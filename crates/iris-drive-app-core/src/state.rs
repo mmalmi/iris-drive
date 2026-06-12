@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
 pub struct UiState {
     pub roots: Vec<UiSyncRoot>,
     pub shares: Vec<UiShare>,

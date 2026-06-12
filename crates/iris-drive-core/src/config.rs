@@ -44,7 +44,7 @@ pub struct AppConfig {
     pub schema_version: u32,
     /// Local `IrisProfile` state. `None` until the user has run a create /
     /// restore / link flow.
-    #[serde(default)]
+    #[serde(default, alias = "account")]
     pub profile: Option<ProfileState>,
     /// Optional local profile metadata collected during account creation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -432,7 +432,11 @@ pub struct Drive {
     /// is computed causally across all entries, with timestamp ordering
     /// for legacy roots (see [`crate::merge::merge_drives`]).
     /// Single-AppKey installs carry exactly one entry here.
-    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[serde(
+        default,
+        alias = "device_roots",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
     pub app_key_roots: BTreeMap<String, AppKeyRootRef>,
     /// This `AppKey`'s most-recent root CID as a flat scalar for status surfaces
     /// that do not need the full per-AppKey root map. New code should read
@@ -459,7 +463,7 @@ pub struct AppKeyRootRef {
     pub dck_generation: u64,
     /// Monotonic per-AppKey sequence for this drive. `0` means legacy
     /// root with unknown causality.
-    #[serde(default, skip_serializing_if = "is_zero")]
+    #[serde(default, alias = "device_seq", skip_serializing_if = "is_zero")]
     pub app_key_seq: u64,
     /// Direct parent roots this snapshot replaces or incorporates.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -609,23 +613,84 @@ working_dir = "/tmp/Iris Drive"
     }
 
     #[test]
-    fn stale_account_config_field_is_rejected() {
+    fn legacy_account_and_device_config_fields_are_migrated() {
+        let device_a = "a".repeat(64);
+        let device_b = "b".repeat(64);
         let raw = format!(
             r#"
 schema_version = {CONFIG_SCHEMA_VERSION}
+relays = ["wss://relay.example"]
+blossom_servers = ["https://upload.example"]
 
 [account]
 profile_id = "018fd1a3-8e37-7dc4-bd29-0cf06bdbe3f0"
-app_key_pubkey = "device-a"
-app_key_link_secret = "link-secret"
+device_pubkey = "{device_a}"
+device_link_secret = "link-secret"
 authorization_state = "authorized"
+device_label = "Old Android"
+
+[account.outbound_device_link_request]
+admin_device_pubkey = "{device_b}"
+link_secret = "outbound-secret"
+requested_at = 1
+
+[[account.inbound_device_link_requests]]
+device_pubkey = "{device_b}"
+link_secret = "inbound-secret"
+requested_at = 2
+
+[[drives]]
+root_scope_id = "018fd1a3-8e37-7dc4-bd29-0cf06bdbe3f0"
+drive_id = "main"
+display_name = "My Drive"
+role = "owner"
+
+[drives.device_roots.{device_a}]
+root_cid = "cid-legacy"
+published_at = 1234
+dck_generation = 1
+device_seq = 3
 "#
         );
         let dir = tempdir().unwrap();
         let path = dir.path().join("config.toml");
         std::fs::write(&path, raw).unwrap();
-        let error = AppConfig::load_or_default(&path).unwrap_err();
-        assert!(error.to_string().contains("unknown field `account`"));
+        let loaded = AppConfig::load_or_default(&path).unwrap();
+        let profile = loaded.profile.as_ref().expect("legacy account migrated");
+        assert_eq!(profile.app_key_pubkey, device_a);
+        assert_eq!(profile.app_key_link_secret, "link-secret");
+        assert_eq!(profile.app_key_label.as_deref(), Some("Old Android"));
+        assert_eq!(
+            profile
+                .outbound_app_key_link_request
+                .as_ref()
+                .unwrap()
+                .admin_app_key_pubkey,
+            device_b
+        );
+        assert_eq!(
+            profile.inbound_app_key_link_requests[0].app_key_pubkey,
+            device_b
+        );
+        let root = loaded
+            .drive("main")
+            .unwrap()
+            .app_key_roots
+            .get(&device_a)
+            .unwrap();
+        assert_eq!(root.root_cid, "cid-legacy");
+        assert_eq!(root.app_key_seq, 3);
+
+        loaded.save(&path).unwrap();
+        let canonical = std::fs::read_to_string(&path).unwrap();
+        assert!(canonical.contains("[profile]"));
+        assert!(canonical.contains("app_key_pubkey"));
+        assert!(canonical.contains("app_key_roots"));
+        assert!(canonical.contains("app_key_seq"));
+        assert!(!canonical.contains("[account]"));
+        assert!(!canonical.contains("device_pubkey"));
+        assert!(!canonical.contains("device_roots"));
+        assert!(!canonical.contains("device_seq"));
     }
 
     #[test]

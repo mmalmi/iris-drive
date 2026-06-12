@@ -48,7 +48,7 @@ struct LegacySelection {
 
 enum UpdateSelection {
     Secure(Box<SecureNostrBlossomSelection>),
-    Legacy(LegacySelection),
+    Legacy(Box<LegacySelection>),
 }
 
 #[must_use]
@@ -134,12 +134,14 @@ async fn select_update(
         Ok(Err(error)) => {
             return legacy_selection(current_version, mode)
                 .await
+                .map(Box::new)
                 .map(UpdateSelection::Legacy)
                 .with_context(|| format!("secure hashtree update check failed: {error}"));
         }
         Err(_) => {
             return legacy_selection(current_version, mode)
                 .await
+                .map(Box::new)
                 .map(UpdateSelection::Legacy)
                 .context("secure hashtree update check timed out");
         }
@@ -149,7 +151,7 @@ async fn select_update(
         && let Ok(legacy) = legacy_selection(current_version, mode).await
         && legacy.update_available
     {
-        return Ok(UpdateSelection::Legacy(legacy));
+        return Ok(UpdateSelection::Legacy(Box::new(legacy)));
     }
 
     Ok(UpdateSelection::Secure(Box::new(selection)))
@@ -404,8 +406,7 @@ fn manifest_asset_url(manifest_url: &str, path: &str) -> String {
     }
     let base = manifest_url
         .rsplit_once('/')
-        .map(|(base, _)| base)
-        .unwrap_or(manifest_url);
+        .map_or(manifest_url, |(base, _)| base);
     format!("{}/{}", base, path.trim_start_matches('/'))
 }
 

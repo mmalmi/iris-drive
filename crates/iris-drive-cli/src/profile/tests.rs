@@ -332,7 +332,7 @@ fn app_key_link_request_retry_uses_startup_burst_before_steady_interval() {
     ));
     assert!(app_key_link_request_send_due(
         Some(first),
-        now + std::time::Duration::from_millis(1_000)
+        now + std::time::Duration::from_secs(1)
     ));
 
     let steady = SentAppKeyLinkRequest {

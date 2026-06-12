@@ -154,7 +154,7 @@ async fn gateway_serves_primary_share_shortcut_projection() {
     )
     .await
     .unwrap();
-    let host = format!("main{}", DRIVE_HOST_SUFFIX);
+    let host = format!("main{DRIVE_HOST_SUFFIX}");
     let response = http_get(server.local_addr(), &host, "/keke/note.txt").await;
     assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
     assert!(response.contains("shared through gateway"), "{response}");

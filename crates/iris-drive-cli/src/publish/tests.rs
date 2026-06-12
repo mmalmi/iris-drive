@@ -96,11 +96,10 @@ fn direct_root_republishes_after_short_native_cadence() {
     ));
 }
 
-#[test]
-fn direct_root_periodic_announce_is_not_on_status_heartbeat() {
+const _: () = {
     assert!(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS >= 30);
     assert!(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS >= DIRECT_ROOT_REPUBLISH_INTERVAL_SECS * 6);
-}
+};
 
 #[test]
 fn direct_root_publish_includes_profile_roster_ops() {

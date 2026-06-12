@@ -68,7 +68,7 @@ fn provider_root_poll_remains_safety_sweep_when_config_watch_is_active() {
     );
     assert_eq!(
         provider_root_poll_period(60),
-        std::time::Duration::from_secs(60)
+        std::time::Duration::from_mins(1)
     );
 }
 

@@ -95,6 +95,7 @@ pub const MAX_INBOUND_APP_KEY_LINK_REQUESTS: usize = 32;
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct PendingAppKeyLinkRequest {
+    #[serde(alias = "admin_device_pubkey")]
     pub admin_app_key_pubkey: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub link_secret: String,
@@ -104,6 +105,7 @@ pub struct PendingAppKeyLinkRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct InboundAppKeyLinkRequest {
+    #[serde(alias = "device_pubkey")]
     pub app_key_pubkey: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
@@ -117,19 +119,23 @@ pub struct InboundAppKeyLinkRequest {
 #[serde(deny_unknown_fields)]
 pub struct ProfileState {
     pub profile_id: IrisProfileId,
+    #[serde(alias = "device_pubkey")]
     pub app_key_pubkey: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
-    #[serde(default = "default_app_key_link_secret")]
+    #[serde(default = "default_app_key_link_secret", alias = "device_link_secret")]
     pub app_key_link_secret: String,
     pub authorization_state: AppKeyAuthorizationState,
+    #[serde(alias = "device_label")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app_key_label: Option<String>,
     /// Runtime projection cache derived from `profile_roster_ops`.
     #[serde(skip)]
     pub app_keys: Option<AppKeysProjection>,
+    #[serde(alias = "outbound_device_link_request")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outbound_app_key_link_request: Option<PendingAppKeyLinkRequest>,
+    #[serde(alias = "inbound_device_link_requests")]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inbound_app_key_link_requests: Vec<InboundAppKeyLinkRequest>,
 }

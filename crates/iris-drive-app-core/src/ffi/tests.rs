@@ -986,13 +986,12 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
     );
 }
 
-#[test]
-fn native_direct_root_exchange_is_not_on_app_key_link_tick() {
+const _: () = {
     assert!(super::NATIVE_DIRECT_ROOT_EXCHANGE_MILLIS >= 5_000);
     assert!(
         super::NATIVE_DIRECT_ROOT_EXCHANGE_MILLIS >= super::APP_KEY_LINK_EXCHANGE_TICK_MILLIS * 10
     );
-}
+};
 
 #[test]
 fn link_device_rejects_bare_app_key_without_profile_target() {
@@ -1623,7 +1622,7 @@ fn app_key_link_request_retry_uses_startup_burst_before_steady_interval() {
     ));
     assert!(app_key_link_request_send_due(
         Some(first),
-        now + std::time::Duration::from_millis(1_000)
+        now + std::time::Duration::from_secs(1)
     ));
 
     let steady = SentAppKeyLinkRequest {

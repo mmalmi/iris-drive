@@ -270,17 +270,14 @@ fn apply_share_action(
             share_id,
             profile_id,
             reason,
-        } => {
-            let reason = trimmed_option(reason);
-            revoke_share_member(
-                config_dir,
-                config,
-                share_id,
-                profile_id,
-                reason.as_deref(),
-                now_seconds,
-            )
-        }
+        } => revoke_share_member_action(
+            config_dir,
+            config,
+            share_id,
+            profile_id,
+            reason,
+            now_seconds,
+        ),
         ShareAction::SetShareMemberRole {
             share_id,
             profile_id,
@@ -302,6 +299,25 @@ fn apply_share_action(
             repair_share_wraps(config_dir, config, share_id, now_seconds)
         }
     }
+}
+
+fn revoke_share_member_action(
+    config_dir: &Path,
+    config: &mut AppConfig,
+    share_id: IrisProfileId,
+    profile_id: IrisProfileId,
+    reason: Option<String>,
+    now_seconds: i64,
+) -> Result<ShareActionMetadata> {
+    let reason = trimmed_option(reason);
+    revoke_share_member(
+        config_dir,
+        config,
+        share_id,
+        profile_id,
+        reason.as_deref(),
+        now_seconds,
+    )
 }
 
 fn create_share(

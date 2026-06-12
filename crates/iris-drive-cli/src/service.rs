@@ -480,12 +480,12 @@ mod tests {
 
     #[test]
     fn macos_launchctl_pid_counts_as_running() {
-        let detail = r#"
+        let detail = r"
 gui/501/to.iris.drive.daemon.test = {
     state = spawn scheduled
     pid = 4242
 }
-"#;
+";
 
         assert!(macos_launchctl_detail_running(detail));
     }

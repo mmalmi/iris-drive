@@ -312,7 +312,7 @@ pub(crate) enum SharesCmd {
     },
     /// List shared folders visible to this app install.
     List {
-        /// Include raw AppKey diagnostics such as missing wrap recipients.
+        /// Include raw `AppKey` diagnostics such as missing wrap recipients.
         #[arg(long)]
         diagnostics: bool,
     },
@@ -321,10 +321,10 @@ pub(crate) enum SharesCmd {
         /// Share UUID.
         share_id: String,
     },
-    /// Export signed recipient evidence for this IrisProfile/AppKey.
+    /// Export signed recipient evidence for this `IrisProfile`/`AppKey`.
     #[command(name = "recipient-evidence")]
     RecipientEvidence {
-        /// Display name to show when another user invites this IrisProfile.
+        /// Display name to show when another user invites this `IrisProfile`.
         #[arg(long)]
         display_name: Option<String>,
     },
@@ -344,7 +344,7 @@ pub(crate) enum SharesCmd {
         /// Recipient role: reader, editor, or admin.
         #[arg(long, default_value = "reader")]
         role: String,
-        /// Display/contact npub hint. Without profile evidence or an AppKey this records a pending invite.
+        /// Display/contact npub hint. Without profile evidence or an `AppKey` this records a pending invite.
         #[arg(long)]
         npub: Option<String>,
         /// Display name for this member.
@@ -368,7 +368,7 @@ pub(crate) enum SharesCmd {
         /// Optional reason recorded in `AppKey` tombstones.
         #[arg(long)]
         reason: Option<String>,
-        /// Include raw revoked AppKeys in the JSON output.
+        /// Include raw revoked `AppKeys` in the JSON output.
         #[arg(long)]
         diagnostics: bool,
     },
@@ -400,7 +400,7 @@ pub(crate) enum SharesCmd {
     RepairWraps {
         /// Share UUID.
         share_id: String,
-        /// Include raw repaired/missing AppKeys in the JSON output.
+        /// Include raw repaired/missing `AppKeys` in the JSON output.
         #[arg(long)]
         diagnostics: bool,
     },

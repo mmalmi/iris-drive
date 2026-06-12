@@ -1183,24 +1183,7 @@ impl NativeAppRuntime {
         let paths = paths_for(&self.data_dir);
         let sync = self.state.ui.sync.clone();
         let previous_roots = self.state.ui.roots.clone();
-        self.state.ui = UiState {
-            relays: default_relays(),
-            relay_statuses: default_relay_statuses(&default_relays()),
-            backups: default_backups(),
-            paths,
-            sync,
-            setup_state: "not_configured".to_owned(),
-            setup_label: setup_label_for_setup_state("not_configured").to_owned(),
-            primary_status: "not_setup".to_owned(),
-            primary_status_label: primary_status_label("not_setup").to_owned(),
-            snapshot_link: String::new(),
-            local_nhash_resolver_enabled: true,
-            launch_on_startup: true,
-            sites_portal_url: iris_drive_core::gateway::local_portal_url(
-                iris_drive_core::gateway::DEFAULT_GATEWAY_PORT,
-            ),
-            ..UiState::default()
-        };
+        self.reset_ui_for_reload(paths, sync);
 
         let Ok(mut config) = self.load_config() else {
             self.refresh_ui_summary(None);
@@ -1293,6 +1276,27 @@ impl NativeAppRuntime {
             self.refresh_provider_summary();
         }
         self.refresh_ui_summary(Some(ui_fips_status));
+    }
+
+    fn reset_ui_for_reload(&mut self, paths: UiPaths, sync: UiSyncStatus) {
+        self.state.ui = UiState {
+            relays: default_relays(),
+            relay_statuses: default_relay_statuses(&default_relays()),
+            backups: default_backups(),
+            paths,
+            sync,
+            setup_state: "not_configured".to_owned(),
+            setup_label: setup_label_for_setup_state("not_configured").to_owned(),
+            primary_status: "not_setup".to_owned(),
+            primary_status_label: primary_status_label("not_setup").to_owned(),
+            snapshot_link: String::new(),
+            local_nhash_resolver_enabled: true,
+            launch_on_startup: true,
+            sites_portal_url: iris_drive_core::gateway::local_portal_url(
+                iris_drive_core::gateway::DEFAULT_GATEWAY_PORT,
+            ),
+            ..UiState::default()
+        };
     }
 
     fn refresh_provider_summary(&mut self) {

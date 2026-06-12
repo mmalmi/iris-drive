@@ -117,6 +117,7 @@ case "$(uname -s)" in
       && [[ "${IRIS_DRIVE_RELEASE_GATE_IOS:-1}" != "0" ]]; then
       run just ios-build
       run just ios-smoke
+      run just ios-gui-smoke
     fi
     if ! bool_true "${IRIS_DRIVE_RELEASE_GATE_ANDROID_SKIP:-0}" \
       && [[ "${IRIS_DRIVE_RELEASE_GATE_ANDROID:-1}" != "0" ]]; then
