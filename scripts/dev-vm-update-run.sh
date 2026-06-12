@@ -14,11 +14,15 @@ HASHTREE_ROOT="${IRIS_DRIVE_HASHTREE_ROOT:-$(cd "$ROOT/../hashtree/rust" && pwd)
 HASHTREE_ROOT="$(git -C "$HASHTREE_ROOT" rev-parse --show-toplevel)"
 FIPS_ROOT="${IRIS_DRIVE_FIPS_ROOT:-$(cd "$ROOT/../fips" && pwd)}"
 FIPS_ROOT="$(git -C "$FIPS_ROOT" rev-parse --show-toplevel)"
+SOCIAL_GRAPH_ROOT="${IRIS_DRIVE_SOCIAL_GRAPH_ROOT:-$(cd "$ROOT/../nostr-social-graph" && pwd)}"
+SOCIAL_GRAPH_ROOT="$(git -C "$SOCIAL_GRAPH_ROOT" rev-parse --show-toplevel)"
 SYNC_BRANCH="${IRIS_DRIVE_DEV_VM_SYNC_BRANCH:-codex/dev-vm-sync}"
 FIPS_SYNC_BRANCH="${IRIS_DRIVE_DEV_VM_FIPS_SYNC_BRANCH:-$SYNC_BRANCH}"
+SOCIAL_GRAPH_SYNC_BRANCH="${IRIS_DRIVE_DEV_VM_SOCIAL_GRAPH_SYNC_BRANCH:-$SYNC_BRANCH}"
 TARGET_BRANCH="${IRIS_DRIVE_DEV_VM_TARGET_BRANCH:-$(git -C "$ROOT" branch --show-current || true)}"
 TARGET_BRANCH="${TARGET_BRANCH:-master}"
 FIPS_TARGET_BRANCH="${IRIS_DRIVE_DEV_VM_FIPS_TARGET_BRANCH:-$FIPS_SYNC_BRANCH}"
+SOCIAL_GRAPH_TARGET_BRANCH="${IRIS_DRIVE_DEV_VM_SOCIAL_GRAPH_TARGET_BRANCH:-master}"
 FORCE=0
 FAIL_ON_DIRTY=0
 SKIP_PUSH=0
@@ -67,6 +71,20 @@ Environment:
                                       Branch checked out in VM fips worktrees
                                       (default: FIPS sync branch, to avoid
                                       clobbering local fips feature branches).
+  IRIS_DRIVE_DEV_VM_SOCIAL_GRAPH_SYNC_BRANCH
+                                      Temporary branch pushed for nostr-social-graph.
+  IRIS_DRIVE_DEV_VM_SOCIAL_GRAPH_TARGET_BRANCH
+                                      Branch checked out in VM nostr-social-graph
+                                      worktrees (default: master).
+  IRIS_DRIVE_DEV_VM_SOCIAL_GRAPH_BARE
+                                      Remote bare repo path for nostr-social-graph
+                                      when no per-target social graph remote is set
+                                      (default: ~/git/nostr-social-graph.git).
+  IRIS_DRIVE_DEV_VM_MACOS_SOCIAL_GRAPH_REMOTE
+  IRIS_DRIVE_DEV_VM_UBUNTU_SOCIAL_GRAPH_REMOTE
+  IRIS_DRIVE_DEV_VM_WINDOWS_SOCIAL_GRAPH_REMOTE
+                                      Optional git remote names for existing
+                                      nostr-social-graph bare repos.
   IRIS_DRIVE_DEV_VM_REQUIRE_CLEAN=1   Refuse to run when local repos are dirty.
   IRIS_DRIVE_DEV_VM_MIN_FREE_KB       Prune VM incremental build caches below
                                       this free space.
@@ -118,11 +136,13 @@ Environment:
                                       CloudStorage files.
   IRIS_DRIVE_HASHTREE_ROOT            Local hashtree/rust checkout.
   IRIS_DRIVE_FIPS_ROOT                Local fips checkout.
+  IRIS_DRIVE_SOCIAL_GRAPH_ROOT        Local nostr-social-graph checkout.
 
 Remote worktree paths are expected to be:
   ~/src/iris-drive
   ~/src/hashtree
   ~/src/fips
+  ~/src/nostr-social-graph
 
 The script never git-cleans untracked files.
 USAGE
@@ -314,9 +334,11 @@ declare -a ALL_SSH_HOSTS=()
 declare -a IRIS_REMOTES=()
 declare -a HASHTREE_REMOTES=()
 declare -a FIPS_REMOTES=()
+declare -a SOCIAL_GRAPH_REMOTES=()
 declare -a IRIS_BARES=()
 declare -a HASHTREE_BARES=()
 declare -a FIPS_BARES=()
+declare -a SOCIAL_GRAPH_BARES=()
 declare -a ALL_OVERLAY_IPS=()
 declare -a STATIC_PEERS_BY_INDEX=()
 
@@ -326,16 +348,20 @@ add_target_from_remotes() {
   local iris_remote="$3"
   local hashtree_remote="$4"
   local fips_remote="$5"
+  local social_graph_remote="$6"
   local iris_parts
   local hashtree_parts
   local fips_parts
+  local social_graph_parts
   local host
   local hashtree_host
   local fips_host
+  local social_graph_host
   local ssh_host
   local iris_bare
   local hashtree_bare
   local fips_bare
+  local social_graph_bare
 
   iris_parts="$(remote_url_parts "$ROOT" "$iris_remote" || true)"
   hashtree_parts="$(remote_url_parts "$HASHTREE_ROOT" "$hashtree_remote" || true)"
@@ -360,6 +386,23 @@ add_target_from_remotes() {
   if [[ "$host" != "$fips_host" ]]; then
     die "$label iris-drive remote host ($host) differs from fips host ($fips_host)"
   fi
+  if [[ -n "$social_graph_remote" ]]; then
+    social_graph_parts="$(remote_url_parts "$SOCIAL_GRAPH_ROOT" "$social_graph_remote" || true)"
+    if [[ -z "$social_graph_parts" ]]; then
+      if [[ ${#ONLY_LABELS[@]} -gt 0 ]]; then
+        die "missing nostr-social-graph git remote $social_graph_remote for requested target $label"
+      fi
+      log "skipping $label; missing nostr-social-graph git remote $social_graph_remote"
+      return 0
+    fi
+    social_graph_host="${social_graph_parts%%$'\t'*}"
+    social_graph_bare="${social_graph_parts#*$'\t'}"
+    if [[ "$host" != "$social_graph_host" ]]; then
+      die "$label iris-drive remote host ($host) differs from nostr-social-graph host ($social_graph_host)"
+    fi
+  else
+    social_graph_bare="${IRIS_DRIVE_DEV_VM_SOCIAL_GRAPH_BARE:-~/git/nostr-social-graph.git}"
+  fi
   ssh_host="$(ssh_host_for_label "$label" "$host")"
 
   ALL_LABELS+=("$label")
@@ -376,9 +419,11 @@ add_target_from_remotes() {
   IRIS_REMOTES+=("$iris_remote")
   HASHTREE_REMOTES+=("$hashtree_remote")
   FIPS_REMOTES+=("$fips_remote")
+  SOCIAL_GRAPH_REMOTES+=("$social_graph_remote")
   IRIS_BARES+=("$iris_bare")
   HASHTREE_BARES+=("$hashtree_bare")
   FIPS_BARES+=("$fips_bare")
+  SOCIAL_GRAPH_BARES+=("$social_graph_bare")
 }
 
 ssh_host_for_label() {
@@ -400,6 +445,7 @@ ssh_git_url() {
 warn_or_fail_local_dirty "$ROOT" "iris-drive"
 warn_or_fail_local_dirty "$HASHTREE_ROOT" "hashtree"
 warn_or_fail_local_dirty "$FIPS_ROOT" "fips"
+warn_or_fail_local_dirty "$SOCIAL_GRAPH_ROOT" "nostr-social-graph"
 
 configured_remote_name() {
   local env_var="$1"
@@ -425,25 +471,31 @@ WINDOWS_HASHTREE_REMOTE="${IRIS_DRIVE_DEV_VM_WINDOWS_HASHTREE_REMOTE:-$WINDOWS_I
 MACOS_FIPS_REMOTE="${IRIS_DRIVE_DEV_VM_MACOS_FIPS_REMOTE:-$MACOS_IRIS_REMOTE}"
 UBUNTU_FIPS_REMOTE="${IRIS_DRIVE_DEV_VM_UBUNTU_FIPS_REMOTE:-$UBUNTU_IRIS_REMOTE}"
 WINDOWS_FIPS_REMOTE="${IRIS_DRIVE_DEV_VM_WINDOWS_FIPS_REMOTE:-$WINDOWS_IRIS_REMOTE}"
+MACOS_SOCIAL_GRAPH_REMOTE="${IRIS_DRIVE_DEV_VM_MACOS_SOCIAL_GRAPH_REMOTE:-}"
+UBUNTU_SOCIAL_GRAPH_REMOTE="${IRIS_DRIVE_DEV_VM_UBUNTU_SOCIAL_GRAPH_REMOTE:-}"
+WINDOWS_SOCIAL_GRAPH_REMOTE="${IRIS_DRIVE_DEV_VM_WINDOWS_SOCIAL_GRAPH_REMOTE:-}"
 
 add_target_from_remotes \
   macos \
   macos \
   "$MACOS_IRIS_REMOTE" \
   "$MACOS_HASHTREE_REMOTE" \
-  "$MACOS_FIPS_REMOTE"
+  "$MACOS_FIPS_REMOTE" \
+  "$MACOS_SOCIAL_GRAPH_REMOTE"
 add_target_from_remotes \
   ubuntu \
   linux \
   "$UBUNTU_IRIS_REMOTE" \
   "$UBUNTU_HASHTREE_REMOTE" \
-  "$UBUNTU_FIPS_REMOTE"
+  "$UBUNTU_FIPS_REMOTE" \
+  "$UBUNTU_SOCIAL_GRAPH_REMOTE"
 add_target_from_remotes \
   windows \
   windows \
   "$WINDOWS_IRIS_REMOTE" \
   "$WINDOWS_HASHTREE_REMOTE" \
-  "$WINDOWS_FIPS_REMOTE"
+  "$WINDOWS_FIPS_REMOTE" \
+  "$WINDOWS_SOCIAL_GRAPH_REMOTE"
 
 if [[ ${#LABELS[@]} -eq 0 ]]; then
   usage >&2
@@ -459,7 +511,8 @@ if [[ "$LIST_TARGETS" == "1" ]]; then
       "${SSH_HOSTS[$i]}" \
       "${IRIS_BARES[$i]}" \
       "${HASHTREE_BARES[$i]}" \
-      "${FIPS_BARES[$i]}"
+      "${FIPS_BARES[$i]}" \
+      "social-graph=${SOCIAL_GRAPH_BARES[$i]}"
   done
   exit 0
 fi
@@ -645,6 +698,7 @@ if [[ "$SKIP_PUSH" != "1" ]]; then
     ensure_remote_bare_repo "${KINDS[$i]}" "${SSH_HOSTS[$i]}" "${IRIS_BARES[$i]}"
     ensure_remote_bare_repo "${KINDS[$i]}" "${SSH_HOSTS[$i]}" "${HASHTREE_BARES[$i]}"
     ensure_remote_bare_repo "${KINDS[$i]}" "${SSH_HOSTS[$i]}" "${FIPS_BARES[$i]}"
+    ensure_remote_bare_repo "${KINDS[$i]}" "${SSH_HOSTS[$i]}" "${SOCIAL_GRAPH_BARES[$i]}"
 
     log "pushing iris-drive HEAD to ${LABELS[$i]} (${SSH_HOSTS[$i]}:${IRIS_BARES[$i]} $SYNC_BRANCH)"
     git -C "$ROOT" push "$(ssh_git_url "${SSH_HOSTS[$i]}" "${IRIS_BARES[$i]}")" "+HEAD:refs/heads/$SYNC_BRANCH"
@@ -652,6 +706,8 @@ if [[ "$SKIP_PUSH" != "1" ]]; then
     git -C "$HASHTREE_ROOT" push "$(ssh_git_url "${SSH_HOSTS[$i]}" "${HASHTREE_BARES[$i]}")" "+HEAD:refs/heads/$SYNC_BRANCH"
     log "pushing fips HEAD to ${LABELS[$i]} (${SSH_HOSTS[$i]}:${FIPS_BARES[$i]} $FIPS_SYNC_BRANCH)"
     git -C "$FIPS_ROOT" push "$(ssh_git_url "${SSH_HOSTS[$i]}" "${FIPS_BARES[$i]}")" "+HEAD:refs/heads/$FIPS_SYNC_BRANCH"
+    log "pushing nostr-social-graph HEAD to ${LABELS[$i]} (${SSH_HOSTS[$i]}:${SOCIAL_GRAPH_BARES[$i]} $SOCIAL_GRAPH_SYNC_BRANCH)"
+    git -C "$SOCIAL_GRAPH_ROOT" push "$(ssh_git_url "${SSH_HOSTS[$i]}" "${SOCIAL_GRAPH_BARES[$i]}")" "+HEAD:refs/heads/$SOCIAL_GRAPH_SYNC_BRANCH"
   done
 fi
 
@@ -662,7 +718,8 @@ run_posix_target() {
   local iris_bare="$4"
   local hashtree_bare="$5"
   local fips_bare="$6"
-  local static_peers="$7"
+  local social_graph_bare="$7"
+  local static_peers="$8"
 
   {
     printf 'LABEL=%s\n' "$(sh_quote "$label")"
@@ -670,10 +727,13 @@ run_posix_target() {
     printf 'IRIS_BARE=%s\n' "$(sh_quote "$iris_bare")"
     printf 'HASHTREE_BARE=%s\n' "$(sh_quote "$hashtree_bare")"
     printf 'FIPS_BARE=%s\n' "$(sh_quote "$fips_bare")"
+    printf 'SOCIAL_GRAPH_BARE=%s\n' "$(sh_quote "$social_graph_bare")"
     printf 'SYNC_BRANCH=%s\n' "$(sh_quote "$SYNC_BRANCH")"
     printf 'FIPS_SYNC_BRANCH=%s\n' "$(sh_quote "$FIPS_SYNC_BRANCH")"
+    printf 'SOCIAL_GRAPH_SYNC_BRANCH=%s\n' "$(sh_quote "$SOCIAL_GRAPH_SYNC_BRANCH")"
     printf 'TARGET_BRANCH=%s\n' "$(sh_quote "$TARGET_BRANCH")"
     printf 'FIPS_TARGET_BRANCH=%s\n' "$(sh_quote "$FIPS_TARGET_BRANCH")"
+    printf 'SOCIAL_GRAPH_TARGET_BRANCH=%s\n' "$(sh_quote "$SOCIAL_GRAPH_TARGET_BRANCH")"
     printf 'FORCE=%s\n' "$(sh_quote "$FORCE")"
     printf 'FAIL_ON_DIRTY=%s\n' "$(sh_quote "$FAIL_ON_DIRTY")"
     printf 'NO_RUN=%s\n' "$(sh_quote "$NO_RUN")"
@@ -753,27 +813,37 @@ sync_repo() {
   local repo="$1"
   local name="$2"
   local bare="$3"
+  local branch="${4:-$SYNC_BRANCH}"
+  local checkout_branch="${5:-$TARGET_BRANCH}"
 
   bare="$(expand_path "$bare")"
-  [[ -d "$repo/.git" ]] || { log "missing checkout: $repo"; exit 1; }
+  if [[ ! -d "$repo/.git" ]]; then
+    if [[ -e "$repo" ]]; then
+      log "sync path exists but is not a git checkout: $repo"
+      exit 1
+    fi
+    log "creating checkout for $name at $repo"
+    mkdir -p "$(dirname "$repo")"
+    git clone "$bare" "$repo"
+  fi
   prepare_worktree "$repo" "$name"
   log "fetching $name from $bare"
-  git -C "$repo" fetch "$bare" "$SYNC_BRANCH"
+  git -C "$repo" fetch "$bare" "$branch"
   local fetched
   local current
   local current_branch
   fetched="$(git -C "$repo" rev-parse FETCH_HEAD)"
   current="$(git -C "$repo" rev-parse HEAD 2>/dev/null || true)"
   current_branch="$(git -C "$repo" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
-  if [[ "$FORCE" != "1" && "$current" == "$fetched" && "$current_branch" == "$TARGET_BRANCH" ]]; then
-    log "$name already at $TARGET_BRANCH@${fetched:0:12}; leaving worktree untouched"
+  if [[ "$FORCE" != "1" && "$current" == "$fetched" && "$current_branch" == "$checkout_branch" ]]; then
+    log "$name already at $checkout_branch@${fetched:0:12}; leaving worktree untouched"
     return 0
   fi
   if [[ "$FORCE" == "1" ]]; then
-    git -C "$repo" checkout --force -B "$TARGET_BRANCH" FETCH_HEAD
+    git -C "$repo" checkout --force -B "$checkout_branch" FETCH_HEAD
     git -C "$repo" reset --hard FETCH_HEAD
   else
-    git -C "$repo" checkout -B "$TARGET_BRANCH" FETCH_HEAD
+    git -C "$repo" checkout -B "$checkout_branch" FETCH_HEAD
   fi
 }
 
@@ -1925,8 +1995,9 @@ check_macos_fileprovider_signing() {
 }
 
 ensure_build_space "$HOME/src/iris-drive" "repository sync"
+sync_repo "$HOME/src/nostr-social-graph" nostr-social-graph "$SOCIAL_GRAPH_BARE" "$SOCIAL_GRAPH_SYNC_BRANCH" "$SOCIAL_GRAPH_TARGET_BRANCH"
 sync_repo "$HOME/src/hashtree" hashtree "$HASHTREE_BARE"
-SYNC_BRANCH="$FIPS_SYNC_BRANCH" TARGET_BRANCH="$FIPS_TARGET_BRANCH" sync_repo "$HOME/src/fips" fips "$FIPS_BARE"
+sync_repo "$HOME/src/fips" fips "$FIPS_BARE" "$FIPS_SYNC_BRANCH" "$FIPS_TARGET_BRANCH"
 sync_repo "$HOME/src/iris-drive" iris-drive "$IRIS_BARE"
 case "$KIND" in
   macos) run_macos ;;
@@ -1943,17 +2014,21 @@ run_windows_target() {
   local iris_bare="$3"
   local hashtree_bare="$4"
   local fips_bare="$5"
-  local static_peers="$6"
+  local social_graph_bare="$6"
+  local static_peers="$7"
 
   {
     printf '$Label = %s\n' "$(ps_quote "$label")"
     printf '$IrisBare = %s\n' "$(ps_quote "$iris_bare")"
     printf '$HashtreeBare = %s\n' "$(ps_quote "$hashtree_bare")"
     printf '$FipsBare = %s\n' "$(ps_quote "$fips_bare")"
+    printf '$SocialGraphBare = %s\n' "$(ps_quote "$social_graph_bare")"
     printf '$SyncBranch = %s\n' "$(ps_quote "$SYNC_BRANCH")"
     printf '$FipsSyncBranch = %s\n' "$(ps_quote "$FIPS_SYNC_BRANCH")"
+    printf '$SocialGraphSyncBranch = %s\n' "$(ps_quote "$SOCIAL_GRAPH_SYNC_BRANCH")"
     printf '$TargetBranch = %s\n' "$(ps_quote "$TARGET_BRANCH")"
     printf '$FipsTargetBranch = %s\n' "$(ps_quote "$FIPS_TARGET_BRANCH")"
+    printf '$SocialGraphTargetBranch = %s\n' "$(ps_quote "$SOCIAL_GRAPH_TARGET_BRANCH")"
     printf '$Force = %s\n' "$(ps_quote "$FORCE")"
     printf '$FailOnDirty = %s\n' "$(ps_quote "$FAIL_ON_DIRTY")"
     printf '$NoRun = %s\n' "$(ps_quote "$NO_RUN")"
@@ -2020,7 +2095,16 @@ function Prepare-Worktree([string]$Repo, [string]$Name) {
 function Sync-Repo([string]$Repo, [string]$Name, [string]$Bare, [string]$Branch = $SyncBranch, [string]$CheckoutBranch = $TargetBranch) {
   $Bare = Expand-RemotePath $Bare
   if (-not (Test-Path (Join-Path $Repo ".git"))) {
-    throw "missing checkout: $Repo"
+    if (Test-Path $Repo) {
+      throw "sync path exists but is not a git checkout: $Repo"
+    }
+    Write-Log "creating checkout for $Name at $Repo"
+    $Parent = Split-Path -Parent $Repo
+    if ($Parent) {
+      New-Item -ItemType Directory -Force -Path $Parent | Out-Null
+    }
+    git clone $Bare $Repo
+    if ($LASTEXITCODE -ne 0) { throw "git clone failed for $Name" }
   }
   Prepare-Worktree $Repo $Name
   Write-Log "fetching $Name from $Bare"
@@ -2215,7 +2299,9 @@ cd /d "$PublishDir"
 $IrisRepo = Join-Path $HOME "src\iris-drive"
 $HashtreeRepo = Join-Path $HOME "src\hashtree"
 $FipsRepo = Join-Path $HOME "src\fips"
+$SocialGraphRepo = Join-Path $HOME "src\nostr-social-graph"
 $ConfigDir = Join-Path $env:APPDATA "iris-drive"
+Sync-Repo $SocialGraphRepo "nostr-social-graph" $SocialGraphBare $SocialGraphSyncBranch $SocialGraphTargetBranch
 Sync-Repo $HashtreeRepo "hashtree" $HashtreeBare
 Sync-Repo $FipsRepo "fips" $FipsBare $FipsSyncBranch $FipsTargetBranch
 Sync-Repo $IrisRepo "iris-drive" $IrisBare
@@ -2646,10 +2732,10 @@ for i in "${!LABELS[@]}"; do
   log "updating/building/running ${LABELS[$i]} on ${HOSTS[$i]} via ${SSH_HOSTS[$i]}"
   case "${KINDS[$i]}" in
     macos|linux)
-      run_posix_target "${LABELS[$i]}" "${KINDS[$i]}" "${SSH_HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}" "${STATIC_PEERS_BY_INDEX[$i]:-}"
+      run_posix_target "${LABELS[$i]}" "${KINDS[$i]}" "${SSH_HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}" "${SOCIAL_GRAPH_BARES[$i]}" "${STATIC_PEERS_BY_INDEX[$i]:-}"
       ;;
     windows)
-      run_windows_target "${LABELS[$i]}" "${SSH_HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}" "${STATIC_PEERS_BY_INDEX[$i]:-}"
+      run_windows_target "${LABELS[$i]}" "${SSH_HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}" "${SOCIAL_GRAPH_BARES[$i]}" "${STATIC_PEERS_BY_INDEX[$i]:-}"
       ;;
     *)
       die "unknown target kind: ${KINDS[$i]}"

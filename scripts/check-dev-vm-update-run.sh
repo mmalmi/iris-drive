@@ -28,6 +28,7 @@ SSH
 chmod +x "$TMPDIR/bin/ssh"
 git init -q "$TMPDIR/hashtree"
 git init -q "$TMPDIR/fips"
+git init -q "$TMPDIR/nostr-social-graph"
 
 git -C "$ROOT" remote add "$MACOS_REMOTE" check-macos:~/git/iris-drive.git
 git -C "$ROOT" remote add "$UBUNTU_REMOTE" check-ubuntu:~/git/iris-drive.git
@@ -43,6 +44,7 @@ export PATH="$TMPDIR/bin:$PATH"
 export IRIS_DRIVE_DEV_LAB_ENV="$TMPDIR/missing-dev-lab.env"
 export IRIS_DRIVE_HASHTREE_ROOT="$TMPDIR/hashtree"
 export IRIS_DRIVE_FIPS_ROOT="$TMPDIR/fips"
+export IRIS_DRIVE_SOCIAL_GRAPH_ROOT="$TMPDIR/nostr-social-graph"
 export IRIS_DRIVE_DEV_VM_MACOS_REMOTE="$MACOS_REMOTE"
 export IRIS_DRIVE_DEV_VM_UBUNTU_REMOTE="$UBUNTU_REMOTE"
 export IRIS_DRIVE_DEV_VM_WINDOWS_REMOTE="$WINDOWS_REMOTE"
@@ -75,6 +77,13 @@ fi
 
 if ! grep -F '$env:CARGO_PROFILE_DEV_DEBUG = $CargoProfileDevDebugDefault' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
   echo "Windows VM Cargo builds must use the same dev debuginfo override" >&2
+  exit 1
+fi
+
+if ! grep -F 'IRIS_DRIVE_SOCIAL_GRAPH_ROOT' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F 'nostr-social-graph' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F 'SOCIAL_GRAPH_BARE' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "dev VM sync must deploy nostr-social-graph because hashtree path-depends on it" >&2
   exit 1
 fi
 
