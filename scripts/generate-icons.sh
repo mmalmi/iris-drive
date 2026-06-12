@@ -30,7 +30,7 @@ render_ios_app_icon_png() {
   {
     cat <<EOF
 <svg xmlns="http://www.w3.org/2000/svg" width="$size" height="$size" viewBox="0 0 1024 1024">
-  <rect width="1024" height="1024" fill="#080214"/>
+  <rect width="1024" height="1024" fill="#050507"/>
 EOF
     sed '1d;$d' "$SVG"
     cat <<'EOF'
@@ -57,7 +57,7 @@ render_android_launcher_png() {
 EOF
     if [[ "$fill_background" == "true" ]]; then
       cat <<'EOF'
-  <rect width="1024" height="1024" fill="#080214"/>
+      <rect width="1024" height="1024" fill="#050507"/>
 EOF
     fi
     cat <<EOF

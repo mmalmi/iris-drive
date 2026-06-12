@@ -10,7 +10,7 @@ exclude = ["linux"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.6"
+version = "0.1.7"
 edition = "2024"
 license = "MIT"
 authors = ["Iris Drive contributors"]
@@ -62,8 +62,8 @@ notify = "6"
 notify-debouncer-mini = "0.4"
 tao = "0.30"
 tray-icon = "0.21"
-iris-drive-core = { version = "0.1.6", path = "crates/iris-drive-core" }
-iris-drive-app-core = { version = "0.1.6", path = "crates/iris-drive-app-core" }
+iris-drive-core = { version = "0.1.7", path = "crates/iris-drive-core" }
+iris-drive-app-core = { version = "0.1.7", path = "crates/iris-drive-app-core" }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

@@ -196,6 +196,9 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
             elapsed_ms = phase.elapsed().as_millis(),
             "provider command built merged root"
         );
+        if provider_command_is_mutation(&command) {
+            ensure_provider_root_locally_available(&daemon, &visible.root_cid).await?;
+        }
         let phase = std::time::Instant::now();
         let provider =
             HashTreeProviderFs::open(daemon.tree_handle(), visible.root_cid.clone()).await?;
@@ -663,6 +666,54 @@ pub(crate) async fn delete_provider_path(
 }
 
 const PROVIDER_IMPORT_RETRY_DELAYS_MS: &[u64] = &[250, 500, 1_000, 2_000, 4_000, 8_000];
+
+async fn ensure_provider_root_locally_available(daemon: &Daemon, root: &Cid) -> Result<()> {
+    let mut attempt = 0;
+    loop {
+        match check_provider_root_locally_available(daemon, root).await {
+            Ok(()) => return Ok(()),
+            Err(error)
+                if attempt < PROVIDER_IMPORT_RETRY_DELAYS_MS.len()
+                    && provider_import_error_message_is_retryable(&format!("{error:#}")) =>
+            {
+                let delay_ms = PROVIDER_IMPORT_RETRY_DELAYS_MS[attempt];
+                attempt += 1;
+                tracing::warn!(
+                    error = %error,
+                    delay_ms,
+                    root_cid = %root,
+                    "provider command hit a transient local root read; retrying mutation preflight"
+                );
+                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
+            }
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("provider root {root} is not locally readable for mutation")
+                });
+            }
+        }
+    }
+}
+
+async fn check_provider_root_locally_available(daemon: &Daemon, root: &Cid) -> Result<()> {
+    let hashes = iris_drive_core::block_sync::collect_live_sync_hashes(daemon.tree(), root, 4)
+        .await
+        .context("walking local provider root blocks")?;
+    let store = daemon.tree().get_store().clone();
+    for hash in hashes {
+        if !store
+            .has(&hash)
+            .await
+            .with_context(|| format!("checking local block {}", hashtree_core::to_hex(&hash)))?
+        {
+            anyhow::bail!(
+                "local store is missing provider root block {}",
+                hashtree_core::to_hex(&hash)
+            );
+        }
+    }
+    Ok(())
+}
 
 async fn primary_merged_root_with_retry(
     daemon: &Daemon,
