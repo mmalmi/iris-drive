@@ -3250,6 +3250,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.18",
  "tokio",
+ "tokio-tungstenite 0.24.0",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
  "uuid",

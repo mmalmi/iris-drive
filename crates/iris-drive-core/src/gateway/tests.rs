@@ -1,7 +1,10 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
+use axum::extract::ws::{Message as AxumWebSocketMessage, WebSocket, WebSocketUpgrade};
+use futures::{SinkExt, StreamExt};
 use nostr_sdk::ToBech32;
 use std::path::Path;
+use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use crate::config::Drive;
 use crate::paths::config_path_in;
@@ -88,6 +91,75 @@ async fn fake_htree_daemon_with_content_type(
         content_type: Arc::new(content_type.to_string()),
     };
     let app = Router::new().fallback(any(handler)).with_state(state);
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let handle = tokio::spawn(async move {
+        let _ = axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                let _ = shutdown_rx.await;
+            })
+            .await;
+    });
+    FakeHtreeDaemon {
+        addr: addr.to_string(),
+        shutdown_tx,
+        handle,
+    }
+}
+
+async fn fake_runtime_htree_daemon() -> FakeHtreeDaemon {
+    async fn ws_echo(mut socket: WebSocket) {
+        while let Some(Ok(message)) = socket.next().await {
+            match message {
+                AxumWebSocketMessage::Text(text) => {
+                    let _ = socket
+                        .send(AxumWebSocketMessage::Text(format!("upstream:{text}")))
+                        .await;
+                }
+                AxumWebSocketMessage::Ping(bytes) => {
+                    let _ = socket.send(AxumWebSocketMessage::Pong(bytes)).await;
+                }
+                AxumWebSocketMessage::Close(_) => break,
+                _ => {}
+            }
+        }
+    }
+
+    async fn handler(
+        ws: Option<WebSocketUpgrade>,
+        method: Method,
+        uri: Uri,
+        body: Bytes,
+    ) -> Response {
+        if uri.path() == "/ws" {
+            return match ws {
+                Some(ws) => ws.on_upgrade(ws_echo),
+                None => text_response(StatusCode::BAD_REQUEST, "missing websocket upgrade"),
+            };
+        }
+        if method == Method::GET && uri.path() == "/api/stats" {
+            return response_builder(StatusCode::OK, false)
+                .header(CONTENT_TYPE, "application/json")
+                .body(Body::from(r#"{"total_dags":7,"total_bytes":42}"#))
+                .expect("response");
+        }
+        if method == Method::PUT && uri.path().starts_with("/__iris/store/") {
+            return response_builder(StatusCode::CREATED, false)
+                .header(CONTENT_TYPE, "text/plain")
+                .body(Body::from(format!(
+                    "stored:{}",
+                    String::from_utf8_lossy(&body)
+                )))
+                .expect("response");
+        }
+        text_response(
+            StatusCode::NOT_FOUND,
+            &format!("unexpected runtime path: {}", uri.path()),
+        )
+    }
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = Router::new().fallback(any(handler));
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let handle = tokio::spawn(async move {
         let _ = axum::serve(listener, app)
@@ -404,7 +476,84 @@ async fn gateway_proxies_portal_npub_path_to_hashtree_daemon() {
 }
 
 #[tokio::test]
-async fn gateway_injects_drive_hashtree_runtime_into_mutable_site_html() {
+async fn gateway_proxies_same_origin_runtime_http_to_hashtree_daemon() {
+    let cfg_dir = tempdir().unwrap();
+    init_account_config(cfg_dir.path());
+    let daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let htree = fake_runtime_htree_daemon().await;
+
+    let server = GatewayServer::bind_with_tree_and_htree_daemon(
+        cfg_dir.path(),
+        daemon.tree_handle(),
+        htree.addr.clone(),
+        GatewayBind::loopback_v4(0),
+    )
+    .await
+    .unwrap();
+    let host = format!("video.{IRIS_SITES_PORTAL_NPUB}.iris.localhost");
+
+    let stats = http_get(server.local_addr(), &host, "/api/stats").await;
+    assert!(stats.starts_with("HTTP/1.1 200 OK"), "{stats}");
+    assert!(stats.contains(r#""total_dags":7"#), "{stats}");
+
+    let put = http_request(
+        server.local_addr(),
+        "PUT",
+        &host,
+        "/__iris/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+        &[("content-type", "application/octet-stream")],
+        b"blob",
+    )
+    .await;
+    assert!(put.starts_with("HTTP/1.1 201 Created"), "{put}");
+    assert!(put.contains("stored:blob"), "{put}");
+
+    server.shutdown().await.unwrap();
+    htree.shutdown().await;
+}
+
+#[tokio::test]
+async fn gateway_proxies_same_origin_runtime_websocket_to_hashtree_daemon() {
+    let cfg_dir = tempdir().unwrap();
+    init_account_config(cfg_dir.path());
+    let daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let htree = fake_runtime_htree_daemon().await;
+
+    let server = GatewayServer::bind_with_tree_and_htree_daemon(
+        cfg_dir.path(),
+        daemon.tree_handle(),
+        htree.addr.clone(),
+        GatewayBind::loopback_v4(0),
+    )
+    .await
+    .unwrap();
+    let host = format!("video.{IRIS_SITES_PORTAL_NPUB}.iris.localhost");
+    let mut request = format!("ws://{}/ws", server.local_addr())
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(HOST, HeaderValue::from_str(&host).unwrap());
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    socket
+        .send(tokio_tungstenite::tungstenite::Message::Text(
+            "hello".into(),
+        ))
+        .await
+        .unwrap();
+
+    let message = socket.next().await.unwrap().unwrap();
+    assert_eq!(
+        message,
+        tokio_tungstenite::tungstenite::Message::Text("upstream:hello".into())
+    );
+
+    server.shutdown().await.unwrap();
+    htree.shutdown().await;
+}
+
+#[tokio::test]
+async fn gateway_leaves_mutable_site_html_without_runtime_injection() {
     let cfg_dir = tempdir().unwrap();
     init_account_config(cfg_dir.path());
     let daemon = Daemon::open(cfg_dir.path()).unwrap();
@@ -430,16 +579,10 @@ async fn gateway_injects_drive_hashtree_runtime_into_mutable_site_html() {
 
     assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
     assert!(
-        response.contains("window.__HTREE_SERVER_URL__"),
+        !response.contains("window.__HTREE_SERVER_URL__"),
         "{response}"
     );
-    assert!(
-        response.contains(&format!("http://{}", htree.addr)),
-        "{response}"
-    );
-    let runtime_pos = response.find("window.__HTREE_SERVER_URL__").unwrap();
-    let module_pos = response.find("type=\"module\"").unwrap();
-    assert!(runtime_pos < module_pos, "{response}");
+    assert!(response.contains(html), "{response}");
 
     server.shutdown().await.unwrap();
     htree.shutdown().await;
