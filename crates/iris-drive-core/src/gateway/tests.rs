@@ -39,10 +39,19 @@ impl FakeHtreeDaemon {
 }
 
 async fn fake_htree_daemon(expected_path: &str, body: &str) -> FakeHtreeDaemon {
+    fake_htree_daemon_with_content_type(expected_path, body, "image/webp").await
+}
+
+async fn fake_htree_daemon_with_content_type(
+    expected_path: &str,
+    body: &str,
+    content_type: &str,
+) -> FakeHtreeDaemon {
     #[derive(Clone)]
     struct FakeState {
         expected_path: Arc<String>,
         body: Arc<String>,
+        content_type: Arc<String>,
     }
 
     async fn handler(
@@ -61,7 +70,7 @@ async fn fake_htree_daemon(expected_path: &str, body: &str) -> FakeHtreeDaemon {
             return text_response(StatusCode::BAD_REQUEST, "unexpected range");
         }
         response_builder(StatusCode::OK, method == Method::HEAD)
-            .header(CONTENT_TYPE, "image/webp")
+            .header(CONTENT_TYPE, state.content_type.as_str())
             .body(if method == Method::HEAD {
                 Body::empty()
             } else {
@@ -75,6 +84,7 @@ async fn fake_htree_daemon(expected_path: &str, body: &str) -> FakeHtreeDaemon {
     let state = FakeState {
         expected_path: Arc::new(expected_path.to_string()),
         body: Arc::new(body.to_string()),
+        content_type: Arc::new(content_type.to_string()),
     };
     let app = Router::new().fallback(any(handler)).with_state(state);
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
@@ -352,6 +362,48 @@ async fn gateway_proxies_mutable_site_host_to_hashtree_daemon() {
     let response = http_get(server.local_addr(), &host, "/app.js").await;
     assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
     assert!(response.contains("mutable app"), "{response}");
+    server.shutdown().await.unwrap();
+    htree.shutdown().await;
+}
+
+#[tokio::test]
+async fn gateway_injects_drive_hashtree_runtime_into_mutable_site_html() {
+    let cfg_dir = tempdir().unwrap();
+    init_account_config(cfg_dir.path());
+    let daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let tree_name = "video";
+    let html = r#"<!doctype html><html><head><title>video</title></head><body><script type="module" src="/assets/app.js"></script></body></html>"#;
+    let htree = fake_htree_daemon_with_content_type(
+        &format!("/htree/{IRIS_SITES_PORTAL_NPUB}/{tree_name}/index.html"),
+        html,
+        "text/html; charset=utf-8",
+    )
+    .await;
+
+    let server = GatewayServer::bind_with_tree_and_htree_daemon(
+        cfg_dir.path(),
+        daemon.tree_handle(),
+        htree.addr.clone(),
+        GatewayBind::loopback_v4(0),
+    )
+    .await
+    .unwrap();
+    let host = format!("{tree_name}.{IRIS_SITES_PORTAL_NPUB}.iris.localhost");
+    let response = http_get(server.local_addr(), &host, "/").await;
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(
+        response.contains("window.__HTREE_SERVER_URL__"),
+        "{response}"
+    );
+    assert!(
+        response.contains(&format!("http://{}", htree.addr)),
+        "{response}"
+    );
+    let runtime_pos = response.find("window.__HTREE_SERVER_URL__").unwrap();
+    let module_pos = response.find("type=\"module\"").unwrap();
+    assert!(runtime_pos < module_pos, "{response}");
+
     server.shutdown().await.unwrap();
     htree.shutdown().await;
 }

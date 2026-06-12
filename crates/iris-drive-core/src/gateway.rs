@@ -522,9 +522,17 @@ async fn proxy_htree_daemon_request(
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("hashtree daemon: {e}")))?;
     let status = StatusCode::from_u16(upstream.status().as_u16())
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
+    let should_inject_runtime = method == Method::GET
+        && status.is_success()
+        && upstream
+            .headers()
+            .get(CONTENT_TYPE)
+            .is_some_and(is_html_content_type);
     let mut builder = response_builder(status, method == Method::HEAD);
     for (name, value) in upstream.headers() {
-        if is_proxy_response_header(name.as_str()) {
+        if is_proxy_response_header(name.as_str())
+            && !(should_inject_runtime && name == CONTENT_LENGTH)
+        {
             builder = builder.header(name.as_str(), value.as_bytes());
         }
     }
@@ -537,6 +545,13 @@ async fn proxy_htree_daemon_request(
         .bytes()
         .await
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("hashtree daemon: {e}")))?;
+    let bytes = if should_inject_runtime {
+        let bytes = inject_htree_runtime_script(bytes, htree_daemon_addr.as_ref());
+        builder = builder.header(CONTENT_LENGTH, bytes.len().to_string());
+        bytes
+    } else {
+        bytes
+    };
     try_finish_response(
         builder,
         if method == Method::HEAD {
@@ -545,6 +560,42 @@ async fn proxy_htree_daemon_request(
             Body::from(bytes)
         },
     )
+}
+
+fn is_html_content_type(value: &HeaderValue) -> bool {
+    value.to_str().ok().is_some_and(|value| {
+        value
+            .split(';')
+            .next()
+            .unwrap_or_default()
+            .trim()
+            .eq_ignore_ascii_case("text/html")
+    })
+}
+
+fn inject_htree_runtime_script(bytes: Bytes, htree_daemon_addr: &str) -> Bytes {
+    let Ok(mut html) = String::from_utf8(bytes.to_vec()) else {
+        return bytes;
+    };
+    if html.contains("window.__HTREE_SERVER_URL__") {
+        return Bytes::from(html);
+    }
+    let server_url = format!("http://{htree_daemon_addr}");
+    let server_url_json = serde_json::to_string(&server_url).unwrap_or_else(|_| "null".to_owned());
+    let script = format!("<script>window.__HTREE_SERVER_URL__={server_url_json};</script>");
+    if let Some(position) = html_head_insert_position(&html) {
+        html.insert_str(position, &script);
+    } else {
+        html.insert_str(0, &script);
+    }
+    Bytes::from(html)
+}
+
+fn html_head_insert_position(html: &str) -> Option<usize> {
+    let lower = html.to_ascii_lowercase();
+    let head_start = lower.find("<head")?;
+    let head_end = lower[head_start..].find('>')?;
+    Some(head_start + head_end + 1)
 }
 
 fn is_proxy_response_header(name: &str) -> bool {
