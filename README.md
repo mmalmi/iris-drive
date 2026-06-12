@@ -143,12 +143,16 @@ Immutable hashtree roots are served from per-root hosts under
 http://nhash.iris.localhost:17321/<nhash>/...
 ```
 
-Mutable published htree refs can be opened through the portal host with any
-`npub1...` owner. Encode slash-containing tree names as one path segment:
+Non-HTML files from mutable published htree refs can be opened through the
+portal host with any `npub1...` owner. Encode slash-containing tree names as
+one path segment:
 
 ```text
 http://iris.localhost:17321/<npub>/releases%2Fhashtree/latest/install.sh
 ```
+
+HTML apps should use an isolated origin such as
+`<tree>.<npub>.iris.localhost`; the shared portal path refuses `text/html`.
 
 Toggle the resolver/gateway setting with:
 

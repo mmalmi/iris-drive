@@ -476,6 +476,47 @@ async fn gateway_proxies_portal_npub_path_to_hashtree_daemon() {
 }
 
 #[tokio::test]
+async fn gateway_blocks_html_on_portal_npub_path() {
+    let cfg_dir = tempdir().unwrap();
+    init_account_config(cfg_dir.path());
+    let daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let npub = nostr_sdk::Keys::generate()
+        .public_key()
+        .to_bech32()
+        .unwrap();
+    let htree = fake_htree_daemon_with_content_type(
+        &format!("/htree/{npub}/releases%2Fhashtree/index.html"),
+        "<!doctype html><script>localStorage.pwned = true;</script>",
+        "text/html; charset=utf-8",
+    )
+    .await;
+
+    let server = GatewayServer::bind_with_tree_and_htree_daemon(
+        cfg_dir.path(),
+        daemon.tree_handle(),
+        htree.addr.clone(),
+        GatewayBind::loopback_v4(0),
+    )
+    .await
+    .unwrap();
+    let response = http_get(
+        server.local_addr(),
+        "iris.localhost",
+        &format!("/{npub}/releases%2Fhashtree/index.html"),
+    )
+    .await;
+
+    assert!(response.starts_with("HTTP/1.1 403 Forbidden"), "{response}");
+    assert!(
+        response.contains("HTML htree apps require an isolated iris.localhost origin"),
+        "{response}"
+    );
+    assert!(!response.contains("localStorage.pwned"), "{response}");
+    server.shutdown().await.unwrap();
+    htree.shutdown().await;
+}
+
+#[tokio::test]
 async fn gateway_proxies_same_origin_runtime_http_to_hashtree_daemon() {
     let cfg_dir = tempdir().unwrap();
     init_account_config(cfg_dir.path());
