@@ -1,5 +1,6 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
+use nostr_sdk::ToBech32;
 use std::path::Path;
 
 use crate::config::Drive;
@@ -362,6 +363,42 @@ async fn gateway_proxies_mutable_site_host_to_hashtree_daemon() {
     let response = http_get(server.local_addr(), &host, "/app.js").await;
     assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
     assert!(response.contains("mutable app"), "{response}");
+    server.shutdown().await.unwrap();
+    htree.shutdown().await;
+}
+
+#[tokio::test]
+async fn gateway_proxies_portal_npub_path_to_hashtree_daemon() {
+    let cfg_dir = tempdir().unwrap();
+    init_account_config(cfg_dir.path());
+    let daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let npub = nostr_sdk::Keys::generate()
+        .public_key()
+        .to_bech32()
+        .unwrap();
+    let htree = fake_htree_daemon(
+        &format!("/htree/{npub}/releases%2Fhashtree/latest/install.sh"),
+        "install script",
+    )
+    .await;
+
+    let server = GatewayServer::bind_with_tree_and_htree_daemon(
+        cfg_dir.path(),
+        daemon.tree_handle(),
+        htree.addr.clone(),
+        GatewayBind::loopback_v4(0),
+    )
+    .await
+    .unwrap();
+    let response = http_get(
+        server.local_addr(),
+        "iris.localhost",
+        &format!("/{npub}/releases%2Fhashtree/latest/install.sh"),
+    )
+    .await;
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(response.contains("install script"), "{response}");
     server.shutdown().await.unwrap();
     htree.shutdown().await;
 }

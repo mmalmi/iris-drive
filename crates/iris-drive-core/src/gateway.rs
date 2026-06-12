@@ -654,6 +654,12 @@ fn resolve_gateway_request(uri: &Uri, headers: &HeaderMap) -> Result<GatewayRequ
     }
 
     if host == LOCAL_PORTAL_HOST {
+        if path_segments
+            .first()
+            .is_some_and(|segment| segment.starts_with("npub1"))
+        {
+            return portal_npub_path_request(path_segments);
+        }
         return Ok(portal_host_redirect(uri, host_header));
     }
 
@@ -747,6 +753,24 @@ fn nhash_request(
         path_segments,
         key_query,
     }))
+}
+
+fn portal_npub_path_request(
+    mut path_segments: Vec<String>,
+) -> Result<GatewayRequest, GatewayError> {
+    if path_segments.len() < 2 {
+        return Err(GatewayError::InvalidRequest(
+            "iris.localhost npub paths require /<npub>/<tree>/...".into(),
+        ));
+    }
+    let npub = path_segments.remove(0);
+    let tree_name = path_segments.remove(0);
+    if !npub.starts_with("npub1") || tree_name.is_empty() {
+        return Err(GatewayError::InvalidRequest(
+            "iris.localhost npub paths require /<npub>/<tree>/...".into(),
+        ));
+    }
+    Ok(mutable_htree_request(npub, tree_name, path_segments))
 }
 
 fn mutable_htree_request(
