@@ -584,6 +584,7 @@ class IrisDriveAndroidGuiFlowTest {
 
         compose.onNodeWithTag("tabMyDrive").assertIsDisplayed()
         compose.onNodeWithTag("tabDevices").assertIsDisplayed()
+        compose.onNodeWithTag("tabShares").assertIsDisplayed()
         compose.onNodeWithTag("tabBackups").assertIsDisplayed()
         compose.onNodeWithTag("tabSettings").assertIsDisplayed()
         compose.onNodeWithTag("driveContent").assertIsDisplayed()

@@ -187,6 +187,7 @@ structure:
     ./scripts/check-android-e2e-kit.sh
     ./scripts/check-ios-e2e-kit.sh
     ./scripts/check-desktop-gui-e2e-kit.sh
+    ./scripts/check-sharing-menu-parity.sh
     ./scripts/check-client-primary-status-ownership.sh
     ./scripts/check-client-sync-status-ownership.sh
     ./scripts/check-backup-target-summary-ownership.sh
