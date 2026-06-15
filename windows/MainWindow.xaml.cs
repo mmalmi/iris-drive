@@ -65,6 +65,7 @@ public partial class MainWindow : Window
             .ToArray() ?? Array.Empty<string>();
         InitializeComponent();
         Icon = WindowsIcon.LoadWindowIcon();
+        AppVersionText.Text = service.AppVersion;
         settingsUpdating = true;
         CloseToTrayCheckBox.IsChecked = ReadCloseToTrayOnClose();
         LaunchOnStartupCheckBox.IsChecked = true;

@@ -1179,6 +1179,7 @@ private fun SelfUpdateCard(
     actions: SelfUpdateActions,
 ) {
     CardSection(title = "Updates", trailing = selfUpdateTrailing(state)) {
+        StatRow("Version", BuildConfig.VERSION_NAME)
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
             Switch(
                 checked = state.autoCheckEnabled,

@@ -556,6 +556,13 @@
                 </StackPanel>
               </Button>
               <TextBlock Text="Updates" Style="{StaticResource FieldName}" Margin="0,18,0,6" />
+              <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <TextBlock Text="Version" Style="{StaticResource FieldName}" Width="90" />
+                <TextBlock x:Name="AppVersionText"
+                           Style="{StaticResource ValueText}"
+                           TextWrapping="NoWrap"
+                           TextTrimming="CharacterEllipsis" />
+              </StackPanel>
               <CheckBox x:Name="AutoCheckUpdatesCheckBox"
                         Content="Check automatically"
                         Checked="AutoCheckUpdates_Changed"

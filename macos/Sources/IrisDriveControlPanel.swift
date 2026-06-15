@@ -1522,6 +1522,7 @@ struct IrisDriveControlPanel: View {
             }
 
             Section("Updates") {
+                LabeledContent("Version", value: appVersion)
                 Toggle(
                     "Check automatically",
                     isOn: Binding(
@@ -1607,7 +1608,6 @@ struct IrisDriveControlPanel: View {
 
             Section("About") {
                 LabeledContent("Drive", value: status.driveName)
-                LabeledContent("Version", value: appVersion)
             }
         }
         .formStyle(.grouped)
