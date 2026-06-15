@@ -20,6 +20,7 @@ equivalent to desktop.
 | Open drive folder | Yes, mounted | FileProvider domain | Cloud Files placeholders | Files app FileProvider domain + open action | SAF DocumentsProvider + open action |
 | Open share dialog for selected folder | `iris-drive://share` + `drive.iris.to/share` | `iris-drive://share` + `drive.iris.to/share` | `iris-drive://share` via installer protocol | `iris-drive://share` + `drive.iris.to/share` | SAF folder action -> `iris-drive://share` |
 | Copy/view drive.iris.to link | Yes | Yes | Yes | Yes | App-core UI flow |
+| Open nhash file link | Passed `drive.iris.to/#/nhash...` URL -> local resolver | Universal link -> local resolver | Launch URL -> local resolver | Universal link -> local resolver attempt | App link -> local resolver attempt |
 | App installs list and auth state | Yes | Yes | Yes | Local UI flow | App-core UI flow |
 | App install online/sync status | Yes | Planned | Yes | Local-only scaffold | Local scaffold |
 | AppKey revoke control | Yes | Planned | Yes | Local UI flow | App-core UI flow |

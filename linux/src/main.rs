@@ -218,7 +218,7 @@ fn main() -> glib::ExitCode {
                 present = false;
                 continue;
             }
-            if arg.starts_with("iris-drive://") {
+            if arg.starts_with("iris-drive://") || arg.starts_with("https://drive.iris.to/") {
                 handle_launch_input(&arg);
                 present = true;
             }
@@ -266,7 +266,28 @@ fn apply_launch_input(model: &AppRef, input: &str) {
     let classification = classify_link_input(input.to_owned());
     if classification.kind == "share_dialog" {
         apply_share_dialog_link(model, &classification);
+    } else if classification.kind == "nhash_file" {
+        open_content_link(model, &classification);
     }
+}
+
+fn open_content_link(model: &AppRef, classification: &LinkInputClassification) {
+    let display_name = classification.open_display_name.trim();
+    let label = if display_name.is_empty() {
+        "file"
+    } else {
+        display_name
+    };
+    if !classification.is_valid || classification.local_open_url.trim().is_empty() {
+        model.ui.notice.set_text(if classification.error.trim().is_empty() {
+            "Could not open content link"
+        } else {
+            classification.error.trim()
+        });
+        return;
+    }
+    model.ui.notice.set_text(&format!("Opening {label}"));
+    open_uri(classification.local_open_url.trim());
 }
 
 fn apply_share_dialog_link(model: &AppRef, classification: &LinkInputClassification) {

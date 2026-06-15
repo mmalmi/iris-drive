@@ -5,17 +5,7 @@
 	<key>com.apple.developer.associated-domains</key>
 	<array>
 		<string>applinks:drive.iris.to</string>
-		<string>applinks:docs.iris.to</string>
-		<string>applinks:video.iris.to</string>
-		<string>applinks:maps.iris.to</string>
-		<string>applinks:boards.iris.to</string>
-		<string>applinks:git.iris.to</string>
 		<string>webcredentials:drive.iris.to</string>
-		<string>webcredentials:docs.iris.to</string>
-		<string>webcredentials:video.iris.to</string>
-		<string>webcredentials:maps.iris.to</string>
-		<string>webcredentials:boards.iris.to</string>
-		<string>webcredentials:git.iris.to</string>
 	</array>
 	<key>com.apple.developer.fileprovider.testing-mode</key>
 	<true/>

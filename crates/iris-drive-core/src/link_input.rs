@@ -5,6 +5,7 @@
 //! admission policy per platform.
 
 use anyhow::{Context, Result, anyhow};
+use hashtree_core::nhash_decode;
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::FromBech32;
 use serde::{Deserialize, Serialize};
@@ -15,6 +16,7 @@ use crate::app_key_link_invite::{
 };
 use crate::app_key_link_transport::{app_key_approval_query, parse_app_key_approval_request};
 use crate::app_key_summary::pubkey_npub;
+use crate::gateway::{DEFAULT_GATEWAY_PORT, local_nhash_url};
 
 const APP_KEY_LINK_INVITE_SINGLE_SLASH_PREFIX: &str = "iris-drive:/invite/";
 const MANUAL_LINK_REQUIRES_PROFILE_AND_ADMIN: &str = "manual device linking requires an IrisProfile UUID and --admin-app-key; otherwise paste an admin invite URL";
@@ -33,6 +35,10 @@ pub struct LinkInputClassification {
     pub share_recipient_npub_hint: String,
     pub share_recipient_display_name: String,
     pub share_recipient_profile_id: String,
+    pub content_nhash: String,
+    pub content_path_hint: String,
+    pub open_display_name: String,
+    pub local_open_url: String,
     pub error: String,
 }
 
@@ -67,6 +73,9 @@ pub fn classify_link_input(input: &str) -> LinkInputClassification {
         return result;
     }
     if let Some(result) = classify_share_dialog_link_input(trimmed) {
+        return result;
+    }
+    if let Some(result) = classify_drive_nhash_file_link_input(trimmed) {
         return result;
     }
     if looks_like_app_key_pubkey_input(trimmed) {
@@ -295,6 +304,104 @@ fn share_dialog_error(input: &str, error: &anyhow::Error) -> LinkInputClassifica
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DriveNhashFileLink {
+    nhash: String,
+    path_hint: String,
+    display_name: String,
+}
+
+fn classify_drive_nhash_file_link_input(input: &str) -> Option<LinkInputClassification> {
+    let route = drive_iris_to_fragment_or_path_route(input)?;
+    if !drive_route_could_be_nhash_file(route) {
+        return None;
+    }
+
+    let mut classification = LinkInputClassification {
+        kind: "nhash_file".to_owned(),
+        normalized_input: input.to_owned(),
+        is_complete: true,
+        ..LinkInputClassification::default()
+    };
+
+    match parse_drive_nhash_file_route(route) {
+        Ok(link) => {
+            classification.is_valid = true;
+            classification.content_nhash = link.nhash;
+            classification.content_path_hint = link.path_hint;
+            classification.open_display_name = link.display_name;
+            classification.local_open_url = local_nhash_url(
+                DEFAULT_GATEWAY_PORT,
+                &classification.content_nhash,
+                (!classification.content_path_hint.is_empty())
+                    .then_some(classification.content_path_hint.as_str()),
+            );
+        }
+        Err(error) => {
+            classification.error = error.to_string();
+            if classification.error.contains("missing nhash") {
+                classification.is_complete = false;
+            }
+        }
+    }
+
+    Some(classification)
+}
+
+fn drive_iris_to_fragment_or_path_route(input: &str) -> Option<&str> {
+    let lower = input.to_ascii_lowercase();
+    let rest = lower.strip_prefix("https://drive.iris.to/")?;
+    let after_origin = &input[input.len() - rest.len()..];
+    Some(after_origin.strip_prefix("#/").unwrap_or(after_origin))
+}
+
+fn drive_route_could_be_nhash_file(route: &str) -> bool {
+    let path = route.split_once('?').map_or(route, |(path, _)| path);
+    let Some(first) = path.split('/').find(|segment| !segment.is_empty()) else {
+        return false;
+    };
+    first.eq_ignore_ascii_case("nhash") || first.to_ascii_lowercase().starts_with("nhash1")
+}
+
+fn parse_drive_nhash_file_route(route: &str) -> Result<DriveNhashFileLink> {
+    let path = route.split_once('?').map_or(route, |(path, _)| path);
+    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
+    let first = segments.next().ok_or_else(|| anyhow!("missing nhash"))?;
+    let raw_nhash = if first.eq_ignore_ascii_case("nhash") {
+        segments.next().ok_or_else(|| anyhow!("missing nhash"))?
+    } else {
+        first
+    };
+    let nhash = percent_decode_path_component(raw_nhash)?
+        .trim()
+        .to_ascii_lowercase();
+    if !nhash.starts_with("nhash1") {
+        return Err(anyhow!("expected nhash1... content id"));
+    }
+    nhash_decode(&nhash).context("invalid nhash")?;
+
+    let path_segments = segments
+        .map(percent_decode_path_component)
+        .collect::<Result<Vec<_>>>()?;
+    for segment in &path_segments {
+        if segment == "." || segment == ".." || segment.contains('\0') {
+            return Err(anyhow!("invalid content path hint"));
+        }
+    }
+    let path_hint = path_segments.join("/");
+    let display_name = path_segments
+        .last()
+        .filter(|segment| !segment.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| nhash.clone());
+
+    Ok(DriveNhashFileLink {
+        nhash,
+        path_hint,
+        display_name,
+    })
+}
+
 fn decoded_first_query_value_or_default(query: &str, names: &[&str]) -> Result<String> {
     match decoded_first_query_value(query, names)? {
         Some(value) => Ok(value.trim().to_owned()),
@@ -359,13 +466,21 @@ fn decoded_query_value(query: &str, name: &str) -> Result<Option<String>> {
         .transpose()
 }
 
+fn percent_decode_path_component(value: &str) -> Result<String> {
+    percent_decode_component(value, false)
+}
+
 fn percent_decode_query_component(value: &str) -> Result<String> {
+    percent_decode_component(value, true)
+}
+
+fn percent_decode_component(value: &str, plus_is_space: bool) -> Result<String> {
     let mut out = Vec::with_capacity(value.len());
     let bytes = value.as_bytes();
     let mut index = 0;
     while index < bytes.len() {
         match bytes[index] {
-            b'+' => {
+            b'+' if plus_is_space => {
                 out.push(b' ');
                 index += 1;
             }
@@ -475,6 +590,38 @@ mod tests {
         assert_eq!(missing_path.kind, "share_dialog");
         assert!(!missing_path.is_complete);
         assert!(!missing_path.is_valid);
+    }
+
+    #[test]
+    fn classify_drive_nhash_file_link_opens_immutable_content() {
+        let input = "https://drive.iris.to/#/nhash1qqsyktrn6c5r444rhjt2qfv6a6uu5hcsrlcvk202whqhxyk3fwkl83s9yr8ngvg5489t2sqnpzqyk7um2ug688j42y57375qex7vgpc384vdv9mr60t/freenet.pdf?fullscreen=1";
+        let file = classify_link_input(input);
+
+        assert_eq!(file.kind, "nhash_file");
+        assert!(file.is_complete);
+        assert!(file.is_valid);
+        assert_eq!(
+            file.content_nhash,
+            "nhash1qqsyktrn6c5r444rhjt2qfv6a6uu5hcsrlcvk202whqhxyk3fwkl83s9yr8ngvg5489t2sqnpzqyk7um2ug688j42y57375qex7vgpc384vdv9mr60t"
+        );
+        assert_eq!(file.content_path_hint, "freenet.pdf");
+        assert_eq!(file.open_display_name, "freenet.pdf");
+        assert_eq!(
+            file.local_open_url,
+            "http://nhash.iris.localhost:17321/nhash1qqsyktrn6c5r444rhjt2qfv6a6uu5hcsrlcvk202whqhxyk3fwkl83s9yr8ngvg5489t2sqnpzqyk7um2ug688j42y57375qex7vgpc384vdv9mr60t/freenet.pdf"
+        );
+
+        let encoded = classify_link_input(
+            "https://drive.iris.to/#/nhash1qqsyktrn6c5r444rhjt2qfv6a6uu5hcsrlcvk202whqhxyk3fwkl83s9yr8ngvg5489t2sqnpzqyk7um2ug688j42y57375qex7vgpc384vdv9mr60t/Freenet%20paper.pdf",
+        );
+        assert_eq!(encoded.content_path_hint, "Freenet paper.pdf");
+        assert_eq!(encoded.open_display_name, "Freenet paper.pdf");
+
+        let traversal = classify_link_input(
+            "https://drive.iris.to/#/nhash1qqsyktrn6c5r444rhjt2qfv6a6uu5hcsrlcvk202whqhxyk3fwkl83s9yr8ngvg5489t2sqnpzqyk7um2ug688j42y57375qex7vgpc384vdv9mr60t/../secret.pdf",
+        );
+        assert_eq!(traversal.kind, "nhash_file");
+        assert!(!traversal.is_valid);
     }
 
     #[test]

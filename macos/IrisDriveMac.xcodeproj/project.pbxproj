@@ -24,6 +24,7 @@
 		875DCC2030031A178FF45AA5 /* IrisDriveDesktopCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2D8F0559841E0DD05F20DA05 /* IrisDriveDesktopCore.swift */; };
 		B94CF2614467C8B708ED65EE /* IrisDriveSetupViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E5A127BDC2089F051BD64AF /* IrisDriveSetupViews.swift */; };
 		BFEF0810E6B3A8092A1F89D2 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 45FEC783A8D4516ACC9559DF /* Assets.xcassets */; };
+		C03C49DB75F1B7D60EBA78B9 /* IrisDriveContentLinks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0868919B79AC4BED15124045 /* IrisDriveContentLinks.swift */; };
 		CAA21A3955327C55C24193DE /* IrisDriveStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = DABEA3F9DC2A990742681F74 /* IrisDriveStatus.swift */; };
 		E2E340ADECF90A8FB0FB9F0B /* IrisDriveScreenshotFixtures.swift in Sources */ = {isa = PBXBuildFile; fileRef = 22A59194714CECC5B65B8422 /* IrisDriveScreenshotFixtures.swift */; };
 		E6989EB6808BB0B129A1B5DE /* IrisDriveMacFileProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5987391F8E13B56428E6B624 /* IrisDriveMacFileProvider.swift */; };
@@ -55,6 +56,7 @@
 
 /* Begin PBXFileReference section */
 		060F43180AD037866984AD05 /* IrisDriveBackupActions.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveBackupActions.swift; sourceTree = "<group>"; };
+		0868919B79AC4BED15124045 /* IrisDriveContentLinks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveContentLinks.swift; sourceTree = "<group>"; };
 		096A885C7F359BD1EA7A431A /* IrisDriveMacApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveMacApp.swift; sourceTree = "<group>"; };
 		0E5A127BDC2089F051BD64AF /* IrisDriveSetupViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveSetupViews.swift; sourceTree = "<group>"; };
 		0E96589580A4A6F8C0C61784 /* IrisDriveStartup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveStartup.swift; sourceTree = "<group>"; };
@@ -107,6 +109,7 @@
 				FE17CE898FD08A2E8AC9A0E2 /* AppKeyLinkInput.swift */,
 				9A583172656F67925362E493 /* BackupTargetRow.swift */,
 				060F43180AD037866984AD05 /* IrisDriveBackupActions.swift */,
+				0868919B79AC4BED15124045 /* IrisDriveContentLinks.swift */,
 				16433B5A1961F8CE8C1F968A /* IrisDriveControlPanel.swift */,
 				763E19593AFF9F5D7EB88F52 /* IrisDriveDaemonService.swift */,
 				2D8F0559841E0DD05F20DA05 /* IrisDriveDesktopCore.swift */,
@@ -256,6 +259,7 @@
 				7104FF4CB6878AC4EE77F24D /* AppKeyLinkInput.swift in Sources */,
 				6A74754BE3D3C08EAD801E69 /* BackupTargetRow.swift in Sources */,
 				4FD4398E0FAB2A9688A37A03 /* IrisDriveBackupActions.swift in Sources */,
+				C03C49DB75F1B7D60EBA78B9 /* IrisDriveContentLinks.swift in Sources */,
 				862E1F35165835674E7541F7 /* IrisDriveControlPanel.swift in Sources */,
 				5B1309D0E6F0FF8FDB39D6D4 /* IrisDriveDaemonService.swift in Sources */,
 				875DCC2030031A178FF45AA5 /* IrisDriveDesktopCore.swift in Sources */,

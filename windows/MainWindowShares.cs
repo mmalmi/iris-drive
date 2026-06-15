@@ -287,6 +287,37 @@ public partial class MainWindow
             : $"Share folder selected for {recipient}";
     }
 
+    private bool OpenContentLinkFromLink(string input)
+    {
+        var classification = IrisDriveNativeCore.ClassifyLinkInput(input);
+        if (!string.Equals(classification.Kind, "nhash_file", StringComparison.Ordinal))
+        {
+            return false;
+        }
+
+        Show();
+        if (WindowState == System.Windows.WindowState.Minimized)
+        {
+            WindowState = System.Windows.WindowState.Normal;
+        }
+        Activate();
+
+        var label = string.IsNullOrWhiteSpace(classification.OpenDisplayName)
+            ? "file"
+            : classification.OpenDisplayName.Trim();
+        if (!classification.IsValid || string.IsNullOrWhiteSpace(classification.LocalOpenUrl))
+        {
+            NoticeText.Text = string.IsNullOrWhiteSpace(classification.Error)
+                ? $"Could not open {label}"
+                : classification.Error.Trim();
+            return true;
+        }
+
+        NoticeText.Text = $"Opening {label}";
+        service.OpenUri(classification.LocalOpenUrl.Trim());
+        return true;
+    }
+
     private static string FirstNonEmpty(params string[] values)
     {
         foreach (var value in values)

@@ -21,11 +21,6 @@ private let irisDriveE2ECreateProfileNotification =
     Notification.Name("to.iris.drive.e2eCreateProfile")
 private let irisDriveAssociatedHosts: Set<String> = [
     "drive.iris.to",
-    "docs.iris.to",
-    "video.iris.to",
-    "maps.iris.to",
-    "boards.iris.to",
-    "git.iris.to",
 ]
 
 @main
@@ -601,6 +596,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 recipientDisplayName: classification["share_recipient_display_name"] as? String ?? "",
                 recipientProfileId: classification["share_recipient_profile_id"] as? String ?? ""
             )
+            return true
+        }
+        if classification["kind"] as? String == "nhash_file" {
+            openContentLink(classification)
             return true
         }
         guard isIrisWebURL(url) else {

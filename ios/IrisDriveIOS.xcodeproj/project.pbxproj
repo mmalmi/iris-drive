@@ -29,6 +29,7 @@
 		BCDFE7E8107DAF5CC4C726DC /* StartupLoadingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57ECD37803B00AFA445E6080 /* StartupLoadingView.swift */; };
 		CAE91FE838AF86B78E47EEB2 /* IrisDriveIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09D6DB93662CEF48C0C9A246 /* IrisDriveIOSApp.swift */; };
 		E8C9614F1C94BB1141210E7E /* QRCodeScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FAD09F152A81F2977621CC8 /* QRCodeScannerView.swift */; };
+		EDB65234DF8B98FA5A85E5BF /* IrisDriveContentLinks.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5776131C4E7DA77C3A533FB /* IrisDriveContentLinks.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -90,6 +91,7 @@
 		ACA849B0E0B0455493C3B441 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
 		B2B2A54EBAE0804BBCC2964E /* FileProviderEnumerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderEnumerator.swift; sourceTree = "<group>"; };
 		C490A3FFF0BAED4EB2A1E5F9 /* FileProviderExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderExtension.swift; sourceTree = "<group>"; };
+		C5776131C4E7DA77C3A533FB /* IrisDriveContentLinks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveContentLinks.swift; sourceTree = "<group>"; };
 		C789203391687925DEAB3576 /* FileProviderItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderItem.swift; sourceTree = "<group>"; };
 		D087872557C2BC55EDB84930 /* IrisDriveMobileModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveMobileModel.swift; sourceTree = "<group>"; };
 		D4FC18243848BE0ED14785D0 /* IrisDriveShareExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = IrisDriveShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -136,6 +138,7 @@
 			isa = PBXGroup;
 			children = (
 				A2262CD0A76753FF6C6D773B /* IrisDriveBackupViews.swift */,
+				C5776131C4E7DA77C3A533FB /* IrisDriveContentLinks.swift */,
 				09D6DB93662CEF48C0C9A246 /* IrisDriveIOSApp.swift */,
 				31FD6FE77F71CF8F6241C514 /* IrisDriveMobileBackups.swift */,
 				D087872557C2BC55EDB84930 /* IrisDriveMobileModel.swift */,
@@ -321,6 +324,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				6D1D9D55F60F25701702EE14 /* IrisDriveBackupViews.swift in Sources */,
+				EDB65234DF8B98FA5A85E5BF /* IrisDriveContentLinks.swift in Sources */,
 				CAE91FE838AF86B78E47EEB2 /* IrisDriveIOSApp.swift in Sources */,
 				0E0EA5ABF3A312874452F666 /* IrisDriveMobileBackups.swift in Sources */,
 				1AD14AA0F5B7D9B4C1124FC7 /* IrisDriveMobileModel.swift in Sources */,

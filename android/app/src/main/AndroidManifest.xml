@@ -73,34 +73,7 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data
                     android:host="drive.iris.to"
-                    android:pathPrefix="/app-key-link"
-                    android:scheme="https" />
-            </intent-filter>
-            <intent-filter android:autoVerify="false">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:host="drive.iris.to"
-                    android:pathPrefix="/link-device"
-                    android:scheme="https" />
-            </intent-filter>
-            <intent-filter android:autoVerify="false">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:host="drive.iris.to"
-                    android:pathPrefix="/invite"
-                    android:scheme="https" />
-            </intent-filter>
-            <intent-filter android:autoVerify="false">
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data
-                    android:host="drive.iris.to"
-                    android:pathPrefix="/share"
+                    android:pathPrefix="/"
                     android:scheme="https" />
             </intent-filter>
         </activity>

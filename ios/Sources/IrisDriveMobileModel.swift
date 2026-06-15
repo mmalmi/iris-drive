@@ -1072,13 +1072,16 @@ final class IrisDriveMobileModel: ObservableObject {
             )
             return
         }
+        if linkInput.kind == "nhash_file" {
+            openContentLink(linkInput)
+            return
+        }
         if linkInput.kind == "invite" {
             profileLinkTarget = url.absoluteString
             linkDevice()
             ensureFileProviderDomainIfProfileExists()
             return
         }
-
         guard linkInput.kind == "app_key_approval" else {
             statusTitle = "Iris link opened"
             statusDetail = url.absoluteString

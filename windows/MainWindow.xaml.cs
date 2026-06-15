@@ -115,7 +115,10 @@ public partial class MainWindow : Window
             {
                 continue;
             }
-            OpenShareDialogFromLink(argument);
+            if (!OpenShareDialogFromLink(argument))
+            {
+                OpenContentLinkFromLink(argument);
+            }
         }
     }
 

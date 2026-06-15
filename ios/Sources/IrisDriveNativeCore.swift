@@ -423,6 +423,10 @@ struct NativeLinkInputClassification: Codable {
     var shareRecipientNpubHint: String = ""
     var shareRecipientDisplayName: String = ""
     var shareRecipientProfileId: String = ""
+    var contentNhash: String = ""
+    var contentPathHint: String = ""
+    var openDisplayName: String = ""
+    var localOpenUrl: String = ""
     var error: String = ""
 
     init(error: String = "") {
@@ -442,6 +446,10 @@ struct NativeLinkInputClassification: Codable {
         case shareRecipientNpubHint = "share_recipient_npub_hint"
         case shareRecipientDisplayName = "share_recipient_display_name"
         case shareRecipientProfileId = "share_recipient_profile_id"
+        case contentNhash = "content_nhash"
+        case contentPathHint = "content_path_hint"
+        case openDisplayName = "open_display_name"
+        case localOpenUrl = "local_open_url"
         case error
     }
 }

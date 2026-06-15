@@ -213,6 +213,10 @@ public sealed record IrisDriveLinkInputClassification(
     string ShareRecipientNpubHint,
     string ShareRecipientDisplayName,
     string ShareRecipientProfileId,
+    string ContentNhash,
+    string ContentPathHint,
+    string OpenDisplayName,
+    string LocalOpenUrl,
     string Error)
 {
     public static IrisDriveLinkInputClassification Empty { get; } = new(
@@ -223,6 +227,10 @@ public sealed record IrisDriveLinkInputClassification(
         "",
         "",
         false,
+        "",
+        "",
+        "",
+        "",
         "",
         "",
         "",
@@ -247,6 +255,10 @@ public sealed record IrisDriveLinkInputClassification(
             String(root, "share_recipient_npub_hint") ?? "",
             String(root, "share_recipient_display_name") ?? "",
             String(root, "share_recipient_profile_id") ?? "",
+            String(root, "content_nhash") ?? "",
+            String(root, "content_path_hint") ?? "",
+            String(root, "open_display_name") ?? "",
+            String(root, "local_open_url") ?? "",
             String(root, "error") ?? "");
     }
 

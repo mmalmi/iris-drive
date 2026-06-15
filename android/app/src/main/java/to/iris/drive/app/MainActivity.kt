@@ -239,7 +239,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         applyDebugEnvironment(intent)
-        handleDebugIntent(intent)
+        handleLaunchIntent(intent)
     }
 
     override fun onDestroy() {
@@ -279,7 +279,7 @@ class MainActivity : ComponentActivity() {
                             refresh()
                         }
                     }
-                    handleDebugIntent(launchIntent)
+                    handleLaunchIntent(launchIntent)
                     selfUpdateManager.startAutomaticChecks()
                 }
             } finally {
@@ -411,6 +411,23 @@ class MainActivity : ComponentActivity() {
         }.onFailure {
             Toast.makeText(this, "No app can open this link", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    private fun openContentLink(classification: JSONObject) {
+        val displayName = classification.optString("open_display_name").trim()
+        val label = displayName.ifBlank { "file" }
+        val localOpenUrl = classification.optString("local_open_url").trim()
+        if (!classification.optBoolean("is_valid") || localOpenUrl.isBlank()) {
+            val error = classification.optString("error").trim()
+            Toast.makeText(
+                this,
+                error.ifBlank { "Could not open $label" },
+                Toast.LENGTH_SHORT,
+            ).show()
+            return
+        }
+        Toast.makeText(this, "Opening $label", Toast.LENGTH_SHORT).show()
+        openUrl(localOpenUrl)
     }
 
     private fun openDriveFolder() {
@@ -545,7 +562,7 @@ class MainActivity : ComponentActivity() {
                 Manifest.permission.POST_NOTIFICATIONS,
             ) != PackageManager.PERMISSION_GRANTED
 
-    private fun handleDebugIntent(intent: Intent?) {
+    private fun handleLaunchIntent(intent: Intent?) {
         val uri = intent?.data
         if (uri != null) {
             val classification = NativeCore.classifyLinkInput(uri.toString())
@@ -558,6 +575,10 @@ class MainActivity : ComponentActivity() {
                         classification.optString("share_recipient_display_name"),
                         classification.optString("share_recipient_profile_id"),
                     )
+                }
+
+                "nhash_file" -> {
+                    openContentLink(classification)
                 }
 
                 "app_key_approval" -> {

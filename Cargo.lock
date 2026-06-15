@@ -573,7 +573,7 @@ checksum = "90dbd31c98227229239363921e60fcf5e558e43ec69094d46fc4996f08d1d5bc"
 dependencies = [
  "bitcoin_hashes",
  "rand 0.8.6",
- "rand_core 0.5.1",
+ "rand_core 0.6.4",
  "serde",
  "unicode-normalization",
 ]
@@ -1776,7 +1776,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.3.54"
+version = "0.3.57"
 dependencies = [
  "bluer",
  "bytes",
@@ -2928,7 +2928,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "tokio",
  "tower-service",
  "tracing",
@@ -3958,7 +3958,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-social-graph"
-version = "0.1.0"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "193c09bb407faf01e68985eebb0d4760e329efbb95a70af9c4a562afd20234d5"
 dependencies = [
  "hex",
  "indexmap",
@@ -3968,7 +3970,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-social-graph-heed"
-version = "0.1.0"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "20d60fce4d4e3a5dc981beb4e8ccbf09ed8028bcad5dabdee219b1474ff179c6"
 dependencies = [
  "heed",
  "nostr-social-graph",
@@ -4651,7 +4655,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls 0.23.40",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -4688,7 +4692,7 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.3",
  "tracing",
  "windows-sys 0.60.2",
 ]
@@ -7051,7 +7055,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

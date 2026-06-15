@@ -50,6 +50,7 @@ use serde_json::Value;
 use serde_json::json;
 
 use crate::actions::NativeAppAction;
+pub use crate::native_link_input::{classify_link_input, validate_link_input};
 #[cfg(test)]
 pub(crate) use crate::native_provider::run_native_sync_once_with_drive_root_events_for_test;
 use crate::native_provider::{
@@ -158,57 +159,6 @@ fn app_key_link_request_retry_interval(attempts: u8) -> std::time::Duration {
     } else {
         std::time::Duration::from_secs(APP_KEY_LINK_REQUEST_RETRY_SECS)
     }
-}
-
-#[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
-pub struct LinkInputClassification {
-    pub kind: String,
-    pub is_complete: bool,
-    pub is_valid: bool,
-    pub normalized_input: String,
-    pub app_key_pubkey: String,
-    pub admin_app_key_pubkey: String,
-    pub has_link_secret: bool,
-    pub share_source_path: String,
-    pub share_display_name: String,
-    pub share_recipient_npub_hint: String,
-    pub share_recipient_display_name: String,
-    pub share_recipient_profile_id: String,
-    pub error: String,
-}
-
-impl From<iris_drive_core::LinkInputClassification> for LinkInputClassification {
-    fn from(value: iris_drive_core::LinkInputClassification) -> Self {
-        Self {
-            kind: value.kind,
-            is_complete: value.is_complete,
-            is_valid: value.is_valid,
-            normalized_input: value.normalized_input,
-            app_key_pubkey: value.app_key_pubkey,
-            admin_app_key_pubkey: value.admin_app_key_pubkey,
-            has_link_secret: value.has_link_secret,
-            share_source_path: value.share_source_path,
-            share_display_name: value.share_display_name,
-            share_recipient_npub_hint: value.share_recipient_npub_hint,
-            share_recipient_display_name: value.share_recipient_display_name,
-            share_recipient_profile_id: value.share_recipient_profile_id,
-            error: value.error,
-        }
-    }
-}
-
-#[uniffi::export]
-#[must_use]
-#[allow(clippy::needless_pass_by_value)]
-pub fn classify_link_input(input: String) -> LinkInputClassification {
-    iris_drive_core::classify_link_input(&input).into()
-}
-
-#[uniffi::export]
-#[must_use]
-#[allow(clippy::needless_pass_by_value)]
-pub fn validate_link_input(input: String) -> LinkInputClassification {
-    iris_drive_core::classify_link_input(&input).into()
 }
 
 #[derive(uniffi::Object, Debug)]
