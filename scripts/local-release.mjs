@@ -1275,7 +1275,7 @@ function releaseResolverRefreshBaseUrls(env) {
   if (/^(0|false|no|off|none)$/i.test(configured)) {
     return []
   }
-  return splitCsv(configured || 'https://upload.iris.to')
+  return splitCsv(configured || 'https://hashtree.iris.to')
 }
 
 function publicReleaseManifestUrl(baseUrl, npub, releaseTree) {

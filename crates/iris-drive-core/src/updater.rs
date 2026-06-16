@@ -18,7 +18,7 @@ use crate::config::{AppConfig, DEFAULT_BLOSSOM_SERVERS, DEFAULT_RELAYS};
 use crate::paths::config_path_in;
 
 pub const HTREE_UPDATE_REF: &str = "htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-drive/latest";
-pub const HTREE_MANIFEST_URL: &str = "https://upload.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-drive/latest/release.json";
+pub const HTREE_MANIFEST_URL: &str = "https://hashtree.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-drive/latest/release.json";
 pub const LEGACY_HTREE_SOURCE_NAME: &str = "legacy-htree-url";
 
 const UPDATE_CONNECT_TIMEOUT_SECS: u64 = 4;
@@ -509,6 +509,14 @@ mod tests {
                 "assets/iris-drive.dmg",
             ),
             "https://example.invalid/releases/iris-drive/latest/assets/iris-drive.dmg"
+        );
+    }
+
+    #[test]
+    fn legacy_manifest_uses_hashtree_gateway() {
+        assert!(
+            HTREE_MANIFEST_URL.starts_with("https://hashtree.iris.to/"),
+            "legacy fallback should use a gateway that serves hashtree directory paths",
         );
     }
 }

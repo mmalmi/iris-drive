@@ -363,7 +363,7 @@ test('local-release final dry-run refreshes public release resolver after htree 
       env: {
         ...process.env,
         IRIS_DRIVE_RELEASE_NPUB: 'npub1example',
-        IRIS_DRIVE_RELEASE_RESOLVER_REFRESH_BASE_URLS: 'https://upload.iris.to',
+        IRIS_DRIVE_RELEASE_RESOLVER_REFRESH_BASE_URLS: 'https://hashtree.iris.to',
       },
     },
   )
@@ -375,7 +375,7 @@ test('local-release final dry-run refreshes public release resolver after htree 
   )
   assert.match(
     result.stdout,
-    /Would verify public release manifest https:\/\/upload\.iris\.to\/npub1example\/releases%2Firis-drive\/latest\/release\.json/,
+    /Would verify public release manifest https:\/\/hashtree\.iris\.to\/npub1example\/releases%2Firis-drive\/latest\/release\.json/,
   )
 })
 
