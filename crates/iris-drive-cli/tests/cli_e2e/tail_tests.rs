@@ -54,16 +54,11 @@ fn relays_can_be_edited_from_cli() {
         .success();
     let reset: serde_json::Value =
         serde_json::from_slice(&idrive(dir.path()).arg("relays").output().unwrap().stdout).unwrap();
-    assert_eq!(
-        reset,
-        serde_json::json!([
-            "wss://temp.iris.to",
-            "wss://relay.damus.io",
-            "wss://relay.snort.social",
-            "wss://relay.primal.net",
-            "wss://upload.iris.to/nostr"
-        ])
-    );
+    let default_relays: Vec<_> = iris_drive_core::config::DEFAULT_RELAYS
+        .iter()
+        .map(|relay| serde_json::json!(relay))
+        .collect();
+    assert_eq!(reset, serde_json::json!(default_relays));
 }
 
 #[test]
