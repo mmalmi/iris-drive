@@ -766,6 +766,8 @@ run_posix_target() {
     printf 'IRIS_DRIVE_DEV_VM_MACOS_SIGN_IDENTITY=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MACOS_SIGN_IDENTITY:-}")"
     printf 'IRIS_DRIVE_DEV_VM_MACOS_KEYCHAIN=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MACOS_KEYCHAIN:-}")"
     printf 'IRIS_DRIVE_DEV_VM_MACOS_KEYCHAIN_PASS_FILE=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MACOS_KEYCHAIN_PASS_FILE:-}")"
+    printf 'IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR:-}")"
+    printf 'IRIS_DRIVE_DEV_VM_LINUX_MOUNTPOINT=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_LINUX_MOUNTPOINT:-}")"
     cat <<'REMOTE_SH'
 set -Eeuo pipefail
 
@@ -2056,6 +2058,7 @@ run_windows_target() {
     printf '$FipsOpenDiscoveryMaxPending = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_FIPS_OPEN_DISCOVERY_MAX_PENDING:-}")"
     printf '$CargoIncrementalDefault = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_CARGO_INCREMENTAL:-0}")"
     printf '$CargoProfileDevDebugDefault = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_CARGO_PROFILE_DEV_DEBUG:-0}")"
+    printf '$WindowsConfigDirOverride = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_WINDOWS_CONFIG_DIR:-}")"
     cat <<'REMOTE_PS'
 $ErrorActionPreference = "Stop"
 
@@ -2124,17 +2127,36 @@ function Sync-Repo([string]$Repo, [string]$Name, [string]$Bare, [string]$Branch 
     git clone $Bare $Repo
     if ($LASTEXITCODE -ne 0) { throw "git clone failed for $Name" }
   }
-  Prepare-Worktree $Repo $Name
+  $HasHead = $true
+  try {
+    git -C $Repo rev-parse --verify HEAD 2>$null | Out-Null
+    if ($LASTEXITCODE -ne 0) { $HasHead = $false }
+  } catch {
+    $HasHead = $false
+  }
+  if ($HasHead) {
+    Prepare-Worktree $Repo $Name
+  } else {
+    Write-Log "$Name checkout has no HEAD yet; skipping dirty check before first checkout"
+  }
   Write-Log "fetching $Name from $Bare"
   git -C $Repo fetch $Bare $Branch
   if ($LASTEXITCODE -ne 0) { throw "git fetch failed for $Name" }
   $Fetched = (git -C $Repo rev-parse FETCH_HEAD).Trim()
   if ($LASTEXITCODE -ne 0) { throw "git rev-parse failed for $Name" }
-  $Current = (git -C $Repo rev-parse HEAD 2>$null)
-  if ($LASTEXITCODE -ne 0) { $Current = "" }
+  try {
+    $Current = (git -C $Repo rev-parse --verify HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0) { $Current = "" }
+  } catch {
+    $Current = ""
+  }
   $Current = ($Current -as [string]).Trim()
-  $CurrentBranch = (git -C $Repo symbolic-ref --quiet --short HEAD 2>$null)
-  if ($LASTEXITCODE -ne 0) { $CurrentBranch = "" }
+  try {
+    $CurrentBranch = (git -C $Repo symbolic-ref --quiet --short HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0) { $CurrentBranch = "" }
+  } catch {
+    $CurrentBranch = ""
+  }
   $CurrentBranch = ($CurrentBranch -as [string]).Trim()
   if (($Force -ne "1") -and ($Current -eq $Fetched) -and ($CurrentBranch -eq $CheckoutBranch)) {
     Write-Log "$Name already at $CheckoutBranch@$($Fetched.Substring(0, [Math]::Min(12, $Fetched.Length))); leaving worktree untouched"
@@ -2319,7 +2341,11 @@ $HashtreeRepo = Join-Path $HOME "src\hashtree"
 $FipsRepo = Join-Path $HOME "src\fips"
 $SocialGraphRepo = Join-Path $HOME "src\nostr-social-graph"
 $CashuServiceRepo = Join-Path $HOME "src\cashu-service"
-$ConfigDir = Join-Path $env:APPDATA "iris-drive"
+if ([string]::IsNullOrWhiteSpace($WindowsConfigDirOverride)) {
+  $ConfigDir = Join-Path $env:APPDATA "iris-drive"
+} else {
+  $ConfigDir = Expand-RemotePath $WindowsConfigDirOverride
+}
 Sync-Repo $SocialGraphRepo "nostr-social-graph" $SocialGraphBare $SocialGraphSyncBranch $SocialGraphTargetBranch
 Sync-Repo $CashuServiceRepo "cashu-service" $CashuServiceBare
 Sync-Repo $HashtreeRepo "hashtree" $HashtreeBare
@@ -2452,7 +2478,7 @@ fi
 REMOTE_SH
       ;;
     linux)
-      ssh "$host" 'bash -se' <<'REMOTE_SH'
+      ssh "$host" "IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR=$(sh_quote "${IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR:-}") IRIS_DRIVE_DEV_VM_LINUX_MOUNTPOINT=$(sh_quote "${IRIS_DRIVE_DEV_VM_LINUX_MOUNTPOINT:-}") bash -se" <<'REMOTE_SH'
 set -Eeuo pipefail
 idrive="$HOME/src/iris-drive/target/debug/idrive"
 config_dir="${IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR:-$HOME/.config/iris-drive}"
@@ -2460,7 +2486,34 @@ config_dir="${IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR:-$HOME/.config/iris-drive}"
 REMOTE_SH
       ;;
     windows)
-      ssh "$host" 'cmd /d /s /c ""%USERPROFILE%\src\iris-drive\windows\bin\Debug\net8.0-windows\win-x64\publish\idrive.exe" --config-dir "%APPDATA%\iris-drive" status"'
+      {
+        printf '$ConfigDirOverride = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_WINDOWS_CONFIG_DIR:-}")"
+        cat <<'REMOTE_PS'
+$ErrorActionPreference = "Stop"
+
+function Expand-RemotePath([string]$Path) {
+  if ($Path -eq "~") {
+    return $HOME
+  }
+  if ($Path.StartsWith("~/") -or $Path.StartsWith("~\")) {
+    return (Join-Path $HOME $Path.Substring(2))
+  }
+  if (-not [System.IO.Path]::IsPathRooted($Path)) {
+    return (Join-Path $HOME $Path)
+  }
+  return $Path
+}
+
+$Idrive = Join-Path $HOME "src\iris-drive\windows\bin\Debug\net8.0-windows\win-x64\publish\idrive.exe"
+if ([string]::IsNullOrWhiteSpace($ConfigDirOverride)) {
+  $ConfigDir = Join-Path $env:APPDATA "iris-drive"
+} else {
+  $ConfigDir = Expand-RemotePath $ConfigDirOverride
+}
+& $Idrive --config-dir $ConfigDir status
+if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+REMOTE_PS
+      } | ssh "$host" 'cmd /d /s /c "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""`$script = [Console]::In.ReadToEnd(); & ([scriptblock]::Create(`$script))"""'
       ;;
     *)
       return 1

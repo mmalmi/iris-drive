@@ -77,8 +77,32 @@ if ! grep -F 'CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG_DEFAULT}"' "$RO
   exit 1
 fi
 
+if ! grep -F "IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR=%s" "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F "IRIS_DRIVE_DEV_VM_LINUX_MOUNTPOINT=%s" "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "POSIX VM runs must forward explicit Linux config and mountpoint overrides" >&2
+  exit 1
+fi
+
 if ! grep -F '$env:CARGO_PROFILE_DEV_DEBUG = $CargoProfileDevDebugDefault' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
   echo "Windows VM Cargo builds must use the same dev debuginfo override" >&2
+  exit 1
+fi
+
+if ! grep -F '$WindowsConfigDirOverride' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "Windows VM runs must forward explicit config dir overrides" >&2
+  exit 1
+fi
+
+if ! grep -F 'windows\bin\Debug\net8.0-windows\win-x64\publish\idrive.exe' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F '& $Idrive --config-dir $ConfigDir status' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "Windows VM status checks must use the same config override as the daemon" >&2
+  exit 1
+fi
+
+if ! grep -F 'skipping dirty check before first checkout' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F 'rev-parse --verify HEAD' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F '$CurrentBranch = ""' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "Windows VM sync must tolerate fresh checkouts whose remote HEAD is unborn" >&2
   exit 1
 fi
 

@@ -15,6 +15,29 @@ against the real IrisDrive.exe window.
 USAGE
 }
 
+sh_quote() {
+  printf "'%s'" "$(printf "%s" "$1" | sed "s/'/'\\\\''/g")"
+}
+
+ps_quote() {
+  printf "'%s'" "$(printf "%s" "$1" | sed "s/'/''/g")"
+}
+
+linux_remote_shell() {
+  local assignments=()
+  if [[ -n "${IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR:-}" ]]; then
+    assignments+=("IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR=$(sh_quote "$IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR")")
+  fi
+  if [[ -n "${IRIS_DRIVE_DEV_VM_LINUX_MOUNTPOINT:-}" ]]; then
+    assignments+=("IRIS_DRIVE_DEV_VM_LINUX_MOUNTPOINT=$(sh_quote "$IRIS_DRIVE_DEV_VM_LINUX_MOUNTPOINT")")
+  fi
+  if [[ ${#assignments[@]} -eq 0 ]]; then
+    printf 'bash -se'
+  else
+    printf '%s bash -se' "${assignments[*]}"
+  fi
+}
+
 target="${1:-}"
 host="${2:-local}"
 
@@ -28,6 +51,8 @@ run_linux_remote() {
   local runner=(ssh "$remote" 'bash -se')
   if [[ "$remote" == "local" ]]; then
     runner=(bash -se)
+  else
+    runner=(ssh "$remote" "$(linux_remote_shell)")
   fi
 
   "${runner[@]}" <<'REMOTE_SH'
@@ -174,11 +199,11 @@ if not status.get("initialized"):
 summary = status.get("summary") or {}
 network = status.get("network") or {}
 if summary:
-    if int(summary.get("authorized_device_count") or 0) < 1:
-        raise SystemExit("Linux GUI summary has no authorized devices")
+    if int(summary.get("authorized_app_key_count") or summary.get("authorized_device_count") or 0) < 1:
+        raise SystemExit("Linux GUI summary has no authorized app keys")
 else:
-    if int(network.get("authorized_device_count") or 0) < 1:
-        raise SystemExit("Linux status has no authorized devices")
+    if int(network.get("authorized_app_key_count") or network.get("authorized_device_count") or 0) < 1:
+        raise SystemExit("Linux status has no authorized app keys")
 PY
       screenshot="/tmp/iris-drive-linux-gui-smoke.png"
       rm -f "$screenshot"
@@ -208,7 +233,9 @@ run_windows_remote() {
     exit 2
   }
 
-  ssh "$remote" 'cmd /d /s /c "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""`$script = [Console]::In.ReadToEnd(); & ([scriptblock]::Create(`$script))"""' <<'REMOTE_PS'
+  {
+    printf '$ConfigDirOverride = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_WINDOWS_CONFIG_DIR:-}")"
+    cat <<'REMOTE_PS'
 $ErrorActionPreference = "Stop"
 
 function Write-SmokeLog([string]$Message) {
@@ -220,11 +247,28 @@ function Fail([string]$Message) {
   exit 1
 }
 
+function Expand-RemotePath([string]$Path) {
+  if ($Path -eq "~") {
+    return $HOME
+  }
+  if ($Path.StartsWith("~/") -or $Path.StartsWith("~\")) {
+    return (Join-Path $HOME $Path.Substring(2))
+  }
+  if (-not [System.IO.Path]::IsPathRooted($Path)) {
+    return (Join-Path $HOME $Path)
+  }
+  return $Path
+}
+
 $IrisRepo = Join-Path $HOME "src\iris-drive"
 $PublishDir = Join-Path $IrisRepo "windows\bin\Debug\net8.0-windows\win-x64\publish"
 $Exe = Join-Path $PublishDir "IrisDrive.exe"
 $Idrive = Join-Path $PublishDir "idrive.exe"
-$ConfigDir = Join-Path $env:APPDATA "iris-drive"
+if ([string]::IsNullOrWhiteSpace($ConfigDirOverride)) {
+  $ConfigDir = Join-Path $env:APPDATA "iris-drive"
+} else {
+  $ConfigDir = Expand-RemotePath $ConfigDirOverride
+}
 
 if (-not (Test-Path $Exe)) {
   Fail "missing published Windows app at $Exe"
@@ -396,17 +440,22 @@ if (-not $Status.initialized) {
   Fail "Windows GUI smoke expected an initialized app profile"
 }
 $Authorized = 0
-if ($Status.summary -and $Status.summary.authorized_device_count) {
+if ($Status.summary -and $Status.summary.authorized_app_key_count) {
+  $Authorized = [int]$Status.summary.authorized_app_key_count
+} elseif ($Status.summary -and $Status.summary.authorized_device_count) {
   $Authorized = [int]$Status.summary.authorized_device_count
+} elseif ($Status.network -and $Status.network.authorized_app_key_count) {
+  $Authorized = [int]$Status.network.authorized_app_key_count
 } elseif ($Status.network -and $Status.network.authorized_device_count) {
   $Authorized = [int]$Status.network.authorized_device_count
 }
 if ($Authorized -lt 1) {
-  Fail "Windows status has no authorized devices"
+  Fail "Windows status has no authorized app keys"
 }
 
 "WINDOWS_GUI_SMOKE_OK"
 REMOTE_PS
+  } | ssh "$remote" 'cmd /d /s /c "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""`$script = [Console]::In.ReadToEnd(); & ([scriptblock]::Create(`$script))"""'
 }
 
 case "$target" in
