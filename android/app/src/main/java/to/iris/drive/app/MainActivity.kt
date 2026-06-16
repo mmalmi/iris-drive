@@ -1,6 +1,7 @@
 package to.iris.drive.app
 
 import android.Manifest
+import android.app.AlertDialog
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -426,8 +427,31 @@ class MainActivity : ComponentActivity() {
             ).show()
             return
         }
-        Toast.makeText(this, "Opening $label", Toast.LENGTH_SHORT).show()
-        openUrl(localOpenUrl)
+        val link = classification.optString("normalized_input").trim()
+        AlertDialog.Builder(this)
+            .setTitle("Open $label?")
+            .setMessage("Open it now or save a copy to Iris Drive.")
+            .setPositiveButton("Open") { _, _ ->
+                Toast.makeText(this, "Opening $label", Toast.LENGTH_SHORT).show()
+                openUrl(localOpenUrl)
+            }
+            .setNegativeButton("Save to Drive") { _, _ ->
+                if (link.isBlank()) {
+                    Toast.makeText(this, "Could not save $label", Toast.LENGTH_SHORT).show()
+                    return@setNegativeButton
+                }
+                Toast.makeText(this, "Saving $label", Toast.LENGTH_SHORT).show()
+                dispatch(NativeActions.importContentLink(link)) { state ->
+                    val error = state.error.trim()
+                    Toast.makeText(
+                        this,
+                        if (error.isBlank()) "Saved $label to Iris Drive" else error,
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+            .setNeutralButton("Cancel", null)
+            .show()
     }
 
     private fun openDriveFolder() {
@@ -577,7 +601,7 @@ class MainActivity : ComponentActivity() {
                     )
                 }
 
-                "nhash_file" -> {
+                "nhash_file", "mutable_file" -> {
                     openContentLink(classification)
                 }
 

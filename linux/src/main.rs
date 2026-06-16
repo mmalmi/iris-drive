@@ -266,7 +266,7 @@ fn apply_launch_input(model: &AppRef, input: &str) {
     let classification = classify_link_input(input.to_owned());
     if classification.kind == "share_dialog" {
         apply_share_dialog_link(model, &classification);
-    } else if classification.kind == "nhash_file" {
+    } else if classification.kind == "nhash_file" || classification.kind == "mutable_file" {
         open_content_link(model, &classification);
     }
 }
@@ -286,8 +286,53 @@ fn open_content_link(model: &AppRef, classification: &LinkInputClassification) {
         });
         return;
     }
-    model.ui.notice.set_text(&format!("Opening {label}"));
-    open_uri(classification.local_open_url.trim());
+    let Some(window) = model.application.active_window() else {
+        model.ui.notice.set_text(&format!("Opening {label}"));
+        open_uri(classification.local_open_url.trim());
+        return;
+    };
+    let dialog = adw::AlertDialog::builder()
+        .heading(format!("Open {label}?"))
+        .body("Open it now or save a copy to Iris Drive.")
+        .close_response("cancel")
+        .default_response("open")
+        .build();
+    dialog.add_responses(&[
+        ("cancel", "Cancel"),
+        ("save", "Save to Drive"),
+        ("open", "Open"),
+    ]);
+    let model = model.clone();
+    let classification = classification.clone();
+    let label = label.to_owned();
+    dialog.choose(&window, None::<&gio::Cancellable>, move |response| {
+        if response == "open" {
+            model.ui.notice.set_text(&format!("Opening {label}"));
+            open_uri(classification.local_open_url.trim());
+        } else if response == "save" {
+            save_content_link(&model, &classification, &label);
+        }
+    });
+}
+
+fn save_content_link(model: &AppRef, classification: &LinkInputClassification, label: &str) {
+    let link = classification.normalized_input.trim();
+    if link.is_empty() {
+        model.ui.notice.set_text(&format!("Could not save {label}"));
+        return;
+    }
+    model.ui.notice.set_text(&format!("Saving {label}"));
+    match dispatch_desktop_action(NativeAppAction::ImportContentLink {
+        link: link.to_owned(),
+    }) {
+        Ok(_state) => {
+            model.ui.notice.set_text(&format!("Saved {label} to Iris Drive"));
+            refresh(model);
+        }
+        Err(error) => {
+            model.ui.notice.set_text(&error);
+        }
+    }
 }
 
 fn apply_share_dialog_link(model: &AppRef, classification: &LinkInputClassification) {

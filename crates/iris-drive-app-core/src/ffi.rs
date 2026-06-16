@@ -54,8 +54,9 @@ pub use crate::native_link_input::{classify_link_input, validate_link_input};
 #[cfg(test)]
 pub(crate) use crate::native_provider::run_native_sync_once_with_drive_root_events_for_test;
 use crate::native_provider::{
-    install_rustls_crypto_provider, native_provider_import_shared_file, native_sync_status_label,
-    run_native_provider_list, run_native_sync_once,
+    install_rustls_crypto_provider, native_provider_import_content_link,
+    native_provider_import_shared_file, native_sync_status_label, run_native_provider_list,
+    run_native_sync_once,
 };
 pub(crate) use crate::native_provider::{
     native_provider_delete_json, native_provider_import_shared_file_json,
@@ -350,6 +351,9 @@ impl NativeAppRuntime {
                 source_path,
             } => {
                 self.import_file(&display_name, &source_path);
+            }
+            NativeAppAction::ImportContentLink { link } => {
+                self.import_content_link(&link);
             }
         }
         self.reload_from_disk_preserving_error();
@@ -1396,6 +1400,20 @@ impl NativeAppRuntime {
             native_provider_import_shared_file(&self.data_dir, display_name, source_path)
         {
             self.state.error = format!("importing shared file: {error:#}");
+        }
+    }
+
+    fn import_content_link(&mut self, link: &str) {
+        if !self.initialized() {
+            "profile is required before importing files".clone_into(&mut self.state.error);
+            return;
+        }
+        if link.trim().is_empty() {
+            "content link is required".clone_into(&mut self.state.error);
+            return;
+        }
+        if let Err(error) = native_provider_import_content_link(&self.data_dir, link) {
+            self.state.error = format!("importing content link: {error:#}");
         }
     }
 }

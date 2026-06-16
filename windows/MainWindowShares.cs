@@ -17,6 +17,13 @@ public partial class MainWindow
 {
     private static readonly string[] ShareRoles = ["reader", "editor", "admin"];
 
+    private enum ContentLinkDialogChoice
+    {
+        Cancel,
+        Open,
+        Save,
+    }
+
     private void RenderShares(IrisDriveStatusData status)
     {
         SharesList.Items.Clear();
@@ -290,7 +297,8 @@ public partial class MainWindow
     private bool OpenContentLinkFromLink(string input)
     {
         var classification = IrisDriveNativeCore.ClassifyLinkInput(input);
-        if (!string.Equals(classification.Kind, "nhash_file", StringComparison.Ordinal))
+        if (!string.Equals(classification.Kind, "nhash_file", StringComparison.Ordinal)
+            && !string.Equals(classification.Kind, "mutable_file", StringComparison.Ordinal))
         {
             return false;
         }
@@ -313,9 +321,109 @@ public partial class MainWindow
             return true;
         }
 
-        NoticeText.Text = $"Opening {label}";
-        service.OpenUri(classification.LocalOpenUrl.Trim());
+        var choice = ShowContentLinkDialog(label);
+        if (choice == ContentLinkDialogChoice.Open)
+        {
+            NoticeText.Text = $"Opening {label}";
+            service.OpenUri(classification.LocalOpenUrl.Trim());
+        }
+        else if (choice == ContentLinkDialogChoice.Save)
+        {
+            _ = ImportContentLinkAsync(classification.NormalizedInput, label);
+        }
         return true;
+    }
+
+    private ContentLinkDialogChoice ShowContentLinkDialog(string label)
+    {
+        var choice = ContentLinkDialogChoice.Cancel;
+        var title = new TextBlock
+        {
+            Text = $"Open {label}?",
+            FontSize = 20,
+            FontWeight = FontWeights.SemiBold,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 10),
+        };
+        var detail = new TextBlock
+        {
+            Text = "Open it now or save a copy to Iris Drive.",
+            Foreground = (WpfBrush)FindResource("IrisMutedBrush"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 18),
+        };
+        var cancel = new WpfButton { Content = "Cancel", MinWidth = 92 };
+        var save = new WpfButton
+        {
+            Content = "Save to Drive",
+            MinWidth = 116,
+            Margin = new Thickness(8, 0, 0, 0),
+        };
+        var open = new WpfButton
+        {
+            Content = "Open",
+            Style = (Style)FindResource("PrimaryButton"),
+            MinWidth = 92,
+            Margin = new Thickness(8, 0, 0, 0),
+        };
+        var buttons = new StackPanel
+        {
+            Orientation = WpfOrientation.Horizontal,
+            HorizontalAlignment = WpfHorizontalAlignment.Right,
+        };
+        buttons.Children.Add(cancel);
+        buttons.Children.Add(save);
+        buttons.Children.Add(open);
+
+        var body = new StackPanel { Margin = new Thickness(18), Width = 400 };
+        body.Children.Add(title);
+        body.Children.Add(detail);
+        body.Children.Add(buttons);
+
+        var dialog = new Window
+        {
+            Title = "Open Iris Drive link",
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            SizeToContent = SizeToContent.WidthAndHeight,
+            Content = body,
+        };
+
+        cancel.Click += (_, _) => dialog.Close();
+        save.Click += (_, _) =>
+        {
+            choice = ContentLinkDialogChoice.Save;
+            dialog.Close();
+        };
+        open.Click += (_, _) =>
+        {
+            choice = ContentLinkDialogChoice.Open;
+            dialog.Close();
+        };
+        dialog.ShowDialog();
+        return choice;
+    }
+
+    private async Task ImportContentLinkAsync(string link, string label)
+    {
+        if (string.IsNullOrWhiteSpace(link))
+        {
+            NoticeText.Text = $"Could not save {label}";
+            return;
+        }
+
+        try
+        {
+            NoticeText.Text = $"Saving {label}";
+            await service.ImportContentLinkAsync(link);
+            NoticeText.Text = $"Saved {label} to Iris Drive";
+            await RefreshAsync();
+        }
+        catch (Exception error)
+        {
+            NoticeText.Text = error.Message;
+        }
     }
 
     private static string FirstNonEmpty(params string[] values)

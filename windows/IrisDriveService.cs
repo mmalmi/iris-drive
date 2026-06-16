@@ -440,6 +440,21 @@ public sealed class IrisDriveService
             });
     }
 
+    public Task<IrisDriveStatusData> ImportContentLinkAsync(string link)
+    {
+        if (string.IsNullOrWhiteSpace(link))
+        {
+            throw new InvalidOperationException("Content link is required.");
+        }
+
+        return NativeCore.DispatchActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "import_content_link",
+                ["link"] = link.Trim(),
+            });
+    }
+
     public Task RepairShareWrapsAsync(string shareId)
     {
         if (string.IsNullOrWhiteSpace(shareId))

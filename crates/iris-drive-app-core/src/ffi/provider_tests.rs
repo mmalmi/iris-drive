@@ -112,6 +112,43 @@ fn import_file_action_writes_shared_file_into_provider_root() {
 }
 
 #[test]
+fn import_content_link_action_downloads_into_provider_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let _ = app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "iPhone".to_owned(),
+    });
+    mark_daemon_live(dir.path());
+    let _download = crate::native_provider::download_content_link_bytes_for_test(
+        b"from public drive link".to_vec(),
+    );
+    let link = format!(
+        "https://drive.iris.to/#/{}/sites/docs/Freenet%20paper.pdf?fullscreen=1",
+        iris_drive_core::gateway::IRIS_SITES_PORTAL_NPUB
+    );
+
+    let state = app.dispatch(NativeAppAction::ImportContentLink { link });
+
+    assert!(state.error.is_empty(), "{}", state.error);
+    assert_eq!(state.ui.file_count, 1);
+    assert_eq!(state.ui.visible_file_bytes, 22);
+    let runtime = tokio::runtime::Runtime::new().unwrap();
+    runtime.block_on(async {
+        let daemon = iris_drive_core::Daemon::open(dir.path()).unwrap();
+        let visible = iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
+            .await
+            .unwrap();
+        let provider = HashTreeProviderFs::open(daemon.tree_handle(), visible.root_cid)
+            .await
+            .unwrap();
+        let path = "Freenet paper.pdf".to_owned();
+        let item = provider.item(&path).await.unwrap();
+        let bytes = provider.read(&path, 0, item.size).await.unwrap();
+        assert_eq!(bytes, b"from public drive link");
+    });
+}
+
+#[test]
 fn provider_list_includes_summary_and_change_key() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());

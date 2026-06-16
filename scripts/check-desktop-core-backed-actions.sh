@@ -35,6 +35,7 @@ require_contains linux/src/main.rs "ApplicationFlags::HANDLES_OPEN"
 require_contains linux/src/main.rs "classify_link_input"
 require_contains linux/src/main.rs "apply_share_dialog_link"
 require_contains linux/src/main.rs "open_content_link"
+require_contains linux/src/main.rs "ImportContentLink"
 require_contains linux/src/ui.rs "stack,"
 require_absent linux/src/render.rs "state.ui.devices"
 require_absent linux/src/data.rs "authorized_device_count"
@@ -47,6 +48,7 @@ require_contains macos/Sources/IrisDriveDesktopCore.swift "final class IrisDrive
 require_contains macos/Sources/IrisDriveMacApp.swift "desktopCore.refreshJson()"
 require_contains macos/Sources/IrisDriveMacApp.swift "applyNativeStatePayload"
 require_contains macos/Sources/IrisDriveMacApp.swift "openContentLink"
+require_contains macos/Sources/IrisDriveContentLinks.swift '"import_content_link"'
 require_contains macos/Sources/IrisDriveMacApp.swift '"record_pending_share_invite"'
 require_contains macos/Sources/IrisDriveControlPanel.swift "Reject"
 require_contains macos/Sources/IrisDriveControlPanel.swift "pendingInvites"
@@ -81,6 +83,7 @@ require_contains windows/App.xaml.cs "SendLaunchArgumentsToPrimary(e.Args)"
 require_contains windows/MainWindow.xaml.cs "ApplyLaunchArguments"
 require_contains windows/MainWindowShares.cs "OpenShareDialogFromLink"
 require_contains windows/MainWindowShares.cs "OpenContentLinkFromLink"
+require_contains windows/IrisDriveService.cs '["type"] = "import_content_link"'
 require_contains windows/MainWindowShares.cs "InviteShareMemberFromEvidenceAsync"
 require_contains windows/MainWindowShares.cs "RecordPendingShareInviteAsync"
 require_contains windows/MainWindowShares.cs "MissingKeyWrapCount"

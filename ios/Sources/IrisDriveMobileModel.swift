@@ -21,6 +21,20 @@ private let fileProviderDebugRegistrationVersionKey = "fileProviderDebugRegistra
 
 enum IrisDriveBackgroundSyncTask { static let identifier = "to.iris.drive.ios.background-sync" }
 
+struct PendingContentLink: Identifiable {
+    let id = UUID()
+    let linkInput: NativeLinkInputClassification
+
+    var label: String {
+        let displayName = linkInput.openDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return displayName.isEmpty ? "file" : displayName
+    }
+
+    var title: String {
+        "Open \(label)?"
+    }
+}
+
 @MainActor
 final class IrisDriveMobileModel: ObservableObject {
     @Published var driveName = "My Drive"
@@ -63,6 +77,7 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var copyFeedback = ""
     @Published var fileProviderError = ""
     @Published var authorizationState = "Not linked"
+    @Published var pendingContentLink: PendingContentLink?
     @Published var authorizedDeviceCount = 0
     @Published var onlineDeviceCount = 0
     @Published var fileCount = 0
@@ -1072,7 +1087,7 @@ final class IrisDriveMobileModel: ObservableObject {
             )
             return
         }
-        if linkInput.kind == "nhash_file" {
+        if linkInput.kind == "nhash_file" || linkInput.kind == "mutable_file" {
             openContentLink(linkInput)
             return
         }
@@ -1312,14 +1327,16 @@ final class IrisDriveMobileModel: ObservableObject {
         }
     }
 
-    func dispatch(_ action: [String: Any]) {
+    @discardableResult
+    func dispatch(_ action: [String: Any]) -> NativeAppState? {
         guard let actionJson = encodeNativeAction(action) else {
             statusTitle = "Native action failed"
             statusDetail = "Unable to encode action."
-            return
+            return nil
         }
         stateGeneration &+= 1
         applyStateJson(nativeCore.dispatchJson(actionJson))
+        return lastState
     }
 
     func dispatchInBackground(

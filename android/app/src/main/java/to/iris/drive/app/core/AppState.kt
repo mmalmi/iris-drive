@@ -459,6 +459,12 @@ internal object NativeActions {
             .put("type", "repair_share_wraps")
             .put("share_id", shareId)
             .toString()
+
+    fun importContentLink(link: String): String =
+        JSONObject()
+            .put("type", "import_content_link")
+            .put("link", link)
+            .toString()
 }
 
 private fun JSONObject.toProfile(): ProfileState =

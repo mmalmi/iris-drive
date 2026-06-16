@@ -26,7 +26,33 @@ extension AppDelegate {
             }
             return
         }
-        updateStatus("Opening \(label)")
-        NSWorkspace.shared.open(url)
+        let alert = NSAlert()
+        alert.messageText = "Open \(label)?"
+        alert.informativeText = "Open it now or save a copy to Iris Drive."
+        alert.addButton(withTitle: "Open")
+        alert.addButton(withTitle: "Save to Drive")
+        alert.addButton(withTitle: "Cancel")
+        let response = alert.runModal()
+        if response == .alertFirstButtonReturn {
+            updateStatus("Opening \(label)")
+            NSWorkspace.shared.open(url)
+        } else if response == .alertSecondButtonReturn {
+            saveContentLink(classification, label: label)
+        }
+    }
+
+    private func saveContentLink(_ classification: [String: Any], label: String) {
+        guard let link = classification["normalized_input"] as? String,
+              !link.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            updateStatus("Could not save \(label)")
+            return
+        }
+        dispatchNativeAction(
+            ["type": "import_content_link", "link": link],
+            progress: "Saving \(label)",
+            success: "Saved \(label) to Iris Drive",
+            restartSyncAfterSuccess: true
+        )
     }
 }

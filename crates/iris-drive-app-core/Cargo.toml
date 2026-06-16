@@ -20,6 +20,7 @@ hashtree-core.workspace = true
 hashtree-fs.workspace = true
 nostr-sdk.workspace = true
 qrcode = { version = "0.14", default-features = false }
+reqwest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 rustls.workspace = true

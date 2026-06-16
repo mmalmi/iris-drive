@@ -16,7 +16,7 @@ use crate::app_key_link_invite::{
 };
 use crate::app_key_link_transport::{app_key_approval_query, parse_app_key_approval_request};
 use crate::app_key_summary::pubkey_npub;
-use crate::gateway::{DEFAULT_GATEWAY_PORT, local_nhash_url};
+use crate::gateway::{DEFAULT_GATEWAY_PORT, local_nhash_url, local_portal_npub_path_url};
 
 const APP_KEY_LINK_INVITE_SINGLE_SLASH_PREFIX: &str = "iris-drive:/invite/";
 const MANUAL_LINK_REQUIRES_PROFILE_AND_ADMIN: &str = "manual device linking requires an IrisProfile UUID and --admin-app-key; otherwise paste an admin invite URL";
@@ -76,6 +76,9 @@ pub fn classify_link_input(input: &str) -> LinkInputClassification {
         return result;
     }
     if let Some(result) = classify_drive_nhash_file_link_input(trimmed) {
+        return result;
+    }
+    if let Some(result) = classify_drive_mutable_file_link_input(trimmed) {
         return result;
     }
     if looks_like_app_key_pubkey_input(trimmed) {
@@ -311,6 +314,15 @@ struct DriveNhashFileLink {
     display_name: String,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DriveMutableFileLink {
+    npub: String,
+    tree_name: String,
+    path_segments: Vec<String>,
+    path_hint: String,
+    display_name: String,
+}
+
 fn classify_drive_nhash_file_link_input(input: &str) -> Option<LinkInputClassification> {
     let route = drive_iris_to_fragment_or_path_route(input)?;
     if !drive_route_could_be_nhash_file(route) {
@@ -383,11 +395,7 @@ fn parse_drive_nhash_file_route(route: &str) -> Result<DriveNhashFileLink> {
     let path_segments = segments
         .map(percent_decode_path_component)
         .collect::<Result<Vec<_>>>()?;
-    for segment in &path_segments {
-        if segment == "." || segment == ".." || segment.contains('\0') {
-            return Err(anyhow!("invalid content path hint"));
-        }
-    }
+    validate_drive_content_path_segments(&path_segments)?;
     let path_hint = path_segments.join("/");
     let display_name = path_segments
         .last()
@@ -400,6 +408,112 @@ fn parse_drive_nhash_file_route(route: &str) -> Result<DriveNhashFileLink> {
         path_hint,
         display_name,
     })
+}
+
+fn classify_drive_mutable_file_link_input(input: &str) -> Option<LinkInputClassification> {
+    let route = drive_iris_to_fragment_or_path_route(input)?;
+    if !drive_route_could_be_mutable_file(route) {
+        return None;
+    }
+
+    let mut classification = LinkInputClassification {
+        kind: "mutable_file".to_owned(),
+        normalized_input: input.to_owned(),
+        is_complete: true,
+        ..LinkInputClassification::default()
+    };
+
+    match parse_drive_mutable_file_route(route) {
+        Ok(link) => {
+            classification.is_valid = true;
+            classification.content_path_hint = link.path_hint;
+            classification.open_display_name = link.display_name;
+            classification.local_open_url = local_portal_npub_path_url(
+                DEFAULT_GATEWAY_PORT,
+                &link.npub,
+                &link.tree_name,
+                &link.path_segments,
+            );
+        }
+        Err(error) => {
+            classification.error = error.to_string();
+            if classification.error.contains("missing") {
+                classification.is_complete = false;
+            }
+        }
+    }
+
+    Some(classification)
+}
+
+fn drive_route_could_be_mutable_file(route: &str) -> bool {
+    let path = route.split_once('?').map_or(route, |(path, _)| path);
+    let Some(first) = path.split('/').find(|segment| !segment.is_empty()) else {
+        return false;
+    };
+    first.to_ascii_lowercase().starts_with("npub1")
+}
+
+fn parse_drive_mutable_file_route(route: &str) -> Result<DriveMutableFileLink> {
+    let path = route.split_once('?').map_or(route, |(path, _)| path);
+    let mut segments = path.split('/').filter(|segment| !segment.is_empty());
+    let raw_npub = segments.next().ok_or_else(|| anyhow!("missing npub"))?;
+    let decoded_npub = percent_decode_path_component(raw_npub)?
+        .trim()
+        .to_ascii_lowercase();
+    if !decoded_npub.starts_with("npub1") {
+        return Err(anyhow!("expected npub1... content owner"));
+    }
+    let pubkey = PublicKey::from_bech32(&decoded_npub).context("invalid npub")?;
+    let npub = pubkey_npub(&pubkey.to_hex());
+
+    let tree_name = percent_decode_path_component(
+        segments
+            .next()
+            .ok_or_else(|| anyhow!("missing hashtree name"))?,
+    )?
+    .trim()
+    .to_owned();
+    if tree_name.is_empty() {
+        return Err(anyhow!("missing hashtree name"));
+    }
+    validate_drive_content_path_segments(std::slice::from_ref(&tree_name))?;
+
+    let path_segments = segments
+        .map(percent_decode_path_component)
+        .collect::<Result<Vec<_>>>()?;
+    if path_segments.is_empty() {
+        return Err(anyhow!("missing content path"));
+    }
+    validate_drive_content_path_segments(&path_segments)?;
+    let path_hint = path_segments.join("/");
+    let display_name = path_segments
+        .last()
+        .filter(|segment| !segment.trim().is_empty())
+        .cloned()
+        .unwrap_or_else(|| tree_name.clone());
+
+    Ok(DriveMutableFileLink {
+        npub,
+        tree_name,
+        path_segments,
+        path_hint,
+        display_name,
+    })
+}
+
+fn validate_drive_content_path_segments(path_segments: &[String]) -> Result<()> {
+    for segment in path_segments {
+        if segment == "."
+            || segment == ".."
+            || segment.contains('\0')
+            || segment.contains('/')
+            || segment.contains('\\')
+        {
+            return Err(anyhow!("invalid content path hint"));
+        }
+    }
+    Ok(())
 }
 
 fn decoded_first_query_value_or_default(query: &str, names: &[&str]) -> Result<String> {
@@ -622,6 +736,28 @@ mod tests {
         );
         assert_eq!(traversal.kind, "nhash_file");
         assert!(!traversal.is_valid);
+    }
+
+    #[test]
+    fn classify_drive_npub_file_link_opens_mutable_content_path() {
+        let input = format!(
+            "https://drive.iris.to/#/{}/sites/docs/Freenet%20paper.pdf?fullscreen=1",
+            crate::gateway::IRIS_SITES_PORTAL_NPUB
+        );
+        let file = classify_link_input(&input);
+
+        assert_eq!(file.kind, "mutable_file");
+        assert!(file.is_complete);
+        assert!(file.is_valid);
+        assert_eq!(file.content_path_hint, "docs/Freenet paper.pdf");
+        assert_eq!(file.open_display_name, "Freenet paper.pdf");
+        assert_eq!(
+            file.local_open_url,
+            format!(
+                "http://iris.localhost:17321/{}/sites/docs/Freenet%20paper.pdf",
+                crate::gateway::IRIS_SITES_PORTAL_NPUB
+            )
+        );
     }
 
     #[test]

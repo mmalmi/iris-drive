@@ -598,7 +598,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             )
             return true
         }
-        if classification["kind"] as? String == "nhash_file" {
+        if classification["kind"] as? String == "nhash_file" || classification["kind"] as? String == "mutable_file" {
             openContentLink(classification)
             return true
         }

@@ -137,4 +137,7 @@ pub enum NativeAppAction {
         display_name: String,
         source_path: String,
     },
+    ImportContentLink {
+        link: String,
+    },
 }

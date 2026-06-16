@@ -1070,6 +1070,25 @@ pub fn local_iris_url(port: u16) -> String {
     format!("http://{LOCAL_PORTAL_HOST}:{port}/")
 }
 
+#[must_use]
+pub fn local_portal_npub_path_url(
+    port: u16,
+    npub: &str,
+    tree_name: &str,
+    path_segments: &[String],
+) -> String {
+    let mut url = format!(
+        "http://{LOCAL_PORTAL_HOST}:{port}/{}/{}",
+        percent_encode_path_segment(npub),
+        percent_encode_path_segment(tree_name)
+    );
+    for segment in path_segments {
+        url.push('/');
+        url.push_str(&percent_encode_path_segment(segment));
+    }
+    url
+}
+
 fn local_mutable_site_origin(port: Option<u16>, npub: &str, tree_name: &str) -> String {
     match port {
         Some(port) => format!("http://{tree_name}.{npub}.iris.localhost:{port}"),

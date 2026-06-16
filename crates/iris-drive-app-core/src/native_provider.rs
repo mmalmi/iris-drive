@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::Mutex;
 
 use anyhow::Context;
 use hashtree_provider::{HashTreeProviderFs, ItemKind, ProviderFs};
@@ -150,15 +152,100 @@ pub(crate) fn native_provider_import_shared_file(
     let display_name = sanitized_provider_file_name(display_name);
     let runtime = native_provider_runtime()?;
     runtime.block_on(async {
-        let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
-        let modified_at_by_path = BTreeMap::new();
-        let entries = provider_entries(&provider, &modified_at_by_path).await?;
-        let path = unique_provider_path(&entries, "", &display_name, None);
         let bytes = std::fs::read(source_path)
             .with_context(|| format!("reading {}", Path::new(source_path).display()))?;
-        write_provider_file(&provider, &path, &bytes).await?;
-        import_provider_mutation(&mut daemon, &provider, &path, Some(visible_root)).await
+        import_provider_bytes(data_dir, &display_name, &bytes).await
     })
+}
+
+pub(crate) fn native_provider_import_content_link(
+    data_dir: &str,
+    link: &str,
+) -> anyhow::Result<serde_json::Value> {
+    ensure_daemon_available_for_provider_mutation(data_dir)?;
+    let classification = iris_drive_core::classify_link_input(link);
+    if !matches!(classification.kind.as_str(), "nhash_file" | "mutable_file") {
+        anyhow::bail!("unsupported content link");
+    }
+    if !classification.is_valid {
+        let error = classification.error.trim();
+        if error.is_empty() {
+            anyhow::bail!("content link is invalid");
+        }
+        anyhow::bail!("{error}");
+    }
+    let url = classification.local_open_url.trim();
+    if url.is_empty() {
+        anyhow::bail!("content link has no local resolver URL");
+    }
+    let display_name = sanitized_provider_file_name(&classification.open_display_name);
+    let runtime = native_provider_runtime()?;
+    runtime.block_on(async {
+        let bytes = download_content_link_bytes(url).await?;
+        import_provider_bytes(data_dir, &display_name, &bytes).await
+    })
+}
+
+async fn import_provider_bytes(
+    data_dir: &str,
+    display_name: &str,
+    bytes: &[u8],
+) -> anyhow::Result<serde_json::Value> {
+    let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
+    let modified_at_by_path = BTreeMap::new();
+    let entries = provider_entries(&provider, &modified_at_by_path).await?;
+    let path = unique_provider_path(&entries, "", display_name, None);
+    write_provider_file(&provider, &path, bytes).await?;
+    import_provider_mutation(&mut daemon, &provider, &path, Some(visible_root)).await
+}
+
+async fn download_content_link_bytes(url: &str) -> anyhow::Result<Vec<u8>> {
+    #[cfg(test)]
+    if let Some(bytes) = CONTENT_LINK_DOWNLOAD_BYTES_FOR_TEST
+        .lock()
+        .expect("content link test bytes lock")
+        .clone()
+    {
+        return Ok(bytes);
+    }
+
+    let response = reqwest::get(url)
+        .await
+        .with_context(|| format!("downloading {url}"))?;
+    let status = response.status();
+    if !status.is_success() {
+        anyhow::bail!("content link returned HTTP {status}");
+    }
+    let bytes = response
+        .bytes()
+        .await
+        .with_context(|| format!("reading response body from {url}"))?;
+    Ok(bytes.to_vec())
+}
+
+#[cfg(test)]
+static CONTENT_LINK_DOWNLOAD_BYTES_FOR_TEST: Mutex<Option<Vec<u8>>> = Mutex::new(None);
+
+#[cfg(test)]
+pub(crate) struct ContentLinkDownloadBytesGuard;
+
+#[cfg(test)]
+impl Drop for ContentLinkDownloadBytesGuard {
+    fn drop(&mut self) {
+        *CONTENT_LINK_DOWNLOAD_BYTES_FOR_TEST
+            .lock()
+            .expect("content link test bytes lock") = None;
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn download_content_link_bytes_for_test(
+    bytes: Vec<u8>,
+) -> ContentLinkDownloadBytesGuard {
+    *CONTENT_LINK_DOWNLOAD_BYTES_FOR_TEST
+        .lock()
+        .expect("content link test bytes lock") = Some(bytes);
+    ContentLinkDownloadBytesGuard
 }
 
 fn run_native_provider_normalize_path(path: &str) -> anyhow::Result<serde_json::Value> {
