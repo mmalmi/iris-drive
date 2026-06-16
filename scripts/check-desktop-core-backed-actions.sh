@@ -83,7 +83,7 @@ require_contains windows/App.xaml.cs "SendLaunchArgumentsToPrimary(e.Args)"
 require_contains windows/MainWindow.xaml.cs "ApplyLaunchArguments"
 require_contains windows/MainWindowShares.cs "OpenShareDialogFromLink"
 require_contains windows/MainWindowShares.cs "OpenContentLinkFromLink"
-require_contains windows/IrisDriveService.cs '["type"] = "import_content_link"'
+require_contains windows/IrisDriveServiceContentLinks.cs '["type"] = "import_content_link"'
 require_contains windows/MainWindowShares.cs "InviteShareMemberFromEvidenceAsync"
 require_contains windows/MainWindowShares.cs "RecordPendingShareInviteAsync"
 require_contains windows/MainWindowShares.cs "MissingKeyWrapCount"

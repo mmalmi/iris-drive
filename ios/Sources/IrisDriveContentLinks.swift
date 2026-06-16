@@ -1,4 +1,19 @@
+import Foundation
 import UIKit
+
+struct PendingContentLink: Identifiable {
+    let id = UUID()
+    let linkInput: NativeLinkInputClassification
+
+    var label: String {
+        let displayName = linkInput.openDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        return displayName.isEmpty ? "file" : displayName
+    }
+
+    var title: String {
+        "Open \(label)?"
+    }
+}
 
 extension IrisDriveMobileModel {
     func openContentLink(_ linkInput: NativeLinkInputClassification) {

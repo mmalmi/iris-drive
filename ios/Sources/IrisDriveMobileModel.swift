@@ -12,28 +12,10 @@ private let defaultBlossomServers = ["https://upload.iris.to"]
 private let iosDebugStateFileName = "debug-state.json"
 private let fileProviderPathIdentifierPrefix = "path:"
 private let fileProviderRegistrationIdentityKey = "fileProviderRegistrationIdentity"
-private let foregroundSyncIntervalNanoseconds: UInt64 = 5_000_000_000
-private let nativeBackgroundStackSize = 8 * 1024 * 1024
 #if DEBUG
 private let fileProviderDebugRegistrationVersion = 2
 private let fileProviderDebugRegistrationVersionKey = "fileProviderDebugRegistrationVersion"
 #endif
-
-enum IrisDriveBackgroundSyncTask { static let identifier = "to.iris.drive.ios.background-sync" }
-
-struct PendingContentLink: Identifiable {
-    let id = UUID()
-    let linkInput: NativeLinkInputClassification
-
-    var label: String {
-        let displayName = linkInput.openDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
-        return displayName.isEmpty ? "file" : displayName
-    }
-
-    var title: String {
-        "Open \(label)?"
-    }
-}
 
 @MainActor
 final class IrisDriveMobileModel: ObservableObject {

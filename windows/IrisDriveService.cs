@@ -8,7 +8,7 @@ using System.Threading.Tasks;
 
 namespace IrisDrive.WindowsShell;
 
-public sealed class IrisDriveService
+public sealed partial class IrisDriveService
 {
     private const string LocalMutationScanEnv = "IRIS_DRIVE_WINDOWS_CLOUD_SCAN_LOCAL_MUTATIONS";
     private static readonly SemaphoreSlim ProviderMutationGate = new(1, 1);
@@ -437,21 +437,6 @@ public sealed class IrisDriveService
                 ["path"] = "",
                 ["parent"] = "",
                 ["target_path"] = "",
-            });
-    }
-
-    public Task<IrisDriveStatusData> ImportContentLinkAsync(string link)
-    {
-        if (string.IsNullOrWhiteSpace(link))
-        {
-            throw new InvalidOperationException("Content link is required.");
-        }
-
-        return NativeCore.DispatchActionAsync(
-            new Dictionary<string, object>
-            {
-                ["type"] = "import_content_link",
-                ["link"] = link.Trim(),
             });
     }
 
