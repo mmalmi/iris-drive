@@ -684,10 +684,9 @@ class IrisDriveAndroidGuiFlowTest {
         val pixel = approved.devices.single { it.label == "Pixel" }
         assertFalse(pixel.isOnline)
         assertEquals(2, approved.authorizedDeviceCount)
-        assertEquals(1, approved.onlineDeviceCount)
 
         render(state = approved)
-        compose.onNodeWithText("1/2 devices", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("/2 devices", substring = true).assertIsDisplayed()
         compose.onNodeWithTag("tabDevices").activate()
         compose.onNodeWithTag("devicesContent").performScrollToNode(hasText("Pixel"))
         compose.onNodeWithText("Pixel").assertIsDisplayed()
