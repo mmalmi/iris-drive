@@ -199,6 +199,7 @@ structure:
     ./scripts/check-desktop-core-backed-actions.sh
     ./scripts/check-tray-menu-state.sh
     ./scripts/check-nostr-client-shutdown.sh
+    ./scripts/check-macos-native-core-serialization.sh
     ./scripts/check-macos-native-link-input.sh
     ./scripts/check-macos-normalized-status.sh
     ./scripts/check-macos-gateway-default.sh

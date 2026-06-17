@@ -79,7 +79,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var externalStatusRefreshWorkItem: DispatchWorkItem?
     private var updatePollTimer: Timer?
     private var startupUpdateCheckDone = false
-    private lazy var desktopCore = IrisDriveDesktopCore(
+    let nativeCoreQueue = DispatchQueue(label: "to.iris.drive.macos.native-core", qos: .utility)
+    var nativeStatusRefreshInFlight = false
+    var nativeStatusRefreshPending = false
+    lazy var desktopCore = IrisDriveDesktopCore(
         dataDir: runtimePaths().configDirectory.path,
         appVersion: appVersion
     )
@@ -106,7 +109,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         installWindowObserver()
         observeWindows()
         suppressHiddenLaunchWindowIfNeeded()
-        DispatchQueue.global(qos: .utility).async { [weak self] in
+        nativeCoreQueue.async { [weak self] in
             NSLog("Iris Drive launching daemon bootstrap")
             self?.bootstrapAndStartDaemon()
         }
@@ -1483,8 +1486,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
 
             try applyNativeStateJson(desktopCore.stateJson())
-            updateStatus("Turning sync on")
-            startDaemon(idrive, paths: paths)
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.updateStatus("Turning sync on")
+                self.startDaemon(idrive, paths: paths)
+            }
         } catch {
             NSLog("Iris Drive daemon bootstrap failed: \(error)")
             markStartupStateLoaded()
@@ -1529,7 +1535,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let paths = runtimePaths()
         runtimePathsForMenu = paths
         updateStatus("Setting up")
-        DispatchQueue.global(qos: .utility).async {
+        nativeCoreQueue.async { [weak self] in
+            guard let self else { return }
             do {
                 try FileManager.default.createDirectory(
                     at: paths.configDirectory,
@@ -2131,7 +2138,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return ui["setup_complete"] as? Bool ?? false
     }
 
-    private func applyNativeStateJson(_ json: String) throws {
+    func applyNativeStateJson(_ json: String) throws {
         applyNativeStatePayload(try nativeStatePayload(from: json))
     }
 
@@ -2251,7 +2258,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let paths = runtimePathsForMenu ?? runtimePaths()
         runtimePathsForMenu = paths
         updateStatus(progress)
-        DispatchQueue.global(qos: .utility).async {
+        nativeCoreQueue.async { [weak self] in
+            guard let self else { return }
             do {
                 let data = try JSONSerialization.data(withJSONObject: action)
                 guard let actionJson = String(data: data, encoding: .utf8) else {
@@ -2275,8 +2283,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             } catch {
                 NSLog("Iris Drive native action failed: \(error)")
-                self.updateStatus(error.localizedDescription)
                 DispatchQueue.main.async {
+                    self.updateStatus(error.localizedDescription)
                     NSSound.beep()
                     failure?(error)
                 }
@@ -2566,13 +2574,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             refreshExternalDaemonStatus(paths: paths)
             return
         }
-        DispatchQueue.global(qos: .utility).async {
-            do {
-                try self.applyNativeStateJson(self.desktopCore.refreshJson())
-            } catch {
-                NSLog("Iris Drive status refresh failed: \(error)")
-            }
-        }
+        self.scheduleNativeStatusRefresh()
     }
 
     private func refreshExternalDaemonStatus(paths: IrisDriveRuntimePaths) {
@@ -2943,15 +2945,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard runtimePathsForMenu != nil else {
             return nil
         }
-        do {
-            let state = try nativeStatePayload(from: desktopCore.refreshJson())
-            applyNativeStatePayload(state)
-            let ui = state["ui"] as? [String: Any] ?? [:]
-            return ui["snapshot_link"] as? String
-        } catch {
-            NSLog("Iris Drive snapshot link refresh failed: \(error)")
-            return nil
-        }
+        refreshStatus()
+        return nil
     }
 
     private static func intValue(_ value: Any?) -> Int? {

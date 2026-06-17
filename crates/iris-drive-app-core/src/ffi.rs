@@ -2813,3 +2813,5 @@ mod backup_tests;
 mod provider_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod app_key_link_flow_tests;
