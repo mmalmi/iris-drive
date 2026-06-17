@@ -13,7 +13,7 @@ public sealed partial class IrisDriveService
             throw new InvalidOperationException("Content link is required.");
         }
 
-        return NativeCore.DispatchActionAsync(
+        return DispatchNativeActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "import_content_link",

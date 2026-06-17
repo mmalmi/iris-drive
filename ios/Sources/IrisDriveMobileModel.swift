@@ -67,6 +67,7 @@ final class IrisDriveMobileModel: ObservableObject {
 
     private let defaults = UserDefaults.standard
     private let nativeCore: IrisDriveNativeCore
+    private let nativeCoreQueue = DispatchQueue(label: "to.iris.drive.ios.native-core", qos: .utility)
     private var lastState: NativeAppState?
     private var fileProviderOpenAttempt = 0
     private var currentProviderSignalKey = ""
@@ -494,7 +495,7 @@ final class IrisDriveMobileModel: ObservableObject {
 
     func refresh() {
         stateGeneration &+= 1
-        applyStateJson(nativeCore.refreshJson())
+        applyStateJson(runNative { $0.refreshJson() })
         ensureFileProviderDomainIfProfileExists()
     }
 
@@ -732,7 +733,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func qrMatrix(for value: String) -> QrMatrix {
-        nativeCore.qrMatrix(text: value)
+        runNative { $0.qrMatrix(text: value) }
     }
 
     func copySnapshotLink() {
@@ -1054,7 +1055,7 @@ final class IrisDriveMobileModel: ObservableObject {
         profileUsername = ""
         profilePhotoName = ""
         persistLocalSettings()
-        applyStateJson(nativeCore.refreshJson())
+        applyStateJson(runNative { $0.refreshJson() })
     }
 
     func handle(url: URL) {
@@ -1126,7 +1127,7 @@ final class IrisDriveMobileModel: ObservableObject {
 
     private func load() {
         removeObsoletePrototypeDefaults()
-        applyStateJson(nativeCore.stateJson())
+        applyStateJson(runNative { $0.stateJson() })
         deviceLabel = defaults.string(forKey: "deviceLabel") ?? UIDevice.current.name
         if hasLocalProfile {
             profileUsername = defaults.string(forKey: "profileUsername") ?? profileUsername
@@ -1317,7 +1318,7 @@ final class IrisDriveMobileModel: ObservableObject {
             return nil
         }
         stateGeneration &+= 1
-        applyStateJson(nativeCore.dispatchJson(actionJson))
+        applyStateJson(runNative { $0.dispatchJson(actionJson) })
         return lastState
     }
 
@@ -1355,15 +1356,14 @@ final class IrisDriveMobileModel: ObservableObject {
         _ operation: @escaping @Sendable (IrisDriveNativeCore) -> String
     ) async -> String {
         let nativeCore = nativeCore
+        let nativeCoreQueue = nativeCoreQueue
         return await withCheckedContinuation { continuation in
-            let thread = Thread {
-                continuation.resume(returning: operation(nativeCore))
-            }
-            thread.name = "IrisDriveNativeCore"
-            thread.qualityOfService = .utility
-            thread.stackSize = nativeBackgroundStackSize
-            thread.start()
+            nativeCoreQueue.async { continuation.resume(returning: operation(nativeCore)) }
         }
+    }
+
+    private func runNative<T>(_ operation: (IrisDriveNativeCore) -> T) -> T {
+        nativeCoreQueue.sync { operation(nativeCore) }
     }
 
     private func encodeNativeAction(_ action: [String: Any]) -> String? {

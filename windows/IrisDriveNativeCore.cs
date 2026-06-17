@@ -2,7 +2,6 @@ using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using System.Text.Json;
-using System.Threading.Tasks;
 
 namespace IrisDrive.WindowsShell;
 
@@ -29,10 +28,10 @@ public sealed class IrisDriveNativeCore : IDisposable
         return TakeString(iris_drive_app_dispatch_json(handle, actionJson));
     }
 
-    public Task<IrisDriveStatusData> DispatchActionAsync(IReadOnlyDictionary<string, object> action)
+    public IrisDriveStatusData DispatchAction(IReadOnlyDictionary<string, object> action)
     {
         var actionJson = JsonSerializer.Serialize(action);
-        return Task.Run(() => IrisDriveStatusData.FromNativeJson(DispatchJson(actionJson)));
+        return IrisDriveStatusData.FromNativeJson(DispatchJson(actionJson));
     }
 
     public static bool IsCompleteLinkInput(string input)

@@ -19,6 +19,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -27,6 +28,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.io.File
+import java.util.concurrent.Executors
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.NativeActions
 import to.iris.drive.app.core.NativeCore
@@ -41,8 +43,15 @@ class MainActivity : ComponentActivity() {
     private val stateFlow = MutableStateFlow(AppState(isLoaded = false))
     private val backupCheckProgressFlow = MutableStateFlow(BackupCheckProgress())
     private val shareDialogFlow = MutableStateFlow<ShareDialogRequest?>(null)
+    private val nativeCoreExecutor = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "IrisDriveNativeCore")
+    }
+    private val nativeCoreDispatcher = nativeCoreExecutor.asCoroutineDispatcher()
     private var nativeHandle: Long = 0
     private var refreshJob: Job? = null
+    private var nativeRefreshInFlight = false
+    private var nativeRefreshPending = false
+    private val nativeRefreshCallbacks = mutableListOf<(AppState) -> Unit>()
     private var nextShareDialogRequestId = 0L
     private lateinit var selfUpdateManager: AndroidSelfUpdateManager
 
@@ -252,18 +261,20 @@ class MainActivity : ComponentActivity() {
         val handle = nativeHandle
         nativeHandle = 0
         if (handle != 0L) {
-            NativeCore.appFree(handle)
+            nativeCoreExecutor.execute { NativeCore.appFree(handle) }
         }
+        nativeCoreDispatcher.close()
         super.onDestroy()
     }
 
     private fun startNativeCore(launchIntent: Intent?) {
-        lifecycleScope.launch(Dispatchers.IO) {
+        lifecycleScope.launch(nativeCoreDispatcher) {
             NativeCore.initializeAndroidContext(applicationContext)
             val handle = NativeCore.appNew(filesDir.absolutePath, BuildConfig.VERSION_NAME)
             var installed = false
             try {
-                val initialState = stateFromJson(NativeCore.stateJson(handle))
+                val initialJson = NativeCore.stateJson(handle)
+                val initialState = stateFromJson(initialJson)
                 withContext(Dispatchers.Main) {
                     if (nativeHandle != 0L) {
                         return@withContext
@@ -271,7 +282,7 @@ class MainActivity : ComponentActivity() {
                     nativeHandle = handle
                     installed = true
                     stateFlow.value = initialState
-                    writeDebugState()
+                    writeDebugState(initialJson)
                     IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, initialState)
                     refresh(::autoStartSyncIfNeeded)
                     refreshJob = lifecycleScope.launch {
@@ -294,27 +305,50 @@ class MainActivity : ComponentActivity() {
     private fun refresh(onState: ((AppState) -> Unit)? = null) {
         val handle = nativeHandle
         if (handle == 0L) return
-        lifecycleScope.launch(Dispatchers.IO) {
-            val state = stateFromJson(NativeCore.refreshJson(handle))
+        if (nativeRefreshInFlight) {
+            nativeRefreshPending = true
+            if (onState != null) {
+                nativeRefreshCallbacks.add(onState)
+            }
+            return
+        }
+        nativeRefreshInFlight = true
+        lifecycleScope.launch(nativeCoreDispatcher) {
+            val json = NativeCore.refreshJson(handle)
+            val state = stateFromJson(json)
             withContext(Dispatchers.Main) {
-                stateFlow.value = state
-                writeDebugState()
-                IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, state)
-                onState?.invoke(state)
+                val pendingCallbacks = nativeRefreshCallbacks.toList()
+                nativeRefreshCallbacks.clear()
+                nativeRefreshInFlight = false
+                applyNativeState(state, onState, json)
+                pendingCallbacks.forEach { it(state) }
+                if (nativeRefreshPending) {
+                    nativeRefreshPending = false
+                    refresh()
+                }
             }
         }
+    }
+
+    private fun applyNativeState(
+        state: AppState,
+        onState: ((AppState) -> Unit)? = null,
+        debugJson: String? = null,
+    ) {
+        stateFlow.value = state
+        writeDebugState(debugJson)
+        IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, state)
+        onState?.invoke(state)
     }
 
     private fun dispatch(actionJson: String, onState: ((AppState) -> Unit)? = null) {
         val handle = nativeHandle
         if (handle == 0L) return
-        lifecycleScope.launch(Dispatchers.IO) {
-            val state = stateFromJson(NativeCore.dispatchJson(handle, actionJson))
+        lifecycleScope.launch(nativeCoreDispatcher) {
+            val json = NativeCore.dispatchJson(handle, actionJson)
+            val state = stateFromJson(json)
             withContext(Dispatchers.Main) {
-                stateFlow.value = state
-                writeDebugState()
-                IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, state)
-                onState?.invoke(state)
+                applyNativeState(state, onState, json)
             }
         }
     }
@@ -338,7 +372,7 @@ class MainActivity : ComponentActivity() {
             total = targets.size,
             activeTarget = targets.first(),
         )
-        lifecycleScope.launch(Dispatchers.IO) {
+        lifecycleScope.launch(nativeCoreDispatcher) {
             try {
                 for ((index, currentTarget) in targets.withIndex()) {
                     withContext(Dispatchers.Main) {
@@ -348,11 +382,11 @@ class MainActivity : ComponentActivity() {
                             activeTarget = currentTarget,
                         )
                     }
-                    val state =
-                        stateFromJson(NativeCore.dispatchJson(handle, NativeActions.checkBackups(currentTarget)))
+                    val json = NativeCore.dispatchJson(handle, NativeActions.checkBackups(currentTarget))
+                    val state = stateFromJson(json)
                     withContext(Dispatchers.Main) {
                         stateFlow.value = state
-                        writeDebugState()
+                        writeDebugState(json)
                         IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, state)
                         backupCheckProgressFlow.value = BackupCheckProgress(
                             checked = index + 1,
@@ -649,10 +683,11 @@ class MainActivity : ComponentActivity() {
             }
     }
 
-    private fun writeDebugState() {
+    private fun writeDebugState(jsonText: String?) {
         if (!BuildConfig.DEBUG) return
+        if (jsonText.isNullOrBlank()) return
         runCatching {
-            File(filesDir, DEBUG_STATE_FILE).writeText(NativeCore.stateJson(nativeHandle))
+            File(filesDir, DEBUG_STATE_FILE).writeText(jsonText)
         }
     }
 
