@@ -277,6 +277,7 @@ pub(crate) async fn import_mount_root_and_publish(
     tombstone_base_root: Option<Cid>,
     direct_roots: &mut DirectRootExchange,
     fips_blocks: Option<&FsFipsBlockSync>,
+    daemon_tasks: &DaemonTaskSet,
 ) -> Result<()> {
     import_mount_root_and_publish_with_tombstone_paths(
         client,
@@ -286,6 +287,7 @@ pub(crate) async fn import_mount_root_and_publish(
         None,
         direct_roots,
         fips_blocks,
+        daemon_tasks,
     )
     .await
 }
@@ -298,6 +300,7 @@ pub(crate) async fn import_mount_root_and_publish_with_tombstone_paths(
     tombstone_paths: Option<&BTreeSet<String>>,
     direct_roots: &mut DirectRootExchange,
     fips_blocks: Option<&FsFipsBlockSync>,
+    daemon_tasks: &DaemonTaskSet,
 ) -> Result<()> {
     if !mount_visible_root_has_changed(&visible_root, tombstone_base_root.as_ref()) {
         let payload = json!({
@@ -329,7 +332,7 @@ pub(crate) async fn import_mount_root_and_publish_with_tombstone_paths(
             Ok(()) => None,
             Err(error) => Some(format!("{error:#}")),
         };
-    spawn_publish_current_state(
+    daemon_tasks.push(spawn_publish_current_state(
         client.clone(),
         config_dir.to_path_buf(),
         updated_config,
@@ -337,7 +340,7 @@ pub(crate) async fn import_mount_root_and_publish_with_tombstone_paths(
         true,
         "mounted_root_publish_finished",
         json!({"root_cid": import.root_cid.clone()}),
-    );
+    ));
     println!(
         "{}",
         json!({
@@ -366,7 +369,7 @@ pub(crate) fn spawn_publish_current_state(
     upload_blossom: bool,
     event_name: &'static str,
     context: Value,
-) {
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let started = std::time::Instant::now();
         let payload = match publish_current_state(
@@ -393,7 +396,7 @@ pub(crate) fn spawn_publish_current_state(
         };
         write_daemon_status(&config_dir, payload.clone());
         println!("{payload}");
-    });
+    })
 }
 
 pub(crate) async fn publish_current_state(
@@ -474,7 +477,7 @@ pub(crate) fn spawn_initial_publish(
     config_dir: PathBuf,
     startup_config: AppConfig,
     startup_state: ProfileState,
-) {
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         match tokio::time::timeout(
             std::time::Duration::from_secs(STARTUP_NETWORK_TIMEOUT_SECS),
@@ -531,7 +534,7 @@ pub(crate) fn spawn_initial_publish(
                 );
             }
         }
-    });
+    })
 }
 
 pub(crate) fn spawn_daemon_heartbeat(config_dir: PathBuf) {

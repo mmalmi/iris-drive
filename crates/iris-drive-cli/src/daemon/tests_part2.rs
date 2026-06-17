@@ -529,7 +529,7 @@ async fn root_apply_followup_skips_refresh_when_blocks_are_missing() {
     config.blossom_servers.clear();
     let (tx, mut rx) = tokio::sync::mpsc::channel(1);
 
-    spawn_root_apply_followup(
+    let task = spawn_root_apply_followup(
         config_dir.path().to_path_buf(),
         config,
         Some("not-a-cid".to_string()),
@@ -537,13 +537,16 @@ async fn root_apply_followup_skips_refresh_when_blocks_are_missing() {
         true,
         "test_refresh",
         Some(tx),
-    );
+    )
+    .expect("followup should be spawned");
 
     assert!(
         tokio::time::timeout(std::time::Duration::from_millis(200), rx.recv())
             .await
             .is_err()
     );
+    task.abort();
+    let _ = task.await;
 }
 
 #[test]

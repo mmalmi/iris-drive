@@ -5,6 +5,7 @@ pub(crate) async fn apply_one_event(
     event: &nostr_sdk::Event,
     fips_blocks: Option<Arc<FsFipsBlockSync>>,
     mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+    daemon_tasks: &DaemonTaskSet,
 ) -> Result<()> {
     use iris_drive_core::relay_sync;
     let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
@@ -84,7 +85,7 @@ pub(crate) async fn apply_one_event(
             sync.refresh_authorized_peers(&config).await;
         }
 
-        spawn_root_apply_followup(
+        if let Some(task) = spawn_root_apply_followup(
             config_dir.to_path_buf(),
             config.clone(),
             root_cid_to_pull,
@@ -92,7 +93,9 @@ pub(crate) async fn apply_one_event(
             followup.refresh_projection,
             "projected_drive_root",
             mount_refresh,
-        );
+        ) {
+            daemon_tasks.push(task);
+        }
         return Ok(());
     } else if kind == iris_drive_core::nostr_events::KIND_HASHTREE_ROOT {
         let Some(account_state) = config.profile.clone() else {
@@ -103,6 +106,7 @@ pub(crate) async fn apply_one_event(
             event,
             fips_blocks,
             mount_refresh,
+            daemon_tasks,
             &mut config,
             account_state,
         );
@@ -119,6 +123,7 @@ pub(crate) fn apply_files_root_event(
     event: &nostr_sdk::Event,
     fips_blocks: Option<Arc<FsFipsBlockSync>>,
     mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+    daemon_tasks: &DaemonTaskSet,
     config: &mut AppConfig,
     account_state: ProfileState,
 ) -> Result<()> {
@@ -158,7 +163,7 @@ pub(crate) fn apply_files_root_event(
         }),
     );
     config.save(config_path_in(config_dir))?;
-    spawn_root_apply_followup(
+    if let Some(task) = spawn_root_apply_followup(
         config_dir.to_path_buf(),
         config.clone(),
         root_cid_to_pull,
@@ -166,7 +171,9 @@ pub(crate) fn apply_files_root_event(
         was_applied,
         "projected_files_root",
         mount_refresh,
-    );
+    ) {
+        daemon_tasks.push(task);
+    }
     Ok(())
 }
 
@@ -220,9 +227,9 @@ pub(crate) fn spawn_root_apply_followup(
     should_refresh_projection: bool,
     projection_event: &'static str,
     mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
-) {
+) -> Option<tokio::task::JoinHandle<()>> {
     if root_cid_to_pull.is_none() && !should_refresh_projection {
-        return;
+        return None;
     }
     let expected_projection_root_key =
         root_apply_followup_key(&config, root_cid_to_pull.as_deref(), should_refresh_projection);
@@ -231,7 +238,7 @@ pub(crate) fn spawn_root_apply_followup(
         .filter(|root_cid| root_cid_belongs_to_peer(&config, root_cid))
         .cloned();
 
-    tokio::spawn(async move {
+    Some(tokio::spawn(async move {
         if let Some(root_cid) = root_cid_to_pull {
             let mut last_error = None;
             for delay_secs in event_block_pull_retry_delays(&config) {
@@ -383,7 +390,7 @@ pub(crate) fn spawn_root_apply_followup(
                 json!({"event": "mount_refresh_skipped", "reason": "no_virtual_mount"})
             );
         }
-    });
+    }))
 }
 
 async fn materialize_primary_merged_root_for_followup(

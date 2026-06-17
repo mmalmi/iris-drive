@@ -144,6 +144,7 @@ async fn import_windows_cloud_root_changes_and_publish(
     changes: Vec<WindowsCloudRootChange>,
     direct_roots: &mut DirectRootExchange,
     fips_blocks: Option<&FsFipsBlockSync>,
+    daemon_tasks: &DaemonTaskSet,
 ) -> Result<WindowsCloudImportOutcome> {
     let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
     let daemon = Daemon::open(config_dir).context("opening daemon for Windows Cloud Files root")?;
@@ -278,6 +279,7 @@ async fn import_windows_cloud_root_changes_and_publish(
         Some(&tombstone_paths),
         direct_roots,
         fips_blocks,
+        daemon_tasks,
     )
     .await
     .context("publishing Windows Cloud Files root")?;

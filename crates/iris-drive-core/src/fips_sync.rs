@@ -91,7 +91,7 @@ pub enum FipsSyncError {
 pub struct FipsBlockSync<L: Store + Send + Sync + 'static> {
     transport: Arc<HashtreeFipsTransport<L>>,
     local_store: Arc<L>,
-    receiver_task: JoinHandle<()>,
+    receiver_task: Option<JoinHandle<()>>,
     mesh_pubsub: Arc<FipsMeshPubsub<L>>,
     endpoint_npub: String,
     discovery_scope: String,
@@ -157,7 +157,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         Ok(Self {
             transport,
             local_store,
-            receiver_task,
+            receiver_task: Some(receiver_task),
             mesh_pubsub,
             endpoint_npub: endpoint.local_peer_id,
             discovery_scope,
@@ -281,6 +281,22 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             self.mesh_pubsub.clone(),
         )
         .await
+    }
+
+    pub async fn shutdown(mut self) -> Result<(), FipsSyncError> {
+        let shutdown_result = self.shutdown_endpoint().await;
+        if let Some(receiver_task) = self.receiver_task.take() {
+            receiver_task.abort();
+            let _ = receiver_task.await;
+        }
+        shutdown_result
+    }
+
+    pub async fn shutdown_endpoint(&self) -> Result<(), FipsSyncError> {
+        self.transport
+            .shutdown()
+            .await
+            .map_err(|error| FipsSyncError::Endpoint(error.to_string()))
     }
 }
 
@@ -415,7 +431,9 @@ fn parse_bool_env_value(value: &str) -> Option<bool> {
 
 impl<L: Store + Send + Sync + 'static> Drop for FipsBlockSync<L> {
     fn drop(&mut self) {
-        self.receiver_task.abort();
+        if let Some(receiver_task) = self.receiver_task.take() {
+            receiver_task.abort();
+        }
     }
 }
 

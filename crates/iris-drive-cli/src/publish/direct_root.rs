@@ -113,6 +113,7 @@ impl DirectRootExchange {
         config_dir: &Path,
         sync: Arc<FsFipsBlockSync>,
         mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+        daemon_tasks: &DaemonTaskSet,
         frame: DirectRootFrame,
     ) -> Result<bool> {
         if self.seen_keys.contains(&frame.key) {
@@ -131,6 +132,7 @@ impl DirectRootExchange {
             &event,
             Some(sync.clone()),
             mount_refresh.clone(),
+            daemon_tasks,
         )
         .await
         {
@@ -170,6 +172,7 @@ impl DirectRootExchange {
         config_dir: &Path,
         sync: Arc<FsFipsBlockSync>,
         mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+        daemon_tasks: &DaemonTaskSet,
     ) -> Result<()> {
         for message in sync.drain_mesh_pubsub_events().await {
             self.handle_mesh_event(
@@ -177,6 +180,7 @@ impl DirectRootExchange {
                 config_dir,
                 sync.clone(),
                 mount_refresh.clone(),
+                daemon_tasks,
                 message,
             )
             .await?;
@@ -190,6 +194,7 @@ impl DirectRootExchange {
         config_dir: &Path,
         sync: Arc<FsFipsBlockSync>,
         mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+        daemon_tasks: &DaemonTaskSet,
         message: FipsMeshPubsubEvent,
     ) -> Result<()> {
         if !message
@@ -203,7 +208,7 @@ impl DirectRootExchange {
         let root_key = frame.key.clone();
         let root_event_id = frame.event_id.clone();
         if !self
-            .apply_direct_root_frame(client, config_dir, sync, mount_refresh, frame)
+            .apply_direct_root_frame(client, config_dir, sync, mount_refresh, daemon_tasks, frame)
             .await?
         {
             return Ok(());
@@ -229,6 +234,7 @@ impl DirectRootExchange {
         config_dir: &Path,
         sync: Arc<FsFipsBlockSync>,
         mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+        daemon_tasks: &DaemonTaskSet,
         message: iris_drive_core::FipsAppMessage,
     ) -> Result<()> {
         if message.topic != DIRECT_ROOT_APP_TOPIC {
@@ -239,7 +245,7 @@ impl DirectRootExchange {
         let root_key = frame.key.clone();
         let root_event_id = frame.event_id.clone();
         if !self
-            .apply_direct_root_frame(client, config_dir, sync, mount_refresh, frame)
+            .apply_direct_root_frame(client, config_dir, sync, mount_refresh, daemon_tasks, frame)
             .await?
         {
             return Ok(());

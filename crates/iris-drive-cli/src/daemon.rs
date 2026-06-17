@@ -4,6 +4,33 @@ use iris_drive_core::daemon_liveness::{daemon_lock_path, process_is_running};
 use iris_drive_core::provider::normalize_provider_path;
 use iris_drive_core::relay_config::normalize_relay_url;
 
+#[derive(Clone, Default)]
+pub(crate) struct DaemonTaskSet {
+    tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+}
+
+impl DaemonTaskSet {
+    pub(crate) fn push(&self, task: tokio::task::JoinHandle<()>) {
+        match self.tasks.lock() {
+            Ok(mut tasks) => tasks.push(task),
+            Err(_) => task.abort(),
+        }
+    }
+
+    async fn abort_all(&self) {
+        let tasks = match self.tasks.lock() {
+            Ok(mut tasks) => std::mem::take(&mut *tasks),
+            Err(_) => Vec::new(),
+        };
+        for task in &tasks {
+            task.abort();
+        }
+        for task in tasks {
+            let _ = task.await;
+        }
+    }
+}
+
 include!("daemon/runtime.rs");
 async fn publish_provider_root_if_changed(
     client: &nostr_sdk::Client,
@@ -11,6 +38,7 @@ async fn publish_provider_root_if_changed(
     last_root_key: &mut Option<String>,
     direct_roots: &mut DirectRootExchange,
     fips_blocks: Option<&FsFipsBlockSync>,
+    daemon_tasks: &DaemonTaskSet,
 ) -> Result<Option<AppConfig>> {
     let updated_config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let current_key = current_app_key_root_key(&updated_config);
@@ -30,7 +58,7 @@ async fn publish_provider_root_if_changed(
             Ok(()) => None,
             Err(error) => Some(format!("{error:#}")),
         };
-    spawn_publish_current_state(
+    daemon_tasks.push(spawn_publish_current_state(
         client.clone(),
         config_dir.to_path_buf(),
         updated_config,
@@ -38,7 +66,7 @@ async fn publish_provider_root_if_changed(
         true,
         "provider_root_publish_finished",
         json!({"root_key": current_key.clone()}),
-    );
+    ));
     emit_daemon_status_event(
         config_dir,
         json!({
@@ -182,6 +210,7 @@ async fn import_mount_visible_root_update(
     mount_tombstone_base: &mut Option<Cid>,
     direct_roots: &mut DirectRootExchange,
     fips_blocks: Option<&FsFipsBlockSync>,
+    daemon_tasks: &DaemonTaskSet,
 ) -> Result<()> {
     let imported_visible_root = visible_root.clone();
     let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
@@ -192,6 +221,7 @@ async fn import_mount_visible_root_update(
         mount_tombstone_base.clone(),
         direct_roots,
         fips_blocks,
+        daemon_tasks,
     )
     .await?;
     *mount_tombstone_base = Some(imported_visible_root);
@@ -266,7 +296,7 @@ pub(crate) fn spawn_status_probe(
     client: nostr_sdk::Client,
     config_dir: PathBuf,
     fips_blocks: Option<Arc<FsFipsBlockSync>>,
-) {
+) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let relay_statuses = match tokio::time::timeout(
             std::time::Duration::from_secs(STATUS_PROBE_TIMEOUT_SECS),
@@ -293,7 +323,7 @@ pub(crate) fn spawn_status_probe(
         });
         let status = write_daemon_status(&config_dir, status);
         println!("{status}");
-    });
+    })
 }
 
 pub(crate) async fn relay_status_payload(client: &nostr_sdk::Client) -> Vec<serde_json::Value> {

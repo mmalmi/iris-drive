@@ -103,6 +103,7 @@ pub(crate) fn cmd_daemon(
     runtime.block_on(async {
         let mut block_config = config.clone();
         block_config.relays = relays.clone();
+        let daemon_tasks = DaemonTaskSet::default();
         let (fips_blocks, fips_block_sync_error) =
             match start_fips_block_sync(config_dir, &block_config).await {
                 Ok(sync) => (Some(Arc::new(sync)), None),
@@ -275,7 +276,7 @@ pub(crate) fn cmd_daemon(
         let startup_config = config.clone();
         let startup_state = state.clone();
         for root_cid in startup_root_cids_needing_sync(config_dir, &config) {
-            spawn_root_apply_followup(
+            if let Some(task) = spawn_root_apply_followup(
                 config_dir.to_path_buf(),
                 config.clone(),
                 Some(root_cid),
@@ -283,9 +284,11 @@ pub(crate) fn cmd_daemon(
                 true,
                 "startup_root_sync",
                 mount_refresh_tx.clone(),
-            );
+            ) {
+                daemon_tasks.push(task);
+            }
         }
-        spawn_root_apply_followup(
+        if let Some(task) = spawn_root_apply_followup(
             config_dir.to_path_buf(),
             config.clone(),
             None,
@@ -293,13 +296,15 @@ pub(crate) fn cmd_daemon(
             true,
             "startup_projection",
             mount_refresh_tx.clone(),
-        );
-        spawn_initial_publish(
+        ) {
+            daemon_tasks.push(task);
+        }
+        daemon_tasks.push(spawn_initial_publish(
             client.clone(),
             config_dir.to_path_buf(),
             startup_config,
             startup_state,
-        );
+        ));
         if let Err(error) =
             announce_current_state_direct(&mut direct_roots, config_dir, fips_blocks.as_deref())
                 .await
@@ -366,10 +371,11 @@ pub(crate) fn cmd_daemon(
                                 apply_one_event(
                                     &client,
                                     config_dir,
-                                    &event,
-                                    fips_blocks.clone(),
-                                    mount_refresh_tx.clone(),
-                                )
+	                                    &event,
+	                                    fips_blocks.clone(),
+	                                    mount_refresh_tx.clone(),
+	                                    &daemon_tasks,
+	                                )
                                 .await
                             {
                                 println!(
@@ -377,11 +383,11 @@ pub(crate) fn cmd_daemon(
                                     json!({"event": "apply_error", "id": event.id.to_hex(), "error": e.to_string()})
                                 );
                             } else if let Err(error) =
-                                announce_current_state_direct(
-                                    &mut direct_roots,
-                                    config_dir,
-                                    fips_blocks.as_deref(),
-                                )
+	                                announce_current_state_direct(
+	                                    &mut direct_roots,
+	                                    config_dir,
+	                                    fips_blocks.as_deref(),
+	                                )
                                 .await
                             {
                                 println!(
@@ -425,13 +431,14 @@ pub(crate) fn cmd_daemon(
                         visible_root = drained_visible_root;
                     }
                     match import_mount_visible_root_update(
-                        &client,
-                        config_dir,
-                        visible_root,
-                        &mut mount_tombstone_base,
-                        &mut direct_roots,
-                        fips_blocks.as_deref(),
-                    )
+	                        &client,
+	                        config_dir,
+	                        visible_root,
+	                        &mut mount_tombstone_base,
+	                        &mut direct_roots,
+	                        fips_blocks.as_deref(),
+	                        &daemon_tasks,
+	                    )
                     .await
                     {
                         Ok(()) => update_last_provider_root_key(config_dir, &mut last_provider_root_key),
@@ -462,11 +469,12 @@ pub(crate) fn cmd_daemon(
                         match import_windows_cloud_root_changes_and_publish(
                             &client,
                             config_dir,
-                            root,
-                            changes,
-                            &mut direct_roots,
-                            fips_blocks.as_deref(),
-                        )
+	                            root,
+	                            changes,
+	                            &mut direct_roots,
+	                            fips_blocks.as_deref(),
+	                            &daemon_tasks,
+	                        )
                         .await
                         {
                             Ok(WindowsCloudImportOutcome::Changed { root_cid, paths }) => {
@@ -499,11 +507,12 @@ pub(crate) fn cmd_daemon(
                     }
                     match publish_provider_root_if_changed(
                         &client,
-                        config_dir,
-                        &mut last_provider_root_key,
-                        &mut direct_roots,
-                        fips_blocks.as_deref(),
-                    )
+	                        config_dir,
+	                        &mut last_provider_root_key,
+	                        &mut direct_roots,
+	                        fips_blocks.as_deref(),
+	                        &daemon_tasks,
+	                    )
                     .await
                     {
                         Ok(Some(_updated_config)) => {}
@@ -528,11 +537,12 @@ pub(crate) fn cmd_daemon(
                         match import_mount_visible_root_update(
                             &client,
                             config_dir,
-                            visible_root,
-                            &mut mount_tombstone_base,
-                            &mut direct_roots,
-                            fips_blocks.as_deref(),
-                        )
+	                            visible_root,
+	                            &mut mount_tombstone_base,
+	                            &mut direct_roots,
+	                            fips_blocks.as_deref(),
+	                            &daemon_tasks,
+	                        )
                         .await
                         {
                             Ok(()) => {
@@ -578,11 +588,12 @@ pub(crate) fn cmd_daemon(
                                     match import_mount_visible_root_update(
                                         &client,
                                         config_dir,
-                                        visible_root,
-                                        &mut mount_tombstone_base,
-                                        &mut direct_roots,
-                                        fips_blocks.as_deref(),
-                                    )
+	                                        visible_root,
+	                                        &mut mount_tombstone_base,
+	                                        &mut direct_roots,
+	                                        fips_blocks.as_deref(),
+	                                        &daemon_tasks,
+	                                    )
                                     .await
                                     {
                                         Ok(()) => {
@@ -625,18 +636,22 @@ pub(crate) fn cmd_daemon(
                     }
                 }
                 _ = relay_status_timer.tick() => {
-                    spawn_status_probe(client.clone(), config_dir.to_path_buf(), fips_blocks.clone());
+                    daemon_tasks.push(spawn_status_probe(
+                        client.clone(),
+                        config_dir.to_path_buf(),
+                        fips_blocks.clone(),
+                    ));
                     direct_roots
                         .request_roots_from_new_peers(config_dir, fips_blocks.as_deref())
                         .await;
                 }
                 _ = direct_root_announce_timer.tick() => {
                     if let Err(error) =
-                        announce_current_state_direct(
-                            &mut direct_roots,
-                            config_dir,
-                            fips_blocks.as_deref(),
-                        )
+	                        announce_current_state_direct(
+	                            &mut direct_roots,
+	                            config_dir,
+	                            fips_blocks.as_deref(),
+	                        )
                         .await
                     {
                         println!(
@@ -648,11 +663,12 @@ pub(crate) fn cmd_daemon(
                 _ = provider_root_poll_timer.tick(), if provider_root_poll_enabled(config_root_watch_active) => {
                     match publish_provider_root_if_changed(
                         &client,
-                        config_dir,
-                        &mut last_provider_root_key,
-                        &mut direct_roots,
-                        fips_blocks.as_deref(),
-                    )
+	                        config_dir,
+	                        &mut last_provider_root_key,
+	                        &mut direct_roots,
+	                        fips_blocks.as_deref(),
+	                        &daemon_tasks,
+	                    )
                     .await
                     {
                         Ok(Some(_updated_config)) => {}
@@ -724,13 +740,14 @@ pub(crate) fn cmd_daemon(
                             }
                             if let Some(sync) = fips_blocks.as_ref()
                                 && let Err(error) = direct_roots
-                                    .handle_app_message(
-                                        &client,
-                                        config_dir,
-                                        sync.clone(),
-                                        mount_refresh_tx.clone(),
-                                        message,
-                                    )
+	                                    .handle_app_message(
+	                                        &client,
+	                                        config_dir,
+	                                        sync.clone(),
+	                                        mount_refresh_tx.clone(),
+	                                        &daemon_tasks,
+	                                        message,
+	                                    )
                                     .await
                             {
                                 println!(
@@ -760,19 +777,21 @@ pub(crate) fn cmd_daemon(
                             .handle_mesh_event(
                                 &client,
                                 config_dir,
-                                sync.clone(),
-                                mount_refresh_tx.clone(),
-                                message,
-                            )
+	                                sync.clone(),
+	                                mount_refresh_tx.clone(),
+	                                &daemon_tasks,
+	                                message,
+	                            )
                             .await;
                         if result.is_ok() {
                             result = direct_roots
                                 .drain_mesh_events(
-                                    &client,
-                                    config_dir,
-                                    sync.clone(),
-                                    mount_refresh_tx.clone(),
-                                )
+	                                    &client,
+	                                    config_dir,
+	                                    sync.clone(),
+	                                    mount_refresh_tx.clone(),
+	                                    &daemon_tasks,
+	                                )
                                 .await;
                         }
                         if let Err(error) = result {
@@ -782,6 +801,34 @@ pub(crate) fn cmd_daemon(
                             );
                         }
                     }
+                }
+            }
+        }
+        drop(notifications);
+        drop(direct_app_message_rx);
+        daemon_tasks.abort_all().await;
+        if let Some(sync) = fips_blocks {
+            match Arc::try_unwrap(sync) {
+                Ok(sync) => {
+                    if let Err(error) = sync.shutdown().await {
+                        println!(
+                            "{}",
+                            json!({"event": "fips_block_sync_shutdown_error", "error": format!("{error:#}")})
+                        );
+                    }
+                }
+                Err(sync) => {
+                    if let Err(error) = sync.shutdown_endpoint().await {
+                        println!(
+                            "{}",
+                            json!({"event": "fips_block_sync_shutdown_error", "error": format!("{error:#}")})
+                        );
+                    }
+                    println!(
+                        "{}",
+                        json!({"event": "fips_block_sync_shutdown_retained", "owners": Arc::strong_count(&sync)})
+                    );
+                    std::mem::forget(sync);
                 }
             }
         }
