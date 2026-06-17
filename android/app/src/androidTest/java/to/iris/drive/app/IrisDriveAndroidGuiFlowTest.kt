@@ -342,7 +342,7 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     @Test
-    fun backupsPanelUsesFileServerCopyForBlossomTargets() {
+    fun backupPanelShowsFilesystemAndServerDestinations() {
         render(
             state = AppState(
                 profile = profileState(),
@@ -357,6 +357,16 @@ class IrisDriveAndroidGuiFlowTest {
                         detail = "https://backup.example",
                         enabled = true,
                     ),
+                    BackupState(
+                        id = "filesystem:/tmp/iris-drive-backup",
+                        kind = "filesystem",
+                        target = "/tmp/iris-drive-backup",
+                        label = "Cloud folder",
+                        configuredLabel = "Cloud folder",
+                        state = "ready",
+                        detail = "/tmp/iris-drive-backup",
+                        enabled = true,
+                    ),
                 ),
                 setupState = "authorized",
                 isSetupComplete = true,
@@ -364,11 +374,15 @@ class IrisDriveAndroidGuiFlowTest {
         )
 
         compose.onNodeWithTag("tabBackups").activate()
-        compose.onNodeWithText("Add Custom Target").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("File Servers").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Server URL").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Add File Server").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithText("Remove file server").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Add Backup").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Destination URL, User ID, or folder path").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("File server").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Cloud folder").performScrollTo().assertIsDisplayed()
+        compose.onAllNodesWithText("Remove backup").assertCountEquals(2)
+        compose.onAllNodesWithText("Add Custom Target").assertCountEquals(0)
+        compose.onAllNodesWithText("File Servers").assertCountEquals(0)
+        compose.onAllNodesWithText("Add File Server").assertCountEquals(0)
+        compose.onAllNodesWithText("Remove file server").assertCountEquals(0)
         compose.onAllNodesWithText("Remove target").assertCountEquals(0)
         compose.onAllNodesWithText("Blossom", substring = true).assertCountEquals(0)
     }

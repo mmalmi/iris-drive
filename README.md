@@ -200,11 +200,11 @@ See the platform READMEs for focused instructions:
 
 | Platform | Status |
 | --- | --- |
-| macOS | SwiftUI/AppKit app, Shares/AppKeys/Backups control, File Provider domain, app-group/runtime wiring, local smoke fixture |
-| Linux x64 | GTK/libadwaita app, Shares/AppKeys/Backups control, FUSE-backed provider path, desktop entry/deep links, native smoke coverage |
+| macOS | SwiftUI/AppKit app, Shares/AppKeys/Backup control, File Provider domain, app-group/runtime wiring, local smoke fixture |
+| Linux x64 | GTK/libadwaita app, Shares/AppKeys/Backup control, FUSE-backed provider path, desktop entry/deep links, native smoke coverage |
 | Windows x64 | WPF app, tray control, Cloud Files placeholder/hydration path, self-contained publish script |
-| Android arm64 | Compose shell with Shares/AppKeys/Backups plus SAF DocumentsProvider with create/read/write/rename/delete/list and folder share-dialog handoff support |
-| iOS | SwiftUI shell with Shares/AppKeys/Backups plus File Provider extension, simulator smoke, multi-app harness peer |
+| Android arm64 | Compose shell with Shares/AppKeys/Backup plus SAF DocumentsProvider with create/read/write/rename/delete/list and folder share-dialog handoff support |
+| iOS | SwiftUI shell with Shares/AppKeys/Backup plus File Provider extension, simulator smoke, multi-app harness peer |
 | CLI | `idrive` create/restore/link, daemon, provider bridge, FIPS sync, Blossom/cache, backups, updater |
 
 See [Platform GUI parity](docs/PARITY.md) for the detailed cross-platform

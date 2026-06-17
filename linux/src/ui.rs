@@ -209,17 +209,17 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     peers_page.append(&peers);
 
     let backups_page = page_box();
-    backups_page.append(&section_title("Backups"));
+    backups_page.append(&section_title("Backup"));
     let backups = gtk::ListBox::new();
     backups.add_css_class("iris-drive-list");
     backups.set_selection_mode(gtk::SelectionMode::None);
     backups_page.append(&backups);
     let backup_controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let backup_entry = setup_entry("https://, User ID, fs:/path, lmdb:/path");
+    let backup_entry = setup_entry("Destination URL, User ID, or folder path");
     backup_entry.set_hexpand(true);
     let backup_label_entry = setup_entry("Label");
     backup_label_entry.set_width_request(140);
-    let add_backup_button = icon_button("list-add-symbolic", "Add custom target");
+    let add_backup_button = icon_button("list-add-symbolic", "Add Backup");
     let check_backups_button = action_button("emblem-default-symbolic", "Check", "Check backups");
     let sync_backups_button =
         action_button("emblem-synchronizing-symbolic", "Sync", "Sync backups");
@@ -358,7 +358,7 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     stack.add_titled(&dashboard, Some("drive"), "My Drive");
     stack.add_titled(&peers_page, Some("devices"), "Devices");
     stack.add_titled(&shares_page, Some("shares"), "Shares");
-    stack.add_titled(&backups_page, Some("backups"), "Backups");
+    stack.add_titled(&backups_page, Some("backups"), "Backup");
     stack.add_titled(&network_page, Some("network"), "Network");
     stack.add_titled(&settings_page, Some("settings"), "Settings");
 
@@ -366,7 +366,7 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
         ("drive", "drive-harddisk-symbolic", "My Drive"),
         ("devices", "system-users-symbolic", "Devices"),
         ("shares", "emblem-shared-symbolic", "Shares"),
-        ("backups", "security-high-symbolic", "Backups"),
+        ("backups", "security-high-symbolic", "Backup"),
         ("network", "network-workgroup-symbolic", "Network"),
         ("settings", "preferences-system-symbolic", "Settings"),
     ];

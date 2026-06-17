@@ -137,9 +137,9 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTAssertTrue(app.buttons["copyShareIdentityButton"].waitForExistence(timeout: 10))
     }
 
-    func testFileServersTabHidesCustomBackupTargets() throws {
+    func testBackupTabShowsFilesystemDestinationControls() throws {
         let baseDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("iris-drive-ui-test-file-servers-\(UUID().uuidString)")
+            .appendingPathComponent("iris-drive-ui-test-backup-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: baseDir, withIntermediateDirectories: true)
         addTeardownBlock {
             try? FileManager.default.removeItem(at: baseDir)
@@ -149,16 +149,16 @@ final class IrisDriveIOSUITests: XCTestCase {
         ])
         ensureMyDriveReady(in: app)
 
-        let fileServersTab = tabButton("File Servers", in: app)
-        XCTAssertTrue(fileServersTab.waitForExistence(timeout: 10))
-        fileServersTab.tap()
+        let backupTab = tabButton("Backup", in: app)
+        XCTAssertTrue(backupTab.waitForExistence(timeout: 10))
+        backupTab.tap()
 
-        XCTAssertTrue(app.navigationBars["File Servers"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.navigationBars["Backup"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["upload.iris.to"].waitForExistence(timeout: 10))
-        XCTAssertFalse(app.textFields["backupTargetInput"].exists)
-        XCTAssertFalse(app.buttons["addCustomBackupTargetButton"].exists)
+        XCTAssertTrue(app.textFields["backupTargetInput"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["addBackupButton"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["Add Custom Target"].exists)
-        XCTAssertFalse(app.textFields["Destination"].exists)
+        XCTAssertFalse(app.buttons["Add File Server"].exists)
     }
 
     func testMyDriveFileCountMatchesExpected() throws {

@@ -819,20 +819,6 @@ final class IrisDriveMobileModel: ObservableObject {
         ])
     }
 
-    func syncFileServers(_ fileServers: [IrisDriveBackup]) {
-        syncBackups(fileServers)
-    }
-
-    func checkFileServer(_ target: String) {
-        let target = target.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isSetupComplete, !target.isEmpty else { return }
-        dispatchBackupAction("check_backups", targets: [target])
-    }
-
-    func checkFileServers(_ fileServers: [IrisDriveBackup]) {
-        checkBackups(fileServers)
-    }
-
     func createShare() {
         let sourcePath = shareSourceInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !sourcePath.isEmpty else { return }

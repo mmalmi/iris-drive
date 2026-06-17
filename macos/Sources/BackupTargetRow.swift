@@ -132,7 +132,7 @@ struct BackupTargetRow: View {
     }
 
     private var removeLabel: String {
-        target.kind == "blossom" ? "Remove file server" : "Remove target"
+        "Remove backup"
     }
 
     private func checkedAgeLine(_ checkedAt: Int) -> String {

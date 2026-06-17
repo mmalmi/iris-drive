@@ -123,7 +123,7 @@ pub(crate) fn render_backups(model: &AppRef, state: &NativeAppState) {
         list.append(&backup_row(model, title, &subtitle, &target.target));
     }
     if list.first_child().is_none() {
-        list.append(&simple_row("No backup targets", ""));
+        list.append(&simple_row("No backups configured", ""));
     }
 }
 
@@ -443,7 +443,7 @@ fn backup_row(model: &AppRef, title: &str, subtitle: &str, target: &str) -> gtk:
     check.connect_clicked(move |_| check_backup_target(&check_model, target_for_check.clone()));
     outer.append(&check);
 
-    let remove = icon_button("user-trash-symbolic", "Remove target");
+    let remove = icon_button("user-trash-symbolic", "Remove backup");
     let target_for_remove = target.to_string();
     let remove_model = model.clone();
     remove.connect_clicked(move |_| remove_backup_target(&remove_model, target_for_remove.clone()));

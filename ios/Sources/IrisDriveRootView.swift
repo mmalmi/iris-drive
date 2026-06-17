@@ -8,7 +8,7 @@ private enum MainTab: Hashable {
     case drive
     case devices
     case shares
-    case fileServers
+    case backup
     case settings
 }
 
@@ -76,12 +76,12 @@ struct IrisDriveRootView: View {
                 .tag(MainTab.shares)
 
                 NavigationStack {
-                    FileServersView(model: model)
+                    BackupView(model: model)
                 }
                 .tabItem {
-                    Label("File Servers", systemImage: "server.rack")
+                    Label("Backup", systemImage: "arrow.triangle.2.circlepath")
                 }
-                .tag(MainTab.fileServers)
+                .tag(MainTab.backup)
 
                 NavigationStack {
                     SettingsView(model: model)

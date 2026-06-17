@@ -32,7 +32,7 @@ fn start_backup_check(model: &AppRef, targets: Vec<String>, success: &str) {
         .filter(|target| !target.is_empty())
         .collect::<Vec<_>>();
     if targets.is_empty() {
-        model.ui.notice.set_text("No backup targets");
+        model.ui.notice.set_text("No backups configured");
         return;
     }
     model.backup_checking.set(true);

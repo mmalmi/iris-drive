@@ -170,7 +170,7 @@ internal enum class MainTab(
     MyDrive("My Drive", "tabMyDrive", R.drawable.ic_drive),
     Devices("Devices", "tabDevices", R.drawable.ic_devices),
     Shares("Shares", "tabShares", R.drawable.ic_shares),
-    Backups("Backups", "tabBackups", R.drawable.ic_backup),
+    Backups("Backup", "tabBackups", R.drawable.ic_backup),
     Settings("Settings", "tabSettings", R.drawable.ic_settings),
 }
 

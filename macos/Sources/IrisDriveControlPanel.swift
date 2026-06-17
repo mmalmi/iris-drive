@@ -8,7 +8,7 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
     case drive
     case peers
     case shares
-    case fileServers
+    case backup
     case settings
 
     var id: Self { self }
@@ -21,8 +21,8 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
             return "Devices"
         case .shares:
             return "Shares"
-        case .fileServers:
-            return "File Servers"
+        case .backup:
+            return "Backup"
         case .settings:
             return "Settings"
         }
@@ -36,8 +36,8 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
             return "person.2.fill"
         case .shares:
             return "person.3.fill"
-        case .fileServers:
-            return "server.rack"
+        case .backup:
+            return "arrow.triangle.2.circlepath"
         case .settings:
             return "gearshape.fill"
         }
@@ -53,7 +53,7 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
         case "share", "shares":
             return .shares
         case "backup", "backups", "file-server", "file-servers", "server", "servers":
-            return .fileServers
+            return .backup
         case "setting", "settings":
             return .settings
         default:
@@ -102,7 +102,6 @@ struct IrisDriveControlPanel: View {
     @State private var relayInput = ""
     @State private var backupTargetInput = ""
     @State private var backupTargetLabelInput = ""
-    @State private var fileServerInput = ""
     @State private var shareSourceInput = ""
     @State private var shareInviteInput = ""
     @State private var shareRecipientNpubHint = ""
@@ -138,21 +137,13 @@ struct IrisDriveControlPanel: View {
     @State private var deleteShare: IrisDriveShareStatus?
     @State private var showMyNpub = false
     @State private var revokeShareMember: ShareMemberRevokeTarget?
-    @State private var checkingAllFileServers = false
-    @State private var checkedFileServerCount = 0
-    @State private var fileServerCheckTotal = 0
+    @State private var checkingAllBackups = false
+    @State private var checkedBackupCount = 0
+    @State private var backupCheckTotal = 0
     @State private var showLogoutConfirmation = false
     @State private var recoveryExport: [String: Any]?
     @State private var recoveryExportWordIndex = 0
     @State private var showStartupLoading = false
-
-    private var fileServerTargets: [IrisDriveBackupTarget] {
-        status.backupTargets.filter { $0.kind == "blossom" }
-    }
-
-    private var customBackupTargets: [IrisDriveBackupTarget] {
-        status.backupTargets.filter { $0.kind != "blossom" }
-    }
 
     var body: some View {
         Group {
@@ -260,8 +251,8 @@ struct IrisDriveControlPanel: View {
             page { peers }
         case .shares:
             page { shares }
-        case .fileServers:
-            page { fileServers }
+        case .backup:
+            page { backup }
         case .settings:
             settingsForm
         }
@@ -1373,42 +1364,42 @@ struct IrisDriveControlPanel: View {
         return value.isEmpty ? nil : value
     }
 
-    private var checkingAllFileServersLabel: String {
-        if fileServerCheckTotal > 0 {
-            return "Checking \(checkedFileServerCount) of \(fileServerCheckTotal)"
+    private var checkingAllBackupsLabel: String {
+        if backupCheckTotal > 0 {
+            return "Checking \(checkedBackupCount) of \(backupCheckTotal)"
         }
-        return "Checked \(checkedFileServerCount)"
+        return "Checked \(checkedBackupCount)"
     }
 
-    // MARK: File Servers
+    // MARK: Backup
 
-    private var fileServers: some View {
+    private var backup: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack {
-                SectionTitle("File Servers")
+                SectionTitle("Backup")
                 Spacer()
                 Button {
-                    guard !checkingAllFileServers else { return }
+                    guard !checkingAllBackups else { return }
                     let targets = status.backupTargets
-                    checkedFileServerCount = 0
-                    fileServerCheckTotal = targets.count
-                    checkingAllFileServers = true
+                    checkedBackupCount = 0
+                    backupCheckTotal = targets.count
+                    checkingAllBackups = true
                     controller.checkBackups(targets, progress: { checked, total in
-                        checkedFileServerCount = checked
-                        fileServerCheckTotal = total
+                        checkedBackupCount = checked
+                        backupCheckTotal = total
                     }) {
-                        checkingAllFileServers = false
-                        checkedFileServerCount = 0
-                        fileServerCheckTotal = 0
+                        checkingAllBackups = false
+                        checkedBackupCount = 0
+                        backupCheckTotal = 0
                     }
                 } label: {
-                    if checkingAllFileServers {
-                        Text(checkingAllFileServersLabel)
+                    if checkingAllBackups {
+                        Text(checkingAllBackupsLabel)
                     } else {
                         Label("Check All", systemImage: "checkmark.shield")
                     }
                 }
-                .disabled(status.backupTargets.isEmpty || checkingAllFileServers)
+                .disabled(status.backupTargets.isEmpty || checkingAllBackups)
                 Button {
                     controller.syncBackups(status.backupTargets)
                 } label: {
@@ -1416,20 +1407,20 @@ struct IrisDriveControlPanel: View {
                 }
                 .disabled(status.backupTargets.isEmpty)
             }
-            if checkingAllFileServers {
+            if checkingAllBackups {
                 VStack(alignment: .leading, spacing: 4) {
                     ProgressView(
-                        value: Double(checkedFileServerCount),
-                        total: Double(max(fileServerCheckTotal, 1))
+                        value: Double(checkedBackupCount),
+                        total: Double(max(backupCheckTotal, 1))
                     )
-                    Text(checkingAllFileServersLabel)
+                    Text(checkingAllBackupsLabel)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
-                    TextField("Target URL", text: $backupTargetInput)
+                    TextField("Destination URL, User ID, or folder path", text: $backupTargetInput)
                         .textFieldStyle(.roundedBorder)
                         .disableAutocorrection(true)
                         .onSubmit { addBackupTargetFromInput() }
@@ -1439,47 +1430,22 @@ struct IrisDriveControlPanel: View {
                     Button {
                         addBackupTargetFromInput()
                     } label: {
-                        Label("Add Custom Target", systemImage: "plus")
+                        Label("Add Backup", systemImage: "plus")
                     }
                     .disabled(backupTargetInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
-                if !customBackupTargets.isEmpty {
-                    ForEach(customBackupTargets) { target in
-                        BackupTargetRow(
-                            target: target,
-                            onCheck: { completion in
-                                controller.checkBackups([target], completion: completion)
-                            },
-                            onRemove: {
-                                controller.removeBackupTarget(target.target)
-                            }
-                        )
-                    }
-                }
             }
-            HStack(spacing: 8) {
-                TextField("Server URL", text: $fileServerInput)
-                    .textFieldStyle(.roundedBorder)
-                    .disableAutocorrection(true)
-                    .onSubmit { addFileServerFromInput() }
-                Button {
-                    addFileServerFromInput()
-                } label: {
-                    Label("Add File Server", systemImage: "plus")
-                }
-                .disabled(fileServerInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-            if fileServerTargets.isEmpty {
-                emptyState("No file servers yet")
+            if status.backupTargets.isEmpty {
+                emptyState("No backups configured")
             } else {
-                ForEach(fileServerTargets) { target in
+                ForEach(status.backupTargets) { target in
                     BackupTargetRow(
                         target: target,
                         onCheck: { completion in
-                            controller.checkFileServer(target, completion: completion)
+                            controller.checkBackups([target], completion: completion)
                         },
                         onRemove: {
-                            controller.removeBlossomServer(target.target)
+                            controller.removeBackupTarget(target.target)
                         }
                     )
                 }
@@ -1750,13 +1716,6 @@ struct IrisDriveControlPanel: View {
         guard !value.isEmpty else { return }
         controller.addRelay(value)
         relayInput = ""
-    }
-
-    private func addFileServerFromInput() {
-        let value = fileServerInput.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return }
-        controller.addBlossomServer(value)
-        fileServerInput = ""
     }
 
     private func addBackupTargetFromInput() {

@@ -134,8 +134,6 @@ internal fun AuthenticatedContent(
             backupCheckProgress = backupCheckProgress,
             onAddBackupTarget = onAddBackupTarget,
             onRemoveBackupTarget = onRemoveBackupTarget,
-            onAddBlossomServer = onAddBlossomServer,
-            onRemoveBlossomServer = onRemoveBlossomServer,
             onSyncBackups = onSyncBackups,
             onCheckBackups = onCheckBackups,
         )
@@ -274,8 +272,6 @@ private fun BackupsContent(
     backupCheckProgress: BackupCheckProgress,
     onAddBackupTarget: (String, String) -> Unit,
     onRemoveBackupTarget: (String) -> Unit,
-    onAddBlossomServer: (String) -> Unit,
-    onRemoveBlossomServer: (String) -> Unit,
     onSyncBackups: (String) -> Unit,
     onCheckBackups: (String) -> Unit,
 ) {
@@ -296,8 +292,6 @@ private fun BackupsContent(
                 backupCheckProgress = backupCheckProgress,
                 onAddBackupTarget = onAddBackupTarget,
                 onRemoveBackupTarget = onRemoveBackupTarget,
-                onAddBlossomServer = onAddBlossomServer,
-                onRemoveBlossomServer = onRemoveBlossomServer,
                 onSyncBackups = onSyncBackups,
                 onCheckBackups = onCheckBackups,
             )
@@ -525,16 +519,13 @@ private fun BackupsPanel(
     backupCheckProgress: BackupCheckProgress,
     onAddBackupTarget: (String, String) -> Unit,
     onRemoveBackupTarget: (String) -> Unit,
-    onAddBlossomServer: (String) -> Unit,
-    onRemoveBlossomServer: (String) -> Unit,
     onSyncBackups: (String) -> Unit,
     onCheckBackups: (String) -> Unit,
 ) {
     var backupInput by remember { mutableStateOf("") }
     var backupLabel by remember { mutableStateOf("") }
-    var blossomInput by remember { mutableStateOf("") }
 
-    CardSection(title = "Backups", trailing = "${backups.size}") {
+    CardSection(title = "Backup", trailing = "${backups.size}") {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedButton(
                 onClick = { onSyncBackups("") },
@@ -555,7 +546,7 @@ private fun BackupsPanel(
         OutlinedTextField(
             value = backupInput,
             onValueChange = { backupInput = it },
-            label = { Text("Destination") },
+            label = { Text("Destination URL, User ID, or folder path") },
             singleLine = true,
             modifier = Modifier.fillMaxWidth(),
         )
@@ -574,27 +565,10 @@ private fun BackupsPanel(
             },
             enabled = backupInput.isNotBlank(),
         ) {
-            Text("Add Custom Target")
-        }
-        Text("File Servers", fontWeight = FontWeight.SemiBold)
-        OutlinedTextField(
-            value = blossomInput,
-            onValueChange = { blossomInput = it },
-            label = { Text("Server URL") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Button(
-            onClick = {
-                onAddBlossomServer(blossomInput)
-                blossomInput = ""
-            },
-            enabled = blossomInput.isNotBlank(),
-        ) {
-            Text("Add File Server")
+            Text("Add Backup")
         }
         if (backups.isEmpty()) {
-            Text("No file servers configured", color = Muted)
+            Text("No backups configured", color = Muted)
         }
         backups.forEach { backup ->
             val checkingThisTarget =
@@ -613,14 +587,8 @@ private fun BackupsPanel(
                 ) {
                     Text(if (checkingThisTarget) "Checking 0 of 1" else "Check")
                 }
-                if (backup.kind == "blossom") {
-                    TextButton(onClick = { onRemoveBlossomServer(backup.target) }) {
-                        Text("Remove file server")
-                    }
-                } else {
-                    TextButton(onClick = { onRemoveBackupTarget(backup.target) }) {
-                        Text("Remove target")
-                    }
+                TextButton(onClick = { onRemoveBackupTarget(backup.target) }) {
+                    Text("Remove backup")
                 }
             }
         }

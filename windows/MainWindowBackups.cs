@@ -17,7 +17,7 @@ public partial class MainWindow
         BackupsList.Items.Clear();
         if (status.BackupTargets.Count == 0)
         {
-            BackupsList.Items.Add(Row("No backup targets", "", ""));
+            BackupsList.Items.Add(Row("No backups configured", "", ""));
             return;
         }
 
@@ -61,8 +61,7 @@ public partial class MainWindow
             IsEnabled = !checkingBackups,
         };
         check.Click += CheckBackupTarget_Click;
-        var removeText = target.Kind == "blossom" ? "Remove file server" : "Remove target";
-        var remove = new WpfButton { Content = removeText, Tag = target.Target };
+        var remove = new WpfButton { Content = "Remove backup", Tag = target.Target };
         remove.Click += RemoveBackupTarget_Click;
 
         var actions = new StackPanel
@@ -131,7 +130,7 @@ public partial class MainWindow
             .ToList() ?? new List<string>();
         if (targets.Count == 0)
         {
-            NoticeText.Text = "No backup targets";
+            NoticeText.Text = "No backups configured";
             return;
         }
 
