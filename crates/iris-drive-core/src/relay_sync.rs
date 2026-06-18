@@ -24,17 +24,19 @@ use crate::app_key_link_transport::AppKeyLinkRosterFrame;
 use crate::app_keys::{AppKeysProjection, ApplyDecision};
 use crate::config::{AppConfig, AppKeyRootRef};
 use crate::nostr_events::{
-    KIND_APP_KEY_LINK_REQUEST, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, app_key_link_request_d_tag,
-    build_app_key_link_request_event, build_drive_root_publish_event,
-    build_private_hashtree_root_event, drive_root_d_tag, parse_app_key_link_request_event,
-    parse_drive_root_event, parse_drive_root_event_for_device, parse_drive_root_event_preview,
+    KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, build_app_key_link_request_event,
+    build_drive_root_publish_event, build_private_hashtree_root_event, drive_root_d_tag,
+    parse_app_key_link_request_event, parse_drive_root_event, parse_drive_root_event_for_device,
+    parse_drive_root_event_preview,
 };
 use crate::profile::app_keys_from_profile_projection;
+use crate::relay_filters::{iris_profile_roster_op_filter, share_access_snapshot_filter};
+pub use crate::relay_filters::{subscription_filters, subscription_filters_for_shared_roots};
 use crate::{
-    IrisProfileId, KIND_IRIS_PROFILE_ROSTER_OP, KIND_SHARE_ACCESS_SNAPSHOT, SHARE_ACCESS_LABEL,
-    SignedIrisProfileRosterOp, SignedShareAccessSnapshot,
-    iris_profile_candidate_ids_for_pubkey_from_events, parse_iris_profile_roster_op_event,
-    parse_share_access_snapshot_event, project_iris_profile_roster, share_access_snapshot_d_tag,
+    IrisProfileId, KIND_IRIS_PROFILE_ROSTER_OP, SignedIrisProfileRosterOp,
+    SignedShareAccessSnapshot, iris_profile_candidate_ids_for_pubkey_from_events,
+    parse_iris_profile_roster_op_event, parse_share_access_snapshot_event,
+    project_iris_profile_roster,
 };
 
 #[derive(Debug, Error)]
@@ -916,100 +918,6 @@ pub async fn fetch_iris_profile_restore_candidates(
     let mut events = discovery_events;
     events.extend(roster_events);
     iris_profile_restore_candidates_from_events(recovery_pubkey_hex, &events)
-}
-
-/// Build the relay filter set covering profile roster ops and drive-root
-/// events for a single profile's primary drive. Full `AppKeys` roster snapshots
-/// are intentionally excluded from relays; `IrisProfile` roster ops are the
-/// relay roster format.
-///
-/// The drive-root filter intentionally does **not** narrow by author:
-/// the d-tag `iris-drive/<profile_or_share_id>/<drive>/root` already pins the drive,
-/// and `apply_remote_drive_root_event` rejects events from unauthorized
-/// `AppKeys`. Skipping the author filter means the daemon
-/// doesn't need to re-subscribe every time the roster changes — newly
-/// approved `AppKeys`' events flow in automatically.
-#[must_use]
-pub fn subscription_filters(
-    current_app_key_pubkey_hex: &str,
-    root_scope_id: &str,
-    drive_id: &str,
-) -> Vec<Filter> {
-    subscription_filters_for_shared_roots(current_app_key_pubkey_hex, root_scope_id, drive_id, &[])
-}
-
-#[must_use]
-pub fn subscription_filters_for_shared_roots(
-    current_app_key_pubkey_hex: &str,
-    root_scope_id: &str,
-    drive_id: &str,
-    share_ids: &[IrisProfileId],
-) -> Vec<Filter> {
-    let mut filters = Vec::new();
-    if let Ok(profile_id) = root_scope_id.parse::<IrisProfileId>() {
-        filters.push(iris_profile_roster_op_filter(profile_id));
-        filters.push(
-            Filter::new()
-                .kind(nostr_sdk::Kind::from(KIND_APP_KEY_LINK_REQUEST))
-                .custom_tag(
-                    SingleLetterTag::lowercase(nostr_sdk::Alphabet::D),
-                    app_key_link_request_d_tag(profile_id),
-                ),
-        );
-    }
-    push_drive_root_filters(&mut filters, root_scope_id, drive_id);
-    for share_id in share_ids {
-        let share_scope = share_id.to_string();
-        if share_scope == root_scope_id {
-            continue;
-        }
-        filters.push(share_access_snapshot_filter(*share_id));
-        push_drive_root_filters(&mut filters, &share_scope, crate::PRIMARY_DRIVE_ID);
-    }
-    if let Ok(current_app_key) = PublicKey::from_hex(current_app_key_pubkey_hex) {
-        filters.push(
-            Filter::new()
-                .author(current_app_key)
-                .kind(nostr_sdk::Kind::from(KIND_HASHTREE_ROOT))
-                .identifier(drive_id)
-                .custom_tag(
-                    SingleLetterTag::lowercase(nostr_sdk::Alphabet::L),
-                    hashtree_nostr::HASHTREE_LABEL,
-                ),
-        );
-    }
-    filters
-}
-
-fn push_drive_root_filters(filters: &mut Vec<Filter>, root_scope_id: &str, drive_id: &str) {
-    let d_tag = drive_root_d_tag(root_scope_id, drive_id);
-    filters.push(
-        Filter::new()
-            .kind(nostr_sdk::Kind::from(KIND_DRIVE_ROOT))
-            .custom_tag(SingleLetterTag::lowercase(nostr_sdk::Alphabet::D), d_tag),
-    );
-}
-
-fn iris_profile_roster_op_filter(profile_id: IrisProfileId) -> Filter {
-    Filter::new()
-        .kind(nostr_sdk::Kind::from(KIND_IRIS_PROFILE_ROSTER_OP))
-        .custom_tag(
-            SingleLetterTag::lowercase(nostr_sdk::Alphabet::I),
-            profile_id.to_string(),
-        )
-}
-
-fn share_access_snapshot_filter(share_id: IrisProfileId) -> Filter {
-    Filter::new()
-        .kind(nostr_sdk::Kind::from(KIND_SHARE_ACCESS_SNAPSHOT))
-        .custom_tag(
-            SingleLetterTag::lowercase(nostr_sdk::Alphabet::L),
-            SHARE_ACCESS_LABEL,
-        )
-        .custom_tag(
-            SingleLetterTag::lowercase(nostr_sdk::Alphabet::D),
-            share_access_snapshot_d_tag(share_id),
-        )
 }
 
 /// Fetch drive-root events from any of `authorized_app_keys` for

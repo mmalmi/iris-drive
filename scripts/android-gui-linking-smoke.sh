@@ -15,7 +15,7 @@ OWNER_DAEMON_LOG="$(mktemp -t iris-drive-android-gui-owner-daemon.XXXXXX)"
 OWNER_DAEMON_PID=""
 OWNER_FIPS_PORT=""
 OWNER_HOST_ADDR="${IRIS_DRIVE_ANDROID_HOST_ADDR:-}"
-USE_DIRECT_STATIC_PEER="${IRIS_DRIVE_ANDROID_USE_DIRECT_STATIC_PEER:-false}"
+USE_DIRECT_STATIC_PEER="${IRIS_DRIVE_ANDROID_USE_DIRECT_STATIC_PEER:-true}"
 LINK_TIMEOUT_SECS="${IRIS_DRIVE_ANDROID_LINK_TIMEOUT_SECS:-90}"
 PUBLISH_TIMEOUT_SECS="${IRIS_DRIVE_ANDROID_PUBLISH_TIMEOUT_SECS:-3}"
 serial="${IRIS_DRIVE_ANDROID_SERIAL:-${ANDROID_SERIAL:-}}"
@@ -279,11 +279,9 @@ printf 'hello from android gui sync smoke\n' >"$OWNER_SOURCE_DIR/android-smoke.t
 "$IDRIVE" --config-dir "$OWNER_CONFIG" import "$OWNER_SOURCE_DIR" >/dev/null
 owner_fips_addr="default-graph"
 owner_daemon_env=(
-  IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=true
   IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true
 )
 android_fips_args=(
-  --es IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP true
   --es IRIS_DRIVE_FIPS_ENABLE_WEBRTC true
 )
 if bool_true "$USE_DIRECT_STATIC_PEER"; then
@@ -292,14 +290,19 @@ if bool_true "$USE_DIRECT_STATIC_PEER"; then
   owner_fips_peer="$owner_app_key_npub=$owner_host_addr:$OWNER_FIPS_PORT"
   owner_fips_addr="$owner_host_addr:$OWNER_FIPS_PORT"
   owner_daemon_env+=(
+    IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=false
     "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=0.0.0.0:$OWNER_FIPS_PORT"
     "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=$owner_host_addr:$OWNER_FIPS_PORT"
     IRIS_DRIVE_FIPS_UDP_PUBLIC=false
   )
   android_fips_args+=(
+    --es IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP false
     --es IRIS_DRIVE_FIPS_STATIC_PEERS "$owner_fips_peer"
     --es IRIS_DRIVE_FIPS_UDP_BIND_ADDR "0.0.0.0:0"
   )
+else
+  owner_daemon_env+=(IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=true)
+  android_fips_args+=(--es IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP true)
 fi
 env "${owner_daemon_env[@]}" \
   "$IDRIVE" --config-dir "$OWNER_CONFIG" daemon --watch-interval 0 --no-gateway \

@@ -1,7 +1,7 @@
 use super::{FfiApp, normalize_pubkey};
 use crate::NativeAppAction;
-use iris_drive_core::paths::config_path_in;
 use iris_drive_core::AppConfig;
+use iris_drive_core::paths::config_path_in;
 use std::path::Path;
 
 fn record_inbound_request(config_dir: &Path, device: &str, label: &str, requested_at: u64) {

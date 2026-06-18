@@ -50,6 +50,7 @@ pub mod projection;
 pub mod provider;
 pub mod recovery_phrase;
 pub mod relay_config;
+mod relay_filters;
 pub mod relay_status;
 pub mod relay_sync;
 pub mod root_meta;

@@ -2808,10 +2808,10 @@ fn drive_iris_to_nhash_url_for_root(root_cid: &str) -> Option<String> {
 }
 
 #[cfg(test)]
+mod app_key_link_flow_tests;
+#[cfg(test)]
 mod backup_tests;
 #[cfg(test)]
 mod provider_tests;
 #[cfg(test)]
 mod tests;
-#[cfg(test)]
-mod app_key_link_flow_tests;

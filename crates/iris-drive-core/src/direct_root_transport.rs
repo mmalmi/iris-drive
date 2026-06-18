@@ -163,9 +163,11 @@ impl DirectRootExchange {
         self.remember_seen_key(frame.key.clone());
         match apply_direct_root_event(config_dir, &event, Some(sync)).await {
             Ok(changed) => {
-                self.cache_event(direct_event);
                 if changed {
+                    self.cache_event(direct_event);
                     self.announce_current_state(config_dir, sync).await?;
+                } else {
+                    self.seen_keys.remove(&frame.key);
                 }
                 Ok(true)
             }
