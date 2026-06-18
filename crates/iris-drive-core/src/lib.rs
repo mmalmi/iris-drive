@@ -124,26 +124,27 @@ pub use share_actions::{
     share_action_state,
 };
 pub use sharing::{
-    KIND_SHARE_ROSTER_CHECKPOINT, PendingShareInvite, PendingShareInviteView,
-    ResolvedShareRecipient, SHARE_INVITE_PREFIX, SHARE_INVITE_SCHEMA,
-    SHARE_ROSTER_CHECKPOINT_SCHEMA, SHARED_WITH_ME_DIR, ShareInviteBundle, ShareInviteOutcome,
+    KIND_SHARE_ACCESS_SNAPSHOT, PendingShareInvite, PendingShareInviteView, ResolvedShareRecipient,
+    SHARE_ACCESS_LABEL, SHARE_ACCESS_SNAPSHOT_SCHEMA, SHARE_INVITE_PREFIX, SHARE_INVITE_SCHEMA,
+    SHARED_WITH_ME_DIR, ShareAccessDevice, ShareAccessGrant, ShareAccessProjection,
+    ShareAccessSnapshot, ShareAccessTarget, ShareInviteBundle, ShareInviteOutcome,
     ShareKeyRepairOutcome, ShareMember, ShareMemberRevokeOutcome, ShareMemberRoleOutcome,
     ShareMemberStatus, ShareRecipient, ShareRecipientProfileEvidence, ShareRole,
-    ShareRootWriteAuthorization, ShareRosterCheckpointContent, ShareShortcut, SharedFolder,
-    SharedFolderKeyStatus, SharedFolderMemberView, SharedFolderView, SharingError,
-    SignedShareRosterCheckpoint, create_shared_folder, current_shared_folder_key,
-    default_share_shortcut_path, encode_share_invite, invite_shared_folder_member,
-    invite_shared_folder_resolved_recipient, parse_share_invite,
-    parse_share_roster_checkpoint_event, record_pending_share_invite,
-    refresh_shared_folder_member_statuses_from_roster, repair_shared_folder_key_epoch_wraps,
+    ShareRootWriteAuthorization, ShareShortcut, SharedFolder, SharedFolderKeyStatus,
+    SharedFolderMemberView, SharedFolderView, SharingError, SignedShareAccessSnapshot,
+    create_shared_folder, current_shared_folder_key, default_share_shortcut_path,
+    encode_share_invite, invite_shared_folder_member, invite_shared_folder_resolved_recipient,
+    is_share_access_snapshot_event_coordinate, parse_share_access_snapshot_event,
+    parse_share_invite, project_share_access, record_pending_share_invite,
+    refresh_shared_folder_member_statuses_from_access, repair_shared_folder_key_epoch_wraps,
     resolve_share_recipient_from_evidence, resolve_share_recipient_from_profile_evidence,
-    revoke_shared_folder_member, set_shared_folder_member_role,
+    revoke_shared_folder_member, set_shared_folder_member_role, share_access_snapshot_d_tag,
     share_recipient_profile_evidence_for_app_key, shared_folder_app_key_can_admin,
     shared_folder_app_key_can_write_roots, shared_folder_app_key_write_authorization,
     shared_folder_authorized_writer_pubkeys, shared_folder_from_invite_for_profile,
     shared_folder_key_recipient_pubkeys, shared_folder_missing_key_wrap_pubkeys,
-    shared_folder_view, shared_folder_views, shared_with_me_path, sign_share_roster_checkpoint,
-    validate_share_roster_checkpoint,
+    shared_folder_view, shared_folder_views, shared_with_me_path, sign_share_access_snapshot,
+    validate_signed_share_access_snapshot,
 };
 pub use sync::{
     ConflictResolution, SyncBaseState, SyncError, SyncReport, sync as run_sync, sync_with_base,
@@ -162,7 +163,8 @@ pub use sync_cache::{
 /// v2: added optional `ProfileState` for the recovery/app-key split + `AppKeys`.
 /// v3: removed plain working-directory mode; configs are strict.
 /// v4: renamed the persisted local identity field from `account` to `profile`.
-pub const CONFIG_SCHEMA_VERSION: u32 = 4;
+/// v5: replaced shared-folder roster/member op logs with canonical access snapshots.
+pub const CONFIG_SCHEMA_VERSION: u32 = 5;
 
 #[cfg(test)]
 mod tests {

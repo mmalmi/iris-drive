@@ -347,6 +347,19 @@ pub async fn apply_direct_root_event(
         }
         return Ok(changed);
     }
+    if crate::is_share_access_snapshot_event_coordinate(event) {
+        let outcome =
+            crate::relay_sync::apply_remote_share_access_snapshot_event(&mut config, event)?;
+        let changed = matches!(
+            outcome,
+            crate::relay_sync::ShareAccessSnapshotApply::Applied
+        );
+        config.save(config_path_in(config_dir))?;
+        if let Some(sync) = sync {
+            sync.refresh_authorized_peers(&config).await;
+        }
+        return Ok(changed);
+    }
     if crate::nostr_events::is_drive_root_event_coordinate(event) {
         let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
         let parsed =

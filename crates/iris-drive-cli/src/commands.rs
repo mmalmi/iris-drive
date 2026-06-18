@@ -201,8 +201,8 @@ pub(crate) enum Command {
     /// List, add, remove, or sync encrypted backup targets.
     #[command(subcommand)]
     Backups(BackupsCmd),
-    /// Publish signed `IrisProfile`/share roster ops and this install's drive
-    /// roots to all configured relays.
+    /// Publish signed `IrisProfile` roster ops, share access snapshots, and
+    /// this install's drive roots to all configured relays.
     Publish {
         /// Override config relays with these URLs.
         #[arg(long)]
@@ -211,8 +211,8 @@ pub(crate) enum Command {
         #[arg(long, default_value_t = 10)]
         timeout: u64,
     },
-    /// Pull signed `IrisProfile`/share roster ops and drive-root events from
-    /// relays, then apply them locally.
+    /// Pull signed `IrisProfile` roster ops, share access snapshots, and
+    /// drive-root events from relays, then apply them locally.
     Sync {
         /// Override config relays with these URLs.
         #[arg(long)]
@@ -222,9 +222,10 @@ pub(crate) enum Command {
         timeout: u64,
     },
     /// Run a long-running subscriber + publisher. Maintains open
-    /// subscriptions for `IrisProfile` roster ops and drive-root events, applies
-    /// each event in real time, serves the local gateway, and keeps any active
-    /// virtual mount/provider refreshed. Stops on Ctrl+C.
+    /// subscriptions for `IrisProfile` roster ops, share access snapshots, and
+    /// drive-root events, applies each event in real time, serves the local
+    /// gateway, and keeps any active virtual mount/provider refreshed. Stops on
+    /// Ctrl+C.
     Daemon {
         /// Override config relays with these URLs.
         #[arg(long)]

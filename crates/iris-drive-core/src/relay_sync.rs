@@ -3,8 +3,8 @@
 //! Two layers:
 //!
 //! - **Apply (offline)** — `apply_remote_iris_profile_roster_op_event`,
-//!   `apply_remote_drive_root_event`, and app-key-link helpers take a parsed
-//!   Nostr event or direct roster frame plus an `AppConfig` and apply the
+//!   `apply_remote_share_access_snapshot_event`, `apply_remote_drive_root_event`,
+//!   and app-key-link helpers take a parsed Nostr event or direct roster frame and apply the
 //!   event's effect onto the config. These are pure functions over data, fully
 //!   covered by unit tests.
 //!
@@ -31,9 +31,10 @@ use crate::nostr_events::{
 };
 use crate::profile::app_keys_from_profile_projection;
 use crate::{
-    IrisProfileId, KIND_IRIS_PROFILE_ROSTER_OP, SignedIrisProfileRosterOp,
+    IrisProfileId, KIND_IRIS_PROFILE_ROSTER_OP, KIND_SHARE_ACCESS_SNAPSHOT, SHARE_ACCESS_LABEL,
+    SignedIrisProfileRosterOp, SignedShareAccessSnapshot,
     iris_profile_candidate_ids_for_pubkey_from_events, parse_iris_profile_roster_op_event,
-    project_iris_profile_roster,
+    parse_share_access_snapshot_event, project_iris_profile_roster, share_access_snapshot_d_tag,
 };
 
 #[derive(Debug, Error)]
@@ -52,6 +53,8 @@ pub enum RelayError {
     Profile(#[from] crate::profile::ProfileError),
     #[error("iris profile: {0}")]
     IrisProfile(#[from] crate::iris_profile::IrisProfileError),
+    #[error("share access: {0}")]
+    ShareAccess(#[from] crate::sharing::SharingError),
     #[error("app-key-link roster: {0}")]
     AppKeyLinkRoster(String),
 }
@@ -75,6 +78,19 @@ pub enum IrisProfileRosterOpApply {
     /// This op id is already present locally.
     Current,
     /// The verified op was unioned into the local profile log.
+    Applied,
+}
+
+/// Result of applying a signed share access snapshot from relay/direct sync.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ShareAccessSnapshotApply {
+    /// The snapshot is for a share this config does not know.
+    NotOurShare,
+    /// The local snapshot is already identical or newer.
+    Current,
+    /// The event signer is not an admin in the local snapshot.
+    NotAdmin,
+    /// The canonical access snapshot was replaced.
     Applied,
 }
 
@@ -280,23 +296,31 @@ pub fn apply_remote_iris_profile_roster_op_event(
         return Ok(IrisProfileRosterOpApply::Applied);
     }
 
+    Ok(IrisProfileRosterOpApply::NotOurProfile)
+}
+
+pub fn apply_remote_share_access_snapshot_event(
+    config: &mut AppConfig,
+    event: &Event,
+) -> Result<ShareAccessSnapshotApply, RelayError> {
+    let snapshot = parse_share_access_snapshot_event(event)?;
     let Some(shared_folder) = config
         .shared_folders
         .iter_mut()
-        .find(|folder| folder.share_id == op.content.profile_id)
+        .find(|folder| folder.share_id == snapshot.content.resource_id)
     else {
-        return Ok(IrisProfileRosterOpApply::NotOurProfile);
+        return Ok(ShareAccessSnapshotApply::NotOurShare);
     };
-    if shared_folder
-        .roster_ops
-        .iter()
-        .any(|current| current.op_id == op.op_id)
+    if snapshot.content.updated_at < shared_folder.access.updated_at
+        || snapshot.content == shared_folder.access
     {
-        return Ok(IrisProfileRosterOpApply::Current);
+        return Ok(ShareAccessSnapshotApply::Current);
     }
-    shared_folder.roster_ops = merge_profile_roster_ops(&shared_folder.roster_ops, &[op]);
-    crate::refresh_shared_folder_member_statuses_from_roster(shared_folder);
-    Ok(IrisProfileRosterOpApply::Applied)
+    if !crate::shared_folder_app_key_can_admin(shared_folder, &snapshot.signer_pubkey) {
+        return Ok(ShareAccessSnapshotApply::NotAdmin);
+    }
+    shared_folder.access = snapshot.content;
+    Ok(ShareAccessSnapshotApply::Applied)
 }
 
 fn verified_profile_roster_ops(
@@ -623,6 +647,27 @@ pub async fn publish_iris_profile_roster_ops(
     Ok(event_ids)
 }
 
+/// Publish a signed canonical share access snapshot.
+pub async fn publish_share_access_snapshot(
+    client: &Client,
+    snapshot: &SignedShareAccessSnapshot,
+) -> Result<nostr_sdk::EventId, RelayError> {
+    let event = Event::from_json(&snapshot.event_json)
+        .map_err(|e| RelayError::Client(format!("share access snapshot JSON: {e}")))?;
+    let parsed = parse_share_access_snapshot_event(&event)?;
+    if parsed.snapshot_id != snapshot.snapshot_id {
+        return Err(RelayError::Client(format!(
+            "share access snapshot id mismatch: stored {}, parsed {}",
+            snapshot.snapshot_id, parsed.snapshot_id
+        )));
+    }
+    let output = client
+        .send_event(&event)
+        .await
+        .map_err(|e| RelayError::Client(e.to_string()))?;
+    Ok(*output.id())
+}
+
 /// Publish a signed drive-root event for this device's current root.
 pub async fn publish_drive_root(
     client: &Client,
@@ -717,6 +762,27 @@ pub async fn fetch_iris_profile_roster_ops(
         .filter(|event| {
             parse_iris_profile_roster_op_event(event)
                 .is_ok_and(|op| op.content.profile_id == profile_id)
+        })
+        .collect())
+}
+
+/// Fetch signed canonical share access snapshots for one share.
+pub async fn fetch_share_access_snapshots(
+    client: &Client,
+    share_id: IrisProfileId,
+    timeout: Duration,
+) -> Result<Vec<Event>, RelayError> {
+    let events = fetch_events(
+        client,
+        vec![share_access_snapshot_filter(share_id)],
+        timeout,
+    )
+    .await?;
+    Ok(events
+        .into_iter()
+        .filter(|event| {
+            parse_share_access_snapshot_event(event)
+                .is_ok_and(|snapshot| snapshot.content.resource_id == share_id)
         })
         .collect())
 }
@@ -897,7 +963,7 @@ pub fn subscription_filters_for_shared_roots(
         if share_scope == root_scope_id {
             continue;
         }
-        filters.push(iris_profile_roster_op_filter(*share_id));
+        filters.push(share_access_snapshot_filter(*share_id));
         push_drive_root_filters(&mut filters, &share_scope, crate::PRIMARY_DRIVE_ID);
     }
     if let Ok(current_app_key) = PublicKey::from_hex(current_app_key_pubkey_hex) {
@@ -930,6 +996,19 @@ fn iris_profile_roster_op_filter(profile_id: IrisProfileId) -> Filter {
         .custom_tag(
             SingleLetterTag::lowercase(nostr_sdk::Alphabet::I),
             profile_id.to_string(),
+        )
+}
+
+fn share_access_snapshot_filter(share_id: IrisProfileId) -> Filter {
+    Filter::new()
+        .kind(nostr_sdk::Kind::from(KIND_SHARE_ACCESS_SNAPSHOT))
+        .custom_tag(
+            SingleLetterTag::lowercase(nostr_sdk::Alphabet::L),
+            SHARE_ACCESS_LABEL,
+        )
+        .custom_tag(
+            SingleLetterTag::lowercase(nostr_sdk::Alphabet::D),
+            share_access_snapshot_d_tag(share_id),
         )
 }
 

@@ -11,8 +11,8 @@ use crate::nostr_events::{
 };
 use crate::profile::{AppKeyAuthorizationState, Profile};
 use crate::sharing::{
-    ShareMemberRosterOp, ShareRecipient, ShareRole, build_share_member_roster_op_event,
-    parse_share_member_roster_op_event,
+    ShareAccessDevice, ShareAccessGrant, ShareAccessTarget, ShareMemberStatus, ShareRecipient,
+    ShareRole,
 };
 use hashtree_core::Cid;
 use nostr_sdk::filter::MatchEventOptions;
@@ -447,7 +447,7 @@ fn restore_candidates_require_active_recovery_facet_projection() {
 }
 
 #[test]
-fn subscription_filters_match_share_roster_ops_and_roots() {
+fn subscription_filters_match_share_access_snapshots_and_roots() {
     let dir = tempdir().unwrap();
     let (_, owner) = config_with_owner_account(dir.path());
     let reader = Keys::generate();
@@ -468,7 +468,10 @@ fn subscription_filters_match_share_roster_ops_and_roots() {
         10,
     )
     .unwrap();
-    let share_op = profile_event(&folder.roster_ops[0]);
+    let share_snapshot =
+        crate::sign_share_access_snapshot(owner.app_key.keys(), &folder, folder.access.updated_at)
+            .unwrap();
+    let share_event = Event::from_json(&share_snapshot.event_json).unwrap();
     let root = encrypted_root(0x55, 20, 1);
     let root_event = build_drive_root_event(
         owner.app_key.keys(),
@@ -492,7 +495,7 @@ fn subscription_filters_match_share_roster_ops_and_roots() {
     assert!(
         filters
             .iter()
-            .any(|filter| filter_matches(filter, &share_op))
+            .any(|filter| filter_matches(filter, &share_event))
     );
     assert!(
         filters
@@ -502,11 +505,11 @@ fn subscription_filters_match_share_roster_ops_and_roots() {
 }
 
 #[test]
-fn apply_share_roster_op_event_merges_known_shared_folder() {
+fn apply_share_access_snapshot_event_replaces_known_shared_folder() {
     let dir = tempdir().unwrap();
     let (_, owner) = config_with_owner_account(dir.path());
     let editor = Keys::generate();
-    let mut folder = crate::create_shared_folder(
+    let folder = crate::create_shared_folder(
         owner.app_key.keys(),
         owner.state.profile_id,
         "Projects/Alpha",
@@ -516,32 +519,38 @@ fn apply_share_roster_op_event_merges_known_shared_folder() {
         10,
     )
     .unwrap();
-    let op_event = build_iris_profile_roster_op_event(
-        owner.app_key.keys(),
-        folder.share_id,
-        crate::iris_profile_roster_parent_ids(&folder.roster_ops),
-        None,
-        IrisProfileRosterOp::AddFacet {
-            facet: IrisProfileFacet::app_key(
-                editor.public_key().to_hex(),
-                20,
-                Some("Editor".into()),
-                IrisProfileCapabilities::app_writer(),
-            ),
+    let editor_id = IrisProfileId::new_v4();
+    let mut remote_folder = folder.clone();
+    remote_folder.access.grants.push(ShareAccessGrant {
+        target: ShareAccessTarget::id(editor_id),
+        role: ShareRole::Editor,
+        status: ShareMemberStatus::Active,
+        representative_npub_hint: None,
+        display_name: Some("Editor".into()),
+    });
+    remote_folder.access.devices.insert(
+        editor.public_key().to_hex(),
+        ShareAccessDevice {
+            pubkey: editor.public_key().to_hex(),
+            profile_id: Some(editor_id),
+            added_at: 20,
+            label: Some("Editor".into()),
         },
-        20,
-    )
-    .unwrap();
+    );
+    remote_folder.access.updated_at = 20;
+    let snapshot =
+        crate::sign_share_access_snapshot(owner.app_key.keys(), &remote_folder, 20).unwrap();
+    let snapshot_event = Event::from_json(&snapshot.event_json).unwrap();
     let mut cfg = AppConfig {
         profile: Some(owner.state.clone()),
         shared_folders: vec![folder.clone()],
         ..AppConfig::default()
     };
 
-    let outcome = apply_remote_iris_profile_roster_op_event(&mut cfg, &op_event).unwrap();
+    let outcome = apply_remote_share_access_snapshot_event(&mut cfg, &snapshot_event).unwrap();
 
-    assert_eq!(outcome, IrisProfileRosterOpApply::Applied);
-    folder = cfg.shared_folder(folder.share_id).unwrap().clone();
+    assert_eq!(outcome, ShareAccessSnapshotApply::Applied);
+    let folder = cfg.shared_folder(folder.share_id).unwrap();
     assert!(
         folder
             .projection()
@@ -1040,23 +1049,16 @@ fn apply_share_root_event_rejects_revoked_profile_member() {
         10,
     )
     .unwrap();
-    let member_revoke_event = build_share_member_roster_op_event(
+    crate::revoke_shared_folder_member(
+        &mut folder,
         owner.app_key.keys(),
-        folder.share_id,
-        folder.member_projection().accepted_op_ids,
-        folder.projection().accepted_op_ids,
-        ShareMemberRosterOp::RevokeMember {
-            profile_id: writer.state.profile_id,
-            reason: None,
-        },
+        writer.state.profile_id,
+        None,
         20,
     )
     .unwrap();
-    folder
-        .member_ops
-        .push(parse_share_member_roster_op_event(&member_revoke_event).unwrap());
     assert!(
-        folder
+        !folder
             .projection()
             .can_write_roots(&writer.state.app_key_pubkey)
     );

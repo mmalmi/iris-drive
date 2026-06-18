@@ -32,8 +32,8 @@ backend the platform supports (FileProvider / WinFsp / FUSE / DocumentsProvider)
 Multiple app installs owned by the same IrisProfile reconcile their drive root
 through signed roster ops, AppKey-signed root events, direct FIPS messages, and
 optional relay/Blossom caching. Shares reuse the same root-event machinery but
-are scoped by a share UUID and authorized by the share roster, not by an owner's
-Nostr pubkey.
+are scoped by a share UUID and authorized by the share access snapshot, not by
+an owner's Nostr pubkey.
 
 No separate daemon process, no IPC — `iris-drive-app-core` links
 `hashtree-embedded` as a library and the app extensions / shells link
@@ -189,8 +189,8 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
 ### Phase 4 — Sharing (weeks 11–13)
 
 - **Create share**: `idrive shares create Photos --name Photos`. Creates an
-  internal share root, initializes an entity-oriented share roster, and records
-  the owner IrisProfile as an admin member.
+  internal share root, initializes a canonical share access snapshot, and
+  records the owner IrisProfile as an admin member.
 - **Send invite**: `idrive shares invite <share-id> --recipient-evidence
   recipient-profile.json --role reader`. The evidence bundle contains the
   selected representative npub/pubkey, signed IrisProfile roster ops, and
@@ -202,13 +202,10 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
   discovery/display hint; access is granted to the resolved IrisProfile member,
   while concrete AppKeys receive key wraps and scoped signing/decryption
   capabilities. The recipient's IrisProfile roster and self-links prove
-  key-to-UUID identity. The share member roster records signed
-  UUID-to-role/status grants plus the key-roster heads that proved signer
-  authority at the time of the member change, and each share AppKey facet
-  carries the member IrisProfile UUID used for share-root authorization;
-  tombstones preserve that UUID so revoked-key status remains explainable after
-  removal. Projected member maps and any separate AppKey-to-IrisProfile map are
-  derived/cache data, not authority. External contact indexes such as
+  key-to-UUID identity. The share access snapshot records signed
+  UUID-to-role/status grants, concrete AppKey/device entries, key epochs, wraps,
+  and tombstones. Projected member maps and any separate AppKey-to-IrisProfile
+  map are derived/cache data, not authority. External contact indexes such as
   `nostr-social-graph` may rank/search representative npubs, but they are not
   share authority.
   If a share dialog only has a representative npub/contact and no signed
@@ -216,9 +213,7 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
   that npub. Pending hints are display/contact state; they do not add members,
   AppKey facets, key wraps, or write authority.
   Inviting rotates the share epoch and emits a compact invite bundle containing
-  a signed roster checkpoint/proof. The checkpoint summarizes entity members,
-  compact AppKey/key-epoch and member-roster heads, current key epoch, and
-  missing-wrap state; the append-only share roster op logs remain authoritative.
+  the signed canonical access snapshot for the share.
 - **Accept invite**: `idrive shares accept <share-invite-url>`. The recipient
   imports the shared folder only if the invite names their IrisProfile.
 - **CLI projection**: normal share JSON is entity/count oriented. `list`,
@@ -243,9 +238,9 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
   action instead of building identity proofs themselves. They do not
   reimplement share authority or key-wrap validation.
 - **Revoke / leave**: share admins revoke an IrisProfile member, tombstone all
-  known AppKeys for that profile in the share roster, rotate the share epoch,
-  and publish the new key only to remaining active members. Prior content can't
-  be recalled (content-addressed); matches Drive/Dropbox reality.
+  known AppKeys for that profile in the share access snapshot, rotate the share
+  epoch, and publish the new key only to remaining active members. Prior
+  content can't be recalled (content-addressed); matches Drive/Dropbox reality.
 
 ### Phase 5 — Windows + remaining desktop (weeks 13–16)
 
@@ -280,12 +275,13 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
 1. **Identity model**: IrisProfile UUID plus typed facets. Every app install
    has its own AppKey. There is no primary Nostr pubkey, and profile UUIDs are
    not derived from key material.
-2. **Authority model**: signed append-only roster op logs with deterministic
-   projection, tombstones, and key-wrap status/repair state derived in Rust
-   core. Facet acceptance events are self-signed breadcrumbs, not roster
-   authority. Signed checkpoints may summarize a projected roster for invites
-   or transport, but they do not replace the op log. Do not add a general CRDT
-   library unless it clearly simplifies this model.
+2. **Authority model**: IrisProfile identity still uses signed roster op logs
+   with deterministic projection. Share access uses one signed canonical
+   replaceable snapshot per share, with UUID grants, concrete AppKeys/devices,
+   tombstones, key epochs, and key-wrap status/repair state derived in Rust
+   core. Facet acceptance events are self-signed breadcrumbs, not roster or
+   share authority. Do not add a general CRDT library unless it clearly
+   simplifies this model.
 3. **Drive granularity**: one user-facing My Drive, with internal share roots
    for shared folders. Recipients see Shared with me and optional shortcuts,
    not a pile of separate sidebar drives.

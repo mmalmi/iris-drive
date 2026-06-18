@@ -44,36 +44,16 @@ fn ui_share_member<'a>(share: &'a UiShare, profile_id: &str) -> &'a UiShareMembe
 
 fn remove_share_wrap_for_epoch(
     folder: &mut iris_drive_core::SharedFolder,
-    signer_keys: &nostr_sdk::Keys,
     epoch: u64,
     removed_pubkey: &str,
 ) {
-    for op in &mut folder.roster_ops {
-        if let iris_drive_core::IrisProfileRosterOp::RotateKeyEpoch {
-            epoch: op_epoch,
-            wrapped_dck,
-        } = &mut op.content.op
-            && *op_epoch == epoch
-        {
-            let mut next_wraps = wrapped_dck.clone();
-            next_wraps.remove(removed_pubkey);
-            let event = iris_drive_core::build_iris_profile_roster_op_event(
-                signer_keys,
-                folder.share_id,
-                op.content.parents.clone(),
-                None,
-                iris_drive_core::IrisProfileRosterOp::RotateKeyEpoch {
-                    epoch: *op_epoch,
-                    wrapped_dck: next_wraps,
-                },
-                op.content.created_at,
-            )
-            .unwrap();
-            *op = iris_drive_core::parse_iris_profile_roster_op_event(&event).unwrap();
-            return;
-        }
-    }
-    panic!("share key epoch {epoch} not found");
+    folder
+        .access
+        .key_epochs
+        .get_mut(&epoch)
+        .unwrap_or_else(|| panic!("share key epoch {epoch} not found"))
+        .wrapped_dck
+        .remove(removed_pubkey);
 }
 
 #[test]
@@ -381,12 +361,7 @@ fn app_state_surfaces_share_missing_wrap_detail() {
         .next_back()
         .copied()
         .unwrap();
-    remove_share_wrap_for_epoch(
-        &mut folder,
-        account.app_key.keys(),
-        current_epoch,
-        &recipient_pubkey,
-    );
+    remove_share_wrap_for_epoch(&mut folder, current_epoch, &recipient_pubkey);
     config.upsert_shared_folder(folder);
     config.save(config_path_in(dir.path())).unwrap();
 

@@ -346,7 +346,7 @@ pub(crate) async fn build_current_sync_events(
     let mut events = Vec::new();
 
     append_profile_roster_events(&mut events, state)?;
-    append_share_roster_events(&mut events, config)?;
+    append_share_access_snapshot_events(&mut events, config_dir, config, state)?;
     append_primary_drive_root_events(&mut events, config_dir, config, state).await?;
     append_share_root_events(&mut events, config_dir, config, state).await?;
 
@@ -368,19 +368,32 @@ fn append_profile_roster_events(
     Ok(())
 }
 
-fn append_share_roster_events(
+fn append_share_access_snapshot_events(
     events: &mut Vec<DirectRootEvent>,
+    config_dir: &Path,
     config: &AppConfig,
+    state: &ProfileState,
 ) -> Result<()> {
+    let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
+        .context("loading app key")?;
     for folder in &config.shared_folders {
-        for op in &folder.roster_ops {
-            let event =
-                Event::from_json(&op.event_json).context("parsing share roster op event")?;
-            events.push(direct_root_event(
-                format!("share-profile-op:{}:{}", folder.share_id, op.op_id),
-                &event,
-            )?);
+        if !iris_drive_core::shared_folder_app_key_can_admin(folder, &state.app_key_pubkey) {
+            continue;
         }
+        let snapshot = iris_drive_core::sign_share_access_snapshot(
+            device.keys(),
+            folder,
+            folder.access.updated_at,
+        )?;
+        let event = Event::from_json(&snapshot.event_json)
+            .context("parsing share access snapshot event")?;
+        events.push(direct_root_event(
+            format!(
+                "share-access:{}:{}:{}",
+                folder.share_id, snapshot.snapshot_id, snapshot.content.updated_at
+            ),
+            &event,
+        )?);
     }
     Ok(())
 }

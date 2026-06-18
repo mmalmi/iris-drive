@@ -66,6 +66,8 @@ pub(crate) fn cmd_publish(
 pub(crate) struct PublishStateReport {
     published_profile_roster_ops: usize,
     profile_roster_publish_error: Option<String>,
+    published_share_access_snapshots: usize,
+    share_access_snapshot_publish_error: Option<String>,
     published_drive_root: bool,
     drive_root_publish_error: Option<String>,
     published_files_root: bool,
@@ -256,6 +258,8 @@ pub(crate) fn publish_state_report_json(report: &PublishStateReport) -> serde_js
     json!({
         "published_profile_roster_ops": report.published_profile_roster_ops,
         "profile_roster_publish_error": report.profile_roster_publish_error,
+        "published_share_access_snapshots": report.published_share_access_snapshots,
+        "share_access_snapshot_publish_error": report.share_access_snapshot_publish_error,
         "published_drive_root": report.published_drive_root,
         "drive_root_publish_error": report.drive_root_publish_error,
         "published_files_root": report.published_files_root,
@@ -421,6 +425,35 @@ pub(crate) async fn publish_current_state(
         }
     }
 
+    if !config.shared_folders.is_empty() {
+        let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
+            .context("loading app key")?;
+        for folder in &config.shared_folders {
+            if !iris_drive_core::shared_folder_app_key_can_admin(folder, &state.app_key_pubkey) {
+                continue;
+            }
+            let snapshot = match iris_drive_core::sign_share_access_snapshot(
+                device.keys(),
+                folder,
+                folder.access.updated_at,
+            ) {
+                Ok(snapshot) => snapshot,
+                Err(error) => {
+                    report.share_access_snapshot_publish_error = Some(error.to_string());
+                    continue;
+                }
+            };
+            match relay_publish_with_timeout(relay_sync::publish_share_access_snapshot(
+                client, &snapshot,
+            ))
+            .await
+            {
+                Ok(_) => report.published_share_access_snapshots += 1,
+                Err(error) => report.share_access_snapshot_publish_error = Some(error),
+            }
+        }
+    }
+
     if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
         && let Some(root) = publishable_app_key_root(config_dir, drive, state).await?
     {
@@ -500,6 +533,8 @@ pub(crate) fn spawn_initial_publish(
                         "event": "initial_publish",
                         "published_profile_roster_ops": report.published_profile_roster_ops,
                         "profile_roster_publish_error": report.profile_roster_publish_error,
+                        "published_share_access_snapshots": report.published_share_access_snapshots,
+                        "share_access_snapshot_publish_error": report.share_access_snapshot_publish_error,
                         "published_drive_root": report.published_drive_root,
                         "drive_root_publish_error": report.drive_root_publish_error,
                         "published_files_root": report.published_files_root,

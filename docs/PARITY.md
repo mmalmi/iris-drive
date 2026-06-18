@@ -72,8 +72,8 @@ prefill the create-share form, while app-core remains responsible for the actual
 share creation. Android exposes this through the SAF folder settings action for
 non-root Iris Drive folders. Optional `recipient_npub`, `recipient_name`, and
 `recipient_profile` query fields prefill invite/contact fields only; signed
-recipient evidence and roster ops remain the authority for the member's
-IrisProfile UUID and AppKeys.
+recipient evidence and IrisProfile roster ops prove the member's IrisProfile
+UUID and AppKeys before Rust core writes the share access snapshot grant.
 Linux accepts the route through its desktop `x-scheme-handler/iris-drive`
 registration and Windows accepts it through the per-user installer protocol
 registration plus a running-instance handoff; both native shells classify the

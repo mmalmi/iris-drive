@@ -129,7 +129,7 @@ fn direct_root_publish_includes_profile_roster_ops() {
 }
 
 #[test]
-fn direct_root_publish_includes_share_roster_ops_and_roots() {
+fn direct_root_publish_includes_share_access_snapshot_and_roots() {
     let config_dir = tempfile::tempdir().unwrap();
     let work = tempfile::tempdir().unwrap();
     let account = Profile::create(config_dir.path(), Some("native".to_string())).unwrap();
@@ -189,12 +189,18 @@ fn direct_root_publish_includes_share_roster_ops_and_roots() {
         ))
         .unwrap();
 
-    assert!(events.iter().any(|event| {
-        event.kind == iris_drive_core::KIND_IRIS_PROFILE_ROSTER_OP
-            && event
-                .key
-                .starts_with(&format!("share-profile-op:{}:", folder.share_id))
-    }));
+    let share_access = events
+        .iter()
+        .find(|event| {
+            event.kind == iris_drive_core::KIND_SHARE_ACCESS_SNAPSHOT
+                && event
+                    .key
+                    .starts_with(&format!("share-access:{}:", folder.share_id))
+        })
+        .expect("share access snapshot should be announced");
+    let event = nostr_sdk::Event::from_json(&share_access.json).unwrap();
+    let snapshot = iris_drive_core::parse_share_access_snapshot_event(&event).unwrap();
+    assert_eq!(snapshot.content, folder.access);
     let share_root = events
         .iter()
         .find(|event| {

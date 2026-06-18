@@ -40,6 +40,23 @@ pub(crate) async fn apply_one_event(
         if let Some(sync) = fips_blocks.as_deref() {
             sync.refresh_authorized_peers(&config).await;
         }
+    } else if iris_drive_core::is_share_access_snapshot_event_coordinate(event) {
+        let outcome = relay_sync::apply_remote_share_access_snapshot_event(&mut config, event)?;
+        emit_daemon_status_event(
+            config_dir,
+            json!({
+                "event": "share_access_snapshot",
+                "event_id": event.id.to_hex(),
+                "author": pubkey_npub(&event.pubkey.to_hex()),
+                "outcome": format!("{outcome:?}"),
+            }),
+        );
+        if matches!(outcome, relay_sync::ShareAccessSnapshotApply::Applied) {
+            config.save(config_path_in(config_dir))?;
+        }
+        if let Some(sync) = fips_blocks.as_deref() {
+            sync.refresh_authorized_peers(&config).await;
+        }
     } else if iris_drive_core::nostr_events::is_drive_root_event_coordinate(event) {
         let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
             .context("loading app key")?;

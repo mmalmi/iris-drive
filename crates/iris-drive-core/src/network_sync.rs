@@ -32,6 +32,8 @@ pub struct NetworkSyncReport {
     pub blossom_servers: Vec<String>,
     pub profile_roster_ops_seen: usize,
     pub profile_roster_ops_applied: usize,
+    pub share_access_snapshots_seen: usize,
+    pub share_access_snapshots_applied: usize,
     pub drive_root_events_seen: usize,
     pub drive_root_events_applied: usize,
     pub drive_root_events_skipped: usize,
@@ -104,17 +106,17 @@ pub async fn sync_once_with_fips(
         .map(|folder| folder.share_id)
         .collect::<Vec<_>>();
     for share_id in share_ids {
-        let share_events = relay_sync::fetch_iris_profile_roster_ops(&client, share_id, timeout)
+        let share_events = relay_sync::fetch_share_access_snapshots(&client, share_id, timeout)
             .await
-            .with_context(|| format!("fetching share roster ops for {share_id}"))?;
-        report.profile_roster_ops_seen += share_events.len();
+            .with_context(|| format!("fetching share access snapshots for {share_id}"))?;
+        report.share_access_snapshots_seen += share_events.len();
         for event in &share_events {
             if matches!(
-                relay_sync::apply_remote_iris_profile_roster_op_event(&mut config, event)
-                    .with_context(|| format!("applying share roster op for {share_id}"))?,
-                relay_sync::IrisProfileRosterOpApply::Applied
+                relay_sync::apply_remote_share_access_snapshot_event(&mut config, event)
+                    .with_context(|| format!("applying share access snapshot for {share_id}"))?,
+                relay_sync::ShareAccessSnapshotApply::Applied
             ) {
-                report.profile_roster_ops_applied += 1;
+                report.share_access_snapshots_applied += 1;
             }
         }
     }

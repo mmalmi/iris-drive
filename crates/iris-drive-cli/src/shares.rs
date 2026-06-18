@@ -683,9 +683,9 @@ mod tests {
         let folder = &saved.shared_folders[0];
         assert_eq!(folder.source_path, "Projects/Alpha");
         assert_eq!(folder.display_name, "Alpha");
+        let members = iris_drive_core::project_share_access(&folder.access).members;
         assert_eq!(
-            folder
-                .members
+            members
                 .get(&account.state.profile_id.to_string())
                 .unwrap()
                 .role,
@@ -693,9 +693,11 @@ mod tests {
         );
         assert_eq!(
             folder
-                .participant_profiles
-                .get(&account.state.app_key_pubkey),
-            Some(&account.state.profile_id)
+                .access
+                .devices
+                .get(&account.state.app_key_pubkey)
+                .and_then(|device| device.profile_id),
+            Some(account.state.profile_id)
         );
         assert_eq!(saved.share_shortcuts.len(), 1);
         let shortcut = &saved.share_shortcuts[0];
@@ -777,8 +779,13 @@ mod tests {
         let saved = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
         let share = saved.shared_folder(share_id).unwrap();
         assert_eq!(share.pending_invites.len(), 1);
-        assert_eq!(share.members.len(), 1);
-        assert_eq!(share.participant_profiles.len(), 1);
+        assert_eq!(
+            iris_drive_core::project_share_access(&share.access)
+                .members
+                .len(),
+            1
+        );
+        assert_eq!(share.access.devices.len(), 1);
         let pending = share.pending_invites.get(&representative_npub).unwrap();
         assert_eq!(pending.display_name.as_deref(), Some("Alice"));
         assert_eq!(pending.status, iris_drive_core::ShareMemberStatus::Pending);
@@ -941,9 +948,9 @@ mod tests {
         let saved = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
         let revoked = saved.shared_folder(folder.share_id).unwrap();
         let projection = revoked.projection();
+        let members = iris_drive_core::project_share_access(&revoked.access).members;
         assert_eq!(
-            revoked
-                .members
+            members
                 .get(&recipient_profile_id.to_string())
                 .unwrap()
                 .status,
@@ -1063,12 +1070,9 @@ mod tests {
 
         let saved = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
         let updated = saved.shared_folder(folder.share_id).unwrap();
+        let members = iris_drive_core::project_share_access(&updated.access).members;
         assert_eq!(
-            updated
-                .members
-                .get(&recipient_profile_id.to_string())
-                .unwrap()
-                .role,
+            members.get(&recipient_profile_id.to_string()).unwrap().role,
             iris_drive_core::ShareRole::Editor
         );
         assert_eq!(
@@ -1131,7 +1135,7 @@ mod tests {
             recipient_profile_id: recipient.state.profile_id,
             role: iris_drive_core::ShareRole::Reader,
             representative_npub_hint: Some("npub1alice".into()),
-            roster_checkpoint: None,
+            access_snapshot: None,
             created_at: 20,
         };
         let invite = iris_drive_core::encode_share_invite(&bundle).unwrap();
@@ -1141,10 +1145,10 @@ mod tests {
         let recipient_saved =
             AppConfig::load_or_default(config_path_in(recipient_dir.path())).unwrap();
         let accepted = recipient_saved.shared_folder(folder.share_id).unwrap();
+        let accepted_members = iris_drive_core::project_share_access(&accepted.access).members;
         assert_eq!(accepted.display_name, "Alpha");
         assert_eq!(
-            accepted
-                .members
+            accepted_members
                 .get(&recipient.state.profile_id.to_string())
                 .unwrap()
                 .display_name
@@ -1196,17 +1200,19 @@ mod tests {
 
         let owner_saved = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
         let invited = owner_saved.shared_folder(folder.share_id).unwrap();
-        let member = invited
-            .members
+        let members = iris_drive_core::project_share_access(&invited.access).members;
+        let member = members
             .get(&recipient.state.profile_id.to_string())
             .unwrap();
         assert_eq!(member.display_name.as_deref(), Some("Alice"));
         assert_eq!(member.role, iris_drive_core::ShareRole::Editor);
         assert_eq!(
             invited
-                .participant_profiles
-                .get(&recipient.state.app_key_pubkey),
-            Some(&recipient.state.profile_id)
+                .access
+                .devices
+                .get(&recipient.state.app_key_pubkey)
+                .and_then(|device| device.profile_id),
+            Some(recipient.state.profile_id)
         );
         assert_eq!(
             iris_drive_core::current_shared_folder_key(invited, recipient.app_key.keys()).unwrap(),
@@ -1252,28 +1258,13 @@ mod tests {
             .next_back()
             .copied()
             .unwrap();
-        for op in &mut folder.roster_ops {
-            if let iris_drive_core::IrisProfileRosterOp::RotateKeyEpoch { epoch, wrapped_dck } =
-                &mut op.content.op
-                && *epoch == current_epoch
-            {
-                let mut missing_recipient_wraps = wrapped_dck.clone();
-                missing_recipient_wraps.remove(&recipient_pubkey);
-                let event = iris_drive_core::build_iris_profile_roster_op_event(
-                    account.app_key.keys(),
-                    folder.share_id,
-                    op.content.parents.clone(),
-                    None,
-                    iris_drive_core::IrisProfileRosterOp::RotateKeyEpoch {
-                        epoch: *epoch,
-                        wrapped_dck: missing_recipient_wraps,
-                    },
-                    op.content.created_at,
-                )
-                .unwrap();
-                *op = iris_drive_core::parse_iris_profile_roster_op_event(&event).unwrap();
-            }
-        }
+        folder
+            .access
+            .key_epochs
+            .get_mut(&current_epoch)
+            .unwrap()
+            .wrapped_dck
+            .remove(&recipient_pubkey);
         assert_eq!(
             iris_drive_core::shared_folder_missing_key_wrap_pubkeys(&folder, current_epoch),
             vec![recipient_pubkey.clone()]

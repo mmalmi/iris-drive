@@ -664,14 +664,10 @@ fn trimmed_option(value: Option<String>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::iris_profile::IrisProfileRosterOp;
     use crate::paths::config_path_in;
     use crate::profile::Profile;
     use crate::sharing::{current_shared_folder_key, shared_folder_missing_key_wrap_pubkeys};
-    use crate::{
-        AppConfig, SHARE_INVITE_PREFIX, build_iris_profile_roster_op_event,
-        parse_iris_profile_roster_op_event,
-    };
+    use crate::{AppConfig, SHARE_INVITE_PREFIX};
     use tempfile::tempdir;
 
     fn init_config(dir: &Path, profile: &Profile) {
@@ -1044,27 +1040,13 @@ mod tests {
             .next_back()
             .copied()
             .unwrap();
-        for op in &mut folder.roster_ops {
-            if let IrisProfileRosterOp::RotateKeyEpoch { epoch, wrapped_dck } = &mut op.content.op
-                && *epoch == current_epoch
-            {
-                let mut incomplete_wraps = wrapped_dck.clone();
-                incomplete_wraps.remove(&recipient_pubkey);
-                let event = build_iris_profile_roster_op_event(
-                    owner.app_key.keys(),
-                    folder.share_id,
-                    op.content.parents.clone(),
-                    None,
-                    IrisProfileRosterOp::RotateKeyEpoch {
-                        epoch: *epoch,
-                        wrapped_dck: incomplete_wraps,
-                    },
-                    op.content.created_at,
-                )
-                .unwrap();
-                *op = parse_iris_profile_roster_op_event(&event).unwrap();
-            }
-        }
+        folder
+            .access
+            .key_epochs
+            .get_mut(&current_epoch)
+            .unwrap()
+            .wrapped_dck
+            .remove(&recipient_pubkey);
         assert_eq!(
             shared_folder_missing_key_wrap_pubkeys(folder, current_epoch),
             vec![recipient_pubkey.clone()]
