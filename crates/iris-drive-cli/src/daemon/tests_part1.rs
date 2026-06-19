@@ -47,6 +47,15 @@ fn config_root_watch_filters_to_config_file() {
 }
 
 #[test]
+fn daemon_status_records_binary_version_for_gui_mismatch_detection() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let status = write_daemon_status(dir.path(), json!({"event": "test"}));
+
+    assert_eq!(status["binary_version"], env!("CARGO_PKG_VERSION"));
+}
+
+#[test]
 fn root_update_debounce_has_fast_floor() {
     assert_eq!(
         root_update_debounce_duration(100),

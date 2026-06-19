@@ -281,11 +281,15 @@ wait_for_daemon() {
 wait_for_log() {
   local pattern="$1"
   local seconds="$2"
+  local log_file
 
   for _ in $(seq 1 "$((seconds * 10))"); do
-    if grep -F "$pattern" "$APP_STDOUT" "$APP_STDERR" "$APP_DEBUG_LOG" >/dev/null 2>&1; then
-      return 0
-    fi
+    for log_file in "$APP_STDOUT" "$APP_STDERR" "$APP_DEBUG_LOG"; do
+      if [[ -f "$log_file" ]] &&
+        grep -F "$pattern" "$log_file" >/dev/null 2>&1; then
+        return 0
+      fi
+    done
     sleep 0.1
   done
   return 1

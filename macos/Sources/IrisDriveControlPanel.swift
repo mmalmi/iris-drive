@@ -206,9 +206,31 @@ struct IrisDriveControlPanel: View {
             sidebar
             Divider()
             VStack(spacing: 0) {
+                runtimeVersionStripe
                 updateStripe
                 content
             }
+        }
+    }
+
+    @ViewBuilder
+    private var runtimeVersionStripe: some View {
+        if status.runtimeVersionMismatch {
+            HStack(spacing: 12) {
+                Label(status.runtimeVersionStripeText, systemImage: "exclamationmark.triangle")
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer()
+                Button(status.serviceVersionMismatch ? "Update Service" : "Restart Sync") {
+                    controller.updateDaemonService()
+                }
+                .disabled(status.updateInstalling)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 8)
+            .background(Color(nsColor: .controlBackgroundColor))
+            Divider()
         }
     }
 
@@ -1489,6 +1511,12 @@ struct IrisDriveControlPanel: View {
 
             Section("Updates") {
                 LabeledContent("Version", value: appVersion)
+                if !status.daemonBinaryVersion.isEmpty {
+                    LabeledContent("Daemon", value: status.daemonBinaryVersion)
+                }
+                if !status.serviceBinaryVersion.isEmpty {
+                    LabeledContent("Daemon service", value: status.serviceBinaryVersion)
+                }
                 Toggle(
                     "Check automatically",
                     isOn: Binding(

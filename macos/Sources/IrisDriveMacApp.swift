@@ -11,7 +11,6 @@ let irisDriveFileProviderDomainDisplayName = "My Drive"
 private let irisDriveControlPanelWindowID = "control-panel"
 private let irisDriveFileProviderRuntimeFileName = "fileprovider-runtime.json"
 private let irisDriveFileProviderPathIdentifierPrefix = "path:"
-private let irisDriveDefaultUpdatePollInterval: TimeInterval = 6 * 60 * 60
 let irisDriveFileProviderRegistrationIdentityKey = "fileProviderRegistrationIdentity"
 private let irisDriveShowControlPanelNotification =
     Notification.Name("to.iris.drive.showControlPanel")
@@ -43,7 +42,7 @@ struct IrisDriveMacApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    private let screenshotFixtureMode = IrisDriveScreenshotFixtures.enabled
+    let screenshotFixtureMode = IrisDriveScreenshotFixtures.enabled
     var daemon: Process?
     var daemonServiceActive = false
     private var userRequestedSyncStop = false
@@ -77,8 +76,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var externalStatusFileDescriptor: CInt = -1
     private var externalStatusDirectoryDescriptor: CInt = -1
     private var externalStatusRefreshWorkItem: DispatchWorkItem?
-    private var updatePollTimer: Timer?
-    private var startupUpdateCheckDone = false
+    var updatePollTimer: Timer?
+    var startupUpdateCheckDone = false
+    var installingAppUpdate = false
     let nativeCoreQueue = DispatchQueue(label: "to.iris.drive.macos.native-core", qos: .utility)
     var nativeStatusRefreshInFlight = false
     var nativeStatusRefreshPending = false
@@ -87,7 +87,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         appVersion: appVersion
     )
 
-    private var appVersion: String {
+    var appVersion: String {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
             ?? "0.1.0"
     }
@@ -216,245 +216,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    func setAutoInstallUpdates(_ enabled: Bool) {
-        let status = IrisDriveStatus.shared
-        status.autoInstallUpdates = enabled
-        UserDefaults.standard.set(enabled, forKey: IrisDriveStatus.autoInstallUpdatesKey)
-        if enabled, status.updateAvailable, status.updateCanInstall {
-            installUpdate()
-        }
-    }
-
-    func checkForUpdates(manual: Bool = true) {
-        if screenshotFixtureMode {
-            if manual {
-                IrisDriveStatus.shared.updateStatus = "Fixture mode"
-            }
-            return
-        }
-        let status = IrisDriveStatus.shared
-        guard !status.updateChecking, !status.updateInstalling else {
-            return
-        }
-        status.updateChecking = true
-        if manual {
-            status.updateStatus = "Checking for updates"
-        }
-        let dataDir = (runtimePathsForMenu ?? runtimePaths()).configDirectory.path
-        let version = appVersion
-        DispatchQueue.global(qos: .utility).async {
-            let result = IrisDriveDesktopCore.updateCheck(
-                dataDir: dataDir,
-                currentVersion: version,
-                mode: "app"
-            )
-            DispatchQueue.main.async {
-                self.applyUpdateCheck(result, manual: manual)
-            }
-        }
-    }
-
-    private func startAutomaticUpdateChecks() {
-        let status = IrisDriveStatus.shared
-        guard !screenshotFixtureMode, status.autoCheckUpdates else {
-            stopAutomaticUpdateChecks()
-            return
-        }
-        if !startupUpdateCheckDone {
-            startupUpdateCheckDone = true
-            checkForUpdates(manual: false)
-        }
-        guard updatePollTimer == nil else {
-            return
-        }
-        updatePollTimer = Timer.scheduledTimer(
-            withTimeInterval: updatePollInterval,
-            repeats: true
-        ) { [weak self] _ in
-            guard let self else { return }
-            guard IrisDriveStatus.shared.autoCheckUpdates else {
-                self.stopAutomaticUpdateChecks()
-                return
-            }
-            self.checkForUpdates(manual: false)
-        }
-    }
-
-    private func stopAutomaticUpdateChecks() {
-        updatePollTimer?.invalidate()
-        updatePollTimer = nil
-    }
-
-    private var updatePollInterval: TimeInterval {
-        let raw = ProcessInfo.processInfo.environment["IRIS_DRIVE_UPDATE_POLL_SECONDS"] ?? ""
-        if let seconds = TimeInterval(raw), seconds > 0 {
-            return seconds
-        }
-        return irisDriveDefaultUpdatePollInterval
-    }
-
-    private func applyUpdateCheck(_ result: [String: Any], manual: Bool) {
-        let status = IrisDriveStatus.shared
-        status.updateChecking = false
-        if let error = result["error"] as? String,
-           !error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            status.updateAvailable = false
-            status.updateCanInstall = false
-            status.updateAsset = ""
-            status.updateStatus = manual ? error : ""
-            return
-        }
-        let available = result["available"] as? Bool ?? false
-        let asset = result["asset"] as? String ?? ""
-        let tag = result["tag"] as? String ?? ""
-        status.updateAvailable = available
-        status.updateVersion = tag
-        status.updateAsset = asset
-        status.updateCanInstall = available && !asset.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        if available {
-            if status.updateCanInstall {
-                status.updateStatus = "Update \(tag) available"
-                if status.autoInstallUpdates && asset.lowercased().hasSuffix(".app.tar.gz") {
-                    installUpdate()
-                }
-            } else {
-                status.updateStatus = "Update \(tag) found without a macOS asset"
-            }
-        } else {
-            status.updateStatus = manual ? "Up to date" : ""
-        }
-    }
-
-    func installUpdate() {
-        let status = IrisDriveStatus.shared
-        guard status.updateCanInstall, !status.updateInstalling else {
-            if status.updateAsset.isEmpty {
-                status.updateStatus = "No macOS update asset found"
-            }
-            return
-        }
-        status.updateInstalling = true
-        status.updateStatus = "Downloading \(status.updateVersion)"
-        let dataDir = (runtimePathsForMenu ?? runtimePaths()).configDirectory.path
-        let version = appVersion
-        let downloadDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("IrisDriveDownloads", isDirectory: true)
-            .path
-        DispatchQueue.global(qos: .utility).async {
-            let result = IrisDriveDesktopCore.updateDownload(
-                dataDir: dataDir,
-                currentVersion: version,
-                mode: "app",
-                downloadDir: downloadDir
-            )
-            DispatchQueue.main.async {
-                self.finishUpdateDownload(result)
-            }
-        }
-    }
-
-    private func finishUpdateDownload(_ result: [String: Any]) {
-        let status = IrisDriveStatus.shared
-        if let error = result["error"] as? String,
-           !error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            status.updateInstalling = false
-            status.updateStatus = error
-            return
-        }
-        guard let path = result["path"] as? String, !path.isEmpty else {
-            status.updateInstalling = false
-            status.updateStatus = "Updater did not return a downloaded file"
-            return
-        }
-        do {
-            try installDownloadedUpdate(URL(fileURLWithPath: path))
-        } catch {
-            status.updateInstalling = false
-            status.updateStatus = error.localizedDescription
-        }
-    }
-
-    private func installDownloadedUpdate(_ archiveURL: URL) throws {
-        let status = IrisDriveStatus.shared
-        if archiveURL.lastPathComponent.lowercased().hasSuffix(".app.tar.gz") {
-            status.updateStatus = "Installing \(status.updateVersion)"
-            let unpackDir = FileManager.default.temporaryDirectory
-                .appendingPathComponent("IrisDriveUpdate-\(UUID().uuidString)", isDirectory: true)
-            try FileManager.default.createDirectory(at: unpackDir, withIntermediateDirectories: true)
-            try runUpdateProcess(
-                "/usr/bin/tar",
-                arguments: ["-xzf", archiveURL.path, "-C", unpackDir.path]
-            )
-            guard let newApp = findIrisDriveApp(in: unpackDir) else {
-                throw NSError(
-                    domain: "IrisDriveUpdate",
-                    code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "Downloaded update did not contain Iris Drive.app"]
-                )
-            }
-            let script = try updateInstallScript()
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/sh")
-            process.arguments = [script.path, Bundle.main.bundleURL.path, newApp.path]
-            try process.run()
-            NSApp.terminate(nil)
-        } else {
-            NSWorkspace.shared.activateFileViewerSelecting([archiveURL])
-            status.updateInstalling = false
-            status.updateStatus = "Downloaded \(archiveURL.lastPathComponent)"
-        }
-    }
-
-    private func findIrisDriveApp(in root: URL) -> URL? {
-        guard let enumerator = FileManager.default.enumerator(
-            at: root,
-            includingPropertiesForKeys: [.isDirectoryKey],
-            options: [.skipsHiddenFiles]
-        ) else {
-            return nil
-        }
-        for case let url as URL in enumerator {
-            if url.pathExtension == "app",
-               (url.lastPathComponent == "Iris Drive.app" || url.lastPathComponent == "IrisDriveMac.app") {
-                return url
-            }
-        }
-        return nil
-    }
-
-    private func updateInstallScript() throws -> URL {
-        let script = FileManager.default.temporaryDirectory
-            .appendingPathComponent("iris-drive-install-update-\(UUID().uuidString).sh")
-        let contents = """
-        #!/bin/sh
-        set -eu
-        current_app="$1"
-        new_app="$2"
-        sleep 1
-        rm -rf "$current_app"
-        ditto "$new_app" "$current_app"
-        open "$current_app"
-        """
-        try contents.write(to: script, atomically: true, encoding: .utf8)
-        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
-        return script
-    }
-
-    private func runUpdateProcess(_ executable: String, arguments: [String]) throws {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        try process.run()
-        process.waitUntilExit()
-        if process.terminationStatus != 0 {
-            throw NSError(
-                domain: "IrisDriveUpdate",
-                code: Int(process.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: "\(URL(fileURLWithPath: executable).lastPathComponent) failed"]
-            )
-        }
-    }
-
     private func ensureFileProviderDomainAfterStatusIfNeeded() {
         guard fileProviderIntegrationEnabled else { return }
         guard IrisDriveStatus.shared.stateLoaded else { return }
@@ -468,8 +229,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        updateStatus("Pausing sync")
-        stopSync()
+        if installingAppUpdate {
+            updateStatus("Installing update")
+        } else {
+            updateStatus("Pausing sync")
+            stopSync()
+        }
         statusRefreshTimer?.invalidate()
         statusRefreshTimer = nil
         updatePollTimer?.invalidate()
@@ -827,11 +592,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     @objc func restartSync() {
         if daemonServiceActive {
             userRequestedSyncStop = false
-            startDaemon(idriveExecutableURL(), paths: runtimePathsForMenu ?? runtimePaths())
+            let paths = runtimePathsForMenu ?? runtimePaths()
+            restartDaemonService(
+                idriveExecutableURL(),
+                paths: paths,
+                refreshDefinition: !currentProcessHasEntitlement("com.apple.security.app-sandbox")
+            )
             return
         }
         stopSync()
         startSync()
+    }
+
+    @objc func updateDaemonService() {
+        userRequestedSyncStop = false
+        daemonRestartWorkItem?.cancel()
+        daemonRestartWorkItem = nil
+        let paths = runtimePathsForMenu ?? runtimePaths()
+        if daemonServiceActive {
+            restartDaemonService(
+                idriveExecutableURL(),
+                paths: paths,
+                refreshDefinition: !currentProcessHasEntitlement("com.apple.security.app-sandbox")
+            )
+            return
+        }
+        restartSync()
     }
 
     @objc func toggleSync() {
@@ -2021,7 +1807,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return nil
     }
 
-    private func runtimePaths() -> IrisDriveRuntimePaths {
+    func runtimePaths() -> IrisDriveRuntimePaths {
         if let override = ProcessInfo.processInfo.environment["IRIS_DRIVE_APP_BASE_DIR"],
            !override.isEmpty {
             return IrisDriveRuntimePaths(
@@ -2147,6 +1933,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.async {
             let status = IrisDriveStatus.shared
             status.stateLoaded = true
+            status.expectedDaemonBinaryVersion = self.appVersion
+            status.expectedServiceBinaryVersion = self.appVersion
             let account = ui["profile"] as? [String: Any]
             let paths = ui["paths"] as? [String: Any] ?? [:]
             status.initialized = account != nil
@@ -2300,6 +2088,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.async {
             let status = IrisDriveStatus.shared
             status.stateLoaded = true
+            status.expectedDaemonBinaryVersion = self.appVersion
+            status.expectedServiceBinaryVersion = self.appVersion
             status.initialized = json["initialized"] as? Bool ?? false
             status.configDirectory = json["config_dir"] as? String
 
@@ -2351,6 +2141,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             var daemonStatusRunning: Bool?
             if let daemon = json["daemon"] as? [String: Any] {
                 daemonStatusRunning = daemon["running"] as? Bool
+                status.daemonBinaryVersion =
+                    daemonStatusRunning == true ? (daemon["binary_version"] as? String ?? "") : ""
                 if let gateway = daemon["browser_gateway"] as? [String: Any] {
                     Self.applyGatewayStatus(gateway, to: status)
                 }
@@ -2358,9 +2150,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             if let service = json["service"] as? [String: Any] {
                 let serviceRunning = service["running"] as? Bool ?? false
+                status.serviceBinaryVersion = service["binary_version"] as? String ?? ""
                 self.daemonServiceActive = serviceRunning
                 self.setDaemonRunning(serviceRunning || (daemonStatusRunning ?? false))
             } else if let daemonStatusRunning {
+                status.serviceBinaryVersion = ""
                 self.setDaemonRunning(daemonStatusRunning)
             }
 
@@ -2433,6 +2227,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func handleDaemonPayload(_ json: [String: Any]) {
         DispatchQueue.main.async {
             let status = IrisDriveStatus.shared
+            status.expectedDaemonBinaryVersion = self.appVersion
+            status.expectedServiceBinaryVersion = self.appVersion
             if let event = json["event"] as? String {
                 status.lastEvent = event
                 switch event {
@@ -2472,6 +2268,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 default:
                     break
                 }
+            }
+            if let version = json["binary_version"] as? String {
+                status.daemonBinaryVersion = version
             }
 
             if json["fips_block_sync"] != nil {
@@ -2617,6 +2416,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         DispatchQueue.main.async {
             let status = IrisDriveStatus.shared
             status.stateLoaded = true
+            status.expectedDaemonBinaryVersion = self.appVersion
+            status.expectedServiceBinaryVersion = self.appVersion
             status.initialized = true
             status.configDirectory = self.runtimePathsForMenu?.configDirectory.path
             if let event = json["event"] as? String {
@@ -2633,6 +2434,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             }
             if let running = json["running"] as? Bool {
                 self.setDaemonRunning(running)
+                status.daemonBinaryVersion = running ? (json["binary_version"] as? String ?? "") : ""
             }
             if let sync = json["sync"] as? [String: Any] {
                 Self.applyDaemonSyncStatus(sync, to: status)

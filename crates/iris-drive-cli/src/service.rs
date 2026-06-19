@@ -5,6 +5,13 @@ use std::path::Path;
 use std::path::PathBuf;
 #[cfg(target_os = "macos")]
 use std::process::{Command as ProcessCommand, Stdio};
+#[cfg(target_os = "macos")]
+use std::time::{Duration, Instant};
+
+#[cfg(target_os = "macos")]
+const BINARY_VERSION_QUERY_TIMEOUT: Duration = Duration::from_secs(2);
+#[cfg(target_os = "macos")]
+const BINARY_VERSION_QUERY_POLL_INTERVAL: Duration = Duration::from_millis(20);
 
 pub(crate) fn cmd_service(config_dir: &Path, command: ServiceCmd) -> Result<()> {
     let json_output = service_command_json(&command);
@@ -308,6 +315,11 @@ fn macos_service_status(config_dir: &Path) -> Result<Value> {
         }
         Err(error) => (false, false, None, format!("{error:#}")),
     };
+    let service_binary = macos_service_executable_path(&plist_path);
+    let binary_version = service_binary
+        .as_deref()
+        .and_then(query_binary_version)
+        .unwrap_or_default();
     Ok(json!({
         "supported": true,
         "kind": "launchagent",
@@ -318,8 +330,72 @@ fn macos_service_status(config_dir: &Path) -> Result<Value> {
         "loaded": loaded,
         "running": running,
         "pid": pid,
+        "binary_path": service_binary
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_default(),
+        "binary_version": binary_version,
         "detail": detail.lines().next().unwrap_or_default(),
     }))
+}
+
+#[cfg(target_os = "macos")]
+fn macos_service_executable_path(plist_path: &Path) -> Option<PathBuf> {
+    let plist = std::fs::read_to_string(plist_path).ok()?;
+    macos_service_executable_path_from_plist_contents(&plist).map(PathBuf::from)
+}
+
+#[cfg(any(target_os = "macos", test))]
+fn macos_service_executable_path_from_plist_contents(plist: &str) -> Option<String> {
+    let program_arguments = plist.split_once("<key>ProgramArguments</key>")?.1;
+    let value = program_arguments
+        .split_once("<string>")?
+        .1
+        .split_once("</string>")?
+        .0;
+    let value = xml_unescape(value.trim());
+    (!value.is_empty()).then_some(value)
+}
+
+#[cfg(target_os = "macos")]
+fn query_binary_version(path: &Path) -> Option<String> {
+    use std::io::Read as _;
+
+    let mut child = ProcessCommand::new(path)
+        .args(["version", "--json"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if started.elapsed() >= BINARY_VERSION_QUERY_TIMEOUT => {
+                let _ = child.kill();
+                let _ = child.try_wait();
+                return None;
+            }
+            Ok(None) => std::thread::sleep(BINARY_VERSION_QUERY_POLL_INTERVAL),
+            Err(_) => {
+                let _ = child.kill();
+                return None;
+            }
+        }
+    };
+    if !status.success() {
+        return None;
+    }
+
+    let mut stdout = Vec::new();
+    child.stdout.take()?.read_to_end(&mut stdout).ok()?;
+    let value = serde_json::from_slice::<Value>(&stdout).ok()?;
+    value
+        .get("version")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|version| !version.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 #[cfg(target_os = "macos")]
@@ -428,6 +504,15 @@ fn xml_escape(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
+fn xml_unescape(value: &str) -> String {
+    value
+        .replace("&apos;", "'")
+        .replace("&quot;", "\"")
+        .replace("&gt;", ">")
+        .replace("&lt;", "<")
+        .replace("&amp;", "&")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -450,6 +535,18 @@ mod tests {
         assert!(plist.contains("<string>--watch-interval</string>"));
         assert!(plist.contains("<string>0</string>"));
         assert!(!plist.contains("IRIS_DRIVE_PARENT_PID"));
+    }
+
+    #[test]
+    fn macos_launch_agent_plist_parser_extracts_service_executable() {
+        let config_dir = Path::new("/Users/example/Library/Application Support/Iris Drive/Config");
+        let executable = Path::new("/Applications/Iris & Drive.app/Contents/MacOS/idrive");
+        let plist = macos_launch_agent_plist(config_dir, executable);
+
+        assert_eq!(
+            macos_service_executable_path_from_plist_contents(&plist).as_deref(),
+            Some("/Applications/Iris & Drive.app/Contents/MacOS/idrive")
+        );
     }
 
     #[test]

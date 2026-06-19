@@ -24,6 +24,10 @@ final class IrisDriveStatus: ObservableObject {
     @Published var updateStatus = ""
     @Published var updateAsset = ""
     @Published var updateCanInstall = false
+    @Published var daemonBinaryVersion = ""
+    @Published var serviceBinaryVersion = ""
+    @Published var expectedDaemonBinaryVersion = ""
+    @Published var expectedServiceBinaryVersion = ""
     @Published var stateLoaded = false
     @Published var initialized = false
     @Published var driveName = "My Drive"
@@ -89,6 +93,59 @@ final class IrisDriveStatus: ObservableObject {
         Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
     }
 
+    var daemonVersionMismatch: Bool {
+        let expected = expectedDaemonBinaryVersion.isEmpty ? appVersionText : expectedDaemonBinaryVersion
+        if daemonRunning,
+           !expected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           daemonBinaryVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return true
+        }
+        return Self.versionsDiffer(daemonBinaryVersion, expected)
+    }
+
+    var serviceVersionMismatch: Bool {
+        Self.versionsDiffer(serviceBinaryVersion, expectedServiceBinaryVersion.isEmpty ? appVersionText : expectedServiceBinaryVersion)
+    }
+
+    var runtimeVersionMismatch: Bool {
+        daemonVersionMismatch || serviceVersionMismatch
+    }
+
+    var runtimeVersionStripeText: String {
+        let expected = expectedDaemonBinaryVersion.isEmpty ? appVersionText : expectedDaemonBinaryVersion
+        if daemonVersionMismatch {
+            let actual = daemonBinaryVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !actual.isEmpty, !expected.isEmpty {
+                return "Daemon is on v\(actual); restart to match app v\(expected)"
+            }
+            return "Daemon needs restart to match the app"
+        }
+        let service = serviceBinaryVersion.trimmingCharacters(in: .whitespacesAndNewlines)
+        let expectedService = expectedServiceBinaryVersion.isEmpty ? appVersionText : expectedServiceBinaryVersion
+        if !service.isEmpty, !expectedService.isEmpty {
+            return "Daemon service is on v\(service); update to match app v\(expectedService)"
+        }
+        return "Daemon service needs update to match the app"
+    }
+
+    static func versionsDiffer(_ installed: String, _ expected: String) -> Bool {
+        let installed = normalizedVersion(installed)
+        let expected = normalizedVersion(expected)
+        return !installed.isEmpty && !expected.isEmpty && installed != expected
+    }
+
+    private static func normalizedVersion(_ value: String) -> String {
+        value
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .trimmingPrefix("v")
+            .trimmingPrefix("V")
+    }
+}
+
+private extension String {
+    func trimmingPrefix(_ prefix: String) -> String {
+        hasPrefix(prefix) ? String(dropFirst(prefix.count)) : self
+    }
 }
 
 struct IrisDriveShareDialogRequest: Identifiable, Equatable {

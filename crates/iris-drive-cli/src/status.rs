@@ -446,6 +446,10 @@ pub(crate) fn write_daemon_status(config_dir: &Path, mut payload: Value) -> Valu
         object.insert("running".to_string(), json!(true));
         object.insert("fresh".to_string(), json!(true));
         object.insert("updated_at".to_string(), json!(now));
+        object.insert(
+            "binary_version".to_string(),
+            json!(env!("CARGO_PKG_VERSION")),
+        );
     }
     normalize_daemon_status_for_clients(config_dir, &mut payload);
     if let Some(parent) = daemon_status_path(config_dir).parent() {

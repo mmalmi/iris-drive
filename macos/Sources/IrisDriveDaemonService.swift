@@ -57,9 +57,23 @@ extension AppDelegate {
                         arguments: ["service", "status", "--json"],
                         paths: paths
                     )
-                    if Self.serviceInstalled(from: data), Self.serviceRunning(from: data) == true {
-                        self.attachDaemonService(data: data, idrive: idrive, paths: paths)
-                        return
+                    if Self.serviceInstalled(from: data) {
+                        var serviceData = data
+                        if Self.serviceRunning(from: data) != true || Self.daemonStatusNeedsRestart(paths: paths) {
+                            do {
+                                serviceData = try self.runIDrive(
+                                    idrive,
+                                    arguments: ["service", "start", "--json"],
+                                    paths: paths
+                                )
+                            } catch {
+                                NSLog("Iris Drive daemon service refresh skipped: \(error)")
+                            }
+                        }
+                        if Self.serviceRunning(from: serviceData) == true || Self.serviceRunning(from: data) == true {
+                            self.attachDaemonService(data: serviceData, idrive: idrive, paths: paths)
+                            return
+                        }
                     }
                     irisDriveDebugLog(
                         "Iris Drive macOS app sandbox cannot install LaunchAgents directly; " +
@@ -112,6 +126,29 @@ extension AppDelegate {
         }
     }
 
+    func restartDaemonService(
+        _ idrive: URL?,
+        paths: IrisDriveRuntimePaths,
+        refreshDefinition: Bool = false
+    ) {
+        updateStatus(refreshDefinition ? "Updating service" : "Restarting service")
+        DispatchQueue.global(qos: .utility).async {
+            do {
+                let arguments = refreshDefinition
+                    ? ["service", "install", "--launch", "--json"]
+                    : ["service", "start", "--json"]
+                let data = try self.runIDrive(idrive, arguments: arguments, paths: paths)
+                self.attachDaemonService(data: data, idrive: idrive, paths: paths)
+            } catch {
+                NSLog("Iris Drive daemon service restart failed: \(error)")
+                DispatchQueue.main.async {
+                    self.updateStatus("Service restart failed")
+                    self.refreshStatus()
+                }
+            }
+        }
+    }
+
     private static func serviceRunning(from data: Data) -> Bool? {
         guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             return nil
@@ -124,6 +161,21 @@ extension AppDelegate {
             return false
         }
         return json["installed"] as? Bool ?? false
+    }
+
+    private static func daemonStatusNeedsRestart(paths: IrisDriveRuntimePaths) -> Bool {
+        let statusURL = paths.configDirectory.appendingPathComponent("daemon-status.json")
+        guard let data = try? Data(contentsOf: statusURL),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              json["running"] as? Bool == true,
+              json["fresh"] as? Bool != false
+        else {
+            return false
+        }
+        let version = json["binary_version"] as? String ?? ""
+        let expected = Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? ""
+        return version.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || IrisDriveStatus.versionsDiffer(version, expected)
     }
 
     private func attachDaemonService(data: Data, idrive: URL?, paths: IrisDriveRuntimePaths) {
