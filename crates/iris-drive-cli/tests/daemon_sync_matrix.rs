@@ -30,6 +30,9 @@ use support::{LocalBlossomServer, LocalNostrRelay};
 
 const WAIT_TIMEOUT: Duration = Duration::from_mins(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
+const REFRESH_VIEW_TIMEOUT: Duration = Duration::from_secs(30);
+const CLI_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+const CLI_COMMAND_POLL_INTERVAL: Duration = Duration::from_millis(50);
 static LIVE_DAEMON_TEST_LOCK: std::sync::LazyLock<Mutex<()>> =
     std::sync::LazyLock::new(|| Mutex::new(()));
 

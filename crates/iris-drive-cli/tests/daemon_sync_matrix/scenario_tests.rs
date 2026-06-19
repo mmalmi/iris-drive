@@ -214,33 +214,69 @@ async fn live_daemons_three_vm_initial_merge_from_all_peers_and_conflicts() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn live_daemons_three_vm_match_seafile_release_operation_permutations() {
+async fn live_daemons_three_vm_match_seafile_release_basic_file_operations() {
     let _guard = live_daemon_test_guard().await;
-    let cluster = SyncCluster::start_three(Duration::from_millis(100)).await;
-    cluster.wait_until_authorized().await;
+    let cluster = start_seafile_cluster().await;
+    let source = Client::Windows;
+    let prefix = "release/windows-basic";
 
-    let primary = Client::Windows;
-    let primary_prefix = format!("release/{}", primary.label());
-    seafile_progress(primary, "add-delete-add");
-    seafile_add_delete_add_sequence(&cluster, primary, &primary_prefix).await;
-    seafile_progress(primary, "create-update");
-    seafile_create_update_sequence(&cluster, primary, &primary_prefix).await;
-    seafile_progress(primary, "rename");
-    seafile_rename_sequence(&cluster, primary, &primary_prefix).await;
-    seafile_progress(primary, "delete");
-    seafile_delete_sequence(&cluster, primary, &primary_prefix).await;
-    seafile_progress(primary, "case-rename");
-    seafile_case_rename_sequence(&cluster, primary, &primary_prefix).await;
-    seafile_progress(primary, "empty-directory");
-    seafile_empty_directory_sequence(&cluster, primary, &primary_prefix).await;
-    seafile_progress(primary, "single-operation");
-    seafile_single_operation_sequence(&cluster, primary, &primary_prefix).await;
+    seafile_progress(source, "add-delete-add");
+    seafile_add_delete_add_sequence(&cluster, source, prefix).await;
+    seafile_progress(source, "create-update");
+    seafile_create_update_sequence(&cluster, source, prefix).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_daemons_three_vm_match_seafile_release_rename_delete_case_operations() {
+    let _guard = live_daemon_test_guard().await;
+    let cluster = start_seafile_cluster().await;
+    let source = Client::Windows;
+    let prefix = "release/windows-rename-delete-case";
+
+    seafile_progress(source, "rename");
+    seafile_rename_sequence(&cluster, source, prefix).await;
+    seafile_progress(source, "delete");
+    seafile_delete_sequence(&cluster, source, prefix).await;
+    seafile_progress(source, "case-rename");
+    seafile_case_rename_sequence(&cluster, source, prefix).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_daemons_three_vm_match_seafile_release_empty_directory_operations() {
+    let _guard = live_daemon_test_guard().await;
+    let cluster = start_seafile_cluster().await;
+    let source = Client::Windows;
+
+    seafile_progress(source, "empty-directory");
+    seafile_empty_directory_sequence(&cluster, source, "release/windows-empty-directory").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_daemons_three_vm_match_seafile_release_single_operation_chain() {
+    let _guard = live_daemon_test_guard().await;
+    let cluster = start_seafile_cluster().await;
+    let source = Client::Windows;
+
+    seafile_progress(source, "single-operation");
+    seafile_single_operation_sequence(&cluster, source, "release/windows-single").await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_daemons_three_vm_match_seafile_release_alternate_origin_operations() {
+    let _guard = live_daemon_test_guard().await;
+    let cluster = start_seafile_cluster().await;
 
     for source in [Client::Ubuntu, Client::MacOS] {
         let prefix = format!("release/{}-origin", source.label());
         seafile_progress(source, "representative add-delete-add");
         seafile_add_delete_add_sequence(&cluster, source, &prefix).await;
     }
+}
+
+async fn start_seafile_cluster() -> SyncCluster {
+    let cluster = SyncCluster::start_three(Duration::from_millis(100)).await;
+    cluster.wait_until_authorized().await;
+    cluster
 }
 
 fn seafile_progress(source: Client, phase: &str) {
@@ -501,18 +537,21 @@ async fn seafile_empty_directory_sequence(cluster: &SyncCluster, source: Client,
 
 async fn seafile_single_operation_sequence(cluster: &SyncCluster, source: Client, prefix: &str) {
     let base = scoped(prefix, "single");
+    seafile_progress(source, "single create file");
     cluster
         .write(source, &format!("{base}/1.txt"), b"11111")
         .await;
     cluster
         .wait_for_convergence_from(source, &format!("{} single create file", source.label()))
         .await;
+    seafile_progress(source, "single update file");
     cluster
         .write(source, &format!("{base}/1.txt"), b"22222")
         .await;
     cluster
         .wait_for_convergence_from(source, &format!("{} single update file", source.label()))
         .await;
+    seafile_progress(source, "single create empty dir");
     cluster.mkdir(source, &format!("{base}/dir1")).await;
     cluster
         .wait_for_provider_entry(
@@ -521,12 +560,14 @@ async fn seafile_single_operation_sequence(cluster: &SyncCluster, source: Client
             &format!("{} single create empty dir", source.label()),
         )
         .await;
+    seafile_progress(source, "single rename file");
     cluster
         .rename(source, &format!("{base}/1.txt"), &format!("{base}/2.txt"))
         .await;
     cluster
         .wait_for_convergence_from(source, &format!("{} single rename file", source.label()))
         .await;
+    seafile_progress(source, "single rename empty dir");
     cluster
         .rename(source, &format!("{base}/dir1"), &format!("{base}/dir2"))
         .await;
@@ -537,12 +578,14 @@ async fn seafile_single_operation_sequence(cluster: &SyncCluster, source: Client
             &format!("{} single rename empty dir", source.label()),
         )
         .await;
+    seafile_progress(source, "single file in dir");
     cluster
         .write(source, &format!("{base}/dir2/1.txt"), b"1111111")
         .await;
     cluster
         .wait_for_convergence_from(source, &format!("{} single file in dir", source.label()))
         .await;
+    seafile_progress(source, "single rename full dir");
     cluster
         .rename(source, &format!("{base}/dir2"), &format!("{base}/dir3"))
         .await;
@@ -552,6 +595,7 @@ async fn seafile_single_operation_sequence(cluster: &SyncCluster, source: Client
             &format!("{} single rename full dir", source.label()),
         )
         .await;
+    seafile_progress(source, "single remove nested file");
     cluster.remove(source, &format!("{base}/dir3/1.txt")).await;
     cluster
         .wait_for_convergence_from(
@@ -559,6 +603,7 @@ async fn seafile_single_operation_sequence(cluster: &SyncCluster, source: Client
             &format!("{} single remove nested file", source.label()),
         )
         .await;
+    seafile_progress(source, "single create move source");
     cluster
         .write(source, &format!("{base}/dir4/2.txt"), b"2222222")
         .await;
@@ -568,6 +613,7 @@ async fn seafile_single_operation_sequence(cluster: &SyncCluster, source: Client
             &format!("{} single create move source", source.label()),
         )
         .await;
+    seafile_progress(source, "single move non-empty dir");
     cluster
         .rename(
             source,
@@ -581,6 +627,7 @@ async fn seafile_single_operation_sequence(cluster: &SyncCluster, source: Client
             &format!("{} single move non-empty dir", source.label()),
         )
         .await;
+    seafile_progress(source, "single delete leftovers");
     cluster.remove(source, &format!("{base}/2.txt")).await;
     cluster.remove_all(source, &format!("{base}/dir3")).await;
     cluster

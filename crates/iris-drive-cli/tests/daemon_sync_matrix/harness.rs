@@ -226,11 +226,12 @@ impl SyncCluster {
             tokio::fs::create_dir_all(parent).await.unwrap();
         }
         tokio::fs::write(&source, bytes).await.unwrap();
-        let output = idrive(self.config_path(client))
-            .args(["provider", "write", path])
-            .arg(&source)
-            .output()
-            .unwrap();
+        let mut command = idrive(self.config_path(client));
+        command.args(["provider", "write", path]).arg(&source);
+        let output = run_command(
+            &mut command,
+            &format!("provider write {} {path}", client.label()),
+        );
         assert_command_success(
             &output,
             &format!("provider write {} {path}", client.label()),
@@ -242,10 +243,12 @@ impl SyncCluster {
     }
 
     async fn provider_rename(&self, client: Client, from: &str, to: &str) -> String {
-        let output = idrive(self.config_path(client))
-            .args(["provider", "rename", from, to])
-            .output()
-            .unwrap();
+        let mut command = idrive(self.config_path(client));
+        command.args(["provider", "rename", from, to]);
+        let output = run_command(
+            &mut command,
+            &format!("provider rename {} {from} -> {to}", client.label()),
+        );
         assert_command_success(
             &output,
             &format!("provider rename {} {from} -> {to}", client.label()),
@@ -260,10 +263,12 @@ impl SyncCluster {
     }
 
     async fn provider_delete(&self, client: Client, path: &str) -> String {
-        let output = idrive(self.config_path(client))
-            .args(["provider", "delete", path])
-            .output()
-            .unwrap();
+        let mut command = idrive(self.config_path(client));
+        command.args(["provider", "delete", path]);
+        let output = run_command(
+            &mut command,
+            &format!("provider delete {} {path}", client.label()),
+        );
         assert_command_success(
             &output,
             &format!("provider delete {} {path}", client.label()),
@@ -278,10 +283,12 @@ impl SyncCluster {
     }
 
     async fn provider_mkdir(&self, client: Client, path: &str) -> String {
-        let output = idrive(self.config_path(client))
-            .args(["provider", "mkdir", path])
-            .output()
-            .unwrap();
+        let mut command = idrive(self.config_path(client));
+        command.args(["provider", "mkdir", path]);
+        let output = run_command(
+            &mut command,
+            &format!("provider mkdir {} {path}", client.label()),
+        );
         assert_command_success(
             &output,
             &format!("provider mkdir {} {path}", client.label()),
@@ -566,8 +573,22 @@ impl SyncCluster {
     }
 
     async fn refresh_view(&self, client: Client) -> bool {
-        let Some(snapshot) = config_visible_snapshot(self.config_path(client)).await else {
-            return false;
+        let snapshot = match tokio::time::timeout(
+            REFRESH_VIEW_TIMEOUT,
+            config_visible_snapshot(self.config_path(client)),
+        )
+        .await
+        {
+            Ok(Some(snapshot)) => snapshot,
+            Ok(None) => return false,
+            Err(_) => {
+                matrix_progress(format!(
+                    "{} refresh_view timed out after {:?}",
+                    client.label(),
+                    REFRESH_VIEW_TIMEOUT
+                ));
+                return false;
+            }
         };
         write_snapshot_to_dir(self.path(client), &snapshot);
         true
@@ -662,9 +683,11 @@ impl SyncCluster {
                 client.label(),
                 dir_snapshot(self.path(client))
             );
-            let status =
-                serde_json::to_string_pretty(&run_json(self.config_path(client), &["status"]))
-                    .unwrap_or_default();
+            let status = run_json_result(self.config_path(client), &["status"])
+                .and_then(|status| {
+                    serde_json::to_string_pretty(&status).map_err(|error| error.to_string())
+                })
+                .unwrap_or_else(|error| format!("status command failed: {error}"));
             let _ = writeln!(out, "{} status: {status}", client.label());
             let log = self.daemon_log(client);
             let _ = writeln!(out, "{} log:\n{log}", client.label());
@@ -759,19 +782,76 @@ fn idrive(config_dir: &Path) -> Command {
 }
 
 fn run_json(config_dir: &Path, args: &[&str]) -> Value {
-    let output = idrive(config_dir).args(args).output().unwrap();
-    assert_success(&output);
-    json_output(&output)
+    run_json_result(config_dir, args).unwrap_or_else(|error| panic!("{error}"))
+}
+
+fn run_json_result(config_dir: &Path, args: &[&str]) -> Result<Value, String> {
+    let mut command = idrive(config_dir);
+    command.args(args);
+    let context = format!("idrive {}", args.join(" "));
+    let output = run_command_result(&mut command, &context)?;
+    if !output.status.success() {
+        return Err(command_failure_message(&output, &context));
+    }
+    json_output_result(&output)
 }
 
 fn json_output(output: &Output) -> Value {
-    serde_json::from_slice(&output.stdout).unwrap_or_else(|error| {
-        panic!(
+    json_output_result(output).unwrap_or_else(|error| panic!("{error}"))
+}
+
+fn json_output_result(output: &Output) -> Result<Value, String> {
+    serde_json::from_slice(&output.stdout).map_err(|error| {
+        format!(
             "invalid json: {error}\nstdout: {}\nstderr: {}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         )
     })
+}
+
+fn run_command(command: &mut Command, context: &str) -> Output {
+    run_command_result(command, context).unwrap_or_else(|error| panic!("{error}"))
+}
+
+fn run_command_result(command: &mut Command, context: &str) -> Result<Output, String> {
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let command_debug = format!("{command:?}");
+    let mut child = command
+        .spawn()
+        .map_err(|error| format!("{context} failed to spawn\ncommand: {command_debug}\n{error}"))?;
+    let start = Instant::now();
+    loop {
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                return child.wait_with_output().map_err(|error| {
+                    format!(
+                        "{context} failed to collect output\ncommand: {command_debug}\n{error}"
+                    )
+                });
+            }
+            Ok(None) if start.elapsed() >= CLI_COMMAND_TIMEOUT => {
+                let kill_error = child.kill().err();
+                let output = child.wait_with_output().map_err(|error| {
+                    format!(
+                        "{context} timed out after {:?} and failed to collect output\ncommand: {command_debug}\nkill_error: {kill_error:?}\n{error}",
+                        CLI_COMMAND_TIMEOUT
+                    )
+                })?;
+                return Err(format!(
+                    "{context} timed out after {:?}\ncommand: {command_debug}\nkill_error: {kill_error:?}\n{}",
+                    CLI_COMMAND_TIMEOUT,
+                    command_output_message(&output)
+                ));
+            }
+            Ok(None) => std::thread::sleep(CLI_COMMAND_POLL_INTERVAL),
+            Err(error) => {
+                return Err(format!(
+                    "{context} failed while polling child\ncommand: {command_debug}\n{error}"
+                ));
+            }
+        }
+    }
 }
 
 fn assert_success(output: &Output) {
@@ -781,26 +861,32 @@ fn assert_success(output: &Output) {
 fn assert_command_success(output: &Output, context: &str) {
     assert!(
         output.status.success(),
-        "{context} failed\nstatus: {}\nstdout: {}\nstderr: {}",
-        output.status,
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        "{}",
+        command_failure_message(output, context)
     );
 }
 
 fn configure_local_blossom(config_dir: &Path, url: &str) {
-    assert_success(
-        &idrive(config_dir)
-            .args(["blossom-servers", "remove", "https://upload.iris.to"])
-            .output()
-            .unwrap(),
-    );
-    assert_success(
-        &idrive(config_dir)
-            .args(["blossom-servers", "add", url])
-            .output()
-            .unwrap(),
-    );
+    let mut remove = idrive(config_dir);
+    remove.args(["blossom-servers", "remove", "https://upload.iris.to"]);
+    assert_success(&run_command(&mut remove, "remove default blossom server"));
+
+    let mut add = idrive(config_dir);
+    add.args(["blossom-servers", "add", url]);
+    assert_success(&run_command(&mut add, "add local blossom server"));
+}
+
+fn command_failure_message(output: &Output, context: &str) -> String {
+    format!("{context} failed\n{}", command_output_message(output))
+}
+
+fn command_output_message(output: &Output) -> String {
+    format!(
+        "status: {}\nstdout: {}\nstderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    )
 }
 
 fn unused_loopback_port() -> u16 {
