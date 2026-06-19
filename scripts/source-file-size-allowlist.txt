@@ -6,7 +6,8 @@ crates/iris-drive-app-core/src/ffi/tests.rs 1800 App-core parity and native acti
 crates/iris-drive-cli/src/shares.rs 1350 CLI share command surface needs a later command/test split.
 crates/iris-drive-cli/src/profile.rs 1050 CLI profile command surface already exceeds default; pending command/test split.
 crates/iris-drive-cli/src/status.rs 1050 CLI status normalization already exceeds default; pending status module split.
-crates/iris-drive-cli/tests/daemon_sync_matrix/scenario_tests.rs 1100 Scenario matrix needs a later harness split.
+crates/iris-drive-cli/tests/daemon_sync_matrix/harness.rs 1100 Live daemon matrix harness includes bounded CLI/refresh diagnostics; pending helper-module split.
+crates/iris-drive-cli/tests/daemon_sync_matrix/scenario_tests.rs 1150 Scenario matrix includes focused Seafile release split; pending scenario-module split.
 crates/iris-drive-core/src/gateway.rs 1160 Local gateway routing and response hardening need a later route-module split.
 crates/iris-drive-core/src/iris_profile.rs 2100 IrisProfile authority model needs a later roster-event-projection module split.
 crates/iris-drive-core/src/profile.rs 1610 Profile create, recovery, admission, projection guards, and DCK flows need a later lifecycle/helper split.

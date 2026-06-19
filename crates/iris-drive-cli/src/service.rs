@@ -586,4 +586,27 @@ gui/501/to.iris.drive.daemon.test = {
 
         assert!(macos_launchctl_detail_running(detail));
     }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_binary_version_query_reads_version_json() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let idrive = dir.path().join("idrive");
+        std::fs::write(
+            &idrive,
+            format!(
+                "#!/bin/sh\n[ \"$1\" = version ] || exit 2\n[ \"$2\" = --json ] || exit 2\necho '{{\"version\":\"{}\"}}'\n",
+                env!("CARGO_PKG_VERSION")
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&idrive, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert_eq!(
+            query_binary_version(&idrive).as_deref(),
+            Some(env!("CARGO_PKG_VERSION")),
+        );
+    }
 }

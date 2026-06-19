@@ -206,6 +206,7 @@ structure:
     ./scripts/check-macos-fileprovider-lifecycle.sh
     ./scripts/check-macos-provider-summary.sh
     ./scripts/check-macos-relay-status-rendering.sh
+    ./scripts/check-updater-wiring.sh
     ./scripts/check-relay-config-normalization.sh
     ./scripts/check-provider-entry-normalization.sh
     ./scripts/check-release-readiness.sh
