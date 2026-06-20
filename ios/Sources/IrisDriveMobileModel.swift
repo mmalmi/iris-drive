@@ -507,6 +507,12 @@ final class IrisDriveMobileModel: ObservableObject {
         ensureFileProviderDomainIfProfileExists()
     }
 
+    func refreshProfileStatusInBackground() async {
+        await dispatchInBackground(["type": "refresh_profile"])
+        ensureFileProviderDomainIfProfileExists()
+        scheduleBackgroundSyncIfNeeded()
+    }
+
     func refreshAfterStartup() { Task { await refreshInBackground() } }
 
     func scheduleBackgroundSyncIfNeeded() {

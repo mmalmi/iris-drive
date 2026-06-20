@@ -231,6 +231,8 @@ internal data class SyncRoot(
 internal object NativeActions {
     fun refresh(): String = JSONObject().put("type", "refresh").toString()
 
+    fun refreshProfile(): String = JSONObject().put("type", "refresh_profile").toString()
+
     fun createProfile(deviceLabel: String): String =
         JSONObject()
             .put("type", "create_profile")

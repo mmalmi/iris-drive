@@ -315,7 +315,12 @@ class MainActivity : ComponentActivity() {
         }
         nativeRefreshInFlight = true
         lifecycleScope.launch(nativeCoreDispatcher) {
-            val json = NativeCore.refreshJson(handle)
+            val action = if (stateFlow.value.isAwaitingApproval || stateFlow.value.isRevoked) {
+                NativeActions.refreshProfile()
+            } else {
+                NativeActions.refresh()
+            }
+            val json = NativeCore.dispatchJson(handle, action)
             val state = stateFromJson(json)
             withContext(Dispatchers.Main) {
                 val pendingCallbacks = nativeRefreshCallbacks.toList()

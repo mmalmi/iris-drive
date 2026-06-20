@@ -180,9 +180,10 @@ private struct RevokedDeviceSetupView: View {
             .accessibilityIdentifier("revokedDeviceView")
             .task {
                 while model.isRevoked {
-                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    await model.refreshProfileStatusInBackground()
+                    if !model.isRevoked { return }
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
                     guard !Task.isCancelled else { return }
-                    model.refresh()
                 }
             }
         }
@@ -229,9 +230,10 @@ private struct AwaitingApprovalSetupView: View {
             .accessibilityIdentifier("awaitingApprovalView")
             .task {
                 while model.isAwaitingApproval {
-                    try? await Task.sleep(nanoseconds: 2_000_000_000)
+                    await model.refreshProfileStatusInBackground()
+                    if !model.isAwaitingApproval { return }
+                    try? await Task.sleep(nanoseconds: 1_000_000_000)
                     guard !Task.isCancelled else { return }
-                    model.refresh()
                 }
             }
         }

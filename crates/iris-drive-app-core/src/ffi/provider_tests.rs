@@ -247,6 +247,45 @@ fn app_constructor_defers_provider_summary_until_refresh() {
 }
 
 #[test]
+fn refresh_profile_skips_provider_summary_until_full_refresh() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let _ = app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "iPhone".to_owned(),
+    });
+    mark_daemon_live(dir.path());
+    let source = dir.path().join("approval-fast-path.txt");
+    std::fs::write(&source, b"fast profile refresh").unwrap();
+
+    assert!(
+        super::native_provider_write_json(
+            &dir.path().display().to_string(),
+            "approval-fast-path.txt",
+            &source.display().to_string(),
+        )["error"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty()
+    );
+
+    let profile_refresh = app.dispatch(NativeAppAction::RefreshProfile);
+    assert!(profile_refresh.ui.setup_complete);
+    assert_eq!(profile_refresh.ui.file_count, 0);
+    assert_eq!(profile_refresh.ui.visible_file_bytes, 0);
+    assert!(profile_refresh.ui.provider_change_key.is_empty());
+
+    let full_refresh = app.dispatch(NativeAppAction::Refresh);
+    assert_eq!(full_refresh.ui.file_count, 1);
+    assert_eq!(full_refresh.ui.visible_file_bytes, 20);
+    assert!(
+        full_refresh
+            .ui
+            .provider_change_key
+            .contains("approval-fast-path.txt")
+    );
+}
+
+#[test]
 fn provider_resolve_path_normalizes_name_and_avoids_collisions() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());

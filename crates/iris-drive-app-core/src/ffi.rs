@@ -275,8 +275,12 @@ impl NativeAppRuntime {
 
     fn dispatch(&mut self, action: NativeAppAction) {
         self.state.error.clear();
+        let provider_summary = match action {
+            NativeAppAction::RefreshProfile => ProviderSummaryMode::Skip,
+            _ => ProviderSummaryMode::Refresh,
+        };
         match action {
-            NativeAppAction::Refresh => {}
+            NativeAppAction::Refresh | NativeAppAction::RefreshProfile => {}
             NativeAppAction::CreateProfile { app_key_label } => {
                 self.create_profile(&app_key_label);
             }
@@ -369,7 +373,7 @@ impl NativeAppRuntime {
                 self.import_content_link(&link);
             }
         }
-        self.reload_from_disk_preserving_error();
+        self.reload_from_disk_preserving_error(provider_summary);
         self.start_app_key_link_exchange_if_needed();
         self.start_browser_gateway_if_needed();
     }
@@ -1227,11 +1231,11 @@ impl NativeAppRuntime {
         }
     }
 
-    fn reload_from_disk_preserving_error(&mut self) {
+    fn reload_from_disk_preserving_error(&mut self, provider_summary: ProviderSummaryMode) {
         let error = self.state.error.clone();
         let last_share_invite = self.state.ui.last_share_invite.clone();
         let last_share_recipient_evidence = self.state.ui.last_share_recipient_evidence.clone();
-        self.reload_from_disk(ProviderSummaryMode::Refresh);
+        self.reload_from_disk(provider_summary);
         self.state.error = error;
         self.state.ui.last_share_invite = last_share_invite;
         self.state.ui.last_share_recipient_evidence = last_share_recipient_evidence;
