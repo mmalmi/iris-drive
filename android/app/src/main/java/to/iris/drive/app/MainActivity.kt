@@ -473,7 +473,7 @@ class MainActivity : ComponentActivity() {
     private fun openIrisWeb(url: String) {
         if (url.isBlank()) return
         runCatching {
-            startActivity(IrisWebActivity.createIntent(this, url))
+            startActivity(IrisWebActivity.createIntent(this, url, stateFlow.value.sitesPortalUrl))
         }.onFailure {
             Toast.makeText(this, "Could not open Iris Apps", Toast.LENGTH_SHORT).show()
         }

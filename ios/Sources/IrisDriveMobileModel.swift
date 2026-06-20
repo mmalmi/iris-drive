@@ -810,6 +810,22 @@ final class IrisDriveMobileModel: ObservableObject {
         webRoute = IrisWebRoute(url: url)
     }
 
+    func browserAddressURL(_ value: String) -> String {
+        var candidate = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidate.isEmpty else { return value }
+        if URLComponents(string: candidate)?.scheme == nil,
+           candidate.contains(".") {
+            candidate = "https://\(candidate)"
+        }
+        let linkInput = IrisDriveNativeLinkInput.classify(candidate)
+        if ["iris_web", "nhash_file", "mutable_file"].contains(linkInput.kind),
+           linkInput.isValid,
+           !linkInput.localOpenUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return localGatewayURL(linkInput.localOpenUrl)
+        }
+        return localGatewayURL(candidate)
+    }
+
     func localGatewayURL(_ value: String) -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard var components = URLComponents(string: trimmed),

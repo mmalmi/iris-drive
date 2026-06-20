@@ -1546,62 +1546,172 @@ private struct RecoveryPhraseExportView: View {
 private struct IrisWebBrowserView: View {
     @ObservedObject var model: IrisDriveMobileModel
     let route: IrisWebRoute
+    @StateObject private var browser = IrisWebBrowserController()
+    @State private var addressText: String
     @State private var isLoading = true
     @State private var loadError = ""
+    @FocusState private var addressFocused: Bool
+
+    init(model: IrisDriveMobileModel, route: IrisWebRoute) {
+        self.model = model
+        self.route = route
+        _addressText = State(initialValue: route.url.absoluteString)
+    }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                IrisWebView(
-                    initialURL: route.url,
-                    model: model,
-                    isLoading: $isLoading,
-                    loadError: $loadError
-                )
-                .ignoresSafeArea(.container, edges: .bottom)
-                if isLoading {
-                    ProgressView()
-                        .controlSize(.large)
-                        .accessibilityIdentifier("irisWebLoading")
-                }
-                if !loadError.isEmpty {
-                    VStack(spacing: 12) {
-                        Image(systemName: "exclamationmark.triangle")
-                            .font(.title)
-                            .foregroundStyle(.orange)
-                        Text("Iris Apps failed to load")
-                            .font(.headline)
-                        Text(loadError)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .multilineTextAlignment(.center)
-                            .accessibilityIdentifier("irisWebError")
-                    }
-                    .padding(24)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .background(.background)
-                }
+        ZStack {
+            IrisWebView(
+                initialURL: route.url,
+                model: model,
+                browser: browser,
+                isLoading: $isLoading,
+                loadError: $loadError
+            )
+            if isLoading {
+                ProgressView()
+                    .controlSize(.large)
+                    .accessibilityIdentifier("irisWebLoading")
             }
-            .navigationTitle("Iris Apps")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Done") {
-                        model.webRoute = nil
-                    }
+            if !loadError.isEmpty {
+                VStack(spacing: 12) {
+                    Image(systemName: "exclamationmark.triangle")
+                        .font(.title)
+                        .foregroundStyle(.orange)
+                    Text("Iris Apps failed to load")
+                        .font(.headline)
+                    Text(loadError)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .accessibilityIdentifier("irisWebError")
                 }
-            }
-            .onChange(of: route.url) {
-                isLoading = true
-                loadError = ""
+                .padding(24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(.background)
             }
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            IrisWebBrowserBar(
+                browser: browser,
+                addressText: $addressText,
+                addressFocused: $addressFocused,
+                onClose: { model.webRoute = nil },
+                onSubmitAddress: loadAddressBarURL
+            )
+        }
+        .presentationDragIndicator(.hidden)
+        .onChange(of: route.url) {
+            isLoading = true
+            loadError = ""
+        }
+        .onChange(of: browser.currentURL) { _, url in
+            if !addressFocused {
+                addressText = url?.absoluteString ?? ""
+            }
+        }
+    }
+
+    private func loadAddressBarURL() {
+        let candidate = model.browserAddressURL(addressText)
+        guard let url = URL(string: candidate) else { return }
+        browser.load(url)
+        addressFocused = false
+    }
+}
+
+@MainActor
+private final class IrisWebBrowserController: ObservableObject {
+    @Published var currentURL: URL?
+    @Published var canGoBack = false
+    private weak var webView: WKWebView?
+
+    func attach(_ webView: WKWebView) {
+        self.webView = webView
+        update(from: webView)
+    }
+
+    func update(from webView: WKWebView) {
+        currentURL = webView.url
+        canGoBack = webView.canGoBack
+    }
+
+    func goBack() {
+        webView?.goBack()
+        if let webView {
+            update(from: webView)
+        }
+    }
+
+    func load(_ url: URL) {
+        webView?.load(URLRequest(url: url))
+    }
+}
+
+private struct IrisWebBrowserBar: View {
+    @ObservedObject var browser: IrisWebBrowserController
+    @Binding var addressText: String
+    var addressFocused: FocusState<Bool>.Binding
+    let onClose: () -> Void
+    let onSubmitAddress: () -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Button(action: onClose) {
+                Image(systemName: "xmark")
+                    .frame(width: 34, height: 34)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("Close")
+            .accessibilityIdentifier("irisWebCloseButton")
+
+            Button(action: browser.goBack) {
+                Image(systemName: "chevron.left")
+                    .frame(width: 34, height: 34)
+            }
+            .buttonStyle(.borderless)
+            .disabled(!browser.canGoBack)
+            .accessibilityLabel("Back")
+            .accessibilityIdentifier("irisWebBackButton")
+
+            TextField("Address", text: $addressText)
+                .keyboardType(.URL)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .submitLabel(.go)
+                .focused(addressFocused)
+                .onSubmit(onSubmitAddress)
+                .font(.footnote)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
+                .accessibilityIdentifier("irisWebAddressField")
+
+            if let url = browser.currentURL {
+                ShareLink(item: url) {
+                    Image(systemName: "square.and.arrow.up")
+                        .frame(width: 34, height: 34)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Share")
+                .accessibilityIdentifier("irisWebShareButton")
+            } else {
+                Image(systemName: "square.and.arrow.up")
+                    .frame(width: 34, height: 34)
+                    .foregroundStyle(.tertiary)
+                    .accessibilityHidden(true)
+            }
+        }
+        .padding(.horizontal, 10)
+        .padding(.top, 8)
+        .padding(.bottom, 10)
+        .background(.regularMaterial)
     }
 }
 
 private struct IrisWebView: UIViewRepresentable {
     let initialURL: URL
     @ObservedObject var model: IrisDriveMobileModel
+    @ObservedObject var browser: IrisWebBrowserController
     @Binding var isLoading: Bool
     @Binding var loadError: String
 
@@ -1614,6 +1724,7 @@ private struct IrisWebView: UIViewRepresentable {
         webView.allowsBackForwardNavigationGestures = true
         webView.isOpaque = false
         webView.backgroundColor = .systemBackground
+        browser.attach(webView)
         webView.load(URLRequest(url: initialURL))
         return webView
     }
@@ -1621,20 +1732,28 @@ private struct IrisWebView: UIViewRepresentable {
     func updateUIView(_ webView: WKWebView, context: Context) {}
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(model: model, isLoading: $isLoading, loadError: $loadError)
+        Coordinator(
+            model: model,
+            browser: browser,
+            isLoading: $isLoading,
+            loadError: $loadError
+        )
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         private weak var model: IrisDriveMobileModel?
+        private weak var browser: IrisWebBrowserController?
         private var isLoading: Binding<Bool>
         private var loadError: Binding<String>
 
         init(
             model: IrisDriveMobileModel,
+            browser: IrisWebBrowserController,
             isLoading: Binding<Bool>,
             loadError: Binding<String>
         ) {
             self.model = model
+            self.browser = browser
             self.isLoading = isLoading
             self.loadError = loadError
         }
@@ -1642,11 +1761,13 @@ private struct IrisWebView: UIViewRepresentable {
         func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
             isLoading.wrappedValue = true
             loadError.wrappedValue = ""
+            browser?.update(from: webView)
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
             isLoading.wrappedValue = false
             loadError.wrappedValue = ""
+            browser?.update(from: webView)
         }
 
         func webView(
@@ -1654,6 +1775,7 @@ private struct IrisWebView: UIViewRepresentable {
             didFail navigation: WKNavigation!,
             withError error: Error
         ) {
+            browser?.update(from: webView)
             showLoadError(error)
         }
 
@@ -1662,12 +1784,14 @@ private struct IrisWebView: UIViewRepresentable {
             didFailProvisionalNavigation navigation: WKNavigation!,
             withError error: Error
         ) {
+            browser?.update(from: webView)
             showLoadError(error)
         }
 
         func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
             isLoading.wrappedValue = false
             loadError.wrappedValue = "Web content process terminated"
+            browser?.update(from: webView)
         }
 
         private func showLoadError(_ error: Error) {

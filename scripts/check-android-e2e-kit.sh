@@ -34,6 +34,7 @@ require_file android/settings.gradle.kts
 require_file android/app/build.gradle.kts
 require_file android/app/src/main/AndroidManifest.xml
 require_file android/app/src/main/java/to/iris/drive/app/MainActivity.kt
+require_file android/app/src/main/java/to/iris/drive/app/IrisWebActivity.kt
 require_file android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt
 require_file android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt
 require_file android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndroidGuiFlowTest.kt
@@ -68,6 +69,12 @@ require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveMainConten
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.kt "Open in Files"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.kt "View on drive.iris.to"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.kt "Reset relay"
+require_contains android/app/src/main/java/to/iris/drive/app/IrisWebActivity.kt "EXTRA_PORTAL_URL"
+require_contains android/app/src/main/java/to/iris/drive/app/IrisWebActivity.kt "browserAddressUrl"
+require_contains android/app/src/main/java/to/iris/drive/app/IrisWebActivity.kt "shareCurrentUrl"
+require_contains android/app/src/main/java/to/iris/drive/app/IrisWebActivity.kt "localGatewayUrl"
+require_contains android/app/src/main/java/to/iris/drive/app/IrisWebActivity.kt "IME_ACTION_GO"
+require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "stateFlow.value.sitesPortalUrl"
 require_absent android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Text(\"Setup\")"
 require_absent android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Copy request link"
 require_absent android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt "Copy request link"
