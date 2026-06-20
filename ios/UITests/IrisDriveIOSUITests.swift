@@ -117,24 +117,45 @@ final class IrisDriveIOSUITests: XCTestCase {
         let app = launchApp()
         ensureMyDriveReady(in: app)
 
+        assertOpenIrisAppsLoads(in: app)
+    }
+
+    func testOpenIrisAppsLoadsBrowserWhenSyncPaused() throws {
+        let app = launchApp()
+        ensureMyDriveReady(in: app)
+
+        let pauseSync = app.buttons["Pause sync"].firstMatch
+        makeHittable(pauseSync, in: app)
+        pauseSync.tap()
+        XCTAssertTrue(app.buttons["Resume sync"].waitForExistence(timeout: 5), app.debugDescription)
+        app.swipeDown()
+
+        assertOpenIrisAppsLoads(in: app)
+    }
+
+    private func assertOpenIrisAppsLoads(
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
         let openIrisApps = app.buttons["Open Iris Apps"].firstMatch
         makeHittable(openIrisApps, in: app)
         openIrisApps.tap()
 
         let address = app.textFields["irisWebAddressField"]
-        XCTAssertTrue(address.waitForExistence(timeout: 35), app.debugDescription)
+        XCTAssertTrue(address.waitForExistence(timeout: 35), app.debugDescription, file: file, line: line)
         let deadline = Date().addingTimeInterval(8)
         while Date() < deadline {
             let error = app.staticTexts["irisWebError"]
-            XCTAssertFalse(error.exists, "Iris Apps browser failed: \(accessibilityValue(error))")
+            XCTAssertFalse(error.exists, "Iris Apps browser failed: \(accessibilityValue(error))", file: file, line: line)
             if !app.progressIndicators["irisWebLoading"].exists {
                 break
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
 
-        XCTAssertFalse(app.staticTexts["irisWebError"].exists)
-        XCTAssertTrue(accessibilityValue(address).contains("iris.localhost"))
+        XCTAssertFalse(app.staticTexts["irisWebError"].exists, file: file, line: line)
+        XCTAssertTrue(accessibilityValue(address).contains("iris.localhost"), file: file, line: line)
         app.buttons["irisWebCloseButton"].tap()
     }
 

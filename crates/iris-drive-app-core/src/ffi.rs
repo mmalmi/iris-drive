@@ -1147,13 +1147,6 @@ impl NativeAppRuntime {
     fn start_browser_gateway_if_needed(&mut self) {
         #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
         {
-            if !self.state.ui.sync.running {
-                write_native_browser_gateway_status(
-                    Path::new(&self.data_dir),
-                    json!({"running": false, "state": "paused"}),
-                );
-                return;
-            }
             let Ok(config) = self.load_config() else {
                 write_native_browser_gateway_status(
                     Path::new(&self.data_dir),
@@ -1161,12 +1154,30 @@ impl NativeAppRuntime {
                 );
                 return;
             };
-            if config.profile.is_none() {
+            let Some(mut profile) = config.profile.clone() else {
                 write_native_browser_gateway_status(
                     Path::new(&self.data_dir),
                     json!({"running": false, "state": "not_configured"}),
                 );
                 return;
+            };
+            profile.recompute_authorization();
+            match profile.authorization_state {
+                AppKeyAuthorizationState::Authorized => {}
+                AppKeyAuthorizationState::AwaitingApproval => {
+                    write_native_browser_gateway_status(
+                        Path::new(&self.data_dir),
+                        json!({"running": false, "state": "awaiting_approval"}),
+                    );
+                    return;
+                }
+                AppKeyAuthorizationState::Revoked => {
+                    write_native_browser_gateway_status(
+                        Path::new(&self.data_dir),
+                        json!({"running": false, "state": "revoked"}),
+                    );
+                    return;
+                }
             }
             if !config.local_nhash_resolver_enabled {
                 write_native_browser_gateway_status(
@@ -1437,8 +1448,6 @@ impl NativeAppRuntime {
         self.set_sync_status(running, if running { "running" } else { "paused" });
         if running {
             self.start_browser_gateway_if_needed();
-        } else {
-            self.stop_browser_gateway();
         }
     }
 
@@ -1586,7 +1595,15 @@ fn run_native_browser_gateway(data_dir: &str, stop: Arc<AtomicBool>) -> Result<(
     );
     let config = AppConfig::load_or_default(config_path_in(&data_dir))
         .map_err(|error| format!("loading config: {error}"))?;
-    if config.profile.is_none() || !config.local_nhash_resolver_enabled {
+    let Some(mut profile) = config.profile.clone() else {
+        write_native_browser_gateway_status(
+            &data_dir,
+            json!({"running": false, "state": "disabled"}),
+        );
+        return Ok(());
+    };
+    profile.recompute_authorization();
+    if !profile.is_authorized() || !config.local_nhash_resolver_enabled {
         write_native_browser_gateway_status(
             &data_dir,
             json!({"running": false, "state": "disabled"}),

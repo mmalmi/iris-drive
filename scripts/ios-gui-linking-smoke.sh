@@ -451,6 +451,7 @@ fi
 reset_sim_app_state
 run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testCreateProfileFromWelcome"
 run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testOpenIrisAppsLoadsBrowserWithoutConnectionError"
+run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testOpenIrisAppsLoadsBrowserWhenSyncPaused"
 run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testOpenDriveFolderInFilesApp"
 
 STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
