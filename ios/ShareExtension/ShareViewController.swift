@@ -40,14 +40,20 @@ final class ShareViewController: UIViewController {
 
         for provider in providers {
             guard let typeIdentifier = preferredTypeIdentifier(for: provider) else { continue }
+            FileProviderStorage.debugLog(
+                "share provider types=\(provider.registeredTypeIdentifiers.joined(separator: ",")) chosen=\(typeIdentifier)"
+            )
             group.enter()
-            provider.loadItem(forTypeIdentifier: typeIdentifier, options: nil) { item, _ in
+            loadProviderItem(provider, typeIdentifier: typeIdentifier) { result in
                 defer { group.leave() }
                 do {
+                    let item = try result.get()
                     if try self.importItem(item, typeIdentifier: typeIdentifier, provider: provider) {
                         lock.lock()
                         imported += 1
                         lock.unlock()
+                    } else {
+                        FileProviderStorage.debugLog("share import unsupported item for \(typeIdentifier)")
                     }
                 } catch {
                     FileProviderStorage.debugLog("share import failed: \(error)")
@@ -71,20 +77,65 @@ final class ShareViewController: UIViewController {
     }
 
     private func preferredTypeIdentifier(for provider: NSItemProvider) -> String? {
-        let preferred = [
+        let exactPreferred = [
             UTType.fileURL.identifier,
-            UTType.image.identifier,
-            UTType.movie.identifier,
             UTType.url.identifier,
             UTType.plainText.identifier,
-            UTType.data.identifier
         ]
-        if let typeIdentifier = preferred.first(where: { provider.hasItemConformingToTypeIdentifier($0) }) {
+        if let typeIdentifier = exactPreferred.first(where: { provider.hasItemConformingToTypeIdentifier($0) }) {
             return typeIdentifier
+        }
+        let concretePreferred = [UTType.image, UTType.movie, UTType.data]
+        for contentType in concretePreferred {
+            if let typeIdentifier = provider.registeredTypeIdentifiers.first(where: { identifier in
+                UTType(identifier)?.conforms(to: contentType) == true
+            }) {
+                return typeIdentifier
+            }
         }
         return provider.registeredTypeIdentifiers.first { identifier in
             UTType(identifier)?.conforms(to: .data) == true
         }
+    }
+
+    private func loadProviderItem(
+        _ provider: NSItemProvider,
+        typeIdentifier: String,
+        completion: @escaping (Result<NSSecureCoding?, Error>) -> Void
+    ) {
+        if shouldLoadFileRepresentation(typeIdentifier) {
+            provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { url, error in
+                if let url {
+                    completion(.success(url as NSURL))
+                    return
+                }
+                if let error {
+                    FileProviderStorage.debugLog("share file representation unavailable: \(error)")
+                }
+                provider.loadItem(forTypeIdentifier: typeIdentifier, options: nil) { item, error in
+                    if let error {
+                        completion(.failure(error))
+                    } else {
+                        completion(.success(item))
+                    }
+                }
+            }
+            return
+        }
+        provider.loadItem(forTypeIdentifier: typeIdentifier, options: nil) { item, error in
+            if let error {
+                completion(.failure(error))
+            } else {
+                completion(.success(item))
+            }
+        }
+    }
+
+    private func shouldLoadFileRepresentation(_ typeIdentifier: String) -> Bool {
+        guard let contentType = UTType(typeIdentifier) else { return false }
+        return contentType.conforms(to: .image)
+            || contentType.conforms(to: .movie)
+            || contentType.conforms(to: .data)
     }
 
     private func importItem(
@@ -93,18 +144,37 @@ final class ShareViewController: UIViewController {
         provider: NSItemProvider
     ) throws -> Bool {
         let contentType = UTType(typeIdentifier) ?? .data
+        let sharedURL: URL?
         if let url = item as? URL {
+            sharedURL = url
+        } else if let url = item as? NSURL {
+            sharedURL = url as URL
+        } else {
+            sharedURL = nil
+        }
+        if let url = sharedURL {
             if url.isFileURL {
+                let scoped = url.startAccessingSecurityScopedResource()
+                defer {
+                    if scoped {
+                        url.stopAccessingSecurityScopedResource()
+                    }
+                }
                 let data = try Data(contentsOf: url)
+                let fileType = UTType(filenameExtension: url.pathExtension) ?? contentType
                 try FileProviderStorage.importSharedFile(
-                    named: provider.suggestedName ?? url.lastPathComponent,
-                    contentType: UTType(filenameExtension: url.pathExtension) ?? contentType,
+                    named: defaultName(
+                        provider: provider,
+                        fallbackName: url.lastPathComponent,
+                        contentType: fileType
+                    ),
+                    contentType: fileType,
                     contents: data
                 )
             } else {
                 try importText(
                     url.absoluteString,
-                    name: provider.suggestedName ?? "Shared link.url",
+                    name: defaultName(provider: provider, fallbackName: "Shared link.url", contentType: .url),
                     contentType: .url
                 )
             }
@@ -121,13 +191,13 @@ final class ShareViewController: UIViewController {
         if let text = item as? String {
             try importText(
                 text,
-                name: provider.suggestedName ?? "Shared text.txt",
+                name: defaultName(provider: provider, fallbackName: "Shared text.txt", contentType: .plainText),
                 contentType: .plainText
             )
             return true
         }
         if let image = item as? UIImage,
-           let data = image.pngData() {
+            let data = image.pngData() {
             try FileProviderStorage.importSharedFile(
                 named: defaultName(provider: provider, contentType: .png),
                 contentType: .png,
@@ -148,12 +218,35 @@ final class ShareViewController: UIViewController {
     }
 
     private func defaultName(provider: NSItemProvider, contentType: UTType) -> String {
-        if let suggestedName = provider.suggestedName, !suggestedName.isEmpty {
-            return suggestedName
+        defaultName(provider: provider, fallbackName: nil, contentType: contentType)
+    }
+
+    private func defaultName(
+        provider: NSItemProvider,
+        fallbackName: String?,
+        contentType: UTType
+    ) -> String {
+        if let suggestedName = provider.suggestedName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !suggestedName.isEmpty {
+            return nameWithExtensionIfNeeded(suggestedName, contentType: contentType)
+        }
+        if let fallbackName = fallbackName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !fallbackName.isEmpty {
+            return nameWithExtensionIfNeeded(fallbackName, contentType: contentType)
         }
         if let preferredExtension = contentType.preferredFilenameExtension {
             return "Shared file.\(preferredExtension)"
         }
         return "Shared file"
+    }
+
+    private func nameWithExtensionIfNeeded(_ name: String, contentType: UTType) -> String {
+        guard (name as NSString).pathExtension.isEmpty,
+              let preferredExtension = contentType.preferredFilenameExtension,
+              !preferredExtension.isEmpty
+        else {
+            return name
+        }
+        return "\(name).\(preferredExtension)"
     }
 }

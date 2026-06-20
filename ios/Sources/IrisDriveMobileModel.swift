@@ -72,6 +72,7 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var localNhashResolverEnabled = true
     @Published var sitesPortalUrl = ""
     @Published var webRoute: IrisWebRoute?
+    @Published var isOpeningIrisApps = false
 
     private let defaults = UserDefaults.standard
     private let nativeCore: IrisDriveNativeCore
@@ -788,8 +789,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func openIrisApps() {
-        refresh()
-        openIrisLink(sitesPortalUrl)
+        openIrisBrowserWhenReady(sitesPortalUrl)
     }
 
     func openIrisLink(_ value: String) {
@@ -799,7 +799,7 @@ final class IrisDriveMobileModel: ObservableObject {
         switch linkInput.kind {
         case "iris_web", "nhash_file", "mutable_file":
             if linkInput.isValid {
-                openIrisBrowser(localGatewayURL(linkInput.localOpenUrl))
+                openIrisBrowserWhenReady(linkInput.localOpenUrl)
             } else {
                 statusTitle = "Iris link failed"
                 statusDetail = linkInput.error.isEmpty ? candidate : linkInput.error
@@ -1137,7 +1137,7 @@ final class IrisDriveMobileModel: ObservableObject {
             return
         }
         if linkInput.kind == "iris_web" {
-            openIrisBrowser(localGatewayURL(linkInput.localOpenUrl))
+            openIrisBrowserWhenReady(linkInput.localOpenUrl)
             return
         }
         if linkInput.kind == "invite" {
@@ -1412,7 +1412,7 @@ final class IrisDriveMobileModel: ObservableObject {
         applyStateJson(json)
     }
 
-    private func refreshInBackground() async {
+    func refreshInBackground() async {
         let generation = stateGeneration
         let json = await runNativeInBackground { nativeCore in
             nativeCore.refreshJson()

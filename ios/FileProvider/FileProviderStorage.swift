@@ -200,13 +200,13 @@ enum FileProviderStorage {
         let source = try temporaryDirectory()
             .appendingPathComponent(UUID().uuidString, isDirectory: false)
         try contents.write(to: source)
-        try runProviderMutation(
-            IrisDriveNativeProvider.importSharedFile(
-                dataDir: baseDirectory.path,
-                displayName: displayName,
-                sourcePath: source.path
-            )
+        let result = IrisDriveNativeProvider.importSharedFile(
+            dataDir: baseDirectory.path,
+            displayName: displayName,
+            sourcePath: source.path
         )
+        try runProviderMutation(result)
+        debugLog("share import saved name=\(displayName) bytes=\(contents.count) result=\(result)")
         signalProviderChanged()
     }
 

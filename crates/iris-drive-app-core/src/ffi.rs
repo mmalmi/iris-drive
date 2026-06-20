@@ -262,6 +262,7 @@ impl NativeAppRuntime {
             #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
             browser_gateway_stop: Arc::new(AtomicBool::new(false)),
         };
+        runtime.reset_native_browser_gateway_status_for_new_process();
         runtime.reload_from_disk(ProviderSummaryMode::Skip);
         runtime.start_app_key_link_exchange_if_needed();
         runtime.start_browser_gateway_if_needed();
@@ -1220,6 +1221,15 @@ impl NativeAppRuntime {
     }
 
     #[allow(clippy::unused_self)]
+    fn reset_native_browser_gateway_status_for_new_process(&mut self) {
+        #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+        write_native_browser_gateway_status(
+            Path::new(&self.data_dir),
+            json!({"running": false, "state": "new_process"}),
+        );
+    }
+
+    #[allow(clippy::unused_self)]
     fn stop_browser_gateway(&mut self) {
         #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
         {
@@ -1265,9 +1275,9 @@ impl NativeAppRuntime {
         self.state.ui.local_nhash_resolver_enabled = config.local_nhash_resolver_enabled;
         self.state.ui.launch_on_startup = config.launch_on_startup;
         self.state.ui.sites_portal_url = if config.local_nhash_resolver_enabled {
-            iris_drive_core::gateway::local_portal_url(native_browser_gateway_port_for_state(
-                Path::new(&self.data_dir),
-            ))
+            native_browser_gateway_port_for_state(Path::new(&self.data_dir))
+                .map(iris_drive_core::gateway::local_portal_url)
+                .unwrap_or_default()
         } else {
             String::new()
         };
@@ -1354,9 +1364,9 @@ impl NativeAppRuntime {
             snapshot_link: String::new(),
             local_nhash_resolver_enabled: true,
             launch_on_startup: true,
-            sites_portal_url: iris_drive_core::gateway::local_portal_url(
-                native_browser_gateway_port_for_state(Path::new(&self.data_dir)),
-            ),
+            sites_portal_url: native_browser_gateway_port_for_state(Path::new(&self.data_dir))
+                .map(iris_drive_core::gateway::local_portal_url)
+                .unwrap_or_default(),
             ..UiState::default()
         };
     }
@@ -1555,15 +1565,16 @@ fn run_app_key_link_exchange(data_dir: &str, stop: Arc<AtomicBool>) -> Result<()
     result
 }
 
-fn native_browser_gateway_port_for_state(config_dir: &Path) -> u16 {
+fn native_browser_gateway_port_for_state(config_dir: &Path) -> Option<u16> {
     #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
     {
-        if let Some(port) = native_browser_gateway_status_port(config_dir) {
-            return port;
-        }
+        native_browser_gateway_status_port(config_dir)
     }
-    let _ = config_dir;
-    iris_drive_core::gateway::DEFAULT_GATEWAY_PORT
+    #[cfg(not(all(not(test), any(target_os = "ios", target_os = "android"))))]
+    {
+        let _ = config_dir;
+        Some(iris_drive_core::gateway::DEFAULT_GATEWAY_PORT)
+    }
 }
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
@@ -1652,6 +1663,11 @@ fn native_browser_gateway_status_port(config_dir: &Path) -> Option<u16> {
         &std::fs::read(native_browser_gateway_status_path(config_dir)).ok()?,
     )
     .ok()?;
+    native_browser_gateway_status_value_port(&value)
+}
+
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
+fn native_browser_gateway_status_value_port(value: &Value) -> Option<u16> {
     if value.get("running")?.as_bool()? != true {
         return None;
     }
@@ -3055,6 +3071,8 @@ fn drive_iris_to_nhash_url_for_root(root_cid: &str) -> Option<String> {
 mod app_key_link_flow_tests;
 #[cfg(test)]
 mod backup_tests;
+#[cfg(test)]
+mod browser_gateway_tests;
 #[cfg(test)]
 mod provider_tests;
 #[cfg(test)]

@@ -686,9 +686,12 @@ private struct DriveHomeView: View {
                 Button {
                     model.openIrisApps()
                 } label: {
-                    Label("Open Iris Apps", systemImage: "safari")
+                    Label(
+                        model.isOpeningIrisApps ? "Opening Iris Apps" : "Open Iris Apps",
+                        systemImage: "safari"
+                    )
                 }
-                .disabled(model.sitesPortalUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                .disabled(!model.localNhashResolverEnabled || model.isOpeningIrisApps)
                 Button {
                     model.copySnapshotLink()
                 } label: {

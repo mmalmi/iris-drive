@@ -113,6 +113,31 @@ final class IrisDriveIOSUITests: XCTestCase {
         assertFilesOpen(in: app, files: files, timeout: 15)
     }
 
+    func testOpenIrisAppsLoadsBrowserWithoutConnectionError() throws {
+        let app = launchApp()
+        ensureMyDriveReady(in: app)
+
+        let openIrisApps = app.buttons["Open Iris Apps"].firstMatch
+        makeHittable(openIrisApps, in: app)
+        openIrisApps.tap()
+
+        let address = app.textFields["irisWebAddressField"]
+        XCTAssertTrue(address.waitForExistence(timeout: 35), app.debugDescription)
+        let deadline = Date().addingTimeInterval(8)
+        while Date() < deadline {
+            let error = app.staticTexts["irisWebError"]
+            XCTAssertFalse(error.exists, "Iris Apps browser failed: \(accessibilityValue(error))")
+            if !app.progressIndicators["irisWebLoading"].exists {
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+
+        XCTAssertFalse(app.staticTexts["irisWebError"].exists)
+        XCTAssertTrue(accessibilityValue(address).contains("iris.localhost"))
+        app.buttons["irisWebCloseButton"].tap()
+    }
+
     func testMyDriveDevicesSummaryOpensDevices() throws {
         let app = launchApp()
         ensureMyDriveReady(in: app)
