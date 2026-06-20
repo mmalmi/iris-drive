@@ -30,6 +30,8 @@ import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.concurrent.Executors
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.NativeActions
@@ -507,8 +509,14 @@ class MainActivity : ComponentActivity() {
 
     private suspend fun waitForIrisPortalUrl(): String? {
         for (attempt in 0 until 40) {
-            stateFlow.value.sitesPortalUrl.takeIf(::hasGatewayPort)?.let { return it }
-            refreshStateOnce()?.sitesPortalUrl?.takeIf(::hasGatewayPort)?.let { return it }
+            stateFlow.value.sitesPortalUrl
+                .takeIf(::hasGatewayPort)
+                ?.takeIf { localGatewayResponds(it) }
+                ?.let { return it }
+            refreshStateOnce()?.sitesPortalUrl
+                ?.takeIf(::hasGatewayPort)
+                ?.takeIf { localGatewayResponds(it) }
+                ?.let { return it }
             delay(if (attempt < 8) 250 else 500)
         }
         return null
@@ -527,6 +535,28 @@ class MainActivity : ComponentActivity() {
 
     private fun hasGatewayPort(url: String): Boolean =
         runCatching { Uri.parse(url).port > 0 }.getOrDefault(false)
+
+    private suspend fun localGatewayResponds(url: String): Boolean =
+        withContext(Dispatchers.IO) {
+            runCatching {
+                val port = Uri.parse(url).port
+                if (port <= 0) return@runCatching false
+                val connection =
+                    (URL("http://127.0.0.1:$port/").openConnection() as HttpURLConnection)
+                        .apply {
+                            requestMethod = "HEAD"
+                            connectTimeout = 500
+                            readTimeout = 500
+                            instanceFollowRedirects = false
+                            useCaches = false
+                        }
+                try {
+                    connection.responseCode in 100..599
+                } finally {
+                    connection.disconnect()
+                }
+            }.getOrDefault(false)
+        }
 
     private fun openIrisWeb(url: String, portalUrl: String = stateFlow.value.sitesPortalUrl) {
         if (url.isBlank() || portalUrl.isBlank()) return
