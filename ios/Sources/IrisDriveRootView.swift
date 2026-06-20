@@ -31,7 +31,7 @@ struct IrisDriveRootView: View {
         .animation(.easeInOut(duration: 0.18), value: model.stateLoaded)
         .animation(.easeInOut(duration: 0.18), value: showStartupLoading)
         .contentLinkConfirmationDialog(model: model)
-        .sheet(item: $model.webRoute) { route in
+        .fullScreenCover(item: $model.webRoute) { route in
             IrisWebBrowserView(model: model, route: route)
         }
         .task(id: model.stateLoaded) {

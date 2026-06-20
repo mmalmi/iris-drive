@@ -66,6 +66,8 @@ require_contains ios/Sources/IrisDriveMobileModel.swift "func localGatewayURL"
 require_contains ios/Sources/IrisDriveMobileModel.swift "func browserAddressURL"
 require_contains ios/Sources/IrisDriveMobileModel.swift '"type": "refresh_profile"'
 require_contains ios/Sources/IrisDriveMobileModel.swift "URLComponents(string: sitesPortalUrl)?.port"
+require_contains ios/Sources/IrisDriveRootView.swift ".fullScreenCover(item: \$model.webRoute)"
+require_absent ios/Sources/IrisDriveRootView.swift ".sheet(item: \$model.webRoute)"
 require_contains ios/Sources/IrisDriveRootView.swift "IrisDriveNativeLinkInput.isComplete(linkTarget.trimmingCharacters"
 require_contains ios/Sources/IrisDriveRootView.swift "IrisDriveNativeLinkInput.isComplete(model.approveDeviceKey"
 require_contains ios/Sources/IrisDriveRootView.swift "irisWebLoading"
