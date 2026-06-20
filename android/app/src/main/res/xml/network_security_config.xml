@@ -3,6 +3,6 @@
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="true">iris.localhost</domain>
         <domain includeSubdomains="true">hash.localhost</domain>
-        <domain>localhost</domain>
+        <domain includeSubdomains="false">localhost</domain>
     </domain-config>
 </network-security-config>
