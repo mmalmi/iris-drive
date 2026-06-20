@@ -20,7 +20,7 @@ extension IrisDriveMobileModel {
         let displayName = linkInput.openDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let label = displayName.isEmpty ? "file" : displayName
         guard linkInput.isValid,
-              URL(string: linkInput.localOpenUrl) != nil
+              URL(string: localGatewayURL(linkInput.localOpenUrl)) != nil
         else {
             statusTitle = "Could not open \(label)"
             statusDetail = linkInput.error.isEmpty ? linkInput.normalizedInput : linkInput.error
@@ -52,9 +52,10 @@ extension IrisDriveMobileModel {
     private func openResolvedContentLink(_ linkInput: NativeLinkInputClassification) {
         let displayName = linkInput.openDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let label = displayName.isEmpty ? "file" : displayName
+        let localOpenURL = localGatewayURL(linkInput.localOpenUrl)
         statusTitle = "Opening \(label)"
-        statusDetail = linkInput.localOpenUrl
-        openIrisBrowser(linkInput.localOpenUrl)
+        statusDetail = localOpenURL
+        openIrisBrowser(localOpenURL)
         persist()
     }
 

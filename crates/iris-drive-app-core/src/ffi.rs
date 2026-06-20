@@ -33,6 +33,8 @@ use iris_drive_core::backup_ops::{
 };
 use iris_drive_core::backup_summary::{backup_target_summary, blossom_backup_target};
 use iris_drive_core::config::{DEFAULT_BLOSSOM_SERVERS, DEFAULT_RELAYS};
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+use iris_drive_core::daemon::EmbeddedHashtreeHost;
 #[cfg(not(test))]
 use iris_drive_core::fips_status::online_device_ids;
 use iris_drive_core::fips_status::{
@@ -42,6 +44,8 @@ use iris_drive_core::paths::{config_path_in, key_path_in, recovery_phrase_path_i
 use iris_drive_core::relay_config::{dedupe_relay_urls, normalize_relay_url};
 use iris_drive_core::relay_status::normalized_relay_statuses_for_relays;
 use iris_drive_core::{AppConfig, AppKeyAuthorizationState, BackupTarget, Drive, Profile};
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+use iris_drive_core::{Daemon, GatewayBind, GatewayServer};
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
 use serde::{Deserialize, Serialize};
@@ -223,6 +227,10 @@ struct NativeAppRuntime {
     app_key_link_exchange_running: Arc<AtomicBool>,
     #[cfg(not(test))]
     app_key_link_exchange_stop: Arc<AtomicBool>,
+    #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+    browser_gateway_running: Arc<AtomicBool>,
+    #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+    browser_gateway_stop: Arc<AtomicBool>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -249,9 +257,14 @@ impl NativeAppRuntime {
             app_key_link_exchange_running: Arc::new(AtomicBool::new(false)),
             #[cfg(not(test))]
             app_key_link_exchange_stop: Arc::new(AtomicBool::new(false)),
+            #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+            browser_gateway_running: Arc::new(AtomicBool::new(false)),
+            #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+            browser_gateway_stop: Arc::new(AtomicBool::new(false)),
         };
         runtime.reload_from_disk(ProviderSummaryMode::Skip);
         runtime.start_app_key_link_exchange_if_needed();
+        runtime.start_browser_gateway_if_needed();
         runtime
     }
 
@@ -358,6 +371,7 @@ impl NativeAppRuntime {
         }
         self.reload_from_disk_preserving_error();
         self.start_app_key_link_exchange_if_needed();
+        self.start_browser_gateway_if_needed();
     }
 
     fn dispatch_share_action(&mut self, action: NativeAppAction) {
@@ -687,6 +701,7 @@ impl NativeAppRuntime {
         match iris_drive_core::logout_local_profile(Path::new(&self.data_dir)) {
             Ok(_) => {
                 self.stop_app_key_link_exchange();
+                self.stop_browser_gateway();
                 self.state.ui.roots.clear();
                 self.state.ui.app_actors.clear();
                 self.set_sync_running(false);
@@ -1123,6 +1138,95 @@ impl NativeAppRuntime {
         }
     }
 
+    #[allow(clippy::unused_self)]
+    fn start_browser_gateway_if_needed(&mut self) {
+        #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+        {
+            if !self.state.ui.sync.running {
+                write_native_browser_gateway_status(
+                    Path::new(&self.data_dir),
+                    json!({"running": false, "state": "paused"}),
+                );
+                return;
+            }
+            let Ok(config) = self.load_config() else {
+                write_native_browser_gateway_status(
+                    Path::new(&self.data_dir),
+                    json!({"running": false, "state": "error", "error": "loading config failed"}),
+                );
+                return;
+            };
+            if config.profile.is_none() {
+                write_native_browser_gateway_status(
+                    Path::new(&self.data_dir),
+                    json!({"running": false, "state": "not_configured"}),
+                );
+                return;
+            }
+            if !config.local_nhash_resolver_enabled {
+                write_native_browser_gateway_status(
+                    Path::new(&self.data_dir),
+                    json!({"running": false, "state": "disabled_by_settings"}),
+                );
+                return;
+            }
+            if self.browser_gateway_running.swap(true, Ordering::AcqRel) {
+                return;
+            }
+
+            write_native_browser_gateway_status(
+                Path::new(&self.data_dir),
+                json!({"running": false, "state": "starting"}),
+            );
+            self.browser_gateway_stop.store(false, Ordering::Release);
+            let data_dir = self.data_dir.clone();
+            let running = self.browser_gateway_running.clone();
+            let stop = self.browser_gateway_stop.clone();
+            std::thread::spawn(move || {
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    run_native_browser_gateway(&data_dir, stop)
+                }));
+                match result {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => {
+                        write_native_browser_gateway_status(
+                            Path::new(&data_dir),
+                            json!({"running": false, "state": "error", "error": error}),
+                        );
+                        tracing::warn!(error = %error, "native browser gateway stopped");
+                    }
+                    Err(payload) => {
+                        let panic = if let Some(value) = payload.downcast_ref::<&str>() {
+                            (*value).to_owned()
+                        } else if let Some(value) = payload.downcast_ref::<String>() {
+                            value.clone()
+                        } else {
+                            "non-string panic payload".to_owned()
+                        };
+                        write_native_browser_gateway_status(
+                            Path::new(&data_dir),
+                            json!({"running": false, "state": "panic", "error": panic}),
+                        );
+                        tracing::warn!(panic = %panic, "native browser gateway panicked");
+                    }
+                }
+                running.store(false, Ordering::Release);
+            });
+        }
+    }
+
+    #[allow(clippy::unused_self)]
+    fn stop_browser_gateway(&mut self) {
+        #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+        {
+            self.browser_gateway_stop.store(true, Ordering::Release);
+            write_native_browser_gateway_status(
+                Path::new(&self.data_dir),
+                json!({"running": false, "state": "stopping"}),
+            );
+        }
+    }
+
     fn reload_from_disk_preserving_error(&mut self) {
         let error = self.state.error.clone();
         let last_share_invite = self.state.ui.last_share_invite.clone();
@@ -1157,9 +1261,9 @@ impl NativeAppRuntime {
         self.state.ui.local_nhash_resolver_enabled = config.local_nhash_resolver_enabled;
         self.state.ui.launch_on_startup = config.launch_on_startup;
         self.state.ui.sites_portal_url = if config.local_nhash_resolver_enabled {
-            iris_drive_core::gateway::local_portal_url(
-                iris_drive_core::gateway::DEFAULT_GATEWAY_PORT,
-            )
+            iris_drive_core::gateway::local_portal_url(native_browser_gateway_port_for_state(
+                Path::new(&self.data_dir),
+            ))
         } else {
             String::new()
         };
@@ -1247,7 +1351,7 @@ impl NativeAppRuntime {
             local_nhash_resolver_enabled: true,
             launch_on_startup: true,
             sites_portal_url: iris_drive_core::gateway::local_portal_url(
-                iris_drive_core::gateway::DEFAULT_GATEWAY_PORT,
+                native_browser_gateway_port_for_state(Path::new(&self.data_dir)),
             ),
             ..UiState::default()
         };
@@ -1317,6 +1421,11 @@ impl NativeAppRuntime {
 
     fn set_sync_running(&mut self, running: bool) {
         self.set_sync_status(running, if running { "running" } else { "paused" });
+        if running {
+            self.start_browser_gateway_if_needed();
+        } else {
+            self.stop_browser_gateway();
+        }
     }
 
     fn set_sync_status(&mut self, running: bool, status: &str) {
@@ -1423,6 +1532,8 @@ impl Drop for NativeAppRuntime {
     fn drop(&mut self) {
         self.app_key_link_exchange_stop
             .store(true, Ordering::Release);
+        #[cfg(any(target_os = "ios", target_os = "android"))]
+        self.browser_gateway_stop.store(true, Ordering::Release);
     }
 }
 
@@ -1438,6 +1549,135 @@ fn run_app_key_link_exchange(data_dir: &str, stop: Arc<AtomicBool>) -> Result<()
         write_native_fips_error(Path::new(data_dir), error);
     }
     result
+}
+
+fn native_browser_gateway_port_for_state(config_dir: &Path) -> u16 {
+    #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+    {
+        if let Some(port) = native_browser_gateway_status_port(config_dir) {
+            return port;
+        }
+    }
+    let _ = config_dir;
+    iris_drive_core::gateway::DEFAULT_GATEWAY_PORT
+}
+
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+fn run_native_browser_gateway(data_dir: &str, stop: Arc<AtomicBool>) -> Result<(), String> {
+    let data_dir = PathBuf::from(data_dir);
+    write_native_browser_gateway_status(
+        &data_dir,
+        json!({"running": false, "state": "loading_config"}),
+    );
+    let config = AppConfig::load_or_default(config_path_in(&data_dir))
+        .map_err(|error| format!("loading config: {error}"))?;
+    if config.profile.is_none() || !config.local_nhash_resolver_enabled {
+        write_native_browser_gateway_status(
+            &data_dir,
+            json!({"running": false, "state": "disabled"}),
+        );
+        return Ok(());
+    }
+    write_native_browser_gateway_status(
+        &data_dir,
+        json!({"running": false, "state": "starting_embedded_hashtree"}),
+    );
+    let embedded_hashtree = EmbeddedHashtreeHost::start(&data_dir, &config)
+        .map_err(|error| format!("starting embedded hashtree: {error:#}"))?;
+    let hashtree_base_url = embedded_hashtree.status().base_url.clone();
+    write_native_browser_gateway_status(
+        &data_dir,
+        json!({
+            "running": false,
+            "state": "starting_gateway",
+            "hashtree_base_url": hashtree_base_url,
+        }),
+    );
+    let daemon =
+        Daemon::open(&data_dir).map_err(|error| format!("opening daemon for gateway: {error}"))?;
+    let tree = daemon.tree_handle();
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .map_err(|error| format!("building browser gateway runtime: {error}"))?;
+    let gateway_data_dir = data_dir.clone();
+    let gateway_hashtree_base_url = hashtree_base_url.clone();
+    let result = runtime.block_on(async move {
+        let gateway = GatewayServer::bind_with_tree_and_htree_daemon(
+            &gateway_data_dir,
+            tree,
+            gateway_hashtree_base_url.clone(),
+            GatewayBind::loopback_v4(0),
+        )
+        .await
+        .map_err(|error| format!("starting browser gateway: {error}"))?;
+        let gateway_port = gateway.local_addr().port();
+        write_native_browser_gateway_status(
+            &gateway_data_dir,
+            json!({
+                "running": true,
+                "state": "running",
+                "bind": gateway.local_addr().to_string(),
+                "hashtree_base_url": gateway_hashtree_base_url,
+                "portal_url": iris_drive_core::gateway::local_portal_url(gateway_port),
+            }),
+        );
+
+        while !stop.load(Ordering::Acquire) {
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+        gateway
+            .shutdown()
+            .await
+            .map_err(|error| format!("stopping browser gateway: {error}"))?;
+        write_native_browser_gateway_status(
+            &gateway_data_dir,
+            json!({"running": false, "state": "stopped"}),
+        );
+        Ok(())
+    });
+    drop(runtime);
+    drop(embedded_hashtree);
+    result
+}
+
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+fn native_browser_gateway_status_port(config_dir: &Path) -> Option<u16> {
+    let value: Value = serde_json::from_slice(
+        &std::fs::read(native_browser_gateway_status_path(config_dir)).ok()?,
+    )
+    .ok()?;
+    if value.get("running")?.as_bool()? != true {
+        return None;
+    }
+    value
+        .get("bind")?
+        .as_str()?
+        .rsplit_once(':')?
+        .1
+        .parse()
+        .ok()
+}
+
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+fn native_browser_gateway_status_path(config_dir: &Path) -> PathBuf {
+    config_dir.join("native-browser-gateway-status.json")
+}
+
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+fn write_native_browser_gateway_status(config_dir: &Path, value: Value) {
+    let path = native_browser_gateway_status_path(config_dir);
+    if let Err(error) = std::fs::write(
+        &path,
+        serde_json::to_vec_pretty(&value).unwrap_or_else(|_| b"{}".to_vec()),
+    ) {
+        tracing::warn!(
+            error = %error,
+            path = %path.display(),
+            "writing native browser gateway status failed"
+        );
+    }
 }
 
 #[cfg(not(test))]

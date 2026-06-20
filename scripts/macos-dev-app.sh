@@ -456,27 +456,61 @@ finalize_app_signature() {
   fi
 }
 
+macos_process_command_matches() {
+  local pid="$1"
+  local path_fragment="$2"
+  local command
+
+  command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  [[ "$command" == *"$path_fragment"* ]]
+}
+
+macos_matching_process_pids() {
+  local process_name="$1"
+  local path_fragment="$2"
+  local pid
+
+  pgrep -x "$process_name" 2>/dev/null | while IFS= read -r pid; do
+    if macos_process_command_matches "$pid" "$path_fragment"; then
+      printf '%s\n' "$pid"
+    fi
+  done
+}
+
+terminate_macos_bundle_processes() {
+  local process_name="$1"
+  local path_fragment="$2"
+  local pid
+  local any=0
+
+  for pid in $(macos_matching_process_pids "$process_name" "$path_fragment"); do
+    kill -TERM "$pid" >/dev/null 2>&1 || true
+    any=1
+  done
+  [[ "$any" -eq 1 ]] || return 0
+
+  for _ in {1..40}; do
+    any=0
+    for pid in $(macos_matching_process_pids "$process_name" "$path_fragment"); do
+      any=1
+      break
+    done
+    [[ "$any" -eq 0 ]] && return 0
+    sleep 0.1
+  done
+
+  for pid in $(macos_matching_process_pids "$process_name" "$path_fragment"); do
+    kill "$pid" >/dev/null 2>&1 || true
+  done
+}
+
 terminate_running_app() {
-  if pgrep -x "$APP_PROCESS_NAME" >/dev/null 2>&1; then
-    pkill -TERM -x "$APP_PROCESS_NAME" >/dev/null 2>&1 || true
-    for _ in {1..40}; do
-      if ! pgrep -x "$APP_PROCESS_NAME" >/dev/null 2>&1; then
-        break
-      fi
-      sleep 0.1
-    done
-    pkill -x "$APP_PROCESS_NAME" >/dev/null 2>&1 || true
-  fi
-  if pgrep -x "IrisDriveFileProvider" >/dev/null 2>&1; then
-    pkill -TERM -x "IrisDriveFileProvider" >/dev/null 2>&1 || true
-    for _ in {1..40}; do
-      if ! pgrep -x "IrisDriveFileProvider" >/dev/null 2>&1; then
-        break
-      fi
-      sleep 0.1
-    done
-    pkill -x "IrisDriveFileProvider" >/dev/null 2>&1 || true
-  fi
+  terminate_macos_bundle_processes \
+    "$APP_PROCESS_NAME" \
+    "/Contents/MacOS/$APP_PROCESS_NAME"
+  terminate_macos_bundle_processes \
+    "IrisDriveFileProvider" \
+    "/Contents/PlugIns/IrisDriveFileProvider.appex/Contents/MacOS/IrisDriveFileProvider"
 }
 
 build_app() {

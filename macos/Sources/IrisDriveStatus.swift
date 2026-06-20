@@ -95,11 +95,6 @@ final class IrisDriveStatus: ObservableObject {
 
     var daemonVersionMismatch: Bool {
         let expected = expectedDaemonBinaryVersion.isEmpty ? appVersionText : expectedDaemonBinaryVersion
-        if daemonRunning,
-           !expected.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-           daemonBinaryVersion.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return true
-        }
         return Self.versionsDiffer(daemonBinaryVersion, expected)
     }
 

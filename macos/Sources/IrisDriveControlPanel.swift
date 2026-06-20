@@ -709,6 +709,16 @@ struct IrisDriveControlPanel: View {
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
 
+            if status.localNhashResolverEnabled {
+                Button(action: controller.openSitesPortal) {
+                    Label("Open Iris Apps", systemImage: "safari")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.large)
+                .disabled(status.sitesPortalURL == nil)
+            }
+
             Button(action: controller.openDriveLink) {
                 Label("View on drive.iris.to", systemImage: "safari")
                     .frame(maxWidth: .infinity)
@@ -1498,12 +1508,6 @@ struct IrisDriveControlPanel: View {
                         set: { controller.setLocalNhashResolver($0) }
                     )
                 )
-                Button {
-                    controller.openSitesPortal()
-                } label: {
-                    Label("Open Iris Apps", systemImage: "safari")
-                }
-                .disabled(status.sitesPortalURL == nil)
             }
 
             Section("Updates") {

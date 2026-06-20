@@ -35,6 +35,28 @@
   <string>Scan Iris Drive invite QR codes.</string>
   <key>NSLocalNetworkUsageDescription</key>
   <string>Find and connect directly to nearby Iris Drive devices on your local network.</string>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+    <key>NSExceptionDomains</key>
+    <dict>
+      <key>iris.localhost</key>
+      <dict>
+        <key>NSExceptionAllowsInsecureHTTPLoads</key>
+        <true/>
+        <key>NSIncludesSubdomains</key>
+        <true/>
+      </dict>
+      <key>hash.localhost</key>
+      <dict>
+        <key>NSExceptionAllowsInsecureHTTPLoads</key>
+        <true/>
+        <key>NSIncludesSubdomains</key>
+        <true/>
+      </dict>
+    </dict>
+  </dict>
   <key>NSBonjourServices</key>
   <array>
     <string>_fips._udp</string>

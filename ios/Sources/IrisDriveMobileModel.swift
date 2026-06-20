@@ -782,6 +782,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func openIrisApps() {
+        refresh()
         openIrisLink(sitesPortalUrl)
     }
 
@@ -792,7 +793,7 @@ final class IrisDriveMobileModel: ObservableObject {
         switch linkInput.kind {
         case "iris_web", "nhash_file", "mutable_file":
             if linkInput.isValid {
-                openIrisBrowser(linkInput.localOpenUrl)
+                openIrisBrowser(localGatewayURL(linkInput.localOpenUrl))
             } else {
                 statusTitle = "Iris link failed"
                 statusDetail = linkInput.error.isEmpty ? candidate : linkInput.error
@@ -804,9 +805,27 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func openIrisBrowser(_ value: String) {
-        let candidate = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let candidate = localGatewayURL(value).trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: candidate) else { return }
         webRoute = IrisWebRoute(url: url)
+    }
+
+    func localGatewayURL(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard var components = URLComponents(string: trimmed),
+              let host = components.host,
+              let activePort = URLComponents(string: sitesPortalUrl)?.port
+        else {
+            return value
+        }
+        let lowerHost = host.lowercased()
+        let isLocalGatewayHost = lowerHost == "iris.localhost"
+            || lowerHost.hasSuffix(".iris.localhost")
+            || lowerHost == "hash.localhost"
+            || lowerHost.hasSuffix(".hash.localhost")
+        guard isLocalGatewayHost else { return value }
+        components.port = activePort
+        return components.url?.absoluteString ?? value
     }
 
     func addRelay(_ value: String? = nil) {
@@ -1096,7 +1115,7 @@ final class IrisDriveMobileModel: ObservableObject {
             return
         }
         if linkInput.kind == "iris_web" {
-            openIrisBrowser(linkInput.localOpenUrl)
+            openIrisBrowser(localGatewayURL(linkInput.localOpenUrl))
             return
         }
         if linkInput.kind == "invite" {

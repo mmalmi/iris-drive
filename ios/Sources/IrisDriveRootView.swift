@@ -1546,20 +1546,55 @@ private struct RecoveryPhraseExportView: View {
 private struct IrisWebBrowserView: View {
     @ObservedObject var model: IrisDriveMobileModel
     let route: IrisWebRoute
+    @State private var isLoading = true
+    @State private var loadError = ""
 
     var body: some View {
         NavigationStack {
-            IrisWebView(initialURL: route.url, model: model)
+            ZStack {
+                IrisWebView(
+                    initialURL: route.url,
+                    model: model,
+                    isLoading: $isLoading,
+                    loadError: $loadError
+                )
                 .ignoresSafeArea(.container, edges: .bottom)
-                .navigationTitle("Iris Apps")
-                .navigationBarTitleDisplayMode(.inline)
-                .toolbar {
-                    ToolbarItem(placement: .topBarTrailing) {
-                        Button("Done") {
-                            model.webRoute = nil
-                        }
+                if isLoading {
+                    ProgressView()
+                        .controlSize(.large)
+                        .accessibilityIdentifier("irisWebLoading")
+                }
+                if !loadError.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "exclamationmark.triangle")
+                            .font(.title)
+                            .foregroundStyle(.orange)
+                        Text("Iris Apps failed to load")
+                            .font(.headline)
+                        Text(loadError)
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .accessibilityIdentifier("irisWebError")
+                    }
+                    .padding(24)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .background(.background)
+                }
+            }
+            .navigationTitle("Iris Apps")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") {
+                        model.webRoute = nil
                     }
                 }
+            }
+            .onChange(of: route.url) {
+                isLoading = true
+                loadError = ""
+            }
         }
     }
 }
@@ -1567,6 +1602,8 @@ private struct IrisWebBrowserView: View {
 private struct IrisWebView: UIViewRepresentable {
     let initialURL: URL
     @ObservedObject var model: IrisDriveMobileModel
+    @Binding var isLoading: Bool
+    @Binding var loadError: String
 
     func makeUIView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
@@ -1575,6 +1612,8 @@ private struct IrisWebView: UIViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
+        webView.isOpaque = false
+        webView.backgroundColor = .systemBackground
         webView.load(URLRequest(url: initialURL))
         return webView
     }
@@ -1582,14 +1621,63 @@ private struct IrisWebView: UIViewRepresentable {
     func updateUIView(_ webView: WKWebView, context: Context) {}
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(model: model)
+        Coordinator(model: model, isLoading: $isLoading, loadError: $loadError)
     }
 
     final class Coordinator: NSObject, WKNavigationDelegate {
         private weak var model: IrisDriveMobileModel?
+        private var isLoading: Binding<Bool>
+        private var loadError: Binding<String>
 
-        init(model: IrisDriveMobileModel) {
+        init(
+            model: IrisDriveMobileModel,
+            isLoading: Binding<Bool>,
+            loadError: Binding<String>
+        ) {
             self.model = model
+            self.isLoading = isLoading
+            self.loadError = loadError
+        }
+
+        func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+            isLoading.wrappedValue = true
+            loadError.wrappedValue = ""
+        }
+
+        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+            isLoading.wrappedValue = false
+            loadError.wrappedValue = ""
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            didFail navigation: WKNavigation!,
+            withError error: Error
+        ) {
+            showLoadError(error)
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            didFailProvisionalNavigation navigation: WKNavigation!,
+            withError error: Error
+        ) {
+            showLoadError(error)
+        }
+
+        func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+            isLoading.wrappedValue = false
+            loadError.wrappedValue = "Web content process terminated"
+        }
+
+        private func showLoadError(_ error: Error) {
+            let nsError = error as NSError
+            if nsError.domain == NSURLErrorDomain,
+               nsError.code == NSURLErrorCancelled {
+                return
+            }
+            isLoading.wrappedValue = false
+            loadError.wrappedValue = nsError.localizedDescription
         }
 
         func webView(
@@ -1604,7 +1692,9 @@ private struct IrisWebView: UIViewRepresentable {
             let classification = IrisDriveNativeLinkInput.classify(url.absoluteString)
             switch classification.kind {
             case "iris_web":
-                if let localURL = URL(string: classification.localOpenUrl),
+                let localOpenURL = model?.localGatewayURL(classification.localOpenUrl)
+                    ?? classification.localOpenUrl
+                if let localURL = URL(string: localOpenURL),
                    localURL.absoluteString != url.absoluteString {
                     webView.load(URLRequest(url: localURL))
                     decisionHandler(.cancel)

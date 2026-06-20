@@ -51,11 +51,17 @@ require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "app-group runtime is man
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'if [[ -z "$app_base_dir" && "$mode" != "development" ]]; then'
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "ensure_daemon_service"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "service install --launch --json"
+require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "macos_process_command_matches"
+require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'pkill -TERM -x "$APP_PROCESS_NAME"'
+require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'pkill -x "$APP_PROCESS_NAME"'
 require_not_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" '"--no-gateway"'
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "startAppManagedDaemon"
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "status.primaryDriveGatewayURL = nil"
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "self.daemonServiceActive = serviceRunning"
 require_contains "$ROOT/macos/Sources/IrisDriveControlPanel.swift" "macos/Sources/IrisDriveControlPanel.swift" "Daemon offline"
+require_contains "$ROOT/macos/Sources/IrisDriveControlPanel.swift" "macos/Sources/IrisDriveControlPanel.swift" "if status.localNhashResolverEnabled"
+require_contains "$ROOT/macos/Sources/IrisDriveControlPanel.swift" "macos/Sources/IrisDriveControlPanel.swift" 'Label("Open Iris Apps", systemImage: "safari")'
+require_contains "$ROOT/macos/Sources/IrisDriveControlPanel.swift" "macos/Sources/IrisDriveControlPanel.swift" ".disabled(status.sitesPortalURL == nil)"
 require_contains "$ROOT/macos/Sources/IrisDriveDaemonService.swift" "macos/Sources/IrisDriveDaemonService.swift" "macOS app sandbox cannot install LaunchAgents directly"
 require_contains "$ROOT/macos/Sources/IrisDriveDaemonService.swift" "macos/Sources/IrisDriveDaemonService.swift" 'currentProcessHasEntitlement("com.apple.security.app-sandbox")'
 require_contains "$ROOT/macos/Sources/IrisDriveDaemonService.swift" "macos/Sources/IrisDriveDaemonService.swift" 'arguments: ["service", "status", "--json"]'
