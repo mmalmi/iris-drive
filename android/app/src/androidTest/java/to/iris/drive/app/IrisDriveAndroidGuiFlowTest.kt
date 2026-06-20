@@ -828,6 +828,7 @@ class IrisDriveAndroidGuiFlowTest {
         onDeleteShare: (String) -> Unit = {},
         onAddShareShortcut: (String, String) -> Unit = { _, _ -> },
         onRepairShareWraps: (String) -> Unit = {},
+        onOpenIrisApps: (String) -> Unit = {},
         shareDialogRequest: ShareDialogRequest? = null,
     ): MutableStateFlow<AppState> {
         val stateFlow = MutableStateFlow(state)
@@ -852,6 +853,7 @@ class IrisDriveAndroidGuiFlowTest {
                 onCopyText = { _, _ -> },
                 onExportRecoverySecret = onExportRecoverySecret,
                 onOpenUrl = { _ -> },
+                onOpenIrisApps = onOpenIrisApps,
                 onOpenDriveFolder = {},
                 onApproveDevice = onApproveDevice,
                 onRejectDevice = onRejectDevice,

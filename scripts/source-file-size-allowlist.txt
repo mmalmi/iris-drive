@@ -1,7 +1,7 @@
 # path line_limit reason
 windows/WindowsCloudFiles.cs 2600 Windows Cloud Files interop is still monolithic.
 android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.kt 1400 Legacy Android Compose shell pending panel-module split.
-crates/iris-drive-app-core/src/ffi.rs 2850 Legacy app-core FFI runtime now includes desktop startup settings; split pending action/provider/app-key-link modules.
+crates/iris-drive-app-core/src/ffi.rs 3100 Legacy app-core FFI runtime now includes native browser and app-key-link exchange paths; split pending action/provider/app-key-link modules.
 crates/iris-drive-app-core/src/ffi/tests.rs 1800 App-core parity and native action fixtures include startup defaults; split pending scenario modules.
 crates/iris-drive-cli/src/shares.rs 1350 CLI share command surface needs a later command/test split.
 crates/iris-drive-cli/src/profile.rs 1050 CLI profile command surface already exceeds default; pending command/test split.
@@ -22,10 +22,10 @@ macos/Sources/IrisDriveMacApp.swift 3070 Legacy macOS shell pending view/runtime
 scripts/dev-vm-smoke.sh 2050 Multi-platform dev VM smoke harness keeps thin desktop GUI smoke dispatch until the harness split.
 scripts/cross-vm-e2e.sh 1400 Multi-device e2e harness needs a later split.
 scripts/macos-smoke.sh 1200 macOS smoke harness needs a later helper split.
-macos/Sources/IrisDriveControlPanel.swift 2700 Legacy macOS control panel includes backup target controls; pending view split.
+macos/Sources/IrisDriveControlPanel.swift 2800 Legacy macOS control panel includes backup target and device approval controls; pending view split.
 scripts/local-release.mjs 1500 Local release orchestration needs a later module split.
 scripts/local-release.test.mjs 1250 Local release test coverage needs a later fixture/helper split.
 windows/IrisDriveService.cs 1020 Legacy Windows service bridge pending command-client split.
 windows/MainWindow.xaml.cs 1800 Legacy Windows window controller pending view-model split.
-ios/Sources/IrisDriveMobileModel.swift 1450 Legacy iOS model pending FileProvider/model split.
-ios/Sources/IrisDriveRootView.swift 1750 Legacy iOS SwiftUI shell pending view split.
+ios/Sources/IrisDriveMobileModel.swift 1550 Legacy iOS model includes FileProvider, browser gateway, and approval refresh plumbing; pending FileProvider/model split.
+ios/Sources/IrisDriveRootView.swift 2100 Legacy iOS SwiftUI shell includes setup, drive, sharing, and browser views; pending view split.

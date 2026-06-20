@@ -564,7 +564,7 @@ private struct LinkDeviceSetupView: View {
 
     init(model: IrisDriveMobileModel) {
         self.model = model
-        _linkTarget = State(initialValue: iosUiTestValue("IRIS_DRIVE_UI_TEST_OWNER_INVITE"))
+        _linkTarget = State(initialValue: iosUiTestDecodedValue("IRIS_DRIVE_UI_TEST_OWNER_INVITE"))
     }
 
     var body: some View {
@@ -1163,6 +1163,20 @@ private struct AddRecoveryKeySheet: View {
 private func iosUiTestValue(_ name: String) -> String {
     #if DEBUG
     ProcessInfo.processInfo.environment[name] ?? ""
+    #else
+    ""
+    #endif
+}
+
+private func iosUiTestDecodedValue(_ name: String) -> String {
+    #if DEBUG
+    let environment = ProcessInfo.processInfo.environment
+    if let encoded = environment["\(name)_B64"],
+       let data = Data(base64Encoded: encoded),
+       let value = String(data: data, encoding: .utf8) {
+        return value
+    }
+    return environment[name] ?? ""
     #else
     ""
     #endif

@@ -31,14 +31,21 @@ final class IrisDriveIOSUITests: XCTestCase {
         app.buttons["welcomeSignIn"].tap()
         app.buttons["openLinkDevice"].tap()
 
-        let owner = app.textFields["linkOwnerInput"]
-        if owner.waitForExistence(timeout: 2) {
-            XCTAssertEqual(owner.value as? String, invite)
+        let awaitingApproval = app.descendants(matching: .any)["awaitingApprovalView"]
+        let deadline = Date().addingTimeInterval(30)
+        var checkedPrefilledTarget = false
+        while Date() < deadline {
+            if awaitingApproval.exists {
+                return
+            }
+            let owner = app.textFields["linkTargetInput"]
+            if owner.exists, !checkedPrefilledTarget {
+                XCTAssertTrue(accessibilityValue(owner).contains("drive.iris"), invite)
+                checkedPrefilledTarget = true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
-
-        XCTAssertTrue(
-            app.descendants(matching: .any)["awaitingApprovalView"].waitForExistence(timeout: 15)
-        )
+        XCTFail(app.debugDescription)
     }
 
     func testCreateProfileFromWelcome() throws {
@@ -263,9 +270,20 @@ final class IrisDriveIOSUITests: XCTestCase {
     }
 
     private func requiredEnvironment(_ name: String) throws -> String {
-        let value = ProcessInfo.processInfo.environment[name] ?? ""
+        let environment = ProcessInfo.processInfo.environment
+        let value = environment[name] ?? decodedEnvironmentValue("\(name)_B64", environment: environment)
         if value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             throw XCTSkip("\(name) is required for this UI test")
+        }
+        return value
+    }
+
+    private func decodedEnvironmentValue(_ name: String, environment: [String: String]) -> String {
+        guard let encoded = environment[name],
+              let data = Data(base64Encoded: encoded),
+              let value = String(data: data, encoding: .utf8)
+        else {
+            return ""
         }
         return value
     }

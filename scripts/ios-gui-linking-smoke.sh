@@ -349,6 +349,7 @@ run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testWelcomeRoutesWithoutSet
 
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
 owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["app_key_link_invite"]["url"])' <<<"$owner_json")"
+owner_invite_b64="$(python3 -c 'import base64,sys; print(base64.b64encode(sys.argv[1].encode()).decode())' "$owner_invite")"
 owner_app_key_npub="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["current_app_key_npub"])' <<<"$owner_json")"
 OWNER_FIPS_PORT="$(unused_loopback_port)"
 owner_fips_peer="$owner_app_key_npub=127.0.0.1:$OWNER_FIPS_PORT"
@@ -369,7 +370,7 @@ fi
 reset_sim_app_state
 run_ui_test \
   "IrisDriveIOSUITests/IrisDriveIOSUITests/testLinkThisDeviceFromWelcome" \
-  "IRIS_DRIVE_UI_TEST_OWNER_INVITE=$owner_invite" \
+  "IRIS_DRIVE_UI_TEST_OWNER_INVITE_B64=$owner_invite_b64" \
   "IRIS_DRIVE_FIPS_STATIC_PEERS=$owner_fips_peer" \
   "IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=false" \
   "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=false" \
