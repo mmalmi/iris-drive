@@ -76,6 +76,10 @@ require_contains android/app/src/main/java/to/iris/drive/app/IrisWebActivity.kt 
 require_contains android/app/src/main/java/to/iris/drive/app/IrisWebActivity.kt "localGatewayUrl"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisWebActivity.kt "IME_ACTION_GO"
 require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "stateFlow.value.sitesPortalUrl"
+require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "waitForIrisPortalUrl"
+require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.kt "Opening Iris Apps"
+require_file android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndroidIrisAppsButtonTest.kt
+require_contains android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndroidIrisAppsButtonTest.kt "openIrisAppsButtonStartsGatewayReadinessEvenBeforePortalUrlExists"
 require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "NativeActions.refreshProfile()"
 require_contains crates/iris-drive-app-core/src/actions.rs "RefreshProfile"
 require_absent android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Text(\"Setup\")"

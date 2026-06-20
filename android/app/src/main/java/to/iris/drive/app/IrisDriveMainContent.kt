@@ -64,6 +64,7 @@ internal fun AuthenticatedContent(
     selfUpdateState: AndroidSelfUpdateState,
     selfUpdateActions: SelfUpdateActions,
     backupCheckProgress: BackupCheckProgress,
+    isOpeningIrisApps: Boolean,
     onStartSync: () -> Unit,
     onStopSync: () -> Unit,
     onCopyAppKey: () -> Unit,
@@ -110,6 +111,7 @@ internal fun AuthenticatedContent(
             state = state,
             selfUpdateState = selfUpdateState,
             selfUpdateActions = selfUpdateActions,
+            isOpeningIrisApps = isOpeningIrisApps,
             onShowDevices = { onSelectTab(MainTab.Devices) },
             onStartSync = onStartSync,
             onStopSync = onStopSync,
@@ -179,6 +181,7 @@ private fun DriveContent(
     state: AppState,
     selfUpdateState: AndroidSelfUpdateState,
     selfUpdateActions: SelfUpdateActions,
+    isOpeningIrisApps: Boolean,
     onShowDevices: () -> Unit,
     onStartSync: () -> Unit,
     onStopSync: () -> Unit,
@@ -210,7 +213,8 @@ private fun DriveContent(
         item {
             ProviderPanel(
                 snapshotLink = state.snapshotLink,
-                sitesPortalUrl = state.sitesPortalUrl,
+                localNhashResolverEnabled = state.localNhashResolverEnabled,
+                isOpeningIrisApps = isOpeningIrisApps,
                 onOpenDriveFolder = onOpenDriveFolder,
                 onCopySnapshotLink = onCopySnapshotLink,
                 onOpenSnapshotLink = onOpenSnapshotLink,
@@ -476,7 +480,8 @@ private fun SyncPanel(
 @Composable
 private fun ProviderPanel(
     snapshotLink: String,
-    sitesPortalUrl: String,
+    localNhashResolverEnabled: Boolean,
+    isOpeningIrisApps: Boolean,
     onOpenDriveFolder: () -> Unit,
     onCopySnapshotLink: () -> Unit,
     onOpenSnapshotLink: () -> Unit,
@@ -505,9 +510,9 @@ private fun ProviderPanel(
         }
         OutlinedButton(
             onClick = onOpenIrisApps,
-            enabled = sitesPortalUrl.isNotBlank(),
+            enabled = localNhashResolverEnabled && !isOpeningIrisApps,
         ) {
-            Text("Open Iris Apps")
+            Text(if (isOpeningIrisApps) "Opening Iris Apps" else "Open Iris Apps")
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(

@@ -19,6 +19,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -26,6 +27,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.Executors
@@ -43,6 +45,7 @@ class MainActivity : ComponentActivity() {
     private val stateFlow = MutableStateFlow(AppState(isLoaded = false))
     private val backupCheckProgressFlow = MutableStateFlow(BackupCheckProgress())
     private val shareDialogFlow = MutableStateFlow<ShareDialogRequest?>(null)
+    private val isOpeningIrisAppsFlow = MutableStateFlow(false)
     private val nativeCoreExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "IrisDriveNativeCore")
     }
@@ -82,6 +85,7 @@ class MainActivity : ComponentActivity() {
                 shareDialogFlow = shareDialogFlow,
                 selfUpdateStateFlow = selfUpdateManager.state,
                 backupCheckProgressFlow = backupCheckProgressFlow,
+                isOpeningIrisAppsFlow = isOpeningIrisAppsFlow,
                 selfUpdateActions = SelfUpdateActions(
                     setAutoCheck = selfUpdateManager::setAutoCheckEnabled,
                     check = { selfUpdateManager.check() },
@@ -110,7 +114,7 @@ class MainActivity : ComponentActivity() {
                     )
                 },
                 onOpenUrl = ::openUrl,
-                onOpenIrisApps = ::openIrisWeb,
+                onOpenIrisApps = ::openIrisWebWhenReady,
                 onOpenDriveFolder = ::openDriveFolder,
                 onApproveDevice = { request, label ->
                     dispatch(NativeActions.approveDevice(request, label), ::autoStartSyncIfNeeded)
@@ -450,13 +454,13 @@ class MainActivity : ComponentActivity() {
         val classification = NativeCore.classifyLinkInput(url)
         when (classification.optString("kind")) {
             "iris_web" -> {
-                openIrisWeb(classification.optString("local_open_url"))
+                openIrisWebWhenReady(classification.optString("local_open_url"))
                 return
             }
 
             "nhash_file", "mutable_file" -> {
                 if (classification.optBoolean("is_valid")) {
-                    openIrisWeb(classification.optString("local_open_url"))
+                    openIrisWebWhenReady(classification.optString("local_open_url"))
                 } else {
                     val error = classification.optString("error").trim()
                     Toast.makeText(
@@ -475,10 +479,59 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun openIrisWeb(url: String) {
-        if (url.isBlank()) return
+    private fun openIrisWebWhenReady(url: String) {
+        if (!stateFlow.value.localNhashResolverEnabled) {
+            Toast.makeText(this, "Local Iris resolver is disabled", Toast.LENGTH_SHORT).show()
+            return
+        }
+        if (isOpeningIrisAppsFlow.value) return
+        isOpeningIrisAppsFlow.value = true
+        lifecycleScope.launch {
+            try {
+                val portalUrl = waitForIrisPortalUrl()
+                if (portalUrl.isNullOrBlank()) {
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Local Iris gateway is still starting",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                    return@launch
+                }
+                val targetUrl = url.ifBlank { portalUrl }
+                openIrisWeb(targetUrl, portalUrl)
+            } finally {
+                isOpeningIrisAppsFlow.value = false
+            }
+        }
+    }
+
+    private suspend fun waitForIrisPortalUrl(): String? {
+        for (attempt in 0 until 40) {
+            stateFlow.value.sitesPortalUrl.takeIf(::hasGatewayPort)?.let { return it }
+            refreshStateOnce()?.sitesPortalUrl?.takeIf(::hasGatewayPort)?.let { return it }
+            delay(if (attempt < 8) 250 else 500)
+        }
+        return null
+    }
+
+    private suspend fun refreshStateOnce(): AppState? {
+        if (nativeHandle == 0L) return null
+        val deferred = CompletableDeferred<AppState>()
+        refresh { state ->
+            if (!deferred.isCompleted) {
+                deferred.complete(state)
+            }
+        }
+        return withTimeoutOrNull(2_500) { deferred.await() }
+    }
+
+    private fun hasGatewayPort(url: String): Boolean =
+        runCatching { Uri.parse(url).port > 0 }.getOrDefault(false)
+
+    private fun openIrisWeb(url: String, portalUrl: String = stateFlow.value.sitesPortalUrl) {
+        if (url.isBlank() || portalUrl.isBlank()) return
         runCatching {
-            startActivity(IrisWebActivity.createIntent(this, url, stateFlow.value.sitesPortalUrl))
+            startActivity(IrisWebActivity.createIntent(this, url, portalUrl))
         }.onFailure {
             Toast.makeText(this, "Could not open Iris Apps", Toast.LENGTH_SHORT).show()
         }

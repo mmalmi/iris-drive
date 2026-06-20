@@ -829,18 +829,21 @@ class IrisDriveAndroidGuiFlowTest {
         onAddShareShortcut: (String, String) -> Unit = { _, _ -> },
         onRepairShareWraps: (String) -> Unit = {},
         onOpenIrisApps: (String) -> Unit = {},
+        isOpeningIrisApps: Boolean = false,
         shareDialogRequest: ShareDialogRequest? = null,
     ): MutableStateFlow<AppState> {
         val stateFlow = MutableStateFlow(state)
         val shareDialogFlow = MutableStateFlow(shareDialogRequest)
         val selfUpdateStateFlow = MutableStateFlow(AndroidSelfUpdateState())
         val backupCheckProgressFlow = MutableStateFlow(BackupCheckProgress())
+        val isOpeningIrisAppsFlow = MutableStateFlow(isOpeningIrisApps)
         compose.setContent {
             IrisDriveAndroidApp(
                 stateFlow = stateFlow,
                 shareDialogFlow = shareDialogFlow,
                 selfUpdateStateFlow = selfUpdateStateFlow,
                 backupCheckProgressFlow = backupCheckProgressFlow,
+                isOpeningIrisAppsFlow = isOpeningIrisAppsFlow,
                 selfUpdateActions = SelfUpdateActions(
                     setAutoCheck = {},
                     check = {},
