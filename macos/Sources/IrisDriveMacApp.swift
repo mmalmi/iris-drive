@@ -370,6 +370,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             openContentLink(classification)
             return true
         }
+        if classification["kind"] as? String == "invite" {
+            showControlPanel()
+            linkDevice(target: url.absoluteString)
+            return true
+        }
         guard isIrisWebURL(url) else {
             return false
         }

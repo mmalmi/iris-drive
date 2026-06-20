@@ -56,12 +56,21 @@ pub fn classify_link_input(input: String) -> LinkInputClassification {
 #[must_use]
 #[allow(clippy::needless_pass_by_value)]
 pub fn validate_link_input(input: String) -> LinkInputClassification {
-    iris_drive_core::classify_link_input(&input).into()
+    let mut classification: LinkInputClassification =
+        iris_drive_core::classify_link_input(&input).into();
+    if !matches!(
+        classification.kind.as_str(),
+        "invite" | "app_key_pubkey" | "app_key_approval"
+    ) {
+        classification.is_complete = false;
+        classification.is_valid = false;
+    }
+    classification
 }
 
 #[cfg(test)]
 mod tests {
-    use super::classify_link_input;
+    use super::{classify_link_input, validate_link_input};
 
     #[test]
     fn classify_nhash_file_exposes_native_open_target() {
@@ -73,5 +82,14 @@ mod tests {
         assert!(file.is_valid);
         assert_eq!(file.open_display_name, "freenet.pdf");
         assert!(file.local_open_url.ends_with("/freenet.pdf"));
+    }
+
+    #[test]
+    fn validate_link_input_does_not_accept_browser_only_iris_links() {
+        let browser = validate_link_input("https://calendar.iris.to/".to_owned());
+
+        assert_eq!(browser.kind, "iris_web");
+        assert!(!browser.is_complete);
+        assert!(!browser.is_valid);
     }
 }

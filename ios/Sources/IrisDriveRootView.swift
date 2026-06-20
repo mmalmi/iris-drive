@@ -1,6 +1,7 @@
 import PhotosUI
 import SwiftUI
 import UIKit
+import WebKit
 
 private let recoveryPhraseWordCount = 12
 
@@ -30,6 +31,9 @@ struct IrisDriveRootView: View {
         .animation(.easeInOut(duration: 0.18), value: model.stateLoaded)
         .animation(.easeInOut(duration: 0.18), value: showStartupLoading)
         .contentLinkConfirmationDialog(model: model)
+        .sheet(item: $model.webRoute) { route in
+            IrisWebBrowserView(model: model, route: route)
+        }
         .task(id: model.stateLoaded) {
             await revealStartupLoadingIfNeeded()
         }
@@ -677,6 +681,12 @@ private struct DriveHomeView: View {
                         .foregroundStyle(.red)
                         .accessibilityIdentifier("openInFilesError")
                 }
+                Button {
+                    model.openIrisApps()
+                } label: {
+                    Label("Open Iris Apps", systemImage: "safari")
+                }
+                .disabled(model.sitesPortalUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button {
                     model.copySnapshotLink()
                 } label: {
@@ -1529,6 +1539,89 @@ private struct RecoveryPhraseExportView: View {
         .navigationTitle("Recovery phrase")
         .task {
             export = model.exportRecoverySecret()
+        }
+    }
+}
+
+private struct IrisWebBrowserView: View {
+    @ObservedObject var model: IrisDriveMobileModel
+    let route: IrisWebRoute
+
+    var body: some View {
+        NavigationStack {
+            IrisWebView(initialURL: route.url, model: model)
+                .ignoresSafeArea(.container, edges: .bottom)
+                .navigationTitle("Iris Apps")
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") {
+                            model.webRoute = nil
+                        }
+                    }
+                }
+        }
+    }
+}
+
+private struct IrisWebView: UIViewRepresentable {
+    let initialURL: URL
+    @ObservedObject var model: IrisDriveMobileModel
+
+    func makeUIView(context: Context) -> WKWebView {
+        let configuration = WKWebViewConfiguration()
+        configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
+        configuration.userContentController = WKUserContentController()
+        let webView = WKWebView(frame: .zero, configuration: configuration)
+        webView.navigationDelegate = context.coordinator
+        webView.allowsBackForwardNavigationGestures = true
+        webView.load(URLRequest(url: initialURL))
+        return webView
+    }
+
+    func updateUIView(_ webView: WKWebView, context: Context) {}
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(model: model)
+    }
+
+    final class Coordinator: NSObject, WKNavigationDelegate {
+        private weak var model: IrisDriveMobileModel?
+
+        init(model: IrisDriveMobileModel) {
+            self.model = model
+        }
+
+        func webView(
+            _ webView: WKWebView,
+            decidePolicyFor navigationAction: WKNavigationAction,
+            decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
+        ) {
+            guard let url = navigationAction.request.url else {
+                decisionHandler(.allow)
+                return
+            }
+            let classification = IrisDriveNativeLinkInput.classify(url.absoluteString)
+            switch classification.kind {
+            case "iris_web":
+                if let localURL = URL(string: classification.localOpenUrl),
+                   localURL.absoluteString != url.absoluteString {
+                    webView.load(URLRequest(url: localURL))
+                    decisionHandler(.cancel)
+                } else {
+                    decisionHandler(.allow)
+                }
+            case "share_dialog", "nhash_file", "mutable_file", "invite", "app_key_approval":
+                Task { @MainActor [weak model] in
+                    model?.handle(url: url)
+                }
+                decisionHandler(.cancel)
+            default:
+                if url.scheme == "http" || url.scheme == "https" {
+                    UIApplication.shared.open(url)
+                }
+                decisionHandler(.cancel)
+            }
         }
     }
 }

@@ -1313,8 +1313,8 @@ admin_app_key_npub="$(jq -r '.current_app_key_npub' <<<"$owner_json")"
 invite_json="$(idrive_cmd "$owner_label" devices invite)"
 invite_url="$(jq -r '.url' <<<"$invite_json")"
 invite_admin_app_key_npub="$(jq -r '.admin_app_key_npub' <<<"$invite_json")"
-if [[ "$invite_url" != iris-drive://invite/* ]]; then
-  echo "owner invite did not use canonical iris-drive://invite/ URL: $invite_url" >&2
+if [[ "$invite_url" != https://drive.iris.to/invite/* ]]; then
+  echo "owner invite did not use canonical https://drive.iris.to/invite/ URL: $invite_url" >&2
   exit 1
 fi
 if [[ "$invite_admin_app_key_npub" != "$admin_app_key_npub" ]]; then

@@ -125,7 +125,7 @@ fn profile_actions_populate_mobile_parity_state() {
     assert!(
         account
             .app_key_link_invite
-            .starts_with("iris-drive://invite/")
+            .starts_with("https://drive.iris.to/invite/")
     );
     assert!(!account.app_key_link_invite.contains("local-owner"));
     assert!(!account.app_key_link_invite.contains("device-"));
@@ -916,10 +916,13 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
     assert!(npub.is_valid);
     assert_eq!(npub.admin_app_key_pubkey, admin_app_key_npub);
 
-    let short_invite = super::classify_link_input("iris-drive://invite/abc".to_owned());
+    let short_invite = super::classify_link_input("https://drive.iris.to/invite/abc".to_owned());
     assert_eq!(short_invite.kind, "invite");
     assert!(!short_invite.is_complete);
     assert!(!short_invite.is_valid);
+
+    let custom_scheme_invite = super::classify_link_input("iris-drive://invite/abc".to_owned());
+    assert_eq!(custom_scheme_invite.kind, "unknown");
 
     let short_npub = super::classify_link_input(admin_app_key_npub[..20].to_owned());
     assert_eq!(short_npub.kind, "app_key_pubkey");
@@ -943,7 +946,8 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
     let unrelated = super::classify_link_input(
         "https://drive.iris.to/app-key-linker?owner=npub1example".to_owned(),
     );
-    assert_eq!(unrelated.kind, "unknown");
+    assert_eq!(unrelated.kind, "iris_web");
+    assert!(unrelated.is_valid);
 
     let share_dialog = super::classify_link_input(
         "https://drive.iris.to/share?path=My%20Drive%2FPhotos&name=Photos&recipient_npub=npub1alice&recipient_name=Alice&recipient_profile=123e4567-e89b-42d3-a456-426614174000".to_owned(),

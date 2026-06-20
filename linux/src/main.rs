@@ -268,6 +268,23 @@ fn apply_launch_input(model: &AppRef, input: &str) {
         apply_share_dialog_link(model, &classification);
     } else if classification.kind == "nhash_file" || classification.kind == "mutable_file" {
         open_content_link(model, &classification);
+    } else if classification.kind == "invite" {
+        apply_invite_link(model, input, &classification);
+    }
+}
+
+fn apply_invite_link(model: &AppRef, input: &str, classification: &LinkInputClassification) {
+    if !classification.is_valid {
+        model.ui.notice.set_text(if classification.error.trim().is_empty() {
+            "Could not open invite link"
+        } else {
+            classification.error.trim()
+        });
+        return;
+    }
+    match relink_device(input) {
+        Ok(()) => refresh(model),
+        Err(error) => model.ui.notice.set_text(&error),
     }
 }
 

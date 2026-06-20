@@ -161,7 +161,7 @@
           </Button>
           <TextBlock Text="Link device" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
           <TextBlock Text="IrisProfile invite link or admin device key" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
-          <TextBox x:Name="LinkTargetBox" Tag="User ID or iris-drive://invite/..." MinHeight="34" Margin="0,0,0,12" TextChanged="LinkTargetBox_TextChanged" KeyDown="LinkTargetBox_KeyDown" />
+          <TextBox x:Name="LinkTargetBox" Tag="User ID or https://drive.iris.to/invite/..." MinHeight="34" Margin="0,0,0,12" TextChanged="LinkTargetBox_TextChanged" KeyDown="LinkTargetBox_KeyDown" />
           <Button x:Name="LinkSubmitButton" Style="{StaticResource SetupPrimaryButton}" Click="LinkSubmit_Click">
             <TextBlock Text="Link device" HorizontalAlignment="Center" />
           </Button>

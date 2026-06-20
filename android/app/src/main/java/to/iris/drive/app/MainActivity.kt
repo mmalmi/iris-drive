@@ -110,6 +110,7 @@ class MainActivity : ComponentActivity() {
                     )
                 },
                 onOpenUrl = ::openUrl,
+                onOpenIrisApps = ::openIrisWeb,
                 onOpenDriveFolder = ::openDriveFolder,
                 onApproveDevice = { request, label ->
                     dispatch(NativeActions.approveDevice(request, label), ::autoStartSyncIfNeeded)
@@ -441,10 +442,40 @@ class MainActivity : ComponentActivity() {
 
     private fun openUrl(url: String) {
         if (url.isBlank()) return
+        val classification = NativeCore.classifyLinkInput(url)
+        when (classification.optString("kind")) {
+            "iris_web" -> {
+                openIrisWeb(classification.optString("local_open_url"))
+                return
+            }
+
+            "nhash_file", "mutable_file" -> {
+                if (classification.optBoolean("is_valid")) {
+                    openIrisWeb(classification.optString("local_open_url"))
+                } else {
+                    val error = classification.optString("error").trim()
+                    Toast.makeText(
+                        this,
+                        error.ifBlank { "Could not open this Iris link" },
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+                return
+            }
+        }
         runCatching {
             startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
         }.onFailure {
             Toast.makeText(this, "No app can open this link", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    private fun openIrisWeb(url: String) {
+        if (url.isBlank()) return
+        runCatching {
+            startActivity(IrisWebActivity.createIntent(this, url))
+        }.onFailure {
+            Toast.makeText(this, "Could not open Iris Apps", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -645,6 +676,10 @@ class MainActivity : ComponentActivity() {
 
                 "invite" -> {
                     dispatch(NativeActions.linkDevice(uri.toString(), defaultDeviceLabel()))
+                }
+
+                "iris_web" -> {
+                    openIrisWeb(classification.optString("local_open_url"))
                 }
             }
         }

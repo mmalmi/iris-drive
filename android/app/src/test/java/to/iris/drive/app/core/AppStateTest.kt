@@ -65,6 +65,8 @@ class AppStateTest {
                 "setup_label": "Linked",
                 "primary_status": "ready",
                 "primary_status_label": "Ready",
+                "local_nhash_resolver_enabled": true,
+                "sites_portal_url": "http://sites.npub1portal.iris.localhost:17321/",
                 "last_share_recipient_evidence": "{\"profile_id\":\"profile-a\"}",
                 "sync": {
                   "running": true,
@@ -119,6 +121,8 @@ class AppStateTest {
         assertTrue(state.isLoaded)
         assertTrue(state.isSetupComplete)
         assertEquals("Ready", state.primaryStatusLabel)
+        assertTrue(state.localNhashResolverEnabled)
+        assertEquals("http://sites.npub1portal.iris.localhost:17321/", state.sitesPortalUrl)
         assertEquals("Up to date", state.sync.statusLabel)
         assertEquals("Running", state.fips.stateLabel)
         assertEquals("1/1 online", state.fips.rosterLabel)
@@ -282,7 +286,7 @@ class AppStateTest {
                 authorizationState = "authorized",
                 canAdminProfile = true,
                 appKeyLinkRequest = "",
-                appKeyLinkInvite = "iris-drive://invite/test",
+                appKeyLinkInvite = "https://drive.iris.to/invite/test",
                 inboundAppKeyLinkRequests = emptyList(),
             ),
             roots = listOf(

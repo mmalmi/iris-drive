@@ -16,9 +16,11 @@ use crate::app_key_link_invite::{
 };
 use crate::app_key_link_transport::{app_key_approval_query, parse_app_key_approval_request};
 use crate::app_key_summary::pubkey_npub;
-use crate::gateway::{DEFAULT_GATEWAY_PORT, local_nhash_url, local_portal_npub_path_url};
+use crate::gateway::{
+    DEFAULT_GATEWAY_PORT, IRIS_SITES_PORTAL_NPUB, is_dns_site_label, local_mutable_site_url,
+    local_nhash_url, local_portal_npub_path_url,
+};
 
-const APP_KEY_LINK_INVITE_SINGLE_SLASH_PREFIX: &str = "iris-drive:/invite/";
 const MANUAL_LINK_REQUIRES_PROFILE_AND_ADMIN: &str = "manual device linking requires an IrisProfile UUID and --admin-app-key; otherwise paste an admin invite URL";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
@@ -79,6 +81,9 @@ pub fn classify_link_input(input: &str) -> LinkInputClassification {
         return result;
     }
     if let Some(result) = classify_drive_mutable_file_link_input(trimmed) {
+        return result;
+    }
+    if let Some(result) = classify_iris_web_link_input(trimmed) {
         return result;
     }
     if looks_like_app_key_pubkey_input(trimmed) {
@@ -198,18 +203,11 @@ fn classify_app_key_approval_link_input(input: &str) -> Option<LinkInputClassifi
 
 fn classify_invite_link_input(input: &str) -> Option<LinkInputClassification> {
     let lower = input.to_ascii_lowercase();
-    let is_canonical = [
-        APP_KEY_LINK_INVITE_PREFIX,
-        APP_KEY_LINK_INVITE_SINGLE_SLASH_PREFIX,
-        APP_KEY_LINK_INVITE_WEB_PREFIX,
-    ]
-    .iter()
-    .any(|prefix| lower.starts_with(prefix))
-        || link_route_matches(&lower, "iris-drive://invite", true)
-        || link_route_matches(&lower, "iris-drive:/invite", true)
+    let is_canonical = [APP_KEY_LINK_INVITE_PREFIX, APP_KEY_LINK_INVITE_WEB_PREFIX]
+        .iter()
+        .any(|prefix| lower.starts_with(prefix))
         || link_route_matches(&lower, "https://drive.iris.to/invite", true);
-    let is_json = input.starts_with('{');
-    if !(is_canonical || is_json) {
+    if !is_canonical {
         return None;
     }
 
@@ -516,6 +514,112 @@ fn validate_drive_content_path_segments(path_segments: &[String]) -> Result<()> 
     Ok(())
 }
 
+fn classify_iris_web_link_input(input: &str) -> Option<LinkInputClassification> {
+    let lower = input.to_ascii_lowercase();
+    if lower.starts_with("http://") {
+        return classify_local_iris_web_link_input(input);
+    }
+    if lower.starts_with("https://") {
+        return classify_public_iris_web_link_input(input);
+    }
+    None
+}
+
+fn classify_local_iris_web_link_input(input: &str) -> Option<LinkInputClassification> {
+    let (host, _) = http_host_and_tail(input, "http://")?;
+    let host = strip_port(&host);
+    let lower_host = host.to_ascii_lowercase();
+    let is_isolated_local_origin = lower_host == "iris.localhost"
+        || lower_host.ends_with(".iris.localhost")
+        || lower_host.ends_with(".hash.localhost");
+    if !is_isolated_local_origin {
+        return None;
+    }
+    Some(LinkInputClassification {
+        kind: "iris_web".to_owned(),
+        is_complete: true,
+        is_valid: true,
+        normalized_input: input.to_owned(),
+        open_display_name: iris_web_display_name(&lower_host),
+        local_open_url: input.to_owned(),
+        ..LinkInputClassification::default()
+    })
+}
+
+fn classify_public_iris_web_link_input(input: &str) -> Option<LinkInputClassification> {
+    let (host, tail) = http_host_and_tail(input, "https://")?;
+    let host = strip_port(&host);
+    let lower_host = host.to_ascii_lowercase();
+    let tree_name = if lower_host == "iris.to" {
+        "sites".to_owned()
+    } else {
+        lower_host.strip_suffix(".iris.to")?.to_owned()
+    };
+    if !is_dns_site_label(&tree_name) {
+        return Some(LinkInputClassification {
+            kind: "iris_web".to_owned(),
+            is_complete: true,
+            normalized_input: input.to_owned(),
+            open_display_name: tree_name,
+            error: "Iris app host is not an isolated app label".to_owned(),
+            ..LinkInputClassification::default()
+        });
+    }
+    Some(LinkInputClassification {
+        kind: "iris_web".to_owned(),
+        is_complete: true,
+        is_valid: true,
+        normalized_input: input.to_owned(),
+        open_display_name: iris_web_display_name(&tree_name),
+        local_open_url: local_iris_web_url(&tree_name, tail),
+        ..LinkInputClassification::default()
+    })
+}
+
+fn http_host_and_tail<'a>(input: &'a str, scheme: &str) -> Option<(String, &'a str)> {
+    let rest = input.get(scheme.len()..)?;
+    if rest.starts_with('/') || rest.starts_with('@') {
+        return None;
+    }
+    let split_at = rest
+        .find(|ch| matches!(ch, '/' | '?' | '#'))
+        .unwrap_or(rest.len());
+    let host = rest[..split_at].trim_end_matches('.').to_owned();
+    if host.is_empty() || host.contains('@') {
+        return None;
+    }
+    Some((host, &rest[split_at..]))
+}
+
+fn strip_port(host: &str) -> &str {
+    host.rsplit_once(':')
+        .and_then(|(name, port)| port.parse::<u16>().ok().map(|_| name))
+        .unwrap_or(host)
+}
+
+fn local_iris_web_url(tree_name: &str, tail: &str) -> String {
+    let mut url = local_mutable_site_url(DEFAULT_GATEWAY_PORT, IRIS_SITES_PORTAL_NPUB, tree_name);
+    let tail = if tail.is_empty() { "/" } else { tail };
+    if let Some(rest) = tail.strip_prefix('/') {
+        url.push_str(rest);
+    } else {
+        url.push_str(tail);
+    }
+    url
+}
+
+fn iris_web_display_name(label: &str) -> String {
+    if label == "iris.localhost" || label == "sites" {
+        return "Iris Apps".to_owned();
+    }
+    label
+        .split('.')
+        .next()
+        .filter(|value| !value.is_empty())
+        .unwrap_or(label)
+        .to_owned()
+}
+
 fn decoded_first_query_value_or_default(query: &str, names: &[&str]) -> Result<String> {
     match decoded_first_query_value(query, names)? {
         Some(value) => Ok(value.trim().to_owned()),
@@ -541,16 +645,12 @@ fn link_route_matches(input: &str, route: &str, allow_path_suffix: bool) -> bool
 
 fn invite_link_input_is_complete(input: &str) -> bool {
     let lower = input.to_ascii_lowercase();
-    for prefix in [
-        APP_KEY_LINK_INVITE_PREFIX,
-        APP_KEY_LINK_INVITE_SINGLE_SLASH_PREFIX,
-        APP_KEY_LINK_INVITE_WEB_PREFIX,
-    ] {
+    for prefix in [APP_KEY_LINK_INVITE_PREFIX, APP_KEY_LINK_INVITE_WEB_PREFIX] {
         if lower.starts_with(prefix) {
             return input[prefix.len()..].len() >= 32;
         }
     }
-    input.starts_with('{') && input.ends_with('}')
+    false
 }
 
 fn looks_like_app_key_pubkey_input(input: &str) -> bool {
@@ -670,7 +770,11 @@ mod tests {
         assert!(!short.is_valid);
 
         let unrelated = classify_link_input("https://drive.iris.to/app-key-linker?owner=npub1x");
-        assert_eq!(unrelated.kind, "unknown");
+        assert_eq!(unrelated.kind, "iris_web");
+        assert!(unrelated.is_valid);
+
+        let custom_scheme_invite = classify_link_input("iris-drive://invite/demo");
+        assert_eq!(custom_scheme_invite.kind, "unknown");
     }
 
     #[test]
@@ -757,6 +861,62 @@ mod tests {
                 "http://iris.localhost:17321/{}/sites/docs/Freenet%20paper.pdf",
                 crate::gateway::IRIS_SITES_PORTAL_NPUB
             )
+        );
+    }
+
+    #[test]
+    fn classify_public_iris_app_link_opens_isolated_local_origin() {
+        let app = classify_link_input("https://calendar.iris.to/events/today?view=week#selected");
+
+        assert_eq!(app.kind, "iris_web");
+        assert!(app.is_complete);
+        assert!(app.is_valid);
+        assert_eq!(app.open_display_name, "calendar");
+        assert_eq!(
+            app.local_open_url,
+            format!(
+                "http://calendar.{}.iris.localhost:17321/events/today?view=week#selected",
+                crate::gateway::IRIS_SITES_PORTAL_NPUB
+            )
+        );
+
+        let portal = classify_link_input("https://iris.to/?launcher=1");
+        assert_eq!(portal.kind, "iris_web");
+        assert!(portal.is_valid);
+        assert_eq!(portal.open_display_name, "Iris Apps");
+        assert_eq!(
+            portal.local_open_url,
+            format!(
+                "http://sites.{}.iris.localhost:17321/?launcher=1",
+                crate::gateway::IRIS_SITES_PORTAL_NPUB
+            )
+        );
+    }
+
+    #[test]
+    fn classify_local_iris_origin_stays_browser_only() {
+        let local = classify_link_input("http://audio.npub1owner.iris.localhost:17321/album");
+
+        assert_eq!(local.kind, "iris_web");
+        assert!(local.is_valid);
+        assert_eq!(
+            local.local_open_url,
+            "http://audio.npub1owner.iris.localhost:17321/album"
+        );
+    }
+
+    #[test]
+    fn classify_public_iris_app_link_rejects_non_isolated_host_labels() {
+        let nested = classify_link_input("https://admin.calendar.iris.to/");
+
+        assert_eq!(nested.kind, "iris_web");
+        assert!(nested.is_complete);
+        assert!(!nested.is_valid);
+        assert!(nested.local_open_url.is_empty());
+        assert!(
+            nested
+                .error
+                .contains("Iris app host is not an isolated app label")
         );
     }
 

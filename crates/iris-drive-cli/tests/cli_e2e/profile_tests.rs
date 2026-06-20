@@ -270,7 +270,7 @@ fn owner_invite_link_queues_fips_request_to_admin_app_key() {
 
     let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
     let invite_url = owner["app_key_link_invite"]["url"].as_str().unwrap();
-    assert!(invite_url.starts_with("iris-drive://invite/"));
+    assert!(invite_url.starts_with("https://drive.iris.to/invite/"));
     let admin_app_key_npub = current_app_key_npub(&owner);
 
     let linked = run_json(linked_dir.path(), &["link", invite_url, "--label", "phone"]);
@@ -521,7 +521,7 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
     let admin_app_key_npub = current_app_key_npub(&owner);
     let invite = run_json(owner_dir.path(), &["app-keys", "invite"]);
     let invite_url = invite["url"].as_str().unwrap();
-    assert!(invite_url.starts_with("iris-drive://invite/"));
+    assert!(invite_url.starts_with("https://drive.iris.to/invite/"));
     assert!(!invite_url.contains("local-owner"));
     assert!(!invite_url.contains("device-"));
     assert_eq!(

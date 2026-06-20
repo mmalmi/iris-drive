@@ -377,6 +377,8 @@ struct NativeUiState: Codable {
     var providerChangeKey: String
     var providerDirectoryPaths: [String]
     var snapshotLink: String
+    var localNhashResolverEnabled: Bool
+    var sitesPortalUrl: String
     var lastShareInvite: String
     var lastShareRecipientEvidence: String
 
@@ -405,6 +407,8 @@ struct NativeUiState: Codable {
         case providerChangeKey = "provider_change_key"
         case providerDirectoryPaths = "provider_directory_paths"
         case snapshotLink = "snapshot_link"
+        case localNhashResolverEnabled = "local_nhash_resolver_enabled"
+        case sitesPortalUrl = "sites_portal_url"
         case lastShareInvite = "last_share_invite"
         case lastShareRecipientEvidence = "last_share_recipient_evidence"
     }

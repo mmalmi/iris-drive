@@ -52,10 +52,9 @@ extension IrisDriveMobileModel {
     private func openResolvedContentLink(_ linkInput: NativeLinkInputClassification) {
         let displayName = linkInput.openDisplayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let label = displayName.isEmpty ? "file" : displayName
-        guard let url = URL(string: linkInput.localOpenUrl) else { return }
         statusTitle = "Opening \(label)"
         statusDetail = linkInput.localOpenUrl
-        UIApplication.shared.open(url)
+        openIrisBrowser(linkInput.localOpenUrl)
         persist()
     }
 

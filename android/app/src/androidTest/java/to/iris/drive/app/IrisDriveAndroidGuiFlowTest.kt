@@ -960,7 +960,7 @@ class IrisDriveAndroidGuiFlowTest {
         authorizationState = "authorized",
         canAdminProfile = true,
         appKeyLinkRequest = "",
-        appKeyLinkInvite = "iris-drive://invite/test",
+        appKeyLinkInvite = "https://drive.iris.to/invite/test",
         inboundAppKeyLinkRequests = emptyList(),
     )
 

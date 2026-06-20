@@ -4,6 +4,8 @@
 <dict>
 	<key>com.apple.developer.associated-domains</key>
 	<array>
+		<string>applinks:iris.to</string>
+		<string>applinks:*.iris.to</string>
 		<string>applinks:drive.iris.to</string>
 		<string>webcredentials:drive.iris.to</string>
 	</array>

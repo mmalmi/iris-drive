@@ -11,20 +11,16 @@ use serde::{Deserialize, Serialize};
 
 use crate::IrisProfileId;
 
-pub const APP_KEY_LINK_INVITE_PREFIX: &str = "iris-drive://invite/";
-const APP_KEY_LINK_INVITE_SINGLE_SLASH_PREFIX: &str = "iris-drive:/invite/";
-pub const APP_KEY_LINK_INVITE_WEB_PREFIX: &str = "https://drive.iris.to/invite/";
+pub const APP_KEY_LINK_INVITE_PREFIX: &str = "https://drive.iris.to/invite/";
+pub const APP_KEY_LINK_INVITE_WEB_PREFIX: &str = APP_KEY_LINK_INVITE_PREFIX;
 pub const APP_KEY_LINK_INVITE_VERSION: u8 = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct AppKeyLinkInvitePayload {
     v: u8,
-    #[serde(alias = "profile", alias = "profile_id")]
     profile_id: IrisProfileId,
-    #[serde(alias = "admin")]
     admin_app_key_npub: String,
-    #[serde(alias = "secret", alias = "link_secret")]
     link_secret: String,
 }
 
@@ -68,7 +64,7 @@ pub fn parse_app_key_link_invite(input: &str) -> Result<Option<ParsedAppKeyLinkI
         }
         if looks_like_invite_placeholder(payload) {
             return Err(anyhow!(
-                "app-key link invite is a placeholder; paste the full iris-drive://invite/... value"
+                "app-key link invite is a placeholder; paste the full https://drive.iris.to/invite/... value"
             ));
         }
         let decoded = URL_SAFE_NO_PAD
@@ -76,11 +72,6 @@ pub fn parse_app_key_link_invite(input: &str) -> Result<Option<ParsedAppKeyLinkI
             .context("decoding app-key link invite payload")?;
         let invite: AppKeyLinkInvitePayload =
             serde_json::from_slice(&decoded).context("parsing app-key link invite payload")?;
-        return normalize_invite_payload(&invite).map(Some);
-    }
-    if trimmed.starts_with('{') {
-        let invite: AppKeyLinkInvitePayload =
-            serde_json::from_str(trimmed).context("parsing app-key link invite JSON")?;
         return normalize_invite_payload(&invite).map(Some);
     }
     Ok(None)
@@ -96,10 +87,7 @@ pub fn app_key_link_invite_web_url(invite_url: &str) -> String {
 }
 
 fn canonical_invite_payload(input: &str) -> Option<&str> {
-    input
-        .strip_prefix(APP_KEY_LINK_INVITE_PREFIX)
-        .or_else(|| input.strip_prefix(APP_KEY_LINK_INVITE_SINGLE_SLASH_PREFIX))
-        .or_else(|| input.strip_prefix(APP_KEY_LINK_INVITE_WEB_PREFIX))
+    input.strip_prefix(APP_KEY_LINK_INVITE_PREFIX)
 }
 
 fn normalize_invite_payload(invite: &AppKeyLinkInvitePayload) -> Result<ParsedAppKeyLinkInvite> {
@@ -174,20 +162,37 @@ mod tests {
     }
 
     #[test]
-    fn single_slash_custom_scheme_invite_imports() {
+    fn custom_scheme_invite_is_not_canonical_input() {
         let profile_id = IrisProfileId::new_v4();
         let admin = Keys::generate().public_key();
         let url = encode_app_key_link_invite(profile_id, &admin.to_hex(), "join-secret")
             .expect("encode invite");
-        let single_slash = url.replacen("iris-drive://invite/", "iris-drive:/invite/", 1);
+        let custom_scheme = url.replacen(APP_KEY_LINK_INVITE_PREFIX, "iris-drive://invite/", 1);
 
-        let parsed = parse_app_key_link_invite(&single_slash)
+        assert!(
+            parse_app_key_link_invite(&custom_scheme)
+                .expect("parse invite")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn current_native_https_invite_payload_imports() {
+        let invite = "https://drive.iris.to/invite/eyJ2IjoxLCJwcm9maWxlSWQiOiIzYzA4OWRmOC0yMjFlLTQ3M2MtOTFlYy1mNzcxYzAxNWM4YmQiLCJhZG1pbkFwcEtleU5wdWIiOiJucHViMXE1bDB2bmVhamg2Mjg5dmduZ3N3dTV3bTI2cWFtc2p3dHlqajJncWxwa3VqNXptZGVkeXMweTZtdDciLCJsaW5rU2VjcmV0IjoiazV3NUpMR2hUQ09sSWdPQUtpRnUtUSJ9";
+
+        let parsed = parse_app_key_link_invite(invite)
             .expect("parse invite")
             .expect("invite");
 
-        assert_eq!(parsed.profile_id, Some(profile_id));
-        assert_eq!(parsed.admin_app_key_hex, admin.to_hex());
-        assert_eq!(parsed.link_secret, "join-secret");
+        assert_eq!(
+            parsed.profile_id.map(|id| id.to_string()).as_deref(),
+            Some("3c089df8-221e-473c-91ec-f771c015c8bd")
+        );
+        assert_eq!(
+            parsed.admin_app_key_hex,
+            "053ef64f3d95f4a395889a20ee51db5681ddc24e592525201f0db92a0b6dcb49"
+        );
+        assert_eq!(parsed.link_secret, "k5w5JLGhTCOlIgOAKiFu-Q");
     }
 
     #[test]

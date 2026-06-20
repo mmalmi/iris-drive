@@ -73,6 +73,7 @@ internal fun AuthenticatedContent(
     onCopyLinkInvite: () -> Unit,
     onCopySnapshotLink: () -> Unit,
     onOpenSnapshotLink: () -> Unit,
+    onOpenIrisApps: () -> Unit,
     onOpenDriveFolder: () -> Unit,
     onAddRecoveryKey: (String) -> Unit,
     onApproveDevice: (String, String) -> Unit,
@@ -114,6 +115,7 @@ internal fun AuthenticatedContent(
             onStopSync = onStopSync,
             onCopySnapshotLink = onCopySnapshotLink,
             onOpenSnapshotLink = onOpenSnapshotLink,
+            onOpenIrisApps = onOpenIrisApps,
             onOpenDriveFolder = onOpenDriveFolder,
         )
         MainTab.Devices -> DevicesContent(
@@ -182,6 +184,7 @@ private fun DriveContent(
     onStopSync: () -> Unit,
     onCopySnapshotLink: () -> Unit,
     onOpenSnapshotLink: () -> Unit,
+    onOpenIrisApps: () -> Unit,
     onOpenDriveFolder: () -> Unit,
 ) {
     LazyColumn(
@@ -207,9 +210,11 @@ private fun DriveContent(
         item {
             ProviderPanel(
                 snapshotLink = state.snapshotLink,
+                sitesPortalUrl = state.sitesPortalUrl,
                 onOpenDriveFolder = onOpenDriveFolder,
                 onCopySnapshotLink = onCopySnapshotLink,
                 onOpenSnapshotLink = onOpenSnapshotLink,
+                onOpenIrisApps = onOpenIrisApps,
             )
         }
         item {
@@ -471,9 +476,11 @@ private fun SyncPanel(
 @Composable
 private fun ProviderPanel(
     snapshotLink: String,
+    sitesPortalUrl: String,
     onOpenDriveFolder: () -> Unit,
     onCopySnapshotLink: () -> Unit,
     onOpenSnapshotLink: () -> Unit,
+    onOpenIrisApps: () -> Unit,
 ) {
     CardSection(title = "Files", trailing = "files") {
         Box(
@@ -495,6 +502,12 @@ private fun ProviderPanel(
             Icon(painterResource(R.drawable.ic_drive), contentDescription = null)
             Spacer(Modifier.size(8.dp))
             Text("Open in Files")
+        }
+        OutlinedButton(
+            onClick = onOpenIrisApps,
+            enabled = sitesPortalUrl.isNotBlank(),
+        ) {
+            Text("Open Iris Apps")
         }
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(

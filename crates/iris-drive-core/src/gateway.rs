@@ -705,7 +705,7 @@ fn mutable_site_host(host: &str) -> Option<(String, String)> {
     Some((npub.to_owned(), tree_name.to_owned()))
 }
 
-fn is_dns_site_label(label: &str) -> bool {
+pub(crate) fn is_dns_site_label(label: &str) -> bool {
     !label.is_empty()
         && label.len() <= 63
         && label

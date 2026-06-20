@@ -17,6 +17,11 @@ private let fileProviderDebugRegistrationVersion = 2
 private let fileProviderDebugRegistrationVersionKey = "fileProviderDebugRegistrationVersion"
 #endif
 
+struct IrisWebRoute: Identifiable {
+    let id = UUID()
+    let url: URL
+}
+
 @MainActor
 final class IrisDriveMobileModel: ObservableObject {
     @Published var driveName = "My Drive"
@@ -64,6 +69,9 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var onlineDeviceCount = 0
     @Published var fileCount = 0
     @Published var visibleFileBytes: UInt64 = 0
+    @Published var localNhashResolverEnabled = true
+    @Published var sitesPortalUrl = ""
+    @Published var webRoute: IrisWebRoute?
 
     private let defaults = UserDefaults.standard
     private let nativeCore: IrisDriveNativeCore
@@ -770,8 +778,35 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func openSnapshotLink() {
-        guard let url = URL(string: snapshotLink) else { return }
-        UIApplication.shared.open(url)
+        openIrisLink(snapshotLink)
+    }
+
+    func openIrisApps() {
+        openIrisLink(sitesPortalUrl)
+    }
+
+    func openIrisLink(_ value: String) {
+        let candidate = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !candidate.isEmpty else { return }
+        let linkInput = IrisDriveNativeLinkInput.classify(candidate)
+        switch linkInput.kind {
+        case "iris_web", "nhash_file", "mutable_file":
+            if linkInput.isValid {
+                openIrisBrowser(linkInput.localOpenUrl)
+            } else {
+                statusTitle = "Iris link failed"
+                statusDetail = linkInput.error.isEmpty ? candidate : linkInput.error
+            }
+        default:
+            guard let url = URL(string: candidate) else { return }
+            UIApplication.shared.open(url)
+        }
+    }
+
+    func openIrisBrowser(_ value: String) {
+        let candidate = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: candidate) else { return }
+        webRoute = IrisWebRoute(url: url)
     }
 
     func addRelay(_ value: String? = nil) {
@@ -1060,6 +1095,10 @@ final class IrisDriveMobileModel: ObservableObject {
             openContentLink(linkInput)
             return
         }
+        if linkInput.kind == "iris_web" {
+            openIrisBrowser(linkInput.localOpenUrl)
+            return
+        }
         if linkInput.kind == "invite" {
             profileLinkTarget = url.absoluteString
             linkDevice()
@@ -1180,6 +1219,8 @@ final class IrisDriveMobileModel: ObservableObject {
             lastProviderSignalKey = ""
             currentProviderDirectoryPaths = []
             onlineDeviceCount = 0
+            localNhashResolverEnabled = true
+            sitesPortalUrl = ""
             return
         }
 
@@ -1230,6 +1271,8 @@ final class IrisDriveMobileModel: ObservableObject {
         onlineDeviceCount = Int(state.ui.onlineDeviceCount)
         fileCount = Int(state.ui.fileCount)
         visibleFileBytes = state.ui.visibleFileBytes
+        localNhashResolverEnabled = state.ui.localNhashResolverEnabled
+        sitesPortalUrl = state.ui.sitesPortalUrl
         currentProviderSignalKey = state.ui.providerChangeKey
         currentProviderDirectoryPaths = state.ui.providerDirectoryPaths
         signalFileProviderIfNeeded()
