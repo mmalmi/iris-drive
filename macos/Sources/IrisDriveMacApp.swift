@@ -721,7 +721,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func linkDevice(target: String) {
         let target = target.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !target.isEmpty else {
-            updateStatus("IrisProfile invite or admin device key required")
+            updateStatus("Invite link or device key required")
             return
         }
         let args = setupArguments(command: "link", label: "", extra: [target, "--force"])
@@ -977,8 +977,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             success: "Invite link created"
         ) {
             if let invite = IrisDriveStatus.shared.lastShareInviteURL {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(invite, forType: .string)
+                irisDriveCopyToPasteboard(invite, feedback: "Invite link copied")
             }
         }
     }
@@ -1006,8 +1005,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             success: "Invite link created"
         ) {
             if let invite = IrisDriveStatus.shared.lastShareInviteURL {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(invite, forType: .string)
+                irisDriveCopyToPasteboard(invite, feedback: "Invite link copied")
             }
         }
     }
@@ -1023,8 +1021,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         ) {
             if let evidence = IrisDriveStatus.shared.lastShareRecipientEvidence,
                !evidence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(evidence, forType: .string)
+                irisDriveCopyToPasteboard(evidence, feedback: "Share identity copied")
             }
         }
     }

@@ -100,8 +100,7 @@ struct IrisDriveControlPanel: View {
     let controller: AppDelegate
     @State private var selectedTab = IrisDrivePanelTab.initialScreenshotSelection
     @State private var relayInput = ""
-    @State private var backupTargetInput = ""
-    @State private var backupTargetLabelInput = ""
+    @State private var backupURLInput = ""
     @State private var shareSourceInput = ""
     @State private var shareInviteInput = ""
     @State private var shareRecipientNpubHint = ""
@@ -491,8 +490,8 @@ struct IrisDriveControlPanel: View {
             }
         case .link:
             setupForm(title: "Link device", backTarget: .restoreOptions) {
-                TextField("IrisProfile invite link or admin device key", text: $setupLinkTarget)
-                    .accessibilityLabel("IrisProfile invite link or admin device key")
+                TextField("Invite link or device key", text: $setupLinkTarget)
+                    .accessibilityLabel("Invite link or device key")
                     .onSubmit {
                         submitSetupLinkTarget(
                             setupLinkTarget,
@@ -871,10 +870,8 @@ struct IrisDriveControlPanel: View {
                 IrisDriveQRCodeView(value: invite)
                     .frame(width: 220, height: 220)
                     .frame(maxWidth: .infinity, alignment: .center)
-                Button {
-                    irisDriveCopyToPasteboard(invite)
-                } label: {
-                    Label("Copy invite link", systemImage: "link")
+                IrisDriveCopyButton(title: "Copy invite link", systemImage: "link") {
+                    irisDriveCopyToPasteboard(invite, feedback: "Invite link copied")
                 }
                 Button {
                     controller.resetInvite()
@@ -1440,22 +1437,22 @@ struct IrisDriveControlPanel: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    TextField("Destination URL, User ID, or folder path", text: $backupTargetInput)
-                        .textFieldStyle(.roundedBorder)
-                        .disableAutocorrection(true)
-                        .onSubmit { addBackupTargetFromInput() }
-                    TextField("Label", text: $backupTargetLabelInput)
-                        .textFieldStyle(.roundedBorder)
-                        .onSubmit { addBackupTargetFromInput() }
-                    Button {
-                        addBackupTargetFromInput()
-                    } label: {
-                        Label("Add Backup", systemImage: "plus")
-                    }
-                    .disabled(backupTargetInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            HStack(spacing: 8) {
+                Button {
+                    chooseBackupFolder()
+                } label: {
+                    Label("Choose Folder", systemImage: "folder.badge.plus")
                 }
+                TextField("https://backup.example", text: $backupURLInput)
+                    .textFieldStyle(.roundedBorder)
+                    .disableAutocorrection(true)
+                    .onSubmit { addBackupURLFromInput() }
+                Button {
+                    addBackupURLFromInput()
+                } label: {
+                    Label("Add Backup", systemImage: "plus")
+                }
+                .disabled(backupURLInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
             if status.backupTargets.isEmpty {
                 emptyState("No backups configured")
@@ -1590,7 +1587,9 @@ struct IrisDriveControlPanel: View {
                 } else {
                     Button("Resume sync") { controller.startSync() }
                 }
-                Button("Copy drive.iris.to link") { controller.copyDriveLink() }
+                IrisDriveCopyButton(title: "Copy drive.iris.to link", systemImage: "link") {
+                    controller.copyDriveLink()
+                }
                     .disabled(status.snapshotLinkURL == nil)
                 Button("View on drive.iris.to") { controller.openDriveLink() }
                     .disabled(status.snapshotLinkURL == nil)
@@ -1746,12 +1745,29 @@ struct IrisDriveControlPanel: View {
         relayInput = ""
     }
 
-    private func addBackupTargetFromInput() {
-        let value = backupTargetInput.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func addBackupURLFromInput() {
+        let value = backupURLInput.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !value.isEmpty else { return }
-        controller.addBackupTarget(value, label: backupTargetLabelInput)
-        backupTargetInput = ""
-        backupTargetLabelInput = ""
+        guard value.hasPrefix("https://") || value.hasPrefix("http://") else {
+            NSSound.beep()
+            controller.updateStatus("Use http(s) URL or choose a folder")
+            return
+        }
+        controller.addBackupTarget(value, label: "")
+        backupURLInput = ""
+    }
+
+    private func chooseBackupFolder() {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        panel.prompt = "Choose"
+        panel.begin { response in
+            guard response == .OK, let url = panel.url else { return }
+            controller.addBackupTarget(url.path, label: "")
+        }
     }
 
     private func saveRelayEdit(_ oldURL: String) {
@@ -1811,6 +1827,56 @@ private struct IrisDriveCopyToast: View {
             .padding(.vertical, 9)
             .background(.regularMaterial, in: Capsule())
             .shadow(radius: 10, y: 4)
+    }
+}
+
+struct IrisDriveCopyButton: View {
+    let title: String
+    var copiedTitle = "Copied"
+    var systemImage: String?
+    var fillsWidth = false
+    let action: () -> Void
+
+    @State private var copied = false
+    @State private var copyGeneration = 0
+
+    var body: some View {
+        Button {
+            action()
+            showCopied()
+        } label: {
+            ZStack {
+                copyLabel(title, systemImage: systemImage)
+                    .opacity(copied ? 0 : 1)
+                copyLabel(copiedTitle, systemImage: "checkmark")
+                    .opacity(copied ? 1 : 0)
+            }
+            .frame(
+                maxWidth: fillsWidth ? .infinity : nil,
+                minHeight: fillsWidth ? setupButtonMinHeight : nil
+            )
+            .contentShape(Rectangle())
+        }
+        .animation(.easeInOut(duration: 0.18), value: copied)
+    }
+
+    @ViewBuilder
+    private func copyLabel(_ text: String, systemImage: String?) -> some View {
+        if let systemImage {
+            Label(text, systemImage: systemImage)
+        } else {
+            Text(text)
+        }
+    }
+
+    private func showCopied() {
+        copyGeneration += 1
+        let generation = copyGeneration
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            guard generation == copyGeneration else { return }
+            copied = false
+        }
     }
 }
 
@@ -1907,8 +1973,8 @@ private struct AccountKeyRow: View {
                 .truncationMode(.middle)
                 .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button(action: copy) {
-                Label("Copy", systemImage: "doc.on.doc")
+            IrisDriveCopyButton(title: "Copy", systemImage: "doc.on.doc") {
+                copy()
             }
             .disabled((value ?? "").isEmpty)
         }
@@ -2101,10 +2167,8 @@ private struct InviteShareMemberSheet: View {
                 IrisDriveQRCodeView(value: viewLink)
                     .frame(width: 200, height: 200)
                     .frame(maxWidth: .infinity, alignment: .center)
-                Button {
-                    irisDriveCopyToPasteboard(viewLink)
-                } label: {
-                    Label("Copy view link", systemImage: "link")
+                IrisDriveCopyButton(title: "Copy view link", systemImage: "link") {
+                    irisDriveCopyToPasteboard(viewLink, feedback: "View link copied")
                 }
             }
             Divider()
@@ -2193,8 +2257,8 @@ private struct MyShareNpubSheet: View {
                 .lineLimit(4)
             HStack {
                 Spacer()
-                Button("Copy") {
-                    irisDriveCopyToPasteboard(npub)
+                IrisDriveCopyButton(title: "Copy", systemImage: "doc.on.doc") {
+                    irisDriveCopyToPasteboard(npub, feedback: "User ID copied")
                 }
                 Button("Done") {
                     dismiss()
@@ -2280,7 +2344,7 @@ private func openDriveIrisLink(_ link: String) {
 
 private func shareMemberDisplayName(_ member: IrisDriveShareMemberStatus) -> String {
     member.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        ? "IrisProfile"
+        ? "User"
         : member.displayName
 }
 
@@ -2391,10 +2455,8 @@ struct DetailRow: View {
                 .truncationMode(.middle)
                 .frame(maxWidth: .infinity, alignment: .leading)
             if copyable {
-                Button {
+                IrisDriveCopyButton(title: "Copy", systemImage: "doc.on.doc") {
                     irisDriveCopyToPasteboard(value)
-                } label: {
-                    Image(systemName: "doc.on.doc")
                 }
                 .buttonStyle(.borderless)
                 .font(.caption)

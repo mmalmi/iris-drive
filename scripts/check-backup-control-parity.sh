@@ -95,7 +95,10 @@ require_contains macos/Sources/IrisDriveBackupActions.swift "checkBackups"
 require_absent macos/Sources/IrisDriveBackupActions.swift 'arguments: ["backups", "sync"]'
 require_absent macos/Sources/IrisDriveBackupActions.swift 'arguments: ["backups", "check"]'
 require_contains macos/Sources/IrisDriveControlPanel.swift "Add Backup"
-require_contains macos/Sources/IrisDriveControlPanel.swift "Destination URL, User ID, or folder path"
+require_contains macos/Sources/IrisDriveControlPanel.swift "Choose Folder"
+require_contains macos/Sources/IrisDriveControlPanel.swift "https://backup.example"
+require_absent macos/Sources/IrisDriveControlPanel.swift "Destination URL, User ID, or folder path"
+require_absent macos/Sources/IrisDriveControlPanel.swift "backupTargetLabelInput"
 require_contains macos/Sources/BackupTargetRow.swift "Remove backup"
 require_absent macos/Sources/IrisDriveControlPanel.swift "Add Custom Target"
 require_absent macos/Sources/IrisDriveControlPanel.swift "Add File Server"

@@ -25,10 +25,12 @@ struct RevokedDeviceSetupView: View {
             .buttonStyle(.borderedProminent)
             .disabled(target.isEmpty)
             if status.deviceNpub?.isEmpty == false {
-                Button {
+                IrisDriveCopyButton(
+                    title: "Copy Device Key",
+                    systemImage: "doc.on.doc",
+                    fillsWidth: true
+                ) {
                     controller.copyDeviceKey()
-                } label: {
-                    buttonLabel("Copy Device Key", systemImage: "doc.on.doc")
                 }
                 .buttonStyle(.bordered)
             }
@@ -77,10 +79,12 @@ struct AwaitingApprovalSetupView: View {
             }
             if let device = status.deviceNpub, !device.isEmpty {
                 keyedValue("Current Device Key", device)
-                Button {
+                IrisDriveCopyButton(
+                    title: "Copy Device Key",
+                    systemImage: "doc.on.doc",
+                    fillsWidth: true
+                ) {
                     controller.copyDeviceKey()
-                } label: {
-                    buttonLabel("Copy Device Key", systemImage: "doc.on.doc")
                 }
                 .buttonStyle(.bordered)
             }
