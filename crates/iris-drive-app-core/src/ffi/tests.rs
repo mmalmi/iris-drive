@@ -891,6 +891,7 @@ fn uninitialized_state_exposes_summary_defaults() {
     assert_eq!(state.ui.online_app_key_count, 0);
     assert_eq!(state.ui.file_count, 0);
     assert_eq!(state.ui.visible_file_bytes, 0);
+    assert!(state.ui.sites_portal_url.is_empty());
 }
 
 #[test]
@@ -1159,6 +1160,7 @@ fn link_action_tracks_pending_approval() {
     assert!(!state.ui.revoked);
     assert_eq!(state.ui.primary_status, "awaiting_approval");
     assert_eq!(state.ui.authorized_app_key_count, 0);
+    assert!(state.ui.sites_portal_url.is_empty());
 }
 
 #[test]

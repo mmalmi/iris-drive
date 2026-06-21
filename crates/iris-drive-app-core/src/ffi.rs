@@ -1285,13 +1285,7 @@ impl NativeAppRuntime {
         }
         self.state.ui.local_nhash_resolver_enabled = config.local_nhash_resolver_enabled;
         self.state.ui.launch_on_startup = config.launch_on_startup;
-        self.state.ui.sites_portal_url = if config.local_nhash_resolver_enabled {
-            native_browser_gateway_port_for_state(Path::new(&self.data_dir))
-                .map(iris_drive_core::gateway::local_portal_url)
-                .unwrap_or_default()
-        } else {
-            String::new()
-        };
+        self.state.ui.sites_portal_url.clear();
         self.state.ui.relays = if config.relays.is_empty() {
             default_relays()
         } else {
@@ -1319,6 +1313,14 @@ impl NativeAppRuntime {
         };
         let mut account = raw_account.clone();
         account.recompute_authorization();
+        self.state.ui.sites_portal_url =
+            if config.local_nhash_resolver_enabled && account.is_authorized() {
+                native_browser_gateway_port_for_state(Path::new(&self.data_dir))
+                    .map(iris_drive_core::gateway::local_portal_url)
+                    .unwrap_or_default()
+            } else {
+                String::new()
+            };
         let profile = iris_profile_summary(&account);
         self.state.ui.profile = Some(UiProfile {
             profile_id: profile.profile_id,
@@ -1375,9 +1377,7 @@ impl NativeAppRuntime {
             snapshot_link: String::new(),
             local_nhash_resolver_enabled: true,
             launch_on_startup: true,
-            sites_portal_url: native_browser_gateway_port_for_state(Path::new(&self.data_dir))
-                .map(iris_drive_core::gateway::local_portal_url)
-                .unwrap_or_default(),
+            sites_portal_url: String::new(),
             ..UiState::default()
         };
     }
@@ -1705,6 +1705,7 @@ fn native_browser_gateway_status_path(config_dir: &Path) -> PathBuf {
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 fn write_native_browser_gateway_status(config_dir: &Path, value: Value) {
     let path = native_browser_gateway_status_path(config_dir);
+    let _ = std::fs::create_dir_all(config_dir);
     if let Err(error) = std::fs::write(
         &path,
         serde_json::to_vec_pretty(&value).unwrap_or_else(|_| b"{}".to_vec()),

@@ -14,6 +14,11 @@ extension IrisDriveMobileModel {
             statusDetail = "Local Iris resolver is disabled."
             return
         }
+        guard isSetupComplete else {
+            statusTitle = "Iris Apps unavailable"
+            statusDetail = "Link this device before opening Iris Apps."
+            return
+        }
         isOpeningIrisApps = true
         defer { isOpeningIrisApps = false }
 

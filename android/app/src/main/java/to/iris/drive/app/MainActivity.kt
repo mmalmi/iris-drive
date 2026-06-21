@@ -486,6 +486,10 @@ class MainActivity : ComponentActivity() {
             Toast.makeText(this, "Local Iris resolver is disabled", Toast.LENGTH_SHORT).show()
             return
         }
+        if (!stateFlow.value.isSetupComplete) {
+            Toast.makeText(this, "Link this device before opening Iris Apps", Toast.LENGTH_SHORT).show()
+            return
+        }
         if (isOpeningIrisAppsFlow.value) return
         isOpeningIrisAppsFlow.value = true
         lifecycleScope.launch {
