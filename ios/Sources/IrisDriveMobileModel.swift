@@ -71,6 +71,7 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var visibleFileBytes: UInt64 = 0
     @Published var localNhashResolverEnabled = true
     @Published var sitesPortalUrl = ""
+    @Published var caldavUrl = ""
     @Published var webRoute: IrisWebRoute?
     @Published var isOpeningIrisApps = false
 
@@ -756,6 +757,10 @@ final class IrisDriveMobileModel: ObservableObject {
         copyToClipboard(snapshotLink, feedback: "drive.iris.to link copied")
     }
 
+    func copyCalDAVURL() {
+        copyToClipboard(caldavUrl, feedback: "CalDAV URL copied")
+    }
+
     func copyLastShareInvite() {
         guard !lastShareInvite.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         copyToClipboard(lastShareInvite, feedback: "Share invite copied")
@@ -1281,6 +1286,7 @@ final class IrisDriveMobileModel: ObservableObject {
             onlineDeviceCount = 0
             localNhashResolverEnabled = true
             sitesPortalUrl = ""
+            caldavUrl = ""
             return
         }
 
@@ -1333,6 +1339,7 @@ final class IrisDriveMobileModel: ObservableObject {
         visibleFileBytes = state.ui.visibleFileBytes
         localNhashResolverEnabled = state.ui.localNhashResolverEnabled
         sitesPortalUrl = state.ui.sitesPortalUrl
+        caldavUrl = state.ui.caldavUrl
         currentProviderSignalKey = state.ui.providerChangeKey
         currentProviderDirectoryPaths = state.ui.providerDirectoryPaths
         signalFileProviderIfNeeded()

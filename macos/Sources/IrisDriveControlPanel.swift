@@ -1510,6 +1510,17 @@ struct IrisDriveControlPanel: View {
                 )
             }
 
+            Section("Calendar") {
+                if let caldavURL = status.caldavURL {
+                    LabeledContent("CalDAV URL", value: caldavURL)
+                    IrisDriveCopyButton(title: "Copy CalDAV URL", systemImage: "calendar.badge.plus") {
+                        irisDriveCopyToPasteboard(caldavURL, feedback: "CalDAV URL copied")
+                    }
+                } else {
+                    LabeledContent("CalDAV URL", value: "Unavailable")
+                }
+            }
+
             Section("Updates") {
                 LabeledContent("Version", value: appVersion)
                 if !status.daemonBinaryVersion.isEmpty {

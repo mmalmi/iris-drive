@@ -1047,6 +1047,10 @@ fn app_state_surfaces_local_resolver_and_portal_settings() {
         created.ui.sites_portal_url,
         iris_drive_core::gateway::local_portal_url(iris_drive_core::gateway::DEFAULT_GATEWAY_PORT)
     );
+    assert_eq!(
+        created.ui.caldav_url,
+        iris_drive_core::gateway::local_caldav_url(iris_drive_core::gateway::DEFAULT_GATEWAY_PORT)
+    );
 
     let config_path = config_path_in(dir.path());
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
@@ -1059,6 +1063,7 @@ fn app_state_surfaces_local_resolver_and_portal_settings() {
     assert!(!refreshed.ui.local_nhash_resolver_enabled);
     assert!(!refreshed.ui.launch_on_startup);
     assert!(refreshed.ui.sites_portal_url.is_empty());
+    assert!(refreshed.ui.caldav_url.is_empty());
 }
 
 #[test]

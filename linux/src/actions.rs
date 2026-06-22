@@ -1263,6 +1263,13 @@ pub(crate) fn copy_snapshot_link(model: &AppRef) {
     }
 }
 
+pub(crate) fn copy_caldav_url(model: &AppRef) {
+    match current_caldav_url() {
+        Ok(link) => copy_text(model, &link, "CalDAV URL copied"),
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
 pub(crate) fn copy_account_key(model: &AppRef, key: &str) {
     match current_account_value(key) {
         Ok(value) => {
@@ -1438,6 +1445,13 @@ pub(crate) fn current_sites_portal_url() -> Result<String, String> {
     sites_portal_url(&state)
         .map(str::to_string)
         .ok_or_else(|| "Local resolver is disabled".to_string())
+}
+
+pub(crate) fn current_caldav_url() -> Result<String, String> {
+    let state = desktop_state()?;
+    caldav_url(&state)
+        .map(str::to_string)
+        .ok_or_else(|| "CalDAV URL unavailable".to_string())
 }
 
 pub(crate) fn current_account_value(key: &str) -> Result<String, String> {

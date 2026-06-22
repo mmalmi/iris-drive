@@ -555,6 +555,20 @@
                   <TextBlock Text="Open Iris Apps" />
                 </StackPanel>
               </Button>
+              <TextBlock Text="Calendar" Style="{StaticResource FieldName}" Margin="0,16,0,6" />
+              <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <TextBlock Text="CalDAV URL" Style="{StaticResource FieldName}" Width="90" />
+                <TextBlock x:Name="CalDavUrlText"
+                           Style="{StaticResource ValueText}"
+                           TextWrapping="NoWrap"
+                           TextTrimming="CharacterEllipsis" />
+              </StackPanel>
+              <Button x:Name="CopyCalDavButton" Click="CopyCalDav_Click" HorizontalAlignment="Left">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="&#xE787;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                  <TextBlock Text="Copy CalDAV URL" />
+                </StackPanel>
+              </Button>
               <TextBlock Text="Updates" Style="{StaticResource FieldName}" Margin="0,18,0,6" />
               <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                 <TextBlock Text="Version" Style="{StaticResource FieldName}" Width="90" />

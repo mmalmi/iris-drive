@@ -31,6 +31,7 @@ public sealed class IrisDriveStatusData
     public string ProviderRefreshKey { get; init; } = "";
     public string? SnapshotUrl { get; init; }
     public string? SitesPortalUrl { get; init; }
+    public string? CalDavUrl { get; init; }
     public string? LastShareInviteUrl { get; init; }
     public string? LastShareRecipientEvidence { get; init; }
     public int FileCount { get; init; }
@@ -112,6 +113,7 @@ public sealed class IrisDriveStatusData
             ProviderRefreshKey = String(ui, "provider_change_key") ?? "",
             SnapshotUrl = EmptyToNull(String(ui, "snapshot_link")),
             SitesPortalUrl = sitesPortalUrl,
+            CalDavUrl = EmptyToNull(String(ui, "caldav_url")),
             LastShareInviteUrl = EmptyToNull(String(ui, "last_share_invite")),
             LastShareRecipientEvidence = EmptyToNull(String(ui, "last_share_recipient_evidence")),
             FileCount = Int(ui, "file_count"),

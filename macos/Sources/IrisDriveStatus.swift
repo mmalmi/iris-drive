@@ -58,6 +58,7 @@ final class IrisDriveStatus: ObservableObject {
     @Published var snapshotURL: String?
     @Published var primaryDriveGatewayURL: String?
     @Published var sitesPortalURL: String?
+    @Published var caldavURL: String?
     @Published var fileCount: Int?
     @Published var visibleFileBytes: Int64?
     @Published var relays: [String] = []

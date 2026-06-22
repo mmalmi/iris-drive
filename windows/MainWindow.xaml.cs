@@ -280,6 +280,8 @@ public partial class MainWindow : Window
         }
         SyncLaunchOnStartup(status.LaunchOnStartup);
         OpenSitesPortalButton.IsEnabled = !string.IsNullOrWhiteSpace(status.SitesPortalUrl);
+        CalDavUrlText.Text = string.IsNullOrWhiteSpace(status.CalDavUrl) ? "-" : status.CalDavUrl;
+        CopyCalDavButton.IsEnabled = !string.IsNullOrWhiteSpace(status.CalDavUrl);
         UpdateTrayText(syncRunning);
     }
 
@@ -305,6 +307,8 @@ public partial class MainWindow : Window
         CopySnapshotButton.IsEnabled = false;
         OpenSnapshotButton.IsEnabled = false;
         OpenSitesPortalButton.IsEnabled = false;
+        CalDavUrlText.Text = "-";
+        CopyCalDavButton.IsEnabled = false;
         StartButton.IsEnabled = true;
         StopButton.IsEnabled = false;
         StartButton.Visibility = Visibility.Visible;
@@ -779,6 +783,11 @@ public partial class MainWindow : Window
         {
             service.OpenUri(currentStatus.SitesPortalUrl);
         }
+    }
+
+    private void CopyCalDav_Click(object sender, RoutedEventArgs e)
+    {
+        CopyText(currentStatus?.CalDavUrl, "CalDAV URL copied");
     }
 
     private void CopyAppKey_Click(object sender, RoutedEventArgs e)

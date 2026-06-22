@@ -1286,6 +1286,7 @@ impl NativeAppRuntime {
         self.state.ui.local_nhash_resolver_enabled = config.local_nhash_resolver_enabled;
         self.state.ui.launch_on_startup = config.launch_on_startup;
         self.state.ui.sites_portal_url.clear();
+        self.state.ui.caldav_url.clear();
         self.state.ui.relays = if config.relays.is_empty() {
             default_relays()
         } else {
@@ -1313,14 +1314,17 @@ impl NativeAppRuntime {
         };
         let mut account = raw_account.clone();
         account.recompute_authorization();
-        self.state.ui.sites_portal_url =
-            if config.local_nhash_resolver_enabled && account.is_authorized() {
-                native_browser_gateway_port_for_state(Path::new(&self.data_dir))
-                    .map(iris_drive_core::gateway::local_portal_url)
-                    .unwrap_or_default()
-            } else {
-                String::new()
-            };
+        let gateway_port = if config.local_nhash_resolver_enabled && account.is_authorized() {
+            native_browser_gateway_port_for_state(Path::new(&self.data_dir))
+        } else {
+            None
+        };
+        self.state.ui.sites_portal_url = gateway_port
+            .map(iris_drive_core::gateway::local_portal_url)
+            .unwrap_or_default();
+        self.state.ui.caldav_url = gateway_port
+            .map(iris_drive_core::gateway::local_caldav_url)
+            .unwrap_or_default();
         let profile = iris_profile_summary(&account);
         self.state.ui.profile = Some(UiProfile {
             profile_id: profile.profile_id,
@@ -1378,6 +1382,7 @@ impl NativeAppRuntime {
             local_nhash_resolver_enabled: true,
             launch_on_startup: true,
             sites_portal_url: String::new(),
+            caldav_url: String::new(),
             ..UiState::default()
         };
     }

@@ -91,6 +91,10 @@ pub(crate) fn sites_portal_url(state: &NativeAppState) -> Option<&str> {
     (!state.ui.sites_portal_url.is_empty()).then_some(state.ui.sites_portal_url.as_str())
 }
 
+pub(crate) fn caldav_url(state: &NativeAppState) -> Option<&str> {
+    (!state.ui.caldav_url.is_empty()).then_some(state.ui.caldav_url.as_str())
+}
+
 pub(crate) fn short_value(value: Option<&str>) -> String {
     let Some(value) = value.filter(|value| !value.is_empty()) else {
         return "-".to_string();

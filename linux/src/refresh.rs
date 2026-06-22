@@ -84,6 +84,12 @@ pub(crate) fn refresh(model: &AppRef) {
                 .ui
                 .open_sites_portal_button
                 .set_sensitive(sites_portal_url(&state).is_some());
+            let caldav_url = caldav_url(&state);
+            model.ui.caldav_url.set_text(&short_value(caldav_url));
+            model
+                .ui
+                .copy_caldav_url_button
+                .set_sensitive(caldav_url.is_some());
             model
                 .ui
                 .recovery_phrase_button
@@ -139,6 +145,8 @@ pub(crate) fn refresh(model: &AppRef) {
             model.ui.copy_snapshot_button.set_sensitive(false);
             model.ui.open_snapshot_button.set_sensitive(false);
             model.ui.open_sites_portal_button.set_sensitive(false);
+            model.ui.caldav_url.set_text("-");
+            model.ui.copy_caldav_url_button.set_sensitive(false);
             model.ui.last_share_invite.set_text("-");
             model.ui.copy_last_share_invite_button.set_sensitive(false);
             model.ui.recovery_phrase_button.set_visible(false);

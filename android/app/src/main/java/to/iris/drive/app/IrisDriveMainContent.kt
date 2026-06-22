@@ -1098,6 +1098,19 @@ private fun SettingsPanel(
                 Text("Reset relay")
             }
         }
+        Text("Calendar", fontWeight = FontWeight.SemiBold)
+        Text(
+            state.caldavUrl.ifBlank { "Unavailable" },
+            color = Muted,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        OutlinedButton(
+            onClick = { onCopyText("CalDAV URL", state.caldavUrl) },
+            enabled = state.caldavUrl.isNotBlank(),
+        ) {
+            Text("Copy CalDAV URL")
+        }
         Text("Device", fontWeight = FontWeight.SemiBold)
         Text(profile?.currentAppKeyNpub.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text("Current Device Key", fontWeight = FontWeight.SemiBold)

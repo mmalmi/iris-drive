@@ -30,6 +30,7 @@ pub struct UiState {
     pub local_nhash_resolver_enabled: bool,
     pub launch_on_startup: bool,
     pub sites_portal_url: String,
+    pub caldav_url: String,
     pub last_share_invite: String,
     pub last_share_recipient_evidence: String,
 }

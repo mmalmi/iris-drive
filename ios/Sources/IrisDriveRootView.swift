@@ -2158,6 +2158,21 @@ private struct SettingsView: View {
                 }
             }
 
+            Section("Calendar") {
+                LabeledContent(
+                    "CalDAV URL",
+                    value: model.caldavUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                        ? "Unavailable"
+                        : model.caldavUrl
+                )
+                Button {
+                    model.copyCalDAVURL()
+                } label: {
+                    Label("Copy CalDAV URL", systemImage: "calendar.badge.plus")
+                }
+                .disabled(model.caldavUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+
             Section("Network") {
                 ForEach(model.relayStatuses) { relay in
                     HStack {

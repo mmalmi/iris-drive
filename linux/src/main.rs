@@ -92,6 +92,8 @@ struct Ui {
     launch_on_startup: gtk::CheckButton,
     local_nhash_resolver: gtk::CheckButton,
     open_sites_portal_button: gtk::Button,
+    caldav_url: gtk::Label,
+    copy_caldav_url_button: gtk::Button,
     recovery_phrase_button: gtk::Button,
     logout_button: gtk::Button,
     relay_entry: gtk::Entry,

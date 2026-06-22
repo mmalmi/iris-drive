@@ -2000,6 +2000,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 ui["local_nhash_resolver_enabled"] as? Bool ?? status.localNhashResolverEnabled
             let portalURL = ui["sites_portal_url"] as? String ?? ""
             status.sitesPortalURL = portalURL.isEmpty ? nil : portalURL
+            let caldavURL = ui["caldav_url"] as? String ?? ""
+            status.caldavURL = caldavURL.isEmpty ? nil : caldavURL
             status.relays = ui["relays"] as? [String] ?? []
             status.relayStatuses =
                 (ui["relay_statuses"] as? [[String: Any]] ?? []).map(IrisDriveRelayStatus.init)
@@ -2348,11 +2350,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if !enabled {
                 status.primaryDriveGatewayURL = nil
                 status.sitesPortalURL = nil
+                status.caldavURL = nil
             }
         }
         if let portalURL = gateway["portal_url"] as? String,
            !portalURL.isEmpty {
             status.sitesPortalURL = portalURL
+        }
+        if let caldavURL = gateway["caldav_url"] as? String,
+           !caldavURL.isEmpty {
+            status.caldavURL = caldavURL
         }
         if let primaryDriveURL = gateway["primary_drive_url"] as? String,
            !primaryDriveURL.isEmpty {

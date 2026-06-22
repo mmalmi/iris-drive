@@ -332,6 +332,21 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
         "Open Iris Apps",
     );
     settings_page.append(&open_sites_portal_button);
+    let calendar_grid = gtk::Grid::new();
+    calendar_grid.add_css_class("iris-summary");
+    calendar_grid.set_column_spacing(10);
+    calendar_grid.set_row_spacing(8);
+    calendar_grid.set_hexpand(true);
+    let caldav_url = value_label();
+    let copy_caldav_url_button = icon_button("edit-copy-symbolic", "Copy CalDAV URL");
+    add_copy_field(
+        &calendar_grid,
+        0,
+        "CalDAV URL",
+        &caldav_url,
+        &copy_caldav_url_button,
+    );
+    settings_page.append(&calendar_grid);
     let update_check_button = action_button(
         "view-refresh-symbolic",
         "Check Updates",
@@ -467,6 +482,8 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
             launch_on_startup,
             local_nhash_resolver,
             open_sites_portal_button,
+            caldav_url,
+            copy_caldav_url_button,
             recovery_phrase_button,
             logout_button,
             relay_entry,
@@ -640,6 +657,11 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
         let button = model.ui.open_sites_portal_button.clone();
         let model = Rc::clone(&model);
         button.connect_clicked(move |_| open_sites_portal(&model));
+    }
+    {
+        let button = model.ui.copy_caldav_url_button.clone();
+        let model = Rc::clone(&model);
+        button.connect_clicked(move |_| copy_caldav_url(&model));
     }
     {
         let button = model.ui.update_auto_check.clone();
