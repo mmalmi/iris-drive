@@ -35,8 +35,8 @@ pub const KIND_DRIVE_ROOT: u16 = 30078;
 pub const KIND_APP_KEY_LINK_REQUEST: u16 = 30078;
 
 /// Standard hashtree mutable-root kind used by drive.iris.to.
-pub const KIND_HASHTREE_ROOT: u16 = 30_078;
-const _: () = assert!(hashtree_nostr::HASHTREE_ROOT_KIND == 30_078);
+pub const KIND_HASHTREE_ROOT: u16 = hashtree_nostr::HASHTREE_ROOT_KIND as u16;
+const _: () = assert!(hashtree_nostr::HASHTREE_ROOT_KIND <= u16::MAX as u32);
 
 #[must_use]
 pub fn app_key_link_request_d_tag(profile_id: IrisProfileId) -> String {

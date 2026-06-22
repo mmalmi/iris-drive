@@ -1706,22 +1706,26 @@ private struct IrisWebBrowserBar: View {
     let publisherDisplayName: (String) -> String?
     let onClose: () -> Void
     let onSubmitAddress: () -> Void
+    @Namespace private var footerNamespace
 
     var body: some View {
-        Group {
-            if browser.footerCollapsed && !addressFocused.wrappedValue {
+        let collapsed = browser.footerCollapsed && !addressFocused.wrappedValue
+        HStack(spacing: 0) {
+            if collapsed {
+                Spacer(minLength: 0)
                 compactBar
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .frame(maxWidth: 286)
+                    .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottom)))
+                Spacer(minLength: 0)
             } else {
                 expandedBar
-                    .transition(.opacity.combined(with: .move(edge: .bottom)))
+                    .transition(.opacity.combined(with: .scale(scale: 1.02, anchor: .bottom)))
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.top, 7)
+        .padding(.horizontal, collapsed ? 26 : 16)
+        .padding(.top, 6)
         .padding(.bottom, 8)
-        .background(.ultraThinMaterial)
-        .animation(.snappy(duration: 0.22), value: browser.footerCollapsed)
+        .animation(.spring(response: 0.32, dampingFraction: 0.86), value: collapsed)
         .onChange(of: addressFocused.wrappedValue) { _, focused in
             if focused {
                 browser.expandFooter()
@@ -1730,7 +1734,7 @@ private struct IrisWebBrowserBar: View {
     }
 
     private var expandedBar: some View {
-        HStack(spacing: 7) {
+        HStack(spacing: 9) {
             browserIconButton("xmark", label: "Close", action: onClose)
                 .accessibilityIdentifier("irisWebCloseButton")
 
@@ -1761,13 +1765,10 @@ private struct IrisWebBrowserBar: View {
                 .accessibilityIdentifier("irisWebReloadButton")
             }
             .padding(.leading, 14)
-            .padding(.trailing, 6)
-            .frame(height: 42)
-            .background(.thinMaterial, in: Capsule())
-            .overlay {
-                Capsule()
-                    .stroke(.white.opacity(0.18), lineWidth: 0.5)
-            }
+            .padding(.trailing, 7)
+            .frame(height: 44)
+            .browserFooterGlass(shape: Capsule())
+            .matchedGeometryEffect(id: "irisWebAddressPill", in: footerNamespace)
 
             browserMenu
         }
@@ -1777,18 +1778,15 @@ private struct IrisWebBrowserBar: View {
         let title = compactTitle
         return Button(action: browser.expandFooter) {
             Text(title)
-                .font(.system(.footnote, design: .rounded, weight: .semibold))
+                .font(.system(.subheadline, design: .rounded, weight: .semibold))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.75)
                 .frame(maxWidth: .infinity)
-                .frame(height: 38)
+                .frame(height: 39)
                 .padding(.horizontal, 16)
-                .background(.thinMaterial, in: Capsule())
-                .overlay {
-                    Capsule()
-                        .stroke(.white.opacity(0.18), lineWidth: 0.5)
-                }
+                .browserFooterGlass(shape: Capsule(), shadowRadius: 18, shadowY: 9)
+                .matchedGeometryEffect(id: "irisWebAddressPill", in: footerNamespace)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Show browser controls")
@@ -1822,8 +1820,8 @@ private struct IrisWebBrowserBar: View {
         } label: {
             Image(systemName: "ellipsis")
                 .font(.system(size: 17, weight: .semibold))
-                .frame(width: 34, height: 34)
-                .background(.thinMaterial, in: Circle())
+                .frame(width: 44, height: 44)
+                .browserFooterGlass(shape: Circle(), shadowRadius: 16, shadowY: 8)
         }
         .buttonStyle(.plain)
         .accessibilityLabel("More")
@@ -1838,11 +1836,27 @@ private struct IrisWebBrowserBar: View {
         Button(action: action) {
             Image(systemName: systemName)
                 .font(.system(size: 17, weight: .semibold))
-                .frame(width: 34, height: 34)
-                .background(.thinMaterial, in: Circle())
+                .frame(width: 44, height: 44)
+                .browserFooterGlass(shape: Circle(), shadowRadius: 16, shadowY: 8)
         }
         .buttonStyle(.plain)
         .accessibilityLabel(label)
+    }
+}
+
+private extension View {
+    func browserFooterGlass<S: InsettableShape>(
+        shape: S,
+        shadowRadius: CGFloat = 20,
+        shadowY: CGFloat = 10
+    ) -> some View {
+        self
+            .background(.ultraThinMaterial, in: shape)
+            .overlay {
+                shape
+                    .stroke(.white.opacity(0.46), lineWidth: 0.6)
+            }
+            .shadow(color: .black.opacity(0.14), radius: shadowRadius, x: 0, y: shadowY)
     }
 }
 
