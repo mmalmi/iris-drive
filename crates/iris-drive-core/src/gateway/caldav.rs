@@ -5,6 +5,8 @@ const CALDAV_ROOT: &str = "/caldav/";
 const CALDAV_PRINCIPAL: &str = "/caldav/principals/iris/";
 const CALDAV_HOME: &str = "/caldav/calendars/iris/";
 const CALDAV_CALENDAR: &str = "/caldav/calendars/iris/calendar/";
+const CALDAV_FEED: &str = "/caldav/calendar.ics";
+const CALDAV_CALENDAR_FEED: &str = "/caldav/calendars/iris/calendar.ics";
 const WELL_KNOWN_CALDAV: &str = "/.well-known/caldav";
 
 pub(crate) fn is_caldav_path(path: &str) -> bool {
@@ -124,15 +126,11 @@ async fn handle_caldav_get(
 ) -> Result<Response, (StatusCode, String)> {
     let path = normalized_caldav_path(uri.path());
     let data = load_caldav_calendar(state).await?;
-    if path == CALDAV_CALENDAR {
-        let body = data
-            .events
-            .iter()
-            .map(|event| {
-                crate::calendar::event_to_ics(event, &data.title, gateway_now_seconds() * 1000)
-            })
-            .collect::<Vec<_>>()
-            .join("");
+    if matches!(
+        path.as_str(),
+        CALDAV_ROOT | CALDAV_CALENDAR | CALDAV_FEED | CALDAV_CALENDAR_FEED
+    ) {
+        let body = crate::calendar::calendar_to_ics(&data, gateway_now_seconds() * 1000);
         return calendar_response(StatusCode::OK, method == Method::HEAD, body, None);
     }
     let id = crate::calendar::href_event_id(&path);

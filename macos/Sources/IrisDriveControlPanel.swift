@@ -1511,13 +1511,20 @@ struct IrisDriveControlPanel: View {
             }
 
             Section("Calendar") {
-                if let caldavURL = status.caldavURL {
-                    LabeledContent("CalDAV URL", value: caldavURL)
+                let caldavURL = status.caldavURL?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                LabeledContent("CalDAV URL", value: caldavURL.isEmpty ? "Unavailable" : caldavURL)
+                LabeledContent("Account Type", value: "Advanced")
+                LabeledContent("User Name", value: "iris")
+                LabeledContent("Password", value: "iris")
+                LabeledContent("Server Address", value: "localhost")
+                LabeledContent("Server Path", value: "/caldav/")
+                LabeledContent("Port", value: irisDriveCalDAVPort(caldavURL))
+                LabeledContent("Use SSL", value: "Off")
+                LabeledContent("Use Kerberos", value: "Off")
+                if !caldavURL.isEmpty {
                     IrisDriveCopyButton(title: "Copy CalDAV URL", systemImage: "calendar.badge.plus") {
                         irisDriveCopyToPasteboard(caldavURL, feedback: "CalDAV URL copied")
                     }
-                } else {
-                    LabeledContent("CalDAV URL", value: "Unavailable")
                 }
             }
 
@@ -1843,6 +1850,10 @@ private struct IrisDriveCopyToast: View {
             .background(.regularMaterial, in: Capsule())
             .shadow(radius: 10, y: 4)
     }
+}
+
+private func irisDriveCalDAVPort(_ url: String) -> String {
+    URL(string: url)?.port.map(String.init) ?? "17321"
 }
 
 struct IrisDriveCopyButton: View {

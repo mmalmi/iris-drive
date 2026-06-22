@@ -264,13 +264,34 @@ fn calendar_actor(config: &AppConfig) -> String {
         .unwrap_or_else(|| "iris-caldav".into())
 }
 
+pub fn calendar_to_ics(data: &CalendarData, now_ms: i64) -> String {
+    let mut lines = calendar_header_lines(&data.title);
+    for event in &data.events {
+        lines.extend(event_component_lines(event, now_ms));
+    }
+    lines.push("END:VCALENDAR".into());
+    ics_document(lines)
+}
+
 pub fn event_to_ics(event: &CalendarEvent, calendar_name: &str, now_ms: i64) -> String {
-    let mut lines = vec![
+    let mut lines = calendar_header_lines(calendar_name);
+    lines.extend(event_component_lines(event, now_ms));
+    lines.push("END:VCALENDAR".into());
+    ics_document(lines)
+}
+
+fn calendar_header_lines(calendar_name: &str) -> Vec<String> {
+    vec![
         "BEGIN:VCALENDAR".to_string(),
         "VERSION:2.0".to_string(),
         "PRODID:-//Iris//Iris Calendar CalDAV//EN".to_string(),
         "CALSCALE:GREGORIAN".to_string(),
         property_line("X-WR-CALNAME", calendar_name),
+    ]
+}
+
+fn event_component_lines(event: &CalendarEvent, now_ms: i64) -> Vec<String> {
+    let mut lines = vec![
         "BEGIN:VEVENT".to_string(),
         property_line("UID", &export_uid(&event.id)),
         format!("DTSTAMP:{}", millis_to_ics_utc(now_ms)),
@@ -298,7 +319,10 @@ pub fn event_to_ics(event: &CalendarEvent, calendar_name: &str, now_ms: i64) -> 
         lines.push(rrule);
     }
     lines.push("END:VEVENT".into());
-    lines.push("END:VCALENDAR".into());
+    lines
+}
+
+fn ics_document(lines: Vec<String>) -> String {
     format!(
         "{}\r\n",
         lines

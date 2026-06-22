@@ -113,6 +113,38 @@ async fn gateway_caldav_put_report_get_and_delete_round_trip_calendar_event() {
     server.shutdown().await.unwrap();
 }
 
+#[tokio::test]
+async fn gateway_caldav_root_get_serves_calendar_subscription_feed() {
+    let cfg_dir = tempdir().unwrap();
+    init_account_config(cfg_dir.path());
+    let daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let server = GatewayServer::bind_with_tree(
+        cfg_dir.path(),
+        daemon.tree_handle(),
+        GatewayBind::loopback_v4(0),
+    )
+    .await
+    .unwrap();
+
+    let get = http_request(
+        server.local_addr(),
+        "GET",
+        "localhost",
+        "/caldav/",
+        &[],
+        b"",
+    )
+    .await;
+    assert!(get.starts_with("HTTP/1.1 200 OK"), "{get}");
+    assert!(get.contains("content-type: text/calendar"), "{get}");
+    assert!(get.contains("BEGIN:VCALENDAR"), "{get}");
+    assert!(get.contains("VERSION:2.0"), "{get}");
+    assert!(get.contains("X-WR-CALNAME:Calendar"), "{get}");
+    assert!(get.contains("END:VCALENDAR"), "{get}");
+
+    server.shutdown().await.unwrap();
+}
+
 async fn http_request(
     addr: SocketAddr,
     method: &str,

@@ -179,3 +179,12 @@ pub(crate) fn add_copy_field(
     grid.attach(value, 1, row, 1, 1);
     grid.attach(button, 2, row, 1, 1);
 }
+
+pub(crate) fn add_value_field(grid: &gtk::Grid, row: i32, name: &str, value: &gtk::Label) {
+    let label = gtk::Label::new(Some(name));
+    label.add_css_class("iris-field-name");
+    label.set_xalign(0.0);
+    grid.attach(&label, 0, row, 1, 1);
+    value.set_hexpand(true);
+    grid.attach(value, 1, row, 2, 1);
+}

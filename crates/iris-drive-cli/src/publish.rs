@@ -495,7 +495,7 @@ pub(crate) async fn publish_current_state(
             let Some(root) = publishable_app_key_root(config_dir, drive, state).await? else {
                 continue;
             };
-            ensure_publishable_root_locally_available(config_dir, &root.root_cid).await?;
+            ensure_publishable_root_locally_available(config_dir, config, &root.root_cid).await?;
             if upload_blossom
                 && !(drive.drive_id == iris_drive_core::PRIMARY_DRIVE_ID
                     && published_primary_files_root)

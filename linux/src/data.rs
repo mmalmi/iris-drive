@@ -95,6 +95,15 @@ pub(crate) fn caldav_url(state: &NativeAppState) -> Option<&str> {
     (!state.ui.caldav_url.is_empty()).then_some(state.ui.caldav_url.as_str())
 }
 
+pub(crate) fn caldav_port(state: &NativeAppState) -> Option<String> {
+    caldav_url(state)
+        .and_then(|url| url.split_once("://").map(|(_, rest)| rest).or(Some(url)))
+        .and_then(|rest| rest.split('/').next())
+        .and_then(|authority| authority.rsplit_once(':').map(|(_, port)| port))
+        .filter(|port| !port.is_empty() && port.chars().all(|ch| ch.is_ascii_digit()))
+        .map(str::to_string)
+}
+
 pub(crate) fn short_value(value: Option<&str>) -> String {
     let Some(value) = value.filter(|value| !value.is_empty()) else {
         return "-".to_string();

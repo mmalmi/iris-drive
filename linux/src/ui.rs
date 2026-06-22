@@ -338,6 +338,7 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     calendar_grid.set_row_spacing(8);
     calendar_grid.set_hexpand(true);
     let caldav_url = value_label();
+    let caldav_port = value_label();
     let copy_caldav_url_button = icon_button("edit-copy-symbolic", "Copy CalDAV URL");
     add_copy_field(
         &calendar_grid,
@@ -346,6 +347,28 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
         &caldav_url,
         &copy_caldav_url_button,
     );
+    let caldav_account_type = value_label();
+    caldav_account_type.set_text("Advanced");
+    let caldav_user_name = value_label();
+    caldav_user_name.set_text("iris");
+    let caldav_password = value_label();
+    caldav_password.set_text("iris");
+    let caldav_server_address = value_label();
+    caldav_server_address.set_text("localhost");
+    let caldav_server_path = value_label();
+    caldav_server_path.set_text("/caldav/");
+    let caldav_use_ssl = value_label();
+    caldav_use_ssl.set_text("Off");
+    let caldav_use_kerberos = value_label();
+    caldav_use_kerberos.set_text("Off");
+    add_value_field(&calendar_grid, 1, "Account Type", &caldav_account_type);
+    add_value_field(&calendar_grid, 2, "User Name", &caldav_user_name);
+    add_value_field(&calendar_grid, 3, "Password", &caldav_password);
+    add_value_field(&calendar_grid, 4, "Server Address", &caldav_server_address);
+    add_value_field(&calendar_grid, 5, "Server Path", &caldav_server_path);
+    add_value_field(&calendar_grid, 6, "Port", &caldav_port);
+    add_value_field(&calendar_grid, 7, "Use SSL", &caldav_use_ssl);
+    add_value_field(&calendar_grid, 8, "Use Kerberos", &caldav_use_kerberos);
     settings_page.append(&calendar_grid);
     let update_check_button = action_button(
         "view-refresh-symbolic",
@@ -483,6 +506,7 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
             local_nhash_resolver,
             open_sites_portal_button,
             caldav_url,
+            caldav_port,
             copy_caldav_url_button,
             recovery_phrase_button,
             logout_button,
