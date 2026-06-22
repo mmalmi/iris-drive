@@ -56,6 +56,8 @@ pub enum ProfileError {
     NoAdminAuthority,
     #[error("AppKey already authorized")]
     AppKeyAlreadyAuthorized,
+    #[error("AppKey was previously removed and cannot be re-added")]
+    AppKeyTombstoned,
     #[error("AppKey not in roster")]
     AppKeyNotInRoster,
     #[error("cannot remove the last admin AppKey")]
@@ -747,6 +749,14 @@ impl Profile {
             && snap.contains(app_key_pubkey_hex)
         {
             return Err(ProfileError::AppKeyAlreadyAuthorized);
+        }
+        if self
+            .state
+            .profile_projection()
+            .tombstones
+            .contains_key(app_key_pubkey_hex)
+        {
+            return Err(ProfileError::AppKeyTombstoned);
         }
         let now = next_profile_timestamp(&self.state);
         self.append_profile_roster_op(

@@ -1229,6 +1229,91 @@ fn owner_can_approve_and_revoke_linked_app_keys() {
 }
 
 #[test]
+fn approving_tombstoned_inbound_request_surfaces_error_and_keeps_request() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+
+    let owner = app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "Mac".to_owned(),
+    });
+    let owner_invite = owner.ui.profile.unwrap().app_key_link_invite;
+    let linked_dir = tempfile::tempdir().unwrap();
+    let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
+    let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
+        link_target: owner_invite,
+        app_key_label: "Phone".to_owned(),
+    });
+    let linked_account = linked.ui.profile.unwrap();
+    let linked_device = linked_account.current_app_key_npub.clone();
+    let linked_app_key_hex = normalize_pubkey(&linked_device).unwrap();
+    let approved = app.dispatch(NativeAppAction::ApproveDevice {
+        request: linked_account.app_key_link_request,
+        label: "Phone".to_owned(),
+    });
+    assert!(approved.error.is_empty(), "{}", approved.error);
+    let revoked = app.dispatch(NativeAppAction::RevokeDevice {
+        app_key_pubkey: linked_device.clone(),
+    });
+    assert!(revoked.error.is_empty(), "{}", revoked.error);
+
+    let config_path = config_path_in(owner_dir.path());
+    let mut config = AppConfig::load_or_default(&config_path).unwrap();
+    let state = config.profile.as_mut().unwrap();
+    let profile_id = state.profile_id;
+    let link_secret = state.app_key_link_secret.clone();
+    state
+        .record_inbound_app_key_link_request(
+            profile_id,
+            &linked_app_key_hex,
+            Some("Phone".to_owned()),
+            &link_secret,
+            42,
+        )
+        .unwrap();
+    config.save(&config_path).unwrap();
+
+    let refreshed = app.refresh();
+    let request = refreshed.ui.profile.unwrap().inbound_app_key_link_requests[0]
+        .request_link
+        .clone();
+    let op_count_before = AppConfig::load_or_default(&config_path)
+        .unwrap()
+        .profile
+        .unwrap()
+        .profile_roster_ops
+        .len();
+
+    let rejected = app.dispatch(NativeAppAction::ApproveDevice {
+        request,
+        label: "Phone".to_owned(),
+    });
+
+    assert!(
+        rejected.error.contains("previously removed"),
+        "{}",
+        rejected.error
+    );
+    let account = rejected.ui.profile.as_ref().unwrap();
+    assert_eq!(account.inbound_app_key_link_requests.len(), 1);
+    assert!(
+        !rejected
+            .ui
+            .app_actors
+            .iter()
+            .any(|device| device.pubkey == linked_device)
+    );
+    assert_eq!(
+        AppConfig::load_or_default(&config_path)
+            .unwrap()
+            .profile
+            .unwrap()
+            .profile_roster_ops
+            .len(),
+        op_count_before
+    );
+}
+
+#[test]
 fn delete_device_json_action_revokes_linked_device() {
     let owner_dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());

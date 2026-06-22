@@ -738,6 +738,43 @@ fn approving_already_authorized_device_errors() {
 }
 
 #[test]
+fn approving_tombstoned_device_errors_without_consuming_request() {
+    let dir = tempdir().unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
+    let target = fresh_app_key_pubkey();
+    acct.approve_app_key(&target, Some("phone".into())).unwrap();
+    acct.revoke_app_key(&target).unwrap();
+    acct.state
+        .record_inbound_app_key_link_request(
+            acct.state.profile_id,
+            &target,
+            Some("phone".into()),
+            &acct.state.app_key_link_secret.clone(),
+            42,
+        )
+        .unwrap();
+    let before_op_count = acct.state.profile_roster_ops.len();
+
+    match acct.approve_app_key(&target, Some("phone".into())) {
+        Err(ProfileError::AppKeyTombstoned) => {}
+        other => panic!("expected AppKeyTombstoned, got {:?}", other.is_ok()),
+    }
+
+    assert_eq!(acct.state.profile_roster_ops.len(), before_op_count);
+    assert_eq!(acct.state.inbound_app_key_link_requests.len(), 1);
+    assert_eq!(
+        acct.state.inbound_app_key_link_requests[0].app_key_pubkey,
+        target
+    );
+    assert!(
+        acct.state
+            .profile_projection()
+            .tombstones
+            .contains_key(&target)
+    );
+}
+
+#[test]
 fn revoke_removes_device_from_roster() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();
