@@ -1007,6 +1007,7 @@ open_args=(
   --stdout "$APP_STDOUT"
   --stderr "$APP_STDERR"
   --env "IRIS_DRIVE_DEBUG_LOG_DIR=$APP_DEBUG_LOG_DIR"
+  --env "IRIS_DRIVE_DISABLE_LOGIN_AGENT_SYNC=true"
 )
 if ! run_create_profile_gui_smoke && ! run_user_journey_smoke && ! run_ui_smoke; then
   open_args=(-j "${open_args[@]}")

@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="$ROOT/macos/Sources/IrisDriveMacApp.swift"
+STARTUP="$ROOT/macos/Sources/IrisDriveStartup.swift"
 LIFECYCLE="$ROOT/macos/Sources/IrisDriveMacFileProvider.swift"
 HELPER_ENTITLEMENTS="$ROOT/macos/idrive-helper.entitlements"
 DEV_APP="$ROOT/scripts/macos-dev-app.sh"
@@ -52,8 +53,12 @@ require_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'if [[ -z "$app_base_dir"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "ensure_daemon_service"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "service install --launch --json"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "macos_process_command_matches"
+require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "macos/.build/Applications/Iris Drive.app"
+require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "IRIS_DRIVE_DISABLE_LOGIN_AGENT_SYNC=true"
 require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'pkill -TERM -x "$APP_PROCESS_NAME"'
 require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'pkill -x "$APP_PROCESS_NAME"'
+require_contains "$STARTUP" "macos/Sources/IrisDriveStartup.swift" "launchAgentSyncDisabled"
+require_contains "$STARTUP" "macos/Sources/IrisDriveStartup.swift" "IRIS_DRIVE_DISABLE_LOGIN_AGENT_SYNC"
 require_not_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" '"--no-gateway"'
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "startAppManagedDaemon"
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "status.primaryDriveGatewayURL = nil"

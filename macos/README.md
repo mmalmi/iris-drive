@@ -16,7 +16,10 @@ just run
 
 `just run` builds the `idrive` helper, builds this app, copies `idrive` into the
 app bundle, opens the app, registers the File Provider domain, and starts the
-daemon. By default it uses a no-provisioning dev launch because macOS rejects
+daemon. The dev bundle is installed under
+`macos/.build/Applications/Iris Drive.app` and dev/smoke launches disable
+LaunchAgent sync so they do not rewrite the production login item. By default
+it uses a no-provisioning dev launch because macOS rejects
 restricted File Provider/app-group entitlements when they are only ad-hoc
 signed. In that default mode the app data directory is
 `macos/.build/AppData`, avoiding app-group container prompts. For the fully

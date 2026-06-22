@@ -250,6 +250,7 @@ launch_app() {
       --env "IRIS_DRIVE_APP_BASE_DIR=$data_dir" \
       --env "IRIS_DRIVE_DEBUG_LOG_DIR=$debug_dir" \
       --env "IRIS_DRIVE_DISABLE_FILEPROVIDER=1" \
+      --env "IRIS_DRIVE_DISABLE_LOGIN_AGENT_SYNC=true" \
       --env "IRIS_DRIVE_DISABLE_SINGLE_INSTANCE=1" \
       --env "IRIS_DRIVE_EXTERNAL_DAEMON=1" \
       -n "$app" --args --hidden; then

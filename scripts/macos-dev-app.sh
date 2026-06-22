@@ -45,7 +45,8 @@ CONFIGURATION="${IRIS_DRIVE_MACOS_XCODE_CONFIGURATION:-Debug}"
 BUILD_DIR="${IRIS_DRIVE_MACOS_BUILD_DIR:-$ROOT/macos/.build}"
 DERIVED_DATA="$BUILD_DIR/DerivedData"
 BUILD_LOG="${IRIS_DRIVE_MACOS_BUILD_LOG:-/tmp/iris-drive-macos-build.log}"
-INSTALL_APP_PATH="${IRIS_DRIVE_MACOS_INSTALL_APP:-$HOME/Applications/Iris Drive.app}"
+DEFAULT_INSTALL_APP_PATH="$BUILD_DIR/Applications/Iris Drive.app"
+INSTALL_APP_PATH="${IRIS_DRIVE_MACOS_INSTALL_APP:-$DEFAULT_INSTALL_APP_PATH}"
 HOST_ARCH="$(uname -m)"
 APP_PROCESS_NAME="Iris Drive"
 BUILD_APP_PATH=""
@@ -77,7 +78,7 @@ Environment:
       has no signed-in account.
   IRIS_DRIVE_MACOS_INSTALL_APP
       Stable app bundle to install and launch. Defaults to
-      ~/Applications/Iris Drive.app.
+      macos/.build/Applications/Iris Drive.app.
 EOF
 }
 
@@ -641,6 +642,7 @@ run_app() {
     ensure_daemon_service "$app_path" "$service_config_dir"
     open \
       --env "IRIS_DRIVE_APP_BASE_DIR=$app_base_dir" \
+      --env "IRIS_DRIVE_DISABLE_LOGIN_AGENT_SYNC=true" \
       --env "IRIS_DRIVE_FILEPROVIDER_RESET_ON_START=true" \
       "$app_path"
     echo "macOS app data: $app_base_dir"
@@ -653,6 +655,7 @@ run_app() {
       echo "macOS app data: ${service_config_dir%/Config}"
     fi
     open \
+      --env "IRIS_DRIVE_DISABLE_LOGIN_AGENT_SYNC=true" \
       --env "IRIS_DRIVE_FILEPROVIDER_RESET_ON_START=true" \
       "$app_path"
   fi

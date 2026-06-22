@@ -8,6 +8,12 @@ extension AppDelegate {
     }
 
     func setLaunchOnStartup(_ enabled: Bool) {
+        guard !launchAgentSyncDisabled else {
+            updateStatus("Launch on startup disabled for development run")
+            refreshStatus()
+            NSSound.beep()
+            return
+        }
         do {
             try configureLaunchAgent(enabled: enabled, loadCurrentSession: true)
             launchOnStartupSynced = enabled
@@ -44,6 +50,13 @@ extension AppDelegate {
     }
 
     func syncLaunchAgentIfNeeded(enabled: Bool) {
+        guard !launchAgentSyncDisabled else {
+            if launchOnStartupSynced != enabled {
+                NSLog("Iris Drive LaunchAgent sync skipped for development run")
+                launchOnStartupSynced = enabled
+            }
+            return
+        }
         guard launchOnStartupSynced != enabled else {
             return
         }
@@ -78,6 +91,15 @@ extension AppDelegate {
                 try manager.removeItem(at: plistURL)
             }
         }
+    }
+
+    private var launchAgentSyncDisabled: Bool {
+        if IrisDriveEnvironment.flag("IRIS_DRIVE_DISABLE_LOGIN_AGENT_SYNC") {
+            return true
+        }
+        let bundlePath = Bundle.main.bundleURL.standardizedFileURL.path
+        return bundlePath.contains("/macos/.build/")
+            || bundlePath.contains("/DerivedData/")
     }
 }
 

@@ -1555,7 +1555,7 @@ run_macos() {
   local iris_repo="$HOME/src/iris-drive"
   local idrive="$iris_repo/target/debug/idrive"
   local built_app="$iris_repo/macos/.build/DerivedData/Build/Products/Debug/Iris Drive.app"
-  local app="${IRIS_DRIVE_DEV_VM_MACOS_APP_PATH:-$HOME/Applications/Iris Drive.app}"
+  local app="${IRIS_DRIVE_DEV_VM_MACOS_APP_PATH:-$iris_repo/macos/.build/Applications/Iris Drive.app}"
   local appex="$app/Contents/PlugIns/IrisDriveFileProvider.appex"
   local app_group
   app_group="$(macos_app_group_identifier)"
@@ -1656,6 +1656,7 @@ run_macos() {
     --env "IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING=$FIPS_OPEN_DISCOVERY_MAX_PENDING_EFFECTIVE"
     --env "IRIS_DRIVE_FIPS_STATIC_PEERS=$STATIC_PEERS"
     --env "IRIS_DRIVE_APP_BASE_DIR=$app_base"
+    --env "IRIS_DRIVE_DISABLE_LOGIN_AGENT_SYNC=true"
     --env "IRIS_DRIVE_FILEPROVIDER_RUNTIME_EXTERNAL=true"
   )
   if [[ "$reset_fileprovider_domain" == "true" ]]; then
@@ -2461,7 +2462,7 @@ set -Eeuo pipefail
 idrive="$HOME/src/iris-drive/target/debug/idrive"
 app_group="${IRIS_DRIVE_DEV_VM_MACOS_APP_GROUP_IDENTIFIER:-}"
 if [[ -z "$app_group" ]]; then
-  app="$HOME/Applications/Iris Drive.app"
+  app="$HOME/src/iris-drive/macos/.build/Applications/Iris Drive.app"
   app_group="$(codesign -d --entitlements :- "$app" 2>/dev/null \
     | python3 -c 'import plistlib, sys; data=sys.stdin.buffer.read(); plist=plistlib.loads(data) if data.strip() else {}; groups=plist.get("com.apple.security.application-groups") or []; print(groups[0] if groups else "")' 2>/dev/null \
     || true)"
