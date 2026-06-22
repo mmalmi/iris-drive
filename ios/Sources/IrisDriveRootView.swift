@@ -1586,6 +1586,7 @@ private struct IrisWebBrowserView: View {
                 isLoading: $isLoading,
                 loadError: $loadError
             )
+            .ignoresSafeArea(.container, edges: .bottom)
             if isLoading {
                 ProgressView()
                     .controlSize(.large)
@@ -1609,7 +1610,7 @@ private struct IrisWebBrowserView: View {
                 .background(.background)
             }
         }
-        .safeAreaInset(edge: .bottom, spacing: 0) {
+        .overlay(alignment: .bottom) {
             IrisWebBrowserBar(
                 browser: browser,
                 addressText: $addressText,
@@ -1851,12 +1852,35 @@ private extension View {
         shadowY: CGFloat = 10
     ) -> some View {
         self
-            .background(.ultraThinMaterial, in: shape)
+            .background {
+                UIKitGlassEffect(style: .systemUltraThinMaterial)
+                    .opacity(0.64)
+                    .clipShape(shape)
+            }
             .overlay {
                 shape
-                    .stroke(.white.opacity(0.46), lineWidth: 0.6)
+                    .fill(.white.opacity(0.08))
+            }
+            .overlay {
+                shape
+                    .stroke(.white.opacity(0.34), lineWidth: 0.55)
             }
             .shadow(color: .black.opacity(0.14), radius: shadowRadius, x: 0, y: shadowY)
+    }
+}
+
+private struct UIKitGlassEffect: UIViewRepresentable {
+    let style: UIBlurEffect.Style
+
+    func makeUIView(context: Context) -> UIVisualEffectView {
+        let view = UIVisualEffectView(effect: UIBlurEffect(style: style))
+        view.backgroundColor = .clear
+        view.contentView.backgroundColor = .clear
+        return view
+    }
+
+    func updateUIView(_ uiView: UIVisualEffectView, context: Context) {
+        uiView.effect = UIBlurEffect(style: style)
     }
 }
 
