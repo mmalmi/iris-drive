@@ -32,16 +32,47 @@ impl DaemonTaskSet {
 }
 
 include!("daemon/runtime.rs");
+
+#[derive(Debug, Default)]
+struct ProviderRootPublishCache {
+    last_config_fingerprint: Option<ConfigFileFingerprint>,
+    last_current_key: Option<Option<String>>,
+}
+
+impl ProviderRootPublishCache {
+    fn is_current(
+        &self,
+        fingerprint: &ConfigFileFingerprint,
+        current_key: &Option<String>,
+    ) -> bool {
+        self.last_config_fingerprint.as_ref() == Some(fingerprint)
+            && self.last_current_key.as_ref() == Some(current_key)
+    }
+
+    fn update(&mut self, fingerprint: ConfigFileFingerprint, current_key: Option<String>) {
+        self.last_config_fingerprint = Some(fingerprint);
+        self.last_current_key = Some(current_key);
+    }
+}
+
 async fn publish_provider_root_if_changed(
     client: &nostr_sdk::Client,
     config_dir: &Path,
     last_root_key: &mut Option<String>,
+    cache: &mut ProviderRootPublishCache,
     direct_roots: &mut DirectRootExchange,
     fips_blocks: Option<&FsFipsBlockSync>,
     daemon_tasks: &DaemonTaskSet,
 ) -> Result<Option<AppConfig>> {
-    let updated_config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let config_path = config_path_in(config_dir);
+    let config_fingerprint = config_file_fingerprint(&config_path)?;
+    if cache.is_current(&config_fingerprint, last_root_key) {
+        return Ok(None);
+    }
+
+    let updated_config = AppConfig::load_or_default(&config_path)?;
     let current_key = current_app_key_root_key(&updated_config);
+    cache.update(config_fingerprint, current_key.clone());
     if current_key == *last_root_key {
         return Ok(None);
     }
@@ -61,7 +92,7 @@ async fn publish_provider_root_if_changed(
     daemon_tasks.push(spawn_publish_current_state(
         client.clone(),
         config_dir.to_path_buf(),
-        updated_config,
+        updated_config.clone(),
         updated_state,
         true,
         "provider_root_publish_finished",
@@ -77,9 +108,7 @@ async fn publish_provider_root_if_changed(
         }),
     );
 
-    Ok(Some(AppConfig::load_or_default(config_path_in(
-        config_dir,
-    ))?))
+    Ok(Some(updated_config))
 }
 
 fn provider_root_poll_enabled(_config_root_watch_active: bool) -> bool {

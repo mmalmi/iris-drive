@@ -56,8 +56,6 @@ pub enum ProfileError {
     NoAdminAuthority,
     #[error("AppKey already authorized")]
     AppKeyAlreadyAuthorized,
-    #[error("AppKey was previously removed and cannot be re-added")]
-    AppKeyTombstoned,
     #[error("AppKey not in roster")]
     AppKeyNotInRoster,
     #[error("cannot remove the last admin AppKey")]
@@ -134,6 +132,9 @@ pub struct ProfileState {
     /// Runtime projection cache derived from `profile_roster_ops`.
     #[serde(skip)]
     pub app_keys: Option<AppKeysProjection>,
+    /// Runtime roster projection cache derived from `profile_roster_ops`.
+    #[serde(skip)]
+    pub profile_roster_projection: Option<IrisProfileRosterProjection>,
     #[serde(alias = "outbound_device_link_request")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outbound_app_key_link_request: Option<PendingAppKeyLinkRequest>,
@@ -152,6 +153,9 @@ pub struct KeyWrapRepairOutcome {
 impl ProfileState {
     #[must_use]
     pub fn profile_projection(&self) -> IrisProfileRosterProjection {
+        if let Some(projection) = self.profile_roster_projection.as_ref() {
+            return projection.clone();
+        }
         project_iris_profile_roster(self.profile_id, self.profile_roster_ops.clone())
     }
 
@@ -162,17 +166,25 @@ impl ProfileState {
 
     #[must_use]
     pub fn app_keys_from_profile(&self) -> Option<AppKeysProjection> {
-        app_keys_from_profile_roster(self.profile_id, &self.profile_roster_ops)
+        app_keys_from_profile_projection(&self.profile_projection())
     }
 
     pub fn sync_app_keys_from_profile(&mut self) -> bool {
-        let Some(projection) = self.app_keys_from_profile() else {
+        let profile_projection =
+            project_iris_profile_roster(self.profile_id, self.profile_roster_ops.clone());
+        let Some(projection) = app_keys_from_profile_projection(&profile_projection) else {
+            self.profile_roster_projection = Some(profile_projection);
             return false;
         };
-        let changed = self.app_keys.as_ref() != Some(&projection);
+        let app_keys_changed = self.app_keys.as_ref() != Some(&projection);
+        let request_count_before = self.inbound_app_key_link_requests.len();
+        self.inbound_app_key_link_requests
+            .retain(|request| !projection.contains(&request.app_key_pubkey));
+        let requests_changed = self.inbound_app_key_link_requests.len() != request_count_before;
+        self.recompute_authorization_from_app_keys(&projection);
+        self.profile_roster_projection = Some(profile_projection);
         self.app_keys = Some(projection);
-        self.recompute_authorization();
-        changed
+        app_keys_changed || requests_changed
     }
 
     /// Adopt the profile UUID carried by local roster evidence when that
@@ -190,8 +202,8 @@ impl ProfileState {
         }
         self.profile_id = profile_id;
         self.app_keys = None;
+        self.profile_roster_projection = None;
         self.sync_app_keys_from_profile();
-        self.recompute_authorization();
         true
     }
 
@@ -207,6 +219,9 @@ impl ProfileState {
     /// Can this install's `AppKey` administer the `IrisProfile` roster?
     #[must_use]
     pub fn can_admin_profile(&self) -> bool {
+        if let Some(app_keys) = &self.app_keys {
+            return app_keys.is_admin(&self.app_key_pubkey);
+        }
         self.profile_projection()
             .can_admin_profile(&self.app_key_pubkey)
     }
@@ -214,18 +229,36 @@ impl ProfileState {
     /// Can this `AppKey` publish mutable roots for this profile?
     #[must_use]
     pub fn can_write_roots(&self) -> bool {
+        if let Some(app_keys) = &self.app_keys {
+            return app_keys.contains(&self.app_key_pubkey);
+        }
         self.profile_projection()
             .can_write_roots(&self.app_key_pubkey)
     }
 
     /// Recompute `authorization_state` from the current profile roster projection.
     pub fn recompute_authorization(&mut self) {
-        let projection = self.profile_projection();
+        let projection =
+            project_iris_profile_roster(self.profile_id, self.profile_roster_ops.clone());
         self.authorization_state = if projection.can_write_roots(&self.app_key_pubkey) {
             AppKeyAuthorizationState::Authorized
         } else if projection.tombstones.contains_key(&self.app_key_pubkey)
             || self.authorization_state == AppKeyAuthorizationState::Authorized
         {
+            AppKeyAuthorizationState::Revoked
+        } else {
+            self.authorization_state
+        };
+        if self.authorization_state == AppKeyAuthorizationState::Authorized {
+            self.outbound_app_key_link_request = None;
+        }
+        self.profile_roster_projection = Some(projection);
+    }
+
+    fn recompute_authorization_from_app_keys(&mut self, projection: &AppKeysProjection) {
+        self.authorization_state = if projection.contains(&self.app_key_pubkey) {
+            AppKeyAuthorizationState::Authorized
+        } else if self.authorization_state == AppKeyAuthorizationState::Authorized {
             AppKeyAuthorizationState::Revoked
         } else {
             self.authorization_state
@@ -284,9 +317,10 @@ impl ProfileState {
                 .as_ref()
                 .is_some_and(|snap| snap.contains(app_key_pubkey))
         {
+            let before = self.inbound_app_key_link_requests.len();
             self.inbound_app_key_link_requests
                 .retain(|request| request.app_key_pubkey != app_key_pubkey);
-            return Ok(false);
+            return Ok(before != self.inbound_app_key_link_requests.len());
         }
 
         let label = label.and_then(|label| {
@@ -456,6 +490,7 @@ impl Profile {
             authorization_state: AppKeyAuthorizationState::AwaitingApproval,
             app_key_label: app_key_label.clone(),
             app_keys: None,
+            profile_roster_projection: None,
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
         };
@@ -503,6 +538,7 @@ impl Profile {
             authorization_state: AppKeyAuthorizationState::AwaitingApproval,
             app_key_label: app_key_label.clone(),
             app_keys: None,
+            profile_roster_projection: None,
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
         };
@@ -569,6 +605,7 @@ impl Profile {
             authorization_state: AppKeyAuthorizationState::AwaitingApproval,
             app_key_label: app_key_label.clone(),
             app_keys: None,
+            profile_roster_projection: None,
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
         };
@@ -656,6 +693,7 @@ impl Profile {
         self.state.profile_id = profile_id;
         self.state.profile_roster_ops = profile_roster_ops;
         self.state.app_keys = None;
+        self.state.profile_roster_projection = None;
         self.state.authorization_state = AppKeyAuthorizationState::AwaitingApproval;
         self.state.outbound_app_key_link_request = None;
         self.state.inbound_app_key_link_requests.clear();
@@ -710,6 +748,7 @@ impl Profile {
             authorization_state: AppKeyAuthorizationState::AwaitingApproval,
             app_key_label,
             app_keys: None,
+            profile_roster_projection: None,
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
         };
@@ -745,18 +784,20 @@ impl Profile {
         if !self.state.can_admin_profile() {
             return Err(ProfileError::NoAdminAuthority);
         }
-        if let Some(snap) = &self.state.app_keys
-            && snap.contains(app_key_pubkey_hex)
-        {
-            return Err(ProfileError::AppKeyAlreadyAuthorized);
-        }
-        if self
+        let already_authorized = self
             .state
-            .profile_projection()
-            .tombstones
-            .contains_key(app_key_pubkey_hex)
-        {
-            return Err(ProfileError::AppKeyTombstoned);
+            .app_keys
+            .as_ref()
+            .is_some_and(|snap| snap.contains(app_key_pubkey_hex));
+        if already_authorized {
+            let before = self.state.inbound_app_key_link_requests.len();
+            self.state
+                .inbound_app_key_link_requests
+                .retain(|request| request.app_key_pubkey != app_key_pubkey_hex);
+            if before != self.state.inbound_app_key_link_requests.len() {
+                return self.current_app_keys_projection();
+            }
+            return Err(ProfileError::AppKeyAlreadyAuthorized);
         }
         let now = next_profile_timestamp(&self.state);
         self.append_profile_roster_op(
@@ -1007,6 +1048,7 @@ impl Profile {
             now,
         )?;
         self.state.profile_roster_ops.push(add_op);
+        self.state.profile_roster_projection = None;
 
         if should_rotate_epoch {
             let dck = generate_dck();
@@ -1097,6 +1139,7 @@ impl Profile {
             created_at,
         )?;
         self.state.profile_roster_ops.push(signed);
+        self.state.profile_roster_projection = None;
         Ok(())
     }
 
@@ -1137,6 +1180,7 @@ impl Profile {
             created_at,
         )?;
         self.state.profile_roster_ops.push(signed);
+        self.state.profile_roster_projection = None;
         Ok(())
     }
 
@@ -1193,6 +1237,7 @@ impl Profile {
             next_profile_timestamp(&self.state),
         )?;
         self.state.profile_roster_ops.push(signed);
+        self.state.profile_roster_projection = None;
         self.state.sync_app_keys_from_profile();
         Ok(KeyWrapRepairOutcome {
             epoch: *epoch,

@@ -983,7 +983,7 @@ fn apply_roster_op_effect(
     match &signed.content.op {
         IrisProfileRosterOp::AddFacet { facet } => {
             if projection.tombstones.contains_key(&facet.pubkey) {
-                return false;
+                projection.tombstones.remove(&facet.pubkey);
             }
             if !facet_capabilities_are_valid(facet) {
                 return false;
@@ -2001,7 +2001,7 @@ mod tests {
     }
 
     #[test]
-    fn tombstone_prevents_stale_or_later_resurrection() {
+    fn tombstone_and_readd_follow_timestamp_order() {
         let profile_id = IrisProfileId::new_v4();
         let admin = Keys::generate();
         let phone = Keys::generate();
@@ -2034,7 +2034,21 @@ mod tests {
             12,
         );
         ops.push(remove_phone);
-        let stale_resurrection = signed_op_with_parents(
+
+        let tombstoned_projection = project(profile_id, ops.clone());
+
+        assert!(tombstoned_projection.tombstones.contains_key(&phone_pubkey));
+        assert!(
+            !tombstoned_projection
+                .active_facets
+                .contains_key(&phone_pubkey)
+        );
+        assert_eq!(
+            tombstoned_projection.key_wrap_status(&phone_pubkey, 1),
+            KeyWrapStatus::Tombstoned
+        );
+
+        let later_readd = signed_op_with_parents(
             &admin,
             profile_id,
             iris_profile_roster_parent_ids(&ops),
@@ -2042,21 +2056,25 @@ mod tests {
                 facet: IrisProfileFacet::app_key(
                     phone_pubkey.clone(),
                     13,
-                    Some("same old key".to_string()),
+                    Some("same key approved again".to_string()),
                     IrisProfileCapabilities::app_writer(),
                 ),
             },
             13,
         );
-        ops.push(stale_resurrection);
+        ops.push(later_readd);
+        let readded_projection = project(profile_id, ops);
 
-        let projection = project(profile_id, ops);
-
-        assert!(projection.tombstones.contains_key(&phone_pubkey));
-        assert!(!projection.active_facets.contains_key(&phone_pubkey));
+        assert!(!readded_projection.tombstones.contains_key(&phone_pubkey));
+        assert!(readded_projection.active_facets.contains_key(&phone_pubkey));
         assert_eq!(
-            projection.key_wrap_status(&phone_pubkey, 1),
-            KeyWrapStatus::Tombstoned
+            readded_projection
+                .active_facets
+                .get(&phone_pubkey)
+                .unwrap()
+                .label
+                .as_deref(),
+            Some("same key approved again")
         );
     }
 

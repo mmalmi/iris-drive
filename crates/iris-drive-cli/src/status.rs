@@ -561,8 +561,11 @@ pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &m
             || provider_refresh_key(current_root_cid.as_deref(), &[]),
             ToOwned::to_owned,
         );
+    let initialized = key_path_in(config_dir).exists()
+        && config_path_in(config_dir).exists()
+        && config.profile.is_some();
     let summary = status_summary(
-        already_initialized(config_dir),
+        initialized,
         profile_block.as_ref(),
         authorized_app_key_count,
         online_app_key_count,

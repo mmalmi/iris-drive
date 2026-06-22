@@ -96,6 +96,52 @@ fn direct_root_republishes_after_short_native_cadence() {
     ));
 }
 
+#[test]
+fn direct_root_profile_stream_cache_reuses_unchanged_config() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let account = Profile::create(config_dir.path(), Some("native".to_string())).unwrap();
+    let config = AppConfig {
+        profile: Some(account.state.clone()),
+        ..AppConfig::default()
+    };
+    let mut exchange = DirectRootExchange::default();
+    let mut loads = 0;
+    let initial_fingerprint = ConfigFileFingerprint {
+        len: 10,
+        modified: None,
+    };
+
+    let first = exchange
+        .cached_profile_stream_root_scope_id_from_config(initial_fingerprint.clone(), || {
+            loads += 1;
+            Ok(config.clone())
+        })
+        .unwrap();
+    let second = exchange
+        .cached_profile_stream_root_scope_id_from_config(initial_fingerprint, || {
+            loads += 1;
+            Ok(AppConfig::default())
+        })
+        .unwrap();
+    let changed = exchange
+        .cached_profile_stream_root_scope_id_from_config(
+            ConfigFileFingerprint {
+                len: 11,
+                modified: None,
+            },
+            || {
+                loads += 1;
+                Ok(AppConfig::default())
+            },
+        )
+        .unwrap();
+
+    assert_eq!(first, Some(account.state.root_scope_id()));
+    assert_eq!(second, first);
+    assert_eq!(changed, None);
+    assert_eq!(loads, 2);
+}
+
 const _: () = {
     assert!(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS >= 30);
     assert!(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS >= DIRECT_ROOT_REPUBLISH_INTERVAL_SECS * 6);

@@ -1,4 +1,7 @@
-use super::{FfiApp, SentAppKeyLinkRequest, app_key_link_request_send_due, normalize_pubkey};
+use super::{
+    FfiApp, NATIVE_RUNTIME_CONFIG_CACHE, SentAppKeyLinkRequest, app_key_link_request_send_due,
+    load_native_runtime_config_cached, normalize_pubkey,
+};
 use crate::NativeAppAction;
 use crate::state::{UiShare, UiShareMember};
 use iris_drive_core::paths::config_path_in;
@@ -32,6 +35,40 @@ fn share_recipient_evidence_json(config_dir: &Path, display_name: &str) -> Strin
         ],
     };
     serde_json::to_string(&evidence).unwrap()
+}
+
+#[test]
+fn native_runtime_config_cache_reuses_unchanged_config_and_invalidates_on_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = config_path_in(dir.path());
+    let first_config = AppConfig {
+        relays: vec!["wss://first.example".to_owned()],
+        ..AppConfig::default()
+    };
+    first_config.save(&config_path).unwrap();
+    NATIVE_RUNTIME_CONFIG_CACHE.lock().unwrap().clear();
+
+    let first = load_native_runtime_config_cached(&config_path).unwrap();
+    assert_eq!(first.relays, vec!["wss://first.example"]);
+
+    NATIVE_RUNTIME_CONFIG_CACHE
+        .lock()
+        .unwrap()
+        .get_mut(&config_path)
+        .unwrap()
+        .config
+        .relays = vec!["cached".to_owned()];
+    let cached = load_native_runtime_config_cached(&config_path).unwrap();
+    assert_eq!(cached.relays, vec!["cached"]);
+
+    let changed_config = AppConfig {
+        relays: vec!["wss://changed.example".to_owned()],
+        ..AppConfig::default()
+    };
+    changed_config.save(&config_path).unwrap();
+
+    let refreshed = load_native_runtime_config_cached(&config_path).unwrap();
+    assert_eq!(refreshed.relays, vec!["wss://changed.example"]);
 }
 
 fn ui_share_member<'a>(share: &'a UiShare, profile_id: &str) -> &'a UiShareMember {
@@ -1229,7 +1266,7 @@ fn owner_can_approve_and_revoke_linked_app_keys() {
 }
 
 #[test]
-fn approving_tombstoned_inbound_request_surfaces_error_and_keeps_request() {
+fn approving_tombstoned_inbound_request_readds_device() {
     let owner_dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
 
@@ -1283,25 +1320,17 @@ fn approving_tombstoned_inbound_request_surfaces_error_and_keeps_request() {
         .profile_roster_ops
         .len();
 
-    let rejected = app.dispatch(NativeAppAction::ApproveDevice {
+    let readded = app.dispatch(NativeAppAction::ApproveDevice {
         request,
-        label: "Phone".to_owned(),
+        label: "Phone again".to_owned(),
     });
 
-    assert!(
-        rejected.error.contains("previously removed"),
-        "{}",
-        rejected.error
-    );
-    let account = rejected.ui.profile.as_ref().unwrap();
-    assert_eq!(account.inbound_app_key_link_requests.len(), 1);
-    assert!(
-        !rejected
-            .ui
-            .app_actors
-            .iter()
-            .any(|device| device.pubkey == linked_device)
-    );
+    assert!(readded.error.is_empty(), "{}", readded.error);
+    let account = readded.ui.profile.as_ref().unwrap();
+    assert!(account.inbound_app_key_link_requests.is_empty());
+    assert!(readded.ui.app_actors.iter().any(|device| {
+        device.pubkey == linked_device && device.label == "Phone again" && device.role == "member"
+    }));
     assert_eq!(
         AppConfig::load_or_default(&config_path)
             .unwrap()
@@ -1309,7 +1338,7 @@ fn approving_tombstoned_inbound_request_surfaces_error_and_keeps_request() {
             .unwrap()
             .profile_roster_ops
             .len(),
-        op_count_before
+        op_count_before + 2
     );
 }
 

@@ -831,6 +831,7 @@ dck_generation = 1
                 authorization_state: crate::profile::AppKeyAuthorizationState::Authorized,
                 app_key_label: None,
                 app_keys: None,
+                profile_roster_projection: None,
                 outbound_app_key_link_request: None,
                 inbound_app_key_link_requests: Vec::new(),
             }),

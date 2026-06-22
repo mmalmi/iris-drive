@@ -16,6 +16,7 @@ use iris_drive_core::provider::{
 use iris_drive_core::{AppConfig, Profile};
 use serde_json::json;
 
+use crate::ffi::load_native_runtime_config_cached;
 use crate::provider_metadata::provider_modified_at_index;
 
 const PROVIDER_IMPORT_RETRY_DELAYS_MS: &[u64] = &[25, 50, 100, 200, 400];
@@ -302,7 +303,10 @@ fn run_native_provider_resolve_path(
 pub(crate) fn run_native_provider_list(data_dir: &str) -> anyhow::Result<serde_json::Value> {
     let runtime = native_provider_runtime()?;
     runtime.block_on(async {
-        let daemon = iris_drive_core::Daemon::open(data_dir)
+        let config_dir = Path::new(data_dir);
+        let config = load_native_runtime_config_cached(&config_path_in(config_dir))
+            .map_err(anyhow::Error::msg)?;
+        let daemon = iris_drive_core::Daemon::open_with_config(config_dir, config)
             .with_context(|| format!("opening daemon at {}", Path::new(data_dir).display()))?;
         let visible_view = iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
             .await

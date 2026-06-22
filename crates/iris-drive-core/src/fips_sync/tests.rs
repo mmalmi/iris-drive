@@ -386,6 +386,7 @@ fn discovery_scope_uses_iris_drive_overlay() {
             authorization_state: crate::AppKeyAuthorizationState::AwaitingApproval,
             app_key_label: None,
             app_keys: None,
+            profile_roster_projection: None,
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
         }),
@@ -488,6 +489,7 @@ fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
                 dck_generation: 0,
                 wrapped_dck: std::collections::BTreeMap::default(),
             }),
+            profile_roster_projection: None,
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
         }),
@@ -525,6 +527,7 @@ fn pending_app_key_link_admin_is_allowed_for_roster_app_messages() {
             authorization_state: crate::AppKeyAuthorizationState::AwaitingApproval,
             app_key_label: None,
             app_keys: None,
+            profile_roster_projection: None,
             outbound_app_key_link_request: Some(crate::profile::PendingAppKeyLinkRequest {
                 admin_app_key_pubkey: admin_pubkey,
                 link_secret: "link-secret".into(),

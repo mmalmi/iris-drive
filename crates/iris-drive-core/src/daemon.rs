@@ -210,12 +210,23 @@ impl Daemon {
         if !key_path_in(&config_dir).exists() {
             return Err(DaemonError::Uninitialized);
         }
+        let config = AppConfig::load_or_default(config_path_in(&config_dir))?;
+        Self::open_with_config(config_dir, config)
+    }
+
+    pub fn open_with_config(
+        config_dir: impl Into<PathBuf>,
+        config: AppConfig,
+    ) -> Result<Self, DaemonError> {
+        let config_dir = config_dir.into();
+        if !key_path_in(&config_dir).exists() {
+            return Err(DaemonError::Uninitialized);
+        }
         std::fs::create_dir_all(&config_dir)?;
         let blocks_dir = config_dir.join("blocks");
         std::fs::create_dir_all(&blocks_dir)?;
         let store = FsBlobStore::new(&blocks_dir).map_err(|e| DaemonError::Store(e.to_string()))?;
         let tree = Arc::new(HashTree::new(HashTreeConfig::new(Arc::new(store))));
-        let config = AppConfig::load_or_default(config_path_in(&config_dir))?;
         Ok(Self {
             config_dir,
             blocks_dir,

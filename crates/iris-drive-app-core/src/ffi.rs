@@ -1,16 +1,15 @@
-#[cfg(not(test))]
 use std::collections::BTreeMap;
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 
 use anyhow::Context;
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use hashtree_core::{Cid, NHashData, nhash_encode_full};
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 use iris_drive_core::app_key_link_transport::{
     APP_KEY_LINK_REQUEST_APP_TOPIC, APP_KEY_LINK_ROSTER_ACK_APP_TOPIC,
     APP_KEY_LINK_ROSTER_APP_TOPIC, AppKeyLinkRequestFrame, AppKeyLinkRosterAckFrame,
@@ -35,7 +34,7 @@ use iris_drive_core::backup_summary::{backup_target_summary, blossom_backup_targ
 use iris_drive_core::config::{DEFAULT_BLOSSOM_SERVERS, DEFAULT_RELAYS};
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 use iris_drive_core::daemon::EmbeddedHashtreeHost;
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 use iris_drive_core::fips_status::online_device_ids;
 use iris_drive_core::fips_status::{
     fips_error_is_present, normalize_fips_status_value, string_vec_from_json_array,
@@ -50,7 +49,7 @@ use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 use serde_json::json;
 
 use crate::actions::NativeAppAction;
@@ -132,22 +131,80 @@ pub(crate) use android_test_support::native_apply_owner_snapshot_for_test_json;
 const DEFAULT_ROOT_STATUS: &str = "SAF provider root";
 const NATIVE_FIPS_STATUS_FILE_NAME: &str = "native-fips-status.json";
 const NATIVE_FIPS_STATUS_FRESH_SECS: u64 = 20;
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 const NATIVE_SYNC_RELAY_TIMEOUT_SECS: u64 = 10;
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 const APP_KEY_LINK_REQUEST_RETRY_SECS: u64 = 10;
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 const APP_KEY_LINK_REQUEST_STARTUP_RETRY_MILLIS: u64 = 1_000;
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 const APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS: u8 = 40;
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 const APP_KEY_LINK_ROSTER_RETRY_SECS: u64 = 2;
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 const APP_KEY_LINK_EXCHANGE_TICK_MILLIS: u64 = 1_000;
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 const NATIVE_DIRECT_ROOT_EXCHANGE_MILLIS: u64 = 10_000;
 
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 #[derive(Debug, Clone, Copy)]
 struct SentAppKeyLinkRequest {
     last_sent: std::time::Instant,
     attempts: u8,
 }
 
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NativeConfigFileFingerprint {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+#[derive(Debug, Default)]
+struct NativeAppConfigCache {
+    fingerprint: Option<NativeConfigFileFingerprint>,
+    config: Option<AppConfig>,
+}
+
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+impl NativeAppConfigCache {
+    fn load(&mut self, config_dir: &Path) -> Result<AppConfig, String> {
+        let config_path = config_path_in(config_dir);
+        let fingerprint = native_config_file_fingerprint(&config_path)
+            .map_err(|error| format!("reading config metadata: {error}"))?;
+        if self.fingerprint.as_ref() == Some(&fingerprint)
+            && let Some(config) = self.config.as_ref()
+        {
+            return Ok(config.clone());
+        }
+
+        let config = AppConfig::load_or_default(&config_path)
+            .map_err(|error| format!("loading config: {error}"))?;
+        self.fingerprint = Some(fingerprint);
+        self.config = Some(config.clone());
+        Ok(config)
+    }
+}
+
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+fn native_config_file_fingerprint(path: &Path) -> std::io::Result<NativeConfigFileFingerprint> {
+    match std::fs::metadata(path) {
+        Ok(metadata) => Ok(NativeConfigFileFingerprint {
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(NativeConfigFileFingerprint {
+                len: 0,
+                modified: None,
+            })
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 fn app_key_link_request_send_due(
     sent: Option<SentAppKeyLinkRequest>,
     now: std::time::Instant,
@@ -158,11 +215,67 @@ fn app_key_link_request_send_due(
     now.duration_since(sent.last_sent) >= app_key_link_request_retry_interval(sent.attempts)
 }
 
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 fn app_key_link_request_retry_interval(attempts: u8) -> std::time::Duration {
     if attempts < APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS {
         std::time::Duration::from_millis(APP_KEY_LINK_REQUEST_STARTUP_RETRY_MILLIS)
     } else {
         std::time::Duration::from_secs(APP_KEY_LINK_REQUEST_RETRY_SECS)
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RuntimeConfigFileFingerprint {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+}
+
+#[derive(Clone)]
+struct RuntimeConfigCacheEntry {
+    fingerprint: RuntimeConfigFileFingerprint,
+    config: AppConfig,
+}
+
+static NATIVE_RUNTIME_CONFIG_CACHE: LazyLock<Mutex<BTreeMap<PathBuf, RuntimeConfigCacheEntry>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+pub(crate) fn load_native_runtime_config_cached(config_path: &Path) -> Result<AppConfig, String> {
+    let fingerprint = runtime_config_file_fingerprint(config_path)
+        .map_err(|error| format!("reading config metadata: {error}"))?;
+    if let Ok(cache) = NATIVE_RUNTIME_CONFIG_CACHE.lock()
+        && let Some(entry) = cache.get(config_path)
+        && entry.fingerprint == fingerprint
+    {
+        return Ok(entry.config.clone());
+    }
+
+    let config = AppConfig::load_or_default(config_path)
+        .map_err(|error| format!("loading config: {error}"))?;
+    if let Ok(mut cache) = NATIVE_RUNTIME_CONFIG_CACHE.lock() {
+        cache.insert(
+            config_path.to_path_buf(),
+            RuntimeConfigCacheEntry {
+                fingerprint,
+                config: config.clone(),
+            },
+        );
+    }
+    Ok(config)
+}
+
+fn runtime_config_file_fingerprint(path: &Path) -> std::io::Result<RuntimeConfigFileFingerprint> {
+    match std::fs::metadata(path) {
+        Ok(metadata) => Ok(RuntimeConfigFileFingerprint {
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            Ok(RuntimeConfigFileFingerprint {
+                len: 0,
+                modified: None,
+            })
+        }
+        Err(error) => Err(error),
     }
 }
 
@@ -223,9 +336,9 @@ struct NativeAppRuntime {
     state: NativeAppState,
     data_dir: String,
     app_version: String,
-    #[cfg(not(test))]
+    #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
     app_key_link_exchange_running: Arc<AtomicBool>,
-    #[cfg(not(test))]
+    #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
     app_key_link_exchange_stop: Arc<AtomicBool>,
     #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
     browser_gateway_running: Arc<AtomicBool>,
@@ -253,9 +366,9 @@ impl NativeAppRuntime {
             state,
             data_dir,
             app_version,
-            #[cfg(not(test))]
+            #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
             app_key_link_exchange_running: Arc::new(AtomicBool::new(false)),
-            #[cfg(not(test))]
+            #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
             app_key_link_exchange_stop: Arc::new(AtomicBool::new(false)),
             #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
             browser_gateway_running: Arc::new(AtomicBool::new(false)),
@@ -1088,8 +1201,7 @@ impl NativeAppRuntime {
     }
 
     fn load_config(&self) -> Result<AppConfig, String> {
-        AppConfig::load_or_default(config_path_in(Path::new(&self.data_dir)))
-            .map_err(|error| format!("loading config: {error}"))
+        load_native_runtime_config_cached(&config_path_in(Path::new(&self.data_dir)))
     }
 
     fn finish_profile_init(&self, account: &Profile) -> Result<(), String> {
@@ -1105,7 +1217,7 @@ impl NativeAppRuntime {
 
     #[allow(clippy::unused_self)]
     fn start_app_key_link_exchange_if_needed(&mut self) {
-        #[cfg(not(test))]
+        #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
         {
             let Ok(config) = self.load_config() else {
                 return;
@@ -1136,7 +1248,7 @@ impl NativeAppRuntime {
 
     #[allow(clippy::unused_self)]
     fn stop_app_key_link_exchange(&mut self) {
-        #[cfg(not(test))]
+        #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
         {
             self.app_key_link_exchange_stop
                 .store(true, Ordering::Release);
@@ -1311,8 +1423,7 @@ impl NativeAppRuntime {
             self.refresh_ui_summary(None);
             return;
         };
-        let mut account = raw_account.clone();
-        account.recompute_authorization();
+        let account = raw_account.clone();
         self.state.ui.sites_portal_url =
             if config.local_nhash_resolver_enabled && account.is_authorized() {
                 native_browser_gateway_port_for_state(Path::new(&self.data_dir))
@@ -1553,6 +1664,7 @@ impl NativeAppRuntime {
 #[cfg(not(test))]
 impl Drop for NativeAppRuntime {
     fn drop(&mut self) {
+        #[cfg(any(target_os = "ios", target_os = "android"))]
         self.app_key_link_exchange_stop
             .store(true, Ordering::Release);
         #[cfg(any(target_os = "ios", target_os = "android"))]
@@ -1560,7 +1672,7 @@ impl Drop for NativeAppRuntime {
     }
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 fn run_app_key_link_exchange(data_dir: &str, stop: Arc<AtomicBool>) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
@@ -1729,7 +1841,7 @@ fn write_native_browser_gateway_status(config_dir: &Path, value: Value) {
     }
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 #[allow(clippy::too_many_lines)]
 async fn run_app_key_link_exchange_async(
     data_dir: &str,
@@ -1779,6 +1891,7 @@ async fn run_app_key_link_exchange_async(
     let mut sent_requests = BTreeMap::new();
     let mut sent_rosters = BTreeMap::new();
     let mut acked_rosters = BTreeSet::new();
+    let mut app_key_link_config_cache = NativeAppConfigCache::default();
     let mut direct_roots = iris_drive_core::DirectRootExchange::default();
     let mut app_key_link_tick = tokio::time::interval(std::time::Duration::from_millis(
         APP_KEY_LINK_EXCHANGE_TICK_MILLIS,
@@ -1798,6 +1911,7 @@ async fn run_app_key_link_exchange_async(
         &mut sent_requests,
         &mut sent_rosters,
         &acked_rosters,
+        &mut app_key_link_config_cache,
     )
     .await?;
     if let Err(error) = direct_roots.announce_current_state(config_dir, &sync).await {
@@ -1821,6 +1935,7 @@ async fn run_app_key_link_exchange_async(
                     &mut sent_requests,
                     &mut sent_rosters,
                     &acked_rosters,
+                    &mut app_key_link_config_cache,
                 ).await?;
             }
             _ = direct_root_tick.tick() => {
@@ -1889,7 +2004,7 @@ async fn run_app_key_link_exchange_async(
     Ok(())
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 async fn drive_app_key_link_exchange_tick(
     config_dir: &Path,
     relay_client: &nostr_sdk::Client,
@@ -1898,9 +2013,9 @@ async fn drive_app_key_link_exchange_tick(
     sent_requests: &mut BTreeMap<String, SentAppKeyLinkRequest>,
     sent_rosters: &mut BTreeMap<String, std::time::Instant>,
     acked_rosters: &BTreeSet<String>,
+    config_cache: &mut NativeAppConfigCache,
 ) -> Result<bool, String> {
-    let config = AppConfig::load_or_default(config_path_in(config_dir))
-        .map_err(|error| format!("loading config: {error}"))?;
+    let config = config_cache.load(config_dir)?;
     let Some(state) = config.profile.as_ref() else {
         return Ok(false);
     };
@@ -1922,7 +2037,7 @@ async fn drive_app_key_link_exchange_tick(
     Ok(true)
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 async fn send_native_pending_app_key_link_request(
     relay_client: &nostr_sdk::Client,
     device_keys: &nostr_sdk::Keys,
@@ -1986,7 +2101,7 @@ async fn send_native_pending_app_key_link_request(
     Ok(())
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 async fn send_native_authorized_app_key_link_rosters(
     _config_dir: &Path,
     sync: &iris_drive_core::FsFipsBlockSync,
@@ -2056,7 +2171,7 @@ async fn send_native_authorized_app_key_link_rosters(
     Ok(())
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 async fn handle_native_app_key_link_app_message(
     config_dir: &Path,
     sync: &iris_drive_core::FsFipsBlockSync,
@@ -2075,7 +2190,7 @@ async fn handle_native_app_key_link_app_message(
     }
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 fn handle_native_app_key_link_request(
     config_dir: &Path,
     message: &iris_drive_core::FipsAppMessage,
@@ -2123,7 +2238,7 @@ fn handle_native_app_key_link_request(
     Ok(true)
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 fn handle_native_app_key_link_request_event(
     config_dir: &Path,
     event: &nostr_sdk::Event,
@@ -2152,7 +2267,7 @@ fn handle_native_app_key_link_request_event(
     Ok(true)
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 #[allow(clippy::too_many_lines)]
 async fn handle_native_app_key_link_roster(
     config_dir: &Path,
@@ -2252,7 +2367,7 @@ async fn handle_native_app_key_link_roster(
     Ok(true)
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 fn handle_native_app_key_link_roster_ack(
     config_dir: &Path,
     message: &iris_drive_core::FipsAppMessage,
@@ -2288,7 +2403,7 @@ fn handle_native_app_key_link_roster_ack(
     Ok(true)
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 async fn send_native_app_key_link_roster_ack(
     sync: &iris_drive_core::FsFipsBlockSync,
     frame: &AppKeyLinkRosterAckFrame,
@@ -2439,7 +2554,7 @@ fn load_native_fips_status(config_dir: &Path) -> Option<Value> {
     serde_json::from_slice(&data).ok()
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 async fn write_native_fips_status(
     config_dir: &Path,
     sync: &iris_drive_core::FsFipsBlockSync,
@@ -2476,7 +2591,7 @@ async fn write_native_fips_status(
     write_native_fips_status_value(config_dir, &value)
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 fn write_native_fips_error(config_dir: &Path, error: &str) {
     let raw = json!({
         "running": false,
@@ -2503,7 +2618,7 @@ fn write_native_fips_error(config_dir: &Path, error: &str) {
     }
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 fn write_native_fips_status_value(
     config_dir: &Path,
     value: &serde_json::Value,
@@ -3028,7 +3143,7 @@ fn decode_app_key_approval_request(request: &str) -> Result<AppKeyApprovalReques
     })
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 fn app_key_approval_link_secret(request: &str) -> String {
     parse_app_key_approval_request(request)
         .ok()
