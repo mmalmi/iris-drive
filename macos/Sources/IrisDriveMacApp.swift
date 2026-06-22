@@ -1411,7 +1411,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 DispatchQueue.main.async {
                     guard let self else { return }
                     if let url {
-                        self.openMountedDriveFolder(url)
+                        self.openFileProviderURL(url, selectingItem: targetPath != nil)
                         return
                     }
 
@@ -1490,8 +1490,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func openMountedDriveFolder(_ url: URL) {
-        if NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: url.path) {
+    private func openFileProviderURL(_ url: URL, selectingItem: Bool) {
+        if selectingItem {
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            irisDriveDebugLog("Iris Drive mounted drive item revealed: \(url.path)")
+        } else if NSWorkspace.shared.open(url) {
             irisDriveDebugLog("Iris Drive mounted drive folder opened: \(url.path)")
         } else {
             NSWorkspace.shared.activateFileViewerSelecting([url])

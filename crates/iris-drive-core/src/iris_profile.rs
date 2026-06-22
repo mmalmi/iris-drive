@@ -973,6 +973,13 @@ fn apply_projected_op(
     if !signer_can_apply_with_roster_parents(projection, signed, accepted_ops_by_id) {
         return false;
     }
+    apply_roster_op_effect(projection, signed)
+}
+
+fn apply_roster_op_effect(
+    projection: &mut IrisProfileRosterProjection,
+    signed: &SignedIrisProfileRosterOp,
+) -> bool {
     match &signed.content.op {
         IrisProfileRosterOp::AddFacet { facet } => {
             if projection.tombstones.contains_key(&facet.pubkey) {
@@ -1080,11 +1087,32 @@ fn project_roster_parent_closure(
         let parent = accepted_ops_by_id.get(&parent_id)?;
         pending.extend(parent.content.parents.iter().cloned());
     }
-    let parent_ops = seen
+    let mut parent_ops = seen
         .into_iter()
         .map(|op_id| accepted_ops_by_id.get(&op_id).cloned())
         .collect::<Option<Vec<_>>>()?;
-    let parent_projection = project_iris_profile_roster(profile_id, parent_ops);
+    parent_ops.sort_by(|left, right| {
+        left.content
+            .created_at
+            .cmp(&right.content.created_at)
+            .then_with(|| left.op_id.cmp(&right.op_id))
+    });
+    let mut parent_projection = IrisProfileRosterProjection {
+        profile_id,
+        active_facets: BTreeMap::new(),
+        tombstones: BTreeMap::new(),
+        key_epochs: BTreeMap::new(),
+        accepted_op_ids: Vec::new(),
+        rejected_op_ids: Vec::new(),
+    };
+    for op in parent_ops {
+        if validate_signed_iris_profile_roster_op(&op).is_err()
+            || !apply_roster_op_effect(&mut parent_projection, &op)
+        {
+            return None;
+        }
+        parent_projection.accepted_op_ids.push(op.op_id);
+    }
     if parents
         .iter()
         .all(|parent| parent_projection.accepted_op_ids.contains(parent))
@@ -1890,6 +1918,40 @@ mod tests {
         assert!(projection.can_write_roots(&valid_invitee_pubkey));
         assert_eq!(projection.accepted_op_ids.len(), 4);
         assert_eq!(projection.rejected_op_ids.len(), 1);
+    }
+
+    #[test]
+    fn roster_parent_projection_scales_with_dense_accepted_history() {
+        let profile_id = IrisProfileId::new_v4();
+        let admin = Keys::generate();
+        let mut ops = vec![bootstrap_op(&admin, profile_id, 10)];
+        let mut parent_ids = vec![ops[0].op_id.clone()];
+
+        for index in 0..32 {
+            let device = Keys::generate();
+            let op = signed_op_with_parents(
+                &admin,
+                profile_id,
+                parent_ids.clone(),
+                IrisProfileRosterOp::AddFacet {
+                    facet: IrisProfileFacet::app_key(
+                        device.public_key().to_hex(),
+                        11 + index,
+                        Some(format!("device {index}")),
+                        IrisProfileCapabilities::app_writer(),
+                    ),
+                },
+                11 + index,
+            );
+            parent_ids.push(op.op_id.clone());
+            ops.push(op);
+        }
+
+        let projection = project(profile_id, ops);
+
+        assert_eq!(projection.accepted_op_ids.len(), 33);
+        assert!(projection.rejected_op_ids.is_empty());
+        assert_eq!(projection.active_facets.len(), 33);
     }
 
     #[test]
