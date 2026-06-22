@@ -36,10 +36,13 @@ use crate::daemon::DaemonError;
 use crate::paths::{config_path_in, key_path_in};
 use crate::{Daemon, PRIMARY_DRIVE_ID};
 
+mod caldav;
 mod paths;
 mod proxy;
 mod response;
 
+#[allow(clippy::wildcard_imports)]
+use self::caldav::*;
 pub use self::paths::encode_immutable_host_label;
 #[allow(clippy::wildcard_imports)]
 use self::paths::*;
@@ -516,6 +519,10 @@ async fn handle_gateway_request(
     headers: HeaderMap,
     body: Bytes,
 ) -> Result<Response, (StatusCode, String)> {
+    if is_caldav_path(uri.path()) {
+        return handle_caldav_request(state, &method, &uri, &headers, body.as_ref()).await;
+    }
+
     if uri.path() == SHARE_ACTION_API_PATH {
         return handle_share_action_api(&state, &method, &headers, body.as_ref());
     }
@@ -1274,6 +1281,11 @@ pub fn local_iris_url(port: u16) -> String {
 }
 
 #[must_use]
+pub fn local_caldav_url(port: u16) -> String {
+    format!("http://localhost:{port}/caldav/")
+}
+
+#[must_use]
 pub fn local_portal_npub_path_url(
     port: u16,
     npub: &str,
@@ -1330,5 +1342,7 @@ pub fn local_nhash_url(port: u16, nhash: &str, filename_hint: Option<&str>) -> S
     format!("http://{LOCAL_NHASH_RESOLVER_HOST}:{port}{path}")
 }
 
+#[cfg(test)]
+mod caldav_tests;
 #[cfg(test)]
 mod tests;

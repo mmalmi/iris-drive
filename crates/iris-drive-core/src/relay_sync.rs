@@ -22,7 +22,8 @@ use thiserror::Error;
 
 use crate::app_key_link_transport::AppKeyLinkRosterFrame;
 use crate::app_keys::{AppKeysProjection, ApplyDecision};
-use crate::config::{AppConfig, AppKeyRootRef};
+use crate::calendar::CALENDAR_TREE_NAME;
+use crate::config::{AppConfig, AppKeyRootRef, Drive, DriveRole};
 use crate::nostr_events::{
     KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, build_app_key_link_request_event,
     build_drive_root_publish_event, build_private_hashtree_root_event, drive_root_d_tag,
@@ -538,6 +539,20 @@ pub fn apply_remote_files_root_event(
         local_only: false,
     };
     let app_key_pubkey = account.app_key_pubkey.clone();
+    if config.drive(&parsed.tree_name).is_none() {
+        if parsed.tree_name != CALENDAR_TREE_NAME {
+            return Ok(FilesRootApply::UnknownDrive);
+        }
+        config.upsert_drive(Drive {
+            root_scope_id: account.root_scope_id(),
+            drive_id: CALENDAR_TREE_NAME.into(),
+            display_name: "Calendar".into(),
+            role: DriveRole::Owner,
+            app_key_roots: BTreeMap::new(),
+            last_root_cid: None,
+            key_hex: None,
+        });
+    }
     let Some(drive) = config
         .drives
         .iter_mut()
@@ -977,5 +992,7 @@ fn drive_root_event_is_newer(candidate: &Event, current: &Event) -> bool {
     }
 }
 
+#[cfg(test)]
+mod calendar_tests;
 #[cfg(test)]
 mod tests;

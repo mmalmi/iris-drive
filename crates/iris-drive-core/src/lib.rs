@@ -6,6 +6,7 @@ pub mod backup_ops;
 pub mod backup_summary;
 pub mod block_sync;
 pub mod blossom_sync;
+pub mod calendar;
 pub mod config;
 pub mod daemon_liveness;
 pub mod direct_root_transport;

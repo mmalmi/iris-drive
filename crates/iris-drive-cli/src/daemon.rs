@@ -92,12 +92,23 @@ fn provider_root_poll_period(watch_interval_secs: u64) -> std::time::Duration {
 
 fn current_app_key_root_key(config: &AppConfig) -> Option<String> {
     let state = config.profile.as_ref()?;
-    let drive = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)?;
-    let root = drive.app_key_roots.get(&state.app_key_pubkey)?;
-    Some(format!(
-        "{}:{}:{}",
-        drive.drive_id, state.app_key_pubkey, root.root_cid
-    ))
+    let mut roots = config
+        .drives
+        .iter()
+        .filter(|drive| {
+            drive.drive_id == iris_drive_core::PRIMARY_DRIVE_ID
+                || drive.drive_id == iris_drive_core::calendar::CALENDAR_TREE_NAME
+        })
+        .filter_map(|drive| {
+            let root = drive.app_key_roots.get(&state.app_key_pubkey)?;
+            Some(format!(
+                "{}:{}:{}",
+                drive.drive_id, state.app_key_pubkey, root.root_cid
+            ))
+        })
+        .collect::<Vec<_>>();
+    roots.sort();
+    (!roots.is_empty()).then(|| roots.join("|"))
 }
 
 fn merged_drive_roots_key(config: &AppConfig) -> Option<String> {

@@ -454,6 +454,7 @@ pub(crate) async fn publish_current_state(
         }
     }
 
+    let mut published_primary_files_root = false;
     if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
         && let Some(root) = publishable_app_key_root(config_dir, drive, state).await?
     {
@@ -483,9 +484,35 @@ pub(crate) async fn publish_current_state(
             Ok(_) => report.published_drive_root = true,
             Err(error) => report.drive_root_publish_error = Some(error),
         }
+        published_primary_files_root = true;
+    }
 
-        if state.can_write_roots() {
-            let account = Profile::load(state.clone(), config_dir).context("loading profile")?;
+    if state.can_write_roots() {
+        let account = Profile::load(state.clone(), config_dir).context("loading profile")?;
+        let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
+            .context("loading app key")?;
+        for drive in standard_files_root_drives(config) {
+            let Some(root) = publishable_app_key_root(config_dir, drive, state).await? else {
+                continue;
+            };
+            ensure_publishable_root_locally_available(config_dir, &root.root_cid).await?;
+            if upload_blossom
+                && !(drive.drive_id == iris_drive_core::PRIMARY_DRIVE_ID
+                    && published_primary_files_root)
+            {
+                let (_upload, upload_error) =
+                    maybe_upload_root_to_blossom(config_dir, config, &device, &root.root_cid, None)
+                        .await?;
+                if let Some(error) = upload_error {
+                    let detail = format!("{}: {error}", drive.drive_id);
+                    report.files_root_publish_error = Some(
+                        report
+                            .files_root_publish_error
+                            .take()
+                            .map_or(detail.clone(), |existing| format!("{existing}; {detail}")),
+                    );
+                }
+            }
             match relay_publish_with_timeout(relay_sync::publish_files_root(
                 client,
                 account.app_key.keys(),
@@ -496,13 +523,26 @@ pub(crate) async fn publish_current_state(
             {
                 Ok(_) => report.published_files_root = true,
                 Err(error) => {
-                    report.files_root_publish_error = Some(error);
+                    let detail = format!("{}: {error}", drive.drive_id);
+                    report.files_root_publish_error = Some(
+                        report
+                            .files_root_publish_error
+                            .take()
+                            .map_or(detail.clone(), |existing| format!("{existing}; {detail}")),
+                    );
                 }
             }
         }
     }
 
     Ok(report)
+}
+
+fn standard_files_root_drives(config: &AppConfig) -> impl Iterator<Item = &iris_drive_core::Drive> {
+    config.drives.iter().filter(|drive| {
+        drive.drive_id == iris_drive_core::PRIMARY_DRIVE_ID
+            || drive.drive_id == iris_drive_core::calendar::CALENDAR_TREE_NAME
+    })
 }
 
 pub(crate) fn spawn_initial_publish(

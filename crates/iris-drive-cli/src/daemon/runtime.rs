@@ -189,6 +189,7 @@ pub(crate) fn cmd_daemon(
                     port,
                     iris_drive_core::PRIMARY_DRIVE_ID,
                 ),
+                "caldav_url": iris_drive_core::gateway::local_caldav_url(port),
                 "nhash_resolver_url": format!(
                     "http://{}:{port}/",
                     iris_drive_core::gateway::LOCAL_NHASH_RESOLVER_HOST,

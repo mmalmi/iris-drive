@@ -1657,6 +1657,7 @@ fn run_native_browser_gateway(data_dir: &str, stop: Arc<AtomicBool>) -> Result<(
                 "bind": gateway.local_addr().to_string(),
                 "hashtree_base_url": gateway_hashtree_base_url,
                 "portal_url": iris_drive_core::gateway::local_portal_url(gateway_port),
+                "caldav_url": iris_drive_core::gateway::local_caldav_url(gateway_port),
                 "proxy_bind": proxy.local_addr().to_string(),
                 "proxy_port": proxy_port,
                 "proxy_url": format!("http://127.0.0.1:{proxy_port}/"),

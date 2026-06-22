@@ -17,7 +17,8 @@ use hashtree_fs::FsBlobStore;
 use serde_json::json;
 use thiserror::Error;
 
-use crate::config::{AppConfig, AppKeyRootRef, ConfigError};
+use crate::calendar::CALENDAR_TREE_NAME;
+use crate::config::{AppConfig, AppKeyRootRef, ConfigError, Drive, DriveRole};
 use crate::conflict::ConflictState;
 use crate::indexer::{
     IndexError, index_dir_with_history_and_meta, layer_conflict_records,
@@ -167,6 +168,8 @@ pub enum DaemonError {
     Store(String),
     #[error("primary drive missing from config (expected drive_id={PRIMARY_DRIVE_ID})")]
     PrimaryDriveMissing,
+    #[error("drive missing from config: {0}")]
+    DriveMissing(String),
     #[error("primary drive has no recorded root")]
     PrimaryRootMissing,
     #[error("conflict record not found: {0}")]
@@ -310,7 +313,21 @@ impl Daemon {
     /// recording the root in config, so mount-backed edits sync with the same
     /// merge semantics as folder imports.
     pub async fn import_visible_root(&mut self, root: Cid) -> Result<ImportReport, DaemonError> {
-        self.import_visible_root_with_tombstone_base(root, None)
+        self.import_visible_root_for_drive(PRIMARY_DRIVE_ID, root)
+            .await
+    }
+
+    /// Persist a visible root for a specific configured tree/drive.
+    ///
+    /// This is used by app-specific web-compatible roots such as the Iris
+    /// Calendar `calendar` tree. The primary Drive import helpers above remain
+    /// the usual path for provider/mount edits.
+    pub async fn import_visible_root_for_drive(
+        &mut self,
+        drive_id: &str,
+        root: Cid,
+    ) -> Result<ImportReport, DaemonError> {
+        self.import_visible_root_with_tombstone_base_for_drive(drive_id, root, None)
             .await
     }
 
@@ -364,8 +381,28 @@ impl Daemon {
         root: Cid,
         tombstone_base_root: Option<Cid>,
     ) -> Result<ImportReport, DaemonError> {
-        self.import_visible_root_with_tombstone_base_and_paths(root, tombstone_base_root, None)
-            .await
+        self.import_visible_root_with_tombstone_base_for_drive(
+            PRIMARY_DRIVE_ID,
+            root,
+            tombstone_base_root,
+        )
+        .await
+    }
+
+    pub async fn import_visible_root_with_tombstone_base_for_drive(
+        &mut self,
+        drive_id: &str,
+        root: Cid,
+        tombstone_base_root: Option<Cid>,
+    ) -> Result<ImportReport, DaemonError> {
+        self.import_visible_root_with_tombstone_base_paths_and_local_only_for_drive(
+            drive_id,
+            root,
+            tombstone_base_root,
+            None,
+            false,
+        )
+        .await
     }
 
     pub async fn import_visible_root_with_tombstone_base_and_paths(
@@ -374,7 +411,8 @@ impl Daemon {
         tombstone_base_root: Option<Cid>,
         tombstone_paths: Option<&std::collections::BTreeSet<String>>,
     ) -> Result<ImportReport, DaemonError> {
-        self.import_visible_root_with_tombstone_base_paths_and_local_only(
+        self.import_visible_root_with_tombstone_base_paths_and_local_only_for_drive(
+            PRIMARY_DRIVE_ID,
             root,
             tombstone_base_root,
             tombstone_paths,
@@ -387,24 +425,32 @@ impl Daemon {
         &mut self,
         root: Cid,
     ) -> Result<ImportReport, DaemonError> {
-        self.import_visible_root_with_tombstone_base_paths_and_local_only(root, None, None, true)
-            .await
+        self.import_visible_root_with_tombstone_base_paths_and_local_only_for_drive(
+            PRIMARY_DRIVE_ID,
+            root,
+            None,
+            None,
+            true,
+        )
+        .await
     }
 
-    async fn import_visible_root_with_tombstone_base_paths_and_local_only(
+    async fn import_visible_root_with_tombstone_base_paths_and_local_only_for_drive(
         &mut self,
+        drive_id: &str,
         root: Cid,
         tombstone_base_root: Option<Cid>,
         tombstone_paths: Option<&std::collections::BTreeSet<String>>,
         local_only: bool,
     ) -> Result<ImportReport, DaemonError> {
+        self.ensure_drive_for_import(drive_id)?;
         let previous_root_cid = self
             .config
             .profile
             .as_ref()
             .and_then(|account| {
                 self.config
-                    .drive(PRIMARY_DRIVE_ID)
+                    .drive(drive_id)
                     .and_then(|d| d.app_key_roots.get(&account.app_key_pubkey))
             })
             .map(|entry| entry.root_cid.clone());
@@ -413,8 +459,8 @@ impl Daemon {
             None => None,
         };
 
-        let now = self.next_import_timestamp();
-        let mut root_meta = self.root_meta_for_import(now);
+        let now = self.next_import_timestamp_for_drive(drive_id);
+        let mut root_meta = self.root_meta_for_import_for_drive(drive_id, now);
         if let Some(meta) = root_meta.as_mut() {
             meta.local_only = local_only;
         }
@@ -479,12 +525,30 @@ impl Daemon {
             root_cid
         };
 
-        self.report_and_record_root(root_cid, None, root_meta.as_ref(), now)
+        self.report_and_record_root_for_drive(drive_id, root_cid, None, root_meta.as_ref(), now)
             .await
     }
 
     async fn report_and_record_root(
         &mut self,
+        root_cid: Cid,
+        source_dir: Option<PathBuf>,
+        root_meta: Option<&DriveRootMeta>,
+        published_at: i64,
+    ) -> Result<ImportReport, DaemonError> {
+        self.report_and_record_root_for_drive(
+            PRIMARY_DRIVE_ID,
+            root_cid,
+            source_dir,
+            root_meta,
+            published_at,
+        )
+        .await
+    }
+
+    async fn report_and_record_root_for_drive(
+        &mut self,
+        drive_id: &str,
         root_cid: Cid,
         source_dir: Option<PathBuf>,
         root_meta: Option<&DriveRootMeta>,
@@ -516,13 +580,14 @@ impl Daemon {
         );
 
         let phase = std::time::Instant::now();
-        self.update_primary_drive(&root_cid, root_meta, published_at)?;
+        self.update_drive(drive_id, &root_cid, root_meta, published_at)?;
         tracing::debug!(
             elapsed_ms = phase.elapsed().as_millis(),
             "record root updated config"
         );
         let phase = std::time::Instant::now();
-        self.persist_sync_cache_with_current_base().await?;
+        self.persist_sync_cache_with_current_base_for_drive(drive_id)
+            .await?;
         tracing::debug!(
             elapsed_ms = phase.elapsed().as_millis(),
             "record root persisted sync cache"
@@ -576,7 +641,8 @@ impl Daemon {
             root = layer_root_meta(&self.tree, root, meta).await?;
         }
         self.update_primary_drive(&root, root_meta.as_ref(), now)?;
-        self.persist_sync_cache_with_current_base().await?;
+        self.persist_sync_cache_with_current_base_for_drive(PRIMARY_DRIVE_ID)
+            .await?;
 
         Ok(ConflictResolveReport {
             conflict_id: conflict_id.to_string(),
@@ -622,7 +688,10 @@ impl Daemon {
         }
     }
 
-    async fn persist_sync_cache_with_current_base(&self) -> Result<(), DaemonError> {
+    async fn persist_sync_cache_with_current_base_for_drive(
+        &self,
+        drive_id: &str,
+    ) -> Result<(), DaemonError> {
         let Some(account) = self.config.profile.as_ref() else {
             let cache =
                 SyncCache::rebuild_from_config(&self.tree, &self.config, unix_now()).await?;
@@ -636,7 +705,7 @@ impl Daemon {
             .replace_app_key_root_from_config(
                 &self.tree,
                 &self.config,
-                PRIMARY_DRIVE_ID,
+                drive_id,
                 &account.app_key_pubkey,
                 unix_now(),
             )
@@ -644,7 +713,7 @@ impl Daemon {
             .is_err()
         {
             cache = SyncCache::rebuild_from_config(&self.tree, &self.config, unix_now()).await?;
-            cache.set_current_device_base(PRIMARY_DRIVE_ID, &account.app_key_pubkey);
+            cache.set_current_device_base(drive_id, &account.app_key_pubkey);
         }
         cache.save(sync_cache_path_in(&self.config_dir))?;
         Ok(())
@@ -656,9 +725,24 @@ impl Daemon {
         root_meta: Option<&DriveRootMeta>,
         published_at: i64,
     ) -> Result<(), DaemonError> {
+        self.update_drive(PRIMARY_DRIVE_ID, root_cid, root_meta, published_at)
+    }
+
+    fn update_drive(
+        &mut self,
+        drive_id: &str,
+        root_cid: &Cid,
+        root_meta: Option<&DriveRootMeta>,
+        published_at: i64,
+    ) -> Result<(), DaemonError> {
         let drive = match self.config.drive(PRIMARY_DRIVE_ID) {
-            Some(d) => d.clone(),
-            None => return Err(DaemonError::PrimaryDriveMissing),
+            Some(d) if drive_id == PRIMARY_DRIVE_ID => d.clone(),
+            _ if drive_id == PRIMARY_DRIVE_ID => return Err(DaemonError::PrimaryDriveMissing),
+            _ => self
+                .config
+                .drive(drive_id)
+                .cloned()
+                .ok_or_else(|| DaemonError::DriveMissing(drive_id.to_string()))?,
         };
         let mut updated = drive;
         updated.last_root_cid = Some(root_cid.to_string());
@@ -685,18 +769,30 @@ impl Daemon {
     }
 
     fn next_import_timestamp(&self) -> i64 {
+        self.next_import_timestamp_for_drive(PRIMARY_DRIVE_ID)
+    }
+
+    fn next_import_timestamp_for_drive(&self, drive_id: &str) -> i64 {
         let now = unix_now();
         let previous = self.config.profile.as_ref().and_then(|account| {
             self.config
-                .drive(PRIMARY_DRIVE_ID)
+                .drive(drive_id)
                 .and_then(|drive| drive.app_key_roots.get(&account.app_key_pubkey))
         });
         previous.map_or(now, |root| now.max(root.published_at.saturating_add(1)))
     }
 
     fn root_meta_for_import(&self, created_at: i64) -> Option<DriveRootMeta> {
+        self.root_meta_for_import_for_drive(PRIMARY_DRIVE_ID, created_at)
+    }
+
+    fn root_meta_for_import_for_drive(
+        &self,
+        drive_id: &str,
+        created_at: i64,
+    ) -> Option<DriveRootMeta> {
         let account = self.config.profile.as_ref()?;
-        let drive = self.config.drive(PRIMARY_DRIVE_ID)?;
+        let drive = self.config.drive(drive_id)?;
         let previous = drive.app_key_roots.get(&account.app_key_pubkey);
         let app_key_seq = previous.map_or(1, |root| root.app_key_seq.saturating_add(1).max(1));
         let parents = previous
@@ -736,6 +832,34 @@ impl Daemon {
             observed,
             created_at,
         })
+    }
+
+    fn ensure_drive_for_import(&mut self, drive_id: &str) -> Result<(), DaemonError> {
+        if self.config.drive(drive_id).is_some() {
+            return Ok(());
+        }
+        if drive_id == PRIMARY_DRIVE_ID {
+            return Err(DaemonError::PrimaryDriveMissing);
+        }
+        if drive_id != CALENDAR_TREE_NAME {
+            return Err(DaemonError::DriveMissing(drive_id.to_string()));
+        }
+        let root_scope_id = self
+            .config
+            .profile
+            .as_ref()
+            .map(|profile| profile.root_scope_id())
+            .ok_or_else(|| DaemonError::DriveMissing(drive_id.to_string()))?;
+        self.config.upsert_drive(Drive {
+            root_scope_id,
+            drive_id: CALENDAR_TREE_NAME.into(),
+            display_name: "Calendar".into(),
+            role: DriveRole::Owner,
+            app_key_roots: std::collections::BTreeMap::new(),
+            last_root_cid: None,
+            key_hex: None,
+        });
+        Ok(())
     }
 }
 

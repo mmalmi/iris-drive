@@ -161,9 +161,14 @@ pub(crate) fn apply_files_root_event(
     let outcome =
         relay_sync::apply_remote_files_root_event(config, event, Some(account.app_key.keys()))?;
     let was_applied = matches!(outcome, relay_sync::FilesRootApply::Applied);
+    let tree_name = event
+        .tags
+        .identifier()
+        .map(str::to_owned)
+        .unwrap_or_else(|| iris_drive_core::PRIMARY_DRIVE_ID.to_string());
     let root_cid_to_pull = if was_applied {
         config
-            .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+            .drive(&tree_name)
             .and_then(|drive| drive.app_key_roots.get(&account.state.app_key_pubkey))
             .map(|root| root.root_cid.clone())
     } else {
@@ -176,6 +181,7 @@ pub(crate) fn apply_files_root_event(
             "event_id": event.id.to_hex(),
             "author": pubkey_npub(&event.pubkey.to_hex()),
             "outcome": files_root_apply_label(&outcome),
+            "tree_name": tree_name.clone(),
             "root_cid": root_cid_to_pull.clone(),
         }),
     );
@@ -185,7 +191,7 @@ pub(crate) fn apply_files_root_event(
         config.clone(),
         root_cid_to_pull,
         fips_blocks,
-        was_applied,
+        was_applied && tree_name == iris_drive_core::PRIMARY_DRIVE_ID,
         "projected_files_root",
         mount_refresh,
     ) {

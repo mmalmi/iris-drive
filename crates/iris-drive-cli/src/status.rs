@@ -828,6 +828,7 @@ pub(crate) fn local_gateway_urls_for_root(
             port,
             iris_drive_core::PRIMARY_DRIVE_ID,
         ),
+        "caldav_url": iris_drive_core::gateway::local_caldav_url(port),
         "nhash_resolver_url": format!(
             "http://{}:{port}/",
             iris_drive_core::gateway::LOCAL_NHASH_RESOLVER_HOST,

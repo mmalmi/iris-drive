@@ -1,5 +1,6 @@
 use nostr_sdk::{Filter, PublicKey, SingleLetterTag};
 
+use crate::calendar::CALENDAR_TREE_NAME;
 use crate::nostr_events::{
     KIND_APP_KEY_LINK_REQUEST, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, app_key_link_request_d_tag,
     drive_root_d_tag,
@@ -58,16 +59,21 @@ pub fn subscription_filters_for_shared_roots(
         push_drive_root_filters(&mut filters, &share_scope, crate::PRIMARY_DRIVE_ID);
     }
     if let Ok(current_app_key) = PublicKey::from_hex(current_app_key_pubkey_hex) {
-        filters.push(
-            Filter::new()
-                .author(current_app_key)
-                .kind(nostr_sdk::Kind::from(KIND_HASHTREE_ROOT))
-                .identifier(drive_id)
-                .custom_tag(
-                    SingleLetterTag::lowercase(nostr_sdk::Alphabet::L),
-                    hashtree_nostr::HASHTREE_LABEL,
-                ),
-        );
+        let mut tree_names = vec![drive_id, CALENDAR_TREE_NAME];
+        tree_names.sort_unstable();
+        tree_names.dedup();
+        for tree_name in tree_names {
+            filters.push(
+                Filter::new()
+                    .author(current_app_key)
+                    .kind(nostr_sdk::Kind::from(KIND_HASHTREE_ROOT))
+                    .identifier(tree_name)
+                    .custom_tag(
+                        SingleLetterTag::lowercase(nostr_sdk::Alphabet::L),
+                        hashtree_nostr::HASHTREE_LABEL,
+                    ),
+            );
+        }
     }
     filters
 }
