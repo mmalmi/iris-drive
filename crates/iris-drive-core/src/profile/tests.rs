@@ -31,6 +31,7 @@ fn create_yields_admin_authorized_account() {
             .iter()
             .all(|op| op.signer_pubkey == acct.state.app_key_pubkey)
     );
+    assert!(acct.state.profile_roster_projection.is_some());
 
     let projection = acct.state.profile_projection();
     assert!(projection.can_write_roots(&acct.state.app_key_pubkey));
@@ -44,6 +45,24 @@ fn create_yields_admin_authorized_account() {
         0
     );
     assert_eq!(projection.key_epochs.len(), 1);
+}
+
+#[test]
+fn sync_app_keys_refreshes_profile_roster_projection_cache() {
+    let dir = tempdir().unwrap();
+    let acct = Profile::create(dir.path(), Some("native".into())).unwrap();
+    let mut state = acct.state.clone();
+    state.profile_roster_projection = None;
+
+    let changed = state.sync_app_keys_from_profile();
+
+    assert!(!changed);
+    assert!(state.profile_roster_projection.is_some());
+    assert!(
+        state
+            .profile_projection()
+            .can_write_roots(&state.app_key_pubkey)
+    );
 }
 
 #[test]
@@ -273,6 +292,7 @@ fn recovery_phrase_admits_fresh_app_key_into_existing_profile_log() {
             authorization_state: AppKeyAuthorizationState::AwaitingApproval,
             app_key_label: Some("web app".into()),
             app_keys: None,
+            profile_roster_projection: None,
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
         },
@@ -393,6 +413,7 @@ fn nip46_authority_admits_fresh_app_key_with_decrypt_wrap() {
             authorization_state: AppKeyAuthorizationState::AwaitingApproval,
             app_key_label: Some("web app".into()),
             app_keys: None,
+            profile_roster_projection: None,
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
         },
@@ -443,6 +464,7 @@ fn nip46_without_decrypt_admits_app_key_but_leaves_wrap_repair_needed() {
             authorization_state: AppKeyAuthorizationState::AwaitingApproval,
             app_key_label: Some("web app".into()),
             app_keys: None,
+            profile_roster_projection: None,
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
         },
@@ -498,6 +520,7 @@ fn epoch_signing_admin_can_repair_missing_app_key_wraps() {
             authorization_state: AppKeyAuthorizationState::AwaitingApproval,
             app_key_label: Some("web app".into()),
             app_keys: None,
+            profile_roster_projection: None,
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
         },
@@ -735,6 +758,121 @@ fn approving_already_authorized_device_errors() {
         Err(ProfileError::AppKeyAlreadyAuthorized) => {}
         _ => panic!("expected AppKeyAlreadyAuthorized"),
     }
+}
+
+#[test]
+fn approving_authorized_inbound_request_consumes_request_without_new_ops() {
+    let dir = tempdir().unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
+    let target = fresh_app_key_pubkey();
+    acct.approve_app_key(&target, Some("phone".into())).unwrap();
+    acct.state
+        .inbound_app_key_link_requests
+        .push(crate::profile::InboundAppKeyLinkRequest {
+            app_key_pubkey: target.clone(),
+            label: Some("phone".into()),
+            link_secret: acct.state.app_key_link_secret.clone(),
+            requested_at: 42,
+        });
+    let before_op_count = acct.state.profile_roster_ops.len();
+
+    let snap = acct
+        .approve_app_key(&target, Some("phone again".into()))
+        .unwrap();
+
+    assert!(snap.contains(&target));
+    assert_eq!(acct.state.profile_roster_ops.len(), before_op_count);
+    assert!(acct.state.inbound_app_key_link_requests.is_empty());
+}
+
+#[test]
+fn approving_tombstoned_device_readds_and_consumes_request() {
+    let dir = tempdir().unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
+    let target = fresh_app_key_pubkey();
+    acct.approve_app_key(&target, Some("phone".into())).unwrap();
+    acct.revoke_app_key(&target).unwrap();
+    acct.state
+        .inbound_app_key_link_requests
+        .push(crate::profile::InboundAppKeyLinkRequest {
+            app_key_pubkey: target.clone(),
+            label: Some("phone".into()),
+            link_secret: acct.state.app_key_link_secret.clone(),
+            requested_at: 42,
+        });
+    let before_op_count = acct.state.profile_roster_ops.len();
+
+    let (contains_target, target_label, target_has_wrap) = {
+        let snap = acct
+            .approve_app_key(&target, Some("phone again".into()))
+            .unwrap();
+        let actor = snap.app_actor(&target).unwrap();
+        (
+            snap.contains(&target),
+            actor.label.clone(),
+            snap.wrapped_dck.contains_key(&target),
+        )
+    };
+
+    assert_eq!(acct.state.profile_roster_ops.len(), before_op_count + 2);
+    assert!(acct.state.inbound_app_key_link_requests.is_empty());
+    assert!(contains_target);
+    assert_eq!(target_label.as_deref(), Some("phone again"));
+    assert!(target_has_wrap);
+    let projection = acct.state.profile_projection();
+    assert!(!projection.tombstones.contains_key(&target));
+    assert!(projection.active_facets.contains_key(&target));
+}
+
+#[test]
+fn sync_prunes_inbound_request_for_authorized_device() {
+    let dir = tempdir().unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
+    let target = fresh_app_key_pubkey();
+    acct.approve_app_key(&target, Some("phone".into())).unwrap();
+    acct.state
+        .inbound_app_key_link_requests
+        .push(crate::profile::InboundAppKeyLinkRequest {
+            app_key_pubkey: target.clone(),
+            label: Some("phone".into()),
+            link_secret: acct.state.app_key_link_secret.clone(),
+            requested_at: 42,
+        });
+    assert_eq!(acct.state.inbound_app_key_link_requests.len(), 1);
+
+    assert!(acct.state.sync_app_keys_from_profile());
+
+    assert!(acct.state.inbound_app_key_link_requests.is_empty());
+}
+
+#[test]
+fn recording_authorized_request_reports_cleanup_change() {
+    let dir = tempdir().unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
+    let target = fresh_app_key_pubkey();
+    acct.approve_app_key(&target, Some("phone".into())).unwrap();
+    acct.state
+        .inbound_app_key_link_requests
+        .push(crate::profile::InboundAppKeyLinkRequest {
+            app_key_pubkey: target.clone(),
+            label: Some("phone".into()),
+            link_secret: acct.state.app_key_link_secret.clone(),
+            requested_at: 41,
+        });
+
+    let changed = acct
+        .state
+        .record_inbound_app_key_link_request(
+            acct.state.profile_id,
+            &target,
+            Some("phone".into()),
+            &acct.state.app_key_link_secret.clone(),
+            42,
+        )
+        .unwrap();
+
+    assert!(changed);
+    assert!(acct.state.inbound_app_key_link_requests.is_empty());
 }
 
 #[test]
@@ -994,6 +1132,7 @@ fn linked_device_with_approved_wrap_decrypts_same_dck_as_owner() {
         authorization_state: AppKeyAuthorizationState::Authorized,
         app_key_label: Some("phone".into()),
         app_keys: app_keys_for_linked,
+        profile_roster_projection: owner_acct.state.profile_roster_projection.clone(),
         outbound_app_key_link_request: None,
         inbound_app_key_link_requests: Vec::new(),
     };
@@ -1032,6 +1171,7 @@ fn revoked_device_cannot_decrypt_new_dck() {
         authorization_state: AppKeyAuthorizationState::Revoked,
         app_key_label: None,
         app_keys: owner_acct.state.app_keys.clone(),
+        profile_roster_projection: owner_acct.state.profile_roster_projection.clone(),
         outbound_app_key_link_request: None,
         inbound_app_key_link_requests: Vec::new(),
     };

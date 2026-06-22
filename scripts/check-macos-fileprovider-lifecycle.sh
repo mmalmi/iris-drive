@@ -32,6 +32,9 @@ require_not_contains() {
 
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "ensureFileProviderDomainAfterStatusIfNeeded"
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "removeFileProviderDomainRegistration("
+require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "openFileProviderURL(_ url: URL, selectingItem: Bool)"
+require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "NSWorkspace.shared.open(url)"
+require_not_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "selectFile(nil, inFileViewerRootedAtPath:"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "irisDriveFileProviderRegistrationIdentityKey"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "markFileProviderRegistrationCurrent"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "fileProviderRegistrationIdentityIsCurrent"

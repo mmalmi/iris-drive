@@ -210,8 +210,9 @@ async fn handle_caldav_delete(
 async fn load_caldav_calendar(
     state: &GatewayState,
 ) -> Result<crate::calendar::CalendarData, (StatusCode, String)> {
-    let config = AppConfig::load_or_default(config_path_in(state.config_dir.as_ref()))
-        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let config =
+        AppConfig::load_or_default_cached_profile(config_path_in(state.config_dir.as_ref()))
+            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     let owner = config
         .profile
         .as_ref()

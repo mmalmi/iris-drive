@@ -254,6 +254,22 @@ impl AppConfig {
 
     /// Load from path. Missing file → `Default::default()`.
     pub fn load_or_default(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
+        Self::load_or_default_with_profile_sync(path, true)
+    }
+
+    /// Load from path without reprojecting `IrisProfile` roster ops.
+    ///
+    /// Read-only hot paths such as daemon startup, status refresh, and gateway
+    /// requests should use the cached app-key projection persisted in config
+    /// instead of making local loopback services wait on full roster projection.
+    pub fn load_or_default_cached_profile(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
+        Self::load_or_default_with_profile_sync(path, false)
+    }
+
+    fn load_or_default_with_profile_sync(
+        path: impl AsRef<Path>,
+        sync_profile: bool,
+    ) -> Result<Self, ConfigError> {
         let path = path.as_ref();
         if !path.exists() {
             return Ok(Self::default());
@@ -268,9 +284,11 @@ impl AppConfig {
             });
         }
         let adopted_root_scope_id = if let Some(account) = parsed.profile.as_mut() {
-            let adopted = account.adopt_single_roster_profile_id();
+            let adopted = sync_profile && account.adopt_single_roster_profile_id();
             if !adopted {
-                account.sync_app_keys_from_profile();
+                if sync_profile {
+                    account.sync_app_keys_from_profile();
+                }
             }
             adopted.then(|| account.root_scope_id())
         } else {
@@ -289,7 +307,7 @@ impl AppConfig {
         }
         let mut config = self.clone();
         if path.exists()
-            && let Ok(existing) = Self::load_or_default(path)
+            && let Ok(existing) = Self::load_or_default_cached_profile(path)
         {
             config.preserve_newer_app_key_roots(&existing);
         }
@@ -590,6 +608,26 @@ mod tests {
     }
 
     #[test]
+    fn cached_profile_load_preserves_app_key_cache_without_projection() {
+        let dir = tempdir().unwrap();
+        let owner = crate::profile::Profile::create(dir.path(), Some("Mac".into())).unwrap();
+        let mut state = owner.state.clone();
+        state.app_keys = None;
+        let config = AppConfig {
+            profile: Some(state),
+            ..AppConfig::default()
+        };
+        let path = dir.path().join("config.toml");
+        std::fs::write(&path, toml::to_string_pretty(&config).unwrap()).unwrap();
+
+        let cached = AppConfig::load_or_default_cached_profile(&path).unwrap();
+        assert!(cached.profile.as_ref().unwrap().app_keys.is_none());
+
+        let projected = AppConfig::load_or_default(&path).unwrap();
+        assert!(projected.profile.as_ref().unwrap().app_keys.is_some());
+    }
+
+    #[test]
     fn stale_drive_fields_are_rejected() {
         let raw = format!(
             r#"
@@ -831,6 +869,7 @@ dck_generation = 1
                 authorization_state: crate::profile::AppKeyAuthorizationState::Authorized,
                 app_key_label: None,
                 app_keys: None,
+                profile_roster_projection: None,
                 outbound_app_key_link_request: None,
                 inbound_app_key_link_requests: Vec::new(),
             }),

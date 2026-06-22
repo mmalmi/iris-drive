@@ -18,6 +18,13 @@ pub(crate) struct DirectRootExchange {
     subscribed_streams: BTreeSet<String>,
     known_mesh_peers: BTreeSet<String>,
     next_mesh_publish_seq: u64,
+    profile_stream_cache: Option<CachedDirectRootProfileStream>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedDirectRootProfileStream {
+    config_fingerprint: ConfigFileFingerprint,
+    root_scope_id: Option<String>,
 }
 
 impl DirectRootExchange {
@@ -157,13 +164,41 @@ impl DirectRootExchange {
             self.subscribed_streams.clear();
             return;
         };
-        let Ok(config) = AppConfig::load_or_default(config_path_in(config_dir)) else {
+        let Ok(root_scope_id) = self.cached_profile_stream_root_scope_id(config_dir) else {
             return;
         };
-        if let Some(state) = config.profile.as_ref() {
-            self.subscribe_profile_stream(&state.root_scope_id(), Some(sync))
-                .await;
+        if let Some(root_scope_id) = root_scope_id {
+            self.subscribe_profile_stream(&root_scope_id, Some(sync)).await;
         }
+    }
+
+    fn cached_profile_stream_root_scope_id(&mut self, config_dir: &Path) -> Result<Option<String>> {
+        let config_path = config_path_in(config_dir);
+        let config_fingerprint = config_file_fingerprint(&config_path)?;
+        self.cached_profile_stream_root_scope_id_from_config(config_fingerprint, || {
+            Ok(AppConfig::load_or_default(&config_path)?)
+        })
+    }
+
+    fn cached_profile_stream_root_scope_id_from_config(
+        &mut self,
+        config_fingerprint: ConfigFileFingerprint,
+        load_config: impl FnOnce() -> Result<AppConfig>,
+    ) -> Result<Option<String>> {
+        if let Some(cached) = self
+            .profile_stream_cache
+            .as_ref()
+            .filter(|cached| cached.config_fingerprint == config_fingerprint)
+        {
+            return Ok(cached.root_scope_id.clone());
+        }
+        let config = load_config()?;
+        let root_scope_id = config.profile.as_ref().map(ProfileState::root_scope_id);
+        self.profile_stream_cache = Some(CachedDirectRootProfileStream {
+            config_fingerprint,
+            root_scope_id: root_scope_id.clone(),
+        });
+        Ok(root_scope_id)
     }
 
     pub(crate) async fn drain_mesh_events(
@@ -407,7 +442,7 @@ async fn append_primary_drive_root_events(
     if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
         && let Some(root) = publishable_app_key_root(config_dir, drive, state).await?
     {
-        ensure_publishable_root_locally_available(config_dir, &root.root_cid).await?;
+        ensure_publishable_root_locally_available(config_dir, config, &root.root_cid).await?;
         let authorized_app_keys = authorized_app_key_pubkeys(state);
         let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
             .context("loading app key")?;
@@ -432,9 +467,8 @@ async fn append_primary_drive_root_events(
         )?);
 
         if state.can_write_roots() {
-            let account = Profile::load(state.clone(), config_dir).context("loading profile")?;
             let event = iris_drive_core::nostr_events::build_private_hashtree_root_event(
-                account.app_key.keys(),
+                device.keys(),
                 &drive.drive_id,
                 &root,
             )
@@ -469,7 +503,7 @@ async fn append_share_root_events(
         if root.local_only {
             continue;
         }
-        ensure_publishable_root_locally_available(config_dir, &root.root_cid).await?;
+        ensure_publishable_root_locally_available(config_dir, config, &root.root_cid).await?;
         let authorized_recipients = iris_drive_core::shared_folder_key_recipient_pubkeys(folder);
         let event = iris_drive_core::nostr_events::build_drive_root_event(
             device.keys(),
@@ -575,6 +609,7 @@ pub(crate) fn direct_root_mesh_stream(root_scope_id: &str) -> String {
 
 pub(crate) async fn ensure_publishable_root_locally_available(
     config_dir: &Path,
+    config: &AppConfig,
     root_cid_str: &str,
 ) -> Result<()> {
     let root_cid =
@@ -586,7 +621,7 @@ pub(crate) async fn ensure_publishable_root_locally_available(
         if delay_ms > 0 {
             tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
         }
-        match collect_local_root_hashes(config_dir, &root_cid).await {
+        match collect_local_root_hashes(config_dir, config, &root_cid).await {
             Ok(_) => return Ok(()),
             Err(error)
                 if delay_ms < *LOCAL_ROOT_AVAILABILITY_RETRY_DELAYS_MS.last().unwrap_or(&0)
@@ -613,8 +648,13 @@ pub(crate) async fn ensure_publishable_root_locally_available(
         .with_context(|| format!("root {root_cid_str} is not locally readable for publish"))
 }
 
-async fn collect_local_root_hashes(config_dir: &Path, root: &Cid) -> Result<usize> {
-    let daemon = Daemon::open(config_dir).context("opening daemon for local root availability")?;
+async fn collect_local_root_hashes(
+    config_dir: &Path,
+    config: &AppConfig,
+    root: &Cid,
+) -> Result<usize> {
+    let daemon = Daemon::open_with_config(config_dir, config.clone())
+        .context("opening daemon for local root availability")?;
     daemon
         .tree()
         .list_directory(root)

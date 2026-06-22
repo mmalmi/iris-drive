@@ -82,6 +82,28 @@ fn provider_root_poll_remains_safety_sweep_when_config_watch_is_active() {
 }
 
 #[test]
+fn provider_root_publish_cache_matches_fingerprint_and_root_key() {
+    let fingerprint = ConfigFileFingerprint {
+        len: 10,
+        modified: None,
+    };
+    let other_fingerprint = ConfigFileFingerprint {
+        len: 11,
+        modified: None,
+    };
+    let root_key = Some("primary:device:root-a".to_string());
+    let other_root_key = Some("primary:device:root-b".to_string());
+    let mut cache = ProviderRootPublishCache::default();
+
+    assert!(!cache.is_current(&fingerprint, &root_key));
+    cache.update(fingerprint.clone(), root_key.clone());
+
+    assert!(cache.is_current(&fingerprint, &root_key));
+    assert!(!cache.is_current(&other_fingerprint, &root_key));
+    assert!(!cache.is_current(&fingerprint, &other_root_key));
+}
+
+#[test]
 fn stale_root_apply_followup_detects_superseded_app_key_root() {
     let config_dir = tempfile::tempdir().unwrap();
     let mut drive = Drive {
@@ -110,6 +132,7 @@ fn stale_root_apply_followup_detects_superseded_app_key_root() {
             authorization_state: iris_drive_core::AppKeyAuthorizationState::Authorized,
             app_key_label: None,
             app_keys: None,
+            profile_roster_projection: None,
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
         }),

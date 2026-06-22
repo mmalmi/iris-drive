@@ -51,6 +51,8 @@ require_contains macos/Sources/IrisDriveMacApp.swift "openContentLink"
 require_contains macos/Sources/IrisDriveContentLinks.swift '"import_content_link"'
 require_contains macos/Sources/IrisDriveMacApp.swift '"record_pending_share_invite"'
 require_contains macos/Sources/IrisDriveControlPanel.swift "Reject"
+require_contains macos/Sources/IrisDriveControlPanel.swift "peer.isCurrentDevice || peer.fipsOnline"
+require_contains macos/Sources/IrisDriveControlPanel.swift 'Label(approvalPending ? "Adding" : "Add", systemImage: "checkmark")'
 require_contains macos/Sources/IrisDriveControlPanel.swift "pendingInvites"
 require_contains scripts/macos-dev-app.sh "cargo build -p iris-drive-app-core"
 require_contains scripts/macos-dev-app.sh "libiris_drive_app_core.a"

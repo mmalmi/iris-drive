@@ -598,13 +598,54 @@ fn iris_profile_summary_json(
 pub(crate) const APP_KEY_LINK_REQUEST_RETRY_SECS: u64 = 10;
 pub(crate) const APP_KEY_LINK_REQUEST_STARTUP_RETRY_MILLIS: u64 = 1_000;
 pub(crate) const APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS: u8 = 40;
-pub(crate) const APP_KEY_LINK_ROSTER_RETRY_SECS: u64 = 2;
+pub(crate) const APP_KEY_LINK_ROSTER_STARTUP_RETRY_SECS: u64 = 2;
+pub(crate) const APP_KEY_LINK_ROSTER_STEADY_RETRY_SECS: u64 = 60;
+pub(crate) const APP_KEY_LINK_ROSTER_STARTUP_BURST_ATTEMPTS: u8 = 5;
 pub(crate) const APP_KEY_LINK_TICK_MILLIS: u64 = 1_000;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SentAppKeyLinkRequest {
     last_sent: std::time::Instant,
     attempts: u8,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct AuthorizedAppKeyLinkRosterSendCache {
+    sent: BTreeMap<String, SentAppKeyLinkRoster>,
+    snapshot: Option<CachedAuthorizedAppKeyLinkRosterSnapshot>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct SentAppKeyLinkRoster {
+    last_sent: std::time::Instant,
+    attempts: u8,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ConfigFileFingerprint {
+    pub(crate) len: u64,
+    pub(crate) modified: Option<std::time::SystemTime>,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct AppConfigLoadCache {
+    fingerprint: Option<ConfigFileFingerprint>,
+    config: Option<AppConfig>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedAuthorizedAppKeyLinkRosterSnapshot {
+    config_fingerprint: ConfigFileFingerprint,
+    snapshot: Option<AuthorizedAppKeyLinkRosterSnapshot>,
+}
+
+#[derive(Debug, Clone)]
+struct AuthorizedAppKeyLinkRosterSnapshot {
+    config: AppConfig,
+    recipients: Vec<iris_drive_core::app_key_link_transport::AppKeyLinkRosterRecipient>,
+    frame_bytes: Vec<u8>,
+    dck_generation: u64,
+    created_at: i64,
 }
 
 fn app_key_link_request_send_due(
@@ -625,13 +666,32 @@ fn app_key_link_request_retry_interval(attempts: u8) -> std::time::Duration {
     }
 }
 
+fn app_key_link_roster_send_due(
+    sent: Option<SentAppKeyLinkRoster>,
+    now: std::time::Instant,
+) -> bool {
+    let Some(sent) = sent else {
+        return true;
+    };
+    now.duration_since(sent.last_sent) >= app_key_link_roster_retry_interval(sent.attempts)
+}
+
+fn app_key_link_roster_retry_interval(attempts: u8) -> std::time::Duration {
+    if attempts < APP_KEY_LINK_ROSTER_STARTUP_BURST_ATTEMPTS {
+        std::time::Duration::from_secs(APP_KEY_LINK_ROSTER_STARTUP_RETRY_SECS)
+    } else {
+        std::time::Duration::from_secs(APP_KEY_LINK_ROSTER_STEADY_RETRY_SECS)
+    }
+}
+
 pub(crate) async fn send_pending_app_key_link_request(
     config_dir: &Path,
     client: &nostr_sdk::Client,
     fips_blocks: Option<&FsFipsBlockSync>,
     sent_cache: &mut BTreeMap<String, SentAppKeyLinkRequest>,
+    config_cache: &mut AppConfigLoadCache,
 ) -> Result<Option<Value>> {
-    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let config = load_app_config_cached(&config_path_in(config_dir), config_cache)?;
     let Some(state) = config.profile.as_ref() else {
         return Ok(None);
     };
@@ -709,13 +769,125 @@ pub(crate) async fn send_pending_app_key_link_request(
 pub(crate) async fn send_authorized_app_key_link_rosters(
     config_dir: &Path,
     fips_blocks: Option<&FsFipsBlockSync>,
-    sent_cache: &mut BTreeMap<String, std::time::Instant>,
+    cache: &mut AuthorizedAppKeyLinkRosterSendCache,
     acked_rosters: &BTreeSet<String>,
 ) -> Result<Option<Value>> {
     let Some(sync) = fips_blocks else {
         return Ok(None);
     };
-    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let Some(snapshot) = load_authorized_app_key_link_roster_snapshot(config_dir, cache)? else {
+        return Ok(None);
+    };
+    let now = std::time::Instant::now();
+    let due_devices = snapshot
+        .recipients
+        .iter()
+        .filter(|recipient| {
+            if acked_rosters.contains(&recipient.roster_fingerprint) {
+                return false;
+            }
+            !cache
+                .sent
+                .get(&recipient.roster_fingerprint)
+                .copied()
+                .is_some_and(|sent| !app_key_link_roster_send_due(Some(sent), now))
+        })
+        .collect::<Vec<_>>();
+    if due_devices.is_empty() {
+        return Ok(None);
+    }
+
+    sync.refresh_authorized_peers(&snapshot.config).await;
+    let mut recipients = Vec::new();
+    for recipient in due_devices {
+        let recipient_npub = pubkey_npub(&recipient.app_key_pubkey);
+        sync.send_app_message(
+            &recipient_npub,
+            APP_KEY_LINK_ROSTER_APP_TOPIC,
+            snapshot.frame_bytes.clone(),
+        )
+        .await?;
+        let attempts = cache
+            .sent
+            .get(&recipient.roster_fingerprint)
+            .map_or(1, |sent| sent.attempts.saturating_add(1));
+        cache.sent.insert(
+            recipient.roster_fingerprint.clone(),
+            SentAppKeyLinkRoster {
+                last_sent: now,
+                attempts,
+            },
+        );
+        recipients.push(recipient_npub);
+    }
+
+    Ok(Some(json!({
+        "event": "app_key_link_roster_sent",
+        "topic": APP_KEY_LINK_ROSTER_APP_TOPIC,
+        "recipient_app_key_npubs": recipients,
+        "dck_generation": snapshot.dck_generation,
+        "created_at": snapshot.created_at,
+        "sent_bytes": snapshot.frame_bytes.len(),
+    })))
+}
+
+fn load_authorized_app_key_link_roster_snapshot(
+    config_dir: &Path,
+    cache: &mut AuthorizedAppKeyLinkRosterSendCache,
+) -> Result<Option<AuthorizedAppKeyLinkRosterSnapshot>> {
+    let config_path = config_path_in(config_dir);
+    let config_fingerprint = config_file_fingerprint(&config_path)?;
+    if let Some(cached) = cache
+        .snapshot
+        .as_ref()
+        .filter(|cached| cached.config_fingerprint == config_fingerprint)
+    {
+        return Ok(cached.snapshot.clone());
+    }
+
+    let config = AppConfig::load_or_default(&config_path)?;
+    let snapshot = authorized_app_key_link_roster_snapshot(config)?;
+    cache.snapshot = Some(CachedAuthorizedAppKeyLinkRosterSnapshot {
+        config_fingerprint,
+        snapshot: snapshot.clone(),
+    });
+    Ok(snapshot)
+}
+
+pub(crate) fn load_app_config_cached(
+    config_path: &Path,
+    cache: &mut AppConfigLoadCache,
+) -> Result<AppConfig> {
+    let config_fingerprint = config_file_fingerprint(config_path)?;
+    if cache.fingerprint.as_ref() == Some(&config_fingerprint)
+        && let Some(config) = cache.config.as_ref()
+    {
+        return Ok(config.clone());
+    }
+
+    let config = AppConfig::load_or_default(config_path)?;
+    cache.fingerprint = Some(config_fingerprint);
+    cache.config = Some(config.clone());
+    Ok(config)
+}
+
+pub(crate) fn config_file_fingerprint(path: &Path) -> Result<ConfigFileFingerprint> {
+    match std::fs::metadata(path) {
+        Ok(metadata) => Ok(ConfigFileFingerprint {
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+        }),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(ConfigFileFingerprint {
+            len: 0,
+            modified: None,
+        }),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn authorized_app_key_link_roster_snapshot(
+    config: AppConfig,
+) -> Result<Option<AuthorizedAppKeyLinkRosterSnapshot>> {
     let Some(state) = config.profile.as_ref() else {
         return Ok(None);
     };
@@ -728,52 +900,22 @@ pub(crate) async fn send_authorized_app_key_link_rosters(
     if !app_keys.contains(&state.app_key_pubkey) {
         return Ok(None);
     }
-
-    let now = std::time::Instant::now();
-    let due_devices = app_key_link_roster_recipients(state)
-        .into_iter()
-        .filter(|recipient| {
-            if acked_rosters.contains(&recipient.roster_fingerprint) {
-                return false;
-            }
-            !sent_cache
-                .get(&recipient.roster_fingerprint)
-                .is_some_and(|last_sent| {
-                    now.duration_since(*last_sent)
-                        < std::time::Duration::from_secs(APP_KEY_LINK_ROSTER_RETRY_SECS)
-                })
-        })
-        .collect::<Vec<_>>();
-    if due_devices.is_empty() {
+    let recipients = app_key_link_roster_recipients(state);
+    if recipients.is_empty() {
         return Ok(None);
     }
-
-    sync.refresh_authorized_peers(&config).await;
     let Some(frame) = app_key_link_roster_frame(state, unix_now_seconds()) else {
         return Ok(None);
     };
-    let bytes = serde_json::to_vec(&frame)?;
-    let mut recipients = Vec::new();
-    for recipient in due_devices {
-        let recipient_npub = pubkey_npub(&recipient.app_key_pubkey);
-        sync.send_app_message(
-            &recipient_npub,
-            APP_KEY_LINK_ROSTER_APP_TOPIC,
-            bytes.clone(),
-        )
-        .await?;
-        sent_cache.insert(recipient.roster_fingerprint, now);
-        recipients.push(recipient_npub);
-    }
-
-    Ok(Some(json!({
-        "event": "app_key_link_roster_sent",
-        "topic": APP_KEY_LINK_ROSTER_APP_TOPIC,
-        "recipient_app_key_npubs": recipients,
-        "dck_generation": app_keys.dck_generation,
-        "created_at": app_keys.created_at,
-        "sent_bytes": bytes.len(),
-    })))
+    let dck_generation = app_keys.dck_generation;
+    let created_at = app_keys.created_at;
+    Ok(Some(AuthorizedAppKeyLinkRosterSnapshot {
+        config,
+        recipients,
+        frame_bytes: serde_json::to_vec(&frame)?,
+        dck_generation,
+        created_at,
+    }))
 }
 
 pub(crate) async fn handle_app_key_link_app_message(

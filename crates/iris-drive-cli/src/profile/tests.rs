@@ -348,3 +348,83 @@ fn app_key_link_request_retry_uses_startup_burst_before_steady_interval() {
         now + std::time::Duration::from_secs(10)
     ));
 }
+
+#[test]
+fn app_key_link_roster_retry_uses_short_burst_then_steady_interval() {
+    let now = std::time::Instant::now();
+    assert!(app_key_link_roster_send_due(None, now));
+
+    let first = SentAppKeyLinkRoster {
+        last_sent: now,
+        attempts: 1,
+    };
+    assert!(!app_key_link_roster_send_due(
+        Some(first),
+        now + std::time::Duration::from_secs(1)
+    ));
+    assert!(app_key_link_roster_send_due(
+        Some(first),
+        now + std::time::Duration::from_secs(2)
+    ));
+
+    let steady = SentAppKeyLinkRoster {
+        last_sent: now,
+        attempts: APP_KEY_LINK_ROSTER_STARTUP_BURST_ATTEMPTS,
+    };
+    assert!(!app_key_link_roster_send_due(
+        Some(steady),
+        now + std::time::Duration::from_secs(59)
+    ));
+    assert!(app_key_link_roster_send_due(
+        Some(steady),
+        now + std::time::Duration::from_secs(60)
+    ));
+}
+
+#[test]
+fn authorized_roster_snapshot_cache_reuses_unchanged_config_and_invalidates_on_save() {
+    let admin_dir = tempdir().unwrap();
+    let mut admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
+    let first_joiner = nostr_sdk::Keys::generate().public_key().to_hex();
+    admin
+        .approve_app_key(&first_joiner, Some("laptop".into()))
+        .unwrap();
+    let mut config = AppConfig {
+        profile: Some(admin.state.clone()),
+        ..AppConfig::default()
+    };
+    config.upsert_drive(Drive::primary(admin.state.root_scope_id()));
+    config.save(config_path_in(admin_dir.path())).unwrap();
+
+    let mut cache = AuthorizedAppKeyLinkRosterSendCache::default();
+    let first = load_authorized_app_key_link_roster_snapshot(admin_dir.path(), &mut cache)
+        .unwrap()
+        .expect("admin with linked app key has a roster snapshot");
+    assert_eq!(first.recipients.len(), 1);
+
+    cache
+        .snapshot
+        .as_mut()
+        .unwrap()
+        .snapshot
+        .as_mut()
+        .unwrap()
+        .frame_bytes = b"cached".to_vec();
+    let cached = load_authorized_app_key_link_roster_snapshot(admin_dir.path(), &mut cache)
+        .unwrap()
+        .expect("unchanged config reuses snapshot");
+    assert_eq!(cached.frame_bytes, b"cached");
+
+    let second_joiner = nostr_sdk::Keys::generate().public_key().to_hex();
+    admin
+        .approve_app_key(&second_joiner, Some("tablet".into()))
+        .unwrap();
+    config.profile = Some(admin.state.clone());
+    config.save(config_path_in(admin_dir.path())).unwrap();
+
+    let refreshed = load_authorized_app_key_link_roster_snapshot(admin_dir.path(), &mut cache)
+        .unwrap()
+        .expect("changed config refreshes snapshot");
+    assert_eq!(refreshed.recipients.len(), 2);
+    assert_ne!(refreshed.frame_bytes, b"cached");
+}

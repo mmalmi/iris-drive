@@ -973,10 +973,17 @@ fn apply_projected_op(
     if !signer_can_apply_with_roster_parents(projection, signed, accepted_ops_by_id) {
         return false;
     }
+    apply_roster_op_effect(projection, signed)
+}
+
+fn apply_roster_op_effect(
+    projection: &mut IrisProfileRosterProjection,
+    signed: &SignedIrisProfileRosterOp,
+) -> bool {
     match &signed.content.op {
         IrisProfileRosterOp::AddFacet { facet } => {
             if projection.tombstones.contains_key(&facet.pubkey) {
-                return false;
+                projection.tombstones.remove(&facet.pubkey);
             }
             if !facet_capabilities_are_valid(facet) {
                 return false;
@@ -1080,11 +1087,32 @@ fn project_roster_parent_closure(
         let parent = accepted_ops_by_id.get(&parent_id)?;
         pending.extend(parent.content.parents.iter().cloned());
     }
-    let parent_ops = seen
+    let mut parent_ops = seen
         .into_iter()
         .map(|op_id| accepted_ops_by_id.get(&op_id).cloned())
         .collect::<Option<Vec<_>>>()?;
-    let parent_projection = project_iris_profile_roster(profile_id, parent_ops);
+    parent_ops.sort_by(|left, right| {
+        left.content
+            .created_at
+            .cmp(&right.content.created_at)
+            .then_with(|| left.op_id.cmp(&right.op_id))
+    });
+    let mut parent_projection = IrisProfileRosterProjection {
+        profile_id,
+        active_facets: BTreeMap::new(),
+        tombstones: BTreeMap::new(),
+        key_epochs: BTreeMap::new(),
+        accepted_op_ids: Vec::new(),
+        rejected_op_ids: Vec::new(),
+    };
+    for op in parent_ops {
+        if validate_signed_iris_profile_roster_op(&op).is_err()
+            || !apply_roster_op_effect(&mut parent_projection, &op)
+        {
+            return None;
+        }
+        parent_projection.accepted_op_ids.push(op.op_id);
+    }
     if parents
         .iter()
         .all(|parent| parent_projection.accepted_op_ids.contains(parent))
@@ -1893,6 +1921,40 @@ mod tests {
     }
 
     #[test]
+    fn roster_parent_projection_scales_with_dense_accepted_history() {
+        let profile_id = IrisProfileId::new_v4();
+        let admin = Keys::generate();
+        let mut ops = vec![bootstrap_op(&admin, profile_id, 10)];
+        let mut parent_ids = vec![ops[0].op_id.clone()];
+
+        for index in 0..32 {
+            let device = Keys::generate();
+            let op = signed_op_with_parents(
+                &admin,
+                profile_id,
+                parent_ids.clone(),
+                IrisProfileRosterOp::AddFacet {
+                    facet: IrisProfileFacet::app_key(
+                        device.public_key().to_hex(),
+                        11 + index,
+                        Some(format!("device {index}")),
+                        IrisProfileCapabilities::app_writer(),
+                    ),
+                },
+                11 + index,
+            );
+            parent_ids.push(op.op_id.clone());
+            ops.push(op);
+        }
+
+        let projection = project(profile_id, ops);
+
+        assert_eq!(projection.accepted_op_ids.len(), 33);
+        assert!(projection.rejected_op_ids.is_empty());
+        assert_eq!(projection.active_facets.len(), 33);
+    }
+
+    #[test]
     fn divergent_roster_logs_merge_by_union_and_project_deterministically() {
         let profile_id = IrisProfileId::new_v4();
         let admin = Keys::generate();
@@ -1939,7 +2001,7 @@ mod tests {
     }
 
     #[test]
-    fn tombstone_prevents_stale_or_later_resurrection() {
+    fn tombstone_and_readd_follow_timestamp_order() {
         let profile_id = IrisProfileId::new_v4();
         let admin = Keys::generate();
         let phone = Keys::generate();
@@ -1972,7 +2034,21 @@ mod tests {
             12,
         );
         ops.push(remove_phone);
-        let stale_resurrection = signed_op_with_parents(
+
+        let tombstoned_projection = project(profile_id, ops.clone());
+
+        assert!(tombstoned_projection.tombstones.contains_key(&phone_pubkey));
+        assert!(
+            !tombstoned_projection
+                .active_facets
+                .contains_key(&phone_pubkey)
+        );
+        assert_eq!(
+            tombstoned_projection.key_wrap_status(&phone_pubkey, 1),
+            KeyWrapStatus::Tombstoned
+        );
+
+        let later_readd = signed_op_with_parents(
             &admin,
             profile_id,
             iris_profile_roster_parent_ids(&ops),
@@ -1980,21 +2056,25 @@ mod tests {
                 facet: IrisProfileFacet::app_key(
                     phone_pubkey.clone(),
                     13,
-                    Some("same old key".to_string()),
+                    Some("same key approved again".to_string()),
                     IrisProfileCapabilities::app_writer(),
                 ),
             },
             13,
         );
-        ops.push(stale_resurrection);
+        ops.push(later_readd);
+        let readded_projection = project(profile_id, ops);
 
-        let projection = project(profile_id, ops);
-
-        assert!(projection.tombstones.contains_key(&phone_pubkey));
-        assert!(!projection.active_facets.contains_key(&phone_pubkey));
+        assert!(!readded_projection.tombstones.contains_key(&phone_pubkey));
+        assert!(readded_projection.active_facets.contains_key(&phone_pubkey));
         assert_eq!(
-            projection.key_wrap_status(&phone_pubkey, 1),
-            KeyWrapStatus::Tombstoned
+            readded_projection
+                .active_facets
+                .get(&phone_pubkey)
+                .unwrap()
+                .label
+                .as_deref(),
+            Some("same key approved again")
         );
     }
 

@@ -270,7 +270,7 @@ pub fn fips_peer_connection_label(status: &Value) -> String {
         (Some(transport), Some(srtt_ms)) => format!("{transport}, {srtt_ms} ms"),
         (Some(transport), None) => transport,
         (None, Some(srtt_ms)) => format!("{srtt_ms} ms"),
-        _ => "Online".to_owned(),
+        _ => "Discovered".to_owned(),
     }
 }
 
@@ -296,34 +296,86 @@ pub fn fips_online_devices_from_status(fips_status: Option<&Value>) -> Vec<Strin
     peers.extend(string_set_from_json_array(
         fips_status.and_then(|status| status.get("mesh_peers")),
     ));
+    if let Some(active_peers) = active_peer_ids_from_statuses(fips_status) {
+        peers = peers.intersection(&active_peers).cloned().collect();
+    }
     peers.into_iter().collect()
 }
 
 #[must_use]
 pub fn fips_direct_devices_from_status(fips_status: Option<&Value>) -> Vec<String> {
-    let direct_devices =
-        string_vec_from_json_array(fips_status.and_then(|status| status.get("direct_devices")));
-    if !direct_devices.is_empty() {
-        return direct_devices;
+    let mut direct_devices =
+        string_set_from_json_array(fips_status.and_then(|status| status.get("direct_devices")));
+    if direct_devices.is_empty() {
+        direct_devices =
+            string_set_from_json_array(fips_status.and_then(|status| status.get("direct_peers")));
     }
-    let direct_peers =
-        string_vec_from_json_array(fips_status.and_then(|status| status.get("direct_peers")));
-    if direct_peers.is_empty() {
-        string_vec_from_json_array(fips_status.and_then(|status| status.get("connected_peers")))
-    } else {
-        direct_peers
+    if direct_devices.is_empty() {
+        direct_devices = string_set_from_json_array(
+            fips_status.and_then(|status| status.get("connected_peers")),
+        );
     }
+    if let Some(active_peers) = active_peer_ids_from_statuses(fips_status) {
+        direct_devices = direct_devices
+            .intersection(&active_peers)
+            .cloned()
+            .collect();
+    }
+    direct_devices.into_iter().collect()
+}
+
+fn active_peer_ids_from_statuses(fips_status: Option<&Value>) -> Option<BTreeSet<String>> {
+    let statuses = fips_status
+        .and_then(|status| status.get("peer_statuses"))
+        .and_then(Value::as_array)?;
+    Some(
+        statuses
+            .iter()
+            .filter(|status| fips_peer_has_live_transport(status))
+            .filter_map(|status| status.get("npub").and_then(Value::as_str))
+            .map(ToOwned::to_owned)
+            .collect(),
+    )
+}
+
+fn fips_peer_has_live_transport(status: &Value) -> bool {
+    if status
+        .get("transport_type")
+        .and_then(Value::as_str)
+        .is_some_and(|transport| !transport.trim().is_empty())
+    {
+        return true;
+    }
+    if status
+        .get("transport_addr")
+        .and_then(Value::as_str)
+        .is_some_and(|transport| !transport.trim().is_empty())
+    {
+        return true;
+    }
+    if status.get("srtt_ms").and_then(Value::as_u64).is_some() {
+        return true;
+    }
+    for key in ["bytes_recv", "bytes_sent", "packets_recv", "packets_sent"] {
+        if status.get(key).and_then(Value::as_u64).unwrap_or(0) > 0 {
+            return true;
+        }
+    }
+    false
 }
 
 #[must_use]
 pub fn fips_mesh_devices_from_status(fips_status: Option<&Value>) -> Vec<String> {
-    let mesh_devices =
-        string_vec_from_json_array(fips_status.and_then(|status| status.get("mesh_devices")));
+    let mut mesh_devices =
+        string_set_from_json_array(fips_status.and_then(|status| status.get("mesh_devices")));
     if mesh_devices.is_empty() {
-        string_vec_from_json_array(fips_status.and_then(|status| status.get("mesh_peers")))
-    } else {
-        mesh_devices
+        mesh_devices =
+            string_set_from_json_array(fips_status.and_then(|status| status.get("mesh_peers")));
     }
+    if let Some(active_peers) = active_peer_ids_from_statuses(fips_status) {
+        mesh_devices = mesh_devices.intersection(&active_peers).cloned().collect();
+    }
+    mesh_devices.into_iter().collect()
 }
 
 #[must_use]
@@ -380,6 +432,13 @@ mod tests {
                 "npub": "npub1b",
                 "transport_type": "tcp",
                 "srtt_ms": 12
+            }, {
+                "npub": "npub1c",
+                "transport_type": "webrtc"
+            }, {
+                "npub": "npub1x",
+                "transport_type": "udp",
+                "bytes_recv": 1
             }]
         });
 
@@ -399,6 +458,35 @@ mod tests {
         assert_eq!(
             normalized["peer_statuses"][0]["connection_label"],
             "TCP, 12 ms"
+        );
+    }
+
+    #[test]
+    fn status_without_live_transport_does_not_count_peer_online() {
+        let raw = json!({
+            "authorized_peers": ["npub1phone"],
+            "connected_peers": ["npub1phone"],
+            "online_devices": ["npub1phone"],
+            "peer_statuses": [{
+                "npub": "npub1phone",
+                "bytes_recv": 0,
+                "bytes_sent": 0,
+                "packets_recv": 0,
+                "packets_sent": 0,
+                "srtt_ms": null,
+                "transport_addr": null,
+                "transport_type": null
+            }]
+        });
+
+        let normalized = normalize_fips_status_value(Some(&raw), true, true, json!(null), &[]);
+
+        assert_eq!(normalized["direct_devices"], json!([]));
+        assert_eq!(normalized["online_devices"], json!([]));
+        assert_eq!(normalized["roster_online_device_count"], 0);
+        assert_eq!(
+            normalized["peer_statuses"][0]["connection_label"],
+            "Discovered"
         );
     }
 

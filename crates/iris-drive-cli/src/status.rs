@@ -25,7 +25,7 @@ use peers::peer_statuses;
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
     let initialized = already_initialized(config_dir);
-    let config = AppConfig::load_or_default(config_path_in(config_dir))
+    let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))
         .with_context(|| format!("reading config at {}", config_path_in(config_dir).display()))?;
     let daemon_status = load_daemon_status(config_dir);
     let blocks_dir = config_dir.join("blocks");
@@ -500,7 +500,7 @@ fn daemon_status_config(
         return Ok(entry.config.clone());
     }
 
-    let config = AppConfig::load_or_default(&path)?;
+    let config = AppConfig::load_or_default_cached_profile(&path)?;
     if let Ok(mut cache) = DAEMON_STATUS_CONFIG_CACHE.lock() {
         cache.insert(
             path,
@@ -561,8 +561,11 @@ pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &m
             || provider_refresh_key(current_root_cid.as_deref(), &[]),
             ToOwned::to_owned,
         );
+    let initialized = key_path_in(config_dir).exists()
+        && config_path_in(config_dir).exists()
+        && config.profile.is_some();
     let summary = status_summary(
-        already_initialized(config_dir),
+        initialized,
         profile_block.as_ref(),
         authorized_app_key_count,
         online_app_key_count,

@@ -2499,7 +2499,7 @@ private struct PeerRow: View {
                     if peer.isDeviceActor {
                         Circle()
                             .fill(
-                                peer.fipsOnline ? Color.green : Color.secondary.opacity(0.5)
+                                peerOnlineForDisplay ? Color.green : Color.secondary.opacity(0.5)
                             )
                             .frame(width: 8, height: 8)
                     }
@@ -2598,13 +2598,21 @@ private struct PeerRow: View {
                 .joined(separator: " | ")
         }
         if peer.isCurrentDevice {
-            return "\(peer.connectionLabel) | \(peer.roleLabel)"
+            return "\(connectionLabelForDisplay) | \(peer.roleLabel)"
         }
-        return [peer.roleLabel, peer.connectionLabel].joined(separator: " | ")
+        return [peer.roleLabel, connectionLabelForDisplay].joined(separator: " | ")
     }
 
     private var canManagePeer: Bool {
         canManageDevices && !peer.isCurrentDevice && peer.role != "recovery"
+    }
+
+    private var peerOnlineForDisplay: Bool {
+        peer.isCurrentDevice || peer.fipsOnline
+    }
+
+    private var connectionLabelForDisplay: String {
+        peer.isCurrentDevice ? "This Device" : peer.connectionLabel
     }
 
 }
@@ -2632,6 +2640,11 @@ private struct AppKeyLinkRequestRow: View {
                         .truncationMode(.middle)
                 }
                 Spacer()
+                if approvalPending {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 18, height: 18)
+                }
                 Button(role: .destructive) {
                     controller.rejectDevice(request.requestURL)
                 } label: {
@@ -2648,7 +2661,7 @@ private struct AppKeyLinkRequestRow: View {
                         }
                     }
                 } label: {
-                    Label("Add", systemImage: "checkmark")
+                    Label(approvalPending ? "Adding" : "Add", systemImage: "checkmark")
                 }
                 .disabled(approvalPending)
             }

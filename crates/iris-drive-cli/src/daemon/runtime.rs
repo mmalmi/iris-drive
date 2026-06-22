@@ -5,8 +5,7 @@ fn emit_daemon_status_event(config_dir: &Path, payload: Value) {
 }
 
 #[allow(clippy::needless_pass_by_value)]
-fn write_runtime_daemon_status(config_dir: &Path, mut payload: Value) -> Value {
-    normalize_daemon_status_for_clients(config_dir, &mut payload);
+fn write_runtime_daemon_status(config_dir: &Path, payload: Value) -> Value {
     write_daemon_status(config_dir, payload)
 }
 
@@ -39,12 +38,11 @@ pub(crate) fn cmd_daemon(
         .build()
         .context("building tokio runtime")?;
 
-    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let mut state = config
+    let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
+    let state = config
         .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    state.recompute_authorization();
     if state.authorization_state == iris_drive_core::AppKeyAuthorizationState::Revoked {
         write_runtime_daemon_status(config_dir, json!({
             "event": "revoked",
@@ -228,7 +226,7 @@ pub(crate) fn cmd_daemon(
                 .clone()
                 .unwrap_or_else(|| default_mountpoint_in(config_dir));
             let mounted = mount::start_iris_drive_mount(config_dir, mountpoint).await?;
-            config = AppConfig::load_or_default(config_path_in(config_dir))?;
+            config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
             Some(mounted)
         } else {
             None
@@ -345,9 +343,11 @@ pub(crate) fn cmd_daemon(
         );
         app_key_link_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut sent_app_key_link_requests = BTreeMap::new();
-        let mut sent_app_key_link_rosters = BTreeMap::new();
+        let mut app_key_link_request_config_cache = AppConfigLoadCache::default();
+        let mut sent_app_key_link_rosters = AuthorizedAppKeyLinkRosterSendCache::default();
         let mut acked_app_key_link_rosters = BTreeSet::new();
         let mut last_provider_root_key = current_app_key_root_key(&config);
+        let mut provider_root_publish_cache = ProviderRootPublishCache::default();
 
         loop {
             tokio::select! {
@@ -510,6 +510,7 @@ pub(crate) fn cmd_daemon(
                         &client,
 	                        config_dir,
 	                        &mut last_provider_root_key,
+	                        &mut provider_root_publish_cache,
 	                        &mut direct_roots,
 	                        fips_blocks.as_deref(),
 	                        &daemon_tasks,
@@ -666,6 +667,7 @@ pub(crate) fn cmd_daemon(
                         &client,
 	                        config_dir,
 	                        &mut last_provider_root_key,
+	                        &mut provider_root_publish_cache,
 	                        &mut direct_roots,
 	                        fips_blocks.as_deref(),
 	                        &daemon_tasks,
@@ -686,6 +688,7 @@ pub(crate) fn cmd_daemon(
                         &client,
                         fips_blocks.as_deref(),
                         &mut sent_app_key_link_requests,
+                        &mut app_key_link_request_config_cache,
                     )
                     .await
                     {

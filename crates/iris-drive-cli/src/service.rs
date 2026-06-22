@@ -152,6 +152,24 @@ pub(crate) fn macos_launch_agent_label(config_dir: &Path) -> String {
 
 #[allow(dead_code)]
 pub(crate) fn macos_launch_agent_plist(config_dir: &Path, executable: &Path) -> String {
+    let home = std::env::var("HOME")
+        .ok()
+        .filter(|value| !value.is_empty())
+        .or_else(|| macos_launch_agent_home_from_config_dir(config_dir));
+    macos_launch_agent_plist_with_home(config_dir, executable, home.as_deref())
+}
+
+fn macos_launch_agent_home_from_config_dir(config_dir: &Path) -> Option<String> {
+    let path = config_dir.to_string_lossy();
+    let (home, _) = path.split_once("/Library/")?;
+    (!home.is_empty()).then(|| home.to_owned())
+}
+
+fn macos_launch_agent_plist_with_home(
+    config_dir: &Path,
+    executable: &Path,
+    home: Option<&str>,
+) -> String {
     let label = macos_launch_agent_label(config_dir);
     let stdout_path = config_dir.join("logs").join("daemon.out.log");
     let stderr_path = config_dir.join("logs").join("daemon.err.log");
@@ -171,6 +189,17 @@ pub(crate) fn macos_launch_agent_plist(config_dir: &Path, executable: &Path) -> 
         .map(|argument| format!("        <string>{}</string>", xml_escape(argument)))
         .collect::<Vec<_>>()
         .join("\n");
+    let environment_variables = home.map_or_else(String::new, |home| {
+        format!(
+            r#"    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>{}</string>
+    </dict>
+"#,
+            xml_escape(home)
+        )
+    });
 
     format!(
         r#"<?xml version="1.0" encoding="UTF-8"?>
@@ -187,7 +216,7 @@ pub(crate) fn macos_launch_agent_plist(config_dir: &Path, executable: &Path) -> 
     <true/>
     <key>KeepAlive</key>
     <true/>
-    <key>ProcessType</key>
+{}    <key>ProcessType</key>
     <string>Background</string>
     <key>StandardOutPath</key>
     <string>{}</string>
@@ -198,6 +227,7 @@ pub(crate) fn macos_launch_agent_plist(config_dir: &Path, executable: &Path) -> 
 "#,
         xml_escape(&label),
         program_arguments,
+        environment_variables,
         xml_escape(&stdout_path.display().to_string()),
         xml_escape(&stderr_path.display().to_string())
     )
@@ -535,6 +565,19 @@ mod tests {
         assert!(plist.contains("<string>--watch-interval</string>"));
         assert!(plist.contains("<string>0</string>"));
         assert!(!plist.contains("IRIS_DRIVE_PARENT_PID"));
+    }
+
+    #[test]
+    fn macos_launch_agent_plist_sets_home_for_launchd_environment() {
+        let config_dir = Path::new("/Users/example/Library/Application Support/Iris Drive/Config");
+        let executable = Path::new("/Applications/Iris Drive.app/Contents/MacOS/idrive");
+
+        let plist =
+            macos_launch_agent_plist_with_home(config_dir, executable, Some("/Users/example & co"));
+
+        assert!(plist.contains("<key>EnvironmentVariables</key>"));
+        assert!(plist.contains("<key>HOME</key>"));
+        assert!(plist.contains("<string>/Users/example &amp; co</string>"));
     }
 
     #[test]

@@ -1,4 +1,7 @@
-use super::{FfiApp, SentAppKeyLinkRequest, app_key_link_request_send_due, normalize_pubkey};
+use super::{
+    FfiApp, NATIVE_RUNTIME_CONFIG_CACHE, SentAppKeyLinkRequest, app_key_link_request_send_due,
+    load_native_runtime_config_cached, normalize_pubkey,
+};
 use crate::NativeAppAction;
 use crate::state::{UiShare, UiShareMember};
 use iris_drive_core::paths::config_path_in;
@@ -32,6 +35,40 @@ fn share_recipient_evidence_json(config_dir: &Path, display_name: &str) -> Strin
         ],
     };
     serde_json::to_string(&evidence).unwrap()
+}
+
+#[test]
+fn native_runtime_config_cache_reuses_unchanged_config_and_invalidates_on_save() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = config_path_in(dir.path());
+    let first_config = AppConfig {
+        relays: vec!["wss://first.example".to_owned()],
+        ..AppConfig::default()
+    };
+    first_config.save(&config_path).unwrap();
+    NATIVE_RUNTIME_CONFIG_CACHE.lock().unwrap().clear();
+
+    let first = load_native_runtime_config_cached(&config_path).unwrap();
+    assert_eq!(first.relays, vec!["wss://first.example"]);
+
+    NATIVE_RUNTIME_CONFIG_CACHE
+        .lock()
+        .unwrap()
+        .get_mut(&config_path)
+        .unwrap()
+        .config
+        .relays = vec!["cached".to_owned()];
+    let cached = load_native_runtime_config_cached(&config_path).unwrap();
+    assert_eq!(cached.relays, vec!["cached"]);
+
+    let changed_config = AppConfig {
+        relays: vec!["wss://changed.example".to_owned()],
+        ..AppConfig::default()
+    };
+    changed_config.save(&config_path).unwrap();
+
+    let refreshed = load_native_runtime_config_cached(&config_path).unwrap();
+    assert_eq!(refreshed.relays, vec!["wss://changed.example"]);
 }
 
 fn ui_share_member<'a>(share: &'a UiShare, profile_id: &str) -> &'a UiShareMember {
@@ -1231,6 +1268,83 @@ fn owner_can_approve_and_revoke_linked_app_keys() {
             .any(|device| device.pubkey == linked_device)
     );
     assert!(state.error.is_empty());
+}
+
+#[test]
+fn approving_tombstoned_inbound_request_readds_device() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+
+    let owner = app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "Mac".to_owned(),
+    });
+    let owner_invite = owner.ui.profile.unwrap().app_key_link_invite;
+    let linked_dir = tempfile::tempdir().unwrap();
+    let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
+    let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
+        link_target: owner_invite,
+        app_key_label: "Phone".to_owned(),
+    });
+    let linked_account = linked.ui.profile.unwrap();
+    let linked_device = linked_account.current_app_key_npub.clone();
+    let linked_app_key_hex = normalize_pubkey(&linked_device).unwrap();
+    let approved = app.dispatch(NativeAppAction::ApproveDevice {
+        request: linked_account.app_key_link_request,
+        label: "Phone".to_owned(),
+    });
+    assert!(approved.error.is_empty(), "{}", approved.error);
+    let revoked = app.dispatch(NativeAppAction::RevokeDevice {
+        app_key_pubkey: linked_device.clone(),
+    });
+    assert!(revoked.error.is_empty(), "{}", revoked.error);
+
+    let config_path = config_path_in(owner_dir.path());
+    let mut config = AppConfig::load_or_default(&config_path).unwrap();
+    let state = config.profile.as_mut().unwrap();
+    let profile_id = state.profile_id;
+    let link_secret = state.app_key_link_secret.clone();
+    state
+        .record_inbound_app_key_link_request(
+            profile_id,
+            &linked_app_key_hex,
+            Some("Phone".to_owned()),
+            &link_secret,
+            42,
+        )
+        .unwrap();
+    config.save(&config_path).unwrap();
+
+    let refreshed = app.refresh();
+    let request = refreshed.ui.profile.unwrap().inbound_app_key_link_requests[0]
+        .request_link
+        .clone();
+    let op_count_before = AppConfig::load_or_default(&config_path)
+        .unwrap()
+        .profile
+        .unwrap()
+        .profile_roster_ops
+        .len();
+
+    let readded = app.dispatch(NativeAppAction::ApproveDevice {
+        request,
+        label: "Phone again".to_owned(),
+    });
+
+    assert!(readded.error.is_empty(), "{}", readded.error);
+    let account = readded.ui.profile.as_ref().unwrap();
+    assert!(account.inbound_app_key_link_requests.is_empty());
+    assert!(readded.ui.app_actors.iter().any(|device| {
+        device.pubkey == linked_device && device.label == "Phone again" && device.role == "member"
+    }));
+    assert_eq!(
+        AppConfig::load_or_default(&config_path)
+            .unwrap()
+            .profile
+            .unwrap()
+            .profile_roster_ops
+            .len(),
+        op_count_before + 2
+    );
 }
 
 #[test]
