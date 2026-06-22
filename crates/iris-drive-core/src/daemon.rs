@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use hashtree_core::{Cid, HashTree, HashTreeConfig};
+use hashtree_core::{Cid, HashTree, HashTreeConfig, nhash_decode};
 use hashtree_fs::FsBlobStore;
 use serde_json::json;
 use thiserror::Error;
@@ -43,7 +43,10 @@ impl EmbeddedHashtreeHost {
         std::fs::create_dir_all(&embedded_config_dir)
             .with_context(|| format!("creating {}", embedded_config_dir.display()))?;
         let settings = json!({
-            "nostrRelays": config.relays.clone(),
+            "storageMaxSizeGb": 1,
+            "socialGraphDbMaxSizeGb": 1,
+            "spamboxDbMaxSizeGb": 0,
+            "nostrRelays": embedded_browser_nostr_relays(config),
             "blossomReadServers": config.blossom_servers.clone(),
             "blossomWriteServers": config.blossom_servers.clone(),
             "enableWebrtc": false,
@@ -74,7 +77,8 @@ impl EmbeddedHashtreeHost {
         }
 
         let runtime = hashtree_embedded::HostDaemonRuntime::start(
-            hashtree_embedded::HostDaemonOptions::new(state_root),
+            hashtree_embedded::HostDaemonOptions::new(state_root)
+                .with_initial_tree_roots(embedded_browser_initial_tree_roots()),
         )?;
         let status = runtime.status();
         Ok(Self { runtime, status })
@@ -94,6 +98,39 @@ impl EmbeddedHashtreeHost {
             "data_dir": self.status.data_dir.display().to_string(),
         })
     }
+}
+
+fn embedded_browser_nostr_relays(config: &AppConfig) -> Vec<String> {
+    let mut relays = config.relays.clone();
+    for relay in hashtree_resolver::nostr::NostrResolverConfig::default().relays {
+        if !relays.iter().any(|existing| same_relay(existing, &relay)) {
+            relays.push(relay);
+        }
+    }
+    relays
+}
+
+fn embedded_browser_initial_tree_roots() -> Vec<(String, Cid)> {
+    let Ok(root) = nhash_decode(crate::gateway::IRIS_SITES_PORTAL_BOOTSTRAP_NHASH) else {
+        return Vec::new();
+    };
+    vec![(
+        format!(
+            "{}/{}",
+            crate::gateway::IRIS_SITES_PORTAL_NPUB,
+            crate::gateway::IRIS_SITES_PORTAL_TREE
+        ),
+        Cid {
+            hash: root.hash,
+            key: root.decrypt_key,
+        },
+    )]
+}
+
+fn same_relay(left: &str, right: &str) -> bool {
+    left.trim()
+        .trim_end_matches('/')
+        .eq_ignore_ascii_case(right.trim().trim_end_matches('/'))
 }
 
 impl Drop for EmbeddedHashtreeHost {

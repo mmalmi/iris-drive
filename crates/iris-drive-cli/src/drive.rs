@@ -427,7 +427,7 @@ async fn provider_entries(
                 key: child.key,
             };
             let kind = match child.link_type {
-                LinkType::Dir => {
+                LinkType::Dir | LinkType::Fanout => {
                     stack.push((path.clone(), cid.clone()));
                     "directory"
                 }

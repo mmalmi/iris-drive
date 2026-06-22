@@ -26,7 +26,8 @@ use hashtree_core::{
 };
 use hashtree_fs::FsBlobStore;
 use thiserror::Error;
-use tokio::net::TcpListener;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::oneshot;
 use tokio::task::JoinHandle;
 
@@ -53,6 +54,7 @@ pub const DEFAULT_GATEWAY_PORT: u16 = 17_321;
 pub const IRIS_SITES_PORTAL_NPUB: &str =
     "npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm";
 pub const IRIS_SITES_PORTAL_TREE: &str = "sites";
+pub const IRIS_SITES_PORTAL_BOOTSTRAP_NHASH: &str = "nhash1qqsgjkehkfml3ak2xld3svmy7862ndqv7ay76jeuq9h28ymyex8q3xg9yz5qqcrc4fq3kfwt3maz4nss7d4qeshcmlkgelvhckszvk76lrzxxfu88jz";
 const IMMUTABLE_HOST_SUFFIX: &str = ".sites.iris.localhost";
 const HASH_HOST_SUFFIX: &str = ".hash.localhost";
 const DRIVE_HOST_SUFFIX: &str = ".drive.iris.localhost";
@@ -100,6 +102,16 @@ impl Default for GatewayBind {
 
 /// Running loopback gateway. Drop it to request shutdown.
 pub struct GatewayServer {
+    local_addr: SocketAddr,
+    shutdown_tx: Option<oneshot::Sender<()>>,
+    handle: Option<JoinHandle<Result<(), GatewayError>>>,
+}
+
+/// Loopback proxy for WebViews that cannot resolve `*.localhost` names.
+///
+/// The browser keeps the original Iris-local URL and origin, while the proxy
+/// forwards only those hosts to the already-running gateway on loopback.
+pub struct GatewayProxyServer {
     local_addr: SocketAddr,
     shutdown_tx: Option<oneshot::Sender<()>>,
     handle: Option<JoinHandle<Result<(), GatewayError>>>,
@@ -196,6 +208,195 @@ impl Drop for GatewayServer {
             let _ = tx.send(());
         }
     }
+}
+
+impl GatewayProxyServer {
+    pub async fn bind_for_gateway(gateway_addr: SocketAddr) -> Result<Self, GatewayError> {
+        let listener =
+            TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).await?;
+        let local_addr = listener.local_addr()?;
+        let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+        let handle =
+            tokio::spawn(
+                async move { run_gateway_proxy(listener, gateway_addr, shutdown_rx).await },
+            );
+        Ok(Self {
+            local_addr,
+            shutdown_tx: Some(shutdown_tx),
+            handle: Some(handle),
+        })
+    }
+
+    #[must_use]
+    pub fn local_addr(&self) -> SocketAddr {
+        self.local_addr
+    }
+
+    pub async fn shutdown(mut self) -> Result<(), GatewayError> {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+        if let Some(handle) = self.handle.take() {
+            handle
+                .await
+                .map_err(|e| GatewayError::Task(e.to_string()))?
+        } else {
+            Ok(())
+        }
+    }
+}
+
+impl Drop for GatewayProxyServer {
+    fn drop(&mut self) {
+        if let Some(tx) = self.shutdown_tx.take() {
+            let _ = tx.send(());
+        }
+    }
+}
+
+async fn run_gateway_proxy(
+    listener: TcpListener,
+    gateway_addr: SocketAddr,
+    mut shutdown_rx: oneshot::Receiver<()>,
+) -> Result<(), GatewayError> {
+    loop {
+        tokio::select! {
+            accept = listener.accept() => {
+                let (stream, _) = accept?;
+                tokio::spawn(async move {
+                    let _ = handle_gateway_proxy_connection(stream, gateway_addr).await;
+                });
+            }
+            _ = &mut shutdown_rx => return Ok(()),
+        }
+    }
+}
+
+async fn handle_gateway_proxy_connection(
+    mut inbound: TcpStream,
+    gateway_addr: SocketAddr,
+) -> std::io::Result<()> {
+    let mut buffer = Vec::with_capacity(4096);
+    let header_end = loop {
+        let mut chunk = [0u8; 1024];
+        let read = inbound.read(&mut chunk).await?;
+        if read == 0 {
+            return Ok(());
+        }
+        buffer.extend_from_slice(&chunk[..read]);
+        if buffer.len() > 64 * 1024 {
+            return write_proxy_error(&mut inbound, "431 Request Header Fields Too Large").await;
+        }
+        if let Some(index) = find_header_end(&buffer) {
+            break index;
+        }
+    };
+
+    let body_start = header_end + 4;
+    let head = &buffer[..body_start];
+    let remainder = &buffer[body_start..];
+    let Ok(head_text) = std::str::from_utf8(head) else {
+        return write_proxy_error(&mut inbound, "400 Bad Request").await;
+    };
+    let Some(line_end) = head_text.find("\r\n") else {
+        return write_proxy_error(&mut inbound, "400 Bad Request").await;
+    };
+    let request_line = &head_text[..line_end];
+    let header_tail = &head_text[line_end + 2..];
+    let mut parts = request_line.split_whitespace();
+    let Some(method) = parts.next() else {
+        return write_proxy_error(&mut inbound, "400 Bad Request").await;
+    };
+    let Some(target) = parts.next() else {
+        return write_proxy_error(&mut inbound, "400 Bad Request").await;
+    };
+    let Some(version) = parts.next() else {
+        return write_proxy_error(&mut inbound, "400 Bad Request").await;
+    };
+
+    if method.eq_ignore_ascii_case("CONNECT") {
+        let Some((host, port)) = proxy_authority_host_port(target) else {
+            return write_proxy_error(&mut inbound, "400 Bad Request").await;
+        };
+        if !is_gateway_proxy_target(&host, port, gateway_addr.port()) {
+            return write_proxy_error(&mut inbound, "403 Forbidden").await;
+        }
+        let mut upstream = TcpStream::connect(gateway_addr).await?;
+        inbound
+            .write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n")
+            .await?;
+        if !remainder.is_empty() {
+            upstream.write_all(remainder).await?;
+        }
+        let _ = tokio::io::copy_bidirectional(&mut inbound, &mut upstream).await;
+        return Ok(());
+    }
+
+    let Some((host, port, path_and_query)) = proxy_request_target(target, header_tail) else {
+        return write_proxy_error(&mut inbound, "400 Bad Request").await;
+    };
+    if !is_gateway_proxy_target(&host, port, gateway_addr.port()) {
+        return write_proxy_error(&mut inbound, "403 Forbidden").await;
+    }
+
+    let mut upstream = TcpStream::connect(gateway_addr).await?;
+    let rewritten = format!("{method} {path_and_query} {version}\r\n{header_tail}");
+    upstream.write_all(rewritten.as_bytes()).await?;
+    if !remainder.is_empty() {
+        upstream.write_all(remainder).await?;
+    }
+    let _ = tokio::io::copy_bidirectional(&mut inbound, &mut upstream).await;
+    Ok(())
+}
+
+fn find_header_end(buffer: &[u8]) -> Option<usize> {
+    buffer.windows(4).position(|window| window == b"\r\n\r\n")
+}
+
+async fn write_proxy_error(stream: &mut TcpStream, status: &str) -> std::io::Result<()> {
+    let response = format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+    stream.write_all(response.as_bytes()).await
+}
+
+fn proxy_request_target(target: &str, headers: &str) -> Option<(String, u16, String)> {
+    if target.starts_with("http://") {
+        let uri = target.parse::<Uri>().ok()?;
+        let authority = uri.authority()?.as_str();
+        let (host, port) = proxy_authority_host_port(authority)?;
+        let path_and_query = uri
+            .path_and_query()
+            .map_or("/", |value| value.as_str())
+            .to_string();
+        return Some((host, port, path_and_query));
+    }
+
+    let host_header = proxy_header(headers, "host")?;
+    let (host, port) = proxy_authority_host_port(&host_header)?;
+    Some((host, port, target.to_string()))
+}
+
+fn proxy_header(headers: &str, name: &str) -> Option<String> {
+    headers.lines().find_map(|line| {
+        let (key, value) = line.split_once(':')?;
+        key.eq_ignore_ascii_case(name)
+            .then(|| value.trim().to_string())
+    })
+}
+
+fn proxy_authority_host_port(authority: &str) -> Option<(String, u16)> {
+    let trimmed = authority.trim().trim_end_matches('.');
+    let port = host_port(trimmed)?;
+    Some((normalize_host(trimmed), port))
+}
+
+fn is_gateway_proxy_target(host: &str, port: u16, gateway_port: u16) -> bool {
+    if port != gateway_port {
+        return false;
+    }
+    host == LOCAL_PORTAL_HOST
+        || host == LOCAL_NHASH_RESOLVER_HOST
+        || host.ends_with(IRIS_LOCALHOST_SUFFIX)
+        || host.ends_with(HASH_HOST_SUFFIX)
 }
 
 #[derive(Clone)]
@@ -825,7 +1026,9 @@ async fn resolve_content<S: Store>(
         let cid = entry_cid(&entry);
         if index + 1 == segments.len() {
             return match entry.link_type {
-                LinkType::Dir => resolve_directory_or_index(tree, cid, &segments.join("/")).await,
+                LinkType::Dir | LinkType::Fanout => {
+                    resolve_directory_or_index(tree, cid, &segments.join("/")).await
+                }
                 LinkType::Blob | LinkType::File => Ok(Some(ResolvedContent::File {
                     cid,
                     size: entry.size,
@@ -834,7 +1037,7 @@ async fn resolve_content<S: Store>(
                 })),
             };
         }
-        if entry.link_type != LinkType::Dir {
+        if !matches!(entry.link_type, LinkType::Dir | LinkType::Fanout) {
             return Ok(None);
         }
         current = cid;
@@ -880,7 +1083,7 @@ async fn file_size_for_cid<S: Store>(
     {
         return match node.node_type {
             LinkType::File => Ok(Some(node.links.iter().map(|link| link.size).sum())),
-            LinkType::Dir | LinkType::Blob => Ok(None),
+            LinkType::Dir | LinkType::Fanout | LinkType::Blob => Ok(None),
         };
     }
 

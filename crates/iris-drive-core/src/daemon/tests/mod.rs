@@ -1,4 +1,5 @@
 use super::*;
+use hashtree_core::to_hex;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::app_keys::AppActorEntry;
@@ -944,5 +945,57 @@ fn embedded_hashtree_state_uses_config_child_for_plain_cli_layout() {
     assert_eq!(
         embedded_hashtree_state_root_in(Path::new("/tmp/iris-drive")),
         PathBuf::from("/tmp/iris-drive/Hashtree")
+    );
+}
+
+#[test]
+fn embedded_browser_relays_include_hashtree_resolver_bootstrap_relays() {
+    let mut config = AppConfig {
+        relays: vec![
+            "wss://custom.example".to_owned(),
+            "wss://relay.snort.social/".to_owned(),
+        ],
+        ..AppConfig::default()
+    };
+
+    let relays = embedded_browser_nostr_relays(&config);
+
+    assert_eq!(relays[0], "wss://custom.example");
+    assert!(relays.iter().any(|relay| relay == "wss://relay.damus.io"));
+    assert!(relays.iter().any(|relay| relay == "wss://relay.primal.net"));
+    assert_eq!(
+        relays
+            .iter()
+            .filter(|relay| same_relay(relay, "wss://relay.snort.social"))
+            .count(),
+        1
+    );
+
+    config.relays.clear();
+    let relays = embedded_browser_nostr_relays(&config);
+    assert!(relays.iter().any(|relay| relay == "wss://relay.damus.io"));
+    assert!(relays.iter().any(|relay| relay == "wss://relay.primal.net"));
+}
+
+#[test]
+fn embedded_browser_initial_roots_seed_iris_sites_portal_with_key() {
+    let roots = embedded_browser_initial_tree_roots();
+
+    assert_eq!(roots.len(), 1);
+    assert_eq!(
+        roots[0].0,
+        format!(
+            "{}/{}",
+            crate::gateway::IRIS_SITES_PORTAL_NPUB,
+            crate::gateway::IRIS_SITES_PORTAL_TREE
+        )
+    );
+    assert_eq!(
+        to_hex(&roots[0].1.hash),
+        "895b37b277f8f6ca37db183364f1f4a9b40cf749ed4b3c016ea39364c98e0899"
+    );
+    assert_eq!(
+        roots[0].1.key.map(|key| to_hex(&key)).as_deref(),
+        Some("a8006078aa411b25cb8efa2ace10f36a0cc2f8dfec8cfd97c5a0265bdaf8c463")
     );
 }

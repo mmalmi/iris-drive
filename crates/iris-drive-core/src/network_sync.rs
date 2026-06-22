@@ -47,6 +47,28 @@ pub struct NetworkSyncReport {
     pub materialized_root_cid: Option<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct NetworkSyncOptions {
+    pub start_direct_fips_download: bool,
+}
+
+impl Default for NetworkSyncOptions {
+    fn default() -> Self {
+        Self {
+            start_direct_fips_download: true,
+        }
+    }
+}
+
+impl NetworkSyncOptions {
+    #[must_use]
+    pub const fn without_direct_fips_download() -> Self {
+        Self {
+            start_direct_fips_download: false,
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct DriveRootEventApplyReport {
     pub seen: usize,
@@ -60,15 +82,47 @@ pub async fn sync_once(
     relay_override: &[String],
     timeout: Duration,
 ) -> Result<NetworkSyncReport> {
-    sync_once_with_fips(config_dir, relay_override, timeout, None).await
+    sync_once_with_options(
+        config_dir,
+        relay_override,
+        timeout,
+        NetworkSyncOptions::default(),
+    )
+    .await
 }
 
-#[allow(clippy::too_many_lines)]
+pub async fn sync_once_with_options(
+    config_dir: &Path,
+    relay_override: &[String],
+    timeout: Duration,
+    options: NetworkSyncOptions,
+) -> Result<NetworkSyncReport> {
+    sync_once_inner(config_dir, relay_override, timeout, None, options).await
+}
+
 pub async fn sync_once_with_fips(
     config_dir: &Path,
     relay_override: &[String],
     timeout: Duration,
     fips: Option<&FsFipsBlockSync>,
+) -> Result<NetworkSyncReport> {
+    sync_once_inner(
+        config_dir,
+        relay_override,
+        timeout,
+        fips,
+        NetworkSyncOptions::default(),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_lines)]
+async fn sync_once_inner(
+    config_dir: &Path,
+    relay_override: &[String],
+    timeout: Duration,
+    fips: Option<&FsFipsBlockSync>,
+    options: NetworkSyncOptions,
 ) -> Result<NetworkSyncReport> {
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
@@ -199,6 +253,7 @@ pub async fn sync_once_with_fips(
         &config,
         &root_cids_to_download,
         fips,
+        options,
         &mut report,
     )
     .await;
@@ -295,6 +350,7 @@ async fn download_roots(
     config: &AppConfig,
     root_cid_strs: &[String],
     fips: Option<&FsFipsBlockSync>,
+    options: NetworkSyncOptions,
     report: &mut NetworkSyncReport,
 ) {
     if root_cid_strs.is_empty() {
@@ -302,21 +358,27 @@ async fn download_roots(
     }
 
     let fips_policy = fips_download_policy(config);
-    if let Some(fips) = fips {
-        match download_roots_over_fips(fips, root_cid_strs, fips_policy).await {
-            Ok(download) => report.fips_download = Some(download),
-            Err(error) => report.fips_download_error = Some(format!("{error:#}")),
-        }
-    } else {
-        let mut block_config = config.clone();
-        block_config.relays = report.relays.clone();
-        match start_fips_block_sync(config_dir, &block_config).await {
-            Ok(fips) => match download_roots_over_fips(&fips, root_cid_strs, fips_policy).await {
+    match direct_fips_download_decision(fips.is_some(), options) {
+        DirectFipsDownloadDecision::UseSupplied => {
+            let fips = fips.expect("direct FIPS decision requires supplied handle");
+            match download_roots_over_fips(fips, root_cid_strs, fips_policy).await {
                 Ok(download) => report.fips_download = Some(download),
                 Err(error) => report.fips_download_error = Some(format!("{error:#}")),
-            },
-            Err(error) => report.fips_download_error = Some(format!("{error:#}")),
+            }
         }
+        DirectFipsDownloadDecision::StartTemporary => {
+            let mut block_config = config.clone();
+            block_config.relays = report.relays.clone();
+            match start_fips_block_sync(config_dir, &block_config).await {
+                Ok(fips) => match download_roots_over_fips(&fips, root_cid_strs, fips_policy).await
+                {
+                    Ok(download) => report.fips_download = Some(download),
+                    Err(error) => report.fips_download_error = Some(format!("{error:#}")),
+                },
+                Err(error) => report.fips_download_error = Some(format!("{error:#}")),
+            }
+        }
+        DirectFipsDownloadDecision::SkipTemporary => {}
     }
 
     if report.fips_download.is_none() && !config.blossom_servers.is_empty() {
@@ -324,6 +386,26 @@ async fn download_roots(
             Ok(download) => report.blossom_download = Some(download),
             Err(error) => report.blossom_download_error = Some(error.to_string()),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum DirectFipsDownloadDecision {
+    UseSupplied,
+    StartTemporary,
+    SkipTemporary,
+}
+
+fn direct_fips_download_decision(
+    has_supplied_fips: bool,
+    options: NetworkSyncOptions,
+) -> DirectFipsDownloadDecision {
+    if has_supplied_fips {
+        DirectFipsDownloadDecision::UseSupplied
+    } else if options.start_direct_fips_download {
+        DirectFipsDownloadDecision::StartTemporary
+    } else {
+        DirectFipsDownloadDecision::SkipTemporary
     }
 }
 
@@ -434,5 +516,33 @@ fn add_download_report(total: &mut DownloadReport, report: DownloadReport) {
 fn push_unique(values: &mut Vec<String>, value: String) {
     if !values.iter().any(|existing| existing == &value) {
         values.push(value);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{DirectFipsDownloadDecision, NetworkSyncOptions, direct_fips_download_decision};
+
+    #[test]
+    fn default_sync_options_preserve_existing_temporary_fips_download() {
+        assert!(NetworkSyncOptions::default().start_direct_fips_download);
+        assert_eq!(
+            direct_fips_download_decision(false, NetworkSyncOptions::default()),
+            DirectFipsDownloadDecision::StartTemporary
+        );
+    }
+
+    #[test]
+    fn sync_options_can_skip_only_temporary_direct_fips_download() {
+        let options = NetworkSyncOptions::without_direct_fips_download();
+
+        assert_eq!(
+            direct_fips_download_decision(false, options),
+            DirectFipsDownloadDecision::SkipTemporary
+        );
+        assert_eq!(
+            direct_fips_download_decision(true, options),
+            DirectFipsDownloadDecision::UseSupplied
+        );
     }
 }

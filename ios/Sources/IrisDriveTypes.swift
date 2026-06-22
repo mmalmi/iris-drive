@@ -124,6 +124,18 @@ enum IrisDriveSharedContainer {
         let uiTestBaseDir = ProcessInfo.processInfo.environment["IRIS_DRIVE_UI_TEST_BASE_DIR"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if let uiTestBaseDir, !uiTestBaseDir.isEmpty {
+            #if DEBUG
+            if uiTestBaseDir == "__TMP__" {
+                return FileManager.default.temporaryDirectory
+                    .appendingPathComponent(storageDirectoryName, isDirectory: true)
+            }
+            if uiTestBaseDir.hasPrefix("__TMP__/") {
+                let suffix = String(uiTestBaseDir.dropFirst("__TMP__/".count))
+                    .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+                return FileManager.default.temporaryDirectory
+                    .appendingPathComponent(suffix.isEmpty ? storageDirectoryName : suffix, isDirectory: true)
+            }
+            #endif
             return URL(fileURLWithPath: uiTestBaseDir, isDirectory: true)
         }
         if let shared = FileManager.default.containerURL(

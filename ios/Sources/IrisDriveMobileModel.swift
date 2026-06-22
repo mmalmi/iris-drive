@@ -832,22 +832,32 @@ final class IrisDriveMobileModel: ObservableObject {
         return localGatewayURL(candidate)
     }
 
-    func localGatewayURL(_ value: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard var components = URLComponents(string: trimmed),
-              let host = components.host,
-              let activePort = URLComponents(string: sitesPortalUrl)?.port
-        else {
-            return value
+    func irisWebPublisherDisplayName(forNpub npub: String) -> String? {
+        let normalized = npub.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return nil }
+        if normalized == currentAppKeyNpub.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            let username = profileUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !username.isEmpty {
+                return username
+            }
         }
-        let lowerHost = host.lowercased()
-        let isLocalGatewayHost = lowerHost == "iris.localhost"
-            || lowerHost.hasSuffix(".iris.localhost")
-            || lowerHost == "hash.localhost"
-            || lowerHost.hasSuffix(".hash.localhost")
-        guard isLocalGatewayHost else { return value }
-        components.port = activePort
-        return components.url?.absoluteString ?? value
+        for share in shares {
+            if let member = share.members.first(where: {
+                $0.representativeNpubHint.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalized
+            }) {
+                return member.displayName
+            }
+            if let invite = share.pendingInvites.first(where: {
+                $0.representativeNpubHint.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalized
+            }) {
+                return invite.displayName
+            }
+        }
+        return nil
+    }
+
+    func localGatewayURL(_ value: String) -> String {
+        localGatewayURL(value, activePortalUrl: sitesPortalUrl)
     }
 
     func addRelay(_ value: String? = nil) {
@@ -1185,6 +1195,15 @@ final class IrisDriveMobileModel: ObservableObject {
                 username: environment["IRIS_DRIVE_DEBUG_USERNAME"] ?? "",
                 profilePhotoName: ""
             )
+        case "probe-iris-apps":
+            debugProbeIrisApps()
+        case "open-browser":
+            guard let target = environment["IRIS_DRIVE_DEBUG_BROWSER_URL"],
+                  !target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else {
+                return
+            }
+            openIrisBrowser(target)
         default:
             return
         }
@@ -1414,6 +1433,15 @@ final class IrisDriveMobileModel: ObservableObject {
 
     func refreshInBackground() async {
         let generation = stateGeneration
+        #if DEBUG
+        if let delay = debugRefreshDelayNanoseconds() {
+            do {
+                try await Task.sleep(nanoseconds: delay)
+            } catch {
+                return
+            }
+        }
+        #endif
         let json = await runNativeInBackground { nativeCore in
             nativeCore.refreshJson()
         }
@@ -1435,6 +1463,15 @@ final class IrisDriveMobileModel: ObservableObject {
     private func runNative<T>(_ operation: (IrisDriveNativeCore) -> T) -> T {
         nativeCoreQueue.sync { operation(nativeCore) }
     }
+
+    #if DEBUG
+    private func debugRefreshDelayNanoseconds() -> UInt64? {
+        let value = ProcessInfo.processInfo.environment["IRIS_DRIVE_DEBUG_REFRESH_DELAY_MS"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard let milliseconds = UInt64(value), milliseconds > 0 else { return nil }
+        return milliseconds * 1_000_000
+    }
+    #endif
 
     private func encodeNativeAction(_ action: [String: Any]) -> String? {
         guard let data = try? JSONSerialization.data(withJSONObject: action) else {

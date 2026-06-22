@@ -77,6 +77,17 @@ fn provider_mutation_liveness_policy_keeps_desktop_daemon_gate_but_allows_mobile
 }
 
 #[test]
+fn native_foreground_sync_skips_temporary_fips_endpoint_on_mobile() {
+    use crate::native_provider::native_sync_starts_direct_fips_for_target;
+
+    assert!(native_sync_starts_direct_fips_for_target("macos"));
+    assert!(native_sync_starts_direct_fips_for_target("linux"));
+    assert!(native_sync_starts_direct_fips_for_target("windows"));
+    assert!(!native_sync_starts_direct_fips_for_target("android"));
+    assert!(!native_sync_starts_direct_fips_for_target("ios"));
+}
+
+#[test]
 fn import_file_action_writes_shared_file_into_provider_root() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());

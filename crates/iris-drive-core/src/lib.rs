@@ -76,7 +76,7 @@ pub use direct_root_transport::{
     direct_root_mesh_stream,
 };
 pub use fips_sync::{FipsBlockSync, FipsSyncError, FsFipsBlockSync};
-pub use gateway::{GatewayBind, GatewayError, GatewayServer};
+pub use gateway::{GatewayBind, GatewayError, GatewayProxyServer, GatewayServer};
 pub use hashtree_fips_transport::{FipsAppMessage, FipsMeshPubsubEvent};
 pub use identity::{AppKey, Identity, IdentityError, RecoveryKey};
 pub use indexer::{
@@ -109,8 +109,9 @@ pub use merge::{
     original_path_from_tombstone, tombstone_path,
 };
 pub use network_sync::{
-    DriveRootEventApplyReport, NetworkSyncReport, apply_drive_root_events,
+    DriveRootEventApplyReport, NetworkSyncOptions, NetworkSyncReport, apply_drive_root_events,
     authorized_app_key_pubkeys, sync_once as network_sync_once, sync_once_with_fips,
+    sync_once_with_options,
 };
 pub use profile::{
     AppKeyAuthorizationState, KeyWrapRepairOutcome, Profile, ProfileError, ProfileLogoutReport,

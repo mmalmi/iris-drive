@@ -133,6 +133,34 @@ final class IrisDriveIOSUITests: XCTestCase {
         assertOpenIrisAppsLoads(in: app)
     }
 
+    func testIrisWebFooterBrowserStyleScreenshots() throws {
+        let screenshotDir = try requiredEnvironment("IRIS_DRIVE_UI_SCREENSHOT_DIR")
+        let browserURL = try requiredEnvironment("IRIS_DRIVE_UI_TEST_BROWSER_URL")
+        let app = launchApp(environment: [
+            "IRIS_DRIVE_DEBUG_ACTION": "open-browser",
+            "IRIS_DRIVE_DEBUG_BROWSER_URL": browserURL,
+        ])
+
+        let address = app.textFields["irisWebAddressField"]
+        XCTAssertTrue(address.waitForExistence(timeout: 15), app.debugDescription)
+        waitForIrisBrowserToFinishLoading(in: app)
+        XCTAssertTrue(app.buttons["irisWebReloadButton"].exists, app.debugDescription)
+        XCTAssertTrue(app.buttons["irisWebMoreButton"].exists, app.debugDescription)
+        try saveScreenshot(named: "iris-web-footer-expanded", in: screenshotDir)
+
+        app.swipeUp()
+        app.swipeUp()
+        let compactTitle = app.buttons["irisWebCompactTitle"].firstMatch
+        XCTAssertTrue(compactTitle.waitForExistence(timeout: 5), app.debugDescription)
+        try saveScreenshot(named: "iris-web-footer-collapsed", in: screenshotDir)
+
+        compactTitle.tap()
+        XCTAssertTrue(address.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(app.buttons["irisWebReloadButton"].exists, app.debugDescription)
+        XCTAssertTrue(app.buttons["irisWebMoreButton"].exists, app.debugDescription)
+        try saveScreenshot(named: "iris-web-footer-reexpanded", in: screenshotDir)
+    }
+
     private func assertOpenIrisAppsLoads(
         in app: XCUIApplication,
         file: StaticString = #filePath,
@@ -144,15 +172,7 @@ final class IrisDriveIOSUITests: XCTestCase {
 
         let address = app.textFields["irisWebAddressField"]
         XCTAssertTrue(address.waitForExistence(timeout: 35), app.debugDescription, file: file, line: line)
-        let deadline = Date().addingTimeInterval(8)
-        while Date() < deadline {
-            let error = app.staticTexts["irisWebError"]
-            XCTAssertFalse(error.exists, "Iris Apps browser failed: \(accessibilityValue(error))", file: file, line: line)
-            if !app.progressIndicators["irisWebLoading"].exists {
-                break
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-        }
+        waitForIrisBrowserToFinishLoading(in: app, file: file, line: line)
 
         XCTAssertFalse(app.staticTexts["irisWebError"].exists, file: file, line: line)
         XCTAssertTrue(accessibilityValue(address).contains("iris.localhost"), file: file, line: line)
@@ -348,6 +368,36 @@ final class IrisDriveIOSUITests: XCTestCase {
             return value
         }
         return element.label.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func waitForIrisBrowserToFinishLoading(
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let deadline = Date().addingTimeInterval(8)
+        while Date() < deadline {
+            let error = app.staticTexts["irisWebError"]
+            XCTAssertFalse(error.exists, "Iris Apps browser failed: \(accessibilityValue(error))", file: file, line: line)
+            if !app.progressIndicators["irisWebLoading"].exists {
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        XCTAssertFalse(app.staticTexts["irisWebError"].exists, file: file, line: line)
+    }
+
+    private func saveScreenshot(named name: String, in directory: String) throws {
+        let directoryURL = URL(fileURLWithPath: directory, isDirectory: true)
+        try FileManager.default.createDirectory(at: directoryURL, withIntermediateDirectories: true)
+        let screenshot = XCUIScreen.main.screenshot()
+        try screenshot.pngRepresentation.write(to: directoryURL.appendingPathComponent("\(name).png"))
+        XCTContext.runActivity(named: name) { activity in
+            let attachment = XCTAttachment(screenshot: screenshot)
+            attachment.name = name
+            attachment.lifetime = .keepAlways
+            activity.add(attachment)
+        }
     }
 
     private func waitForLinkedOnlineDeviceRow(in app: XCUIApplication, timeout: TimeInterval) -> Bool {

@@ -33,6 +33,7 @@
 		D3FE62286547E94FA6B5DDA5 /* IrisDriveBackgroundSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06140F5A8590769EE11B0EC6 /* IrisDriveBackgroundSync.swift */; };
 		E8C9614F1C94BB1141210E7E /* QRCodeScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FAD09F152A81F2977621CC8 /* QRCodeScannerView.swift */; };
 		EDB65234DF8B98FA5A85E5BF /* IrisDriveContentLinks.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5776131C4E7DA77C3A533FB /* IrisDriveContentLinks.swift */; };
+		FCA07D9E0FCE8AD5D196A8CB /* browser-footer.html in Resources */ = {isa = PBXBuildFile; fileRef = 5F7984AB4A917CEB5A16EB9A /* browser-footer.html */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -90,6 +91,7 @@
 		51A215568D3B9E51946DE326 /* IrisDriveNativeCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveNativeCore.swift; sourceTree = "<group>"; };
 		57ECD37803B00AFA445E6080 /* StartupLoadingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StartupLoadingView.swift; sourceTree = "<group>"; };
 		59222C8CE8FD8C001461A472 /* FileProvider.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FileProvider.entitlements; sourceTree = "<group>"; };
+		5F7984AB4A917CEB5A16EB9A /* browser-footer.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "browser-footer.html"; sourceTree = "<group>"; };
 		977A7BAB3E96F1AD9B1C5AB9 /* ShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ShareExtension.entitlements; sourceTree = "<group>"; };
 		A2262CD0A76753FF6C6D773B /* IrisDriveBackupViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveBackupViews.swift; sourceTree = "<group>"; };
 		A63880B58F406AD06ACD2A66 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -140,6 +142,14 @@
 			path = Resources;
 			sourceTree = "<group>";
 		};
+		6A7BB1B22A4C820515A4A943 /* Fixtures */ = {
+			isa = PBXGroup;
+			children = (
+				5F7984AB4A917CEB5A16EB9A /* browser-footer.html */,
+			);
+			path = Fixtures;
+			sourceTree = "<group>";
+		};
 		7A1D5291928F47D312DCDA64 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
@@ -174,6 +184,7 @@
 			isa = PBXGroup;
 			children = (
 				2924EE6BC887DE0B5E1E045D /* IrisDriveIOSUITests.swift */,
+				6A7BB1B22A4C820515A4A943 /* Fixtures */,
 			);
 			path = UITests;
 			sourceTree = "<group>";
@@ -236,6 +247,7 @@
 			buildConfigurationList = 00442C1579679BD22CC4C088 /* Build configuration list for PBXNativeTarget "IrisDriveIOSUITests" */;
 			buildPhases = (
 				D1245BE1B9FD60C1544699FB /* Sources */,
+				4F3AD3F682F1885F762E2882 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -317,6 +329,14 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		4F3AD3F682F1885F762E2882 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FCA07D9E0FCE8AD5D196A8CB /* browser-footer.html in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		50731F699E6027C4EBEE36FF /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -435,7 +455,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1015;
+				CURRENT_PROJECT_VERSION = 1016;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = J8PPJKD7TA;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -455,7 +475,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 0.1.15;
+				MARKETING_VERSION = 0.1.16;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -544,7 +564,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1015;
+				CURRENT_PROJECT_VERSION = 1016;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = J8PPJKD7TA;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -558,7 +578,7 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				MARKETING_VERSION = 0.1.15;
+				MARKETING_VERSION = 0.1.16;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

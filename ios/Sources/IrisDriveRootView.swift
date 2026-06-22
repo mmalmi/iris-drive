@@ -1614,6 +1614,7 @@ private struct IrisWebBrowserView: View {
                 browser: browser,
                 addressText: $addressText,
                 addressFocused: $addressFocused,
+                publisherDisplayName: model.irisWebPublisherDisplayName,
                 onClose: { model.webRoute = nil },
                 onSubmitAddress: loadAddressBarURL
             )
@@ -1641,8 +1642,11 @@ private struct IrisWebBrowserView: View {
 @MainActor
 private final class IrisWebBrowserController: ObservableObject {
     @Published var currentURL: URL?
+    @Published var pageTitle = ""
     @Published var canGoBack = false
+    @Published var footerCollapsed = false
     private weak var webView: WKWebView?
+    private var lastScrollY: CGFloat = 0
 
     func attach(_ webView: WKWebView) {
         self.webView = webView
@@ -1651,18 +1655,47 @@ private final class IrisWebBrowserController: ObservableObject {
 
     func update(from webView: WKWebView) {
         currentURL = webView.url
+        pageTitle = webView.title ?? ""
         canGoBack = webView.canGoBack
     }
 
     func goBack() {
+        footerCollapsed = false
         webView?.goBack()
         if let webView {
             update(from: webView)
         }
     }
 
+    func reload() {
+        footerCollapsed = false
+        webView?.reload()
+    }
+
     func load(_ url: URL) {
+        footerCollapsed = false
         webView?.load(URLRequest(url: url))
+    }
+
+    func expandFooter() {
+        footerCollapsed = false
+    }
+
+    func updateScroll(_ scrollView: UIScrollView) {
+        let y = max(0, scrollView.contentOffset.y + scrollView.adjustedContentInset.top)
+        let delta = y - lastScrollY
+        defer { lastScrollY = y }
+
+        guard scrollView.isDragging || scrollView.isDecelerating else { return }
+        if y < 12 {
+            footerCollapsed = false
+            return
+        }
+        if delta > 9 {
+            footerCollapsed = true
+        } else if delta < -7 {
+            footerCollapsed = false
+        }
     }
 }
 
@@ -1670,61 +1703,247 @@ private struct IrisWebBrowserBar: View {
     @ObservedObject var browser: IrisWebBrowserController
     @Binding var addressText: String
     var addressFocused: FocusState<Bool>.Binding
+    let publisherDisplayName: (String) -> String?
     let onClose: () -> Void
     let onSubmitAddress: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            Button(action: onClose) {
-                Image(systemName: "xmark")
-                    .frame(width: 34, height: 34)
-            }
-            .buttonStyle(.borderless)
-            .accessibilityLabel("Close")
-            .accessibilityIdentifier("irisWebCloseButton")
-
-            Button(action: browser.goBack) {
-                Image(systemName: "chevron.left")
-                    .frame(width: 34, height: 34)
-            }
-            .buttonStyle(.borderless)
-            .disabled(!browser.canGoBack)
-            .accessibilityLabel("Back")
-            .accessibilityIdentifier("irisWebBackButton")
-
-            TextField("Address", text: $addressText)
-                .keyboardType(.URL)
-                .textInputAutocapitalization(.never)
-                .autocorrectionDisabled()
-                .submitLabel(.go)
-                .focused(addressFocused)
-                .onSubmit(onSubmitAddress)
-                .font(.footnote)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 8))
-                .accessibilityIdentifier("irisWebAddressField")
-
-            if let url = browser.currentURL {
-                ShareLink(item: url) {
-                    Image(systemName: "square.and.arrow.up")
-                        .frame(width: 34, height: 34)
-                }
-                .buttonStyle(.borderless)
-                .accessibilityLabel("Share")
-                .accessibilityIdentifier("irisWebShareButton")
+        Group {
+            if browser.footerCollapsed && !addressFocused.wrappedValue {
+                compactBar
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
             } else {
-                Image(systemName: "square.and.arrow.up")
-                    .frame(width: 34, height: 34)
-                    .foregroundStyle(.tertiary)
-                    .accessibilityHidden(true)
+                expandedBar
+                    .transition(.opacity.combined(with: .move(edge: .bottom)))
             }
         }
         .padding(.horizontal, 10)
-        .padding(.top, 8)
-        .padding(.bottom, 10)
-        .background(.regularMaterial)
+        .padding(.top, 7)
+        .padding(.bottom, 8)
+        .background(.ultraThinMaterial)
+        .animation(.snappy(duration: 0.22), value: browser.footerCollapsed)
+        .onChange(of: addressFocused.wrappedValue) { _, focused in
+            if focused {
+                browser.expandFooter()
+            }
+        }
     }
+
+    private var expandedBar: some View {
+        HStack(spacing: 7) {
+            browserIconButton("xmark", label: "Close", action: onClose)
+                .accessibilityIdentifier("irisWebCloseButton")
+
+            browserIconButton("chevron.left", label: "Back", action: browser.goBack)
+                .disabled(!browser.canGoBack)
+                .accessibilityIdentifier("irisWebBackButton")
+
+            HStack(spacing: 6) {
+                TextField("Address", text: $addressText)
+                    .keyboardType(.URL)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .submitLabel(.go)
+                    .focused(addressFocused)
+                    .onSubmit(onSubmitAddress)
+                    .font(.system(.subheadline, design: .rounded, weight: .medium))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .accessibilityIdentifier("irisWebAddressField")
+
+                Button(action: browser.reload) {
+                    Image(systemName: "arrow.clockwise")
+                        .font(.system(size: 15, weight: .semibold))
+                        .frame(width: 28, height: 30)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Reload")
+                .accessibilityIdentifier("irisWebReloadButton")
+            }
+            .padding(.leading, 14)
+            .padding(.trailing, 6)
+            .frame(height: 42)
+            .background(.thinMaterial, in: Capsule())
+            .overlay {
+                Capsule()
+                    .stroke(.white.opacity(0.18), lineWidth: 0.5)
+            }
+
+            browserMenu
+        }
+    }
+
+    private var compactBar: some View {
+        let title = compactTitle
+        return Button(action: browser.expandFooter) {
+            Text(title)
+                .font(.system(.footnote, design: .rounded, weight: .semibold))
+                .foregroundStyle(.primary)
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .frame(maxWidth: .infinity)
+                .frame(height: 38)
+                .padding(.horizontal, 16)
+                .background(.thinMaterial, in: Capsule())
+                .overlay {
+                    Capsule()
+                        .stroke(.white.opacity(0.18), lineWidth: 0.5)
+                }
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Show browser controls")
+        .accessibilityValue(title)
+        .accessibilityIdentifier("irisWebCompactTitle")
+    }
+
+    private var compactTitle: String {
+        irisWebFooterDisplayTitle(
+            url: browser.currentURL,
+            pageTitle: browser.pageTitle,
+            publisherDisplayName: publisherDisplayName
+        )
+    }
+
+    private var browserMenu: some View {
+        Menu {
+            if let url = browser.currentURL {
+                ShareLink(item: url) {
+                    Label("Share", systemImage: "square.and.arrow.up")
+                }
+                Button {
+                    UIApplication.shared.open(url)
+                } label: {
+                    Label("Open in Safari", systemImage: "safari")
+                }
+            }
+            Button(role: .cancel, action: onClose) {
+                Label("Close Browser", systemImage: "xmark")
+            }
+        } label: {
+            Image(systemName: "ellipsis")
+                .font(.system(size: 17, weight: .semibold))
+                .frame(width: 34, height: 34)
+                .background(.thinMaterial, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("More")
+        .accessibilityIdentifier("irisWebMoreButton")
+    }
+
+    private func browserIconButton(
+        _ systemName: String,
+        label: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 17, weight: .semibold))
+                .frame(width: 34, height: 34)
+                .background(.thinMaterial, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+}
+
+private func irisWebFooterDisplayTitle(
+    url: URL?,
+    pageTitle: String,
+    publisherDisplayName: (String) -> String? = { _ in nil }
+) -> String {
+    let cleanTitle = pageTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard let url,
+          let host = url.host?.trimmingCharacters(in: .whitespacesAndNewlines),
+          !host.isEmpty
+    else {
+        return cleanTitle.isEmpty ? "Browser" : cleanTitle
+    }
+
+    let lowerHost = host.lowercased()
+    if let title = irisMutableSiteFooterTitle(
+        url: url,
+        lowerHost: lowerHost,
+        publisherDisplayName: publisherDisplayName
+    ) {
+        return title
+    }
+
+    if isIrisHashFooterHost(lowerHost) {
+        return cleanTitle.isEmpty ? "nhash" : cleanTitle
+    }
+
+    if lowerHost.hasPrefix("www.") {
+        return String(lowerHost.dropFirst(4))
+    }
+    return lowerHost
+}
+
+private func irisMutableSiteFooterTitle(
+    url: URL,
+    lowerHost: String,
+    publisherDisplayName: (String) -> String?
+) -> String? {
+    if lowerHost == "iris.localhost",
+       let title = irisPortalPathFooterTitle(url: url, publisherDisplayName: publisherDisplayName) {
+        return title
+    }
+
+    guard lowerHost.hasSuffix(".iris.localhost") else { return nil }
+    let prefix = String(lowerHost.dropLast(".iris.localhost".count))
+    if prefix.isEmpty || prefix == "nhash" || prefix.hasSuffix(".sites") {
+        return nil
+    }
+
+    let labels = prefix.split(separator: ".").map(String.init)
+    guard let npubIndex = labels.lastIndex(where: { $0.hasPrefix("npub1") }),
+          npubIndex > 0
+    else {
+        return nil
+    }
+
+    let siteName = labels[..<npubIndex]
+        .joined(separator: ".")
+        .removingPercentEncoding ?? labels[..<npubIndex].joined(separator: ".")
+    let npub = labels[npubIndex]
+    return "\(publisherLabel(for: npub, publisherDisplayName: publisherDisplayName)) / \(siteName)"
+}
+
+private func irisPortalPathFooterTitle(
+    url: URL,
+    publisherDisplayName: (String) -> String?
+) -> String? {
+    let parts = url.pathComponents.filter { $0 != "/" }
+    guard parts.count >= 2,
+          parts[0].hasPrefix("npub1")
+    else {
+        return nil
+    }
+    let treeName = parts[1].removingPercentEncoding ?? parts[1]
+    return "\(publisherLabel(for: parts[0], publisherDisplayName: publisherDisplayName)) / \(treeName)"
+}
+
+private func publisherLabel(
+    for npub: String,
+    publisherDisplayName: (String) -> String?
+) -> String {
+    if let name = publisherDisplayName(npub)?
+        .trimmingCharacters(in: .whitespacesAndNewlines),
+        !name.isEmpty {
+        return name
+    }
+    return shortNpub(npub)
+}
+
+private func shortNpub(_ npub: String) -> String {
+    guard npub.count > 14 else { return npub }
+    return "\(npub.prefix(8))...\(npub.suffix(4))"
+}
+
+private func isIrisHashFooterHost(_ lowerHost: String) -> Bool {
+    lowerHost == "nhash.iris.localhost"
+        || lowerHost == "hash.localhost"
+        || lowerHost.hasSuffix(".hash.localhost")
+        || lowerHost.hasSuffix(".sites.iris.localhost")
 }
 
 private struct IrisWebView: UIViewRepresentable {
@@ -1738,8 +1957,10 @@ private struct IrisWebView: UIViewRepresentable {
         let configuration = WKWebViewConfiguration()
         configuration.preferences.javaScriptCanOpenWindowsAutomatically = false
         configuration.userContentController = WKUserContentController()
+        model.configureIrisWebDataStore(configuration.websiteDataStore)
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
+        webView.scrollView.delegate = context.coordinator
         webView.allowsBackForwardNavigationGestures = true
         webView.isOpaque = false
         webView.backgroundColor = .systemBackground
@@ -1759,7 +1980,7 @@ private struct IrisWebView: UIViewRepresentable {
         )
     }
 
-    final class Coordinator: NSObject, WKNavigationDelegate {
+    final class Coordinator: NSObject, WKNavigationDelegate, UIScrollViewDelegate {
         private weak var model: IrisDriveMobileModel?
         private weak var browser: IrisWebBrowserController?
         private var isLoading: Binding<Bool>
@@ -1823,6 +2044,10 @@ private struct IrisWebView: UIViewRepresentable {
             loadError.wrappedValue = nsError.localizedDescription
         }
 
+        func scrollViewDidScroll(_ scrollView: UIScrollView) {
+            browser?.updateScroll(scrollView)
+        }
+
         func webView(
             _ webView: WKWebView,
             decidePolicyFor navigationAction: WKNavigationAction,
@@ -1832,27 +2057,21 @@ private struct IrisWebView: UIViewRepresentable {
                 decisionHandler(.allow)
                 return
             }
-            let classification = IrisDriveNativeLinkInput.classify(url.absoluteString)
-            switch classification.kind {
-            case "iris_web":
-                let localOpenURL = model?.localGatewayURL(classification.localOpenUrl)
-                    ?? classification.localOpenUrl
-                if let localURL = URL(string: localOpenURL),
-                   localURL.absoluteString != url.absoluteString {
-                    webView.load(URLRequest(url: localURL))
-                    decisionHandler(.cancel)
-                } else {
-                    decisionHandler(.allow)
-                }
-            case "share_dialog", "nhash_file", "mutable_file", "invite", "app_key_approval":
+            switch model?.irisWebNavigationAction(for: url) ?? .allow {
+            case .allow:
+                decisionHandler(.allow)
+            case .redirect(let localURL):
+                webView.load(URLRequest(url: localURL))
+                decisionHandler(.cancel)
+            case .handleNative(let nativeURL):
                 Task { @MainActor [weak model] in
-                    model?.handle(url: url)
+                    model?.handle(url: nativeURL)
                 }
                 decisionHandler(.cancel)
-            default:
-                if url.scheme == "http" || url.scheme == "https" {
-                    UIApplication.shared.open(url)
-                }
+            case .openExternal(let externalURL):
+                UIApplication.shared.open(externalURL)
+                decisionHandler(.cancel)
+            case .cancel:
                 decisionHandler(.cancel)
             }
         }

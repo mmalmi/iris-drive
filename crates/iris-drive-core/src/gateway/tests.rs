@@ -4,6 +4,8 @@ use axum::extract::ws::{Message as AxumWebSocketMessage, WebSocket, WebSocketUpg
 use futures::{SinkExt, StreamExt};
 use nostr_sdk::ToBech32;
 use std::path::Path;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
 use crate::config::Drive;
@@ -91,6 +93,36 @@ async fn fake_htree_daemon_with_content_type(
         content_type: Arc::new(content_type.to_string()),
     };
     let app = Router::new().fallback(any(handler)).with_state(state);
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let handle = tokio::spawn(async move {
+        let _ = axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                let _ = shutdown_rx.await;
+            })
+            .await;
+    });
+    FakeHtreeDaemon {
+        addr: addr.to_string(),
+        shutdown_tx,
+        handle,
+    }
+}
+
+async fn fake_echo_path_htree_daemon() -> FakeHtreeDaemon {
+    async fn handler(method: Method, uri: Uri) -> Response {
+        response_builder(StatusCode::OK, method == Method::HEAD)
+            .header(CONTENT_TYPE, "text/plain")
+            .body(if method == Method::HEAD {
+                Body::empty()
+            } else {
+                Body::from(uri.path().to_string())
+            })
+            .expect("response")
+    }
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = Router::new().fallback(any(handler));
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let handle = tokio::spawn(async move {
         let _ = axum::serve(listener, app)
@@ -203,6 +235,169 @@ async fn gateway_serves_current_primary_drive_root() {
     let response = http_get(server.local_addr(), "main.drive.iris.localhost", "/").await;
     assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
     assert!(response.contains("hello gateway"), "{response}");
+    server.shutdown().await.unwrap();
+}
+
+async fn proxy_http_get(proxy_addr: SocketAddr, host: &str, port: u16, path: &str) -> String {
+    let mut stream = TcpStream::connect(proxy_addr).await.unwrap();
+    stream
+        .write_all(
+            format!(
+                "GET http://{host}:{port}{path} HTTP/1.1\r\n\
+                 Host: {host}:{port}\r\n\
+                 Connection: close\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+    response
+}
+
+#[tokio::test]
+async fn gateway_proxy_forwards_absolute_form_iris_host() {
+    let cfg_dir = tempdir().unwrap();
+    init_account_config(cfg_dir.path());
+    let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let work = tempdir().unwrap();
+    std::fs::write(work.path().join("index.html"), b"hello proxied gateway").unwrap();
+    daemon.import_source_dir(work.path()).await.unwrap();
+    let server = GatewayServer::bind_with_tree(
+        cfg_dir.path(),
+        daemon.tree_handle(),
+        GatewayBind::loopback_v4(0),
+    )
+    .await
+    .unwrap();
+    let proxy = GatewayProxyServer::bind_for_gateway(server.local_addr())
+        .await
+        .unwrap();
+    let mut stream = TcpStream::connect(proxy.local_addr()).await.unwrap();
+    let gateway_port = server.local_addr().port();
+    stream
+        .write_all(
+            format!(
+                "GET http://main.drive.iris.localhost:{gateway_port}/ HTTP/1.1\r\n\
+                 Host: main.drive.iris.localhost:{gateway_port}\r\n\
+                 Connection: close\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(response.contains("hello proxied gateway"), "{response}");
+    proxy.shutdown().await.unwrap();
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn gateway_proxy_preserves_distinct_mutable_site_origins() {
+    let cfg_dir = tempdir().unwrap();
+    init_account_config(cfg_dir.path());
+    let daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let htree = fake_echo_path_htree_daemon().await;
+    let server = GatewayServer::bind_with_tree_and_htree_daemon(
+        cfg_dir.path(),
+        daemon.tree_handle(),
+        htree.addr.clone(),
+        GatewayBind::loopback_v4(0),
+    )
+    .await
+    .unwrap();
+    let proxy = GatewayProxyServer::bind_for_gateway(server.local_addr())
+        .await
+        .unwrap();
+    let port = server.local_addr().port();
+    let maps_host = format!("maps.{IRIS_SITES_PORTAL_NPUB}.iris.localhost");
+    let notes_host = format!("notes.{IRIS_SITES_PORTAL_NPUB}.iris.localhost");
+
+    let maps_response = proxy_http_get(proxy.local_addr(), &maps_host, port, "/index.html").await;
+    let notes_response = proxy_http_get(proxy.local_addr(), &notes_host, port, "/index.html").await;
+
+    assert!(
+        maps_response.starts_with("HTTP/1.1 200 OK"),
+        "{maps_response}"
+    );
+    assert!(
+        notes_response.starts_with("HTTP/1.1 200 OK"),
+        "{notes_response}"
+    );
+    assert!(
+        maps_response.contains(&format!("/htree/{IRIS_SITES_PORTAL_NPUB}/maps/index.html")),
+        "{maps_response}"
+    );
+    assert!(
+        notes_response.contains(&format!("/htree/{IRIS_SITES_PORTAL_NPUB}/notes/index.html")),
+        "{notes_response}"
+    );
+    assert_ne!(maps_response, notes_response);
+
+    proxy.shutdown().await.unwrap();
+    server.shutdown().await.unwrap();
+    htree.shutdown().await;
+}
+
+#[tokio::test]
+async fn gateway_proxy_tunnels_connect_iris_host() {
+    let cfg_dir = tempdir().unwrap();
+    init_account_config(cfg_dir.path());
+    let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let work = tempdir().unwrap();
+    std::fs::write(work.path().join("index.html"), b"hello tunnel").unwrap();
+    daemon.import_source_dir(work.path()).await.unwrap();
+    let server = GatewayServer::bind_with_tree(
+        cfg_dir.path(),
+        daemon.tree_handle(),
+        GatewayBind::loopback_v4(0),
+    )
+    .await
+    .unwrap();
+    let proxy = GatewayProxyServer::bind_for_gateway(server.local_addr())
+        .await
+        .unwrap();
+    let mut stream = TcpStream::connect(proxy.local_addr()).await.unwrap();
+    let gateway_port = server.local_addr().port();
+    stream
+        .write_all(
+            format!(
+                "CONNECT main.drive.iris.localhost:{gateway_port} HTTP/1.1\r\n\
+                 Host: main.drive.iris.localhost:{gateway_port}\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut connect_response = vec![0u8; 128];
+    let read = stream.read(&mut connect_response).await.unwrap();
+    let connect_response = String::from_utf8_lossy(&connect_response[..read]);
+    assert!(
+        connect_response.starts_with("HTTP/1.1 200 Connection Established"),
+        "{connect_response}"
+    );
+
+    stream
+        .write_all(
+            format!(
+                "GET / HTTP/1.1\r\n\
+                 Host: main.drive.iris.localhost:{gateway_port}\r\n\
+                 Connection: close\r\n\r\n"
+            )
+            .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).await.unwrap();
+
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(response.contains("hello tunnel"), "{response}");
+    proxy.shutdown().await.unwrap();
     server.shutdown().await.unwrap();
 }
 

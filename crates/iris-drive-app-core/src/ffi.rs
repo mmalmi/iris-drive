@@ -45,7 +45,7 @@ use iris_drive_core::relay_config::{dedupe_relay_urls, normalize_relay_url};
 use iris_drive_core::relay_status::normalized_relay_statuses_for_relays;
 use iris_drive_core::{AppConfig, AppKeyAuthorizationState, BackupTarget, Drive, Profile};
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
-use iris_drive_core::{Daemon, GatewayBind, GatewayServer};
+use iris_drive_core::{Daemon, GatewayBind, GatewayProxyServer, GatewayServer};
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
 use serde::{Deserialize, Serialize};
@@ -1644,7 +1644,11 @@ fn run_native_browser_gateway(data_dir: &str, stop: Arc<AtomicBool>) -> Result<(
         )
         .await
         .map_err(|error| format!("starting browser gateway: {error}"))?;
+        let proxy = GatewayProxyServer::bind_for_gateway(gateway.local_addr())
+            .await
+            .map_err(|error| format!("starting browser gateway proxy: {error}"))?;
         let gateway_port = gateway.local_addr().port();
+        let proxy_port = proxy.local_addr().port();
         write_native_browser_gateway_status(
             &gateway_data_dir,
             json!({
@@ -1653,12 +1657,19 @@ fn run_native_browser_gateway(data_dir: &str, stop: Arc<AtomicBool>) -> Result<(
                 "bind": gateway.local_addr().to_string(),
                 "hashtree_base_url": gateway_hashtree_base_url,
                 "portal_url": iris_drive_core::gateway::local_portal_url(gateway_port),
+                "proxy_bind": proxy.local_addr().to_string(),
+                "proxy_port": proxy_port,
+                "proxy_url": format!("http://127.0.0.1:{proxy_port}/"),
             }),
         );
 
         while !stop.load(Ordering::Acquire) {
             tokio::time::sleep(std::time::Duration::from_millis(250)).await;
         }
+        proxy
+            .shutdown()
+            .await
+            .map_err(|error| format!("stopping browser gateway proxy: {error}"))?;
         gateway
             .shutdown()
             .await

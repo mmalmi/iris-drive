@@ -38,6 +38,16 @@ fn provider_mutation_liveness() -> ProviderMutationLiveness {
     provider_mutation_liveness_for_target(std::env::consts::OS)
 }
 
+pub(crate) fn native_sync_starts_direct_fips_for_target(target_os: &str) -> bool {
+    !matches!(target_os, "android" | "ios")
+}
+
+fn native_sync_options() -> iris_drive_core::NetworkSyncOptions {
+    iris_drive_core::NetworkSyncOptions {
+        start_direct_fips_download: native_sync_starts_direct_fips_for_target(std::env::consts::OS),
+    }
+}
+
 pub(crate) fn native_provider_list_json(data_dir: &str) -> serde_json::Value {
     match run_native_provider_list(data_dir) {
         Ok(value) => value,
@@ -580,10 +590,11 @@ pub(crate) fn run_native_sync_once(
     data_dir: &str,
 ) -> anyhow::Result<iris_drive_core::NetworkSyncReport> {
     let runtime = native_provider_runtime()?;
-    runtime.block_on(iris_drive_core::network_sync_once(
+    runtime.block_on(iris_drive_core::sync_once_with_options(
         Path::new(data_dir),
         &[],
         std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS),
+        native_sync_options(),
     ))
 }
 
