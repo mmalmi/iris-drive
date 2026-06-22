@@ -1586,7 +1586,7 @@ private struct IrisWebBrowserView: View {
                 isLoading: $isLoading,
                 loadError: $loadError
             )
-            .ignoresSafeArea(.container, edges: .bottom)
+            .ignoresSafeArea(.container, edges: [.top, .bottom])
             if isLoading {
                 ProgressView()
                     .controlSize(.large)
@@ -1999,9 +1999,15 @@ private struct IrisWebView: UIViewRepresentable {
         let webView = WKWebView(frame: .zero, configuration: configuration)
         webView.navigationDelegate = context.coordinator
         webView.scrollView.delegate = context.coordinator
+        webView.scrollView.contentInsetAdjustmentBehavior = .never
         webView.allowsBackForwardNavigationGestures = true
         webView.isOpaque = false
-        webView.backgroundColor = .systemBackground
+        webView.backgroundColor = .clear
+        webView.scrollView.backgroundColor = .clear
+        webView.scrollView.clipsToBounds = false
+        if #available(iOS 15.0, *) {
+            webView.underPageBackgroundColor = .clear
+        }
         browser.attach(webView)
         webView.load(URLRequest(url: initialURL))
         return webView
