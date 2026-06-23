@@ -2166,11 +2166,10 @@ private struct SettingsView: View {
                         ? "Unavailable"
                         : caldavURL
                 )
-                LabeledContent("Account Type", value: "Advanced")
                 LabeledContent("User Name", value: "iris")
                 LabeledContent("Password", value: "iris")
                 LabeledContent("Server Address", value: "localhost")
-                LabeledContent("Server Path", value: "/caldav/")
+                LabeledContent("Server Path", value: "/caldav/principals/iris/")
                 LabeledContent("Port", value: irisDriveCalDAVPort(caldavURL))
                 LabeledContent("Use SSL", value: "Off")
                 LabeledContent("Use Kerberos", value: "Off")

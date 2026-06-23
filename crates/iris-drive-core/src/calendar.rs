@@ -417,7 +417,7 @@ pub fn home_propfind_multistatus(href: &str, depth: &str, data: &CalendarData) -
 
 pub fn root_propfind_multistatus(href: &str) -> String {
     let props = format!(
-        "<D:response><D:href>{}</D:href><D:propstat><D:prop><D:displayname>Iris CalDAV</D:displayname><D:resourcetype><D:collection/></D:resourcetype><D:current-user-principal><D:href>/caldav/principals/iris/</D:href></D:current-user-principal><D:principal-collection-set><D:href>/caldav/principals/</D:href></D:principal-collection-set></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
+        "<D:response><D:href>{}</D:href><D:propstat><D:prop><D:displayname>Iris CalDAV</D:displayname><D:resourcetype><D:collection/></D:resourcetype><D:current-user-principal><D:href>/caldav/principals/iris/</D:href></D:current-user-principal><D:principal-collection-set><D:href>/caldav/principals/</D:href></D:principal-collection-set><C:calendar-home-set><D:href>/caldav/calendars/iris/</D:href></C:calendar-home-set></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
         xml_escape(href)
     );
     multistatus(&props)

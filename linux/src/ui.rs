@@ -347,8 +347,6 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
         &caldav_url,
         &copy_caldav_url_button,
     );
-    let caldav_account_type = value_label();
-    caldav_account_type.set_text("Advanced");
     let caldav_user_name = value_label();
     caldav_user_name.set_text("iris");
     let caldav_password = value_label();
@@ -356,19 +354,18 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     let caldav_server_address = value_label();
     caldav_server_address.set_text("localhost");
     let caldav_server_path = value_label();
-    caldav_server_path.set_text("/caldav/");
+    caldav_server_path.set_text("/caldav/principals/iris/");
     let caldav_use_ssl = value_label();
     caldav_use_ssl.set_text("Off");
     let caldav_use_kerberos = value_label();
     caldav_use_kerberos.set_text("Off");
-    add_value_field(&calendar_grid, 1, "Account Type", &caldav_account_type);
-    add_value_field(&calendar_grid, 2, "User Name", &caldav_user_name);
-    add_value_field(&calendar_grid, 3, "Password", &caldav_password);
-    add_value_field(&calendar_grid, 4, "Server Address", &caldav_server_address);
-    add_value_field(&calendar_grid, 5, "Server Path", &caldav_server_path);
-    add_value_field(&calendar_grid, 6, "Port", &caldav_port);
-    add_value_field(&calendar_grid, 7, "Use SSL", &caldav_use_ssl);
-    add_value_field(&calendar_grid, 8, "Use Kerberos", &caldav_use_kerberos);
+    add_value_field(&calendar_grid, 1, "User Name", &caldav_user_name);
+    add_value_field(&calendar_grid, 2, "Password", &caldav_password);
+    add_value_field(&calendar_grid, 3, "Server Address", &caldav_server_address);
+    add_value_field(&calendar_grid, 4, "Server Path", &caldav_server_path);
+    add_value_field(&calendar_grid, 5, "Port", &caldav_port);
+    add_value_field(&calendar_grid, 6, "Use SSL", &caldav_use_ssl);
+    add_value_field(&calendar_grid, 7, "Use Kerberos", &caldav_use_kerberos);
     settings_page.append(&calendar_grid);
     let update_check_button = action_button(
         "view-refresh-symbolic",

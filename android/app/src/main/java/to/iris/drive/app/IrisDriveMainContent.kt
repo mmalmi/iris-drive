@@ -1101,11 +1101,10 @@ private fun SettingsPanel(
         }
         Text("Calendar", fontWeight = FontWeight.SemiBold)
         StatRow("CalDAV URL", state.caldavUrl.ifBlank { "Unavailable" })
-        StatRow("Account Type", "Advanced")
         StatRow("User Name", "iris")
         StatRow("Password", "iris")
         StatRow("Server Address", "localhost")
-        StatRow("Server Path", "/caldav/")
+        StatRow("Server Path", "/caldav/principals/iris/")
         StatRow("Port", caldavPort(state.caldavUrl))
         StatRow("Use SSL", "Off")
         StatRow("Use Kerberos", "Off")

@@ -114,6 +114,45 @@ async fn gateway_caldav_put_report_get_and_delete_round_trip_calendar_event() {
 }
 
 #[tokio::test]
+async fn gateway_caldav_root_propfind_exposes_calendar_home_for_apple_calendar() {
+    let cfg_dir = tempdir().unwrap();
+    init_account_config(cfg_dir.path());
+    let daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let server = GatewayServer::bind_with_tree(
+        cfg_dir.path(),
+        daemon.tree_handle(),
+        GatewayBind::loopback_v4(0),
+    )
+    .await
+    .unwrap();
+
+    let propfind = http_request(
+        server.local_addr(),
+        "PROPFIND",
+        "localhost",
+        "/caldav/",
+        &[("Depth", "0"), ("Content-Type", "application/xml")],
+        br#"<?xml version="1.0"?><D:propfind xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:prop><C:calendar-home-set/><D:current-user-principal/></D:prop></D:propfind>"#,
+    )
+    .await;
+    assert!(
+        propfind.starts_with("HTTP/1.1 207 Multi-Status"),
+        "{propfind}"
+    );
+    assert!(propfind.contains("<C:calendar-home-set>"), "{propfind}");
+    assert!(
+        propfind.contains("<D:href>/caldav/calendars/iris/</D:href>"),
+        "{propfind}"
+    );
+    assert!(
+        propfind.contains("<D:href>/caldav/principals/iris/</D:href>"),
+        "{propfind}"
+    );
+
+    server.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn gateway_caldav_root_get_serves_calendar_subscription_feed() {
     let cfg_dir = tempdir().unwrap();
     init_account_config(cfg_dir.path());
