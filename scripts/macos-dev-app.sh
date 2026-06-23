@@ -308,15 +308,9 @@ register_fileprovider_plugin() {
   local app_path="$1"
   local appex="$app_path/Contents/PlugIns/IrisDriveFileProvider.appex"
   local plugin_id="to.iris.drive.macos.FileProvider"
-  local candidate
   local plugin
-  local candidate_registered=0
+  local appex_registered=0
   local registered_plugins=()
-  local candidate_plugins=(
-    "$appex"
-    "$HOME/Applications/Iris Drive.app/Contents/PlugIns/IrisDriveFileProvider.appex"
-    "/Applications/Iris Drive.app/Contents/PlugIns/IrisDriveFileProvider.appex"
-  )
 
   [[ -d "$appex" ]] || return 0
   command -v pluginkit >/dev/null 2>&1 || return 0
@@ -326,22 +320,20 @@ register_fileprovider_plugin() {
     registered_plugins+=("$plugin")
   done < <(pluginkit -m -i "$plugin_id" -ADv 2>/dev/null | awk -F '\t' 'NF >= 4 { print $4 }')
 
-  for candidate in "${candidate_plugins[@]}"; do
-    [[ -d "$candidate" ]] || continue
-    candidate_registered=0
-    for plugin in "${registered_plugins[@]}"; do
-      if [[ "$plugin" == "$candidate" ]]; then
-        candidate_registered=1
-        break
-      fi
-    done
-
-    if [[ "$candidate_registered" == "1" ]]; then
-      log "Reusing existing macOS FileProvider pluginkit registration for $candidate"
+  for plugin in "${registered_plugins[@]}"; do
+    if [[ "$plugin" == "$appex" ]]; then
+      appex_registered=1
     else
-      pluginkit -a "$candidate" >/dev/null 2>&1 || true
+      log "Removing stale macOS FileProvider pluginkit registration for $plugin"
+      pluginkit -r "$plugin" >/dev/null 2>&1 || true
     fi
   done
+
+  if [[ "$appex_registered" == "1" ]]; then
+    log "Reusing existing macOS FileProvider pluginkit registration for $appex"
+  else
+    pluginkit -a "$appex" >/dev/null 2>&1 || true
+  fi
 
   pluginkit -e use -i "$plugin_id" >/dev/null 2>&1 || true
 }

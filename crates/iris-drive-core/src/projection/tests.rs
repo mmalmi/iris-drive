@@ -232,6 +232,63 @@ async fn primary_merged_root_does_not_synthesize_missing_modified_at() {
 }
 
 #[tokio::test]
+async fn primary_merged_root_preserves_directory_modified_at() {
+    let cfg_dir = tempdir().unwrap();
+    let account = Profile::create(cfg_dir.path(), Some("mount-test".into())).unwrap();
+    let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+    let empty_dir = tree.put_directory(Vec::new()).await.unwrap();
+    let modified_at = 1_700_000_000_i64;
+    let source_root = tree
+        .put_directory(vec![
+            DirEntry::from_cid("Empty", &empty_dir)
+                .with_link_type(LinkType::Dir)
+                .with_meta(std::collections::HashMap::from([(
+                    MODIFIED_AT_META_KEY.to_string(),
+                    serde_json::json!(modified_at),
+                )])),
+        ])
+        .await
+        .unwrap();
+    let meta = DriveRootMeta {
+        schema: DriveRootMeta::SCHEMA,
+        drive_id: PRIMARY_DRIVE_ID.to_string(),
+        app_key_pubkey: account.state.app_key_pubkey.clone(),
+        app_key_seq: 1,
+        dck_generation: 1,
+        local_only: false,
+        parents: Vec::new(),
+        observed: BTreeMap::new(),
+        created_at: 1_800_000_000,
+    };
+
+    let mut config = AppConfig {
+        profile: Some(account.state.clone()),
+        ..AppConfig::default()
+    };
+    let mut drive = Drive::primary(account.state.root_scope_id());
+    drive.app_key_roots.insert(
+        account.state.app_key_pubkey.clone(),
+        AppKeyRootRef::from_meta(source_root.to_string(), meta.created_at, &meta),
+    );
+    config.upsert_drive(drive);
+
+    let merged = primary_merged_root(&tree, &config).await.unwrap();
+    let entries = tree.list_directory(&merged.root_cid).await.unwrap();
+    let empty = entries
+        .iter()
+        .find(|entry| entry.name == "Empty")
+        .expect("empty directory remains visible");
+    assert_eq!(
+        empty
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get(MODIFIED_AT_META_KEY))
+            .and_then(serde_json::Value::as_i64),
+        Some(modified_at)
+    );
+}
+
+#[tokio::test]
 async fn primary_merged_root_hides_tombstoned_foreign_directory() {
     let cfg_dir = tempdir().unwrap();
     let mut account = Profile::create(cfg_dir.path(), Some("mount-test".into())).unwrap();

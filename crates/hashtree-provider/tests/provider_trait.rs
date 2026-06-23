@@ -68,6 +68,7 @@ impl ProviderFs for MemFs {
             name: name.to_string(),
             kind: *kind,
             size,
+            modified_at: None,
         })
     }
 
@@ -79,6 +80,7 @@ impl ProviderFs for MemFs {
                 name: String::new(),
                 kind: ItemKind::Directory,
                 size: 0,
+                modified_at: None,
             });
         }
         if let Some(bytes) = inner.files.get(id) {
@@ -87,6 +89,7 @@ impl ProviderFs for MemFs {
                 name: id.rsplit('/').next().unwrap_or(id).to_string(),
                 kind: ItemKind::File,
                 size: bytes.len() as u64,
+                modified_at: None,
             });
         }
         if inner.dirs.contains_key(id) {
@@ -95,6 +98,7 @@ impl ProviderFs for MemFs {
                 name: id.rsplit('/').next().unwrap_or(id).to_string(),
                 kind: ItemKind::Directory,
                 size: 0,
+                modified_at: None,
             });
         }
         Err(ProviderError::NotFound)
@@ -160,6 +164,7 @@ impl ProviderFs for MemFs {
             name: name.to_string(),
             kind: ItemKind::File,
             size: 0,
+            modified_at: None,
         })
     }
 
@@ -194,6 +199,7 @@ impl ProviderFs for MemFs {
             name: name.to_string(),
             kind: ItemKind::Directory,
             size: 0,
+            modified_at: None,
         })
     }
 

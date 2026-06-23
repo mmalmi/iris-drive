@@ -214,6 +214,7 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
             name: name.to_string(),
             kind: kind_from_link(resolved.link_type),
             size: resolved.size,
+            modified_at: modified_at_from_meta(resolved.meta.as_ref()),
         })
     }
 
@@ -225,6 +226,7 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
             name,
             kind: kind_from_link(resolved.link_type),
             size: resolved.size,
+            modified_at: modified_at_from_meta(resolved.meta.as_ref()),
         })
     }
 
@@ -300,6 +302,8 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
         }
 
         let (cid, size) = self.tree.put(&[]).await.map_err(map_err)?;
+        let meta = file_meta(&[], None);
+        let modified_at = modified_at_from_meta(Some(&meta));
         let parent_segs = Self::segments(parent);
         let new_root = set_entry_with_meta(
             &self.tree,
@@ -310,7 +314,7 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
                 cid: &cid,
                 size,
                 link_type: link_type_for_size(size),
-                meta: Some(file_meta(&[], None)),
+                meta: Some(meta),
             },
         )
         .await
@@ -321,6 +325,7 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
             name: name.to_string(),
             kind: ItemKind::File,
             size,
+            modified_at,
         })
     }
 
@@ -338,25 +343,30 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
         }
 
         let dir_cid = self.tree.put_directory(Vec::new()).await.map_err(map_err)?;
+        let meta = modified_at_meta(None);
+        let modified_at = modified_at_from_meta(Some(&meta));
         let parent_segs = Self::segments(parent);
-        let new_root = self
-            .tree
-            .set_entry(
-                &self.current_root().await,
-                &parent_segs,
+        let new_root = set_entry_with_meta(
+            &self.tree,
+            &self.current_root().await,
+            &parent_segs,
+            EntryWrite {
                 name,
-                &dir_cid,
-                0,
-                LinkType::Dir,
-            )
-            .await
-            .map_err(map_err)?;
+                cid: &dir_cid,
+                size: 0,
+                link_type: LinkType::Dir,
+                meta: Some(meta),
+            },
+        )
+        .await
+        .map_err(map_err)?;
         self.apply_new_root(new_root).await?;
         Ok(Item {
             id,
             name: name.to_string(),
             kind: ItemKind::Directory,
             size: 0,
+            modified_at,
         })
     }
 
@@ -618,16 +628,29 @@ fn file_meta(
     bytes: &[u8],
     meta: Option<HashMap<String, serde_json::Value>>,
 ) -> HashMap<String, serde_json::Value> {
-    let mut meta = meta.unwrap_or_default();
-    meta.insert(
-        MODIFIED_AT_META_KEY.to_string(),
-        serde_json::Value::Number(unix_now_seconds().into()),
-    );
+    let mut meta = modified_at_meta(meta);
     meta.insert(
         WHOLE_FILE_HASH_META_KEY.to_string(),
         serde_json::Value::String(to_hex(&sha256(bytes))),
     );
     meta
+}
+
+fn modified_at_meta(
+    meta: Option<HashMap<String, serde_json::Value>>,
+) -> HashMap<String, serde_json::Value> {
+    let mut meta = meta.unwrap_or_default();
+    meta.insert(
+        MODIFIED_AT_META_KEY.to_string(),
+        serde_json::Value::Number(unix_now_seconds().into()),
+    );
+    meta
+}
+
+fn modified_at_from_meta(meta: Option<&HashMap<String, serde_json::Value>>) -> Option<i64> {
+    meta.and_then(|meta| meta.get(MODIFIED_AT_META_KEY))
+        .and_then(serde_json::Value::as_i64)
+        .filter(|value| *value >= 946_684_800)
 }
 
 fn unix_now_seconds() -> i64 {

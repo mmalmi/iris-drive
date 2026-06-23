@@ -64,6 +64,26 @@ async fn file_write_stamps_modified_at_metadata() {
 }
 
 #[tokio::test]
+async fn create_dir_stamps_modified_at_metadata() {
+    let tr = tree();
+    let fs = HashTreeProviderFs::fresh(tr.clone()).await.unwrap();
+    let root = fs.root().await;
+    fs.create_dir(&root, "docs").await.unwrap();
+
+    let listing = tr.list_directory(&fs.current_root().await).await.unwrap();
+    let modified_at = listing
+        .iter()
+        .find(|entry| entry.name == "docs")
+        .and_then(|entry| entry.meta.as_ref())
+        .and_then(|meta| meta.get("modified_at"))
+        .and_then(|value| value.as_i64());
+    assert!(
+        modified_at.is_some_and(|value| value >= 946_684_800),
+        "provider directories should stamp a non-epoch modified_at, got {modified_at:?}"
+    );
+}
+
+#[tokio::test]
 async fn file_write_stamps_whole_file_hash_metadata() {
     let tr = tree();
     let fs = HashTreeProviderFs::fresh(tr.clone()).await.unwrap();

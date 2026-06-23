@@ -477,8 +477,20 @@ async fn visible_root_import_preserves_created_empty_directory() {
     let tree = new_tree();
     let base_root = tree.put_directory(Vec::new()).await.unwrap();
     let empty_dir = tree.put_directory(Vec::new()).await.unwrap();
+    let modified_at = 1_700_000_000_i64;
     let edited_root = tree
-        .set_entry(&base_root, &[], "folder", &empty_dir, 0, LinkType::Dir)
+        .set_entry_with_meta(
+            &base_root,
+            &[],
+            "folder",
+            &empty_dir,
+            0,
+            LinkType::Dir,
+            Some(std::collections::HashMap::from([(
+                MODIFIED_AT_META_KEY.to_string(),
+                serde_json::json!(modified_at),
+            )])),
+        )
         .await
         .unwrap();
 
@@ -493,6 +505,75 @@ async fn visible_root_import_preserves_created_empty_directory() {
         .unwrap()
         .expect("folder should exist");
     assert!(tree.is_dir(&folder).await.unwrap());
+    let listing = tree.list_directory(&delta.root).await.unwrap();
+    let folder = listing
+        .iter()
+        .find(|entry| entry.name == "folder")
+        .expect("folder entry should exist");
+    assert_eq!(
+        folder
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get(MODIFIED_AT_META_KEY))
+            .and_then(serde_json::Value::as_i64),
+        Some(modified_at)
+    );
+}
+
+#[tokio::test]
+async fn visible_root_import_preserves_directory_metadata_after_child_file() {
+    let tree = new_tree();
+    let base_root = tree.put_directory(Vec::new()).await.unwrap();
+    let (file_cid, file_size) = tree.put_file(b"note").await.unwrap();
+    let dir = tree
+        .put_directory(vec![
+            DirEntry::from_cid("note.txt", &file_cid)
+                .with_size(file_size)
+                .with_link_type(LinkType::Blob),
+        ])
+        .await
+        .unwrap();
+    let modified_at = 1_700_000_001_i64;
+    let edited_root = tree
+        .set_entry_with_meta(
+            &base_root,
+            &[],
+            "folder",
+            &dir,
+            0,
+            LinkType::Dir,
+            Some(std::collections::HashMap::from([(
+                MODIFIED_AT_META_KEY.to_string(),
+                serde_json::json!(modified_at),
+            )])),
+        )
+        .await
+        .unwrap();
+
+    let delta =
+        local_visible_root_for_mount_import(&tree, &edited_root, None, &base_root, None, None)
+            .await
+            .unwrap();
+
+    let listing = tree.list_directory(&delta.root).await.unwrap();
+    let folder = listing
+        .iter()
+        .find(|entry| entry.name == "folder")
+        .expect("folder entry should exist");
+    assert_eq!(
+        folder
+            .meta
+            .as_ref()
+            .and_then(|meta| meta.get(MODIFIED_AT_META_KEY))
+            .and_then(serde_json::Value::as_i64),
+        Some(modified_at)
+    );
+    assert!(
+        tree.resolve(&delta.root, "folder/note.txt")
+            .await
+            .unwrap()
+            .is_some()
+    );
 }
 
 #[tokio::test]

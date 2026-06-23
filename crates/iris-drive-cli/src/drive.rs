@@ -456,8 +456,12 @@ async fn provider_entries(
                 }
                 LinkType::Blob | LinkType::File => "file",
             };
+            let modified_at = modified_at_by_path
+                .get(&path)
+                .copied()
+                .or_else(|| provider_entry_modified_at(child.meta.as_ref()));
             entries.push(ProviderListEntry {
-                modified_at: modified_at_by_path.get(&path).copied(),
+                modified_at,
                 path,
                 parent_path: parent.clone(),
                 display_name: child.name,
@@ -469,6 +473,14 @@ async fn provider_entries(
     }
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     Ok(entries)
+}
+
+fn provider_entry_modified_at(
+    meta: Option<&std::collections::HashMap<String, serde_json::Value>>,
+) -> Option<i64> {
+    meta.and_then(|meta| meta.get("modified_at"))
+        .and_then(serde_json::Value::as_i64)
+        .filter(|value| *value >= 946_684_800)
 }
 
 fn provider_modified_at_index(

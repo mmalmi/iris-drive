@@ -341,6 +341,36 @@ fn provider_list_includes_summary_and_change_key() {
 }
 
 #[test]
+fn provider_list_includes_modified_at_for_empty_directories() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let _ = app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "iPhone".to_owned(),
+    });
+    mark_daemon_live(dir.path());
+
+    assert!(
+        super::native_provider_mkdir_json(&dir.path().display().to_string(), "Empty")["error"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty()
+    );
+
+    let provider = super::native_provider_list_json(&dir.path().display().to_string());
+    let entries = provider["entries"].as_array().unwrap();
+    let empty = entries
+        .iter()
+        .find(|entry| entry["path"] == "Empty")
+        .expect("provider list includes empty directory");
+    assert!(
+        empty["modified_at"]
+            .as_i64()
+            .is_some_and(|modified_at| modified_at >= 946_684_800),
+        "provider list should include non-epoch directory modification time: {empty:#?}"
+    );
+}
+
+#[test]
 fn app_constructor_defers_provider_summary_until_refresh() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());

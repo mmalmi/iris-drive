@@ -35,6 +35,7 @@ pub struct Item<Id> {
     pub name: String,
     pub kind: ItemKind,
     pub size: u64,
+    pub modified_at: Option<i64>,
 }
 
 /// A child entry in a directory listing.

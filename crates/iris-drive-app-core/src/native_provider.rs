@@ -544,7 +544,10 @@ where
                 }
                 ItemKind::File => "file",
             };
-            let modified_at = modified_at_by_path.get(&child.id).copied();
+            let modified_at = modified_at_by_path
+                .get(&child.id)
+                .copied()
+                .or(item.modified_at);
             entries.push(ProviderListEntry {
                 path: child.id,
                 parent_path: parent.clone(),

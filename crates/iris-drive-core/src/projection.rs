@@ -1,6 +1,6 @@
 //! Build the merged signed drive view exposed by virtual provider surfaces.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use hashtree_core::{
     Cid, CidParseError, DirEntry, HashTree, HashTreeError, LinkType, Store, from_hex, to_hex,
@@ -17,6 +17,8 @@ use crate::merge::{
 };
 use crate::profile::ProfileState;
 use crate::provider::provider_collision_family_path;
+
+type DirectoryMeta = HashMap<String, serde_json::Value>;
 
 #[derive(Debug, Error)]
 pub enum ProjectionError {
@@ -321,14 +323,14 @@ pub async fn primary_merged_root<S: Store>(
     let merged = primary_merged_view(tree, config).await?;
     let mut root = tree.put_directory(Vec::new()).await?;
 
-    let target_dirs = merged_user_directory_paths(
+    let target_dir_meta = merged_user_directory_paths(
         tree,
         drive,
         &merge_app_keys,
         &merged.view.suppressed_by_tombstone,
     )
     .await?;
-    let mut target_dirs = target_dirs;
+    let mut target_dirs = target_dir_meta.keys().cloned().collect::<BTreeSet<_>>();
     add_primary_share_shortcut_directory_paths(&mut target_dirs, &merged.view.files, config);
     for dir in &target_dirs {
         root = ensure_visible_dir(tree, root, dir).await?;
@@ -344,6 +346,10 @@ pub async fn primary_merged_root<S: Store>(
         let (parent, name) = split_visible_path(&entry.path)?;
         root =
             set_visible_entry_with_meta(tree, &root, &parent, name, &cid, &source, entry).await?;
+    }
+
+    for (dir, meta) in target_dir_meta {
+        root = set_visible_dir_meta(tree, &root, &dir, meta).await?;
     }
 
     Ok(PrimaryMergedRoot {
@@ -628,6 +634,37 @@ async fn set_visible_entry_with_meta<S: Store>(
     .map_err(Into::into)
 }
 
+async fn set_visible_dir_meta<S: Store>(
+    tree: &HashTree<S>,
+    root: &Cid,
+    path: &str,
+    meta: DirectoryMeta,
+) -> Result<Cid, ProjectionError> {
+    if meta.is_empty() {
+        return Ok(root.clone());
+    }
+    let (parent, name) = split_visible_path(path)?;
+    let existing = tree_entry_at_path(tree, root, path).await?;
+    if existing.link_type != LinkType::Dir {
+        return Err(HashTreeError::PathNotFound(path.to_string()).into());
+    }
+    let cid = Cid {
+        hash: existing.hash,
+        key: existing.key,
+    };
+    tree.set_entry_with_meta(
+        root,
+        &parent,
+        name,
+        &cid,
+        existing.size,
+        existing.link_type,
+        Some(meta),
+    )
+    .await
+    .map_err(Into::into)
+}
+
 fn visible_entry_meta(
     source: &hashtree_core::TreeEntry,
     merged: &MergedEntry,
@@ -649,8 +686,8 @@ async fn merged_user_directory_paths<S: Store>(
     drive: &crate::config::Drive,
     authorized_app_keys: &[String],
     suppressed_paths: &[String],
-) -> Result<BTreeSet<String>, ProjectionError> {
-    let mut dirs = BTreeSet::new();
+) -> Result<BTreeMap<String, DirectoryMeta>, ProjectionError> {
+    let mut dirs = BTreeMap::new();
     for app_key_pubkey in authorized_app_keys {
         let Some(root) = drive.app_key_roots.get(app_key_pubkey) else {
             continue;
@@ -667,7 +704,7 @@ async fn merged_user_directory_paths<S: Store>(
         })?;
         collect_user_directory_paths(tree, &cid, "", &mut dirs).await?;
     }
-    dirs.retain(|path| !path_is_suppressed_by_tombstone(path, suppressed_paths));
+    dirs.retain(|path, _meta| !path_is_suppressed_by_tombstone(path, suppressed_paths));
     Ok(dirs)
 }
 
@@ -743,7 +780,7 @@ fn collect_user_directory_paths<'a, S: Store>(
     tree: &'a HashTree<S>,
     dir_cid: &'a Cid,
     prefix: &'a str,
-    dirs: &'a mut BTreeSet<String>,
+    dirs: &'a mut BTreeMap<String, DirectoryMeta>,
 ) -> futures::future::BoxFuture<'a, Result<(), HashTreeError>> {
     Box::pin(async move {
         let entries = tree.list_directory(dir_cid).await?;
@@ -762,7 +799,7 @@ fn collect_user_directory_paths<'a, S: Store>(
             } else {
                 format!("{prefix}/{}", entry.name)
             };
-            dirs.insert(path.clone());
+            remember_directory_meta(dirs, path.clone(), entry.meta.clone());
             let child_cid = Cid {
                 hash: entry.hash,
                 key: entry.key,
@@ -771,6 +808,34 @@ fn collect_user_directory_paths<'a, S: Store>(
         }
         Ok(())
     })
+}
+
+fn remember_directory_meta(
+    dirs: &mut BTreeMap<String, DirectoryMeta>,
+    path: String,
+    meta: Option<DirectoryMeta>,
+) {
+    let candidate = meta.unwrap_or_default();
+    dirs.entry(path)
+        .and_modify(|existing| merge_directory_meta(existing, &candidate))
+        .or_insert(candidate);
+}
+
+fn merge_directory_meta(existing: &mut DirectoryMeta, candidate: &DirectoryMeta) {
+    if candidate.is_empty() {
+        return;
+    }
+    if existing.is_empty()
+        || directory_meta_modified_at(candidate) > directory_meta_modified_at(existing)
+    {
+        *existing = candidate.clone();
+    }
+}
+
+fn directory_meta_modified_at(meta: &DirectoryMeta) -> Option<i64> {
+    meta.get(MODIFIED_AT_META_KEY)
+        .and_then(serde_json::Value::as_i64)
+        .filter(|value| *value > 0)
 }
 
 fn authorized_app_key_pubkeys(state: &ProfileState) -> Vec<String> {

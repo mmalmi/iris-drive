@@ -289,6 +289,16 @@ fn provider_list_entry_serializes_core_path_metadata() {
 }
 
 #[test]
+fn provider_entry_modified_at_reads_directory_metadata() {
+    let meta = std::collections::HashMap::from([(
+        "modified_at".to_string(),
+        serde_json::json!(1_700_000_000_i64),
+    )]);
+
+    assert_eq!(provider_entry_modified_at(Some(&meta)), Some(1_700_000_000));
+}
+
+#[test]
 fn provider_resolve_path_reports_collision_display_name() {
     let entries = vec![ProviderListEntry {
         path: "Reports/Shared_file.txt".to_string(),
