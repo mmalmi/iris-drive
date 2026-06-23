@@ -52,6 +52,9 @@ fn config_root_watch_accepts_exact_file_and_parent_directory_events() {
     assert!(event_touches_path(&event, &config));
     assert!(event_touches_path(&parent, &config));
     assert!(!event_touches_path(&other, &config));
+    assert!(event_touches_config_root(&event, dir.path()));
+    assert!(event_touches_config_root(&other, dir.path()));
+    assert!(event_touches_config_root(&parent, dir.path()));
 }
 
 #[test]
@@ -76,16 +79,16 @@ fn root_update_debounce_has_fast_floor() {
 }
 
 #[test]
-fn provider_root_poll_is_fast_sweep_when_config_watch_is_quiet() {
-    assert!(provider_root_poll_enabled(true));
+fn provider_root_poll_is_safety_sweep_only_without_config_watch() {
+    assert!(!provider_root_poll_enabled(true));
     assert!(provider_root_poll_enabled(false));
     assert_eq!(
         provider_root_poll_period(0),
-        std::time::Duration::from_secs(1)
+        std::time::Duration::from_secs(30)
     );
     assert_eq!(
         provider_root_poll_period(60),
-        std::time::Duration::from_secs(1)
+        std::time::Duration::from_mins(1)
     );
 }
 

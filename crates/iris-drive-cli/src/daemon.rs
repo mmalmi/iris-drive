@@ -118,14 +118,14 @@ async fn publish_provider_root_if_changed(
     Ok(Some(updated_config))
 }
 
-const PROVIDER_ROOT_FAST_SWEEP_SECS: u64 = 1;
+const PROVIDER_ROOT_SAFETY_POLL_MIN_SECS: u64 = 30;
 
-fn provider_root_poll_enabled(_config_root_watch_active: bool) -> bool {
-    true
+fn provider_root_poll_enabled(config_root_watch_active: bool) -> bool {
+    !config_root_watch_active
 }
 
-fn provider_root_poll_period(_watch_interval_secs: u64) -> std::time::Duration {
-    std::time::Duration::from_secs(PROVIDER_ROOT_FAST_SWEEP_SECS)
+fn provider_root_poll_period(watch_interval_secs: u64) -> std::time::Duration {
+    std::time::Duration::from_secs(watch_interval_secs.max(PROVIDER_ROOT_SAFETY_POLL_MIN_SECS))
 }
 
 fn current_app_key_root_key(config: &AppConfig) -> Option<String> {
@@ -302,13 +302,10 @@ fn start_config_root_watch(
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let callback_tx = tx.clone();
-    let watched_config = config_path.clone();
-    let watched_provider_signal = provider_signal_path.clone();
+    let watched_parent = parent.clone();
     let mut watcher = notify::recommended_watcher(move |result| match result {
         Ok(event) => {
-            if event_touches_path(&event, &watched_config)
-                || event_touches_path(&event, &watched_provider_signal)
-            {
+            if event_touches_config_root(&event, &watched_parent) {
                 let _ = callback_tx.send(());
             }
         }
@@ -341,6 +338,63 @@ fn start_config_root_watch(
     ))
 }
 
+async fn start_provider_root_wake_listener(
+    config_dir: &Path,
+) -> Result<(
+    tokio::sync::mpsc::UnboundedReceiver<()>,
+    tokio::task::JoinHandle<()>,
+    Value,
+)> {
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .context("binding provider root wake listener")?;
+    let port = listener
+        .local_addr()
+        .context("reading provider root wake listener address")?
+        .port();
+    let wake_path = iris_drive_core::paths::provider_root_wake_path_in(config_dir);
+    if let Some(parent) = wake_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::write(&wake_path, serde_json::to_vec(&json!({ "port": port }))?).with_context(
+        || {
+            format!(
+                "writing provider root wake endpoint {}",
+                wake_path.display()
+            )
+        },
+    )?;
+
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let task = tokio::spawn(async move {
+        while let Ok((_stream, _addr)) = listener.accept().await {
+            let _ = tx.send(());
+        }
+    });
+
+    Ok((
+        rx,
+        task,
+        json!({
+            "running": true,
+            "bind": format!("127.0.0.1:{port}"),
+            "path": wake_path.display().to_string(),
+        }),
+    ))
+}
+
+fn event_touches_config_root(event: &notify::Event, config_dir: &Path) -> bool {
+    event.paths.is_empty()
+        || event.paths.iter().any(|path| {
+            paths_refer_to_same_file(path, config_dir)
+                || path
+                    .parent()
+                    .is_some_and(|parent| paths_refer_to_same_file(parent, config_dir))
+        })
+}
+
+#[cfg(test)]
 fn event_touches_path(event: &notify::Event, target: &Path) -> bool {
     let parent = target.parent();
     event.paths.iter().any(|path| {

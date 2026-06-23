@@ -10,12 +10,13 @@ unless the user explicitly asks otherwise.
   write on device A to the file becoming visible through device B's provider
   viewer. The first run showed the source daemon waiting for the old
   provider-root safety cadence: roughly 50-60 seconds across the matrix.
-- Tightened provider-root notice handling and capped the quiet-watcher provider
-  root sweep at 1 second. The steady-state work is cheap because unchanged
-  roots return through the config/root-key cache.
+- Tightened provider-root notice handling so provider mutations ping a daemon
+  loopback wake endpoint, with the config/provider filesystem watcher still
+  active as an event source. The old 30s+ sweep remains only for the degraded
+  case where the watcher cannot start.
 - Verification command:
   `cargo test -p idrive --test daemon_sync_matrix live_daemons_provider_write_viewer_to_viewer_latency_probe -- --exact --nocapture`.
-  Passing run measured about 1.3s, 0.5s, and 0.5s from source viewer completion
+  Passing run measured about 0.13s, 0.14s, and 0.14s from source viewer completion
   to target viewer visibility across the three client hops.
 
 ## 2026-06-22 macOS roster/FIPS status CPU check
