@@ -633,12 +633,95 @@ pub(crate) struct ConfigMutationLock {
     path: PathBuf,
 }
 
+#[derive(Debug)]
+struct ConfigMutationLockTimeout {
+    path: PathBuf,
+}
+
+impl std::fmt::Display for ConfigMutationLockTimeout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "timed out waiting for config mutation lock {}",
+            self.path.display()
+        )
+    }
+}
+
+impl std::error::Error for ConfigMutationLockTimeout {}
+
 impl ConfigMutationLock {
     const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(25);
     const WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
     const STALE_AFTER: std::time::Duration = std::time::Duration::from_mins(2);
 
     pub(crate) async fn acquire(config_dir: &Path) -> Result<Self> {
+        Self::acquire_with_timeout(config_dir, Self::WAIT_TIMEOUT).await
+    }
+
+    async fn acquire_for_background<F>(config_dir: &Path, is_stale: F) -> Result<Option<Self>>
+    where
+        F: FnMut() -> bool,
+    {
+        let retry_delays = [
+            std::time::Duration::from_millis(250),
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_secs(2),
+            std::time::Duration::from_secs(4),
+        ];
+        Self::acquire_for_background_with_options(
+            config_dir,
+            is_stale,
+            Self::WAIT_TIMEOUT,
+            &retry_delays,
+        )
+        .await
+    }
+
+    async fn acquire_for_background_with_options<F>(
+        config_dir: &Path,
+        mut is_stale: F,
+        wait_timeout: std::time::Duration,
+        retry_delays: &[std::time::Duration],
+    ) -> Result<Option<Self>>
+    where
+        F: FnMut() -> bool,
+    {
+        for retry_delay in std::iter::once(std::time::Duration::ZERO).chain(
+            retry_delays
+                .iter()
+                .copied()
+                .filter(|delay| !delay.is_zero()),
+        ) {
+            if retry_delay > std::time::Duration::ZERO {
+                tokio::time::sleep(retry_delay).await;
+            }
+            if is_stale() {
+                return Ok(None);
+            }
+            match Self::acquire_with_timeout(config_dir, wait_timeout).await {
+                Ok(lock) => {
+                    if is_stale() {
+                        return Ok(None);
+                    }
+                    return Ok(Some(lock));
+                }
+                Err(error) if error.downcast_ref::<ConfigMutationLockTimeout>().is_some() => {}
+                Err(error) => return Err(error),
+            }
+        }
+        if is_stale() {
+            return Ok(None);
+        }
+        Self::acquire_with_timeout(config_dir, wait_timeout)
+            .await
+            .map(Some)
+    }
+
+    async fn acquire_with_timeout(
+        config_dir: &Path,
+        wait_timeout: std::time::Duration,
+    ) -> Result<Self> {
         std::fs::create_dir_all(config_dir)
             .with_context(|| format!("creating config dir {}", config_dir.display()))?;
         let path = config_dir.join("config-mutation.lock");
@@ -649,11 +732,8 @@ impl ConfigMutationLock {
                 Ok(lock) => return Ok(lock),
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
                     Self::remove_stale_lock(&path);
-                    if started.elapsed() >= Self::WAIT_TIMEOUT {
-                        return Err(anyhow::anyhow!(
-                            "timed out waiting for config mutation lock {}",
-                            path.display()
-                        ));
+                    if started.elapsed() >= wait_timeout {
+                        return Err(ConfigMutationLockTimeout { path }.into());
                     }
                     tokio::time::sleep(Self::POLL_INTERVAL).await;
                 }

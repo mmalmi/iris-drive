@@ -390,7 +390,12 @@ pub(crate) fn spawn_root_apply_followup(
         }
 
         if root_cid_for_materialize.is_some() {
-            match materialize_primary_merged_root_for_followup(&config_dir).await {
+            match materialize_primary_merged_root_for_followup(
+                &config_dir,
+                expected_projection_root_key.as_ref(),
+            )
+            .await
+            {
                 Ok(Some(report)) => emit_daemon_status_event(
                     &config_dir,
                     json!({
@@ -480,8 +485,15 @@ pub(crate) fn spawn_root_apply_followup(
 
 async fn materialize_primary_merged_root_for_followup(
     config_dir: &Path,
+    expected_root_key: Option<&RootApplyFollowupKey>,
 ) -> Result<Option<iris_drive_core::ImportReport>> {
-    let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
+    let Some(_config_lock) = ConfigMutationLock::acquire_for_background(config_dir, || {
+        root_apply_followup_is_stale(config_dir, expected_root_key)
+    })
+    .await?
+    else {
+        return Ok(None);
+    };
     let mut daemon =
         iris_drive_core::Daemon::open(config_dir).context("opening daemon to materialize merge")?;
     daemon

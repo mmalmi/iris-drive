@@ -308,6 +308,60 @@ async fn config_mutation_lock_serializes_same_config_dir() {
     drop(second);
 }
 
+#[tokio::test]
+async fn background_config_mutation_lock_retries_after_contention() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = ConfigMutationLock::acquire(dir.path()).await.unwrap();
+    let release = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(70)).await;
+        drop(first);
+    });
+    let retry_delays = [
+        std::time::Duration::from_millis(10),
+        std::time::Duration::from_millis(10),
+        std::time::Duration::from_millis(10),
+        std::time::Duration::from_millis(10),
+    ];
+
+    let second = ConfigMutationLock::acquire_for_background_with_options(
+        dir.path(),
+        || false,
+        std::time::Duration::from_millis(20),
+        &retry_delays,
+    )
+    .await
+    .unwrap();
+
+    assert!(second.is_some());
+    drop(second);
+    release.await.unwrap();
+}
+
+#[tokio::test]
+async fn background_config_mutation_lock_stops_when_followup_becomes_stale() {
+    let dir = tempfile::tempdir().unwrap();
+    let _first = ConfigMutationLock::acquire(dir.path()).await.unwrap();
+    let stale = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stale_for_task = stale.clone();
+    let mark_stale = tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(35)).await;
+        stale_for_task.store(true, std::sync::atomic::Ordering::SeqCst);
+    });
+    let retry_delays = [std::time::Duration::from_millis(10)];
+
+    let second = ConfigMutationLock::acquire_for_background_with_options(
+        dir.path(),
+        || stale.load(std::sync::atomic::Ordering::SeqCst),
+        std::time::Duration::from_millis(20),
+        &retry_delays,
+    )
+    .await
+    .unwrap();
+
+    assert!(second.is_none());
+    mark_stale.await.unwrap();
+}
+
 #[test]
 fn event_block_pull_retry_budget_stays_short_without_blossom() {
     let config = AppConfig {
