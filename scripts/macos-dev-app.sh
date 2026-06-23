@@ -308,19 +308,41 @@ register_fileprovider_plugin() {
   local app_path="$1"
   local appex="$app_path/Contents/PlugIns/IrisDriveFileProvider.appex"
   local plugin_id="to.iris.drive.macos.FileProvider"
+  local candidate
   local plugin
+  local candidate_registered=0
+  local registered_plugins=()
+  local candidate_plugins=(
+    "$appex"
+    "$HOME/Applications/Iris Drive.app/Contents/PlugIns/IrisDriveFileProvider.appex"
+    "/Applications/Iris Drive.app/Contents/PlugIns/IrisDriveFileProvider.appex"
+  )
 
   [[ -d "$appex" ]] || return 0
   command -v pluginkit >/dev/null 2>&1 || return 0
 
-  pluginkit -m -i "$plugin_id" -ADv 2>/dev/null \
-    | awk -F '\t' 'NF >= 4 { print $4 }' \
-    | while IFS= read -r plugin; do
-        if [[ -n "$plugin" && "$plugin" != "$appex" ]]; then
-          pluginkit -r "$plugin" >/dev/null 2>&1 || true
-        fi
-      done
-  pluginkit -a "$appex" >/dev/null 2>&1 || true
+  while IFS= read -r plugin; do
+    [[ -n "$plugin" ]] || continue
+    registered_plugins+=("$plugin")
+  done < <(pluginkit -m -i "$plugin_id" -ADv 2>/dev/null | awk -F '\t' 'NF >= 4 { print $4 }')
+
+  for candidate in "${candidate_plugins[@]}"; do
+    [[ -d "$candidate" ]] || continue
+    candidate_registered=0
+    for plugin in "${registered_plugins[@]}"; do
+      if [[ "$plugin" == "$candidate" ]]; then
+        candidate_registered=1
+        break
+      fi
+    done
+
+    if [[ "$candidate_registered" == "1" ]]; then
+      log "Reusing existing macOS FileProvider pluginkit registration for $candidate"
+    else
+      pluginkit -a "$candidate" >/dev/null 2>&1 || true
+    fi
+  done
+
   pluginkit -e use -i "$plugin_id" >/dev/null 2>&1 || true
 }
 

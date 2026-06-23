@@ -7,7 +7,9 @@ import SwiftUI
 let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier("main")
 let irisDriveDisplayName = "Iris Drive"
 let irisDriveHiddenLaunchArgument = "--hidden"
-let irisDriveFileProviderDomainDisplayName = "My Drive"
+// Keep the domain display empty so macOS names the CloudStorage root IrisDrive,
+// while Finder still shows the provider/root item as Iris Drive.
+let irisDriveFileProviderDomainDisplayName = ""
 private let irisDriveControlPanelWindowID = "control-panel"
 private let irisDriveFileProviderRuntimeFileName = "fileprovider-runtime.json"
 private let irisDriveFileProviderPathIdentifierPrefix = "path:"
@@ -21,6 +23,14 @@ private let irisDriveE2ECreateProfileNotification =
 private let irisDriveAssociatedHosts: Set<String> = [
     "drive.iris.to",
 ]
+
+private func irisDriveUserFacingDriveName(_ value: Any?) -> String {
+    let name = (value as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+    if name.isEmpty || name == "My Drive" {
+        return irisDriveDisplayName
+    }
+    return name
+}
 
 @main
 struct IrisDriveMacApp: App {
@@ -93,6 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        IrisDriveDesktopCore.installRustlsCryptoProvider()
         if screenshotFixtureMode {
             IrisDriveScreenshotFixtures.apply()
             installWindowObserver()
@@ -1494,9 +1505,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if selectingItem {
             NSWorkspace.shared.activateFileViewerSelecting([url])
             irisDriveDebugLog("Iris Drive mounted drive item revealed: \(url.path)")
-        } else if NSWorkspace.shared.open(url) {
-            irisDriveDebugLog("Iris Drive mounted drive folder opened: \(url.path)")
         } else {
+            // Opening FileProvider roots as plain file URLs can trip sandbox
+            // permission prompts. Hand off to Finder by revealing the root.
             NSWorkspace.shared.activateFileViewerSelecting([url])
             irisDriveDebugLog("Iris Drive mounted drive folder revealed: \(url.path)")
         }
@@ -1973,10 +1984,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             let roots = ui["roots"] as? [[String: Any]] ?? []
             if let primary = roots.first {
-                status.driveName = primary["name"] as? String ?? "My Drive"
+                status.driveName = irisDriveUserFacingDriveName(primary["name"])
                 status.workingDirectory = primary["local_path"] as? String
             } else {
-                status.driveName = "My Drive"
+                status.driveName = irisDriveDisplayName
                 status.workingDirectory = nil
             }
 
@@ -2125,7 +2136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             if let drives = json["drives"] as? [[String: Any]],
                let primary = drives.first(where: { $0["drive_id"] as? String == "main" }) {
-                status.driveName = primary["display_name"] as? String ?? "My Drive"
+                status.driveName = irisDriveUserFacingDriveName(primary["display_name"])
                 status.rootCID = primary["last_root_cid"] as? String
             }
 

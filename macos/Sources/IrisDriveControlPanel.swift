@@ -16,7 +16,7 @@ private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .drive:
-            return "My Drive"
+            return "Iris Drive"
         case .peers:
             return "Devices"
         case .shares:

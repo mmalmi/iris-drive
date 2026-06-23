@@ -30,7 +30,7 @@ final class IrisDriveStatus: ObservableObject {
     @Published var expectedServiceBinaryVersion = ""
     @Published var stateLoaded = false
     @Published var initialized = false
-    @Published var driveName = "My Drive"
+    @Published var driveName = "Iris Drive"
     @Published var currentAppKeyNpub: String?
     @Published var deviceNpub: String?
     @Published var profileId: String?

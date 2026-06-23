@@ -1,5 +1,8 @@
 import Foundation
 
+@_silgen_name("iris_drive_install_rustls_crypto_provider")
+private func irisDriveInstallRustlsCryptoProvider()
+
 @_silgen_name("iris_drive_app_new")
 private func irisDriveAppNew(
     _ dataDir: UnsafePointer<CChar>,
@@ -68,6 +71,10 @@ private func irisDriveStringFree(_ value: UnsafeMutablePointer<CChar>?)
 
 final class IrisDriveDesktopCore {
     private var handle: UnsafeMutableRawPointer?
+
+    static func installRustlsCryptoProvider() {
+        irisDriveInstallRustlsCryptoProvider()
+    }
 
     init(dataDir: String, appVersion: String) {
         handle = dataDir.withCString { dataDirPointer in

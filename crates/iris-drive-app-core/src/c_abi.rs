@@ -28,6 +28,7 @@ use crate::{
         classify_link_input, drive_link_for_cid, export_recovery_secret, generate_recovery_key,
         recovery_pubkey_for_phrase, validate_link_input,
     },
+    native_provider::install_rustls_crypto_provider,
 };
 use iris_drive_core::updater::{
     ProductUpdateMode, ProductUpdateResult, check_product_update_blocking,
@@ -59,6 +60,11 @@ struct NativeUpdateResult {
     root_cid: Option<String>,
     release_cid: Option<String>,
     error: String,
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_install_rustls_crypto_provider() {
+    install_rustls_crypto_provider();
 }
 
 impl From<ProductUpdateResult> for NativeUpdateResult {
@@ -880,9 +886,16 @@ mod tests {
 
     use super::{
         iris_drive_app_dispatch_json, iris_drive_app_free, iris_drive_app_new,
-        iris_drive_app_state_json, iris_drive_qr_matrix_json, iris_drive_string_free,
-        iris_drive_validate_link_input_json,
+        iris_drive_app_state_json, iris_drive_install_rustls_crypto_provider,
+        iris_drive_qr_matrix_json, iris_drive_string_free, iris_drive_validate_link_input_json,
     };
+
+    #[test]
+    fn c_abi_installs_rustls_crypto_provider() {
+        iris_drive_install_rustls_crypto_provider();
+
+        assert!(rustls::crypto::CryptoProvider::get_default().is_some());
+    }
 
     #[test]
     fn c_abi_returns_json_state_and_action_errors() {

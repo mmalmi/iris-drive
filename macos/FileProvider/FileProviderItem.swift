@@ -77,7 +77,7 @@ extension FileProviderItem {
         FileProviderItem(
             itemIdentifier: .rootContainer,
             parentItemIdentifier: .rootContainer,
-            filename: "My Drive",
+            filename: "Iris Drive",
             contentType: .folder,
             versionIdentifier: "root:\(anchor ?? "initial")"
         )
