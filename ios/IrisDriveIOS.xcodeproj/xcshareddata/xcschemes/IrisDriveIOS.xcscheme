@@ -87,6 +87,17 @@
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
+               BlueprintIdentifier = "60284211D6933E6DA8E51E59"
+               BuildableName = "IrisDriveIOSShareExtensionTests.xctest"
+               BlueprintName = "IrisDriveIOSShareExtensionTests"
+               ReferencedContainer = "container:IrisDriveIOS.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
+         <TestableReference
+            skipped = "NO"
+            parallelizable = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
                BlueprintIdentifier = "67B67C05CCBE0A7C7C7E41CA"
                BuildableName = "IrisDriveIOSUITests.xctest"
                BlueprintName = "IrisDriveIOSUITests"

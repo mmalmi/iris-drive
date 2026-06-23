@@ -36,6 +36,8 @@ require_file ios/Sources/IrisDriveMobileModel.swift
 require_file ios/Sources/IrisDriveNativeCore.swift
 require_file ios/Sources/IrisDriveTypes.swift
 require_file ios/FileProvider/FileProviderExtension.swift
+require_file ios/ShareExtension/ShareItemImporter.swift
+require_file ios/UnitTests/ShareItemImporterTests.swift
 require_file ios/UITests/IrisDriveIOSUITests.swift
 require_file ios/UITests/Fixtures/external-links.html
 require_file scripts/ios-simulator-smoke.sh
@@ -44,6 +46,7 @@ require_file scripts/cross-vm-four-platform-e2e.sh
 
 require_contains ios/project.yml "IrisDriveIOS"
 require_contains ios/project.yml "IrisDriveFileProvider"
+require_contains ios/project.yml "IrisDriveIOSShareExtensionTests"
 require_contains ios/Info.plist "CFBundleURLSchemes"
 require_contains ios/Info.plist "iris-drive"
 require_contains ios/Info.plist "NSAppTransportSecurity"
@@ -97,8 +100,10 @@ require_absent ios/Sources/IrisDriveMobileModel.swift "applicationSupportDirecto
 require_absent ios/Sources/IrisDriveMobileModel.swift "UIDocumentPickerViewController"
 require_contains ios/FileProvider/FileProviderStorage.swift "storageDirectoryName = \"IrisDrive\""
 require_absent ios/FileProvider/FileProviderStorage.swift "applicationSupportDirectory"
-require_contains ios/ShareExtension/ShareViewController.swift "loadFileRepresentation"
-require_contains ios/ShareExtension/ShareViewController.swift "provider.registeredTypeIdentifiers"
+require_contains ios/ShareExtension/ShareItemImporter.swift "loadFileRepresentation"
+require_contains ios/ShareExtension/ShareItemImporter.swift "provider.registeredTypeIdentifiers"
+require_contains ios/UnitTests/ShareItemImporterTests.swift "testWebURLImportCreatesUrlFile"
+require_contains ios/UnitTests/ShareItemImporterTests.swift "testDataImportUsesSuggestedImageExtension"
 require_contains ios/Sources/IrisDriveNativeCore.swift "iris_drive_app_dispatch_json"
 require_contains crates/iris-drive-app-core/src/ffi.rs "start_browser_gateway_if_needed"
 require_contains crates/iris-drive-app-core/src/ffi.rs "EmbeddedHashtreeHost::start"
@@ -144,6 +149,7 @@ require_contains scripts/ios-simulator-smoke.sh "SIMCTL_CHILD_IRIS_DRIVE_DEBUG_A
 require_contains scripts/ios-gui-linking-smoke.sh "testLinkThisDeviceFromWelcome"
 require_contains scripts/ios-gui-linking-smoke.sh "testAddLinkedDeviceFromDevices"
 require_contains scripts/ios-gui-linking-smoke.sh "testOpenIrisAppsLoadsBrowserWhenSyncPaused"
+require_contains scripts/ios-gui-linking-smoke.sh "IrisDriveIOSShareExtensionTests"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "testOpenIrisAppsLoadsBrowserWhenSyncPaused"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "assertNoFilesProviderTrouble"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "syncing with iris drive paused"

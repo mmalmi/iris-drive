@@ -97,6 +97,18 @@ targets:
           CODE_SIGN_IDENTITY: $(IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY)
           PROVISIONING_PROFILE: $(IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID)
 
+  IrisDriveIOSShareExtensionTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - path: UnitTests
+      - path: ShareExtension/ShareItemImporter.swift
+    settings:
+      base:
+        PRODUCT_NAME: IrisDriveIOSShareExtensionTests
+        PRODUCT_BUNDLE_IDENTIFIER: to.iris.drive.ios.ShareExtensionTests
+        GENERATE_INFOPLIST_FILE: YES
+
   IrisDriveIOSUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -121,4 +133,5 @@ schemes:
         IrisDriveIOSUITests: [test]
     test:
       targets:
+        - IrisDriveIOSShareExtensionTests
         - IrisDriveIOSUITests
