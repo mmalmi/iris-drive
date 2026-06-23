@@ -577,6 +577,22 @@ pub(crate) fn reset_invite(model: &AppRef) {
     }
 }
 
+pub(crate) fn copy_app_key_link_invite(model: &AppRef) {
+    match desktop_state() {
+        Ok(state) => {
+            let invite = profile(&state)
+                .map(|account| account.app_key_link_invite.as_str())
+                .unwrap_or_default();
+            if invite.is_empty() {
+                model.ui.notice.set_text("Invite link unavailable");
+            } else {
+                copy_text(model, invite, "Invite link copied");
+            }
+        }
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
 pub(crate) fn logout(model: &AppRef) {
     stop_daemon(model);
     match dispatch_desktop_action(NativeAppAction::Logout) {
@@ -586,145 +602,6 @@ pub(crate) fn logout(model: &AppRef) {
         }
         Err(error) => model.ui.notice.set_text(&error),
     }
-}
-
-pub(crate) fn show_add_device_dialog(model: &AppRef) {
-    let dialog = gtk::Window::builder()
-        .application(&model.application)
-        .title("Add a Device")
-        .modal(true)
-        .default_width(420)
-        .build();
-    if let Some(parent) = model.application.active_window() {
-        dialog.set_transient_for(Some(&parent));
-    }
-
-    let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
-    body.set_margin_top(18);
-    body.set_margin_bottom(18);
-    body.set_margin_start(18);
-    body.set_margin_end(18);
-
-    let title = gtk::Label::new(Some("Add a Device"));
-    title.add_css_class("title-2");
-    title.set_xalign(0.0);
-    body.append(&title);
-
-    if let Ok(state) = desktop_state() {
-        if let Some(requests) = profile(&state)
-            .map(|account| account.inbound_app_key_link_requests.as_slice())
-            .filter(|requests| !requests.is_empty())
-        {
-            let heading = gtk::Label::new(Some("Device requests"));
-            heading.add_css_class("iris-row-title");
-            heading.set_xalign(0.0);
-            body.append(&heading);
-            for request in requests {
-                let request_url = request.request_link.clone();
-                let request_label = if request.label.is_empty() {
-                    "New device".to_string()
-                } else {
-                    request.label.clone()
-                };
-                let request_device = request.app_key_pubkey.clone();
-                let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-                row.set_valign(gtk::Align::Center);
-                let labels = gtk::Box::new(gtk::Orientation::Vertical, 3);
-                labels.set_hexpand(true);
-                let title = gtk::Label::new(Some(&request_label));
-                title.set_xalign(0.0);
-                title.add_css_class("iris-row-title");
-                labels.append(&title);
-                let subtitle = gtk::Label::new(Some(&request_device));
-                subtitle.set_xalign(0.0);
-                subtitle.add_css_class("iris-row-subtitle");
-                subtitle.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
-                labels.append(&subtitle);
-                row.append(&labels);
-                let reject = pill_button("Reject");
-                reject.add_css_class("destructive-action");
-                let add_request = primary_button("Add");
-                {
-                    let model = Rc::clone(model);
-                    let request_url = request_url.clone();
-                    let dialog = dialog.clone();
-                    reject.connect_clicked(move |_| match reject_device(&request_url) {
-                        Ok(()) => {
-                            model.ui.notice.set_text("Device request rejected");
-                            refresh(&model);
-                            dialog.close();
-                        }
-                        Err(error) => model.ui.notice.set_text(&error),
-                    });
-                }
-                {
-                    let model = Rc::clone(model);
-                    let request_url = request_url.clone();
-                    let request_label = request_label.clone();
-                    let dialog = dialog.clone();
-                    add_request.connect_clicked(move |_| {
-                        if approve_device_values(&model, request_url.clone(), request_label.clone())
-                        {
-                            dialog.close();
-                        }
-                    });
-                }
-                row.append(&reject);
-                row.append(&add_request);
-                body.append(&row);
-            }
-        }
-    }
-
-    let help = gtk::Label::new(Some("Paste the device key or request link."));
-    help.add_css_class("iris-muted");
-    help.set_xalign(0.0);
-    help.set_wrap(true);
-    body.append(&help);
-
-    let device = setup_entry("Device key");
-    let label = setup_entry("Name (optional)");
-    body.append(&device);
-    body.append(&label);
-
-    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    buttons.set_halign(gtk::Align::End);
-    let cancel = pill_button("Cancel");
-    let add = primary_button("Add");
-    buttons.append(&cancel);
-    buttons.append(&add);
-    body.append(&buttons);
-
-    {
-        let dialog = dialog.clone();
-        cancel.connect_clicked(move |_| dialog.close());
-    }
-    {
-        let model = Rc::clone(model);
-        let dialog = dialog.clone();
-        let device = device.clone();
-        let label = label.clone();
-        add.connect_clicked(move |_| {
-            if approve_device_values(
-                &model,
-                device.text().trim().to_string(),
-                label.text().trim().to_string(),
-            ) {
-                dialog.close();
-            }
-        });
-    }
-    {
-        let add = add.clone();
-        device.connect_activate(move |_| add.emit_clicked());
-    }
-    {
-        let add = add.clone();
-        label.connect_activate(move |_| add.emit_clicked());
-    }
-
-    dialog.set_child(Some(&body));
-    dialog.present();
 }
 
 pub(crate) fn show_add_recovery_key_dialog(model: &AppRef) {

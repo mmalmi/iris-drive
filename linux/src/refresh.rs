@@ -62,6 +62,7 @@ pub(crate) fn refresh(model: &AppRef) {
                 .ui
                 .approve_box
                 .set_visible(account.is_some_and(|account| account.can_admin_profile));
+            render_add_device_section(model, &state);
             model.ui.snapshot.set_text(&snapshot_value(&state));
             model.ui.files.set_text(&file_count_value(&state));
             model.ui.storage.set_text(&storage_value(&state));

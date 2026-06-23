@@ -55,6 +55,99 @@ pub(crate) fn render_peers(model: &AppRef, state: &NativeAppState) {
     }
 }
 
+pub(crate) fn render_add_device_section(model: &AppRef, state: &NativeAppState) {
+    let account = profile(state);
+    let invite = account
+        .map(|account| account.app_key_link_invite.as_str())
+        .unwrap_or_default();
+    model.ui.add_device_invite.set_text(if invite.is_empty() {
+        "Invite link unavailable"
+    } else {
+        invite
+    });
+    model.ui.copy_invite_button.set_sensitive(!invite.is_empty());
+
+    let requests = account
+        .map(|account| account.inbound_app_key_link_requests.as_slice())
+        .unwrap_or_default();
+    let expander_label = match requests.len() {
+        0 => "Add Device".to_string(),
+        1 => "Add Device (1 request)".to_string(),
+        count => format!("Add Device ({count} requests)"),
+    };
+    model.ui.add_device_expander.set_label(Some(&expander_label));
+
+    clear_list(&model.ui.add_device_requests);
+    model.ui.add_device_requests.set_visible(!requests.is_empty());
+    for request in requests {
+        model
+            .ui
+            .add_device_requests
+            .append(&app_key_link_request_row(model, request));
+    }
+}
+
+fn app_key_link_request_row(
+    model: &AppRef,
+    request: &iris_drive_app_core::state::UiAppKeyLinkRequest,
+) -> gtk::ListBoxRow {
+    let request_url = request.request_link.clone();
+    let request_label = if request.label.is_empty() {
+        "New device".to_string()
+    } else {
+        request.label.clone()
+    };
+    let request_device = request.app_key_pubkey.clone();
+    let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    row.set_valign(gtk::Align::Center);
+    row.set_margin_top(8);
+    row.set_margin_bottom(8);
+    row.set_margin_start(10);
+    row.set_margin_end(10);
+
+    let labels = gtk::Box::new(gtk::Orientation::Vertical, 3);
+    labels.set_hexpand(true);
+    let title = gtk::Label::new(Some(&request_label));
+    title.set_xalign(0.0);
+    title.add_css_class("iris-row-title");
+    labels.append(&title);
+    let subtitle = gtk::Label::new(Some(&request_device));
+    subtitle.set_xalign(0.0);
+    subtitle.add_css_class("iris-row-subtitle");
+    subtitle.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    labels.append(&subtitle);
+    row.append(&labels);
+
+    let reject = pill_button("Reject");
+    reject.add_css_class("destructive-action");
+    let add_request = primary_button("Add");
+    {
+        let model = Rc::clone(model);
+        let request_url = request_url.clone();
+        reject.connect_clicked(move |_| match reject_device(&request_url) {
+            Ok(()) => {
+                model.ui.notice.set_text("Device request rejected");
+                refresh(&model);
+            }
+            Err(error) => model.ui.notice.set_text(&error),
+        });
+    }
+    {
+        let model = Rc::clone(model);
+        let request_url = request_url.clone();
+        let request_label = request_label.clone();
+        add_request.connect_clicked(move |_| {
+            approve_device_values(&model, request_url.clone(), request_label.clone());
+        });
+    }
+    row.append(&reject);
+    row.append(&add_request);
+
+    let list_row = gtk::ListBoxRow::new();
+    list_row.set_child(Some(&row));
+    list_row
+}
+
 fn append_peer_actor_row(
     model: &AppRef,
     list: &gtk::ListBox,

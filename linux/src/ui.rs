@@ -187,19 +187,54 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     );
     peers_page.append(&account_grid);
 
-    let approve_box = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let approve_box = gtk::Box::new(gtk::Orientation::Vertical, 8);
     approve_box.set_hexpand(true);
-    let approve_device_button = action_button("list-add-symbolic", "Add Device", "Add device");
+    let add_device_expander = gtk::Expander::new(Some("Add Device"));
+    add_device_expander.set_hexpand(true);
+    let add_device_body = gtk::Box::new(gtk::Orientation::Vertical, 10);
+    add_device_body.set_margin_top(8);
+    add_device_body.set_margin_bottom(8);
+    add_device_body.set_margin_start(8);
+    add_device_body.set_margin_end(8);
+    let add_device_invite = value_label();
+    add_device_invite.set_max_width_chars(72);
+    add_device_body.append(&add_device_invite);
+    let invite_controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let copy_invite_button =
+        action_button("edit-copy-symbolic", "Copy invite link", "Copy invite link");
+    let reset_invite_button =
+        action_button("view-refresh-symbolic", "Reset invite", "Reset invite");
+    invite_controls.append(&copy_invite_button);
+    invite_controls.append(&reset_invite_button);
+    add_device_body.append(&invite_controls);
+    let add_device_requests = gtk::ListBox::new();
+    add_device_requests.add_css_class("iris-drive-list");
+    add_device_requests.set_selection_mode(gtk::SelectionMode::None);
+    add_device_requests.set_visible(false);
+    add_device_body.append(&add_device_requests);
+    let add_device_help = gtk::Label::new(Some("Paste the device key."));
+    add_device_help.add_css_class("iris-muted");
+    add_device_help.set_xalign(0.0);
+    add_device_help.set_wrap(true);
+    add_device_body.append(&add_device_help);
+    let manual_controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    let add_device_entry = setup_entry("Device key");
+    add_device_entry.set_hexpand(true);
+    let add_device_label_entry = setup_entry("Name (optional)");
+    add_device_label_entry.set_width_request(160);
+    let add_device_submit_button = primary_button("Add");
+    manual_controls.append(&add_device_entry);
+    manual_controls.append(&add_device_label_entry);
+    manual_controls.append(&add_device_submit_button);
+    add_device_body.append(&manual_controls);
+    add_device_expander.set_child(Some(&add_device_body));
     let add_recovery_key_button = action_button(
         "dialog-password-symbolic",
         "Add Recovery Key",
         "Add recovery key",
     );
-    let reset_invite_button =
-        action_button("view-refresh-symbolic", "Reset invite", "Reset invite");
-    approve_box.append(&approve_device_button);
+    approve_box.append(&add_device_expander);
     approve_box.append(&add_recovery_key_button);
-    approve_box.append(&reset_invite_button);
     peers_page.append(&approve_box);
 
     peers_page.append(&field_title("Linked Devices"));
@@ -486,7 +521,13 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
             account_device,
             account_authorization,
             approve_box,
-            approve_device_button,
+            add_device_expander,
+            add_device_invite,
+            copy_invite_button,
+            add_device_requests,
+            add_device_entry,
+            add_device_label_entry,
+            add_device_submit_button,
             add_recovery_key_button,
             reset_invite_button,
             notice,
@@ -597,9 +638,39 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
         copy_device_button.connect_clicked(move |_| copy_account_key(&model, "device_npub"));
     }
     {
-        let button = model.ui.approve_device_button.clone();
+        let button = model.ui.copy_invite_button.clone();
         let model = Rc::clone(&model);
-        button.connect_clicked(move |_| show_add_device_dialog(&model));
+        button.connect_clicked(move |_| copy_app_key_link_invite(&model));
+    }
+    {
+        let button = model.ui.add_device_submit_button.clone();
+        let device = model.ui.add_device_entry.clone();
+        let label = model.ui.add_device_label_entry.clone();
+        let model = Rc::clone(&model);
+        button.connect_clicked(move |_| {
+            if approve_device_values(
+                &model,
+                device.text().trim().to_string(),
+                label.text().trim().to_string(),
+            ) {
+                device.set_text("");
+                label.set_text("");
+            }
+        });
+    }
+    {
+        let add = model.ui.add_device_submit_button.clone();
+        model
+            .ui
+            .add_device_entry
+            .connect_activate(move |_| add.emit_clicked());
+    }
+    {
+        let add = model.ui.add_device_submit_button.clone();
+        model
+            .ui
+            .add_device_label_entry
+            .connect_activate(move |_| add.emit_clicked());
     }
     {
         let button = model.ui.add_recovery_key_button.clone();
