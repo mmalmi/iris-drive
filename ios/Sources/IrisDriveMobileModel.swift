@@ -5,7 +5,10 @@ import Foundation
 import SwiftUI
 import UIKit
 
-private let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier("main")
+private let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier("primary-v1")
+private let irisDriveLegacyDomainIdentifiers = [
+    NSFileProviderDomainIdentifier("main"),
+]
 private let irisDriveFileProviderDisplayName = "Iris Drive"
 private let defaultRelay = "wss://relay.damus.io"
 private let defaultRelays = [defaultRelay]
@@ -15,7 +18,7 @@ private let configMutationAuditDefaultsKey = "configMutationAuditV1"
 private let configMutationAuditMaxEvents = 20
 private let fileProviderPathIdentifierPrefix = "path:"
 private let fileProviderRegistrationIdentityKey = "fileProviderRegistrationIdentity"
-private let fileProviderRegistrationVersion = 4
+private let fileProviderRegistrationVersion = 5
 private let fileProviderRegistrationVersionKey = "fileProviderRegistrationVersion"
 private let providerRootSignalFileName = "provider-root.changed"
 private let nativeFipsStatusFileName = "native-fips-status.json"
@@ -286,6 +289,11 @@ final class IrisDriveMobileModel: ObservableObject {
         NSFileProviderManager.getDomainsWithCompletionHandler { [weak self] domains, _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                let legacyDomains = domains.filter { irisDriveLegacyDomainIdentifiers.contains($0.identifier) }
+                if !legacyDomains.isEmpty {
+                    self.removeLegacyFileProviderDomains(legacyDomains, completion: completion)
+                    return
+                }
                 if let existingDomain = domains.first(where: { $0.identifier == irisDriveDomainIdentifier }) {
                     if self.shouldRepairFileProviderRegistration(existingDomain) {
                         self.repairFileProviderRegistration(
@@ -473,9 +481,17 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private func removeFileProviderDomain() {
-        let domain = irisDriveFileProviderDomain()
+        let domains = [irisDriveFileProviderDomain()]
+            + irisDriveLegacyDomainIdentifiers.map(legacyFileProviderDomain)
         fileProviderDomainRemovalInFlight = true
-        NSFileProviderManager.remove(domain) { [weak self] _ in
+        let group = DispatchGroup()
+        for domain in domains {
+            group.enter()
+            NSFileProviderManager.remove(domain) { _ in
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) { [weak self] in
             Task { @MainActor in
                 self?.fileProviderDomainRemovalInFlight = false
             }
@@ -485,6 +501,38 @@ final class IrisDriveMobileModel: ObservableObject {
         #if DEBUG
         defaults.removeObject(forKey: fileProviderDebugRegistrationVersionKey)
         #endif
+    }
+
+    private func removeLegacyFileProviderDomains(
+        _ domains: [NSFileProviderDomain],
+        completion: ((Bool) -> Void)?
+    ) {
+        fileProviderStatus = "Repairing Files provider"
+        rebuildDerivedState()
+        fileProviderDomainRemovalInFlight = true
+        defaults.removeObject(forKey: fileProviderRegistrationIdentityKey)
+        defaults.removeObject(forKey: fileProviderRegistrationVersionKey)
+        #if DEBUG
+        defaults.removeObject(forKey: fileProviderDebugRegistrationVersionKey)
+        #endif
+        let group = DispatchGroup()
+        for domain in domains {
+            group.enter()
+            NSFileProviderManager.remove(domain) { error in
+                if let error {
+                    NSLog("Iris Drive legacy FileProvider domain removal failed: \(error)")
+                }
+                group.leave()
+            }
+        }
+        group.notify(queue: .main) { [weak self] in
+            guard let self else {
+                completion?(false)
+                return
+            }
+            self.fileProviderDomainRemovalInFlight = false
+            self.ensureFileProviderDomain(completion: completion)
+        }
     }
 
     private func waitForFileProviderRemovalThenEnsure(completion: ((Bool) -> Void)?) {
@@ -510,6 +558,12 @@ final class IrisDriveMobileModel: ObservableObject {
         domain.testingModes = [.alwaysEnabled]
         #endif
         return domain
+    }
+
+    private func legacyFileProviderDomain(
+        identifier: NSFileProviderDomainIdentifier
+    ) -> NSFileProviderDomain {
+        NSFileProviderDomain(identifier: identifier, displayName: irisDriveFileProviderDisplayName)
     }
 
     private func markFileProviderRegistrationCurrent() {

@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 
 enum FileProviderStorage {
     private static let appGroupIdentifier = "group.to.iris.drive"
-    private static let domainIdentifier = NSFileProviderDomainIdentifier("main")
+    private static let domainIdentifier = NSFileProviderDomainIdentifier("primary-v1")
     private static let domainDisplayName = "Iris Drive"
     private static let storageDirectoryName = "IrisDrive"
     private static let providerSnapshotFileName = "ios-provider-snapshot.json"
@@ -167,7 +167,7 @@ enum FileProviderStorage {
         template: NSFileProviderItem,
         contents: URL?,
         mayAlreadyExist: Bool
-    ) throws -> FileProviderItem {
+    ) throws -> FileProviderItem? {
         let parent = path(for: template.parentItemIdentifier) ?? ""
         let destination: NativeProviderResolvedPath
         if mayAlreadyExist {
@@ -178,6 +178,9 @@ enum FileProviderStorage {
                 return item(for: existing, anchor: state.anchor)
             }
             debugLog("create mayAlreadyExist rejected absent path=\(destination.path)")
+            if contents == nil {
+                return nil
+            }
             throw NSError.fileProviderErrorForNonExistentItem(
                 withIdentifier: identifier(for: destination.path)
             )
@@ -195,13 +198,21 @@ enum FileProviderStorage {
             } else {
                 source = try emptyTemporaryFile()
             }
-            try runProviderMutation(
-                IrisDriveNativeProvider.write(
-                    dataDir: baseDirectory.path,
-                    path: destination.path,
-                    sourcePath: source.path
+            do {
+                try runProviderMutation(
+                    IrisDriveNativeProvider.write(
+                        dataDir: baseDirectory.path,
+                        path: destination.path,
+                        sourcePath: source.path
+                    )
                 )
-            )
+            } catch {
+                if isPlaceholderCopyError(error) {
+                    debugLog("create refused placeholder copy path=\(destination.path)")
+                    return nil
+                }
+                throw error
+            }
         }
         signalProviderChanged()
         return optimisticItem(for: destination, template: template, contents: contents)
@@ -556,5 +567,9 @@ enum FileProviderStorage {
             code: NSFileProviderError.serverUnreachable.rawValue,
             userInfo: [NSLocalizedDescriptionKey: message]
         )
+    }
+
+    private static func isPlaceholderCopyError(_ error: Error) -> Bool {
+        (error as NSError).localizedDescription.contains("placeholder copy")
     }
 }
