@@ -728,11 +728,11 @@ pub(crate) async fn send_authorized_app_key_link_rosters(
             if acked_rosters.contains(&recipient.roster_fingerprint) {
                 return false;
             }
-            !cache
+            cache
                 .sent
                 .get(&recipient.roster_fingerprint)
                 .copied()
-                .is_some_and(|sent| !app_key_link_roster_send_due(Some(sent), now))
+                .is_none_or(|sent| app_key_link_roster_send_due(Some(sent), now))
         })
         .collect::<Vec<_>>();
     if due_devices.is_empty() {

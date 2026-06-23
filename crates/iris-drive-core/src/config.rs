@@ -285,10 +285,8 @@ impl AppConfig {
         }
         let adopted_root_scope_id = if let Some(account) = parsed.profile.as_mut() {
             let adopted = sync_profile && account.adopt_single_roster_profile_id();
-            if !adopted {
-                if sync_profile {
-                    account.sync_app_keys_from_profile();
-                }
+            if !adopted && sync_profile {
+                account.sync_app_keys_from_profile();
             }
             adopted.then(|| account.root_scope_id())
         } else {

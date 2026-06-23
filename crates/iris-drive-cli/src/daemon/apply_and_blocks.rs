@@ -27,7 +27,11 @@ pub(crate) fn drive_root_apply_outcome_is_retryable(
     )
 }
 
-#[allow(clippy::too_many_lines)]
+#[allow(
+    clippy::needless_return,
+    clippy::redundant_else,
+    clippy::too_many_lines
+)]
 pub(crate) async fn apply_one_event(
     _client: &nostr_sdk::Client,
     config_dir: &std::path::Path,
@@ -212,8 +216,7 @@ pub(crate) fn apply_files_root_event(
     let tree_name = event
         .tags
         .identifier()
-        .map(str::to_owned)
-        .unwrap_or_else(|| iris_drive_core::PRIMARY_DRIVE_ID.to_string());
+        .map_or_else(|| iris_drive_core::PRIMARY_DRIVE_ID.to_string(), str::to_owned);
     let root_cid_to_pull = if was_applied {
         config
             .drive(&tree_name)

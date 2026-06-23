@@ -581,9 +581,7 @@ fn http_host_and_tail<'a>(input: &'a str, scheme: &str) -> Option<(String, &'a s
     if rest.starts_with('/') || rest.starts_with('@') {
         return None;
     }
-    let split_at = rest
-        .find(|ch| matches!(ch, '/' | '?' | '#'))
-        .unwrap_or(rest.len());
+    let split_at = rest.find(['/', '?', '#']).unwrap_or(rest.len());
     let host = rest[..split_at].trim_end_matches('.').to_owned();
     if host.is_empty() || host.contains('@') {
         return None;

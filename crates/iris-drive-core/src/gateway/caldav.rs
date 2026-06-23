@@ -196,7 +196,7 @@ async fn handle_caldav_put(
     let paths = current_caldav_paths(&config);
     let legacy_paths = legacy_caldav_paths();
     if calendar_event_collection_href(&path, &paths, &legacy_paths).is_none()
-        || !path.ends_with(".ics")
+        || !has_ics_extension(&path)
     {
         return Err((
             StatusCode::BAD_REQUEST,
@@ -209,12 +209,11 @@ async fn handle_caldav_put(
     let existed =
         crate::calendar::load_calendar_data(daemon.tree(), daemon.config(), "iris-caldav")
             .await
-            .map(|data| {
+            .is_ok_and(|data| {
                 data.events
                     .iter()
                     .any(|event| event.id == id || crate::calendar::event_href_id(&event.id) == id)
-            })
-            .unwrap_or(false);
+            });
     let event = crate::calendar::put_calendar_event_ics(&mut daemon, &id, body)
         .await
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
@@ -262,8 +261,7 @@ async fn load_caldav_calendar(
     let owner = config
         .profile
         .as_ref()
-        .map(|profile| profile.app_key_pubkey.as_str())
-        .unwrap_or("iris-caldav");
+        .map_or("iris-caldav", |profile| profile.app_key_pubkey.as_str());
     crate::calendar::load_calendar_data(state.tree.as_ref(), config, owner)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
@@ -275,11 +273,10 @@ fn load_caldav_config(state: &GatewayState) -> Result<AppConfig, (StatusCode, St
 }
 
 fn current_caldav_paths(config: &AppConfig) -> CaldavPaths {
-    let identity = config
-        .profile
-        .as_ref()
-        .map(|profile| crate::app_key_summary::pubkey_npub(&profile.app_key_pubkey))
-        .unwrap_or_else(|| CALDAV_LEGACY_IDENTITY.to_string());
+    let identity = config.profile.as_ref().map_or_else(
+        || CALDAV_LEGACY_IDENTITY.to_string(),
+        |profile| crate::app_key_summary::pubkey_npub(&profile.app_key_pubkey),
+    );
     CaldavPaths::new(&identity)
 }
 
@@ -310,27 +307,31 @@ fn calendar_event_collection_href<'a>(
     paths: &'a CaldavPaths,
     legacy_paths: &'a CaldavPaths,
 ) -> Option<&'a str> {
-    if path.starts_with(&paths.calendar) && path.ends_with(".ics") {
+    if path.starts_with(&paths.calendar) && has_ics_extension(path) {
         Some(paths.calendar.as_str())
-    } else if path.starts_with(&legacy_paths.calendar) && path.ends_with(".ics") {
+    } else if path.starts_with(&legacy_paths.calendar) && has_ics_extension(path) {
         Some(legacy_paths.calendar.as_str())
     } else {
         None
     }
 }
 
+fn has_ics_extension(path: &str) -> bool {
+    std::path::Path::new(path)
+        .extension()
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("ics"))
+}
+
 fn normalized_caldav_path(path: &str) -> String {
     if path == "/caldav" {
         return CALDAV_ROOT.into();
     }
-    if path == CALDAV_ROOT || path.ends_with(".ics") {
+    if path == CALDAV_ROOT || has_ics_extension(path) {
         return path.to_string();
     }
     let parts = path.trim_matches('/').split('/').collect::<Vec<_>>();
     match parts.as_slice() {
-        ["caldav", "principals", _]
-        | ["caldav", "calendars", _]
-        | ["caldav", "calendars", _, "calendar"] => {
+        ["caldav", "principals" | "calendars", _] | ["caldav", "calendars", _, "calendar"] => {
             format!("{}/", path.trim_end_matches('/'))
         }
         _ => path.to_string(),

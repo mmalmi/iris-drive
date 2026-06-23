@@ -402,6 +402,7 @@ impl NativeAppRuntime {
         self.state.clone()
     }
 
+    #[allow(clippy::too_many_lines)]
     fn dispatch(&mut self, action: NativeAppAction) {
         self.state.error.clear();
         let provider_summary = match action {
@@ -1389,6 +1390,7 @@ impl NativeAppRuntime {
         self.state.ui.last_share_recipient_evidence = last_share_recipient_evidence;
     }
 
+    #[allow(clippy::too_many_lines)]
     fn reload_from_disk(&mut self, provider_summary: ProviderSummaryMode) {
         let paths = paths_for(&self.data_dir);
         let sync = self.state.ui.sync.clone();
@@ -1710,6 +1712,7 @@ fn run_app_key_link_exchange(data_dir: &str, stop: Arc<AtomicBool>) -> Result<()
     result
 }
 
+#[allow(clippy::unnecessary_wraps)]
 fn native_browser_gateway_port_for_state(config_dir: &Path) -> Option<u16> {
     #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
     {
@@ -1728,11 +1731,10 @@ fn run_native_calendar_export(
     let config_dir = Path::new(data_dir);
     let config = load_native_runtime_config_cached(&config_path_in(config_dir))
         .map_err(anyhow::Error::msg)?;
-    let owner_npub = config
-        .profile
-        .as_ref()
-        .map(|profile| pubkey_npub(&profile.app_key_pubkey))
-        .unwrap_or_else(|| "iris-android".to_owned());
+    let owner_npub = config.profile.as_ref().map_or_else(
+        || "iris-android".to_owned(),
+        |profile| pubkey_npub(&profile.app_key_pubkey),
+    );
     let daemon = iris_drive_core::Daemon::open_with_config(config_dir, config)
         .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
     block_on_backup_operation(async {
@@ -2573,13 +2575,13 @@ fn ui_fips_status_from_normalized(normalized: &Value) -> UiFipsStatus {
             .and_then(Value::as_str)
             .unwrap_or("0/0 online")
             .to_owned(),
-        roster_peer_count: normalized_u64(&normalized, "roster_peer_count"),
-        roster_online_device_count: normalized_u64(&normalized, "roster_online_device_count"),
-        roster_direct_device_count: normalized_u64(&normalized, "roster_direct_device_count"),
-        online_device_count: normalized_u64(&normalized, "online_device_count"),
-        direct_device_count: normalized_u64(&normalized, "direct_device_count"),
-        mesh_device_count: normalized_u64(&normalized, "mesh_device_count"),
-        other_peer_count: normalized_u64(&normalized, "other_peer_count"),
+        roster_peer_count: normalized_u64(normalized, "roster_peer_count"),
+        roster_online_device_count: normalized_u64(normalized, "roster_online_device_count"),
+        roster_direct_device_count: normalized_u64(normalized, "roster_direct_device_count"),
+        online_device_count: normalized_u64(normalized, "online_device_count"),
+        direct_device_count: normalized_u64(normalized, "direct_device_count"),
+        mesh_device_count: normalized_u64(normalized, "mesh_device_count"),
+        other_peer_count: normalized_u64(normalized, "other_peer_count"),
         online_devices,
         direct_devices,
         mesh_devices,

@@ -110,7 +110,7 @@ pub struct GatewayServer {
     handle: Option<JoinHandle<Result<(), GatewayError>>>,
 }
 
-/// Loopback proxy for WebViews that cannot resolve `*.localhost` names.
+/// Loopback proxy for `WebView`s that cannot resolve `*.localhost` names.
 ///
 /// The browser keeps the original Iris-local URL and origin, while the proxy
 /// forwards only those hosts to the already-running gateway on loopback.

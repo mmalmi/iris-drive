@@ -36,22 +36,29 @@ include!("daemon/runtime.rs");
 #[derive(Debug, Default)]
 struct ProviderRootPublishCache {
     last_config_fingerprint: Option<ConfigFileFingerprint>,
-    last_current_key: Option<Option<String>>,
+    last_current_key: ProviderRootKeySnapshot,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+enum ProviderRootKeySnapshot {
+    #[default]
+    Unknown,
+    Current(Option<String>),
 }
 
 impl ProviderRootPublishCache {
     fn is_current(
         &self,
         fingerprint: &ConfigFileFingerprint,
-        current_key: &Option<String>,
+        current_key: Option<&String>,
     ) -> bool {
         self.last_config_fingerprint.as_ref() == Some(fingerprint)
-            && self.last_current_key.as_ref() == Some(current_key)
+            && self.last_current_key == ProviderRootKeySnapshot::Current(current_key.cloned())
     }
 
     fn update(&mut self, fingerprint: ConfigFileFingerprint, current_key: Option<String>) {
         self.last_config_fingerprint = Some(fingerprint);
-        self.last_current_key = Some(current_key);
+        self.last_current_key = ProviderRootKeySnapshot::Current(current_key);
     }
 }
 
@@ -66,7 +73,7 @@ async fn publish_provider_root_if_changed(
 ) -> Result<Option<AppConfig>> {
     let config_path = config_path_in(config_dir);
     let config_fingerprint = config_file_fingerprint(&config_path)?;
-    if cache.is_current(&config_fingerprint, last_root_key) {
+    if cache.is_current(&config_fingerprint, last_root_key.as_ref()) {
         return Ok(None);
     }
 
@@ -111,14 +118,14 @@ async fn publish_provider_root_if_changed(
     Ok(Some(updated_config))
 }
 
-const PROVIDER_ROOT_SAFETY_POLL_MIN_SECS: u64 = 30;
+const PROVIDER_ROOT_FAST_SWEEP_SECS: u64 = 1;
 
 fn provider_root_poll_enabled(_config_root_watch_active: bool) -> bool {
     true
 }
 
-fn provider_root_poll_period(watch_interval_secs: u64) -> std::time::Duration {
-    std::time::Duration::from_secs(watch_interval_secs.max(PROVIDER_ROOT_SAFETY_POLL_MIN_SECS))
+fn provider_root_poll_period(_watch_interval_secs: u64) -> std::time::Duration {
+    std::time::Duration::from_secs(PROVIDER_ROOT_FAST_SWEEP_SECS)
 }
 
 fn current_app_key_root_key(config: &AppConfig) -> Option<String> {
@@ -284,6 +291,14 @@ fn start_config_root_watch(
     let parent = config_path.parent().unwrap_or(config_dir).to_path_buf();
     std::fs::create_dir_all(&parent)
         .with_context(|| format!("creating config directory {}", parent.display()))?;
+    if !provider_signal_path.exists() {
+        std::fs::write(&provider_signal_path, b"").with_context(|| {
+            format!(
+                "creating provider signal {}",
+                provider_signal_path.display()
+            )
+        })?;
+    }
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let callback_tx = tx.clone();
@@ -305,6 +320,14 @@ fn start_config_root_watch(
     watcher
         .watch(&parent, RecursiveMode::NonRecursive)
         .with_context(|| format!("watching config directory {}", parent.display()))?;
+    watcher
+        .watch(&provider_signal_path, RecursiveMode::NonRecursive)
+        .with_context(|| {
+            format!(
+                "watching provider signal {}",
+                provider_signal_path.display()
+            )
+        })?;
 
     Ok((
         rx,
@@ -313,15 +336,17 @@ fn start_config_root_watch(
             "watching": true,
             "path": config_path.display().to_string(),
             "provider_signal_path": provider_signal_path.display().to_string(),
+            "provider_signal_file_watch": true,
         }),
     ))
 }
 
 fn event_touches_path(event: &notify::Event, target: &Path) -> bool {
-    event
-        .paths
-        .iter()
-        .any(|path| paths_refer_to_same_file(path, target))
+    let parent = target.parent();
+    event.paths.iter().any(|path| {
+        paths_refer_to_same_file(path, target)
+            || parent.is_some_and(|parent| paths_refer_to_same_file(path, parent))
+    })
 }
 
 fn paths_refer_to_same_file(path: &Path, target: &Path) -> bool {

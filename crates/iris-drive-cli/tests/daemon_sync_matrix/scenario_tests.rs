@@ -535,6 +535,7 @@ async fn seafile_empty_directory_sequence(cluster: &SyncCluster, source: Client,
     }
 }
 
+#[allow(clippy::too_many_lines)]
 async fn seafile_single_operation_sequence(cluster: &SyncCluster, source: Client, prefix: &str) {
     let base = scoped(prefix, "single");
     seafile_progress(source, "single create file");

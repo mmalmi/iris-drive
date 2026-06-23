@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::fmt::Write as _;
 
 use hashtree_core::{Cid, HashTree, LinkType, Store};
 use serde::{Deserialize, Serialize};
@@ -257,13 +258,13 @@ fn current_calendar_root(config: &AppConfig) -> Result<Option<Cid>, CalendarErro
 }
 
 fn calendar_actor(config: &AppConfig) -> String {
-    config
-        .profile
-        .as_ref()
-        .map(|profile| profile.app_key_pubkey.clone())
-        .unwrap_or_else(|| "iris-caldav".into())
+    config.profile.as_ref().map_or_else(
+        || "iris-caldav".into(),
+        |profile| profile.app_key_pubkey.clone(),
+    )
 }
 
+#[must_use]
 pub fn calendar_to_ics(data: &CalendarData, now_ms: i64) -> String {
     let mut lines = calendar_header_lines(&data.title);
     for event in &data.events {
@@ -273,6 +274,7 @@ pub fn calendar_to_ics(data: &CalendarData, now_ms: i64) -> String {
     ics_document(lines)
 }
 
+#[must_use]
 pub fn event_to_ics(event: &CalendarEvent, calendar_name: &str, now_ms: i64) -> String {
     let mut lines = calendar_header_lines(calendar_name);
     lines.extend(event_component_lines(event, now_ms));
@@ -333,25 +335,28 @@ fn ics_document(lines: Vec<String>) -> String {
     )
 }
 
+#[must_use]
 pub fn calendar_query_multistatus(data: &CalendarData, collection_href: &str) -> String {
     let mut responses = String::new();
     for event in &data.events {
         let href = format!(
-            "{}{}.ics",
+            "{}/{}.ics",
             collection_href.trim_end_matches('/'),
-            format!("/{}", percent_encode(&event_href_id(&event.id)))
+            percent_encode(&event_href_id(&event.id))
         );
         let ics = event_to_ics(event, &data.title, now_millis());
-        responses.push_str(&format!(
+        let _ = write!(
+            responses,
             "<D:response><D:href>{}</D:href><D:propstat><D:prop><D:getetag>{}</D:getetag><C:calendar-data>{}</C:calendar-data></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
             xml_escape(&href),
             xml_escape(&event_etag(event)),
             xml_escape(&ics),
-        ));
+        );
     }
     multistatus(&responses)
 }
 
+#[must_use]
 pub fn calendar_multiget_multistatus(data: &CalendarData, hrefs: &[String]) -> String {
     let mut responses = String::new();
     for href in hrefs {
@@ -362,22 +367,25 @@ pub fn calendar_multiget_multistatus(data: &CalendarData, hrefs: &[String]) -> S
             .find(|event| event.id == id || event_href_id(&event.id) == id)
         {
             let ics = event_to_ics(event, &data.title, now_millis());
-            responses.push_str(&format!(
+            let _ = write!(
+                responses,
                 "<D:response><D:href>{}</D:href><D:propstat><D:prop><D:getetag>{}</D:getetag><C:calendar-data>{}</C:calendar-data></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
                 xml_escape(href),
                 xml_escape(&event_etag(event)),
                 xml_escape(&ics),
-            ));
+            );
         } else {
-            responses.push_str(&format!(
+            let _ = write!(
+                responses,
                 "<D:response><D:href>{}</D:href><D:status>HTTP/1.1 404 Not Found</D:status></D:response>",
                 xml_escape(href),
-            ));
+            );
         }
     }
     multistatus(&responses)
 }
 
+#[must_use]
 pub fn collection_propfind_multistatus(data: &CalendarData, href: &str, depth: &str) -> String {
     let mut responses = collection_prop_response(href, &data.title);
     if depth != "0" {
@@ -393,6 +401,7 @@ pub fn collection_propfind_multistatus(data: &CalendarData, href: &str, depth: &
     multistatus(&responses)
 }
 
+#[must_use]
 pub fn principal_propfind_multistatus(href: &str, principal_href: &str, home_href: &str) -> String {
     let props = format!(
         "<D:response><D:href>{}</D:href><D:propstat><D:prop><D:displayname>Iris</D:displayname><D:resourcetype><D:collection/><D:principal/></D:resourcetype><C:calendar-home-set><D:href>{}</D:href></C:calendar-home-set><D:current-user-principal><D:href>{}</D:href></D:current-user-principal></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
@@ -403,6 +412,7 @@ pub fn principal_propfind_multistatus(href: &str, principal_href: &str, home_hre
     multistatus(&props)
 }
 
+#[must_use]
 pub fn home_propfind_multistatus(
     href: &str,
     calendar_href: &str,
@@ -419,6 +429,7 @@ pub fn home_propfind_multistatus(
     multistatus(&responses)
 }
 
+#[must_use]
 pub fn root_propfind_multistatus(href: &str, principal_href: &str, home_href: &str) -> String {
     let props = format!(
         "<D:response><D:href>{}</D:href><D:propstat><D:prop><D:displayname>Iris CalDAV</D:displayname><D:resourcetype><D:collection/></D:resourcetype><D:current-user-principal><D:href>{}</D:href></D:current-user-principal><D:principal-collection-set><D:href>/caldav/principals/</D:href></D:principal-collection-set><C:calendar-home-set><D:href>{}</D:href></C:calendar-home-set></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
@@ -453,6 +464,7 @@ fn multistatus(responses: &str) -> String {
     )
 }
 
+#[must_use]
 pub fn extract_hrefs(xml: &str) -> Vec<String> {
     let mut hrefs = Vec::new();
     let mut rest = xml;
@@ -471,6 +483,7 @@ pub fn extract_hrefs(xml: &str) -> Vec<String> {
     hrefs
 }
 
+#[must_use]
 pub fn href_event_id(href: &str) -> String {
     let last = href
         .trim_end_matches('/')
@@ -481,12 +494,14 @@ pub fn href_event_id(href: &str) -> String {
     percent_decode(raw).unwrap_or_else(|| raw.to_string())
 }
 
+#[must_use]
 pub fn event_href_id(id: &str) -> String {
     id.strip_suffix(CALENDAR_UID_SUFFIX)
         .unwrap_or(id)
         .to_string()
 }
 
+#[must_use]
 pub fn event_etag(event: &CalendarEvent) -> String {
     let json = serde_json::to_vec(event).unwrap_or_default();
     let digest = Sha256::digest(json);
@@ -740,7 +755,6 @@ fn unescape_ics_text(value: &str) -> String {
         if ch == '\\' {
             match chars.next() {
                 Some('n' | 'N') => out.push('\n'),
-                Some(next @ ('\\' | ';' | ',')) => out.push(next),
                 Some(next) => out.push(next),
                 None => {}
             }
