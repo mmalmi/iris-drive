@@ -864,20 +864,37 @@ struct IrisDriveControlPanel: View {
     }
 
     private var addDeviceSection: some View {
-        DisclosureGroup(isExpanded: $showAddDevice) {
-            addDevicePanel
-                .padding(.top, 8)
-        } label: {
-            HStack {
-                Label("Add Device", systemImage: "plus")
-                Spacer()
-                if !status.inboundAppKeyLinkRequests.isEmpty {
-                    Text("\(status.inboundAppKeyLinkRequests.count) request\(status.inboundAppKeyLinkRequests.count == 1 ? "" : "s")")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    showAddDevice.toggle()
                 }
+            } label: {
+                HStack(spacing: 10) {
+                    Label("Add Device", systemImage: "plus")
+                    Spacer()
+                    if !status.inboundAppKeyLinkRequests.isEmpty {
+                        Text("\(status.inboundAppKeyLinkRequests.count) request\(status.inboundAppKeyLinkRequests.count == 1 ? "" : "s")")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    Image(systemName: "chevron.right")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .rotationEffect(.degrees(showAddDevice ? 90 : 0))
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+            .accessibilityIdentifier("addDeviceToggle")
+            .accessibilityLabel("Add Device")
+            .accessibilityValue(showAddDevice ? "expanded" : "collapsed")
+
+            if showAddDevice {
+                addDevicePanel
+                    .padding(.top, 12)
+            }
         }
         .padding(12)
         .background(Color(nsColor: .textBackgroundColor))
