@@ -16,7 +16,9 @@ use crate::merge::{
     MergedView, merge_drives, walk_app_key_tree,
 };
 use crate::profile::ProfileState;
-use crate::provider::provider_collision_family_path;
+use crate::provider::{
+    provider_collision_family_path, provider_file_probable_os_placeholder_family,
+};
 
 type DirectoryMeta = HashMap<String, serde_json::Value>;
 
@@ -115,7 +117,7 @@ pub async fn primary_merged_view<S: Store>(
         .collect();
     let mut view = merge_drives(&merge_app_key_refs, &snapshots);
     add_visible_conflict_entries(&mut view)?;
-    collapse_same_source_collision_copy_entries(&mut view);
+    suppress_probable_os_placeholder_entries(&mut view);
     add_primary_share_shortcut_entries(&mut view, config);
     Ok(PrimaryMergedView {
         view,
@@ -177,56 +179,26 @@ fn add_visible_conflict_entries(view: &mut MergedView) -> Result<(), ProjectionE
     Ok(())
 }
 
-fn collapse_same_source_collision_copy_entries(view: &mut MergedView) {
-    let mut best_by_identity: BTreeMap<(String, String, u64, [u8; 32]), (usize, usize, String)> =
-        BTreeMap::new();
-    for entry in &view.files {
-        let (family_path, collision_depth) = provider_collision_family_path(&entry.path);
-        let key = (
-            entry.source_app_key_pubkey.clone(),
-            family_path,
-            entry.size,
-            entry_identity_hash(entry),
-        );
-        let score = (collision_depth, entry.path.len(), entry.path.clone());
-        if best_by_identity
-            .get(&key)
-            .is_none_or(|existing| score < *existing)
-        {
-            best_by_identity.insert(key, score);
-        }
-    }
-
-    view.files.retain(|entry| {
-        let (family_path, _) = provider_collision_family_path(&entry.path);
-        let key = (
-            entry.source_app_key_pubkey.clone(),
-            family_path,
-            entry.size,
-            entry_identity_hash(entry),
-        );
-        best_by_identity
-            .get(&key)
-            .is_some_and(|(_, _, path)| path == &entry.path)
-    });
-
+fn suppress_probable_os_placeholder_entries(view: &mut MergedView) {
     let non_empty_families = view
         .files
         .iter()
         .filter(|entry| entry.size > 0)
         .map(|entry| {
-            let (family_path, _) = provider_collision_family_path(&entry.path);
-            (entry.source_app_key_pubkey.clone(), family_path)
+            (
+                entry.source_app_key_pubkey.clone(),
+                provider_collision_family_path(&entry.path).0,
+            )
         })
         .collect::<BTreeSet<_>>();
 
     view.files.retain(|entry| {
-        if entry.size > 0 {
+        let Some(family_path) =
+            provider_file_probable_os_placeholder_family(&entry.path, entry.size)
+        else {
             return true;
-        }
-        let (family_path, collision_depth) = provider_collision_family_path(&entry.path);
-        collision_depth == 0
-            || !non_empty_families.contains(&(entry.source_app_key_pubkey.clone(), family_path))
+        };
+        !non_empty_families.contains(&(entry.source_app_key_pubkey.clone(), family_path))
     });
 }
 

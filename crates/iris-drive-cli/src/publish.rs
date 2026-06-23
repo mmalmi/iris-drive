@@ -458,6 +458,10 @@ pub(crate) async fn publish_current_state(
     if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
         && let Some(root) = publishable_app_key_root(config_dir, drive, state).await?
     {
+        let authorized_app_key_pubkeys = authorized_app_key_pubkeys(state);
+        if authorized_app_key_pubkeys.is_empty() {
+            return Ok(report);
+        }
         ensure_publishable_root_locally_available(config_dir, config, &root.root_cid).await?;
         let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
             .context("loading app key")?;
@@ -477,7 +481,7 @@ pub(crate) async fn publish_current_state(
             &state.root_scope_id(),
             &drive.drive_id,
             &root,
-            &authorized_app_key_pubkeys(state),
+            &authorized_app_key_pubkeys,
         ))
         .await
         {

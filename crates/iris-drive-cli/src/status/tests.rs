@@ -290,6 +290,13 @@ fn fips_diagnostics_emit_normalized_device_counts_and_sets() {
                 "npub": "npub1b",
                 "transport_type": "tcp",
                 "srtt_ms": 12
+            }, {
+                "npub": "npub1c",
+                "transport_type": "webrtc"
+            }, {
+                "npub": "npub1x",
+                "transport_type": "udp",
+                "bytes_recv": 1
             }]
         }
     });

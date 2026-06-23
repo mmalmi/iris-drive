@@ -9,9 +9,10 @@ use iris_drive_core::config::DEFAULT_RELAYS;
 use iris_drive_core::paths::config_path_in;
 use iris_drive_core::provider::{
     ProviderListEntry, normalize_provider_document_path, normalize_provider_parent_path,
-    normalize_provider_path, optional_normalized_provider_path, provider_collision_family_path,
-    provider_list_summary, provider_path_is_child_document, sanitized_provider_file_name,
-    split_provider_path, unique_provider_path,
+    normalize_provider_path, optional_normalized_provider_path,
+    provider_entry_is_probable_os_placeholder, provider_list_summary,
+    provider_path_is_child_document, provider_write_is_probable_os_placeholder,
+    sanitized_provider_file_name, split_provider_path, unique_provider_path,
 };
 use iris_drive_core::{AppConfig, Profile};
 use serde_json::json;
@@ -205,63 +206,12 @@ async fn import_provider_bytes(
     let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
     let modified_at_by_path = BTreeMap::new();
     let entries = provider_entries(&provider, &modified_at_by_path).await?;
-    if let Some(path) =
-        duplicate_provider_file_path(&provider, &entries, "", display_name, bytes).await?
-    {
-        let root_cid = visible_root.to_string();
-        return Ok(duplicate_provider_file_response(&path, &root_cid, &entries));
-    }
     let path = unique_provider_path(&entries, "", display_name, None);
+    if provider_write_is_probable_os_placeholder(&entries, &path, bytes) {
+        anyhow::bail!("refusing probable FileProvider placeholder copy: {path}");
+    }
     write_provider_file(&provider, &path, bytes).await?;
     import_provider_mutation(&mut daemon, &provider, &path, Some(visible_root)).await
-}
-
-fn duplicate_provider_file_response(
-    path: &str,
-    root_cid: &str,
-    entries: &[ProviderListEntry],
-) -> serde_json::Value {
-    let summary = provider_list_summary(root_cid, entries);
-    json!({
-        "path": path,
-        "root_cid": root_cid,
-        "file_count": summary.file_count,
-        "top_level_entries": entries.iter().filter(|entry| entry.parent_path.is_empty()).count(),
-        "imported": false,
-        "duplicate": true,
-    })
-}
-
-async fn duplicate_provider_file_path<P>(
-    provider: &P,
-    entries: &[ProviderListEntry],
-    parent: &str,
-    display_name: &str,
-    bytes: &[u8],
-) -> anyhow::Result<Option<String>>
-where
-    P: ProviderFs<ItemId = String>,
-{
-    for entry in entries.iter().filter(|entry| {
-        entry.kind == "file"
-            && entry.parent_path == parent
-            && provider_import_display_name_matches(&entry.display_name, display_name)
-            && entry.size == u64::try_from(bytes.len()).unwrap_or(u64::MAX)
-    }) {
-        if bytes.is_empty() {
-            return Ok(Some(entry.path.clone()));
-        }
-        let existing = provider.read(&entry.path, 0, entry.size).await?;
-        if existing == bytes {
-            return Ok(Some(entry.path.clone()));
-        }
-    }
-    Ok(None)
-}
-
-fn provider_import_display_name_matches(existing: &str, requested: &str) -> bool {
-    existing == requested
-        || provider_collision_family_path(existing).0 == provider_collision_family_path(requested).0
 }
 
 async fn download_content_link_bytes(url: &str) -> anyhow::Result<Vec<u8>> {
@@ -427,19 +377,9 @@ fn run_native_provider_write(
         let bytes = std::fs::read(source_path)
             .with_context(|| format!("reading {}", Path::new(source_path).display()))?;
         let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
-        let modified_at_by_path = BTreeMap::new();
-        let entries = provider_entries(&provider, &modified_at_by_path).await?;
-        let (parent_path, display_name) = split_provider_path(&path)?;
-        if let Some(existing_path) =
-            duplicate_provider_file_path(&provider, &entries, &parent_path, &display_name, &bytes)
-                .await?
-        {
-            let root_cid = visible_root.to_string();
-            return Ok(duplicate_provider_file_response(
-                &existing_path,
-                &root_cid,
-                &entries,
-            ));
+        let entries = provider_entries(&provider, &BTreeMap::new()).await?;
+        if provider_write_is_probable_os_placeholder(&entries, &path, &bytes) {
+            anyhow::bail!("refusing probable FileProvider placeholder copy: {path}");
         }
         write_provider_file(&provider, &path, &bytes).await?;
         import_provider_mutation(&mut daemon, &provider, &path, Some(visible_root)).await
@@ -560,6 +500,8 @@ where
         }
     }
     entries.sort_by(|left, right| left.path.cmp(&right.path));
+    let all_entries = entries.clone();
+    entries.retain(|entry| !provider_entry_is_probable_os_placeholder(&all_entries, entry));
     Ok(entries)
 }
 

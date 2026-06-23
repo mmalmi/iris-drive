@@ -3,6 +3,8 @@ use std::path::{Path, PathBuf};
 
 use serde::Serialize;
 
+const PROBABLE_OS_PLACEHOLDER_COLLISION_DEPTH: usize = 3;
+
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ProviderListEntry {
     pub path: String,
@@ -266,6 +268,53 @@ pub fn provider_collision_family_path(path: &str) -> (String, usize) {
     }
 }
 
+#[must_use]
+pub fn provider_file_probable_os_placeholder_family(path: &str, size: u64) -> Option<String> {
+    if size != 0 {
+        return None;
+    }
+    let (family_path, collision_depth) = provider_collision_family_path(path);
+    (collision_depth >= PROBABLE_OS_PLACEHOLDER_COLLISION_DEPTH).then_some(family_path)
+}
+
+#[must_use]
+pub fn provider_entry_is_probable_os_placeholder(
+    entries: &[ProviderListEntry],
+    entry: &ProviderListEntry,
+) -> bool {
+    if entry.kind != "file" {
+        return false;
+    }
+    let Some(family_path) = provider_file_probable_os_placeholder_family(&entry.path, entry.size)
+    else {
+        return false;
+    };
+    entries.iter().any(|sibling| {
+        sibling.kind == "file"
+            && sibling.path != entry.path
+            && sibling.size > 0
+            && provider_collision_family_path(&sibling.path).0 == family_path
+    })
+}
+
+#[must_use]
+pub fn provider_write_is_probable_os_placeholder(
+    entries: &[ProviderListEntry],
+    path: &str,
+    bytes: &[u8],
+) -> bool {
+    let Some(family_path) = provider_file_probable_os_placeholder_family(path, bytes.len() as u64)
+    else {
+        return false;
+    };
+    entries.iter().any(|sibling| {
+        sibling.kind == "file"
+            && sibling.path != path
+            && sibling.size > 0
+            && provider_collision_family_path(&sibling.path).0 == family_path
+    })
+}
+
 fn strip_numeric_collision_suffix(stem: &str) -> Option<&str> {
     let inner = stem.strip_suffix(')')?;
     let (base, number) = inner.rsplit_once(" (")?;
@@ -387,6 +436,58 @@ mod tests {
             provider_collision_family_path("photo (copy).png"),
             ("photo (copy).png".to_string(), 0)
         );
+    }
+
+    #[test]
+    fn provider_probable_os_placeholder_detection_keeps_reasonable_empty_copies() {
+        let entries = vec![
+            ProviderListEntry {
+                path: "photo.png".to_string(),
+                parent_path: String::new(),
+                display_name: "photo.png".to_string(),
+                kind: "file",
+                size: 100,
+                version: "real".to_string(),
+                modified_at: None,
+            },
+            ProviderListEntry {
+                path: "photo copy (2).png".to_string(),
+                parent_path: String::new(),
+                display_name: "photo copy (2).png".to_string(),
+                kind: "file",
+                size: 0,
+                version: "empty-copy".to_string(),
+                modified_at: None,
+            },
+            ProviderListEntry {
+                path: "photo copy (2) (2).png".to_string(),
+                parent_path: String::new(),
+                display_name: "photo copy (2) (2).png".to_string(),
+                kind: "file",
+                size: 0,
+                version: "placeholder".to_string(),
+                modified_at: None,
+            },
+        ];
+
+        assert!(!provider_entry_is_probable_os_placeholder(
+            &entries,
+            &entries[1]
+        ));
+        assert!(provider_entry_is_probable_os_placeholder(
+            &entries,
+            &entries[2]
+        ));
+        assert!(provider_write_is_probable_os_placeholder(
+            &entries,
+            "photo copy (2) (3).png",
+            b""
+        ));
+        assert!(!provider_write_is_probable_os_placeholder(
+            &entries,
+            "photo copy (2) (3).png",
+            b"real bytes"
+        ));
     }
 
     #[test]

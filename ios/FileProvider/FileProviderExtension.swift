@@ -117,7 +117,11 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
     ) -> Progress {
         let progress = Progress(totalUnitCount: 1)
         do {
-            let item = try FileProviderStorage.createItem(template: itemTemplate, contents: url)
+            let item = try FileProviderStorage.createItem(
+                template: itemTemplate,
+                contents: url,
+                mayAlreadyExist: options.contains(.mayAlreadyExist)
+            )
             completionHandler(item, [], false, nil)
         } catch {
             completionHandler(nil, [], false, error)

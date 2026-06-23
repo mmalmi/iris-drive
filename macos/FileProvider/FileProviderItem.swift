@@ -461,11 +461,24 @@ enum FileProviderStorage {
 
     static func createItem(
         template: NSFileProviderItem,
-        contents: URL?
+        contents: URL?,
+        mayAlreadyExist: Bool
     ) throws -> FileProviderItem {
         let parent = path(for: template.parentItemIdentifier) ?? ""
         let destination = try resolvedPath(parent: parent, name: template.filename)
-        NSLog("Iris Drive FileProvider create path=\(destination.path)")
+        NSLog("Iris Drive FileProvider create path=\(destination.path) mayAlreadyExist=\(mayAlreadyExist)")
+        if mayAlreadyExist {
+            invalidateProviderListCache()
+            let list = providerList()
+            if let existing = list.entries.first(where: { $0.path == destination.path }) {
+                debugLog("create mayAlreadyExist resolved existing path=\(destination.path)")
+                return item(for: existing, anchor: list.anchor)
+            }
+            debugLog("create mayAlreadyExist rejected absent path=\(destination.path)")
+            throw NSError.fileProviderErrorForNonExistentItem(
+                withIdentifier: identifier(for: destination.path)
+            )
+        }
         invalidateProviderListCache()
         if (template.contentType ?? .data).conforms(to: .folder) {
             _ = try runIDrive(arguments: ["provider", "mkdir", destination.path])

@@ -97,6 +97,25 @@ fn direct_root_republishes_after_short_native_cadence() {
 }
 
 #[test]
+fn direct_root_retry_policy_keeps_prerequisite_skips_uncached() {
+    use iris_drive_core::relay_sync::DriveRootApply;
+
+    for outcome in [
+        DriveRootApply::NotOurScope,
+        DriveRootApply::UnknownDrive,
+        DriveRootApply::UnauthorizedAppKey,
+        DriveRootApply::KeyUnavailable,
+    ] {
+        assert!(drive_root_apply_outcome_is_retryable(&outcome));
+    }
+    for outcome in [DriveRootApply::StaleTimestamp, DriveRootApply::Applied] {
+        assert!(!drive_root_apply_outcome_is_retryable(&outcome));
+    }
+    assert!(!EventApplyOutcome::RetryablePrerequisiteMissing.should_cache_direct_root_frame());
+    assert!(EventApplyOutcome::Final.should_cache_direct_root_frame());
+}
+
+#[test]
 fn direct_root_profile_stream_cache_reuses_unchanged_config() {
     let config_dir = tempfile::tempdir().unwrap();
     let account = Profile::create(config_dir.path(), Some("native".to_string())).unwrap();
@@ -172,6 +191,63 @@ fn direct_root_publish_includes_profile_roster_ops() {
         event.kind == iris_drive_core::KIND_IRIS_PROFILE_ROSTER_OP
             && event.key.starts_with("profile-op:")
     }));
+}
+
+#[test]
+fn direct_root_publish_skips_private_root_without_key_recipients() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let account = Profile::create(config_dir.path(), Some("native".to_string())).unwrap();
+    let mut initial_config = AppConfig {
+        profile: Some(account.state.clone()),
+        ..AppConfig::default()
+    };
+    initial_config.upsert_drive(Drive::primary(account.state.root_scope_id()));
+    initial_config
+        .save(config_path_in(config_dir.path()))
+        .unwrap();
+    std::fs::write(work.path().join("local.txt"), b"local root").unwrap();
+    let mut daemon = Daemon::open(config_dir.path()).unwrap();
+    tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(daemon.import_source_dir(work.path()))
+        .unwrap();
+
+    let mut awaiting_state = account.state.clone();
+    awaiting_state.profile_roster_ops.clear();
+    awaiting_state.profile_roster_projection = None;
+    awaiting_state.app_keys = None;
+    awaiting_state.authorization_state =
+        iris_drive_core::AppKeyAuthorizationState::AwaitingApproval;
+    let config = AppConfig {
+        profile: Some(awaiting_state.clone()),
+        drives: daemon.config().drives.clone(),
+        ..AppConfig::default()
+    };
+
+    let events = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(build_current_sync_events(
+            config_dir.path(),
+            &config,
+            &awaiting_state,
+        ))
+        .unwrap();
+
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.kind == iris_drive_core::nostr_events::KIND_DRIVE_ROOT)
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.kind == iris_drive_core::nostr_events::KIND_HASHTREE_ROOT)
+    );
 }
 
 #[test]
