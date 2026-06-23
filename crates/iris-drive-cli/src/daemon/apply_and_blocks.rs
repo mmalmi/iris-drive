@@ -391,14 +391,19 @@ pub(crate) fn spawn_root_apply_followup(
 
         if root_cid_for_materialize.is_some() {
             match materialize_primary_merged_root_for_followup(&config_dir).await {
-                Ok(Some(report)) => println!(
-                    "{}",
+                Ok(Some(report)) => emit_daemon_status_event(
+                    &config_dir,
                     json!({
                         "event": "merged_root_materialized",
-                        "root_cid": report.root_cid,
+                        "root_cid": report.root_cid.clone(),
                         "file_count": report.file_count,
                         "top_level_entries": report.top_level_entries,
-                    })
+                        "hashtree": {
+                            "current_root_cid": report.root_cid,
+                            "file_count": report.file_count,
+                            "top_level_entries": report.top_level_entries,
+                        },
+                    }),
                 ),
                 Ok(None) => {}
                 Err(error) => {

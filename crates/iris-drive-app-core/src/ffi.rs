@@ -60,10 +60,11 @@ use crate::native_provider::{
     run_native_sync_once,
 };
 pub(crate) use crate::native_provider::{
-    native_provider_delete_json, native_provider_import_shared_file_json,
-    native_provider_is_child_document_json, native_provider_list_json, native_provider_mkdir_json,
-    native_provider_normalize_path_json, native_provider_read_json, native_provider_rename_json,
-    native_provider_resolve_path_json, native_provider_write_json,
+    native_provider_compose_path_json, native_provider_delete_json,
+    native_provider_import_shared_file_json, native_provider_is_child_document_json,
+    native_provider_list_json, native_provider_mkdir_json, native_provider_normalize_path_json,
+    native_provider_read_json, native_provider_rename_json, native_provider_resolve_path_json,
+    native_provider_write_json,
 };
 use crate::state::{
     NativeAppState, UiAppActor, UiAppKeyLinkRequest, UiBackup, UiFipsPeerStatus, UiFipsStatus,

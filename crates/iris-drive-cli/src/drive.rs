@@ -1,8 +1,9 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 use iris_drive_core::provider::{
-    ProviderListEntry, normalize_provider_document_path, normalize_provider_parent_path,
-    normalize_provider_path, provider_cache_destination, provider_entry_is_probable_os_placeholder,
+    ProviderListEntry, compose_provider_path, normalize_provider_document_path,
+    normalize_provider_parent_path, normalize_provider_path, provider_cache_destination,
+    provider_entry_is_probable_os_placeholder, provider_file_probable_os_placeholder_family,
     provider_list_summary, provider_write_is_probable_os_placeholder, sanitized_provider_file_name,
     split_provider_path, unique_provider_path,
 };
@@ -189,6 +190,23 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
         );
         return Ok(());
     }
+    if let ProviderCmd::ComposePath {
+        parent_path,
+        display_name,
+    } = command
+    {
+        let (parent_path, display_name, path) = compose_provider_path(&parent_path, &display_name)?;
+        println!(
+            "{}",
+            json!({
+                "parent_path": parent_path,
+                "display_name": display_name,
+                "path": path,
+                "error": "",
+            })
+        );
+        return Ok(());
+    }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
@@ -212,16 +230,35 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
             elapsed_ms = started.elapsed().as_millis(),
             "provider command opened daemon"
         );
+        let supplied_base_root_cid = provider_command_base_root_cid(&command)?;
         let phase = std::time::Instant::now();
-        let visible = primary_merged_root_with_retry(&daemon)
-            .await
-            .context("building virtual provider root")?;
+        let visible = if let Some(root_cid) = supplied_base_root_cid.clone() {
+            tracing::debug!("provider command using supplied visible root anchor");
+            iris_drive_core::projection::PrimaryMergedRoot {
+                root_cid,
+                file_count: 0,
+                top_level_entries: 0,
+            }
+        } else {
+            primary_merged_root_with_retry(&daemon)
+                .await
+                .context("building virtual provider root")?
+        };
         tracing::debug!(
             elapsed_ms = phase.elapsed().as_millis(),
             "provider command built merged root"
         );
         if provider_command_is_mutation(&command) {
-            ensure_provider_root_locally_available(&daemon, &visible.root_cid).await?;
+            if supplied_base_root_cid.is_none() {
+                let phase = std::time::Instant::now();
+                ensure_provider_root_locally_available(&daemon, &visible.root_cid).await?;
+                tracing::debug!(
+                    elapsed_ms = phase.elapsed().as_millis(),
+                    "provider command checked provider root availability"
+                );
+            } else {
+                tracing::debug!("provider command skipped provider root availability preflight");
+            }
         }
         let phase = std::time::Instant::now();
         let provider =
@@ -262,6 +299,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                 );
             }
             ProviderCmd::ResolvePath {
+                base_root_cid: _,
                 parent_path,
                 display_name,
                 excluding_path,
@@ -293,11 +331,15 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                         "parent_path": resolved_parent_path,
                         "display_name": resolved_display_name,
                         "path": path,
+                        "root_cid": visible.root_cid.to_string(),
                         "error": "",
                     })
                 );
             }
             ProviderCmd::NormalizePath { .. } => {
+                unreachable!("handled before opening provider state")
+            }
+            ProviderCmd::ComposePath { .. } => {
                 unreachable!("handled before opening provider state")
             }
             ProviderCmd::Read { path, output } => {
@@ -347,14 +389,22 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     })
                 );
             }
-            ProviderCmd::Write { path, source } => {
+            ProviderCmd::Write {
+                base_root_cid: _,
+                path,
+                source,
+            } => {
                 let path = normalize_provider_path(&path)?;
                 let bytes = std::fs::read(&source)
                     .with_context(|| format!("reading {}", source.display()))?;
-                let entries =
-                    provider_entries(daemon.tree(), &visible.root_cid, &BTreeMap::new()).await?;
-                if provider_write_is_probable_os_placeholder(&entries, &path, &bytes) {
-                    anyhow::bail!("refusing probable FileProvider placeholder copy: {path}");
+                if provider_file_probable_os_placeholder_family(&path, bytes.len() as u64).is_some()
+                {
+                    let entries =
+                        provider_entries(daemon.tree(), &visible.root_cid, &BTreeMap::new())
+                            .await?;
+                    if provider_write_is_probable_os_placeholder(&entries, &path, &bytes) {
+                        anyhow::bail!("refusing probable FileProvider placeholder copy: {path}");
+                    }
                 }
                 let phase = std::time::Instant::now();
                 write_provider_file(&provider, &path, &bytes).await?;
@@ -370,7 +420,10 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                 )
                 .await?;
             }
-            ProviderCmd::Mkdir { path } => {
+            ProviderCmd::Mkdir {
+                base_root_cid: _,
+                path,
+            } => {
                 let path = normalize_provider_path(&path)?;
                 let phase = std::time::Instant::now();
                 create_provider_dir(&provider, &path).await?;
@@ -386,7 +439,10 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                 )
                 .await?;
             }
-            ProviderCmd::Delete { path } => {
+            ProviderCmd::Delete {
+                base_root_cid: _,
+                path,
+            } => {
                 let path = normalize_provider_path(&path)?;
                 let phase = std::time::Instant::now();
                 delete_provider_path(&provider, &path).await?;
@@ -402,7 +458,11 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                 )
                 .await?;
             }
-            ProviderCmd::Rename { old_path, new_path } => {
+            ProviderCmd::Rename {
+                base_root_cid: _,
+                old_path,
+                new_path,
+            } => {
                 let old_path = normalize_provider_path(&old_path)?;
                 let new_path = normalize_provider_path(&new_path)?;
                 let phase = std::time::Instant::now();
@@ -433,6 +493,20 @@ fn provider_command_is_mutation(command: &ProviderCmd) -> bool {
             | ProviderCmd::Delete { .. }
             | ProviderCmd::Rename { .. }
     )
+}
+
+fn provider_command_base_root_cid(command: &ProviderCmd) -> Result<Option<Cid>> {
+    let raw = match command {
+        ProviderCmd::Write { base_root_cid, .. }
+        | ProviderCmd::Mkdir { base_root_cid, .. }
+        | ProviderCmd::Delete { base_root_cid, .. }
+        | ProviderCmd::Rename { base_root_cid, .. }
+        | ProviderCmd::ResolvePath { base_root_cid, .. } => base_root_cid.as_deref(),
+        _ => None,
+    };
+    raw.map(Cid::parse)
+        .transpose()
+        .context("parsing provider base root cid")
 }
 
 async fn provider_entries(
@@ -805,11 +879,11 @@ async fn print_provider_mutation(
     );
     let phase = std::time::Instant::now();
     let report = import_provider_root_with_retry(daemon, root, tombstone_base_root).await?;
-    iris_drive_core::paths::touch_provider_root_signal_in(daemon.config_dir())
-        .context("signaling provider root change")?;
-    wake_provider_root_publisher(daemon.config_dir())
+    wake_provider_root_publisher(daemon.config_dir(), Some(&report))
         .await
         .context("waking provider root publisher")?;
+    iris_drive_core::paths::touch_provider_root_signal_in(daemon.config_dir())
+        .context("signaling provider root change")?;
     tracing::debug!(
         elapsed_ms = phase.elapsed().as_millis(),
         "provider command imported provider root"
@@ -826,7 +900,12 @@ async fn print_provider_mutation(
     Ok(())
 }
 
-async fn wake_provider_root_publisher(config_dir: &Path) -> Result<()> {
+async fn wake_provider_root_publisher(
+    config_dir: &Path,
+    report: Option<&iris_drive_core::daemon::ImportReport>,
+) -> Result<()> {
+    use tokio::io::AsyncWriteExt as _;
+
     let wake_path = iris_drive_core::paths::provider_root_wake_path_in(config_dir);
     let raw = match tokio::fs::read_to_string(&wake_path).await {
         Ok(raw) => raw,
@@ -851,13 +930,26 @@ async fn wake_provider_root_publisher(config_dir: &Path) -> Result<()> {
         .and_then(Value::as_u64)
         .and_then(|port| u16::try_from(port).ok())
         .ok_or_else(|| anyhow::anyhow!("provider root wake endpoint missing port"))?;
-    tokio::time::timeout(
+    let mut stream = tokio::time::timeout(
         std::time::Duration::from_secs(2),
         tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)),
     )
     .await
     .context("provider root wake timed out")?
     .with_context(|| format!("connecting to provider root wake endpoint on port {port}"))?;
+    if let Some(report) = report {
+        let payload = json!({
+            "root_cid": report.root_cid.clone(),
+            "file_count": report.file_count,
+            "top_level_entries": report.top_level_entries,
+        });
+        let bytes = serde_json::to_vec(&payload)?;
+        stream
+            .write_all(&bytes)
+            .await
+            .context("writing provider root wake payload")?;
+        let _ = stream.shutdown().await;
+    }
     Ok(())
 }
 

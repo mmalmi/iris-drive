@@ -67,6 +67,58 @@ fn daemon_status_records_binary_version_for_gui_mismatch_detection() {
 }
 
 #[test]
+fn daemon_status_heartbeat_preserves_last_file_count() {
+    let dir = tempfile::tempdir().unwrap();
+
+    let seeded = write_daemon_status(
+        dir.path(),
+        json!({
+            "event": "provider_root_published",
+            "summary": {
+                "file_count": 3,
+                "visible_file_bytes": 123,
+                "provider_refresh_key": "current:root-a",
+            },
+        }),
+    );
+    let heartbeat = write_daemon_status(dir.path(), json!({"event": "heartbeat"}));
+
+    assert_eq!(seeded["summary"]["file_count"], 3);
+    assert_eq!(heartbeat["summary"]["file_count"], 3);
+    assert_eq!(heartbeat["summary"]["visible_file_bytes"], 123);
+}
+
+#[test]
+fn daemon_status_prefers_fresh_hashtree_count_over_copied_summary() {
+    let dir = tempfile::tempdir().unwrap();
+
+    write_daemon_status(
+        dir.path(),
+        json!({
+            "event": "old",
+            "summary": {
+                "file_count": 0,
+                "visible_file_bytes": 0,
+                "provider_refresh_key": "current:old-root",
+            },
+        }),
+    );
+    let refreshed = write_daemon_status(
+        dir.path(),
+        json!({
+            "event": "provider_root_published",
+            "hashtree": {
+                "file_count": 11,
+                "visible_file_bytes": 456,
+            },
+        }),
+    );
+
+    assert_eq!(refreshed["summary"]["file_count"], 11);
+    assert_eq!(refreshed["summary"]["visible_file_bytes"], 456);
+}
+
+#[test]
 fn root_update_debounce_has_fast_floor() {
     assert_eq!(
         root_update_debounce_duration(100),
@@ -112,6 +164,22 @@ fn provider_root_publish_cache_matches_fingerprint_and_root_key() {
     assert!(cache.is_current(&fingerprint, root_key.as_ref()));
     assert!(!cache.is_current(&other_fingerprint, root_key.as_ref()));
     assert!(!cache.is_current(&fingerprint, other_root_key.as_ref()));
+}
+
+#[test]
+fn provider_root_wake_payload_carries_file_count_status() {
+    let status = provider_root_wake_status_payload(&json!({
+        "root_cid": "root-a",
+        "file_count": 12,
+        "top_level_entries": 4,
+    }))
+    .expect("status payload");
+
+    assert_eq!(status["event"], "provider_root_local_update");
+    assert_eq!(status["root_cid"], "root-a");
+    assert_eq!(status["hashtree"]["current_root_cid"], "root-a");
+    assert_eq!(status["hashtree"]["file_count"], 12);
+    assert_eq!(status["hashtree"]["top_level_entries"], 4);
 }
 
 #[test]

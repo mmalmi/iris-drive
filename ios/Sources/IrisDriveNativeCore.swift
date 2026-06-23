@@ -95,6 +95,12 @@ private func irisDriveProviderResolvePathJson(
     _ excludingPath: UnsafePointer<CChar>
 ) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("iris_drive_provider_compose_path_json")
+private func irisDriveProviderComposePathJson(
+    _ parentPath: UnsafePointer<CChar>,
+    _ displayName: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("iris_drive_provider_normalize_path_json")
 private func irisDriveProviderNormalizePathJson(
     _ path: UnsafePointer<CChar>
@@ -345,6 +351,20 @@ enum IrisDriveNativeProvider {
               let value = try? JSONDecoder().decode(NativeProviderResolvedPath.self, from: data)
         else {
             return NativeProviderResolvedPath(error: "native provider path normalizer returned invalid JSON")
+        }
+        return value
+    }
+
+    static func composePath(parentPath: String, displayName: String) -> NativeProviderResolvedPath {
+        let json = parentPath.withCString { parentPointer in
+            displayName.withCString { namePointer in
+                takeString(irisDriveProviderComposePathJson(parentPointer, namePointer))
+            }
+        }
+        guard let data = json.data(using: .utf8),
+              let value = try? JSONDecoder().decode(NativeProviderResolvedPath.self, from: data)
+        else {
+            return NativeProviderResolvedPath(error: "native provider path composer returned invalid JSON")
         }
         return value
     }

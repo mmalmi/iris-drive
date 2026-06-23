@@ -271,7 +271,7 @@ pub(crate) fn cmd_daemon(
             })
         });
         let root_update_debounce = root_update_debounce_duration(watch_debounce_ms);
-        let subscribed_status = json!({
+        let mut subscribed_status = json!({
                 "event": "subscribed",
                 "relays": relays,
                 "current_app_key_npub": pubkey_npub(&state.app_key_pubkey),
@@ -289,6 +289,9 @@ pub(crate) fn cmd_daemon(
                 "fips_block_sync": startup_fips_block_sync_status,
                 "fips_block_sync_error": fips_block_sync_error,
         });
+        if let Some(hashtree) = primary_drive_status_payload(config_dir, &config).await {
+            subscribed_status["hashtree"] = hashtree;
+        }
         let subscribed_status = write_runtime_daemon_status(config_dir, subscribed_status);
         println!("{subscribed_status}");
         spawn_daemon_heartbeat(config_dir.to_path_buf());
@@ -532,6 +535,14 @@ pub(crate) fn cmd_daemon(
                         tokio::time::sleep(root_update_debounce).await;
                         while rx.try_recv().is_ok() {}
                     }
+                    if let Some(rx) = provider_root_wake_rx.as_mut()
+                        && let Some(wake_payload) =
+                            drain_latest_provider_root_wake_payload(rx, None)
+                        && let Some(status_payload) =
+                            provider_root_wake_status_payload(&wake_payload)
+                    {
+                        emit_daemon_status_event(config_dir, status_payload);
+                    }
                     match publish_provider_root_if_changed(
                         &client,
 	                        config_dir,
@@ -551,15 +562,22 @@ pub(crate) fn cmd_daemon(
                         ),
                     }
                 }
-                Some(()) = async {
+                Some(wake_payload) = async {
                     if let Some(rx) = provider_root_wake_rx.as_mut() {
                         rx.recv().await
                     } else {
-                        std::future::pending::<Option<()>>().await
+                        std::future::pending::<Option<Option<Value>>>().await
                     }
                 } => {
+                    let mut latest_wake_payload = wake_payload;
                     if let Some(rx) = provider_root_wake_rx.as_mut() {
-                        while rx.try_recv().is_ok() {}
+                        latest_wake_payload =
+                            drain_latest_provider_root_wake_payload(rx, latest_wake_payload);
+                    }
+                    if let Some(wake_payload) = latest_wake_payload.as_ref()
+                        && let Some(status_payload) = provider_root_wake_status_payload(wake_payload)
+                    {
+                        emit_daemon_status_event(config_dir, status_payload);
                     }
                     match publish_provider_root_if_changed(
                         &client,

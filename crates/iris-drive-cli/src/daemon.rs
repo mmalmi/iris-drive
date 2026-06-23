@@ -105,17 +105,31 @@ async fn publish_provider_root_if_changed(
         "provider_root_publish_finished",
         json!({"root_key": current_key.clone()}),
     ));
-    emit_daemon_status_event(
-        config_dir,
-        json!({
+    let mut payload = json!({
             "event": "provider_root_published",
             "root_key": current_key,
             "direct_root_mesh_error": direct_root_mesh_error,
             "publish": {"queued": true, "upload_blossom": true},
-        }),
-    );
+    });
+    if let Some(hashtree) = primary_drive_status_payload(config_dir, &updated_config).await {
+        payload["hashtree"] = hashtree;
+    }
+    emit_daemon_status_event(config_dir, payload);
 
     Ok(Some(updated_config))
+}
+
+async fn primary_drive_status_payload(config_dir: &Path, config: &AppConfig) -> Option<Value> {
+    let daemon = Daemon::open(config_dir).ok()?;
+    let merged = iris_drive_core::primary_merged_view(daemon.tree(), config)
+        .await
+        .ok()?;
+    Some(json!({
+        "current_root_cid": crate::status::current_primary_root_cid(config),
+        "file_count": merged.file_count(),
+        "top_level_entries": merged.top_level_entries(),
+        "visible_file_bytes": merged.view.files.iter().map(|entry| entry.size).sum::<u64>(),
+    }))
 }
 
 const PROVIDER_ROOT_SAFETY_POLL_MIN_SECS: u64 = 30;
@@ -341,7 +355,7 @@ fn start_config_root_watch(
 async fn start_provider_root_wake_listener(
     config_dir: &Path,
 ) -> Result<(
-    tokio::sync::mpsc::UnboundedReceiver<()>,
+    tokio::sync::mpsc::UnboundedReceiver<Option<Value>>,
     tokio::task::JoinHandle<()>,
     Value,
 )> {
@@ -368,8 +382,20 @@ async fn start_provider_root_wake_listener(
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let task = tokio::spawn(async move {
-        while let Ok((_stream, _addr)) = listener.accept().await {
-            let _ = tx.send(());
+        use tokio::io::AsyncReadExt as _;
+
+        while let Ok((mut stream, _addr)) = listener.accept().await {
+            let mut bytes = vec![0_u8; 4096];
+            let payload = match tokio::time::timeout(
+                std::time::Duration::from_millis(200),
+                stream.read(&mut bytes),
+            )
+            .await
+            {
+                Ok(Ok(len)) if len > 0 => serde_json::from_slice::<Value>(&bytes[..len]).ok(),
+                _ => None,
+            };
+            let _ = tx.send(payload);
         }
     });
 
@@ -382,6 +408,37 @@ async fn start_provider_root_wake_listener(
             "path": wake_path.display().to_string(),
         }),
     ))
+}
+
+fn provider_root_wake_status_payload(wake_payload: &Value) -> Option<Value> {
+    let file_count = wake_payload.get("file_count").and_then(Value::as_u64)?;
+    let mut hashtree = json!({ "file_count": file_count });
+    if let Some(root_cid) = wake_payload.get("root_cid").and_then(Value::as_str) {
+        hashtree["current_root_cid"] = json!(root_cid);
+    }
+    if let Some(top_level_entries) = wake_payload
+        .get("top_level_entries")
+        .and_then(Value::as_u64)
+    {
+        hashtree["top_level_entries"] = json!(top_level_entries);
+    }
+    Some(json!({
+        "event": "provider_root_local_update",
+        "root_cid": wake_payload.get("root_cid").cloned(),
+        "hashtree": hashtree,
+    }))
+}
+
+fn drain_latest_provider_root_wake_payload(
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<Option<Value>>,
+    mut latest: Option<Value>,
+) -> Option<Value> {
+    while let Ok(next) = rx.try_recv() {
+        if next.is_some() {
+            latest = next;
+        }
+    }
+    latest
 }
 
 fn event_touches_config_root(event: &notify::Event, config_dir: &Path) -> bool {

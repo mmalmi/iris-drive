@@ -437,6 +437,8 @@ pub(crate) fn write_daemon_status(config_dir: &Path, mut payload: Value) -> Valu
             "block_sync_by_root",
             "relays",
             "current_app_key_npub",
+            "summary",
+            "hashtree",
             "provider_update_mode",
             "watch_debounce_ms",
             "mount",
@@ -561,22 +563,22 @@ pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &m
     let (authorized_app_key_count, online_app_key_count) =
         daemon_summary_app_key_counts(&config, payload);
     let file_count = payload
-        .get("summary")
-        .and_then(|summary| summary.get("file_count"))
+        .get("hashtree")
+        .and_then(|hashtree| hashtree.get("file_count"))
         .or_else(|| {
             payload
-                .get("hashtree")
-                .and_then(|hashtree| hashtree.get("file_count"))
+                .get("summary")
+                .and_then(|summary| summary.get("file_count"))
         })
         .and_then(Value::as_u64)
         .and_then(|count| usize::try_from(count).ok());
     let visible_file_bytes = payload
-        .get("summary")
-        .and_then(|summary| summary.get("visible_file_bytes"))
+        .get("hashtree")
+        .and_then(|hashtree| hashtree.get("visible_file_bytes"))
         .or_else(|| {
             payload
-                .get("hashtree")
-                .and_then(|hashtree| hashtree.get("visible_file_bytes"))
+                .get("summary")
+                .and_then(|summary| summary.get("visible_file_bytes"))
         })
         .and_then(Value::as_u64);
     let current_root_cid = current_primary_root_cid(&config);

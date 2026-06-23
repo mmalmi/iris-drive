@@ -53,6 +53,7 @@ fn provider_mutation_requires_live_daemon() {
     let error = cmd_provider(
         config_dir.path(),
         ProviderCmd::Mkdir {
+            base_root_cid: None,
             path: "Reports".into(),
         },
     )
@@ -62,6 +63,21 @@ fn provider_mutation_requires_live_daemon() {
         error.to_string().contains("daemon is unavailable"),
         "unexpected error: {error:#}"
     );
+}
+
+#[test]
+fn provider_compose_path_does_not_require_live_daemon() {
+    let config_dir = tempfile::tempdir().unwrap();
+    init_config(config_dir.path());
+
+    cmd_provider(
+        config_dir.path(),
+        ProviderCmd::ComposePath {
+            parent_path: "Reports".into(),
+            display_name: "../Quarter:1/report.txt".into(),
+        },
+    )
+    .unwrap();
 }
 
 #[test]
@@ -85,6 +101,7 @@ fn provider_mutation_accepts_fresh_daemon_status_when_pid_probe_fails() {
     cmd_provider(
         config_dir.path(),
         ProviderCmd::Mkdir {
+            base_root_cid: None,
             path: "Reports".into(),
         },
     )
@@ -103,6 +120,7 @@ fn provider_delete_local_file_is_idempotent() {
     cmd_provider(
         config_dir.path(),
         ProviderCmd::Delete {
+            base_root_cid: None,
             path: "juuh.txt".into(),
         },
     )
@@ -110,6 +128,7 @@ fn provider_delete_local_file_is_idempotent() {
     cmd_provider(
         config_dir.path(),
         ProviderCmd::Delete {
+            base_root_cid: None,
             path: "juuh.txt".into(),
         },
     )
@@ -159,6 +178,7 @@ fn provider_delete_directory_removes_tree() {
     cmd_provider(
         config_dir.path(),
         ProviderCmd::Delete {
+            base_root_cid: None,
             path: "folder".into(),
         },
     )
@@ -198,6 +218,7 @@ fn provider_write_rejects_probable_os_placeholder_collision() {
     cmd_provider(
         config_dir.path(),
         ProviderCmd::Write {
+            base_root_cid: None,
             path: "photo.png".into(),
             source: real_source.clone(),
         },
@@ -206,6 +227,7 @@ fn provider_write_rejects_probable_os_placeholder_collision() {
     cmd_provider(
         config_dir.path(),
         ProviderCmd::Write {
+            base_root_cid: None,
             path: "photo copy (2).png".into(),
             source: empty_source.clone(),
         },
@@ -215,6 +237,7 @@ fn provider_write_rejects_probable_os_placeholder_collision() {
     let error = cmd_provider(
         config_dir.path(),
         ProviderCmd::Write {
+            base_root_cid: None,
             path: "photo copy (2) (2).png".into(),
             source: empty_source,
         },
@@ -285,6 +308,7 @@ fn provider_delete_tombstones_foreign_visible_files() {
     cmd_provider(
         config_dir.path(),
         ProviderCmd::Delete {
+            base_root_cid: None,
             path: "foreign.txt".into(),
         },
     )

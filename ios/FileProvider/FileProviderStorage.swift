@@ -169,8 +169,9 @@ enum FileProviderStorage {
         mayAlreadyExist: Bool
     ) throws -> FileProviderItem {
         let parent = path(for: template.parentItemIdentifier) ?? ""
-        let destination = try resolvedPath(parent: parent, name: template.filename)
+        let destination: NativeProviderResolvedPath
         if mayAlreadyExist {
+            destination = try resolvedPath(parent: parent, name: template.filename)
             let state = loadStateForEnumeration()
             if let existing = state.entries.first(where: { $0.path == destination.path }) {
                 debugLog("create mayAlreadyExist resolved existing path=\(destination.path)")
@@ -180,6 +181,8 @@ enum FileProviderStorage {
             throw NSError.fileProviderErrorForNonExistentItem(
                 withIdentifier: identifier(for: destination.path)
             )
+        } else {
+            destination = try composedPath(parent: parent, name: template.filename)
         }
         if (template.contentType ?? .data).conforms(to: .folder) {
             try runProviderMutation(
@@ -529,6 +532,20 @@ enum FileProviderStorage {
         }
         guard !resolved.path.isEmpty else {
             throw providerError("provider path resolver returned no path")
+        }
+        return resolved
+    }
+
+    private static func composedPath(
+        parent: String,
+        name: String
+    ) throws -> NativeProviderResolvedPath {
+        let resolved = IrisDriveNativeProvider.composePath(parentPath: parent, displayName: name)
+        if !resolved.error.isEmpty {
+            throw providerError(resolved.error)
+        }
+        guard !resolved.path.isEmpty else {
+            throw providerError("provider path composer returned no path")
         }
         return resolved
     }

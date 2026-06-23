@@ -18,6 +18,11 @@ unless the user explicitly asks otherwise.
   `cargo test -p idrive --test daemon_sync_matrix live_daemons_provider_write_viewer_to_viewer_latency_probe -- --exact --nocapture`.
   Passing run measured about 0.13s, 0.14s, and 0.14s from source viewer completion
   to target viewer visibility across the three client hops.
+- Isolated count-reaction probe used a throwaway `/tmp/iris-drive-latency.*`
+  config/data dir, not the user's FileProvider/CloudStorage directory. After
+  skipping the full provider-tree placeholder preflight for normal non-empty
+  writes, one provider write completed in 58 ms and the temp daemon status
+  file count changed in 69 ms.
 
 ## 2026-06-22 macOS roster/FIPS status CPU check
 
