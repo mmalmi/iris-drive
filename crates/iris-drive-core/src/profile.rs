@@ -16,11 +16,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::str::FromStr;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
 use nostr_sdk::{Keys, PublicKey, SecretKey};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -125,8 +126,11 @@ pub struct HandledAppKeyLinkRequest {
 
 /// Persisted local profile state. Lives inside `AppConfig`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
 pub struct ProfileState {
+    #[serde(
+        alias = "owner_pubkey",
+        deserialize_with = "deserialize_profile_id_or_legacy_owner"
+    )]
     pub profile_id: IrisProfileId,
     #[serde(alias = "device_pubkey")]
     pub app_key_pubkey: String,
@@ -139,7 +143,7 @@ pub struct ProfileState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app_key_label: Option<String>,
     /// Runtime projection cache derived from `profile_roster_ops`.
-    #[serde(skip)]
+    #[serde(default, skip_serializing)]
     pub app_keys: Option<AppKeysProjection>,
     /// Runtime roster projection cache derived from `profile_roster_ops`.
     #[serde(skip)]
@@ -152,6 +156,39 @@ pub struct ProfileState {
     pub inbound_app_key_link_requests: Vec<InboundAppKeyLinkRequest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub handled_app_key_link_requests: Vec<HandledAppKeyLinkRequest>,
+}
+
+fn deserialize_profile_id_or_legacy_owner<'de, D>(
+    deserializer: D,
+) -> Result<IrisProfileId, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if let Ok(profile_id) = IrisProfileId::from_str(&value) {
+        return Ok(profile_id);
+    }
+    legacy_profile_id_from_owner_pubkey(&value).ok_or_else(|| {
+        serde::de::Error::custom("profile_id must be a UUID or legacy 64-character owner_pubkey")
+    })
+}
+
+fn legacy_profile_id_from_owner_pubkey(value: &str) -> Option<IrisProfileId> {
+    if value.len() != 64 {
+        return None;
+    }
+    let mut decoded = [0_u8; 32];
+    for (index, chunk) in value.as_bytes().chunks_exact(2).enumerate() {
+        let hex = std::str::from_utf8(chunk).ok()?;
+        decoded[index] = u8::from_str_radix(hex, 16).ok()?;
+    }
+    let mut uuid_bytes = [0_u8; 16];
+    for index in 0..16 {
+        uuid_bytes[index] = decoded[index] ^ decoded[index + 16];
+    }
+    uuid_bytes[6] = (uuid_bytes[6] & 0x0f) | 0x80;
+    uuid_bytes[8] = (uuid_bytes[8] & 0x3f) | 0x80;
+    Some(IrisProfileId::from_uuid(Uuid::from_bytes(uuid_bytes)))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

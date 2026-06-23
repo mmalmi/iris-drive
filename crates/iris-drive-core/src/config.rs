@@ -277,13 +277,19 @@ impl AppConfig {
         let raw = fs::read_to_string(path)?;
         let mut parsed: Self =
             toml::from_str(&raw).map_err(|e| ConfigError::Parse(e.to_string()))?;
-        if parsed.schema_version != CONFIG_SCHEMA_VERSION {
+        if parsed.schema_version > CONFIG_SCHEMA_VERSION {
             return Err(ConfigError::SchemaMismatch {
                 found: parsed.schema_version,
                 expected: CONFIG_SCHEMA_VERSION,
             });
         }
+        parsed.schema_version = CONFIG_SCHEMA_VERSION;
         let adopted_root_scope_id = if let Some(account) = parsed.profile.as_mut() {
+            if let Some(app_keys) = account.app_keys.as_mut()
+                && app_keys.profile_id.is_empty()
+            {
+                app_keys.profile_id = account.profile_id.to_string();
+            }
             let adopted = sync_profile && account.adopt_single_roster_profile_id();
             if !adopted && sync_profile {
                 account.sync_app_keys_from_profile();
@@ -465,6 +471,7 @@ impl DriveRole {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Drive {
+    #[serde(alias = "owner_pubkey")]
     pub root_scope_id: String,
     pub drive_id: String,
     pub display_name: String,
@@ -703,16 +710,27 @@ working_dir = "/tmp/Iris Drive"
         let device_b = "b".repeat(64);
         let raw = format!(
             r#"
-schema_version = {CONFIG_SCHEMA_VERSION}
+schema_version = 3
 relays = ["wss://relay.example"]
 blossom_servers = ["https://upload.example"]
 
 [account]
-profile_id = "018fd1a3-8e37-7dc4-bd29-0cf06bdbe3f0"
+owner_pubkey = "{device_a}"
 device_pubkey = "{device_a}"
 device_link_secret = "link-secret"
+has_owner_signing_authority = true
 authorization_state = "authorized"
 device_label = "Old Android"
+
+[account.app_keys]
+owner_pubkey = "{device_a}"
+created_at = 123
+dck_generation = 1
+
+[[account.app_keys.devices]]
+pubkey = "{device_a}"
+added_at = 123
+role = "admin"
 
 [account.outbound_device_link_request]
 admin_device_pubkey = "{device_b}"
@@ -725,7 +743,7 @@ link_secret = "inbound-secret"
 requested_at = 2
 
 [[drives]]
-root_scope_id = "018fd1a3-8e37-7dc4-bd29-0cf06bdbe3f0"
+owner_pubkey = "{device_a}"
 drive_id = "main"
 display_name = "My Drive"
 role = "owner"
@@ -735,6 +753,15 @@ root_cid = "cid-legacy"
 published_at = 1234
 dck_generation = 1
 device_seq = 3
+
+[[drives.device_roots.{device_a}.parents]]
+device_id = "{device_b}"
+device_seq = 2
+root_cid = "cid-parent"
+
+[drives.device_roots.{device_a}.observed.{device_b}]
+device_seq = 2
+root_cid = "cid-parent"
 "#
         );
         let dir = tempdir().unwrap();
@@ -745,6 +772,15 @@ device_seq = 3
         assert_eq!(profile.app_key_pubkey, device_a);
         assert_eq!(profile.app_key_link_secret, "link-secret");
         assert_eq!(profile.app_key_label.as_deref(), Some("Old Android"));
+        assert!(profile.app_keys.as_ref().unwrap().contains(&device_a));
+        assert_eq!(
+            profile.app_keys.as_ref().unwrap().profile_id,
+            profile.profile_id.to_string()
+        );
+        assert_eq!(
+            profile.app_keys.as_ref().unwrap().signer_pubkey(),
+            Some(device_a.as_str())
+        );
         assert_eq!(
             profile
                 .outbound_app_key_link_request
@@ -765,15 +801,24 @@ device_seq = 3
             .unwrap();
         assert_eq!(root.root_cid, "cid-legacy");
         assert_eq!(root.app_key_seq, 3);
+        assert_eq!(root.parents[0].app_key_pubkey, device_b);
+        assert_eq!(root.parents[0].app_key_seq, 2);
+        assert_eq!(root.observed.get(&device_b).unwrap().app_key_seq, 2);
 
         loaded.save(&path).unwrap();
         let canonical = std::fs::read_to_string(&path).unwrap();
+        assert!(canonical.contains(&format!("schema_version = {CONFIG_SCHEMA_VERSION}")));
         assert!(canonical.contains("[profile]"));
+        assert!(canonical.contains("root_scope_id"));
         assert!(canonical.contains("app_key_pubkey"));
         assert!(canonical.contains("app_key_roots"));
         assert!(canonical.contains("app_key_seq"));
         assert!(!canonical.contains("[account]"));
+        assert!(!canonical.contains("[profile.app_keys]"));
+        assert!(!canonical.contains("owner_pubkey"));
+        assert!(!canonical.contains("devices"));
         assert!(!canonical.contains("device_pubkey"));
+        assert!(!canonical.contains("device_id"));
         assert!(!canonical.contains("device_roots"));
         assert!(!canonical.contains("device_seq"));
     }

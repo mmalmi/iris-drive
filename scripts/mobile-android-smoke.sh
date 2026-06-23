@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PACKAGE_NAME="${IRIS_DRIVE_ANDROID_PACKAGE:-to.iris.drive.debug}"
 MAIN_ACTIVITY="${IRIS_DRIVE_ANDROID_ACTIVITY:-to.iris.drive.debug/to.iris.drive.app.MainActivity}"
-PROVIDER_AUTHORITY="${IRIS_DRIVE_ANDROID_PROVIDER_AUTHORITY:-to.iris.drive.documents}"
+PROVIDER_AUTHORITY="${IRIS_DRIVE_ANDROID_PROVIDER_AUTHORITY:-to.iris.drive.debug.documents}"
 DEBUG_ACTION_EXTRA="${IRIS_DRIVE_ANDROID_DEBUG_ACTION_EXTRA:-to.iris.drive.DEBUG_ACTION}"
 APK_PATH="${IRIS_DRIVE_ANDROID_APK:-$ROOT/android/app/build/outputs/apk/debug/app-debug.apk}"
 
@@ -120,8 +120,17 @@ if [[ "$add_debug_root" -eq 1 ]]; then
   "$ADB" -s "$serial" shell am start -n "$MAIN_ACTIVITY" --es "$DEBUG_ACTION_EXTRA" add-root >/dev/null
 fi
 "$ADB" -s "$serial" shell pm path "$PACKAGE_NAME" >/dev/null
-"$ADB" -s "$serial" shell dumpsys package "$PACKAGE_NAME" | grep -F "$PROVIDER_AUTHORITY" >/dev/null
-"$ADB" -s "$serial" shell dumpsys package "$PACKAGE_NAME" | grep -F "app-key-link" >/dev/null
-"$ADB" -s "$serial" shell dumpsys package "$PACKAGE_NAME" | grep -F "invite" >/dev/null
+package_dump="$("$ADB" -s "$serial" shell dumpsys package "$PACKAGE_NAME")"
+require_package_dump() {
+  local needle="$1"
+  local label="$2"
+  if ! grep -F "$needle" <<<"$package_dump" >/dev/null; then
+    echo "Android package $PACKAGE_NAME missing $label ($needle)" >&2
+    exit 1
+  fi
+}
+require_package_dump "$PROVIDER_AUTHORITY" "DocumentsProvider authority"
+require_package_dump 'Authority: "app-key-link"' "app-key link deep link"
+require_package_dump 'Authority: "share"' "share deep link"
 
 echo "Android smoke passed on adb serial: $serial"

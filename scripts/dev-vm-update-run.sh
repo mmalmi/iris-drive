@@ -980,13 +980,15 @@ terminate_pid() {
 
 detach_stale_mountpoint() {
   local mountpoint="$1"
-  local target=""
   [[ -n "$mountpoint" ]] || return 0
   [[ -e "$mountpoint" ]] || return 0
 
-  if command -v findmnt >/dev/null 2>&1; then
-    target="$(findmnt -rn --target "$mountpoint" --output TARGET 2>/dev/null | head -n 1 || true)"
-    [[ "$target" == "$mountpoint" ]] || return 0
+  if command -v mountpoint >/dev/null 2>&1; then
+    mountpoint -q "$mountpoint" || return 0
+  elif command -v findmnt >/dev/null 2>&1; then
+    findmnt -rn --mountpoint "$mountpoint" >/dev/null 2>&1 || return 0
+  else
+    return 0
   fi
 
   if command -v fusermount3 >/dev/null 2>&1; then
@@ -1199,9 +1201,10 @@ run_linux() {
   [[ "$NO_RUN" == "1" ]] && return 0
 
   log "restarting idrive daemon"
-  mkdir -p "$config_dir" "$mountpoint"
+  mkdir -p "$config_dir"
   pkill -u "$(id -u)" -f "$iris_repo/linux/target/debug/iris-drive" >/dev/null 2>&1 || true; rm -f "$config_dir/app.lock"
   stop_idrive_daemon "$config_dir" "$mountpoint"
+  mkdir -p "$mountpoint"
   rm -f "$config_dir/daemon.lock"
   nohup env \
     "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=0.0.0.0:$FIPS_PORT" \
