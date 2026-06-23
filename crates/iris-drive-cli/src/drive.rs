@@ -61,6 +61,7 @@ pub(crate) fn cmd_import(config_dir: &std::path::Path, source_dir: &std::path::P
                     Some(&report.root_cid),
                     DEFAULT_GATEWAY_PORT,
                     daemon.config().local_nhash_resolver_enabled,
+                    crate::status::current_app_key_npub(daemon.config()).as_deref(),
                 ),
                 "file_count": report.file_count,
                 "top_level_entries": report.top_level_entries,

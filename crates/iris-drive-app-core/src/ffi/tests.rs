@@ -1086,7 +1086,10 @@ fn app_state_surfaces_local_resolver_and_portal_settings() {
     );
     assert_eq!(
         created.ui.caldav_url,
-        iris_drive_core::gateway::local_caldav_url(iris_drive_core::gateway::DEFAULT_GATEWAY_PORT)
+        iris_drive_core::gateway::local_caldav_url_for_identity(
+            iris_drive_core::gateway::DEFAULT_GATEWAY_PORT,
+            &created.ui.profile.as_ref().unwrap().current_app_key_npub
+        )
     );
 
     let config_path = config_path_in(dir.path());

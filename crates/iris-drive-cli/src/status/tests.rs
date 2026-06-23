@@ -45,7 +45,7 @@ fn block_stats_entry_limit_marks_truncated() {
 
 #[test]
 fn local_gateway_status_includes_nhash_resolver_host_when_enabled() {
-    let status = local_gateway_urls_for_root(None, 17_321, true);
+    let status = local_gateway_urls_for_root(None, 17_321, true, Some("npub1calendar"));
     assert_eq!(status["enabled"], true);
     assert_eq!(
         status["nhash_resolver_url"],
@@ -55,11 +55,15 @@ fn local_gateway_status_includes_nhash_resolver_host_when_enabled() {
         status["portal_url"],
         iris_drive_core::gateway::local_portal_url(17_321)
     );
+    assert_eq!(
+        status["caldav_url"],
+        iris_drive_core::gateway::local_caldav_url_for_identity(17_321, "npub1calendar")
+    );
 }
 
 #[test]
 fn local_gateway_status_reports_disabled_resolver() {
-    let status = local_gateway_urls_for_root(None, 17_321, false);
+    let status = local_gateway_urls_for_root(None, 17_321, false, Some("npub1calendar"));
     assert_eq!(status["enabled"], false);
     assert_eq!(status["host"], "nhash.iris.localhost");
     assert!(status.get("portal_url").is_none());

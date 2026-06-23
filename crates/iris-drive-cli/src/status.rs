@@ -44,6 +44,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         current_root_cid.as_deref(),
         DEFAULT_GATEWAY_PORT,
         config.local_nhash_resolver_enabled,
+        current_app_key_npub(&config).as_deref(),
     );
     let merged_stats = primary_drive_stats(config_dir, &config);
     let root_file_stats = current_root_cid
@@ -803,6 +804,7 @@ pub(crate) fn local_gateway_urls_for_root(
     root_cid: Option<&str>,
     port: u16,
     enabled: bool,
+    caldav_identity: Option<&str>,
 ) -> serde_json::Value {
     if !enabled {
         return json!({
@@ -831,7 +833,10 @@ pub(crate) fn local_gateway_urls_for_root(
             port,
             iris_drive_core::PRIMARY_DRIVE_ID,
         ),
-        "caldav_url": iris_drive_core::gateway::local_caldav_url(port),
+        "caldav_url": caldav_identity.map_or_else(
+            || iris_drive_core::gateway::local_caldav_url(port),
+            |identity| iris_drive_core::gateway::local_caldav_url_for_identity(port, identity),
+        ),
         "nhash_resolver_url": format!(
             "http://{}:{port}/",
             iris_drive_core::gateway::LOCAL_NHASH_RESOLVER_HOST,
@@ -839,6 +844,13 @@ pub(crate) fn local_gateway_urls_for_root(
         "nhash_url": nhash_url,
         "immutable_url": immutable_url,
     })
+}
+
+pub(crate) fn current_app_key_npub(config: &AppConfig) -> Option<String> {
+    config
+        .profile
+        .as_ref()
+        .map(|state| pubkey_npub(&state.app_key_pubkey))
 }
 
 pub(crate) fn percent_encode_path_segment(segment: &str) -> String {

@@ -354,7 +354,6 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     let caldav_server_address = value_label();
     caldav_server_address.set_text("localhost");
     let caldav_server_path = value_label();
-    caldav_server_path.set_text("/caldav/principals/iris/");
     let caldav_use_ssl = value_label();
     caldav_use_ssl.set_text("Off");
     let caldav_use_kerberos = value_label();
@@ -503,6 +502,7 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
             local_nhash_resolver,
             open_sites_portal_button,
             caldav_url,
+            caldav_server_path,
             caldav_port,
             copy_caldav_url_button,
             recovery_phrase_button,

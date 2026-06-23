@@ -18,10 +18,18 @@ fn init_account_config(dir: &Path) {
     cfg.save(config_path_in(dir)).unwrap();
 }
 
+fn account_caldav_identity(dir: &Path) -> String {
+    let cfg = AppConfig::load_or_default_cached_profile(config_path_in(dir)).unwrap();
+    crate::app_key_summary::pubkey_npub(&cfg.profile.as_ref().unwrap().app_key_pubkey)
+}
+
 #[tokio::test]
 async fn gateway_caldav_put_report_get_and_delete_round_trip_calendar_event() {
     let cfg_dir = tempdir().unwrap();
     init_account_config(cfg_dir.path());
+    let identity = account_caldav_identity(cfg_dir.path());
+    let calendar_href = format!("/caldav/calendars/{identity}/calendar/");
+    let event_href = format!("{calendar_href}event-123.ics");
     let daemon = Daemon::open(cfg_dir.path()).unwrap();
     let server = GatewayServer::bind_with_tree(
         cfg_dir.path(),
@@ -36,7 +44,7 @@ async fn gateway_caldav_put_report_get_and_delete_round_trip_calendar_event() {
         server.local_addr(),
         "OPTIONS",
         "localhost",
-        "/caldav/calendars/iris/calendar/",
+        &calendar_href,
         &[],
         b"",
     )
@@ -48,7 +56,7 @@ async fn gateway_caldav_put_report_get_and_delete_round_trip_calendar_event() {
         server.local_addr(),
         "PUT",
         "localhost",
-        "/caldav/calendars/iris/calendar/event-123.ics",
+        &event_href,
         &[("Content-Type", "text/calendar; charset=utf-8")],
         ics,
     )
@@ -60,23 +68,20 @@ async fn gateway_caldav_put_report_get_and_delete_round_trip_calendar_event() {
         server.local_addr(),
         "REPORT",
         "localhost",
-        "/caldav/calendars/iris/calendar/",
+        &calendar_href,
         &[("Depth", "1"), ("Content-Type", "application/xml")],
         br#"<?xml version="1.0"?><C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:prop><D:getetag/><C:calendar-data/></D:prop></C:calendar-query>"#,
     )
     .await;
     assert!(report.starts_with("HTTP/1.1 207 Multi-Status"), "{report}");
-    assert!(
-        report.contains("/caldav/calendars/iris/calendar/event-123.ics"),
-        "{report}"
-    );
+    assert!(report.contains(&event_href), "{report}");
     assert!(report.contains("SUMMARY:WebDAV bridge"), "{report}");
 
     let get = http_request(
         server.local_addr(),
         "GET",
         "localhost",
-        "/caldav/calendars/iris/calendar/event-123.ics",
+        &event_href,
         &[],
         b"",
     )
@@ -89,7 +94,7 @@ async fn gateway_caldav_put_report_get_and_delete_round_trip_calendar_event() {
         server.local_addr(),
         "DELETE",
         "localhost",
-        "/caldav/calendars/iris/calendar/event-123.ics",
+        &event_href,
         &[],
         b"",
     )
@@ -100,7 +105,7 @@ async fn gateway_caldav_put_report_get_and_delete_round_trip_calendar_event() {
         server.local_addr(),
         "REPORT",
         "localhost",
-        "/caldav/calendars/iris/calendar/",
+        &calendar_href,
         &[("Depth", "1"), ("Content-Type", "application/xml")],
         br#"<?xml version="1.0"?><C:calendar-query xmlns:D="DAV:" xmlns:C="urn:ietf:params:xml:ns:caldav"><D:prop><D:getetag/><C:calendar-data/></D:prop></C:calendar-query>"#,
     )
@@ -117,6 +122,7 @@ async fn gateway_caldav_put_report_get_and_delete_round_trip_calendar_event() {
 async fn gateway_caldav_root_propfind_exposes_calendar_home_for_apple_calendar() {
     let cfg_dir = tempdir().unwrap();
     init_account_config(cfg_dir.path());
+    let identity = account_caldav_identity(cfg_dir.path());
     let daemon = Daemon::open(cfg_dir.path()).unwrap();
     let server = GatewayServer::bind_with_tree(
         cfg_dir.path(),
@@ -141,11 +147,11 @@ async fn gateway_caldav_root_propfind_exposes_calendar_home_for_apple_calendar()
     );
     assert!(propfind.contains("<C:calendar-home-set>"), "{propfind}");
     assert!(
-        propfind.contains("<D:href>/caldav/calendars/iris/</D:href>"),
+        propfind.contains(&format!("<D:href>/caldav/calendars/{identity}/</D:href>")),
         "{propfind}"
     );
     assert!(
-        propfind.contains("<D:href>/caldav/principals/iris/</D:href>"),
+        propfind.contains(&format!("<D:href>/caldav/principals/{identity}/</D:href>")),
         "{propfind}"
     );
 

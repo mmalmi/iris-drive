@@ -187,7 +187,10 @@ pub(crate) fn cmd_daemon(
                     port,
                     iris_drive_core::PRIMARY_DRIVE_ID,
                 ),
-                "caldav_url": iris_drive_core::gateway::local_caldav_url(port),
+                "caldav_url": iris_drive_core::gateway::local_caldav_url_for_identity(
+                    port,
+                    &pubkey_npub(&state.app_key_pubkey),
+                ),
                 "nhash_resolver_url": format!(
                     "http://{}:{port}/",
                     iris_drive_core::gateway::LOCAL_NHASH_RESOLVER_HOST,

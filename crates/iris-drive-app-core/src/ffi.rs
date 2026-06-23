@@ -1434,7 +1434,12 @@ impl NativeAppRuntime {
             .map(iris_drive_core::gateway::local_portal_url)
             .unwrap_or_default();
         self.state.ui.caldav_url = gateway_port
-            .map(iris_drive_core::gateway::local_caldav_url)
+            .map(|port| {
+                iris_drive_core::gateway::local_caldav_url_for_identity(
+                    port,
+                    &pubkey_npub(&account.app_key_pubkey),
+                )
+            })
             .unwrap_or_default();
         let profile = iris_profile_summary(&account);
         self.state.ui.profile = Some(UiProfile {
@@ -1774,7 +1779,7 @@ fn run_native_browser_gateway(data_dir: &str, stop: Arc<AtomicBool>) -> Result<(
                 "bind": gateway.local_addr().to_string(),
                 "hashtree_base_url": gateway_hashtree_base_url,
                 "portal_url": iris_drive_core::gateway::local_portal_url(gateway_port),
-                "caldav_url": iris_drive_core::gateway::local_caldav_url(gateway_port),
+                "caldav_url": native_caldav_url_for_config_dir(&gateway_data_dir, gateway_port),
                 "proxy_bind": proxy.local_addr().to_string(),
                 "proxy_port": proxy_port,
                 "proxy_url": format!("http://127.0.0.1:{proxy_port}/"),
@@ -1801,6 +1806,21 @@ fn run_native_browser_gateway(data_dir: &str, stop: Arc<AtomicBool>) -> Result<(
     drop(runtime);
     drop(embedded_hashtree);
     result
+}
+
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+fn native_caldav_url_for_config_dir(config_dir: &Path, port: u16) -> String {
+    AppConfig::load_or_default_cached_profile(config_path_in(config_dir))
+        .ok()
+        .and_then(|config| {
+            config
+                .profile
+                .map(|profile| pubkey_npub(&profile.app_key_pubkey))
+        })
+        .map_or_else(
+            || iris_drive_core::gateway::local_caldav_url(port),
+            |identity| iris_drive_core::gateway::local_caldav_url_for_identity(port, &identity),
+        )
 }
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]

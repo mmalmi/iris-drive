@@ -1286,6 +1286,18 @@ pub fn local_caldav_url(port: u16) -> String {
 }
 
 #[must_use]
+pub fn local_caldav_url_for_identity(port: u16, identity: &str) -> String {
+    let identity = identity.trim();
+    if identity.is_empty() {
+        return local_caldav_url(port);
+    }
+    format!(
+        "http://localhost:{port}/caldav/principals/{}/",
+        percent_encode_path_segment(identity)
+    )
+}
+
+#[must_use]
 pub fn local_portal_npub_path_url(
     port: u16,
     npub: &str,

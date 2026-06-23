@@ -2,12 +2,35 @@
 use super::*;
 
 const CALDAV_ROOT: &str = "/caldav/";
-const CALDAV_PRINCIPAL: &str = "/caldav/principals/iris/";
-const CALDAV_HOME: &str = "/caldav/calendars/iris/";
-const CALDAV_CALENDAR: &str = "/caldav/calendars/iris/calendar/";
+const CALDAV_LEGACY_IDENTITY: &str = "iris";
 const CALDAV_FEED: &str = "/caldav/calendar.ics";
-const CALDAV_CALENDAR_FEED: &str = "/caldav/calendars/iris/calendar.ics";
 const WELL_KNOWN_CALDAV: &str = "/.well-known/caldav";
+
+#[derive(Clone, Debug)]
+struct CaldavPaths {
+    principal: String,
+    home: String,
+    calendar: String,
+    calendar_feed: String,
+}
+
+impl CaldavPaths {
+    fn new(identity: &str) -> Self {
+        let identity = identity.trim();
+        let identity = if identity.is_empty() {
+            CALDAV_LEGACY_IDENTITY
+        } else {
+            identity
+        };
+        let identity = percent_encode_path_segment(identity);
+        Self {
+            principal: format!("/caldav/principals/{identity}/"),
+            home: format!("/caldav/calendars/{identity}/"),
+            calendar: format!("/caldav/calendars/{identity}/calendar/"),
+            calendar_feed: format!("/caldav/calendars/{identity}/calendar.ics"),
+        }
+    }
+}
 
 pub(crate) fn is_caldav_path(path: &str) -> bool {
     path == WELL_KNOWN_CALDAV || path == "/caldav" || path.starts_with(CALDAV_ROOT)
@@ -48,22 +71,26 @@ async fn handle_caldav_propfind(
     headers: &HeaderMap,
 ) -> Result<Response, (StatusCode, String)> {
     let path = normalized_caldav_path(uri.path());
+    let config = load_caldav_config(state)?;
+    let paths = current_caldav_paths(&config);
+    let legacy_paths = legacy_caldav_paths();
     let depth = headers
         .get("depth")
         .and_then(|value| value.to_str().ok())
         .unwrap_or("0");
     let xml = if path == CALDAV_ROOT {
-        crate::calendar::root_propfind_multistatus(CALDAV_ROOT)
-    } else if path == "/caldav/principals/" || path == CALDAV_PRINCIPAL {
-        crate::calendar::principal_propfind_multistatus(CALDAV_PRINCIPAL)
-    } else if path == CALDAV_HOME {
-        let data = load_caldav_calendar(state).await?;
-        crate::calendar::home_propfind_multistatus(CALDAV_HOME, depth, &data)
-    } else if path == CALDAV_CALENDAR {
-        let data = load_caldav_calendar(state).await?;
-        crate::calendar::collection_propfind_multistatus(&data, CALDAV_CALENDAR, depth)
-    } else if path.starts_with(CALDAV_CALENDAR) {
-        let data = load_caldav_calendar(state).await?;
+        crate::calendar::root_propfind_multistatus(CALDAV_ROOT, &paths.principal, &paths.home)
+    } else if path == "/caldav/principals/" || is_principal_path(&path, &paths, &legacy_paths) {
+        crate::calendar::principal_propfind_multistatus(&path, &paths.principal, &paths.home)
+    } else if path == paths.home || path == legacy_paths.home {
+        let data = load_caldav_calendar(state, &config).await?;
+        crate::calendar::home_propfind_multistatus(&path, &paths.calendar, depth, &data)
+    } else if path == paths.calendar || path == legacy_paths.calendar {
+        let data = load_caldav_calendar(state, &config).await?;
+        crate::calendar::collection_propfind_multistatus(&data, &path, depth)
+    } else if let Some(calendar_href) = calendar_event_collection_href(&path, &paths, &legacy_paths)
+    {
+        let data = load_caldav_calendar(state, &config).await?;
         let id = crate::calendar::href_event_id(&path);
         let Some(event) = data
             .events
@@ -74,7 +101,7 @@ async fn handle_caldav_propfind(
         };
         let href = format!(
             "{}{}.ics",
-            CALDAV_CALENDAR,
+            calendar_href,
             percent_encode_path_segment(&crate::calendar::event_href_id(&event.id))
         );
         return event_propfind_response(&href, event);
@@ -102,19 +129,22 @@ async fn handle_caldav_report(
     body: &[u8],
 ) -> Result<Response, (StatusCode, String)> {
     let path = normalized_caldav_path(uri.path());
-    if path != CALDAV_CALENDAR {
+    let config = load_caldav_config(state)?;
+    let paths = current_caldav_paths(&config);
+    let legacy_paths = legacy_caldav_paths();
+    let Some(calendar_href) = calendar_collection_href(&path, &paths, &legacy_paths) else {
         return Err((
             StatusCode::NOT_FOUND,
             "CalDAV report target not found".into(),
         ));
-    }
-    let data = load_caldav_calendar(state).await?;
+    };
+    let data = load_caldav_calendar(state, &config).await?;
     let body_text = String::from_utf8_lossy(body);
     let xml = if body_text.contains("calendar-multiget") {
         let hrefs = crate::calendar::extract_hrefs(&body_text);
         crate::calendar::calendar_multiget_multistatus(&data, &hrefs)
     } else {
-        crate::calendar::calendar_query_multistatus(&data, CALDAV_CALENDAR)
+        crate::calendar::calendar_query_multistatus(&data, calendar_href)
     };
     xml_response(StatusCode::MULTI_STATUS, xml)
 }
@@ -125,11 +155,17 @@ async fn handle_caldav_get(
     uri: &Uri,
 ) -> Result<Response, (StatusCode, String)> {
     let path = normalized_caldav_path(uri.path());
-    let data = load_caldav_calendar(state).await?;
-    if matches!(
-        path.as_str(),
-        CALDAV_ROOT | CALDAV_CALENDAR | CALDAV_FEED | CALDAV_CALENDAR_FEED
-    ) {
+    let config = load_caldav_config(state)?;
+    let paths = current_caldav_paths(&config);
+    let legacy_paths = legacy_caldav_paths();
+    let data = load_caldav_calendar(state, &config).await?;
+    if path == CALDAV_ROOT
+        || path == CALDAV_FEED
+        || path == paths.calendar
+        || path == paths.calendar_feed
+        || path == legacy_paths.calendar
+        || path == legacy_paths.calendar_feed
+    {
         let body = crate::calendar::calendar_to_ics(&data, gateway_now_seconds() * 1000);
         return calendar_response(StatusCode::OK, method == Method::HEAD, body, None);
     }
@@ -156,7 +192,12 @@ async fn handle_caldav_put(
     body: &[u8],
 ) -> Result<Response, (StatusCode, String)> {
     let path = normalized_caldav_path(uri.path());
-    if !path.starts_with(CALDAV_CALENDAR) || !path.ends_with(".ics") {
+    let config = load_caldav_config(state)?;
+    let paths = current_caldav_paths(&config);
+    let legacy_paths = legacy_caldav_paths();
+    if calendar_event_collection_href(&path, &paths, &legacy_paths).is_none()
+        || !path.ends_with(".ics")
+    {
         return Err((
             StatusCode::BAD_REQUEST,
             "PUT requires an event .ics path".into(),
@@ -192,6 +233,15 @@ async fn handle_caldav_delete(
     uri: &Uri,
 ) -> Result<Response, (StatusCode, String)> {
     let path = normalized_caldav_path(uri.path());
+    let config = load_caldav_config(state)?;
+    let paths = current_caldav_paths(&config);
+    let legacy_paths = legacy_caldav_paths();
+    if calendar_event_collection_href(&path, &paths, &legacy_paths).is_none() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "DELETE requires an event .ics path".into(),
+        ));
+    }
     let id = crate::calendar::href_event_id(&path);
     let mut daemon = Daemon::open(state.config_dir.as_ref())
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
@@ -207,42 +257,84 @@ async fn handle_caldav_delete(
 
 async fn load_caldav_calendar(
     state: &GatewayState,
+    config: &AppConfig,
 ) -> Result<crate::calendar::CalendarData, (StatusCode, String)> {
-    let config =
-        AppConfig::load_or_default_cached_profile(config_path_in(state.config_dir.as_ref()))
-            .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
     let owner = config
         .profile
         .as_ref()
         .map(|profile| profile.app_key_pubkey.as_str())
         .unwrap_or("iris-caldav");
-    crate::calendar::load_calendar_data(state.tree.as_ref(), &config, owner)
+    crate::calendar::load_calendar_data(state.tree.as_ref(), config, owner)
         .await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))
+}
+
+fn load_caldav_config(state: &GatewayState) -> Result<AppConfig, (StatusCode, String)> {
+    AppConfig::load_or_default_cached_profile(config_path_in(state.config_dir.as_ref()))
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))
+}
+
+fn current_caldav_paths(config: &AppConfig) -> CaldavPaths {
+    let identity = config
+        .profile
+        .as_ref()
+        .map(|profile| crate::app_key_summary::pubkey_npub(&profile.app_key_pubkey))
+        .unwrap_or_else(|| CALDAV_LEGACY_IDENTITY.to_string());
+    CaldavPaths::new(&identity)
+}
+
+fn legacy_caldav_paths() -> CaldavPaths {
+    CaldavPaths::new(CALDAV_LEGACY_IDENTITY)
+}
+
+fn is_principal_path(path: &str, paths: &CaldavPaths, legacy_paths: &CaldavPaths) -> bool {
+    path == paths.principal || path == legacy_paths.principal
+}
+
+fn calendar_collection_href<'a>(
+    path: &str,
+    paths: &'a CaldavPaths,
+    legacy_paths: &'a CaldavPaths,
+) -> Option<&'a str> {
+    if path == paths.calendar {
+        Some(paths.calendar.as_str())
+    } else if path == legacy_paths.calendar {
+        Some(legacy_paths.calendar.as_str())
+    } else {
+        None
+    }
+}
+
+fn calendar_event_collection_href<'a>(
+    path: &str,
+    paths: &'a CaldavPaths,
+    legacy_paths: &'a CaldavPaths,
+) -> Option<&'a str> {
+    if path.starts_with(&paths.calendar) && path.ends_with(".ics") {
+        Some(paths.calendar.as_str())
+    } else if path.starts_with(&legacy_paths.calendar) && path.ends_with(".ics") {
+        Some(legacy_paths.calendar.as_str())
+    } else {
+        None
+    }
 }
 
 fn normalized_caldav_path(path: &str) -> String {
     if path == "/caldav" {
         return CALDAV_ROOT.into();
     }
-    if path == CALDAV_ROOT
-        || path == CALDAV_PRINCIPAL
-        || path == CALDAV_HOME
-        || path == CALDAV_CALENDAR
-        || path.ends_with(".ics")
-    {
+    if path == CALDAV_ROOT || path.ends_with(".ics") {
         return path.to_string();
     }
-    if path == "/caldav/principals/iris" {
-        return CALDAV_PRINCIPAL.into();
+    let parts = path.trim_matches('/').split('/').collect::<Vec<_>>();
+    match parts.as_slice() {
+        ["caldav", "principals", _]
+        | ["caldav", "calendars", _]
+        | ["caldav", "calendars", _, "calendar"] => {
+            format!("{}/", path.trim_end_matches('/'))
+        }
+        _ => path.to_string(),
     }
-    if path == "/caldav/calendars/iris" {
-        return CALDAV_HOME.into();
-    }
-    if path == "/caldav/calendars/iris/calendar" {
-        return CALDAV_CALENDAR.into();
-    }
-    path.to_string()
 }
 
 fn caldav_host_allowed(headers: &HeaderMap) -> bool {

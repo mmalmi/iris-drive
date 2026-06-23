@@ -2474,7 +2474,7 @@ private struct SettingsView: View {
                 LabeledContent("User Name", value: "iris")
                 LabeledContent("Password", value: "iris")
                 LabeledContent("Server Address", value: "localhost")
-                LabeledContent("Server Path", value: "/caldav/principals/iris/")
+                LabeledContent("Server Path", value: irisDriveCalDAVServerPath(caldavURL))
                 LabeledContent("Port", value: irisDriveCalDAVPort(caldavURL))
                 LabeledContent("Use SSL", value: "Off")
                 LabeledContent("Use Kerberos", value: "Off")
@@ -2607,6 +2607,13 @@ private func byteString(_ bytes: UInt64) -> String {
 
 private func irisDriveCalDAVPort(_ url: String) -> String {
     URL(string: url)?.port.map(String.init) ?? "17321"
+}
+
+private func irisDriveCalDAVServerPath(_ url: String) -> String {
+    guard let path = URL(string: url)?.path, !path.isEmpty else {
+        return "/caldav/"
+    }
+    return path
 }
 
 private func shareDisplayName(_ share: IrisDriveShare) -> String {

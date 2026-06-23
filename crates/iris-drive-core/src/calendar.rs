@@ -393,32 +393,38 @@ pub fn collection_propfind_multistatus(data: &CalendarData, href: &str, depth: &
     multistatus(&responses)
 }
 
-pub fn principal_propfind_multistatus(href: &str) -> String {
+pub fn principal_propfind_multistatus(href: &str, principal_href: &str, home_href: &str) -> String {
     let props = format!(
-        "<D:response><D:href>{}</D:href><D:propstat><D:prop><D:displayname>Iris</D:displayname><D:resourcetype><D:collection/><D:principal/></D:resourcetype><C:calendar-home-set><D:href>/caldav/calendars/iris/</D:href></C:calendar-home-set><D:current-user-principal><D:href>/caldav/principals/iris/</D:href></D:current-user-principal></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
-        xml_escape(href)
+        "<D:response><D:href>{}</D:href><D:propstat><D:prop><D:displayname>Iris</D:displayname><D:resourcetype><D:collection/><D:principal/></D:resourcetype><C:calendar-home-set><D:href>{}</D:href></C:calendar-home-set><D:current-user-principal><D:href>{}</D:href></D:current-user-principal></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
+        xml_escape(href),
+        xml_escape(home_href),
+        xml_escape(principal_href),
     );
     multistatus(&props)
 }
 
-pub fn home_propfind_multistatus(href: &str, depth: &str, data: &CalendarData) -> String {
+pub fn home_propfind_multistatus(
+    href: &str,
+    calendar_href: &str,
+    depth: &str,
+    data: &CalendarData,
+) -> String {
     let mut responses = format!(
         "<D:response><D:href>{}</D:href><D:propstat><D:prop><D:displayname>Iris Calendars</D:displayname><D:resourcetype><D:collection/></D:resourcetype></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
         xml_escape(href)
     );
     if depth != "0" {
-        responses.push_str(&collection_prop_response(
-            "/caldav/calendars/iris/calendar/",
-            &data.title,
-        ));
+        responses.push_str(&collection_prop_response(calendar_href, &data.title));
     }
     multistatus(&responses)
 }
 
-pub fn root_propfind_multistatus(href: &str) -> String {
+pub fn root_propfind_multistatus(href: &str, principal_href: &str, home_href: &str) -> String {
     let props = format!(
-        "<D:response><D:href>{}</D:href><D:propstat><D:prop><D:displayname>Iris CalDAV</D:displayname><D:resourcetype><D:collection/></D:resourcetype><D:current-user-principal><D:href>/caldav/principals/iris/</D:href></D:current-user-principal><D:principal-collection-set><D:href>/caldav/principals/</D:href></D:principal-collection-set><C:calendar-home-set><D:href>/caldav/calendars/iris/</D:href></C:calendar-home-set></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
-        xml_escape(href)
+        "<D:response><D:href>{}</D:href><D:propstat><D:prop><D:displayname>Iris CalDAV</D:displayname><D:resourcetype><D:collection/></D:resourcetype><D:current-user-principal><D:href>{}</D:href></D:current-user-principal><D:principal-collection-set><D:href>/caldav/principals/</D:href></D:principal-collection-set><C:calendar-home-set><D:href>{}</D:href></C:calendar-home-set></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
+        xml_escape(href),
+        xml_escape(principal_href),
+        xml_escape(home_href),
     );
     multistatus(&props)
 }

@@ -1516,7 +1516,7 @@ struct IrisDriveControlPanel: View {
                 LabeledContent("User Name", value: "iris")
                 LabeledContent("Password", value: "iris")
                 LabeledContent("Server Address", value: "localhost")
-                LabeledContent("Server Path", value: "/caldav/principals/iris/")
+                LabeledContent("Server Path", value: irisDriveCalDAVServerPath(caldavURL))
                 LabeledContent("Port", value: irisDriveCalDAVPort(caldavURL))
                 LabeledContent("Use SSL", value: "Off")
                 LabeledContent("Use Kerberos", value: "Off")
@@ -1853,6 +1853,13 @@ private struct IrisDriveCopyToast: View {
 
 private func irisDriveCalDAVPort(_ url: String) -> String {
     URL(string: url)?.port.map(String.init) ?? "17321"
+}
+
+private func irisDriveCalDAVServerPath(_ url: String) -> String {
+    guard let path = URL(string: url)?.path, !path.isEmpty else {
+        return "/caldav/"
+    }
+    return path
 }
 
 struct IrisDriveCopyButton: View {

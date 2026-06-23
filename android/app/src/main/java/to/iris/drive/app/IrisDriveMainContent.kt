@@ -1104,7 +1104,7 @@ private fun SettingsPanel(
         StatRow("User Name", "iris")
         StatRow("Password", "iris")
         StatRow("Server Address", "localhost")
-        StatRow("Server Path", "/caldav/principals/iris/")
+        StatRow("Server Path", caldavServerPath(state.caldavUrl))
         StatRow("Port", caldavPort(state.caldavUrl))
         StatRow("Use SSL", "Off")
         StatRow("Use Kerberos", "Off")
@@ -1350,6 +1350,11 @@ private fun caldavPort(caldavUrl: String): String =
     runCatching {
         URI(caldavUrl).port.takeIf { it > 0 }?.toString()
     }.getOrNull() ?: "17321"
+
+private fun caldavServerPath(caldavUrl: String): String =
+    runCatching {
+        URI(caldavUrl).rawPath.takeIf { !it.isNullOrBlank() }
+    }.getOrNull() ?: "/caldav/"
 
 @Composable
 private fun relayHealthColor(health: String): Color =
