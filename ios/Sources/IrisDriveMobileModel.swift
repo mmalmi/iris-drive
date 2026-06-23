@@ -15,7 +15,7 @@ private let configMutationAuditDefaultsKey = "configMutationAuditV1"
 private let configMutationAuditMaxEvents = 20
 private let fileProviderPathIdentifierPrefix = "path:"
 private let fileProviderRegistrationIdentityKey = "fileProviderRegistrationIdentity"
-private let fileProviderRegistrationVersion = 3
+private let fileProviderRegistrationVersion = 4
 private let fileProviderRegistrationVersionKey = "fileProviderRegistrationVersion"
 private let providerRootSignalFileName = "provider-root.changed"
 private let nativeFipsStatusFileName = "native-fips-status.json"
@@ -283,6 +283,33 @@ final class IrisDriveMobileModel: ObservableObject {
             return
         }
         let domain = irisDriveFileProviderDomain()
+        NSFileProviderManager.getDomainsWithCompletionHandler { [weak self] domains, _ in
+            Task { @MainActor [weak self] in
+                guard let self else { return }
+                if let existingDomain = domains.first(where: { $0.identifier == irisDriveDomainIdentifier }) {
+                    if self.shouldRepairFileProviderRegistration(existingDomain) {
+                        self.repairFileProviderRegistration(
+                            existingDomain: existingDomain,
+                            completion: completion
+                        )
+                    } else {
+                        self.markFileProviderRegistrationCurrent()
+                        self.fileProviderStatus = "Files provider registered"
+                        self.rebuildDerivedState()
+                        self.signalFileProviderIfNeeded()
+                        completion?(true)
+                    }
+                    return
+                }
+                self.addFileProviderDomain(domain, completion: completion)
+            }
+        }
+    }
+
+    private func addFileProviderDomain(
+        _ domain: NSFileProviderDomain,
+        completion: ((Bool) -> Void)?
+    ) {
         NSFileProviderManager.add(domain) { [weak self] error in
             if error == nil {
                 Task { @MainActor in
