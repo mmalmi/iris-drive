@@ -978,6 +978,18 @@ fn embedded_browser_relays_include_hashtree_resolver_bootstrap_relays() {
 }
 
 #[test]
+fn embedded_browser_settings_allow_iris_sites_portal_plaintext_reads() {
+    let settings = embedded_browser_settings(&AppConfig::default());
+
+    assert_eq!(
+        settings["allowedNpubs"].as_array().unwrap(),
+        &[serde_json::json!(crate::gateway::IRIS_SITES_PORTAL_NPUB)]
+    );
+    assert_eq!(settings["publicWrites"], false);
+    assert_eq!(settings["publicPlaintextReads"], false);
+}
+
+#[test]
 fn embedded_browser_initial_roots_seed_iris_sites_portal_with_key() {
     let roots = embedded_browser_initial_tree_roots();
 

@@ -98,23 +98,14 @@ async fn materialize_primary_merged_root_converges_accepted_remote_files() {
     );
 
     let mut converged = daemon.config().clone();
-    converged
+    if let Some(app_keys) = converged
         .profile
         .as_mut()
-        .unwrap()
-        .app_keys
-        .as_mut()
-        .unwrap()
-        .app_actors
-        .retain(|device| device.pubkey != remote);
-    converged
-        .profile
-        .as_mut()
-        .unwrap()
-        .app_keys
-        .as_mut()
-        .unwrap()
-        .normalize();
+        .and_then(|profile| profile.app_keys.as_mut())
+    {
+        app_keys.app_actors.retain(|device| device.pubkey != remote);
+        app_keys.normalize();
+    }
     converged
         .drives
         .iter_mut()

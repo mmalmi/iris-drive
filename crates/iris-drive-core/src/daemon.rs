@@ -43,25 +43,7 @@ impl EmbeddedHashtreeHost {
         let embedded_config_dir = state_root.join("config");
         std::fs::create_dir_all(&embedded_config_dir)
             .with_context(|| format!("creating {}", embedded_config_dir.display()))?;
-        let settings = json!({
-            "storageMaxSizeGb": 1,
-            "socialGraphDbMaxSizeGb": 1,
-            "spamboxDbMaxSizeGb": 0,
-            "nostrRelays": embedded_browser_nostr_relays(config),
-            "blossomReadServers": config.blossom_servers.clone(),
-            "blossomWriteServers": config.blossom_servers.clone(),
-            "enableWebrtc": false,
-            "enableMulticast": false,
-            "enableFips": false,
-            "enableFipsUdp": false,
-            "enableFipsWebrtc": false,
-            "fetchFromFipsPeers": false,
-            "socialGraphCrawlDepth": 0,
-            "syncEnabled": false,
-            "syncOwn": false,
-            "syncFollowed": false,
-            "publicWrites": false,
-        });
+        let settings = embedded_browser_settings(config);
         let settings_path = embedded_config_dir.join("browser_settings.json");
         std::fs::write(&settings_path, serde_json::to_vec_pretty(&settings)?)
             .with_context(|| format!("writing {}", settings_path.display()))?;
@@ -99,6 +81,30 @@ impl EmbeddedHashtreeHost {
             "data_dir": self.status.data_dir.display().to_string(),
         })
     }
+}
+
+fn embedded_browser_settings(config: &AppConfig) -> serde_json::Value {
+    json!({
+        "storageMaxSizeGb": 1,
+        "socialGraphDbMaxSizeGb": 1,
+        "spamboxDbMaxSizeGb": 0,
+        "nostrRelays": embedded_browser_nostr_relays(config),
+        "blossomReadServers": config.blossom_servers.clone(),
+        "blossomWriteServers": config.blossom_servers.clone(),
+        "enableWebrtc": false,
+        "enableMulticast": false,
+        "enableFips": false,
+        "enableFipsUdp": false,
+        "enableFipsWebrtc": false,
+        "fetchFromFipsPeers": false,
+        "socialGraphCrawlDepth": 0,
+        "syncEnabled": false,
+        "syncOwn": false,
+        "syncFollowed": false,
+        "publicWrites": false,
+        "publicPlaintextReads": false,
+        "allowedNpubs": [crate::gateway::IRIS_SITES_PORTAL_NPUB],
+    })
 }
 
 fn embedded_browser_nostr_relays(config: &AppConfig) -> Vec<String> {
@@ -761,10 +767,8 @@ impl Daemon {
         // Per-AppKey root entry, keyed by this install's AppKey pubkey.
         // Falls back to no-op when there is no profile yet.
         if let Some(account) = self.config.profile.as_ref() {
-            let dck_generation = account
-                .app_keys
-                .as_ref()
-                .map_or(0, |snap| snap.dck_generation);
+            let dck_generation =
+                current_app_keys_projection(account).map_or(0, |snap| snap.dck_generation);
             let app_key_root = root_meta.map_or_else(
                 || AppKeyRootRef::legacy(root_cid.to_string(), published_at, dck_generation),
                 |meta| AppKeyRootRef::from_meta(root_cid.to_string(), published_at, meta),
@@ -828,10 +832,8 @@ impl Daemon {
                 )
             })
             .collect();
-        let dck_generation = account
-            .app_keys
-            .as_ref()
-            .map_or(0, |snap| snap.dck_generation);
+        let dck_generation =
+            current_app_keys_projection(account).map_or(0, |snap| snap.dck_generation);
         Some(DriveRootMeta {
             schema: DriveRootMeta::SCHEMA,
             drive_id: drive.drive_id.clone(),
@@ -872,6 +874,15 @@ impl Daemon {
         });
         Ok(())
     }
+}
+
+fn current_app_keys_projection(
+    account: &crate::profile::ProfileState,
+) -> Option<crate::app_keys::AppKeysProjection> {
+    account
+        .app_keys
+        .clone()
+        .or_else(|| account.app_keys_from_profile())
 }
 
 async fn current_root_observes_drive_roots(
