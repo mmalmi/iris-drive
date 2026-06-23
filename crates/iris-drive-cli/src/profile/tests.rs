@@ -377,7 +377,7 @@ fn app_key_link_roster_retry_uses_short_burst_then_steady_interval() {
     ));
     assert!(app_key_link_roster_send_due(
         Some(steady),
-        now + std::time::Duration::from_secs(60)
+        now + std::time::Duration::from_mins(1)
     ));
 }
 

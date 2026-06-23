@@ -31,7 +31,7 @@ use support::{LocalBlossomServer, LocalNostrRelay};
 const WAIT_TIMEOUT: Duration = Duration::from_mins(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);
 const REFRESH_VIEW_TIMEOUT: Duration = Duration::from_secs(30);
-const CLI_COMMAND_TIMEOUT: Duration = Duration::from_secs(60);
+const CLI_COMMAND_TIMEOUT: Duration = Duration::from_mins(1);
 const CLI_COMMAND_POLL_INTERVAL: Duration = Duration::from_millis(50);
 static LIVE_DAEMON_TEST_LOCK: std::sync::LazyLock<Mutex<()>> =
     std::sync::LazyLock::new(|| Mutex::new(()));
@@ -86,6 +86,13 @@ impl std::fmt::Debug for FileSnapshot {
             .field("sha256", &self.sha256)
             .finish_non_exhaustive()
     }
+}
+
+#[derive(Debug, Clone)]
+struct SyncLatency {
+    root_cid: String,
+    local_edit_to_remote_visible: Duration,
+    source_viewer_done_to_remote_visible: Duration,
 }
 
 #[derive(Clone)]
@@ -258,6 +265,60 @@ async fn live_daemons_sync_when_relay_drops_root_events_after_fips_connect() {
         "direct-fips-root.txt",
         b"root event moved over direct fips",
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_daemons_provider_write_viewer_to_viewer_latency_probe() {
+    let _guard = live_daemon_test_guard().await;
+    let cluster = SyncCluster::start_three(Duration::ZERO).await;
+    cluster.wait_until_authorized().await;
+    cluster.wait_until_direct_peers_connected().await;
+
+    let hops = [
+        (
+            Client::Windows,
+            Client::Ubuntu,
+            "latency/windows-to-ubuntu.txt",
+        ),
+        (Client::Ubuntu, Client::MacOS, "latency/ubuntu-to-macos.txt"),
+        (
+            Client::MacOS,
+            Client::Windows,
+            "latency/macos-to-windows.txt",
+        ),
+    ];
+
+    for (source, target, path) in hops {
+        let bytes = format!(
+            "{} to {} viewer latency probe",
+            source.label(),
+            target.label()
+        )
+        .into_bytes();
+        let label = format!("{} to {} viewer latency", source.label(), target.label());
+        let latency = cluster
+            .measure_provider_write_to_remote_visible(source, target, path, &bytes, &label)
+            .await;
+        println!(
+            "{}",
+            serde_json::json!({
+                "event": "viewer_to_viewer_latency_probe",
+                "source": source.label(),
+                "target": target.label(),
+                "path": path,
+                "root_cid": &latency.root_cid,
+                "local_edit_to_remote_visible_ms": latency.local_edit_to_remote_visible.as_millis(),
+                "source_viewer_done_to_remote_visible_ms": latency.source_viewer_done_to_remote_visible.as_millis(),
+            })
+        );
+        assert!(
+            latency.source_viewer_done_to_remote_visible < Duration::from_secs(10),
+            "{} to {} viewer latency was {:?}, expected under 10s",
+            source.label(),
+            target.label(),
+            latency.source_viewer_done_to_remote_visible,
+        );
+    }
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

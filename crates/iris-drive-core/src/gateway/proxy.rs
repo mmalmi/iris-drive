@@ -242,7 +242,7 @@ async fn bridge_htree_daemon_websocket(
             let message = message.map_err(|e| e.to_string())?;
             match message {
                 AxumWebSocketMessage::Text(text) => upstream_tx
-                    .send(TungsteniteMessage::Text(text.into()))
+                    .send(TungsteniteMessage::Text(text))
                     .await
                     .map_err(|e| e.to_string())?,
                 AxumWebSocketMessage::Binary(bytes) => upstream_tx
@@ -269,7 +269,7 @@ async fn bridge_htree_daemon_websocket(
             let message = message.map_err(|e| e.to_string())?;
             match message {
                 TungsteniteMessage::Text(text) => client_tx
-                    .send(AxumWebSocketMessage::Text(text.to_string()))
+                    .send(AxumWebSocketMessage::Text(text.clone()))
                     .await
                     .map_err(|e| e.to_string())?,
                 TungsteniteMessage::Binary(bytes) => client_tx

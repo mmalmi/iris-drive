@@ -517,6 +517,8 @@ where
     let root = hashtree_core::Cid::parse(provider.anchor().await.as_str())
         .context("reading provider root CID")?;
     let report = import_provider_root_with_retry(daemon, root, tombstone_base_root).await?;
+    iris_drive_core::paths::touch_provider_root_signal_in(daemon.config_dir())
+        .context("signaling provider root change")?;
     let publish = publish_current_app_key_root_best_effort(daemon.config_dir()).await;
     Ok(json!({
         "path": changed_path,

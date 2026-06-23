@@ -24,7 +24,7 @@ fn live_block_pull_tries_blossom_after_fips_failure() {
 }
 
 #[test]
-fn config_root_watch_filters_to_config_file() {
+fn config_root_watch_accepts_exact_file_and_parent_directory_events() {
     let dir = tempfile::tempdir().unwrap();
     let config = dir.path().join("config.toml");
     let event = notify::Event {
@@ -41,9 +41,20 @@ fn config_root_watch_filters_to_config_file() {
         paths: vec![dir.path().join("daemon-status.json")],
         attrs: notify::event::EventAttributes::new(),
     };
+    let parent = notify::Event {
+        kind: notify::EventKind::Modify(notify::event::ModifyKind::Metadata(
+            notify::event::MetadataKind::Any,
+        )),
+        paths: vec![dir.path().to_path_buf()],
+        attrs: notify::event::EventAttributes::new(),
+    };
 
     assert!(event_touches_path(&event, &config));
+    assert!(event_touches_path(&parent, &config));
     assert!(!event_touches_path(&other, &config));
+    assert!(event_touches_config_root(&event, dir.path()));
+    assert!(event_touches_config_root(&other, dir.path()));
+    assert!(event_touches_config_root(&parent, dir.path()));
 }
 
 #[test]
@@ -68,12 +79,12 @@ fn root_update_debounce_has_fast_floor() {
 }
 
 #[test]
-fn provider_root_poll_remains_safety_sweep_when_config_watch_is_active() {
-    assert!(provider_root_poll_enabled(true));
+fn provider_root_poll_is_safety_sweep_only_without_config_watch() {
+    assert!(!provider_root_poll_enabled(true));
     assert!(provider_root_poll_enabled(false));
     assert_eq!(
         provider_root_poll_period(0),
-        std::time::Duration::from_secs(1)
+        std::time::Duration::from_secs(30)
     );
     assert_eq!(
         provider_root_poll_period(60),
@@ -95,12 +106,12 @@ fn provider_root_publish_cache_matches_fingerprint_and_root_key() {
     let other_root_key = Some("primary:device:root-b".to_string());
     let mut cache = ProviderRootPublishCache::default();
 
-    assert!(!cache.is_current(&fingerprint, &root_key));
+    assert!(!cache.is_current(&fingerprint, root_key.as_ref()));
     cache.update(fingerprint.clone(), root_key.clone());
 
-    assert!(cache.is_current(&fingerprint, &root_key));
-    assert!(!cache.is_current(&other_fingerprint, &root_key));
-    assert!(!cache.is_current(&fingerprint, &other_root_key));
+    assert!(cache.is_current(&fingerprint, root_key.as_ref()));
+    assert!(!cache.is_current(&other_fingerprint, root_key.as_ref()));
+    assert!(!cache.is_current(&fingerprint, other_root_key.as_ref()));
 }
 
 #[test]

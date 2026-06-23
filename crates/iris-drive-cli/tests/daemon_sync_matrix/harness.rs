@@ -365,12 +365,22 @@ impl SyncCluster {
     }
 
     async fn wait_for_file(&self, client: Client, path: &str, expected: &[u8], label: &str) {
+        self.wait_for_file_latency(client, path, expected, label).await;
+    }
+
+    async fn wait_for_file_latency(
+        &self,
+        client: Client,
+        path: &str,
+        expected: &[u8],
+        label: &str,
+    ) -> Duration {
         let local_path = self.path(client).join(path);
         let start = Instant::now();
         while start.elapsed() < WAIT_TIMEOUT {
             self.refresh_view(client).await;
             if matches!(std::fs::read(&local_path), Ok(actual) if actual == expected) {
-                return;
+                return start.elapsed();
             }
             tokio::time::sleep(POLL_INTERVAL).await;
         }
@@ -380,6 +390,27 @@ impl SyncCluster {
             std::fs::read(&local_path).map(|actual| format!("{} bytes", actual.len())),
             self.debug_state_with_rerun_hint()
         );
+    }
+
+    async fn measure_provider_write_to_remote_visible(
+        &self,
+        source: Client,
+        target: Client,
+        path: &str,
+        bytes: &[u8],
+        label: &str,
+    ) -> SyncLatency {
+        let edit_started = Instant::now();
+        let root_cid = self.provider_write(source, path, bytes).await;
+        let source_viewer_done = Instant::now();
+        self
+            .wait_for_file_latency(target, path, bytes, label)
+            .await;
+        SyncLatency {
+            root_cid,
+            local_edit_to_remote_visible: edit_started.elapsed(),
+            source_viewer_done_to_remote_visible: source_viewer_done.elapsed(),
+        }
     }
 
     fn assert_missing(&self, client: Client, path: &str) {
@@ -834,13 +865,11 @@ fn run_command_result(command: &mut Command, context: &str) -> Result<Output, St
                 let kill_error = child.kill().err();
                 let output = child.wait_with_output().map_err(|error| {
                     format!(
-                        "{context} timed out after {:?} and failed to collect output\ncommand: {command_debug}\nkill_error: {kill_error:?}\n{error}",
-                        CLI_COMMAND_TIMEOUT
+                        "{context} timed out after {CLI_COMMAND_TIMEOUT:?} and failed to collect output\ncommand: {command_debug}\nkill_error: {kill_error:?}\n{error}"
                     )
                 })?;
                 return Err(format!(
-                    "{context} timed out after {:?}\ncommand: {command_debug}\nkill_error: {kill_error:?}\n{}",
-                    CLI_COMMAND_TIMEOUT,
+                    "{context} timed out after {CLI_COMMAND_TIMEOUT:?}\ncommand: {command_debug}\nkill_error: {kill_error:?}\n{}",
                     command_output_message(&output)
                 ));
             }

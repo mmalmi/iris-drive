@@ -191,12 +191,12 @@ fn macos_launch_agent_plist_with_home(
         .join("\n");
     let environment_variables = home.map_or_else(String::new, |home| {
         format!(
-            r#"    <key>EnvironmentVariables</key>
+            r"    <key>EnvironmentVariables</key>
     <dict>
         <key>HOME</key>
         <string>{}</string>
     </dict>
-"#,
+",
             xml_escape(home)
         )
     });

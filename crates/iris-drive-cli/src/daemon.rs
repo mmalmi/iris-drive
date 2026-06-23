@@ -36,22 +36,29 @@ include!("daemon/runtime.rs");
 #[derive(Debug, Default)]
 struct ProviderRootPublishCache {
     last_config_fingerprint: Option<ConfigFileFingerprint>,
-    last_current_key: Option<Option<String>>,
+    last_current_key: ProviderRootKeySnapshot,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+enum ProviderRootKeySnapshot {
+    #[default]
+    Unknown,
+    Current(Option<String>),
 }
 
 impl ProviderRootPublishCache {
     fn is_current(
         &self,
         fingerprint: &ConfigFileFingerprint,
-        current_key: &Option<String>,
+        current_key: Option<&String>,
     ) -> bool {
         self.last_config_fingerprint.as_ref() == Some(fingerprint)
-            && self.last_current_key.as_ref() == Some(current_key)
+            && self.last_current_key == ProviderRootKeySnapshot::Current(current_key.cloned())
     }
 
     fn update(&mut self, fingerprint: ConfigFileFingerprint, current_key: Option<String>) {
         self.last_config_fingerprint = Some(fingerprint);
-        self.last_current_key = Some(current_key);
+        self.last_current_key = ProviderRootKeySnapshot::Current(current_key);
     }
 }
 
@@ -66,7 +73,7 @@ async fn publish_provider_root_if_changed(
 ) -> Result<Option<AppConfig>> {
     let config_path = config_path_in(config_dir);
     let config_fingerprint = config_file_fingerprint(&config_path)?;
-    if cache.is_current(&config_fingerprint, last_root_key) {
+    if cache.is_current(&config_fingerprint, last_root_key.as_ref()) {
         return Ok(None);
     }
 
@@ -111,12 +118,14 @@ async fn publish_provider_root_if_changed(
     Ok(Some(updated_config))
 }
 
-fn provider_root_poll_enabled(_config_root_watch_active: bool) -> bool {
-    true
+const PROVIDER_ROOT_SAFETY_POLL_MIN_SECS: u64 = 30;
+
+fn provider_root_poll_enabled(config_root_watch_active: bool) -> bool {
+    !config_root_watch_active
 }
 
 fn provider_root_poll_period(watch_interval_secs: u64) -> std::time::Duration {
-    std::time::Duration::from_secs(watch_interval_secs.max(1))
+    std::time::Duration::from_secs(watch_interval_secs.max(PROVIDER_ROOT_SAFETY_POLL_MIN_SECS))
 }
 
 fn current_app_key_root_key(config: &AppConfig) -> Option<String> {
@@ -278,16 +287,25 @@ fn start_config_root_watch(
     use notify::{RecursiveMode, Watcher};
 
     let config_path = config_path_in(config_dir);
+    let provider_signal_path = iris_drive_core::paths::provider_root_signal_path_in(config_dir);
     let parent = config_path.parent().unwrap_or(config_dir).to_path_buf();
     std::fs::create_dir_all(&parent)
         .with_context(|| format!("creating config directory {}", parent.display()))?;
+    if !provider_signal_path.exists() {
+        std::fs::write(&provider_signal_path, b"").with_context(|| {
+            format!(
+                "creating provider signal {}",
+                provider_signal_path.display()
+            )
+        })?;
+    }
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let callback_tx = tx.clone();
-    let watched_config = config_path.clone();
+    let watched_parent = parent.clone();
     let mut watcher = notify::recommended_watcher(move |result| match result {
         Ok(event) => {
-            if event_touches_path(&event, &watched_config) {
+            if event_touches_config_root(&event, &watched_parent) {
                 let _ = callback_tx.send(());
             }
         }
@@ -299,6 +317,14 @@ fn start_config_root_watch(
     watcher
         .watch(&parent, RecursiveMode::NonRecursive)
         .with_context(|| format!("watching config directory {}", parent.display()))?;
+    watcher
+        .watch(&provider_signal_path, RecursiveMode::NonRecursive)
+        .with_context(|| {
+            format!(
+                "watching provider signal {}",
+                provider_signal_path.display()
+            )
+        })?;
 
     Ok((
         rx,
@@ -306,15 +332,75 @@ fn start_config_root_watch(
         json!({
             "watching": true,
             "path": config_path.display().to_string(),
+            "provider_signal_path": provider_signal_path.display().to_string(),
+            "provider_signal_file_watch": true,
         }),
     ))
 }
 
+async fn start_provider_root_wake_listener(
+    config_dir: &Path,
+) -> Result<(
+    tokio::sync::mpsc::UnboundedReceiver<()>,
+    tokio::task::JoinHandle<()>,
+    Value,
+)> {
+    let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
+        .await
+        .context("binding provider root wake listener")?;
+    let port = listener
+        .local_addr()
+        .context("reading provider root wake listener address")?
+        .port();
+    let wake_path = iris_drive_core::paths::provider_root_wake_path_in(config_dir);
+    if let Some(parent) = wake_path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    std::fs::write(&wake_path, serde_json::to_vec(&json!({ "port": port }))?).with_context(
+        || {
+            format!(
+                "writing provider root wake endpoint {}",
+                wake_path.display()
+            )
+        },
+    )?;
+
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let task = tokio::spawn(async move {
+        while let Ok((_stream, _addr)) = listener.accept().await {
+            let _ = tx.send(());
+        }
+    });
+
+    Ok((
+        rx,
+        task,
+        json!({
+            "running": true,
+            "bind": format!("127.0.0.1:{port}"),
+            "path": wake_path.display().to_string(),
+        }),
+    ))
+}
+
+fn event_touches_config_root(event: &notify::Event, config_dir: &Path) -> bool {
+    event.paths.is_empty()
+        || event.paths.iter().any(|path| {
+            paths_refer_to_same_file(path, config_dir)
+                || path
+                    .parent()
+                    .is_some_and(|parent| paths_refer_to_same_file(parent, config_dir))
+        })
+}
+
+#[cfg(test)]
 fn event_touches_path(event: &notify::Event, target: &Path) -> bool {
-    event
-        .paths
-        .iter()
-        .any(|path| paths_refer_to_same_file(path, target))
+    let parent = target.parent();
+    event.paths.iter().any(|path| {
+        paths_refer_to_same_file(path, target)
+            || parent.is_some_and(|parent| paths_refer_to_same_file(path, parent))
+    })
 }
 
 fn paths_refer_to_same_file(path: &Path, target: &Path) -> bool {

@@ -817,6 +817,11 @@ async fn print_provider_mutation(
     );
     let phase = std::time::Instant::now();
     let report = import_provider_root_with_retry(daemon, root, tombstone_base_root).await?;
+    iris_drive_core::paths::touch_provider_root_signal_in(daemon.config_dir())
+        .context("signaling provider root change")?;
+    wake_provider_root_publisher(daemon.config_dir())
+        .await
+        .context("waking provider root publisher")?;
     tracing::debug!(
         elapsed_ms = phase.elapsed().as_millis(),
         "provider command imported provider root"
@@ -830,6 +835,41 @@ async fn print_provider_mutation(
             "top_level_entries": report.top_level_entries,
         })
     );
+    Ok(())
+}
+
+async fn wake_provider_root_publisher(config_dir: &Path) -> Result<()> {
+    let wake_path = iris_drive_core::paths::provider_root_wake_path_in(config_dir);
+    let raw = match tokio::fs::read_to_string(&wake_path).await {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "reading provider root wake endpoint {}",
+                    wake_path.display()
+                )
+            });
+        }
+    };
+    let value: Value = serde_json::from_str(&raw).with_context(|| {
+        format!(
+            "parsing provider root wake endpoint {}",
+            wake_path.display()
+        )
+    })?;
+    let port = value
+        .get("port")
+        .and_then(Value::as_u64)
+        .and_then(|port| u16::try_from(port).ok())
+        .ok_or_else(|| anyhow::anyhow!("provider root wake endpoint missing port"))?;
+    tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)),
+    )
+    .await
+    .context("provider root wake timed out")?
+    .with_context(|| format!("connecting to provider root wake endpoint on port {port}"))?;
     Ok(())
 }
 

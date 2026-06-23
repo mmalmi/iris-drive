@@ -19,12 +19,19 @@ pub(crate) struct DirectRootExchange {
     known_mesh_peers: BTreeSet<String>,
     next_mesh_publish_seq: u64,
     profile_stream_cache: Option<CachedDirectRootProfileStream>,
+    current_sync_events_cache: Option<CachedCurrentSyncEvents>,
 }
 
 #[derive(Debug, Clone)]
 struct CachedDirectRootProfileStream {
     config_fingerprint: ConfigFileFingerprint,
     root_scope_id: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedCurrentSyncEvents {
+    config_fingerprint: ConfigFileFingerprint,
+    events: Vec<DirectRootEvent>,
 }
 
 impl DirectRootExchange {
@@ -62,7 +69,13 @@ impl DirectRootExchange {
         let root_scope_id = state.root_scope_id();
         self.subscribe_profile_stream(&root_scope_id, Some(sync)).await;
         let stream = direct_root_mesh_stream(&root_scope_id);
-        let events = self.events_for_publish(build_current_sync_events(config_dir, config, state).await?);
+        let config_fingerprint = config_file_fingerprint(&config_path_in(config_dir))?;
+        let local_events = self
+            .cached_current_sync_events_from_config(config_fingerprint, || {
+                build_current_sync_events(config_dir, config, state)
+            })
+            .await?;
+        let events = self.events_for_publish(local_events);
         let now = std::time::Instant::now();
         for event in events {
             let event = self.event_for_publish(event);
@@ -149,7 +162,7 @@ impl DirectRootExchange {
             return Ok(false);
         }
         self.cache_event(direct_event);
-        let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+        let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
         if let Some(state) = config.profile.as_ref() {
             self.announce_current_state(config_dir, &config, state, Some(sync.as_ref()))
                 .await?;
@@ -178,7 +191,7 @@ impl DirectRootExchange {
         let config_path = config_path_in(config_dir);
         let config_fingerprint = config_file_fingerprint(&config_path)?;
         self.cached_profile_stream_root_scope_id_from_config(config_fingerprint, || {
-            Ok(AppConfig::load_or_default(&config_path)?)
+            Ok(AppConfig::load_or_default_cached_profile(&config_path)?)
         })
     }
 
@@ -201,6 +214,30 @@ impl DirectRootExchange {
             root_scope_id: root_scope_id.clone(),
         });
         Ok(root_scope_id)
+    }
+
+    async fn cached_current_sync_events_from_config<F, Fut>(
+        &mut self,
+        config_fingerprint: ConfigFileFingerprint,
+        build: F,
+    ) -> Result<Vec<DirectRootEvent>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<Vec<DirectRootEvent>>>,
+    {
+        if let Some(cached) = self
+            .current_sync_events_cache
+            .as_ref()
+            .filter(|cached| cached.config_fingerprint == config_fingerprint)
+        {
+            return Ok(cached.events.clone());
+        }
+        let events = build().await?;
+        self.current_sync_events_cache = Some(CachedCurrentSyncEvents {
+            config_fingerprint,
+            events: events.clone(),
+        });
+        Ok(events)
     }
 
     pub(crate) async fn drain_mesh_events(

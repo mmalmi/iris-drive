@@ -441,8 +441,8 @@ impl ProfileState {
                 || existing.link_secret != link_secret
             {
                 existing.requested_at = next_requested_at;
-                existing.label = request.label.clone();
-                existing.link_secret = request.link_secret.clone();
+                existing.label.clone_from(&request.label);
+                existing.link_secret.clone_from(&request.link_secret);
                 changed = true;
             }
         } else {

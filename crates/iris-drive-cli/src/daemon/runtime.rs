@@ -148,6 +148,23 @@ pub(crate) fn cmd_daemon(
                     })))
                 }
             };
+        let (mut provider_root_wake_rx, provider_root_wake_status) =
+            match start_provider_root_wake_listener(config_dir).await {
+                Ok((rx, task, status)) => {
+                    daemon_tasks.push(task);
+                    (Some(rx), Some(status))
+                }
+                Err(error) => {
+                    println!(
+                        "{}",
+                        json!({"event": "provider_root_wake_error", "error": format!("{error:#}")})
+                    );
+                    (None, Some(json!({
+                        "running": false,
+                        "error": format!("{error:#}"),
+                    })))
+                }
+            };
         let gateway_enabled = embedded_hashtree_requested && embedded_hashtree.is_some();
         let gateway_disabled_by = if !enable_gateway {
             Some("cli")
@@ -268,6 +285,7 @@ pub(crate) fn cmd_daemon(
                 "browser_gateway": gateway_status,
                 "windows_cloud_root": windows_cloud_status,
                 "config_root_watch": config_root_watch_status,
+                "provider_root_wake": provider_root_wake_status,
                 "fips_block_sync": startup_fips_block_sync_status,
                 "fips_block_sync_error": fips_block_sync_error,
         });
@@ -371,33 +389,38 @@ pub(crate) fn cmd_daemon(
                 } => {
                     match recv {
                         Some(Ok(RelayPoolNotification::Event { event, .. })) => {
-                            if let Err(e) =
-                                apply_one_event(
-                                    &client,
-                                    config_dir,
-	                                    &event,
-	                                    fips_blocks.clone(),
-	                                    mount_refresh_tx.clone(),
-	                                    &daemon_tasks,
-	                                )
-                                .await
+                            match apply_one_event(
+                                &client,
+                                config_dir,
+                                &event,
+                                fips_blocks.clone(),
+                                mount_refresh_tx.clone(),
+                                &daemon_tasks,
+                            )
+                            .await
                             {
-                                println!(
-                                    "{}",
-                                    json!({"event": "apply_error", "id": event.id.to_hex(), "error": e.to_string()})
-                                );
-                            } else if let Err(error) =
-	                                announce_current_state_direct(
-	                                    &mut direct_roots,
-	                                    config_dir,
-	                                    fips_blocks.as_deref(),
-	                                )
-                                .await
-                            {
-                                println!(
-                                    "{}",
-                                    json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
-                                );
+                                Ok(outcome) if outcome.should_announce_current_state() => {
+                                    if let Err(error) =
+                                        announce_current_state_direct(
+                                            &mut direct_roots,
+                                            config_dir,
+                                            fips_blocks.as_deref(),
+                                        )
+                                        .await
+                                    {
+                                        println!(
+                                            "{}",
+                                            json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
+                                        );
+                                    }
+                                }
+                                Ok(_) => {}
+                                Err(e) => {
+                                    println!(
+                                        "{}",
+                                        json!({"event": "apply_error", "id": event.id.to_hex(), "error": e.to_string()})
+                                    );
+                                }
                             }
                         }
                         Some(Ok(RelayPoolNotification::Shutdown)) => {
@@ -525,6 +548,35 @@ pub(crate) fn cmd_daemon(
                         Err(error) => println!(
                             "{}",
                             json!({"event": "provider_root_publish_error", "trigger": "config_root_watch", "error": format!("{error:#}")})
+                        ),
+                    }
+                }
+                Some(()) = async {
+                    if let Some(rx) = provider_root_wake_rx.as_mut() {
+                        rx.recv().await
+                    } else {
+                        std::future::pending::<Option<()>>().await
+                    }
+                } => {
+                    if let Some(rx) = provider_root_wake_rx.as_mut() {
+                        while rx.try_recv().is_ok() {}
+                    }
+                    match publish_provider_root_if_changed(
+                        &client,
+	                        config_dir,
+	                        &mut last_provider_root_key,
+	                        &mut provider_root_publish_cache,
+	                        &mut direct_roots,
+	                        fips_blocks.as_deref(),
+	                        &daemon_tasks,
+	                    )
+                    .await
+                    {
+                        Ok(Some(_updated_config)) => {}
+                        Ok(None) => {}
+                        Err(error) => println!(
+                            "{}",
+                            json!({"event": "provider_root_publish_error", "trigger": "provider_root_wake", "error": format!("{error:#}")})
                         ),
                     }
                 }

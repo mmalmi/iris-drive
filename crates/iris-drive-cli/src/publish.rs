@@ -84,7 +84,7 @@ pub(crate) async fn announce_current_state_direct(
     config_dir: &Path,
     fips_blocks: Option<&FsFipsBlockSync>,
 ) -> Result<()> {
-    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
     let Some(state) = config.profile.as_ref() else {
         return Ok(());
     };
@@ -296,6 +296,7 @@ pub(crate) async fn import_mount_root_and_publish(
     .await
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn import_mount_root_and_publish_with_tombstone_paths(
     client: &nostr_sdk::Client,
     config_dir: &std::path::Path,
@@ -403,6 +404,7 @@ pub(crate) fn spawn_publish_current_state(
     })
 }
 
+#[allow(clippy::too_many_lines)]
 pub(crate) async fn publish_current_state(
     client: &nostr_sdk::Client,
     config_dir: &std::path::Path,

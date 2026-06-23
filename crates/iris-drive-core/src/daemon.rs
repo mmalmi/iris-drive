@@ -858,7 +858,7 @@ impl Daemon {
             .config
             .profile
             .as_ref()
-            .map(|profile| profile.root_scope_id())
+            .map(super::profile::ProfileState::root_scope_id)
             .ok_or_else(|| DaemonError::DriveMissing(drive_id.to_string()))?;
         self.config.upsert_drive(Drive {
             root_scope_id,

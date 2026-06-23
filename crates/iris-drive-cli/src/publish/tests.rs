@@ -112,7 +112,11 @@ fn direct_root_retry_policy_keeps_prerequisite_skips_uncached() {
         assert!(!drive_root_apply_outcome_is_retryable(&outcome));
     }
     assert!(!EventApplyOutcome::RetryablePrerequisiteMissing.should_cache_direct_root_frame());
-    assert!(EventApplyOutcome::Final.should_cache_direct_root_frame());
+    assert!(EventApplyOutcome::Changed.should_cache_direct_root_frame());
+    assert!(EventApplyOutcome::Unchanged.should_cache_direct_root_frame());
+    assert!(EventApplyOutcome::Changed.should_announce_current_state());
+    assert!(!EventApplyOutcome::Unchanged.should_announce_current_state());
+    assert!(!EventApplyOutcome::RetryablePrerequisiteMissing.should_announce_current_state());
 }
 
 #[test]
@@ -159,6 +163,67 @@ fn direct_root_profile_stream_cache_reuses_unchanged_config() {
     assert_eq!(second, first);
     assert_eq!(changed, None);
     assert_eq!(loads, 2);
+}
+
+#[test]
+fn direct_root_publish_cache_reuses_unchanged_local_events() {
+    let mut exchange = DirectRootExchange::default();
+    let initial_fingerprint = ConfigFileFingerprint {
+        len: 10,
+        modified: None,
+    };
+    let changed_fingerprint = ConfigFileFingerprint {
+        len: 11,
+        modified: None,
+    };
+    let first = DirectRootEvent {
+        key: "drive-root:first".to_string(),
+        event_id: "event-a".to_string(),
+        kind: 30_078,
+        json: "{\"id\":\"event-a\"}".to_string(),
+    };
+    let second = DirectRootEvent {
+        key: "drive-root:second".to_string(),
+        event_id: "event-b".to_string(),
+        kind: 30_078,
+        json: "{\"id\":\"event-b\"}".to_string(),
+    };
+    let mut builds = 0;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let initial = runtime
+        .block_on(exchange.cached_current_sync_events_from_config(
+            initial_fingerprint.clone(),
+            || async {
+                builds += 1;
+                Ok(vec![first.clone()])
+            },
+        ))
+        .unwrap();
+    let cached = runtime
+        .block_on(
+            exchange.cached_current_sync_events_from_config(initial_fingerprint, || async {
+                builds += 1;
+                Ok(vec![second.clone()])
+            }),
+        )
+        .unwrap();
+    let changed = runtime
+        .block_on(
+            exchange.cached_current_sync_events_from_config(changed_fingerprint, || async {
+                builds += 1;
+                Ok(vec![second.clone()])
+            }),
+        )
+        .unwrap();
+
+    assert_eq!(initial[0].key, first.key);
+    assert_eq!(cached[0].key, first.key);
+    assert_eq!(changed[0].key, second.key);
+    assert_eq!(builds, 2);
 }
 
 const _: () = {
