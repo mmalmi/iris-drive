@@ -1393,6 +1393,7 @@ done
 
 run_step "authorization" wait_until "all devices authorized" all_authorized
 run_step "fresh daemons" wait_until "all daemon statuses fresh" all_fresh
+run_step "direct FIPS peer discovery" wait_until "every device has a direct peer" all_have_direct_peer
 
 for label in "${LABELS[@]}"; do
   write_file "$label" "seed/$label.txt" "seed from $label in $RUN_ID
@@ -1403,7 +1404,6 @@ done
 
 run_step "initial multi-device merge" wait_for_converged_union "initial merge"
 
-run_step "direct FIPS peer discovery" wait_until "every device has a direct peer" all_have_direct_peer
 run_step "create edit rename delete from $source_label" step_create_edit_rename_delete
 run_step "nested create/delete from $target_label" step_nested_create_delete
 run_step "windows projection stale remote edit" step_windows_projection_replaces_stale_remote_edit

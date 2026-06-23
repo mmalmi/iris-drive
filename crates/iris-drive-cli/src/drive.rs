@@ -800,7 +800,9 @@ pub(crate) async fn delete_provider_path(
     Ok(())
 }
 
-const PROVIDER_IMPORT_RETRY_DELAYS_MS: &[u64] = &[250, 500, 1_000, 2_000, 4_000, 8_000];
+const PROVIDER_IMPORT_RETRY_DELAYS_MS: &[u64] = &[
+    250, 500, 1_000, 2_000, 4_000, 8_000, 12_000, 16_000, 16_000, 16_000,
+];
 
 async fn ensure_provider_root_locally_available(daemon: &Daemon, root: &Cid) -> Result<()> {
     let mut attempt = 0;
@@ -1019,6 +1021,7 @@ fn provider_import_error_message_is_retryable(message: &str) -> bool {
             || message.contains("No such file or directory")
             || message.contains("The system cannot find the file specified"))
         || message.contains("Missing chunk")
+        || message.contains("local store is missing provider root block")
 }
 
 #[cfg(test)]

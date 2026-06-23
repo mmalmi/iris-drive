@@ -344,9 +344,28 @@ fn provider_import_retries_windows_transient_missing_store_reads() {
     assert!(provider_import_error_message_is_retryable(
         "index: tree: Missing chunk: abc123"
     ));
+    assert!(provider_import_error_message_is_retryable(
+        "local store is missing provider root block abc123"
+    ));
     assert!(!provider_import_error_message_is_retryable(
         "config: invalid json"
     ));
+}
+
+#[test]
+fn provider_import_retries_long_enough_for_peer_root_warmup() {
+    let retry_budget_ms: u64 = PROVIDER_IMPORT_RETRY_DELAYS_MS.iter().sum();
+
+    assert!(
+        retry_budget_ms >= 60_000,
+        "provider root warmup retry budget was only {retry_budget_ms}ms"
+    );
+    assert!(
+        PROVIDER_IMPORT_RETRY_DELAYS_MS
+            .iter()
+            .all(|delay| *delay <= 16_000),
+        "individual provider retry sleeps should stay bounded"
+    );
 }
 
 #[test]
