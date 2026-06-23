@@ -222,6 +222,25 @@ fn list_after_import_shows_merged_view() {
 }
 
 #[test]
+fn list_uses_projected_view_for_provider_collision_copies() {
+    let cfg = tempdir().unwrap();
+    let work = tempdir().unwrap();
+    std::fs::write(work.path().join("photo.png"), b"real image").unwrap();
+    std::fs::write(work.path().join("photo (2).png"), b"").unwrap();
+    std::fs::write(work.path().join("photo copy.png"), b"real image").unwrap();
+    std::fs::write(work.path().join("photo copy (2).png"), b"").unwrap();
+
+    idrive(cfg.path()).arg("init").assert().success();
+    idrive(cfg.path())
+        .arg("import")
+        .arg(work.path())
+        .assert()
+        .success();
+
+    assert_list_paths(cfg.path(), &["photo.png"]);
+}
+
+#[test]
 fn provider_commands_operate_on_virtual_root() {
     let cfg = tempdir().unwrap();
     let work = tempdir().unwrap();

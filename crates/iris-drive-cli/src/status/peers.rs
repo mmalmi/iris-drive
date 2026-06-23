@@ -15,7 +15,7 @@ pub(crate) fn peer_statuses(
     let Some(account) = config.profile.as_ref() else {
         return Vec::new();
     };
-    let Some(snapshot) = account.app_keys.as_ref() else {
+    let Some(snapshot) = account.current_app_keys_projection() else {
         return Vec::new();
     };
     let primary_drive = config.drive(iris_drive_core::PRIMARY_DRIVE_ID);

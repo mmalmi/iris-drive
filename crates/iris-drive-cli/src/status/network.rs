@@ -32,7 +32,7 @@ fn configured_fips_authorized_peer_npubs(config: &AppConfig) -> Vec<String> {
     let Some(account) = config.profile.as_ref() else {
         return Vec::new();
     };
-    let Some(snapshot) = account.app_keys.as_ref() else {
+    let Some(snapshot) = account.current_app_keys_projection() else {
         return Vec::new();
     };
 

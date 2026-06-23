@@ -94,7 +94,9 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         .count();
     let published_app_key_roots = config
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-        .map_or(0, |drive| drive.app_key_roots.len());
+        .map_or(0, |drive| {
+            drive.active_app_key_root_count(config.profile.as_ref())
+        });
     let fips_diagnostics = fips_network_diagnostics(&config, daemon_status.as_ref());
     let backup_targets = backup_targets_status(&config);
     let backup_target_count = backup_targets.len();
@@ -123,7 +125,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                 "root_scope_id": d.root_scope_id,
                 "role": drive_role_label(d.role),
                 "last_root_cid": d.last_root_cid,
-                "app_key_root_count": d.app_key_roots.len(),
+                "app_key_root_count": d.active_app_key_root_count(config.profile.as_ref()),
             })).collect::<Vec<_>>(),
             "hashtree": {
                 "blocks_dir": blocks_dir.display().to_string(),
@@ -606,7 +608,7 @@ fn daemon_summary_app_key_counts(config: &AppConfig, payload: &Value) -> (usize,
     let Some(account) = config.profile.as_ref() else {
         return (0, 0);
     };
-    let Some(snapshot) = account.app_keys.as_ref() else {
+    let Some(snapshot) = account.current_app_keys_projection() else {
         return (0, 0);
     };
     let fips_status = payload

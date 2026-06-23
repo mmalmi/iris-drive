@@ -16,6 +16,7 @@ use crate::merge::{
     MergedView, merge_drives, walk_app_key_tree,
 };
 use crate::profile::ProfileState;
+use crate::provider::provider_collision_family_path;
 
 #[derive(Debug, Error)]
 pub enum ProjectionError {
@@ -87,7 +88,8 @@ pub async fn primary_merged_view<S: Store>(
         let Some(root) = drive.app_key_roots.get(app_key_pubkey) else {
             continue;
         };
-        let Some(root) = merge_root_for_device(tree, app_key_pubkey, root).await? else {
+        let Some(root) = merge_root_for_device(tree, app_key_pubkey, root, &merge_app_keys).await?
+        else {
             continue;
         };
         let cid = Cid::parse(&root.root_cid).map_err(|source| ProjectionError::RootCid {
@@ -111,6 +113,7 @@ pub async fn primary_merged_view<S: Store>(
         .collect();
     let mut view = merge_drives(&merge_app_key_refs, &snapshots);
     add_visible_conflict_entries(&mut view)?;
+    collapse_same_source_collision_copy_entries(&mut view);
     add_primary_share_shortcut_entries(&mut view, config);
     Ok(PrimaryMergedView {
         view,
@@ -172,6 +175,59 @@ fn add_visible_conflict_entries(view: &mut MergedView) -> Result<(), ProjectionE
     Ok(())
 }
 
+fn collapse_same_source_collision_copy_entries(view: &mut MergedView) {
+    let mut best_by_identity: BTreeMap<(String, String, u64, [u8; 32]), (usize, usize, String)> =
+        BTreeMap::new();
+    for entry in &view.files {
+        let (family_path, collision_depth) = provider_collision_family_path(&entry.path);
+        let key = (
+            entry.source_app_key_pubkey.clone(),
+            family_path,
+            entry.size,
+            entry_identity_hash(entry),
+        );
+        let score = (collision_depth, entry.path.len(), entry.path.clone());
+        if best_by_identity
+            .get(&key)
+            .is_none_or(|existing| score < *existing)
+        {
+            best_by_identity.insert(key, score);
+        }
+    }
+
+    view.files.retain(|entry| {
+        let (family_path, _) = provider_collision_family_path(&entry.path);
+        let key = (
+            entry.source_app_key_pubkey.clone(),
+            family_path,
+            entry.size,
+            entry_identity_hash(entry),
+        );
+        best_by_identity
+            .get(&key)
+            .is_some_and(|(_, _, path)| path == &entry.path)
+    });
+
+    let non_empty_families = view
+        .files
+        .iter()
+        .filter(|entry| entry.size > 0)
+        .map(|entry| {
+            let (family_path, _) = provider_collision_family_path(&entry.path);
+            (entry.source_app_key_pubkey.clone(), family_path)
+        })
+        .collect::<BTreeSet<_>>();
+
+    view.files.retain(|entry| {
+        if entry.size > 0 {
+            return true;
+        }
+        let (family_path, collision_depth) = provider_collision_family_path(&entry.path);
+        collision_depth == 0
+            || !non_empty_families.contains(&(entry.source_app_key_pubkey.clone(), family_path))
+    });
+}
+
 fn visible_conflict_entry(
     original_path: &str,
     file: &MergedConflictFile,
@@ -198,10 +254,12 @@ fn conflict_file_matches_entry(file: &MergedConflictFile, entry: &MergedEntry) -
         && file.size == entry.size
 }
 
+fn entry_identity_hash(entry: &MergedEntry) -> [u8; 32] {
+    entry.whole_file_hash.unwrap_or(entry.hash)
+}
+
 fn entry_identity_hash_hex(entry: &MergedEntry) -> String {
-    entry
-        .whole_file_hash
-        .map_or_else(|| to_hex(&entry.hash), |hash| to_hex(&hash))
+    to_hex(&entry_identity_hash(entry))
 }
 
 fn next_visible_conflict_path(
@@ -403,7 +461,8 @@ async fn merge_source_roots<S: Store>(
         let Some(root) = drive.app_key_roots.get(app_key_pubkey) else {
             continue;
         };
-        let Some(root) = merge_root_for_device(tree, app_key_pubkey, root).await? else {
+        let Some(root) = merge_root_for_device(tree, app_key_pubkey, root, merge_app_keys).await?
+        else {
             continue;
         };
         source_roots.insert(app_key_pubkey.clone(), root);
@@ -596,7 +655,9 @@ async fn merged_user_directory_paths<S: Store>(
         let Some(root) = drive.app_key_roots.get(app_key_pubkey) else {
             continue;
         };
-        let Some(root) = merge_root_for_device(tree, app_key_pubkey, root).await? else {
+        let Some(root) =
+            merge_root_for_device(tree, app_key_pubkey, root, authorized_app_keys).await?
+        else {
             continue;
         };
         let cid = Cid::parse(&root.root_cid).map_err(|source| ProjectionError::RootCid {
@@ -623,10 +684,14 @@ async fn merge_root_for_device<S: Store>(
     tree: &HashTree<S>,
     app_key_pubkey: &str,
     root: &AppKeyRootRef,
+    active_app_keys: &[String],
 ) -> Result<Option<AppKeyRootRef>, ProjectionError> {
     let mut current = root.clone();
     for _ in 0..32 {
         if !current.local_only {
+            return Ok(Some(current));
+        }
+        if should_use_local_only_root(app_key_pubkey, &current, active_app_keys) {
             return Ok(Some(current));
         }
         let Some(parent) = current
@@ -655,6 +720,23 @@ async fn merge_root_for_device<S: Store>(
         current = AppKeyRootRef::from_meta(parent.root_cid.clone(), meta.created_at, &meta);
     }
     Ok(None)
+}
+
+fn should_use_local_only_root(
+    app_key_pubkey: &str,
+    root: &AppKeyRootRef,
+    active_app_keys: &[String],
+) -> bool {
+    let observed_inactive_peer = root.observed.keys().any(|observed_app_key| {
+        observed_app_key != app_key_pubkey
+            && !active_app_keys
+                .iter()
+                .any(|active_app_key| active_app_key == observed_app_key)
+    });
+    let active_peer_present = active_app_keys
+        .iter()
+        .any(|active_app_key| active_app_key != app_key_pubkey);
+    observed_inactive_peer && !active_peer_present
 }
 
 fn collect_user_directory_paths<'a, S: Store>(
@@ -692,26 +774,13 @@ fn collect_user_directory_paths<'a, S: Store>(
 }
 
 fn authorized_app_key_pubkeys(state: &ProfileState) -> Vec<String> {
-    let mut app_actors: Vec<String> = state
-        .app_keys
-        .as_ref()
-        .map(|snap| {
-            snap.app_actors
-                .iter()
-                .map(|device| device.pubkey.clone())
-                .collect()
-        })
-        .unwrap_or_default();
-    if !app_actors.contains(&state.app_key_pubkey) {
-        app_actors.push(state.app_key_pubkey.clone());
-    }
-    app_actors
+    state.active_root_writer_app_key_pubkeys()
 }
 
 #[must_use]
 pub fn merge_app_key_pubkeys(account: &ProfileState, drive: &Drive) -> Vec<String> {
     let mut devices = authorized_app_key_pubkeys(account);
-    for app_key_pubkey in drive.app_key_roots.keys() {
+    for (app_key_pubkey, _) in drive.active_app_key_roots(Some(account)) {
         if !devices.contains(app_key_pubkey) {
             devices.push(app_key_pubkey.clone());
         }

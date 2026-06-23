@@ -305,15 +305,7 @@ pub fn apply_drive_root_events(
 
 #[must_use]
 pub fn authorized_app_key_pubkeys(state: &ProfileState) -> Vec<String> {
-    let mut app_actors: Vec<String> = state
-        .app_keys
-        .as_ref()
-        .map(|snap| snap.app_actors.iter().map(|d| d.pubkey.clone()).collect())
-        .unwrap_or_default();
-    if !app_actors.contains(&state.app_key_pubkey) {
-        app_actors.push(state.app_key_pubkey.clone());
-    }
-    app_actors
+    state.active_root_writer_app_key_pubkeys()
 }
 
 fn pick_relays(config: &AppConfig, relay_override: &[String]) -> Vec<String> {
@@ -339,8 +331,8 @@ fn root_cid_belongs_to_peer(config: &AppConfig, root_cid: &str) -> bool {
     };
     config.drive(PRIMARY_DRIVE_ID).is_some_and(|drive| {
         drive
-            .app_key_roots
-            .iter()
+            .active_app_key_roots(config.profile.as_ref())
+            .into_iter()
             .any(|(device, root)| device != &account.app_key_pubkey && root.root_cid == root_cid)
     })
 }

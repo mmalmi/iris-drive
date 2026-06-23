@@ -376,13 +376,8 @@ impl Daemon {
             let current_visible =
                 crate::indexer::filter_ignored_entries_from_root(&self.tree, &current_cid).await?;
             if current_visible == merged.root_cid
-                && current_root_observes_drive_roots(
-                    &self.tree,
-                    &current_cid,
-                    &account.app_key_pubkey,
-                    &drive,
-                )
-                .await?
+                && current_root_observes_drive_roots(&self.tree, &current_cid, &account, &drive)
+                    .await?
             {
                 return Ok(None);
             }
@@ -767,8 +762,9 @@ impl Daemon {
         // Per-AppKey root entry, keyed by this install's AppKey pubkey.
         // Falls back to no-op when there is no profile yet.
         if let Some(account) = self.config.profile.as_ref() {
-            let dck_generation =
-                current_app_keys_projection(account).map_or(0, |snap| snap.dck_generation);
+            let dck_generation = account
+                .current_app_keys_projection()
+                .map_or(0, |snap| snap.dck_generation);
             let app_key_root = root_meta.map_or_else(
                 || AppKeyRootRef::legacy(root_cid.to_string(), published_at, dck_generation),
                 |meta| AppKeyRootRef::from_meta(root_cid.to_string(), published_at, meta),
@@ -819,8 +815,8 @@ impl Daemon {
             .into_iter()
             .collect();
         let observed = drive
-            .app_key_roots
-            .iter()
+            .active_app_key_roots(Some(account))
+            .into_iter()
             .filter(|(_, root)| root.app_key_seq > 0)
             .map(|(app_key_pubkey, root)| {
                 (
@@ -832,8 +828,9 @@ impl Daemon {
                 )
             })
             .collect();
-        let dck_generation =
-            current_app_keys_projection(account).map_or(0, |snap| snap.dck_generation);
+        let dck_generation = account
+            .current_app_keys_projection()
+            .map_or(0, |snap| snap.dck_generation);
         Some(DriveRootMeta {
             schema: DriveRootMeta::SCHEMA,
             drive_id: drive.drive_id.clone(),
@@ -876,33 +873,27 @@ impl Daemon {
     }
 }
 
-fn current_app_keys_projection(
-    account: &crate::profile::ProfileState,
-) -> Option<crate::app_keys::AppKeysProjection> {
-    account
-        .app_keys
-        .clone()
-        .or_else(|| account.app_keys_from_profile())
-}
-
 async fn current_root_observes_drive_roots(
     tree: &HashTree<FsBlobStore>,
     current_root: &Cid,
-    current_device: &str,
+    account: &crate::profile::ProfileState,
     drive: &crate::config::Drive,
 ) -> Result<bool, DaemonError> {
     let Some(meta) = read_root_meta(tree, current_root).await? else {
         return Ok(false);
     };
-    Ok(drive.app_key_roots.iter().all(|(app_key_pubkey, root)| {
-        app_key_pubkey == current_device
-            || root.local_only
-            || root.app_key_seq == 0
-            || meta
-                .observed
-                .get(app_key_pubkey)
-                .is_some_and(|observed| root_observation_covers(observed, root))
-    }))
+    Ok(drive
+        .active_app_key_roots(Some(account))
+        .into_iter()
+        .all(|(app_key_pubkey, root)| {
+            app_key_pubkey == &account.app_key_pubkey
+                || root.local_only
+                || root.app_key_seq == 0
+                || meta
+                    .observed
+                    .get(app_key_pubkey)
+                    .is_some_and(|observed| root_observation_covers(observed, root))
+        }))
 }
 
 fn root_observation_covers(observed: &RootObservation, root: &AppKeyRootRef) -> bool {

@@ -154,6 +154,50 @@ fn import_file_action_dedupes_identical_shared_file() {
 }
 
 #[test]
+fn native_provider_write_dedupes_identical_collision_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let _ = app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "iPhone".to_owned(),
+    });
+    mark_daemon_live(dir.path());
+
+    let source = dir.path().join("empty.png");
+    std::fs::write(&source, b"").unwrap();
+    let data_dir = dir.path().display().to_string();
+
+    let first =
+        super::native_provider_write_json(&data_dir, "photo.png", &source.display().to_string());
+    assert!(
+        first["error"].as_str().unwrap_or_default().is_empty(),
+        "unexpected first write result: {first:#}"
+    );
+
+    let second = super::native_provider_write_json(
+        &data_dir,
+        "photo (2) (3).png",
+        &source.display().to_string(),
+    );
+    assert!(
+        second["error"].as_str().unwrap_or_default().is_empty(),
+        "unexpected second write result: {second:#}"
+    );
+    assert_eq!(second["duplicate"], true);
+    assert_eq!(second["path"], "photo.png");
+
+    let provider = super::native_provider_list_json(&data_dir);
+    assert_eq!(provider["file_count"], 1);
+    let paths = provider["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["kind"] == "file")
+        .map(|entry| entry["path"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, vec!["photo.png"]);
+}
+
+#[test]
 fn import_file_action_dedupes_identical_collision_copy() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());

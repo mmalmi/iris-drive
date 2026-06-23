@@ -9,9 +9,9 @@ use iris_drive_core::config::DEFAULT_RELAYS;
 use iris_drive_core::paths::config_path_in;
 use iris_drive_core::provider::{
     ProviderListEntry, normalize_provider_document_path, normalize_provider_parent_path,
-    normalize_provider_path, optional_normalized_provider_path, provider_list_summary,
-    provider_path_is_child_document, sanitized_provider_file_name, split_provider_path,
-    unique_provider_path,
+    normalize_provider_path, optional_normalized_provider_path, provider_collision_family_path,
+    provider_list_summary, provider_path_is_child_document, sanitized_provider_file_name,
+    split_provider_path, unique_provider_path,
 };
 use iris_drive_core::{AppConfig, Profile};
 use serde_json::json;
@@ -208,19 +208,28 @@ async fn import_provider_bytes(
     if let Some(path) =
         duplicate_provider_file_path(&provider, &entries, "", display_name, bytes).await?
     {
-        let summary = provider_list_summary(provider.anchor().await.as_str(), &entries);
-        return Ok(json!({
-            "path": path,
-            "root_cid": visible_root.to_string(),
-            "file_count": summary.file_count,
-            "top_level_entries": entries.iter().filter(|entry| entry.parent_path.is_empty()).count(),
-            "imported": false,
-            "duplicate": true,
-        }));
+        let root_cid = visible_root.to_string();
+        return Ok(duplicate_provider_file_response(&path, &root_cid, &entries));
     }
     let path = unique_provider_path(&entries, "", display_name, None);
     write_provider_file(&provider, &path, bytes).await?;
     import_provider_mutation(&mut daemon, &provider, &path, Some(visible_root)).await
+}
+
+fn duplicate_provider_file_response(
+    path: &str,
+    root_cid: &str,
+    entries: &[ProviderListEntry],
+) -> serde_json::Value {
+    let summary = provider_list_summary(root_cid, entries);
+    json!({
+        "path": path,
+        "root_cid": root_cid,
+        "file_count": summary.file_count,
+        "top_level_entries": entries.iter().filter(|entry| entry.parent_path.is_empty()).count(),
+        "imported": false,
+        "duplicate": true,
+    })
 }
 
 async fn duplicate_provider_file_path<P>(
@@ -251,33 +260,8 @@ where
 }
 
 fn provider_import_display_name_matches(existing: &str, requested: &str) -> bool {
-    if existing == requested {
-        return true;
-    }
-    let path = Path::new(requested);
-    let stem = path
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())
-        .unwrap_or("Shared file");
-    let extension = path
-        .extension()
-        .and_then(|value| value.to_str())
-        .filter(|value| !value.is_empty())
-        .map(|value| format!(".{value}"))
-        .unwrap_or_default();
-    let Some(rest) = existing.strip_prefix(stem) else {
-        return false;
-    };
-    let Some(rest) = rest.strip_prefix(" (") else {
-        return false;
-    };
-    let number = if extension.is_empty() {
-        rest.strip_suffix(')')
-    } else {
-        rest.strip_suffix(&format!("){extension}"))
-    };
-    number.is_some_and(|value| value.parse::<u32>().is_ok())
+    existing == requested
+        || provider_collision_family_path(existing).0 == provider_collision_family_path(requested).0
 }
 
 async fn download_content_link_bytes(url: &str) -> anyhow::Result<Vec<u8>> {
@@ -443,6 +427,20 @@ fn run_native_provider_write(
         let bytes = std::fs::read(source_path)
             .with_context(|| format!("reading {}", Path::new(source_path).display()))?;
         let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
+        let modified_at_by_path = BTreeMap::new();
+        let entries = provider_entries(&provider, &modified_at_by_path).await?;
+        let (parent_path, display_name) = split_provider_path(&path)?;
+        if let Some(existing_path) =
+            duplicate_provider_file_path(&provider, &entries, &parent_path, &display_name, &bytes)
+                .await?
+        {
+            let root_cid = visible_root.to_string();
+            return Ok(duplicate_provider_file_response(
+                &existing_path,
+                &root_cid,
+                &entries,
+            ));
+        }
         write_provider_file(&provider, &path, &bytes).await?;
         import_provider_mutation(&mut daemon, &provider, &path, Some(visible_root)).await
     })
@@ -701,20 +699,7 @@ pub(crate) fn native_sync_status_label(
 }
 
 fn authorized_app_key_pubkeys(state: &iris_drive_core::ProfileState) -> Vec<String> {
-    let mut app_actors: Vec<String> = state
-        .app_keys
-        .as_ref()
-        .map(|snap| {
-            snap.app_actors
-                .iter()
-                .map(|device| device.pubkey.clone())
-                .collect()
-        })
-        .unwrap_or_default();
-    if !app_actors.contains(&state.app_key_pubkey) {
-        app_actors.push(state.app_key_pubkey.clone());
-    }
-    app_actors
+    state.active_root_writer_app_key_pubkeys()
 }
 
 async fn write_provider_file<P>(provider: &P, path: &str, bytes: &[u8]) -> anyhow::Result<()>

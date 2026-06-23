@@ -4,7 +4,7 @@ use super::*;
 #[allow(clippy::too_many_lines)]
 async fn materialize_primary_merged_root_converges_accepted_remote_files() {
     let cfg_dir = tempdir().unwrap();
-    let account = init_config_with_account(cfg_dir.path());
+    let mut account = init_config_with_account(cfg_dir.path());
     let remote = Identity::generate(cfg_dir.path().join("remote.key")).pubkey_hex();
     let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
 
@@ -36,19 +36,11 @@ async fn materialize_primary_merged_root_converges_accepted_remote_files() {
     .unwrap();
     drop(daemon);
 
+    account
+        .approve_app_key(&remote, Some("Pixel".into()))
+        .unwrap();
     let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
-    let state = config.profile.as_mut().unwrap();
-    state
-        .app_keys
-        .as_mut()
-        .unwrap()
-        .app_actors
-        .push(AppActorEntry::member(
-            remote.clone(),
-            100,
-            Some("Pixel".into()),
-        ));
-    state.app_keys.as_mut().unwrap().normalize();
+    config.profile = Some(account.state.clone());
     let mut drive = config.drive(PRIMARY_DRIVE_ID).unwrap().clone();
     drive.app_key_roots.insert(
         remote.clone(),
@@ -97,15 +89,9 @@ async fn materialize_primary_merged_root_converges_accepted_remote_files() {
         vec!["mac.txt", "pixel.txt"]
     );
 
+    account.revoke_app_key(&remote).unwrap();
     let mut converged = daemon.config().clone();
-    if let Some(app_keys) = converged
-        .profile
-        .as_mut()
-        .and_then(|profile| profile.app_keys.as_mut())
-    {
-        app_keys.app_actors.retain(|device| device.pubkey != remote);
-        app_keys.normalize();
-    }
+    converged.profile = Some(account.state.clone());
     converged
         .drives
         .iter_mut()

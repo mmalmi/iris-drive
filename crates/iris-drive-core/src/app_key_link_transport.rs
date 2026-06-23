@@ -106,7 +106,7 @@ pub fn app_key_link_roster_frame(
 
 #[must_use]
 pub fn app_key_link_roster_recipients(state: &ProfileState) -> Vec<AppKeyLinkRosterRecipient> {
-    let Some(app_keys) = state.app_keys.as_ref() else {
+    let Some(app_keys) = state.current_app_keys_projection() else {
         return Vec::new();
     };
     app_keys

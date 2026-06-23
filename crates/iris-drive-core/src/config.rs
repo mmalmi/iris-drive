@@ -6,7 +6,7 @@ use std::path::Path;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::CONFIG_SCHEMA_VERSION;
 use crate::iris_profile::IrisProfileId;
@@ -318,11 +318,29 @@ impl AppConfig {
     }
 
     fn preserve_newer_app_key_roots(&mut self, existing: &Self) {
+        let active_app_key_roots = self.profile.as_ref().and_then(|account| {
+            account.has_profile_roster_evidence().then(|| {
+                account
+                    .active_root_writer_app_key_pubkeys()
+                    .into_iter()
+                    .collect::<BTreeSet<_>>()
+            })
+        });
         for drive in &mut self.drives {
+            if let Some(active_app_key_roots) = active_app_key_roots.as_ref() {
+                drive
+                    .app_key_roots
+                    .retain(|app_key_pubkey, _| active_app_key_roots.contains(app_key_pubkey));
+            }
             let Some(existing_drive) = existing.drive(&drive.drive_id) else {
                 continue;
             };
             for (app_key_pubkey, existing_root) in &existing_drive.app_key_roots {
+                if let Some(active_app_key_roots) = active_app_key_roots.as_ref()
+                    && !active_app_key_roots.contains(app_key_pubkey)
+                {
+                    continue;
+                }
                 let keep_existing = drive
                     .app_key_roots
                     .get(app_key_pubkey)
@@ -553,6 +571,29 @@ impl Drive {
             last_root_cid: None,
             key_hex: None,
         }
+    }
+
+    #[must_use]
+    pub fn active_app_key_roots<'a>(
+        &'a self,
+        profile: Option<&ProfileState>,
+    ) -> Vec<(&'a String, &'a AppKeyRootRef)> {
+        let Some(profile) = profile.filter(|profile| profile.has_profile_roster_evidence()) else {
+            return self.app_key_roots.iter().collect();
+        };
+        let active_app_keys = profile
+            .active_root_writer_app_key_pubkeys()
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        self.app_key_roots
+            .iter()
+            .filter(|(app_key_pubkey, _)| active_app_keys.contains(*app_key_pubkey))
+            .collect()
+    }
+
+    #[must_use]
+    pub fn active_app_key_root_count(&self, profile: Option<&ProfileState>) -> usize {
+        self.active_app_key_roots(profile).len()
     }
 }
 
@@ -973,6 +1014,72 @@ dck_generation = 1
             .unwrap();
         assert_eq!(root.root_cid, "newer");
         assert_eq!(root.app_key_seq, 2);
+    }
+
+    #[test]
+    fn save_does_not_resurrect_tombstoned_app_key_root_from_disk() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let mut account = crate::profile::Profile::create(dir.path(), Some("owner".into()))
+            .expect("profile created");
+        let removed_app_key = nostr_sdk::Keys::generate().public_key().to_hex();
+        account
+            .approve_app_key(&removed_app_key, Some("Old iPhone".into()))
+            .expect("app key approved");
+        account
+            .revoke_app_key(&removed_app_key)
+            .expect("app key revoked");
+
+        let mut existing = AppConfig {
+            profile: Some(account.state.clone()),
+            ..AppConfig::default()
+        };
+        let mut existing_drive = Drive::primary(account.state.root_scope_id());
+        existing_drive.app_key_roots.insert(
+            account.state.app_key_pubkey.clone(),
+            AppKeyRootRef {
+                root_cid: "current".into(),
+                published_at: 20,
+                dck_generation: 1,
+                app_key_seq: 2,
+                parents: Vec::new(),
+                observed: BTreeMap::new(),
+                local_only: false,
+            },
+        );
+        existing_drive.app_key_roots.insert(
+            removed_app_key.clone(),
+            AppKeyRootRef {
+                root_cid: "removed".into(),
+                published_at: 30,
+                dck_generation: 1,
+                app_key_seq: 3,
+                parents: Vec::new(),
+                observed: BTreeMap::new(),
+                local_only: false,
+            },
+        );
+        existing.upsert_drive(existing_drive);
+        existing.save(&path).unwrap();
+
+        let mut incoming = existing.clone();
+        incoming
+            .drives
+            .iter_mut()
+            .find(|drive| drive.drive_id == "main")
+            .unwrap()
+            .app_key_roots
+            .remove(&removed_app_key);
+        incoming.save(&path).unwrap();
+
+        let loaded = AppConfig::load_or_default(&path).unwrap();
+        assert!(
+            !loaded
+                .drive("main")
+                .unwrap()
+                .app_key_roots
+                .contains_key(&removed_app_key)
+        );
     }
 
     #[test]

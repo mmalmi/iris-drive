@@ -163,6 +163,11 @@ pub struct KeyWrapRepairOutcome {
 
 impl ProfileState {
     #[must_use]
+    pub fn has_profile_roster_evidence(&self) -> bool {
+        !self.profile_roster_ops.is_empty()
+    }
+
+    #[must_use]
     pub fn profile_projection(&self) -> IrisProfileRosterProjection {
         if let Some(projection) = self.profile_roster_projection.as_ref() {
             return projection.clone();
@@ -178,6 +183,57 @@ impl ProfileState {
     #[must_use]
     pub fn app_keys_from_profile(&self) -> Option<AppKeysProjection> {
         app_keys_from_profile_projection(&self.profile_projection())
+    }
+
+    #[must_use]
+    pub fn current_app_keys_projection(&self) -> Option<AppKeysProjection> {
+        if self.has_profile_roster_evidence() {
+            return self
+                .app_keys_from_profile()
+                .or_else(|| self.app_keys.clone());
+        }
+        self.app_keys.clone()
+    }
+
+    #[must_use]
+    pub fn active_root_writer_app_key_pubkeys(&self) -> Vec<String> {
+        let mut app_keys = if self.has_profile_roster_evidence() {
+            let projection = self.profile_projection();
+            projection
+                .active_facets
+                .values()
+                .filter(|facet| facet.is_app_key() && facet.capabilities.can_write_roots)
+                .map(|facet| facet.pubkey.clone())
+                .collect::<Vec<_>>()
+        } else {
+            self.app_keys
+                .as_ref()
+                .map(|projection| {
+                    projection
+                        .app_actors
+                        .iter()
+                        .map(|actor| actor.pubkey.clone())
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+
+        if self.can_write_roots() && !app_keys.contains(&self.app_key_pubkey) {
+            app_keys.push(self.app_key_pubkey.clone());
+        }
+        app_keys.sort();
+        app_keys.dedup();
+        app_keys
+    }
+
+    #[must_use]
+    pub fn can_write_roots_for_app_key(&self, app_key_pubkey: &str) -> bool {
+        if self.has_profile_roster_evidence() {
+            return self.profile_projection().can_write_roots(app_key_pubkey);
+        }
+        self.app_keys
+            .as_ref()
+            .is_some_and(|projection| projection.contains(app_key_pubkey))
     }
 
     pub fn sync_app_keys_from_profile(&mut self) -> bool {
@@ -240,21 +296,32 @@ impl ProfileState {
     /// Can this install's `AppKey` administer the `IrisProfile` roster?
     #[must_use]
     pub fn can_admin_profile(&self) -> bool {
+        if self.has_profile_roster_evidence() {
+            return self
+                .profile_projection()
+                .can_admin_profile(&self.app_key_pubkey);
+        }
         if let Some(app_keys) = &self.app_keys {
             return app_keys.is_admin(&self.app_key_pubkey);
         }
-        self.profile_projection()
-            .can_admin_profile(&self.app_key_pubkey)
+        false
     }
 
     /// Can this `AppKey` publish mutable roots for this profile?
     #[must_use]
     pub fn can_write_roots(&self) -> bool {
+        if self.has_profile_roster_evidence() {
+            return self
+                .profile_projection()
+                .can_write_roots(&self.app_key_pubkey);
+        }
         if let Some(app_keys) = &self.app_keys {
             return app_keys.contains(&self.app_key_pubkey);
         }
-        self.profile_projection()
-            .can_write_roots(&self.app_key_pubkey)
+        matches!(
+            self.authorization_state,
+            AppKeyAuthorizationState::Authorized
+        )
     }
 
     /// Recompute `authorization_state` from the current profile roster projection.

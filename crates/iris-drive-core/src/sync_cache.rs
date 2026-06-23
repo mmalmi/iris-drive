@@ -578,8 +578,8 @@ fn roots_for_drive(
 ) -> Vec<(String, AppKeyRootRef)> {
     if !drive.app_key_roots.is_empty() {
         return drive
-            .app_key_roots
-            .iter()
+            .active_app_key_roots(config.profile.as_ref())
+            .into_iter()
             .map(|(app_key_pubkey, root)| (app_key_pubkey.clone(), root.clone()))
             .collect();
     }

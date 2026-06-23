@@ -47,11 +47,12 @@ pub(crate) fn cmd_stats(config_dir: &std::path::Path) -> Result<()> {
     let authorized_app_keys = config
         .profile
         .as_ref()
-        .and_then(|state| state.app_keys.as_ref())
-        .map_or(0, |snap| snap.app_actors.len());
+        .map_or(0, |state| state.active_root_writer_app_key_pubkeys().len());
     let published_app_key_roots = config
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-        .map_or(0, |drive| drive.app_key_roots.len());
+        .map_or(0, |drive| {
+            drive.active_app_key_root_count(config.profile.as_ref())
+        });
     let unresolved_conflicts = current_root_cid
         .as_deref()
         .and_then(|root| root_conflict_status(config_dir, root))

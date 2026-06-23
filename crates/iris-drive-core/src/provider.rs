@@ -238,6 +238,63 @@ pub fn unique_provider_path(
     candidate
 }
 
+#[must_use]
+pub fn provider_collision_family_path(path: &str) -> (String, usize) {
+    let (parent, name) = path
+        .rsplit_once('/')
+        .map_or(("", path), |(parent, name)| (parent, name));
+    let (mut stem, extension) = split_extension(name);
+    let mut depth = 0usize;
+    loop {
+        if let Some(base) = strip_numeric_collision_suffix(&stem) {
+            stem = base.to_string();
+            depth += 1;
+            continue;
+        }
+        if let Some(base) = strip_copy_collision_suffix(&stem) {
+            stem = base.to_string();
+            depth += 1;
+            continue;
+        }
+        break;
+    }
+    let family_name = format!("{stem}{extension}");
+    if parent.is_empty() {
+        (family_name, depth)
+    } else {
+        (format!("{parent}/{family_name}"), depth)
+    }
+}
+
+fn strip_numeric_collision_suffix(stem: &str) -> Option<&str> {
+    let inner = stem.strip_suffix(')')?;
+    let (base, number) = inner.rsplit_once(" (")?;
+    if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some(base)
+}
+
+fn strip_copy_collision_suffix(stem: &str) -> Option<&str> {
+    if let Some(base) = stem.strip_suffix(" copy") {
+        return Some(base);
+    }
+    let (base, number) = stem.rsplit_once(" copy ")?;
+    if number.is_empty() || !number.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    Some(base)
+}
+
+fn split_extension(name: &str) -> (String, &str) {
+    if let Some((stem, _extension)) = name.rsplit_once('.')
+        && !stem.is_empty()
+    {
+        return (stem.to_string(), &name[stem.len()..]);
+    }
+    (name.to_string(), "")
+}
+
 pub fn split_provider_path(path: &str) -> anyhow::Result<(String, String)> {
     let path = normalize_provider_path(path)?;
     let Some((parent, name)) = path.rsplit_once('/') else {
@@ -306,6 +363,30 @@ mod tests {
 
         assert_eq!(parent_path, "Reports");
         assert_eq!(display_name, "Shared_file (2).txt");
+    }
+
+    #[test]
+    fn provider_collision_family_strips_repeated_numeric_suffixes() {
+        assert_eq!(
+            provider_collision_family_path("Reports/photo (2) (3).png"),
+            ("Reports/photo.png".to_string(), 2)
+        );
+        assert_eq!(
+            provider_collision_family_path("Reports/photo copy (2).png"),
+            ("Reports/photo.png".to_string(), 2)
+        );
+        assert_eq!(
+            provider_collision_family_path("Reports/photo copy 2.png"),
+            ("Reports/photo.png".to_string(), 1)
+        );
+        assert_eq!(
+            provider_collision_family_path("photo.png"),
+            ("photo.png".to_string(), 0)
+        );
+        assert_eq!(
+            provider_collision_family_path("photo (copy).png"),
+            ("photo (copy).png".to_string(), 0)
+        );
     }
 
     #[test]

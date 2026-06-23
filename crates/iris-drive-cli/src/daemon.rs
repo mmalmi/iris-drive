@@ -622,15 +622,7 @@ pub(crate) fn pick_relays(config: &AppConfig, override_list: &[String]) -> Vec<S
 }
 
 pub(crate) fn authorized_app_key_pubkeys(state: &ProfileState) -> Vec<String> {
-    let mut app_actors: Vec<String> = state
-        .app_keys
-        .as_ref()
-        .map(|snap| snap.app_actors.iter().map(|d| d.pubkey.clone()).collect())
-        .unwrap_or_default();
-    if !app_actors.contains(&state.app_key_pubkey) {
-        app_actors.push(state.app_key_pubkey.clone());
-    }
-    app_actors
+    state.active_root_writer_app_key_pubkeys()
 }
 
 pub(crate) fn files_root_apply_label(

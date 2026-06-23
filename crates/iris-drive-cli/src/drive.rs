@@ -89,6 +89,18 @@ pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("no account; run `idrive init` first"))?;
         let authorized = authorized_app_key_pubkeys(account);
+        if at == 0 {
+            let projected = iris_drive_core::primary_merged_view(daemon.tree(), config).await?;
+            print_drive_list(
+                drive,
+                at,
+                authorized.len(),
+                projected.app_key_roots_present,
+                &projected.view,
+            );
+            return Ok::<_, anyhow::Error>(());
+        }
+
         let merge_app_keys = iris_drive_core::projection::merge_app_key_pubkeys(account, drive);
 
         // Fetch each trusted AppKey root's tree + tombstones from htree.
@@ -124,30 +136,40 @@ pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
 
         let view = merge_drives(&merge_app_key_refs, &snapshots);
 
-        println!(
-            "{}",
-            json!({
-                "drive_id": drive.drive_id,
-                "at_revision": at,
-                "authorized_app_keys": authorized.len(),
-                "app_key_roots_present": snapshots.len(),
-                "files": view
-                    .files
-                    .iter()
-                    .map(|e| json!({
-                        "path": e.path,
-                        "size": e.size,
-                        "sha256": e.whole_file_hash.unwrap_or(e.hash).map(|byte| format!("{byte:02x}")).join(""),
-                        "source_app_key_pubkey": e.source_app_key_pubkey,
-                        "modified_at": e.modified_at,
-                        "published_at": e.published_at,
-                    }))
-                    .collect::<Vec<_>>(),
-                "suppressed_by_tombstone": view.suppressed_by_tombstone,
-            })
-        );
+        print_drive_list(drive, at, authorized.len(), snapshots.len(), &view);
         Ok::<_, anyhow::Error>(())
     })
+}
+
+fn print_drive_list(
+    drive: &Drive,
+    at: usize,
+    authorized_app_key_count: usize,
+    app_key_roots_present: usize,
+    view: &iris_drive_core::merge::MergedView,
+) {
+    println!(
+        "{}",
+        json!({
+            "drive_id": drive.drive_id,
+            "at_revision": at,
+            "authorized_app_keys": authorized_app_key_count,
+            "app_key_roots_present": app_key_roots_present,
+            "files": view
+                .files
+                .iter()
+                .map(|e| json!({
+                    "path": e.path,
+                    "size": e.size,
+                    "sha256": e.whole_file_hash.unwrap_or(e.hash).map(|byte| format!("{byte:02x}")).join(""),
+                    "source_app_key_pubkey": e.source_app_key_pubkey,
+                    "modified_at": e.modified_at,
+                    "published_at": e.published_at,
+                }))
+                .collect::<Vec<_>>(),
+            "suppressed_by_tombstone": view.suppressed_by_tombstone,
+        })
+    );
 }
 
 #[allow(clippy::too_many_lines)]

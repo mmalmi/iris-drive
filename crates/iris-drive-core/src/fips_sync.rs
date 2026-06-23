@@ -528,7 +528,7 @@ fn authorized_device_fips_peers(
     };
     let mut peers = Vec::new();
     let local_device = &account.app_key_pubkey;
-    if let Some(app_keys) = account.app_keys.as_ref() {
+    if let Some(app_keys) = account.current_app_keys_projection() {
         peers.extend(
             app_keys
                 .app_actors
@@ -581,7 +581,7 @@ fn has_remote_authorized_app_key(config: &AppConfig) -> bool {
     let Some(account) = config.profile.as_ref() else {
         return false;
     };
-    let Some(app_keys) = account.app_keys.as_ref() else {
+    let Some(app_keys) = account.current_app_keys_projection() else {
         return false;
     };
     app_keys

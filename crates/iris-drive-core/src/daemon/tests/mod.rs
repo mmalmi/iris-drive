@@ -2,7 +2,6 @@ use super::*;
 use hashtree_core::to_hex;
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::app_keys::AppActorEntry;
 use crate::config::Drive;
 use crate::conflict::{ConflictRecord, ConflictSide, ConflictState};
 use crate::identity::Identity;
@@ -32,6 +31,20 @@ fn init_config_with_account(dir: &Path) -> crate::profile::Profile {
     cfg.upsert_drive(Drive::primary(account.state.root_scope_id()));
     cfg.save(config_path_in(dir)).unwrap();
     account
+}
+
+fn approve_remote_app_key(
+    dir: &Path,
+    account: &mut crate::profile::Profile,
+    remote: &str,
+    label: &str,
+) {
+    account
+        .approve_app_key(remote, Some(label.to_string()))
+        .unwrap();
+    let mut config = AppConfig::load_or_default(config_path_in(dir)).unwrap();
+    config.profile = Some(account.state.clone());
+    config.save(config_path_in(dir)).unwrap();
 }
 
 #[tokio::test]
@@ -97,23 +110,9 @@ async fn import_visible_root_records_mount_deletions_as_tombstones() {
 #[allow(clippy::too_many_lines)]
 async fn import_visible_root_tombstones_deleted_foreign_visible_files() {
     let cfg_dir = tempdir().unwrap();
-    let account = init_config_with_account(cfg_dir.path());
+    let mut account = init_config_with_account(cfg_dir.path());
     let remote = Identity::generate(cfg_dir.path().join("remote.key")).pubkey_hex();
-
-    let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
-    let state = config.profile.as_mut().unwrap();
-    state
-        .app_keys
-        .as_mut()
-        .unwrap()
-        .app_actors
-        .push(AppActorEntry::member(
-            remote.clone(),
-            100,
-            Some("remote".into()),
-        ));
-    state.app_keys.as_mut().unwrap().normalize();
-    config.save(config_path_in(cfg_dir.path())).unwrap();
+    approve_remote_app_key(cfg_dir.path(), &mut account, &remote, "remote");
 
     let daemon = Daemon::open(cfg_dir.path()).unwrap();
     let remote_dir = tempdir().unwrap();
@@ -210,23 +209,9 @@ async fn import_visible_root_tombstones_deleted_foreign_visible_files() {
 #[tokio::test]
 async fn scoped_visible_root_import_only_tombstones_changed_paths() {
     let cfg_dir = tempdir().unwrap();
-    let account = init_config_with_account(cfg_dir.path());
+    let mut account = init_config_with_account(cfg_dir.path());
     let remote = Identity::generate(cfg_dir.path().join("remote.key")).pubkey_hex();
-
-    let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
-    let state = config.profile.as_mut().unwrap();
-    state
-        .app_keys
-        .as_mut()
-        .unwrap()
-        .app_actors
-        .push(AppActorEntry::member(
-            remote.clone(),
-            100,
-            Some("remote".into()),
-        ));
-    state.app_keys.as_mut().unwrap().normalize();
-    config.save(config_path_in(cfg_dir.path())).unwrap();
+    approve_remote_app_key(cfg_dir.path(), &mut account, &remote, "remote");
 
     let daemon = Daemon::open(cfg_dir.path()).unwrap();
     let remote_dir = tempdir().unwrap();
@@ -313,23 +298,9 @@ async fn scoped_visible_root_import_only_tombstones_changed_paths() {
 #[allow(clippy::too_many_lines)]
 async fn mounted_visible_import_does_not_claim_unchanged_foreign_files() {
     let cfg_dir = tempdir().unwrap();
-    let account = init_config_with_account(cfg_dir.path());
+    let mut account = init_config_with_account(cfg_dir.path());
     let remote = Identity::generate(cfg_dir.path().join("remote.key")).pubkey_hex();
-
-    let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
-    let state = config.profile.as_mut().unwrap();
-    state
-        .app_keys
-        .as_mut()
-        .unwrap()
-        .app_actors
-        .push(AppActorEntry::member(
-            remote.clone(),
-            100,
-            Some("remote".into()),
-        ));
-    state.app_keys.as_mut().unwrap().normalize();
-    config.save(config_path_in(cfg_dir.path())).unwrap();
+    approve_remote_app_key(cfg_dir.path(), &mut account, &remote, "remote");
 
     let daemon = Daemon::open(cfg_dir.path()).unwrap();
     let remote_dir = tempdir().unwrap();
@@ -428,23 +399,9 @@ async fn mounted_visible_import_does_not_claim_unchanged_foreign_files() {
 #[tokio::test]
 async fn mounted_visible_import_does_not_claim_foreign_files_projected_after_base() {
     let cfg_dir = tempdir().unwrap();
-    let account = init_config_with_account(cfg_dir.path());
+    let mut account = init_config_with_account(cfg_dir.path());
     let remote = Identity::generate(cfg_dir.path().join("remote.key")).pubkey_hex();
-
-    let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
-    let state = config.profile.as_mut().unwrap();
-    state
-        .app_keys
-        .as_mut()
-        .unwrap()
-        .app_actors
-        .push(AppActorEntry::member(
-            remote.clone(),
-            100,
-            Some("remote".into()),
-        ));
-    state.app_keys.as_mut().unwrap().normalize();
-    config.save(config_path_in(cfg_dir.path())).unwrap();
+    approve_remote_app_key(cfg_dir.path(), &mut account, &remote, "remote");
 
     let daemon = Daemon::open(cfg_dir.path()).unwrap();
     let old_visible = crate::primary_merged_root(daemon.tree(), daemon.config())

@@ -2172,7 +2172,7 @@ async fn send_native_authorized_app_key_link_rosters(
     if !state.can_admin_profile() {
         return Ok(());
     }
-    let Some(app_keys) = state.app_keys.as_ref() else {
+    let Some(app_keys) = state.current_app_keys_projection() else {
         return Ok(());
     };
     if !app_keys.contains(&state.app_key_pubkey) {
@@ -3024,7 +3024,7 @@ fn app_actors_from_account(
     fips_status: &UiFipsStatus,
 ) -> Vec<UiAppActor> {
     let mut rows = Vec::new();
-    if let Some(app_keys) = state.app_keys.as_ref() {
+    if let Some(app_keys) = state.current_app_keys_projection() {
         let current_app_key_npub = pubkey_npub(&state.app_key_pubkey);
         let current_app_key_online = fips_status.fresh
             && (fips_status.endpoint_npub.is_empty()

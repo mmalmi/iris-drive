@@ -1,6 +1,5 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
-use crate::app_keys::AppActorEntry;
 use crate::config::{AppConfig, AppKeyRootRef, Drive};
 use crate::indexer::index_dir_with_history_and_meta;
 use crate::merge::AppKeyFileEntry;
@@ -235,10 +234,12 @@ async fn primary_merged_root_does_not_synthesize_missing_modified_at() {
 #[tokio::test]
 async fn primary_merged_root_hides_tombstoned_foreign_directory() {
     let cfg_dir = tempdir().unwrap();
-    let account = Profile::create(cfg_dir.path(), Some("mount-test".into())).unwrap();
-    let remote_device =
-        "5555555555555555555555555555555555555555555555555555555555555555".to_string();
+    let mut account = Profile::create(cfg_dir.path(), Some("mount-test".into())).unwrap();
+    let remote_device = nostr_sdk::Keys::generate().public_key().to_hex();
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+    account
+        .approve_app_key(&remote_device, Some("remote".into()))
+        .unwrap();
 
     let remote_source = tempdir().unwrap();
     std::fs::create_dir_all(remote_source.path().join("codex-lab").join("empty")).unwrap();
@@ -294,20 +295,8 @@ async fn primary_merged_root_hides_tombstoned_foreign_directory() {
     .await
     .unwrap();
 
-    let mut account_state = account.state.clone();
-    account_state
-        .app_keys
-        .as_mut()
-        .expect("created account has app keys")
-        .app_actors
-        .push(AppActorEntry::member(
-            remote_device.clone(),
-            1,
-            Some("remote".into()),
-        ));
-
     let mut config = AppConfig {
-        profile: Some(account_state),
+        profile: Some(account.state.clone()),
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
@@ -394,7 +383,7 @@ async fn primary_merged_root_hides_ignored_legacy_directories() {
 }
 
 #[tokio::test]
-async fn primary_merged_view_keeps_previously_accepted_roots_after_device_relink() {
+async fn primary_merged_view_excludes_revoked_root_after_device_relink() {
     let cfg_dir = tempdir().unwrap();
     let mut account = Profile::create(cfg_dir.path(), Some("owner".into())).unwrap();
     let old_pixel = nostr_sdk::Keys::generate().public_key().to_hex();
@@ -443,35 +432,183 @@ async fn primary_merged_view_keeps_previously_accepted_roots_after_device_relink
         .iter()
         .map(|entry| entry.path.as_str())
         .collect::<Vec<_>>();
-    assert_eq!(paths, vec!["mac.txt", "pixel.txt"]);
+    assert_eq!(paths, vec!["mac.txt"]);
+}
+
+#[tokio::test]
+async fn primary_merged_view_excludes_tombstoned_app_key_roots() {
+    let cfg_dir = tempdir().unwrap();
+    let mut account = Profile::create(cfg_dir.path(), Some("owner".into())).unwrap();
+    let old_phone = nostr_sdk::Keys::generate().public_key().to_hex();
+    let current_phone = nostr_sdk::Keys::generate().public_key().to_hex();
+    let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+
+    account
+        .approve_app_key(&old_phone, Some("iPhone".into()))
+        .unwrap();
+    account.revoke_app_key(&old_phone).unwrap();
+    account
+        .approve_app_key(&current_phone, Some("iPhone".into()))
+        .unwrap();
+
+    let owner_root = index_device_file_root(
+        &tree,
+        &account.state.app_key_pubkey,
+        "mac.txt",
+        b"from mac",
+        1,
+        10,
+    )
+    .await;
+    let old_phone_root =
+        index_device_file_root(&tree, &old_phone, "old-phone.txt", b"stale", 1, 11).await;
+    let current_phone_root =
+        index_device_file_root(&tree, &current_phone, "phone.txt", b"current", 1, 12).await;
+
+    let mut config = AppConfig {
+        profile: Some(account.state.clone()),
+        ..AppConfig::default()
+    };
+    let mut drive = Drive::primary(account.state.root_scope_id());
+    drive.app_key_roots.insert(
+        account.state.app_key_pubkey.clone(),
+        AppKeyRootRef::from_meta(owner_root.0.to_string(), 10, &owner_root.1),
+    );
+    drive.app_key_roots.insert(
+        old_phone,
+        AppKeyRootRef::from_meta(old_phone_root.0.to_string(), 11, &old_phone_root.1),
+    );
+    drive.app_key_roots.insert(
+        current_phone,
+        AppKeyRootRef::from_meta(current_phone_root.0.to_string(), 12, &current_phone_root.1),
+    );
+    config.upsert_drive(drive);
+
+    let view = primary_merged_view(&tree, &config).await.unwrap();
+    assert_eq!(view.authorized_app_keys, 2);
+    assert_eq!(view.app_key_roots_present, 2);
+    let paths = view
+        .view
+        .files
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, vec!["mac.txt", "phone.txt"]);
+}
+
+#[tokio::test]
+async fn primary_merged_view_collapses_same_source_collision_copy_chain() {
+    let cfg_dir = tempdir().unwrap();
+    let account = Profile::create(cfg_dir.path(), Some("owner".into())).unwrap();
+    let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+
+    let source = tempdir().unwrap();
+    std::fs::write(source.path().join("photo.png"), b"same").unwrap();
+    std::fs::write(source.path().join("photo (2).png"), b"same").unwrap();
+    std::fs::write(source.path().join("photo (2) (3).png"), b"same").unwrap();
+    std::fs::write(source.path().join("photo (3).png"), b"different").unwrap();
+    let meta = DriveRootMeta {
+        schema: DriveRootMeta::SCHEMA,
+        drive_id: PRIMARY_DRIVE_ID.to_string(),
+        app_key_pubkey: account.state.app_key_pubkey.clone(),
+        app_key_seq: 1,
+        dck_generation: 1,
+        local_only: false,
+        parents: Vec::new(),
+        observed: BTreeMap::new(),
+        created_at: 10,
+    };
+    let root = index_dir_with_history_and_meta(&tree, source.path(), None, 10, Some(&meta))
+        .await
+        .unwrap();
+
+    let mut config = AppConfig {
+        profile: Some(account.state.clone()),
+        ..AppConfig::default()
+    };
+    let mut drive = Drive::primary(account.state.root_scope_id());
+    drive.app_key_roots.insert(
+        account.state.app_key_pubkey.clone(),
+        AppKeyRootRef::from_meta(root.to_string(), 10, &meta),
+    );
+    config.upsert_drive(drive);
+
+    let view = primary_merged_view(&tree, &config).await.unwrap();
+    let paths = view
+        .view
+        .files
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, vec!["photo (3).png", "photo.png"]);
+}
+
+#[tokio::test]
+async fn primary_merged_view_hides_zero_byte_collision_placeholders_when_content_exists() {
+    let cfg_dir = tempdir().unwrap();
+    let account = Profile::create(cfg_dir.path(), Some("owner".into())).unwrap();
+    let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+
+    let source = tempdir().unwrap();
+    std::fs::write(source.path().join("photo.png"), b"real image").unwrap();
+    std::fs::write(source.path().join("photo (2).png"), b"").unwrap();
+    std::fs::write(source.path().join("photo copy.png"), b"real image").unwrap();
+    std::fs::write(source.path().join("photo copy (2).png"), b"").unwrap();
+    std::fs::write(source.path().join("empty.txt"), b"").unwrap();
+    std::fs::write(source.path().join("empty (2).txt"), b"").unwrap();
+    let meta = DriveRootMeta {
+        schema: DriveRootMeta::SCHEMA,
+        drive_id: PRIMARY_DRIVE_ID.to_string(),
+        app_key_pubkey: account.state.app_key_pubkey.clone(),
+        app_key_seq: 1,
+        dck_generation: 1,
+        local_only: false,
+        parents: Vec::new(),
+        observed: BTreeMap::new(),
+        created_at: 10,
+    };
+    let root = index_dir_with_history_and_meta(&tree, source.path(), None, 10, Some(&meta))
+        .await
+        .unwrap();
+
+    let mut config = AppConfig {
+        profile: Some(account.state.clone()),
+        ..AppConfig::default()
+    };
+    let mut drive = Drive::primary(account.state.root_scope_id());
+    drive.app_key_roots.insert(
+        account.state.app_key_pubkey.clone(),
+        AppKeyRootRef::from_meta(root.to_string(), 10, &meta),
+    );
+    config.upsert_drive(drive);
+
+    let view = primary_merged_view(&tree, &config).await.unwrap();
+    let paths = view
+        .view
+        .files
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, vec!["empty.txt", "photo.png"]);
 }
 
 #[tokio::test]
 async fn primary_merged_root_surfaces_concurrent_write_conflict_copy() {
     let cfg_dir = tempdir().unwrap();
-    let account = Profile::create(cfg_dir.path(), Some("owner".into())).unwrap();
+    let mut account = Profile::create(cfg_dir.path(), Some("owner".into())).unwrap();
     let peer_device =
         "2222222222222222222222222222222222222222222222222222222222222222".to_string();
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+    account
+        .approve_app_key(&peer_device, Some("peer".into()))
+        .unwrap();
 
     let owner_root =
         index_device_note_root(&tree, &account.state.app_key_pubkey, b"owner edit", 1, 10).await;
     let peer_root = index_device_note_root(&tree, &peer_device, b"peer edit", 1, 11).await;
 
-    let mut account_state = account.state.clone();
-    account_state
-        .app_keys
-        .as_mut()
-        .expect("created account has app keys")
-        .app_actors
-        .push(AppActorEntry::member(
-            peer_device.clone(),
-            1,
-            Some("peer".into()),
-        ));
-
     let mut config = AppConfig {
-        profile: Some(account_state),
+        profile: Some(account.state.clone()),
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
@@ -539,10 +676,13 @@ async fn primary_merged_root_surfaces_concurrent_write_conflict_copy() {
 #[tokio::test]
 async fn primary_merged_root_surfaces_concurrent_write_delete_conflict_copy() {
     let cfg_dir = tempdir().unwrap();
-    let account = Profile::create(cfg_dir.path(), Some("owner".into())).unwrap();
+    let mut account = Profile::create(cfg_dir.path(), Some("owner".into())).unwrap();
     let peer_device =
         "4444444444444444444444444444444444444444444444444444444444444444".to_string();
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+    account
+        .approve_app_key(&peer_device, Some("peer".into()))
+        .unwrap();
 
     let owner_edit_meta = DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
@@ -585,20 +725,8 @@ async fn primary_merged_root_surfaces_concurrent_write_delete_conflict_copy() {
     .await
     .unwrap();
 
-    let mut account_state = account.state.clone();
-    account_state
-        .app_keys
-        .as_mut()
-        .expect("created account has app keys")
-        .app_actors
-        .push(AppActorEntry::member(
-            peer_device.clone(),
-            1,
-            Some("peer".into()),
-        ));
-
     let mut config = AppConfig {
-        profile: Some(account_state),
+        profile: Some(account.state.clone()),
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
@@ -656,10 +784,13 @@ async fn primary_merged_root_surfaces_concurrent_write_delete_conflict_copy() {
 #[tokio::test]
 async fn primary_merged_view_ignores_local_only_root_publish_time() {
     let cfg_dir = tempdir().unwrap();
-    let account = Profile::create(cfg_dir.path(), Some("owner".into())).unwrap();
+    let mut account = Profile::create(cfg_dir.path(), Some("owner".into())).unwrap();
     let peer_device =
         "3333333333333333333333333333333333333333333333333333333333333333".to_string();
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+    account
+        .approve_app_key(&peer_device, Some("peer".into()))
+        .unwrap();
 
     let owner_source =
         index_device_note_root(&tree, &account.state.app_key_pubkey, b"owner source", 1, 10).await;
@@ -687,20 +818,8 @@ async fn primary_merged_view_ignores_local_only_root_publish_time() {
     )
     .await;
 
-    let mut account_state = account.state.clone();
-    account_state
-        .app_keys
-        .as_mut()
-        .expect("created account has app keys")
-        .app_actors
-        .push(AppActorEntry::member(
-            peer_device.clone(),
-            1,
-            Some("peer".into()),
-        ));
-
     let mut config = AppConfig {
-        profile: Some(account_state),
+        profile: Some(account.state.clone()),
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
@@ -727,10 +846,12 @@ async fn primary_merged_view_ignores_local_only_root_publish_time() {
 #[tokio::test]
 async fn primary_merged_root_reads_conflict_bytes_from_local_only_parent() {
     let cfg_dir = tempdir().unwrap();
-    let account = Profile::create(cfg_dir.path(), Some("owner".into())).unwrap();
-    let peer_device =
-        "5555555555555555555555555555555555555555555555555555555555555555".to_string();
+    let mut account = Profile::create(cfg_dir.path(), Some("owner".into())).unwrap();
+    let peer_device = nostr_sdk::Keys::generate().public_key().to_hex();
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+    account
+        .approve_app_key(&peer_device, Some("peer".into()))
+        .unwrap();
 
     let owner_source =
         index_device_note_root(&tree, &account.state.app_key_pubkey, b"owner source", 1, 10).await;
@@ -754,20 +875,8 @@ async fn primary_merged_root_reads_conflict_bytes_from_local_only_parent() {
         index_device_note_root_with_meta(&tree, b"peer source", 20, owner_mirror_meta.clone())
             .await;
 
-    let mut account_state = account.state.clone();
-    account_state
-        .app_keys
-        .as_mut()
-        .expect("created account has app keys")
-        .app_actors
-        .push(AppActorEntry::member(
-            peer_device.clone(),
-            1,
-            Some("peer".into()),
-        ));
-
     let mut config = AppConfig {
-        profile: Some(account_state),
+        profile: Some(account.state.clone()),
         ..AppConfig::default()
     };
     let mut drive = Drive::primary(account.state.root_scope_id());
