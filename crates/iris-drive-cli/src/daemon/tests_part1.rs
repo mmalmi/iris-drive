@@ -135,6 +135,7 @@ fn stale_root_apply_followup_detects_superseded_app_key_root() {
             profile_roster_projection: None,
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
+            handled_app_key_link_requests: Vec::new(),
         }),
         drives: vec![drive],
         ..AppConfig::default()

@@ -205,9 +205,79 @@ async fn import_provider_bytes(
     let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
     let modified_at_by_path = BTreeMap::new();
     let entries = provider_entries(&provider, &modified_at_by_path).await?;
+    if let Some(path) =
+        duplicate_provider_file_path(&provider, &entries, "", display_name, bytes).await?
+    {
+        let summary = provider_list_summary(provider.anchor().await.as_str(), &entries);
+        return Ok(json!({
+            "path": path,
+            "root_cid": visible_root.to_string(),
+            "file_count": summary.file_count,
+            "top_level_entries": entries.iter().filter(|entry| entry.parent_path.is_empty()).count(),
+            "imported": false,
+            "duplicate": true,
+        }));
+    }
     let path = unique_provider_path(&entries, "", display_name, None);
     write_provider_file(&provider, &path, bytes).await?;
     import_provider_mutation(&mut daemon, &provider, &path, Some(visible_root)).await
+}
+
+async fn duplicate_provider_file_path<P>(
+    provider: &P,
+    entries: &[ProviderListEntry],
+    parent: &str,
+    display_name: &str,
+    bytes: &[u8],
+) -> anyhow::Result<Option<String>>
+where
+    P: ProviderFs<ItemId = String>,
+{
+    for entry in entries.iter().filter(|entry| {
+        entry.kind == "file"
+            && entry.parent_path == parent
+            && provider_import_display_name_matches(&entry.display_name, display_name)
+            && entry.size == u64::try_from(bytes.len()).unwrap_or(u64::MAX)
+    }) {
+        if bytes.is_empty() {
+            return Ok(Some(entry.path.clone()));
+        }
+        let existing = provider.read(&entry.path, 0, entry.size).await?;
+        if existing == bytes {
+            return Ok(Some(entry.path.clone()));
+        }
+    }
+    Ok(None)
+}
+
+fn provider_import_display_name_matches(existing: &str, requested: &str) -> bool {
+    if existing == requested {
+        return true;
+    }
+    let path = Path::new(requested);
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .unwrap_or("Shared file");
+    let extension = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .filter(|value| !value.is_empty())
+        .map(|value| format!(".{value}"))
+        .unwrap_or_default();
+    let Some(rest) = existing.strip_prefix(stem) else {
+        return false;
+    };
+    let Some(rest) = rest.strip_prefix(" (") else {
+        return false;
+    };
+    let number = if extension.is_empty() {
+        rest.strip_suffix(')')
+    } else {
+        rest.strip_suffix(&format!("){extension}"))
+    };
+    number.is_some_and(|value| value.parse::<u32>().is_ok())
 }
 
 async fn download_content_link_bytes(url: &str) -> anyhow::Result<Vec<u8>> {

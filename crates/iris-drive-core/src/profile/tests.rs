@@ -295,6 +295,7 @@ fn recovery_phrase_admits_fresh_app_key_into_existing_profile_log() {
             profile_roster_projection: None,
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
+            handled_app_key_link_requests: Vec::new(),
         },
         app_key: recovered_device,
     };
@@ -416,6 +417,7 @@ fn nip46_authority_admits_fresh_app_key_with_decrypt_wrap() {
             profile_roster_projection: None,
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
+            handled_app_key_link_requests: Vec::new(),
         },
         app_key: recovered_device,
     };
@@ -467,6 +469,7 @@ fn nip46_without_decrypt_admits_app_key_but_leaves_wrap_repair_needed() {
             profile_roster_projection: None,
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
+            handled_app_key_link_requests: Vec::new(),
         },
         app_key: recovered_device,
     };
@@ -523,6 +526,7 @@ fn epoch_signing_admin_can_repair_missing_app_key_wraps() {
             profile_roster_projection: None,
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
+            handled_app_key_link_requests: Vec::new(),
         },
         app_key: recovered_device,
     };
@@ -692,6 +696,60 @@ fn reset_app_key_link_secret_rotates_invite_and_clears_pending_requests() {
             )
             .unwrap()
     );
+}
+
+#[test]
+fn rejected_inbound_app_key_link_request_does_not_replay() {
+    let dir = tempdir().unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
+    let profile_id = acct.state.profile_id;
+    let link_secret = acct.state.app_key_link_secret.clone();
+    let device = fresh_app_key_pubkey();
+
+    assert!(
+        acct.state
+            .record_inbound_app_key_link_request(
+                profile_id,
+                &device,
+                Some("phone".to_string()),
+                &link_secret,
+                10,
+            )
+            .unwrap()
+    );
+    assert!(
+        acct.state
+            .reject_inbound_app_key_link_request(&device)
+            .unwrap()
+    );
+    assert!(acct.state.inbound_app_key_link_requests.is_empty());
+
+    assert!(
+        !acct
+            .state
+            .record_inbound_app_key_link_request(
+                profile_id,
+                &device,
+                Some("phone".to_string()),
+                &link_secret,
+                10,
+            )
+            .unwrap()
+    );
+    assert!(acct.state.inbound_app_key_link_requests.is_empty());
+
+    assert!(
+        acct.state
+            .record_inbound_app_key_link_request(
+                profile_id,
+                &device,
+                Some("phone".to_string()),
+                &link_secret,
+                11,
+            )
+            .unwrap()
+    );
+    assert_eq!(acct.state.inbound_app_key_link_requests.len(), 1);
 }
 
 #[test]
@@ -873,6 +931,74 @@ fn recording_authorized_request_reports_cleanup_change() {
 
     assert!(changed);
     assert!(acct.state.inbound_app_key_link_requests.is_empty());
+}
+
+#[test]
+fn recording_authorized_request_without_app_keys_cache_stays_hidden() {
+    let dir = tempdir().unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
+    let target = fresh_app_key_pubkey();
+    acct.approve_app_key(&target, Some("phone".into())).unwrap();
+    acct.state.app_keys = None;
+
+    let changed = acct
+        .state
+        .record_inbound_app_key_link_request(
+            acct.state.profile_id,
+            &target,
+            Some("phone".into()),
+            &acct.state.app_key_link_secret.clone(),
+            42,
+        )
+        .unwrap();
+
+    assert!(!changed);
+    assert!(acct.state.inbound_app_key_link_requests.is_empty());
+}
+
+#[test]
+fn recording_removed_request_ignores_stale_replay_but_allows_newer_rejoin() {
+    let dir = tempdir().unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
+    let target = fresh_app_key_pubkey();
+    let profile_id = acct.state.profile_id;
+    let link_secret = acct.state.app_key_link_secret.clone();
+    acct.approve_app_key(&target, Some("phone".into())).unwrap();
+    acct.revoke_app_key(&target).unwrap();
+    let removed_at = acct
+        .state
+        .profile_projection()
+        .tombstones
+        .get(&target)
+        .unwrap()
+        .removed_at;
+
+    assert!(
+        !acct
+            .state
+            .record_inbound_app_key_link_request(
+                profile_id,
+                &target,
+                Some("phone".into()),
+                &link_secret,
+                u64::try_from(removed_at).unwrap().saturating_sub(1),
+            )
+            .unwrap()
+    );
+    assert!(acct.state.inbound_app_key_link_requests.is_empty());
+
+    assert!(
+        acct.state
+            .record_inbound_app_key_link_request(
+                profile_id,
+                &target,
+                Some("phone".into()),
+                &link_secret,
+                u64::try_from(removed_at).unwrap() + 1,
+            )
+            .unwrap()
+    );
+    assert_eq!(acct.state.inbound_app_key_link_requests.len(), 1);
 }
 
 #[test]
@@ -1135,6 +1261,7 @@ fn linked_device_with_approved_wrap_decrypts_same_dck_as_owner() {
         profile_roster_projection: owner_acct.state.profile_roster_projection.clone(),
         outbound_app_key_link_request: None,
         inbound_app_key_link_requests: Vec::new(),
+        handled_app_key_link_requests: Vec::new(),
     };
     let linked_acct = Profile {
         state: linked_state,
@@ -1174,6 +1301,7 @@ fn revoked_device_cannot_decrypt_new_dck() {
         profile_roster_projection: owner_acct.state.profile_roster_projection.clone(),
         outbound_app_key_link_request: None,
         inbound_app_key_link_requests: Vec::new(),
+        handled_app_key_link_requests: Vec::new(),
     };
     let linked_acct = Profile {
         state: linked_state,

@@ -1314,13 +1314,19 @@ fn approving_tombstoned_inbound_request_readds_device() {
     let state = config.profile.as_mut().unwrap();
     let profile_id = state.profile_id;
     let link_secret = state.app_key_link_secret.clone();
+    let removed_at = state
+        .profile_projection()
+        .tombstones
+        .get(&linked_app_key_hex)
+        .unwrap()
+        .removed_at;
     state
         .record_inbound_app_key_link_request(
             profile_id,
             &linked_app_key_hex,
             Some("Phone".to_owned()),
             &link_secret,
-            42,
+            u64::try_from(removed_at).unwrap() + 1,
         )
         .unwrap();
     config.save(&config_path).unwrap();

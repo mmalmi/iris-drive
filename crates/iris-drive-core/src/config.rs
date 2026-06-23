@@ -872,6 +872,7 @@ dck_generation = 1
                 profile_roster_projection: None,
                 outbound_app_key_link_request: None,
                 inbound_app_key_link_requests: Vec::new(),
+                handled_app_key_link_requests: Vec::new(),
             }),
             ..AppConfig::default()
         };

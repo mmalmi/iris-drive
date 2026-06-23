@@ -91,6 +91,7 @@ pub enum AppKeyAuthorizationState {
 }
 
 pub const MAX_INBOUND_APP_KEY_LINK_REQUESTS: usize = 32;
+pub const MAX_HANDLED_APP_KEY_LINK_REQUESTS: usize = 128;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -111,6 +112,14 @@ pub struct InboundAppKeyLinkRequest {
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub link_secret: String,
+    pub requested_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HandledAppKeyLinkRequest {
+    #[serde(alias = "device_pubkey")]
+    pub app_key_pubkey: String,
     pub requested_at: u64,
 }
 
@@ -141,6 +150,8 @@ pub struct ProfileState {
     #[serde(alias = "inbound_device_link_requests")]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub inbound_app_key_link_requests: Vec<InboundAppKeyLinkRequest>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub handled_app_key_link_requests: Vec<HandledAppKeyLinkRequest>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,13 +184,23 @@ impl ProfileState {
         let profile_projection =
             project_iris_profile_roster(self.profile_id, self.profile_roster_ops.clone());
         let Some(projection) = app_keys_from_profile_projection(&profile_projection) else {
+            let request_count_before = self.inbound_app_key_link_requests.len();
+            self.inbound_app_key_link_requests.retain(|request| {
+                !request_is_handled_by_profile_projection(request, &profile_projection, None)
+            });
+            let requests_changed = self.inbound_app_key_link_requests.len() != request_count_before;
             self.profile_roster_projection = Some(profile_projection);
-            return false;
+            return requests_changed;
         };
         let app_keys_changed = self.app_keys.as_ref() != Some(&projection);
         let request_count_before = self.inbound_app_key_link_requests.len();
-        self.inbound_app_key_link_requests
-            .retain(|request| !projection.contains(&request.app_key_pubkey));
+        self.inbound_app_key_link_requests.retain(|request| {
+            !request_is_handled_by_profile_projection(
+                request,
+                &profile_projection,
+                Some(&projection),
+            )
+        });
         let requests_changed = self.inbound_app_key_link_requests.len() != request_count_before;
         self.recompute_authorization_from_app_keys(&projection);
         self.profile_roster_projection = Some(profile_projection);
@@ -311,11 +332,29 @@ impl ProfileState {
                 app_key_pubkey.to_string(),
             ));
         }
+        let request = InboundAppKeyLinkRequest {
+            app_key_pubkey: app_key_pubkey.to_string(),
+            label: label.and_then(|label| {
+                let trimmed = label.trim();
+                (!trimmed.is_empty()).then(|| trimmed.to_string())
+            }),
+            link_secret: link_secret.to_string(),
+            requested_at,
+        };
+        let profile_projection = self.profile_projection();
+        let projection = self
+            .app_keys
+            .clone()
+            .or_else(|| app_keys_from_profile_projection(&profile_projection));
         if app_key_pubkey == self.app_key_pubkey
-            || self
-                .app_keys
-                .as_ref()
-                .is_some_and(|snap| snap.contains(app_key_pubkey))
+            || request_is_handled_by_profile_projection(
+                &request,
+                &profile_projection,
+                projection.as_ref(),
+            )
+            || self.handled_app_key_link_requests.iter().any(|handled| {
+                handled.app_key_pubkey == app_key_pubkey && handled.requested_at >= requested_at
+            })
         {
             let before = self.inbound_app_key_link_requests.len();
             self.inbound_app_key_link_requests
@@ -323,10 +362,6 @@ impl ProfileState {
             return Ok(before != self.inbound_app_key_link_requests.len());
         }
 
-        let label = label.and_then(|label| {
-            let trimmed = label.trim();
-            (!trimmed.is_empty()).then(|| trimmed.to_string())
-        });
         let mut changed = false;
         if let Some(existing) = self
             .inbound_app_key_link_requests
@@ -335,22 +370,16 @@ impl ProfileState {
         {
             let next_requested_at = existing.requested_at.max(requested_at);
             if existing.requested_at != next_requested_at
-                || existing.label != label
+                || existing.label != request.label
                 || existing.link_secret != link_secret
             {
                 existing.requested_at = next_requested_at;
-                existing.label = label;
-                existing.link_secret = link_secret.to_string();
+                existing.label = request.label.clone();
+                existing.link_secret = request.link_secret.clone();
                 changed = true;
             }
         } else {
-            self.inbound_app_key_link_requests
-                .push(InboundAppKeyLinkRequest {
-                    app_key_pubkey: app_key_pubkey.to_string(),
-                    label,
-                    link_secret: link_secret.to_string(),
-                    requested_at,
-                });
+            self.inbound_app_key_link_requests.push(request);
             changed = true;
         }
 
@@ -376,10 +405,20 @@ impl ProfileState {
                 app_key_pubkey.to_string(),
             ));
         }
+        let handled_at = self
+            .inbound_app_key_link_requests
+            .iter()
+            .filter(|request| request.app_key_pubkey == app_key_pubkey)
+            .map(|request| request.requested_at)
+            .max();
         let before = self.inbound_app_key_link_requests.len();
         self.inbound_app_key_link_requests
             .retain(|request| request.app_key_pubkey != app_key_pubkey);
-        Ok(before != self.inbound_app_key_link_requests.len())
+        let removed = before != self.inbound_app_key_link_requests.len();
+        if let Some(requested_at) = handled_at {
+            self.remember_handled_app_key_link_request(app_key_pubkey, requested_at);
+        }
+        Ok(removed)
     }
 
     pub fn reset_app_key_link_secret(&mut self) -> bool {
@@ -387,8 +426,51 @@ impl ProfileState {
         self.app_key_link_secret = default_app_key_link_secret();
         let had_requests = !self.inbound_app_key_link_requests.is_empty();
         self.inbound_app_key_link_requests.clear();
+        self.handled_app_key_link_requests.clear();
         had_requests || self.app_key_link_secret != previous
     }
+
+    fn remember_handled_app_key_link_request(&mut self, app_key_pubkey: &str, requested_at: u64) {
+        if let Some(existing) = self
+            .handled_app_key_link_requests
+            .iter_mut()
+            .find(|request| request.app_key_pubkey == app_key_pubkey)
+        {
+            existing.requested_at = existing.requested_at.max(requested_at);
+        } else {
+            self.handled_app_key_link_requests
+                .push(HandledAppKeyLinkRequest {
+                    app_key_pubkey: app_key_pubkey.to_string(),
+                    requested_at,
+                });
+        }
+        if self.handled_app_key_link_requests.len() > MAX_HANDLED_APP_KEY_LINK_REQUESTS {
+            self.handled_app_key_link_requests
+                .sort_by_key(|request| request.requested_at);
+            while self.handled_app_key_link_requests.len() > MAX_HANDLED_APP_KEY_LINK_REQUESTS {
+                self.handled_app_key_link_requests.remove(0);
+            }
+        }
+        self.handled_app_key_link_requests
+            .sort_by(|left, right| left.app_key_pubkey.cmp(&right.app_key_pubkey));
+    }
+}
+
+fn request_is_handled_by_profile_projection(
+    request: &InboundAppKeyLinkRequest,
+    profile_projection: &IrisProfileRosterProjection,
+    app_keys_projection: Option<&AppKeysProjection>,
+) -> bool {
+    if app_keys_projection.is_some_and(|projection| projection.contains(&request.app_key_pubkey)) {
+        return true;
+    }
+    profile_projection
+        .tombstones
+        .get(&request.app_key_pubkey)
+        .is_some_and(|tombstone| {
+            u64::try_from(tombstone.removed_at)
+                .is_ok_and(|removed_at| removed_at >= request.requested_at)
+        })
 }
 
 #[must_use]
@@ -493,6 +575,7 @@ impl Profile {
             profile_roster_projection: None,
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
+            handled_app_key_link_requests: Vec::new(),
         };
 
         let now = current_unix_seconds();
@@ -541,6 +624,7 @@ impl Profile {
             profile_roster_projection: None,
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
+            handled_app_key_link_requests: Vec::new(),
         };
 
         let now = current_unix_seconds();
@@ -608,6 +692,7 @@ impl Profile {
             profile_roster_projection: None,
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
+            handled_app_key_link_requests: Vec::new(),
         };
         state.sync_app_keys_from_profile();
 
@@ -697,6 +782,7 @@ impl Profile {
         self.state.authorization_state = AppKeyAuthorizationState::AwaitingApproval;
         self.state.outbound_app_key_link_request = None;
         self.state.inbound_app_key_link_requests.clear();
+        self.state.handled_app_key_link_requests.clear();
         self.state.sync_app_keys_from_profile();
 
         if self
@@ -751,6 +837,7 @@ impl Profile {
             profile_roster_projection: None,
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
+            handled_app_key_link_requests: Vec::new(),
         };
 
         Ok(Self {

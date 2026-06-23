@@ -123,6 +123,81 @@ fn import_file_action_writes_shared_file_into_provider_root() {
 }
 
 #[test]
+fn import_file_action_dedupes_identical_shared_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let _ = app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "iPhone".to_owned(),
+    });
+    mark_daemon_live(dir.path());
+
+    let source = dir.path().join("share-source.txt");
+    std::fs::write(&source, b"same share bytes").unwrap();
+    for _ in 0..2 {
+        let state = app.dispatch(NativeAppAction::ImportFile {
+            display_name: "Shared note.txt".to_owned(),
+            source_path: source.display().to_string(),
+        });
+        assert!(state.error.is_empty(), "{}", state.error);
+    }
+
+    let provider = super::native_provider_list_json(&dir.path().display().to_string());
+    assert_eq!(provider["file_count"], 1);
+    let paths = provider["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["kind"] == "file")
+        .map(|entry| entry["path"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, vec!["Shared note.txt"]);
+}
+
+#[test]
+fn import_file_action_dedupes_identical_collision_copy() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let _ = app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "iPhone".to_owned(),
+    });
+    mark_daemon_live(dir.path());
+
+    let occupied = dir.path().join("occupied.txt");
+    std::fs::write(&occupied, b"different existing bytes").unwrap();
+    assert!(
+        super::native_provider_write_json(
+            &dir.path().display().to_string(),
+            "Shared note.txt",
+            &occupied.display().to_string(),
+        )["error"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty()
+    );
+
+    let source = dir.path().join("share-source.txt");
+    std::fs::write(&source, b"same share bytes").unwrap();
+    for _ in 0..2 {
+        let state = app.dispatch(NativeAppAction::ImportFile {
+            display_name: "Shared note.txt".to_owned(),
+            source_path: source.display().to_string(),
+        });
+        assert!(state.error.is_empty(), "{}", state.error);
+    }
+
+    let provider = super::native_provider_list_json(&dir.path().display().to_string());
+    assert_eq!(provider["file_count"], 2);
+    let paths = provider["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["kind"] == "file")
+        .map(|entry| entry["path"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(paths, vec!["Shared note (2).txt", "Shared note.txt"]);
+}
+
+#[test]
 fn import_content_link_action_downloads_into_provider_root() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
