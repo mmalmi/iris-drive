@@ -1667,7 +1667,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         externalStatusRefreshWorkItem?.cancel()
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            self.refreshExternalDaemonStatusFile(paths: paths)
+            if self.externalDaemonMode || self.daemonServiceActive {
+                self.refreshExternalDaemonStatusFile(paths: paths)
+            } else {
+                irisDriveDebugLog("Iris Drive app-managed daemon status file changed")
+                self.scheduleNativeStatusRefresh()
+            }
         }
         externalStatusRefreshWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: workItem)

@@ -479,15 +479,12 @@ impl Daemon {
         let mut scoped_tombstone_paths = None;
         let import_root = if let Some(tombstone_base_root) = tombstone_base_root.as_ref() {
             let phase = std::time::Instant::now();
-            let projection_root = crate::primary_merged_root(&self.tree, &self.config)
-                .await?
-                .root_cid;
             let delta = local_visible_root_for_mount_import(
                 &self.tree,
                 &root,
                 previous_root.as_ref(),
                 tombstone_base_root,
-                Some(&projection_root),
+                Some(tombstone_base_root),
                 tombstone_paths,
             )
             .await?;

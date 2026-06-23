@@ -526,6 +526,9 @@ terminate_running_app() {
   terminate_macos_bundle_processes \
     "IrisDriveFileProvider" \
     "/Contents/PlugIns/IrisDriveFileProvider.appex/Contents/MacOS/IrisDriveFileProvider"
+  terminate_macos_bundle_processes \
+    "idrive" \
+    "/Contents/PlugIns/IrisDriveFileProvider.appex/Contents/MacOS/idrive"
 }
 
 build_app() {

@@ -1,4 +1,5 @@
 import BackgroundTasks
+import Darwin
 import FileProvider
 import Foundation
 import SwiftUI
@@ -14,6 +15,7 @@ private let configMutationAuditDefaultsKey = "configMutationAuditV1"
 private let configMutationAuditMaxEvents = 20
 private let fileProviderPathIdentifierPrefix = "path:"
 private let fileProviderRegistrationIdentityKey = "fileProviderRegistrationIdentity"
+private let nativeFipsStatusFileName = "native-fips-status.json"
 private let irisWebPublisherProfileNameCacheKey = "irisWebPublisherProfileNameCacheV1"
 private let irisWebPublisherProfileNameFreshAge: TimeInterval = 24 * 60 * 60
 private let irisWebPublisherProfileNameMaxCacheAge: TimeInterval = 30 * 24 * 60 * 60
@@ -122,6 +124,11 @@ final class IrisDriveMobileModel: ObservableObject {
     private var copyFeedbackTask: Task<Void, Never>?
     private var fileProviderDomainRemovalInFlight = false
     private var stateGeneration: UInt64 = 0
+    private var nativeFipsStatusDirectorySource: DispatchSourceFileSystemObject?
+    private var nativeFipsStatusFileSource: DispatchSourceFileSystemObject?
+    private var nativeFipsStatusDirectoryDescriptor: CInt = -1
+    private var nativeFipsStatusFileDescriptor: CInt = -1
+    private var nativeFipsStatusRefreshTask: Task<Void, Never>?
     private var appleCalendarSyncInFlight = false
     private var lastAppleCalendarSyncCheck = Date.distantPast
     private var irisWebPublisherProfileNameTasks: [String: Task<Void, Never>] = [:]
@@ -585,6 +592,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func startForegroundSyncLoop() {
+        startNativeFipsStatusWatcher()
         guard foregroundSyncTask == nil else { return }
         foregroundSyncTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -602,6 +610,97 @@ final class IrisDriveMobileModel: ObservableObject {
     func stopForegroundSyncLoop() {
         foregroundSyncTask?.cancel()
         foregroundSyncTask = nil
+        stopNativeFipsStatusWatcher()
+    }
+
+    private func startNativeFipsStatusWatcher() {
+        stopNativeFipsStatusWatcher()
+        let directory = IrisDriveSharedContainer.baseDirectory
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        startNativeFipsStatusDirectoryWatcher(directory: directory)
+        startNativeFipsStatusFileWatcher(directory: directory)
+    }
+
+    private func stopNativeFipsStatusWatcher() {
+        nativeFipsStatusRefreshTask?.cancel()
+        nativeFipsStatusRefreshTask = nil
+        nativeFipsStatusFileSource?.cancel()
+        nativeFipsStatusFileSource = nil
+        nativeFipsStatusDirectorySource?.cancel()
+        nativeFipsStatusDirectorySource = nil
+    }
+
+    private func startNativeFipsStatusDirectoryWatcher(directory: URL) {
+        let descriptor = open(directory.path, O_EVTONLY)
+        guard descriptor >= 0 else {
+            NSLog("Iris Drive native FIPS status directory watch unavailable: \(directory.path)")
+            return
+        }
+        nativeFipsStatusDirectoryDescriptor = descriptor
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor,
+            eventMask: [.write, .rename, .delete],
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            guard self.nativeFipsStatusFileSource == nil else { return }
+            if self.startNativeFipsStatusFileWatcher(directory: directory) {
+                self.scheduleNativeFipsStatusRefresh()
+            }
+        }
+        source.setCancelHandler { [weak self, descriptor] in
+            close(descriptor)
+            guard let self else { return }
+            if self.nativeFipsStatusDirectoryDescriptor == descriptor {
+                self.nativeFipsStatusDirectoryDescriptor = -1
+            }
+        }
+        nativeFipsStatusDirectorySource = source
+        source.resume()
+    }
+
+    @discardableResult
+    private func startNativeFipsStatusFileWatcher(directory: URL) -> Bool {
+        nativeFipsStatusFileSource?.cancel()
+        nativeFipsStatusFileSource = nil
+        let statusURL = directory.appendingPathComponent(nativeFipsStatusFileName, isDirectory: false)
+        let descriptor = open(statusURL.path, O_EVTONLY)
+        guard descriptor >= 0 else { return false }
+        nativeFipsStatusFileDescriptor = descriptor
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor,
+            eventMask: [.write, .extend, .attrib, .rename, .delete],
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            let data = source.data
+            if data.contains(.delete) || data.contains(.rename) {
+                self.startNativeFipsStatusFileWatcher(directory: directory)
+            }
+            self.scheduleNativeFipsStatusRefresh()
+        }
+        source.setCancelHandler { [weak self, descriptor] in
+            close(descriptor)
+            guard let self else { return }
+            if self.nativeFipsStatusFileDescriptor == descriptor {
+                self.nativeFipsStatusFileDescriptor = -1
+            }
+        }
+        nativeFipsStatusFileSource = source
+        source.resume()
+        return true
+    }
+
+    private func scheduleNativeFipsStatusRefresh() {
+        nativeFipsStatusRefreshTask?.cancel()
+        nativeFipsStatusRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            guard let self else { return }
+            NSLog("Iris Drive native FIPS status file changed")
+            await self.refreshInBackground()
+        }
     }
 
     private func syncOnceIfRunning() async {

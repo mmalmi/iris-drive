@@ -39,6 +39,7 @@ extension AppDelegate {
                 prepareFileProviderRuntime(paths: paths, idrive: idrive)
             }
             startStatusRefreshTimer(interval: 5.0)
+            startExternalDaemonStatusWatcher(paths: paths)
             refreshStatus()
         } catch {
             NSLog("Iris Drive daemon failed to start: \(error)")

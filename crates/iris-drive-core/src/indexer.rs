@@ -247,6 +247,7 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
     projection_root: Option<&Cid>,
     tombstone_paths: Option<&BTreeSet<String>>,
 ) -> Result<VisibleImportDelta, IndexError> {
+    let original_base_root = base_root.clone();
     let edited_root = filter_ignored_entries_from_root(tree, edited_root).await?;
     let base_root = filter_ignored_entries_from_root(tree, base_root).await?;
 
@@ -260,8 +261,12 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
     collect_visible_dirs(tree, &base_root, "", &mut base_dirs).await?;
     let mut projection_files = BTreeMap::new();
     if let Some(projection_root) = projection_root {
-        let projection_root = filter_ignored_entries_from_root(tree, projection_root).await?;
-        collect_visible_files(tree, &projection_root, "", &mut projection_files).await?;
+        if projection_root == &original_base_root {
+            projection_files = base_files.clone();
+        } else {
+            let projection_root = filter_ignored_entries_from_root(tree, projection_root).await?;
+            collect_visible_files(tree, &projection_root, "", &mut projection_files).await?;
+        }
     }
 
     let previous_visible_root = match previous_root {
