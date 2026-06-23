@@ -48,9 +48,7 @@ use iris_drive_core::{Daemon, GatewayBind, GatewayProxyServer, GatewayServer};
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
-#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
-use serde_json::json;
+use serde_json::{Value, json};
 
 use crate::actions::NativeAppAction;
 pub use crate::native_link_input::{classify_link_input, validate_link_input};
@@ -120,6 +118,19 @@ pub fn recovery_pubkey_for_phrase(recovery_phrase: String) -> GeneratedRecoveryK
 #[allow(clippy::needless_pass_by_value)]
 pub fn drive_link_for_cid(root_cid: String) -> DriveLinkForCid {
     drive_link_for_cid_value(&root_cid)
+}
+
+pub(crate) fn native_calendar_export_json(data_dir: &str) -> Value {
+    match run_native_calendar_export(data_dir) {
+        Ok(calendar) => json!({
+            "calendar": calendar,
+            "error": "",
+        }),
+        Err(error) => json!({
+            "calendar": null,
+            "error": format!("{error:#}"),
+        }),
+    }
 }
 
 #[cfg(target_os = "android")]
@@ -1709,6 +1720,26 @@ fn native_browser_gateway_port_for_state(config_dir: &Path) -> Option<u16> {
         let _ = config_dir;
         Some(iris_drive_core::gateway::DEFAULT_GATEWAY_PORT)
     }
+}
+
+fn run_native_calendar_export(
+    data_dir: &str,
+) -> anyhow::Result<iris_drive_core::calendar::CalendarData> {
+    let config_dir = Path::new(data_dir);
+    let config = load_native_runtime_config_cached(&config_path_in(config_dir))
+        .map_err(anyhow::Error::msg)?;
+    let owner_npub = config
+        .profile
+        .as_ref()
+        .map(|profile| pubkey_npub(&profile.app_key_pubkey))
+        .unwrap_or_else(|| "iris-android".to_owned());
+    let daemon = iris_drive_core::Daemon::open_with_config(config_dir, config)
+        .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
+    block_on_backup_operation(async {
+        iris_drive_core::calendar::load_calendar_data(daemon.tree(), daemon.config(), &owner_npub)
+            .await
+            .context("loading Iris calendar")
+    })
 }
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]

@@ -37,6 +37,8 @@ import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.NativeActions
 import to.iris.drive.app.core.NativeCore
 import to.iris.drive.app.core.recoverySecretExportFromJson
+import to.iris.drive.app.calendar.AndroidCalendarSync
+import to.iris.drive.app.calendar.parseIrisCalendarExportJson
 import to.iris.drive.app.sync.BackgroundSyncPolicy
 import to.iris.drive.app.sync.IrisDriveBackgroundSync
 import to.iris.drive.app.sync.IrisDriveSyncService
@@ -81,6 +83,23 @@ class MainActivity : ComponentActivity() {
                         startSyncService()
                     }
                 }
+            val calendarPermissionLauncher =
+                rememberLauncherForActivityResult(
+                    ActivityResultContracts.RequestMultiplePermissions(),
+                ) { grants ->
+                    val granted =
+                        grants[Manifest.permission.READ_CALENDAR] == true &&
+                            grants[Manifest.permission.WRITE_CALENDAR] == true
+                    if (granted) {
+                        syncAndroidCalendar()
+                    } else {
+                        Toast.makeText(
+                            this@MainActivity,
+                            "Calendar permission is required",
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                    }
+                }
 
             IrisDriveAndroidApp(
                 stateFlow = stateFlow,
@@ -114,6 +133,18 @@ class MainActivity : ComponentActivity() {
                     recoverySecretExportFromJson(
                         NativeCore.exportRecoverySecretJson(filesDir.absolutePath),
                     )
+                },
+                onSyncAndroidCalendar = {
+                    if (AndroidCalendarSync.hasPermissions(this@MainActivity)) {
+                        syncAndroidCalendar()
+                    } else {
+                        calendarPermissionLauncher.launch(
+                            arrayOf(
+                                Manifest.permission.READ_CALENDAR,
+                                Manifest.permission.WRITE_CALENDAR,
+                            ),
+                        )
+                    }
                 },
                 onOpenUrl = ::openUrl,
                 onOpenIrisApps = ::openIrisWebWhenReady,
@@ -742,6 +773,40 @@ class MainActivity : ComponentActivity() {
                 this,
                 Manifest.permission.POST_NOTIFICATIONS,
             ) != PackageManager.PERMISSION_GRANTED
+
+    private fun syncAndroidCalendar() {
+        if (!AndroidCalendarSync.hasPermissions(this)) {
+            Toast.makeText(this, "Calendar permission is required", Toast.LENGTH_SHORT).show()
+            return
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            val result = runCatching {
+                val exportJson = NativeCore.exportCalendarJson(filesDir.absolutePath)
+                val snapshot = parseIrisCalendarExportJson(exportJson)
+                AndroidCalendarSync.sync(applicationContext, snapshot)
+            }
+            withContext(Dispatchers.Main) {
+                result.onSuccess { sync ->
+                    val deleted = if (sync.eventsDeleted > 0) {
+                        ", ${sync.eventsDeleted} removed"
+                    } else {
+                        ""
+                    }
+                    Toast.makeText(
+                        this@MainActivity,
+                        "${sync.eventsSynced} events synced$deleted",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }.onFailure { error ->
+                    Toast.makeText(
+                        this@MainActivity,
+                        error.message?.takeIf { it.isNotBlank() } ?: "Calendar sync failed",
+                        Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            }
+        }
+    }
 
     private fun handleLaunchIntent(intent: Intent?) {
         val uri = intent?.data

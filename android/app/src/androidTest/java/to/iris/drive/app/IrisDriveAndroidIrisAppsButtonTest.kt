@@ -71,6 +71,7 @@ class IrisDriveAndroidIrisAppsButtonTest {
                 onLinkDevice = { _, _ -> },
                 onCopyText = { _, _ -> },
                 onExportRecoverySecret = { RecoverySecretExport() },
+                onSyncAndroidCalendar = {},
                 onOpenUrl = {},
                 onOpenIrisApps = onOpenIrisApps,
                 onOpenDriveFolder = {},

@@ -14,6 +14,7 @@ use serde::Serialize;
 
 use crate::{
     FfiApp, NativeAppAction, NativeAppState,
+    ffi::native_calendar_export_json,
     ffi::native_provider_delete_json,
     ffi::native_provider_import_shared_file_json,
     ffi::native_provider_is_child_document_json,
@@ -191,6 +192,11 @@ pub extern "C" fn iris_drive_recovery_pubkey_for_phrase_json(
 #[unsafe(no_mangle)]
 pub extern "C" fn iris_drive_link_for_cid_json(root_cid: *const c_char) -> *mut c_char {
     json_string(&drive_link_for_cid(c_string_lossy(root_cid)))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_calendar_export_json(data_dir: *const c_char) -> *mut c_char {
+    json_string(&native_calendar_export_json(&c_string_lossy(data_dir)))
 }
 
 #[unsafe(no_mangle)]
@@ -506,6 +512,17 @@ pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_recoveryPubkeyForP
 ) -> jstring {
     let recovery_phrase = jni_string_lossy(&mut env, &recovery_phrase);
     jni_json_string(env, &recovery_pubkey_for_phrase(recovery_phrase))
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_exportCalendarJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    data_dir: JString<'_>,
+) -> jstring {
+    let data_dir = jni_string_lossy(&mut env, &data_dir);
+    jni_json_string(env, &native_calendar_export_json(&data_dir))
 }
 
 #[cfg(target_os = "android")]

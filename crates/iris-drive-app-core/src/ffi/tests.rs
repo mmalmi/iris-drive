@@ -1,6 +1,6 @@
 use super::{
     FfiApp, NATIVE_RUNTIME_CONFIG_CACHE, SentAppKeyLinkRequest, app_key_link_request_send_due,
-    load_native_runtime_config_cached, normalize_pubkey,
+    load_native_runtime_config_cached, native_calendar_export_json, normalize_pubkey,
 };
 use crate::NativeAppAction;
 use crate::state::{UiShare, UiShareMember};
@@ -69,6 +69,31 @@ fn native_runtime_config_cache_reuses_unchanged_config_and_invalidates_on_save()
 
     let refreshed = load_native_runtime_config_cached(&config_path).unwrap();
     assert_eq!(refreshed.relays, vec!["wss://changed.example"]);
+}
+
+#[test]
+fn native_calendar_export_returns_default_calendar_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let state = app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "Android calendar test".to_owned(),
+    });
+    assert!(state.error.is_empty(), "{}", state.error);
+
+    let export = native_calendar_export_json(&dir.path().display().to_string());
+
+    assert_eq!(export["error"], "");
+    assert_eq!(export["calendar"]["title"], "Calendar");
+    assert_eq!(
+        export["calendar"]["events"].as_array().map(Vec::len),
+        Some(0)
+    );
+    assert!(
+        export["calendar"]["ownerNpub"]
+            .as_str()
+            .is_some_and(|owner| owner.starts_with("npub1")),
+        "{export}",
+    );
 }
 
 fn ui_share_member<'a>(share: &'a UiShare, profile_id: &str) -> &'a UiShareMember {

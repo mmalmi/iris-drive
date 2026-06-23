@@ -71,6 +71,7 @@ internal fun AuthenticatedContent(
     onCopyDeviceKey: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onExportRecoverySecret: () -> RecoverySecretExport,
+    onSyncAndroidCalendar: () -> Unit,
     onCopyLinkInvite: () -> Unit,
     onCopySnapshotLink: () -> Unit,
     onOpenSnapshotLink: () -> Unit,
@@ -167,6 +168,7 @@ internal fun AuthenticatedContent(
             onCopyDeviceKey = onCopyDeviceKey,
             onCopyText = onCopyText,
             onExportRecoverySecret = onExportRecoverySecret,
+            onSyncAndroidCalendar = onSyncAndroidCalendar,
             onLogout = onLogout,
             onAddRelay = onAddRelay,
             onRemoveRelay = onRemoveRelay,
@@ -368,6 +370,7 @@ private fun SettingsContent(
     onCopyDeviceKey: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onExportRecoverySecret: () -> RecoverySecretExport,
+    onSyncAndroidCalendar: () -> Unit,
     onLogout: () -> Unit,
     onAddRelay: (String) -> Unit,
     onRemoveRelay: (String) -> Unit,
@@ -393,6 +396,7 @@ private fun SettingsContent(
                 onCopyDeviceKey = onCopyDeviceKey,
                 onCopyText = onCopyText,
                 onExportRecoverySecret = onExportRecoverySecret,
+                onSyncAndroidCalendar = onSyncAndroidCalendar,
                 onLogout = onLogout,
                 onAddRelay = onAddRelay,
                 onRemoveRelay = onRemoveRelay,
@@ -1014,6 +1018,7 @@ private fun SettingsPanel(
     onCopyDeviceKey: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onExportRecoverySecret: () -> RecoverySecretExport,
+    onSyncAndroidCalendar: () -> Unit,
     onLogout: () -> Unit,
     onAddRelay: (String) -> Unit,
     onRemoveRelay: (String) -> Unit,
@@ -1120,6 +1125,15 @@ private fun SettingsPanel(
             ) {
                 Text("Recovery phrase")
             }
+        }
+        Text("Android Calendar", fontWeight = FontWeight.SemiBold)
+        OutlinedButton(
+            onClick = onSyncAndroidCalendar,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("syncAndroidCalendar"),
+        ) {
+            Text("Sync now")
         }
         OutlinedButton(onClick = { confirmLogout = true }) {
             Icon(painterResource(R.drawable.ic_delete), contentDescription = null, tint = Danger)

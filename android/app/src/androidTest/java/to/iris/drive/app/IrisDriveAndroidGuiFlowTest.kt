@@ -833,6 +833,25 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithText("Device requests").assertIsDisplayed()
     }
 
+    @Test
+    fun settingsExposeAndroidCalendarSyncAction() {
+        var syncCount = 0
+        render(
+            state = AppState(
+                profile = profileState(),
+                setupState = "authorized",
+                isSetupComplete = true,
+            ),
+            onSyncAndroidCalendar = { syncCount += 1 },
+        )
+
+        compose.onNodeWithTag("tabSettings").activate()
+        compose.onNodeWithTag("settingsContent").performScrollToNode(hasTestTag("syncAndroidCalendar"))
+        compose.onNodeWithTag("syncAndroidCalendar").assertIsDisplayed().activate()
+
+        assertEquals(1, syncCount)
+    }
+
     private fun render(
         state: AppState,
         onCreateProfile: (String) -> Unit = {},
@@ -843,6 +862,7 @@ class IrisDriveAndroidGuiFlowTest {
         onDeleteDevice: (String) -> Unit = {},
         onAddRoot: (String, String) -> Unit = { _, _ -> },
         onExportRecoverySecret: () -> RecoverySecretExport = { RecoverySecretExport() },
+        onSyncAndroidCalendar: () -> Unit = {},
         onAddBackupTarget: (String, String) -> Unit = { _, _ -> },
         onRemoveBackupTarget: (String) -> Unit = {},
         onAddBlossomServer: (String) -> Unit = {},
@@ -890,6 +910,7 @@ class IrisDriveAndroidGuiFlowTest {
                 onLinkDevice = onLinkDevice,
                 onCopyText = { _, _ -> },
                 onExportRecoverySecret = onExportRecoverySecret,
+                onSyncAndroidCalendar = onSyncAndroidCalendar,
                 onOpenUrl = { _ -> },
                 onOpenIrisApps = onOpenIrisApps,
                 onOpenDriveFolder = {},
