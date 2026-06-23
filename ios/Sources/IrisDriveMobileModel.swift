@@ -1,6 +1,6 @@
 import BackgroundTasks
 import Darwin
-import FileProvider
+@preconcurrency import FileProvider
 import Foundation
 import SwiftUI
 import UIKit
@@ -15,6 +15,9 @@ private let configMutationAuditDefaultsKey = "configMutationAuditV1"
 private let configMutationAuditMaxEvents = 20
 private let fileProviderPathIdentifierPrefix = "path:"
 private let fileProviderRegistrationIdentityKey = "fileProviderRegistrationIdentity"
+private let fileProviderRegistrationVersion = 3
+private let fileProviderRegistrationVersionKey = "fileProviderRegistrationVersion"
+private let providerRootSignalFileName = "provider-root.changed"
 private let nativeFipsStatusFileName = "native-fips-status.json"
 private let irisWebPublisherProfileNameCacheKey = "irisWebPublisherProfileNameCacheV1"
 private let irisWebPublisherProfileNameFreshAge: TimeInterval = 24 * 60 * 60
@@ -129,6 +132,11 @@ final class IrisDriveMobileModel: ObservableObject {
     private var nativeFipsStatusDirectoryDescriptor: CInt = -1
     private var nativeFipsStatusFileDescriptor: CInt = -1
     private var nativeFipsStatusRefreshTask: Task<Void, Never>?
+    private var providerRootSignalDirectorySource: DispatchSourceFileSystemObject?
+    private var providerRootSignalFileSource: DispatchSourceFileSystemObject?
+    private var providerRootSignalDirectoryDescriptor: CInt = -1
+    private var providerRootSignalFileDescriptor: CInt = -1
+    private var providerRootSignalRefreshTask: Task<Void, Never>?
     private var appleCalendarSyncInFlight = false
     private var lastAppleCalendarSyncCheck = Date.distantPast
     private var irisWebPublisherProfileNameTasks: [String: Task<Void, Never>] = [:]
@@ -446,6 +454,7 @@ final class IrisDriveMobileModel: ObservableObject {
             }
         }
         defaults.removeObject(forKey: fileProviderRegistrationIdentityKey)
+        defaults.removeObject(forKey: fileProviderRegistrationVersionKey)
         #if DEBUG
         defaults.removeObject(forKey: fileProviderDebugRegistrationVersionKey)
         #endif
@@ -483,6 +492,7 @@ final class IrisDriveMobileModel: ObservableObject {
         } else {
             defaults.set(identity, forKey: fileProviderRegistrationIdentityKey)
         }
+        defaults.set(fileProviderRegistrationVersion, forKey: fileProviderRegistrationVersionKey)
         #if DEBUG
         defaults.set(fileProviderDebugRegistrationVersion, forKey: fileProviderDebugRegistrationVersionKey)
         #endif
@@ -505,6 +515,9 @@ final class IrisDriveMobileModel: ObservableObject {
             return true
         }
         if defaults.string(forKey: fileProviderRegistrationIdentityKey) != currentIdentity {
+            return true
+        }
+        if defaults.integer(forKey: fileProviderRegistrationVersionKey) < fileProviderRegistrationVersion {
             return true
         }
         #if DEBUG
@@ -593,6 +606,7 @@ final class IrisDriveMobileModel: ObservableObject {
 
     func startForegroundSyncLoop() {
         startNativeFipsStatusWatcher()
+        startProviderRootSignalWatcher()
         guard foregroundSyncTask == nil else { return }
         foregroundSyncTask = Task { @MainActor [weak self] in
             guard let self else { return }
@@ -611,6 +625,7 @@ final class IrisDriveMobileModel: ObservableObject {
         foregroundSyncTask?.cancel()
         foregroundSyncTask = nil
         stopNativeFipsStatusWatcher()
+        stopProviderRootSignalWatcher()
     }
 
     private func startNativeFipsStatusWatcher() {
@@ -699,6 +714,100 @@ final class IrisDriveMobileModel: ObservableObject {
             try? await Task.sleep(nanoseconds: 50_000_000)
             guard let self else { return }
             NSLog("Iris Drive native FIPS status file changed")
+            await self.refreshInBackground()
+        }
+    }
+
+    private func startProviderRootSignalWatcher() {
+        stopProviderRootSignalWatcher()
+        let directory = IrisDriveSharedContainer.baseDirectory
+        try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        startProviderRootSignalDirectoryWatcher(directory: directory)
+        startProviderRootSignalFileWatcher(directory: directory)
+        let signalURL = directory.appendingPathComponent(providerRootSignalFileName, isDirectory: false)
+        if FileManager.default.fileExists(atPath: signalURL.path) {
+            scheduleProviderRootSignalRefresh()
+        }
+    }
+
+    private func stopProviderRootSignalWatcher() {
+        providerRootSignalRefreshTask?.cancel()
+        providerRootSignalRefreshTask = nil
+        providerRootSignalFileSource?.cancel()
+        providerRootSignalFileSource = nil
+        providerRootSignalDirectorySource?.cancel()
+        providerRootSignalDirectorySource = nil
+    }
+
+    private func startProviderRootSignalDirectoryWatcher(directory: URL) {
+        let descriptor = open(directory.path, O_EVTONLY)
+        guard descriptor >= 0 else {
+            NSLog("Iris Drive provider root signal directory watch unavailable: \(directory.path)")
+            return
+        }
+        providerRootSignalDirectoryDescriptor = descriptor
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor,
+            eventMask: [.write, .rename, .delete],
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            guard self.providerRootSignalFileSource == nil else { return }
+            if self.startProviderRootSignalFileWatcher(directory: directory) {
+                self.scheduleProviderRootSignalRefresh()
+            }
+        }
+        source.setCancelHandler { [weak self, descriptor] in
+            close(descriptor)
+            guard let self else { return }
+            if self.providerRootSignalDirectoryDescriptor == descriptor {
+                self.providerRootSignalDirectoryDescriptor = -1
+            }
+        }
+        providerRootSignalDirectorySource = source
+        source.resume()
+    }
+
+    @discardableResult
+    private func startProviderRootSignalFileWatcher(directory: URL) -> Bool {
+        providerRootSignalFileSource?.cancel()
+        providerRootSignalFileSource = nil
+        let signalURL = directory.appendingPathComponent(providerRootSignalFileName, isDirectory: false)
+        let descriptor = open(signalURL.path, O_EVTONLY)
+        guard descriptor >= 0 else { return false }
+        providerRootSignalFileDescriptor = descriptor
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor,
+            eventMask: [.write, .extend, .attrib, .rename, .delete],
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            let data = source.data
+            if data.contains(.delete) || data.contains(.rename) {
+                self.startProviderRootSignalFileWatcher(directory: directory)
+            }
+            self.scheduleProviderRootSignalRefresh()
+        }
+        source.setCancelHandler { [weak self, descriptor] in
+            close(descriptor)
+            guard let self else { return }
+            if self.providerRootSignalFileDescriptor == descriptor {
+                self.providerRootSignalFileDescriptor = -1
+            }
+        }
+        providerRootSignalFileSource = source
+        source.resume()
+        return true
+    }
+
+    private func scheduleProviderRootSignalRefresh() {
+        providerRootSignalRefreshTask?.cancel()
+        providerRootSignalRefreshTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            guard let self else { return }
+            NSLog("Iris Drive provider root signal changed")
             await self.refreshInBackground()
         }
     }
@@ -2051,8 +2160,16 @@ final class IrisDriveMobileModel: ObservableObject {
     private func fileProviderIdentifier(for path: String) -> NSFileProviderItemIdentifier {
         guard !path.isEmpty else { return .rootContainer }
         return NSFileProviderItemIdentifier(
-            "\(fileProviderPathIdentifierPrefix)\(Data(path.utf8).base64EncodedString())"
+            "\(fileProviderPathIdentifierPrefix)\(fileProviderEncodedPath(path))"
         )
+    }
+
+    private func fileProviderEncodedPath(_ path: String) -> String {
+        Data(path.utf8)
+            .base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
     }
 
     private func deviceKey(from request: String) -> String {
