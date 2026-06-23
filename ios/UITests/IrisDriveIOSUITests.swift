@@ -123,6 +123,7 @@ final class IrisDriveIOSUITests: XCTestCase {
 
         let files = XCUIApplication(bundleIdentifier: "com.apple.DocumentsApp")
         assertFilesOpen(in: app, files: files, timeout: 20, expectedItem: seededFile)
+        assertNoFilesProviderTrouble(in: files)
     }
 
     func testOpenIrisAppsLoadsBrowserWithoutConnectionError() throws {
@@ -521,6 +522,10 @@ final class IrisDriveIOSUITests: XCTestCase {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
             if files.state == .runningForeground {
+                if let trouble = filesProviderTrouble(in: files) {
+                    XCTFail("Files showed Iris Drive provider trouble while opening: \(trouble)")
+                    return
+                }
                 if let expectedItem {
                     if filesContains(expectedItem, in: files) {
                         return
@@ -543,6 +548,52 @@ final class IrisDriveIOSUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
         XCTFail("Files did not show Iris Drive. Files hierarchy:\n\(files.debugDescription)")
+    }
+
+    private func assertNoFilesProviderTrouble(
+        in files: XCUIApplication,
+        duration: TimeInterval = 4,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let deadline = Date().addingTimeInterval(duration)
+        while Date() < deadline {
+            if let trouble = filesProviderTrouble(in: files) {
+                XCTFail("Files showed Iris Drive provider trouble after opening: \(trouble)", file: file, line: line)
+                return
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+    }
+
+    private func filesProviderTrouble(in files: XCUIApplication) -> String? {
+        let text = visibleAccessibilityText(in: files)
+        let lowercased = text.lowercased()
+        let exactTrouble = [
+            "iris drive is empty",
+            "syncing with iris drive paused",
+            "unable to sync",
+            "upload error",
+            "download error",
+        ]
+        if exactTrouble.contains(where: lowercased.contains) {
+            return text
+        }
+        if lowercased.contains("iris drive") {
+            let providerTrouble = ["paused", "error", "couldn't", "couldn’t", "could not"]
+            if providerTrouble.contains(where: lowercased.contains) {
+                return text
+            }
+        }
+        return nil
+    }
+
+    private func visibleAccessibilityText(in app: XCUIApplication) -> String {
+        app.descendants(matching: .any).allElementsBoundByIndex
+            .prefix(120)
+            .map(accessibilityValue)
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
     }
 
     private func filesContains(_ expectedItem: String, in files: XCUIApplication) -> Bool {

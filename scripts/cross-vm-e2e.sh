@@ -32,7 +32,7 @@ Environment:
   IRIS_DRIVE_E2E_PROVIDER_MUTATIONS
                                   Use provider commands instead of projection surfaces when set to 1.
   IRIS_DRIVE_E2E_SIDELOAD_APPKEYS
-                                  Copy the owner AppKeys snapshot into temp peer configs after approval
+                                  Copy the owner profile roster snapshot into temp peer configs after approval
                                   so VM file-sync tests do not depend on public relay timing (default: 1).
   IRIS_DRIVE_E2E_KEEP            Keep remote temp dirs/daemons when set to 1.
 USAGE
@@ -275,7 +275,13 @@ if (Test-Path -LiteralPath \$base) { Remove-Item -LiteralPath \$base -Recurse -F
 if (Test-Path -LiteralPath \$projectionE2e) { Remove-Item -LiteralPath \$projectionE2e -Recurse -Force }
 \$config = Join-Path \$base 'config'; \$work = Join-Path \$base 'work'
 New-Item -ItemType Directory -Force -Path \$config,\$work | Out-Null
-\$repoIdrive = Join-Path \$HOME 'src\iris-drive\target\debug\idrive.exe'
+\$repo = Join-Path \$HOME 'src\iris-drive'
+\$repoIdrive = Join-Path \$repo 'target\debug\idrive.exe'
+function Test-IrisDriveCli([string]\$candidate) {
+  if ([string]::IsNullOrWhiteSpace(\$candidate) -or -not (Test-Path -LiteralPath \$candidate)) { return \$false }
+  & \$candidate app-keys --help *> \$null
+  return \$LASTEXITCODE -eq 0
+}
 \$idrive = \$repoIdrive
 if (-not (Test-Path -LiteralPath \$idrive)) {
   \$idrive = Join-Path \$HOME '.cargo\bin\idrive.exe'
@@ -284,7 +290,15 @@ if (-not (Test-Path -LiteralPath \$idrive)) {
     if (\$cmd) { \$idrive = \$cmd.Source }
   }
 }
-if (-not (Test-Path -LiteralPath \$idrive)) { throw \"idrive.exe not found for \$label\" }
+if (-not (Test-IrisDriveCli \$idrive)) {
+  if (Test-Path -LiteralPath (Join-Path \$repo 'Cargo.toml')) {
+    Push-Location \$repo
+    cargo build -q -p idrive --bin idrive
+    Pop-Location
+    \$idrive = \$repoIdrive
+  }
+}
+if (-not (Test-IrisDriveCli \$idrive)) { throw \"current idrive.exe with app-keys support not found for \$label\" }
 Write-Output \"base=\$base\"
 Write-Output \"config=\$config\"
 Write-Output \"work=\$work\"
@@ -301,14 +315,25 @@ run=$(sh_quote "$RUN_ID")
 base=\"\${TMPDIR:-/tmp}/iris-drive-e2e-\${run}-\${label}\"
 rm -rf \"\$base\"
 mkdir -p \"\$base/config\" \"\$base/work\"
+supports_app_keys() {
+  [[ -x \"\$1\" ]] && \"\$1\" app-keys --help >/dev/null 2>&1
+}
 idrive=\"\${IRIS_DRIVE_E2E_IDRIVE:-\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/debug/idrive}}\"; idrive=\"\${idrive:-\$HOME/src/iris-drive/target/debug/idrive}\"
 [[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cache/cargo-target/debug/idrive\"
 [[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cargo/bin/idrive\"
 if [[ ! -x \"\$idrive\" ]]; then
   idrive=\"\$(command -v idrive || true)\"
 fi
-if [[ -z \"\$idrive\" || ! -x \"\$idrive\" ]]; then
-  echo \"idrive not found for \$label\" >&2
+if ! supports_app_keys \"\$idrive\"; then
+  repo=\"\$HOME/src/iris-drive\"
+  if [[ -f \"\$repo/Cargo.toml\" ]] && command -v cargo >/dev/null 2>&1; then
+    (cd \"\$repo\" && cargo build -q -p idrive --bin idrive)
+    idrive=\"\$repo/target/debug/idrive\"
+    [[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cache/cargo-target/debug/idrive\"
+  fi
+fi
+if ! supports_app_keys \"\$idrive\"; then
+  echo \"current idrive with app-keys support not found for \$label\" >&2
   exit 1
 fi
 printf 'base=%s\n' \"\$base\"
@@ -374,7 +399,7 @@ config=$(sh_quote "$config")
   remote_exec "$label" "$script" | tr -d '\r'
 }
 
-owner_app_keys_b64() {
+owner_profile_roster_ops_b64() {
   local label="$1"
   local kind
   local config
@@ -385,23 +410,23 @@ owner_app_keys_b64() {
     script="
 \$config = $(ps_quote "$config")
 \$text = Get-Content -LiteralPath (Join-Path \$config 'config.toml') -Raw
-\$match = [regex]::Match(\$text, '(?s)\\[account\\.app_keys\\].*?(?=\\r?\\n\\[\\[drives\\]\\])')
-if (-not \$match.Success) { throw 'owner AppKeys block not found' }
+\$match = [regex]::Match(\$text, '(?s)\\[\\[profile\\.profile_roster_ops\\]\\].*?(?=\\r?\\n\\[\\[drives\\]\\])')
+if (-not \$match.Success) { throw 'owner profile roster ops block not found' }
 [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(\$match.Value))
 "
   else
     script="
 set -Eeuo pipefail
 config=$(sh_quote "$config")
-awk 'BEGIN{copy=0} /^\\[account\\.app_keys\\]/{copy=1} /^\\[\\[drives\\]\\]/{copy=0} copy{print}' \"\$config/config.toml\" | base64 | tr -d '\\n'
+awk 'BEGIN{copy=0} /^\\[\\[profile\\.profile_roster_ops\\]\\]/{copy=1} /^\\[\\[drives\\]\\]/{copy=0} copy{print}' \"\$config/config.toml\" | base64 | tr -d '\\n'
 "
   fi
   remote_exec "$label" "$script" | tr -d '\r\n'
 }
 
-sideload_app_keys() {
+sideload_profile_roster_ops() {
   local label="$1"
-  local appkeys_b64="$2"
+  local roster_ops_b64="$2"
   local kind
   local config
   local script
@@ -411,32 +436,32 @@ sideload_app_keys() {
     script="
 \$config = $(ps_quote "$config")
 \$path = Join-Path \$config 'config.toml'
-\$appKeys = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($(ps_quote "$appkeys_b64")))
+\$rosterOps = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($(ps_quote "$roster_ops_b64")))
 \$text = Get-Content -LiteralPath \$path -Raw
 \$text = \$text.Replace('authorization_state = \"awaiting_approval\"', 'authorization_state = \"authorized\"')
 \$lf = [string][char]10
-\$pattern = '(?s)\\r?\\n\\[account\\.app_keys\\].*?(?=\\r?\\n\\[\\[drives\\]\\])'
+\$pattern = '(?s)\\r?\\n\\[\\[profile\\.profile_roster_ops\\]\\].*?(?=\\r?\\n\\[\\[drives\\]\\])'
 if ([regex]::IsMatch(\$text, \$pattern)) {
-  \$text = [regex]::Replace(\$text, \$pattern, (\$lf + \$appKeys + \$lf), 1)
+  \$text = [regex]::Replace(\$text, \$pattern, (\$lf + \$rosterOps + \$lf), 1)
 } else {
-  \$text = \$text.Replace(\$lf + '[[drives]]', \$lf + \$appKeys + \$lf + '[[drives]]')
+  \$text = \$text.Replace(\$lf + '[[drives]]', \$lf + \$rosterOps + \$lf + '[[drives]]')
 }
 Set-Content -LiteralPath \$path -Value \$text -NoNewline
 "
   else
     script="
 set -Eeuo pipefail
-CONFIG_PATH=$(sh_quote "$config") APPKEYS_B64=$(sh_quote "$appkeys_b64") python3 - <<'PY'
+CONFIG_PATH=$(sh_quote "$config") ROSTER_OPS_B64=$(sh_quote "$roster_ops_b64") python3 - <<'PY'
 import base64, os, re
 from pathlib import Path
 
 path = Path(os.environ['CONFIG_PATH']) / 'config.toml'
-appkeys = base64.b64decode(os.environ['APPKEYS_B64']).decode()
+roster_ops = base64.b64decode(os.environ['ROSTER_OPS_B64']).decode()
 text = path.read_text()
 text = text.replace('authorization_state = \"awaiting_approval\"', 'authorization_state = \"authorized\"')
-text = re.sub(r'\\n\\[account\\.app_keys\\].*?(?=\\n\\[\\[drives\\]\\])', '\\n' + appkeys + '\\n', text, count=1, flags=re.S)
-if '[account.app_keys]' not in text:
-    text = text.replace('\\n[[drives]]', '\\n' + appkeys + '\\n[[drives]]', 1)
+text = re.sub(r'\\n\\[\\[profile\\.profile_roster_ops\\]\\].*?(?=\\n\\[\\[drives\\]\\])', '\\n' + roster_ops + '\\n', text, count=1, flags=re.S)
+if '[[profile.profile_roster_ops]]' not in text:
+    text = text.replace('\\n[[drives]]', '\\n' + roster_ops + '\\n[[drives]]', 1)
 path.write_text(text)
 PY
 "
@@ -1310,7 +1335,7 @@ echo "initializing owner on $owner_label"
 owner_json="$(idrive_cmd "$owner_label" init --label "$owner_label")"
 owner_profile_id="$(jq -r '.profile_id' <<<"$owner_json")"
 admin_app_key_npub="$(jq -r '.current_app_key_npub' <<<"$owner_json")"
-invite_json="$(idrive_cmd "$owner_label" devices invite)"
+invite_json="$(idrive_cmd "$owner_label" app-keys invite)"
 invite_url="$(jq -r '.url' <<<"$invite_json")"
 invite_admin_app_key_npub="$(jq -r '.admin_app_key_npub' <<<"$invite_json")"
 if [[ "$invite_url" != https://drive.iris.to/invite/* ]]; then
@@ -1327,7 +1352,7 @@ for label in "${LABELS[@]}"; do
     continue
   fi
   echo "requesting invite-based link for $label"
-  link_json="$(idrive_cmd "$label" devices request "$invite_url" --label "$label")"
+  link_json="$(idrive_cmd "$label" app-keys request "$invite_url" --label "$label")"
   linked_app_key_npub="$(jq -r '.current_app_key_npub' <<<"$link_json")"
   request_url="$(jq -r '.app_key_link_request.url' <<<"$link_json")"
   request_profile_id="$(jq -r '.app_key_link_request.profile_id' <<<"$link_json")"
@@ -1348,17 +1373,17 @@ for label in "${LABELS[@]}"; do
     echo "$label request URL leaked placeholder ids: $request_url" >&2
     exit 1
   fi
-  idrive_cmd "$owner_label" devices approve "$request_url" --label "$label" >/dev/null
+  idrive_cmd "$owner_label" app-keys approve "$request_url" --label "$label" >/dev/null
 done
 
 if [[ "$SIDELOAD_APPKEYS" == "1" ]]; then
-  echo "side-loading approved AppKeys into peer temp configs"
-  appkeys_b64="$(owner_app_keys_b64 "$owner_label")"
+  echo "side-loading approved profile roster ops into peer temp configs"
+  roster_ops_b64="$(owner_profile_roster_ops_b64 "$owner_label")"
   for label in "${LABELS[@]}"; do
     if [[ "$label" == "$owner_label" ]]; then
       continue
     fi
-    sideload_app_keys "$label" "$appkeys_b64"
+    sideload_profile_roster_ops "$label" "$roster_ops_b64"
   done
 fi
 

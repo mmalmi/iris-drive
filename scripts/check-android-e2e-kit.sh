@@ -38,6 +38,8 @@ require_file android/app/src/main/java/to/iris/drive/app/IrisWebActivity.kt
 require_file android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt
 require_file android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt
 require_file android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndroidGuiFlowTest.kt
+require_file android/app/src/androidTest/java/to/iris/drive/app/ShareActivityInstrumentedTest.kt
+require_file android/app/src/androidTest/java/to/iris/drive/app/provider/IrisDriveDocumentsProviderContractTest.kt
 require_file android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentsProvider.kt
 require_file scripts/mobile-android-smoke.sh
 require_file scripts/android-gui-linking-smoke.sh
@@ -58,6 +60,11 @@ require_contains android/app/src/main/java/to/iris/drive/app/provider/IrisDriveD
 require_contains android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentsProvider.kt "openDocument"
 require_contains android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentsProvider.kt "renameDocument"
 require_contains android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentsProvider.kt "deleteDocument"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/provider/IrisDriveDocumentsProviderContractTest.kt "DocumentsContract.createDocument"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/provider/IrisDriveDocumentsProviderContractTest.kt "openOutputStream"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/provider/IrisDriveDocumentsProviderContractTest.kt "openInputStream"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/provider/IrisDriveDocumentsProviderContractTest.kt "DocumentsContract.renameDocument"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/provider/IrisDriveDocumentsProviderContractTest.kt "DocumentsContract.deleteDocument"
 require_contains android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentStore.kt "isChildDocument"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "SetupRoute.Welcome ->"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "route = SetupRoute.CreateProfile"
@@ -80,6 +87,10 @@ require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "wa
 require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "localGatewayResponds"
 require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "HttpURLConnection"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.kt "Opening Iris Apps"
+require_contains android/app/src/main/AndroidManifest.xml "android.intent.action.SEND"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/ShareActivityInstrumentedTest.kt "Intent.ACTION_SEND"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/ShareActivityInstrumentedTest.kt "ActivityScenario.launch<ShareActivity>"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/ShareActivityInstrumentedTest.kt "Mobile share API.txt"
 require_file android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndroidIrisAppsButtonTest.kt
 require_contains android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndroidIrisAppsButtonTest.kt "openIrisAppsButtonStartsGatewayReadinessEvenBeforePortalUrlExists"
 require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "NativeActions.refreshProfile()"

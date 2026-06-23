@@ -145,6 +145,8 @@ require_contains scripts/ios-gui-linking-smoke.sh "testLinkThisDeviceFromWelcome
 require_contains scripts/ios-gui-linking-smoke.sh "testAddLinkedDeviceFromDevices"
 require_contains scripts/ios-gui-linking-smoke.sh "testOpenIrisAppsLoadsBrowserWhenSyncPaused"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "testOpenIrisAppsLoadsBrowserWhenSyncPaused"
+require_contains ios/UITests/IrisDriveIOSUITests.swift "assertNoFilesProviderTrouble"
+require_contains ios/UITests/IrisDriveIOSUITests.swift "syncing with iris drive paused"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "testIrisWebLauncherExternalLinksOpenSystemBrowser"
 require_absent scripts/ios-gui-linking-smoke.sh "simctl pbcopy"
 require_absent ios/UITests/IrisDriveIOSUITests.swift "linkTargetInput\"].typeText"
