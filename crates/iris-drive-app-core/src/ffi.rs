@@ -129,6 +129,8 @@ mod android_test_support;
 pub(crate) use android_test_support::native_apply_owner_snapshot_for_test_json;
 
 const DEFAULT_ROOT_STATUS: &str = "SAF provider root";
+const DAEMON_STATUS_FILE_NAME: &str = "daemon-status.json";
+const DAEMON_STATUS_FRESH_SECS: u64 = 15;
 const NATIVE_FIPS_STATUS_FILE_NAME: &str = "native-fips-status.json";
 const NATIVE_FIPS_STATUS_FRESH_SECS: u64 = 20;
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
@@ -1474,8 +1476,7 @@ impl NativeAppRuntime {
             self.refresh_ui_summary(None);
             return;
         }
-        let fips_status = load_native_fips_status(Path::new(&self.data_dir));
-        let ui_fips_status = ui_fips_status(fips_status.as_ref());
+        let ui_fips_status = ui_fips_status_for_config_dir(Path::new(&self.data_dir));
         self.state.ui.app_actors = app_actors_from_account(&account, &ui_fips_status);
         update_snapshot_link(&mut self.state, &config);
         if provider_summary == ProviderSummaryMode::Refresh {
@@ -2446,6 +2447,14 @@ async fn send_native_app_key_link_roster_ack(
     Ok(())
 }
 
+fn ui_fips_status_for_config_dir(config_dir: &Path) -> UiFipsStatus {
+    if let Some(status) = load_daemon_ui_fips_status(config_dir) {
+        return status;
+    }
+    let native_status = load_native_fips_status(config_dir);
+    ui_fips_status(native_status.as_ref())
+}
+
 fn ui_fips_status(status: Option<&Value>) -> UiFipsStatus {
     let Some(status) = status else {
         return paused_ui_fips_status();
@@ -2457,6 +2466,10 @@ fn ui_fips_status(status: Option<&Value>) -> UiFipsStatus {
     let fresh = native_fips_status_is_fresh(status);
     let error = status.get("error").cloned().unwrap_or(Value::Null);
     let normalized = normalize_fips_status_value(Some(status), running, fresh, error, &[]);
+    ui_fips_status_from_normalized(&normalized)
+}
+
+fn ui_fips_status_from_normalized(normalized: &Value) -> UiFipsStatus {
     let online_devices = string_vec_from_json_array(normalized.get("online_devices"));
     let direct_devices = string_vec_from_json_array(normalized.get("direct_devices"));
     let mesh_devices = string_vec_from_json_array(normalized.get("mesh_devices"));
@@ -2524,6 +2537,42 @@ fn paused_ui_fips_status() -> UiFipsStatus {
         roster_label: "0/0 online".to_owned(),
         ..UiFipsStatus::default()
     }
+}
+
+fn daemon_status_path(config_dir: &Path) -> PathBuf {
+    config_dir.join(DAEMON_STATUS_FILE_NAME)
+}
+
+fn load_daemon_ui_fips_status(config_dir: &Path) -> Option<UiFipsStatus> {
+    let data = std::fs::read(daemon_status_path(config_dir)).ok()?;
+    let status: Value = serde_json::from_slice(&data).ok()?;
+    let fips_status = status
+        .get("fips_block_sync")
+        .filter(|value| value.is_object())
+        .or_else(|| status.get("fips").filter(|value| value.is_object()))?;
+    let running = status
+        .get("running")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let fresh_flag = status
+        .get("fresh")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let updated_at = status
+        .get("updated_at")
+        .and_then(Value::as_u64)
+        .unwrap_or_default();
+    let fresh = running
+        && fresh_flag
+        && unix_now_seconds().saturating_sub(updated_at) <= DAEMON_STATUS_FRESH_SECS;
+    let error = status
+        .get("fips_block_sync_error")
+        .filter(|value| !value.is_null())
+        .cloned()
+        .or_else(|| status.get("fips").and_then(|fips| fips.get("error")).cloned())
+        .unwrap_or(Value::Null);
+    let normalized = normalize_fips_status_value(Some(fips_status), running, fresh, error, &[]);
+    Some(ui_fips_status_from_normalized(&normalized))
 }
 
 fn normalized_u64(status: &Value, key: &str) -> u64 {

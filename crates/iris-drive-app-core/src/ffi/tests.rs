@@ -1595,6 +1595,57 @@ fn native_fips_status_drives_device_online_presence() {
 }
 
 #[test]
+fn daemon_fips_status_overrides_stale_native_fips_status_for_desktop_refresh() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+
+    let owner = app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "Mac".to_owned(),
+    });
+    let owner_account = owner.ui.profile.unwrap();
+    let owner_invite = owner_account.app_key_link_invite;
+    let current_device = owner_account.current_app_key_npub;
+
+    let linked_dir = tempfile::tempdir().unwrap();
+    let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
+    let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
+        link_target: owner_invite,
+        app_key_label: "Phone".to_owned(),
+    });
+    let linked_account = linked.ui.profile.unwrap();
+    let linked_device = linked_account.current_app_key_npub;
+
+    let approved = app.dispatch(NativeAppAction::ApproveDevice {
+        request: linked_account.app_key_link_request,
+        label: "Phone".to_owned(),
+    });
+    assert!(approved.error.is_empty());
+
+    let now = super::unix_now_seconds();
+    write_native_fips_status_fixture(owner_dir.path(), &current_device, &[], &[], now);
+    write_daemon_fips_status_fixture(
+        owner_dir.path(),
+        &current_device,
+        &[linked_device.as_str()],
+        &[],
+        now,
+    );
+
+    let refreshed = app.refresh();
+    let linked = refreshed
+        .ui
+        .app_actors
+        .iter()
+        .find(|device| device.pubkey == linked_device)
+        .expect("linked device in roster");
+    assert!(linked.is_online);
+    assert_eq!(linked.connection_state, "direct");
+    assert_eq!(linked.connection_label, "Online (UDP, 34 ms)");
+    assert_eq!(refreshed.ui.fips.roster_label, "1/1 online");
+    assert_eq!(refreshed.ui.fips.roster_online_device_count, 1);
+}
+
+#[test]
 fn owner_state_surfaces_inbound_requests_for_accept_flow() {
     let owner_dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
@@ -1758,6 +1809,22 @@ fn write_native_fips_status_fixture(
     updated_at: u64,
 ) {
     let path = dir.join(super::NATIVE_FIPS_STATUS_FILE_NAME);
+    let mut peer_statuses = connected_peers
+        .iter()
+        .map(|peer| {
+            serde_json::json!({
+                "npub": peer,
+                "transport_type": "tcp",
+                "srtt_ms": 12
+            })
+        })
+        .collect::<Vec<_>>();
+    peer_statuses.extend(mesh_peers.iter().map(|peer| {
+        serde_json::json!({
+            "npub": peer,
+            "bytes_recv": 1
+        })
+    }));
     let value = serde_json::json!({
         "running": true,
         "updated_at": updated_at,
@@ -1765,12 +1832,47 @@ fn write_native_fips_status_fixture(
         "authorized_peers": connected_peers.iter().chain(mesh_peers.iter()).copied().collect::<Vec<_>>(),
         "connected_peers": connected_peers,
         "mesh_peers": mesh_peers,
-        "peer_statuses": connected_peers.iter().map(|peer| serde_json::json!({
-            "npub": peer,
-            "transport_type": "tcp",
-            "srtt_ms": 12
-        })).collect::<Vec<_>>(),
+        "peer_statuses": peer_statuses,
         "error": null,
+    });
+    std::fs::write(path, value.to_string()).unwrap();
+}
+
+fn write_daemon_fips_status_fixture(
+    dir: &Path,
+    endpoint_npub: &str,
+    connected_peers: &[&str],
+    mesh_peers: &[&str],
+    updated_at: u64,
+) {
+    let path = dir.join(super::DAEMON_STATUS_FILE_NAME);
+    let online_peers = connected_peers
+        .iter()
+        .chain(mesh_peers.iter())
+        .copied()
+        .collect::<Vec<_>>();
+    let value = serde_json::json!({
+        "running": true,
+        "fresh": true,
+        "updated_at": updated_at,
+        "fips_block_sync": {
+            "endpoint_npub": endpoint_npub,
+            "discovery_scope": "fips-overlay-v1",
+            "authorized_peers": online_peers,
+            "online_devices": online_peers,
+            "online_peers": online_peers,
+            "connected_peers": connected_peers,
+            "direct_devices": connected_peers,
+            "direct_peers": connected_peers,
+            "mesh_devices": mesh_peers,
+            "mesh_peers": mesh_peers,
+            "peer_statuses": connected_peers.iter().map(|peer| serde_json::json!({
+                "npub": peer,
+                "transport_type": "udp",
+                "srtt_ms": 34
+            })).collect::<Vec<_>>(),
+        },
+        "fips_block_sync_error": null,
     });
     std::fs::write(path, value.to_string()).unwrap();
 }
