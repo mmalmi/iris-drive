@@ -231,6 +231,19 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
             "provider command opened daemon"
         );
         let supplied_base_root_cid = provider_command_base_root_cid(&command)?;
+        let visible_view = if provider_command_needs_merged_view(&command) {
+            let phase = std::time::Instant::now();
+            let view = iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
+                .await
+                .context("building virtual provider timestamp index")?;
+            tracing::debug!(
+                elapsed_ms = phase.elapsed().as_millis(),
+                "provider command built merged view"
+            );
+            Some(view)
+        } else {
+            None
+        };
         let phase = std::time::Instant::now();
         let visible = if let Some(root_cid) = supplied_base_root_cid.clone() {
             tracing::debug!("provider command using supplied visible root anchor");
@@ -239,6 +252,14 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                 file_count: 0,
                 top_level_entries: 0,
             }
+        } else if let Some(visible_view) = visible_view.as_ref() {
+            iris_drive_core::primary_merged_root_from_view(
+                daemon.tree(),
+                daemon.config(),
+                visible_view,
+            )
+            .await
+            .context("building virtual provider root")?
         } else {
             primary_merged_root_with_retry(&daemon)
                 .await
@@ -271,11 +292,10 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
         match command {
             ProviderCmd::List => {
                 let phase = std::time::Instant::now();
-                let visible_view =
-                    iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
-                        .await
-                        .context("building virtual provider timestamp index")?;
-                let modified_at_by_path = provider_modified_at_index(&visible_view);
+                let visible_view = visible_view
+                    .as_ref()
+                    .expect("list command should have prebuilt merged view");
+                let modified_at_by_path = provider_modified_at_index(visible_view);
                 let entries =
                     provider_entries(daemon.tree(), &visible.root_cid, &modified_at_by_path)
                         .await?;
@@ -310,11 +330,10 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     .as_deref()
                     .map(normalize_provider_path)
                     .transpose()?;
-                let visible_view =
-                    iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
-                        .await
-                        .context("building virtual provider timestamp index")?;
-                let modified_at_by_path = provider_modified_at_index(&visible_view);
+                let modified_at_by_path = visible_view
+                    .as_ref()
+                    .map(provider_modified_at_index)
+                    .unwrap_or_default();
                 let entries =
                     provider_entries(daemon.tree(), &visible.root_cid, &modified_at_by_path)
                         .await?;
@@ -492,6 +511,17 @@ fn provider_command_is_mutation(command: &ProviderCmd) -> bool {
             | ProviderCmd::Mkdir { .. }
             | ProviderCmd::Delete { .. }
             | ProviderCmd::Rename { .. }
+    )
+}
+
+fn provider_command_needs_merged_view(command: &ProviderCmd) -> bool {
+    matches!(
+        command,
+        ProviderCmd::List
+            | ProviderCmd::ResolvePath {
+                base_root_cid: None,
+                ..
+            }
     )
 }
 

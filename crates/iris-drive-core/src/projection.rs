@@ -284,13 +284,26 @@ pub async fn primary_merged_root<S: Store>(
     tree: &HashTree<S>,
     config: &AppConfig,
 ) -> Result<PrimaryMergedRoot, ProjectionError> {
+    let merged = primary_merged_view(tree, config).await?;
+    primary_merged_root_from_view(tree, config, &merged).await
+}
+
+/// Build the visible provider root from an already-computed merged view.
+///
+/// FileProvider callers often need both the entry timestamp index from
+/// [`primary_merged_view`] and the materialized provider root. Passing the view
+/// through this helper keeps that path to one projection walk.
+pub async fn primary_merged_root_from_view<S: Store>(
+    tree: &HashTree<S>,
+    config: &AppConfig,
+    merged: &PrimaryMergedView,
+) -> Result<PrimaryMergedRoot, ProjectionError> {
     let account = config.profile.as_ref().ok_or(ProjectionError::NoAccount)?;
     let drive = config
         .drive(PRIMARY_DRIVE_ID)
         .ok_or(ProjectionError::PrimaryDriveMissing)?;
     let merge_app_keys = merge_app_key_pubkeys(account, drive);
     let source_roots = merge_source_roots(tree, drive, &merge_app_keys).await?;
-    let merged = primary_merged_view(tree, config).await?;
     let mut root = tree.put_directory(Vec::new()).await?;
 
     let target_dirs = merged_user_directory_paths(
@@ -790,5 +803,7 @@ fn may_replace_destination(
     destination_was_imported || local_entry.is_none()
 }
 
+#[cfg(test)]
+mod provider_perf_tests;
 #[cfg(test)]
 mod tests;

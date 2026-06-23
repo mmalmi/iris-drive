@@ -119,7 +119,8 @@ pub use profile::{
     ProfileState, logout_local_profile,
 };
 pub use projection::{
-    PrimaryMergedRoot, PrimaryMergedView, ProjectionError, primary_merged_root, primary_merged_view,
+    PrimaryMergedRoot, PrimaryMergedView, ProjectionError, primary_merged_root,
+    primary_merged_root_from_view, primary_merged_view,
 };
 pub use root_meta::{DriveRootMeta, RootObservation, RootParent};
 pub use share_actions::{

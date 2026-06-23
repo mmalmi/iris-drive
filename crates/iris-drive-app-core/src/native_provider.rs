@@ -345,9 +345,13 @@ pub(crate) fn run_native_provider_list(data_dir: &str) -> anyhow::Result<serde_j
             .await
             .context("building provider view")?;
         let modified_at_by_path = provider_modified_at_index(&visible_view);
-        let visible_root = iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
-            .await
-            .context("building provider root")?;
+        let visible_root = iris_drive_core::primary_merged_root_from_view(
+            daemon.tree(),
+            daemon.config(),
+            &visible_view,
+        )
+        .await
+        .context("building provider root")?;
         let provider =
             HashTreeProviderFs::open(daemon.tree_handle(), visible_root.root_cid.clone())
                 .await

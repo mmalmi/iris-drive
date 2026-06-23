@@ -108,7 +108,7 @@ enum FileProviderStorage {
     private static let providerListCacheLock = NSLock()
     private static let providerPathCacheLock = NSLock()
     private static let contentCacheLock = NSLock()
-    private static var providerListCache: (loadedAt: Date, list: ProviderList)?
+    private static var providerListCache: (loadedAt: Date, refreshKey: String?, list: ProviderList)?
     private static var providerPathCache: [String: String] = [:]
     private static var configuredRuntime: Runtime?
 
@@ -189,6 +189,24 @@ enum FileProviderStorage {
     private struct ProviderList: Decodable {
         let anchor: String?
         let entries: [ProviderEntry]
+    }
+
+    private struct DaemonStatus: Decodable {
+        let summary: DaemonStatusSummary?
+        let updatedAt: Int64?
+
+        enum CodingKeys: String, CodingKey {
+            case summary
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct DaemonStatusSummary: Decodable {
+        let providerRefreshKey: String?
+
+        enum CodingKeys: String, CodingKey {
+            case providerRefreshKey = "provider_refresh_key"
+        }
     }
 
     private struct ProviderEntry: Decodable {
@@ -735,11 +753,16 @@ enum FileProviderStorage {
     }
 
     private static func cachedProviderList() -> ProviderList? {
+        let refreshKey = currentProviderRefreshKey()
         providerListCacheLock.lock()
         defer { providerListCacheLock.unlock() }
-        guard let cached = providerListCache,
-              Date().timeIntervalSince(cached.loadedAt) <= providerListCacheTTL
-        else {
+        guard let cached = providerListCache else {
+            return nil
+        }
+        if let refreshKey, refreshKey == cached.refreshKey {
+            return cached.list
+        }
+        guard Date().timeIntervalSince(cached.loadedAt) <= providerListCacheTTL else {
             return nil
         }
         return cached.list
@@ -769,7 +792,7 @@ enum FileProviderStorage {
 
     private static func storeProviderListCache(_ list: ProviderList) {
         providerListCacheLock.lock()
-        providerListCache = (Date(), list)
+        providerListCache = (Date(), currentProviderRefreshKey(), list)
         providerListCacheLock.unlock()
     }
 
@@ -883,6 +906,30 @@ enum FileProviderStorage {
 
     private static func snapshotURL() -> URL {
         baseDirectory.appendingPathComponent(snapshotFileName, isDirectory: false)
+    }
+
+    private static func currentProviderRefreshKey() -> String? {
+        let statusURL = configDirectory.appendingPathComponent(
+            "daemon-status.json",
+            isDirectory: false
+        )
+        guard let data = try? Data(contentsOf: statusURL),
+              let status = try? JSONDecoder().decode(DaemonStatus.self, from: data),
+              daemonStatusIsFresh(status),
+              let key = status.summary?.providerRefreshKey?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !key.isEmpty
+        else {
+            return nil
+        }
+        return key
+    }
+
+    private static func daemonStatusIsFresh(_ status: DaemonStatus) -> Bool {
+        guard let updatedAt = status.updatedAt else {
+            return false
+        }
+        let now = Int64(Date().timeIntervalSince1970)
+        return now >= updatedAt && now - updatedAt <= 15
     }
 
     private static func runIDrive(arguments: [String], timeout: TimeInterval = 15) throws -> Data {
