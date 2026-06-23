@@ -12,10 +12,20 @@ private let defaultBlossomServers = ["https://upload.iris.to"]
 private let iosDebugStateFileName = "debug-state.json"
 private let fileProviderPathIdentifierPrefix = "path:"
 private let fileProviderRegistrationIdentityKey = "fileProviderRegistrationIdentity"
+private let irisWebPublisherProfileNameCacheKey = "irisWebPublisherProfileNameCacheV1"
+private let irisWebPublisherProfileNameFreshAge: TimeInterval = 24 * 60 * 60
+private let irisWebPublisherProfileNameMaxCacheAge: TimeInterval = 30 * 24 * 60 * 60
+private let irisWebPublisherProfileNameMissCooldown: TimeInterval = 5 * 60
+private let irisWebPublisherProfileFetchTimeout: TimeInterval = 4
 #if DEBUG
 private let fileProviderDebugRegistrationVersion = 2
 private let fileProviderDebugRegistrationVersionKey = "fileProviderDebugRegistrationVersion"
 #endif
+
+private struct IrisWebPublisherProfileNameCacheEntry: Codable {
+    var name: String
+    var fetchedAt: TimeInterval
+}
 
 struct IrisWebRoute: Identifiable {
     let id = UUID()
@@ -74,6 +84,7 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var caldavUrl = ""
     @Published var webRoute: IrisWebRoute?
     @Published var isOpeningIrisApps = false
+    @Published private var irisWebPublisherProfileNameCache: [String: IrisWebPublisherProfileNameCacheEntry] = [:]
 
     private let defaults = UserDefaults.standard
     private let nativeCore: IrisDriveNativeCore
@@ -87,6 +98,8 @@ final class IrisDriveMobileModel: ObservableObject {
     private var copyFeedbackTask: Task<Void, Never>?
     private var fileProviderDomainRemovalInFlight = false
     private var stateGeneration: UInt64 = 0
+    private var irisWebPublisherProfileNameTasks: [String: Task<Void, Never>] = [:]
+    private var irisWebPublisherProfileNameMisses: [String: Date] = [:]
 
     init() {
         nativeCore = IrisDriveNativeCore(dataDir: IrisDriveSharedContainer.baseDirectory.path, appVersion: "ios")
@@ -846,6 +859,9 @@ final class IrisDriveMobileModel: ObservableObject {
                 return username
             }
         }
+        if let name = cachedIrisWebPublisherProfileName(for: normalized) {
+            return name
+        }
         for share in shares {
             if let member = share.members.first(where: {
                 $0.representativeNpubHint.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalized
@@ -859,6 +875,124 @@ final class IrisDriveMobileModel: ObservableObject {
             }
         }
         return nil
+    }
+
+    func refreshIrisWebPublisherDisplayName(for url: URL?) {
+        guard let npub = irisWebPublisherNpub(from: url) else { return }
+        refreshIrisWebPublisherDisplayName(forNpub: npub)
+    }
+
+    private func refreshIrisWebPublisherDisplayName(forNpub npub: String) {
+        let normalized = npub.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return }
+        if let entry = irisWebPublisherProfileNameCache[normalized],
+           Date().timeIntervalSince1970 - entry.fetchedAt < irisWebPublisherProfileNameFreshAge {
+            return
+        }
+        if let miss = irisWebPublisherProfileNameMisses[normalized],
+           Date().timeIntervalSince(miss) < irisWebPublisherProfileNameMissCooldown {
+            return
+        }
+        guard irisWebPublisherProfileNameTasks[normalized] == nil,
+              let baseURL = irisNativeHashtreeBaseURL()
+        else {
+            return
+        }
+
+        let profileURL = baseURL
+            .appendingPathComponent("api")
+            .appendingPathComponent("nostr")
+            .appendingPathComponent("profile")
+            .appendingPathComponent(normalized)
+        irisWebPublisherProfileNameTasks[normalized] = Task { [weak self] in
+            let name = await Self.fetchIrisWebPublisherProfileName(from: profileURL)
+            await MainActor.run {
+                guard let self else { return }
+                self.irisWebPublisherProfileNameTasks[normalized] = nil
+                if let name {
+                    self.irisWebPublisherProfileNameMisses[normalized] = nil
+                    self.irisWebPublisherProfileNameCache[normalized] =
+                        IrisWebPublisherProfileNameCacheEntry(
+                            name: name,
+                            fetchedAt: Date().timeIntervalSince1970
+                        )
+                    self.persistIrisWebPublisherProfileNameCache()
+                } else {
+                    self.irisWebPublisherProfileNameMisses[normalized] = Date()
+                }
+            }
+        }
+    }
+
+    private func cachedIrisWebPublisherProfileName(for normalizedNpub: String) -> String? {
+        guard let entry = irisWebPublisherProfileNameCache[normalizedNpub],
+              Date().timeIntervalSince1970 - entry.fetchedAt < irisWebPublisherProfileNameMaxCacheAge
+        else {
+            return nil
+        }
+        return Self.normalizedIrisWebProfileName(entry.name)
+    }
+
+    private func loadIrisWebPublisherProfileNameCache() -> [String: IrisWebPublisherProfileNameCacheEntry] {
+        guard let data = defaults.data(forKey: irisWebPublisherProfileNameCacheKey),
+              let decoded = try? JSONDecoder().decode(
+                [String: IrisWebPublisherProfileNameCacheEntry].self,
+                from: data
+              )
+        else {
+            return [:]
+        }
+        let now = Date().timeIntervalSince1970
+        return decoded.filter { key, entry in
+            key.starts(with: "npub1")
+                && !entry.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && now - entry.fetchedAt < irisWebPublisherProfileNameMaxCacheAge
+        }
+    }
+
+    private func persistIrisWebPublisherProfileNameCache() {
+        let now = Date().timeIntervalSince1970
+        let fresh = irisWebPublisherProfileNameCache.filter { key, entry in
+            key.starts(with: "npub1")
+                && !entry.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                && now - entry.fetchedAt < irisWebPublisherProfileNameMaxCacheAge
+        }
+        irisWebPublisherProfileNameCache = fresh
+        guard let data = try? JSONEncoder().encode(fresh) else { return }
+        defaults.set(data, forKey: irisWebPublisherProfileNameCacheKey)
+    }
+
+    private static func fetchIrisWebPublisherProfileName(from url: URL) async -> String? {
+        var request = URLRequest(url: url)
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        request.timeoutInterval = irisWebPublisherProfileFetchTimeout
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            guard let http = response as? HTTPURLResponse,
+                  http.statusCode == 200,
+                  let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let profile = object["profile"] as? [String: Any]
+            else {
+                return nil
+            }
+            for key in ["display_name", "displayName", "name", "username"] {
+                if let name = normalizedIrisWebProfileName(profile[key]) {
+                    return name
+                }
+            }
+            return nil
+        } catch {
+            return nil
+        }
+    }
+
+    private static func normalizedIrisWebProfileName(_ value: Any?) -> String? {
+        guard let raw = value as? String else { return nil }
+        let normalized = raw
+            .split(whereSeparator: { $0.isWhitespace || $0.isNewline })
+            .joined(separator: " ")
+        guard !normalized.isEmpty else { return nil }
+        return String(normalized.prefix(80))
     }
 
     func localGatewayURL(_ value: String) -> String {
@@ -1209,6 +1343,13 @@ final class IrisDriveMobileModel: ObservableObject {
                 return
             }
             openIrisBrowser(target)
+        case "open-browser-ready":
+            guard let target = environment["IRIS_DRIVE_DEBUG_BROWSER_URL"],
+                  !target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            else {
+                return
+            }
+            openIrisBrowserWhenReady(target)
         default:
             return
         }
@@ -1217,6 +1358,7 @@ final class IrisDriveMobileModel: ObservableObject {
 
     private func load() {
         removeObsoletePrototypeDefaults()
+        irisWebPublisherProfileNameCache = loadIrisWebPublisherProfileNameCache()
         applyStateJson(runNative { $0.stateJson() })
         deviceLabel = defaults.string(forKey: "deviceLabel") ?? UIDevice.current.name
         if hasLocalProfile {

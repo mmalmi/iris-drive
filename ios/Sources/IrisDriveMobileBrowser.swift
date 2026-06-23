@@ -98,6 +98,17 @@ extension IrisDriveMobileModel {
         return try? JSONDecoder().decode(IrisNativeBrowserGatewayStatus.self, from: data)
     }
 
+    func irisNativeHashtreeBaseURL() -> URL? {
+        guard let status = nativeBrowserGatewayStatus(),
+              status.running == true,
+              let value = status.hashtreeBaseUrl?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !value.isEmpty
+        else {
+            return nil
+        }
+        return URL(string: value)
+    }
+
     private func localGatewayResponds(portalUrl: String) async -> Bool {
         guard let port = URLComponents(string: portalUrl)?.port,
               let url = URL(string: "http://127.0.0.1:\(port)/")

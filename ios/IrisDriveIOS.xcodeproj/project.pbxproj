@@ -11,6 +11,7 @@
 		0E0EA5ABF3A312874452F666 /* IrisDriveMobileBackups.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31FD6FE77F71CF8F6241C514 /* IrisDriveMobileBackups.swift */; };
 		1AD14AA0F5B7D9B4C1124FC7 /* IrisDriveMobileModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D087872557C2BC55EDB84930 /* IrisDriveMobileModel.swift */; };
 		2676BB10C5BF12BE68411FE0 /* FileProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = C789203391687925DEAB3576 /* FileProviderItem.swift */; };
+		2B7BF5F5C0309E423C967CC9 /* back-hit-test.html in Resources */ = {isa = PBXBuildFile; fileRef = 7CA3DF1C0E66C469EE9CCFB8 /* back-hit-test.html */; };
 		317C357A9221DCC0CE22A6E0 /* IrisDriveShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = D4FC18243848BE0ED14785D0 /* IrisDriveShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		413E8F55ECADA251FA095C78 /* IrisDriveNativeCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A215568D3B9E51946DE326 /* IrisDriveNativeCore.swift */; };
 		42DC352648243213A7638096 /* IrisDriveNativeCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A215568D3B9E51946DE326 /* IrisDriveNativeCore.swift */; };
@@ -31,6 +32,7 @@
 		BCDFE7E8107DAF5CC4C726DC /* StartupLoadingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57ECD37803B00AFA445E6080 /* StartupLoadingView.swift */; };
 		CAE91FE838AF86B78E47EEB2 /* IrisDriveIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09D6DB93662CEF48C0C9A246 /* IrisDriveIOSApp.swift */; };
 		D3FE62286547E94FA6B5DDA5 /* IrisDriveBackgroundSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06140F5A8590769EE11B0EC6 /* IrisDriveBackgroundSync.swift */; };
+		D47A6409051387D5D36CEB1F /* IrisWebBrowserURLIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 438598A8B3E5334B56EC8C2B /* IrisWebBrowserURLIdentity.swift */; };
 		E8C9614F1C94BB1141210E7E /* QRCodeScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FAD09F152A81F2977621CC8 /* QRCodeScannerView.swift */; };
 		EDB65234DF8B98FA5A85E5BF /* IrisDriveContentLinks.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5776131C4E7DA77C3A533FB /* IrisDriveContentLinks.swift */; };
 		FCA07D9E0FCE8AD5D196A8CB /* browser-footer.html in Resources */ = {isa = PBXBuildFile; fileRef = 5F7984AB4A917CEB5A16EB9A /* browser-footer.html */; };
@@ -87,11 +89,13 @@
 		31FD6FE77F71CF8F6241C514 /* IrisDriveMobileBackups.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveMobileBackups.swift; sourceTree = "<group>"; };
 		380C73AB07C0999D07F8E4ED /* IrisDriveContentLinkDialog.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveContentLinkDialog.swift; sourceTree = "<group>"; };
 		4257294BF467D6B229B52DBD /* IrisDriveFileProvider.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = IrisDriveFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
+		438598A8B3E5334B56EC8C2B /* IrisWebBrowserURLIdentity.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisWebBrowserURLIdentity.swift; sourceTree = "<group>"; };
 		4711B533A555343A234B3E03 /* FileProviderStorage.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderStorage.swift; sourceTree = "<group>"; };
 		51A215568D3B9E51946DE326 /* IrisDriveNativeCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveNativeCore.swift; sourceTree = "<group>"; };
 		57ECD37803B00AFA445E6080 /* StartupLoadingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StartupLoadingView.swift; sourceTree = "<group>"; };
 		59222C8CE8FD8C001461A472 /* FileProvider.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FileProvider.entitlements; sourceTree = "<group>"; };
 		5F7984AB4A917CEB5A16EB9A /* browser-footer.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "browser-footer.html"; sourceTree = "<group>"; };
+		7CA3DF1C0E66C469EE9CCFB8 /* back-hit-test.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "back-hit-test.html"; sourceTree = "<group>"; };
 		977A7BAB3E96F1AD9B1C5AB9 /* ShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ShareExtension.entitlements; sourceTree = "<group>"; };
 		A2262CD0A76753FF6C6D773B /* IrisDriveBackupViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveBackupViews.swift; sourceTree = "<group>"; };
 		A63880B58F406AD06ACD2A66 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
@@ -145,6 +149,7 @@
 		6A7BB1B22A4C820515A4A943 /* Fixtures */ = {
 			isa = PBXGroup;
 			children = (
+				7CA3DF1C0E66C469EE9CCFB8 /* back-hit-test.html */,
 				5F7984AB4A917CEB5A16EB9A /* browser-footer.html */,
 			);
 			path = Fixtures;
@@ -164,6 +169,7 @@
 				51A215568D3B9E51946DE326 /* IrisDriveNativeCore.swift */,
 				050F38C17BF67B7645C1572B /* IrisDriveRootView.swift */,
 				05D4B51FEA3B8CED41DCF37E /* IrisDriveTypes.swift */,
+				438598A8B3E5334B56EC8C2B /* IrisWebBrowserURLIdentity.swift */,
 				0FAD09F152A81F2977621CC8 /* QRCodeScannerView.swift */,
 				57ECD37803B00AFA445E6080 /* StartupLoadingView.swift */,
 			);
@@ -333,6 +339,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				2B7BF5F5C0309E423C967CC9 /* back-hit-test.html in Resources */,
 				FCA07D9E0FCE8AD5D196A8CB /* browser-footer.html in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -363,6 +370,7 @@
 				6D070FE16A7563F4606BA7A6 /* IrisDriveNativeCore.swift in Sources */,
 				4BEA90FF19E22C4AC1DBD5BF /* IrisDriveRootView.swift in Sources */,
 				894AF158E3CF979243462B09 /* IrisDriveTypes.swift in Sources */,
+				D47A6409051387D5D36CEB1F /* IrisWebBrowserURLIdentity.swift in Sources */,
 				E8C9614F1C94BB1141210E7E /* QRCodeScannerView.swift in Sources */,
 				BCDFE7E8107DAF5CC4C726DC /* StartupLoadingView.swift in Sources */,
 			);

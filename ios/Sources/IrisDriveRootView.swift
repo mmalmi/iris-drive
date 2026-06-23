@@ -4,6 +4,9 @@ import UIKit
 import WebKit
 
 private let recoveryPhraseWordCount = 12
+private let irisWebBrowserExpandedFooterHeight: CGFloat = 58
+private let irisWebBrowserCollapsedFooterHeight: CGFloat = 51
+private let irisWebBrowserFooterClearance: CGFloat = 4
 
 private enum MainTab: Hashable {
     case drive
@@ -1569,7 +1572,7 @@ private struct IrisWebBrowserView: View {
     @State private var addressText: String
     @State private var isLoading = true
     @State private var loadError = ""
-    @FocusState private var addressFocused: Bool
+    @State private var addressFocused = false
 
     init(model: IrisDriveMobileModel, route: IrisWebRoute) {
         self.model = model
@@ -1610,6 +1613,9 @@ private struct IrisWebBrowserView: View {
                 .background(.background)
             }
         }
+        .overlay {
+            IrisWebBrowserSafeAreaChrome()
+        }
         .overlay(alignment: .bottom) {
             IrisWebBrowserBar(
                 browser: browser,
@@ -1619,16 +1625,32 @@ private struct IrisWebBrowserView: View {
                 onClose: { model.webRoute = nil },
                 onSubmitAddress: loadAddressBarURL
             )
+            .background {
+                GeometryReader { proxy in
+                    Color.clear.preference(
+                        key: IrisWebBrowserFooterHeightPreferenceKey.self,
+                        value: proxy.size.height
+                    )
+                }
+            }
+        }
+        .onPreferenceChange(IrisWebBrowserFooterHeightPreferenceKey.self) { height in
+            browser.setFooterOverlayHeight(height)
         }
         .presentationDragIndicator(.hidden)
+        .task {
+            model.refreshIrisWebPublisherDisplayName(for: route.url)
+        }
         .onChange(of: route.url) {
             isLoading = true
             loadError = ""
+            model.refreshIrisWebPublisherDisplayName(for: route.url)
         }
         .onChange(of: browser.currentURL) { _, url in
             if !addressFocused {
                 addressText = url?.absoluteString ?? ""
             }
+            model.refreshIrisWebPublisherDisplayName(for: url)
         }
     }
 
@@ -1640,6 +1662,41 @@ private struct IrisWebBrowserView: View {
     }
 }
 
+private struct IrisWebBrowserSafeAreaChrome: View {
+    var body: some View {
+        GeometryReader { proxy in
+            VStack(spacing: 0) {
+                IrisWebBrowserSafeAreaStrip()
+                    .frame(height: proxy.safeAreaInsets.top)
+                    .ignoresSafeArea(.container, edges: .top)
+                Spacer(minLength: 0)
+                IrisWebBrowserSafeAreaStrip()
+                    .frame(height: proxy.safeAreaInsets.bottom)
+                    .ignoresSafeArea(.container, edges: .bottom)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .accessibilityHidden(true)
+    }
+}
+
+private struct IrisWebBrowserSafeAreaStrip: View {
+    var body: some View {
+        Color(uiColor: .systemBackground)
+    }
+}
+
+private struct IrisWebBrowserFooterHeightPreferenceKey: PreferenceKey {
+    static var defaultValue: CGFloat = irisWebBrowserExpandedFooterHeight
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        let next = nextValue()
+        if next > 0 {
+            value = next
+        }
+    }
+}
+
 @MainActor
 private final class IrisWebBrowserController: ObservableObject {
     @Published var currentURL: URL?
@@ -1648,20 +1705,31 @@ private final class IrisWebBrowserController: ObservableObject {
     @Published var footerCollapsed = false
     private weak var webView: WKWebView?
     private var lastScrollY: CGFloat = 0
+    private var footerOverlayHeight = irisWebBrowserExpandedFooterHeight
 
     func attach(_ webView: WKWebView) {
         self.webView = webView
         update(from: webView)
+        DispatchQueue.main.async { [weak self] in
+            self?.updateBrowserInsets()
+        }
     }
 
     func update(from webView: WKWebView) {
         currentURL = webView.url
         pageTitle = webView.title ?? ""
         canGoBack = webView.canGoBack
+        updateBrowserInsets(for: webView)
+    }
+
+    func setFooterOverlayHeight(_ height: CGFloat) {
+        guard height > 0, abs(footerOverlayHeight - height) > 0.5 else { return }
+        footerOverlayHeight = height
+        updateBrowserInsets()
     }
 
     func goBack() {
-        footerCollapsed = false
+        setFooterCollapsed(false)
         webView?.goBack()
         if let webView {
             update(from: webView)
@@ -1669,17 +1737,17 @@ private final class IrisWebBrowserController: ObservableObject {
     }
 
     func reload() {
-        footerCollapsed = false
+        setFooterCollapsed(false)
         webView?.reload()
     }
 
     func load(_ url: URL) {
-        footerCollapsed = false
+        setFooterCollapsed(false)
         webView?.load(URLRequest(url: url))
     }
 
     func expandFooter() {
-        footerCollapsed = false
+        setFooterCollapsed(false)
     }
 
     func updateScroll(_ scrollView: UIScrollView) {
@@ -1689,33 +1757,64 @@ private final class IrisWebBrowserController: ObservableObject {
 
         guard scrollView.isDragging || scrollView.isDecelerating else { return }
         if y < 12 {
-            footerCollapsed = false
+            setFooterCollapsed(false)
             return
         }
         if delta > 9 {
-            footerCollapsed = true
+            setFooterCollapsed(true)
         } else if delta < -7 {
-            footerCollapsed = false
+            setFooterCollapsed(false)
         }
+    }
+
+    func updateBrowserInsets() {
+        updateBrowserInsets(for: nil)
+    }
+
+    private func setFooterCollapsed(_ collapsed: Bool) {
+        guard footerCollapsed != collapsed else { return }
+        footerCollapsed = collapsed
+        updateBrowserInsets()
+    }
+
+    private func updateBrowserInsets(for candidateWebView: WKWebView?) {
+        guard let webView = candidateWebView ?? webView else { return }
+        let safeAreaInsets = irisWebBrowserSafeAreaInsets(for: webView)
+        let fallbackHeight = footerCollapsed
+            ? irisWebBrowserCollapsedFooterHeight
+            : irisWebBrowserExpandedFooterHeight
+        let footerHeight = max(footerOverlayHeight, fallbackHeight)
+        let bottomInset = safeAreaInsets.bottom + footerHeight + irisWebBrowserFooterClearance
+        let contentInset = UIEdgeInsets.zero
+        if webView.scrollView.contentInset != contentInset {
+            webView.scrollView.contentInset = contentInset
+        }
+        webView.scrollView.verticalScrollIndicatorInsets = UIEdgeInsets(
+            top: safeAreaInsets.top,
+            left: 0,
+            bottom: bottomInset,
+            right: 0
+        )
     }
 }
 
 private struct IrisWebBrowserBar: View {
     @ObservedObject var browser: IrisWebBrowserController
     @Binding var addressText: String
-    var addressFocused: FocusState<Bool>.Binding
+    @Binding var addressFocused: Bool
     let publisherDisplayName: (String) -> String?
     let onClose: () -> Void
     let onSubmitAddress: () -> Void
     @Namespace private var footerNamespace
+    @State private var addressEditing = false
 
     var body: some View {
-        let collapsed = browser.footerCollapsed && !addressFocused.wrappedValue
+        let collapsed = browser.footerCollapsed && !addressFocused && !addressEditing
         HStack(spacing: 0) {
             if collapsed {
                 Spacer(minLength: 0)
                 compactBar
-                    .frame(maxWidth: 286)
+                    .frame(maxWidth: 232)
                     .transition(.opacity.combined(with: .scale(scale: 0.96, anchor: .bottom)))
                 Spacer(minLength: 0)
             } else {
@@ -1723,13 +1822,18 @@ private struct IrisWebBrowserBar: View {
                     .transition(.opacity.combined(with: .scale(scale: 1.02, anchor: .bottom)))
             }
         }
-        .padding(.horizontal, collapsed ? 26 : 16)
-        .padding(.top, 6)
-        .padding(.bottom, 8)
+        .padding(.horizontal, collapsed ? 44 : 16)
+        .padding(.top, collapsed ? 4 : 6)
+        .padding(.bottom, collapsed ? 6 : 8)
         .animation(.spring(response: 0.32, dampingFraction: 0.86), value: collapsed)
-        .onChange(of: addressFocused.wrappedValue) { _, focused in
+        .onChange(of: addressFocused) { _, focused in
             if focused {
                 browser.expandFooter()
+                addressEditing = true
+                addressText = browser.currentURL?.absoluteString ?? addressText
+            } else if let url = browser.currentURL {
+                addressEditing = false
+                addressText = url.absoluteString
             }
         }
     }
@@ -1740,21 +1844,17 @@ private struct IrisWebBrowserBar: View {
                 .accessibilityIdentifier("irisWebCloseButton")
 
             browserIconButton("chevron.left", label: "Back", action: browser.goBack)
-                .disabled(!browser.canGoBack)
+                .opacity(browser.canGoBack ? 1 : 0.65)
                 .accessibilityIdentifier("irisWebBackButton")
 
             HStack(spacing: 6) {
-                TextField("Address", text: $addressText)
-                    .keyboardType(.URL)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .submitLabel(.go)
-                    .focused(addressFocused)
-                    .onSubmit(onSubmitAddress)
-                    .font(.system(.subheadline, design: .rounded, weight: .medium))
-                    .lineLimit(1)
-                    .minimumScaleFactor(0.8)
-                    .accessibilityIdentifier("irisWebAddressField")
+                Group {
+                    if addressEditing || addressFocused {
+                        addressEditor
+                    } else {
+                        addressDisplayButton
+                    }
+                }
 
                 Button(action: browser.reload) {
                     Image(systemName: "arrow.clockwise")
@@ -1775,18 +1875,61 @@ private struct IrisWebBrowserBar: View {
         }
     }
 
+    private var addressEditor: some View {
+        IrisAddressTextField(
+            text: $addressText,
+            isFocused: $addressFocused,
+            onSubmit: onSubmitAddress
+        )
+        .frame(maxWidth: .infinity)
+    }
+
+    private var addressDisplayButton: some View {
+        Button(action: focusAddressField) {
+            Text(expandedAddressDisplayText)
+                .font(.system(.subheadline, design: .rounded, weight: .regular))
+                .foregroundStyle(.primary.opacity(0.84))
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .frame(height: 44)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel("Address")
+        .accessibilityValue(expandedAddressDisplayText)
+        .accessibilityIdentifier("irisWebAddressField")
+    }
+
+    private var expandedAddressDisplayText: String {
+        irisWebFooterDisplayTitle(
+            url: browser.currentURL,
+            pageTitle: browser.pageTitle,
+            publisherDisplayName: publisherDisplayName
+        )
+    }
+
+    private func focusAddressField() {
+        browser.expandFooter()
+        addressText = browser.currentURL?.absoluteString ?? addressText
+        addressEditing = true
+        DispatchQueue.main.async {
+            addressFocused = true
+        }
+    }
+
     private var compactBar: some View {
         let title = compactTitle
         return Button(action: browser.expandFooter) {
             Text(title)
-                .font(.system(.subheadline, design: .rounded, weight: .semibold))
-                .foregroundStyle(.primary)
+                .font(.system(size: 13, weight: .regular, design: .rounded))
+                .foregroundStyle(.primary.opacity(0.84))
                 .lineLimit(1)
-                .minimumScaleFactor(0.75)
+                .minimumScaleFactor(0.82)
                 .frame(maxWidth: .infinity)
-                .frame(height: 39)
-                .padding(.horizontal, 16)
-                .browserFooterGlass(shape: Capsule(), shadowRadius: 18, shadowY: 9)
+                .frame(height: 32)
+                .padding(.horizontal, 12)
+                .browserFooterGlass(shape: Capsule(), shadowRadius: 14, shadowY: 7)
                 .matchedGeometryEffect(id: "irisWebAddressPill", in: footerNamespace)
         }
         .buttonStyle(.plain)
@@ -1819,12 +1962,17 @@ private struct IrisWebBrowserBar: View {
                 Label("Close Browser", systemImage: "xmark")
             }
         } label: {
-            Image(systemName: "ellipsis")
-                .font(.system(size: 17, weight: .semibold))
+            ZStack {
+                Circle().fill(Color.primary.opacity(0.001))
+                Image(systemName: "ellipsis")
+                    .font(.system(size: 17, weight: .semibold))
+            }
                 .frame(width: 44, height: 44)
                 .browserFooterGlass(shape: Circle(), shadowRadius: 16, shadowY: 8)
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .contentShape(Circle())
         .accessibilityLabel("More")
         .accessibilityIdentifier("irisWebMoreButton")
     }
@@ -1835,13 +1983,140 @@ private struct IrisWebBrowserBar: View {
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
-            Image(systemName: systemName)
-                .font(.system(size: 17, weight: .semibold))
+            ZStack {
+                Circle().fill(Color.primary.opacity(0.001))
+                Image(systemName: systemName)
+                    .font(.system(size: 17, weight: .semibold))
+            }
                 .frame(width: 44, height: 44)
                 .browserFooterGlass(shape: Circle(), shadowRadius: 16, shadowY: 8)
+                .contentShape(Circle())
         }
         .buttonStyle(.plain)
+        .contentShape(Circle())
         .accessibilityLabel(label)
+    }
+}
+
+private struct IrisAddressTextField: UIViewRepresentable {
+    @Binding var text: String
+    @Binding var isFocused: Bool
+    let onSubmit: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, isFocused: $isFocused, onSubmit: onSubmit)
+    }
+
+    func makeUIView(context: Context) -> UITextField {
+        let textField = UITextField(frame: .zero)
+        textField.delegate = context.coordinator
+        textField.addTarget(
+            context.coordinator,
+            action: #selector(Coordinator.textDidChange(_:)),
+            for: .editingChanged
+        )
+        textField.accessibilityIdentifier = "irisWebAddressField"
+        textField.accessibilityLabel = "Address"
+        textField.adjustsFontForContentSizeCategory = true
+        textField.autocapitalizationType = .none
+        textField.autocorrectionType = .no
+        textField.backgroundColor = .clear
+        textField.borderStyle = .none
+        textField.clearButtonMode = .never
+        textField.enablesReturnKeyAutomatically = false
+        textField.font = UIFontMetrics(forTextStyle: .subheadline)
+            .scaledFont(for: UIFont.systemFont(ofSize: 15, weight: .regular))
+        textField.keyboardType = .URL
+        textField.returnKeyType = .go
+        textField.textColor = .label
+        textField.tintColor = .systemBlue
+        textField.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        textField.setContentHuggingPriority(.defaultLow, for: .horizontal)
+        return textField
+    }
+
+    func updateUIView(_ textField: UITextField, context: Context) {
+        context.coordinator.text = $text
+        context.coordinator.isFocused = $isFocused
+        context.coordinator.onSubmit = onSubmit
+        if textField.text != text {
+            context.coordinator.isUpdatingText = true
+            textField.text = text
+            context.coordinator.isUpdatingText = false
+        }
+        textField.accessibilityValue = text
+
+        if isFocused {
+            if textField.isFirstResponder {
+                context.coordinator.selectAllIfNeeded(in: textField)
+            } else {
+                context.coordinator.prepareForFocusCycle()
+                DispatchQueue.main.async {
+                    guard context.coordinator.isFocused.wrappedValue else { return }
+                    textField.becomeFirstResponder()
+                    context.coordinator.selectAllIfNeeded(in: textField)
+                }
+            }
+        } else {
+            context.coordinator.resetFocusCycle()
+            if textField.isFirstResponder {
+                DispatchQueue.main.async {
+                    guard !context.coordinator.isFocused.wrappedValue else { return }
+                    textField.resignFirstResponder()
+                }
+            }
+        }
+    }
+
+    final class Coordinator: NSObject, UITextFieldDelegate {
+        var text: Binding<String>
+        var isFocused: Binding<Bool>
+        var onSubmit: () -> Void
+        var isUpdatingText = false
+        private var didSelectAllForFocusCycle = false
+
+        init(text: Binding<String>, isFocused: Binding<Bool>, onSubmit: @escaping () -> Void) {
+            self.text = text
+            self.isFocused = isFocused
+            self.onSubmit = onSubmit
+        }
+
+        func prepareForFocusCycle() {
+            didSelectAllForFocusCycle = false
+        }
+
+        func resetFocusCycle() {
+            didSelectAllForFocusCycle = false
+        }
+
+        func selectAllIfNeeded(in textField: UITextField) {
+            guard !didSelectAllForFocusCycle, textField.isFirstResponder else { return }
+            didSelectAllForFocusCycle = true
+            DispatchQueue.main.async {
+                guard textField.isFirstResponder else { return }
+                textField.selectAll(nil)
+            }
+        }
+
+        func textFieldDidBeginEditing(_ textField: UITextField) {
+            isFocused.wrappedValue = true
+            selectAllIfNeeded(in: textField)
+        }
+
+        func textFieldDidEndEditing(_ textField: UITextField) {
+            isFocused.wrappedValue = false
+            resetFocusCycle()
+        }
+
+        func textFieldShouldReturn(_ textField: UITextField) -> Bool {
+            onSubmit()
+            return false
+        }
+
+        @objc func textDidChange(_ textField: UITextField) {
+            guard !isUpdatingText else { return }
+            text.wrappedValue = textField.text ?? ""
+        }
     }
 }
 
@@ -1856,14 +2131,17 @@ private extension View {
                 UIKitGlassEffect(style: .systemUltraThinMaterial)
                     .opacity(0.64)
                     .clipShape(shape)
+                    .allowsHitTesting(false)
             }
             .overlay {
                 shape
                     .fill(.white.opacity(0.08))
+                    .allowsHitTesting(false)
             }
             .overlay {
                 shape
                     .stroke(.white.opacity(0.34), lineWidth: 0.55)
+                    .allowsHitTesting(false)
             }
             .shadow(color: .black.opacity(0.14), radius: shadowRadius, x: 0, y: shadowY)
     }
@@ -1921,43 +2199,12 @@ private func irisMutableSiteFooterTitle(
     lowerHost: String,
     publisherDisplayName: (String) -> String?
 ) -> String? {
-    if lowerHost == "iris.localhost",
-       let title = irisPortalPathFooterTitle(url: url, publisherDisplayName: publisherDisplayName) {
-        return title
-    }
-
-    guard lowerHost.hasSuffix(".iris.localhost") else { return nil }
-    let prefix = String(lowerHost.dropLast(".iris.localhost".count))
-    if prefix.isEmpty || prefix == "nhash" || prefix.hasSuffix(".sites") {
-        return nil
-    }
-
-    let labels = prefix.split(separator: ".").map(String.init)
-    guard let npubIndex = labels.lastIndex(where: { $0.hasPrefix("npub1") }),
-          npubIndex > 0
+    guard lowerHost == "iris.localhost" || lowerHost.hasSuffix(".iris.localhost"),
+          let identity = irisWebMutableSiteIdentity(from: url)
     else {
         return nil
     }
-
-    let siteName = labels[..<npubIndex]
-        .joined(separator: ".")
-        .removingPercentEncoding ?? labels[..<npubIndex].joined(separator: ".")
-    let npub = labels[npubIndex]
-    return "\(publisherLabel(for: npub, publisherDisplayName: publisherDisplayName)) / \(siteName)"
-}
-
-private func irisPortalPathFooterTitle(
-    url: URL,
-    publisherDisplayName: (String) -> String?
-) -> String? {
-    let parts = url.pathComponents.filter { $0 != "/" }
-    guard parts.count >= 2,
-          parts[0].hasPrefix("npub1")
-    else {
-        return nil
-    }
-    let treeName = parts[1].removingPercentEncoding ?? parts[1]
-    return "\(publisherLabel(for: parts[0], publisherDisplayName: publisherDisplayName)) / \(treeName)"
+    return "\(publisherLabel(for: identity.npub, publisherDisplayName: publisherDisplayName)) / \(identity.siteName)"
 }
 
 private func publisherLabel(
@@ -1969,12 +2216,57 @@ private func publisherLabel(
         !name.isEmpty {
         return name
     }
-    return shortNpub(npub)
+    return irisCoolName(npub)
 }
 
-private func shortNpub(_ npub: String) -> String {
-    guard npub.count > 14 else { return npub }
-    return "\(npub.prefix(8))...\(npub.suffix(4))"
+private let irisCoolNameAdjectives = [
+    "Amber", "Analog", "Arcane", "Astral", "Aurora", "Azure", "Blissful", "Blooming",
+    "Bold", "Bright", "Brilliant", "Calm", "Celestial", "Charming", "Clear", "Clever",
+    "Cosmic", "Crimson", "Crystal", "Curious", "Daring", "Deep", "Dreamy", "Electric",
+    "Emerald", "Ethereal", "Fabled", "Feral", "Festival", "Floating", "Fluent", "Free",
+    "Friendly", "Gentle", "Glowing", "Golden", "Graceful", "Harmonic", "Hidden", "Honey",
+    "Infinite", "Kind", "Laughing", "Liminal", "Lucid", "Lunar", "Lush", "Magnetic",
+    "Mellow", "Mercury", "Midnight", "Mirrored", "Mystic", "Neon", "Nimble", "Noble",
+    "Northern", "Nova", "Opal", "Open", "Pacific", "Patient", "Pearl", "Playful",
+    "Polished", "Prismatic", "Quiet", "Radiant", "Restless", "River", "Ruby", "Saffron",
+    "Secret", "Serene", "Signal", "Silver", "Solar", "Sparkling", "Spiral", "Stellar",
+    "Still", "Stormy", "Sunny", "Swift", "Tender", "Verdant", "Velvet", "Vivid",
+    "Warm", "Wandering", "Wild", "Wise", "Witty", "Wonder", "Zephyr",
+]
+
+private let irisCoolNameNouns = [
+    "Anchor", "Archive", "Atlas", "Aurora", "Beacon", "Bloom", "Bridge", "Canvas",
+    "Cascade", "Cipher", "Circuit", "Cloud", "Comet", "Compass", "Constellation",
+    "Cove", "Daydream", "Drift", "Echo", "Ember", "Field", "Festival", "Flame",
+    "Flux", "Forest", "Forge", "Fountain", "Garden", "Glacier", "Halo", "Harbor",
+    "Harmony", "Hearth", "Horizon", "Lantern", "Library", "Lighthouse", "Lagoon",
+    "Labyrinth", "Meadow", "Melody", "Mirage", "Mosaic", "Nebula", "Nimbus", "Nova",
+    "Oasis", "Opal", "Orbit", "Orchard", "Paradox", "Pearl", "Planet", "Portal",
+    "Prism", "Pulse", "Quartz", "Quest", "Radiance", "Rain", "Reef", "Riddle",
+    "Ripple", "River", "Sanctuary", "Satellite", "Serenade", "Signal", "Solstice",
+    "Spark", "Spectrum", "Spiral", "Starlight", "Station", "Studio", "Summit",
+    "Sunrise", "Tempo", "Thread", "Tide", "Trail", "Valley", "Velvet", "Voyager",
+    "Vortex", "Wave", "Wonder", "Zenith",
+]
+
+private func irisCoolName(_ seed: String?) -> String {
+    let trimmed = seed?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    let normalized = trimmed.isEmpty ? "iris" : trimmed
+    let (first, second) = irisCoolNameHash(normalized)
+    let adjective = irisCoolNameAdjectives[Int(first % UInt32(irisCoolNameAdjectives.count))]
+    let noun = irisCoolNameNouns[Int(second % UInt32(irisCoolNameNouns.count))]
+    return "\(adjective) \(noun)"
+}
+
+private func irisCoolNameHash(_ seed: String) -> (UInt32, UInt32) {
+    var first: UInt32 = 0x811c9dc5
+    var second: UInt32 = 0x85ebca6b
+    for codeUnit in seed.utf16 {
+        let code = UInt32(codeUnit)
+        first = (first ^ code) &* 16_777_619
+        second = (second ^ code) &* 2_246_822_519
+    }
+    return (first, second)
 }
 
 private func isIrisHashFooterHost(_ lowerHost: String) -> Bool {
@@ -1982,6 +2274,17 @@ private func isIrisHashFooterHost(_ lowerHost: String) -> Bool {
         || lowerHost == "hash.localhost"
         || lowerHost.hasSuffix(".hash.localhost")
         || lowerHost.hasSuffix(".sites.iris.localhost")
+}
+
+private func irisWebBrowserSafeAreaInsets(for view: UIView) -> UIEdgeInsets {
+    if let window = view.window {
+        return window.safeAreaInsets
+    }
+    return UIApplication.shared.connectedScenes
+        .compactMap { $0 as? UIWindowScene }
+        .flatMap(\.windows)
+        .first(where: \.isKeyWindow)?
+        .safeAreaInsets ?? .zero
 }
 
 private struct IrisWebView: UIViewRepresentable {
@@ -2013,7 +2316,9 @@ private struct IrisWebView: UIViewRepresentable {
         return webView
     }
 
-    func updateUIView(_ webView: WKWebView, context: Context) {}
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        browser.updateBrowserInsets()
+    }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(

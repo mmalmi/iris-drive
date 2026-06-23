@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Back Hit Test</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      background: #f7f8fb;
+      color: #17181c;
+    }
+    body {
+      min-height: 100vh;
+      margin: 0;
+      padding: 36px 20px 180px;
+      background: linear-gradient(180deg, #eef6ff 0%, #f8fafc 55%, #e9f7ef 100%);
+    }
+    main {
+      display: grid;
+      gap: 14px;
+      max-width: 560px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 30px;
+      line-height: 1.08;
+    }
+    p {
+      margin: 0;
+      color: #59616d;
+      font-size: 17px;
+      line-height: 1.45;
+    }
+    #underlay {
+      position: fixed;
+      left: 0;
+      bottom: 0;
+      z-index: 2147483647;
+      display: block;
+      width: 170px;
+      height: 170px;
+      opacity: 0.01;
+      background: #ff2d55;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Back hit test</h1>
+    <p>The invisible bottom-left link should not receive taps through the native Iris Drive browser controls.</p>
+  </main>
+  <a id="underlay" href="/browser-footer.html#fell-through" aria-label="underlay web tap target"></a>
+</body>
+</html>

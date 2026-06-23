@@ -134,18 +134,29 @@ final class IrisDriveIOSUITests: XCTestCase {
     }
 
     func testIrisWebFooterBrowserStyleScreenshots() throws {
-        let screenshotDir = try requiredEnvironment("IRIS_DRIVE_UI_SCREENSHOT_DIR")
-        let browserURL = try requiredEnvironment("IRIS_DRIVE_UI_TEST_BROWSER_URL")
+        let screenshotDir = optionalEnvironment("IRIS_DRIVE_UI_SCREENSHOT_DIR")
+            ?? FileManager.default.temporaryDirectory
+                .appendingPathComponent("iris-drive-browser-footer-shots")
+                .path
+        let browserURL = try optionalEnvironment("IRIS_DRIVE_UI_TEST_BROWSER_URL")
+            ?? localBrowserFooterFixtureURL()
+        let debugAction = optionalEnvironment("IRIS_DRIVE_UI_TEST_BROWSER_DEBUG_ACTION") ?? "open-browser"
         let app = launchApp(environment: [
-            "IRIS_DRIVE_DEBUG_ACTION": "open-browser",
+            "IRIS_DRIVE_DEBUG_ACTION": debugAction,
             "IRIS_DRIVE_DEBUG_BROWSER_URL": browserURL,
         ])
 
-        let address = app.textFields["irisWebAddressField"]
-        XCTAssertTrue(address.waitForExistence(timeout: 15), app.debugDescription)
+        let address = app.descendants(matching: .any)["irisWebAddressField"]
+        XCTAssertTrue(address.waitForExistence(timeout: 35), app.debugDescription)
         waitForIrisBrowserToFinishLoading(in: app)
         XCTAssertTrue(app.buttons["irisWebReloadButton"].exists, app.debugDescription)
         XCTAssertTrue(app.buttons["irisWebMoreButton"].exists, app.debugDescription)
+        if let expectedTitle = optionalEnvironment("IRIS_DRIVE_UI_TEST_BROWSER_TITLE_CONTAINS") {
+            XCTAssertTrue(
+                waitForValue(address, containing: expectedTitle, timeout: 12),
+                "Expected browser footer title to contain \(expectedTitle), got \(accessibilityValue(address))"
+            )
+        }
         try saveScreenshot(named: "iris-web-footer-expanded", in: screenshotDir)
 
         app.swipeUp()
@@ -161,6 +172,95 @@ final class IrisDriveIOSUITests: XCTestCase {
         try saveScreenshot(named: "iris-web-footer-reexpanded", in: screenshotDir)
     }
 
+    func testIrisWebAddressFieldFocusShowsFullURL() throws {
+        let browserURL = try optionalEnvironment("IRIS_DRIVE_UI_TEST_BROWSER_URL")
+            ?? localBrowserFooterFixtureURL()
+        let debugAction = optionalEnvironment("IRIS_DRIVE_UI_TEST_BROWSER_DEBUG_ACTION") ?? "open-browser"
+        let app = launchApp(environment: [
+            "IRIS_DRIVE_DEBUG_ACTION": debugAction,
+            "IRIS_DRIVE_DEBUG_BROWSER_URL": browserURL,
+        ])
+
+        let addressBar = app.descendants(matching: .any)["irisWebAddressField"]
+        XCTAssertTrue(addressBar.waitForExistence(timeout: 35), app.debugDescription)
+        waitForIrisBrowserToFinishLoading(in: app)
+
+        XCTAssertTrue(app.buttons["irisWebAddressField"].waitForExistence(timeout: 5), app.debugDescription)
+        app.buttons["irisWebAddressField"].tap()
+
+        let focusedAddress = app.textFields["irisWebAddressField"]
+        XCTAssertTrue(
+            focusedAddress.waitForExistence(timeout: 5),
+            "Expected the address control to become an editable text field"
+        )
+        let expectedAddressFragment = browserURL
+            .replacingOccurrences(of: #"^https?:/+"#, with: "", options: .regularExpression)
+        XCTAssertTrue(
+            waitForValue(focusedAddress, containing: expectedAddressFragment, timeout: 5),
+            "Expected focused address field to show \(browserURL), got \(accessibilityValue(focusedAddress))"
+        )
+    }
+
+    func testIrisWebAddressFieldSelectsURLAndStaysFocusedOnSecondTap() throws {
+        let browserURL = try optionalEnvironment("IRIS_DRIVE_UI_TEST_BROWSER_URL")
+            ?? localBrowserFooterFixtureURL()
+        let app = launchApp(environment: [
+            "IRIS_DRIVE_DEBUG_ACTION": "open-browser",
+            "IRIS_DRIVE_DEBUG_BROWSER_URL": browserURL,
+        ])
+
+        let addressBar = app.descendants(matching: .any)["irisWebAddressField"]
+        XCTAssertTrue(addressBar.waitForExistence(timeout: 15), app.debugDescription)
+        waitForIrisBrowserToFinishLoading(in: app)
+
+        XCTAssertTrue(app.buttons["irisWebAddressField"].waitForExistence(timeout: 5), app.debugDescription)
+        app.buttons["irisWebAddressField"].tap()
+
+        let focusedAddress = app.textFields["irisWebAddressField"]
+        XCTAssertTrue(focusedAddress.waitForExistence(timeout: 5), app.debugDescription)
+        focusedAddress.typeText("x")
+        XCTAssertEqual(
+            accessibilityValue(focusedAddress),
+            "x",
+            "Initial address focus should select the whole URL so typing replaces it"
+        )
+
+        focusedAddress.tap()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        XCTAssertTrue(
+            focusedAddress.exists,
+            "Tapping the focused address field again should keep it editable"
+        )
+    }
+
+    func testIrisWebBackButtonDoesNotLeakTapToPage() throws {
+        let browserURL = try optionalEnvironment("IRIS_DRIVE_UI_TEST_BACK_HIT_URL")
+            ?? localBackHitFixtureURL()
+        let app = launchApp(environment: [
+            "IRIS_DRIVE_DEBUG_ACTION": "open-browser",
+            "IRIS_DRIVE_DEBUG_BROWSER_URL": browserURL,
+        ])
+
+        let address = app.descendants(matching: .any)["irisWebAddressField"]
+        XCTAssertTrue(address.waitForExistence(timeout: 15), app.debugDescription)
+        waitForIrisBrowserToFinishLoading(in: app)
+
+        let backButton = app.buttons["irisWebBackButton"]
+        XCTAssertTrue(backButton.waitForExistence(timeout: 5), app.debugDescription)
+
+        app.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0))
+            .withOffset(CGVector(dx: backButton.frame.midX, dy: backButton.frame.midY))
+            .tap()
+
+        address.tap()
+        let focusedAddress = app.textFields["irisWebAddressField"]
+        XCTAssertTrue(focusedAddress.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertFalse(
+            waitForValue(focusedAddress, containing: "fell-through", timeout: 2),
+            "Back button tap leaked to page content; address became \(accessibilityValue(focusedAddress))"
+        )
+    }
+
     private func assertOpenIrisAppsLoads(
         in app: XCUIApplication,
         file: StaticString = #filePath,
@@ -170,12 +270,15 @@ final class IrisDriveIOSUITests: XCTestCase {
         makeHittable(openIrisApps, in: app)
         openIrisApps.tap()
 
-        let address = app.textFields["irisWebAddressField"]
+        let address = app.descendants(matching: .any)["irisWebAddressField"]
         XCTAssertTrue(address.waitForExistence(timeout: 35), app.debugDescription, file: file, line: line)
         waitForIrisBrowserToFinishLoading(in: app, file: file, line: line)
 
         XCTAssertFalse(app.staticTexts["irisWebError"].exists, file: file, line: line)
-        XCTAssertTrue(accessibilityValue(address).contains("iris.localhost"), file: file, line: line)
+        address.tap()
+        let focusedAddress = app.textFields["irisWebAddressField"]
+        XCTAssertTrue(focusedAddress.waitForExistence(timeout: 5), app.debugDescription, file: file, line: line)
+        XCTAssertTrue(accessibilityValue(focusedAddress).contains("iris.localhost"), file: file, line: line)
         app.buttons["irisWebCloseButton"].tap()
     }
 
@@ -344,6 +447,45 @@ final class IrisDriveIOSUITests: XCTestCase {
         return value
     }
 
+    private func optionalEnvironment(_ name: String) -> String? {
+        let environment = ProcessInfo.processInfo.environment
+        let value = environment[name] ?? decodedEnvironmentValue("\(name)_B64", environment: environment)
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? nil : trimmed
+    }
+
+    private func localBackHitFixtureURL() throws -> String {
+        let url = URL(string: "http://127.0.0.1:8765/back-hit-test.html")!
+        guard httpURLResponds(url) else {
+            throw XCTSkip("IRIS_DRIVE_UI_TEST_BACK_HIT_URL or local fixture server is required")
+        }
+        return url.absoluteString
+    }
+
+    private func localBrowserFooterFixtureURL() throws -> String {
+        let url = URL(string: "http://127.0.0.1:8765/browser-footer.html")!
+        guard httpURLResponds(url) else {
+            throw XCTSkip("IRIS_DRIVE_UI_TEST_BROWSER_URL or local fixture server is required")
+        }
+        return url.absoluteString
+    }
+
+    private func httpURLResponds(_ url: URL) -> Bool {
+        var request = URLRequest(url: url)
+        request.httpMethod = "HEAD"
+        request.timeoutInterval = 1
+        let semaphore = DispatchSemaphore(value: 0)
+        var ok = false
+        URLSession.shared.dataTask(with: request) { _, response, _ in
+            if let http = response as? HTTPURLResponse {
+                ok = http.statusCode == 200
+            }
+            semaphore.signal()
+        }.resume()
+        _ = semaphore.wait(timeout: .now() + 2)
+        return ok
+    }
+
     private func decodedEnvironmentValue(_ name: String, environment: [String: String]) -> String {
         guard let encoded = environment[name],
               let data = Data(base64Encoded: encoded),
@@ -368,6 +510,21 @@ final class IrisDriveIOSUITests: XCTestCase {
             return value
         }
         return element.label.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func waitForValue(
+        _ element: XCUIElement,
+        containing expected: String,
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if accessibilityValue(element).contains(expected) {
+                return true
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        return accessibilityValue(element).contains(expected)
     }
 
     private func waitForIrisBrowserToFinishLoading(
