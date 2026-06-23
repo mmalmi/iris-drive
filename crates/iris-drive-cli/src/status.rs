@@ -408,6 +408,13 @@ pub(crate) fn load_daemon_status(config_dir: &Path) -> Option<Value> {
         fips.insert("mesh_peers".to_string(), json!([]));
         fips.insert("peer_statuses".to_string(), json!([]));
     }
+    if !fresh
+        && let Some(browser_gateway) = object
+            .get_mut("browser_gateway")
+            .and_then(Value::as_object_mut)
+    {
+        browser_gateway.insert("running".to_string(), json!(false));
+    }
     normalize_daemon_status_for_clients(config_dir, &mut value);
     Some(value)
 }

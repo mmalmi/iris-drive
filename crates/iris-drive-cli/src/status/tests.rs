@@ -70,6 +70,38 @@ fn local_gateway_status_reports_disabled_resolver() {
 }
 
 #[test]
+fn stale_daemon_status_marks_browser_gateway_not_running() {
+    let dir = tempfile::tempdir().unwrap();
+    AppConfig::default()
+        .save(config_path_in(dir.path()))
+        .unwrap();
+    std::fs::write(
+        iris_drive_core::daemon_liveness::daemon_lock_path(dir.path()),
+        "99999999\n",
+    )
+    .unwrap();
+    std::fs::write(
+        daemon_status_path(dir.path()),
+        serde_json::to_vec(&json!({
+            "updated_at": unix_now(),
+            "browser_gateway": {
+                "running": true,
+                "bind": "127.0.0.1:17321",
+                "caldav_url": "http://localhost:17321/caldav/",
+            }
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+
+    let status = load_daemon_status(dir.path()).unwrap();
+
+    assert_eq!(status["running"], false);
+    assert_eq!(status["fresh"], false);
+    assert_eq!(status["browser_gateway"]["running"], false);
+}
+
+#[test]
 fn status_lists_default_blossom_server_as_backup_target() {
     let config = AppConfig::default();
     let targets = backup_targets_status(&config);
