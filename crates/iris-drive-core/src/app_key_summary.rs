@@ -238,6 +238,7 @@ pub fn pubkey_npub(hex: &str) -> String {
 #[must_use]
 pub fn iris_profile_summary(state: &ProfileState) -> IrisProfileSummary {
     let projection = state.profile_projection();
+    let has_profile_roster = state.has_profile_roster_evidence();
     let current_facet = projection.active_facets.get(&state.app_key_pubkey);
     let current_key_epoch = projection
         .key_epochs
@@ -272,19 +273,23 @@ pub fn iris_profile_summary(state: &ProfileState) -> IrisProfileSummary {
             .and_then(|facet| facet.label.clone())
             .or_else(|| state.app_key_label.clone()),
         authorization_state: authorization_state_key(state.authorization_state).to_owned(),
-        can_write_roots: state.can_write_roots(),
-        can_admin_profile: if projection.active_facets.is_empty() {
-            state.can_admin_profile()
+        can_write_roots: if has_profile_roster {
+            projection.can_write_roots(&state.app_key_pubkey)
         } else {
-            projection.can_admin_profile(&state.app_key_pubkey)
+            state.can_write_roots()
         },
-        active_app_key_count: if projection.active_facets.is_empty() {
+        can_admin_profile: if has_profile_roster {
+            projection.can_admin_profile(&state.app_key_pubkey)
+        } else {
+            state.can_admin_profile()
+        },
+        active_app_key_count: if has_profile_roster {
+            projection.active_app_key_pubkeys().len()
+        } else {
             state
                 .app_keys
                 .as_ref()
                 .map_or(0, |snapshot| snapshot.app_actors.len())
-        } else {
-            projection.active_app_key_pubkeys().len()
         },
         profile_roster_op_count: state.profile_roster_ops.len(),
         current_key_epoch,

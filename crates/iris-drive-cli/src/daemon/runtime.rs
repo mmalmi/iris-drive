@@ -371,33 +371,38 @@ pub(crate) fn cmd_daemon(
                 } => {
                     match recv {
                         Some(Ok(RelayPoolNotification::Event { event, .. })) => {
-                            if let Err(e) =
-                                apply_one_event(
-                                    &client,
-                                    config_dir,
-	                                    &event,
-	                                    fips_blocks.clone(),
-	                                    mount_refresh_tx.clone(),
-	                                    &daemon_tasks,
-	                                )
-                                .await
+                            match apply_one_event(
+                                &client,
+                                config_dir,
+                                &event,
+                                fips_blocks.clone(),
+                                mount_refresh_tx.clone(),
+                                &daemon_tasks,
+                            )
+                            .await
                             {
-                                println!(
-                                    "{}",
-                                    json!({"event": "apply_error", "id": event.id.to_hex(), "error": e.to_string()})
-                                );
-                            } else if let Err(error) =
-	                                announce_current_state_direct(
-	                                    &mut direct_roots,
-	                                    config_dir,
-	                                    fips_blocks.as_deref(),
-	                                )
-                                .await
-                            {
-                                println!(
-                                    "{}",
-                                    json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
-                                );
+                                Ok(outcome) if outcome.should_announce_current_state() => {
+                                    if let Err(error) =
+                                        announce_current_state_direct(
+                                            &mut direct_roots,
+                                            config_dir,
+                                            fips_blocks.as_deref(),
+                                        )
+                                        .await
+                                    {
+                                        println!(
+                                            "{}",
+                                            json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
+                                        );
+                                    }
+                                }
+                                Ok(_) => {}
+                                Err(e) => {
+                                    println!(
+                                        "{}",
+                                        json!({"event": "apply_error", "id": event.id.to_hex(), "error": e.to_string()})
+                                    );
+                                }
                             }
                         }
                         Some(Ok(RelayPoolNotification::Shutdown)) => {

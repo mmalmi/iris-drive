@@ -421,12 +421,7 @@ pub fn apply_remote_drive_root_event(
         return Err(RelayError::NoAccount);
     };
     if preview.root_scope_id == account.root_scope_id() {
-        let authorized: BTreeSet<String> = account
-            .app_keys
-            .as_ref()
-            .map(|s| s.app_actors.iter().map(|d| d.pubkey.clone()).collect())
-            .unwrap_or_default();
-        if !authorized.contains(&app_key_hex) {
+        if !account.can_write_roots_for_app_key(&app_key_hex) {
             return Ok(DriveRootApply::UnauthorizedAppKey);
         }
         let Some(drive) = config

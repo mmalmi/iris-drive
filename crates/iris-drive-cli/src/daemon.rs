@@ -111,12 +111,14 @@ async fn publish_provider_root_if_changed(
     Ok(Some(updated_config))
 }
 
+const PROVIDER_ROOT_SAFETY_POLL_MIN_SECS: u64 = 30;
+
 fn provider_root_poll_enabled(_config_root_watch_active: bool) -> bool {
     true
 }
 
 fn provider_root_poll_period(watch_interval_secs: u64) -> std::time::Duration {
-    std::time::Duration::from_secs(watch_interval_secs.max(1))
+    std::time::Duration::from_secs(watch_interval_secs.max(PROVIDER_ROOT_SAFETY_POLL_MIN_SECS))
 }
 
 fn current_app_key_root_key(config: &AppConfig) -> Option<String> {
@@ -278,6 +280,7 @@ fn start_config_root_watch(
     use notify::{RecursiveMode, Watcher};
 
     let config_path = config_path_in(config_dir);
+    let provider_signal_path = iris_drive_core::paths::provider_root_signal_path_in(config_dir);
     let parent = config_path.parent().unwrap_or(config_dir).to_path_buf();
     std::fs::create_dir_all(&parent)
         .with_context(|| format!("creating config directory {}", parent.display()))?;
@@ -285,9 +288,12 @@ fn start_config_root_watch(
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let callback_tx = tx.clone();
     let watched_config = config_path.clone();
+    let watched_provider_signal = provider_signal_path.clone();
     let mut watcher = notify::recommended_watcher(move |result| match result {
         Ok(event) => {
-            if event_touches_path(&event, &watched_config) {
+            if event_touches_path(&event, &watched_config)
+                || event_touches_path(&event, &watched_provider_signal)
+            {
                 let _ = callback_tx.send(());
             }
         }
@@ -306,6 +312,7 @@ fn start_config_root_watch(
         json!({
             "watching": true,
             "path": config_path.display().to_string(),
+            "provider_signal_path": provider_signal_path.display().to_string(),
         }),
     ))
 }

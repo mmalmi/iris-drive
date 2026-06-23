@@ -306,15 +306,14 @@ pub(crate) fn local_nhash_resolver_status(
 pub(crate) fn status_profile_block(config: &AppConfig) -> Option<Value> {
     config.profile.as_ref().map(|state| {
         let mut output = profile_identity_json_map(state);
-        output.insert(
-            "roster_size".to_string(),
-            json!(
-                state
-                    .app_keys_from_profile()
-                    .as_ref()
-                    .map_or(0, |s| s.app_actors.len())
-            ),
-        );
+        let roster_size = if let Some(snapshot) = state.app_keys.as_ref() {
+            snapshot.app_actors.len()
+        } else {
+            state
+                .app_keys_from_profile()
+                .map_or(0, |snapshot| snapshot.app_actors.len())
+        };
+        output.insert("roster_size".to_string(), json!(roster_size));
         output.insert(
             "user_profile".to_string(),
             config.user_profile.as_ref().map_or(Value::Null, |profile| {
@@ -515,7 +514,8 @@ fn daemon_status_config(
         return Ok(entry.config.clone());
     }
 
-    let config = AppConfig::load_or_default_cached_profile(&path)?;
+    let mut config = AppConfig::load_or_default_cached_profile(&path)?;
+    hydrate_daemon_status_profile_cache(&mut config);
     if let Ok(mut cache) = DAEMON_STATUS_CONFIG_CACHE.lock() {
         cache.insert(
             path,
@@ -526,6 +526,18 @@ fn daemon_status_config(
         );
     }
     Ok(config)
+}
+
+fn hydrate_daemon_status_profile_cache(config: &mut AppConfig) {
+    let Some(profile) = config.profile.as_mut() else {
+        return;
+    };
+    if !profile.has_profile_roster_evidence() {
+        return;
+    }
+    if profile.app_keys.is_none() || profile.profile_roster_projection.is_none() {
+        profile.sync_app_keys_from_profile();
+    }
 }
 
 pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &mut Value) {

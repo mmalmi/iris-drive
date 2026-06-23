@@ -73,7 +73,7 @@ fn provider_root_poll_remains_safety_sweep_when_config_watch_is_active() {
     assert!(provider_root_poll_enabled(false));
     assert_eq!(
         provider_root_poll_period(0),
-        std::time::Duration::from_secs(1)
+        std::time::Duration::from_secs(30)
     );
     assert_eq!(
         provider_root_poll_period(60),

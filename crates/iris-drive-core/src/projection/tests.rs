@@ -497,7 +497,7 @@ async fn primary_merged_view_excludes_tombstoned_app_key_roots() {
 }
 
 #[tokio::test]
-async fn primary_merged_view_collapses_same_source_collision_copy_chain() {
+async fn primary_merged_view_preserves_same_source_collision_named_files() {
     let cfg_dir = tempdir().unwrap();
     let account = Profile::create(cfg_dir.path(), Some("owner".into())).unwrap();
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
@@ -540,11 +540,79 @@ async fn primary_merged_view_collapses_same_source_collision_copy_chain() {
         .iter()
         .map(|entry| entry.path.as_str())
         .collect::<Vec<_>>();
-    assert_eq!(paths, vec!["photo (3).png", "photo.png"]);
+    assert_eq!(
+        paths,
+        vec![
+            "photo (2) (3).png",
+            "photo (2).png",
+            "photo (3).png",
+            "photo.png"
+        ]
+    );
 }
 
 #[tokio::test]
-async fn primary_merged_view_hides_zero_byte_collision_placeholders_when_content_exists() {
+async fn primary_merged_view_preserves_cross_app_key_identical_collision_copy() {
+    let cfg_dir = tempdir().unwrap();
+    let mut account = Profile::create(cfg_dir.path(), Some("owner".into())).unwrap();
+    let peer_device = nostr_sdk::Keys::generate().public_key().to_hex();
+    let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
+    account
+        .approve_app_key(&peer_device, Some("peer".into()))
+        .unwrap();
+
+    let owner_root = index_device_file_root(
+        &tree,
+        &account.state.app_key_pubkey,
+        "Screenshot 2026-06-23 at 10.43.16.png",
+        b"same screenshot bytes",
+        1,
+        10,
+    )
+    .await;
+    let peer_root = index_device_file_root(
+        &tree,
+        &peer_device,
+        "Screenshot 2026-06-23 at 10.43.16 copy.png",
+        b"same screenshot bytes",
+        1,
+        11,
+    )
+    .await;
+
+    let mut config = AppConfig {
+        profile: Some(account.state.clone()),
+        ..AppConfig::default()
+    };
+    let mut drive = Drive::primary(account.state.root_scope_id());
+    drive.app_key_roots.insert(
+        account.state.app_key_pubkey.clone(),
+        AppKeyRootRef::from_meta(owner_root.0.to_string(), 10, &owner_root.1),
+    );
+    drive.app_key_roots.insert(
+        peer_device,
+        AppKeyRootRef::from_meta(peer_root.0.to_string(), 11, &peer_root.1),
+    );
+    config.upsert_drive(drive);
+
+    let view = primary_merged_view(&tree, &config).await.unwrap();
+    let paths = view
+        .view
+        .files
+        .iter()
+        .map(|entry| entry.path.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        paths,
+        vec![
+            "Screenshot 2026-06-23 at 10.43.16 copy.png",
+            "Screenshot 2026-06-23 at 10.43.16.png"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn primary_merged_view_preserves_zero_byte_collision_named_files() {
     let cfg_dir = tempdir().unwrap();
     let account = Profile::create(cfg_dir.path(), Some("owner".into())).unwrap();
     let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
@@ -554,6 +622,7 @@ async fn primary_merged_view_hides_zero_byte_collision_placeholders_when_content
     std::fs::write(source.path().join("photo (2).png"), b"").unwrap();
     std::fs::write(source.path().join("photo copy.png"), b"real image").unwrap();
     std::fs::write(source.path().join("photo copy (2).png"), b"").unwrap();
+    std::fs::write(source.path().join("photo copy (2) (2).png"), b"").unwrap();
     std::fs::write(source.path().join("empty.txt"), b"").unwrap();
     std::fs::write(source.path().join("empty (2).txt"), b"").unwrap();
     let meta = DriveRootMeta {
@@ -589,7 +658,17 @@ async fn primary_merged_view_hides_zero_byte_collision_placeholders_when_content
         .iter()
         .map(|entry| entry.path.as_str())
         .collect::<Vec<_>>();
-    assert_eq!(paths, vec!["empty.txt", "photo.png"]);
+    assert_eq!(
+        paths,
+        vec![
+            "empty (2).txt",
+            "empty.txt",
+            "photo (2).png",
+            "photo copy (2).png",
+            "photo copy.png",
+            "photo.png"
+        ]
+    );
 }
 
 #[tokio::test]

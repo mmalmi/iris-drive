@@ -1,3 +1,32 @@
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum EventApplyOutcome {
+    Changed,
+    Unchanged,
+    RetryablePrerequisiteMissing,
+}
+
+impl EventApplyOutcome {
+    pub(crate) const fn should_cache_direct_root_frame(self) -> bool {
+        !matches!(self, Self::RetryablePrerequisiteMissing)
+    }
+
+    pub(crate) const fn should_announce_current_state(self) -> bool {
+        matches!(self, Self::Changed)
+    }
+}
+
+pub(crate) fn drive_root_apply_outcome_is_retryable(
+    outcome: &iris_drive_core::relay_sync::DriveRootApply,
+) -> bool {
+    matches!(
+        outcome,
+        iris_drive_core::relay_sync::DriveRootApply::NotOurScope
+            | iris_drive_core::relay_sync::DriveRootApply::UnknownDrive
+            | iris_drive_core::relay_sync::DriveRootApply::UnauthorizedAppKey
+            | iris_drive_core::relay_sync::DriveRootApply::KeyUnavailable
+    )
+}
+
 #[allow(clippy::too_many_lines)]
 pub(crate) async fn apply_one_event(
     _client: &nostr_sdk::Client,
@@ -6,7 +35,7 @@ pub(crate) async fn apply_one_event(
     fips_blocks: Option<Arc<FsFipsBlockSync>>,
     mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
     daemon_tasks: &DaemonTaskSet,
-) -> Result<()> {
+) -> Result<EventApplyOutcome> {
     use iris_drive_core::relay_sync;
     let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
@@ -22,10 +51,15 @@ pub(crate) async fn apply_one_event(
                 "outcome": format!("{outcome:?}"),
             }),
         );
-        if matches!(outcome, relay_sync::AppKeyLinkRequestApply::Recorded) {
+        let changed = matches!(outcome, relay_sync::AppKeyLinkRequestApply::Recorded);
+        if changed {
             config.save(config_path_in(config_dir))?;
         }
-        return Ok(());
+        return Ok(if changed {
+            EventApplyOutcome::Changed
+        } else {
+            EventApplyOutcome::Unchanged
+        });
     } else if iris_drive_core::is_iris_profile_roster_op_event_coordinate(event) {
         let outcome = relay_sync::apply_remote_iris_profile_roster_op_event(&mut config, event)?;
         emit_daemon_status_event(
@@ -37,9 +71,14 @@ pub(crate) async fn apply_one_event(
                 "outcome": format!("{outcome:?}"),
             }),
         );
-        if let Some(sync) = fips_blocks.as_deref() {
-            sync.refresh_authorized_peers(&config).await;
+        if matches!(outcome, relay_sync::IrisProfileRosterOpApply::Applied) {
+            config.save(config_path_in(config_dir))?;
+            if let Some(sync) = fips_blocks.as_deref() {
+                sync.refresh_authorized_peers(&config).await;
+            }
+            return Ok(EventApplyOutcome::Changed);
         }
+        return Ok(EventApplyOutcome::Unchanged);
     } else if iris_drive_core::is_share_access_snapshot_event_coordinate(event) {
         let outcome = relay_sync::apply_remote_share_access_snapshot_event(&mut config, event)?;
         emit_daemon_status_event(
@@ -53,10 +92,12 @@ pub(crate) async fn apply_one_event(
         );
         if matches!(outcome, relay_sync::ShareAccessSnapshotApply::Applied) {
             config.save(config_path_in(config_dir))?;
+            if let Some(sync) = fips_blocks.as_deref() {
+                sync.refresh_authorized_peers(&config).await;
+            }
+            return Ok(EventApplyOutcome::Changed);
         }
-        if let Some(sync) = fips_blocks.as_deref() {
-            sync.refresh_authorized_peers(&config).await;
-        }
+        return Ok(EventApplyOutcome::Unchanged);
     } else if iris_drive_core::nostr_events::is_drive_root_event_coordinate(event) {
         let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
             .context("loading app key")?;
@@ -65,6 +106,7 @@ pub(crate) async fn apply_one_event(
                 .ok();
         let outcome =
             relay_sync::apply_remote_drive_root_event(&mut config, event, Some(device.keys()))?;
+        let retryable = drive_root_apply_outcome_is_retryable(&outcome);
         let was_applied = matches!(outcome, relay_sync::DriveRootApply::Applied);
         let stale_current_root = matches!(outcome, relay_sync::DriveRootApply::StaleTimestamp)
             && parsed
@@ -97,7 +139,9 @@ pub(crate) async fn apply_one_event(
                 "root_cid": root_cid_to_pull.clone(),
             }),
         );
-        config.save(config_path_in(config_dir))?;
+        if was_applied {
+            config.save(config_path_in(config_dir))?;
+        }
         if let Some(sync) = fips_blocks.as_deref() {
             sync.refresh_authorized_peers(&config).await;
         }
@@ -113,10 +157,16 @@ pub(crate) async fn apply_one_event(
         ) {
             daemon_tasks.push(task);
         }
-        return Ok(());
+        return Ok(if retryable {
+            EventApplyOutcome::RetryablePrerequisiteMissing
+        } else if was_applied {
+            EventApplyOutcome::Changed
+        } else {
+            EventApplyOutcome::Unchanged
+        });
     } else if kind == iris_drive_core::nostr_events::KIND_HASHTREE_ROOT {
         let Some(account_state) = config.profile.clone() else {
-            return Ok(());
+            return Ok(EventApplyOutcome::Unchanged);
         };
         return apply_files_root_event(
             config_dir,
@@ -129,10 +179,8 @@ pub(crate) async fn apply_one_event(
         );
     } else {
         // Unknown kind; ignore.
-        return Ok(());
+        return Ok(EventApplyOutcome::Unchanged);
     }
-    config.save(config_path_in(config_dir))?;
-    Ok(())
 }
 
 pub(crate) fn apply_files_root_event(
@@ -143,7 +191,7 @@ pub(crate) fn apply_files_root_event(
     daemon_tasks: &DaemonTaskSet,
     config: &mut AppConfig,
     account_state: ProfileState,
-) -> Result<()> {
+) -> Result<EventApplyOutcome> {
     use iris_drive_core::relay_sync;
     if !account_state.can_write_roots() {
         println!(
@@ -155,7 +203,7 @@ pub(crate) fn apply_files_root_event(
                 "outcome": "app_key_cannot_write_roots",
             })
         );
-        return Ok(());
+        return Ok(EventApplyOutcome::Unchanged);
     }
     let account = Profile::load(account_state, config_dir).context("loading profile")?;
     let outcome =
@@ -185,7 +233,9 @@ pub(crate) fn apply_files_root_event(
             "root_cid": root_cid_to_pull.clone(),
         }),
     );
-    config.save(config_path_in(config_dir))?;
+    if was_applied {
+        config.save(config_path_in(config_dir))?;
+    }
     if let Some(task) = spawn_root_apply_followup(
         config_dir.to_path_buf(),
         config.clone(),
@@ -197,7 +247,11 @@ pub(crate) fn apply_files_root_event(
     ) {
         daemon_tasks.push(task);
     }
-    Ok(())
+    Ok(if was_applied {
+        EventApplyOutcome::Changed
+    } else {
+        EventApplyOutcome::Unchanged
+    })
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]

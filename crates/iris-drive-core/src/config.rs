@@ -319,12 +319,20 @@ impl AppConfig {
 
     fn preserve_newer_app_key_roots(&mut self, existing: &Self) {
         let active_app_key_roots = self.profile.as_ref().and_then(|account| {
-            account.has_profile_roster_evidence().then(|| {
-                account
-                    .active_root_writer_app_key_pubkeys()
-                    .into_iter()
-                    .collect::<BTreeSet<_>>()
-            })
+            if !account.has_profile_roster_evidence() {
+                return None;
+            }
+            let mut active = account
+                .active_root_writer_app_key_pubkeys()
+                .into_iter()
+                .collect::<BTreeSet<_>>();
+            if matches!(
+                account.authorization_state,
+                crate::profile::AppKeyAuthorizationState::AwaitingApproval
+            ) {
+                active.insert(account.app_key_pubkey.clone());
+            }
+            Some(active)
         });
         for drive in &mut self.drives {
             if let Some(active_app_key_roots) = active_app_key_roots.as_ref() {
@@ -1080,6 +1088,71 @@ dck_generation = 1
                 .app_key_roots
                 .contains_key(&removed_app_key)
         );
+    }
+
+    #[test]
+    fn save_preserves_awaiting_current_root_during_partial_roster_merge() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        let owner_dir = tempdir().unwrap();
+        let linked_dir = tempdir().unwrap();
+        let owner = crate::profile::Profile::create(owner_dir.path(), Some("owner".into()))
+            .expect("owner created");
+        let linked = crate::profile::Profile::link_to_profile(
+            linked_dir.path(),
+            owner.state.profile_id,
+            owner.state.app_key_pubkey.clone(),
+            Some("phone".into()),
+        )
+        .expect("linked profile created");
+        let linked_root = AppKeyRootRef {
+            root_cid: "linked-root".into(),
+            published_at: 20,
+            dck_generation: 1,
+            app_key_seq: 1,
+            parents: Vec::new(),
+            observed: BTreeMap::new(),
+            local_only: false,
+        };
+
+        let mut existing = AppConfig {
+            profile: Some(linked.state.clone()),
+            ..AppConfig::default()
+        };
+        let mut existing_drive = Drive::primary(owner.state.root_scope_id());
+        existing_drive
+            .app_key_roots
+            .insert(linked.state.app_key_pubkey.clone(), linked_root.clone());
+        existing.upsert_drive(existing_drive);
+        existing.save(&path).unwrap();
+
+        let mut partial_state = linked.state.clone();
+        partial_state.profile_roster_ops = vec![owner.state.profile_roster_ops[0].clone()];
+        partial_state.app_keys = None;
+        partial_state.profile_roster_projection = None;
+        partial_state.authorization_state =
+            crate::profile::AppKeyAuthorizationState::AwaitingApproval;
+        assert!(
+            !partial_state
+                .active_root_writer_app_key_pubkeys()
+                .contains(&partial_state.app_key_pubkey)
+        );
+
+        let mut incoming = AppConfig {
+            profile: Some(partial_state),
+            ..AppConfig::default()
+        };
+        incoming.upsert_drive(Drive::primary(owner.state.root_scope_id()));
+        incoming.save(&path).unwrap();
+
+        let loaded = AppConfig::load_or_default(&path).unwrap();
+        let root = loaded
+            .drive("main")
+            .unwrap()
+            .app_key_roots
+            .get(&linked.state.app_key_pubkey)
+            .expect("awaiting app key root should survive partial roster saves");
+        assert_eq!(root.root_cid, linked_root.root_cid);
     }
 
     #[test]

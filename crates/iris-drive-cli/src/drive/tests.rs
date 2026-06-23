@@ -13,19 +13,14 @@ fn init_config(config_dir: &Path) -> Profile {
 }
 
 fn init_config_with_remote_device(config_dir: &Path) -> (Profile, String, DriveRootMeta) {
-    let account = init_config(config_dir);
+    let mut account = init_config(config_dir);
     let remote =
         iris_drive_core::identity::Identity::generate(config_dir.join("remote.key")).pubkey_hex();
+    account
+        .approve_app_key(&remote, Some("remote".into()))
+        .unwrap();
     let mut config = AppConfig::load_or_default(config_path_in(config_dir)).unwrap();
-    let state = config.profile.as_mut().unwrap();
-    state.app_keys.as_mut().unwrap().app_actors.push(
-        iris_drive_core::app_keys::AppActorEntry::member(
-            remote.clone(),
-            100,
-            Some("remote".into()),
-        ),
-    );
-    state.app_keys.as_mut().unwrap().normalize();
+    config.profile = Some(account.state.clone());
     config.save(config_path_in(config_dir)).unwrap();
 
     let remote_meta = DriveRootMeta {
@@ -186,6 +181,66 @@ fn provider_delete_directory_removes_tree() {
                 .all(|entry| !entry.path.starts_with("folder/")),
             "deleted directory children should not remain in the merged view"
         );
+    });
+}
+
+#[test]
+fn provider_write_rejects_probable_os_placeholder_collision() {
+    let config_dir = tempfile::tempdir().unwrap();
+    init_config(config_dir.path());
+    mark_daemon_live(config_dir.path());
+    let source_dir = tempfile::tempdir().unwrap();
+    let real_source = source_dir.path().join("real.png");
+    std::fs::write(&real_source, b"real image bytes").unwrap();
+    let empty_source = source_dir.path().join("empty.png");
+    std::fs::write(&empty_source, b"").unwrap();
+
+    cmd_provider(
+        config_dir.path(),
+        ProviderCmd::Write {
+            path: "photo.png".into(),
+            source: real_source.clone(),
+        },
+    )
+    .unwrap();
+    cmd_provider(
+        config_dir.path(),
+        ProviderCmd::Write {
+            path: "photo copy (2).png".into(),
+            source: empty_source.clone(),
+        },
+    )
+    .unwrap();
+
+    let error = cmd_provider(
+        config_dir.path(),
+        ProviderCmd::Write {
+            path: "photo copy (2) (2).png".into(),
+            source: empty_source,
+        },
+    )
+    .expect_err("runaway zero-byte FileProvider placeholder should be rejected");
+    assert!(
+        error.to_string().contains("placeholder copy"),
+        "unexpected error: {error:#}"
+    );
+
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let daemon = Daemon::open(config_dir.path()).unwrap();
+        let merged = iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
+            .await
+            .unwrap();
+        let paths = merged
+            .view
+            .files
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(paths, vec!["photo copy (2).png", "photo.png"]);
     });
 }
 

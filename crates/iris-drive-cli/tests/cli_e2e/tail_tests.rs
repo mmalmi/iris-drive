@@ -229,6 +229,7 @@ fn list_uses_projected_view_for_provider_collision_copies() {
     std::fs::write(work.path().join("photo (2).png"), b"").unwrap();
     std::fs::write(work.path().join("photo copy.png"), b"real image").unwrap();
     std::fs::write(work.path().join("photo copy (2).png"), b"").unwrap();
+    std::fs::write(work.path().join("photo copy (2) (2).png"), b"").unwrap();
 
     idrive(cfg.path()).arg("init").assert().success();
     idrive(cfg.path())
@@ -237,7 +238,15 @@ fn list_uses_projected_view_for_provider_collision_copies() {
         .assert()
         .success();
 
-    assert_list_paths(cfg.path(), &["photo.png"]);
+    assert_list_paths(
+        cfg.path(),
+        &[
+            "photo (2).png",
+            "photo copy (2).png",
+            "photo copy.png",
+            "photo.png",
+        ],
+    );
 }
 
 #[test]

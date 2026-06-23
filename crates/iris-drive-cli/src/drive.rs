@@ -2,8 +2,9 @@
 use super::*;
 use iris_drive_core::provider::{
     ProviderListEntry, normalize_provider_document_path, normalize_provider_parent_path,
-    normalize_provider_path, provider_cache_destination, provider_list_summary,
-    sanitized_provider_file_name, split_provider_path, unique_provider_path,
+    normalize_provider_path, provider_cache_destination, provider_entry_is_probable_os_placeholder,
+    provider_list_summary, provider_write_is_probable_os_placeholder, sanitized_provider_file_name,
+    split_provider_path, unique_provider_path,
 };
 
 mod commands;
@@ -350,6 +351,11 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                 let path = normalize_provider_path(&path)?;
                 let bytes = std::fs::read(&source)
                     .with_context(|| format!("reading {}", source.display()))?;
+                let entries =
+                    provider_entries(daemon.tree(), &visible.root_cid, &BTreeMap::new()).await?;
+                if provider_write_is_probable_os_placeholder(&entries, &path, &bytes) {
+                    anyhow::bail!("refusing probable FileProvider placeholder copy: {path}");
+                }
                 let phase = std::time::Instant::now();
                 write_provider_file(&provider, &path, &bytes).await?;
                 tracing::debug!(
@@ -468,6 +474,8 @@ async fn provider_entries(
         }
     }
     entries.sort_by(|a, b| a.path.cmp(&b.path));
+    let all_entries = entries.clone();
+    entries.retain(|entry| !provider_entry_is_probable_os_placeholder(&all_entries, entry));
     Ok(entries)
 }
 
@@ -797,6 +805,8 @@ async fn print_provider_mutation(
     );
     let phase = std::time::Instant::now();
     let report = import_provider_root_with_retry(daemon, root, tombstone_base_root).await?;
+    iris_drive_core::paths::touch_provider_root_signal_in(daemon.config_dir())
+        .context("signaling provider root change")?;
     tracing::debug!(
         elapsed_ms = phase.elapsed().as_millis(),
         "provider command imported provider root"
