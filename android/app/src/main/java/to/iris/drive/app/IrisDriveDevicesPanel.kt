@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -78,10 +79,10 @@ internal fun DevicesPanel(
         if (canApprove) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedButton(
-                    onClick = { showAddDevice = true },
+                    onClick = { showAddDevice = !showAddDevice },
                     modifier = Modifier.testTag("addDeviceButton"),
                 ) {
-                    Text("Add Device")
+                    Text(if (showAddDevice) "Hide Add Device" else "Add Device")
                 }
                 OutlinedButton(
                     onClick = { showAddRecoveryKey = true },
@@ -90,6 +91,27 @@ internal fun DevicesPanel(
                     Text("Add Recovery Key")
                 }
             }
+        }
+        if (showAddDevice) {
+            AddDevicePanel(
+                linkInvite = linkInvite,
+                inboundRequests = inboundRequests,
+                canApprove = canApprove,
+                request = request,
+                manualRequestIsComplete = manualRequestIsComplete,
+                label = label,
+                onRequestChange = { request = it },
+                onLabelChange = { label = it },
+                onCopyLinkInvite = onCopyLinkInvite,
+                onResetInvite = onResetInvite,
+                onApproveDevice = onApproveDevice,
+                onRejectDevice = onRejectDevice,
+                onDismiss = { showAddDevice = false },
+                onAdded = {
+                    request = ""
+                    label = ""
+                },
+            )
         }
         if (deviceActors.isEmpty()) {
             Text("No devices yet", color = Muted)
@@ -117,29 +139,6 @@ internal fun DevicesPanel(
                 )
             }
         }
-    }
-
-    if (showAddDevice) {
-        AddDeviceDialog(
-            linkInvite = linkInvite,
-            inboundRequests = inboundRequests,
-            canApprove = canApprove,
-            request = request,
-            manualRequestIsComplete = manualRequestIsComplete,
-            label = label,
-            onRequestChange = { request = it },
-            onLabelChange = { label = it },
-            onCopyLinkInvite = onCopyLinkInvite,
-            onResetInvite = onResetInvite,
-            onApproveDevice = onApproveDevice,
-            onRejectDevice = onRejectDevice,
-            onDismiss = { showAddDevice = false },
-            onAdded = {
-                request = ""
-                label = ""
-                showAddDevice = false
-            },
-        )
     }
 
     devicePendingDelete?.let { device ->
@@ -293,7 +292,7 @@ private fun DeleteDeviceDialog(
 }
 
 @Composable
-private fun AddDeviceDialog(
+private fun AddDevicePanel(
     linkInvite: String,
     inboundRequests: List<AppKeyLinkRequestState>,
     canApprove: Boolean,
@@ -315,93 +314,95 @@ private fun AddDeviceDialog(
         onAdded()
     }
 
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("Add a Device") },
-        text = {
-            Column(
-                modifier = Modifier.verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                if (linkInvite.isNotBlank()) {
-                    Text("Invite device", fontWeight = FontWeight.SemiBold)
-                    QrCode(linkInvite, side = 220.dp, modifier = Modifier.align(Alignment.CenterHorizontally))
-                    Text(linkInvite, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                    OutlinedButton(onClick = onCopyLinkInvite) {
-                        Text("Copy invite link")
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .padding(12.dp)
+            .testTag("addDevicePanel"),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text("Add a Device", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
+            TextButton(onClick = onDismiss) {
+                Text("Hide")
+            }
+        }
+        if (linkInvite.isNotBlank()) {
+            Text("Invite device", fontWeight = FontWeight.SemiBold)
+            QrCode(linkInvite, side = 220.dp, modifier = Modifier.align(Alignment.CenterHorizontally))
+            Text(linkInvite, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            OutlinedButton(onClick = onCopyLinkInvite) {
+                Text("Copy invite link")
+            }
+            OutlinedButton(onClick = onResetInvite) {
+                Text("Reset invite")
+            }
+        }
+        if (inboundRequests.isNotEmpty()) {
+            Text("Device requests", fontWeight = FontWeight.SemiBold)
+            inboundRequests.forEach { inbound ->
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.weight(1f)) {
+                        Text(inbound.label.ifBlank { "New device" }, fontWeight = FontWeight.SemiBold)
+                        Text(
+                            inbound.devicePubkey,
+                            color = Muted,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
-                    OutlinedButton(onClick = onResetInvite) {
-                        Text("Reset invite")
-                    }
-                }
-                if (inboundRequests.isNotEmpty()) {
-                    Text("Device requests", fontWeight = FontWeight.SemiBold)
-                    inboundRequests.forEach { inbound ->
-                        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
-                            Column(Modifier.weight(1f)) {
-                                Text(inbound.label.ifBlank { "New device" }, fontWeight = FontWeight.SemiBold)
-                                Text(
-                                    inbound.devicePubkey,
-                                    color = Muted,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
-                                )
-                            }
-                            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                TextButton(
-                                    onClick = { onRejectDevice(inbound.requestLink) },
-                                    enabled = canApprove,
-                                ) {
-                                    Text("Reject", color = Danger)
-                                }
-                                Button(
-                                    onClick = { onApproveDevice(inbound.requestLink, inbound.label) },
-                                    enabled = canApprove,
-                                ) {
-                                    Text("Add")
-                                }
-                            }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(
+                            onClick = { onRejectDevice(inbound.requestLink) },
+                            enabled = canApprove,
+                        ) {
+                            Text("Reject", color = Danger)
+                        }
+                        Button(
+                            onClick = { onApproveDevice(inbound.requestLink, inbound.label) },
+                            enabled = canApprove,
+                            modifier = Modifier.testTag("requestDeviceAdd"),
+                        ) {
+                            Text("Add")
                         }
                     }
                 }
-                Text(
-                    "Paste the device key or request link.",
-                    color = Muted,
-                )
-                OutlinedTextField(
-                    value = request,
-                    onValueChange = onRequestChange,
-                    modifier = Modifier.fillMaxWidth().testTag("manualDeviceId"),
-                    singleLine = true,
-                    label = { Text("Device key") },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-                )
-                OutlinedTextField(
-                    value = label,
-                    onValueChange = onLabelChange,
-                    modifier = Modifier.fillMaxWidth().testTag("manualDeviceName"),
-                    singleLine = true,
-                    label = { Text("Name (optional)") },
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                    keyboardActions = KeyboardActions(onDone = { submitManualDevice() }),
-                )
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = { submitManualDevice() },
-                enabled = canApprove && manualRequestIsComplete,
-                modifier = Modifier.testTag("manualDeviceAdd"),
-            ) {
-                Text("Add")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        },
-    )
+        }
+        Text(
+            "Paste the device key or request link.",
+            color = Muted,
+        )
+        OutlinedTextField(
+            value = request,
+            onValueChange = onRequestChange,
+            modifier = Modifier.fillMaxWidth().testTag("manualDeviceId"),
+            singleLine = true,
+            label = { Text("Device key") },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+        )
+        OutlinedTextField(
+            value = label,
+            onValueChange = onLabelChange,
+            modifier = Modifier.fillMaxWidth().testTag("manualDeviceName"),
+            singleLine = true,
+            label = { Text("Name (optional)") },
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = { submitManualDevice() }),
+        )
+        Button(
+            onClick = { submitManualDevice() },
+            enabled = canApprove && manualRequestIsComplete,
+            modifier = Modifier.testTag("manualDeviceAdd"),
+        ) {
+            Text("Add")
+        }
+    }
 }
 
 @Composable

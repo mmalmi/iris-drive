@@ -147,7 +147,7 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     @Test
-    fun addDeviceDialogDispatchesManualDeviceApproval() {
+    fun addDevicePanelDispatchesManualDeviceApproval() {
         val approvedRequests = mutableListOf<Pair<String, String>>()
         val devicePubkey = "npub1260n42s06vzc7796w0fh3ny7zcpw6tlk4gq3940gmfrzl5c9pv2s3657q8"
 
@@ -796,6 +796,41 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithText("Reject").performScrollTo().assertIsDisplayed().activate()
 
         assertEquals(listOf(requestLink), rejectedRequests)
+    }
+
+    @Test
+    fun inboundDeviceRequestApprovalKeepsInlineAddDevicePanelOpen() {
+        val approvedRequests = mutableListOf<Pair<String, String>>()
+        val requestLink = "iris-drive://request/device-b"
+        val state = AppState(
+            profile = profileState().copy(
+                inboundAppKeyLinkRequests = listOf(
+                    to.iris.drive.app.core.AppKeyLinkRequestState(
+                        devicePubkey = "device-b",
+                        label = "Tablet",
+                        requestedAt = 42,
+                        requestLink = requestLink,
+                    ),
+                ),
+            ),
+            setupState = "authorized",
+            isSetupComplete = true,
+        )
+
+        render(
+            state = state,
+            onApproveDevice = { request, label -> approvedRequests += request to label },
+        )
+
+        compose.onNodeWithTag("tabDevices").activate()
+        compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceButton"))
+        compose.onNodeWithTag("addDeviceButton").assertIsDisplayed().activate()
+        compose.onNodeWithText("Device requests").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("requestDeviceAdd").performScrollTo().assertIsDisplayed().activate()
+
+        assertEquals(listOf(requestLink to "Tablet"), approvedRequests)
+        compose.onNodeWithTag("addDevicePanel").assertIsDisplayed()
+        compose.onNodeWithText("Device requests").assertIsDisplayed()
     }
 
     private fun render(

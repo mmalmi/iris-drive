@@ -811,9 +811,12 @@ struct IrisDriveControlPanel: View {
                 if status.canAdminProfile {
                     HStack(spacing: 8) {
                         Button {
-                            showAddDevice = true
+                            showAddDevice.toggle()
                         } label: {
-                            Label("Add Device", systemImage: "plus")
+                            Label(
+                                showAddDevice ? "Hide Add Device" : "Add Device",
+                                systemImage: showAddDevice ? "chevron.up" : "plus"
+                            )
                         }
                         Button {
                             openRecoveryKeyFlow()
@@ -822,6 +825,9 @@ struct IrisDriveControlPanel: View {
                         }
                     }
                 }
+            }
+            if showAddDevice {
+                addDevicePanel
             }
             if devicePeers.isEmpty {
                 emptyState("No devices yet")
@@ -851,7 +857,7 @@ struct IrisDriveControlPanel: View {
                     }
                 }
             }
-            if !status.inboundAppKeyLinkRequests.isEmpty {
+            if !showAddDevice, !status.inboundAppKeyLinkRequests.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Requests")
                         .font(.subheadline.weight(.semibold))
@@ -862,15 +868,12 @@ struct IrisDriveControlPanel: View {
                 }
             }
         }
-        .sheet(isPresented: $showAddDevice) {
-            addDeviceSheet
-        }
         .sheet(isPresented: $showAddRecoveryKey, onDismiss: resetRecoveryKeyFlow) {
             addRecoveryKeySheet
         }
     }
 
-    private var addDeviceSheet: some View {
+    private var addDevicePanel: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Add a Device")
                 .font(.title3.weight(.semibold))
@@ -937,7 +940,6 @@ struct IrisDriveControlPanel: View {
                             approveDeviceKey = ""
                             approveDeviceKeyIsComplete = false
                             approveDeviceLabel = ""
-                            showAddDevice = false
                         case let .failure(error):
                             approveDeviceError = error.localizedDescription
                         }
@@ -948,7 +950,9 @@ struct IrisDriveControlPanel: View {
             }
         }
         .padding(20)
-        .frame(width: 420)
+        .frame(maxWidth: 520, alignment: .leading)
+        .background(Color(nsColor: .textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     private var addRecoveryKeySheet: some View {

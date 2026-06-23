@@ -746,6 +746,11 @@ private struct DevicesView: View {
 
     var body: some View {
         List {
+            if showingAddDevice {
+                AddDeviceSection(model: model) {
+                    showingAddDevice = false
+                }
+            }
             Section {
                 if deviceActors.isEmpty {
                     Text("No devices yet")
@@ -768,9 +773,12 @@ private struct DevicesView: View {
             if model.canAdminProfile {
                 ToolbarItemGroup(placement: .primaryAction) {
                     Button {
-                        showingAddDevice = true
+                        showingAddDevice.toggle()
                     } label: {
-                        Label("Add Device", systemImage: "plus")
+                        Label(
+                            showingAddDevice ? "Hide Add Device" : "Add Device",
+                            systemImage: showingAddDevice ? "chevron.up" : "plus"
+                        )
                     }
                     .accessibilityIdentifier("addDeviceButton")
                     Button {
@@ -781,9 +789,6 @@ private struct DevicesView: View {
                     .accessibilityIdentifier("addRecoveryKeyButton")
                 }
             }
-        }
-        .sheet(isPresented: $showingAddDevice) {
-            AddDeviceSheet(model: model, isPresented: $showingAddDevice)
         }
         .sheet(isPresented: $showingAddRecoveryKey) {
             AddRecoveryKeySheet(model: model, isPresented: $showingAddRecoveryKey)
@@ -896,9 +901,9 @@ private struct DevicesView: View {
     }
 }
 
-private struct AddDeviceSheet: View {
+private struct AddDeviceSection: View {
     @ObservedObject var model: IrisDriveMobileModel
-    @Binding var isPresented: Bool
+    let onHide: () -> Void
 
     private var canAddManualDevice: Bool {
         IrisDriveNativeLinkInput.isComplete(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -907,93 +912,90 @@ private struct AddDeviceSheet: View {
     private func submitManualDevice() {
         guard canAddManualDevice else { return }
         model.approveDevice()
-        isPresented = false
     }
 
     var body: some View {
-        NavigationStack {
-            Form {
-                if !model.appKeyLinkInvite.isEmpty {
-                    Section("Invite device") {
-                        QrCodeView(matrix: model.qrMatrix(for: model.appKeyLinkInvite))
-                            .frame(width: 260, height: 260)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                        Text(model.appKeyLinkInvite)
+        Section {
+            if !model.appKeyLinkInvite.isEmpty {
+                Text("Invite device")
+                    .font(.headline)
+                QrCodeView(matrix: model.qrMatrix(for: model.appKeyLinkInvite))
+                    .frame(width: 260, height: 260)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                Text(model.appKeyLinkInvite)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+                Button {
+                    model.copyLinkInvite()
+                } label: {
+                    Label("Copy invite link", systemImage: "link")
+                }
+                Button {
+                    model.resetInvite()
+                } label: {
+                    Label("Reset invite", systemImage: "arrow.clockwise")
+                }
+            }
+
+            if !model.inboundAppKeyLinkRequests.isEmpty {
+                Text("Device requests")
+                    .font(.headline)
+                ForEach(model.inboundAppKeyLinkRequests) { request in
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(request.label.isEmpty ? "New device" : request.label)
+                            .font(.headline)
+                        Text(request.devicePubkey)
                             .font(.footnote)
                             .foregroundStyle(.secondary)
                             .textSelection(.enabled)
                         Button {
-                            model.copyLinkInvite()
+                            model.approveDevice(request: request.requestLink, label: request.label)
                         } label: {
-                            Label("Copy invite link", systemImage: "link")
+                            Label("Add", systemImage: "plus")
                         }
-                        Button {
-                            model.resetInvite()
+                        Button(role: .destructive) {
+                            model.rejectDevice(request: request.requestLink)
                         } label: {
-                            Label("Reset invite", systemImage: "arrow.clockwise")
+                            Label("Reject", systemImage: "xmark")
                         }
                     }
                 }
+            }
 
-                if !model.inboundAppKeyLinkRequests.isEmpty {
-                    Section("Device requests") {
-                        ForEach(model.inboundAppKeyLinkRequests) { request in
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(request.label.isEmpty ? "New device" : request.label)
-                                    .font(.headline)
-                                Text(request.devicePubkey)
-                                    .font(.footnote)
-                                    .foregroundStyle(.secondary)
-                                    .textSelection(.enabled)
-                                Button {
-                                    model.approveDevice(request: request.requestLink, label: request.label)
-                                } label: {
-                                    Label("Add", systemImage: "plus")
-                                }
-                                Button(role: .destructive) {
-                                    model.rejectDevice(request: request.requestLink)
-                                } label: {
-                                    Label("Reject", systemImage: "xmark")
-                                }
-                            }
-                        }
-                    }
+            Text("Paste the device key or request link.")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+            TextField("Device key", text: $model.approveDeviceKey)
+                .textInputAutocapitalization(.never)
+                .autocorrectionDisabled()
+                .accessibilityIdentifier("manualDeviceId")
+                .onSubmit {
+                    submitManualDevice()
                 }
-
-                Section("Link manually") {
-                    Text("Paste the device key or request link.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                    TextField("Device key", text: $model.approveDeviceKey)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .accessibilityIdentifier("manualDeviceId")
-                        .onSubmit {
-                            submitManualDevice()
-                        }
-                    TextField("Name (optional)", text: $model.approveDeviceLabel)
-                        .accessibilityIdentifier("manualDeviceName")
-                        .onSubmit {
-                            submitManualDevice()
-                        }
-                    Button {
-                        submitManualDevice()
-                    } label: {
-                        Label("Add", systemImage: "plus")
-                    }
-                    .accessibilityIdentifier("manualDeviceAdd")
-                    .disabled(!canAddManualDevice)
+            TextField("Name (optional)", text: $model.approveDeviceLabel)
+                .accessibilityIdentifier("manualDeviceName")
+                .onSubmit {
+                    submitManualDevice()
+                }
+            Button {
+                submitManualDevice()
+            } label: {
+                Label("Add", systemImage: "plus")
+            }
+            .accessibilityIdentifier("manualDeviceAdd")
+            .disabled(!canAddManualDevice)
+        } header: {
+            HStack {
+                Text("Add a Device")
+                Spacer()
+                Button("Hide") {
+                    onHide()
                 }
             }
-            .navigationTitle("Add a Device")
-            .toolbar {
-                Button("Cancel") {
-                    isPresented = false
-                }
-            }
-            .onAppear {
-                prefillUiTestDeviceFields()
-            }
+        }
+        .onAppear {
+            prefillUiTestDeviceFields()
         }
     }
 
