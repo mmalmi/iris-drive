@@ -37,6 +37,7 @@ require_file ios/Sources/IrisDriveNativeCore.swift
 require_file ios/Sources/IrisDriveTypes.swift
 require_file ios/FileProvider/FileProviderExtension.swift
 require_file ios/UITests/IrisDriveIOSUITests.swift
+require_file ios/UITests/Fixtures/external-links.html
 require_file scripts/ios-simulator-smoke.sh
 require_file scripts/ios-gui-linking-smoke.sh
 require_file scripts/cross-vm-four-platform-e2e.sh
@@ -66,6 +67,9 @@ require_contains ios/Sources/IrisDriveMobileModel.swift "func localGatewayURL"
 require_contains ios/Sources/IrisDriveMobileModel.swift "func browserAddressURL"
 require_contains ios/Sources/IrisDriveMobileBrowser.swift "readyIrisBrowserURL"
 require_contains ios/Sources/IrisDriveMobileBrowser.swift "localGatewayResponds"
+require_contains ios/Sources/IrisDriveMobileBrowser.swift "irisWebShouldOpenExternally"
+require_contains ios/Sources/IrisDriveMobileBrowser.swift "silent.link"
+require_contains ios/Sources/IrisDriveMobileBrowser.swift "protonmail.com"
 require_contains ios/Sources/IrisDriveMobileBrowser.swift "URLSession.shared.data"
 require_contains ios/Sources/IrisDriveMobileModel.swift '"type": "refresh_profile"'
 require_contains ios/Sources/IrisDriveMobileBrowser.swift "URLComponents(string: activePortalUrl)?.port"
@@ -133,8 +137,11 @@ require_contains scripts/ios-gui-linking-smoke.sh "testLinkThisDeviceFromWelcome
 require_contains scripts/ios-gui-linking-smoke.sh "testAddLinkedDeviceFromDevices"
 require_contains scripts/ios-gui-linking-smoke.sh "testOpenIrisAppsLoadsBrowserWhenSyncPaused"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "testOpenIrisAppsLoadsBrowserWhenSyncPaused"
+require_contains ios/UITests/IrisDriveIOSUITests.swift "testIrisWebLauncherExternalLinksOpenSystemBrowser"
 require_absent scripts/ios-gui-linking-smoke.sh "simctl pbcopy"
-require_absent ios/UITests/IrisDriveIOSUITests.swift "typeText"
+require_absent ios/UITests/IrisDriveIOSUITests.swift "linkTargetInput\"].typeText"
+require_absent ios/UITests/IrisDriveIOSUITests.swift "manualDeviceId\"].typeText"
+require_absent ios/UITests/IrisDriveIOSUITests.swift "manualDeviceName\"].typeText"
 require_absent ios/UITests/IrisDriveIOSUITests.swift "UIPasteboard"
 require_absent ios/UITests/IrisDriveIOSUITests.swift "app.buttons[\"linkDeviceSubmit\"].tap()"
 require_contains scripts/cross-vm-four-platform-e2e.sh "IRIS_DRIVE_E2E_IOS_HOST"

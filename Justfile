@@ -197,6 +197,7 @@ structure:
     ./scripts/check-fips-status-normalization.sh
     ./scripts/check-linux-core-owned-status.sh
     ./scripts/check-desktop-core-backed-actions.sh
+    ./scripts/check-admin-role-no-daemon-restart.sh
     ./scripts/check-tray-menu-state.sh
     ./scripts/check-nostr-client-shutdown.sh
     ./scripts/check-macos-native-core-serialization.sh

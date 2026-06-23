@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 final class IrisDriveIOSUITests: XCTestCase {
     override func setUpWithError() throws {
@@ -244,6 +245,36 @@ final class IrisDriveIOSUITests: XCTestCase {
         )
     }
 
+    func testIrisWebAddressFocusKeepsPageVisibleAboveKeyboard() throws {
+        let browserURL = try optionalEnvironment("IRIS_DRIVE_UI_TEST_BROWSER_URL")
+            ?? localKeyboardViewportFixtureURL()
+        let app = launchApp(environment: [
+            "IRIS_DRIVE_DEBUG_ACTION": "open-browser",
+            "IRIS_DRIVE_DEBUG_BROWSER_URL": browserURL,
+        ])
+
+        let addressBar = app.descendants(matching: .any)["irisWebAddressField"]
+        XCTAssertTrue(addressBar.waitForExistence(timeout: 15), app.debugDescription)
+        waitForIrisBrowserToFinishLoading(in: app)
+
+        XCTAssertTrue(app.buttons["irisWebAddressField"].waitForExistence(timeout: 5), app.debugDescription)
+        app.buttons["irisWebAddressField"].tap()
+
+        let focusedAddress = app.textFields["irisWebAddressField"]
+        XCTAssertTrue(focusedAddress.waitForExistence(timeout: 5), app.debugDescription)
+        RunLoop.current.run(until: Date().addingTimeInterval(0.8))
+
+        let screenshot = XCUIScreen.main.screenshot()
+        if let screenshotDir = optionalEnvironment("IRIS_DRIVE_UI_SCREENSHOT_DIR") {
+            try saveScreenshot(named: "iris-web-address-focused-keyboard", in: screenshotDir)
+        }
+        assertNoLargeBlankVoidAbove(
+            focusedAddress,
+            in: app,
+            screenshot: screenshot
+        )
+    }
+
     func testIrisWebBackButtonDoesNotLeakTapToPage() throws {
         let browserURL = try optionalEnvironment("IRIS_DRIVE_UI_TEST_BACK_HIT_URL")
             ?? localBackHitFixtureURL()
@@ -269,6 +300,39 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTAssertFalse(
             waitForValue(focusedAddress, containing: "fell-through", timeout: 2),
             "Back button tap leaked to page content; address became \(accessibilityValue(focusedAddress))"
+        )
+    }
+
+    func testIrisWebLauncherExternalLinksOpenSystemBrowser() throws {
+        let browserURL = try optionalEnvironment("IRIS_DRIVE_UI_TEST_EXTERNAL_LINKS_URL")
+            ?? localExternalLinksFixtureURL()
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        safari.terminate()
+        let app = launchApp(environment: [
+            "IRIS_DRIVE_DEBUG_ACTION": "open-browser",
+            "IRIS_DRIVE_DEBUG_BROWSER_URL": browserURL,
+        ])
+        addTeardownBlock {
+            safari.terminate()
+            app.terminate()
+        }
+
+        let address = app.descendants(matching: .any)["irisWebAddressField"]
+        XCTAssertTrue(address.waitForExistence(timeout: 15), app.debugDescription)
+        waitForIrisBrowserToFinishLoading(in: app)
+
+        let protonLink = app.links["Proton Mail"].firstMatch
+        if protonLink.waitForExistence(timeout: 2), protonLink.isHittable {
+            protonLink.tap()
+        } else {
+            let webView = app.webViews.firstMatch
+            XCTAssertTrue(webView.waitForExistence(timeout: 5), app.debugDescription)
+            webView.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.22)).tap()
+        }
+
+        XCTAssertTrue(
+            safari.wait(for: .runningForeground, timeout: 10),
+            "Expected Proton launcher link to open Safari instead of staying inside Iris Web. App hierarchy:\n\(app.debugDescription)"
         )
     }
 
@@ -346,6 +410,24 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTAssertTrue(app.buttons["addBackupButton"].waitForExistence(timeout: 10))
         XCTAssertFalse(app.buttons["Add Custom Target"].exists)
         XCTAssertFalse(app.buttons["Add File Server"].exists)
+    }
+
+    func testSettingsExposeAppleCalendarContinuousSyncToggle() throws {
+        let app = launchApp()
+        ensureMyDriveReady(in: app)
+
+        tabButton("Settings", in: app).tap()
+
+        let toggle = app.descendants(matching: .any)["appleCalendarSyncToggle"]
+        let status = app.staticTexts["appleCalendarSyncStatus"]
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline, !toggle.exists {
+            app.swipeUp()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        XCTAssertTrue(toggle.exists, app.debugDescription)
+        XCTAssertTrue(status.exists, app.debugDescription)
+        XCTAssertFalse(app.buttons["Sync now"].exists)
     }
 
     func testMyDriveFileCountMatchesExpected() throws {
@@ -505,6 +587,22 @@ final class IrisDriveIOSUITests: XCTestCase {
         return url.absoluteString
     }
 
+    private func localKeyboardViewportFixtureURL() throws -> String {
+        let url = URL(string: "http://127.0.0.1:8765/keyboard-viewport.html")!
+        guard httpURLResponds(url) else {
+            throw XCTSkip("IRIS_DRIVE_UI_TEST_BROWSER_URL or local fixture server is required")
+        }
+        return url.absoluteString
+    }
+
+    private func localExternalLinksFixtureURL() throws -> String {
+        let url = URL(string: "http://127.0.0.1:8765/external-links.html")!
+        guard httpURLResponds(url) else {
+            throw XCTSkip("IRIS_DRIVE_UI_TEST_EXTERNAL_LINKS_URL or local fixture server is required")
+        }
+        return url.absoluteString
+    }
+
     private func httpURLResponds(_ url: URL) -> Bool {
         var request = URLRequest(url: url)
         request.httpMethod = "HEAD"
@@ -608,6 +706,102 @@ final class IrisDriveIOSUITests: XCTestCase {
             attachment.name = name
             attachment.lifetime = .keepAlways
             activity.add(attachment)
+        }
+    }
+
+    private func assertNoLargeBlankVoidAbove(
+        _ element: XCUIElement,
+        in app: XCUIApplication,
+        screenshot: XCUIScreenshot,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        guard let image = UIImage(data: screenshot.pngRepresentation),
+              let cgImage = image.cgImage,
+              let samples = RGBAImage(cgImage: cgImage)
+        else {
+            XCTFail("Could not read focused browser screenshot pixels", file: file, line: line)
+            return
+        }
+
+        let scale = CGFloat(samples.width) / max(app.frame.width, 1)
+        let fieldFrame = element.frame
+        let sampleFrame = CGRect(
+            x: max(app.frame.minX + 24, fieldFrame.minX - 72),
+            y: max(app.frame.minY + 160, fieldFrame.minY - 260),
+            width: min(app.frame.width - 48, fieldFrame.width + 144),
+            height: 180
+        )
+        let pixelRect = CGRect(
+            x: sampleFrame.minX * scale,
+            y: sampleFrame.minY * scale,
+            width: sampleFrame.width * scale,
+            height: min(sampleFrame.height, max(fieldFrame.minY - sampleFrame.minY - 20, 1)) * scale
+        ).integral
+
+        var blankVoid = 0
+        var total = 0
+        let step = max(4, Int(scale * 6))
+        let minX = max(0, Int(pixelRect.minX))
+        let maxX = min(samples.width - 1, Int(pixelRect.maxX))
+        let minY = max(0, Int(pixelRect.minY))
+        let maxY = min(samples.height - 1, Int(pixelRect.maxY))
+
+        for y in stride(from: minY, through: maxY, by: step) {
+            for x in stride(from: minX, through: maxX, by: step) {
+                total += 1
+                if samples.isBlankVoid(x: x, y: y) {
+                    blankVoid += 1
+                }
+            }
+        }
+
+        XCTAssertGreaterThan(total, 0, "Focused browser screenshot sample was empty", file: file, line: line)
+        let ratio = total == 0 ? 1 : Double(blankVoid) / Double(total)
+        XCTAssertLessThan(
+            ratio,
+            0.45,
+            "Focused address left a blank page void above the keyboard (blank ratio \(ratio))",
+            file: file,
+            line: line
+        )
+    }
+
+    private struct RGBAImage {
+        let width: Int
+        let height: Int
+        private let bytes: [UInt8]
+
+        init?(cgImage: CGImage) {
+            width = cgImage.width
+            height = cgImage.height
+            var data = [UInt8](repeating: 0, count: width * height * 4)
+            guard let context = CGContext(
+                data: &data,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            ) else {
+                return nil
+            }
+            context.draw(cgImage, in: CGRect(x: 0, y: 0, width: width, height: height))
+            bytes = data
+        }
+
+        func isBlankVoid(x: Int, y: Int) -> Bool {
+            let offset = ((y * width) + x) * 4
+            guard offset + 3 < bytes.count else { return false }
+            let red = bytes[offset]
+            let green = bytes[offset + 1]
+            let blue = bytes[offset + 2]
+            let alpha = bytes[offset + 3]
+            guard alpha > 180 else { return false }
+            let nearBlack = red < 22 && green < 22 && blue < 22
+            let nearWhite = red > 238 && green > 238 && blue > 238
+            return nearBlack || nearWhite
         }
     }
 

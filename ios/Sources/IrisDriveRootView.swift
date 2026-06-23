@@ -1568,6 +1568,7 @@ private struct IrisWebBrowserView: View {
     @State private var isLoading = true
     @State private var loadError = ""
     @State private var addressFocused = false
+    @State private var keyboardBottomOverlap: CGFloat = 0
 
     init(model: IrisDriveMobileModel, route: IrisWebRoute) {
         self.model = model
@@ -1620,6 +1621,7 @@ private struct IrisWebBrowserView: View {
                 onClose: { model.webRoute = nil },
                 onSubmitAddress: loadAddressBarURL
             )
+            .padding(.bottom, keyboardBottomOverlap)
             .background {
                 GeometryReader { proxy in
                     Color.clear.preference(
@@ -1631,6 +1633,13 @@ private struct IrisWebBrowserView: View {
         }
         .onPreferenceChange(IrisWebBrowserFooterHeightPreferenceKey.self) { height in
             browser.setFooterOverlayHeight(height)
+        }
+        .ignoresSafeArea(.keyboard, edges: .bottom)
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillChangeFrameNotification)) {
+            keyboardBottomOverlap = irisKeyboardBottomOverlap(from: $0)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: UIResponder.keyboardWillHideNotification)) { _ in
+            keyboardBottomOverlap = 0
         }
         .presentationDragIndicator(.hidden)
         .task {
@@ -2275,11 +2284,24 @@ private func irisWebBrowserSafeAreaInsets(for view: UIView) -> UIEdgeInsets {
     if let window = view.window {
         return window.safeAreaInsets
     }
+    return irisActiveWindowSafeAreaInsets()
+}
+
+private func irisActiveWindowSafeAreaInsets() -> UIEdgeInsets {
     return UIApplication.shared.connectedScenes
         .compactMap { $0 as? UIWindowScene }
         .flatMap(\.windows)
         .first(where: \.isKeyWindow)?
         .safeAreaInsets ?? .zero
+}
+
+private func irisKeyboardBottomOverlap(from notification: Notification) -> CGFloat {
+    guard let frame = notification.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect else {
+        return 0
+    }
+    let screenHeight = UIScreen.main.bounds.height
+    let safeAreaBottom = irisActiveWindowSafeAreaInsets().bottom
+    return max(0, screenHeight - frame.minY - safeAreaBottom)
 }
 
 private struct IrisWebView: UIViewRepresentable {
@@ -2500,6 +2522,21 @@ private struct SettingsView: View {
                     .onChange(of: model.syncOverCellular) { _, _ in
                         model.persist()
                     }
+            }
+
+            Section("Apple Calendar") {
+                Toggle(
+                    "Keep Apple Calendar in sync",
+                    isOn: Binding(
+                        get: { model.appleCalendarSyncEnabled },
+                        set: { model.setAppleCalendarSyncEnabled($0) }
+                    )
+                )
+                .accessibilityIdentifier("appleCalendarSyncToggle")
+                Text(model.appleCalendarSyncStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("appleCalendarSyncStatus")
             }
 
             Section("Advanced") {

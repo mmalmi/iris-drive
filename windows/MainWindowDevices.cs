@@ -311,11 +311,6 @@ public partial class MainWindow
         try
         {
             await service.AppointAdminAsync(deviceNpub);
-            StopDaemon();
-            if (currentStatus is not null)
-            {
-                EnsureDaemonRunning(currentStatus);
-            }
             NoticeText.Text = "Device made admin";
             await RefreshAsync();
         }
@@ -628,11 +623,6 @@ public partial class MainWindow
         try
         {
             await service.DemoteAdminAsync(deviceNpub);
-            StopDaemon();
-            if (currentStatus is not null)
-            {
-                EnsureDaemonRunning(currentStatus);
-            }
             NoticeText.Text = "Admin removed";
             await RefreshAsync();
         }

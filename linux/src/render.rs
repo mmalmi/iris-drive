@@ -736,7 +736,6 @@ pub(crate) fn peer_row(
         let app_key_pubkey = app_key_pubkey.to_string();
         appoint.connect_clicked(move |_| match appoint_admin(&app_key_pubkey) {
             Ok(()) => {
-                restart_daemon(&model);
                 model.ui.notice.set_text("Device made admin");
                 refresh(&model);
             }
@@ -751,7 +750,6 @@ pub(crate) fn peer_row(
         let app_key_pubkey = app_key_pubkey.to_string();
         demote.connect_clicked(move |_| match demote_admin(&app_key_pubkey) {
             Ok(()) => {
-                restart_daemon(&model);
                 model.ui.notice.set_text("Admin removed");
                 refresh(&model);
             }

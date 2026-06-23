@@ -24,6 +24,22 @@ private struct IrisNativeBrowserGatewayStatus: Decodable {
     }
 }
 
+private func irisWebShouldOpenExternally(_ url: URL) -> Bool {
+    guard let scheme = url.scheme?.lowercased(),
+          scheme == "http" || scheme == "https",
+          let host = url.host?.lowercased()
+    else {
+        return false
+    }
+
+    return host == "silent.link"
+        || host.hasSuffix(".silent.link")
+        || host == "proton.me"
+        || host.hasSuffix(".proton.me")
+        || host == "protonmail.com"
+        || host.hasSuffix(".protonmail.com")
+}
+
 extension IrisDriveMobileModel {
     func openIrisBrowserWhenReady(_ value: String) {
         guard !isOpeningIrisApps else { return }
@@ -159,7 +175,10 @@ extension IrisDriveMobileModel {
         case "share_dialog", "nhash_file", "mutable_file", "invite", "app_key_approval":
             return .handleNative(url)
         default:
-            if url.scheme == "http" || url.scheme == "https" {
+            if irisWebShouldOpenExternally(url) {
+                return .openExternal(url)
+            }
+            if let scheme = url.scheme?.lowercased(), scheme == "http" || scheme == "https" {
                 return .allow
             }
             return .cancel
