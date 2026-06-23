@@ -33,6 +33,9 @@ private func irisDriveValidateLinkInputJson(_ text: UnsafePointer<CChar>) -> Uns
 @_silgen_name("iris_drive_export_recovery_secret_json")
 private func irisDriveExportRecoverySecretJson(_ dataDir: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("iris_drive_calendar_export_json")
+private func irisDriveCalendarExportJson(_ dataDir: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("iris_drive_generate_recovery_key_json")
 private func irisDriveGenerateRecoveryKeyJson() -> UnsafeMutablePointer<CChar>?
 
@@ -151,6 +154,12 @@ final class IrisDriveNativeCore {
             return NativeRecoverySecretExport(error: "native recovery export returned invalid JSON")
         }
         return value
+    }
+
+    static func exportCalendarJson(dataDir: String) -> String {
+        dataDir.withCString { pointer in
+            takeString(irisDriveCalendarExportJson(pointer))
+        }
     }
 
     static func generateRecoveryKey() -> NativeGeneratedRecoveryKey {

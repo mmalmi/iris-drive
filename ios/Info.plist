@@ -33,6 +33,10 @@
   <string>public.app-category.productivity</string>
   <key>NSCameraUsageDescription</key>
   <string>Scan Iris Drive invite QR codes.</string>
+  <key>NSCalendarsFullAccessUsageDescription</key>
+  <string>Sync your Iris calendar with Apple Calendar.</string>
+  <key>NSCalendarsUsageDescription</key>
+  <string>Sync your Iris calendar with Apple Calendar.</string>
   <key>NSLocalNetworkUsageDescription</key>
   <string>Find and connect directly to nearby Iris Drive devices on your local network.</string>
   <key>NSAppTransportSecurity</key>

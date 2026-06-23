@@ -19,6 +19,7 @@ private let irisWebPublisherProfileNameFreshAge: TimeInterval = 24 * 60 * 60
 private let irisWebPublisherProfileNameMaxCacheAge: TimeInterval = 30 * 24 * 60 * 60
 private let irisWebPublisherProfileNameMissCooldown: TimeInterval = 5 * 60
 private let irisWebPublisherProfileFetchTimeout: TimeInterval = 4
+private let appleCalendarSyncCheckInterval: TimeInterval = 60
 #if DEBUG
 private let fileProviderDebugRegistrationVersion = 2
 private let fileProviderDebugRegistrationVersionKey = "fileProviderDebugRegistrationVersion"
@@ -102,10 +103,13 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var sitesPortalUrl = ""
     @Published var webRoute: IrisWebRoute?
     @Published var isOpeningIrisApps = false
+    @Published var appleCalendarSyncEnabled = false
+    @Published var appleCalendarSyncStatus = "Off"
     @Published private var irisWebPublisherProfileNameCache: [String: IrisWebPublisherProfileNameCacheEntry] = [:]
 
     private let defaults = UserDefaults.standard
     private let nativeCore: IrisDriveNativeCore
+    private let appleCalendarSync = IrisDriveAppleCalendarSync.shared
     private let nativeCoreQueue = DispatchQueue(label: "to.iris.drive.ios.native-core", qos: .utility)
     private var lastState: NativeAppState?
     private var fileProviderOpenAttempt = 0
@@ -118,6 +122,8 @@ final class IrisDriveMobileModel: ObservableObject {
     private var copyFeedbackTask: Task<Void, Never>?
     private var fileProviderDomainRemovalInFlight = false
     private var stateGeneration: UInt64 = 0
+    private var appleCalendarSyncInFlight = false
+    private var lastAppleCalendarSyncCheck = Date.distantPast
     private var irisWebPublisherProfileNameTasks: [String: Task<Void, Never>] = [:]
     private var irisWebPublisherProfileNameMisses: [String: Date] = [:]
 
@@ -217,8 +223,16 @@ final class IrisDriveMobileModel: ObservableObject {
         lastState?.ui.revoked ?? false
     }
 
-    private var shouldRunBackgroundSync: Bool {
+    private var shouldRunDriveBackgroundSync: Bool {
         syncRunning && !isRevoked && (isSetupComplete || isAwaitingApproval)
+    }
+
+    private var shouldRunAppleCalendarSync: Bool {
+        appleCalendarSync.isActive && isSetupComplete && !isRevoked
+    }
+
+    private var shouldScheduleBackgroundSync: Bool {
+        shouldRunDriveBackgroundSync || shouldRunAppleCalendarSync
     }
 
     var canAdminProfile: Bool {
@@ -543,6 +557,7 @@ final class IrisDriveMobileModel: ObservableObject {
         stateGeneration &+= 1
         applyStateJson(runNative { $0.refreshJson() })
         ensureFileProviderDomainIfProfileExists()
+        maybeRunAppleCalendarSync()
     }
 
     func refreshProfileStatusInBackground() async {
@@ -554,7 +569,7 @@ final class IrisDriveMobileModel: ObservableObject {
     func refreshAfterStartup() { Task { await refreshInBackground() } }
 
     func scheduleBackgroundSyncIfNeeded() {
-        guard shouldRunBackgroundSync else { return cancelBackgroundSync() }
+        guard shouldScheduleBackgroundSync else { return cancelBackgroundSync() }
         let request = BGAppRefreshTaskRequest(identifier: IrisDriveBackgroundSyncTask.identifier)
         request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
         BGTaskScheduler.shared.cancel(taskRequestWithIdentifier: IrisDriveBackgroundSyncTask.identifier)
@@ -590,12 +605,14 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private func syncOnceIfRunning() async {
-        guard syncRunning, isSetupComplete || isAwaitingApproval else { return }
-        if isSetupComplete {
-            await dispatchInBackground(["type": "restart_sync"])
-        } else {
-            await refreshInBackground()
+        if syncRunning, isSetupComplete || isAwaitingApproval {
+            if isSetupComplete {
+                await dispatchInBackground(["type": "restart_sync"])
+            } else {
+                await refreshInBackground()
+            }
         }
+        await runAppleCalendarSyncIfEnabled()
     }
 
     func createProfile(username: String = "", profilePhotoName: String = "") {
@@ -740,6 +757,8 @@ final class IrisDriveMobileModel: ObservableObject {
         let before = configIdentitySnapshot()
         cancelBackgroundSync()
         stopSync()
+        appleCalendarSync.setEnabled(false)
+        refreshAppleCalendarSyncState()
         dispatch(["type": "logout"])
         restoreSecret = ""
         approveDeviceKey = ""
@@ -767,13 +786,94 @@ final class IrisDriveMobileModel: ObservableObject {
 
     func stopSync() {
         dispatch(["type": "stop_sync"])
-        cancelBackgroundSync()
+        scheduleBackgroundSyncIfNeeded()
     }
 
     func restartSync() {
         guard isSetupComplete else { return }
         dispatch(["type": "restart_sync"])
         scheduleBackgroundSyncIfNeeded()
+    }
+
+    func setAppleCalendarSyncEnabled(_ enabled: Bool) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if !enabled {
+                self.appleCalendarSync.setEnabled(false)
+                self.refreshAppleCalendarSyncState()
+                self.scheduleBackgroundSyncIfNeeded()
+                return
+            }
+
+            do {
+                let granted = try await self.appleCalendarSync.requestFullAccess()
+                guard granted else {
+                    self.appleCalendarSync.setEnabled(false)
+                    self.refreshAppleCalendarSyncState()
+                    self.appleCalendarSyncStatus = "Calendar access denied"
+                    self.scheduleBackgroundSyncIfNeeded()
+                    return
+                }
+                self.appleCalendarSync.setEnabled(true)
+                self.refreshAppleCalendarSyncState()
+                self.scheduleBackgroundSyncIfNeeded()
+                await self.runAppleCalendarSyncIfEnabled(force: true)
+            } catch {
+                self.appleCalendarSync.setEnabled(false)
+                self.refreshAppleCalendarSyncState()
+                self.appleCalendarSyncStatus = error.localizedDescription.isEmpty
+                    ? "Apple Calendar access failed"
+                    : error.localizedDescription
+                self.scheduleBackgroundSyncIfNeeded()
+            }
+        }
+    }
+
+    private func refreshAppleCalendarSyncState() {
+        appleCalendarSyncEnabled = appleCalendarSync.isActive
+        appleCalendarSyncStatus = appleCalendarSync.accessStatusLabel
+    }
+
+    private func maybeRunAppleCalendarSync(force: Bool = false) {
+        Task { @MainActor [weak self] in
+            await self?.runAppleCalendarSyncIfEnabled(force: force)
+        }
+    }
+
+    private func runAppleCalendarSyncIfEnabled(force: Bool = false) async {
+        refreshAppleCalendarSyncState()
+        guard shouldRunAppleCalendarSync else { return }
+        guard !appleCalendarSyncInFlight else { return }
+        if !force,
+           Date().timeIntervalSince(lastAppleCalendarSyncCheck) < appleCalendarSyncCheckInterval {
+            return
+        }
+        appleCalendarSyncInFlight = true
+        lastAppleCalendarSyncCheck = Date()
+        let result = appleCalendarSync.syncIfEnabled(
+            dataDir: sharedContainerPath,
+            isSetupComplete: isSetupComplete,
+            force: force
+        )
+        appleCalendarSyncInFlight = false
+        applyAppleCalendarSyncResult(result)
+        scheduleBackgroundSyncIfNeeded()
+    }
+
+    private func applyAppleCalendarSyncResult(_ result: AppleCalendarSyncResult) {
+        if !result.error.isEmpty {
+            appleCalendarSyncStatus = result.error
+            return
+        }
+        if result.synced, result.eventsDeleted > 0 {
+            appleCalendarSyncStatus = "\(result.eventsSynced) events synced, \(result.eventsDeleted) removed"
+        } else if result.synced {
+            appleCalendarSyncStatus = "\(result.eventsSynced) events synced"
+        } else if result.unchanged {
+            appleCalendarSyncStatus = "Up to date"
+        } else {
+            refreshAppleCalendarSyncState()
+        }
     }
 
     func copyAppKey() {
@@ -1422,6 +1522,7 @@ final class IrisDriveMobileModel: ObservableObject {
         }
         relayInput = ""
         syncOverCellular = defaults.bool(forKey: "syncOverCellular")
+        refreshAppleCalendarSyncState()
     }
 
     func persist() {
@@ -1651,6 +1752,7 @@ final class IrisDriveMobileModel: ObservableObject {
         guard !Task.isCancelled, generation == stateGeneration else { return }
         applyStateJson(json)
         ensureFileProviderDomainIfProfileExists()
+        await runAppleCalendarSyncIfEnabled()
     }
 
     private func runNativeInBackground(

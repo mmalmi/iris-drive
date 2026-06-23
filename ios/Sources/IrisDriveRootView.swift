@@ -2502,6 +2502,21 @@ private struct SettingsView: View {
                     }
             }
 
+            Section("Apple Calendar") {
+                Toggle(
+                    "Keep Apple Calendar in sync",
+                    isOn: Binding(
+                        get: { model.appleCalendarSyncEnabled },
+                        set: { model.setAppleCalendarSyncEnabled($0) }
+                    )
+                )
+                .accessibilityIdentifier("appleCalendarSyncToggle")
+                Text(model.appleCalendarSyncStatus)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .accessibilityIdentifier("appleCalendarSyncStatus")
+            }
+
             Section("Advanced") {
                 Button(role: .destructive) {
                     model.resetLocalState()

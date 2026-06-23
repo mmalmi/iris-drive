@@ -348,6 +348,24 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Add File Server"].exists)
     }
 
+    func testSettingsExposeAppleCalendarContinuousSyncToggle() throws {
+        let app = launchApp()
+        ensureMyDriveReady(in: app)
+
+        tabButton("Settings", in: app).tap()
+
+        let toggle = app.descendants(matching: .any)["appleCalendarSyncToggle"]
+        let status = app.staticTexts["appleCalendarSyncStatus"]
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline, !toggle.exists {
+            app.swipeUp()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        XCTAssertTrue(toggle.exists, app.debugDescription)
+        XCTAssertTrue(status.exists, app.debugDescription)
+        XCTAssertFalse(app.buttons["Sync now"].exists)
+    }
+
     func testMyDriveFileCountMatchesExpected() throws {
         let expected = try requiredEnvironment("IRIS_DRIVE_UI_TEST_EXPECTED_FILE_COUNT")
         let app = launchApp()
