@@ -124,6 +124,11 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
             )
             completionHandler(item, [], false, nil)
         } catch {
+            FileProviderStorage.debugLog(
+                "create failed name=\(itemTemplate.filename) " +
+                    "mayAlreadyExist=\(options.contains(.mayAlreadyExist)) " +
+                    "contents=\(url != nil) error=\(error)"
+            )
             completionHandler(nil, [], false, error)
         }
         progress.completedUnitCount = 1
@@ -153,6 +158,10 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
             )
             completionHandler(updated, [], false, nil)
         } catch {
+            FileProviderStorage.debugLog(
+                "modify failed identifier=\(item.itemIdentifier.rawValue) " +
+                    "fields=\(changedFields) contents=\(newContents != nil) error=\(error)"
+            )
             completionHandler(nil, [], false, error)
         }
         progress.completedUnitCount = 1
@@ -171,6 +180,9 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
             try FileProviderStorage.deleteItem(identifier: identifier)
             completionHandler(nil)
         } catch {
+            FileProviderStorage.debugLog(
+                "delete failed identifier=\(identifier.rawValue) error=\(error)"
+            )
             completionHandler(error)
         }
         progress.completedUnitCount = 1
