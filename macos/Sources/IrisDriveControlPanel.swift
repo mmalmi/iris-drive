@@ -809,25 +809,15 @@ struct IrisDriveControlPanel: View {
                 SectionTitle("Devices")
                 Spacer()
                 if status.canAdminProfile {
-                    HStack(spacing: 8) {
-                        Button {
-                            showAddDevice.toggle()
-                        } label: {
-                            Label(
-                                showAddDevice ? "Hide Add Device" : "Add Device",
-                                systemImage: showAddDevice ? "chevron.up" : "plus"
-                            )
-                        }
-                        Button {
-                            openRecoveryKeyFlow()
-                        } label: {
-                            Label("Add Recovery Key", systemImage: "key.fill")
-                        }
+                    Button {
+                        openRecoveryKeyFlow()
+                    } label: {
+                        Label("Add Recovery Key", systemImage: "key.fill")
                     }
                 }
             }
-            if showAddDevice {
-                addDevicePanel
+            if status.canAdminProfile {
+                addDeviceSection
             }
             if devicePeers.isEmpty {
                 emptyState("No devices yet")
@@ -873,23 +863,42 @@ struct IrisDriveControlPanel: View {
         }
     }
 
+    private var addDeviceSection: some View {
+        DisclosureGroup(isExpanded: $showAddDevice) {
+            addDevicePanel
+                .padding(.top, 8)
+        } label: {
+            HStack {
+                Label("Add Device", systemImage: "plus")
+                Spacer()
+                if !status.inboundAppKeyLinkRequests.isEmpty {
+                    Text("\(status.inboundAppKeyLinkRequests.count) request\(status.inboundAppKeyLinkRequests.count == 1 ? "" : "s")")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .padding(12)
+        .background(Color(nsColor: .textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+    }
+
     private var addDevicePanel: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Text("Add a Device")
-                .font(.title3.weight(.semibold))
             if let invite = status.appKeyLinkInviteURL, !invite.isEmpty {
-                Text("Invite device")
-                    .font(.headline)
                 IrisDriveQRCodeView(value: invite)
                     .frame(width: 220, height: 220)
                     .frame(maxWidth: .infinity, alignment: .center)
-                IrisDriveCopyButton(title: "Copy invite link", systemImage: "link") {
-                    irisDriveCopyToPasteboard(invite, feedback: "Invite link copied")
-                }
-                Button {
-                    controller.resetInvite()
-                } label: {
-                    Label("Reset invite", systemImage: "arrow.clockwise")
+                HStack(spacing: 8) {
+                    IrisDriveCopyButton(title: "Copy invite link", systemImage: "link") {
+                        irisDriveCopyToPasteboard(invite, feedback: "Invite link copied")
+                    }
+                    Button {
+                        controller.resetInvite()
+                    } label: {
+                        Label("Reset invite", systemImage: "arrow.clockwise")
+                    }
                 }
             }
             if !status.inboundAppKeyLinkRequests.isEmpty {
@@ -899,7 +908,7 @@ struct IrisDriveControlPanel: View {
                     AppKeyLinkRequestRow(request: request, controller: controller)
                 }
             }
-            Text("Paste the device key or request link.")
+            Text("Paste the device key.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             TextField("Device key", text: $approveDeviceKey)
@@ -914,7 +923,7 @@ struct IrisDriveControlPanel: View {
                 }
             if !approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                !approveDeviceKeyIsComplete {
-                Text("That is not a complete device key or request link.")
+                Text("That is not a complete device key.")
                     .font(.caption)
                     .foregroundStyle(.red)
             }
@@ -927,9 +936,6 @@ struct IrisDriveControlPanel: View {
                 .textFieldStyle(.roundedBorder)
             HStack {
                 Spacer()
-                Button("Cancel") {
-                    showAddDevice = false
-                }
                 Button("Add") {
                     approveDevicePending = true
                     approveDeviceError = ""
@@ -949,10 +955,7 @@ struct IrisDriveControlPanel: View {
                 .disabled(!approveDeviceKeyIsComplete || approveDevicePending)
             }
         }
-        .padding(20)
         .frame(maxWidth: 520, alignment: .leading)
-        .background(Color(nsColor: .textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 10))
     }
 
     private var addRecoveryKeySheet: some View {

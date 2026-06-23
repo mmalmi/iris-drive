@@ -374,8 +374,9 @@ final class IrisDriveIOSUITests: XCTestCase {
 
         XCTAssertTrue(tabButton("Devices", in: app).waitForExistence(timeout: 10))
         tabButton("Devices", in: app).tap()
-        XCTAssertTrue(app.buttons["addDeviceButton"].waitForExistence(timeout: 10))
-        app.buttons["addDeviceButton"].tap()
+        let addDeviceToggle = app.descendants(matching: .any)["addDeviceToggle"]
+        XCTAssertTrue(addDeviceToggle.waitForExistence(timeout: 10))
+        addDeviceToggle.tap()
 
         let deviceField = app.textFields["manualDeviceId"]
         makeHittable(deviceField, in: app)

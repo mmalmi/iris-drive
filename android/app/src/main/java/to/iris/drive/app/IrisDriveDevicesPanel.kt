@@ -2,6 +2,7 @@ package to.iris.drive.app
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -18,6 +19,8 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Card
+import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -75,24 +78,12 @@ internal fun DevicesPanel(
         NativeCore.isCompleteLinkInput(request)
     }
 
-    CardSection(title = "Devices", trailing = "${deviceActors.size}") {
-        if (canApprove) {
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedButton(
-                    onClick = { showAddDevice = !showAddDevice },
-                    modifier = Modifier.testTag("addDeviceButton"),
-                ) {
-                    Text(if (showAddDevice) "Hide Add Device" else "Add Device")
-                }
-                OutlinedButton(
-                    onClick = { showAddRecoveryKey = true },
-                    modifier = Modifier.testTag("addRecoveryKeyButton"),
-                ) {
-                    Text("Add Recovery Key")
-                }
-            }
-        }
-        if (showAddDevice) {
+    if (canApprove) {
+        AddDeviceDisclosureSection(
+            expanded = showAddDevice,
+            requestCount = inboundRequests.size,
+            onToggle = { showAddDevice = !showAddDevice },
+        ) {
             AddDevicePanel(
                 linkInvite = linkInvite,
                 inboundRequests = inboundRequests,
@@ -106,12 +97,22 @@ internal fun DevicesPanel(
                 onResetInvite = onResetInvite,
                 onApproveDevice = onApproveDevice,
                 onRejectDevice = onRejectDevice,
-                onDismiss = { showAddDevice = false },
                 onAdded = {
                     request = ""
                     label = ""
                 },
             )
+        }
+    }
+
+    CardSection(title = "Devices", trailing = "${deviceActors.size}") {
+        if (canApprove) {
+            OutlinedButton(
+                onClick = { showAddRecoveryKey = true },
+                modifier = Modifier.testTag("addRecoveryKeyButton"),
+            ) {
+                Text("Add Recovery Key")
+            }
         }
         if (deviceActors.isEmpty()) {
             Text("No devices yet", color = Muted)
@@ -292,6 +293,49 @@ private fun DeleteDeviceDialog(
 }
 
 @Composable
+private fun AddDeviceDisclosureSection(
+    expanded: Boolean,
+    requestCount: Int,
+    onToggle: () -> Unit,
+    content: @Composable () -> Unit,
+) {
+    Card(
+        shape = RoundedCornerShape(8.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(14.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onToggle)
+                    .padding(vertical = 4.dp)
+                    .testTag("addDeviceToggle"),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("Add Device", fontWeight = FontWeight.SemiBold)
+                val trailing = when {
+                    expanded -> "hide"
+                    requestCount == 1 -> "1 request"
+                    requestCount > 1 -> "$requestCount requests"
+                    else -> "show"
+                }
+                Text(trailing, color = Muted, style = MaterialTheme.typography.labelMedium)
+            }
+            if (expanded) {
+                content()
+            }
+        }
+    }
+}
+
+@Composable
 private fun AddDevicePanel(
     linkInvite: String,
     inboundRequests: List<AppKeyLinkRequestState>,
@@ -305,7 +349,6 @@ private fun AddDevicePanel(
     onResetInvite: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRejectDevice: (String) -> Unit,
-    onDismiss: () -> Unit,
     onAdded: () -> Unit,
 ) {
     fun submitManualDevice() {
@@ -323,24 +366,19 @@ private fun AddDevicePanel(
             .testTag("addDevicePanel"),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Text("Add a Device", fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f))
-            TextButton(onClick = onDismiss) {
-                Text("Hide")
-            }
-        }
         if (linkInvite.isNotBlank()) {
-            Text("Invite device", fontWeight = FontWeight.SemiBold)
             QrCode(linkInvite, side = 220.dp, modifier = Modifier.align(Alignment.CenterHorizontally))
             Text(linkInvite, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            OutlinedButton(onClick = onCopyLinkInvite) {
-                Text("Copy invite link")
-            }
-            OutlinedButton(onClick = onResetInvite) {
-                Text("Reset invite")
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                OutlinedButton(onClick = onCopyLinkInvite, modifier = Modifier.weight(1f)) {
+                    Text("Copy invite link", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                OutlinedButton(onClick = onResetInvite, modifier = Modifier.weight(1f)) {
+                    Text("Reset invite", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
             }
         }
         if (inboundRequests.isNotEmpty()) {
@@ -375,7 +413,7 @@ private fun AddDevicePanel(
             }
         }
         Text(
-            "Paste the device key or request link.",
+            "Paste the device key.",
             color = Muted,
         )
         OutlinedTextField(

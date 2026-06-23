@@ -147,7 +147,7 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     @Test
-    fun addDevicePanelDispatchesManualDeviceApproval() {
+    fun addDeviceSectionDispatchesManualDeviceApproval() {
         val approvedRequests = mutableListOf<Pair<String, String>>()
         val devicePubkey = "npub1260n42s06vzc7796w0fh3ny7zcpw6tlk4gq3940gmfrzl5c9pv2s3657q8"
 
@@ -163,8 +163,8 @@ class IrisDriveAndroidGuiFlowTest {
         )
 
         compose.onNodeWithTag("tabDevices").activate()
-        compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceButton"))
-        compose.onNodeWithTag("addDeviceButton").activate()
+        compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceToggle"))
+        compose.onNodeWithTag("addDeviceToggle").activate()
         compose.onNodeWithTag("manualDeviceId").performScrollTo().assertIsDisplayed()
             .performTextInput(devicePubkey)
         compose.onNodeWithTag("manualDeviceName").performScrollTo().assertIsDisplayed()
@@ -176,7 +176,7 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     @Test
-    fun addDeviceDialogRequiresCompleteNativeLinkInput() {
+    fun addDeviceSectionRequiresCompleteNativeLinkInput() {
         val state = AppState(
             profile = profileState(),
             setupState = "authorized",
@@ -186,8 +186,8 @@ class IrisDriveAndroidGuiFlowTest {
         render(state = state)
 
         compose.onNodeWithTag("tabDevices").activate()
-        compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceButton"))
-        compose.onNodeWithTag("addDeviceButton").activate()
+        compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceToggle"))
+        compose.onNodeWithTag("addDeviceToggle").activate()
         compose.onNodeWithTag("manualDeviceId").performScrollTo().assertIsDisplayed()
             .performTextInput("npub1short")
 
@@ -790,8 +790,8 @@ class IrisDriveAndroidGuiFlowTest {
         )
 
         compose.onNodeWithTag("tabDevices").activate()
-        compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceButton"))
-        compose.onNodeWithTag("addDeviceButton").assertIsDisplayed().activate()
+        compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceToggle"))
+        compose.onNodeWithTag("addDeviceToggle").assertIsDisplayed().activate()
         compose.onNodeWithText("Device requests").performScrollTo().assertIsDisplayed()
         compose.onNodeWithText("Reject").performScrollTo().assertIsDisplayed().activate()
 
@@ -823,8 +823,8 @@ class IrisDriveAndroidGuiFlowTest {
         )
 
         compose.onNodeWithTag("tabDevices").activate()
-        compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceButton"))
-        compose.onNodeWithTag("addDeviceButton").assertIsDisplayed().activate()
+        compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceToggle"))
+        compose.onNodeWithTag("addDeviceToggle").assertIsDisplayed().activate()
         compose.onNodeWithText("Device requests").performScrollTo().assertIsDisplayed()
         compose.onNodeWithTag("requestDeviceAdd").performScrollTo().assertIsDisplayed().activate()
 
