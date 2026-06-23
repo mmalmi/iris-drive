@@ -19,6 +19,7 @@
 		45ACE487D08A90186C70D195 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA849B0E0B0455493C3B441 /* ShareViewController.swift */; };
 		46FB7CC3A4BBDB15C3882988 /* IrisDriveMobileBrowser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C21C908DBB23960AAC56A6 /* IrisDriveMobileBrowser.swift */; };
 		4BEA90FF19E22C4AC1DBD5BF /* IrisDriveRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 050F38C17BF67B7645C1572B /* IrisDriveRootView.swift */; };
+		4CE6371A48B56109DAF96C93 /* external-links.html in Resources */ = {isa = PBXBuildFile; fileRef = 5FC65A0B497BC4727996F907 /* external-links.html */; };
 		4F5EE2D9DAE2D8B802124579 /* FileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = C490A3FFF0BAED4EB2A1E5F9 /* FileProviderExtension.swift */; };
 		6D070FE16A7563F4606BA7A6 /* IrisDriveNativeCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A215568D3B9E51946DE326 /* IrisDriveNativeCore.swift */; };
 		6D1D9D55F60F25701702EE14 /* IrisDriveBackupViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2262CD0A76753FF6C6D773B /* IrisDriveBackupViews.swift */; };
@@ -98,6 +99,7 @@
 		57ECD37803B00AFA445E6080 /* StartupLoadingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StartupLoadingView.swift; sourceTree = "<group>"; };
 		59222C8CE8FD8C001461A472 /* FileProvider.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FileProvider.entitlements; sourceTree = "<group>"; };
 		5F7984AB4A917CEB5A16EB9A /* browser-footer.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "browser-footer.html"; sourceTree = "<group>"; };
+		5FC65A0B497BC4727996F907 /* external-links.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "external-links.html"; sourceTree = "<group>"; };
 		7CA3DF1C0E66C469EE9CCFB8 /* back-hit-test.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "back-hit-test.html"; sourceTree = "<group>"; };
 		977A7BAB3E96F1AD9B1C5AB9 /* ShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ShareExtension.entitlements; sourceTree = "<group>"; };
 		A2262CD0A76753FF6C6D773B /* IrisDriveBackupViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveBackupViews.swift; sourceTree = "<group>"; };
@@ -157,6 +159,7 @@
 			children = (
 				7CA3DF1C0E66C469EE9CCFB8 /* back-hit-test.html */,
 				5F7984AB4A917CEB5A16EB9A /* browser-footer.html */,
+				5FC65A0B497BC4727996F907 /* external-links.html */,
 				E41F97CC4C0E1F6DFCF75979 /* keyboard-viewport.html */,
 			);
 			path = Fixtures;
@@ -350,6 +353,7 @@
 			files = (
 				2B7BF5F5C0309E423C967CC9 /* back-hit-test.html in Resources */,
 				FCA07D9E0FCE8AD5D196A8CB /* browser-footer.html in Resources */,
+				4CE6371A48B56109DAF96C93 /* external-links.html in Resources */,
 				815B33E7988F5B78C46957A3 /* keyboard-viewport.html in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

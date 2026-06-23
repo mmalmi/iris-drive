@@ -303,6 +303,39 @@ final class IrisDriveIOSUITests: XCTestCase {
         )
     }
 
+    func testIrisWebLauncherExternalLinksOpenSystemBrowser() throws {
+        let browserURL = try optionalEnvironment("IRIS_DRIVE_UI_TEST_EXTERNAL_LINKS_URL")
+            ?? localExternalLinksFixtureURL()
+        let safari = XCUIApplication(bundleIdentifier: "com.apple.mobilesafari")
+        safari.terminate()
+        let app = launchApp(environment: [
+            "IRIS_DRIVE_DEBUG_ACTION": "open-browser",
+            "IRIS_DRIVE_DEBUG_BROWSER_URL": browserURL,
+        ])
+        addTeardownBlock {
+            safari.terminate()
+            app.terminate()
+        }
+
+        let address = app.descendants(matching: .any)["irisWebAddressField"]
+        XCTAssertTrue(address.waitForExistence(timeout: 15), app.debugDescription)
+        waitForIrisBrowserToFinishLoading(in: app)
+
+        let protonLink = app.links["Proton Mail"].firstMatch
+        if protonLink.waitForExistence(timeout: 2), protonLink.isHittable {
+            protonLink.tap()
+        } else {
+            let webView = app.webViews.firstMatch
+            XCTAssertTrue(webView.waitForExistence(timeout: 5), app.debugDescription)
+            webView.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.22)).tap()
+        }
+
+        XCTAssertTrue(
+            safari.wait(for: .runningForeground, timeout: 10),
+            "Expected Proton launcher link to open Safari instead of staying inside Iris Web. App hierarchy:\n\(app.debugDescription)"
+        )
+    }
+
     private func assertOpenIrisAppsLoads(
         in app: XCUIApplication,
         file: StaticString = #filePath,
@@ -558,6 +591,14 @@ final class IrisDriveIOSUITests: XCTestCase {
         let url = URL(string: "http://127.0.0.1:8765/keyboard-viewport.html")!
         guard httpURLResponds(url) else {
             throw XCTSkip("IRIS_DRIVE_UI_TEST_BROWSER_URL or local fixture server is required")
+        }
+        return url.absoluteString
+    }
+
+    private func localExternalLinksFixtureURL() throws -> String {
+        let url = URL(string: "http://127.0.0.1:8765/external-links.html")!
+        guard httpURLResponds(url) else {
+            throw XCTSkip("IRIS_DRIVE_UI_TEST_EXTERNAL_LINKS_URL or local fixture server is required")
         }
         return url.absoluteString
     }

@@ -865,8 +865,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 "app_key_pubkey": device,
             ],
             progress: makeAdmin ? "Making admin" : "Removing admin",
-            success: makeAdmin ? "Device made admin" : "Admin removed",
-            restartSyncAfterSuccess: true
+            success: makeAdmin ? "Device made admin" : "Admin removed"
         )
     }
 
