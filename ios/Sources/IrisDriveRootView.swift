@@ -906,6 +906,29 @@ private struct AddDeviceSection: View {
     var body: some View {
         Section {
             DisclosureGroup(isExpanded: $isExpanded) {
+                Text("Paste the device key.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                TextField("Device key", text: $model.approveDeviceKey)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .accessibilityIdentifier("manualDeviceId")
+                    .onSubmit {
+                        submitManualDevice()
+                    }
+                TextField("Name (optional)", text: $model.approveDeviceLabel)
+                    .accessibilityIdentifier("manualDeviceName")
+                    .onSubmit {
+                        submitManualDevice()
+                    }
+                Button {
+                    submitManualDevice()
+                } label: {
+                    Label("Add", systemImage: "plus")
+                }
+                .accessibilityIdentifier("manualDeviceAdd")
+                .disabled(!canAddManualDevice)
+
                 if !model.appKeyLinkInvite.isEmpty {
                     QrCodeView(matrix: model.qrMatrix(for: model.appKeyLinkInvite))
                         .frame(width: 260, height: 260)
@@ -952,29 +975,6 @@ private struct AddDeviceSection: View {
                         }
                     }
                 }
-
-                Text("Paste the device key.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                TextField("Device key", text: $model.approveDeviceKey)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .accessibilityIdentifier("manualDeviceId")
-                    .onSubmit {
-                        submitManualDevice()
-                    }
-                TextField("Name (optional)", text: $model.approveDeviceLabel)
-                    .accessibilityIdentifier("manualDeviceName")
-                    .onSubmit {
-                        submitManualDevice()
-                    }
-                Button {
-                    submitManualDevice()
-                } label: {
-                    Label("Add", systemImage: "plus")
-                }
-                .accessibilityIdentifier("manualDeviceAdd")
-                .disabled(!canAddManualDevice)
             } label: {
                 HStack {
                     Label("Add Device", systemImage: "plus")
@@ -986,7 +986,6 @@ private struct AddDeviceSection: View {
                     }
                 }
             }
-            .accessibilityIdentifier("addDeviceToggle")
         }
         .onAppear {
             prefillUiTestDeviceFields()

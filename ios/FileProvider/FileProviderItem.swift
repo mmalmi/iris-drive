@@ -29,7 +29,7 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
         self.itemSize = itemSize
         self.created = created
         self.modified = modified
-        let version = Data(versionIdentifier.utf8)
+        let version = Data(String(versionIdentifier.prefix(128)).utf8)
         self.itemVersion = NSFileProviderItemVersion(
             contentVersion: version,
             metadataVersion: version
@@ -59,6 +59,10 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
 
     var documentSize: NSNumber? {
         itemSize
+    }
+
+    var typeIdentifier: String {
+        contentType.identifier
     }
 
     var creationDate: Date? {

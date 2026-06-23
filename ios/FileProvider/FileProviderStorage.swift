@@ -5,6 +5,8 @@ import UniformTypeIdentifiers
 
 enum FileProviderStorage {
     private static let appGroupIdentifier = "group.to.iris.drive"
+    private static let domainIdentifier = NSFileProviderDomainIdentifier("main")
+    private static let domainDisplayName = "Iris Drive"
     private static let storageDirectoryName = "IrisDrive"
     private static let providerSnapshotFileName = "ios-provider-snapshot.json"
     private static let debugLogFileName = "ios-fileprovider-extension.log"
@@ -101,7 +103,7 @@ enum FileProviderStorage {
         let raw = identifier.rawValue
         guard raw.hasPrefix(pathPrefix) else { return nil }
         let encoded = String(raw.dropFirst(pathPrefix.count))
-        guard let data = Data(base64Encoded: encoded),
+        guard let data = Data(base64Encoded: base64DecodeString(encoded)),
               let relative = String(data: data, encoding: .utf8)
         else {
             return nil
@@ -114,7 +116,7 @@ enum FileProviderStorage {
         if path.isEmpty {
             return .rootContainer
         }
-        return NSFileProviderItemIdentifier("\(pathPrefix)\(Data(path.utf8).base64EncodedString())")
+        return NSFileProviderItemIdentifier("\(pathPrefix)\(base64EncodeString(Data(path.utf8)))")
     }
 
     static func children(of containerIdentifier: NSFileProviderItemIdentifier) -> [FileProviderItem] {
@@ -141,16 +143,11 @@ enum FileProviderStorage {
     }
 
     static func storedSnapshotIdentifiers() -> Set<String> {
-        guard let data = try? Data(contentsOf: snapshotURL()),
-              let snapshot = try? JSONDecoder().decode(ProviderSnapshot.self, from: data)
-        else {
-            return []
-        }
-        return Set(snapshot.identifiers)
+        Set(storedSnapshot()?.identifiers ?? [])
     }
 
     static func currentProviderAnchor() -> NSFileProviderSyncAnchor {
-        syncAnchor(for: loadStateForEnumeration().anchor)
+        syncAnchor(for: storedSnapshot()?.anchor ?? "bootstrap")
     }
 
     static func recordSnapshot(items: [FileProviderItem], anchor: NSFileProviderSyncAnchor) {
@@ -406,6 +403,29 @@ enum FileProviderStorage {
         baseDirectory.appendingPathComponent(providerSnapshotFileName, isDirectory: false)
     }
 
+    private static func storedSnapshot() -> ProviderSnapshot? {
+        guard let data = try? Data(contentsOf: snapshotURL()) else { return nil }
+        return try? JSONDecoder().decode(ProviderSnapshot.self, from: data)
+    }
+
+    private static func base64EncodeString(_ data: Data) -> String {
+        data.base64EncodedString()
+            .replacingOccurrences(of: "+", with: "-")
+            .replacingOccurrences(of: "/", with: "_")
+            .replacingOccurrences(of: "=", with: "")
+    }
+
+    private static func base64DecodeString(_ value: String) -> String {
+        var normalized = value
+            .replacingOccurrences(of: "-", with: "+")
+            .replacingOccurrences(of: "_", with: "/")
+        let padding = (4 - normalized.count % 4) % 4
+        if padding > 0 {
+            normalized += String(repeating: "=", count: padding)
+        }
+        return normalized
+    }
+
     private static func temporaryDirectory() throws -> URL {
         let directory = baseDirectory.appendingPathComponent(tempDirectoryName, isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
@@ -460,12 +480,18 @@ enum FileProviderStorage {
     }
 
     private static func signalProviderChanged() {
-        NSFileProviderManager.default.signalEnumerator(for: .rootContainer) { error in
+        guard let manager = NSFileProviderManager(
+            for: NSFileProviderDomain(identifier: domainIdentifier, displayName: domainDisplayName)
+        ) else {
+            debugLog("signal provider failed: manager unavailable")
+            return
+        }
+        manager.signalEnumerator(for: .rootContainer) { error in
             if let error {
                 debugLog("signal root failed: \(error)")
             }
         }
-        NSFileProviderManager.default.signalEnumerator(for: .workingSet) { error in
+        manager.signalEnumerator(for: .workingSet) { error in
             if let error {
                 debugLog("signal working set failed: \(error)")
             }

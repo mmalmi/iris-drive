@@ -47,13 +47,6 @@ fn cached_can_admin_profile(state: &ProfileState) -> bool {
         .is_some_and(|snapshot| snapshot.is_admin(&state.app_key_pubkey))
 }
 
-pub(crate) fn cached_can_write_roots(state: &ProfileState) -> bool {
-    state
-        .app_keys
-        .as_ref()
-        .is_some_and(|snapshot| snapshot.contains(&state.app_key_pubkey))
-}
-
 pub(crate) fn app_key_link_request_json(state: &ProfileState) -> Value {
     app_key_link_request_json_for_admin_state(state, state.can_admin_profile())
 }

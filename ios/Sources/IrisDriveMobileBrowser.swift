@@ -495,9 +495,21 @@ extension IrisDriveMobileModel {
             guard let self else { return }
             let environment = ProcessInfo.processInfo.environment
             if environment["IRIS_DRIVE_DEBUG_RESET_LOCAL_STATE"] == "1" {
+                guard self.allowDebugStateMutation(
+                    action: "probe-iris-apps reset-local-state",
+                    environment: environment
+                ) else {
+                    return
+                }
                 resetLocalState()
             }
             if !hasLocalProfile {
+                guard self.allowDebugStateMutation(
+                    action: "probe-iris-apps create-profile",
+                    environment: environment
+                ) else {
+                    return
+                }
                 createProfile(
                     username: environment["IRIS_DRIVE_DEBUG_USERNAME"] ?? "",
                     profilePhotoName: ""

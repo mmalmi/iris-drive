@@ -34,11 +34,11 @@ use iris_drive_core::backup_summary::{backup_target_summary, blossom_backup_targ
 use iris_drive_core::config::{DEFAULT_BLOSSOM_SERVERS, DEFAULT_RELAYS};
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 use iris_drive_core::daemon::EmbeddedHashtreeHost;
+#[cfg(any(test, target_os = "ios", target_os = "android"))]
+use iris_drive_core::fips_status::fips_error_is_present;
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 use iris_drive_core::fips_status::online_device_ids;
-use iris_drive_core::fips_status::{
-    fips_error_is_present, normalize_fips_status_value, string_vec_from_json_array,
-};
+use iris_drive_core::fips_status::{normalize_fips_status_value, string_vec_from_json_array};
 use iris_drive_core::paths::{config_path_in, key_path_in, recovery_phrase_path_in};
 use iris_drive_core::relay_config::{dedupe_relay_urls, normalize_relay_url};
 use iris_drive_core::relay_status::normalized_relay_statuses_for_relays;
@@ -132,6 +132,7 @@ const DEFAULT_ROOT_STATUS: &str = "SAF provider root";
 const DAEMON_STATUS_FILE_NAME: &str = "daemon-status.json";
 const DAEMON_STATUS_FRESH_SECS: u64 = 15;
 const NATIVE_FIPS_STATUS_FILE_NAME: &str = "native-fips-status.json";
+#[cfg(any(test, target_os = "ios", target_os = "android"))]
 const NATIVE_FIPS_STATUS_FRESH_SECS: u64 = 20;
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 const NATIVE_SYNC_RELAY_TIMEOUT_SECS: u64 = 10;
@@ -2448,13 +2449,43 @@ async fn send_native_app_key_link_roster_ack(
 }
 
 fn ui_fips_status_for_config_dir(config_dir: &Path) -> UiFipsStatus {
+    #[cfg(not(any(target_os = "ios", target_os = "android")))]
+    remove_legacy_native_fips_status(config_dir);
     if let Some(status) = load_daemon_ui_fips_status(config_dir) {
         return status;
     }
+    ui_native_fips_status_for_current_target(config_dir)
+}
+
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+fn remove_legacy_native_fips_status(config_dir: &Path) {
+    let path = config_dir.join(NATIVE_FIPS_STATUS_FILE_NAME);
+    match std::fs::remove_file(&path) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            tracing::warn!(error = %error, path = %path.display(), "removing legacy native FIPS status failed");
+        }
+    }
+}
+
+#[cfg(any(target_os = "ios", target_os = "android"))]
+fn ui_native_fips_status_for_current_target(config_dir: &Path) -> UiFipsStatus {
+    ui_fips_status_for_native_config_dir(config_dir)
+}
+
+#[cfg(not(any(target_os = "ios", target_os = "android")))]
+fn ui_native_fips_status_for_current_target(_config_dir: &Path) -> UiFipsStatus {
+    paused_ui_fips_status()
+}
+
+#[cfg(any(test, target_os = "ios", target_os = "android"))]
+fn ui_fips_status_for_native_config_dir(config_dir: &Path) -> UiFipsStatus {
     let native_status = load_native_fips_status(config_dir);
     ui_fips_status(native_status.as_ref())
 }
 
+#[cfg(any(test, target_os = "ios", target_os = "android"))]
 fn ui_fips_status(status: Option<&Value>) -> UiFipsStatus {
     let Some(status) = status else {
         return paused_ui_fips_status();
@@ -2554,10 +2585,7 @@ fn load_daemon_ui_fips_status(config_dir: &Path) -> Option<UiFipsStatus> {
         .get("running")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let fresh_flag = status
-        .get("fresh")
-        .and_then(Value::as_bool)
-        .unwrap_or(true);
+    let fresh_flag = status.get("fresh").and_then(Value::as_bool).unwrap_or(true);
     let updated_at = status
         .get("updated_at")
         .and_then(Value::as_u64)
@@ -2569,7 +2597,12 @@ fn load_daemon_ui_fips_status(config_dir: &Path) -> Option<UiFipsStatus> {
         .get("fips_block_sync_error")
         .filter(|value| !value.is_null())
         .cloned()
-        .or_else(|| status.get("fips").and_then(|fips| fips.get("error")).cloned())
+        .or_else(|| {
+            status
+                .get("fips")
+                .and_then(|fips| fips.get("error"))
+                .cloned()
+        })
         .unwrap_or(Value::Null);
     let normalized = normalize_fips_status_value(Some(fips_status), running, fresh, error, &[]);
     Some(ui_fips_status_from_normalized(&normalized))
@@ -2606,6 +2639,7 @@ fn ui_fips_peer_statuses(value: Option<&Value>) -> Vec<UiFipsPeerStatus> {
         .unwrap_or_default()
 }
 
+#[cfg(any(test, target_os = "ios", target_os = "android"))]
 fn native_fips_status_is_fresh(status: &Value) -> bool {
     let running = status
         .get("running")
@@ -2621,10 +2655,12 @@ fn native_fips_status_is_fresh(status: &Value) -> bool {
         && unix_now_seconds().saturating_sub(updated_at) <= NATIVE_FIPS_STATUS_FRESH_SECS
 }
 
+#[cfg(any(test, target_os = "ios", target_os = "android"))]
 fn native_fips_status_path(config_dir: &Path) -> PathBuf {
     config_dir.join(NATIVE_FIPS_STATUS_FILE_NAME)
 }
 
+#[cfg(any(test, target_os = "ios", target_os = "android"))]
 fn load_native_fips_status(config_dir: &Path) -> Option<Value> {
     let data = std::fs::read(native_fips_status_path(config_dir)).ok()?;
     serde_json::from_slice(&data).ok()

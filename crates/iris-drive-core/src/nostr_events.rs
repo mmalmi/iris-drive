@@ -333,7 +333,7 @@ fn build_drive_root_event_at(
 /// Build a standard private hashtree mutable-root event for drive.iris.to.
 ///
 /// Iris Drive keeps its richer multi-device drive-root event, but the files
-/// app already understands kind 30078 tree roots with `#l=hashtree`, `hash`,
+/// app already understands standard hashtree root events with `#l=hashtree`, `hash`,
 /// and `selfEncryptedKey` tags. This event points `npub/tree_name` at the
 /// current root without publishing the root key in cleartext.
 pub fn build_private_hashtree_root_event(

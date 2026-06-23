@@ -558,9 +558,36 @@ fn authorized_device_fips_peers(
 }
 
 fn routing_fips_peers(config: &AppConfig, settings: &FipsTransportSettings) -> Vec<FipsPeerConfig> {
-    let mut peers = bootstrap_fips_peers(settings);
-    peers.extend(pending_app_key_link_fips_peers(config, settings));
+    let pending = pending_app_key_link_fips_peers(config, settings);
+    let mut peers = if should_use_bootstrap_fips_peers(config, !pending.is_empty()) {
+        bootstrap_fips_peers(settings)
+    } else {
+        Vec::new()
+    };
+    peers.extend(pending);
     peers
+}
+
+fn should_use_bootstrap_fips_peers(config: &AppConfig, has_pending_link_peer: bool) -> bool {
+    has_remote_authorized_app_key(config)
+        || has_pending_link_peer
+        || config
+            .profile
+            .as_ref()
+            .is_some_and(|account| !account.inbound_app_key_link_requests.is_empty())
+}
+
+fn has_remote_authorized_app_key(config: &AppConfig) -> bool {
+    let Some(account) = config.profile.as_ref() else {
+        return false;
+    };
+    let Some(app_keys) = account.app_keys.as_ref() else {
+        return false;
+    };
+    app_keys
+        .app_actors
+        .iter()
+        .any(|device| device.pubkey != account.app_key_pubkey)
 }
 
 fn pending_app_key_link_fips_peers(

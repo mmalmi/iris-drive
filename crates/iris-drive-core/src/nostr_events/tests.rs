@@ -260,7 +260,7 @@ fn private_hashtree_root_event_is_files_app_compatible() {
     );
 
     let event = build_private_hashtree_root_event(&owner, "main", &root).unwrap();
-    assert_eq!(event.kind.as_u16(), 30078);
+    assert_eq!(event.kind.as_u16(), KIND_HASHTREE_ROOT);
     assert_eq!(event.pubkey, owner.public_key());
     assert_eq!(event.tags.identifier(), Some("main"));
     assert_eq!(event.content, "");

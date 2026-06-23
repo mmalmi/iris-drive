@@ -102,15 +102,26 @@ final class IrisDriveIOSUITests: XCTestCase {
     }
 
     func testOpenDriveFolderInFilesApp() throws {
-        let app = launchApp()
+        let seededFile = "Iris Drive UI provider entry.txt"
+        let app = launchApp(environment: [
+            "IRIS_DRIVE_DEBUG_ACTION": "reset-and-seed-provider-file",
+            "IRIS_DRIVE_DEBUG_PROVIDER_FILE_NAME": seededFile,
+            "IRIS_DRIVE_DEBUG_PROVIDER_FILE_CONTENT": "Files enumeration test\n",
+        ])
         ensureMyDriveReady(in: app)
+        let row = app.descendants(matching: .any)["filesSummaryRow"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        XCTAssertTrue(
+            waitForValue(row, containing: "1", timeout: 15),
+            "Expected seeded provider file count before opening Files. Row: \(row.debugDescription)"
+        )
 
         let openInFiles = app.buttons["openInFilesButton"]
         makeHittable(openInFiles, in: app)
         openInFiles.tap()
 
         let files = XCUIApplication(bundleIdentifier: "com.apple.DocumentsApp")
-        assertFilesOpen(in: app, files: files, timeout: 15)
+        assertFilesOpen(in: app, files: files, timeout: 20, expectedItem: seededFile)
     }
 
     func testOpenIrisAppsLoadsBrowserWithoutConnectionError() throws {
@@ -374,7 +385,7 @@ final class IrisDriveIOSUITests: XCTestCase {
 
         XCTAssertTrue(tabButton("Devices", in: app).waitForExistence(timeout: 10))
         tabButton("Devices", in: app).tap()
-        let addDeviceToggle = app.descendants(matching: .any)["addDeviceToggle"]
+        let addDeviceToggle = app.buttons["Add Device"]
         XCTAssertTrue(addDeviceToggle.waitForExistence(timeout: 10))
         addDeviceToggle.tap()
 
@@ -387,7 +398,10 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTAssertEqual(nameField.value as? String, "iOS UI linked")
         app.buttons["manualDeviceAdd"].tap()
 
-        XCTAssertTrue(app.staticTexts["iOS UI linked"].waitForExistence(timeout: 15))
+        XCTAssertTrue(
+            waitForStaticText("iOS UI linked", in: app, timeout: 15),
+            "Expected linked device row. Static texts:\n\(staticTextLabels(in: app))"
+        )
     }
 
     private func launchApp(environment overrides: [String: String] = [:]) -> XCUIApplication {
@@ -419,13 +433,23 @@ final class IrisDriveIOSUITests: XCTestCase {
     private func assertFilesOpen(
         in app: XCUIApplication,
         files: XCUIApplication,
-        timeout: TimeInterval
+        timeout: TimeInterval,
+        expectedItem: String? = nil
     ) {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if files.state == .runningForeground,
-               files.descendants(matching: .any)["Iris Drive"].exists {
-                return
+            if files.state == .runningForeground {
+                if let expectedItem {
+                    if filesContains(expectedItem, in: files) {
+                        return
+                    }
+                    let driveLocation = files.descendants(matching: .any)["Iris Drive"].firstMatch
+                    if driveLocation.exists, driveLocation.isHittable {
+                        driveLocation.tap()
+                    }
+                } else if files.descendants(matching: .any)["Iris Drive"].exists {
+                    return
+                }
             }
             if app.state == .runningForeground {
                 let error = app.staticTexts["openInFilesError"]
@@ -437,6 +461,16 @@ final class IrisDriveIOSUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
         XCTFail("Files did not show Iris Drive. Files hierarchy:\n\(files.debugDescription)")
+    }
+
+    private func filesContains(_ expectedItem: String, in files: XCUIApplication) -> Bool {
+        let elements = files.descendants(matching: .any)
+        if elements[expectedItem].exists {
+            return true
+        }
+        let url = URL(fileURLWithPath: expectedItem)
+        let displayStem = url.deletingPathExtension().lastPathComponent
+        return !displayStem.isEmpty && displayStem != expectedItem && elements[displayStem].exists
     }
 
     private func requiredEnvironment(_ name: String) throws -> String {
@@ -501,8 +535,11 @@ final class IrisDriveIOSUITests: XCTestCase {
         for _ in 0..<6 where !element.isHittable {
             app.swipeUp()
         }
-        XCTAssertTrue(element.waitForExistence(timeout: 2))
-        XCTAssertTrue(element.isHittable)
+        XCTAssertTrue(
+            element.waitForExistence(timeout: 2),
+            "Expected element to exist. App hierarchy:\n\(app.debugDescription)"
+        )
+        XCTAssertTrue(element.isHittable, "Expected element to be hittable: \(element.debugDescription)")
     }
 
     private func accessibilityValue(_ element: XCUIElement) -> String {
@@ -511,6 +548,22 @@ final class IrisDriveIOSUITests: XCTestCase {
             return value
         }
         return element.label.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func waitForStaticText(
+        _ label: String,
+        in app: XCUIApplication,
+        timeout: TimeInterval
+    ) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if app.staticTexts[label].exists {
+                return true
+            }
+            app.swipeUp()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.5))
+        }
+        return app.staticTexts[label].exists
     }
 
     private func waitForValue(

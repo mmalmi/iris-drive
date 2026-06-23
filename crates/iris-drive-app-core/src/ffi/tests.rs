@@ -1474,7 +1474,7 @@ fn revoked_current_device_refresh_pauses_sync_and_keeps_relink_context() {
 
 #[test]
 #[allow(clippy::too_many_lines)]
-fn native_fips_status_drives_device_online_presence() {
+fn daemon_fips_status_drives_device_online_presence() {
     let owner_dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
 
@@ -1507,7 +1507,7 @@ fn native_fips_status_drives_device_online_presence() {
             .all(|device| !device.is_online)
     );
 
-    write_native_fips_status_fixture(
+    write_daemon_fips_status_fixture(
         owner_dir.path(),
         &current_device,
         &[linked_device.as_str()],
@@ -1537,7 +1537,7 @@ fn native_fips_status_drives_device_online_presence() {
     assert_eq!(refreshed.ui.fips.peer_statuses[0].npub, linked_device);
     assert_eq!(
         refreshed.ui.fips.peer_statuses[0].connection_label,
-        "TCP, 12 ms"
+        "UDP, 34 ms"
     );
     let linked = refreshed
         .ui
@@ -1549,9 +1549,9 @@ fn native_fips_status_drives_device_online_presence() {
     assert!(linked.is_online);
     assert_eq!(linked.state, "Linked");
     assert_eq!(linked.connection_state, "direct");
-    assert_eq!(linked.connection_label, "Online (TCP, 12 ms)");
+    assert_eq!(linked.connection_label, "Online (UDP, 34 ms)");
 
-    write_native_fips_status_fixture(
+    write_daemon_fips_status_fixture(
         owner_dir.path(),
         &current_device,
         &[],
@@ -1569,7 +1569,7 @@ fn native_fips_status_drives_device_online_presence() {
     assert_eq!(linked.connection_state, "mesh");
     assert_eq!(linked.connection_label, "Online (Mesh)");
 
-    write_native_fips_status_fixture(
+    write_daemon_fips_status_fixture(
         owner_dir.path(),
         &current_device,
         &[],
@@ -1592,6 +1592,31 @@ fn native_fips_status_drives_device_online_presence() {
     assert_eq!(linked.connection_label, "Offline");
     assert_eq!(stale.ui.fips.online_device_count, 0);
     assert!(!stale.ui.fips.fresh);
+}
+
+#[test]
+fn native_fips_status_parser_drives_mobile_presence_source() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let current_device = "npub1current";
+    let linked_device = "npub1linked";
+
+    write_native_fips_status_fixture(
+        owner_dir.path(),
+        current_device,
+        &[linked_device],
+        &[],
+        super::unix_now_seconds(),
+    );
+
+    let status = super::ui_fips_status_for_native_config_dir(owner_dir.path());
+
+    assert_eq!(status.state, "running");
+    assert_eq!(status.state_label, "Running");
+    assert_eq!(status.roster_label, "1/1 online");
+    assert_eq!(status.roster_online_device_count, 1);
+    assert_eq!(status.peer_statuses.len(), 1);
+    assert_eq!(status.peer_statuses[0].npub, linked_device);
+    assert_eq!(status.peer_statuses[0].connection_label, "TCP, 12 ms");
 }
 
 #[test]
@@ -1643,6 +1668,56 @@ fn daemon_fips_status_overrides_stale_native_fips_status_for_desktop_refresh() {
     assert_eq!(linked.connection_label, "Online (UDP, 34 ms)");
     assert_eq!(refreshed.ui.fips.roster_label, "1/1 online");
     assert_eq!(refreshed.ui.fips.roster_online_device_count, 1);
+}
+
+#[test]
+fn desktop_refresh_ignores_native_fips_status_without_daemon_status() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+
+    let owner = app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "Mac".to_owned(),
+    });
+    let owner_account = owner.ui.profile.unwrap();
+    let owner_invite = owner_account.app_key_link_invite;
+    let current_device = owner_account.current_app_key_npub;
+
+    let linked_dir = tempfile::tempdir().unwrap();
+    let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
+    let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
+        link_target: owner_invite,
+        app_key_label: "Phone".to_owned(),
+    });
+    let linked_account = linked.ui.profile.unwrap();
+    let linked_device = linked_account.current_app_key_npub;
+
+    let approved = app.dispatch(NativeAppAction::ApproveDevice {
+        request: linked_account.app_key_link_request,
+        label: "Phone".to_owned(),
+    });
+    assert!(approved.error.is_empty());
+
+    write_native_fips_status_fixture(
+        owner_dir.path(),
+        &current_device,
+        &[linked_device.as_str()],
+        &[],
+        super::unix_now_seconds(),
+    );
+
+    let refreshed = app.refresh();
+
+    assert_eq!(refreshed.ui.fips.state, "paused");
+    assert_eq!(refreshed.ui.fips.roster_label, "0/0 online");
+    assert!(!owner_dir.path().join("native-fips-status.json").exists());
+    let linked = refreshed
+        .ui
+        .app_actors
+        .iter()
+        .find(|device| device.pubkey == linked_device)
+        .expect("linked device in roster");
+    assert!(!linked.is_online);
+    assert_eq!(linked.connection_state, "offline");
 }
 
 #[test]
@@ -1870,7 +1945,10 @@ fn write_daemon_fips_status_fixture(
                 "npub": peer,
                 "transport_type": "udp",
                 "srtt_ms": 34
-            })).collect::<Vec<_>>(),
+            })).chain(mesh_peers.iter().map(|peer| serde_json::json!({
+                "npub": peer,
+                "bytes_recv": 1
+            }))).collect::<Vec<_>>(),
         },
         "fips_block_sync_error": null,
     });

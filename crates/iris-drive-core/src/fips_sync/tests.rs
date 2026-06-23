@@ -449,6 +449,78 @@ fn default_transport_settings_seed_fips_bootstrap_transit() {
 }
 
 #[test]
+fn single_device_profile_does_not_route_to_bootstrap_fips_peers() {
+    let current_pubkey = "dd".repeat(32);
+    let profile_id = crate::IrisProfileId::new_v4();
+    let config = AppConfig {
+        profile: Some(crate::ProfileState {
+            profile_id,
+            app_key_pubkey: current_pubkey.clone(),
+            profile_roster_ops: Vec::new(),
+            app_key_link_secret: "link-secret".into(),
+            authorization_state: crate::AppKeyAuthorizationState::Authorized,
+            app_key_label: None,
+            app_keys: Some(crate::app_keys::AppKeysProjection {
+                profile_id: profile_id.to_string(),
+                signed_by_pubkey: Some(current_pubkey.clone()),
+                created_at: 1,
+                app_actors: vec![crate::app_keys::AppActorEntry::admin(
+                    current_pubkey,
+                    1,
+                    Some("iPhone".into()),
+                )],
+                dck_generation: 0,
+                wrapped_dck: std::collections::BTreeMap::default(),
+            }),
+            profile_roster_projection: None,
+            outbound_app_key_link_request: None,
+            inbound_app_key_link_requests: Vec::new(),
+        }),
+        ..Default::default()
+    };
+
+    assert!(authorized_device_fips_peers(&config, &FipsTransportSettings::default()).is_empty());
+    assert!(routing_fips_peers(&config, &FipsTransportSettings::default()).is_empty());
+}
+
+#[test]
+fn remote_authorized_device_keeps_bootstrap_fips_routing_peers() {
+    let current_pubkey = "dd".repeat(32);
+    let remote_pubkey = "ee".repeat(32);
+    let profile_id = crate::IrisProfileId::new_v4();
+    let config = AppConfig {
+        profile: Some(crate::ProfileState {
+            profile_id,
+            app_key_pubkey: current_pubkey.clone(),
+            profile_roster_ops: Vec::new(),
+            app_key_link_secret: "link-secret".into(),
+            authorization_state: crate::AppKeyAuthorizationState::Authorized,
+            app_key_label: None,
+            app_keys: Some(crate::app_keys::AppKeysProjection {
+                profile_id: profile_id.to_string(),
+                signed_by_pubkey: Some(current_pubkey.clone()),
+                created_at: 1,
+                app_actors: vec![
+                    crate::app_keys::AppActorEntry::admin(current_pubkey, 1, Some("Mac".into())),
+                    crate::app_keys::AppActorEntry::member(remote_pubkey, 1, Some("iPhone".into())),
+                ],
+                dck_generation: 0,
+                wrapped_dck: std::collections::BTreeMap::default(),
+            }),
+            profile_roster_projection: None,
+            outbound_app_key_link_request: None,
+            inbound_app_key_link_requests: Vec::new(),
+        }),
+        ..Default::default()
+    };
+
+    assert_eq!(
+        routing_fips_peers(&config, &FipsTransportSettings::default()).len(),
+        DEFAULT_FIPS_BOOTSTRAP_PEERS.len()
+    );
+}
+
+#[test]
 fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
     let first_keys = nostr_sdk::Keys::generate();
     let second_keys = nostr_sdk::Keys::generate();

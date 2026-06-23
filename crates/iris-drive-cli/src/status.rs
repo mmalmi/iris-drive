@@ -303,10 +303,15 @@ pub(crate) fn local_nhash_resolver_status(
 
 pub(crate) fn status_profile_block(config: &AppConfig) -> Option<Value> {
     config.profile.as_ref().map(|state| {
-        let mut output = cached_profile_identity_json_map(state);
+        let mut output = profile_identity_json_map(state);
         output.insert(
             "roster_size".to_string(),
-            json!(state.app_keys.as_ref().map_or(0, |s| s.app_actors.len())),
+            json!(
+                state
+                    .app_keys_from_profile()
+                    .as_ref()
+                    .map_or(0, |s| s.app_actors.len())
+            ),
         );
         output.insert(
             "user_profile".to_string(),

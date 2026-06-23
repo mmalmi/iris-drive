@@ -10,6 +10,8 @@ private let defaultRelay = "wss://relay.damus.io"
 private let defaultRelays = [defaultRelay]
 private let defaultBlossomServers = ["https://upload.iris.to"]
 private let iosDebugStateFileName = "debug-state.json"
+private let configMutationAuditDefaultsKey = "configMutationAuditV1"
+private let configMutationAuditMaxEvents = 20
 private let fileProviderPathIdentifierPrefix = "path:"
 private let fileProviderRegistrationIdentityKey = "fileProviderRegistrationIdentity"
 private let irisWebPublisherProfileNameCacheKey = "irisWebPublisherProfileNameCacheV1"
@@ -25,6 +27,23 @@ private let fileProviderDebugRegistrationVersionKey = "fileProviderDebugRegistra
 private struct IrisWebPublisherProfileNameCacheEntry: Codable {
     var name: String
     var fetchedAt: TimeInterval
+}
+
+private struct ConfigIdentitySnapshot: Codable {
+    var hasProfile: Bool
+    var setupState: String
+    var profileId: String
+    var currentAppKeyNpub: String
+    var currentAppKeyLabel: String
+}
+
+private struct ConfigMutationAuditEvent: Codable {
+    var timestamp: String
+    var action: String
+    var debugAction: String
+    var before: ConfigIdentitySnapshot
+    var after: ConfigIdentitySnapshot
+    var error: String
 }
 
 struct IrisWebRoute: Identifiable {
@@ -93,6 +112,8 @@ final class IrisDriveMobileModel: ObservableObject {
     private var fileProviderOpenAttempt = 0
     private var currentProviderSignalKey = ""
     private var lastProviderSignalKey = ""
+    private var providerSignalInFlightKey = ""
+    private var providerSignalRetryTask: Task<Void, Never>?
     private var currentProviderDirectoryPaths: [String] = []
     private var foregroundSyncTask: Task<Void, Never>?
     private var copyFeedbackTask: Task<Void, Never>?
@@ -497,6 +518,9 @@ final class IrisDriveMobileModel: ObservableObject {
                     }
                     self.markFileProviderRegistrationCurrent()
                     self.lastProviderSignalKey = ""
+                    self.providerSignalInFlightKey = ""
+                    self.providerSignalRetryTask?.cancel()
+                    self.providerSignalRetryTask = nil
                     self.fileProviderStatus = "Files provider registered"
                     self.rebuildDerivedState()
                     self.signalFileProviderIfNeeded()
@@ -576,6 +600,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func createProfile(username: String = "", profilePhotoName: String = "") {
+        let before = configIdentitySnapshot()
         statusTitle = "Creating profile"
         statusDetail = "Preparing this device."
         profileUsername = username.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -587,6 +612,7 @@ final class IrisDriveMobileModel: ObservableObject {
         persistLocalSettings()
         ensureFileProviderDomainIfProfileExists()
         scheduleBackgroundSyncIfNeeded()
+        recordConfigMutation(action: "create_profile", before: before)
     }
 
     func restoreProfile() {
@@ -599,6 +625,7 @@ final class IrisDriveMobileModel: ObservableObject {
         guard !recoverySecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             return
         }
+        let before = configIdentitySnapshot()
         profileUsername = ""
         profilePhotoName = ""
         dispatch([
@@ -609,6 +636,7 @@ final class IrisDriveMobileModel: ObservableObject {
         persistLocalSettings()
         ensureFileProviderDomainIfProfileExists()
         scheduleBackgroundSyncIfNeeded()
+        recordConfigMutation(action: "restore_profile", before: before)
     }
 
     func exportRecoverySecret() -> NativeRecoverySecretExport {
@@ -621,6 +649,7 @@ final class IrisDriveMobileModel: ObservableObject {
             return
         }
         profileLinkTarget = target
+        let before = configIdentitySnapshot()
         Task { @MainActor [weak self] in
             guard let self else { return }
             await self.dispatchInBackground(
@@ -633,6 +662,7 @@ final class IrisDriveMobileModel: ObservableObject {
             )
             self.ensureFileProviderDomainIfProfileExists()
             self.scheduleBackgroundSyncIfNeeded()
+            self.recordConfigMutation(action: "link_device", before: before)
         }
     }
 
@@ -708,6 +738,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func logout() {
+        let before = configIdentitySnapshot()
         cancelBackgroundSync()
         stopSync()
         dispatch(["type": "logout"])
@@ -720,6 +751,7 @@ final class IrisDriveMobileModel: ObservableObject {
         fileProviderStatus = "Files provider not registered"
         removeFileProviderDomain()
         persistLocalSettings()
+        recordConfigMutation(action: "logout", before: before)
     }
 
     func revokeDevice(label: String) {
@@ -1254,9 +1286,15 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func resetLocalState() {
+        let before = configIdentitySnapshot()
         cancelBackgroundSync()
         try? FileManager.default.removeItem(at: IrisDriveSharedContainer.baseDirectory)
         removeFileProviderDomain()
+        providerSignalRetryTask?.cancel()
+        providerSignalRetryTask = nil
+        providerSignalInFlightKey = ""
+        currentProviderSignalKey = ""
+        lastProviderSignalKey = ""
         lastState = nil
         stateLoaded = false
         restoreSecret = ""
@@ -1267,6 +1305,7 @@ final class IrisDriveMobileModel: ObservableObject {
         profilePhotoName = ""
         persistLocalSettings()
         applyStateJson(runNative { $0.refreshJson() })
+        recordConfigMutation(action: "reset_local_state", before: before)
     }
 
     func handle(url: URL) {
@@ -1319,8 +1358,14 @@ final class IrisDriveMobileModel: ObservableObject {
         let environment = ProcessInfo.processInfo.environment
         switch environment["IRIS_DRIVE_DEBUG_ACTION"] {
         case "reset-local-state":
+            guard allowDebugStateMutation(action: "reset-local-state", environment: environment) else {
+                return
+            }
             resetLocalState()
         case "link-device":
+            guard allowDebugStateMutation(action: "link-device", environment: environment) else {
+                return
+            }
             guard let target = environment["IRIS_DRIVE_DEBUG_OWNER"],
                   !target.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             else {
@@ -1329,11 +1374,24 @@ final class IrisDriveMobileModel: ObservableObject {
             profileLinkTarget = target
             linkDevice()
         case "create-profile":
+            guard allowDebugStateMutation(action: "create-profile", environment: environment) else {
+                return
+            }
             guard !hasLocalProfile else { return }
             createProfile(
                 username: environment["IRIS_DRIVE_DEBUG_USERNAME"] ?? "",
                 profilePhotoName: ""
             )
+        case "seed-provider-file":
+            guard allowDebugStateMutation(action: "seed-provider-file", environment: environment) else {
+                return
+            }
+            seedDebugProviderFile(resetFirst: false, environment: environment)
+        case "reset-and-seed-provider-file":
+            guard allowDebugStateMutation(action: "reset-and-seed-provider-file", environment: environment) else {
+                return
+            }
+            seedDebugProviderFile(resetFirst: true, environment: environment)
         case "probe-iris-apps":
             debugProbeIrisApps()
         case "open-browser":
@@ -1424,6 +1482,9 @@ final class IrisDriveMobileModel: ObservableObject {
             statusDetail = "Waiting for this device to be linked."
             currentProviderSignalKey = ""
             lastProviderSignalKey = ""
+            providerSignalInFlightKey = ""
+            providerSignalRetryTask?.cancel()
+            providerSignalRetryTask = nil
             currentProviderDirectoryPaths = []
             onlineDeviceCount = 0
             localNhashResolverEnabled = true
@@ -1667,24 +1728,129 @@ final class IrisDriveMobileModel: ObservableObject {
             at: url.deletingLastPathComponent(),
             withIntermediateDirectories: true
         )
-        try? json.write(to: url, atomically: true, encoding: .utf8)
+        let debugJson = jsonWithConfigMutationAudit(json)
+        try? debugJson.write(to: url, atomically: true, encoding: .utf8)
         #endif
+    }
+
+    private func configIdentitySnapshot() -> ConfigIdentitySnapshot {
+        let profile = lastState?.ui.profile
+        return ConfigIdentitySnapshot(
+            hasProfile: profile != nil,
+            setupState: lastState?.ui.setupState ?? "",
+            profileId: profile?.profileId ?? "",
+            currentAppKeyNpub: profile?.currentAppKeyNpub ?? "",
+            currentAppKeyLabel: profile?.appKeyLabel ?? ""
+        )
+    }
+
+    private func recordConfigMutation(action: String, before: ConfigIdentitySnapshot) {
+        let event = ConfigMutationAuditEvent(
+            timestamp: ISO8601DateFormatter().string(from: Date()),
+            action: action,
+            debugAction: ProcessInfo.processInfo.environment["IRIS_DRIVE_DEBUG_ACTION"] ?? "",
+            before: before,
+            after: configIdentitySnapshot(),
+            error: lastState?.error ?? ""
+        )
+        var events = configMutationAuditEvents()
+        events.append(event)
+        if events.count > configMutationAuditMaxEvents {
+            events.removeFirst(events.count - configMutationAuditMaxEvents)
+        }
+        guard let data = try? JSONEncoder().encode(events) else { return }
+        defaults.set(data, forKey: configMutationAuditDefaultsKey)
+        writeDebugState(runNative { $0.stateJson() })
+    }
+
+    private func configMutationAuditEvents() -> [ConfigMutationAuditEvent] {
+        guard let data = defaults.data(forKey: configMutationAuditDefaultsKey),
+              let events = try? JSONDecoder().decode([ConfigMutationAuditEvent].self, from: data)
+        else {
+            return []
+        }
+        return events
+    }
+
+    private func jsonWithConfigMutationAudit(_ json: String) -> String {
+        guard let data = json.data(using: .utf8),
+              var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let auditData = try? JSONEncoder().encode(configMutationAuditEvents()),
+              let audit = try? JSONSerialization.jsonObject(with: auditData)
+        else {
+            return json
+        }
+        object["ios_config_mutation_audit"] = audit
+        guard let output = try? JSONSerialization.data(
+            withJSONObject: object,
+            options: [.prettyPrinted, .sortedKeys]
+        ) else {
+            return json
+        }
+        return String(data: output, encoding: .utf8) ?? json
     }
 
     private func signalFileProviderIfNeeded() {
         guard isSetupComplete, !currentProviderSignalKey.isEmpty else { return }
         guard currentProviderSignalKey != lastProviderSignalKey else { return }
+        guard currentProviderSignalKey != providerSignalInFlightKey else { return }
+        let signalKey = currentProviderSignalKey
         let domain = irisDriveFileProviderDomain()
-        guard let manager = NSFileProviderManager(for: domain) else { return }
-        lastProviderSignalKey = currentProviderSignalKey
+        guard let manager = NSFileProviderManager(for: domain) else {
+            scheduleFileProviderSignalRetry(for: signalKey)
+            return
+        }
+        providerSignalInFlightKey = signalKey
+        providerSignalRetryTask?.cancel()
+        providerSignalRetryTask = nil
         var identifiers: [NSFileProviderItemIdentifier] = [.rootContainer, .workingSet]
         identifiers.append(contentsOf: currentProviderDirectoryPaths.map(fileProviderIdentifier))
+        let group = DispatchGroup()
+        var failed = false
+        if #available(iOS 16.0, *) {
+            group.enter()
+            manager.reimportItems(below: .rootContainer) { error in
+                if let error {
+                    failed = true
+                    NSLog("Iris Drive Files provider reimport failed: \(error)")
+                }
+                group.leave()
+            }
+        }
         for identifier in identifiers {
+            group.enter()
             manager.signalEnumerator(for: identifier) { error in
                 if let error {
+                    failed = true
                     NSLog("Iris Drive Files provider signal failed for \(identifier.rawValue): \(error)")
                 }
+                group.leave()
             }
+        }
+        group.notify(queue: .main) { [weak self] in
+            guard let self, self.providerSignalInFlightKey == signalKey else { return }
+            self.providerSignalInFlightKey = ""
+            if failed {
+                self.scheduleFileProviderSignalRetry(for: signalKey)
+                return
+            }
+            if self.currentProviderSignalKey == signalKey {
+                self.lastProviderSignalKey = signalKey
+            }
+        }
+    }
+
+    private func scheduleFileProviderSignalRetry(for signalKey: String) {
+        providerSignalRetryTask?.cancel()
+        providerSignalRetryTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            guard let self,
+                  self.currentProviderSignalKey == signalKey,
+                  self.lastProviderSignalKey != signalKey
+            else {
+                return
+            }
+            self.signalFileProviderIfNeeded()
         }
     }
 
@@ -1702,4 +1868,59 @@ final class IrisDriveMobileModel: ObservableObject {
         }
         return linkInput.appKeyPubkey
     }
+
+    func allowDebugStateMutation(action: String, environment: [String: String]) -> Bool {
+        #if DEBUG
+        #if targetEnvironment(simulator)
+        return true
+        #else
+        if environment["IRIS_DRIVE_ALLOW_DESTRUCTIVE_DEBUG_ACTIONS_ON_DEVICE"] == "1" {
+            return true
+        }
+        if let baseDir = environment["IRIS_DRIVE_UI_TEST_BASE_DIR"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           baseDir == "__TMP__" || baseDir.hasPrefix("__TMP__/") {
+            return true
+        }
+        statusTitle = "Debug action blocked"
+        statusDetail = "Refused \(action) on a physical device."
+        writeDebugState(runNative { $0.refreshJson() })
+        return false
+        #endif
+        #else
+        return false
+        #endif
+    }
+
+    #if DEBUG
+    private func seedDebugProviderFile(resetFirst: Bool, environment: [String: String]) {
+        if resetFirst {
+            resetLocalState()
+        }
+        if !hasLocalProfile {
+            createProfile(
+                username: environment["IRIS_DRIVE_DEBUG_USERNAME"] ?? "",
+                profilePhotoName: ""
+            )
+        }
+        let displayName = environment["IRIS_DRIVE_DEBUG_PROVIDER_FILE_NAME"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            ?? "Iris Drive UI provider entry.txt"
+        let contents = environment["IRIS_DRIVE_DEBUG_PROVIDER_FILE_CONTENT"] ?? "Iris Drive UI provider entry\n"
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iris-drive-ui-provider-\(UUID().uuidString)", isDirectory: false)
+        do {
+            try contents.write(to: source, atomically: true, encoding: .utf8)
+            _ = dispatch([
+                "type": "import_file",
+                "display_name": displayName,
+                "source_path": source.path,
+            ])
+            ensureFileProviderDomainIfProfileExists()
+        } catch {
+            statusTitle = "Debug seed failed"
+            statusDetail = "\(error)"
+        }
+    }
+    #endif
 }

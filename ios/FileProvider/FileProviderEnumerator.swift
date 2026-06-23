@@ -15,6 +15,9 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         startingAt page: NSFileProviderPage
     ) {
         let items = FileProviderStorage.children(of: containerIdentifier)
+        FileProviderStorage.debugLog(
+            "enumerate items container=\(containerIdentifier.rawValue) count=\(items.count)"
+        )
         observer.didEnumerate(items)
         observer.finishEnumerating(upTo: nil)
     }
@@ -29,6 +32,9 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         let deleted = previousIdentifiers
             .subtracting(currentIdentifiers)
             .map { NSFileProviderItemIdentifier($0) }
+        FileProviderStorage.debugLog(
+            "enumerate changes from=\(String(data: syncAnchor.rawValue, encoding: .utf8) ?? "unavailable") current=\(String(data: currentAnchor.rawValue, encoding: .utf8) ?? "unavailable") previous=\(previousIdentifiers.count) current_count=\(currentIdentifiers.count) deleted=\(deleted.count)"
+        )
 
         if !deleted.isEmpty {
             observer.didDeleteItems(withIdentifiers: deleted)
@@ -41,6 +47,10 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
     }
 
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
-        completionHandler(FileProviderStorage.currentProviderAnchor())
+        let anchor = FileProviderStorage.currentProviderAnchor()
+        FileProviderStorage.debugLog(
+            "current sync anchor \(String(data: anchor.rawValue, encoding: .utf8) ?? "unavailable")"
+        )
+        completionHandler(anchor)
     }
 }

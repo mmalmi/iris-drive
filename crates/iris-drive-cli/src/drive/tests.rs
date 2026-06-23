@@ -70,6 +70,33 @@ fn provider_mutation_requires_live_daemon() {
 }
 
 #[test]
+fn provider_mutation_accepts_fresh_daemon_status_when_pid_probe_fails() {
+    let config_dir = tempfile::tempdir().unwrap();
+    init_config(config_dir.path());
+    std::fs::write(
+        iris_drive_core::daemon_liveness::daemon_lock_path(config_dir.path()),
+        "99999999\n",
+    )
+    .unwrap();
+    std::fs::write(
+        config_dir.path().join("daemon-status.json"),
+        format!(
+            r#"{{"pid":99999999,"running":true,"fresh":true,"updated_at":{}}}"#,
+            unix_now_seconds()
+        ),
+    )
+    .unwrap();
+
+    cmd_provider(
+        config_dir.path(),
+        ProviderCmd::Mkdir {
+            path: "Reports".into(),
+        },
+    )
+    .unwrap();
+}
+
+#[test]
 fn provider_delete_local_file_is_idempotent() {
     let config_dir = tempfile::tempdir().unwrap();
     init_config(config_dir.path());
@@ -111,6 +138,13 @@ fn provider_delete_local_file_is_idempotent() {
             "deleted file should not reappear in the merged view"
         );
     });
+}
+
+fn unix_now_seconds() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
 }
 
 #[test]

@@ -524,6 +524,26 @@ fn daemon_status_profile_block_uses_cached_app_keys_without_reprojecting_roster(
 }
 
 #[test]
+fn daemon_status_profile_block_projects_roster_when_app_key_cache_is_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = Profile::create(dir.path(), Some("Mac".into())).unwrap();
+    let mut state = owner.state.clone();
+    state.app_keys = None;
+    let config = AppConfig {
+        profile: Some(state),
+        ..AppConfig::default()
+    };
+
+    let profile = status_profile_block(&config).expect("profile block");
+
+    assert_eq!(profile["authorization_state"], "authorized");
+    assert_eq!(profile["can_write_roots"], true);
+    assert_eq!(profile["can_admin_profile"], true);
+    assert_eq!(profile["profile"]["active_app_key_count"], 1);
+    assert_eq!(profile["profile"]["current_key_epoch"], 1);
+}
+
+#[test]
 fn daemon_status_writer_prefers_runtime_relays_for_top_level_status() {
     let dir = tempfile::tempdir().unwrap();
     AppConfig::default()
