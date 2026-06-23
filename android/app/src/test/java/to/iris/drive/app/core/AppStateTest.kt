@@ -67,7 +67,6 @@ class AppStateTest {
                 "primary_status_label": "Ready",
                 "local_nhash_resolver_enabled": true,
                 "sites_portal_url": "http://sites.npub1portal.iris.localhost:17321/",
-                "caldav_url": "http://localhost:17321/caldav/",
                 "last_share_recipient_evidence": "{\"profile_id\":\"profile-a\"}",
                 "sync": {
                   "running": true,
@@ -124,7 +123,6 @@ class AppStateTest {
         assertEquals("Ready", state.primaryStatusLabel)
         assertTrue(state.localNhashResolverEnabled)
         assertEquals("http://sites.npub1portal.iris.localhost:17321/", state.sitesPortalUrl)
-        assertEquals("http://localhost:17321/caldav/", state.caldavUrl)
         assertEquals("Up to date", state.sync.statusLabel)
         assertEquals("Running", state.fips.stateLabel)
         assertEquals("1/1 online", state.fips.rosterLabel)

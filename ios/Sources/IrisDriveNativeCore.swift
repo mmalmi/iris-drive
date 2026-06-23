@@ -379,7 +379,6 @@ struct NativeUiState: Codable {
     var snapshotLink: String
     var localNhashResolverEnabled: Bool
     var sitesPortalUrl: String
-    var caldavUrl: String
     var lastShareInvite: String
     var lastShareRecipientEvidence: String
 
@@ -410,7 +409,6 @@ struct NativeUiState: Codable {
         case snapshotLink = "snapshot_link"
         case localNhashResolverEnabled = "local_nhash_resolver_enabled"
         case sitesPortalUrl = "sites_portal_url"
-        case caldavUrl = "caldav_url"
         case lastShareInvite = "last_share_invite"
         case lastShareRecipientEvidence = "last_share_recipient_evidence"
     }

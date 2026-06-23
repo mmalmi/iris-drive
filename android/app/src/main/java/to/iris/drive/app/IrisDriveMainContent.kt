@@ -51,7 +51,6 @@ import to.iris.drive.app.core.ShareState
 import to.iris.drive.app.update.AndroidSelfUpdateState
 import to.iris.drive.app.update.SelfUpdateActions
 import to.iris.drive.app.update.buttonText
-import java.net.URI
 
 private data class ShareInvitePrefill(val profileId: String = "", val npubHint: String = "", val displayName: String = "")
 
@@ -1099,21 +1098,6 @@ private fun SettingsPanel(
                 Text("Reset relay")
             }
         }
-        Text("Calendar", fontWeight = FontWeight.SemiBold)
-        StatRow("CalDAV URL", state.caldavUrl.ifBlank { "Unavailable" })
-        StatRow("User Name", "iris")
-        StatRow("Password", "iris")
-        StatRow("Server Address", "localhost")
-        StatRow("Server Path", caldavServerPath(state.caldavUrl))
-        StatRow("Port", caldavPort(state.caldavUrl))
-        StatRow("Use SSL", "Off")
-        StatRow("Use Kerberos", "Off")
-        OutlinedButton(
-            onClick = { onCopyText("CalDAV URL", state.caldavUrl) },
-            enabled = state.caldavUrl.isNotBlank(),
-        ) {
-            Text("Copy CalDAV URL")
-        }
         Text("Device", fontWeight = FontWeight.SemiBold)
         Text(profile?.currentAppKeyNpub.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text("Current Device Key", fontWeight = FontWeight.SemiBold)
@@ -1345,16 +1329,6 @@ private fun StatRow(label: String, value: String) {
         Text(value.ifBlank { "-" }, color = Ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
     }
 }
-
-private fun caldavPort(caldavUrl: String): String =
-    runCatching {
-        URI(caldavUrl).port.takeIf { it > 0 }?.toString()
-    }.getOrNull() ?: "17321"
-
-private fun caldavServerPath(caldavUrl: String): String =
-    runCatching {
-        URI(caldavUrl).rawPath.takeIf { !it.isNullOrBlank() }
-    }.getOrNull() ?: "/caldav/"
 
 @Composable
 private fun relayHealthColor(health: String): Color =

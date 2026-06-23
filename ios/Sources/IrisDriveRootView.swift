@@ -2458,29 +2458,6 @@ private struct SettingsView: View {
                 }
             }
 
-            Section("Calendar") {
-                let caldavURL = model.caldavUrl.trimmingCharacters(in: .whitespacesAndNewlines)
-                LabeledContent(
-                    "CalDAV URL",
-                    value: caldavURL.isEmpty
-                        ? "Unavailable"
-                        : caldavURL
-                )
-                LabeledContent("User Name", value: "iris")
-                LabeledContent("Password", value: "iris")
-                LabeledContent("Server Address", value: "localhost")
-                LabeledContent("Server Path", value: irisDriveCalDAVServerPath(caldavURL))
-                LabeledContent("Port", value: irisDriveCalDAVPort(caldavURL))
-                LabeledContent("Use SSL", value: "Off")
-                LabeledContent("Use Kerberos", value: "Off")
-                Button {
-                    model.copyCalDAVURL()
-                } label: {
-                    Label("Copy CalDAV URL", systemImage: "calendar.badge.plus")
-                }
-                .disabled(caldavURL.isEmpty)
-            }
-
             Section("Network") {
                 ForEach(model.relayStatuses) { relay in
                     HStack {
@@ -2598,17 +2575,6 @@ private struct QrCodeView: View {
 
 private func byteString(_ bytes: UInt64) -> String {
     ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)
-}
-
-private func irisDriveCalDAVPort(_ url: String) -> String {
-    URL(string: url)?.port.map(String.init) ?? "17321"
-}
-
-private func irisDriveCalDAVServerPath(_ url: String) -> String {
-    guard let path = URL(string: url)?.path, !path.isEmpty else {
-        return "/caldav/"
-    }
-    return path
 }
 
 private func shareDisplayName(_ share: IrisDriveShare) -> String {
