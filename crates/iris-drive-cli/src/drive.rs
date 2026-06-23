@@ -213,9 +213,18 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
             "provider command opened daemon"
         );
         let phase = std::time::Instant::now();
-        let visible = primary_merged_root_with_retry(&daemon)
-            .await
-            .context("building virtual provider root")?;
+        let visible = if let Some(root_cid) = provider_command_base_root_cid(&command)? {
+            tracing::debug!("provider command using supplied visible root anchor");
+            iris_drive_core::projection::PrimaryMergedRoot {
+                root_cid,
+                file_count: 0,
+                top_level_entries: 0,
+            }
+        } else {
+            primary_merged_root_with_retry(&daemon)
+                .await
+                .context("building virtual provider root")?
+        };
         tracing::debug!(
             elapsed_ms = phase.elapsed().as_millis(),
             "provider command built merged root"
@@ -262,6 +271,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                 );
             }
             ProviderCmd::ResolvePath {
+                base_root_cid: _,
                 parent_path,
                 display_name,
                 excluding_path,
@@ -293,6 +303,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                         "parent_path": resolved_parent_path,
                         "display_name": resolved_display_name,
                         "path": path,
+                        "root_cid": visible.root_cid.to_string(),
                         "error": "",
                     })
                 );
@@ -347,7 +358,11 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     })
                 );
             }
-            ProviderCmd::Write { path, source } => {
+            ProviderCmd::Write {
+                base_root_cid: _,
+                path,
+                source,
+            } => {
                 let path = normalize_provider_path(&path)?;
                 let bytes = std::fs::read(&source)
                     .with_context(|| format!("reading {}", source.display()))?;
@@ -370,7 +385,10 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                 )
                 .await?;
             }
-            ProviderCmd::Mkdir { path } => {
+            ProviderCmd::Mkdir {
+                base_root_cid: _,
+                path,
+            } => {
                 let path = normalize_provider_path(&path)?;
                 let phase = std::time::Instant::now();
                 create_provider_dir(&provider, &path).await?;
@@ -386,7 +404,10 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                 )
                 .await?;
             }
-            ProviderCmd::Delete { path } => {
+            ProviderCmd::Delete {
+                base_root_cid: _,
+                path,
+            } => {
                 let path = normalize_provider_path(&path)?;
                 let phase = std::time::Instant::now();
                 delete_provider_path(&provider, &path).await?;
@@ -402,7 +423,11 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                 )
                 .await?;
             }
-            ProviderCmd::Rename { old_path, new_path } => {
+            ProviderCmd::Rename {
+                base_root_cid: _,
+                old_path,
+                new_path,
+            } => {
                 let old_path = normalize_provider_path(&old_path)?;
                 let new_path = normalize_provider_path(&new_path)?;
                 let phase = std::time::Instant::now();
@@ -433,6 +458,20 @@ fn provider_command_is_mutation(command: &ProviderCmd) -> bool {
             | ProviderCmd::Delete { .. }
             | ProviderCmd::Rename { .. }
     )
+}
+
+fn provider_command_base_root_cid(command: &ProviderCmd) -> Result<Option<Cid>> {
+    let raw = match command {
+        ProviderCmd::Write { base_root_cid, .. }
+        | ProviderCmd::Mkdir { base_root_cid, .. }
+        | ProviderCmd::Delete { base_root_cid, .. }
+        | ProviderCmd::Rename { base_root_cid, .. }
+        | ProviderCmd::ResolvePath { base_root_cid, .. } => base_root_cid.as_deref(),
+        _ => None,
+    };
+    raw.map(Cid::parse)
+        .transpose()
+        .context("parsing provider base root cid")
 }
 
 async fn provider_entries(

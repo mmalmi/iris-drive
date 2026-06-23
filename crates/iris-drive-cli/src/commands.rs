@@ -599,6 +599,9 @@ pub(crate) enum ProviderCmd {
     },
     /// Create or replace one virtual file from a provider-owned temporary file.
     Write {
+        /// Current visible root from the native FileProvider anchor.
+        #[arg(long, hide = true)]
+        base_root_cid: Option<String>,
         /// Virtual path inside the drive.
         path: String,
         /// Source file path.
@@ -606,16 +609,25 @@ pub(crate) enum ProviderCmd {
     },
     /// Create a virtual directory.
     Mkdir {
+        /// Current visible root from the native FileProvider anchor.
+        #[arg(long, hide = true)]
+        base_root_cid: Option<String>,
         /// Virtual path inside the drive.
         path: String,
     },
     /// Delete a virtual file or directory.
     Delete {
+        /// Current visible root from the native FileProvider anchor.
+        #[arg(long, hide = true)]
+        base_root_cid: Option<String>,
         /// Virtual path inside the drive.
         path: String,
     },
     /// Rename or move a virtual item.
     Rename {
+        /// Current visible root from the native FileProvider anchor.
+        #[arg(long, hide = true)]
+        base_root_cid: Option<String>,
         /// Existing virtual path inside the drive.
         old_path: String,
         /// New virtual path inside the drive.
@@ -624,6 +636,9 @@ pub(crate) enum ProviderCmd {
     /// Resolve a native provider parent/name into a normalized collision-free virtual path.
     #[command(name = "resolve-path", hide = true)]
     ResolvePath {
+        /// Current visible root from the native FileProvider anchor.
+        #[arg(long, hide = true)]
+        base_root_cid: Option<String>,
         /// Parent virtual path, empty for the root.
         parent_path: String,
         /// Native display name to normalize.

@@ -220,12 +220,14 @@ enum FileProviderStorage {
         let parentPath: String
         let displayName: String
         let path: String
+        let rootCid: String?
         let error: String?
 
         enum CodingKeys: String, CodingKey {
             case parentPath = "parent_path"
             case displayName = "display_name"
             case path
+            case rootCid = "root_cid"
             case error
         }
     }
@@ -465,7 +467,13 @@ enum FileProviderStorage {
         mayAlreadyExist: Bool
     ) throws -> FileProviderItem {
         let parent = path(for: template.parentItemIdentifier) ?? ""
-        let destination = try resolvedPath(parent: parent, name: template.filename)
+        let baseRootCid = cachedProviderList()?.anchor
+        let destination = try resolvedPath(
+            parent: parent,
+            name: template.filename,
+            baseRootCid: baseRootCid
+        )
+        let mutationBaseRootCid = destination.rootCid ?? baseRootCid
         NSLog("Iris Drive FileProvider create path=\(destination.path) mayAlreadyExist=\(mayAlreadyExist)")
         if mayAlreadyExist {
             invalidateProviderListCache()
@@ -481,12 +489,18 @@ enum FileProviderStorage {
         }
         invalidateProviderListCache()
         if (template.contentType ?? .data).conforms(to: .folder) {
-            _ = try runIDrive(arguments: ["provider", "mkdir", destination.path])
+            var arguments = ["provider", "mkdir", destination.path]
+            appendBaseRootCid(mutationBaseRootCid, to: &arguments)
+            _ = try runIDrive(arguments: arguments)
         } else if let contents {
-            _ = try runIDrive(arguments: ["provider", "write", destination.path, contents.path])
+            var arguments = ["provider", "write", destination.path, contents.path]
+            appendBaseRootCid(mutationBaseRootCid, to: &arguments)
+            _ = try runIDrive(arguments: arguments)
         } else {
             let empty = try emptyTemporaryFile()
-            _ = try runIDrive(arguments: ["provider", "write", destination.path, empty.path])
+            var arguments = ["provider", "write", destination.path, empty.path]
+            appendBaseRootCid(mutationBaseRootCid, to: &arguments)
+            _ = try runIDrive(arguments: arguments)
         }
         let item = optimisticItem(for: destination, template: template, contents: contents)
         invalidateProviderListCache()
@@ -503,6 +517,7 @@ enum FileProviderStorage {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: item.itemIdentifier)
         }
         let list = providerList()
+        let baseRootCid = list.anchor
         guard let originalEntry = list.entries.first(where: { $0.path == original }) else {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: item.itemIdentifier)
         }
@@ -526,13 +541,23 @@ enum FileProviderStorage {
             parent = originalEntry.parentPath
         }
         let name = changedFields.contains(.filename) ? item.filename : originalEntry.displayName
-        let destination = try resolvedPath(parent: parent, name: name, excluding: original)
+        let destination = try resolvedPath(
+            parent: parent,
+            name: name,
+            excluding: original,
+            baseRootCid: baseRootCid
+        )
+        let mutationBaseRootCid = destination.rootCid ?? baseRootCid
         invalidateProviderListCache()
         if destination.path != original {
-            _ = try runIDrive(arguments: ["provider", "rename", original, destination.path])
+            var arguments = ["provider", "rename", original, destination.path]
+            appendBaseRootCid(mutationBaseRootCid, to: &arguments)
+            _ = try runIDrive(arguments: arguments)
         }
         if let contents, !(item.contentType ?? .data).conforms(to: .folder) {
-            _ = try runIDrive(arguments: ["provider", "write", destination.path, contents.path])
+            var arguments = ["provider", "write", destination.path, contents.path]
+            appendBaseRootCid(mutationBaseRootCid, to: &arguments)
+            _ = try runIDrive(arguments: arguments)
         }
         let updated = optimisticItem(for: destination, template: item, contents: contents)
         invalidateProviderListCache()
@@ -545,8 +570,11 @@ enum FileProviderStorage {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier)
         }
         NSLog("Iris Drive FileProvider delete path=\(path)")
+        let baseRootCid = cachedProviderList()?.anchor
         invalidateProviderListCache()
-        _ = try runIDrive(arguments: ["provider", "delete", path])
+        var arguments = ["provider", "delete", path]
+        appendBaseRootCid(baseRootCid, to: &arguments)
+        _ = try runIDrive(arguments: arguments)
         invalidateProviderListCache()
     }
 
@@ -712,6 +740,12 @@ enum FileProviderStorage {
             return nil
         }
         return cached.list
+    }
+
+    private static func appendBaseRootCid(_ rootCid: String?, to arguments: inout [String]) {
+        guard let rootCid, !rootCid.isEmpty else { return }
+        arguments.append("--base-root-cid")
+        arguments.append(rootCid)
     }
 
     private static func storeProviderListCache(_ list: ProviderList) {
@@ -915,12 +949,14 @@ enum FileProviderStorage {
     private static func resolvedPath(
         parent: String,
         name: String,
-        excluding: String = ""
+        excluding: String = "",
+        baseRootCid: String? = nil
     ) throws -> ProviderResolvedPath {
         var arguments = ["provider", "resolve-path", parent, name]
         if !excluding.isEmpty {
             arguments.append(excluding)
         }
+        appendBaseRootCid(baseRootCid, to: &arguments)
         let data = try runIDrive(arguments: arguments)
         let resolved = try JSONDecoder().decode(ProviderResolvedPath.self, from: data)
         if let error = resolved.error, !error.isEmpty {
