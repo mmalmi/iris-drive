@@ -23,6 +23,7 @@
 		6D070FE16A7563F4606BA7A6 /* IrisDriveNativeCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A215568D3B9E51946DE326 /* IrisDriveNativeCore.swift */; };
 		6D1D9D55F60F25701702EE14 /* IrisDriveBackupViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2262CD0A76753FF6C6D773B /* IrisDriveBackupViews.swift */; };
 		7416D3315363238D639AFF6E /* IrisDriveContentLinkDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 380C73AB07C0999D07F8E4ED /* IrisDriveContentLinkDialog.swift */; };
+		815B33E7988F5B78C46957A3 /* keyboard-viewport.html in Resources */ = {isa = PBXBuildFile; fileRef = E41F97CC4C0E1F6DFCF75979 /* keyboard-viewport.html */; };
 		85A10B7EC9033C5254EC2898 /* FileProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2B2A54EBAE0804BBCC2964E /* FileProviderEnumerator.swift */; };
 		872C7CEF3E9946E8A3BCBF61 /* IrisDriveCalendarModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = B7C58D499ABF89689689DEBD /* IrisDriveCalendarModels.swift */; };
 		894AF158E3CF979243462B09 /* IrisDriveTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = 05D4B51FEA3B8CED41DCF37E /* IrisDriveTypes.swift */; };
@@ -111,6 +112,7 @@
 		D087872557C2BC55EDB84930 /* IrisDriveMobileModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveMobileModel.swift; sourceTree = "<group>"; };
 		D4FC18243848BE0ED14785D0 /* IrisDriveShareExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = IrisDriveShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		DBC171DD1C2DE89B561ADE85 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		E41F97CC4C0E1F6DFCF75979 /* keyboard-viewport.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "keyboard-viewport.html"; sourceTree = "<group>"; };
 		F5DF48D5DED6EBB1E1A738ED /* IrisDriveAppleCalendarSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveAppleCalendarSync.swift; sourceTree = "<group>"; };
 		FE91FC48A66D089D44B648C1 /* IrisDriveIOSUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = IrisDriveIOSUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		FFAA63EB47F10A248B2C85CE /* FileProviderDebug.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FileProviderDebug.entitlements; sourceTree = "<group>"; };
@@ -155,6 +157,7 @@
 			children = (
 				7CA3DF1C0E66C469EE9CCFB8 /* back-hit-test.html */,
 				5F7984AB4A917CEB5A16EB9A /* browser-footer.html */,
+				E41F97CC4C0E1F6DFCF75979 /* keyboard-viewport.html */,
 			);
 			path = Fixtures;
 			sourceTree = "<group>";
@@ -347,6 +350,7 @@
 			files = (
 				2B7BF5F5C0309E423C967CC9 /* back-hit-test.html in Resources */,
 				FCA07D9E0FCE8AD5D196A8CB /* browser-footer.html in Resources */,
+				815B33E7988F5B78C46957A3 /* keyboard-viewport.html in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
