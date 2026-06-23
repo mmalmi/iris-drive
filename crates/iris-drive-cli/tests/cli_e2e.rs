@@ -587,6 +587,15 @@ fn status_reports_fips_network_diagnostics_from_daemon_status() {
                     "packets_recv": 7,
                     "bytes_sent": 512,
                     "bytes_recv": 1024,
+                }, {
+                    "npub": "npub1outside",
+                    "transport_addr": "tcp:10.44.1.3:2121",
+                    "transport_type": "tcp",
+                    "srtt_ms": 31,
+                    "packets_sent": 1,
+                    "packets_recv": 1,
+                    "bytes_sent": 64,
+                    "bytes_recv": 64,
                 }],
                 "relay_statuses": [{"url": "wss://relay.example", "status": "connected"}],
             },
@@ -652,6 +661,16 @@ fn status_reports_fips_network_diagnostics_from_daemon_status() {
             "bytes_sent": 512,
             "bytes_recv": 1024,
             "connection_label": "UDP, 23 ms",
+        }, {
+            "npub": "npub1outside",
+            "transport_addr": "tcp:10.44.1.3:2121",
+            "transport_type": "tcp",
+            "srtt_ms": 31,
+            "packets_sent": 1,
+            "packets_recv": 1,
+            "bytes_sent": 64,
+            "bytes_recv": 64,
+            "connection_label": "TCP, 31 ms",
         }])
     );
     assert_eq!(

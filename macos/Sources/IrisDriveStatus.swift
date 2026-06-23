@@ -61,6 +61,7 @@ final class IrisDriveStatus: ObservableObject {
     @Published var caldavURL: String?
     @Published var fileCount: Int?
     @Published var visibleFileBytes: Int64?
+    @Published var providerRefreshKey = ""
     @Published var relays: [String] = []
     @Published var relayStatuses: [IrisDriveRelayStatus] = []
     @Published var blossomServers: [String] = []

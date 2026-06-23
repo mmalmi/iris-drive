@@ -132,8 +132,7 @@ impl DirectRootExchange {
             return Err(anyhow::anyhow!("direct root event id mismatch"));
         }
         let direct_event = direct_root_event(frame.key.clone(), &event)?;
-        self.seen_keys.insert(frame.key.clone());
-        if let Err(error) = apply_one_event(
+        let outcome = match apply_one_event(
             client,
             config_dir,
             &event,
@@ -143,8 +142,11 @@ impl DirectRootExchange {
         )
         .await
         {
-            self.seen_keys.remove(&frame.key);
-            return Err(error);
+            Ok(outcome) => outcome,
+            Err(error) => return Err(error),
+        };
+        if !outcome.should_cache_direct_root_frame() {
+            return Ok(false);
         }
         self.cache_event(direct_event);
         let config = AppConfig::load_or_default(config_path_in(config_dir))?;
@@ -439,11 +441,15 @@ async fn append_primary_drive_root_events(
     config: &AppConfig,
     state: &ProfileState,
 ) -> Result<()> {
-    if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
-        && let Some(root) = publishable_app_key_root(config_dir, drive, state).await?
-    {
-        ensure_publishable_root_locally_available(config_dir, config, &root.root_cid).await?;
+    if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID) {
+        let Some(root) = publishable_app_key_root(config_dir, drive, state).await? else {
+            return Ok(());
+        };
         let authorized_app_keys = authorized_app_key_pubkeys(state);
+        if authorized_app_keys.is_empty() {
+            return Ok(());
+        }
+        ensure_publishable_root_locally_available(config_dir, config, &root.root_cid).await?;
         let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
             .context("loading app key")?;
         let event = iris_drive_core::nostr_events::build_drive_root_event(

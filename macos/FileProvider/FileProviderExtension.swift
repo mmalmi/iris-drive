@@ -129,7 +129,8 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
             FileProviderStorage.debugLog("create item name=\(itemTemplate.filename)")
             let item = try FileProviderStorage.createItem(
                 template: itemTemplate,
-                contents: url
+                contents: url,
+                mayAlreadyExist: options.contains(.mayAlreadyExist)
             )
             completionHandler(item, [], false, nil)
         } catch {

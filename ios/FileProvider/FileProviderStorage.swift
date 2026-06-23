@@ -163,9 +163,24 @@ enum FileProviderStorage {
         }
     }
 
-    static func createItem(template: NSFileProviderItem, contents: URL?) throws -> FileProviderItem {
+    static func createItem(
+        template: NSFileProviderItem,
+        contents: URL?,
+        mayAlreadyExist: Bool
+    ) throws -> FileProviderItem {
         let parent = path(for: template.parentItemIdentifier) ?? ""
         let destination = try resolvedPath(parent: parent, name: template.filename)
+        if mayAlreadyExist {
+            let state = loadStateForEnumeration()
+            if let existing = state.entries.first(where: { $0.path == destination.path }) {
+                debugLog("create mayAlreadyExist resolved existing path=\(destination.path)")
+                return item(for: existing, anchor: state.anchor)
+            }
+            debugLog("create mayAlreadyExist rejected absent path=\(destination.path)")
+            throw NSError.fileProviderErrorForNonExistentItem(
+                withIdentifier: identifier(for: destination.path)
+            )
+        }
         if (template.contentType ?? .data).conforms(to: .folder) {
             try runProviderMutation(
                 IrisDriveNativeProvider.mkdir(dataDir: baseDirectory.path, path: destination.path)
