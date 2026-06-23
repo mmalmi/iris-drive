@@ -60,6 +60,7 @@ class IrisDriveAndroidIrisAppsButtonTest {
                 selfUpdateStateFlow = MutableStateFlow(AndroidSelfUpdateState()),
                 backupCheckProgressFlow = MutableStateFlow(BackupCheckProgress()),
                 isOpeningIrisAppsFlow = MutableStateFlow(isOpeningIrisApps),
+                androidCalendarSyncEnabledFlow = MutableStateFlow(false),
                 selfUpdateActions = SelfUpdateActions(
                     setAutoCheck = {},
                     check = {},
@@ -71,7 +72,7 @@ class IrisDriveAndroidIrisAppsButtonTest {
                 onLinkDevice = { _, _ -> },
                 onCopyText = { _, _ -> },
                 onExportRecoverySecret = { RecoverySecretExport() },
-                onSyncAndroidCalendar = {},
+                onSetAndroidCalendarSync = {},
                 onOpenUrl = {},
                 onOpenIrisApps = onOpenIrisApps,
                 onOpenDriveFolder = {},

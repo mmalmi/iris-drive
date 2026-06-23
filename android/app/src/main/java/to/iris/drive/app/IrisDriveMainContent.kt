@@ -65,13 +65,14 @@ internal fun AuthenticatedContent(
     selfUpdateActions: SelfUpdateActions,
     backupCheckProgress: BackupCheckProgress,
     isOpeningIrisApps: Boolean,
+    androidCalendarSyncEnabled: Boolean,
     onStartSync: () -> Unit,
     onStopSync: () -> Unit,
     onCopyAppKey: () -> Unit,
     onCopyDeviceKey: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onExportRecoverySecret: () -> RecoverySecretExport,
-    onSyncAndroidCalendar: () -> Unit,
+    onSetAndroidCalendarSync: (Boolean) -> Unit,
     onCopyLinkInvite: () -> Unit,
     onCopySnapshotLink: () -> Unit,
     onOpenSnapshotLink: () -> Unit,
@@ -168,7 +169,8 @@ internal fun AuthenticatedContent(
             onCopyDeviceKey = onCopyDeviceKey,
             onCopyText = onCopyText,
             onExportRecoverySecret = onExportRecoverySecret,
-            onSyncAndroidCalendar = onSyncAndroidCalendar,
+            androidCalendarSyncEnabled = androidCalendarSyncEnabled,
+            onSetAndroidCalendarSync = onSetAndroidCalendarSync,
             onLogout = onLogout,
             onAddRelay = onAddRelay,
             onRemoveRelay = onRemoveRelay,
@@ -370,7 +372,8 @@ private fun SettingsContent(
     onCopyDeviceKey: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onExportRecoverySecret: () -> RecoverySecretExport,
-    onSyncAndroidCalendar: () -> Unit,
+    androidCalendarSyncEnabled: Boolean,
+    onSetAndroidCalendarSync: (Boolean) -> Unit,
     onLogout: () -> Unit,
     onAddRelay: (String) -> Unit,
     onRemoveRelay: (String) -> Unit,
@@ -396,7 +399,8 @@ private fun SettingsContent(
                 onCopyDeviceKey = onCopyDeviceKey,
                 onCopyText = onCopyText,
                 onExportRecoverySecret = onExportRecoverySecret,
-                onSyncAndroidCalendar = onSyncAndroidCalendar,
+                androidCalendarSyncEnabled = androidCalendarSyncEnabled,
+                onSetAndroidCalendarSync = onSetAndroidCalendarSync,
                 onLogout = onLogout,
                 onAddRelay = onAddRelay,
                 onRemoveRelay = onRemoveRelay,
@@ -1018,7 +1022,8 @@ private fun SettingsPanel(
     onCopyDeviceKey: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onExportRecoverySecret: () -> RecoverySecretExport,
-    onSyncAndroidCalendar: () -> Unit,
+    androidCalendarSyncEnabled: Boolean,
+    onSetAndroidCalendarSync: (Boolean) -> Unit,
     onLogout: () -> Unit,
     onAddRelay: (String) -> Unit,
     onRemoveRelay: (String) -> Unit,
@@ -1127,13 +1132,18 @@ private fun SettingsPanel(
             }
         }
         Text("Android Calendar", fontWeight = FontWeight.SemiBold)
-        OutlinedButton(
-            onClick = onSyncAndroidCalendar,
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
             modifier = Modifier
                 .fillMaxWidth()
-                .testTag("syncAndroidCalendar"),
+                .testTag("androidCalendarSyncRow"),
         ) {
-            Text("Sync now")
+            Text("Keep Android Calendar in sync", modifier = Modifier.weight(1f))
+            Switch(
+                checked = androidCalendarSyncEnabled,
+                onCheckedChange = onSetAndroidCalendarSync,
+                modifier = Modifier.testTag("androidCalendarSyncToggle"),
+            )
         }
         OutlinedButton(onClick = { confirmLogout = true }) {
             Icon(painterResource(R.drawable.ic_delete), contentDescription = null, tint = Danger)

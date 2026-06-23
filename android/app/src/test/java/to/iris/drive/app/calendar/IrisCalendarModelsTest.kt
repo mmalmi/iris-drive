@@ -6,6 +6,16 @@ import org.junit.Test
 
 class IrisCalendarModelsTest {
     @Test
+    fun calendarFingerprintChangesWithExportJson() {
+        val first = AndroidCalendarAutoSync.calendarFingerprint("""{"calendar":{"events":[]}}""")
+        val second = AndroidCalendarAutoSync.calendarFingerprint("""{"calendar":{"events":[{"id":"1"}]}}""")
+
+        assertEquals(64, first.length)
+        assertEquals(64, second.length)
+        org.junit.Assert.assertNotEquals(first, second)
+    }
+
+    @Test
     fun parsesCalendarExportAndBuildsAndroidEventDrafts() {
         val snapshot = parseIrisCalendarExportJson(
             """

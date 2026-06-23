@@ -47,4 +47,27 @@ class IrisDriveBackgroundSyncPolicyTest {
         assertFalse(BackgroundSyncPolicy.shouldSchedule(revoked))
         assertEquals(BackgroundSyncAction.None, BackgroundSyncPolicy.actionFor(revoked))
     }
+
+    @Test
+    fun androidCalendarSyncKeepsPeriodicJobsScheduledForPausedLinkedProfiles() {
+        val state = AppState(
+            isSetupComplete = true,
+            sync = SyncState(running = false),
+        )
+
+        assertFalse(BackgroundSyncPolicy.shouldSchedule(state))
+        assertTrue(BackgroundSyncPolicy.shouldSchedule(state, androidCalendarSyncActive = true))
+        assertEquals(BackgroundSyncAction.None, BackgroundSyncPolicy.actionFor(state))
+    }
+
+    @Test
+    fun androidCalendarSyncDoesNotScheduleRevokedProfiles() {
+        val state = AppState(
+            isSetupComplete = true,
+            isRevoked = true,
+            sync = SyncState(running = false),
+        )
+
+        assertFalse(BackgroundSyncPolicy.shouldSchedule(state, androidCalendarSyncActive = true))
+    }
 }

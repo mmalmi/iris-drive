@@ -6,6 +6,7 @@ import android.content.ComponentName
 import android.content.Context
 import android.util.Log
 import to.iris.drive.app.BuildConfig
+import to.iris.drive.app.calendar.AndroidCalendarAutoSync
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.NativeActions
 import to.iris.drive.app.core.NativeCore
@@ -17,8 +18,9 @@ internal enum class BackgroundSyncAction {
 }
 
 internal object BackgroundSyncPolicy {
-    fun shouldSchedule(state: AppState): Boolean =
-        actionFor(state) != BackgroundSyncAction.None
+    fun shouldSchedule(state: AppState, androidCalendarSyncActive: Boolean = false): Boolean =
+        actionFor(state) != BackgroundSyncAction.None ||
+            shouldScheduleAndroidCalendar(state, androidCalendarSyncActive)
 
     fun actionFor(state: AppState): BackgroundSyncAction {
         if (state.isRevoked || !state.sync.running) {
@@ -32,6 +34,12 @@ internal object BackgroundSyncPolicy {
         }
         return BackgroundSyncAction.None
     }
+
+    private fun shouldScheduleAndroidCalendar(
+        state: AppState,
+        androidCalendarSyncActive: Boolean,
+    ): Boolean =
+        androidCalendarSyncActive && state.isSetupComplete && !state.isRevoked
 }
 
 internal class NativeSyncSession(context: Context) : AutoCloseable {
@@ -51,11 +59,13 @@ internal class NativeSyncSession(context: Context) : AutoCloseable {
 
     fun runBackgroundSyncOnce(): AppState {
         val refreshed = refreshState()
-        return when (BackgroundSyncPolicy.actionFor(refreshed)) {
+        val state = when (BackgroundSyncPolicy.actionFor(refreshed)) {
             BackgroundSyncAction.RestartSync -> dispatch(NativeActions.restartSync())
             BackgroundSyncAction.RefreshOnly -> refreshed
             BackgroundSyncAction.None -> refreshed
         }
+        AndroidCalendarAutoSync.syncIfEnabled(appContext, state)
+        return state
     }
 
     override fun close() {
@@ -80,12 +90,13 @@ internal object IrisDriveBackgroundSync {
     fun pause(context: Context): AppState =
         NativeSyncSession(context).use { session ->
             val state = session.dispatch(NativeActions.stopSync())
-            cancel(context)
+            scheduleIfNeeded(context, state)
             state
         }
 
     fun scheduleIfNeeded(context: Context, state: AppState) {
-        if (BackgroundSyncPolicy.shouldSchedule(state)) {
+        val androidCalendarSyncActive = AndroidCalendarAutoSync.isActive(context)
+        if (BackgroundSyncPolicy.shouldSchedule(state, androidCalendarSyncActive)) {
             schedule(context)
         } else {
             cancel(context)

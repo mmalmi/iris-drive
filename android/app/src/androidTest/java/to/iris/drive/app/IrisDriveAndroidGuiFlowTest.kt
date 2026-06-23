@@ -834,22 +834,22 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     @Test
-    fun settingsExposeAndroidCalendarSyncAction() {
-        var syncCount = 0
+    fun settingsExposeAndroidCalendarSyncToggle() {
+        val syncStates = mutableListOf<Boolean>()
         render(
             state = AppState(
                 profile = profileState(),
                 setupState = "authorized",
                 isSetupComplete = true,
             ),
-            onSyncAndroidCalendar = { syncCount += 1 },
+            onSetAndroidCalendarSync = { syncStates += it },
         )
 
         compose.onNodeWithTag("tabSettings").activate()
-        compose.onNodeWithTag("settingsContent").performScrollToNode(hasTestTag("syncAndroidCalendar"))
-        compose.onNodeWithTag("syncAndroidCalendar").assertIsDisplayed().activate()
+        compose.onNodeWithTag("settingsContent").performScrollToNode(hasTestTag("androidCalendarSyncToggle"))
+        compose.onNodeWithTag("androidCalendarSyncToggle").assertIsDisplayed().activate()
 
-        assertEquals(1, syncCount)
+        assertEquals(listOf(true), syncStates)
     }
 
     private fun render(
@@ -862,7 +862,8 @@ class IrisDriveAndroidGuiFlowTest {
         onDeleteDevice: (String) -> Unit = {},
         onAddRoot: (String, String) -> Unit = { _, _ -> },
         onExportRecoverySecret: () -> RecoverySecretExport = { RecoverySecretExport() },
-        onSyncAndroidCalendar: () -> Unit = {},
+        androidCalendarSyncEnabled: Boolean = false,
+        onSetAndroidCalendarSync: (Boolean) -> Unit = {},
         onAddBackupTarget: (String, String) -> Unit = { _, _ -> },
         onRemoveBackupTarget: (String) -> Unit = {},
         onAddBlossomServer: (String) -> Unit = {},
@@ -892,6 +893,7 @@ class IrisDriveAndroidGuiFlowTest {
         val selfUpdateStateFlow = MutableStateFlow(AndroidSelfUpdateState())
         val backupCheckProgressFlow = MutableStateFlow(BackupCheckProgress())
         val isOpeningIrisAppsFlow = MutableStateFlow(isOpeningIrisApps)
+        val androidCalendarSyncEnabledFlow = MutableStateFlow(androidCalendarSyncEnabled)
         compose.setContent {
             IrisDriveAndroidApp(
                 stateFlow = stateFlow,
@@ -899,6 +901,7 @@ class IrisDriveAndroidGuiFlowTest {
                 selfUpdateStateFlow = selfUpdateStateFlow,
                 backupCheckProgressFlow = backupCheckProgressFlow,
                 isOpeningIrisAppsFlow = isOpeningIrisAppsFlow,
+                androidCalendarSyncEnabledFlow = androidCalendarSyncEnabledFlow,
                 selfUpdateActions = SelfUpdateActions(
                     setAutoCheck = {},
                     check = {},
@@ -910,7 +913,7 @@ class IrisDriveAndroidGuiFlowTest {
                 onLinkDevice = onLinkDevice,
                 onCopyText = { _, _ -> },
                 onExportRecoverySecret = onExportRecoverySecret,
-                onSyncAndroidCalendar = onSyncAndroidCalendar,
+                onSetAndroidCalendarSync = onSetAndroidCalendarSync,
                 onOpenUrl = { _ -> },
                 onOpenIrisApps = onOpenIrisApps,
                 onOpenDriveFolder = {},

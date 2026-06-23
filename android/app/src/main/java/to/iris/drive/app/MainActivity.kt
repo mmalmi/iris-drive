@@ -33,12 +33,13 @@ import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.Executors
+import to.iris.drive.app.calendar.AndroidCalendarAutoSync
+import to.iris.drive.app.calendar.AndroidCalendarAutoSyncResult
+import to.iris.drive.app.calendar.AndroidCalendarSync
 import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.NativeActions
 import to.iris.drive.app.core.NativeCore
 import to.iris.drive.app.core.recoverySecretExportFromJson
-import to.iris.drive.app.calendar.AndroidCalendarSync
-import to.iris.drive.app.calendar.parseIrisCalendarExportJson
 import to.iris.drive.app.sync.BackgroundSyncPolicy
 import to.iris.drive.app.sync.IrisDriveBackgroundSync
 import to.iris.drive.app.sync.IrisDriveSyncService
@@ -50,6 +51,7 @@ class MainActivity : ComponentActivity() {
     private val backupCheckProgressFlow = MutableStateFlow(BackupCheckProgress())
     private val shareDialogFlow = MutableStateFlow<ShareDialogRequest?>(null)
     private val isOpeningIrisAppsFlow = MutableStateFlow(false)
+    private val androidCalendarSyncEnabledFlow = MutableStateFlow(false)
     private val nativeCoreExecutor = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "IrisDriveNativeCore")
     }
@@ -58,6 +60,8 @@ class MainActivity : ComponentActivity() {
     private var refreshJob: Job? = null
     private var nativeRefreshInFlight = false
     private var nativeRefreshPending = false
+    private var androidCalendarAutoSyncJob: Job? = null
+    private var lastAndroidCalendarAutoSyncCheckMs = 0L
     private val nativeRefreshCallbacks = mutableListOf<(AppState) -> Unit>()
     private var nextShareDialogRequestId = 0L
     private lateinit var selfUpdateManager: AndroidSelfUpdateManager
@@ -65,6 +69,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         applyDebugEnvironment(intent)
+        refreshAndroidCalendarSyncEnabled()
         selfUpdateManager =
             AndroidSelfUpdateManager(
                 context = applicationContext,
@@ -91,8 +96,14 @@ class MainActivity : ComponentActivity() {
                         grants[Manifest.permission.READ_CALENDAR] == true &&
                             grants[Manifest.permission.WRITE_CALENDAR] == true
                     if (granted) {
-                        syncAndroidCalendar()
+                        AndroidCalendarAutoSync.setEnabled(this@MainActivity, true)
+                        refreshAndroidCalendarSyncEnabled()
+                        IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, stateFlow.value)
+                        maybeRunAndroidCalendarAutoSync(stateFlow.value, force = true, toast = true)
                     } else {
+                        AndroidCalendarAutoSync.setEnabled(this@MainActivity, false)
+                        refreshAndroidCalendarSyncEnabled()
+                        IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, stateFlow.value)
                         Toast.makeText(
                             this@MainActivity,
                             "Calendar permission is required",
@@ -107,6 +118,7 @@ class MainActivity : ComponentActivity() {
                 selfUpdateStateFlow = selfUpdateManager.state,
                 backupCheckProgressFlow = backupCheckProgressFlow,
                 isOpeningIrisAppsFlow = isOpeningIrisAppsFlow,
+                androidCalendarSyncEnabledFlow = androidCalendarSyncEnabledFlow,
                 selfUpdateActions = SelfUpdateActions(
                     setAutoCheck = selfUpdateManager::setAutoCheckEnabled,
                     check = { selfUpdateManager.check() },
@@ -134,9 +146,16 @@ class MainActivity : ComponentActivity() {
                         NativeCore.exportRecoverySecretJson(filesDir.absolutePath),
                     )
                 },
-                onSyncAndroidCalendar = {
-                    if (AndroidCalendarSync.hasPermissions(this@MainActivity)) {
-                        syncAndroidCalendar()
+                onSetAndroidCalendarSync = { enabled ->
+                    if (!enabled) {
+                        AndroidCalendarAutoSync.setEnabled(this@MainActivity, false)
+                        refreshAndroidCalendarSyncEnabled()
+                        IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, stateFlow.value)
+                    } else if (AndroidCalendarSync.hasPermissions(this@MainActivity)) {
+                        AndroidCalendarAutoSync.setEnabled(this@MainActivity, true)
+                        refreshAndroidCalendarSyncEnabled()
+                        IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, stateFlow.value)
+                        maybeRunAndroidCalendarAutoSync(stateFlow.value, force = true, toast = true)
                     } else {
                         calendarPermissionLauncher.launch(
                             arrayOf(
@@ -293,6 +312,8 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         refreshJob?.cancel()
         refreshJob = null
+        androidCalendarAutoSyncJob?.cancel()
+        androidCalendarAutoSyncJob = null
         if (::selfUpdateManager.isInitialized) {
             selfUpdateManager.stopAutomaticChecks()
         }
@@ -381,6 +402,7 @@ class MainActivity : ComponentActivity() {
         stateFlow.value = state
         writeDebugState(debugJson)
         IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, state)
+        maybeRunAndroidCalendarAutoSync(state)
         onState?.invoke(state)
     }
 
@@ -774,39 +796,45 @@ class MainActivity : ComponentActivity() {
                 Manifest.permission.POST_NOTIFICATIONS,
             ) != PackageManager.PERMISSION_GRANTED
 
-    private fun syncAndroidCalendar() {
-        if (!AndroidCalendarSync.hasPermissions(this)) {
-            Toast.makeText(this, "Calendar permission is required", Toast.LENGTH_SHORT).show()
+    private fun refreshAndroidCalendarSyncEnabled() {
+        androidCalendarSyncEnabledFlow.value = AndroidCalendarAutoSync.isActive(this)
+    }
+
+    private fun maybeRunAndroidCalendarAutoSync(
+        state: AppState,
+        force: Boolean = false,
+        toast: Boolean = false,
+    ) {
+        if (!state.isSetupComplete || !AndroidCalendarAutoSync.isActive(this)) {
             return
         }
+        val now = System.currentTimeMillis()
+        if (!force && now - lastAndroidCalendarAutoSyncCheckMs < ANDROID_CALENDAR_SYNC_CHECK_INTERVAL_MS) {
+            return
+        }
+        if (androidCalendarAutoSyncJob?.isActive == true) return
+        lastAndroidCalendarAutoSyncCheckMs = now
         lifecycleScope.launch(Dispatchers.IO) {
-            val result = runCatching {
-                val exportJson = NativeCore.exportCalendarJson(filesDir.absolutePath)
-                val snapshot = parseIrisCalendarExportJson(exportJson)
-                AndroidCalendarSync.sync(applicationContext, snapshot)
-            }
+            val result = AndroidCalendarAutoSync.syncIfEnabled(applicationContext, state, force)
             withContext(Dispatchers.Main) {
-                result.onSuccess { sync ->
-                    val deleted = if (sync.eventsDeleted > 0) {
-                        ", ${sync.eventsDeleted} removed"
-                    } else {
-                        ""
-                    }
-                    Toast.makeText(
-                        this@MainActivity,
-                        "${sync.eventsSynced} events synced$deleted",
-                        Toast.LENGTH_SHORT,
-                    ).show()
-                }.onFailure { error ->
-                    Toast.makeText(
-                        this@MainActivity,
-                        error.message?.takeIf { it.isNotBlank() } ?: "Calendar sync failed",
-                        Toast.LENGTH_SHORT,
-                    ).show()
+                refreshAndroidCalendarSyncEnabled()
+                if (toast || result.error.isNotBlank()) {
+                    Toast.makeText(this@MainActivity, calendarAutoSyncMessage(result), Toast.LENGTH_SHORT)
+                        .show()
                 }
             }
-        }
+        }.also { androidCalendarAutoSyncJob = it }
     }
+
+    private fun calendarAutoSyncMessage(result: AndroidCalendarAutoSyncResult): String =
+        when {
+            result.error.isNotBlank() -> result.error
+            result.synced && result.eventsDeleted > 0 ->
+                "${result.eventsSynced} events synced, ${result.eventsDeleted} removed"
+            result.synced -> "${result.eventsSynced} events synced"
+            result.unchanged -> "Android Calendar is up to date"
+            else -> "Android Calendar sync enabled"
+        }
 
     private fun handleLaunchIntent(intent: Intent?) {
         val uri = intent?.data
@@ -928,5 +956,6 @@ class MainActivity : ComponentActivity() {
         const val DEBUG_PROVIDER_LIST_FILE = "debug-provider-list.json"
         private const val DEBUG_ENV_EXTRA_PREFIX = "IRIS_DRIVE_"
         private const val DOCUMENTS_ROOT_DOCUMENT_ID = "root"
+        private const val ANDROID_CALENDAR_SYNC_CHECK_INTERVAL_MS = 60_000L
     }
 }

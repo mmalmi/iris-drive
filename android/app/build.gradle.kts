@@ -57,6 +57,12 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            manifestPlaceholders["documentsProviderAuthority"] = "to.iris.drive.debug.documents"
+            buildConfigField(
+                "String",
+                "DOCUMENTS_PROVIDER_AUTHORITY",
+                "\"to.iris.drive.debug.documents\"",
+            )
             buildConfigField("long", "UPDATE_POLL_SECONDS", "${updatePollSeconds}L")
             buildConfigField("boolean", "SELF_UPDATE_ENABLED", "false")
         }

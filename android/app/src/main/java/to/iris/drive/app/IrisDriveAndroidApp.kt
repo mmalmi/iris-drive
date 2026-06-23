@@ -181,13 +181,14 @@ internal fun IrisDriveAndroidApp(
     selfUpdateStateFlow: StateFlow<AndroidSelfUpdateState>,
     backupCheckProgressFlow: StateFlow<BackupCheckProgress>,
     isOpeningIrisAppsFlow: StateFlow<Boolean>,
+    androidCalendarSyncEnabledFlow: StateFlow<Boolean>,
     selfUpdateActions: SelfUpdateActions,
     onCreateProfile: (String) -> Unit,
     onRestoreProfile: (String, String) -> Unit,
     onLinkDevice: (String, String) -> Unit,
     onCopyText: (String, String) -> Unit,
     onExportRecoverySecret: () -> RecoverySecretExport,
-    onSyncAndroidCalendar: () -> Unit,
+    onSetAndroidCalendarSync: (Boolean) -> Unit,
     onOpenUrl: (String) -> Unit,
     onOpenIrisApps: (String) -> Unit,
     onOpenDriveFolder: () -> Unit,
@@ -228,6 +229,7 @@ internal fun IrisDriveAndroidApp(
     val selfUpdateState by selfUpdateStateFlow.collectAsState()
     val backupCheckProgress by backupCheckProgressFlow.collectAsState()
     val isOpeningIrisApps by isOpeningIrisAppsFlow.collectAsState()
+    val androidCalendarSyncEnabled by androidCalendarSyncEnabledFlow.collectAsState()
     val profile = state.profile
     var selectedTab by remember { mutableStateOf(MainTab.MyDrive) }
     var showStartupLoading by remember { mutableStateOf(false) }
@@ -320,7 +322,8 @@ internal fun IrisDriveAndroidApp(
                     onCopyDeviceKey = { onCopyText("Device key", activeProfile.devicePubkey) },
                     onCopyText = onCopyText,
                     onExportRecoverySecret = onExportRecoverySecret,
-                    onSyncAndroidCalendar = onSyncAndroidCalendar,
+                    androidCalendarSyncEnabled = androidCalendarSyncEnabled,
+                    onSetAndroidCalendarSync = onSetAndroidCalendarSync,
                     onCopyLinkInvite = { onCopyText("Invite link", activeProfile.appKeyLinkInvite) },
                     onCopySnapshotLink = { onCopyText("drive.iris.to link", state.snapshotLink) },
                     onOpenSnapshotLink = { onOpenUrl(state.snapshotLink) },
