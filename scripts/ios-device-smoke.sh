@@ -20,6 +20,7 @@ DEVICE_SELECTOR="${IRIS_DRIVE_IOS_DEVICE:-virus.exe}"
 DEVELOPMENT_TEAM="${IRIS_DRIVE_IOS_DEVELOPMENT_TEAM:-J8PPJKD7TA}"
 CODE_SIGN_IDENTITY="${IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY:-Apple Development}"
 LAUNCH_WAIT_SECONDS="${IRIS_DRIVE_IOS_LAUNCH_WAIT_SECONDS:-3}"
+ALLOW_SCREEN_OFF="${IRIS_DRIVE_IOS_ALLOW_SCREEN_OFF:-0}"
 TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
 RUST_IOS_TARGET="${IRIS_DRIVE_IOS_RUST_TARGET:-aarch64-apple-ios}"
 RUST_LIB_DIR="$TARGET_DIR/$RUST_IOS_TARGET/debug"
@@ -71,6 +72,37 @@ PY
   rm -f "$devices_json"
 }
 
+assert_device_awake_for_launch() {
+  local device_udid="$1"
+  local display_json
+  local backlight_state
+
+  display_json="$(mktemp -t iris-drive-ios-display.XXXXXX.json)"
+  if ! xcrun devicectl device info displays \
+    --device "$device_udid" \
+    --json-output "$display_json" >/dev/null; then
+    rm -f "$display_json"
+    echo "FAIL: could not read iOS device display state before launch." >&2
+    exit 1
+  fi
+
+  backlight_state="$(python3 - "$display_json" <<'PY'
+import json
+import sys
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    print((json.load(handle).get("result") or {}).get("backlightState") or "")
+PY
+)"
+  rm -f "$display_json"
+
+  if [[ "$ALLOW_SCREEN_OFF" != "1" && "$backlight_state" == "off" ]]; then
+    echo "FAIL: selected iOS device screen is off; wake and unlock the device before running physical launch smoke." >&2
+    echo "Set IRIS_DRIVE_IOS_ALLOW_SCREEN_OFF=1 to bypass this preflight." >&2
+    exit 1
+  fi
+}
+
 resolve_app_path() {
   find "$DERIVED_DATA/Build/Products" \
     -path "*/$CONFIGURATION-iphoneos/Iris Drive.app" \
@@ -115,6 +147,9 @@ assert_app_running() {
   fi
 }
 
+DEVICE_UDID="$(select_device)"
+assert_device_awake_for_launch "$DEVICE_UDID"
+
 cargo build -p iris-drive-app-core --target "$RUST_IOS_TARGET"
 if [[ ! -f "$RUST_STATIC_LIB" ]]; then
   echo "FAIL: static app-core library not found at $RUST_STATIC_LIB" >&2
@@ -127,8 +162,6 @@ elif [[ ! -d "$PROJECT" ]]; then
   echo "FAIL: $PROJECT is missing and xcodegen is not installed" >&2
   exit 1
 fi
-
-DEVICE_UDID="$(select_device)"
 
 xcodebuild \
   -project "$PROJECT" \
