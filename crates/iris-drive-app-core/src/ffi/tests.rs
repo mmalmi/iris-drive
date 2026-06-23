@@ -94,6 +94,14 @@ fn remove_share_wrap_for_epoch(
 }
 
 #[test]
+fn app_runtime_installs_rustls_crypto_provider() {
+    let dir = tempfile::tempdir().unwrap();
+    let _app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+
+    assert!(rustls::crypto::CryptoProvider::get_default().is_some());
+}
+
+#[test]
 fn dispatch_adds_updates_and_removes_roots() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());

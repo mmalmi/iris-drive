@@ -354,6 +354,7 @@ enum ProviderSummaryMode {
 
 impl NativeAppRuntime {
     fn new(data_dir: String, app_version: String) -> Self {
+        let _ = rustls::crypto::ring::default_provider().install_default();
         let mut state = NativeAppState::default();
         state.ui.paths = paths_for(&data_dir);
         state.ui.sync = UiSyncStatus {
