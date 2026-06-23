@@ -509,6 +509,29 @@ fn daemon_status_summary_does_not_walk_roots_inside_runtime() {
 }
 
 #[test]
+fn daemon_status_config_hydrates_roster_projection_once_for_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = Profile::create(dir.path(), Some("Mac".into())).unwrap();
+    let config = AppConfig {
+        profile: Some(owner.state.clone()),
+        ..AppConfig::default()
+    };
+    config.save(config_path_in(dir.path())).unwrap();
+
+    let cached_before = AppConfig::load_or_default_cached_profile(config_path_in(dir.path()))
+        .expect("load cheap config");
+    let profile_before = cached_before.profile.as_ref().expect("profile");
+    assert!(profile_before.app_keys.is_none());
+    assert!(profile_before.profile_roster_projection.is_none());
+
+    let status_config = daemon_status_config(dir.path()).expect("load status config");
+    let profile = status_config.profile.as_ref().expect("profile");
+
+    assert!(profile.app_keys.is_some());
+    assert!(profile.profile_roster_projection.is_some());
+}
+
+#[test]
 fn daemon_status_profile_block_uses_cached_app_keys_without_reprojecting_roster() {
     let dir = tempfile::tempdir().unwrap();
     let owner = Profile::create(dir.path(), Some("Mac".into())).unwrap();

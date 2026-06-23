@@ -72,6 +72,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var lastPeerStatusRefreshAt = Date.distantPast
     private var lastExternalFileProviderSignalKey: String?
     private var lastExternalFileProviderSignalAt = Date.distantPast
+    private var lastProviderSignalProbeKey: String?
+    private var lastProviderSignalProbeAt = Date.distantPast
+    private var providerSignalSummaryInFlight = false
     private var fileProviderSignalWorkItem: DispatchWorkItem?
     private var pendingFileProviderDirectoryPaths: [String]?
     private var fileProviderRepairInFlight = false
@@ -2009,6 +2012,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             status.onlineDeviceCount = Self.intValue(ui["online_app_key_count"]) ?? 0
             status.fileCount = Self.intValue(ui["file_count"]) ?? 0
             status.visibleFileBytes = Self.int64Value(ui["visible_file_bytes"]) ?? 0
+            if let providerRefreshKey = ui["provider_change_key"] as? String {
+                status.providerRefreshKey = providerRefreshKey
+            }
             status.localNhashResolverEnabled =
                 ui["local_nhash_resolver_enabled"] as? Bool ?? status.localNhashResolverEnabled
             let portalURL = ui["sites_portal_url"] as? String ?? ""
@@ -2355,6 +2361,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         status.fileCount = Self.intValue(summary["file_count"]) ?? 0
         status.visibleFileBytes =
             Self.int64Value(summary["visible_file_bytes"]) ?? 0
+        if let providerRefreshKey = summary["provider_refresh_key"] as? String {
+            status.providerRefreshKey = providerRefreshKey
+        }
     }
 
     private static func applyGatewayStatus(_ gateway: [String: Any], to status: IrisDriveStatus) {
@@ -2699,16 +2708,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func signalFileProviderDomainForProviderChangeIfNeeded(reason: String) {
         guard fileProviderIntegrationEnabled else { return }
         guard let paths = runtimePathsForMenu else { return }
+        if !Thread.isMainThread {
+            DispatchQueue.main.async { [weak self] in
+                self?.signalFileProviderDomainForProviderChangeIfNeeded(reason: reason)
+            }
+            return
+        }
+        let providerRefreshKey = IrisDriveStatus.shared.providerRefreshKey
+        guard !providerRefreshKey.isEmpty else { return }
+        let now = Date()
+        if providerRefreshKey == lastProviderSignalProbeKey
+            && now.timeIntervalSince(lastProviderSignalProbeAt) < 10 {
+            return
+        }
+        guard !providerSignalSummaryInFlight else { return }
+        lastProviderSignalProbeKey = providerRefreshKey
+        lastProviderSignalProbeAt = now
+        providerSignalSummaryInFlight = true
         let idrive = idriveExecutableURL()
         DispatchQueue.global(qos: .utility).async { [weak self] in
             guard let self else { return }
             do {
                 let summary = try self.providerSignalSummary(idrive: idrive, paths: paths)
                 DispatchQueue.main.async {
+                    self.providerSignalSummaryInFlight = false
                     self.signalFileProviderDomainIfNeeded(summary: summary, reason: reason)
+                    let currentProviderRefreshKey = IrisDriveStatus.shared.providerRefreshKey
+                    if !currentProviderRefreshKey.isEmpty
+                        && currentProviderRefreshKey != providerRefreshKey {
+                        self.lastProviderSignalProbeKey = nil
+                        self.signalFileProviderDomainForProviderChangeIfNeeded(
+                            reason: "provider key changed while probing"
+                        )
+                    }
                 }
             } catch {
-                NSLog("Iris Drive FileProvider provider summary skipped: \(error)")
+                DispatchQueue.main.async {
+                    self.providerSignalSummaryInFlight = false
+                    NSLog("Iris Drive FileProvider provider summary skipped: \(error)")
+                }
             }
         }
     }
