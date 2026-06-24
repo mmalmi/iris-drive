@@ -20,7 +20,7 @@ pub(crate) use iris_drive_core::fips_status::{
 use iris_drive_core::provider::provider_refresh_key;
 use iris_drive_core::relay_status::normalized_relay_statuses_for_relays;
 pub(crate) use network::fips_network_diagnostics;
-use peers::peer_statuses;
+use peers::{app_key_actors_for_status, peer_statuses};
 
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
@@ -581,15 +581,14 @@ pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &m
                 .and_then(|summary| summary.get("visible_file_bytes"))
         })
         .and_then(Value::as_u64);
-    let current_root_cid = current_primary_root_cid(&config);
-    let provider_refresh_key = payload
-        .get("summary")
-        .and_then(|summary| summary.get("provider_refresh_key"))
-        .and_then(Value::as_str)
-        .map_or_else(
-            || provider_refresh_key(current_root_cid.as_deref(), &[]),
-            ToOwned::to_owned,
-        );
+    let current_root_cid = current_primary_root_cid(&config).or_else(|| {
+        payload
+            .get("hashtree")
+            .and_then(|hashtree| hashtree.get("current_root_cid"))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+    });
+    let provider_refresh_key = provider_refresh_key(current_root_cid.as_deref(), &[]);
     let initialized = key_path_in(config_dir).exists()
         && config_path_in(config_dir).exists()
         && config.profile.is_some();
@@ -622,9 +621,10 @@ fn daemon_summary_app_key_counts(config: &AppConfig, payload: &Value) -> (usize,
     let Some(account) = config.profile.as_ref() else {
         return (0, 0);
     };
-    let Some(snapshot) = account.current_app_keys_projection() else {
+    let app_actors = app_key_actors_for_status(config);
+    if app_actors.is_empty() {
         return (0, 0);
-    };
+    }
     let fips_status = payload
         .get("fips_block_sync")
         .filter(|value| value.is_object());
@@ -645,9 +645,9 @@ fn daemon_summary_app_key_counts(config: &AppConfig, payload: &Value) -> (usize,
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let rows = app_key_roster_rows(
-        &snapshot.app_actors,
+        &app_actors,
         &account.app_key_pubkey,
-        snapshot.is_admin(&account.app_key_pubkey),
+        account.can_admin_profile(),
         daemon_running,
         &connectivity,
     );

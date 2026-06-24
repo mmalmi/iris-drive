@@ -524,6 +524,50 @@ fn remote_authorized_device_keeps_bootstrap_fips_routing_peers() {
 }
 
 #[test]
+fn legacy_drive_roots_keep_bootstrap_fips_routing_peers() {
+    let current_keys = nostr_sdk::Keys::generate();
+    let remote_keys = nostr_sdk::Keys::generate();
+    let current_pubkey = current_keys.public_key().to_hex();
+    let remote_pubkey = remote_keys.public_key().to_hex();
+    let profile_id = crate::IrisProfileId::new_v4();
+    let mut drive = crate::Drive::primary(profile_id.to_string());
+    drive.app_key_roots.insert(
+        current_pubkey.clone(),
+        crate::AppKeyRootRef::legacy("current-root", 10, 1),
+    );
+    drive.app_key_roots.insert(
+        remote_pubkey.clone(),
+        crate::AppKeyRootRef::legacy("remote-root", 11, 1),
+    );
+    let config = AppConfig {
+        profile: Some(crate::ProfileState {
+            profile_id,
+            app_key_pubkey: current_pubkey,
+            profile_roster_ops: Vec::new(),
+            app_key_link_secret: "link-secret".into(),
+            authorization_state: crate::AppKeyAuthorizationState::Authorized,
+            app_key_label: None,
+            app_keys: None,
+            profile_roster_projection: None,
+            outbound_app_key_link_request: None,
+            inbound_app_key_link_requests: Vec::new(),
+            handled_app_key_link_requests: Vec::new(),
+        }),
+        drives: vec![drive],
+        ..Default::default()
+    };
+
+    let remote_npub = remote_keys.public_key().to_bech32().unwrap();
+    let authorized = authorized_device_fips_peers(&config, &FipsTransportSettings::default());
+    assert_eq!(authorized.len(), 1);
+    assert_eq!(authorized[0].npub, remote_npub);
+    assert_eq!(
+        routing_fips_peers(&config, &FipsTransportSettings::default()).len(),
+        DEFAULT_FIPS_BOOTSTRAP_PEERS.len()
+    );
+}
+
+#[test]
 fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
     let first_keys = nostr_sdk::Keys::generate();
     let second_keys = nostr_sdk::Keys::generate();

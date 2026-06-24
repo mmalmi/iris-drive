@@ -108,6 +108,7 @@ fn daemon_status_prefers_fresh_hashtree_count_over_copied_summary() {
         json!({
             "event": "provider_root_published",
             "hashtree": {
+                "current_root_cid": "root-b",
                 "file_count": 11,
                 "visible_file_bytes": 456,
             },
@@ -116,6 +117,7 @@ fn daemon_status_prefers_fresh_hashtree_count_over_copied_summary() {
 
     assert_eq!(refreshed["summary"]["file_count"], 11);
     assert_eq!(refreshed["summary"]["visible_file_bytes"], 456);
+    assert_eq!(refreshed["summary"]["provider_refresh_key"], "current:root-b");
 }
 
 #[test]

@@ -421,16 +421,21 @@ pub fn apply_remote_drive_root_event(
         return Err(RelayError::NoAccount);
     };
     if preview.root_scope_id == account.root_scope_id() {
-        if !account.can_write_roots_for_app_key(&app_key_hex) {
-            return Ok(DriveRootApply::UnauthorizedAppKey);
-        }
-        let Some(drive) = config
+        let Some(drive_index) = config
             .drives
-            .iter_mut()
-            .find(|d| d.drive_id == preview.drive_id)
+            .iter()
+            .position(|drive| drive.drive_id == preview.drive_id)
         else {
             return Ok(DriveRootApply::UnknownDrive);
         };
+        if !crate::drive_root_app_key_can_write_roots(
+            account,
+            &config.drives[drive_index],
+            &app_key_hex,
+        ) {
+            return Ok(DriveRootApply::UnauthorizedAppKey);
+        }
+        let drive = &mut config.drives[drive_index];
         return apply_root_to_app_key_roots(&mut drive.app_key_roots, event, device_keys, &preview);
     }
 

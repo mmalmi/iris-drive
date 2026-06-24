@@ -482,7 +482,7 @@ async fn append_primary_drive_root_events(
         let Some(root) = publishable_app_key_root(config_dir, drive, state).await? else {
             return Ok(());
         };
-        let authorized_app_keys = authorized_app_key_pubkeys(state);
+        let authorized_app_keys = iris_drive_core::drive_root_recipient_app_key_pubkeys(state, drive);
         if authorized_app_keys.is_empty() {
             return Ok(());
         }

@@ -9,7 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::paths::{config_path_in, key_path_in};
 use crate::{
-    AppConfig, AppKey, FsFipsBlockSync, PRIMARY_DRIVE_ID, ProfileState, authorized_app_key_pubkeys,
+    AppConfig, AppKey, FsFipsBlockSync, PRIMARY_DRIVE_ID, ProfileState,
+    drive_root_recipient_app_key_pubkeys,
 };
 
 pub const DIRECT_ROOT_APP_TOPIC: &str = "iris-drive/root-events/v1/direct";
@@ -293,7 +294,7 @@ pub fn build_current_direct_root_events(
         && let Some(root) = drive.app_key_roots.get(&state.app_key_pubkey)
     {
         let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
-        let authorized_app_keys = authorized_app_key_pubkeys(state);
+        let authorized_app_keys = drive_root_recipient_app_key_pubkeys(state, drive);
         let event = crate::nostr_events::build_drive_root_event(
             device.keys(),
             &state.root_scope_id(),
@@ -429,4 +430,71 @@ async fn download_direct_root(sync: &FsFipsBlockSync, root_cid: &str) -> Result<
     .context("direct-root FIPS download timed out")?
     .with_context(|| format!("downloading direct root {root_cid} over FIPS"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{AppKeyRootRef, Drive, Profile};
+
+    #[test]
+    fn direct_root_events_fall_back_to_known_drive_roots_without_roster_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let owner = Profile::create(dir.path(), Some("Windows".to_string())).unwrap();
+        let mut state = owner.state.clone();
+        state.profile_roster_ops.clear();
+        state.app_keys = None;
+
+        let mut drive = Drive::primary(state.root_scope_id());
+        let other_app_key = "08de265ef1945219e2a23a9243f63b2698aa71e8cf0a72ecc6456030363ce282";
+        let third_app_key = "e543d0df262839a24d6ca2b400ce50a285adb3a89219d3d702ff4c23e05a1dc4";
+        drive.app_key_roots.insert(
+            other_app_key.to_string(),
+            AppKeyRootRef::legacy(
+                "082c410c74dd61929c37875ca2d8f79f31e1d64b0aaeabf66672cf933cf37922:1e7814a66a87918eced61de58be46e8bc8e9790fbb554f62b096f82832aeed04",
+                10,
+                1,
+            ),
+        );
+        drive.app_key_roots.insert(
+            state.app_key_pubkey.clone(),
+            AppKeyRootRef::legacy(
+                "63c49f803c85645412e6fd431633b21f8ede15dd39150e709a087bc1b7cd960c:3e9a2656d97761cc705a80c405827bbd204e34fb83cb80ef59bcbad30bfec5e4",
+                11,
+                2,
+            ),
+        );
+        drive.app_key_roots.insert(
+            third_app_key.to_string(),
+            AppKeyRootRef::legacy(
+                "a04b615515eaa15ab861094d1d5cdfaf1e90b525017d6d9181b916a3d6327fad:20cd54a52f030a27ae1f3e1d730c281b13d89093c8959585b6ba78b19647b51b",
+                12,
+                1,
+            ),
+        );
+        let config = AppConfig {
+            profile: Some(state.clone()),
+            drives: vec![drive],
+            ..AppConfig::default()
+        };
+
+        let events = build_current_direct_root_events(dir.path(), &config, &state).unwrap();
+        let drive_root = events
+            .iter()
+            .find(|event| event.key.starts_with("drive-root:"))
+            .expect("drive root event");
+
+        let mut expected = vec![
+            other_app_key.to_string(),
+            state.app_key_pubkey.clone(),
+            third_app_key.to_string(),
+        ];
+        expected.sort();
+
+        assert!(
+            drive_root
+                .key
+                .ends_with(&format!(":{}", expected.join(",")))
+        );
+    }
 }

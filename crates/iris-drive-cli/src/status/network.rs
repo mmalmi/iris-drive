@@ -32,12 +32,8 @@ fn configured_fips_authorized_peer_npubs(config: &AppConfig) -> Vec<String> {
     let Some(account) = config.profile.as_ref() else {
         return Vec::new();
     };
-    let Some(snapshot) = account.current_app_keys_projection() else {
-        return Vec::new();
-    };
 
-    snapshot
-        .app_actors
+    app_key_actors_for_status(config)
         .iter()
         .filter(|device| device.pubkey != account.app_key_pubkey)
         .map(|device| pubkey_npub(&device.pubkey))

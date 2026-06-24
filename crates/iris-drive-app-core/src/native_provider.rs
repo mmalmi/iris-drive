@@ -619,7 +619,7 @@ async fn publish_current_app_key_root(config_dir: &Path) -> anyhow::Result<serde
         config.relays.clone()
     };
     let client = iris_drive_core::relay_sync::connect(&relays).await?;
-    let authorized_app_keys = authorized_app_key_pubkeys(account);
+    let authorized_app_keys = iris_drive_core::drive_root_recipient_app_key_pubkeys(account, drive);
     let result = iris_drive_core::relay_sync::publish_drive_root(
         &client,
         loaded_account.app_key.keys(),
@@ -675,10 +675,6 @@ pub(crate) fn native_sync_status_label(
     } else {
         "up to date"
     }
-}
-
-fn authorized_app_key_pubkeys(state: &iris_drive_core::ProfileState) -> Vec<String> {
-    state.active_root_writer_app_key_pubkeys()
 }
 
 async fn write_provider_file<P>(provider: &P, path: &str, bytes: &[u8]) -> anyhow::Result<()>

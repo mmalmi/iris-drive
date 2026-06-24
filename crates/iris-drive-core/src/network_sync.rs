@@ -12,7 +12,7 @@ use hashtree_core::Cid;
 use nostr_sdk::Event;
 
 use crate::blossom_sync::DownloadReport;
-use crate::config::AppConfig;
+use crate::config::{AppConfig, Drive};
 use crate::daemon::Daemon;
 use crate::fips_sync::FsFipsBlockSync;
 use crate::identity::AppKey;
@@ -306,6 +306,45 @@ pub fn apply_drive_root_events(
 #[must_use]
 pub fn authorized_app_key_pubkeys(state: &ProfileState) -> Vec<String> {
     state.active_root_writer_app_key_pubkeys()
+}
+
+#[must_use]
+pub fn drive_root_recipient_app_key_pubkeys(state: &ProfileState, drive: &Drive) -> Vec<String> {
+    drive_root_writer_app_key_pubkeys(state, drive)
+}
+
+#[must_use]
+pub fn drive_root_writer_app_key_pubkeys(state: &ProfileState, drive: &Drive) -> Vec<String> {
+    let mut app_keys = authorized_app_key_pubkeys(state);
+    if !app_keys.is_empty() && (state.has_profile_roster_evidence() || state.app_keys.is_some()) {
+        return app_keys;
+    }
+
+    app_keys.extend(drive.app_key_roots.keys().cloned());
+    if state.can_write_roots() {
+        app_keys.push(state.app_key_pubkey.clone());
+    }
+    app_keys.sort();
+    app_keys.dedup();
+    app_keys
+}
+
+#[must_use]
+pub fn drive_root_app_key_can_write_roots(
+    state: &ProfileState,
+    drive: &Drive,
+    app_key_pubkey: &str,
+) -> bool {
+    if state.can_write_roots_for_app_key(app_key_pubkey) {
+        return true;
+    }
+    if state.has_profile_roster_evidence() || state.app_keys.is_some() {
+        return false;
+    }
+    if app_key_pubkey == state.app_key_pubkey {
+        return state.can_write_roots();
+    }
+    drive.app_key_roots.contains_key(app_key_pubkey)
 }
 
 fn pick_relays(config: &AppConfig, relay_override: &[String]) -> Vec<String> {

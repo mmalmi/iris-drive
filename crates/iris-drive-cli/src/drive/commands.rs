@@ -140,7 +140,7 @@ pub(crate) fn cmd_event_drive_root(config_dir: &std::path::Path) -> Result<()> {
         &state.root_scope_id(),
         &drive.drive_id,
         root_ref,
-        &authorized_app_key_pubkeys(&state),
+        &iris_drive_core::drive_root_recipient_app_key_pubkeys(&state, drive),
     )
     .context("building drive-root event")?;
     println!("{}", serde_json::to_string_pretty(&event)?);

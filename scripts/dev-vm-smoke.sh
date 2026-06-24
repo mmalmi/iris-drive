@@ -69,6 +69,8 @@ PROJECTION_STRESS_FILES="${IRIS_DRIVE_DEV_VM_PROJECTION_STRESS_FILES:-32}"
 PROJECTION_STRESS_LARGE_BYTES="${IRIS_DRIVE_DEV_VM_PROJECTION_STRESS_LARGE_BYTES:-262144}"
 SMOKE_ONLY="${IRIS_DRIVE_DEV_VM_SMOKE_ONLY:-all}"
 SMOKE_ACTIVE_PHASE="$SMOKE_ONLY"
+MACOS_VISIBLE_FILEPROVIDER_STATE=""
+WINDOWS_CLOUDFILES_STATE=""
 mkdir -p "$(dirname "$TIMINGS_FILE")"
 : >"$TIMINGS_FILE"
 
@@ -233,8 +235,8 @@ macos_config_dir() {
   fi
   local candidate
   for candidate in \
-    "$HOME"/Library/Group\ Containers/*.to.iris.drive/Iris\ Drive\ Dev/Config \
     "$HOME"/Library/Group\ Containers/group.to.iris.drive/Iris\ Drive\ Dev/Config \
+    "$HOME"/Library/Group\ Containers/*.to.iris.drive/Iris\ Drive\ Dev/Config \
     "$HOME"/Library/Containers/to.iris.drive.macos/Data/Library/Application\ Support/Iris\ Drive\ Dev/Config
   do
     [[ -d "$candidate" ]] || continue
@@ -247,6 +249,63 @@ macos_config_dir() {
 config_dir="$(macos_config_dir)"
 "$HOME/src/iris-drive/target/debug/idrive" --config-dir "$config_dir" "$@"
 REMOTE_SH
+}
+
+macos_visible_fileprovider_available() {
+  if [[ -n "$MACOS_VISIBLE_FILEPROVIDER_STATE" ]]; then
+    [[ "$MACOS_VISIBLE_FILEPROVIDER_STATE" == "1" ]]
+    return
+  fi
+  case "${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_FILEPROVIDER:-auto}" in
+    1|true|TRUE|yes|YES|on|ON|force|FORCE)
+      MACOS_VISIBLE_FILEPROVIDER_STATE="1"
+      return 0
+      ;;
+    0|false|FALSE|no|NO|off|OFF|skip|SKIP)
+      MACOS_VISIBLE_FILEPROVIDER_STATE="0"
+      return 1
+      ;;
+  esac
+
+  local line
+  line="$(ssh "$MACOS_SSH_HOST" "grep -F 'Iris Drive FileProvider integration enabled=' /tmp/iris-drive-macos-app.err 2>/dev/null | tail -1" || true)"
+  if [[ "$line" == *"enabled=true"* ]]; then
+    MACOS_VISIBLE_FILEPROVIDER_STATE="1"
+    return 0
+  fi
+  MACOS_VISIBLE_FILEPROVIDER_STATE="0"
+  return 1
+}
+
+windows_cloudfiles_available() {
+  if [[ -n "$WINDOWS_CLOUDFILES_STATE" ]]; then
+    [[ "$WINDOWS_CLOUDFILES_STATE" == "1" ]]
+    return
+  fi
+  case "${IRIS_DRIVE_DEV_VM_WINDOWS_CLOUDFILES:-auto}" in
+    1|true|TRUE|yes|YES|on|ON|force|FORCE)
+      WINDOWS_CLOUDFILES_STATE="1"
+      return 0
+      ;;
+    0|false|FALSE|no|NO|off|OFF|skip|SKIP)
+      WINDOWS_CLOUDFILES_STATE="0"
+      return 1
+      ;;
+  esac
+
+  if win_ps <<'REMOTE_PS' >/dev/null 2>&1
+$Process = Get-Process | Where-Object {
+  $_.ProcessName -like "IrisDrive*" -or $_.ProcessName -like "Iris Drive*"
+} | Select-Object -First 1
+if ($Process) { exit 0 }
+exit 1
+REMOTE_PS
+  then
+    WINDOWS_CLOUDFILES_STATE="1"
+    return 0
+  fi
+  WINDOWS_CLOUDFILES_STATE="0"
+  return 1
 }
 
 ubuntu_provider_has() {
@@ -672,17 +731,22 @@ check_revisions() {
       return 0
       ;;
   esac
-  local local_head
-  local_head="$(git -C "$ROOT" rev-parse --short HEAD)"
-  log "checking VM revisions against $local_head"
-  [[ "$(ssh "$UBUNTU_SSH_HOST" 'git -C ~/src/iris-drive rev-parse --short HEAD')" == "$local_head" ]] \
-    || die "ubuntu VM is not on $local_head"
-  [[ "$(ssh "$MACOS_SSH_HOST" 'git -C ~/src/iris-drive rev-parse --short HEAD')" == "$local_head" ]] \
-    || die "macOS VM is not on $local_head"
-  [[ "$(win_ps <<'REMOTE_PS' | tr -d '\r'
-git -C (Join-Path $HOME "src\iris-drive") rev-parse --short HEAD
+  local local_head local_display ubuntu_head macos_head windows_head
+  local_head="$(git -C "$ROOT" rev-parse HEAD)"
+  local_display="${local_head:0:12}"
+  log "checking VM revisions against $local_display"
+  ubuntu_head="$(ssh "$UBUNTU_SSH_HOST" 'git -C ~/src/iris-drive rev-parse HEAD' | tr -d '\r')"
+  [[ "$ubuntu_head" == "$local_head" ]] \
+    || die "ubuntu VM is not on $local_display (found ${ubuntu_head:0:12})"
+  macos_head="$(ssh "$MACOS_SSH_HOST" 'git -C ~/src/iris-drive rev-parse HEAD' | tr -d '\r')"
+  [[ "$macos_head" == "$local_head" ]] \
+    || die "macOS VM is not on $local_display (found ${macos_head:0:12})"
+  windows_head="$(win_ps <<'REMOTE_PS' | tr -d '\r'
+git -C (Join-Path $HOME "src\iris-drive") rev-parse HEAD
 REMOTE_PS
-)" == "$local_head" ]] || die "Windows VM is not on $local_head"
+)"
+  [[ "$windows_head" == "$local_head" ]] \
+    || die "Windows VM is not on $local_display (found ${windows_head:0:12})"
 }
 
 check_fips_online() {
@@ -693,7 +757,7 @@ check_fips_online() {
   ubuntu_status="$(ssh "$UBUNTU_SSH_HOST" '"$HOME/src/iris-drive/target/debug/idrive" status')"
   macos_status="$(macos_idrive_json status)"
   windows_status="$(win_idrive_json status)"
-  STATUS_UBUNTU="$ubuntu_status" STATUS_MACOS="$macos_status" STATUS_WINDOWS="$windows_status" python3 <<'PY'
+STATUS_UBUNTU="$ubuntu_status" STATUS_MACOS="$macos_status" STATUS_WINDOWS="$windows_status" python3 <<'PY'
 import json
 import os
 
@@ -702,17 +766,46 @@ statuses = {
     "macos": json.loads(os.environ["STATUS_MACOS"]),
     "windows": json.loads(os.environ["STATUS_WINDOWS"]),
 }
+current_npubs = {}
 for name, status in statuses.items():
-    peers = {
-        peer.get("label"): peer
-        for peer in status.get("peers", [])
-        if not peer.get("is_current_device")
-    }
-    offline = [
-        f"{label}: online={peer.get('fips_online')} state={peer.get('sync_state')}"
-        for label, peer in sorted(peers.items())
-        if not peer.get("fips_online")
-    ]
+    npub = status.get("current_app_key_npub")
+    if not npub:
+        npub = ((status.get("profile") or {}).get("profile") or {}).get("current_app_key_npub")
+    if not npub:
+        npub = (status.get("profile") or {}).get("current_app_key_npub")
+    if not npub:
+        raise SystemExit(f"{name} current app-key npub unavailable")
+    current_npubs[name] = npub
+
+for name, status in statuses.items():
+    peers = {}
+    for peer in status.get("peers", []):
+        for key in ("label", "display_label", "app_key_npub", "app_key_pubkey"):
+            value = peer.get(key)
+            if value:
+                peers[value] = peer
+    fips = (status.get("network") or {}).get("fips") or {}
+    online_fips = set(
+        (fips.get("online_peers") or [])
+        + (fips.get("online_devices") or [])
+        + (fips.get("direct_peers") or [])
+        + (fips.get("direct_devices") or [])
+        + (fips.get("connected_peers") or [])
+        + (fips.get("mesh_peers") or [])
+        + (fips.get("mesh_devices") or [])
+    )
+    offline = []
+    for peer_name, npub in sorted(current_npubs.items()):
+        if peer_name == name:
+            continue
+        peer = peers.get(npub)
+        if peer is None:
+            if npub not in online_fips:
+                offline.append(f"{peer_name}: missing")
+        elif not peer.get("fips_online"):
+            offline.append(
+                f"{peer_name}: online={peer.get('fips_online')} state={peer.get('sync_state')}"
+            )
     if offline:
         raise SystemExit(f"{name} has offline FIPS peers: {offline}")
 PY
@@ -767,6 +860,164 @@ if (\$OldParent -eq \$Parent) {
   Move-Item -LiteralPath \$OldPath -Destination \$NewPath -Force
 }
 REMOTE_PS
+}
+
+write_windows_provider_file() {
+  local path="$1"
+  local content="$2"
+  local content_b64
+  content_b64="$(base64_arg "$content")"
+  win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$IrisRepo = Join-Path \$HOME "src\\iris-drive"
+\$Idrive = Join-Path \$IrisRepo "windows\\bin\\Debug\\net8.0-windows\\win-x64\\publish\\idrive.exe"
+if (-not (Test-Path \$Idrive)) {
+  \$Idrive = Join-Path \$IrisRepo "target\\debug\\idrive.exe"
+}
+\$ConfigDir = Join-Path \$env:APPDATA "iris-drive"
+\$Tmp = Join-Path \$env:TEMP ("iris-drive-provider-write-" + [guid]::NewGuid().ToString() + ".txt")
+try {
+  \$Content = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("$content_b64"))
+  [System.IO.File]::WriteAllText(\$Tmp, \$Content + [string][char]10, [System.Text.Encoding]::ASCII)
+  & \$Idrive --config-dir \$ConfigDir provider write "$path" \$Tmp | Out-Null
+} finally {
+  Remove-Item -LiteralPath \$Tmp -Force -ErrorAction SilentlyContinue
+}
+REMOTE_PS
+}
+
+write_windows_provider_zero_file() {
+  local path="$1"
+  local bytes="$2"
+  win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$IrisRepo = Join-Path \$HOME "src\\iris-drive"
+\$Idrive = Join-Path \$IrisRepo "windows\\bin\\Debug\\net8.0-windows\\win-x64\\publish\\idrive.exe"
+if (-not (Test-Path \$Idrive)) {
+  \$Idrive = Join-Path \$IrisRepo "target\\debug\\idrive.exe"
+}
+\$ConfigDir = Join-Path \$env:APPDATA "iris-drive"
+\$Tmp = Join-Path \$env:TEMP ("iris-drive-provider-zero-" + [guid]::NewGuid().ToString() + ".bin")
+try {
+  [System.IO.File]::WriteAllBytes(\$Tmp, [byte[]]::new($bytes))
+  & \$Idrive --config-dir \$ConfigDir provider write "$path" \$Tmp | Out-Null
+} finally {
+  Remove-Item -LiteralPath \$Tmp -Force -ErrorAction SilentlyContinue
+}
+REMOTE_PS
+}
+
+rename_windows_provider_path() {
+  local old_path="$1"
+  local new_path="$2"
+  win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$IrisRepo = Join-Path \$HOME "src\\iris-drive"
+\$Idrive = Join-Path \$IrisRepo "windows\\bin\\Debug\\net8.0-windows\\win-x64\\publish\\idrive.exe"
+if (-not (Test-Path \$Idrive)) {
+  \$Idrive = Join-Path \$IrisRepo "target\\debug\\idrive.exe"
+}
+\$ConfigDir = Join-Path \$env:APPDATA "iris-drive"
+& \$Idrive --config-dir \$ConfigDir provider rename "$old_path" "$new_path" | Out-Null
+REMOTE_PS
+}
+
+wait_windows_provider_file_has_content() {
+  local path="$1"
+  local expected="$2"
+  local expected_b64
+  expected_b64="$(base64_arg "$expected")"
+  win_ps_limited "$WINDOWS_PROBE_SSH_TIMEOUT" <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$IrisRepo = Join-Path \$HOME "src\\iris-drive"
+\$Idrive = Join-Path \$IrisRepo "windows\\bin\\Debug\\net8.0-windows\\win-x64\\publish\\idrive.exe"
+if (-not (Test-Path \$Idrive)) {
+  \$Idrive = Join-Path \$IrisRepo "target\\debug\\idrive.exe"
+}
+\$ConfigDir = Join-Path \$env:APPDATA "iris-drive"
+\$Tmp = Join-Path \$env:TEMP ("iris-drive-provider-read-" + [guid]::NewGuid().ToString() + ".txt")
+try {
+  \$PreviousErrorAction = \$ErrorActionPreference
+  \$ErrorActionPreference = "SilentlyContinue"
+  & \$Idrive --config-dir \$ConfigDir provider read "$path" \$Tmp *>\$null
+  \$ReadExit = \$LASTEXITCODE
+  \$ErrorActionPreference = \$PreviousErrorAction
+  if (\$ReadExit -ne 0 -or -not (Test-Path -LiteralPath \$Tmp)) {
+    exit 1
+  }
+  \$Expected = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("$expected_b64")) + [string][char]10
+  \$Actual = [System.IO.File]::ReadAllText(\$Tmp)
+  if (\$Actual -ne \$Expected) {
+    exit 1
+  }
+} finally {
+  Remove-Item -LiteralPath \$Tmp -Force -ErrorAction SilentlyContinue
+}
+REMOTE_PS
+}
+
+write_windows_surface_file() {
+  if windows_cloudfiles_available; then
+    write_windows_file "$@"
+  else
+    write_windows_provider_file "$@"
+  fi
+}
+
+write_windows_surface_zero_file() {
+  if windows_cloudfiles_available; then
+    write_windows_zero_file "$@"
+  else
+    write_windows_provider_zero_file "$@"
+  fi
+}
+
+delete_windows_surface_path() {
+  if windows_cloudfiles_available; then
+    delete_windows_path "$@"
+  else
+    delete_windows_provider_path "$@"
+  fi
+}
+
+rename_windows_surface_path() {
+  if windows_cloudfiles_available; then
+    rename_windows_path "$@"
+  else
+    rename_windows_provider_path "$@"
+  fi
+}
+
+wait_windows_surface_has() {
+  if windows_cloudfiles_available; then
+    wait_windows_disk_has "$@"
+  else
+    windows_provider_has "$@"
+  fi
+}
+
+wait_windows_surface_missing() {
+  if windows_cloudfiles_available; then
+    wait_windows_disk_missing "$@"
+  else
+    windows_provider_missing "$@"
+  fi
+}
+
+wait_windows_surface_reparse() {
+  if windows_cloudfiles_available; then
+    wait_windows_disk_reparse "$@"
+  else
+    return 0
+  fi
+}
+
+wait_windows_surface_file_has_content() {
+  if windows_cloudfiles_available; then
+    wait_windows_file_has_content "$@"
+  else
+    wait_windows_provider_file_has_content "$@"
+  fi
 }
 
 write_ubuntu_file() {
@@ -1021,8 +1272,8 @@ macos_config_dir() {
   fi
   local candidate
   for candidate in \
-    "$HOME"/Library/Group\ Containers/*.to.iris.drive/Iris\ Drive\ Dev/Config \
     "$HOME"/Library/Group\ Containers/group.to.iris.drive/Iris\ Drive\ Dev/Config \
+    "$HOME"/Library/Group\ Containers/*.to.iris.drive/Iris\ Drive\ Dev/Config \
     "$HOME"/Library/Containers/to.iris.drive.macos/Data/Library/Application\ Support/Iris\ Drive\ Dev/Config
   do
     [[ -d "$candidate" ]] || continue
@@ -1036,6 +1287,39 @@ config_dir="$(macos_config_dir)"
 tmp="$(mktemp -t iris-drive-macos-provider-write)"
 trap 'rm -f "$tmp"' EXIT
 printf '%s\n' "$content" > "$tmp"
+"$HOME/src/iris-drive/target/debug/idrive" --config-dir "$config_dir" provider write "$path" "$tmp" >/dev/null
+REMOTE_SH
+}
+
+write_macos_provider_zero_file() {
+  local path="$1"
+  local bytes="$2"
+  ssh "$MACOS_SSH_HOST" 'bash -se' "$path" "$bytes" <<'REMOTE_SH'
+set -Eeuo pipefail
+path="$1"
+bytes="$2"
+macos_config_dir() {
+  if [[ -n "${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-}" ]]; then
+    printf '%s\n' "$IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR/Config"
+    return 0
+  fi
+  local candidate
+  for candidate in \
+    "$HOME"/Library/Group\ Containers/group.to.iris.drive/Iris\ Drive\ Dev/Config \
+    "$HOME"/Library/Group\ Containers/*.to.iris.drive/Iris\ Drive\ Dev/Config \
+    "$HOME"/Library/Containers/to.iris.drive.macos/Data/Library/Application\ Support/Iris\ Drive\ Dev/Config
+  do
+    [[ -d "$candidate" ]] || continue
+    [[ -f "$candidate/key" || -f "$candidate/config.json" ]] || continue
+    printf '%s\n' "$candidate"
+    return 0
+  done
+  return 1
+}
+config_dir="$(macos_config_dir)"
+tmp="$(mktemp -t iris-drive-macos-provider-zero)"
+trap 'rm -f "$tmp"' EXIT
+python3 -c 'import sys; open(sys.argv[1], "wb").write(b"\0" * int(sys.argv[2]))' "$tmp" "$bytes"
 "$HOME/src/iris-drive/target/debug/idrive" --config-dir "$config_dir" provider write "$path" "$tmp" >/dev/null
 REMOTE_SH
 }
@@ -1497,8 +1781,16 @@ print(json.dumps({"entries": entries}, sort_keys=True))
 PY
 )"
   ubuntu_json="$(ubuntu_visible_manifest "$dir")" || return 1
-  macos_json="$(macos_visible_manifest "$dir")" || return 1
-  windows_json="$(windows_visible_manifest "$dir")" || return 1
+  if macos_visible_fileprovider_available; then
+    macos_json="$(macos_visible_manifest "$dir")" || return 1
+  else
+    macos_json=""
+  fi
+  if windows_cloudfiles_available; then
+    windows_json="$(windows_visible_manifest "$dir")" || return 1
+  else
+    windows_json=""
+  fi
   EXPECTED_JSON="$expected_json" \
     UBUNTU_JSON="$ubuntu_json" \
     MACOS_JSON="$macos_json" \
@@ -1511,9 +1803,11 @@ import sys
 expected = json.loads(os.environ["EXPECTED_JSON"])
 manifests = {
     "ubuntu": json.loads(os.environ["UBUNTU_JSON"]),
-    "macos": json.loads(os.environ["MACOS_JSON"]),
-    "windows": json.loads(os.environ["WINDOWS_JSON"]),
 }
+if os.environ.get("MACOS_JSON"):
+    manifests["macos"] = json.loads(os.environ["MACOS_JSON"])
+if os.environ.get("WINDOWS_JSON"):
+    manifests["windows"] = json.loads(os.environ["WINDOWS_JSON"])
 
 for name, manifest in manifests.items():
     conflicts = [
@@ -1545,8 +1839,16 @@ print(json.dumps(sorted(sys.argv[1:])))
 PY
 )"
   ubuntu_json="$(ubuntu_visible_manifest "$dir")" || return 1
-  macos_json="$(macos_visible_manifest "$dir")" || return 1
-  windows_json="$(windows_visible_manifest "$dir")" || return 1
+  if macos_visible_fileprovider_available; then
+    macos_json="$(macos_visible_manifest "$dir")" || return 1
+  else
+    macos_json=""
+  fi
+  if windows_cloudfiles_available; then
+    windows_json="$(windows_visible_manifest "$dir")" || return 1
+  else
+    windows_json=""
+  fi
   EXPECTED_PATHS_JSON="$expected_paths_json" \
     UBUNTU_JSON="$ubuntu_json" \
     MACOS_JSON="$macos_json" \
@@ -1558,9 +1860,11 @@ import os
 expected_paths = set(json.loads(os.environ["EXPECTED_PATHS_JSON"]))
 manifests = {
     "ubuntu": json.loads(os.environ["UBUNTU_JSON"]),
-    "macos": json.loads(os.environ["MACOS_JSON"]),
-    "windows": json.loads(os.environ["WINDOWS_JSON"]),
 }
+if os.environ.get("MACOS_JSON"):
+    manifests["macos"] = json.loads(os.environ["MACOS_JSON"])
+if os.environ.get("WINDOWS_JSON"):
+    manifests["windows"] = json.loads(os.environ["WINDOWS_JSON"])
 
 baseline_name = "ubuntu"
 baseline = manifests[baseline_name]
@@ -1593,8 +1897,16 @@ heavy_projection_manifest_matches() {
   local macos_json
   local windows_json
   ubuntu_json="$(ubuntu_visible_manifest "$dir")" || return 1
-  macos_json="$(macos_visible_manifest "$dir")" || return 1
-  windows_json="$(windows_visible_manifest "$dir")" || return 1
+  if macos_visible_fileprovider_available; then
+    macos_json="$(macos_visible_manifest "$dir")" || return 1
+  else
+    macos_json=""
+  fi
+  if windows_cloudfiles_available; then
+    windows_json="$(windows_visible_manifest "$dir")" || return 1
+  else
+    windows_json=""
+  fi
   FILE_COUNT="$file_count" \
     LARGE_BYTES="$large_bytes" \
     RUN_ID="$run_id" \
@@ -1647,9 +1959,11 @@ expected = {"entries": sorted(expected_entries, key=lambda entry: entry["path"])
 
 manifests = {
     "ubuntu": json.loads(os.environ["UBUNTU_JSON"]),
-    "macos": json.loads(os.environ["MACOS_JSON"]),
-    "windows": json.loads(os.environ["WINDOWS_JSON"]),
 }
+if os.environ.get("MACOS_JSON"):
+    manifests["macos"] = json.loads(os.environ["MACOS_JSON"])
+if os.environ.get("WINDOWS_JSON"):
+    manifests["windows"] = json.loads(os.environ["WINDOWS_JSON"])
 
 def path_key(entry):
     return entry.get("path", "")
@@ -1715,15 +2029,21 @@ errors = []
 for name, status in statuses.items():
     hashtree = status.get("hashtree", {})
     network = status.get("network", {})
+    summary = status.get("summary", {})
+    peers = status.get("peers", [])
     file_count = hashtree.get("file_count") or hashtree.get("top_level_entries") or 0
     visible_file_bytes = hashtree.get("visible_file_bytes") or 0
-    authorized_devices = network.get("authorized_device_count") or 0
+    authorized_app_keys = (
+        summary.get("authorized_app_key_count")
+        or network.get("authorized_app_key_count")
+        or len([peer for peer in peers if peer.get("authorized")])
+    )
     if file_count <= 0:
         errors.append(f"{name} status file_count={file_count}")
     if visible_file_bytes <= 0:
         errors.append(f"{name} status visible_file_bytes={visible_file_bytes}")
-    if authorized_devices < 3:
-        errors.append(f"{name} status authorized_device_count={authorized_devices}")
+    if authorized_app_keys < 3:
+        errors.append(f"{name} status authorized_app_key_count={authorized_app_keys}")
 if errors:
     raise SystemExit("; ".join(errors))
 PY
@@ -1746,28 +2066,43 @@ run_sync_smoke() {
   local ubuntu_delete_monitor_token="${RUN_ID//[^A-Za-z0-9]/}-ubuntu-delete"
   local windows_monitor_token="${RUN_ID//[^A-Za-z0-9]/}-windows-live"
 
+  if macos_visible_fileprovider_available; then
+    log "macOS visible FileProvider folder checks enabled"
+  else
+    log "skipping macOS visible FileProvider folder checks; app reports FileProvider disabled"
+  fi
+  if windows_cloudfiles_available; then
+    log "Windows CloudFiles disk checks enabled"
+  else
+    log "skipping Windows CloudFiles disk checks; Windows app GUI is not running"
+  fi
+
   log "checking Windows-origin create then Ubuntu-origin delete"
-  write_windows_file "$windows_file" "from windows $RUN_ID"
+  write_windows_surface_file "$windows_file" "from windows $RUN_ID"
   wait_for "Windows file reaches Ubuntu" "$SYNC_WAIT_TIMEOUT" \
     wait_ubuntu_file_has "$windows_file"
   wait_for "Windows file reaches macOS provider" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
     macos_provider_has "$windows_file"
-  wait_for "Windows file reaches macOS visible FileProvider folder" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
-    macos_visible_drive_has "$windows_file"
+  if macos_visible_fileprovider_available; then
+    wait_for "Windows file reaches macOS visible FileProvider folder" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+      macos_visible_drive_has "$windows_file"
+  fi
   delete_ubuntu_path "$windows_file"
-  wait_for_quiet "Ubuntu delete removes Windows disk file" \
+  wait_for_quiet "Ubuntu delete removes Windows surface file" \
     "$SYNC_WAIT_TIMEOUT" "$SYNC_QUIET_POLL_INTERVAL" \
-    wait_windows_disk_missing "$windows_file"
+    wait_windows_surface_missing "$windows_file"
   wait_for "Ubuntu delete removes Windows provider file" "$SYNC_WAIT_TIMEOUT" \
     windows_provider_missing "$windows_file"
 
   log "checking Windows placeholder delete publishes back to Ubuntu"
   write_ubuntu_file "$ubuntu_file" "from ubuntu $RUN_ID"
-  wait_for "Ubuntu file reaches Windows disk" "$SYNC_WAIT_TIMEOUT" \
-    wait_windows_disk_has "$ubuntu_file"
-  wait_for "Ubuntu file is represented as a Windows Cloud Files placeholder" \
-    "$SYNC_WAIT_TIMEOUT" wait_windows_disk_reparse "$ubuntu_file"
-  delete_windows_path "$ubuntu_file"
+  wait_for "Ubuntu file reaches Windows surface" "$SYNC_WAIT_TIMEOUT" \
+    wait_windows_surface_has "$ubuntu_file"
+  if windows_cloudfiles_available; then
+    wait_for "Ubuntu file is represented as a Windows Cloud Files placeholder" \
+      "$SYNC_WAIT_TIMEOUT" wait_windows_surface_reparse "$ubuntu_file"
+  fi
+  delete_windows_surface_path "$ubuntu_file"
   wait_for "Windows placeholder delete removes Ubuntu file" \
     "$WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT" \
     wait_ubuntu_missing "$ubuntu_file"
@@ -1780,32 +2115,46 @@ run_sync_smoke() {
   write_macos_provider_file "$macos_file" "from macos $RUN_ID"
   wait_for "macOS provider file reaches Ubuntu" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
     wait_ubuntu_file_has "$macos_file"
-  wait_for "macOS provider file reaches Windows disk" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
-    wait_windows_disk_has "$macos_file"
-  wait_for "macOS provider file is represented as a Windows Cloud Files placeholder" \
-    "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" wait_windows_disk_reparse "$macos_file"
-  delete_windows_path "$macos_file"
+  wait_for "macOS provider file reaches Windows surface" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+    wait_windows_surface_has "$macos_file"
+  if windows_cloudfiles_available; then
+    wait_for "macOS provider file is represented as a Windows Cloud Files placeholder" \
+      "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" wait_windows_surface_reparse "$macos_file"
+  fi
+  delete_windows_surface_path "$macos_file"
   wait_for "Windows delete removes macOS provider file" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
     macos_provider_missing "$macos_file"
   wait_for "Windows delete removes Ubuntu copy of macOS file" \
     "$WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT" \
     wait_ubuntu_missing "$macos_file"
 
-  log "checking Windows local create does not hide existing placeholders"
+  if windows_cloudfiles_available; then
+    log "checking Windows local create does not hide existing placeholders"
+  else
+    log "checking Windows provider create preserves remote projection"
+  fi
   write_ubuntu_file "$windows_projection_guard_ubuntu" "projection guard ubuntu $RUN_ID"
   write_macos_provider_file "$windows_projection_guard_macos" "projection guard macos $RUN_ID"
-  wait_for "Ubuntu projection guard reaches Windows disk" "$SYNC_WAIT_TIMEOUT" \
-    wait_windows_disk_has "$windows_projection_guard_ubuntu"
-  wait_for "Ubuntu projection guard is a Windows Cloud Files placeholder" \
-    "$SYNC_WAIT_TIMEOUT" wait_windows_disk_reparse "$windows_projection_guard_ubuntu"
-  wait_for "macOS projection guard reaches Windows disk" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
-    wait_windows_disk_has "$windows_projection_guard_macos"
-  wait_for "macOS projection guard is a Windows Cloud Files placeholder" \
-    "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" wait_windows_disk_reparse "$windows_projection_guard_macos"
-  windows_projection_stays_visible_during_local_create \
-    "$windows_projection_guard_local" \
-    "$windows_projection_guard_ubuntu" \
-    "$windows_projection_guard_macos"
+  wait_for "Ubuntu projection guard reaches Windows surface" "$SYNC_WAIT_TIMEOUT" \
+    wait_windows_surface_has "$windows_projection_guard_ubuntu"
+  if windows_cloudfiles_available; then
+    wait_for "Ubuntu projection guard is a Windows Cloud Files placeholder" \
+      "$SYNC_WAIT_TIMEOUT" wait_windows_surface_reparse "$windows_projection_guard_ubuntu"
+  fi
+  wait_for "macOS projection guard reaches Windows surface" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+    wait_windows_surface_has "$windows_projection_guard_macos"
+  if windows_cloudfiles_available; then
+    wait_for "macOS projection guard is a Windows Cloud Files placeholder" \
+      "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" wait_windows_surface_reparse "$windows_projection_guard_macos"
+  fi
+  if windows_cloudfiles_available; then
+    windows_projection_stays_visible_during_local_create \
+      "$windows_projection_guard_local" \
+      "$windows_projection_guard_ubuntu" \
+      "$windows_projection_guard_macos"
+  else
+    write_windows_provider_file "$windows_projection_guard_local" "projection guard windows $RUN_ID"
+  fi
   wait_for "Windows projection guard local create reaches Ubuntu" "$SYNC_WAIT_TIMEOUT" \
     wait_ubuntu_file_has "$windows_projection_guard_local"
   wait_for "Windows projection guard local create reaches macOS provider" \
@@ -1814,17 +2163,17 @@ run_sync_smoke() {
   log "checking Ubuntu edit replaces hydrated Windows projection bytes"
   write_ubuntu_file "$ubuntu_edit_windows_hydrated" "old ubuntu bytes $RUN_ID"
   wait_for "Ubuntu edit baseline reaches Windows bytes" "$SYNC_WAIT_TIMEOUT" \
-    wait_windows_file_has_content "$ubuntu_edit_windows_hydrated" "old ubuntu bytes $RUN_ID"
+    wait_windows_surface_file_has_content "$ubuntu_edit_windows_hydrated" "old ubuntu bytes $RUN_ID"
   write_ubuntu_file "$ubuntu_edit_windows_hydrated" "new ubuntu bytes $RUN_ID"
   wait_for "Ubuntu edit updates hydrated Windows bytes" "$SYNC_WAIT_TIMEOUT" \
-    wait_windows_file_has_content "$ubuntu_edit_windows_hydrated" "new ubuntu bytes $RUN_ID"
+    wait_windows_surface_file_has_content "$ubuntu_edit_windows_hydrated" "new ubuntu bytes $RUN_ID"
 
   log "checking Ubuntu-origin create then macOS-origin provider delete"
   write_ubuntu_file "$macos_delete_file" "delete from macos $RUN_ID"
   wait_for "Ubuntu file reaches macOS provider" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
     macos_provider_has "$macos_delete_file"
-  wait_for "Ubuntu file reaches Windows disk before macOS delete" "$SYNC_WAIT_TIMEOUT" \
-    wait_windows_disk_has "$macos_delete_file"
+  wait_for "Ubuntu file reaches Windows surface before macOS delete" "$SYNC_WAIT_TIMEOUT" \
+    wait_windows_surface_has "$macos_delete_file"
   ubuntu_start_directory_monitor "$SMOKE_DIR" "$ubuntu_delete_monitor_token"
   delete_macos_provider_path "$macos_delete_file"
   wait_for "macOS provider delete removes Ubuntu file" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
@@ -1833,21 +2182,21 @@ run_sync_smoke() {
     ubuntu_monitor_saw_any "$ubuntu_delete_monitor_token" \
       "$(basename "$macos_delete_file")" "iris-drive-refresh" ".iris-drive-refresh"
   ubuntu_stop_directory_monitor "$ubuntu_delete_monitor_token"
-  wait_for_quiet "macOS provider delete removes Windows disk file" \
+  wait_for_quiet "macOS provider delete removes Windows surface file" \
     "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" "$SYNC_QUIET_POLL_INTERVAL" \
-    wait_windows_disk_missing "$macos_delete_file"
+    wait_windows_surface_missing "$macos_delete_file"
   wait_for "macOS provider delete removes Windows provider file" \
     "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" windows_provider_missing "$macos_delete_file"
 
   log "checking Windows-origin rename/create updates other live providers"
-  write_windows_file "$windows_rename_src" "rename from windows $RUN_ID"
+  write_windows_surface_file "$windows_rename_src" "rename from windows $RUN_ID"
   wait_for "Windows rename source reaches Ubuntu" "$SYNC_WAIT_TIMEOUT" \
     wait_ubuntu_file_has "$windows_rename_src"
   wait_for "Windows rename source reaches macOS provider" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
     macos_provider_has "$windows_rename_src"
   local macos_log_before
   macos_log_before="$(macos_app_log_line_count)"
-  rename_windows_path "$windows_rename_src" "$windows_rename_dst"
+  rename_windows_surface_path "$windows_rename_src" "$windows_rename_dst"
   wait_for "Windows rename destination reaches Ubuntu" "$SYNC_WAIT_TIMEOUT" \
     wait_ubuntu_file_has "$windows_rename_dst"
   wait_for "Windows rename source disappears from Ubuntu" "$SYNC_WAIT_TIMEOUT" \
@@ -1856,12 +2205,14 @@ run_sync_smoke() {
     macos_provider_has "$windows_rename_dst"
   wait_for "Windows rename source disappears from macOS provider" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
     macos_provider_missing "$windows_rename_src"
-  wait_for "macOS FileProvider was signaled after Windows rename" "$SYNC_WAIT_TIMEOUT" \
-    macos_log_has_fileprovider_signal_after "$macos_log_before"
+  if macos_visible_fileprovider_available; then
+    wait_for "macOS FileProvider was signaled after Windows rename" "$SYNC_WAIT_TIMEOUT" \
+      macos_log_has_fileprovider_signal_after "$macos_log_before"
+  fi
 
   log "checking Linux directory monitor sees a remote Windows create"
   ubuntu_start_directory_monitor "$SMOKE_DIR" "$monitor_token"
-  write_windows_file "$live_file" "live from windows $RUN_ID"
+  write_windows_surface_file "$live_file" "live from windows $RUN_ID"
   wait_for "Ubuntu directory monitor wakes for Windows create" "$SYNC_WAIT_TIMEOUT" \
     ubuntu_monitor_saw_any "$monitor_token" "$(basename "$live_file")" "iris-drive-refresh" ".iris-drive-refresh"
   wait_for "Ubuntu live create is visible after monitor wake" 15 wait_ubuntu_file_has "$live_file"
@@ -1869,13 +2220,20 @@ run_sync_smoke() {
   wait_for "Windows live create reaches macOS provider" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" macos_provider_has "$live_file"
 
   log "checking Windows directory monitor sees a remote Ubuntu create"
-  windows_start_directory_monitor "$SMOKE_DIR" "$windows_monitor_token"
+  if windows_cloudfiles_available; then
+    windows_start_directory_monitor "$SMOKE_DIR" "$windows_monitor_token"
+  fi
   write_ubuntu_file "$windows_live_file" "live from ubuntu $RUN_ID"
-  wait_for "Windows directory monitor wakes or disk refreshes for Ubuntu create" \
-    "$SYNC_WAIT_TIMEOUT" windows_monitor_saw_any_or_disk_has \
-    "$windows_monitor_token" "$windows_live_file"
-  wait_for "Ubuntu live create is visible on Windows disk" 15 wait_windows_disk_has "$windows_live_file"
-  windows_stop_directory_monitor "$windows_monitor_token"
+  if windows_cloudfiles_available; then
+    wait_for "Windows directory monitor wakes or disk refreshes for Ubuntu create" \
+      "$SYNC_WAIT_TIMEOUT" windows_monitor_saw_any_or_disk_has \
+      "$windows_monitor_token" "$windows_live_file"
+    wait_for "Ubuntu live create is visible on Windows disk" 15 wait_windows_disk_has "$windows_live_file"
+    windows_stop_directory_monitor "$windows_monitor_token"
+  else
+    wait_for "Ubuntu live create reaches Windows provider" "$SYNC_WAIT_TIMEOUT" \
+      windows_provider_has "$windows_live_file"
+  fi
 
   log "checking native visible directories converge without conflict fan-out"
   wait_for "native visible smoke directory manifests converge" "$SYNC_WAIT_TIMEOUT" \
@@ -1898,12 +2256,20 @@ run_heavy_projection_stress() {
     local suffix
     suffix="$(printf "%03d" "$i")"
     write_ubuntu_file "$stress_dir/ubuntu/$suffix.txt" "stress ubuntu $suffix $RUN_ID"
-    write_windows_file "$stress_dir/windows/$suffix.txt" "stress windows $suffix $RUN_ID"
-    write_macos_visible_file "$stress_dir/macos/$suffix.txt" "stress macos $suffix $RUN_ID"
+    write_windows_surface_file "$stress_dir/windows/$suffix.txt" "stress windows $suffix $RUN_ID"
+    if macos_visible_fileprovider_available; then
+      write_macos_visible_file "$stress_dir/macos/$suffix.txt" "stress macos $suffix $RUN_ID"
+    else
+      write_macos_provider_file "$stress_dir/macos/$suffix.txt" "stress macos $suffix $RUN_ID"
+    fi
   done
   write_ubuntu_zero_file "$stress_dir/large/ubuntu-zero.bin" "$PROJECTION_STRESS_LARGE_BYTES"
-  write_windows_zero_file "$stress_dir/large/windows-zero.bin" "$PROJECTION_STRESS_LARGE_BYTES"
-  write_macos_visible_zero_file "$stress_dir/large/macos-zero.bin" "$PROJECTION_STRESS_LARGE_BYTES"
+  write_windows_surface_zero_file "$stress_dir/large/windows-zero.bin" "$PROJECTION_STRESS_LARGE_BYTES"
+  if macos_visible_fileprovider_available; then
+    write_macos_visible_zero_file "$stress_dir/large/macos-zero.bin" "$PROJECTION_STRESS_LARGE_BYTES"
+  else
+    write_macos_provider_zero_file "$stress_dir/large/macos-zero.bin" "$PROJECTION_STRESS_LARGE_BYTES"
+  fi
   wait_for "heavy native projection manifests converge with expected bytes" "$HEAVY_PROJECTION_SYNC_WAIT_TIMEOUT" \
     heavy_projection_manifest_matches \
     "$stress_dir" "$PROJECTION_STRESS_FILES" "$PROJECTION_STRESS_LARGE_BYTES" "$RUN_ID"
