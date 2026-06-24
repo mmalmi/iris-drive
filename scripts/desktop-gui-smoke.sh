@@ -243,6 +243,9 @@ function Write-SmokeLog([string]$Message) {
 }
 
 function Fail([string]$Message) {
+  if (Get-Command Write-FailureScreenshot -ErrorAction SilentlyContinue) {
+    Write-FailureScreenshot
+  }
   [Console]::Error.WriteLine("[windows-gui-smoke] ERROR: $Message")
   exit 1
 }
@@ -289,6 +292,30 @@ Add-Type -Namespace IrisDriveSmoke -Name NativeMethods -MemberDefinition @"
   public static extern bool SetForegroundWindow(System.IntPtr hWnd);
 "@
 
+function Write-FailureScreenshot {
+  if ($script:LastWindowsGuiPreflightScreenshot -and (Test-Path $script:LastWindowsGuiPreflightScreenshot)) {
+    $Bytes = (Get-Item $script:LastWindowsGuiPreflightScreenshot).Length
+    Write-SmokeLog "failure screenshot saved to $script:LastWindowsGuiPreflightScreenshot bytes=$Bytes"
+    return
+  }
+  try {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    $Screenshot = Join-Path $PublishDir "gui-smoke-failure.png"
+    $Bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $Bitmap = [System.Drawing.Bitmap]::new($Bounds.Width, $Bounds.Height)
+    $Graphics = [System.Drawing.Graphics]::FromImage($Bitmap)
+    $Graphics.CopyFromScreen($Bounds.Location, [System.Drawing.Point]::Empty, $Bounds.Size)
+    $Bitmap.Save($Screenshot, [System.Drawing.Imaging.ImageFormat]::Png)
+    $Graphics.Dispose()
+    $Bitmap.Dispose()
+    $Bytes = (Get-Item $Screenshot).Length
+    Write-SmokeLog "failure screenshot saved to $Screenshot bytes=$Bytes"
+  } catch {
+    Write-SmokeLog "failure screenshot unavailable: $($_.Exception.Message)"
+  }
+}
+
 function Current-IrisWindowProcess {
   Get-Process -Name "IrisDrive" -ErrorAction SilentlyContinue |
     Where-Object {
@@ -320,35 +347,44 @@ function Test-InteractiveDesktop {
 }
 
 function Test-VisibleWindowLaunch {
-  $ExistingNotepadIds = @(
-    Get-Process -Name "notepad" -ErrorAction SilentlyContinue |
-      ForEach-Object { $_.Id }
-  )
   $TaskName = "IrisDriveGuiSmokeWindowPreflight"
-  $LaunchScript = Join-Path $PublishDir "launch-window-preflight.cmd"
+  $ProbeDir = Join-Path $PublishDir "gui-smoke-preflight"
+  $ProbeScript = Join-Path $ProbeDir "capture-desktop.ps1"
+  $ProbeImage = Join-Path $ProbeDir "desktop.png"
+  $PersistedProbeImage = Join-Path $PublishDir "gui-smoke-preflight.png"
+  $ProbeResult = Join-Path $ProbeDir "result.txt"
+  $ProbeError = Join-Path $ProbeDir "error.txt"
+  New-Item -ItemType Directory -Force -Path $ProbeDir | Out-Null
+  Remove-Item -Force -ErrorAction SilentlyContinue $ProbeImage, $PersistedProbeImage, $ProbeResult, $ProbeError
 @"
-@echo off
-start "" notepad.exe
-"@ | Set-Content -Encoding ASCII $LaunchScript
+`$ErrorActionPreference = "Stop"
+try {
+  Add-Type -AssemblyName System.Windows.Forms
+  Add-Type -AssemblyName System.Drawing
+  `$Bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+  `$Bitmap = [System.Drawing.Bitmap]::new(`$Bounds.Width, `$Bounds.Height)
+  `$Graphics = [System.Drawing.Graphics]::FromImage(`$Bitmap)
+  `$Graphics.CopyFromScreen(`$Bounds.Location, [System.Drawing.Point]::Empty, `$Bounds.Size)
+  `$Bitmap.Save("$ProbeImage", [System.Drawing.Imaging.ImageFormat]::Png)
+  `$Graphics.Dispose()
+  `$Bitmap.Dispose()
+  "captured width=`$(`$Bounds.Width) height=`$(`$Bounds.Height)" | Set-Content -Encoding ASCII "$ProbeResult"
+} catch {
+  (`$_ | Out-String) | Set-Content -Encoding ASCII "$ProbeError"
+}
+"@ | Set-Content -Encoding ASCII $ProbeScript
 
   try {
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
-    $Action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$LaunchScript`"" -WorkingDirectory $PublishDir
+    $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument "-NoProfile -ExecutionPolicy Bypass -File `"$ProbeScript`"" -WorkingDirectory $ProbeDir
     $Trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1))
     $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
     Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Force | Out-Null
     Start-ScheduledTask -TaskName $TaskName
 
-    for ($i = 0; $i -lt 20; $i++) {
-      $Candidates = @(
-        Get-Process -Name "notepad" -ErrorAction SilentlyContinue |
-          Where-Object { $ExistingNotepadIds -notcontains $_.Id }
-      )
-      foreach ($Candidate in $Candidates) {
-        if ($Candidate.MainWindowHandle -ne [IntPtr]::Zero -and
-            [IrisDriveSmoke.NativeMethods]::IsWindowVisible($Candidate.MainWindowHandle)) {
-          return $true
-        }
+    for ($i = 0; $i -lt 40; $i++) {
+      if ((Test-Path $ProbeResult) -or (Test-Path $ProbeError)) {
+        break
       }
       Start-Sleep -Milliseconds 250
     }
@@ -357,28 +393,26 @@ start "" notepad.exe
     if ($Task -or $TaskInfo) {
       Write-SmokeLog "Windows GUI preflight task state=$($Task.State) last_result=$($TaskInfo.LastTaskResult)"
     }
-    $Candidates = @(
-      Get-Process -Name "notepad" -ErrorAction SilentlyContinue |
-        Where-Object { $ExistingNotepadIds -notcontains $_.Id }
-    )
-    if ($Candidates.Count -eq 0) {
-      Write-SmokeLog "Windows GUI preflight launched no disposable Notepad process"
-    } else {
-      foreach ($Candidate in $Candidates) {
-        $Visible = $false
-        if ($Candidate.MainWindowHandle -ne [IntPtr]::Zero) {
-          $Visible = [IrisDriveSmoke.NativeMethods]::IsWindowVisible($Candidate.MainWindowHandle)
-        }
-        Write-SmokeLog "Windows GUI preflight candidate id=$($Candidate.Id) session=$($Candidate.SessionId) handle=$($Candidate.MainWindowHandle) visible=$Visible"
-      }
+    if (Test-Path $ProbeError) {
+      Write-SmokeLog "Windows GUI preflight screenshot error: $((Get-Content $ProbeError -Raw).Trim())"
+      return $false
+    }
+    if (-not (Test-Path $ProbeImage)) {
+      Write-SmokeLog "Windows GUI preflight did not produce a desktop screenshot"
+      return $false
+    }
+    $ProbeImageBytes = (Get-Item $ProbeImage).Length
+    $ProbeSummary = if (Test-Path $ProbeResult) { (Get-Content $ProbeResult -Raw).Trim() } else { "captured" }
+    Copy-Item -Force $ProbeImage $PersistedProbeImage
+    $script:LastWindowsGuiPreflightScreenshot = $PersistedProbeImage
+    Write-SmokeLog "Windows GUI preflight desktop screenshot $ProbeSummary bytes=$ProbeImageBytes file=$PersistedProbeImage"
+    if ($ProbeImageBytes -gt 1024) {
+      return $true
     }
     return $false
   } finally {
-    Get-Process -Name "notepad" -ErrorAction SilentlyContinue |
-      Where-Object { $ExistingNotepadIds -notcontains $_.Id } |
-      Stop-Process -Force -ErrorAction SilentlyContinue
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
-    Remove-Item -Force -ErrorAction SilentlyContinue $LaunchScript
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $ProbeDir
   }
 }
 
