@@ -293,6 +293,9 @@ function Test-IrisDriveCli([string]\$candidate) {
   return \$LASTEXITCODE -eq 0
 }
 \$idrive = \$overrideIdrive
+if ([string]::IsNullOrWhiteSpace(\$idrive) -and (Test-IrisDriveCli \$repoIdrive)) {
+  \$idrive = \$repoIdrive
+}
 if ([string]::IsNullOrWhiteSpace(\$idrive)) {
   if (Test-Path -LiteralPath (Join-Path \$repo 'Cargo.toml')) {
     \$cargo = Get-Command cargo -ErrorAction SilentlyContinue
@@ -343,8 +346,22 @@ supports_app_keys() {
   [[ -x \"\$1\" ]] && \"\$1\" app-keys --help >/dev/null 2>&1
 }
 repo=\"\$HOME/src/iris-drive\"
-idrive=\"\${IRIS_DRIVE_E2E_IDRIVE:-}\"
-if [[ -z \"\$idrive\" && -f \"\$repo/Cargo.toml\" ]] && command -v cargo >/dev/null 2>&1; then
+idrive=$(sh_quote "${IRIS_DRIVE_E2E_IDRIVE:-}")
+if [[ -z \"\$idrive\" ]]; then
+  for candidate in \\
+    \"\$repo/target/debug/idrive\" \\
+    \"\$HOME/.cache/cargo-target/debug/idrive\" \\
+    \"\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/debug/idrive}\" \\
+    \"\$HOME/.cargo/bin/idrive\" \\
+    \"\$(command -v idrive || true)\"
+  do
+    if supports_app_keys \"\$candidate\"; then
+      idrive=\"\$candidate\"
+      break
+    fi
+  done
+fi
+if ! supports_app_keys \"\$idrive\" && [[ -f \"\$repo/Cargo.toml\" ]] && command -v cargo >/dev/null 2>&1; then
   (cd \"\$repo\" && cargo build -q -p idrive --bin idrive)
   idrive=\"\$repo/target/debug/idrive\"
   [[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cache/cargo-target/debug/idrive\"
