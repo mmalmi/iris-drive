@@ -611,6 +611,20 @@ pub fn validate_signed_iris_profile_roster_op(
     Ok(())
 }
 
+fn canonical_signed_iris_profile_roster_op(
+    signed: &SignedIrisProfileRosterOp,
+) -> Result<SignedIrisProfileRosterOp, IrisProfileError> {
+    let event = Event::from_json(&signed.event_json)
+        .map_err(|error| IrisProfileError::Event(error.to_string()))?;
+    let parsed = parse_iris_profile_roster_op_event(&event)?;
+    if parsed.op_id != signed.op_id || parsed.signer_pubkey != signed.signer_pubkey {
+        return Err(IrisProfileError::Event(
+            "roster op event_json does not match op identity fields".to_string(),
+        ));
+    }
+    Ok(parsed)
+}
+
 pub fn parse_iris_profile_facet_acceptance_event(
     event: &Event,
 ) -> Result<SignedIrisProfileFacetAcceptance, IrisProfileError> {
@@ -1185,9 +1199,12 @@ where
     });
 
     for op in ops {
-        if validate_signed_iris_profile_roster_op(&op).is_err() {
-            rejected_op_ids.push(op.op_id);
-        } else if let Ok(identity_op) = signed_iris_profile_roster_op_to_identity(&op) {
+        let op_id = op.op_id.clone();
+        let Ok(canonical_op) = canonical_signed_iris_profile_roster_op(&op) else {
+            rejected_op_ids.push(op_id);
+            continue;
+        };
+        if let Ok(identity_op) = signed_iris_profile_roster_op_to_identity(&canonical_op) {
             identity_ops.push(identity_op);
         } else {
             rejected_op_ids.push(op.op_id);
@@ -1335,20 +1352,25 @@ mod tests {
     }
 
     #[test]
-    fn profile_roster_projection_rejects_tampered_signed_fields() {
+    fn profile_roster_projection_uses_signed_event_over_cached_fields() {
         let profile_id = IrisProfileId::new_v4();
         let admin = Keys::generate();
         let mut op = bootstrap_op(&admin, profile_id, 10);
         let op_id = op.op_id.clone();
+        let admin_pubkey = admin.public_key().to_hex();
         if let IrisProfileRosterOp::AddFacet { facet } = &mut op.content.op {
             facet.label = Some("forged label".to_string());
         }
 
         let projection = project(profile_id, vec![op]);
 
-        assert!(projection.accepted_op_ids.is_empty());
-        assert_eq!(projection.rejected_op_ids, vec![op_id]);
-        assert!(projection.active_facets.is_empty());
+        assert_eq!(projection.accepted_op_ids, vec![op_id]);
+        assert!(projection.rejected_op_ids.is_empty());
+        let facet = projection
+            .active_facets
+            .get(&admin_pubkey)
+            .expect("signed roster event should project");
+        assert_eq!(facet.label.as_deref(), Some("native app"));
     }
 
     #[test]

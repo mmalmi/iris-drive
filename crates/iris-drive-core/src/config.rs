@@ -909,6 +909,14 @@ dck_generation = 1
         let loaded = AppConfig::load_or_default(&path).unwrap();
         let loaded_account = loaded.profile.expect("account persisted");
         assert_eq!(loaded_account.app_keys, Some(expected));
+        let projection = loaded_account.profile_projection();
+        assert!(
+            projection.rejected_op_ids.is_empty(),
+            "persisted roster ops should validate after reload: {:?}",
+            projection.rejected_op_ids
+        );
+        assert!(projection.can_write_roots(&loaded_account.app_key_pubkey));
+        assert!(projection.can_admin_profile(&loaded_account.app_key_pubkey));
     }
 
     #[test]
