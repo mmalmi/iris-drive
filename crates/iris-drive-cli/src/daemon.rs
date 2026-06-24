@@ -91,6 +91,7 @@ async fn publish_provider_root_if_changed(
         return Ok(Some(updated_config));
     };
 
+    direct_roots.invalidate_current_sync_events_cache();
     let direct_root_mesh_error =
         match announce_current_state_direct(direct_roots, config_dir, fips_blocks).await {
             Ok(()) => None,

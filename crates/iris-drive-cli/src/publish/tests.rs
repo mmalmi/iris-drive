@@ -375,6 +375,54 @@ fn direct_root_publish_cache_reuses_unchanged_local_events() {
     assert_eq!(builds, 2);
 }
 
+#[test]
+fn direct_root_publish_cache_can_be_invalidated_for_provider_updates() {
+    let mut exchange = DirectRootExchange::default();
+    let fingerprint = ConfigFileFingerprint {
+        len: 10,
+        modified: None,
+    };
+    let first = DirectRootEvent {
+        key: "drive-root:first".to_string(),
+        event_id: "event-a".to_string(),
+        kind: 30_078,
+        json: "{\"id\":\"event-a\"}".to_string(),
+    };
+    let second = DirectRootEvent {
+        key: "drive-root:second".to_string(),
+        event_id: "event-b".to_string(),
+        kind: 30_078,
+        json: "{\"id\":\"event-b\"}".to_string(),
+    };
+    let mut builds = 0;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let initial = runtime
+        .block_on(
+            exchange.cached_current_sync_events_from_config(fingerprint.clone(), || async {
+                builds += 1;
+                Ok(vec![first.clone()])
+            }),
+        )
+        .unwrap();
+    exchange.invalidate_current_sync_events_cache();
+    let refreshed = runtime
+        .block_on(
+            exchange.cached_current_sync_events_from_config(fingerprint, || async {
+                builds += 1;
+                Ok(vec![second.clone()])
+            }),
+        )
+        .unwrap();
+
+    assert_eq!(initial[0].key, first.key);
+    assert_eq!(refreshed[0].key, second.key);
+    assert_eq!(builds, 2);
+}
+
 const _: () = {
     assert!(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS >= DIRECT_ROOT_REPUBLISH_INTERVAL_SECS * 2);
     assert!(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS <= 15);

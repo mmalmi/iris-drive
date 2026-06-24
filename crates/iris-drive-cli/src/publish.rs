@@ -316,6 +316,7 @@ pub(crate) async fn publish_imported_mount_root(
     let Some(updated_state) = updated_config.profile.clone() else {
         return Err(anyhow::anyhow!("missing account after mount import"));
     };
+    direct_roots.invalidate_current_sync_events_cache();
     let direct_root_mesh_error =
         match announce_current_state_direct(direct_roots, config_dir, fips_blocks).await {
             Ok(()) => None,

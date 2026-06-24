@@ -35,6 +35,10 @@ struct CachedCurrentSyncEvents {
 }
 
 impl DirectRootExchange {
+    pub(crate) fn invalidate_current_sync_events_cache(&mut self) {
+        self.current_sync_events_cache = None;
+    }
+
     async fn subscribe_profile_stream(
         &mut self,
         root_scope_id: &str,
@@ -169,6 +173,7 @@ impl DirectRootExchange {
         }
         self.cache_event(direct_event);
         if outcome.should_announce_current_state() {
+            self.invalidate_current_sync_events_cache();
             let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
             if let Some(state) = config.profile.as_ref() {
                 self.announce_current_state(config_dir, &config, state, Some(sync.as_ref()))
