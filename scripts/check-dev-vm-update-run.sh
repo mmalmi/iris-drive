@@ -189,4 +189,11 @@ if ! grep -F 'if value is None or value == "":' "$ROOT/scripts/dev-vm-update-run
   exit 1
 fi
 
+if ! grep -F 'local daemon_idrive="$app/Contents/MacOS/idrive"' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F '"$daemon_idrive" --config-dir "$config_dir" daemon' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F 'wait_for_idrive_fips_status "$daemon_idrive" "$config_dir" "$daemon_pid"' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "macOS dev VM daemon must run the bundled signed idrive helper, not target/debug/idrive" >&2
+  exit 1
+fi
+
 echo "DEV_VM_UPDATE_RUN_CHECK_OK"

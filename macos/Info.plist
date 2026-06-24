@@ -35,5 +35,16 @@
   <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSAllowsLocalNetworking</key>
+    <true/>
+  </dict>
+  <key>NSBonjourServices</key>
+  <array>
+    <string>_fips._udp</string>
+  </array>
+  <key>NSLocalNetworkUsageDescription</key>
+  <string>Find and connect directly to nearby Iris Drive devices on your local network.</string>
 </dict>
 </plist>

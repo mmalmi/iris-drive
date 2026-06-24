@@ -1583,6 +1583,7 @@ run_macos() {
   local idrive="$iris_repo/target/debug/idrive"
   local built_app="$iris_repo/macos/.build/DerivedData/Build/Products/Debug/Iris Drive.app"
   local app="${IRIS_DRIVE_DEV_VM_MACOS_APP_PATH:-$iris_repo/macos/.build/Applications/Iris Drive.app}"
+  local daemon_idrive="$app/Contents/MacOS/idrive"
   local appex="$app/Contents/PlugIns/IrisDriveFileProvider.appex"
   local app_group
   app_group="$(macos_app_group_identifier)"
@@ -1713,14 +1714,14 @@ run_macos() {
     "IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=$FIPS_ENABLE_BOOTSTRAP_EFFECTIVE" \
     "IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING=$FIPS_OPEN_DISCOVERY_MAX_PENDING_EFFECTIVE" \
     "IRIS_DRIVE_FIPS_STATIC_PEERS=$STATIC_PEERS" \
-    "$idrive" --config-dir "$config_dir" daemon \
+    "$daemon_idrive" --config-dir "$config_dir" daemon \
       --watch-debounce-ms 100 \
       > "$daemon_log" 2>&1 < /dev/null &
   daemon_pid="$!"
   disown "$daemon_pid" >/dev/null 2>&1 || true
   local status_json=""
   local wait_status=0
-  status_json="$(wait_for_idrive_fips_status "$idrive" "$config_dir" "$daemon_pid")" || wait_status=$?
+  status_json="$(wait_for_idrive_fips_status "$daemon_idrive" "$config_dir" "$daemon_pid")" || wait_status=$?
   if [[ "$wait_status" == "2" ]]; then
     log "macOS idrive daemon exited during startup"
     tail -n 120 "$daemon_log" >&2 2>/dev/null || true
@@ -1731,7 +1732,7 @@ run_macos() {
     tail -n 160 "$daemon_log" >&2 2>/dev/null || true
     exit 4
   fi
-  if ! idrive_provider_list_retry "$idrive" "$config_dir" /tmp/iris-drive-macos-provider-list.json 120 1; then
+  if ! idrive_provider_list_retry "$daemon_idrive" "$config_dir" /tmp/iris-drive-macos-provider-list.json 120 1; then
     log "macOS virtual provider list failed"
     cat /tmp/iris-drive-macos-provider-list.json >&2 2>/dev/null || true
     tail -n 120 "$app_stderr" >&2 2>/dev/null || true
