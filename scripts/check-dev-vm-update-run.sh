@@ -196,4 +196,10 @@ if ! grep -F 'local daemon_idrive="$app/Contents/MacOS/idrive"' "$ROOT/scripts/d
   exit 1
 fi
 
+if ! grep -F 'local helper_identifier="to.iris.drive.macos.idrive"' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F 'helper_codesign_base+=(--identifier "$helper_identifier")' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "macOS dev VM helper signing must use a stable Iris Drive code-signing identifier" >&2
+  exit 1
+fi
+
 echo "DEV_VM_UPDATE_RUN_CHECK_OK"
