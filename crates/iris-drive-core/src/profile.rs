@@ -1158,7 +1158,7 @@ impl Profile {
     ///
     /// The recovery phrase stays a recovery/admin facet only: it proves it can
     /// decrypt the current epoch, signs the `AppKey` admission, then signs a
-    /// coherent new key epoch wrapped to every active recipient.
+    /// coherent new key epoch that rewraps the same DCK to every active recipient.
     pub fn admit_current_app_key_with_recovery_phrase(
         &mut self,
         recovery_phrase: &str,
@@ -1213,13 +1213,15 @@ impl Profile {
         if projection.can_write_roots(&self.state.app_key_pubkey) {
             return Err(ProfileError::AppKeyAlreadyAuthorized);
         }
-        let should_rotate_epoch = authority_facet.capabilities.can_decrypt_key_epochs;
-        if should_rotate_epoch {
-            self.current_dck_from_authority_keys(authority_keys, expected_purpose)?;
+        let dck_to_rewrap = if authority_facet.capabilities.can_decrypt_key_epochs {
+            let dck = self.current_dck_from_authority_keys(authority_keys, expected_purpose)?;
             if !authority_facet.capabilities.can_change_key_epochs() {
                 return Err(ProfileError::RecoveryCannotRotateKeyEpochs);
             }
-        }
+            Some(dck)
+        } else {
+            None
+        };
 
         let now = next_profile_timestamp(&self.state);
         let parents = iris_profile_roster_parent_ids(&self.state.profile_roster_ops);
@@ -1241,8 +1243,7 @@ impl Profile {
         self.state.profile_roster_ops.push(add_op);
         self.state.profile_roster_projection = None;
 
-        if should_rotate_epoch {
-            let dck = generate_dck();
+        if let Some(dck) = dck_to_rewrap {
             self.rotate_profile_dck_epoch_with_signer(authority_keys, &dck, now + 1)?;
         }
         self.state.sync_app_keys_from_profile();

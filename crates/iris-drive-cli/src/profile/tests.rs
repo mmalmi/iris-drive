@@ -51,7 +51,7 @@ fn recover_app_key_command_uses_saved_phrase_after_profile_log_sync() {
 
     let recovered_account = Profile::load(state.clone(), recovered_dir.path()).unwrap();
     let recovered_dck = recovered_account.current_dck().unwrap();
-    assert_ne!(recovered_dck, owner_dck);
+    assert_eq!(recovered_dck, owner_dck);
     owner.state.profile_roster_ops = state.profile_roster_ops;
     owner.state.sync_app_keys_from_profile();
     assert_eq!(owner.current_dck().unwrap(), recovered_dck);

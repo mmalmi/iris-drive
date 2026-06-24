@@ -257,7 +257,7 @@ fn fallback_restore_can_reconcile_with_nip46_signer_roster_evidence() {
     assert_eq!(fallback.state.app_key_pubkey, fallback_app_key);
     assert!(app_keys.is_admin(&fallback_app_key));
     assert!(fallback.state.can_write_roots());
-    assert_ne!(
+    assert_eq!(
         fallback.current_dck().unwrap(),
         owner.current_dck().unwrap()
     );
@@ -319,7 +319,7 @@ fn recovery_phrase_admits_fresh_app_key_into_existing_profile_log() {
     assert_eq!(projection.key_epochs.keys().next_back().copied(), Some(2));
 
     let recovered_dck = recovered.current_dck().unwrap();
-    assert_ne!(recovered_dck, old_owner_dck);
+    assert_eq!(recovered_dck, old_owner_dck);
 
     owner.state.profile_roster_ops = recovered.state.profile_roster_ops.clone();
     owner.state.sync_app_keys_from_profile();
@@ -437,7 +437,7 @@ fn nip46_authority_admits_fresh_app_key_with_decrypt_wrap() {
     assert_eq!(projection.key_epochs.keys().next_back().copied(), Some(3));
 
     let recovered_dck = recovered.current_dck().unwrap();
-    assert_ne!(recovered_dck, old_owner_dck);
+    assert_eq!(recovered_dck, old_owner_dck);
     owner.state.profile_roster_ops = recovered.state.profile_roster_ops.clone();
     owner.state.sync_app_keys_from_profile();
     assert_eq!(owner.current_dck().unwrap(), recovered_dck);
