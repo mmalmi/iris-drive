@@ -99,11 +99,12 @@ functions = re.findall(r"macos_config_dir\(\) \{(.*?)\n\}", text, re.S)
 if len(functions) < 2:
     raise SystemExit("expected macos_config_dir helpers in dev-vm-smoke.sh")
 for body in functions:
-    stable = body.find("Group\\ Containers/group.to.iris.drive")
+    newest = body.find("best_mtime")
     wildcard = body.find("Group\\ Containers/*.to.iris.drive")
-    if stable < 0 or wildcard < 0 or stable > wildcard:
+    status = body.find("daemon-status.json")
+    if newest < 0 or wildcard < 0 or status < 0:
         raise SystemExit(
-            "macOS dev VM smoke must prefer group.to.iris.drive before wildcard team-id app groups"
+            "macOS dev VM smoke must pick the active app-group config by daemon-status freshness"
         )
 PY
 
@@ -173,6 +174,18 @@ if ! grep -F 'entitlements.pop("com.apple.developer.associated-domains", None)' 
   ! grep -F 'entitlements.pop("com.apple.developer.fileprovider.testing-mode", None)' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
   ! grep -F 'entitlements.pop("com.apple.security.application-groups", None)' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
   echo "macOS dev VM signing must strip provisioned-only entitlements unless FileProvider is explicitly required" >&2
+  exit 1
+fi
+
+if ! grep -F 'IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER="${IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER:-}"' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F 'IRIS_DRIVE_DEV_VM_MACOS_KEEP_PROVISIONED_DEBUG_ENTITLEMENTS="${IRIS_DRIVE_DEV_VM_MACOS_KEEP_PROVISIONED_DEBUG_ENTITLEMENTS:-}"' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F 'IRIS_DRIVE_DEV_VM_MACOS_KEEP_FILEPROVIDER_TESTING_MODE="${IRIS_DRIVE_DEV_VM_MACOS_KEEP_FILEPROVIDER_TESTING_MODE:-}"' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "macOS dev VM entitlement filtering must pass FileProvider keep flags into Python" >&2
+  exit 1
+fi
+
+if ! grep -F 'if value is None or value == "":' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "macOS dev VM entitlement filtering must treat empty keep flags as defaulted" >&2
   exit 1
 fi
 

@@ -233,18 +233,32 @@ macos_config_dir() {
     printf '%s\n' "$IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR/Config"
     return 0
   fi
-  local candidate
+  local candidate status_file candidate_mtime
+  local best=""
+  local best_mtime=-1
   for candidate in \
-    "$HOME"/Library/Group\ Containers/group.to.iris.drive/Iris\ Drive\ Dev/Config \
     "$HOME"/Library/Group\ Containers/*.to.iris.drive/Iris\ Drive\ Dev/Config \
+    "$HOME"/Library/Group\ Containers/group.to.iris.drive/Iris\ Drive\ Dev/Config \
     "$HOME"/Library/Containers/to.iris.drive.macos/Data/Library/Application\ Support/Iris\ Drive\ Dev/Config
   do
     [[ -d "$candidate" ]] || continue
     [[ -f "$candidate/key" || -f "$candidate/config.json" ]] || continue
-    printf '%s\n' "$candidate"
-    return 0
+    status_file="$candidate/daemon-status.json"
+    if [[ -f "$status_file" ]]; then
+      candidate_mtime="$(stat -f %m "$status_file" 2>/dev/null || printf '0')"
+    else
+      candidate_mtime=0
+    fi
+    case "$candidate_mtime" in
+      ''|*[!0-9]*) candidate_mtime=0 ;;
+    esac
+    if [[ -z "$best" || "$candidate_mtime" -gt "$best_mtime" ]]; then
+      best="$candidate"
+      best_mtime="$candidate_mtime"
+    fi
   done
-  return 1
+  [[ -n "$best" ]] || return 1
+  printf '%s\n' "$best"
 }
 config_dir="$(macos_config_dir)"
 "$HOME/src/iris-drive/target/debug/idrive" --config-dir "$config_dir" "$@"
@@ -1270,18 +1284,32 @@ macos_config_dir() {
     printf '%s\n' "$IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR/Config"
     return 0
   fi
-  local candidate
+  local candidate status_file candidate_mtime
+  local best=""
+  local best_mtime=-1
   for candidate in \
-    "$HOME"/Library/Group\ Containers/group.to.iris.drive/Iris\ Drive\ Dev/Config \
     "$HOME"/Library/Group\ Containers/*.to.iris.drive/Iris\ Drive\ Dev/Config \
+    "$HOME"/Library/Group\ Containers/group.to.iris.drive/Iris\ Drive\ Dev/Config \
     "$HOME"/Library/Containers/to.iris.drive.macos/Data/Library/Application\ Support/Iris\ Drive\ Dev/Config
   do
     [[ -d "$candidate" ]] || continue
     [[ -f "$candidate/key" || -f "$candidate/config.json" ]] || continue
-    printf '%s\n' "$candidate"
-    return 0
+    status_file="$candidate/daemon-status.json"
+    if [[ -f "$status_file" ]]; then
+      candidate_mtime="$(stat -f %m "$status_file" 2>/dev/null || printf '0')"
+    else
+      candidate_mtime=0
+    fi
+    case "$candidate_mtime" in
+      ''|*[!0-9]*) candidate_mtime=0 ;;
+    esac
+    if [[ -z "$best" || "$candidate_mtime" -gt "$best_mtime" ]]; then
+      best="$candidate"
+      best_mtime="$candidate_mtime"
+    fi
   done
-  return 1
+  [[ -n "$best" ]] || return 1
+  printf '%s\n' "$best"
 }
 config_dir="$(macos_config_dir)"
 tmp="$(mktemp -t iris-drive-macos-provider-write)"
@@ -1303,18 +1331,32 @@ macos_config_dir() {
     printf '%s\n' "$IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR/Config"
     return 0
   fi
-  local candidate
+  local candidate status_file candidate_mtime
+  local best=""
+  local best_mtime=-1
   for candidate in \
-    "$HOME"/Library/Group\ Containers/group.to.iris.drive/Iris\ Drive\ Dev/Config \
     "$HOME"/Library/Group\ Containers/*.to.iris.drive/Iris\ Drive\ Dev/Config \
+    "$HOME"/Library/Group\ Containers/group.to.iris.drive/Iris\ Drive\ Dev/Config \
     "$HOME"/Library/Containers/to.iris.drive.macos/Data/Library/Application\ Support/Iris\ Drive\ Dev/Config
   do
     [[ -d "$candidate" ]] || continue
     [[ -f "$candidate/key" || -f "$candidate/config.json" ]] || continue
-    printf '%s\n' "$candidate"
-    return 0
+    status_file="$candidate/daemon-status.json"
+    if [[ -f "$status_file" ]]; then
+      candidate_mtime="$(stat -f %m "$status_file" 2>/dev/null || printf '0')"
+    else
+      candidate_mtime=0
+    fi
+    case "$candidate_mtime" in
+      ''|*[!0-9]*) candidate_mtime=0 ;;
+    esac
+    if [[ -z "$best" || "$candidate_mtime" -gt "$best_mtime" ]]; then
+      best="$candidate"
+      best_mtime="$candidate_mtime"
+    fi
   done
-  return 1
+  [[ -n "$best" ]] || return 1
+  printf '%s\n' "$best"
 }
 config_dir="$(macos_config_dir)"
 tmp="$(mktemp -t iris-drive-macos-provider-zero)"

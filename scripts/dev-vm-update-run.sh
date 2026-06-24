@@ -1368,7 +1368,11 @@ macos_prepare_entitlements_for_signing() {
   fi
 
   output="$(mktemp -t iris-drive-entitlements.XXXXXX.plist)"
-  IRIS_DRIVE_MACOS_ENTITLEMENT_TEAM="$team" python3 - "$entitlements" "$output" <<'PY'
+  IRIS_DRIVE_MACOS_ENTITLEMENT_TEAM="$team" \
+  IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER="${IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER:-}" \
+  IRIS_DRIVE_DEV_VM_MACOS_KEEP_PROVISIONED_DEBUG_ENTITLEMENTS="${IRIS_DRIVE_DEV_VM_MACOS_KEEP_PROVISIONED_DEBUG_ENTITLEMENTS:-}" \
+  IRIS_DRIVE_DEV_VM_MACOS_KEEP_FILEPROVIDER_TESTING_MODE="${IRIS_DRIVE_DEV_VM_MACOS_KEEP_FILEPROVIDER_TESTING_MODE:-}" \
+    python3 - "$entitlements" "$output" <<'PY'
 import os
 import plistlib
 import sys
@@ -1379,7 +1383,7 @@ team = os.environ.get("IRIS_DRIVE_MACOS_ENTITLEMENT_TEAM", "").rstrip(".")
 
 def truthy(name, default=False):
     value = os.environ.get(name)
-    if value is None:
+    if value is None or value == "":
         return default
     return value in {"1", "true", "TRUE", "True", "yes", "YES", "Yes", "on", "ON", "On"}
 
