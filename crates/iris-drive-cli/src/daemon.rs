@@ -736,7 +736,7 @@ impl ConfigMutationLock {
         loop {
             match Self::try_create(&path) {
                 Ok(lock) => return Ok(lock),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                Err(error) if Self::lock_create_error_is_contention(&path, &error) => {
                     Self::remove_stale_lock(&path);
                     if started.elapsed() >= wait_timeout {
                         return Err(ConfigMutationLockTimeout { path }.into());
@@ -750,6 +750,11 @@ impl ConfigMutationLock {
                 }
             }
         }
+    }
+
+    fn lock_create_error_is_contention(path: &Path, error: &std::io::Error) -> bool {
+        error.kind() == std::io::ErrorKind::AlreadyExists
+            || (error.kind() == std::io::ErrorKind::PermissionDenied && path.exists())
     }
 
     fn try_create(path: &Path) -> std::io::Result<Self> {

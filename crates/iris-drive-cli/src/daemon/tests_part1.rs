@@ -310,6 +310,25 @@ async fn config_mutation_lock_serializes_same_config_dir() {
     drop(second);
 }
 
+#[test]
+fn config_mutation_lock_treats_existing_permission_denied_as_contention() {
+    let dir = tempfile::tempdir().unwrap();
+    let lock_path = dir.path().join("config-mutation.lock");
+    std::fs::write(&lock_path, "12345\n").unwrap();
+    let permission_denied =
+        std::io::Error::new(std::io::ErrorKind::PermissionDenied, "open denied");
+    let missing_path = dir.path().join("missing.lock");
+
+    assert!(ConfigMutationLock::lock_create_error_is_contention(
+        &lock_path,
+        &permission_denied,
+    ));
+    assert!(!ConfigMutationLock::lock_create_error_is_contention(
+        &missing_path,
+        &permission_denied,
+    ));
+}
+
 #[tokio::test]
 async fn background_config_mutation_lock_retries_after_contention() {
     let dir = tempfile::tempdir().unwrap();
