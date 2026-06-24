@@ -56,8 +56,16 @@ fn direct_root_republish_includes_cached_remote_events() {
     let events = exchange.events_for_publish(vec![local.clone()]);
 
     assert_eq!(events.len(), 2);
-    assert!(events.iter().any(|event| event.event_id == local.event_id));
-    assert!(events.iter().any(|event| event.event_id == remote.event_id));
+    let local_publish = events
+        .iter()
+        .find(|publish| publish.event.event_id == local.event_id)
+        .unwrap();
+    let remote_publish = events
+        .iter()
+        .find(|publish| publish.event.event_id == remote.event_id)
+        .unwrap();
+    assert_eq!(local_publish.source, DirectRootPublishSource::LocalCurrent);
+    assert_eq!(remote_publish.source, DirectRootPublishSource::CachedRelay);
 }
 
 #[test]
@@ -82,7 +90,8 @@ fn direct_root_republish_keeps_latest_sequence_per_root_family() {
     let events = exchange.events_for_publish(Vec::new());
 
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].event_id, newer.event_id);
+    assert_eq!(events[0].event.event_id, newer.event_id);
+    assert_eq!(events[0].source, DirectRootPublishSource::CachedRelay);
 }
 
 #[test]
@@ -105,7 +114,8 @@ fn direct_root_republish_filters_cached_roots_superseded_by_local_root() {
     let events = exchange.events_for_publish(vec![newer.clone()]);
 
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].event_id, newer.event_id);
+    assert_eq!(events[0].event.event_id, newer.event_id);
+    assert_eq!(events[0].source, DirectRootPublishSource::LocalCurrent);
 }
 
 #[test]
@@ -168,6 +178,62 @@ fn direct_root_republishes_after_short_native_cadence() {
 }
 
 #[test]
+fn direct_root_cached_relay_roots_republish_on_quiet_cadence() {
+    let mut exchange = DirectRootExchange::default();
+    let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
+    let now = std::time::Instant::now();
+
+    assert!(exchange.should_publish_candidate_key(key, DirectRootPublishSource::CachedRelay, now));
+    assert!(!exchange.should_publish_candidate_key(
+        key,
+        DirectRootPublishSource::CachedRelay,
+        now + std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
+    ));
+    assert!(!exchange.should_publish_candidate_key(
+        key,
+        DirectRootPublishSource::CachedRelay,
+        now + std::time::Duration::from_secs(DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS - 1)
+    ));
+    assert!(exchange.should_publish_candidate_key(
+        key,
+        DirectRootPublishSource::CachedRelay,
+        now + std::time::Duration::from_secs(DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS)
+    ));
+}
+
+#[test]
+fn direct_root_peer_change_allows_cached_relay_once() {
+    let mut exchange = DirectRootExchange::default();
+    let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
+    let now = std::time::Instant::now();
+
+    assert!(exchange.refresh_known_root_peers(
+        ["authorized-a".to_string(), "authorized-b".to_string()],
+        ["mesh-a".to_string()],
+    ));
+    assert!(exchange.should_publish_candidate_key(key, DirectRootPublishSource::CachedRelay, now));
+    assert!(!exchange.should_publish_candidate_key(
+        key,
+        DirectRootPublishSource::CachedRelay,
+        now + std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
+    ));
+
+    assert!(exchange.refresh_known_root_peers(
+        [
+            "authorized-a".to_string(),
+            "authorized-b".to_string(),
+            "authorized-c".to_string(),
+        ],
+        ["mesh-a".to_string()],
+    ));
+    assert!(exchange.should_publish_candidate_key(
+        key,
+        DirectRootPublishSource::CachedRelay,
+        now + std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS + 1)
+    ));
+}
+
+#[test]
 fn direct_root_metadata_republishes_on_longer_cadence() {
     let mut exchange = DirectRootExchange::default();
     let key = "profile-op:profile:op";
@@ -225,7 +291,7 @@ fn direct_root_republish_collapses_recipient_list_variants() {
     let events = exchange.events_for_publish(Vec::new());
 
     assert_eq!(events.len(), 1);
-    assert_eq!(events[0].event_id, wide.event_id);
+    assert_eq!(events[0].event.event_id, wide.event_id);
 }
 
 #[test]

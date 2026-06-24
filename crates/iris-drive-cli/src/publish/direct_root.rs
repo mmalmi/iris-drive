@@ -10,6 +10,27 @@ pub(crate) struct DirectRootEvent {
     json: String,
 }
 
+#[derive(Debug, Clone)]
+struct DirectRootPublishEvent {
+    event: DirectRootEvent,
+    source: DirectRootPublishSource,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum DirectRootPublishSource {
+    LocalCurrent,
+    CachedRelay,
+}
+
+impl DirectRootPublishSource {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::LocalCurrent => "local_current",
+            Self::CachedRelay => "cached_relay",
+        }
+    }
+}
+
 #[derive(Default)]
 pub(crate) struct DirectRootExchange {
     cached_events: BTreeMap<String, DirectRootEvent>,
@@ -87,9 +108,10 @@ impl DirectRootExchange {
             .await?;
         let events = self.events_for_publish(local_events);
         let now = std::time::Instant::now();
-        for event in events {
+        for publish_event in events {
+            let DirectRootPublishEvent { event, source } = publish_event;
             let event = self.event_for_publish(event);
-            let should_publish = self.should_publish_key(&event.key, now);
+            let should_publish = self.should_publish_candidate_key(&event.key, source, now);
             self.cache_event(event.clone());
             if !should_publish {
                 continue;
@@ -100,7 +122,7 @@ impl DirectRootExchange {
                 event_json: event.json.clone(),
             };
             let bytes = serde_json::to_vec(&frame)?;
-            let attempts = direct_root_publish_attempts(&event.key);
+            let attempts = direct_root_publish_attempts_for_source(&event.key, source);
             for attempt in 0..attempts {
                 let selected_app_peers = sync.authorized_peer_ids().await.len();
                 let sent_app_peers = sync
@@ -114,6 +136,7 @@ impl DirectRootExchange {
                         "root_key": event.key.clone(),
                         "root_event_id": event.event_id.clone(),
                         "kind": event.kind,
+                        "source": source.as_str(),
                         "attempt": attempt + 1,
                         "attempts": attempts,
                         "selected_peers": selected_app_peers,
@@ -134,6 +157,7 @@ impl DirectRootExchange {
                         "root_key": event.key.clone(),
                         "root_event_id": event.event_id.clone(),
                         "kind": event.kind,
+                        "source": source.as_str(),
                         "attempt": attempt + 1,
                         "attempts": attempts,
                         "selected_peers": publish_stats.selected_peers,
@@ -401,7 +425,7 @@ impl DirectRootExchange {
         self.cached_events.get(&event.key).cloned().unwrap_or(event)
     }
 
-    fn events_for_publish(&self, local_events: Vec<DirectRootEvent>) -> Vec<DirectRootEvent> {
+    fn events_for_publish(&self, local_events: Vec<DirectRootEvent>) -> Vec<DirectRootPublishEvent> {
         let mut events = Vec::with_capacity(local_events.len() + self.cached_events.len());
         let mut keys = BTreeSet::new();
         let mut local_slots = BTreeMap::new();
@@ -411,7 +435,10 @@ impl DirectRootExchange {
             if let Some(slot) = direct_root_cache_slot(&event.key) {
                 local_slots.insert(slot.family.clone(), slot);
             }
-            events.push(event);
+            events.push(DirectRootPublishEvent {
+                event,
+                source: DirectRootPublishSource::LocalCurrent,
+            });
         }
         events.extend(
             self.cached_events
@@ -427,7 +454,11 @@ impl DirectRootExchange {
                         .get(&slot.family)
                         .is_none_or(|local_slot| direct_root_slot_is_newer(&slot, local_slot))
                 })
-                .cloned(),
+                .cloned()
+                .map(|event| DirectRootPublishEvent {
+                    event,
+                    source: DirectRootPublishSource::CachedRelay,
+                }),
         );
         events
     }
@@ -460,10 +491,22 @@ impl DirectRootExchange {
             .collect()
     }
 
+    #[cfg(test)]
     fn should_publish_key(&mut self, key: &str, now: std::time::Instant) -> bool {
+        self.should_publish_candidate_key(key, DirectRootPublishSource::LocalCurrent, now)
+    }
+
+    fn should_publish_candidate_key(
+        &mut self,
+        key: &str,
+        source: DirectRootPublishSource,
+        now: std::time::Instant,
+    ) -> bool {
         if self.published_keys.get(key).is_some_and(|last| {
             now.duration_since(*last)
-                < std::time::Duration::from_secs(direct_root_republish_interval_secs(key))
+                < std::time::Duration::from_secs(direct_root_republish_interval_secs_for_source(
+                    key, source,
+                ))
         }) {
             return false;
         }
@@ -502,7 +545,13 @@ impl DirectRootExchange {
     }
 }
 
-fn direct_root_republish_interval_secs(key: &str) -> u64 {
+fn direct_root_republish_interval_secs_for_source(
+    key: &str,
+    source: DirectRootPublishSource,
+) -> u64 {
+    if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
+        return DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS;
+    }
     if direct_root_cache_slot(key).is_some() || key.starts_with("files-root:") {
         DIRECT_ROOT_REPUBLISH_INTERVAL_SECS
     } else {
@@ -510,7 +559,15 @@ fn direct_root_republish_interval_secs(key: &str) -> u64 {
     }
 }
 
+#[cfg(test)]
 fn direct_root_publish_attempts(key: &str) -> usize {
+    direct_root_publish_attempts_for_source(key, DirectRootPublishSource::LocalCurrent)
+}
+
+fn direct_root_publish_attempts_for_source(key: &str, source: DirectRootPublishSource) -> usize {
+    if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
+        return 1;
+    }
     if direct_root_cache_slot(key).is_some() || key.starts_with("files-root:") {
         2
     } else {
