@@ -178,26 +178,22 @@ fn direct_root_republishes_after_short_native_cadence() {
 }
 
 #[test]
-fn direct_root_cached_relay_roots_republish_on_quiet_cadence() {
+fn direct_root_cached_relay_roots_share_family_cadence() {
     let mut exchange = DirectRootExchange::default();
     let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
+    let newer_key = "drive-root:device:main:9:new-root-hash:new-root-key:device,remote";
     let now = std::time::Instant::now();
 
     assert!(exchange.should_publish_candidate_key(key, DirectRootPublishSource::CachedRelay, now));
     assert!(!exchange.should_publish_candidate_key(
-        key,
+        newer_key,
         DirectRootPublishSource::CachedRelay,
-        now + std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
-    ));
-    assert!(!exchange.should_publish_candidate_key(
-        key,
-        DirectRootPublishSource::CachedRelay,
-        now + std::time::Duration::from_secs(DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS - 1)
+        now + std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS - 1)
     ));
     assert!(exchange.should_publish_candidate_key(
-        key,
+        newer_key,
         DirectRootPublishSource::CachedRelay,
-        now + std::time::Duration::from_secs(DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS)
+        now + std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
     ));
 }
 
@@ -215,7 +211,7 @@ fn direct_root_peer_change_allows_cached_relay_once() {
     assert!(!exchange.should_publish_candidate_key(
         key,
         DirectRootPublishSource::CachedRelay,
-        now + std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
+        now + std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS - 1)
     ));
 
     assert!(exchange.refresh_known_root_peers(

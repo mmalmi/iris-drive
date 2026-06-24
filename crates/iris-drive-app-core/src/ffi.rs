@@ -160,6 +160,8 @@ const APP_KEY_LINK_ROSTER_RETRY_SECS: u64 = 2;
 const APP_KEY_LINK_EXCHANGE_TICK_MILLIS: u64 = 1_000;
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 const NATIVE_DIRECT_ROOT_EXCHANGE_MILLIS: u64 = 10_000;
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+const NATIVE_APP_MESSAGE_DRAIN_LIMIT: usize = 4096;
 
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 #[derive(Debug, Clone, Copy)]
@@ -2021,21 +2023,45 @@ async fn run_app_key_link_exchange_async(
             message = app_messages.recv() => {
                 match message {
                     Ok(message) => {
-                        if let Err(error) = handle_native_app_key_link_app_message(
-                            config_dir,
-                            &sync,
-                            &message,
-                            &mut acked_rosters,
-                        ).await {
-                            tracing::warn!(error = %error, topic = message.topic, "handling native app-key-link FIPS message failed");
-                            continue;
+                        let mut messages = vec![message];
+                        while messages.len() < NATIVE_APP_MESSAGE_DRAIN_LIMIT {
+                            match app_messages.try_recv() {
+                                Ok(message) => messages.push(message),
+                                Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+                                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(skipped)) => {
+                                    tracing::warn!(skipped, "native app-key-link FIPS receiver lagged");
+                                }
+                                Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break,
+                            }
                         }
-                        if let Err(error) = direct_roots.handle_app_message(
-                            config_dir,
-                            &sync,
-                            &message,
-                        ).await {
-                            tracing::warn!(error = %error, topic = message.topic, "handling native direct-root FIPS message failed");
+                        let received_messages = messages.len();
+                        let (messages, skipped_roots) =
+                            iris_drive_core::coalesce_direct_root_app_messages(messages);
+                        if skipped_roots > 0 {
+                            tracing::debug!(
+                                received_messages,
+                                applied_messages = messages.len(),
+                                skipped_roots,
+                                "coalesced native direct-root FIPS messages"
+                            );
+                        }
+                        for message in messages {
+                            if let Err(error) = handle_native_app_key_link_app_message(
+                                config_dir,
+                                &sync,
+                                &message,
+                                &mut acked_rosters,
+                            ).await {
+                                tracing::warn!(error = %error, topic = message.topic, "handling native app-key-link FIPS message failed");
+                                continue;
+                            }
+                            if let Err(error) = direct_roots.handle_app_message(
+                                config_dir,
+                                &sync,
+                                &message,
+                            ).await {
+                                tracing::warn!(error = %error, topic = message.topic, "handling native direct-root FIPS message failed");
+                            }
                         }
                     }
                     Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped)) => {

@@ -502,7 +502,8 @@ impl DirectRootExchange {
         source: DirectRootPublishSource,
         now: std::time::Instant,
     ) -> bool {
-        if self.published_keys.get(key).is_some_and(|last| {
+        let throttle_key = direct_root_publish_throttle_key(key, source);
+        if self.published_keys.get(&throttle_key).is_some_and(|last| {
             now.duration_since(*last)
                 < std::time::Duration::from_secs(direct_root_republish_interval_secs_for_source(
                     key, source,
@@ -510,7 +511,7 @@ impl DirectRootExchange {
         }) {
             return false;
         }
-        self.published_keys.insert(key.to_string(), now);
+        self.published_keys.insert(throttle_key, now);
         true
     }
 
@@ -550,7 +551,7 @@ fn direct_root_republish_interval_secs_for_source(
     source: DirectRootPublishSource,
 ) -> u64 {
     if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
-        return DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS;
+        return DIRECT_ROOT_REPUBLISH_INTERVAL_SECS;
     }
     if direct_root_cache_slot(key).is_some() || key.starts_with("files-root:") {
         DIRECT_ROOT_REPUBLISH_INTERVAL_SECS
@@ -573,6 +574,15 @@ fn direct_root_publish_attempts_for_source(key: &str, source: DirectRootPublishS
     } else {
         1
     }
+}
+
+fn direct_root_publish_throttle_key(key: &str, source: DirectRootPublishSource) -> String {
+    if source == DirectRootPublishSource::CachedRelay
+        && let Some(slot) = direct_root_cache_slot(key)
+    {
+        return format!("cached-relay:{}", slot.family);
+    }
+    key.to_string()
 }
 
 pub(crate) async fn build_current_sync_events(

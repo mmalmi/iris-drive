@@ -35,6 +35,18 @@ pub struct DirectRootEvent {
     pub event_json: String,
 }
 
+#[derive(Debug, Clone)]
+struct DirectRootPublishEvent {
+    event: DirectRootEvent,
+    source: DirectRootPublishSource,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum DirectRootPublishSource {
+    LocalCurrent,
+    CachedRelay,
+}
+
 #[derive(Default)]
 pub struct DirectRootExchange {
     cached_events: BTreeMap<String, DirectRootEvent>,
@@ -65,8 +77,9 @@ impl DirectRootExchange {
                 .map_err(|error| format!("{error:#}"))?,
         );
         let now = Instant::now();
-        for event in events {
-            if !self.should_publish_key(&event.key, now) {
+        for publish_event in events {
+            let DirectRootPublishEvent { event, source } = publish_event;
+            if !self.should_publish_candidate_key(&event.key, source, now) {
                 continue;
             }
             let frame = DirectRootFrame {
@@ -214,14 +227,25 @@ impl DirectRootExchange {
         self.next_mesh_publish_seq
     }
 
+    #[cfg(test)]
     fn should_publish_key(&mut self, key: &str, now: Instant) -> bool {
-        if self.published_keys.get(key).is_some_and(|last| {
+        self.should_publish_candidate_key(key, DirectRootPublishSource::LocalCurrent, now)
+    }
+
+    fn should_publish_candidate_key(
+        &mut self,
+        key: &str,
+        source: DirectRootPublishSource,
+        now: Instant,
+    ) -> bool {
+        let throttle_key = direct_root_publish_throttle_key(key, source);
+        if self.published_keys.get(&throttle_key).is_some_and(|last| {
             now.duration_since(*last)
-                < Duration::from_secs(direct_root_republish_interval_secs(key))
+                < Duration::from_secs(direct_root_republish_interval_secs_for_source(key, source))
         }) {
             return false;
         }
-        self.published_keys.insert(key.to_owned(), now);
+        self.published_keys.insert(throttle_key, now);
         true
     }
 
@@ -258,7 +282,10 @@ impl DirectRootExchange {
         self.cached_events.get(&event.key).cloned().unwrap_or(event)
     }
 
-    fn events_for_publish(&self, local_events: Vec<DirectRootEvent>) -> Vec<DirectRootEvent> {
+    fn events_for_publish(
+        &self,
+        local_events: Vec<DirectRootEvent>,
+    ) -> Vec<DirectRootPublishEvent> {
         let mut events = Vec::with_capacity(local_events.len() + self.cached_events.len());
         let mut keys = BTreeSet::new();
         let mut local_slots = BTreeMap::new();
@@ -268,7 +295,10 @@ impl DirectRootExchange {
             if let Some(slot) = direct_root_cache_slot(&event.key) {
                 local_slots.insert(slot.family.clone(), slot);
             }
-            events.push(event);
+            events.push(DirectRootPublishEvent {
+                event,
+                source: DirectRootPublishSource::LocalCurrent,
+            });
         }
         events.extend(
             self.cached_events
@@ -284,7 +314,11 @@ impl DirectRootExchange {
                         .get(&slot.family)
                         .is_none_or(|local_slot| direct_root_slot_is_newer(&slot, local_slot))
                 })
-                .cloned(),
+                .cloned()
+                .map(|event| DirectRootPublishEvent {
+                    event,
+                    source: DirectRootPublishSource::CachedRelay,
+                }),
         );
         events
     }
@@ -325,6 +359,45 @@ impl DirectRootExchange {
             self.published_keys.remove(&oldest);
         }
     }
+}
+
+pub fn coalesce_direct_root_app_messages(
+    messages: Vec<crate::FipsAppMessage>,
+) -> (Vec<crate::FipsAppMessage>, usize) {
+    let mut passthrough = Vec::new();
+    let mut latest_roots = BTreeMap::<String, (DirectRootCacheSlot, crate::FipsAppMessage)>::new();
+    let mut skipped = 0usize;
+
+    for message in messages {
+        let Some(slot) = direct_root_message_cache_slot(&message) else {
+            passthrough.push(message);
+            continue;
+        };
+        match latest_roots.entry(slot.family.clone()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert((slot, message));
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                if direct_root_slot_is_strictly_newer(&slot, &entry.get().0) {
+                    skipped = skipped.saturating_add(1);
+                    entry.insert((slot, message));
+                } else {
+                    skipped = skipped.saturating_add(1);
+                }
+            }
+        }
+    }
+
+    passthrough.extend(latest_roots.into_values().map(|(_, message)| message));
+    (passthrough, skipped)
+}
+
+fn direct_root_message_cache_slot(message: &crate::FipsAppMessage) -> Option<DirectRootCacheSlot> {
+    if message.topic != DIRECT_ROOT_APP_TOPIC {
+        return None;
+    }
+    let frame: DirectRootFrame = serde_json::from_slice(&message.data).ok()?;
+    direct_root_cache_slot(&frame.key)
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -395,12 +468,27 @@ fn should_cache_unsequenced_direct_root_key(key: &str) -> bool {
         && !key.starts_with("files-root:")
 }
 
-fn direct_root_republish_interval_secs(key: &str) -> u64 {
+fn direct_root_republish_interval_secs_for_source(
+    key: &str,
+    source: DirectRootPublishSource,
+) -> u64 {
+    if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
+        return DIRECT_ROOT_REPUBLISH_INTERVAL_SECS;
+    }
     if direct_root_cache_slot(key).is_some() {
         DIRECT_ROOT_REPUBLISH_INTERVAL_SECS
     } else {
         DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS
     }
+}
+
+fn direct_root_publish_throttle_key(key: &str, source: DirectRootPublishSource) -> String {
+    if source == DirectRootPublishSource::CachedRelay
+        && let Some(slot) = direct_root_cache_slot(key)
+    {
+        return format!("cached-relay:{}", slot.family);
+    }
+    key.to_string()
 }
 
 pub fn build_current_direct_root_events(
@@ -649,7 +737,7 @@ mod tests {
         let events = exchange.events_for_publish(Vec::new());
 
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_id, newer.event_id);
+        assert_eq!(events[0].event.event_id, newer.event_id);
     }
 
     #[test]
@@ -670,7 +758,71 @@ mod tests {
         let events = exchange.events_for_publish(vec![newer.clone()]);
 
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_id, newer.event_id);
+        assert_eq!(events[0].event.event_id, newer.event_id);
+    }
+
+    #[test]
+    fn direct_root_app_message_coalescing_keeps_latest_root_per_family() {
+        let older_drive =
+            direct_root_app_message("drive-root:remote:main:7:old-hash:old-key:local,remote");
+        let newer_drive =
+            direct_root_app_message("drive-root:remote:main:8:new-hash:new-key:local,remote");
+        let duplicate_newer =
+            direct_root_app_message("drive-root:remote:main:8:new-hash:new-key:local,remote");
+        let share_root =
+            direct_root_app_message("share-root:share:remote:2:share-hash:share-key:local,remote");
+
+        let (messages, skipped) = coalesce_direct_root_app_messages(vec![
+            older_drive,
+            share_root,
+            newer_drive,
+            duplicate_newer,
+        ]);
+
+        assert_eq!(skipped, 2);
+        assert_eq!(
+            direct_root_app_message_keys(&messages),
+            vec![
+                "drive-root:remote:main:8:new-hash:new-key:local,remote".to_string(),
+                "share-root:share:remote:2:share-hash:share-key:local,remote".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn direct_root_app_message_coalescing_preserves_unsequenced_messages() {
+        let profile = direct_root_app_message("profile-op:profile:event");
+        let broken = crate::FipsAppMessage {
+            peer_id: "peer".to_string(),
+            topic: DIRECT_ROOT_APP_TOPIC.to_string(),
+            data: b"not json".to_vec(),
+        };
+        let other_topic = crate::FipsAppMessage {
+            peer_id: "peer".to_string(),
+            topic: "iris-drive/device-link/v1/request".to_string(),
+            data: b"link".to_vec(),
+        };
+        let older_drive =
+            direct_root_app_message("drive-root:remote:main:7:old-hash:old-key:local,remote");
+        let newer_drive =
+            direct_root_app_message("drive-root:remote:main:8:new-hash:new-key:local,remote");
+
+        let (messages, skipped) = coalesce_direct_root_app_messages(vec![
+            profile.clone(),
+            broken.clone(),
+            older_drive,
+            other_topic.clone(),
+            newer_drive,
+        ]);
+
+        assert_eq!(skipped, 1);
+        assert_eq!(messages[0], profile);
+        assert_eq!(messages[1], broken);
+        assert_eq!(messages[2], other_topic);
+        assert_eq!(
+            direct_root_app_message_keys(&messages[3..]),
+            vec!["drive-root:remote:main:8:new-hash:new-key:local,remote".to_string()]
+        );
     }
 
     #[test]
@@ -712,7 +864,7 @@ mod tests {
         let events = exchange.events_for_publish(Vec::new());
 
         assert_eq!(events.len(), 1);
-        assert_eq!(events[0].event_id, wide.event_id);
+        assert_eq!(events[0].event.event_id, wide.event_id);
     }
 
     #[test]
@@ -732,6 +884,30 @@ mod tests {
     }
 
     #[test]
+    fn direct_root_cached_relay_roots_share_family_cadence() {
+        let mut exchange = DirectRootExchange::default();
+        let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
+        let newer_key = "drive-root:device:main:9:new-root-hash:new-root-key:device,remote";
+        let now = Instant::now();
+
+        assert!(exchange.should_publish_candidate_key(
+            key,
+            DirectRootPublishSource::CachedRelay,
+            now
+        ));
+        assert!(!exchange.should_publish_candidate_key(
+            newer_key,
+            DirectRootPublishSource::CachedRelay,
+            now + Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS - 1)
+        ));
+        assert!(exchange.should_publish_candidate_key(
+            newer_key,
+            DirectRootPublishSource::CachedRelay,
+            now + Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
+        ));
+    }
+
+    #[test]
     fn direct_root_metadata_republishes_on_longer_cadence() {
         let mut exchange = DirectRootExchange::default();
         let key = "profile-op:profile:op";
@@ -746,5 +922,26 @@ mod tests {
             key,
             now + Duration::from_secs(DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS)
         ));
+    }
+
+    fn direct_root_app_message(key: &str) -> crate::FipsAppMessage {
+        let frame = DirectRootFrame {
+            key: key.to_string(),
+            event_id: format!("{key}:event"),
+            event_json: "{}".to_string(),
+        };
+        crate::FipsAppMessage {
+            peer_id: "peer".to_string(),
+            topic: DIRECT_ROOT_APP_TOPIC.to_string(),
+            data: serde_json::to_vec(&frame).unwrap(),
+        }
+    }
+
+    fn direct_root_app_message_keys(messages: &[crate::FipsAppMessage]) -> Vec<String> {
+        messages
+            .iter()
+            .filter_map(|message| serde_json::from_slice::<DirectRootFrame>(&message.data).ok())
+            .map(|frame| frame.key)
+            .collect()
     }
 }

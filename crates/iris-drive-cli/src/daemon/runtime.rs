@@ -9,6 +9,8 @@ fn write_runtime_daemon_status(config_dir: &Path, payload: Value) -> Value {
     write_daemon_status(config_dir, payload)
 }
 
+const DIRECT_APP_MESSAGE_DRAIN_LIMIT: usize = 4096;
+
 #[allow(
     clippy::needless_pass_by_value,
     clippy::too_many_arguments,
@@ -27,7 +29,7 @@ pub(crate) fn cmd_daemon(
 ) -> Result<()> {
     use iris_drive_core::relay_sync;
     use nostr_sdk::RelayPoolNotification;
-    use tokio::sync::broadcast::error::RecvError;
+    use tokio::sync::broadcast::error::{RecvError, TryRecvError};
     use tokio::sync::mpsc;
 
     let _daemon_lock = DaemonProcessLock::acquire(config_dir)?;
@@ -803,40 +805,77 @@ pub(crate) fn cmd_daemon(
                 } => {
                     match recv {
                         Some(Ok(message)) => {
-                            match handle_app_key_link_app_message(
-                                config_dir,
-                                &message,
-                                fips_blocks.as_deref(),
-                                &mut acked_app_key_link_rosters,
-                            )
-                            .await
-                            {
-                                Ok(true) => continue,
-                                Ok(false) => {}
-                                Err(error) => {
-                                    println!(
-                                        "{}",
-                                        json!({"event": "app_key_link_request_receive_error", "error": format!("{error:#}")})
-                                    );
-                                    continue;
+                            let mut messages = vec![message];
+                            let mut receiver_closed = false;
+                            if let Some(rx) = direct_app_message_rx.as_mut() {
+                                while messages.len() < DIRECT_APP_MESSAGE_DRAIN_LIMIT {
+                                    match rx.try_recv() {
+                                        Ok(message) => messages.push(message),
+                                        Err(TryRecvError::Empty) => break,
+                                        Err(TryRecvError::Lagged(n)) => {
+                                            println!("{}", json!({"event": "direct_root_app_lagged", "skipped": n}));
+                                        }
+                                        Err(TryRecvError::Closed) => {
+                                            receiver_closed = true;
+                                            break;
+                                        }
+                                    }
                                 }
                             }
-                            if let Some(sync) = fips_blocks.as_ref()
-                                && let Err(error) = direct_roots
-	                                    .handle_app_message(
-	                                        &client,
-	                                        config_dir,
-	                                        sync.clone(),
-	                                        mount_refresh_tx.clone(),
-	                                        &daemon_tasks,
-	                                        message,
-	                                    )
-                                    .await
-                            {
+                            let received_messages = messages.len();
+                            let (messages, coalesced_roots) =
+                                iris_drive_core::coalesce_direct_root_app_messages(messages);
+                            if coalesced_roots > 0 {
                                 println!(
                                     "{}",
-                                    json!({"event": "direct_root_app_error", "error": format!("{error:#}")})
+                                    json!({
+                                        "event": "direct_root_app_coalesced",
+                                        "received_messages": received_messages,
+                                        "applied_messages": messages.len(),
+                                        "skipped_roots": coalesced_roots,
+                                    })
                                 );
+                            }
+                            for message in messages {
+                                match handle_app_key_link_app_message(
+                                    config_dir,
+                                    &message,
+                                    fips_blocks.as_deref(),
+                                    &mut acked_app_key_link_rosters,
+                                )
+                                .await
+                                {
+                                    Ok(true) => continue,
+                                    Ok(false) => {}
+                                    Err(error) => {
+                                        println!(
+                                            "{}",
+                                            json!({"event": "app_key_link_request_receive_error", "error": format!("{error:#}")})
+                                        );
+                                        continue;
+                                    }
+                                }
+                                if let Some(sync) = fips_blocks.as_ref()
+                                    && let Err(error) = direct_roots
+                                        .handle_app_message(
+                                            &client,
+                                            config_dir,
+                                            sync.clone(),
+                                            mount_refresh_tx.clone(),
+                                            &daemon_tasks,
+                                            message,
+                                        )
+                                        .await
+                                {
+                                    println!(
+                                        "{}",
+                                        json!({"event": "direct_root_app_error", "error": format!("{error:#}")})
+                                    );
+                                }
+                            }
+                            if receiver_closed {
+                                direct_app_message_rx = None;
+                                println!("{}", json!({"event": "direct_root_app_closed"}));
                             }
                         }
                         Some(Err(RecvError::Lagged(n))) => {

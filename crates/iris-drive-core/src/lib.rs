@@ -74,7 +74,7 @@ pub use daemon::{Daemon, DaemonError, ImportReport, PRIMARY_DRIVE_ID};
 pub use direct_root_transport::{
     DIRECT_ROOT_APP_TOPIC, DIRECT_ROOT_MESH_STREAM_PREFIX, DirectRootEvent, DirectRootExchange,
     DirectRootFrame, apply_direct_root_event, build_current_direct_root_events,
-    direct_root_mesh_stream,
+    coalesce_direct_root_app_messages, direct_root_mesh_stream,
 };
 pub use fips_sync::{FipsBlockSync, FipsSyncError, FsFipsBlockSync};
 pub use gateway::{GatewayBind, GatewayError, GatewayProxyServer, GatewayServer};
