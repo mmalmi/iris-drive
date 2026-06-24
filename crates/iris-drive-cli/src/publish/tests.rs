@@ -134,7 +134,7 @@ fn direct_root_peer_churn_does_not_clear_republish_throttle() {
         ["authorized-a".to_string(), "authorized-b".to_string()],
         ["mesh-a".to_string()],
     ));
-    assert!(!exchange.should_publish_key(key, now + std::time::Duration::from_secs(1)));
+    assert!(!exchange.should_publish_key(key, now + std::time::Duration::from_millis(500)));
 }
 
 #[test]

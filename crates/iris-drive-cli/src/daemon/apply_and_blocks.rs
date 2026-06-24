@@ -5,6 +5,8 @@ pub(crate) enum EventApplyOutcome {
     RetryablePrerequisiteMissing,
 }
 
+const ROOT_APPLY_FOLLOWUP_COALESCE_MS: u64 = 750;
+
 impl EventApplyOutcome {
     pub(crate) const fn should_cache_direct_root_frame(self) -> bool {
         !matches!(self, Self::RetryablePrerequisiteMissing)
@@ -320,8 +322,16 @@ pub(crate) fn spawn_root_apply_followup(
         .as_ref()
         .filter(|root_cid| root_cid_belongs_to_peer(&config, root_cid))
         .cloned();
+    let should_coalesce_followup =
+        root_cid_to_pull.is_some() && expected_projection_root_key.is_some();
 
     Some(tokio::spawn(async move {
+        if should_coalesce_followup {
+            tokio::time::sleep(std::time::Duration::from_millis(
+                ROOT_APPLY_FOLLOWUP_COALESCE_MS,
+            ))
+            .await;
+        }
         if let Some(root_cid) = root_cid_to_pull {
             let mut last_error = None;
             for delay_secs in event_block_pull_retry_delays(&config) {
