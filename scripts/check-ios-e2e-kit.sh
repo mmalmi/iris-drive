@@ -168,6 +168,7 @@ require_contains scripts/ios-device-smoke.sh 'local status'
 require_contains scripts/ios-device-smoke.sh 'return "$status"'
 require_contains scripts/ios-device-iris-apps-smoke.sh 'local status'
 require_contains scripts/ios-device-iris-apps-smoke.sh 'return "$status"'
+require_contains scripts/ios-device-iris-apps-smoke.sh "assert_device_awake_for_launch"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "testShareSheetImportsFileFromExternalSender"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "assertSharedFileVisibleInFiles(sharedFile, in: refreshed)"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "assertFilesOpen(in: app, files: files, timeout: 25, expectedItem: sharedFile)"
