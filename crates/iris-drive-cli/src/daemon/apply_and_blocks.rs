@@ -277,7 +277,7 @@ fn drive_root_followup_plan(
     }
 }
 
-fn root_has_successful_block_sync(config_dir: &Path, root_cid: &str) -> bool {
+pub(crate) fn root_has_successful_block_sync(config_dir: &Path, root_cid: &str) -> bool {
     load_daemon_status(config_dir)
         .and_then(|status| {
             status

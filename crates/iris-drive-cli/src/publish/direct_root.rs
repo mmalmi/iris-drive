@@ -146,7 +146,7 @@ impl DirectRootExchange {
         daemon_tasks: &DaemonTaskSet,
         frame: DirectRootFrame,
     ) -> Result<bool> {
-        if self.seen_keys.contains(&frame.key) {
+        if self.should_skip_seen_direct_root_frame(config_dir, &frame.key) {
             return Ok(false);
         }
         let event: Event =
@@ -181,6 +181,16 @@ impl DirectRootExchange {
             }
         }
         Ok(true)
+    }
+
+    fn should_skip_seen_direct_root_frame(&self, config_dir: &Path, key: &str) -> bool {
+        if !self.seen_keys.contains(key) {
+            return false;
+        }
+        let Some(root_cid) = direct_root_retry_root_cid(key) else {
+            return true;
+        };
+        root_has_successful_block_sync(config_dir, &root_cid)
     }
 
     pub(crate) async fn request_roots_from_new_peers(
@@ -556,6 +566,31 @@ fn direct_root_cache_slot(key: &str) -> Option<DirectRootCacheSlot> {
                 seq,
                 recipient_count: direct_root_recipient_count(recipients),
             })
+        }
+        _ => None,
+    }
+}
+
+fn direct_root_retry_root_cid(key: &str) -> Option<String> {
+    let (prefix, rest) = key.split_once(':')?;
+    match prefix {
+        "drive-root" => {
+            let mut parts = rest.splitn(4, ':');
+            let _app_key = parts.next()?;
+            let _drive_id = parts.next()?;
+            let _seq = parts.next()?;
+            let root_and_recipients = parts.next()?;
+            let (root_cid, _recipients) = root_and_recipients.rsplit_once(':')?;
+            Some(root_cid.to_string())
+        }
+        "share-root" => {
+            let mut parts = rest.splitn(4, ':');
+            let _share_id = parts.next()?;
+            let _app_key = parts.next()?;
+            let _seq = parts.next()?;
+            let root_and_recipients = parts.next()?;
+            let (root_cid, _recipients) = root_and_recipients.rsplit_once(':')?;
+            Some(root_cid.to_string())
         }
         _ => None,
     }

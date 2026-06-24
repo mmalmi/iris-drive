@@ -1074,15 +1074,17 @@ pub(crate) fn app_key_sync_state(
     is_current_app_key: bool,
     has_root: bool,
     root_available: Option<bool>,
+    root_block_synced: bool,
 ) -> &'static str {
     if is_current_app_key {
         return if has_root { "local" } else { "not imported" };
     }
-    match (has_root, root_available) {
-        (false, _) => "waiting for root",
-        (true, Some(true)) => "synced",
-        (true, Some(false)) => "blocks pending",
-        (true, None) => "metadata only",
+    match (has_root, root_available, root_block_synced) {
+        (false, _, _) => "waiting for root",
+        (true, _, false) => "blocks pending",
+        (true, Some(true), true) => "synced",
+        (true, Some(false), true) => "blocks pending",
+        (true, None, true) => "metadata only",
     }
 }
 

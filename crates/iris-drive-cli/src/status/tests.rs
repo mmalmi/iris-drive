@@ -30,6 +30,15 @@ fn retry_interrupted_io_returns_non_interrupted_errors() {
 }
 
 #[test]
+fn remote_app_key_sync_state_requires_successful_block_sync() {
+    assert_eq!(
+        app_key_sync_state(false, true, Some(true), false),
+        "blocks pending"
+    );
+    assert_eq!(app_key_sync_state(false, true, Some(true), true), "synced");
+}
+
+#[test]
 fn block_stats_entry_limit_marks_truncated() {
     let dir = tempfile::tempdir().unwrap();
     for index in 0..3 {

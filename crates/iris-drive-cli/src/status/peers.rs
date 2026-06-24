@@ -83,11 +83,15 @@ pub(crate) fn peer_statuses(
             .as_deref()
             .map(|root| root_file_count(config_dir, root).is_some());
         let fips_peer_status = fips_peer_statuses.get(&app_key.npub);
-        let sync_state =
-            app_key_sync_state(app_key.is_current_app_key, root.is_some(), root_available);
         let last_block_sync = root_cid
             .as_ref()
             .and_then(|root| block_sync_by_root.and_then(|map| map.get(root)).cloned());
+        let sync_state = app_key_sync_state(
+            app_key.is_current_app_key,
+            root.is_some(),
+            root_available,
+            last_block_sync.is_some(),
+        );
         let detail = peer_detail(
             app_key,
             sync_state,

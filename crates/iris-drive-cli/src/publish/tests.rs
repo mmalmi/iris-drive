@@ -246,6 +246,33 @@ fn direct_root_republish_skips_cached_files_root_events() {
 }
 
 #[test]
+fn direct_root_seen_drive_root_retries_until_blocks_sync() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let mut exchange = DirectRootExchange::default();
+    let key = "drive-root:remote:main:8:root-hash:root-key:local,remote".to_string();
+
+    exchange.seen_keys.insert(key.clone());
+
+    assert!(!exchange.should_skip_seen_direct_root_frame(config_dir.path(), &key));
+
+    write_daemon_status(
+        config_dir.path(),
+        json!({
+            "event": "test",
+            "block_sync_by_root": {
+                "root-hash:root-key": {
+                    "transport": "fips",
+                    "total_hashes": 3,
+                    "fetched": 3,
+                }
+            }
+        }),
+    );
+
+    assert!(exchange.should_skip_seen_direct_root_frame(config_dir.path(), &key));
+}
+
+#[test]
 fn direct_root_retry_policy_keeps_prerequisite_skips_uncached() {
     use iris_drive_core::relay_sync::DriveRootApply;
 
