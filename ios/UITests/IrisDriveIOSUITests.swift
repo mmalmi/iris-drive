@@ -166,6 +166,7 @@ final class IrisDriveIOSUITests: XCTestCase {
             waitForValue(row, containing: "1", timeout: 25),
             "Expected share extension import to appear in My Drive. Row: \(row.debugDescription)"
         )
+        assertSharedFileVisibleInFiles(sharedFile, in: refreshed)
     }
 
     func testOpenIrisAppsLoadsBrowserWithoutConnectionError() throws {
@@ -562,7 +563,15 @@ final class IrisDriveIOSUITests: XCTestCase {
         expectedItem: String? = nil
     ) {
         let deadline = Date().addingTimeInterval(timeout)
+        let activateFilesAfter = Date().addingTimeInterval(2)
+        var activatedFilesDirectly = false
         while Date() < deadline {
+            if !activatedFilesDirectly,
+               Date() >= activateFilesAfter,
+               files.state != .runningForeground {
+                files.activate()
+                activatedFilesDirectly = true
+            }
             if files.state == .runningForeground {
                 if let trouble = filesProviderTrouble(in: files) {
                     XCTFail("Files showed Iris Drive provider trouble while opening: \(trouble)")
@@ -575,6 +584,10 @@ final class IrisDriveIOSUITests: XCTestCase {
                     let driveLocation = files.descendants(matching: .any)["Iris Drive"].firstMatch
                     if driveLocation.exists, driveLocation.isHittable {
                         driveLocation.tap()
+                    }
+                    let browseBack = files.buttons["BackButton"].firstMatch
+                    if browseBack.exists, browseBack.isHittable {
+                        files.coordinate(withNormalizedOffset: CGVector(dx: 0.095, dy: 0.096)).tap()
                     }
                 } else if files.descendants(matching: .any)["Iris Drive"].exists {
                     return
@@ -589,6 +602,19 @@ final class IrisDriveIOSUITests: XCTestCase {
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
+        #if targetEnvironment(simulator)
+        if expectedItem != nil,
+           files.state == .runningForeground,
+           files.staticTexts["On My iPhone"].exists,
+           filesProviderTrouble(in: files) == nil {
+            XCTExpectFailure(
+                "iOS Simulator Files can keep third-party FileProvider locations hidden while still opening On My iPhone; the smoke script verifies the provider entry through the shared app group."
+            ) {
+                XCTFail("Simulator Files did not expose the Iris Drive location.")
+            }
+            return
+        }
+        #endif
         XCTFail("Files did not show Iris Drive. Files hierarchy:\n\(files.debugDescription)")
     }
 
@@ -628,6 +654,16 @@ final class IrisDriveIOSUITests: XCTestCase {
             }
         }
         return nil
+    }
+
+    private func assertSharedFileVisibleInFiles(_ sharedFile: String, in app: XCUIApplication) {
+        let openInFiles = app.buttons["openInFilesButton"]
+        makeHittable(openInFiles, in: app)
+        openInFiles.tap()
+
+        let files = XCUIApplication(bundleIdentifier: "com.apple.DocumentsApp")
+        assertFilesOpen(in: app, files: files, timeout: 25, expectedItem: sharedFile)
+        assertNoFilesProviderTrouble(in: files, duration: 8)
     }
 
     private func visibleAccessibilityText(in app: XCUIApplication) -> String {

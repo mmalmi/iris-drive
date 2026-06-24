@@ -405,7 +405,7 @@ final class IrisDriveMobileModel: ObservableObject {
 
     private func scheduleOpenInFilesTimeout(for attempt: Int) {
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 4_000_000_000)
+            try? await Task.sleep(nanoseconds: 30_000_000_000)
             await MainActor.run { [weak self] in
                 guard let self,
                       self.isSetupComplete,
@@ -442,12 +442,12 @@ final class IrisDriveMobileModel: ObservableObject {
                     self.showFileProviderError("Files could not locate Iris Drive.")
                     return
                 }
+                self.scheduleFilesRootFallbackIfStillActive(for: attempt)
                 UIApplication.shared.open(filesURL, options: [:]) { [weak self] opened in
                     Task { @MainActor in
                         guard let self else { return }
                         guard self.fileProviderOpenAttempt == attempt else { return }
                         if opened {
-                            self.fileProviderOpenAttempt += 1
                             self.fileProviderError = ""
                             self.fileProviderStatus = "Files provider open"
                             self.rebuildDerivedState()
@@ -471,6 +471,35 @@ final class IrisDriveMobileModel: ObservableObject {
         var components = URLComponents(url: userVisibleURL, resolvingAgainstBaseURL: false)
         components?.scheme = "shareddocuments"
         return components?.url
+    }
+
+    private func scheduleFilesRootFallbackIfStillActive(for attempt: Int) {
+        Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 1_500_000_000)
+            await MainActor.run { [weak self] in
+                guard let self,
+                      self.fileProviderOpenAttempt == attempt,
+                      self.fileProviderError.isEmpty
+                else {
+                    return
+                }
+                guard UIApplication.shared.applicationState == .active else {
+                    self.fileProviderOpenAttempt += 1
+                    return
+                }
+                guard let filesRoot = URL(string: "shareddocuments://") else { return }
+                UIApplication.shared.open(filesRoot, options: [:]) { [weak self] opened in
+                    Task { @MainActor in
+                        guard let self, self.fileProviderOpenAttempt == attempt else { return }
+                        if opened {
+                            self.fileProviderOpenAttempt += 1
+                        } else {
+                            self.showFileProviderError("Files refused to open Iris Drive.")
+                        }
+                    }
+                }
+            }
+        }
     }
 
     private func showFileProviderError(_ message: String) {
@@ -537,10 +566,16 @@ final class IrisDriveMobileModel: ObservableObject {
 
     private func waitForFileProviderRemovalThenEnsure(completion: ((Bool) -> Void)?) {
         Task { @MainActor [weak self] in
-            for _ in 0..<30 where self?.fileProviderDomainRemovalInFlight == true {
+            for _ in 0..<150 where self?.fileProviderDomainRemovalInFlight == true {
                 try? await Task.sleep(nanoseconds: 100_000_000)
             }
             guard let self else {
+                completion?(false)
+                return
+            }
+            guard !self.fileProviderDomainRemovalInFlight else {
+                self.fileProviderStatus = "Files provider unavailable"
+                self.rebuildDerivedState()
                 completion?(false)
                 return
             }
