@@ -85,23 +85,7 @@ final class ShareItemImporter {
         }
         if let url = sharedURL {
             if url.isFileURL {
-                let scoped = url.startAccessingSecurityScopedResource()
-                defer {
-                    if scoped {
-                        url.stopAccessingSecurityScopedResource()
-                    }
-                }
-                let data = try Data(contentsOf: url)
-                let fileType = UTType(filenameExtension: url.pathExtension) ?? contentType
-                try saveSharedFile(
-                    defaultName(
-                        provider: provider,
-                        fallbackName: url.lastPathComponent,
-                        contentType: fileType
-                    ),
-                    fileType,
-                    data
-                )
+                try importFileURL(url, declaredContentType: contentType, provider: provider)
             } else {
                 try importText(
                     url.absoluteString,
@@ -112,6 +96,11 @@ final class ShareItemImporter {
             return true
         }
         if let data = item as? Data {
+            if contentType.conforms(to: .fileURL),
+               let referencedURL = fileURLPayload(from: data) {
+                try importFileURL(referencedURL, declaredContentType: .data, provider: provider)
+                return true
+            }
             try saveSharedFile(
                 defaultName(provider: provider, contentType: contentType),
                 contentType,
@@ -141,7 +130,8 @@ final class ShareItemImporter {
 
     private func shouldLoadFileRepresentation(_ typeIdentifier: String) -> Bool {
         guard let contentType = UTType(typeIdentifier) else { return false }
-        return contentType.conforms(to: .image)
+        return contentType.conforms(to: .fileURL)
+            || contentType.conforms(to: .image)
             || contentType.conforms(to: .movie)
             || contentType.conforms(to: .data)
     }
@@ -172,6 +162,83 @@ final class ShareItemImporter {
             return "Shared file.\(preferredExtension)"
         }
         return "Shared file"
+    }
+
+    private func fileURLDefaultName(
+        provider: NSItemProvider,
+        fallbackName: String?,
+        contentType: UTType
+    ) -> String {
+        if let fallbackName = fallbackName?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !fallbackName.isEmpty {
+            return nameWithExtensionIfNeeded(fallbackName, contentType: contentType)
+        }
+        return defaultName(provider: provider, fallbackName: nil, contentType: contentType)
+    }
+
+    private func importFileURL(
+        _ url: URL,
+        declaredContentType: UTType,
+        provider: NSItemProvider
+    ) throws {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer {
+            if scoped {
+                url.stopAccessingSecurityScopedResource()
+            }
+        }
+        let data = try Data(contentsOf: url)
+        if declaredContentType.conforms(to: .fileURL),
+           let referencedURL = fileURLPayload(from: data),
+           referencedURL != url {
+            try importFileURL(referencedURL, declaredContentType: .data, provider: provider)
+            return
+        }
+        let fileType = UTType(filenameExtension: url.pathExtension)
+            ?? (declaredContentType.conforms(to: .fileURL) ? .data : declaredContentType)
+        try saveSharedFile(
+            fileURLDefaultName(
+                provider: provider,
+                fallbackName: url.lastPathComponent,
+                contentType: fileType
+            ),
+            fileType,
+            data
+        )
+    }
+
+    private func fileURLPayload(from data: Data) -> URL? {
+        if let propertyList = try? PropertyListSerialization.propertyList(
+            from: data,
+            options: [],
+            format: nil
+        ) {
+            if let url = fileURL(from: propertyList) {
+                return url
+            }
+        }
+        if let text = String(data: data, encoding: .utf8) {
+            return fileURL(from: text)
+        }
+        return nil
+    }
+
+    private func fileURL(from propertyList: Any) -> URL? {
+        if let string = propertyList as? String {
+            return fileURL(from: string)
+        }
+        if let values = propertyList as? [Any] {
+            return values.compactMap { fileURL(from: $0) }.first
+        }
+        if let values = propertyList as? [String: Any] {
+            return values.values.compactMap { fileURL(from: $0) }.first
+        }
+        return nil
+    }
+
+    private func fileURL(from string: String) -> URL? {
+        guard let url = URL(string: string), url.isFileURL else { return nil }
+        return url
     }
 
     private func nameWithExtensionIfNeeded(_ name: String, contentType: UTType) -> String {

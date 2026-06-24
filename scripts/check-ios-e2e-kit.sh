@@ -15,7 +15,7 @@ require_file() {
 require_contains() {
   local path="$1"
   local pattern="$2"
-  if ! grep -F "$pattern" "$ROOT/$path" >/dev/null; then
+  if ! grep -F -- "$pattern" "$ROOT/$path" >/dev/null; then
     echo "missing '$pattern' in $path" >&2
     exit 1
   fi
@@ -24,7 +24,7 @@ require_contains() {
 require_absent() {
   local path="$1"
   local pattern="$2"
-  if grep -F "$pattern" "$ROOT/$path" >/dev/null; then
+  if grep -F -- "$pattern" "$ROOT/$path" >/dev/null; then
     echo "unexpected '$pattern' in $path" >&2
     exit 1
   fi
@@ -37,6 +37,7 @@ require_file ios/Sources/IrisDriveNativeCore.swift
 require_file ios/Sources/IrisDriveTypes.swift
 require_file ios/FileProvider/FileProviderExtension.swift
 require_file ios/ShareExtension/ShareItemImporter.swift
+require_file ios/ShareSource/ShareSourceApp.swift
 require_file ios/UnitTests/ShareItemImporterTests.swift
 require_file ios/UITests/IrisDriveIOSUITests.swift
 require_file ios/UITests/Fixtures/external-links.html
@@ -47,6 +48,7 @@ require_file scripts/cross-vm-four-platform-e2e.sh
 require_contains ios/project.yml "IrisDriveIOS"
 require_contains ios/project.yml "IrisDriveFileProvider"
 require_contains ios/project.yml "IrisDriveIOSShareExtensionTests"
+require_contains ios/project.yml "IrisDriveShareSource"
 require_contains ios/project.yml 'TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Iris Drive.app/Iris Drive"'
 require_contains ios/project.yml 'BUNDLE_LOADER: "$(TEST_HOST)"'
 require_contains ios/Info.plist "CFBundleURLSchemes"
@@ -104,6 +106,9 @@ require_contains ios/FileProvider/FileProviderStorage.swift "storageDirectoryNam
 require_absent ios/FileProvider/FileProviderStorage.swift "applicationSupportDirectory"
 require_contains ios/ShareExtension/ShareItemImporter.swift "loadFileRepresentation"
 require_contains ios/ShareExtension/ShareItemImporter.swift "provider.registeredTypeIdentifiers"
+require_contains ios/ShareSource/ShareSourceApp.swift "shareFileToIrisDriveButton"
+require_contains ios/ShareSource/ShareSourceApp.swift "UIActivityViewController"
+require_contains ios/ShareSource/ShareSourceApp.swift "NSItemProvider(contentsOf:"
 require_contains ios/UnitTests/ShareItemImporterTests.swift "testWebURLImportCreatesUrlFile"
 require_contains ios/UnitTests/ShareItemImporterTests.swift "testDataImportUsesSuggestedImageExtension"
 require_contains ios/Sources/IrisDriveNativeCore.swift "iris_drive_app_dispatch_json"
@@ -151,9 +156,14 @@ require_contains scripts/ios-simulator-smoke.sh "SIMCTL_CHILD_IRIS_DRIVE_DEBUG_A
 require_contains scripts/ios-gui-linking-smoke.sh "testLinkThisDeviceFromWelcome"
 require_contains scripts/ios-gui-linking-smoke.sh "testAddLinkedDeviceFromDevices"
 require_contains scripts/ios-gui-linking-smoke.sh "testOpenIrisAppsLoadsBrowserWhenSyncPaused"
+require_contains scripts/ios-gui-linking-smoke.sh "testShareSheetImportsFileFromExternalSender"
+require_contains scripts/ios-gui-linking-smoke.sh "Iris Drive Share Source.app"
+require_contains scripts/ios-gui-linking-smoke.sh "--app-group"
 require_contains scripts/ios-gui-linking-smoke.sh "IrisDriveIOSShareExtensionTests"
 require_contains scripts/ios-device-smoke.sh "IrisDriveIOSShareExtensionTests"
 require_contains scripts/ios-device-smoke.sh "IOS_DEVICE_SHARE_EXTENSION_TESTS_OK"
+require_contains ios/UITests/IrisDriveIOSUITests.swift "testShareSheetImportsFileFromExternalSender"
+require_contains ios/UITests/IrisDriveIOSUITests.swift "Save to Iris Drive"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "testOpenIrisAppsLoadsBrowserWhenSyncPaused"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "assertNoFilesProviderTrouble"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "syncing with iris drive paused"

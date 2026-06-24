@@ -97,6 +97,24 @@ targets:
           CODE_SIGN_IDENTITY: $(IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY)
           PROVISIONING_PROFILE: $(IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID)
 
+  IrisDriveShareSource:
+    type: application
+    platform: iOS
+    sources:
+      - path: ShareSource
+    settings:
+      base:
+        PRODUCT_NAME: Iris Drive Share Source
+        PRODUCT_BUNDLE_IDENTIFIER: to.iris.drive.ios.ShareSource
+        PRODUCT_MODULE_NAME: IrisDriveShareSource
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_CFBundleDisplayName: Iris Drive Share Source
+      configs:
+        Debug:
+          CODE_SIGN_STYLE: Automatic
+        Release:
+          CODE_SIGN_STYLE: Automatic
+
   IrisDriveIOSShareExtensionTests:
     type: bundle.unit-test
     platform: iOS
@@ -127,6 +145,7 @@ targets:
         TEST_TARGET_NAME: IrisDriveIOS
     dependencies:
       - target: IrisDriveIOS
+      - target: IrisDriveShareSource
 
 schemes:
   IrisDriveIOS:
@@ -135,6 +154,7 @@ schemes:
         IrisDriveIOS: all
         IrisDriveFileProvider: all
         IrisDriveShareExtension: all
+        IrisDriveShareSource: all
         IrisDriveIOSUITests: [test]
     test:
       targets:

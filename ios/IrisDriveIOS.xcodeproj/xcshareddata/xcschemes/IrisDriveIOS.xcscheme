@@ -64,6 +64,20 @@
                ReferencedContainer = "container:IrisDriveIOS.xcodeproj">
             </BuildableReference>
          </BuildActionEntry>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "6DFD6B6D65667A6359D62B22"
+               BuildableName = "IrisDriveShareSource.app"
+               BlueprintName = "IrisDriveShareSource"
+               ReferencedContainer = "container:IrisDriveIOS.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
       </BuildActionEntries>
    </BuildAction>
    <TestAction
