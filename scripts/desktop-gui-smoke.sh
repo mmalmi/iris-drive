@@ -352,6 +352,26 @@ start "" notepad.exe
       }
       Start-Sleep -Milliseconds 250
     }
+    $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    $TaskInfo = Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($Task -or $TaskInfo) {
+      Write-SmokeLog "Windows GUI preflight task state=$($Task.State) last_result=$($TaskInfo.LastTaskResult)"
+    }
+    $Candidates = @(
+      Get-Process -Name "notepad" -ErrorAction SilentlyContinue |
+        Where-Object { $ExistingNotepadIds -notcontains $_.Id }
+    )
+    if ($Candidates.Count -eq 0) {
+      Write-SmokeLog "Windows GUI preflight launched no disposable Notepad process"
+    } else {
+      foreach ($Candidate in $Candidates) {
+        $Visible = $false
+        if ($Candidate.MainWindowHandle -ne [IntPtr]::Zero) {
+          $Visible = [IrisDriveSmoke.NativeMethods]::IsWindowVisible($Candidate.MainWindowHandle)
+        }
+        Write-SmokeLog "Windows GUI preflight candidate id=$($Candidate.Id) session=$($Candidate.SessionId) handle=$($Candidate.MainWindowHandle) visible=$Visible"
+      }
+    }
     return $false
   } finally {
     Get-Process -Name "notepad" -ErrorAction SilentlyContinue |
