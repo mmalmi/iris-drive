@@ -19,30 +19,41 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        WindowsShellTrace.Write($"OnStartup args={string.Join(" ", e.Args)}");
         appMutex = new Mutex(true, MutexName, out var created);
+        WindowsShellTrace.Write($"app mutex created={created}");
         if (!created)
         {
+            WindowsShellTrace.Write("forwarding launch arguments to primary instance");
             SendLaunchArgumentsToPrimary(e.Args);
             appMutex.Dispose();
             appMutex = null;
+            WindowsShellTrace.Write("shutdown duplicate instance");
             Shutdown();
             return;
         }
         ownsAppMutex = true;
 
         base.OnStartup(e);
+        WindowsShellTrace.Write("base OnStartup completed");
         var startHidden = StartupService.IsHiddenLaunch(e.Args);
+        WindowsShellTrace.Write($"constructing MainWindow startHidden={startHidden}");
         var window = new MainWindow(e.Args);
+        WindowsShellTrace.Write("MainWindow constructed");
         StartLaunchArgumentPipe(window);
+        WindowsShellTrace.Write("launch argument pipe started");
         window.Show();
+        WindowsShellTrace.Write($"window.Show completed isVisible={window.IsVisible} state={window.WindowState}");
         if (startHidden)
         {
             window.Hide();
+            WindowsShellTrace.Write("window hidden for startup launch");
         }
     }
 
     protected override void OnExit(ExitEventArgs e)
     {
+        WindowsShellTrace.Write($"OnExit code={e.ApplicationExitCode}");
         launchPipeCancellation?.Cancel();
         launchPipeCancellation?.Dispose();
         if (ownsAppMutex)

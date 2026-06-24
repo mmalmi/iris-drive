@@ -56,6 +56,7 @@ public partial class MainWindow : Window
 
     public MainWindow(string[]? launchArguments = null)
     {
+        WindowsShellTrace.Write("MainWindow constructor entered");
         pendingLaunchArguments = launchArguments?
             .Where(argument => !string.IsNullOrWhiteSpace(argument))
             .Where(argument => !string.Equals(
@@ -87,15 +88,21 @@ public partial class MainWindow : Window
         SelectPage("Drive");
         RenderLoading();
         RenderUpdateState();
+        WindowsShellTrace.Write("MainWindow constructor completed");
     }
 
     private async void Window_Loaded(object sender, RoutedEventArgs e)
     {
+        WindowsShellTrace.Write($"Window_Loaded entered isVisible={IsVisible} state={WindowState}");
         InstallTraySafely();
+        WindowsShellTrace.Write($"tray installed={trayIcon is not null}");
         _ = Task.Run(WindowsIcon.RefreshShortcutIcons);
         refreshTimer.Start();
+        WindowsShellTrace.Write("initial RefreshAsync starting");
         await RefreshAsync();
+        WindowsShellTrace.Write("initial RefreshAsync completed");
         ApplyLaunchArguments(pendingLaunchArguments);
+        WindowsShellTrace.Write("pending launch arguments applied");
         if (AutoCheckUpdatesCheckBox.IsChecked == true)
         {
             _ = CheckUpdatesAsync(manual: false);
@@ -105,6 +112,7 @@ public partial class MainWindow : Window
 
     internal void ApplyLaunchArguments(string[] launchArguments)
     {
+        WindowsShellTrace.Write($"ApplyLaunchArguments count={launchArguments.Length}");
         pendingLaunchArguments = Array.Empty<string>();
         if (launchArguments.Length == 0)
         {
@@ -1364,9 +1372,11 @@ public partial class MainWindow : Window
 
     private void ShowFromTray()
     {
+        WindowsShellTrace.Write($"ShowFromTray before show isVisible={IsVisible} state={WindowState}");
         Show();
         WindowState = WindowState.Normal;
         Activate();
+        WindowsShellTrace.Write($"ShowFromTray after activate isVisible={IsVisible} state={WindowState}");
         _ = RefreshAsync();
     }
 

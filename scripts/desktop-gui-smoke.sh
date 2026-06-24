@@ -246,6 +246,9 @@ function Fail([string]$Message) {
   if (Get-Command Write-FailureScreenshot -ErrorAction SilentlyContinue) {
     Write-FailureScreenshot
   }
+  if (Get-Command Write-ShellTrace -ErrorAction SilentlyContinue) {
+    Write-ShellTrace
+  }
   [Console]::Error.WriteLine("[windows-gui-smoke] ERROR: $Message")
   exit 1
 }
@@ -267,6 +270,7 @@ $IrisRepo = Join-Path $HOME "src\iris-drive"
 $PublishDir = Join-Path $IrisRepo "windows\bin\Debug\net8.0-windows\win-x64\publish"
 $Exe = Join-Path $PublishDir "IrisDrive.exe"
 $Idrive = Join-Path $PublishDir "idrive.exe"
+$ShellTrace = Join-Path $PublishDir "windows-shell-smoke.log"
 if ([string]::IsNullOrWhiteSpace($ConfigDirOverride)) {
   $ConfigDir = Join-Path $env:APPDATA "iris-drive"
 } else {
@@ -313,6 +317,15 @@ function Write-FailureScreenshot {
     Write-SmokeLog "failure screenshot saved to $Screenshot bytes=$Bytes"
   } catch {
     Write-SmokeLog "failure screenshot unavailable: $($_.Exception.Message)"
+  }
+}
+
+function Write-ShellTrace {
+  if ($ShellTrace -and (Test-Path $ShellTrace)) {
+    Write-SmokeLog "Windows shell startup trace:"
+    Get-Content $ShellTrace -Tail 120 | ForEach-Object {
+      [Console]::Error.WriteLine("[windows-gui-smoke] trace $_")
+    }
   }
 }
 
@@ -428,10 +441,12 @@ function Require-InteractiveDesktop {
 function Start-IrisWindowProcess {
   Require-InteractiveDesktop
   $LaunchScript = Join-Path $PublishDir "launch-iris-drive-gui-smoke.cmd"
+  Remove-Item -Force -ErrorAction SilentlyContinue $ShellTrace
 @"
 @echo off
-set IRIS_DRIVE_CLI=$Idrive
-set IRIS_DRIVE_EXTERNAL_DAEMON=true
+set "IRIS_DRIVE_CLI=$Idrive"
+set "IRIS_DRIVE_EXTERNAL_DAEMON=true"
+set "IRIS_DRIVE_WINDOWS_SHELL_TRACE=$ShellTrace"
 cd /d "$PublishDir"
 start "" "$Exe"
 "@ | Set-Content -Encoding ASCII $LaunchScript
