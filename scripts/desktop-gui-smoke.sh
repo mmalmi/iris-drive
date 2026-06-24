@@ -319,9 +319,55 @@ function Test-InteractiveDesktop {
   return [bool](Get-Process -Name "explorer" -ErrorAction SilentlyContinue)
 }
 
+function Test-VisibleWindowLaunch {
+  $ExistingNotepadIds = @(
+    Get-Process -Name "notepad" -ErrorAction SilentlyContinue |
+      ForEach-Object { $_.Id }
+  )
+  $TaskName = "IrisDriveGuiSmokeWindowPreflight"
+  $LaunchScript = Join-Path $PublishDir "launch-window-preflight.cmd"
+@"
+@echo off
+start "" notepad.exe
+"@ | Set-Content -Encoding ASCII $LaunchScript
+
+  try {
+    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+    $Action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$LaunchScript`"" -WorkingDirectory $PublishDir
+    $Trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1))
+    $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+    Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Force | Out-Null
+    Start-ScheduledTask -TaskName $TaskName
+
+    for ($i = 0; $i -lt 20; $i++) {
+      $Candidates = @(
+        Get-Process -Name "notepad" -ErrorAction SilentlyContinue |
+          Where-Object { $ExistingNotepadIds -notcontains $_.Id }
+      )
+      foreach ($Candidate in $Candidates) {
+        if ($Candidate.MainWindowHandle -ne [IntPtr]::Zero -and
+            [IrisDriveSmoke.NativeMethods]::IsWindowVisible($Candidate.MainWindowHandle)) {
+          return $true
+        }
+      }
+      Start-Sleep -Milliseconds 250
+    }
+    return $false
+  } finally {
+    Get-Process -Name "notepad" -ErrorAction SilentlyContinue |
+      Where-Object { $ExistingNotepadIds -notcontains $_.Id } |
+      Stop-Process -Force -ErrorAction SilentlyContinue
+    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+    Remove-Item -Force -ErrorAction SilentlyContinue $LaunchScript
+  }
+}
+
 function Require-InteractiveDesktop {
   if (-not (Test-InteractiveDesktop)) {
     Fail "Windows GUI smoke requires an unlocked interactive desktop session; unlock the Windows VM console and rerun"
+  }
+  if (-not (Test-VisibleWindowLaunch)) {
+    Fail "Windows GUI smoke requires a desktop session that exposes visible windows; the active session did not show a disposable Notepad preflight window. Reattach or unlock the VM console/RDP desktop and rerun"
   }
 }
 
