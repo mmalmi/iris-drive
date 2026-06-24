@@ -277,13 +277,28 @@ if (Test-Path -LiteralPath \$projectionE2e) { Remove-Item -LiteralPath \$project
 New-Item -ItemType Directory -Force -Path \$config,\$work | Out-Null
 \$repo = Join-Path \$HOME 'src\iris-drive'
 \$repoIdrive = Join-Path \$repo 'target\debug\idrive.exe'
+\$overrideIdrive = $(ps_quote "${IRIS_DRIVE_E2E_IDRIVE:-}")
 function Test-IrisDriveCli([string]\$candidate) {
   if ([string]::IsNullOrWhiteSpace(\$candidate) -or -not (Test-Path -LiteralPath \$candidate)) { return \$false }
   & \$candidate app-keys --help *> \$null
   return \$LASTEXITCODE -eq 0
 }
-\$idrive = \$repoIdrive
-if (-not (Test-Path -LiteralPath \$idrive)) {
+\$idrive = \$overrideIdrive
+if ([string]::IsNullOrWhiteSpace(\$idrive)) {
+  if (Test-Path -LiteralPath (Join-Path \$repo 'Cargo.toml')) {
+    \$cargo = Get-Command cargo -ErrorAction SilentlyContinue
+    if (\$cargo) {
+      Push-Location \$repo
+      cargo build -q -p idrive --bin idrive
+      Pop-Location
+      \$idrive = \$repoIdrive
+    }
+  }
+}
+if ([string]::IsNullOrWhiteSpace(\$idrive) -or -not (Test-IrisDriveCli \$idrive)) {
+  \$idrive = \$repoIdrive
+}
+if (-not (Test-IrisDriveCli \$idrive)) {
   \$idrive = Join-Path \$HOME '.cargo\bin\idrive.exe'
   if (-not (Test-Path -LiteralPath \$idrive)) {
     \$cmd = Get-Command idrive.exe -ErrorAction SilentlyContinue
@@ -318,14 +333,21 @@ mkdir -p \"\$base/config\" \"\$base/work\"
 supports_app_keys() {
   [[ -x \"\$1\" ]] && \"\$1\" app-keys --help >/dev/null 2>&1
 }
-idrive=\"\${IRIS_DRIVE_E2E_IDRIVE:-\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/debug/idrive}}\"; idrive=\"\${idrive:-\$HOME/src/iris-drive/target/debug/idrive}\"
-[[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cache/cargo-target/debug/idrive\"
-[[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cargo/bin/idrive\"
-if [[ ! -x \"\$idrive\" ]]; then
-  idrive=\"\$(command -v idrive || true)\"
+repo=\"\$HOME/src/iris-drive\"
+idrive=\"\${IRIS_DRIVE_E2E_IDRIVE:-}\"
+if [[ -z \"\$idrive\" && -f \"\$repo/Cargo.toml\" ]] && command -v cargo >/dev/null 2>&1; then
+  (cd \"\$repo\" && cargo build -q -p idrive --bin idrive)
+  idrive=\"\$repo/target/debug/idrive\"
+  [[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cache/cargo-target/debug/idrive\"
+  [[ -x \"\$idrive\" ]] || idrive=\"\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/debug/idrive}\"
 fi
 if ! supports_app_keys \"\$idrive\"; then
-  repo=\"\$HOME/src/iris-drive\"
+  idrive=\"\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/debug/idrive}\"; idrive=\"\${idrive:-\$repo/target/debug/idrive}\"
+fi
+supports_app_keys \"\$idrive\" || idrive=\"\$HOME/.cache/cargo-target/debug/idrive\"
+supports_app_keys \"\$idrive\" || idrive=\"\$HOME/.cargo/bin/idrive\"
+supports_app_keys \"\$idrive\" || idrive=\"\$(command -v idrive || true)\"
+if ! supports_app_keys \"\$idrive\"; then
   if [[ -f \"\$repo/Cargo.toml\" ]] && command -v cargo >/dev/null 2>&1; then
     (cd \"\$repo\" && cargo build -q -p idrive --bin idrive)
     idrive=\"\$repo/target/debug/idrive\"

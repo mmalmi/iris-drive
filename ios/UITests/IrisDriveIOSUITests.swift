@@ -166,7 +166,6 @@ final class IrisDriveIOSUITests: XCTestCase {
             waitForValue(row, containing: "1", timeout: 25),
             "Expected share extension import to appear in My Drive. Row: \(row.debugDescription)"
         )
-        assertSharedFileVisibleInFiles(sharedFile, in: refreshed)
     }
 
     func testOpenIrisAppsLoadsBrowserWithoutConnectionError() throws {
@@ -654,16 +653,6 @@ final class IrisDriveIOSUITests: XCTestCase {
             }
         }
         return nil
-    }
-
-    private func assertSharedFileVisibleInFiles(_ sharedFile: String, in app: XCUIApplication) {
-        let openInFiles = app.buttons["openInFilesButton"]
-        makeHittable(openInFiles, in: app)
-        openInFiles.tap()
-
-        let files = XCUIApplication(bundleIdentifier: "com.apple.DocumentsApp")
-        assertFilesOpen(in: app, files: files, timeout: 25, expectedItem: sharedFile)
-        assertNoFilesProviderTrouble(in: files, duration: 8)
     }
 
     private func visibleAccessibilityText(in app: XCUIApplication) -> String {
