@@ -451,9 +451,23 @@ fn direct_root_publish_cache_can_be_invalidated_for_provider_updates() {
 }
 
 const _: () = {
-    assert!(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS >= DIRECT_ROOT_REPUBLISH_INTERVAL_SECS * 2);
-    assert!(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS <= 15);
+    assert!(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS <= DIRECT_ROOT_REPUBLISH_INTERVAL_SECS);
+    assert!(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS <= 10);
 };
+
+#[test]
+fn direct_root_publish_bursts_root_frames_only() {
+    assert_eq!(
+        direct_root_publish_attempts("drive-root:device:main:8:root-hash:root-key:device,remote"),
+        2
+    );
+    assert_eq!(
+        direct_root_publish_attempts("share-root:share:device:9:root-hash:root-key:device,remote"),
+        2
+    );
+    assert_eq!(direct_root_publish_attempts("files-root:device:main"), 2);
+    assert_eq!(direct_root_publish_attempts("profile-op:profile:op"), 1);
+}
 
 #[test]
 fn direct_root_publish_includes_profile_roster_ops() {

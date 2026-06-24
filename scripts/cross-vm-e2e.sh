@@ -956,6 +956,29 @@ snapshot() {
     LC_ALL=C sort
 }
 
+snapshot_all_once() {
+  local out_dir="$1"
+  local label pid status
+  local -a labels=()
+  local -a pids=()
+  mkdir -p "$out_dir"
+  for label in "${LABELS[@]}"; do
+    (
+      snapshot "$label" >"$out_dir/$label.snapshot"
+    ) &
+    labels+=("$label")
+    pids+=("$!")
+  done
+  status=0
+  for i in "${!pids[@]}"; do
+    if ! wait "${pids[$i]}"; then
+      echo "snapshot failed for ${labels[$i]}" >&2
+      status=1
+    fi
+  done
+  return "$status"
+}
+
 filter_ignored_snapshot_paths() {
   python3 -c '
 import sys
@@ -1202,25 +1225,39 @@ wait_for_converged_union() {
 }
 
 snapshots_match_expected() {
-  local host_label current
+  local host_label current tmp
+  tmp="$(mktemp -d)"
+  if ! snapshot_all_once "$tmp"; then
+    rm -rf "$tmp"
+    return 1
+  fi
   for host_label in "${LABELS[@]}"; do
-    current="$(snapshot "$host_label")"
+    current="$(cat "$tmp/$host_label.snapshot")"
     if [[ "$current" != "$EXPECTED_SNAPSHOT" ]]; then
+      rm -rf "$tmp"
       return 1
     fi
   done
+  rm -rf "$tmp"
   return 0
 }
 
 snapshots_match_current_union() {
-  local expected host_label current
-  expected="$(union_snapshots)"
+  local expected host_label current tmp
+  tmp="$(mktemp -d)"
+  if ! snapshot_all_once "$tmp"; then
+    rm -rf "$tmp"
+    return 1
+  fi
+  expected="$(cat "$tmp"/*.snapshot | LC_ALL=C sort -u)"
   for host_label in "${LABELS[@]}"; do
-    current="$(snapshot "$host_label")"
+    current="$(cat "$tmp/$host_label.snapshot")"
     if [[ "$current" != "$expected" ]]; then
+      rm -rf "$tmp"
       return 1
     fi
   done
+  rm -rf "$tmp"
   return 0
 }
 
@@ -1274,6 +1311,36 @@ run_step() {
   echo
   echo "== $name =="
   "$@"
+}
+
+run_for_all_labels_parallel() {
+  local label status
+  local -a labels=()
+  local -a pids=()
+  local fn="$1"
+  for label in "${LABELS[@]}"; do
+    (
+      "$fn" "$label"
+    ) &
+    labels+=("$label")
+    pids+=("$!")
+  done
+  status=0
+  for i in "${!pids[@]}"; do
+    if ! wait "${pids[$i]}"; then
+      echo "$fn failed for ${labels[$i]}" >&2
+      status=1
+    fi
+  done
+  return "$status"
+}
+
+write_initial_seed_files() {
+  local label="$1"
+  write_file "$label" "seed/$label.txt" "seed from $label in $RUN_ID
+"
+  write_file "$label" "shared/same.txt" "same bytes from all devices
+"
 }
 
 step_create_edit_rename_delete() {
@@ -1533,12 +1600,7 @@ run_step "authorization" wait_until "all devices authorized" all_authorized
 run_step "fresh daemons" wait_until "all daemon statuses fresh" all_fresh
 run_step "direct FIPS peer discovery" wait_until "every device has a direct peer" all_have_direct_peer
 
-for label in "${LABELS[@]}"; do
-  write_file "$label" "seed/$label.txt" "seed from $label in $RUN_ID
-"
-  write_file "$label" "shared/same.txt" "same bytes from all devices
-"
-done
+run_step "initial seed writes" run_for_all_labels_parallel write_initial_seed_files
 
 run_step "initial multi-device merge" wait_for_converged_union "initial merge"
 

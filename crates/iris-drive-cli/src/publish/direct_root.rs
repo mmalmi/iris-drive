@@ -100,39 +100,48 @@ impl DirectRootExchange {
                 event_json: event.json.clone(),
             };
             let bytes = serde_json::to_vec(&frame)?;
-            let selected_app_peers = sync.authorized_peer_ids().await.len();
-            let sent_app_peers = sync
-                .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, bytes.clone())
-                .await?;
-            println!(
-                "{}",
-                json!({
-                    "event": "direct_root_app_publish",
-                    "topic": DIRECT_ROOT_APP_TOPIC,
-                    "root_key": event.key.clone(),
-                    "root_event_id": event.event_id.clone(),
-                    "kind": event.kind,
-                    "selected_peers": selected_app_peers,
-                    "sent_peers": sent_app_peers,
-                    "sent_bytes": bytes.len(),
-                })
-            );
-            let seq = self.next_mesh_publish_seq();
-            let publish_stats = sync.publish_mesh_pubsub(stream.clone(), seq, bytes).await;
-            println!(
-                "{}",
-                json!({
-                    "event": "direct_root_mesh_publish",
-                    "stream": stream,
-                    "seq": seq,
-                    "root_key": event.key,
-                    "root_event_id": event.event_id,
-                    "kind": event.kind,
-                    "selected_peers": publish_stats.selected_peers,
-                    "sent_peers": publish_stats.sent_peers,
-                    "sent_bytes": publish_stats.sent_bytes,
-                })
-            );
+            let attempts = direct_root_publish_attempts(&event.key);
+            for attempt in 0..attempts {
+                let selected_app_peers = sync.authorized_peer_ids().await.len();
+                let sent_app_peers = sync
+                    .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, bytes.clone())
+                    .await?;
+                println!(
+                    "{}",
+                    json!({
+                        "event": "direct_root_app_publish",
+                        "topic": DIRECT_ROOT_APP_TOPIC,
+                        "root_key": event.key.clone(),
+                        "root_event_id": event.event_id.clone(),
+                        "kind": event.kind,
+                        "attempt": attempt + 1,
+                        "attempts": attempts,
+                        "selected_peers": selected_app_peers,
+                        "sent_peers": sent_app_peers,
+                        "sent_bytes": bytes.len(),
+                    })
+                );
+                let seq = self.next_mesh_publish_seq();
+                let publish_stats = sync
+                    .publish_mesh_pubsub(stream.clone(), seq, bytes.clone())
+                    .await;
+                println!(
+                    "{}",
+                    json!({
+                        "event": "direct_root_mesh_publish",
+                        "stream": stream,
+                        "seq": seq,
+                        "root_key": event.key.clone(),
+                        "root_event_id": event.event_id.clone(),
+                        "kind": event.kind,
+                        "attempt": attempt + 1,
+                        "attempts": attempts,
+                        "selected_peers": publish_stats.selected_peers,
+                        "sent_peers": publish_stats.sent_peers,
+                        "sent_bytes": publish_stats.sent_bytes,
+                    })
+                );
+            }
         }
         Ok(())
     }
@@ -498,6 +507,14 @@ fn direct_root_republish_interval_secs(key: &str) -> u64 {
         DIRECT_ROOT_REPUBLISH_INTERVAL_SECS
     } else {
         DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS
+    }
+}
+
+fn direct_root_publish_attempts(key: &str) -> usize {
+    if direct_root_cache_slot(key).is_some() || key.starts_with("files-root:") {
+        2
+    } else {
+        1
     }
 }
 
