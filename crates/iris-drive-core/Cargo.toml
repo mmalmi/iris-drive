@@ -28,6 +28,7 @@ hashtree-updater = { workspace = true, features = ["secure-nostr-blossom"] }
 hashtree-provider.workspace = true
 http.workspace = true
 mime_guess.workspace = true
+nostr-identity.workspace = true
 nostr-sdk.workspace = true
 reqwest.workspace = true
 rustls.workspace = true

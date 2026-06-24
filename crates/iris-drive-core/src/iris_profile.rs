@@ -9,18 +9,26 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::str::FromStr;
 
-use nostr_sdk::{
-    Alphabet, Event, EventBuilder, EventId, JsonUtil, Keys, Kind, PublicKey, SingleLetterTag, Tag,
-    TagKind,
+use nostr_identity::{
+    FACT_OP_KIND, IDENTITY_CAPABILITY_ADMIN, IDENTITY_CAPABILITY_DECRYPT_SECRET_EPOCHS,
+    IDENTITY_CAPABILITY_RECEIVE_SECRET_WRAPS, IDENTITY_CAPABILITY_RECOVER,
+    IDENTITY_CAPABILITY_WRITE, IDENTITY_PURPOSE_APP, IDENTITY_PURPOSE_PROFILE,
+    IDENTITY_PURPOSE_RECOVERY, IDENTITY_PURPOSE_REMOTE_SIGNER, IdentityKey,
+    IdentityKeyAcceptanceContent, IdentityKeyTombstone, IdentityRosterOp, IdentityRosterOpContent,
+    IdentityRosterProjection, IdentitySecretEpoch, NOSTR_IDENTITY_KEY_ACCEPTANCE_TYPE,
+    NOSTR_IDENTITY_ROSTER_TYPE, SignedIdentityRosterOp, build_identity_key_acceptance_event,
+    build_identity_roster_op_event, parse_identity_key_acceptance_event,
+    parse_identity_roster_op_event, project_identity_roster,
 };
+use nostr_sdk::{Alphabet, Event, EventId, JsonUtil, Keys, PublicKey, SingleLetterTag, TagKind};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
 pub const IRIS_PROFILE_ROSTER_SCHEMA: u32 = 1;
-pub const KIND_IRIS_PROFILE_ROSTER_OP: u16 = 30_078;
+pub const KIND_IRIS_PROFILE_ROSTER_OP: u16 = FACT_OP_KIND;
 pub const IRIS_PROFILE_FACET_ACCEPTANCE_SCHEMA: u32 = 1;
-pub const KIND_IRIS_PROFILE_FACET_ACCEPTANCE: u16 = 30_078;
+pub const KIND_IRIS_PROFILE_FACET_ACCEPTANCE: u16 = FACT_OP_KIND;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -465,21 +473,16 @@ pub fn build_iris_profile_roster_op_event(
         created_at,
         op,
     };
-    let content_json =
-        serde_json::to_string(&content).map_err(|e| IrisProfileError::BadContent(e.to_string()))?;
-    let ts = u64::try_from(created_at).unwrap_or(0);
-    let mut tags = vec![
-        Tag::identifier(iris_profile_roster_op_d_tag(profile_id, &client_nonce)),
-        Tag::custom(iris_profile_tag_kind(), [profile_id.to_string()]),
-    ];
-    for pubkey in content.op.mentioned_pubkeys() {
-        tags.push(Tag::public_key(public_key_from_hex(pubkey)?));
-    }
-    EventBuilder::new(Kind::from(KIND_IRIS_PROFILE_ROSTER_OP), content_json)
-        .tags(tags)
-        .custom_created_at(nostr_sdk::Timestamp::from(ts))
-        .sign_with_keys(signer_keys)
-        .map_err(|e| IrisProfileError::Event(e.to_string()))
+    build_identity_roster_op_event(
+        signer_keys,
+        profile_id.as_uuid(),
+        iris_profile_roster_op_to_identity(content.op)?,
+        content.parents,
+        content.actor_seq,
+        content.client_nonce,
+        non_negative_u64(content.created_at, "created_at")?,
+    )
+    .map_err(|e| IrisProfileError::Event(e.to_string()))
 }
 
 pub fn build_iris_profile_facet_acceptance_event<I>(
@@ -503,25 +506,15 @@ where
         accepted_at,
     };
     validate_facet_acceptance_content(&content)?;
-    let content_json =
-        serde_json::to_string(&content).map_err(|e| IrisProfileError::BadContent(e.to_string()))?;
-    let mut tags = vec![
-        Tag::identifier(iris_profile_facet_acceptance_d_tag(
-            profile_id,
-            &client_nonce,
-        )),
-        Tag::custom(iris_profile_tag_kind(), [profile_id.to_string()]),
-        Tag::public_key(signer_keys.public_key()),
-    ];
-    if let Some(roster_op_id) = &content.roster_op_id {
-        tags.push(Tag::event(event_id_from_hex(roster_op_id)?));
-    }
-    let ts = u64::try_from(accepted_at).unwrap_or(0);
-    EventBuilder::new(Kind::from(KIND_IRIS_PROFILE_FACET_ACCEPTANCE), content_json)
-        .tags(tags)
-        .custom_created_at(nostr_sdk::Timestamp::from(ts))
-        .sign_with_keys(signer_keys)
-        .map_err(|e| IrisProfileError::Event(e.to_string()))
+    build_identity_key_acceptance_event(
+        signer_keys,
+        profile_id.as_uuid(),
+        content.purposes.into_iter().map(iris_purpose_to_identity),
+        content.roster_op_id,
+        content.client_nonce,
+        non_negative_u64(content.accepted_at, "accepted_at")?,
+    )
+    .map_err(|e| IrisProfileError::Event(e.to_string()))
 }
 
 #[must_use]
@@ -553,19 +546,13 @@ pub fn iris_profile_tag_kind() -> TagKind<'static> {
 #[must_use]
 pub fn is_iris_profile_roster_op_event_coordinate(event: &Event) -> bool {
     event.kind.as_u16() == KIND_IRIS_PROFILE_ROSTER_OP
-        && event
-            .tags
-            .identifier()
-            .is_some_and(|d_tag| parse_iris_profile_roster_op_d_tag(d_tag).is_ok())
+        && fact_event_has_type(event, NOSTR_IDENTITY_ROSTER_TYPE)
 }
 
 #[must_use]
 pub fn is_iris_profile_facet_acceptance_event_coordinate(event: &Event) -> bool {
     event.kind.as_u16() == KIND_IRIS_PROFILE_FACET_ACCEPTANCE
-        && event
-            .tags
-            .identifier()
-            .is_some_and(|d_tag| parse_iris_profile_facet_acceptance_d_tag(d_tag).is_ok())
+        && fact_event_has_type(event, NOSTR_IDENTITY_KEY_ACCEPTANCE_TYPE)
 }
 
 pub fn parse_iris_profile_roster_op_event(
@@ -578,31 +565,9 @@ pub fn parse_iris_profile_roster_op_event(
             got: kind,
         });
     }
-    let d_tag = event
-        .tags
-        .identifier()
-        .ok_or(IrisProfileError::MissingDTag)?;
-    let (d_tag_profile, d_tag_nonce) = parse_iris_profile_roster_op_d_tag(d_tag)?;
-    event
-        .verify()
-        .map_err(|e| IrisProfileError::SignatureFailed(e.to_string()))?;
-    let content: IrisProfileRosterOpContent = serde_json::from_str(&event.content)
-        .map_err(|e| IrisProfileError::BadContent(format!("IrisProfile roster op content: {e}")))?;
-    if content.schema != IRIS_PROFILE_ROSTER_SCHEMA {
-        return Err(IrisProfileError::UnsupportedSchema(content.schema));
-    }
-    if content.profile_id != d_tag_profile {
-        return Err(IrisProfileError::ProfileMismatch {
-            d_tag_profile,
-            content_profile: content.profile_id,
-        });
-    }
-    if content.client_nonce != d_tag_nonce {
-        return Err(IrisProfileError::NonceMismatch {
-            d_tag_nonce,
-            content_nonce: content.client_nonce,
-        });
-    }
+    let signed = parse_identity_roster_op_event(event)
+        .map_err(|e| IrisProfileError::BadContent(format!("Nostr identity roster op: {e}")))?;
+    let content = identity_roster_content_to_iris(&signed.content)?;
     let event_created_at = i64::try_from(event.created_at.as_secs()).unwrap_or(i64::MAX);
     if content.created_at != event_created_at {
         return Err(IrisProfileError::CreatedAtMismatch {
@@ -656,33 +621,9 @@ pub fn parse_iris_profile_facet_acceptance_event(
             got: kind,
         });
     }
-    let d_tag = event
-        .tags
-        .identifier()
-        .ok_or(IrisProfileError::MissingDTag)?;
-    let (d_tag_profile, d_tag_nonce) = parse_iris_profile_facet_acceptance_d_tag(d_tag)?;
-    event
-        .verify()
-        .map_err(|e| IrisProfileError::SignatureFailed(e.to_string()))?;
-    let content: IrisProfileFacetAcceptanceContent =
-        serde_json::from_str(&event.content).map_err(|e| {
-            IrisProfileError::BadContent(format!("IrisProfile facet acceptance content: {e}"))
-        })?;
-    if content.schema != IRIS_PROFILE_FACET_ACCEPTANCE_SCHEMA {
-        return Err(IrisProfileError::UnsupportedSchema(content.schema));
-    }
-    if content.profile_id != d_tag_profile {
-        return Err(IrisProfileError::ProfileMismatch {
-            d_tag_profile,
-            content_profile: content.profile_id,
-        });
-    }
-    if content.client_nonce != d_tag_nonce {
-        return Err(IrisProfileError::NonceMismatch {
-            d_tag_nonce,
-            content_nonce: content.client_nonce,
-        });
-    }
+    let signed = parse_identity_key_acceptance_event(event)
+        .map_err(|e| IrisProfileError::BadContent(format!("Nostr identity key acceptance: {e}")))?;
+    let content = identity_key_acceptance_content_to_iris(&signed.content)?;
     let event_created_at = i64::try_from(event.created_at.as_secs()).unwrap_or(i64::MAX);
     if content.accepted_at != event_created_at {
         return Err(IrisProfileError::CreatedAtMismatch {
@@ -749,42 +690,342 @@ where
     Ok(profile_ids.into_iter().collect())
 }
 
-fn parse_iris_profile_roster_op_d_tag(
-    d_tag: &str,
-) -> Result<(IrisProfileId, String), IrisProfileError> {
-    let rest = d_tag
-        .strip_prefix("iris-profile/")
-        .ok_or_else(|| IrisProfileError::DTagMalformed(format!("missing prefix: {d_tag}")))?;
-    let (profile, nonce) = rest
-        .split_once("/roster-op/")
-        .ok_or_else(|| IrisProfileError::DTagMalformed(format!("missing roster op: {d_tag}")))?;
-    if nonce.is_empty() || nonce.contains('/') {
-        return Err(IrisProfileError::DTagMalformed(format!(
-            "invalid nonce: {d_tag}"
-        )));
-    }
-    let profile_id = IrisProfileId::from_str(profile)
-        .map_err(|e| IrisProfileError::DTagMalformed(format!("invalid profile UUID: {e}")))?;
-    Ok((profile_id, nonce.to_string()))
+fn iris_profile_roster_op_to_identity(
+    op: IrisProfileRosterOp,
+) -> Result<IdentityRosterOp, IrisProfileError> {
+    Ok(match op {
+        IrisProfileRosterOp::AddFacet { facet } => IdentityRosterOp::AddKey {
+            key: iris_profile_facet_to_identity(facet)?,
+        },
+        IrisProfileRosterOp::TombstoneFacet { pubkey, reason } => {
+            validate_pubkey(&pubkey)?;
+            IdentityRosterOp::TombstoneKey { pubkey, reason }
+        }
+        IrisProfileRosterOp::SetCapabilities {
+            pubkey,
+            capabilities,
+        } => {
+            validate_pubkey(&pubkey)?;
+            IdentityRosterOp::SetKeyCapabilities {
+                pubkey,
+                capabilities: iris_capabilities_to_identity(capabilities),
+            }
+        }
+        IrisProfileRosterOp::RotateKeyEpoch { epoch, wrapped_dck } => {
+            IdentityRosterOp::RotateSecretEpoch {
+                epoch,
+                wrapped_secrets: normalize_wrapped_dck(wrapped_dck)?,
+            }
+        }
+        IrisProfileRosterOp::RepairKeyWraps { epoch, wrapped_dck } => {
+            IdentityRosterOp::RepairSecretWraps {
+                epoch,
+                wrapped_secrets: normalize_wrapped_dck(wrapped_dck)?,
+            }
+        }
+    })
 }
 
-fn parse_iris_profile_facet_acceptance_d_tag(
-    d_tag: &str,
-) -> Result<(IrisProfileId, String), IrisProfileError> {
-    let rest = d_tag
-        .strip_prefix("iris-profile/")
-        .ok_or_else(|| IrisProfileError::DTagMalformed(format!("missing prefix: {d_tag}")))?;
-    let (profile, nonce) = rest.split_once("/facet-acceptance/").ok_or_else(|| {
-        IrisProfileError::DTagMalformed(format!("missing facet acceptance: {d_tag}"))
-    })?;
-    if nonce.is_empty() || nonce.contains('/') {
-        return Err(IrisProfileError::DTagMalformed(format!(
-            "invalid nonce: {d_tag}"
-        )));
+fn iris_profile_facet_to_identity(
+    facet: IrisProfileFacet,
+) -> Result<IdentityKey, IrisProfileError> {
+    validate_pubkey(&facet.pubkey)?;
+    Ok(IdentityKey {
+        pubkey: facet.pubkey,
+        subject: facet.profile_id.map(|profile_id| profile_id.as_uuid()),
+        purposes: facet
+            .purposes
+            .into_iter()
+            .map(iris_purpose_to_identity)
+            .collect(),
+        capabilities: iris_capabilities_to_identity(facet.capabilities),
+        added_at: non_negative_u64(facet.added_at, "facet added_at")?,
+        label: facet.label,
+    })
+}
+
+fn identity_roster_content_to_iris(
+    content: &IdentityRosterOpContent,
+) -> Result<IrisProfileRosterOpContent, IrisProfileError> {
+    if content.schema != u64::from(IRIS_PROFILE_ROSTER_SCHEMA) {
+        return Err(IrisProfileError::UnsupportedSchema(
+            u32::try_from(content.schema).unwrap_or(u32::MAX),
+        ));
     }
-    let profile_id = IrisProfileId::from_str(profile)
-        .map_err(|e| IrisProfileError::DTagMalformed(format!("invalid profile UUID: {e}")))?;
-    Ok((profile_id, nonce.to_string()))
+    Ok(IrisProfileRosterOpContent {
+        schema: IRIS_PROFILE_ROSTER_SCHEMA,
+        profile_id: IrisProfileId::from_uuid(content.identity),
+        actor_pubkey: content.actor_pubkey.clone(),
+        actor_seq: content.actor_seq,
+        parents: content.parents.clone(),
+        client_nonce: content.client_nonce.clone(),
+        created_at: i64::try_from(content.created_at).map_err(|_| {
+            IrisProfileError::BadContent("IrisProfile roster created_at overflows i64".to_string())
+        })?,
+        op: identity_roster_op_to_iris_profile(&content.op)?,
+    })
+}
+
+fn identity_roster_op_to_iris_profile(
+    op: &IdentityRosterOp,
+) -> Result<IrisProfileRosterOp, IrisProfileError> {
+    Ok(match op {
+        IdentityRosterOp::AddKey { key } => IrisProfileRosterOp::AddFacet {
+            facet: identity_key_to_iris_profile_facet(key)?,
+        },
+        IdentityRosterOp::TombstoneKey { pubkey, reason } => {
+            validate_pubkey(pubkey)?;
+            IrisProfileRosterOp::TombstoneFacet {
+                pubkey: pubkey.clone(),
+                reason: reason.clone(),
+            }
+        }
+        IdentityRosterOp::SetKeyCapabilities {
+            pubkey,
+            capabilities,
+        } => {
+            validate_pubkey(pubkey)?;
+            IrisProfileRosterOp::SetCapabilities {
+                pubkey: pubkey.clone(),
+                capabilities: identity_capabilities_to_iris(capabilities)?,
+            }
+        }
+        IdentityRosterOp::RotateSecretEpoch {
+            epoch,
+            wrapped_secrets,
+        } => IrisProfileRosterOp::RotateKeyEpoch {
+            epoch: *epoch,
+            wrapped_dck: wrapped_secrets.clone(),
+        },
+        IdentityRosterOp::RepairSecretWraps {
+            epoch,
+            wrapped_secrets,
+        } => IrisProfileRosterOp::RepairKeyWraps {
+            epoch: *epoch,
+            wrapped_dck: wrapped_secrets.clone(),
+        },
+    })
+}
+
+fn identity_key_to_iris_profile_facet(
+    key: &IdentityKey,
+) -> Result<IrisProfileFacet, IrisProfileError> {
+    validate_pubkey(&key.pubkey)?;
+    Ok(IrisProfileFacet {
+        pubkey: key.pubkey.clone(),
+        profile_id: key.subject.map(IrisProfileId::from_uuid),
+        purposes: key
+            .purposes
+            .iter()
+            .map(|purpose| identity_purpose_to_iris(purpose))
+            .collect::<Result<BTreeSet<_>, _>>()?,
+        capabilities: identity_capabilities_to_iris(&key.capabilities)?,
+        added_at: i64::try_from(key.added_at).map_err(|_| {
+            IrisProfileError::BadContent("IrisProfile key added_at overflows i64".to_string())
+        })?,
+        label: key.label.clone(),
+    })
+}
+
+fn signed_iris_profile_roster_op_to_identity(
+    signed: &SignedIrisProfileRosterOp,
+) -> Result<SignedIdentityRosterOp, IrisProfileError> {
+    Ok(SignedIdentityRosterOp {
+        op_id: signed.op_id.clone(),
+        signer_pubkey: signed.signer_pubkey.clone(),
+        content: IdentityRosterOpContent {
+            schema: u64::from(signed.content.schema),
+            identity: signed.content.profile_id.as_uuid(),
+            actor_pubkey: signed.content.actor_pubkey.clone(),
+            actor_seq: signed.content.actor_seq,
+            parents: signed.content.parents.clone(),
+            client_nonce: signed.content.client_nonce.clone(),
+            created_at: non_negative_u64(signed.content.created_at, "created_at")?,
+            op: iris_profile_roster_op_to_identity(signed.content.op.clone())?,
+        },
+    })
+}
+
+fn identity_roster_projection_to_iris(
+    projection: IdentityRosterProjection,
+) -> Result<IrisProfileRosterProjection, IrisProfileError> {
+    Ok(IrisProfileRosterProjection {
+        profile_id: IrisProfileId::from_uuid(projection.identity),
+        active_facets: projection
+            .active_keys
+            .into_iter()
+            .map(|(pubkey, key)| Ok((pubkey, identity_key_to_iris_profile_facet(&key)?)))
+            .collect::<Result<BTreeMap<_, _>, IrisProfileError>>()?,
+        tombstones: projection
+            .tombstones
+            .into_iter()
+            .map(|(pubkey, tombstone)| Ok((pubkey, identity_tombstone_to_iris(tombstone)?)))
+            .collect::<Result<BTreeMap<_, _>, IrisProfileError>>()?,
+        key_epochs: projection
+            .secret_epochs
+            .into_iter()
+            .map(|(epoch, secret_epoch)| Ok((epoch, identity_secret_epoch_to_iris(secret_epoch)?)))
+            .collect::<Result<BTreeMap<_, _>, IrisProfileError>>()?,
+        accepted_op_ids: projection.accepted_op_ids,
+        rejected_op_ids: projection.rejected_op_ids,
+    })
+}
+
+fn identity_tombstone_to_iris(
+    tombstone: IdentityKeyTombstone,
+) -> Result<IrisProfileTombstone, IrisProfileError> {
+    validate_pubkey(&tombstone.pubkey)?;
+    validate_pubkey(&tombstone.removed_by_pubkey)?;
+    Ok(IrisProfileTombstone {
+        pubkey: tombstone.pubkey,
+        profile_id: tombstone.subject.map(IrisProfileId::from_uuid),
+        removed_by_pubkey: tombstone.removed_by_pubkey,
+        removed_at: i64::try_from(tombstone.removed_at).map_err(|_| {
+            IrisProfileError::BadContent(
+                "IrisProfile tombstone removed_at overflows i64".to_string(),
+            )
+        })?,
+        reason: tombstone.reason,
+    })
+}
+
+fn identity_secret_epoch_to_iris(
+    secret_epoch: IdentitySecretEpoch,
+) -> Result<IrisProfileKeyEpoch, IrisProfileError> {
+    validate_pubkey(&secret_epoch.signed_by_pubkey)?;
+    Ok(IrisProfileKeyEpoch {
+        epoch: secret_epoch.epoch,
+        created_at: i64::try_from(secret_epoch.created_at).map_err(|_| {
+            IrisProfileError::BadContent(
+                "IrisProfile key epoch created_at overflows i64".to_string(),
+            )
+        })?,
+        signed_by_pubkey: secret_epoch.signed_by_pubkey,
+        wrapped_dck: secret_epoch.wrapped_secrets,
+    })
+}
+
+fn identity_key_acceptance_content_to_iris(
+    content: &IdentityKeyAcceptanceContent,
+) -> Result<IrisProfileFacetAcceptanceContent, IrisProfileError> {
+    if content.schema != u64::from(IRIS_PROFILE_FACET_ACCEPTANCE_SCHEMA) {
+        return Err(IrisProfileError::UnsupportedSchema(
+            u32::try_from(content.schema).unwrap_or(u32::MAX),
+        ));
+    }
+    Ok(IrisProfileFacetAcceptanceContent {
+        schema: IRIS_PROFILE_FACET_ACCEPTANCE_SCHEMA,
+        profile_id: IrisProfileId::from_uuid(content.identity),
+        facet_pubkey: content.key_pubkey.clone(),
+        purposes: content
+            .purposes
+            .iter()
+            .map(|purpose| identity_purpose_to_iris(purpose))
+            .collect::<Result<BTreeSet<_>, _>>()?,
+        roster_op_id: content.roster_op_id.clone(),
+        client_nonce: content.client_nonce.clone(),
+        accepted_at: i64::try_from(content.accepted_at).map_err(|_| {
+            IrisProfileError::BadContent(
+                "IrisProfile acceptance accepted_at overflows i64".to_string(),
+            )
+        })?,
+    })
+}
+
+fn iris_capabilities_to_identity(capabilities: IrisProfileCapabilities) -> Vec<String> {
+    [
+        (
+            capabilities.can_write_roots,
+            IDENTITY_CAPABILITY_WRITE.to_string(),
+        ),
+        (
+            capabilities.can_admin_profile,
+            IDENTITY_CAPABILITY_ADMIN.to_string(),
+        ),
+        (
+            capabilities.can_recover_app_keys,
+            IDENTITY_CAPABILITY_RECOVER.to_string(),
+        ),
+        (
+            capabilities.can_receive_key_wraps,
+            IDENTITY_CAPABILITY_RECEIVE_SECRET_WRAPS.to_string(),
+        ),
+        (
+            capabilities.can_decrypt_key_epochs,
+            IDENTITY_CAPABILITY_DECRYPT_SECRET_EPOCHS.to_string(),
+        ),
+    ]
+    .into_iter()
+    .filter_map(|(enabled, capability)| enabled.then_some(capability))
+    .collect()
+}
+
+fn identity_capabilities_to_iris(
+    capabilities: &[String],
+) -> Result<IrisProfileCapabilities, IrisProfileError> {
+    let mut iris = IrisProfileCapabilities::default();
+    for capability in capabilities {
+        match capability.as_str() {
+            IDENTITY_CAPABILITY_WRITE => iris.can_write_roots = true,
+            IDENTITY_CAPABILITY_ADMIN => iris.can_admin_profile = true,
+            IDENTITY_CAPABILITY_RECOVER => iris.can_recover_app_keys = true,
+            IDENTITY_CAPABILITY_RECEIVE_SECRET_WRAPS => iris.can_receive_key_wraps = true,
+            IDENTITY_CAPABILITY_DECRYPT_SECRET_EPOCHS => iris.can_decrypt_key_epochs = true,
+            other => {
+                return Err(IrisProfileError::BadContent(format!(
+                    "unsupported IrisProfile capability {other}"
+                )));
+            }
+        }
+    }
+    Ok(iris)
+}
+
+fn iris_purpose_to_identity(purpose: IrisProfileKeyPurpose) -> String {
+    match purpose {
+        IrisProfileKeyPurpose::AppKey => IDENTITY_PURPOSE_APP,
+        IrisProfileKeyPurpose::RecoveryPhrase => IDENTITY_PURPOSE_RECOVERY,
+        IrisProfileKeyPurpose::Nip46Signer => IDENTITY_PURPOSE_REMOTE_SIGNER,
+        IrisProfileKeyPurpose::SocialProfile => IDENTITY_PURPOSE_PROFILE,
+    }
+    .to_string()
+}
+
+fn identity_purpose_to_iris(purpose: &str) -> Result<IrisProfileKeyPurpose, IrisProfileError> {
+    match purpose {
+        IDENTITY_PURPOSE_APP => Ok(IrisProfileKeyPurpose::AppKey),
+        IDENTITY_PURPOSE_RECOVERY => Ok(IrisProfileKeyPurpose::RecoveryPhrase),
+        IDENTITY_PURPOSE_REMOTE_SIGNER => Ok(IrisProfileKeyPurpose::Nip46Signer),
+        IDENTITY_PURPOSE_PROFILE => Ok(IrisProfileKeyPurpose::SocialProfile),
+        other => Err(IrisProfileError::BadContent(format!(
+            "unsupported IrisProfile purpose {other}"
+        ))),
+    }
+}
+
+fn normalize_wrapped_dck(
+    wrapped_dck: BTreeMap<String, String>,
+) -> Result<BTreeMap<String, String>, IrisProfileError> {
+    wrapped_dck
+        .into_iter()
+        .map(|(pubkey, wrapped)| {
+            validate_pubkey(&pubkey)?;
+            Ok((pubkey, wrapped))
+        })
+        .collect()
+}
+
+fn non_negative_u64(value: i64, label: &str) -> Result<u64, IrisProfileError> {
+    u64::try_from(value).map_err(|_| {
+        IrisProfileError::BadContent(format!("IrisProfile {label} must be non-negative"))
+    })
+}
+
+fn fact_event_has_type(event: &Event, expected: &str) -> bool {
+    event.tags.iter().any(|tag| {
+        let parts = tag.as_slice();
+        parts.len() == 2 && parts[0] == "type" && parts[1] == expected
+    })
 }
 
 #[derive(Debug, Clone)]
@@ -930,14 +1171,8 @@ pub fn project_iris_profile_roster<I>(
 where
     I: IntoIterator<Item = SignedIrisProfileRosterOp>,
 {
-    let mut projection = IrisProfileRosterProjection {
-        profile_id,
-        active_facets: BTreeMap::new(),
-        tombstones: BTreeMap::new(),
-        key_epochs: BTreeMap::new(),
-        accepted_op_ids: Vec::new(),
-        rejected_op_ids: Vec::new(),
-    };
+    let mut rejected_op_ids = Vec::new();
+    let mut identity_ops = Vec::new();
     let mut ops: Vec<_> = ops
         .into_iter()
         .filter(|op| op.content.profile_id == profile_id)
@@ -949,245 +1184,37 @@ where
             .then_with(|| left.op_id.cmp(&right.op_id))
     });
 
-    let mut accepted_ops_by_id = BTreeMap::new();
     for op in ops {
         if validate_signed_iris_profile_roster_op(&op).is_err() {
-            projection.rejected_op_ids.push(op.op_id);
-            continue;
-        }
-        if apply_projected_op(&mut projection, &op, &accepted_ops_by_id) {
-            projection.accepted_op_ids.push(op.op_id.clone());
-            accepted_ops_by_id.insert(op.op_id.clone(), op);
+            rejected_op_ids.push(op.op_id);
+        } else if let Ok(identity_op) = signed_iris_profile_roster_op_to_identity(&op) {
+            identity_ops.push(identity_op);
         } else {
-            projection.rejected_op_ids.push(op.op_id);
+            rejected_op_ids.push(op.op_id);
         }
     }
-    projection
-}
-
-fn apply_projected_op(
-    projection: &mut IrisProfileRosterProjection,
-    signed: &SignedIrisProfileRosterOp,
-    accepted_ops_by_id: &BTreeMap<String, SignedIrisProfileRosterOp>,
-) -> bool {
-    if !signer_can_apply_with_roster_parents(projection, signed, accepted_ops_by_id) {
-        return false;
-    }
-    apply_roster_op_effect(projection, signed)
-}
-
-fn apply_roster_op_effect(
-    projection: &mut IrisProfileRosterProjection,
-    signed: &SignedIrisProfileRosterOp,
-) -> bool {
-    match &signed.content.op {
-        IrisProfileRosterOp::AddFacet { facet } => {
-            if projection.tombstones.contains_key(&facet.pubkey) {
-                projection.tombstones.remove(&facet.pubkey);
+    let identity_projection = project_identity_roster(profile_id.as_uuid(), identity_ops);
+    let mut projection =
+        identity_roster_projection_to_iris(identity_projection).unwrap_or_else(|_| {
+            IrisProfileRosterProjection {
+                profile_id,
+                active_facets: BTreeMap::new(),
+                tombstones: BTreeMap::new(),
+                key_epochs: BTreeMap::new(),
+                accepted_op_ids: Vec::new(),
+                rejected_op_ids: Vec::new(),
             }
-            if !facet_capabilities_are_valid(facet) {
-                return false;
-            }
-            projection
-                .active_facets
-                .entry(facet.pubkey.clone())
-                .or_insert_with(|| facet.clone());
-            true
-        }
-        IrisProfileRosterOp::TombstoneFacet { pubkey, reason } => {
-            let profile_id = projection
-                .active_facets
-                .remove(pubkey)
-                .and_then(|facet| facet.profile_id);
-            projection.tombstones.insert(
-                pubkey.clone(),
-                IrisProfileTombstone {
-                    pubkey: pubkey.clone(),
-                    profile_id,
-                    removed_by_pubkey: signed.signer_pubkey.clone(),
-                    removed_at: signed.content.created_at,
-                    reason: reason.clone(),
-                },
-            );
-            true
-        }
-        IrisProfileRosterOp::SetCapabilities {
-            pubkey,
-            capabilities,
-        } => {
-            if projection.tombstones.contains_key(pubkey) {
-                return false;
-            }
-            let Some(facet) = projection.active_facets.get_mut(pubkey) else {
-                return false;
-            };
-            if !capabilities_are_valid_for_purposes(&facet.purposes, *capabilities) {
-                return false;
-            }
-            facet.capabilities = *capabilities;
-            true
-        }
-        IrisProfileRosterOp::RotateKeyEpoch { epoch, wrapped_dck } => {
-            projection.key_epochs.insert(
-                *epoch,
-                IrisProfileKeyEpoch {
-                    epoch: *epoch,
-                    created_at: signed.content.created_at,
-                    signed_by_pubkey: signed.signer_pubkey.clone(),
-                    wrapped_dck: wrapped_dck.clone(),
-                },
-            );
-            true
-        }
-        IrisProfileRosterOp::RepairKeyWraps { epoch, wrapped_dck } => {
-            let Some(key_epoch) = projection.key_epochs.get_mut(epoch) else {
-                return false;
-            };
-            if key_epoch.signed_by_pubkey != signed.signer_pubkey {
-                return false;
-            }
-            key_epoch.wrapped_dck.extend(wrapped_dck.clone());
-            true
-        }
-    }
-}
-
-fn signer_can_apply_with_roster_parents(
-    projection: &IrisProfileRosterProjection,
-    signed: &SignedIrisProfileRosterOp,
-    accepted_ops_by_id: &BTreeMap<String, SignedIrisProfileRosterOp>,
-) -> bool {
-    if projection.active_facets.is_empty() {
-        return is_valid_bootstrap_op(signed);
-    }
-    if signed.content.parents.is_empty() {
-        return false;
-    }
-    let Some(parent_projection) = project_roster_parent_closure(
-        projection.profile_id,
-        &signed.content.parents,
-        accepted_ops_by_id,
-    ) else {
-        return false;
-    };
-    signer_can_apply(&parent_projection, signed)
-}
-
-fn project_roster_parent_closure(
-    profile_id: IrisProfileId,
-    parents: &[String],
-    accepted_ops_by_id: &BTreeMap<String, SignedIrisProfileRosterOp>,
-) -> Option<IrisProfileRosterProjection> {
-    let mut pending = parents.to_vec();
-    let mut seen = BTreeSet::new();
-    while let Some(parent_id) = pending.pop() {
-        if !seen.insert(parent_id.clone()) {
-            continue;
-        }
-        let parent = accepted_ops_by_id.get(&parent_id)?;
-        pending.extend(parent.content.parents.iter().cloned());
-    }
-    let mut parent_ops = seen
+        });
+    projection.rejected_op_ids = rejected_op_ids
         .into_iter()
-        .map(|op_id| accepted_ops_by_id.get(&op_id).cloned())
-        .collect::<Option<Vec<_>>>()?;
-    parent_ops.sort_by(|left, right| {
-        left.content
-            .created_at
-            .cmp(&right.content.created_at)
-            .then_with(|| left.op_id.cmp(&right.op_id))
-    });
-    let mut parent_projection = IrisProfileRosterProjection {
-        profile_id,
-        active_facets: BTreeMap::new(),
-        tombstones: BTreeMap::new(),
-        key_epochs: BTreeMap::new(),
-        accepted_op_ids: Vec::new(),
-        rejected_op_ids: Vec::new(),
-    };
-    for op in parent_ops {
-        if validate_signed_iris_profile_roster_op(&op).is_err()
-            || !apply_roster_op_effect(&mut parent_projection, &op)
-        {
-            return None;
-        }
-        parent_projection.accepted_op_ids.push(op.op_id);
-    }
-    if parents
-        .iter()
-        .all(|parent| parent_projection.accepted_op_ids.contains(parent))
-    {
-        Some(parent_projection)
-    } else {
-        None
-    }
-}
-
-fn signer_can_apply(
-    projection: &IrisProfileRosterProjection,
-    signed: &SignedIrisProfileRosterOp,
-) -> bool {
-    if projection.active_facets.is_empty() {
-        return is_valid_bootstrap_op(signed);
-    }
-    let Some(signing_facet) = projection.active_facets.get(&signed.signer_pubkey) else {
-        return false;
-    };
-    match &signed.content.op {
-        IrisProfileRosterOp::AddFacet { facet } => {
-            if facet.is_app_key() {
-                signing_facet.capabilities.can_admin_profile
-                    || signing_facet.capabilities.can_recover_app_keys
-            } else {
-                signing_facet.capabilities.can_admin_profile
-            }
-        }
-        IrisProfileRosterOp::TombstoneFacet { .. }
-        | IrisProfileRosterOp::SetCapabilities { .. } => {
-            signing_facet.capabilities.can_admin_profile
-        }
-        IrisProfileRosterOp::RotateKeyEpoch { .. } | IrisProfileRosterOp::RepairKeyWraps { .. } => {
-            signing_facet.capabilities.can_change_key_epochs()
-        }
-    }
-}
-
-fn is_valid_bootstrap_op(signed: &SignedIrisProfileRosterOp) -> bool {
-    let IrisProfileRosterOp::AddFacet { facet } = &signed.content.op else {
-        return false;
-    };
-    signed.signer_pubkey == facet.pubkey
-        && facet.is_app_key()
-        && facet.capabilities.can_admin_profile
-        && facet.capabilities.can_write_roots
-        && facet.capabilities.can_receive_key_wraps
-        && facet_capabilities_are_valid(facet)
-}
-
-fn facet_capabilities_are_valid(facet: &IrisProfileFacet) -> bool {
-    capabilities_are_valid_for_purposes(&facet.purposes, facet.capabilities)
-}
-
-fn capabilities_are_valid_for_purposes(
-    purposes: &BTreeSet<IrisProfileKeyPurpose>,
-    capabilities: IrisProfileCapabilities,
-) -> bool {
-    if capabilities.can_write_roots && !purposes.contains(&IrisProfileKeyPurpose::AppKey) {
-        return false;
-    }
-    if capabilities.can_decrypt_key_epochs && !capabilities.can_receive_key_wraps {
-        return false;
-    }
-    true
+        .chain(projection.rejected_op_ids)
+        .collect();
+    projection
 }
 
 fn validate_pubkey(pubkey: &str) -> Result<(), IrisProfileError> {
     PublicKey::from_hex(pubkey).map_err(|e| IrisProfileError::InvalidPubkey(e.to_string()))?;
     Ok(())
-}
-
-fn public_key_from_hex(pubkey: &str) -> Result<PublicKey, IrisProfileError> {
-    PublicKey::from_hex(pubkey).map_err(|e| IrisProfileError::InvalidPubkey(e.to_string()))
 }
 
 fn event_id_from_hex(event_id: &str) -> Result<EventId, IrisProfileError> {
@@ -1217,6 +1244,7 @@ fn is_false(value: &bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use nostr_sdk::{EventBuilder, Kind, Tag};
 
     fn signed_op(
         signer: &Keys,
@@ -1284,7 +1312,26 @@ mod tests {
         assert_eq!(op.content.profile_id, profile_id);
         assert_eq!(op.content.actor_pubkey, app.public_key().to_hex());
         assert!(!op.op_id.is_empty());
-        assert!(op.event_json.contains("iris-profile/"));
+        let event = Event::from_json(&op.event_json).unwrap();
+        assert_eq!(event.kind, Kind::from(KIND_IRIS_PROFILE_ROSTER_OP));
+        assert!(event.content.is_empty());
+        assert!(
+            !event
+                .tags
+                .iter()
+                .any(|tag| tag.as_slice().first().is_some_and(|kind| kind == "d"))
+        );
+        assert!(event.tags.iter().any(|tag| {
+            tag.as_slice()
+                == [
+                    "i".to_string(),
+                    profile_id.to_string(),
+                    "subject".to_string(),
+                ]
+        }));
+        assert!(event.tags.iter().any(|tag| {
+            tag.as_slice() == ["type".to_string(), NOSTR_IDENTITY_ROSTER_TYPE.to_string()]
+        }));
     }
 
     #[test]
@@ -1419,7 +1466,9 @@ mod tests {
 
         assert!(matches!(
             parse_iris_profile_facet_acceptance_event(&event),
-            Err(IrisProfileError::FacetSignerMismatch { .. })
+            Err(IrisProfileError::BadContent(message))
+                if message.contains("identity key acceptance signer mismatch")
+                    || message.contains("fact events must have empty content")
         ));
     }
 
@@ -1592,7 +1641,7 @@ mod tests {
             iris_profile_roster_parent_ids(&ops),
             IrisProfileRosterOp::TombstoneFacet {
                 pubkey: phone_pubkey.clone(),
-                reason: Some("recovery cannot remove app actors".to_string()),
+                reason: Some("recovery removed app actor".to_string()),
             },
             13,
         );
@@ -1617,11 +1666,18 @@ mod tests {
 
         assert!(!projection.can_write_roots(&recovery_pubkey));
         assert!(!projection.can_admin_profile(&recovery_pubkey));
-        assert!(projection.active_facets.contains_key(&phone_pubkey));
+        assert!(!projection.active_facets.contains_key(&phone_pubkey));
+        assert_eq!(
+            projection
+                .tombstones
+                .get(&phone_pubkey)
+                .and_then(|tombstone| tombstone.reason.as_deref()),
+            Some("recovery removed app actor")
+        );
         assert!(projection.can_write_roots(&recovered_pubkey));
         assert!(projection.can_admin_profile(&recovered_pubkey));
-        assert_eq!(projection.accepted_op_ids.len(), 4);
-        assert_eq!(projection.rejected_op_ids.len(), 1);
+        assert_eq!(projection.accepted_op_ids.len(), 5);
+        assert!(projection.rejected_op_ids.is_empty());
     }
 
     #[test]
@@ -1840,7 +1896,7 @@ mod tests {
     }
 
     #[test]
-    fn roster_ops_are_authorized_by_declared_parent_closure() {
+    fn roster_ops_are_authorized_by_neutral_graph_state() {
         let profile_id = IrisProfileId::new_v4();
         let admin = Keys::generate();
         let writer = Keys::generate();
@@ -1894,7 +1950,7 @@ mod tests {
         let stale_op_id = stale_op.op_id.clone();
         ops.push(stale_op);
         let parent_ids_after_stale_branch = iris_profile_roster_parent_ids(&ops);
-        assert!(!parent_ids_after_stale_branch.contains(&stale_op_id));
+        assert!(parent_ids_after_stale_branch.contains(&stale_op_id));
         let valid_op = signed_op_with_parents(
             &writer,
             profile_id,
@@ -1914,10 +1970,10 @@ mod tests {
         let projection = project(profile_id, ops);
 
         assert!(projection.can_admin_profile(&writer_pubkey));
-        assert!(!projection.active_facets.contains_key(&stale_invitee_pubkey));
+        assert!(projection.can_write_roots(&stale_invitee_pubkey));
         assert!(projection.can_write_roots(&valid_invitee_pubkey));
-        assert_eq!(projection.accepted_op_ids.len(), 4);
-        assert_eq!(projection.rejected_op_ids.len(), 1);
+        assert_eq!(projection.accepted_op_ids.len(), 5);
+        assert!(projection.rejected_op_ids.is_empty());
     }
 
     #[test]
