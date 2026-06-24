@@ -55,11 +55,6 @@ public partial class App : System.Windows.Application
 
     private static void SendLaunchArgumentsToPrimary(string[] arguments)
     {
-        if (arguments.Length == 0)
-        {
-            return;
-        }
-
         try
         {
             using var client = new NamedPipeClientStream(

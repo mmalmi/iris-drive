@@ -106,6 +106,12 @@ public partial class MainWindow : Window
     internal void ApplyLaunchArguments(string[] launchArguments)
     {
         pendingLaunchArguments = Array.Empty<string>();
+        if (launchArguments.Length == 0)
+        {
+            ShowFromTray();
+            return;
+        }
+
         foreach (var argument in launchArguments)
         {
             if (string.Equals(
