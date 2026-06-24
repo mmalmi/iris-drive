@@ -290,7 +290,7 @@ pub async fn primary_merged_root<S: Store>(
 
 /// Build the visible provider root from an already-computed merged view.
 ///
-/// FileProvider callers often need both the entry timestamp index from
+/// `FileProvider` callers often need both the entry timestamp index from
 /// [`primary_merged_view`] and the materialized provider root. Passing the view
 /// through this helper keeps that path to one projection walk.
 pub async fn primary_merged_root_from_view<S: Store>(

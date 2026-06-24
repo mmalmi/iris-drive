@@ -1142,6 +1142,139 @@ fn revoke_rotates_dck_and_drops_revoked_device_wrap() {
 }
 
 #[test]
+fn recovery_secret_revokes_app_key_and_rotates_fresh_dck() {
+    let owner_dir = tempdir().unwrap();
+    let phrase = crate::recovery_phrase::generate_recovery_phrase().unwrap();
+    let mut owner = Profile::restore(owner_dir.path(), &phrase, Some("owner".into())).unwrap();
+    let recovery_pubkey = crate::recovery_phrase::recovery_phrase_to_keys(&phrase)
+        .unwrap()
+        .public_key()
+        .to_hex();
+    let owner_app_key_pubkey = owner.state.app_key_pubkey.clone();
+    let linked_dir = tempdir().unwrap();
+    let linked_device = AppKey::generate(linked_dir.path().join("key"));
+    linked_device.save().unwrap();
+    let linked_pubkey = linked_device.pubkey_hex();
+
+    owner
+        .approve_app_key(&linked_pubkey, Some("phone".into()))
+        .unwrap();
+    let gen_before = owner.state.app_keys.as_ref().unwrap().dck_generation;
+    let dck_before = owner.current_dck_from_recovery_phrase(&phrase).unwrap();
+    let recovery_nsec = crate::recovery_phrase::recovery_phrase_to_nsec(&phrase).unwrap();
+
+    let (gen_after, signer_pubkey, owner_still_wrapped, linked_still_wrapped, linked_still_active) = {
+        let snap = owner
+            .revoke_app_key_with_recovery_secret(&recovery_nsec, &linked_pubkey)
+            .unwrap();
+        (
+            snap.dck_generation,
+            snap.signer_pubkey().map(str::to_string),
+            snap.wrapped_dck.contains_key(&owner_app_key_pubkey),
+            snap.wrapped_dck.contains_key(&linked_pubkey),
+            snap.contains(&linked_pubkey),
+        )
+    };
+    assert!(gen_after > gen_before);
+    assert_eq!(signer_pubkey.as_deref(), Some(recovery_pubkey.as_str()));
+    assert!(owner_still_wrapped);
+    assert!(!linked_still_wrapped);
+    assert!(!linked_still_active);
+    assert_ne!(
+        owner.current_dck_from_recovery_phrase(&phrase).unwrap(),
+        dck_before,
+        "revocation rotates to a fresh DCK"
+    );
+
+    let linked_state = ProfileState {
+        profile_id: owner.state.profile_id,
+        app_key_pubkey: linked_pubkey,
+        profile_roster_ops: owner.state.profile_roster_ops.clone(),
+        app_key_link_secret: "linked-secret".into(),
+        authorization_state: AppKeyAuthorizationState::Revoked,
+        app_key_label: Some("phone".into()),
+        app_keys: owner.state.app_keys.clone(),
+        profile_roster_projection: owner.state.profile_roster_projection.clone(),
+        outbound_app_key_link_request: None,
+        inbound_app_key_link_requests: Vec::new(),
+        handled_app_key_link_requests: Vec::new(),
+    };
+    let linked_acct = Profile {
+        state: linked_state,
+        app_key: linked_device,
+    };
+    match linked_acct.current_dck() {
+        Err(ProfileError::NoWrapForThisAppKey) => {}
+        other => panic!("expected NoWrapForThisAppKey, got {:?}", other.is_ok()),
+    }
+}
+
+#[test]
+fn nip46_recovery_revokes_app_key_when_decrypt_capable() {
+    let dir = tempdir().unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
+    let nip46 = Keys::generate();
+    let nip46_pubkey = nip46.public_key().to_hex();
+    acct.add_nip46_recovery(&nip46_pubkey, Some("bunker".into()), true)
+        .unwrap();
+    let target = fresh_app_key_pubkey();
+    acct.approve_app_key(&target, Some("tablet".into()))
+        .unwrap();
+    let gen_before = acct.state.app_keys.as_ref().unwrap().dck_generation;
+
+    let (gen_after, signer_pubkey, target_still_wrapped) = {
+        let snap = acct
+            .revoke_app_key_with_nip46_keys(&nip46, &target)
+            .unwrap();
+        (
+            snap.dck_generation,
+            snap.signer_pubkey().map(str::to_string),
+            snap.wrapped_dck.contains_key(&target),
+        )
+    };
+
+    assert!(gen_after > gen_before);
+    assert_eq!(signer_pubkey.as_deref(), Some(nip46_pubkey.as_str()));
+    assert!(!target_still_wrapped);
+}
+
+#[test]
+fn nip46_without_decrypt_cannot_revoke_app_key() {
+    let dir = tempdir().unwrap();
+    let mut acct = Profile::create(dir.path(), None).unwrap();
+    let nip46 = Keys::generate();
+    acct.add_nip46_recovery(
+        &nip46.public_key().to_hex(),
+        Some("signer only".into()),
+        false,
+    )
+    .unwrap();
+    let target = fresh_app_key_pubkey();
+    acct.approve_app_key(&target, None).unwrap();
+
+    match acct.revoke_app_key_with_nip46_keys(&nip46, &target) {
+        Err(ProfileError::RecoveryAuthorityUnavailable) => {}
+        other => panic!(
+            "expected RecoveryAuthorityUnavailable, got {:?}",
+            other.is_ok()
+        ),
+    }
+}
+
+#[test]
+fn recovery_cannot_revoke_last_admin_app_key() {
+    let dir = tempdir().unwrap();
+    let phrase = crate::recovery_phrase::generate_recovery_phrase().unwrap();
+    let mut acct = Profile::restore(dir.path(), &phrase, Some("owner".into())).unwrap();
+    let current = acct.state.app_key_pubkey.clone();
+
+    match acct.revoke_app_key_with_recovery_phrase(&phrase, &current) {
+        Err(ProfileError::CannotRemoveLastAdmin) => {}
+        other => panic!("expected CannotRemoveLastAdmin, got {:?}", other.is_ok()),
+    }
+}
+
+#[test]
 fn dck_changes_after_rotation() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();

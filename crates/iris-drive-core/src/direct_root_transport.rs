@@ -615,7 +615,7 @@ mod tests {
             .find(|event| event.key.starts_with("drive-root:"))
             .expect("drive root event");
 
-        let mut expected = vec![
+        let mut expected = [
             other_app_key.to_string(),
             state.app_key_pubkey.clone(),
             third_app_key.to_string(),

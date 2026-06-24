@@ -528,10 +528,10 @@ fn authorized_device_fips_peers(
     };
     let mut peers = Vec::new();
     let local_device = &account.app_key_pubkey;
-    let devices = account
-        .current_app_keys_projection()
-        .map(|projection| projection.app_actors)
-        .unwrap_or_else(|| legacy_drive_root_app_actors(config, account));
+    let devices = account.current_app_keys_projection().map_or_else(
+        || legacy_drive_root_app_actors(config, account),
+        |projection| projection.app_actors,
+    );
     peers.extend(
         devices
             .iter()

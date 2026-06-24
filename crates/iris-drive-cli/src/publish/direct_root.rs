@@ -190,16 +190,15 @@ impl DirectRootExchange {
         let Ok(root_scope_id) = self.cached_profile_stream_root_scope_id(config_dir) else {
             return Ok(());
         };
-        if let Some(root_scope_id) = root_scope_id {
-            if self
+        if let Some(root_scope_id) = root_scope_id
+            && self
                 .subscribe_profile_stream(&root_scope_id, Some(sync))
                 .await
-            {
-                let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
-                if let Some(state) = config.profile.as_ref() {
-                    self.announce_current_state(config_dir, &config, state, Some(sync))
-                        .await?;
-                }
+        {
+            let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
+            if let Some(state) = config.profile.as_ref() {
+                self.announce_current_state(config_dir, &config, state, Some(sync))
+                    .await?;
             }
         }
         Ok(())

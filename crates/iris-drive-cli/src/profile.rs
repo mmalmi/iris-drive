@@ -265,20 +265,36 @@ pub(crate) fn cmd_reject(config_dir: &std::path::Path, device: &str) -> Result<(
     Ok(())
 }
 
-pub(crate) fn cmd_revoke(config_dir: &std::path::Path, device: &str) -> Result<()> {
+pub(crate) fn cmd_revoke(
+    config_dir: &std::path::Path,
+    device: &str,
+    recovery_secret: Option<&str>,
+) -> Result<()> {
     let app_key_hex = normalize_pubkey(device).context("parsing AppKey pubkey")?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
         .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    if state.app_key_pubkey == app_key_hex {
+    let using_recovery_secret = recovery_secret
+        .map(str::trim)
+        .is_some_and(|secret| !secret.is_empty());
+    if state.app_key_pubkey == app_key_hex && !using_recovery_secret {
         return Err(anyhow::anyhow!("cannot revoke this AppKey from itself"));
     }
     let mut profile = Profile::load(state, config_dir).context("loading profile")?;
-    let snap = profile
-        .revoke_app_key(&app_key_hex)
-        .context("revoking AppKey")?;
+    let snap = if let Some(secret) = recovery_secret
+        .map(str::trim)
+        .filter(|secret| !secret.is_empty())
+    {
+        profile
+            .revoke_app_key_with_recovery_secret(secret, &app_key_hex)
+            .context("revoking AppKey with recovery secret")?
+    } else {
+        profile
+            .revoke_app_key(&app_key_hex)
+            .context("revoking AppKey")?
+    };
     let device_count = snap.app_actors.len();
     let dck_generation = snap.dck_generation;
     config.profile = Some(profile.state.clone());
@@ -289,6 +305,7 @@ pub(crate) fn cmd_revoke(config_dir: &std::path::Path, device: &str) -> Result<(
             "revoked_app_key_npub": pubkey_npub(&app_key_hex),
             "roster_size": device_count,
             "dck_generation": dck_generation,
+            "used_recovery_secret": using_recovery_secret,
         })
     );
     Ok(())

@@ -355,10 +355,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     })
                 );
             }
-            ProviderCmd::NormalizePath { .. } => {
-                unreachable!("handled before opening provider state")
-            }
-            ProviderCmd::ComposePath { .. } => {
+            ProviderCmd::NormalizePath { .. } | ProviderCmd::ComposePath { .. } => {
                 unreachable!("handled before opening provider state")
             }
             ProviderCmd::Read { path, output } => {

@@ -705,6 +705,7 @@ working_dir = "/tmp/Iris Drive"
     }
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn legacy_account_and_device_config_fields_are_migrated() {
         let device_a = "a".repeat(64);
         let device_b = "b".repeat(64);

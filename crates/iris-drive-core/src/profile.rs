@@ -1048,6 +1048,132 @@ impl Profile {
         self.current_app_keys_projection()
     }
 
+    /// Revoke an `AppKey` with a recovery phrase, then rotate the DCK so the
+    /// removed `AppKey` loses access to future content.
+    pub fn revoke_app_key_with_recovery_phrase(
+        &mut self,
+        recovery_phrase: &str,
+        app_key_pubkey_hex: &str,
+    ) -> Result<&AppKeysProjection, ProfileError> {
+        let recovery_phrase = validate_recovery_phrase(recovery_phrase)?;
+        let recovery_key = RecoveryKey::from_recovery_phrase(&recovery_phrase, PathBuf::new())?;
+        self.revoke_app_key_with_authority_keys(
+            recovery_key.keys(),
+            IrisProfileKeyPurpose::RecoveryPhrase,
+            app_key_pubkey_hex,
+        )
+    }
+
+    /// Revoke an `AppKey` with a recovery secret. Accepts a 12-word recovery
+    /// phrase, nsec1, or 64-char hex secret and matches the active recovery
+    /// authority purpose already recorded in the profile.
+    pub fn revoke_app_key_with_recovery_secret(
+        &mut self,
+        recovery_secret: &str,
+        app_key_pubkey_hex: &str,
+    ) -> Result<&AppKeysProjection, ProfileError> {
+        let recovery_phrase = validate_recovery_phrase(recovery_secret).ok();
+        let recovery_key = if let Some(phrase) = recovery_phrase.as_deref() {
+            RecoveryKey::from_recovery_phrase(phrase, PathBuf::new())?
+        } else {
+            RecoveryKey::from_secret(recovery_secret, PathBuf::new())?
+        };
+        let authority_pubkey = recovery_key.pubkey_hex();
+        let expected_purpose = recovery_authority_purpose(
+            &self.state.profile_projection(),
+            &authority_pubkey,
+            recovery_phrase
+                .as_ref()
+                .map(|_| IrisProfileKeyPurpose::RecoveryPhrase),
+        )?;
+        self.revoke_app_key_with_authority_keys(
+            recovery_key.keys(),
+            expected_purpose,
+            app_key_pubkey_hex,
+        )
+    }
+
+    /// Revoke an `AppKey` with a configured NIP-46 recovery authority. The
+    /// caller owns the actual remote-signer transport; this method receives the
+    /// already-authorized signing/decryption keys used by tests and local flows.
+    pub fn revoke_app_key_with_nip46_keys(
+        &mut self,
+        nip46_keys: &Keys,
+        app_key_pubkey_hex: &str,
+    ) -> Result<&AppKeysProjection, ProfileError> {
+        self.revoke_app_key_with_authority_keys(
+            nip46_keys,
+            IrisProfileKeyPurpose::Nip46Signer,
+            app_key_pubkey_hex,
+        )
+    }
+
+    fn revoke_app_key_with_authority_keys(
+        &mut self,
+        authority_keys: &Keys,
+        expected_purpose: IrisProfileKeyPurpose,
+        app_key_pubkey_hex: &str,
+    ) -> Result<&AppKeysProjection, ProfileError> {
+        let target_pubkey = PublicKey::from_hex(app_key_pubkey_hex)
+            .map_err(|e| ProfileError::InvalidAppKeyPubkey(e.to_string()))?
+            .to_hex();
+        let authority_pubkey = authority_keys.public_key().to_hex();
+        {
+            let projection = self.state.profile_projection();
+            let Some(authority_facet) = projection.active_facets.get(&authority_pubkey) else {
+                return Err(ProfileError::RecoveryAuthorityUnavailable);
+            };
+            if !authority_facet.has_purpose(expected_purpose)
+                || !authority_facet.capabilities.can_recover_app_keys
+            {
+                return Err(ProfileError::RecoveryAuthorityUnavailable);
+            }
+            if !authority_facet.capabilities.can_decrypt_key_epochs {
+                return Err(ProfileError::RecoveryAuthorityUnavailable);
+            }
+            if !authority_facet.capabilities.can_change_key_epochs() {
+                return Err(ProfileError::RecoveryCannotRotateKeyEpochs);
+            }
+            let Some(target_facet) = projection.active_facets.get(&target_pubkey) else {
+                return Err(ProfileError::AppKeyNotInRoster);
+            };
+            if !target_facet.is_app_key() {
+                return Err(ProfileError::AppKeyNotInRoster);
+            }
+            if target_facet.capabilities.can_admin_profile {
+                let active_admin_count = projection
+                    .active_facets
+                    .values()
+                    .filter(|facet| facet.is_app_key() && facet.capabilities.can_admin_profile)
+                    .count();
+                if active_admin_count <= 1 {
+                    return Err(ProfileError::CannotRemoveLastAdmin);
+                }
+            }
+        }
+
+        self.current_dck_from_authority_keys(authority_keys, expected_purpose)?;
+        let now = next_profile_timestamp(&self.state);
+        let parents = iris_profile_roster_parent_ids(&self.state.profile_roster_ops);
+        let remove_op = signed_profile_roster_op_with_parents(
+            authority_keys,
+            self.state.profile_id,
+            parents,
+            IrisProfileRosterOp::TombstoneFacet {
+                pubkey: target_pubkey,
+                reason: None,
+            },
+            now,
+        )?;
+        self.state.profile_roster_ops.push(remove_op);
+        self.state.profile_roster_projection = None;
+
+        let dck = generate_dck();
+        self.rotate_profile_dck_epoch_with_signer(authority_keys, &dck, now + 1)?;
+        self.state.sync_app_keys_from_profile();
+        self.current_app_keys_projection()
+    }
+
     /// Rotate the DCK without changing the `AppKey` roster. Useful for
     /// periodic key freshness ("rotate weekly even with no membership
     /// churn"). Admin-only.

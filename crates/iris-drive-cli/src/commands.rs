@@ -110,6 +110,10 @@ pub(crate) enum Command {
     Revoke {
         /// `AppKey` pubkey to revoke (npub1... or 64-char hex).
         app_key: String,
+        /// Optional recovery phrase, nsec1, or 64-char hex secret used to
+        /// revoke without relying on this install's `AppKey` as an admin.
+        #[arg(long)]
+        recovery_secret: Option<String>,
     },
     /// Print the current `IrisProfile`/`AppKeys` roster projection as JSON.
     Roster,
@@ -599,7 +603,7 @@ pub(crate) enum ProviderCmd {
     },
     /// Create or replace one virtual file from a provider-owned temporary file.
     Write {
-        /// Current visible root from the native FileProvider anchor.
+        /// Current visible root from the native `FileProvider` anchor.
         #[arg(long, hide = true)]
         base_root_cid: Option<String>,
         /// Virtual path inside the drive.
@@ -609,7 +613,7 @@ pub(crate) enum ProviderCmd {
     },
     /// Create a virtual directory.
     Mkdir {
-        /// Current visible root from the native FileProvider anchor.
+        /// Current visible root from the native `FileProvider` anchor.
         #[arg(long, hide = true)]
         base_root_cid: Option<String>,
         /// Virtual path inside the drive.
@@ -617,7 +621,7 @@ pub(crate) enum ProviderCmd {
     },
     /// Delete a virtual file or directory.
     Delete {
-        /// Current visible root from the native FileProvider anchor.
+        /// Current visible root from the native `FileProvider` anchor.
         #[arg(long, hide = true)]
         base_root_cid: Option<String>,
         /// Virtual path inside the drive.
@@ -625,7 +629,7 @@ pub(crate) enum ProviderCmd {
     },
     /// Rename or move a virtual item.
     Rename {
-        /// Current visible root from the native FileProvider anchor.
+        /// Current visible root from the native `FileProvider` anchor.
         #[arg(long, hide = true)]
         base_root_cid: Option<String>,
         /// Existing virtual path inside the drive.
@@ -636,7 +640,7 @@ pub(crate) enum ProviderCmd {
     /// Resolve a native provider parent/name into a normalized collision-free virtual path.
     #[command(name = "resolve-path", hide = true)]
     ResolvePath {
-        /// Current visible root from the native FileProvider anchor.
+        /// Current visible root from the native `FileProvider` anchor.
         #[arg(long, hide = true)]
         base_root_cid: Option<String>,
         /// Parent virtual path, empty for the root.

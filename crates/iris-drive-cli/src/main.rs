@@ -110,6 +110,7 @@ fn main() -> ExitCode {
     run_cli()
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_cli() -> ExitCode {
     let _ = rustls::crypto::ring::default_provider().install_default();
     init_tracing();
@@ -158,7 +159,10 @@ fn run_cli() -> ExitCode {
         } => cmd_link(&config_dir, &invite, force, label),
         Command::Logout => cmd_logout(&config_dir),
         Command::Approve { app_key, label } => cmd_approve(&config_dir, &app_key, label),
-        Command::Revoke { app_key } => cmd_revoke(&config_dir, &app_key),
+        Command::Revoke {
+            app_key,
+            recovery_secret,
+        } => cmd_revoke(&config_dir, &app_key, recovery_secret.as_deref()),
         Command::Roster => cmd_roster(&config_dir),
         Command::RotateDck => cmd_rotate_dck(&config_dir),
         Command::Status => cmd_status(&config_dir),

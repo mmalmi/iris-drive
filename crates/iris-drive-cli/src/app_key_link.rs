@@ -21,7 +21,7 @@ pub(crate) fn cmd_app_keys(config_dir: &std::path::Path, command: AppKeysCmd) ->
         AppKeysCmd::Reject { request } => cmd_reject(config_dir, &request),
         AppKeysCmd::List => cmd_roster(config_dir),
         AppKeysCmd::RepairWraps => cmd_repair_key_wraps(config_dir),
-        AppKeysCmd::Revoke { app_key } => cmd_revoke(config_dir, &app_key),
+        AppKeysCmd::Revoke { app_key } => cmd_revoke(config_dir, &app_key, None),
         AppKeysCmd::AppointAdmin { app_key } => cmd_appoint_admin(config_dir, &app_key),
         AppKeysCmd::DemoteAdmin { app_key } => cmd_demote_admin(config_dir, &app_key),
     }
