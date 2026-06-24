@@ -21,6 +21,7 @@ DEVELOPMENT_TEAM="${IRIS_DRIVE_IOS_DEVELOPMENT_TEAM:-J8PPJKD7TA}"
 CODE_SIGN_IDENTITY="${IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY:-Apple Development}"
 LAUNCH_WAIT_SECONDS="${IRIS_DRIVE_IOS_LAUNCH_WAIT_SECONDS:-3}"
 ALLOW_SCREEN_OFF="${IRIS_DRIVE_IOS_ALLOW_SCREEN_OFF:-0}"
+RUN_SHARE_EXTENSION_TESTS="${IRIS_DRIVE_IOS_RUN_SHARE_EXTENSION_TESTS:-1}"
 TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
 RUST_IOS_TARGET="${IRIS_DRIVE_IOS_RUST_TARGET:-aarch64-apple-ios}"
 RUST_LIB_DIR="$TARGET_DIR/$RUST_IOS_TARGET/debug"
@@ -147,6 +148,33 @@ assert_app_running() {
   fi
 }
 
+run_share_extension_tests() {
+  local device_udid="$1"
+
+  case "$RUN_SHARE_EXTENSION_TESTS" in
+    1|true|TRUE|True|yes|YES|Yes|on|ON|On) ;;
+    *) return 0 ;;
+  esac
+
+  xcodebuild \
+    -project "$PROJECT" \
+    -scheme "$SCHEME" \
+    -configuration "$CONFIGURATION" \
+    -derivedDataPath "$DERIVED_DATA" \
+    -destination "platform=iOS,id=$device_udid" \
+    DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
+    CODE_SIGN_STYLE=Automatic \
+    CODE_SIGN_IDENTITY="$CODE_SIGN_IDENTITY" \
+    LIBRARY_SEARCH_PATHS="$RUST_LIB_DIR" \
+    OTHER_LDFLAGS="$RUST_STATIC_LIB" \
+    -allowProvisioningUpdates \
+    -allowProvisioningDeviceRegistration \
+    -only-testing:IrisDriveIOSShareExtensionTests \
+    test
+
+  echo "IOS_DEVICE_SHARE_EXTENSION_TESTS_OK"
+}
+
 DEVICE_UDID="$(select_device)"
 assert_device_awake_for_launch "$DEVICE_UDID"
 
@@ -177,6 +205,8 @@ xcodebuild \
   -allowProvisioningUpdates \
   -allowProvisioningDeviceRegistration \
   build
+
+run_share_extension_tests "$DEVICE_UDID"
 
 APP_PATH="$(resolve_app_path)"
 if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then

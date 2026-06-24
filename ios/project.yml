@@ -108,6 +108,11 @@ targets:
         PRODUCT_NAME: IrisDriveIOSShareExtensionTests
         PRODUCT_BUNDLE_IDENTIFIER: to.iris.drive.ios.ShareExtensionTests
         GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: IrisDriveIOS
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Iris Drive.app/Iris Drive"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+    dependencies:
+      - target: IrisDriveIOS
 
   IrisDriveIOSUITests:
     type: bundle.ui-testing

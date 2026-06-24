@@ -47,6 +47,8 @@ require_file scripts/cross-vm-four-platform-e2e.sh
 require_contains ios/project.yml "IrisDriveIOS"
 require_contains ios/project.yml "IrisDriveFileProvider"
 require_contains ios/project.yml "IrisDriveIOSShareExtensionTests"
+require_contains ios/project.yml 'TEST_HOST: "$(BUILT_PRODUCTS_DIR)/Iris Drive.app/Iris Drive"'
+require_contains ios/project.yml 'BUNDLE_LOADER: "$(TEST_HOST)"'
 require_contains ios/Info.plist "CFBundleURLSchemes"
 require_contains ios/Info.plist "iris-drive"
 require_contains ios/Info.plist "NSAppTransportSecurity"
@@ -150,6 +152,8 @@ require_contains scripts/ios-gui-linking-smoke.sh "testLinkThisDeviceFromWelcome
 require_contains scripts/ios-gui-linking-smoke.sh "testAddLinkedDeviceFromDevices"
 require_contains scripts/ios-gui-linking-smoke.sh "testOpenIrisAppsLoadsBrowserWhenSyncPaused"
 require_contains scripts/ios-gui-linking-smoke.sh "IrisDriveIOSShareExtensionTests"
+require_contains scripts/ios-device-smoke.sh "IrisDriveIOSShareExtensionTests"
+require_contains scripts/ios-device-smoke.sh "IOS_DEVICE_SHARE_EXTENSION_TESTS_OK"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "testOpenIrisAppsLoadsBrowserWhenSyncPaused"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "assertNoFilesProviderTrouble"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "syncing with iris drive paused"

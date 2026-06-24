@@ -60,6 +60,13 @@
 			remoteGlobalIDString = F8BA9ACB95AFB2250E4FE292;
 			remoteInfo = IrisDriveFileProvider;
 		};
+		7B469916E589F85B2B98A72D /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 01F8372FFC4B24BE323F6D62 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2AEF53C9FE79D54F9AB8EE95;
+			remoteInfo = IrisDriveIOS;
+		};
 		AF939187950D4DF463B00166 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 01F8372FFC4B24BE323F6D62 /* Project object */;
@@ -286,6 +293,7 @@
 			buildRules = (
 			);
 			dependencies = (
+				8B432369F6739507F94430CA /* PBXTargetDependency */,
 			);
 			name = IrisDriveIOSShareExtensionTests;
 			packageProductDependencies = (
@@ -350,6 +358,7 @@
 					60284211D6933E6DA8E51E59 = {
 						DevelopmentTeam = J8PPJKD7TA;
 						ProvisioningStyle = Automatic;
+						TestTargetID = 2AEF53C9FE79D54F9AB8EE95;
 					};
 					67B67C05CCBE0A7C7C7E41CA = {
 						DevelopmentTeam = J8PPJKD7TA;
@@ -485,6 +494,11 @@
 			target = 2AEF53C9FE79D54F9AB8EE95 /* IrisDriveIOS */;
 			targetProxy = 5775ADF28900F0E53C5CD23F /* PBXContainerItemProxy */;
 		};
+		8B432369F6739507F94430CA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 2AEF53C9FE79D54F9AB8EE95 /* IrisDriveIOS */;
+			targetProxy = 7B469916E589F85B2B98A72D /* PBXContainerItemProxy */;
+		};
 		AA8DF5D06F3D7E145D31439E /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = F8BA9ACB95AFB2250E4FE292 /* IrisDriveFileProvider */;
@@ -616,6 +630,8 @@
 				PRODUCT_NAME = IrisDriveIOSShareExtensionTests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Iris Drive.app/Iris Drive";
+				TEST_TARGET_NAME = IrisDriveIOS;
 			};
 			name = Debug;
 		};
@@ -779,6 +795,8 @@
 				PRODUCT_NAME = IrisDriveIOSShareExtensionTests;
 				SDKROOT = iphoneos;
 				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Iris Drive.app/Iris Drive";
+				TEST_TARGET_NAME = IrisDriveIOS;
 			};
 			name = Release;
 		};
