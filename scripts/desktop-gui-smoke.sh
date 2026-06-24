@@ -438,57 +438,81 @@ function Require-InteractiveDesktop {
   }
 }
 
-function Start-IrisWindowProcess {
+function Invoke-InteractiveGuiSmoke {
   Require-InteractiveDesktop
-  $LaunchScript = Join-Path $PublishDir "launch-iris-drive-gui-smoke.cmd"
-  Remove-Item -Force -ErrorAction SilentlyContinue $ShellTrace
-@"
-@echo off
-set "IRIS_DRIVE_CLI=$Idrive"
-set "IRIS_DRIVE_EXTERNAL_DAEMON=true"
-set "IRIS_DRIVE_WINDOWS_SHELL_TRACE=$ShellTrace"
-cd /d "$PublishDir"
-start "" "$Exe"
-"@ | Set-Content -Encoding ASCII $LaunchScript
+  $TaskName = "IrisDriveGuiSmokeInteractive"
+  $RunDir = Join-Path $PublishDir "gui-smoke-interactive"
+  $WorkerScript = Join-Path $RunDir "run-gui-smoke.ps1"
+  $ResultFile = Join-Path $RunDir "result.txt"
+  $ErrorFile = Join-Path $RunDir "error.txt"
+  $WorkerLog = Join-Path $RunDir "worker.log"
+  $InteractiveScreenshot = Join-Path $PublishDir "gui-smoke-interactive.png"
+  New-Item -ItemType Directory -Force -Path $RunDir | Out-Null
+  Remove-Item -Force -ErrorAction SilentlyContinue $ResultFile, $ErrorFile, $WorkerLog, $InteractiveScreenshot, $ShellTrace
 
-  $TaskName = "IrisDriveGuiSmokeLaunch"
-  Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
-  $Action = New-ScheduledTaskAction -Execute "cmd.exe" -Argument "/c `"$LaunchScript`"" -WorkingDirectory $PublishDir
-  $Trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1))
-  $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
-  Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Force | Out-Null
-  Start-ScheduledTask -TaskName $TaskName
+@'
+param(
+  [string]$PublishDir,
+  [string]$Exe,
+  [string]$Idrive,
+  [string]$ConfigDir,
+  [string]$ShellTrace,
+  [string]$ResultFile,
+  [string]$ErrorFile,
+  [string]$WorkerLog,
+  [string]$Screenshot
+)
+
+$ErrorActionPreference = "Stop"
+
+function Log([string]$Message) {
+  Add-Content -Encoding ASCII -Path $WorkerLog -Value "$(Get-Date -Format o) $Message"
 }
 
-$Process = Current-IrisWindowProcess
-if (-not $Process) {
-  Stop-HiddenIrisWindowProcesses
-  Start-Sleep -Seconds 1
-  Write-SmokeLog "launching Windows WPF shell"
-  Start-IrisWindowProcess
+function Capture-Screenshot([string]$Path) {
+  try {
+    Add-Type -AssemblyName System.Windows.Forms
+    Add-Type -AssemblyName System.Drawing
+    $Bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $Bitmap = [System.Drawing.Bitmap]::new($Bounds.Width, $Bounds.Height)
+    $Graphics = [System.Drawing.Graphics]::FromImage($Bitmap)
+    $Graphics.CopyFromScreen($Bounds.Location, [System.Drawing.Point]::Empty, $Bounds.Size)
+    $Bitmap.Save($Path, [System.Drawing.Imaging.ImageFormat]::Png)
+    $Graphics.Dispose()
+    $Bitmap.Dispose()
+    Log "screenshot captured width=$($Bounds.Width) height=$($Bounds.Height) file=$Path bytes=$((Get-Item $Path).Length)"
+  } catch {
+    Log "screenshot unavailable: $($_.Exception.Message)"
+  }
 }
 
-for ($i = 0; $i -lt 50; $i++) {
-  $Process = Current-IrisWindowProcess
-  if ($Process) { break }
-  Start-Sleep -Milliseconds 500
-}
-if (-not $Process) {
-  Fail "Windows WPF shell did not expose a visible Iris Drive window"
+function Fail([string]$Message) {
+  Log "ERROR: $Message"
+  Capture-Screenshot $Screenshot
+  $Message | Set-Content -Encoding ASCII $ErrorFile
+  exit 1
 }
 
-[void][IrisDriveSmoke.NativeMethods]::ShowWindow($Process.MainWindowHandle, 9)
-[void][IrisDriveSmoke.NativeMethods]::SetForegroundWindow($Process.MainWindowHandle)
+Add-Type -Namespace IrisDriveSmoke -Name NativeMethods -MemberDefinition @"
+  [System.Runtime.InteropServices.DllImport("user32.dll")]
+  public static extern bool IsWindowVisible(System.IntPtr hWnd);
+  [System.Runtime.InteropServices.DllImport("user32.dll")]
+  public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
+  [System.Runtime.InteropServices.DllImport("user32.dll")]
+  public static extern bool SetForegroundWindow(System.IntPtr hWnd);
+"@
 
-Add-Type -AssemblyName UIAutomationClient
-Add-Type -AssemblyName UIAutomationTypes
-
-$Window = [System.Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
-if (-not $Window) {
-  Fail "UI Automation could not attach to Iris Drive window"
+function Current-IrisWindowProcess {
+  Get-Process -Name "IrisDrive" -ErrorAction SilentlyContinue |
+    Where-Object {
+      $_.MainWindowHandle -ne [IntPtr]::Zero -and
+      [IrisDriveSmoke.NativeMethods]::IsWindowVisible($_.MainWindowHandle)
+    } |
+    Sort-Object StartTime -Descending |
+    Select-Object -First 1
 }
 
-function Find-ElementByName([string]$Name) {
+function Find-ElementByName([System.Windows.Automation.AutomationElement]$Window, [string]$Name) {
   $Condition = [System.Windows.Automation.PropertyCondition]::new(
     [System.Windows.Automation.AutomationElement]::NameProperty,
     $Name
@@ -499,7 +523,7 @@ function Find-ElementByName([string]$Name) {
   )
 }
 
-function Find-ButtonByName([string]$Name) {
+function Find-ButtonByName([System.Windows.Automation.AutomationElement]$Window, [string]$Name) {
   $Condition = [System.Windows.Automation.PropertyCondition]::new(
     [System.Windows.Automation.AutomationElement]::NameProperty,
     $Name
@@ -517,16 +541,16 @@ function Find-ButtonByName([string]$Name) {
   return $null
 }
 
-function Require-Element([string]$Name) {
-  $Element = Find-ElementByName $Name
+function Require-Element([System.Windows.Automation.AutomationElement]$Window, [string]$Name) {
+  $Element = Find-ElementByName $Window $Name
   if (-not $Element) {
     Fail "missing UI Automation element named '$Name'"
   }
   return $Element
 }
 
-function Invoke-Button([string]$Name) {
-  $Button = Find-ButtonByName $Name
+function Invoke-Button([System.Windows.Automation.AutomationElement]$Window, [string]$Name) {
+  $Button = Find-ButtonByName $Window $Name
   if (-not $Button) {
     Fail "missing button named '$Name'"
   }
@@ -538,37 +562,135 @@ function Invoke-Button([string]$Name) {
   Start-Sleep -Milliseconds 500
 }
 
-[void](Require-Element "My Drive")
-[void](Require-Element "Open Drive Folder")
-[void](Require-Element "Files")
-[void](Require-Element "Storage")
-[void](Require-Element "Devices")
-Invoke-Button "Devices"
-[void](Require-Element "Linked devices")
-Invoke-Button "Network"
-[void](Require-Element "FIPS")
-[void](Require-Element "Relays")
-Invoke-Button "My Drive"
-
-$Status = & $Idrive --config-dir $ConfigDir status | ConvertFrom-Json
-if (-not $Status.initialized) {
-  Fail "Windows GUI smoke expected an initialized app profile"
-}
-$Authorized = 0
-if ($Status.summary -and $Status.summary.authorized_app_key_count) {
-  $Authorized = [int]$Status.summary.authorized_app_key_count
-} elseif ($Status.summary -and $Status.summary.authorized_device_count) {
-  $Authorized = [int]$Status.summary.authorized_device_count
-} elseif ($Status.network -and $Status.network.authorized_app_key_count) {
-  $Authorized = [int]$Status.network.authorized_app_key_count
-} elseif ($Status.network -and $Status.network.authorized_device_count) {
-  $Authorized = [int]$Status.network.authorized_device_count
-}
-if ($Authorized -lt 1) {
-  Fail "Windows status has no authorized app keys"
+function Wait-ShellReady {
+  for ($i = 0; $i -lt 40; $i++) {
+    if ((Test-Path $ShellTrace) -and
+        (Select-String -Path $ShellTrace -Pattern "initial RefreshAsync completed" -Quiet)) {
+      Log "shell initial refresh completed"
+      return
+    }
+    Start-Sleep -Milliseconds 250
+  }
+  Fail "Windows shell did not finish initial refresh before UI assertions"
 }
 
-"WINDOWS_GUI_SMOKE_OK"
+try {
+  Log "interactive GUI smoke worker started user=$env:USERNAME session=$([System.Diagnostics.Process]::GetCurrentProcess().SessionId)"
+  Get-Process -Name "IrisDrive" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+  Start-Sleep -Milliseconds 500
+
+  $env:IRIS_DRIVE_CLI = $Idrive
+  $env:IRIS_DRIVE_EXTERNAL_DAEMON = "true"
+  $env:IRIS_DRIVE_WINDOWS_SHELL_TRACE = $ShellTrace
+  $Started = Start-Process -FilePath $Exe -WorkingDirectory $PublishDir -PassThru
+  Log "launched IrisDrive pid=$($Started.Id)"
+
+  $Process = $null
+  for ($i = 0; $i -lt 50; $i++) {
+    $Process = Current-IrisWindowProcess
+    if ($Process) { break }
+    Start-Sleep -Milliseconds 500
+  }
+  if (-not $Process) {
+    Fail "Windows WPF shell did not expose a visible Iris Drive window from the interactive worker"
+  }
+
+  Log "visible IrisDrive window pid=$($Process.Id) handle=$($Process.MainWindowHandle)"
+  [void][IrisDriveSmoke.NativeMethods]::ShowWindow($Process.MainWindowHandle, 9)
+  [void][IrisDriveSmoke.NativeMethods]::SetForegroundWindow($Process.MainWindowHandle)
+  Wait-ShellReady
+
+  Add-Type -AssemblyName UIAutomationClient
+  Add-Type -AssemblyName UIAutomationTypes
+  $Window = [System.Windows.Automation.AutomationElement]::FromHandle($Process.MainWindowHandle)
+  if (-not $Window) {
+    Fail "UI Automation could not attach to Iris Drive window"
+  }
+
+  [void](Require-Element $Window "My Drive")
+  [void](Require-Element $Window "Open Drive Folder")
+  [void](Require-Element $Window "Files")
+  [void](Require-Element $Window "Storage")
+  [void](Require-Element $Window "Devices")
+  Invoke-Button $Window "Devices"
+  [void](Require-Element $Window "Linked Devices")
+  Invoke-Button $Window "Network"
+  [void](Require-Element $Window "FIPS")
+  [void](Require-Element $Window "Relays")
+  Invoke-Button $Window "My Drive"
+
+  $Status = & $Idrive --config-dir $ConfigDir status | ConvertFrom-Json
+  if (-not $Status.initialized) {
+    Fail "Windows GUI smoke expected an initialized app profile"
+  }
+  $Authorized = 0
+  if ($Status.summary -and $Status.summary.authorized_app_key_count) {
+    $Authorized = [int]$Status.summary.authorized_app_key_count
+  } elseif ($Status.summary -and $Status.summary.authorized_device_count) {
+    $Authorized = [int]$Status.summary.authorized_device_count
+  } elseif ($Status.network -and $Status.network.authorized_app_key_count) {
+    $Authorized = [int]$Status.network.authorized_app_key_count
+  } elseif ($Status.network -and $Status.network.authorized_device_count) {
+    $Authorized = [int]$Status.network.authorized_device_count
+  }
+  if ($Authorized -lt 1) {
+    Fail "Windows status has no authorized app keys"
+  }
+
+  Capture-Screenshot $Screenshot
+  "WINDOWS_GUI_SMOKE_OK" | Set-Content -Encoding ASCII $ResultFile
+  Log "WINDOWS_GUI_SMOKE_OK"
+  exit 0
+} catch {
+  Fail (($_ | Out-String).Trim())
+}
+'@ | Set-Content -Encoding ASCII $WorkerScript
+
+  try {
+    $ActionArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$WorkerScript`" -PublishDir `"$PublishDir`" -Exe `"$Exe`" -Idrive `"$Idrive`" -ConfigDir `"$ConfigDir`" -ShellTrace `"$ShellTrace`" -ResultFile `"$ResultFile`" -ErrorFile `"$ErrorFile`" -WorkerLog `"$WorkerLog`" -Screenshot `"$InteractiveScreenshot`""
+    Write-SmokeLog "launching Windows WPF shell in interactive task"
+    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+    $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $ActionArgs -WorkingDirectory $PublishDir
+    $Trigger = New-ScheduledTaskTrigger -Once -At ((Get-Date).AddMinutes(1))
+    $Principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel Limited
+    Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Force | Out-Null
+    Start-ScheduledTask -TaskName $TaskName
+
+    for ($i = 0; $i -lt 90; $i++) {
+      if ((Test-Path $ResultFile) -or (Test-Path $ErrorFile)) {
+        break
+      }
+      Start-Sleep -Milliseconds 500
+    }
+
+    $Task = Get-ScheduledTask -TaskName $TaskName -ErrorAction SilentlyContinue
+    $TaskInfo = Get-ScheduledTaskInfo -TaskName $TaskName -ErrorAction SilentlyContinue
+    if ($Task -or $TaskInfo) {
+      Write-SmokeLog "Windows GUI interactive task state=$($Task.State) last_result=$($TaskInfo.LastTaskResult)"
+    }
+    if (Test-Path $WorkerLog) {
+      Get-Content $WorkerLog -Tail 120 | ForEach-Object {
+        [Console]::Error.WriteLine("[windows-gui-smoke] worker $_")
+      }
+    }
+    if (Test-Path $InteractiveScreenshot) {
+      $Bytes = (Get-Item $InteractiveScreenshot).Length
+      Write-SmokeLog "interactive screenshot saved to $InteractiveScreenshot bytes=$Bytes"
+      $script:LastWindowsGuiPreflightScreenshot = $InteractiveScreenshot
+    }
+    if (Test-Path $ErrorFile) {
+      Fail ((Get-Content $ErrorFile -Raw).Trim())
+    }
+    if (-not (Test-Path $ResultFile)) {
+      Fail "Windows GUI interactive smoke task did not finish"
+    }
+    (Get-Content $ResultFile -Raw).Trim()
+  } finally {
+    Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
+  }
+}
+
+Invoke-InteractiveGuiSmoke
 REMOTE_PS
   } | ssh "$remote" 'cmd /d /s /c "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""`$script = [Console]::In.ReadToEnd(); & ([scriptblock]::Create(`$script))"""'
 }
