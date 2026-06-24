@@ -20,6 +20,8 @@ private let fileProviderPathIdentifierPrefix = "path:"
 private let fileProviderRegistrationIdentityKey = "fileProviderRegistrationIdentity"
 private let fileProviderRegistrationVersion = 5
 private let fileProviderRegistrationVersionKey = "fileProviderRegistrationVersion"
+private let fileProviderAddRetryLimit = 8
+private let fileProviderRemovalWaitPolls = 450
 private let providerRootSignalFileName = "provider-root.changed"
 private let nativeFipsStatusFileName = "native-fips-status.json"
 private let irisWebPublisherProfileNameCacheKey = "irisWebPublisherProfileNameCacheV1"
@@ -316,7 +318,8 @@ final class IrisDriveMobileModel: ObservableObject {
 
     private func addFileProviderDomain(
         _ domain: NSFileProviderDomain,
-        completion: ((Bool) -> Void)?
+        completion: ((Bool) -> Void)?,
+        attempt: Int = 0
     ) {
         NSFileProviderManager.add(domain) { [weak self] error in
             if error == nil {
@@ -329,6 +332,9 @@ final class IrisDriveMobileModel: ObservableObject {
                     completion?(true)
                 }
                 return
+            }
+            if let error {
+                NSLog("Iris Drive FileProvider domain add failed attempt \(attempt + 1): \(error)")
             }
 
             NSFileProviderManager.getDomainsWithCompletionHandler { [weak self] domains, _ in
@@ -346,6 +352,23 @@ final class IrisDriveMobileModel: ObservableObject {
                     }
                     if exists {
                         self.markFileProviderRegistrationCurrent()
+                    }
+                    if !exists, attempt < fileProviderAddRetryLimit {
+                        self.fileProviderStatus = "Registering Files provider"
+                        self.rebuildDerivedState()
+                        Task { @MainActor [weak self] in
+                            try? await Task.sleep(nanoseconds: 350_000_000)
+                            guard let self else {
+                                completion?(false)
+                                return
+                            }
+                            self.addFileProviderDomain(
+                                self.irisDriveFileProviderDomain(),
+                                completion: completion,
+                                attempt: attempt + 1
+                            )
+                        }
+                        return
                     }
                     self.fileProviderStatus = exists
                         ? "Files provider registered"
@@ -405,7 +428,7 @@ final class IrisDriveMobileModel: ObservableObject {
 
     private func scheduleOpenInFilesTimeout(for attempt: Int) {
         Task { [weak self] in
-            try? await Task.sleep(nanoseconds: 30_000_000_000)
+            try? await Task.sleep(nanoseconds: 60_000_000_000)
             await MainActor.run { [weak self] in
                 guard let self,
                       self.isSetupComplete,
@@ -566,7 +589,7 @@ final class IrisDriveMobileModel: ObservableObject {
 
     private func waitForFileProviderRemovalThenEnsure(completion: ((Bool) -> Void)?) {
         Task { @MainActor [weak self] in
-            for _ in 0..<150 where self?.fileProviderDomainRemovalInFlight == true {
+            for _ in 0..<fileProviderRemovalWaitPolls where self?.fileProviderDomainRemovalInFlight == true {
                 try? await Task.sleep(nanoseconds: 100_000_000)
             }
             guard let self else {

@@ -146,7 +146,7 @@ async fn import_windows_cloud_root_changes_and_publish(
     fips_blocks: Option<&FsFipsBlockSync>,
     daemon_tasks: &DaemonTaskSet,
 ) -> Result<WindowsCloudImportOutcome> {
-    let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
+    let config_lock = ConfigMutationLock::acquire(config_dir).await?;
     let daemon = Daemon::open(config_dir).context("opening daemon for Windows Cloud Files root")?;
     let visible = iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
         .await
@@ -271,18 +271,27 @@ async fn import_windows_cloud_root_changes_and_publish(
         return Ok(WindowsCloudImportOutcome::Unchanged);
     }
 
-    import_mount_root_and_publish_with_tombstone_paths(
-        client,
+    let import = import_mount_root_for_publish(
         config_dir,
         root.clone(),
         Some(before),
         Some(&tombstone_paths),
-        direct_roots,
-        fips_blocks,
-        daemon_tasks,
     )
     .await
-    .context("publishing Windows Cloud Files root")?;
+    .context("importing Windows Cloud Files root")?;
+    drop(config_lock);
+    if let Some(import) = import {
+        publish_imported_mount_root(
+            client,
+            config_dir,
+            import,
+            direct_roots,
+            fips_blocks,
+            daemon_tasks,
+        )
+        .await
+        .context("publishing Windows Cloud Files root")?;
+    }
 
     // Write synced local-state only after the config root has advanced. If this
     // cache wins the race against provider list, the Windows app can mistake a

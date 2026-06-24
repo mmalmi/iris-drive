@@ -41,7 +41,7 @@ pub(crate) async fn apply_one_event(
     daemon_tasks: &DaemonTaskSet,
 ) -> Result<EventApplyOutcome> {
     use iris_drive_core::relay_sync;
-    let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
+    let config_lock = ConfigMutationLock::acquire(config_dir).await?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let kind = event.kind.as_u16();
     if iris_drive_core::nostr_events::is_app_key_link_request_event_coordinate(event) {
@@ -77,6 +77,7 @@ pub(crate) async fn apply_one_event(
         );
         if matches!(outcome, relay_sync::IrisProfileRosterOpApply::Applied) {
             config.save(config_path_in(config_dir))?;
+            drop(config_lock);
             if let Some(sync) = fips_blocks.as_deref() {
                 sync.refresh_authorized_peers(&config).await;
             }
@@ -96,6 +97,7 @@ pub(crate) async fn apply_one_event(
         );
         if matches!(outcome, relay_sync::ShareAccessSnapshotApply::Applied) {
             config.save(config_path_in(config_dir))?;
+            drop(config_lock);
             if let Some(sync) = fips_blocks.as_deref() {
                 sync.refresh_authorized_peers(&config).await;
             }
@@ -146,6 +148,7 @@ pub(crate) async fn apply_one_event(
         if was_applied {
             config.save(config_path_in(config_dir))?;
         }
+        drop(config_lock);
         if let Some(sync) = fips_blocks.as_deref() {
             sync.refresh_authorized_peers(&config).await;
         }
@@ -390,11 +393,7 @@ pub(crate) fn spawn_root_apply_followup(
         }
 
         if root_cid_for_materialize.is_some() {
-            match materialize_primary_merged_root_for_followup(
-                &config_dir,
-                expected_projection_root_key.as_ref(),
-            )
-            .await
+            match materialize_primary_merged_root_for_followup(&config_dir).await
             {
                 Ok(Some(report)) => emit_daemon_status_event(
                     &config_dir,
@@ -425,16 +424,6 @@ pub(crate) fn spawn_root_apply_followup(
         }
 
         if should_refresh_projection {
-            if root_apply_followup_is_stale(&config_dir, expected_projection_root_key.as_ref()) {
-                println!(
-                    "{}",
-                    json!({
-                        "event": "root_apply_projection_refresh_skipped_stale",
-                        "root_key": root_apply_followup_key_label(expected_projection_root_key.as_ref()),
-                    })
-                );
-                return;
-            }
             let mut refreshed_windows_cloud = false;
             if let Some(sync_root) = windows_cloud_projection_root() {
                 match refresh_windows_cloud_local_projection(&config_dir, &sync_root).await {
@@ -485,12 +474,9 @@ pub(crate) fn spawn_root_apply_followup(
 
 async fn materialize_primary_merged_root_for_followup(
     config_dir: &Path,
-    expected_root_key: Option<&RootApplyFollowupKey>,
 ) -> Result<Option<iris_drive_core::ImportReport>> {
-    let Some(_config_lock) = ConfigMutationLock::acquire_for_background(config_dir, || {
-        root_apply_followup_is_stale(config_dir, expected_root_key)
-    })
-    .await?
+    let Some(_config_lock) =
+        ConfigMutationLock::acquire_for_background(config_dir, || false).await?
     else {
         return Ok(None);
     };

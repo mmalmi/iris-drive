@@ -716,9 +716,15 @@ pub(crate) fn cmd_daemon(
                         config_dir.to_path_buf(),
                         fips_blocks.clone(),
                     ));
-                    direct_roots
+                    if let Err(error) = direct_roots
                         .request_roots_from_new_peers(config_dir, fips_blocks.as_deref())
-                        .await;
+                        .await
+                    {
+                        println!(
+                            "{}",
+                            json!({"event": "direct_root_mesh_error", "trigger": "peer_refresh", "error": format!("{error:#}")})
+                        );
+                    }
                 }
                 _ = direct_root_announce_timer.tick() => {
                     if let Err(error) =

@@ -25,6 +25,9 @@ Environment:
   IRIS_DRIVE_E2E_TIMEOUT_SECS    Convergence timeout per step (default: 60).
   IRIS_DRIVE_E2E_REMOTE_TIMEOUT_SECS
                                   Per SSH command timeout; 0 disables (default: 60).
+  IRIS_DRIVE_E2E_SETUP_REMOTE_TIMEOUT_SECS
+                                  Per host setup/build SSH command timeout only;
+                                  does not affect file-sync convergence (default: 180).
   IRIS_DRIVE_E2E_MANY_FILES      Many-file test count (default: 32).
   IRIS_DRIVE_E2E_LARGE_BYTES     Large-file test bytes (default: 262144).
   IRIS_DRIVE_E2E_MOUNT_LABELS    Space-separated POSIX labels that should expose FUSE mounts.
@@ -42,6 +45,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_ID="run-$(date +%Y%m%d%H%M%S)-$$"
 TIMEOUT_SECS="${IRIS_DRIVE_E2E_TIMEOUT_SECS:-60}"
 REMOTE_TIMEOUT_SECS="${IRIS_DRIVE_E2E_REMOTE_TIMEOUT_SECS:-60}"
+SETUP_REMOTE_TIMEOUT_SECS="${IRIS_DRIVE_E2E_SETUP_REMOTE_TIMEOUT_SECS:-180}"
 POLL_SECS="${IRIS_DRIVE_E2E_POLL_SECS:-3}"
 MANY_FILES="${IRIS_DRIVE_E2E_MANY_FILES:-32}"
 LARGE_BYTES="${IRIS_DRIVE_E2E_LARGE_BYTES:-262144}"
@@ -223,13 +227,18 @@ run_remote_exec() {
 }
 
 remote_exec() {
+  remote_exec_with_timeout "$1" "$2" "$REMOTE_TIMEOUT_SECS"
+}
+
+remote_exec_with_timeout() {
   local label="$1"
   local script="$2"
+  local timeout_secs="$3"
   local pid
   local watchdog
   local status
 
-  if (( REMOTE_TIMEOUT_SECS <= 0 )); then
+  if (( timeout_secs <= 0 )); then
     run_remote_exec "$label" "$script"
     return
   fi
@@ -237,10 +246,10 @@ remote_exec() {
   run_remote_exec "$label" "$script" &
   pid="$!"
   (
-    deadline=$((SECONDS + REMOTE_TIMEOUT_SECS))
+    deadline=$((SECONDS + timeout_secs))
     while kill -0 "$pid" 2>/dev/null; do
       if (( SECONDS >= deadline )); then
-        echo "remote command timed out after ${REMOTE_TIMEOUT_SECS}s on $label" >&2
+        echo "remote command timed out after ${timeout_secs}s on $label" >&2
         kill "$pid" 2>/dev/null || true
         sleep 1
         kill -9 "$pid" 2>/dev/null || true
@@ -367,7 +376,7 @@ printf 'err=%s\n' \"\$base/daemon.err.log\"
 printf 'pid=%s\n' \"\$base/daemon.pid\"
 "
   fi
-  meta="$(remote_exec "$label" "$script")"
+  meta="$(remote_exec_with_timeout "$label" "$script" "$SETUP_REMOTE_TIMEOUT_SECS")"
   while IFS='=' read -r key value; do
     value="${value%$'\r'}"
     case "$key" in
@@ -1014,9 +1023,92 @@ print_statuses() {
   local label
   for label in "${LABELS[@]}"; do
     echo "---- $label status ----" >&2
-    idrive_cmd "$label" status >&2 || true
+    idrive_cmd "$label" status |
+      jq '{
+        daemon: {
+          running: .daemon.running,
+          fresh: .daemon.fresh
+        },
+        summary: {
+          file_count: .summary.file_count,
+          sync_status: .summary.sync_status,
+          sync_status_label: .summary.sync_status_label,
+          online_app_key_count: .summary.online_app_key_count
+        },
+        fips: {
+          state: .network.fips.state,
+          state_label: .network.fips.state_label,
+          endpoint_npub: .network.fips.endpoint_npub,
+          roster_peer_count: .network.fips.roster_peer_count,
+          roster_online_peer_count: .network.fips.roster_online_peer_count,
+          roster_connected_peer_count: .network.fips.roster_connected_peer_count,
+          connected_peer_count: .network.fips.connected_peer_count,
+          other_peer_count: .network.fips.other_peer_count,
+          error: .network.fips.error
+        },
+        peers: [
+          .peers[]? | {
+            label,
+            connection_state,
+            sync_state,
+            root_available,
+            root_cid,
+            last_block_sync
+          }
+        ]
+      }' >&2 || true
     echo "---- $label snapshot ----" >&2
     snapshot "$label" >&2 || true
+    if [[ -n "${EXPECTED_SNAPSHOT:-}" ]]; then
+      local current missing extra
+      current="$(snapshot "$label" || true)"
+      missing="$(
+        comm -23 \
+          <(printf "%s\n" "$EXPECTED_SNAPSHOT" | sed '/^$/d') \
+          <(printf "%s\n" "$current" | sed '/^$/d') || true
+      )"
+      extra="$(
+        comm -13 \
+          <(printf "%s\n" "$EXPECTED_SNAPSHOT" | sed '/^$/d') \
+          <(printf "%s\n" "$current" | sed '/^$/d') || true
+      )"
+      if [[ -n "$missing" || -n "$extra" ]]; then
+        echo "---- $label snapshot diff ----" >&2
+        if [[ -n "$missing" ]]; then
+          echo "missing:" >&2
+          printf "%s\n" "$missing" | sed -n '1,40p' >&2
+        fi
+        if [[ -n "$extra" ]]; then
+          echo "extra:" >&2
+          printf "%s\n" "$extra" | sed -n '1,40p' >&2
+        fi
+      fi
+      if [[ "$PROVIDER_MUTATIONS" != "1" ]] && projection_enabled "$label"; then
+        local projection_current projection_missing projection_extra
+        projection_current="$(projection_snapshot "$label" || true)"
+        projection_missing="$(
+          comm -23 \
+            <(printf "%s\n" "$EXPECTED_SNAPSHOT" | sed '/^$/d') \
+            <(printf "%s\n" "$projection_current" | sed '/^$/d') || true
+        )"
+        projection_extra="$(
+          comm -13 \
+            <(printf "%s\n" "$EXPECTED_SNAPSHOT" | sed '/^$/d') \
+            <(printf "%s\n" "$projection_current" | sed '/^$/d') || true
+        )"
+        if [[ -n "$projection_missing" || -n "$projection_extra" ]]; then
+          echo "---- $label projection snapshot diff ----" >&2
+          if [[ -n "$projection_missing" ]]; then
+            echo "missing:" >&2
+            printf "%s\n" "$projection_missing" | sed -n '1,40p' >&2
+          fi
+          if [[ -n "$projection_extra" ]]; then
+            echo "extra:" >&2
+            printf "%s\n" "$projection_extra" | sed -n '1,40p' >&2
+          fi
+        fi
+      fi
+    fi
   done
 }
 
@@ -1058,9 +1150,16 @@ all_fresh() {
 
 all_have_direct_peer() {
   local label status
+  local expected_peers
+  expected_peers=$((${#LABELS[@]} - 1))
   for label in "${LABELS[@]}"; do
     status="$(idrive_cmd "$label" status 2>/dev/null || true)"
-    jq -e '.network.fips.connected_peer_count >= 1' >/dev/null 2>&1 <<<"$status" || return 1
+    jq -e --argjson expected "$expected_peers" '
+      .network.fips.running == true and
+      .network.fips.fresh == true and
+      (.network.fips.roster_peer_count // 0) >= $expected and
+      (.network.fips.roster_connected_peer_count // 0) >= $expected
+    ' >/dev/null 2>&1 <<<"$status" || return 1
   done
 }
 

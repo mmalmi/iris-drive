@@ -17,7 +17,7 @@ fn direct_root_mesh_publish_sequence_is_monotonic() {
 fn direct_root_mesh_reuses_cached_event_for_same_logical_root() {
     let mut exchange = DirectRootExchange::default();
     let first = DirectRootEvent {
-        key: "drive-root:device:main:7:root".to_string(),
+        key: "drive-root:device:main:7:root-hash:root-key:device".to_string(),
         event_id: "first-event".to_string(),
         kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
         json: "{\"id\":\"first\"}".to_string(),
@@ -40,13 +40,13 @@ fn direct_root_mesh_reuses_cached_event_for_same_logical_root() {
 fn direct_root_republish_includes_cached_remote_events() {
     let mut exchange = DirectRootExchange::default();
     let local = DirectRootEvent {
-        key: "drive-root:local:main:1:local-root".to_string(),
+        key: "drive-root:local:main:1:local-hash:local-key:local,remote".to_string(),
         event_id: "local-event".to_string(),
         kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
         json: "{\"id\":\"local\"}".to_string(),
     };
     let remote = DirectRootEvent {
-        key: "drive-root:remote:main:7:remote-root".to_string(),
+        key: "drive-root:remote:main:7:remote-hash:remote-key:local,remote".to_string(),
         event_id: "remote-event".to_string(),
         kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
         json: "{\"id\":\"remote\"}".to_string(),
@@ -61,9 +61,57 @@ fn direct_root_republish_includes_cached_remote_events() {
 }
 
 #[test]
+fn direct_root_republish_keeps_latest_sequence_per_root_family() {
+    let mut exchange = DirectRootExchange::default();
+    let older = DirectRootEvent {
+        key: "drive-root:remote:main:7:old-hash:old-key:local,remote".to_string(),
+        event_id: "old-event".to_string(),
+        kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
+        json: "{\"id\":\"old\"}".to_string(),
+    };
+    let newer = DirectRootEvent {
+        key: "drive-root:remote:main:8:new-hash:new-key:local,remote".to_string(),
+        event_id: "new-event".to_string(),
+        kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
+        json: "{\"id\":\"new\"}".to_string(),
+    };
+
+    exchange.cache_event(older.clone());
+    exchange.cache_event(newer.clone());
+    exchange.cache_event(older);
+    let events = exchange.events_for_publish(Vec::new());
+
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event_id, newer.event_id);
+}
+
+#[test]
+fn direct_root_republish_filters_cached_roots_superseded_by_local_root() {
+    let mut exchange = DirectRootExchange::default();
+    let older = DirectRootEvent {
+        key: "drive-root:local:main:7:old-hash:old-key:local,remote".to_string(),
+        event_id: "old-event".to_string(),
+        kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
+        json: "{\"id\":\"old\"}".to_string(),
+    };
+    let newer = DirectRootEvent {
+        key: "drive-root:local:main:8:new-hash:new-key:local,remote".to_string(),
+        event_id: "new-event".to_string(),
+        kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
+        json: "{\"id\":\"new\"}".to_string(),
+    };
+
+    exchange.cache_event(older);
+    let events = exchange.events_for_publish(vec![newer.clone()]);
+
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event_id, newer.event_id);
+}
+
+#[test]
 fn direct_root_peer_churn_does_not_clear_republish_throttle() {
     let mut exchange = DirectRootExchange::default();
-    let key = "drive-root:device:main:7:root";
+    let key = "drive-root:device:main:7:root-hash:root-key:device,remote";
     let now = std::time::Instant::now();
 
     assert!(exchange.refresh_known_root_peers(
@@ -80,9 +128,32 @@ fn direct_root_peer_churn_does_not_clear_republish_throttle() {
 }
 
 #[test]
+fn direct_root_peer_churn_clears_republish_throttle() {
+    let mut exchange = DirectRootExchange::default();
+    let key = "drive-root:device:main:7:root-hash:root-key:device,remote";
+    let now = std::time::Instant::now();
+
+    assert!(exchange.refresh_known_root_peers(
+        ["authorized-a".to_string(), "authorized-b".to_string()],
+        ["mesh-a".to_string()],
+    ));
+    assert!(exchange.should_publish_key(key, now));
+
+    assert!(exchange.refresh_known_root_peers(
+        [
+            "authorized-a".to_string(),
+            "authorized-b".to_string(),
+            "authorized-c".to_string(),
+        ],
+        ["mesh-a".to_string()],
+    ));
+    assert!(exchange.should_publish_key(key, now + std::time::Duration::from_secs(1)));
+}
+
+#[test]
 fn direct_root_republishes_after_short_native_cadence() {
     let mut exchange = DirectRootExchange::default();
-    let key = "drive-root:device:main:8:root";
+    let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
     let now = std::time::Instant::now();
 
     assert!(exchange.should_publish_key(key, now));
@@ -94,6 +165,84 @@ fn direct_root_republishes_after_short_native_cadence() {
         key,
         now + std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
     ));
+}
+
+#[test]
+fn direct_root_metadata_republishes_on_longer_cadence() {
+    let mut exchange = DirectRootExchange::default();
+    let key = "profile-op:profile:op";
+    let now = std::time::Instant::now();
+
+    assert!(exchange.should_publish_key(key, now));
+    assert!(!exchange.should_publish_key(
+        key,
+        now + std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
+    ));
+    assert!(exchange.should_publish_key(
+        key,
+        now + std::time::Duration::from_secs(DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS)
+    ));
+}
+
+#[test]
+fn direct_root_cache_slot_parses_real_cid_shape() {
+    assert_eq!(
+        direct_root_cache_slot("drive-root:device:main:8:root-hash:root-key:device,remote"),
+        Some(DirectRootCacheSlot {
+            family: "drive-root:device:main".to_string(),
+            seq: 8,
+            recipient_count: 2,
+        })
+    );
+    assert_eq!(
+        direct_root_cache_slot("share-root:share:device:9:root-hash:root-key:device,remote"),
+        Some(DirectRootCacheSlot {
+            family: "share-root:share:device".to_string(),
+            seq: 9,
+            recipient_count: 2,
+        })
+    );
+}
+
+#[test]
+fn direct_root_republish_collapses_recipient_list_variants() {
+    let mut exchange = DirectRootExchange::default();
+    let narrow = DirectRootEvent {
+        key: "drive-root:remote:main:8:same-hash:same-key:local".to_string(),
+        event_id: "narrow-event".to_string(),
+        kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
+        json: "{\"id\":\"narrow\"}".to_string(),
+    };
+    let wide = DirectRootEvent {
+        key: "drive-root:remote:main:8:same-hash:same-key:local,remote".to_string(),
+        event_id: "wide-event".to_string(),
+        kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
+        json: "{\"id\":\"wide\"}".to_string(),
+    };
+
+    exchange.cache_event(narrow);
+    exchange.cache_event(wide.clone());
+    let events = exchange.events_for_publish(Vec::new());
+
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].event_id, wide.event_id);
+}
+
+#[test]
+fn direct_root_republish_skips_cached_files_root_events() {
+    let mut exchange = DirectRootExchange::default();
+    let remote = DirectRootEvent {
+        key: "files-root:remote:main:root-hash:root-key".to_string(),
+        event_id: "remote-files-root".to_string(),
+        kind: iris_drive_core::nostr_events::KIND_HASHTREE_ROOT,
+        json: "{\"id\":\"remote\"}".to_string(),
+    };
+
+    exchange.cache_event(remote.clone());
+    let events = exchange.events_for_publish(Vec::new());
+
+    assert!(events.is_empty());
+    assert!(exchange.seen_keys.contains(&remote.key));
 }
 
 #[test]
@@ -227,8 +376,8 @@ fn direct_root_publish_cache_reuses_unchanged_local_events() {
 }
 
 const _: () = {
-    assert!(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS >= 30);
-    assert!(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS >= DIRECT_ROOT_REPUBLISH_INTERVAL_SECS * 6);
+    assert!(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS >= DIRECT_ROOT_REPUBLISH_INTERVAL_SECS * 2);
+    assert!(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS <= 15);
 };
 
 #[test]

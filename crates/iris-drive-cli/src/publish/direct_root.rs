@@ -35,14 +35,19 @@ struct CachedCurrentSyncEvents {
 }
 
 impl DirectRootExchange {
-    async fn subscribe_profile_stream(&mut self, root_scope_id: &str, sync: Option<&FsFipsBlockSync>) {
+    async fn subscribe_profile_stream(
+        &mut self,
+        root_scope_id: &str,
+        sync: Option<&FsFipsBlockSync>,
+    ) -> bool {
         let Some(sync) = sync else {
             self.subscribed_streams.clear();
-            return;
+            return false;
         };
         let stream = direct_root_mesh_stream(root_scope_id);
         let peers_changed = self.refresh_known_mesh_peers(sync).await;
-        if self.subscribed_streams.insert(stream.clone()) || peers_changed {
+        let should_subscribe = self.subscribed_streams.insert(stream.clone()) || peers_changed;
+        if should_subscribe {
             let subscribe_stats = sync.subscribe_mesh_pubsub(stream.clone()).await;
             println!(
                 "{}",
@@ -54,6 +59,7 @@ impl DirectRootExchange {
                 })
             );
         }
+        should_subscribe
     }
 
     async fn announce_current_state(
@@ -162,10 +168,12 @@ impl DirectRootExchange {
             return Ok(false);
         }
         self.cache_event(direct_event);
-        let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
-        if let Some(state) = config.profile.as_ref() {
-            self.announce_current_state(config_dir, &config, state, Some(sync.as_ref()))
-                .await?;
+        if outcome.should_announce_current_state() {
+            let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
+            if let Some(state) = config.profile.as_ref() {
+                self.announce_current_state(config_dir, &config, state, Some(sync.as_ref()))
+                    .await?;
+            }
         }
         Ok(true)
     }
@@ -174,17 +182,27 @@ impl DirectRootExchange {
         &mut self,
         config_dir: &Path,
         sync: Option<&FsFipsBlockSync>,
-    ) {
+    ) -> Result<()> {
         let Some(sync) = sync else {
             self.subscribed_streams.clear();
-            return;
+            return Ok(());
         };
         let Ok(root_scope_id) = self.cached_profile_stream_root_scope_id(config_dir) else {
-            return;
+            return Ok(());
         };
         if let Some(root_scope_id) = root_scope_id {
-            self.subscribe_profile_stream(&root_scope_id, Some(sync)).await;
+            if self
+                .subscribe_profile_stream(&root_scope_id, Some(sync))
+                .await
+            {
+                let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
+                if let Some(state) = config.profile.as_ref() {
+                    self.announce_current_state(config_dir, &config, state, Some(sync))
+                        .await?;
+                }
+            }
         }
+        Ok(())
     }
 
     fn cached_profile_stream_root_scope_id(&mut self, config_dir: &Path) -> Result<Option<String>> {
@@ -339,6 +357,13 @@ impl DirectRootExchange {
 
     fn cache_event(&mut self, event: DirectRootEvent) {
         self.seen_keys.insert(event.key.clone());
+        if !self.should_cache_event_as_latest(&event.key) {
+            return;
+        }
+        for key in self.superseded_cached_event_keys(&event.key) {
+            self.cached_events.remove(&key);
+            self.published_keys.remove(&key);
+        }
         self.cached_events.insert(event.key.clone(), event);
         while self.cached_events.len() > DIRECT_ROOT_EVENT_CACHE_CAP {
             let Some(key) = self.cached_events.keys().next().cloned() else {
@@ -356,24 +381,66 @@ impl DirectRootExchange {
     fn events_for_publish(&self, local_events: Vec<DirectRootEvent>) -> Vec<DirectRootEvent> {
         let mut events = Vec::with_capacity(local_events.len() + self.cached_events.len());
         let mut keys = BTreeSet::new();
+        let mut local_slots = BTreeMap::new();
         for event in local_events {
             let event = self.event_for_publish(event);
             keys.insert(event.key.clone());
+            if let Some(slot) = direct_root_cache_slot(&event.key) {
+                local_slots.insert(slot.family.clone(), slot);
+            }
             events.push(event);
         }
         events.extend(
             self.cached_events
                 .values()
-                .filter(|event| !keys.contains(&event.key))
+                .filter(|event| {
+                    if keys.contains(&event.key) {
+                        return false;
+                    }
+                    let Some(slot) = direct_root_cache_slot(&event.key) else {
+                        return true;
+                    };
+                    local_slots
+                        .get(&slot.family)
+                        .is_none_or(|local_slot| direct_root_slot_is_newer(&slot, local_slot))
+                })
                 .cloned(),
         );
         events
     }
 
+    fn should_cache_event_as_latest(&self, incoming_key: &str) -> bool {
+        let Some(incoming) = direct_root_cache_slot(incoming_key) else {
+            return should_cache_unsequenced_direct_root_key(incoming_key);
+        };
+        !self.cached_events.keys().any(|key| {
+            direct_root_cache_slot(key).is_some_and(|cached| {
+                cached.family == incoming.family
+                    && direct_root_slot_is_strictly_newer(&cached, &incoming)
+            })
+        })
+    }
+
+    fn superseded_cached_event_keys(&self, incoming_key: &str) -> Vec<String> {
+        let Some(incoming) = direct_root_cache_slot(incoming_key) else {
+            return Vec::new();
+        };
+        self.cached_events
+            .keys()
+            .filter(|key| {
+                direct_root_cache_slot(key).is_some_and(|cached| {
+                    cached.family == incoming.family
+                        && !direct_root_slot_is_strictly_newer(&cached, &incoming)
+                })
+            })
+            .cloned()
+            .collect()
+    }
+
     fn should_publish_key(&mut self, key: &str, now: std::time::Instant) -> bool {
         if self.published_keys.get(key).is_some_and(|last| {
             now.duration_since(*last)
-                < std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
+                < std::time::Duration::from_secs(direct_root_republish_interval_secs(key))
         }) {
             return false;
         }
@@ -412,6 +479,14 @@ impl DirectRootExchange {
     }
 }
 
+fn direct_root_republish_interval_secs(key: &str) -> u64 {
+    if direct_root_cache_slot(key).is_some() || key.starts_with("files-root:") {
+        DIRECT_ROOT_REPUBLISH_INTERVAL_SECS
+    } else {
+        DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS
+    }
+}
+
 pub(crate) async fn build_current_sync_events(
     config_dir: &Path,
     config: &AppConfig,
@@ -440,6 +515,71 @@ fn append_profile_roster_events(
         )?);
     }
     Ok(())
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct DirectRootCacheSlot {
+    family: String,
+    seq: u64,
+    recipient_count: usize,
+}
+
+fn direct_root_cache_slot(key: &str) -> Option<DirectRootCacheSlot> {
+    let (prefix, rest) = key.split_once(':')?;
+    match prefix {
+        "drive-root" => {
+            let mut parts = rest.splitn(4, ':');
+            let app_key = parts.next()?;
+            let drive_id = parts.next()?;
+            let seq = parts.next()?.parse().ok()?;
+            let root_and_recipients = parts.next()?;
+            let (_root_cid, recipients) = root_and_recipients.rsplit_once(':')?;
+            Some(DirectRootCacheSlot {
+                family: format!("drive-root:{app_key}:{drive_id}"),
+                seq,
+                recipient_count: direct_root_recipient_count(recipients),
+            })
+        }
+        "share-root" => {
+            let mut parts = rest.splitn(4, ':');
+            let share_id = parts.next()?;
+            let app_key = parts.next()?;
+            let seq = parts.next()?.parse().ok()?;
+            let root_and_recipients = parts.next()?;
+            let (_root_cid, recipients) = root_and_recipients.rsplit_once(':')?;
+            Some(DirectRootCacheSlot {
+                family: format!("share-root:{share_id}:{app_key}"),
+                seq,
+                recipient_count: direct_root_recipient_count(recipients),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn direct_root_recipient_count(recipients: &str) -> usize {
+    recipients
+        .split(',')
+        .filter(|recipient| !recipient.is_empty())
+        .count()
+}
+
+fn direct_root_slot_is_newer(candidate: &DirectRootCacheSlot, current: &DirectRootCacheSlot) -> bool {
+    candidate.seq > current.seq
+        || (candidate.seq == current.seq && candidate.recipient_count > current.recipient_count)
+}
+
+fn direct_root_slot_is_strictly_newer(
+    candidate: &DirectRootCacheSlot,
+    current: &DirectRootCacheSlot,
+) -> bool {
+    direct_root_slot_is_newer(candidate, current)
+}
+
+fn should_cache_unsequenced_direct_root_key(key: &str) -> bool {
+    !key.starts_with("drive-root:")
+        && !key.starts_with("share-root:")
+        && !key.starts_with("files-root:")
 }
 
 fn append_share_access_snapshot_events(
@@ -478,6 +618,9 @@ async fn append_primary_drive_root_events(
     config: &AppConfig,
     state: &ProfileState,
 ) -> Result<()> {
+    if !state.can_write_roots() {
+        return Ok(());
+    }
     if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID) {
         let Some(root) = publishable_app_key_root(config_dir, drive, state).await? else {
             return Ok(());

@@ -214,6 +214,17 @@ pub(crate) fn daemon_sync_status(daemon_status: Option<&Value>) -> String {
         return "paused".to_owned();
     }
     if status
+        .get("fips_block_sync_error")
+        .is_some_and(|error| !error.is_null())
+        || status
+            .get("fips_block_sync")
+            .and_then(|fips| fips.get("status"))
+            .and_then(Value::as_str)
+            .is_some_and(|status| status == "timeout")
+    {
+        return "sync error".to_owned();
+    }
+    if status
         .get("blossom_upload")
         .and_then(Value::as_object)
         .is_some_and(|upload| {

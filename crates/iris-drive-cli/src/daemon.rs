@@ -240,10 +240,6 @@ fn root_apply_followup_is_stale(
     }
 }
 
-fn root_apply_followup_key_label(expected_root_key: Option<&RootApplyFollowupKey>) -> String {
-    expected_root_key.map_or_else(|| "none".to_string(), |key| format!("{key:?}"))
-}
-
 fn root_update_debounce_duration(watch_debounce_ms: u64) -> std::time::Duration {
     std::time::Duration::from_millis(watch_debounce_ms.max(ROOT_UPDATE_THROTTLE_MS))
 }
@@ -276,17 +272,22 @@ async fn import_mount_visible_root_update(
     daemon_tasks: &DaemonTaskSet,
 ) -> Result<()> {
     let imported_visible_root = visible_root.clone();
-    let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
-    import_mount_root_and_publish(
-        client,
-        config_dir,
-        visible_root,
-        mount_tombstone_base.clone(),
-        direct_roots,
-        fips_blocks,
-        daemon_tasks,
-    )
-    .await?;
+    let config_lock = ConfigMutationLock::acquire(config_dir).await?;
+    let import =
+        import_mount_root_for_publish(config_dir, visible_root, mount_tombstone_base.clone(), None)
+            .await?;
+    drop(config_lock);
+    if let Some(import) = import {
+        publish_imported_mount_root(
+            client,
+            config_dir,
+            import,
+            direct_roots,
+            fips_blocks,
+            daemon_tasks,
+        )
+        .await?;
+    }
     *mount_tombstone_base = Some(imported_visible_root);
     Ok(())
 }
@@ -490,19 +491,23 @@ pub(crate) fn spawn_status_probe(
             Ok(statuses) => statuses,
             Err(_) => vec![json!({"url": "*", "status": "timeout"})],
         };
-        let fips_status = match tokio::time::timeout(
+        let (fips_status, fips_block_sync_error) = match tokio::time::timeout(
             std::time::Duration::from_secs(STATUS_PROBE_TIMEOUT_SECS),
             fips_block_sync_status(fips_blocks.as_deref()),
         )
         .await
         {
-            Ok(status) => status,
-            Err(_) => Some(json!({"status": "timeout"})),
+            Ok(status) => (status, Value::Null),
+            Err(_) => (
+                Some(json!({"status": "timeout"})),
+                json!("FIPS status probe timed out"),
+            ),
         };
         let status = json!({
             "event": "relay_statuses",
             "relay_statuses": relay_statuses,
             "fips_block_sync": fips_status,
+            "fips_block_sync_error": fips_block_sync_error,
         });
         let status = write_daemon_status(&config_dir, status);
         println!("{status}");

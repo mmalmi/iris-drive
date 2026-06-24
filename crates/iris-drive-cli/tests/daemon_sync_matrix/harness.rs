@@ -189,10 +189,14 @@ impl SyncCluster {
         self.wait_until("direct fips peers connected", || {
             self.clients().into_iter().all(|client| {
                 let status = run_json(self.config_path(client), &["status"]);
-                status["network"]["fips"]["connected_peer_count"]
+                let fips = &status["network"]["fips"];
+                fips["running"].as_bool().unwrap_or(false)
+                    && fips["fresh"].as_bool().unwrap_or(false)
+                    && fips["roster_peer_count"].as_u64().unwrap_or(0) >= expected_peers
+                    && fips["roster_connected_peer_count"]
                     .as_u64()
                     .unwrap_or(0)
-                    >= expected_peers
+                        >= expected_peers
             })
         })
         .await;

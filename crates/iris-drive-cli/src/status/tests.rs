@@ -274,6 +274,20 @@ fn daemon_sync_status_is_normalized_for_clients() {
         daemon_sync_status(Some(&json!({"running": true, "event": "apply_error"}))),
         "sync error"
     );
+    assert_eq!(
+        daemon_sync_status(Some(&json!({
+            "running": true,
+            "fips_block_sync_error": "FIPS status probe timed out",
+        }))),
+        "sync error"
+    );
+    assert_eq!(
+        daemon_sync_status(Some(&json!({
+            "running": true,
+            "fips_block_sync": {"status": "timeout"},
+        }))),
+        "sync error"
+    );
 }
 
 #[test]

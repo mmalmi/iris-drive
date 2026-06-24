@@ -274,39 +274,12 @@ pub(crate) fn publish_state_report_json(report: &PublishStateReport) -> serde_js
     })
 }
 
-pub(crate) async fn import_mount_root_and_publish(
-    client: &nostr_sdk::Client,
-    config_dir: &std::path::Path,
-    visible_root: Cid,
-    tombstone_base_root: Option<Cid>,
-    direct_roots: &mut DirectRootExchange,
-    fips_blocks: Option<&FsFipsBlockSync>,
-    daemon_tasks: &DaemonTaskSet,
-) -> Result<()> {
-    import_mount_root_and_publish_with_tombstone_paths(
-        client,
-        config_dir,
-        visible_root,
-        tombstone_base_root,
-        None,
-        direct_roots,
-        fips_blocks,
-        daemon_tasks,
-    )
-    .await
-}
-
-#[allow(clippy::too_many_arguments)]
-pub(crate) async fn import_mount_root_and_publish_with_tombstone_paths(
-    client: &nostr_sdk::Client,
+pub(crate) async fn import_mount_root_for_publish(
     config_dir: &std::path::Path,
     visible_root: Cid,
     tombstone_base_root: Option<Cid>,
     tombstone_paths: Option<&BTreeSet<String>>,
-    direct_roots: &mut DirectRootExchange,
-    fips_blocks: Option<&FsFipsBlockSync>,
-    daemon_tasks: &DaemonTaskSet,
-) -> Result<()> {
+) -> Result<Option<iris_drive_core::ImportReport>> {
     if !mount_visible_root_has_changed(&visible_root, tombstone_base_root.as_ref()) {
         let payload = json!({
             "event": "mounted_root_unchanged",
@@ -315,7 +288,7 @@ pub(crate) async fn import_mount_root_and_publish_with_tombstone_paths(
         });
         write_daemon_status(config_dir, payload.clone());
         println!("{payload}");
-        return Ok(());
+        return Ok(None);
     }
 
     let mut daemon = Daemon::open(config_dir)
@@ -328,6 +301,17 @@ pub(crate) async fn import_mount_root_and_publish_with_tombstone_paths(
         )
         .await
         .context("importing mounted root")?;
+    Ok(Some(import))
+}
+
+pub(crate) async fn publish_imported_mount_root(
+    client: &nostr_sdk::Client,
+    config_dir: &std::path::Path,
+    import: iris_drive_core::ImportReport,
+    direct_roots: &mut DirectRootExchange,
+    fips_blocks: Option<&FsFipsBlockSync>,
+    daemon_tasks: &DaemonTaskSet,
+) -> Result<()> {
     let updated_config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let Some(updated_state) = updated_config.profile.clone() else {
         return Err(anyhow::anyhow!("missing account after mount import"));
@@ -457,7 +441,8 @@ pub(crate) async fn publish_current_state(
     }
 
     let mut published_primary_files_root = false;
-    if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
+    if state.can_write_roots()
+        && let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
         && let Some(root) = publishable_app_key_root(config_dir, drive, state).await?
     {
         let authorized_app_key_pubkeys =

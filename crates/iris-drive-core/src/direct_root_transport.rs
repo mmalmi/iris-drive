@@ -18,6 +18,7 @@ pub const DIRECT_ROOT_MESH_STREAM_PREFIX: &str = "iris-drive/root-events/v1";
 
 const DIRECT_ROOT_EVENT_CACHE_CAP: usize = 128;
 const DIRECT_ROOT_REPUBLISH_INTERVAL_SECS: u64 = 5;
+const DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS: u64 = 300;
 const DIRECT_ROOT_DOWNLOAD_TIMEOUT_SECS: u64 = 8;
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -215,7 +216,8 @@ impl DirectRootExchange {
 
     fn should_publish_key(&mut self, key: &str, now: Instant) -> bool {
         if self.published_keys.get(key).is_some_and(|last| {
-            now.duration_since(*last) < Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
+            now.duration_since(*last)
+                < Duration::from_secs(direct_root_republish_interval_secs(key))
         }) {
             return false;
         }
@@ -235,6 +237,13 @@ impl DirectRootExchange {
 
     fn cache_event(&mut self, event: DirectRootEvent) {
         self.remember_seen_key(event.key.clone());
+        if !self.should_cache_event_as_latest(&event.key) {
+            return;
+        }
+        for key in self.superseded_cached_event_keys(&event.key) {
+            self.cached_events.remove(&key);
+            self.published_keys.remove(&key);
+        }
         self.cached_events.insert(event.key.clone(), event);
         while self.cached_events.len() > DIRECT_ROOT_EVENT_CACHE_CAP {
             let Some(key) = self.cached_events.keys().next().cloned() else {
@@ -252,18 +261,60 @@ impl DirectRootExchange {
     fn events_for_publish(&self, local_events: Vec<DirectRootEvent>) -> Vec<DirectRootEvent> {
         let mut events = Vec::with_capacity(local_events.len() + self.cached_events.len());
         let mut keys = BTreeSet::new();
+        let mut local_slots = BTreeMap::new();
         for event in local_events {
             let event = self.event_for_publish(event);
             keys.insert(event.key.clone());
+            if let Some(slot) = direct_root_cache_slot(&event.key) {
+                local_slots.insert(slot.family.clone(), slot);
+            }
             events.push(event);
         }
         events.extend(
             self.cached_events
                 .values()
-                .filter(|event| !keys.contains(&event.key))
+                .filter(|event| {
+                    if keys.contains(&event.key) {
+                        return false;
+                    }
+                    let Some(slot) = direct_root_cache_slot(&event.key) else {
+                        return true;
+                    };
+                    local_slots
+                        .get(&slot.family)
+                        .is_none_or(|local_slot| direct_root_slot_is_newer(&slot, local_slot))
+                })
                 .cloned(),
         );
         events
+    }
+
+    fn should_cache_event_as_latest(&self, incoming_key: &str) -> bool {
+        let Some(incoming) = direct_root_cache_slot(incoming_key) else {
+            return should_cache_unsequenced_direct_root_key(incoming_key);
+        };
+        !self.cached_events.keys().any(|key| {
+            direct_root_cache_slot(key).is_some_and(|cached| {
+                cached.family == incoming.family
+                    && direct_root_slot_is_strictly_newer(&cached, &incoming)
+            })
+        })
+    }
+
+    fn superseded_cached_event_keys(&self, incoming_key: &str) -> Vec<String> {
+        let Some(incoming) = direct_root_cache_slot(incoming_key) else {
+            return Vec::new();
+        };
+        self.cached_events
+            .keys()
+            .filter(|key| {
+                direct_root_cache_slot(key).is_some_and(|cached| {
+                    cached.family == incoming.family
+                        && !direct_root_slot_is_strictly_newer(&cached, &incoming)
+                })
+            })
+            .cloned()
+            .collect()
     }
 
     fn prune_published_keys(&mut self) {
@@ -273,6 +324,82 @@ impl DirectRootExchange {
             };
             self.published_keys.remove(&oldest);
         }
+    }
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct DirectRootCacheSlot {
+    family: String,
+    seq: u64,
+    recipient_count: usize,
+}
+
+fn direct_root_cache_slot(key: &str) -> Option<DirectRootCacheSlot> {
+    let (prefix, rest) = key.split_once(':')?;
+    match prefix {
+        "drive-root" => {
+            let mut parts = rest.splitn(4, ':');
+            let app_key = parts.next()?;
+            let drive_id = parts.next()?;
+            let seq = parts.next()?.parse().ok()?;
+            let root_and_recipients = parts.next()?;
+            let (_root_cid, recipients) = root_and_recipients.rsplit_once(':')?;
+            Some(DirectRootCacheSlot {
+                family: format!("drive-root:{app_key}:{drive_id}"),
+                seq,
+                recipient_count: direct_root_recipient_count(recipients),
+            })
+        }
+        "share-root" => {
+            let mut parts = rest.splitn(4, ':');
+            let share_id = parts.next()?;
+            let app_key = parts.next()?;
+            let seq = parts.next()?.parse().ok()?;
+            let root_and_recipients = parts.next()?;
+            let (_root_cid, recipients) = root_and_recipients.rsplit_once(':')?;
+            Some(DirectRootCacheSlot {
+                family: format!("share-root:{share_id}:{app_key}"),
+                seq,
+                recipient_count: direct_root_recipient_count(recipients),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn direct_root_recipient_count(recipients: &str) -> usize {
+    recipients
+        .split(',')
+        .filter(|recipient| !recipient.is_empty())
+        .count()
+}
+
+fn direct_root_slot_is_newer(
+    candidate: &DirectRootCacheSlot,
+    current: &DirectRootCacheSlot,
+) -> bool {
+    candidate.seq > current.seq
+        || (candidate.seq == current.seq && candidate.recipient_count > current.recipient_count)
+}
+
+fn direct_root_slot_is_strictly_newer(
+    candidate: &DirectRootCacheSlot,
+    current: &DirectRootCacheSlot,
+) -> bool {
+    direct_root_slot_is_newer(candidate, current)
+}
+
+fn should_cache_unsequenced_direct_root_key(key: &str) -> bool {
+    !key.starts_with("drive-root:")
+        && !key.starts_with("share-root:")
+        && !key.starts_with("files-root:")
+}
+
+fn direct_root_republish_interval_secs(key: &str) -> u64 {
+    if direct_root_cache_slot(key).is_some() {
+        DIRECT_ROOT_REPUBLISH_INTERVAL_SECS
+    } else {
+        DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS
     }
 }
 
@@ -290,11 +417,15 @@ pub fn build_current_direct_root_events(
             &event,
         ));
     }
-    if let Some(drive) = config.drive(PRIMARY_DRIVE_ID)
+    if state.can_write_roots()
+        && let Some(drive) = config.drive(PRIMARY_DRIVE_ID)
         && let Some(root) = drive.app_key_roots.get(&state.app_key_pubkey)
     {
         let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
         let authorized_app_keys = drive_root_recipient_app_key_pubkeys(state, drive);
+        if authorized_app_keys.is_empty() {
+            return Ok(events);
+        }
         let event = crate::nostr_events::build_drive_root_event(
             device.keys(),
             &state.root_scope_id(),
@@ -496,5 +627,124 @@ mod tests {
                 .key
                 .ends_with(&format!(":{}", expected.join(",")))
         );
+    }
+
+    #[test]
+    fn direct_root_republish_keeps_latest_sequence_per_root_family() {
+        let mut exchange = DirectRootExchange::default();
+        let older = DirectRootEvent {
+            key: "drive-root:remote:main:7:old-hash:old-key:local,remote".to_string(),
+            event_id: "old-event".to_string(),
+            event_json: "{\"id\":\"old\"}".to_string(),
+        };
+        let newer = DirectRootEvent {
+            key: "drive-root:remote:main:8:new-hash:new-key:local,remote".to_string(),
+            event_id: "new-event".to_string(),
+            event_json: "{\"id\":\"new\"}".to_string(),
+        };
+
+        exchange.cache_event(older.clone());
+        exchange.cache_event(newer.clone());
+        exchange.cache_event(older);
+        let events = exchange.events_for_publish(Vec::new());
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_id, newer.event_id);
+    }
+
+    #[test]
+    fn direct_root_republish_filters_cached_roots_superseded_by_local_root() {
+        let mut exchange = DirectRootExchange::default();
+        let older = DirectRootEvent {
+            key: "drive-root:local:main:7:old-hash:old-key:local,remote".to_string(),
+            event_id: "old-event".to_string(),
+            event_json: "{\"id\":\"old\"}".to_string(),
+        };
+        let newer = DirectRootEvent {
+            key: "drive-root:local:main:8:new-hash:new-key:local,remote".to_string(),
+            event_id: "new-event".to_string(),
+            event_json: "{\"id\":\"new\"}".to_string(),
+        };
+
+        exchange.cache_event(older);
+        let events = exchange.events_for_publish(vec![newer.clone()]);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_id, newer.event_id);
+    }
+
+    #[test]
+    fn direct_root_cache_slot_parses_real_cid_shape() {
+        assert_eq!(
+            direct_root_cache_slot("drive-root:device:main:8:root-hash:root-key:device,remote"),
+            Some(DirectRootCacheSlot {
+                family: "drive-root:device:main".to_string(),
+                seq: 8,
+                recipient_count: 2,
+            })
+        );
+        assert_eq!(
+            direct_root_cache_slot("share-root:share:device:9:root-hash:root-key:device,remote"),
+            Some(DirectRootCacheSlot {
+                family: "share-root:share:device".to_string(),
+                seq: 9,
+                recipient_count: 2,
+            })
+        );
+    }
+
+    #[test]
+    fn direct_root_republish_collapses_recipient_list_variants() {
+        let mut exchange = DirectRootExchange::default();
+        let narrow = DirectRootEvent {
+            key: "drive-root:remote:main:8:same-hash:same-key:local".to_string(),
+            event_id: "narrow-event".to_string(),
+            event_json: "{\"id\":\"narrow\"}".to_string(),
+        };
+        let wide = DirectRootEvent {
+            key: "drive-root:remote:main:8:same-hash:same-key:local,remote".to_string(),
+            event_id: "wide-event".to_string(),
+            event_json: "{\"id\":\"wide\"}".to_string(),
+        };
+
+        exchange.cache_event(narrow);
+        exchange.cache_event(wide.clone());
+        let events = exchange.events_for_publish(Vec::new());
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_id, wide.event_id);
+    }
+
+    #[test]
+    fn direct_root_republish_skips_cached_files_root_events() {
+        let mut exchange = DirectRootExchange::default();
+        let remote = DirectRootEvent {
+            key: "files-root:remote:main:root-hash:root-key".to_string(),
+            event_id: "remote-files-root".to_string(),
+            event_json: "{\"id\":\"remote\"}".to_string(),
+        };
+
+        exchange.cache_event(remote.clone());
+        let events = exchange.events_for_publish(Vec::new());
+
+        assert!(events.is_empty());
+        assert!(exchange.seen_keys.contains(&remote.key));
+    }
+
+    #[test]
+    fn direct_root_metadata_republishes_on_longer_cadence() {
+        let mut exchange = DirectRootExchange::default();
+        let key = "profile-op:profile:op";
+        let now = Instant::now();
+
+        assert!(exchange.should_publish_key(key, now));
+        assert!(!exchange.should_publish_key(
+            key,
+            now + Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
+        ));
+        assert!(exchange.should_publish_key(
+            key,
+            now + Duration::from_secs(DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS)
+        ));
     }
 }
