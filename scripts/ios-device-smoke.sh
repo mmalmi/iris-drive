@@ -29,6 +29,7 @@ RUST_STATIC_LIB="$RUST_LIB_DIR/libiris_drive_app_core.a"
 
 select_device() {
   local devices_json
+  local status
   devices_json="$(mktemp -t iris-drive-ios-devices.XXXXXX.json)"
   xcrun devicectl list devices --json-output "$devices_json" >/dev/null
   python3 - "$DEVICE_SELECTOR" "$devices_json" <<'PY'
@@ -70,7 +71,9 @@ for device in devices:
         raise SystemExit(0)
 raise SystemExit("no paired available iPhone found")
 PY
+  status=$?
   rm -f "$devices_json"
+  return "$status"
 }
 
 assert_device_awake_for_launch() {

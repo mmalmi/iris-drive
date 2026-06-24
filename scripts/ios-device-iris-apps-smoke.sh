@@ -34,6 +34,7 @@ PROBE_BASE_DIR="iris-drive-device-iris-apps-smoke-$PROBE_ID"
 
 select_device() {
   local devices_json
+  local status
   devices_json="$(mktemp -t iris-drive-ios-devices.XXXXXX.json)"
   xcrun devicectl list devices --json-output "$devices_json" >/dev/null
   python3 - "$DEVICE_SELECTOR" "$devices_json" <<'PY'
@@ -75,7 +76,9 @@ for device in devices:
         raise SystemExit(0)
 raise SystemExit("no paired available iPhone found")
 PY
+  status=$?
   rm -f "$devices_json"
+  return "$status"
 }
 
 resolve_app_path() {
@@ -117,6 +120,8 @@ PY
   return 1
 }
 
+DEVICE_UDID="$(select_device)"
+
 cargo build -p iris-drive-app-core --target "$RUST_IOS_TARGET"
 if [[ ! -f "$RUST_STATIC_LIB" ]]; then
   echo "FAIL: static app-core library not found at $RUST_STATIC_LIB" >&2
@@ -129,8 +134,6 @@ elif [[ ! -d "$PROJECT" ]]; then
   echo "FAIL: $PROJECT is missing and xcodegen is not installed" >&2
   exit 1
 fi
-
-DEVICE_UDID="$(select_device)"
 
 if ! xcodebuild \
   -project "$PROJECT" \
