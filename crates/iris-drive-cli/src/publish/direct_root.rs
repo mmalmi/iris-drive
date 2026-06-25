@@ -20,6 +20,7 @@ struct DirectRootPublishEvent {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum DirectRootPublishSource {
     LocalCurrent,
+    LocalHeartbeat,
     CachedRelay,
     StateRequestReply,
 }
@@ -45,6 +46,7 @@ impl DirectRootPublishSource {
     fn as_str(self) -> &'static str {
         match self {
             Self::LocalCurrent => "local_current",
+            Self::LocalHeartbeat => "local_heartbeat",
             Self::CachedRelay => "cached_relay",
             Self::StateRequestReply => "state_request",
         }
@@ -152,20 +154,38 @@ impl DirectRootExchange {
             })
             .await?;
         let now = std::time::Instant::now();
-        for event in local_events
-            .into_iter()
-            .filter(|event| direct_root_cache_slot(&event.key).is_some())
+        for publish_event in
+            self.local_root_events_for_publish(local_events, DirectRootPublishSource::StateRequestReply)
         {
-            self.publish_event(
-                sync,
-                &stream,
-                DirectRootPublishEvent {
-                    event,
-                    source: DirectRootPublishSource::StateRequestReply,
-                },
-                now,
-            )
+            self.publish_event(sync, &stream, publish_event, now).await?;
+        }
+        Ok(())
+    }
+
+    async fn announce_local_root_heartbeat(
+        &mut self,
+        config_dir: &Path,
+        config: &AppConfig,
+        state: &ProfileState,
+        fips_blocks: Option<&FsFipsBlockSync>,
+    ) -> Result<()> {
+        let Some(sync) = fips_blocks else {
+            return Ok(());
+        };
+        let root_scope_id = state.root_scope_id();
+        self.subscribe_profile_stream(&root_scope_id, Some(sync)).await;
+        let stream = direct_root_mesh_stream(&root_scope_id);
+        let config_fingerprint = config_file_fingerprint(&config_path_in(config_dir))?;
+        let local_events = self
+            .cached_current_sync_events_from_config(config_fingerprint, || {
+                build_current_sync_events(config_dir, config, state)
+            })
             .await?;
+        let now = std::time::Instant::now();
+        for publish_event in
+            self.local_root_events_for_publish(local_events, DirectRootPublishSource::LocalHeartbeat)
+        {
+            self.publish_event(sync, &stream, publish_event, now).await?;
         }
         Ok(())
     }
@@ -731,6 +751,21 @@ impl DirectRootExchange {
         events
     }
 
+    fn local_root_events_for_publish(
+        &self,
+        local_events: Vec<DirectRootEvent>,
+        source: DirectRootPublishSource,
+    ) -> Vec<DirectRootPublishEvent> {
+        local_events
+            .into_iter()
+            .filter(|event| direct_root_cache_slot(&event.key).is_some())
+            .map(|event| DirectRootPublishEvent {
+                event: self.event_for_publish(event),
+                source,
+            })
+            .collect()
+    }
+
     fn should_cache_event_as_latest(&self, incoming_key: &str) -> bool {
         let Some(incoming) = direct_root_cache_slot(incoming_key) else {
             return should_cache_unsequenced_direct_root_key(incoming_key);
@@ -847,7 +882,10 @@ fn direct_root_publish_attempts(key: &str) -> usize {
 }
 
 fn direct_root_publish_attempts_for_source(key: &str, source: DirectRootPublishSource) -> usize {
-    if source == DirectRootPublishSource::StateRequestReply {
+    if matches!(
+        source,
+        DirectRootPublishSource::LocalHeartbeat | DirectRootPublishSource::StateRequestReply
+    ) {
         return 1;
     }
     if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
@@ -865,7 +903,9 @@ fn direct_root_publish_attempts_for_source(key: &str, source: DirectRootPublishS
 fn should_publish_direct_root_hint(key: &str, source: DirectRootPublishSource) -> bool {
     matches!(
         source,
-        DirectRootPublishSource::LocalCurrent | DirectRootPublishSource::StateRequestReply
+        DirectRootPublishSource::LocalCurrent
+            | DirectRootPublishSource::LocalHeartbeat
+            | DirectRootPublishSource::StateRequestReply
     ) && direct_root_cache_slot(key).is_some()
 }
 

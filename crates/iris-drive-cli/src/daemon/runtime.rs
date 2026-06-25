@@ -733,13 +733,12 @@ pub(crate) fn cmd_daemon(
                     );
                 }
                 _ = direct_root_announce_timer.tick() => {
-                    if let Err(error) =
-	                        announce_current_state_direct(
-	                            &mut direct_roots,
-	                            config_dir,
-	                            fips_blocks.as_deref(),
-	                        )
-                        .await
+                    if let Err(error) = announce_local_root_heartbeat_direct(
+                        &mut direct_roots,
+                        config_dir,
+                        fips_blocks.as_deref(),
+                    )
+                    .await
                     {
                         println!(
                             "{}",

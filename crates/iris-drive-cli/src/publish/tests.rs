@@ -69,6 +69,52 @@ fn direct_root_republish_includes_cached_remote_events() {
 }
 
 #[test]
+fn direct_root_heartbeat_publishes_local_root_events_only() {
+    let mut exchange = DirectRootExchange::default();
+    exchange.cache_event(DirectRootEvent {
+        key: "drive-root:remote:main:7:remote-hash:remote-key:local,remote".to_string(),
+        event_id: "remote-event".to_string(),
+        kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
+        json: "{\"id\":\"remote\"}".to_string(),
+    });
+    let drive = DirectRootEvent {
+        key: "drive-root:local:main:8:drive-hash:drive-key:local,remote".to_string(),
+        event_id: "drive-event".to_string(),
+        kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
+        json: "{\"id\":\"drive\"}".to_string(),
+    };
+    let share = DirectRootEvent {
+        key: "share-root:share:local:4:share-hash:share-key:local,remote".to_string(),
+        event_id: "share-event".to_string(),
+        kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
+        json: "{\"id\":\"share\"}".to_string(),
+    };
+    let files = DirectRootEvent {
+        key: "files-root:local:main:drive-hash:drive-key".to_string(),
+        event_id: "files-event".to_string(),
+        kind: iris_drive_core::nostr_events::KIND_HASHTREE_ROOT,
+        json: "{\"id\":\"files\"}".to_string(),
+    };
+    let profile = DirectRootEvent {
+        key: "profile-op:profile:op".to_string(),
+        event_id: "profile-event".to_string(),
+        kind: iris_drive_core::KIND_IRIS_PROFILE_ROSTER_OP,
+        json: "{\"id\":\"profile\"}".to_string(),
+    };
+
+    let events = exchange.local_root_events_for_publish(
+        vec![drive.clone(), share.clone(), files, profile],
+        DirectRootPublishSource::LocalHeartbeat,
+    );
+
+    assert_eq!(events.len(), 2);
+    assert_eq!(events[0].event.event_id, drive.event_id);
+    assert_eq!(events[0].source, DirectRootPublishSource::LocalHeartbeat);
+    assert_eq!(events[1].event.event_id, share.event_id);
+    assert_eq!(events[1].source, DirectRootPublishSource::LocalHeartbeat);
+}
+
+#[test]
 fn direct_root_republish_keeps_latest_sequence_per_root_family() {
     let mut exchange = DirectRootExchange::default();
     let older = DirectRootEvent {
@@ -653,6 +699,33 @@ fn direct_root_publish_bursts_root_frames_only() {
     ));
     assert_eq!(direct_root_publish_attempts("files-root:device:main"), 2);
     assert_eq!(direct_root_publish_attempts("profile-op:profile:op"), 1);
+}
+
+#[test]
+fn direct_root_heartbeat_uses_single_hinted_attempt_with_local_throttle() {
+    let mut exchange = DirectRootExchange::default();
+    let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
+    let now = std::time::Instant::now();
+
+    assert_eq!(
+        direct_root_publish_attempts_for_source(key, DirectRootPublishSource::LocalHeartbeat),
+        1
+    );
+    assert!(should_publish_direct_root_hint(
+        key,
+        DirectRootPublishSource::LocalHeartbeat
+    ));
+    assert!(exchange.should_publish_candidate_key(key, DirectRootPublishSource::LocalCurrent, now));
+    assert!(!exchange.should_publish_candidate_key(
+        key,
+        DirectRootPublishSource::LocalHeartbeat,
+        now + std::time::Duration::from_millis(500)
+    ));
+    assert!(exchange.should_publish_candidate_key(
+        key,
+        DirectRootPublishSource::LocalHeartbeat,
+        now + std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
+    ));
 }
 
 #[test]

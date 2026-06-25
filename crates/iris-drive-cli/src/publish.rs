@@ -93,6 +93,20 @@ pub(crate) async fn announce_current_state_direct(
         .await
 }
 
+pub(crate) async fn announce_local_root_heartbeat_direct(
+    direct_roots: &mut DirectRootExchange,
+    config_dir: &Path,
+    fips_blocks: Option<&FsFipsBlockSync>,
+) -> Result<()> {
+    let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
+    let Some(state) = config.profile.as_ref() else {
+        return Ok(());
+    };
+    direct_roots
+        .announce_local_root_heartbeat(config_dir, &config, state, fips_blocks)
+        .await
+}
+
 pub(crate) async fn upload_tree_to_blossom_with_hashtree(
     config_dir: &std::path::Path,
     config: &AppConfig,
