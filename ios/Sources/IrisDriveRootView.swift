@@ -562,6 +562,7 @@ private struct LinkDeviceSetupView: View {
     @ObservedObject var model: IrisDriveMobileModel
     @State private var linkTarget = ""
     @State private var submittedLinkTarget = ""
+    @State private var linkValidationMessage = ""
     @State private var scannerPresented = false
 
     init(model: IrisDriveMobileModel) {
@@ -588,35 +589,75 @@ private struct LinkDeviceSetupView: View {
                     Label("Link device", systemImage: "link")
                 }
                 .accessibilityIdentifier("linkDeviceSubmit")
-                .disabled(!IrisDriveNativeLinkInput.isComplete(linkTarget.trimmingCharacters(in: .whitespacesAndNewlines)))
+                .disabled(linkTarget.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 Button {
                     scannerPresented = true
                 } label: {
                     Label("Scan invite QR", systemImage: "qrcode.viewfinder")
                 }
             }
+            if !linkValidationMessage.isEmpty {
+                Section {
+                    Text(linkValidationMessage)
+                        .font(.footnote)
+                        .foregroundStyle(.red)
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("linkDeviceErrorMessage")
+                }
+            }
+            SetupErrorSection(message: model.setupErrorMessage)
         }
         .navigationTitle("Link device")
         .toolbar(.visible, for: .navigationBar)
         .onAppear {
-            submitLinkDevice(linkTarget, force: false)
+            submitLinkDevice(
+                linkTarget,
+                force: !linkTarget.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            )
         }
         .sheet(isPresented: $scannerPresented) {
             QRCodeScannerSheet { code in
                 linkTarget = code
-                submitLinkDevice(code, force: false)
+                submitLinkDevice(code, force: true)
             }
         }
     }
 
-    private func submitLinkDevice(_ value: String, force _: Bool) {
+    private func submitLinkDevice(_ value: String, force: Bool) {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        guard IrisDriveNativeLinkInput.isComplete(trimmed) else { return }
+        guard !trimmed.isEmpty else {
+            if force {
+                linkValidationMessage = ""
+            }
+            return
+        }
+        let linkInput = IrisDriveNativeLinkInput.validate(trimmed)
+        guard linkInput.isComplete, linkInput.isValid else {
+            if force {
+                linkValidationMessage = linkValidationFailureMessage(linkInput)
+            }
+            return
+        }
         guard submittedLinkTarget != trimmed else { return }
+        linkValidationMessage = ""
         submittedLinkTarget = trimmed
         model.profileLinkTarget = trimmed
         model.linkDevice()
+    }
+
+    private func linkValidationFailureMessage(_ linkInput: NativeLinkInputClassification) -> String {
+        let error = linkInput.error.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !error.isEmpty {
+            return error
+        }
+        switch linkInput.kind {
+        case "invite":
+            return "Scan or paste the full device invite link."
+        case "app_key_pubkey":
+            return "Paste the full admin device key."
+        default:
+            return "Scan or paste an Iris Drive device invite link."
+        }
     }
 }
 

@@ -49,6 +49,27 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTFail(app.debugDescription)
     }
 
+    func testLinkDeviceShowsInvalidInviteReason() throws {
+        let baseDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iris-drive-ui-test-invalid-link-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: baseDir, withIntermediateDirectories: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: baseDir)
+        }
+        let app = launchApp(environment: [
+            "IRIS_DRIVE_UI_TEST_BASE_DIR": baseDir.path,
+            "IRIS_DRIVE_UI_TEST_OWNER_INVITE_B64": "aHR0cHM6Ly9kcml2ZS5pcmlzLnRvL2ludml0ZS9kZW1v",
+        ])
+
+        app.buttons["welcomeSignIn"].tap()
+        app.buttons["openLinkDevice"].tap()
+
+        let error = app.staticTexts["linkDeviceErrorMessage"]
+        XCTAssertTrue(error.waitForExistence(timeout: 5))
+        XCTAssertTrue(accessibilityValue(error).contains("full device invite"))
+        XCTAssertFalse(app.descendants(matching: .any)["awaitingApprovalView"].exists)
+    }
+
     func testCreateProfileFromWelcome() throws {
         let app = launchApp()
 
