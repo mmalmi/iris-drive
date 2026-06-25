@@ -503,18 +503,29 @@ pub(crate) fn enqueue_root_apply_followup(
     ) else {
         return false;
     };
-    let Some(key) = root_apply_followup_queue_key(
+    let exact_key = root_apply_followup_key(
         &config,
         root_cid_to_pull.as_deref(),
         should_refresh_projection,
     )
-    .map(|key| format!("root_apply_followup:{key:?}"))
-    else {
-        daemon_tasks.push(task);
-        return true;
+    .map(|key| format!("root_apply_followup:{key:?}"));
+    let group_key = root_apply_followup_queue_key(
+        &config,
+        root_cid_to_pull.as_deref(),
+        should_refresh_projection,
+    )
+    .map(|key| format!("root_apply_followup_group:{key:?}"));
+
+    let enqueued = match (exact_key.clone(), group_key.clone()) {
+        (Some(key), Some(group)) => daemon_tasks.push_keyed_replacing_group(key, group, task),
+        (Some(key), None) | (None, Some(key)) => daemon_tasks.push_keyed(key, task),
+        (None, None) => {
+            daemon_tasks.push(task);
+            return true;
+        }
     };
 
-    if daemon_tasks.push_keyed(key.clone(), task) {
+    if enqueued {
         true
     } else {
         println!(
@@ -522,7 +533,8 @@ pub(crate) fn enqueue_root_apply_followup(
             json!({
                 "event": "root_apply_followup_coalesced",
                 "root_cid": root_cid_to_pull,
-                "key": key,
+                "key": exact_key,
+                "group": group_key,
             })
         );
         false

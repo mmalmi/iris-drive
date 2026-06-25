@@ -18,7 +18,14 @@ struct ManagedDaemonTask {
 #[derive(Default)]
 struct KeyedDaemonTasks {
     next_id: u64,
-    active: std::collections::BTreeMap<String, (u64, tokio::task::AbortHandle)>,
+    active: std::collections::BTreeMap<String, ActiveKeyedTask>,
+    groups: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+}
+
+struct ActiveKeyedTask {
+    id: u64,
+    abort: tokio::task::AbortHandle,
+    group: Option<String>,
 }
 
 impl DaemonTaskSet {
@@ -33,18 +40,73 @@ impl DaemonTaskSet {
     }
 
     pub(crate) fn push_keyed(&self, key: String, task: tokio::task::JoinHandle<()>) -> bool {
+        self.push_keyed_inner(key, None, task)
+    }
+
+    pub(crate) fn push_keyed_replacing_group(
+        &self,
+        key: String,
+        group: String,
+        task: tokio::task::JoinHandle<()>,
+    ) -> bool {
+        self.push_keyed_inner(key, Some(group), task)
+    }
+
+    fn push_keyed_inner(
+        &self,
+        key: String,
+        group: Option<String>,
+        task: tokio::task::JoinHandle<()>,
+    ) -> bool {
         let abort_inner = task.abort_handle();
         let Ok(mut keyed_tasks) = self.keyed_tasks.lock() else {
             task.abort();
             return false;
         };
+        if keyed_tasks.active.contains_key(&key) {
+            task.abort();
+            return false;
+        }
+        if let Some(group) = group.as_ref() {
+            let stale_keys = keyed_tasks
+                .groups
+                .get(group)
+                .into_iter()
+                .flat_map(|keys| keys.iter().cloned())
+                .collect::<Vec<_>>();
+            for stale_key in stale_keys {
+                if stale_key == key {
+                    continue;
+                }
+                if let Some(stale_task) = keyed_tasks.active.remove(&stale_key) {
+                    if let Some(stale_group) = stale_task.group.as_ref()
+                        && let Some(keys) = keyed_tasks.groups.get_mut(stale_group)
+                    {
+                        keys.remove(&stale_key);
+                        if keys.is_empty() {
+                            keyed_tasks.groups.remove(stale_group);
+                        }
+                    }
+                    stale_task.abort.abort();
+                }
+            }
+        }
         keyed_tasks.next_id = keyed_tasks.next_id.wrapping_add(1);
         let task_id = keyed_tasks.next_id;
-        if let Some((_, old_abort)) = keyed_tasks
-            .active
-            .insert(key.clone(), (task_id, abort_inner.clone()))
-        {
-            old_abort.abort();
+        keyed_tasks.active.insert(
+            key.clone(),
+            ActiveKeyedTask {
+                id: task_id,
+                abort: abort_inner.clone(),
+                group: group.clone(),
+            },
+        );
+        if let Some(group) = group.as_ref() {
+            keyed_tasks
+                .groups
+                .entry(group.clone())
+                .or_default()
+                .insert(key.clone());
         }
         drop(keyed_tasks);
 
@@ -57,9 +119,21 @@ impl DaemonTaskSet {
                 && keyed_tasks
                     .active
                     .get(&task_key)
-                    .is_some_and(|(active_id, _)| *active_id == task_id)
+                    .is_some_and(|active| active.id == task_id)
             {
+                let group = keyed_tasks
+                    .active
+                    .get(&task_key)
+                    .and_then(|active| active.group.clone());
                 keyed_tasks.active.remove(&task_key);
+                if let Some(group) = group
+                    && let Some(keys) = keyed_tasks.groups.get_mut(&group)
+                {
+                    keys.remove(&task_key);
+                    if keys.is_empty() {
+                        keyed_tasks.groups.remove(&group);
+                    }
+                }
             }
         });
         match self.tasks.lock() {
@@ -75,9 +149,21 @@ impl DaemonTaskSet {
                     && keyed_tasks
                         .active
                         .get(&key)
-                        .is_some_and(|(active_id, _)| *active_id == task_id)
+                        .is_some_and(|active| active.id == task_id)
                 {
+                    let group = keyed_tasks
+                        .active
+                        .get(&key)
+                        .and_then(|active| active.group.clone());
                     keyed_tasks.active.remove(&key);
+                    if let Some(group) = group
+                        && let Some(keys) = keyed_tasks.groups.get_mut(&group)
+                    {
+                        keys.remove(&key);
+                        if keys.is_empty() {
+                            keyed_tasks.groups.remove(&group);
+                        }
+                    }
                 }
                 abort_inner_on_error.abort();
                 join.abort();
@@ -92,10 +178,11 @@ impl DaemonTaskSet {
             Err(_) => Vec::new(),
         };
         if let Ok(mut keyed_tasks) = self.keyed_tasks.lock() {
-            for (_, abort_inner) in keyed_tasks.active.values() {
-                abort_inner.abort();
+            for active in keyed_tasks.active.values() {
+                active.abort.abort();
             }
             keyed_tasks.active.clear();
+            keyed_tasks.groups.clear();
         }
         for task in &tasks {
             if let Some(abort_inner) = &task.abort_inner {

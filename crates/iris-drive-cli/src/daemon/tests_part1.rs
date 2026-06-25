@@ -34,9 +34,9 @@ fn live_block_pull_tries_blossom_after_fips_failure() {
 }
 
 #[tokio::test]
-async fn keyed_daemon_tasks_replace_older_active_task() {
+async fn grouped_keyed_daemon_tasks_replace_older_roots_but_coalesce_duplicates() {
     let tasks = DaemonTaskSet::default();
-    let key = "root-apply:device-a".to_string();
+    let group = "root-apply:device-a".to_string();
 
     let (old_ready_tx, old_ready_rx) = tokio::sync::oneshot::channel();
     let (old_dropped_tx, old_dropped_rx) = tokio::sync::oneshot::channel();
@@ -45,7 +45,11 @@ async fn keyed_daemon_tasks_replace_older_active_task() {
         let _ = old_ready_tx.send(());
         std::future::pending::<()>().await;
     });
-    assert!(tasks.push_keyed(key.clone(), old));
+    assert!(tasks.push_keyed_replacing_group(
+        "root-apply:device-a:root-1".to_string(),
+        group.clone(),
+        old,
+    ));
     old_ready_rx.await.expect("old task started");
 
     let (new_ready_tx, new_ready_rx) = tokio::sync::oneshot::channel();
@@ -55,32 +59,30 @@ async fn keyed_daemon_tasks_replace_older_active_task() {
         let _ = new_ready_tx.send(());
         std::future::pending::<()>().await;
     });
-    assert!(tasks.push_keyed(key.clone(), new));
+    assert!(tasks.push_keyed_replacing_group(
+        "root-apply:device-a:root-2".to_string(),
+        group.clone(),
+        new,
+    ));
     tokio::time::timeout(std::time::Duration::from_secs(1), old_dropped_rx)
         .await
-        .expect("old task aborted")
+        .expect("old root task aborted by newer root")
         .expect("old drop notification");
     new_ready_rx.await.expect("new task started");
 
-    let (third_ready_tx, third_ready_rx) = tokio::sync::oneshot::channel();
-    let (third_dropped_tx, third_dropped_rx) = tokio::sync::oneshot::channel();
-    let third = tokio::spawn(async move {
-        let _drop = DropNotify(Some(third_dropped_tx));
-        let _ = third_ready_tx.send(());
-        std::future::pending::<()>().await;
-    });
-    assert!(tasks.push_keyed(key, third));
-    tokio::time::timeout(std::time::Duration::from_secs(1), new_dropped_rx)
-        .await
-        .expect("new task aborted by third replacement")
-        .expect("new drop notification");
-    third_ready_rx.await.expect("third task started");
+    assert!(!tasks.push_keyed_replacing_group(
+        "root-apply:device-a:root-2".to_string(),
+        group,
+        tokio::spawn(async {
+            panic!("duplicate exact root task should be coalesced");
+        }),
+    ));
 
     tasks.abort_all().await;
-    tokio::time::timeout(std::time::Duration::from_secs(1), third_dropped_rx)
+    tokio::time::timeout(std::time::Duration::from_secs(1), new_dropped_rx)
         .await
-        .expect("third task aborted by cleanup")
-        .expect("third drop notification");
+        .expect("new task aborted by cleanup")
+        .expect("new drop notification");
 }
 
 #[test]
