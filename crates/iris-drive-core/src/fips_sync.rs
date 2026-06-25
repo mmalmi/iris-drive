@@ -33,7 +33,7 @@ use crate::identity::AppKey;
 const FIPS_REQUEST_TIMEOUT: Duration = Duration::from_millis(1_250);
 const FIPS_REQUEST_RETRY_INTERVAL: Duration = Duration::from_millis(250);
 const FIPS_REQUEST_MAX_ATTEMPTS: usize = 4;
-const FIPS_PACKET_CHANNEL_CAPACITY: usize = 1024;
+const FIPS_PACKET_CHANNEL_CAPACITY: usize = 8192;
 const FIPS_WEBRTC_MAX_CONNECTIONS: usize = 16;
 const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 0;
 const APP_KEY_LINK_OPEN_DISCOVERY_MAX_PENDING: usize = 16;

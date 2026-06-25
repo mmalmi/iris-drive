@@ -689,6 +689,24 @@ fn endpoint_options_keep_native_udp_private_by_default() {
 }
 
 #[test]
+fn endpoint_options_keep_packet_queue_large_enough_for_root_bursts() {
+    let settings = FipsTransportSettings::default();
+
+    let options = fips_endpoint_options(
+        "nsec1example".to_string(),
+        IRIS_DRIVE_FIPS_DISCOVERY_SCOPE.to_string(),
+        Vec::new(),
+        &AppConfig::default(),
+        &settings,
+    );
+
+    assert!(
+        options.packet_channel_capacity >= 8192,
+        "direct root hints share this queue with block traffic during file bursts"
+    );
+}
+
+#[test]
 fn admin_endpoint_options_allow_open_app_key_link_requests() {
     let settings = FipsTransportSettings::default();
     let dir = tempfile::tempdir().unwrap();
