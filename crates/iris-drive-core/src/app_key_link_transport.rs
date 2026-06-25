@@ -21,9 +21,7 @@ pub struct AppKeyLinkRequestFrame {
     pub admin_app_key_pubkey: String,
     pub app_key_pubkey: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub link_secret: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub link_secret_hash: String,
+    pub invite_pubkey: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     pub requested_at: u64,
@@ -34,7 +32,7 @@ pub struct AppKeyLinkRequestFrame {
 pub struct AppKeyApprovalRequest {
     pub profile_id: Option<IrisProfileId>,
     pub app_key_hex: String,
-    pub link_secret: String,
+    pub invite_pubkey: String,
     pub label: Option<String>,
 }
 
@@ -70,34 +68,21 @@ pub fn pending_app_key_link_request_frame(state: &ProfileState) -> Option<AppKey
         return None;
     }
     let pending = state.outbound_app_key_link_request.as_ref()?;
-    let link_secret = if pending.link_secret.trim().is_empty() {
-        state.app_key_link_secret.clone()
-    } else {
-        pending.link_secret.clone()
-    };
     Some(AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: state.profile_id,
         admin_app_key_pubkey: pending.admin_app_key_pubkey.clone(),
         app_key_pubkey: state.app_key_pubkey.clone(),
-        link_secret: link_secret.clone(),
-        link_secret_hash: app_key_link_secret_hash(&link_secret),
+        invite_pubkey: pending.invite_pubkey.clone(),
         label: state.app_key_label.clone(),
         requested_at: pending.requested_at,
         url: encode_app_key_approval_request(
             state.profile_id,
             &state.app_key_pubkey,
-            &link_secret,
+            &pending.invite_pubkey,
             state.app_key_label.as_deref(),
         ),
     })
-}
-
-#[must_use]
-pub fn app_key_link_secret_hash(link_secret: &str) -> String {
-    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
-
-    URL_SAFE_NO_PAD.encode(Sha256::digest(link_secret.trim().as_bytes()))
 }
 
 #[must_use]
@@ -213,7 +198,7 @@ fn current_app_key_is_authorized(state: &ProfileState) -> bool {
 pub fn encode_app_key_approval_request(
     profile_id: IrisProfileId,
     app_key_hex: &str,
-    link_secret: &str,
+    invite_pubkey: &str,
     label: Option<&str>,
 ) -> String {
     let mut url = format!(
@@ -221,9 +206,9 @@ pub fn encode_app_key_approval_request(
         profile_id,
         pubkey_npub(app_key_hex)
     );
-    if !link_secret.trim().is_empty() {
-        url.push_str("&secret=");
-        url.push_str(&percent_encode_component(link_secret.trim()));
+    if !invite_pubkey.trim().is_empty() {
+        url.push_str("&invite=");
+        url.push_str(&percent_encode_component(&pubkey_npub(invite_pubkey.trim())));
     }
     if let Some(label) = label.map(str::trim).filter(|label| !label.is_empty()) {
         url.push_str("&label=");
@@ -240,7 +225,7 @@ pub fn parse_app_key_approval_request(input: &str) -> Result<Option<AppKeyApprov
 
     let mut profile_id = None;
     let mut app_key = None;
-    let mut link_secret = None;
+    let mut invite_pubkey = None;
     let mut label = None;
     for pair in query.split('&') {
         if pair.is_empty() {
@@ -254,7 +239,9 @@ pub fn parse_app_key_approval_request(input: &str) -> Result<Option<AppKeyApprov
                 profile_id = Some(value.trim().parse().context("parsing request profile id")?);
             }
             "app_key" | "appKey" if !value.trim().is_empty() => app_key = Some(value),
-            "secret" | "link_secret" if !value.trim().is_empty() => link_secret = Some(value),
+            "invite" | "invite_pubkey" | "invitePubkey" if !value.trim().is_empty() => {
+                invite_pubkey = Some(value);
+            }
             "label" if !value.trim().is_empty() => label = Some(value),
             _ => {}
         }
@@ -262,11 +249,13 @@ pub fn parse_app_key_approval_request(input: &str) -> Result<Option<AppKeyApprov
 
     let profile_id = profile_id.ok_or_else(|| anyhow!("AppKey-link request is missing profile"))?;
     let app_key = app_key.ok_or_else(|| anyhow!("AppKey-link request is missing AppKey"))?;
+    let invite_pubkey =
+        invite_pubkey.ok_or_else(|| anyhow!("AppKey-link request is missing invite pubkey"))?;
 
     Ok(Some(AppKeyApprovalRequest {
         profile_id: Some(profile_id),
         app_key_hex: normalize_pubkey_hex(&app_key).context("parsing request AppKey")?,
-        link_secret: link_secret.unwrap_or_default().trim().to_string(),
+        invite_pubkey: normalize_pubkey_hex(&invite_pubkey).context("parsing request invite")?,
         label,
     }))
 }
@@ -426,7 +415,8 @@ mod tests {
             .state
             .queue_outbound_app_key_link_request(
                 owner.state.app_key_pubkey.clone(),
-                &owner.state.app_key_link_secret,
+                &crate::profile::app_key_link_invite_pubkey(&owner.state.app_key_link_secret)
+                    .unwrap(),
                 123,
             )
             .unwrap();
@@ -442,14 +432,15 @@ mod tests {
     }
 
     #[test]
-    fn approval_request_round_trips_profile_app_key_secret_and_label_without_owner() {
+    fn approval_request_round_trips_profile_app_key_invite_and_label_without_owner() {
         let profile_id = IrisProfileId::new_v4();
         let app_key = nostr_sdk::Keys::generate().public_key();
+        let invite = nostr_sdk::Keys::generate().public_key();
 
         let url = encode_app_key_approval_request(
             profile_id,
             &app_key.to_hex(),
-            " join secret ",
+            &invite.to_hex(),
             Some("Web + Native"),
         );
         let parsed = parse_app_key_approval_request(&url)
@@ -458,7 +449,7 @@ mod tests {
 
         assert_eq!(parsed.profile_id, Some(profile_id));
         assert_eq!(parsed.app_key_hex, app_key.to_hex());
-        assert_eq!(parsed.link_secret, "join secret");
+        assert_eq!(parsed.invite_pubkey, invite.to_hex());
         assert_eq!(parsed.label.as_deref(), Some("Web + Native"));
         assert!(!url.contains("owner="));
     }
@@ -467,9 +458,11 @@ mod tests {
     fn approval_request_parser_accepts_aliases_and_rejects_nearby_routes() {
         let profile_id = IrisProfileId::new_v4();
         let app_key = nostr_sdk::Keys::generate().public_key();
+        let invite = nostr_sdk::Keys::generate().public_key();
         let url = format!(
-            "iris-drive:/app-key-link?profile_id={profile_id}&app_key={}&link_secret=s&label=Phone+Browser",
-            app_key.to_hex()
+            "iris-drive:/app-key-link?profile_id={profile_id}&app_key={}&invite={}&label=Phone+Browser",
+            app_key.to_hex(),
+            invite.to_hex()
         );
         let parsed = parse_app_key_approval_request(&url)
             .expect("parse request")
@@ -477,7 +470,7 @@ mod tests {
 
         assert_eq!(parsed.profile_id, Some(profile_id));
         assert_eq!(parsed.app_key_hex, app_key.to_hex());
-        assert_eq!(parsed.link_secret, "s");
+        assert_eq!(parsed.invite_pubkey, invite.to_hex());
         assert_eq!(parsed.label.as_deref(), Some("Phone Browser"));
         assert!(
             parse_app_key_approval_request("https://drive.iris.to/app-key-linker?owner=x")

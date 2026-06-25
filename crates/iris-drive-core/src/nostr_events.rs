@@ -12,8 +12,8 @@
 //!   access snapshot. d-tag: bare share UUID; l-tag:
 //!   `"iris-drive/share-access"`. Pubkey = authorized share admin `AppKey`.
 //! - **AppKey-link requests** — AppKey-signed identity fact events
-//!   (`kind=7368`, `type=nostr_identity_link_request`). The previous
-//!   profile-scoped `30078` JSON request is parse-only compatibility.
+//!   (`kind=7368`, `type=nostr_identity_link_request`) encrypted to the
+//!   random invite key carried by the invite URL.
 //!
 //! All events are signed by the appropriate key and verify under the
 //! event's own pubkey. Build functions return a signed `Event`; parse
@@ -31,27 +31,17 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::IrisProfileId;
-use crate::app_key_link_transport::{
-    AppKeyLinkRequestFrame, app_key_link_secret_hash, encode_app_key_approval_request,
-};
+use crate::app_key_link_transport::{AppKeyLinkRequestFrame, encode_app_key_approval_request};
 use crate::config::AppKeyRootRef;
 use crate::root_meta::{RootObservation, RootParent};
 
 /// NIP-78 parameterized-replaceable kind for AppKey-signed drive roots.
 pub const KIND_DRIVE_ROOT: u16 = 30078;
 
-/// Legacy NIP-78 parameterized-replaceable kind for parse-only AppKey-link requests.
-pub const KIND_APP_KEY_LINK_REQUEST: u16 = 30078;
-
 /// Standard hashtree mutable-root kind used by drive.iris.to.
 const _: () = assert!(hashtree_nostr::HASHTREE_ROOT_KIND <= u16::MAX as u32);
 #[allow(clippy::cast_possible_truncation)]
 pub const KIND_HASHTREE_ROOT: u16 = hashtree_nostr::HASHTREE_ROOT_KIND as u16;
-
-#[must_use]
-pub fn app_key_link_request_d_tag(profile_id: IrisProfileId) -> String {
-    format!("iris-drive/{profile_id}/app-key-link-request")
-}
 
 #[must_use]
 pub fn is_drive_root_event_kind(kind: u16) -> bool {
@@ -70,11 +60,6 @@ pub fn is_drive_root_event_coordinate(event: &Event) -> bool {
 #[must_use]
 pub fn is_app_key_link_request_event_coordinate(event: &Event) -> bool {
     is_identity_app_key_link_request_event(event)
-        || (event.kind.as_u16() == KIND_APP_KEY_LINK_REQUEST
-            && event
-                .tags
-                .identifier()
-                .is_some_and(|d_tag| parse_app_key_link_request_d_tag(d_tag).is_ok()))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -109,13 +94,6 @@ pub enum WireError {
     MissingRootHash,
     #[error("drive-root key is not available for this device")]
     RootKeyUnavailable,
-    #[error(
-        "app-key-link d-tag profile {d_tag_profile} does not match request profile {frame_profile}"
-    )]
-    AppKeyLinkProfileMismatch {
-        d_tag_profile: IrisProfileId,
-        frame_profile: IrisProfileId,
-    },
     #[error("app-key-link event signer {signer} does not match request device {device}")]
     AppKeyLinkSignerMismatch { signer: String, device: String },
 }
@@ -142,10 +120,6 @@ fn is_zero(value: &u64) -> bool {
     *value == 0
 }
 
-/// Build a signed app-key-link request event.
-///
-/// New requests are neutral identity fact events signed by the requesting
-/// `AppKey`; the legacy profile-scoped `30078` JSON shape is parse-only.
 pub fn build_app_key_link_request_event(
     device_keys: &Keys,
     frame: &AppKeyLinkRequestFrame,
@@ -161,21 +135,13 @@ pub fn build_app_key_link_request_event(
     }
     PublicKey::from_hex(&frame.admin_app_key_pubkey)
         .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
-    let link_secret_hash = if frame.link_secret_hash.trim().is_empty() {
-        if frame.link_secret.trim().is_empty() {
-            return Err(WireError::BadContent(
-                "app-key-link request is missing link secret hash".to_string(),
-            ));
-        }
-        app_key_link_secret_hash(&frame.link_secret)
-    } else {
-        frame.link_secret_hash.trim().to_string()
-    };
+    PublicKey::from_hex(&frame.invite_pubkey)
+        .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
     build_identity_link_request_event(
         device_keys,
         frame.profile_id.as_uuid(),
         frame.admin_app_key_pubkey.clone(),
-        link_secret_hash,
+        frame.invite_pubkey.clone(),
         format!("app-key-link-{}", frame.requested_at),
         frame.label.clone(),
         frame.requested_at,
@@ -186,76 +152,42 @@ pub fn build_app_key_link_request_event(
 /// Parse + verify a signed app-key-link request event.
 pub fn parse_app_key_link_request_event(
     event: &Event,
+    invite_keys: &Keys,
 ) -> Result<AppKeyLinkRequestFrame, WireError> {
-    if is_identity_app_key_link_request_event(event) {
-        return parse_identity_app_key_link_request_event(event);
+    if !is_identity_app_key_link_request_event(event) {
+        return Err(WireError::WrongKind {
+            expected: FACT_OP_KIND,
+            got: event.kind.as_u16(),
+        });
     }
-    parse_legacy_app_key_link_request_event(event)
+    parse_identity_app_key_link_request_event(event, invite_keys)
 }
 
 fn parse_identity_app_key_link_request_event(
     event: &Event,
+    invite_keys: &Keys,
 ) -> Result<AppKeyLinkRequestFrame, WireError> {
     event
         .verify()
         .map_err(|e| WireError::SignatureFailed(e.to_string()))?;
-    let signed = parse_identity_link_request_event(event)
+    let signed = parse_identity_link_request_event(event, invite_keys)
         .map_err(|e| WireError::BadContent(format!("Nostr identity link request: {e}")))?;
     let profile_id = IrisProfileId::from_uuid(signed.content.identity);
     Ok(AppKeyLinkRequestFrame {
         schema: 1,
         profile_id,
         admin_app_key_pubkey: signed.content.admin_pubkey.clone(),
-        app_key_pubkey: signed.content.key_pubkey.clone(),
-        link_secret: String::new(),
-        link_secret_hash: signed.content.link_secret_hash.clone(),
+        app_key_pubkey: signed.content.joining_pubkey.clone(),
+        invite_pubkey: signed.content.invite_pubkey.clone(),
         label: signed.content.label.clone(),
         requested_at: signed.content.requested_at,
         url: encode_app_key_approval_request(
             profile_id,
-            &signed.content.key_pubkey,
-            "",
+            &signed.content.joining_pubkey,
+            &signed.content.invite_pubkey,
             signed.content.label.as_deref(),
         ),
     })
-}
-
-fn parse_legacy_app_key_link_request_event(
-    event: &Event,
-) -> Result<AppKeyLinkRequestFrame, WireError> {
-    let kind = event.kind.as_u16();
-    if kind != KIND_APP_KEY_LINK_REQUEST {
-        return Err(WireError::WrongKind {
-            expected: KIND_APP_KEY_LINK_REQUEST,
-            got: kind,
-        });
-    }
-    let d_tag = event.tags.identifier().ok_or(WireError::MissingDTag)?;
-    let d_tag_profile = parse_app_key_link_request_d_tag(d_tag)?;
-    event
-        .verify()
-        .map_err(|e| WireError::SignatureFailed(e.to_string()))?;
-    let mut frame: AppKeyLinkRequestFrame =
-        serde_json::from_str(&event.content).map_err(|e| WireError::BadContent(e.to_string()))?;
-    if frame.link_secret_hash.trim().is_empty() && !frame.link_secret.trim().is_empty() {
-        frame.link_secret_hash = app_key_link_secret_hash(&frame.link_secret);
-    }
-    PublicKey::from_hex(&frame.app_key_pubkey)
-        .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
-    if d_tag_profile != frame.profile_id {
-        return Err(WireError::AppKeyLinkProfileMismatch {
-            d_tag_profile,
-            frame_profile: frame.profile_id,
-        });
-    }
-    let signer = event.pubkey.to_hex();
-    if signer != frame.app_key_pubkey {
-        return Err(WireError::AppKeyLinkSignerMismatch {
-            signer,
-            device: frame.app_key_pubkey,
-        });
-    }
-    Ok(frame)
 }
 
 fn is_identity_app_key_link_request_event(event: &Event) -> bool {
@@ -267,23 +199,6 @@ fn is_identity_app_key_link_request_event(event: &Event) -> bool {
                     .get(1)
                     .is_some_and(|value| value == NOSTR_IDENTITY_LINK_REQUEST_TYPE)
         })
-}
-
-fn parse_app_key_link_request_d_tag(d_tag: &str) -> Result<IrisProfileId, WireError> {
-    let rest = d_tag
-        .strip_prefix("iris-drive/")
-        .ok_or_else(|| WireError::DTagMalformed(format!("no iris-drive/ prefix: {d_tag}")))?;
-    let profile = rest.strip_suffix("/app-key-link-request").ok_or_else(|| {
-        WireError::DTagMalformed(format!("no /app-key-link-request suffix: {d_tag}"))
-    })?;
-    if profile.is_empty() {
-        return Err(WireError::DTagMalformed(format!(
-            "empty app-key-link profile: {d_tag}"
-        )));
-    }
-    profile
-        .parse()
-        .map_err(|error| WireError::DTagMalformed(format!("invalid app-key-link profile: {error}")))
 }
 
 /// Compute the d-tag for a drive-root event.

@@ -18,7 +18,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::str::FromStr;
 
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use nostr_sdk::nips::nip19::FromBech32;
 use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
 use nostr_sdk::{Keys, PublicKey, SecretKey};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -53,6 +53,8 @@ pub enum ProfileError {
     CurrentAppKeyTombstoned,
     #[error("invalid AppKey pubkey: {0}")]
     InvalidAppKeyPubkey(String),
+    #[error("invalid AppKey-link invite secret key: {0}")]
+    InvalidAppKeyLinkInviteSecret(String),
     #[error("this AppKey is not an admin")]
     NoAdminAuthority,
     #[error("AppKey already authorized")]
@@ -100,7 +102,7 @@ pub struct PendingAppKeyLinkRequest {
     #[serde(alias = "admin_device_pubkey")]
     pub admin_app_key_pubkey: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub link_secret: String,
+    pub invite_pubkey: String,
     pub requested_at: u64,
 }
 
@@ -112,7 +114,7 @@ pub struct InboundAppKeyLinkRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub link_secret: String,
+    pub invite_pubkey: String,
     pub requested_at: u64,
 }
 
@@ -396,18 +398,19 @@ impl ProfileState {
     pub fn queue_outbound_app_key_link_request(
         &mut self,
         admin_app_key_pubkey: String,
-        link_secret: &str,
+        invite_pubkey: &str,
         requested_at: u64,
     ) -> Result<bool, ProfileError> {
         if !is_pubkey_hex(&admin_app_key_pubkey) {
             return Err(ProfileError::InvalidAppKeyPubkey(admin_app_key_pubkey));
         }
+        let invite_pubkey = normalize_required_pubkey(invite_pubkey)?;
         if self.app_key_pubkey == admin_app_key_pubkey {
             return Ok(false);
         }
         let next = PendingAppKeyLinkRequest {
             admin_app_key_pubkey,
-            link_secret: link_secret.trim().to_string(),
+            invite_pubkey,
             requested_at,
         };
         let changed = self.outbound_app_key_link_request.as_ref() != Some(&next);
@@ -420,15 +423,15 @@ impl ProfileState {
         profile_id: IrisProfileId,
         app_key_pubkey: &str,
         label: Option<String>,
-        link_secret: &str,
+        invite_pubkey: &str,
         requested_at: u64,
     ) -> Result<bool, ProfileError> {
         if profile_id != self.profile_id || !self.can_admin_profile() {
             return Ok(false);
         }
-        let link_secret = link_secret.trim();
-        let expected_secret = self.app_key_link_secret.trim();
-        if !expected_secret.is_empty() && link_secret != expected_secret {
+        let invite_pubkey = normalize_required_pubkey(invite_pubkey)?;
+        let expected_invite_pubkey = app_key_link_invite_pubkey(&self.app_key_link_secret)?;
+        if invite_pubkey != expected_invite_pubkey {
             return Ok(false);
         }
         if !is_pubkey_hex(app_key_pubkey) {
@@ -442,7 +445,7 @@ impl ProfileState {
                 let trimmed = label.trim();
                 (!trimmed.is_empty()).then(|| trimmed.to_string())
             }),
-            link_secret: link_secret.to_string(),
+            invite_pubkey,
             requested_at,
         };
         let profile_projection = self.profile_projection();
@@ -475,11 +478,11 @@ impl ProfileState {
             let next_requested_at = existing.requested_at.max(requested_at);
             if existing.requested_at != next_requested_at
                 || existing.label != request.label
-                || existing.link_secret != link_secret
+                || existing.invite_pubkey != request.invite_pubkey
             {
                 existing.requested_at = next_requested_at;
                 existing.label.clone_from(&request.label);
-                existing.link_secret.clone_from(&request.link_secret);
+                existing.invite_pubkey.clone_from(&request.invite_pubkey);
                 changed = true;
             }
         } else {
@@ -1652,8 +1655,38 @@ fn generate_dck() -> [u8; 32] {
     out
 }
 
+pub fn app_key_link_invite_keys(invite_secret_key: &str) -> Result<Keys, ProfileError> {
+    let trimmed = invite_secret_key.trim();
+    if trimmed.is_empty() {
+        return Err(ProfileError::InvalidAppKeyLinkInviteSecret(
+            "empty invite secret key".to_string(),
+        ));
+    }
+    let secret = if trimmed.starts_with("nsec1") {
+        SecretKey::from_bech32(trimmed).map_err(|error| error.to_string())
+    } else {
+        SecretKey::from_hex(trimmed).map_err(|error| error.to_string())
+    }
+    .map_err(ProfileError::InvalidAppKeyLinkInviteSecret)?;
+    Ok(Keys::new(secret))
+}
+
+pub fn app_key_link_invite_pubkey(invite_secret_key: &str) -> Result<String, ProfileError> {
+    Ok(app_key_link_invite_keys(invite_secret_key)?
+        .public_key()
+        .to_hex())
+}
+
+fn normalize_required_pubkey(value: &str) -> Result<String, ProfileError> {
+    let trimmed = value.trim();
+    if is_pubkey_hex(trimmed) {
+        return Ok(trimmed.to_ascii_lowercase());
+    }
+    Err(ProfileError::InvalidAppKeyPubkey(trimmed.to_string()))
+}
+
 fn default_app_key_link_secret() -> String {
-    URL_SAFE_NO_PAD.encode(Uuid::new_v4().as_bytes())
+    Keys::generate().secret_key().to_secret_hex()
 }
 
 fn wrap_dck_for_pubkeys<'a, I>(

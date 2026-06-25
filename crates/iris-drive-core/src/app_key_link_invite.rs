@@ -21,31 +21,28 @@ struct AppKeyLinkInvitePayload {
     v: u8,
     profile_id: IrisProfileId,
     admin_app_key_npub: String,
-    link_secret: String,
+    invite_npub: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedAppKeyLinkInvite {
     pub profile_id: Option<IrisProfileId>,
     pub admin_app_key_hex: String,
-    pub link_secret: String,
+    pub invite_pubkey: String,
 }
 
 pub fn encode_app_key_link_invite(
     profile_id: IrisProfileId,
     admin_app_key_hex: &str,
-    link_secret: &str,
+    invite_pubkey: &str,
 ) -> Result<String> {
     let payload = AppKeyLinkInvitePayload {
         v: APP_KEY_LINK_INVITE_VERSION,
         profile_id,
         admin_app_key_npub: pubkey_to_npub(admin_app_key_hex)
             .context("encoding invite admin AppKey")?,
-        link_secret: link_secret.trim().to_string(),
+        invite_npub: pubkey_to_npub(invite_pubkey).context("encoding invite pubkey")?,
     };
-    if payload.link_secret.is_empty() {
-        return Err(anyhow!("app-key link invite is missing secret"));
-    }
     let bytes = serde_json::to_vec(&payload).context("encoding app-key link invite JSON")?;
     Ok(format!(
         "{APP_KEY_LINK_INVITE_PREFIX}{}",
@@ -98,15 +95,12 @@ fn normalize_invite_payload(invite: &AppKeyLinkInvitePayload) -> Result<ParsedAp
             APP_KEY_LINK_INVITE_VERSION
         ));
     }
-    let link_secret = invite.link_secret.trim().to_string();
-    if link_secret.is_empty() {
-        return Err(anyhow!("app-key link invite is missing secret"));
-    }
     Ok(ParsedAppKeyLinkInvite {
         profile_id: Some(invite.profile_id),
         admin_app_key_hex: normalize_pubkey_hex(&invite.admin_app_key_npub)
             .context("parsing invite admin AppKey")?,
-        link_secret,
+        invite_pubkey: normalize_pubkey_hex(&invite.invite_npub)
+            .context("parsing invite pubkey")?,
     })
 }
 
@@ -142,11 +136,12 @@ mod tests {
     use nostr_sdk::Keys;
 
     #[test]
-    fn canonical_invite_round_trips_profile_admin_and_secret() {
+    fn canonical_invite_round_trips_profile_admin_and_invite_pubkey() {
         let profile_id = IrisProfileId::new_v4();
         let admin = Keys::generate().public_key();
+        let invite = Keys::generate().public_key();
 
-        let url = encode_app_key_link_invite(profile_id, &admin.to_hex(), " join-secret ")
+        let url = encode_app_key_link_invite(profile_id, &admin.to_hex(), &invite.to_hex())
             .expect("encode invite");
         let parsed = parse_app_key_link_invite(&url)
             .expect("parse invite")
@@ -155,7 +150,7 @@ mod tests {
         assert!(url.starts_with(APP_KEY_LINK_INVITE_PREFIX));
         assert_eq!(parsed.profile_id, Some(profile_id));
         assert_eq!(parsed.admin_app_key_hex, admin.to_hex());
-        assert_eq!(parsed.link_secret, "join-secret");
+        assert_eq!(parsed.invite_pubkey, invite.to_hex());
         assert!(!url.contains("owner"));
         assert!(!url.contains("local-owner"));
         assert!(!url.contains("device-"));
@@ -165,7 +160,8 @@ mod tests {
     fn custom_scheme_invite_is_not_canonical_input() {
         let profile_id = IrisProfileId::new_v4();
         let admin = Keys::generate().public_key();
-        let url = encode_app_key_link_invite(profile_id, &admin.to_hex(), "join-secret")
+        let invite = Keys::generate().public_key();
+        let url = encode_app_key_link_invite(profile_id, &admin.to_hex(), &invite.to_hex())
             .expect("encode invite");
         let custom_scheme = url.replacen(APP_KEY_LINK_INVITE_PREFIX, "iris-drive://invite/", 1);
 
@@ -177,22 +173,10 @@ mod tests {
     }
 
     #[test]
-    fn current_native_https_invite_payload_imports() {
+    fn old_link_secret_https_invite_payload_is_rejected() {
         let invite = "https://drive.iris.to/invite/eyJ2IjoxLCJwcm9maWxlSWQiOiIzYzA4OWRmOC0yMjFlLTQ3M2MtOTFlYy1mNzcxYzAxNWM4YmQiLCJhZG1pbkFwcEtleU5wdWIiOiJucHViMXE1bDB2bmVhamg2Mjg5dmduZ3N3dTV3bTI2cWFtc2p3dHlqajJncWxwa3VqNXptZGVkeXMweTZtdDciLCJsaW5rU2VjcmV0IjoiazV3NUpMR2hUQ09sSWdPQUtpRnUtUSJ9";
 
-        let parsed = parse_app_key_link_invite(invite)
-            .expect("parse invite")
-            .expect("invite");
-
-        assert_eq!(
-            parsed.profile_id.map(|id| id.to_string()).as_deref(),
-            Some("3c089df8-221e-473c-91ec-f771c015c8bd")
-        );
-        assert_eq!(
-            parsed.admin_app_key_hex,
-            "053ef64f3d95f4a395889a20ee51db5681ddc24e592525201f0db92a0b6dcb49"
-        );
-        assert_eq!(parsed.link_secret, "k5w5JLGhTCOlIgOAKiFu-Q");
+        assert!(parse_app_key_link_invite(invite).is_err());
     }
 
     #[test]

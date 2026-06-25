@@ -20,7 +20,7 @@ use std::time::Duration;
 use nostr_sdk::{Client, ClientOptions, Event, Filter, JsonUtil, Keys, PublicKey, SingleLetterTag};
 use thiserror::Error;
 
-use crate::app_key_link_transport::{AppKeyLinkRosterFrame, app_key_link_secret_hash};
+use crate::app_key_link_transport::AppKeyLinkRosterFrame;
 use crate::app_keys::{AppKeysProjection, ApplyDecision};
 use crate::calendar::CALENDAR_TREE_NAME;
 use crate::config::{AppConfig, AppKeyRootRef, Drive, DriveRole};
@@ -30,7 +30,7 @@ use crate::nostr_events::{
     parse_app_key_link_request_event, parse_drive_root_event, parse_drive_root_event_for_device,
     parse_drive_root_event_preview,
 };
-use crate::profile::app_keys_from_profile_projection;
+use crate::profile::{app_key_link_invite_keys, app_keys_from_profile_projection};
 use crate::relay_filters::{iris_profile_roster_op_filter, share_access_snapshot_filter};
 pub use crate::relay_filters::{subscription_filters, subscription_filters_for_shared_roots};
 use crate::{
@@ -117,8 +117,8 @@ pub enum AppKeyLinkRequestApply {
     NotOurProfile,
     /// This install's `AppKey` is not an admin and cannot approve `AppKeys`.
     NotAdmin,
-    /// The event did not carry this admin's current invite secret.
-    InvalidSecret,
+    /// The event was not encrypted for this admin's current invite key.
+    InvalidInvite,
     /// The request was already represented locally.
     Current,
     /// The inbound request queue changed.
@@ -130,9 +130,16 @@ pub fn apply_remote_app_key_link_request_event(
     config: &mut AppConfig,
     event: &Event,
 ) -> Result<AppKeyLinkRequestApply, RelayError> {
-    let frame = parse_app_key_link_request_event(event)?;
     let Some(account) = config.profile.as_mut() else {
         return Err(RelayError::NoAccount);
+    };
+    let invite_keys = app_key_link_invite_keys(&account.app_key_link_secret)?;
+    let frame = match parse_app_key_link_request_event(event, &invite_keys) {
+        Ok(frame) => frame,
+        Err(crate::nostr_events::WireError::BadContent(_)) => {
+            return Ok(AppKeyLinkRequestApply::InvalidInvite);
+        }
+        Err(error) => return Err(error.into()),
     };
     if frame.profile_id != account.profile_id {
         return Ok(AppKeyLinkRequestApply::NotOurProfile);
@@ -145,34 +152,12 @@ pub fn apply_remote_app_key_link_request_event(
     {
         return Ok(AppKeyLinkRequestApply::NotAdmin);
     }
-    let link_secret = if frame.link_secret.trim().is_empty() {
-        let expected_secret = account.app_key_link_secret.trim().to_string();
-        if expected_secret.is_empty()
-            || frame.link_secret_hash.trim().is_empty()
-            || app_key_link_secret_hash(&expected_secret) != frame.link_secret_hash.trim()
-        {
-            return Ok(AppKeyLinkRequestApply::InvalidSecret);
-        }
-        expected_secret
-    } else {
-        let link_secret = frame.link_secret.trim().to_string();
-        if !frame.link_secret_hash.trim().is_empty()
-            && app_key_link_secret_hash(&link_secret) != frame.link_secret_hash.trim()
-        {
-            return Ok(AppKeyLinkRequestApply::InvalidSecret);
-        }
-        link_secret
-    };
-    let expected_secret = account.app_key_link_secret.trim();
-    if !expected_secret.is_empty() && link_secret != expected_secret {
-        return Ok(AppKeyLinkRequestApply::InvalidSecret);
-    }
 
     let changed = account.record_inbound_app_key_link_request(
         frame.profile_id,
         &frame.app_key_pubkey,
         frame.label,
-        &link_secret,
+        &frame.invite_pubkey,
         frame.requested_at,
     )?;
     if changed {

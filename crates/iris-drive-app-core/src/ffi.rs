@@ -814,14 +814,13 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        let link_secret = if target.link_secret.trim().is_empty() {
-            account.state.app_key_link_secret.clone()
-        } else {
-            target.link_secret
-        };
+        if target.invite_pubkey.trim().is_empty() {
+            "device invite is missing invite pubkey".clone_into(&mut self.state.error);
+            return;
+        }
         if let Err(error) = account.state.queue_outbound_app_key_link_request(
             target.admin_app_key_hex,
-            &link_secret,
+            &target.invite_pubkey,
             unix_now_seconds(),
         ) {
             self.state.error = format!("queueing app-key link request: {error}");
@@ -2305,10 +2304,10 @@ fn handle_native_app_key_link_request(
         ));
     }
     let app_key_hex = normalize_pubkey(&frame.app_key_pubkey)?;
-    let link_secret = if frame.link_secret.trim().is_empty() {
-        app_key_approval_link_secret(&frame.url)
+    let invite_pubkey = if frame.invite_pubkey.trim().is_empty() {
+        app_key_approval_invite_pubkey(&frame.url)
     } else {
-        frame.link_secret
+        frame.invite_pubkey
     };
 
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))
@@ -2321,7 +2320,7 @@ fn handle_native_app_key_link_request(
             frame.profile_id,
             &app_key_hex,
             frame.label,
-            &link_secret,
+            &invite_pubkey,
             frame.requested_at,
         )
         .map_err(|error| format!("recording inbound app-key link request: {error}"))?;
@@ -3259,10 +3258,8 @@ fn app_key_link_request_url(state: &iris_drive_core::ProfileState) -> String {
         state
             .outbound_app_key_link_request
             .as_ref()
-            .and_then(|request| {
-                (!request.link_secret.trim().is_empty()).then_some(request.link_secret.as_str())
-            })
-            .unwrap_or(state.app_key_link_secret.as_str()),
+            .map(|request| request.invite_pubkey.as_str())
+            .unwrap_or(""),
         state.app_key_label.as_deref(),
     )
 }
@@ -3271,10 +3268,14 @@ fn app_key_link_invite_url(state: &iris_drive_core::ProfileState) -> String {
     if !state.can_admin_profile() {
         return String::new();
     }
+    let Ok(invite_pubkey) = iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret)
+    else {
+        return String::new();
+    };
     iris_drive_core::app_key_link_invite::encode_app_key_link_invite(
         state.profile_id,
         &state.app_key_pubkey,
-        &state.app_key_link_secret,
+        &invite_pubkey,
     )
     .unwrap_or_default()
 }
@@ -3295,7 +3296,7 @@ fn inbound_app_key_link_requests(
             request_link: encode_app_key_approval_request(
                 state.profile_id,
                 &request.app_key_pubkey,
-                &request.link_secret,
+                &request.invite_pubkey,
                 request.label.as_deref(),
             ),
         })
@@ -3322,17 +3323,17 @@ fn decode_app_key_approval_request(request: &str) -> Result<AppKeyApprovalReques
     Ok(AppKeyApprovalRequest {
         profile_id: None,
         app_key_hex: device,
-        link_secret: String::new(),
+        invite_pubkey: String::new(),
         label: None,
     })
 }
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
-fn app_key_approval_link_secret(request: &str) -> String {
+fn app_key_approval_invite_pubkey(request: &str) -> String {
     parse_app_key_approval_request(request)
         .ok()
         .flatten()
-        .map(|request| request.link_secret)
+        .map(|request| request.invite_pubkey)
         .unwrap_or_default()
         .trim()
         .to_owned()

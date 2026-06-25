@@ -101,7 +101,8 @@ fn linked_config_after_initial_roster() -> (Profile, AppConfig) {
         .state
         .queue_outbound_app_key_link_request(
             admin.state.app_key_pubkey.clone(),
-            &admin.state.app_key_link_secret,
+            &crate::profile::app_key_link_invite_pubkey(&admin.state.app_key_link_secret)
+                .unwrap(),
             123,
         )
         .unwrap();
@@ -179,7 +180,8 @@ fn apply_app_key_link_roster_is_profile_scoped_and_ownerless() {
         .state
         .queue_outbound_app_key_link_request(
             admin.state.app_key_pubkey.clone(),
-            &admin.state.app_key_link_secret,
+            &crate::profile::app_key_link_invite_pubkey(&admin.state.app_key_link_secret)
+                .unwrap(),
             123,
         )
         .unwrap();
@@ -281,14 +283,14 @@ fn apply_app_key_link_roster_merges_older_branch_without_downgrading_epoch() {
 fn subscription_filters_match_app_key_link_requests_for_profile() {
     let admin = Keys::generate();
     let device = Keys::generate();
+    let invite = Keys::generate();
     let profile_id = IrisProfileId::new_v4();
     let frame = crate::app_key_link_transport::AppKeyLinkRequestFrame {
         schema: 1,
         profile_id,
         admin_app_key_pubkey: admin.public_key().to_hex(),
         app_key_pubkey: device.public_key().to_hex(),
-        link_secret: "join-secret".to_string(),
-        link_secret_hash: String::new(),
+        invite_pubkey: invite.public_key().to_hex(),
         label: Some("phone".to_string()),
         requested_at: 123,
         url: "iris-drive://app-key-link?app_key=example".to_string(),
@@ -677,15 +679,14 @@ fn apply_app_key_link_request_event_records_admin_inbound_request() {
         Some("phone".into()),
     )
     .unwrap();
+    let invite_pubkey =
+        crate::profile::app_key_link_invite_pubkey(&admin.state.app_key_link_secret).unwrap();
     let frame = crate::app_key_link_transport::AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: admin.state.profile_id,
         admin_app_key_pubkey: admin.state.app_key_pubkey.clone(),
         app_key_pubkey: linked.state.app_key_pubkey.clone(),
-        link_secret: String::new(),
-        link_secret_hash: crate::app_key_link_transport::app_key_link_secret_hash(
-            &admin.state.app_key_link_secret,
-        ),
+        invite_pubkey: invite_pubkey.clone(),
         label: Some("phone".to_string()),
         requested_at: 123,
         url: "iris-drive://app-key-link?app_key=example".to_string(),
@@ -703,7 +704,7 @@ fn apply_app_key_link_request_event_records_admin_inbound_request() {
     assert_eq!(inbound.len(), 1);
     assert_eq!(inbound[0].app_key_pubkey, linked.state.app_key_pubkey);
     assert_eq!(inbound[0].label.as_deref(), Some("phone"));
-    assert_eq!(inbound[0].link_secret, admin.state.app_key_link_secret);
+    assert_eq!(inbound[0].invite_pubkey, invite_pubkey);
 }
 
 #[test]

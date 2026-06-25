@@ -99,22 +99,20 @@ async fn app_key_link_app_message_records_inbound_request_for_owner_admin() {
     config.save(config_path_in(config_dir.path())).unwrap();
 
     let linked_device = nostr_sdk::Keys::generate().public_key().to_hex();
-    let link_secret = account.state.app_key_link_secret.clone();
+    let invite_pubkey =
+        iris_drive_core::app_key_link_invite_pubkey(&account.state.app_key_link_secret).unwrap();
     let frame = AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: account.state.profile_id,
         admin_app_key_pubkey: account.state.app_key_pubkey.clone(),
         app_key_pubkey: linked_device.clone(),
-        link_secret: link_secret.clone(),
-        link_secret_hash: iris_drive_core::app_key_link_transport::app_key_link_secret_hash(
-            &link_secret,
-        ),
+        invite_pubkey: invite_pubkey.clone(),
         label: Some(" phone ".into()),
         requested_at: 123,
         url: encode_app_key_approval_request(
             account.state.profile_id,
             &linked_device,
-            &link_secret,
+            &invite_pubkey,
             Some(" phone "),
         ),
     };
@@ -155,16 +153,13 @@ async fn app_key_link_app_message_ignores_wrong_link_secret() {
         profile_id: account.state.profile_id,
         admin_app_key_pubkey: account.state.app_key_pubkey.clone(),
         app_key_pubkey: linked_device.clone(),
-        link_secret: "wrong-secret".into(),
-        link_secret_hash: iris_drive_core::app_key_link_transport::app_key_link_secret_hash(
-            "wrong-secret",
-        ),
+        invite_pubkey: nostr_sdk::Keys::generate().public_key().to_hex(),
         label: Some("phone".into()),
         requested_at: 123,
         url: encode_app_key_approval_request(
             account.state.profile_id,
             &linked_device,
-            "wrong-secret",
+            &nostr_sdk::Keys::generate().public_key().to_hex(),
             Some("phone"),
         ),
     };

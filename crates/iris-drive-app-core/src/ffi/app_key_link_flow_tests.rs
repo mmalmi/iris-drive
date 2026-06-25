@@ -10,13 +10,14 @@ fn record_inbound_request(config_dir: &Path, device: &str, label: &str, requeste
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     let state = config.profile.as_mut().unwrap();
     let profile_id = state.profile_id;
-    let link_secret = state.app_key_link_secret.clone();
+    let invite_pubkey = iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret)
+        .unwrap();
     state
         .record_inbound_app_key_link_request(
             profile_id,
             &device_hex,
             Some(label.to_owned()),
-            &link_secret,
+            &invite_pubkey,
             requested_at,
         )
         .unwrap();

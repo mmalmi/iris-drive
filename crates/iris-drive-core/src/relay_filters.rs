@@ -1,10 +1,7 @@
 use nostr_sdk::{Filter, PublicKey, SingleLetterTag};
 
 use crate::calendar::CALENDAR_TREE_NAME;
-use crate::nostr_events::{
-    KIND_APP_KEY_LINK_REQUEST, KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, app_key_link_request_d_tag,
-    drive_root_d_tag,
-};
+use crate::nostr_events::{KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, drive_root_d_tag};
 use crate::sharing::share_access_snapshot_d_tag;
 use crate::{
     IrisProfileId, KIND_IRIS_PROFILE_ROSTER_OP, KIND_SHARE_ACCESS_SNAPSHOT, SHARE_ACCESS_LABEL,
@@ -40,17 +37,6 @@ pub fn subscription_filters_for_shared_roots(
     let mut filters = Vec::new();
     if let Ok(profile_id) = root_scope_id.parse::<IrisProfileId>() {
         filters.push(iris_profile_roster_op_filter(profile_id));
-        // The roster-op filter also receives current identity-link requests
-        // (`kind=7368`). Keep this old `30078` filter only for compatibility
-        // with clients that have not migrated their request publisher yet.
-        filters.push(
-            Filter::new()
-                .kind(nostr_sdk::Kind::from(KIND_APP_KEY_LINK_REQUEST))
-                .custom_tag(
-                    SingleLetterTag::lowercase(nostr_sdk::Alphabet::D),
-                    app_key_link_request_d_tag(profile_id),
-                ),
-        );
     }
     push_drive_root_filters(&mut filters, root_scope_id, drive_id);
     for share_id in share_ids {

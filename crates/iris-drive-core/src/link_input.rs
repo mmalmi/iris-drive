@@ -31,7 +31,7 @@ pub struct LinkInputClassification {
     pub normalized_input: String,
     pub app_key_pubkey: String,
     pub admin_app_key_pubkey: String,
-    pub has_link_secret: bool,
+    pub has_invite_pubkey: bool,
     pub share_source_path: String,
     pub share_display_name: String,
     pub share_recipient_npub_hint: String,
@@ -48,7 +48,7 @@ pub struct LinkInputClassification {
 pub struct AppKeyLinkTarget {
     pub profile_id: IrisProfileId,
     pub admin_app_key_hex: String,
-    pub link_secret: String,
+    pub invite_pubkey: String,
 }
 
 #[must_use]
@@ -127,7 +127,7 @@ pub fn resolve_app_key_link_target(
         return Ok(AppKeyLinkTarget {
             profile_id,
             admin_app_key_hex: invite.admin_app_key_hex,
-            link_secret: invite.link_secret,
+            invite_pubkey: invite.invite_pubkey,
         });
     }
 
@@ -144,7 +144,7 @@ pub fn resolve_app_key_link_target(
             .context("parsing IrisProfile UUID")?,
         admin_app_key_hex: normalize_app_key_pubkey(manual_admin_app_key)
             .context("parsing admin device key")?,
-        link_secret: String::new(),
+        invite_pubkey: String::new(),
     })
 }
 
@@ -175,6 +175,11 @@ fn classify_app_key_approval_link_input(input: &str) -> Option<LinkInputClassifi
         .is_some_and(|value| !value.trim().is_empty())
         && app_key
             .as_deref()
+            .is_some_and(app_key_pubkey_input_is_complete)
+        && raw_query_value(query, "invite")
+            .or_else(|| raw_query_value(query, "invite_pubkey"))
+            .or_else(|| raw_query_value(query, "invitePubkey"))
+            .as_deref()
             .is_some_and(app_key_pubkey_input_is_complete);
     let mut classification = LinkInputClassification {
         kind: "app_key_approval".to_owned(),
@@ -194,10 +199,10 @@ fn classify_app_key_approval_link_input(input: &str) -> Option<LinkInputClassifi
             Err(error) => classification.error = error.to_string(),
         }
     }
-    classification.has_link_secret = parse_app_key_approval_request(input)
+    classification.has_invite_pubkey = parse_app_key_approval_request(input)
         .ok()
         .flatten()
-        .is_some_and(|request| !request.link_secret.trim().is_empty());
+        .is_some_and(|request| !request.invite_pubkey.trim().is_empty());
     Some(classification)
 }
 
@@ -222,7 +227,7 @@ fn classify_invite_link_input(input: &str) -> Option<LinkInputClassification> {
             classification.is_complete = true;
             classification.is_valid = true;
             classification.admin_app_key_pubkey = pubkey_npub(&invite.admin_app_key_hex);
-            classification.has_link_secret = !invite.link_secret.trim().is_empty();
+            classification.has_invite_pubkey = !invite.invite_pubkey.trim().is_empty();
         }
         Ok(None) => "device invite was not recognized".clone_into(&mut classification.error),
         Err(error) if classification.is_complete => {
@@ -725,8 +730,9 @@ mod tests {
     fn classify_link_input_is_shared_for_invites_app_keys_and_approval_links() {
         let profile_id = IrisProfileId::new_v4();
         let admin = Keys::generate().public_key();
-        let invite =
-            encode_app_key_link_invite(profile_id, &admin.to_hex(), "secret").expect("invite");
+        let invite_key = Keys::generate().public_key();
+        let invite = encode_app_key_link_invite(profile_id, &admin.to_hex(), &invite_key.to_hex())
+            .expect("invite");
 
         let invite_classification = classify_link_input(&invite);
         assert_eq!(invite_classification.kind, "invite");
@@ -736,7 +742,7 @@ mod tests {
             invite_classification.admin_app_key_pubkey,
             admin.to_bech32().expect("npub")
         );
-        assert!(invite_classification.has_link_secret);
+        assert!(invite_classification.has_invite_pubkey);
 
         let app_key_npub = admin.to_bech32().expect("npub");
         let app_key = classify_link_input(&app_key_npub);
@@ -751,13 +757,14 @@ mod tests {
         assert!(!short_app_key.is_complete);
         assert!(!short_app_key.is_valid);
 
-        let request = encode_app_key_approval_request(profile_id, &admin.to_hex(), "secret", None);
+        let request =
+            encode_app_key_approval_request(profile_id, &admin.to_hex(), &invite_key.to_hex(), None);
         let approval = classify_link_input(&request);
         assert_eq!(approval.kind, "app_key_approval");
         assert!(approval.is_complete);
         assert!(approval.is_valid);
         assert_eq!(approval.app_key_pubkey, app_key_npub);
-        assert!(approval.has_link_secret);
+        assert!(approval.has_invite_pubkey);
     }
 
     #[test]
@@ -922,20 +929,22 @@ mod tests {
     fn resolve_app_key_link_target_accepts_invite_or_manual_profile_with_admin() {
         let profile_id = IrisProfileId::new_v4();
         let admin = Keys::generate().public_key();
+        let invite_key = Keys::generate().public_key();
         let invite =
-            encode_app_key_link_invite(profile_id, &admin.to_hex(), "secret").expect("invite");
+            encode_app_key_link_invite(profile_id, &admin.to_hex(), &invite_key.to_hex())
+                .expect("invite");
 
         let from_invite = resolve_app_key_link_target(&invite, None).expect("invite target");
         assert_eq!(from_invite.profile_id, profile_id);
         assert_eq!(from_invite.admin_app_key_hex, admin.to_hex());
-        assert_eq!(from_invite.link_secret, "secret");
+        assert_eq!(from_invite.invite_pubkey, invite_key.to_hex());
 
         let from_manual =
             resolve_app_key_link_target(&profile_id.to_string(), Some(&admin.to_hex()))
                 .expect("manual target");
         assert_eq!(from_manual.profile_id, profile_id);
         assert_eq!(from_manual.admin_app_key_hex, admin.to_hex());
-        assert!(from_manual.link_secret.is_empty());
+        assert!(from_manual.invite_pubkey.is_empty());
     }
 
     #[test]

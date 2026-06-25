@@ -979,7 +979,7 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
     assert!(invite.is_valid);
     let admin_app_key_npub = invite.admin_app_key_pubkey.clone();
     assert!(!admin_app_key_npub.is_empty());
-    assert!(invite.has_link_secret);
+    assert!(invite.has_invite_pubkey);
 
     let npub = super::classify_link_input(admin_app_key_npub.clone());
     assert_eq!(npub.kind, "app_key_pubkey");
@@ -1336,7 +1336,8 @@ fn approving_tombstoned_inbound_request_readds_device() {
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     let state = config.profile.as_mut().unwrap();
     let profile_id = state.profile_id;
-    let link_secret = state.app_key_link_secret.clone();
+    let invite_pubkey = iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret)
+        .unwrap();
     let removed_at = state
         .profile_projection()
         .tombstones
@@ -1348,7 +1349,7 @@ fn approving_tombstoned_inbound_request_readds_device() {
             profile_id,
             &linked_app_key_hex,
             Some("Phone".to_owned()),
-            &link_secret,
+            &invite_pubkey,
             u64::try_from(removed_at).unwrap() + 1,
         )
         .unwrap();
@@ -1771,13 +1772,14 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     let state = config.profile.as_mut().unwrap();
     let profile_id = state.profile_id;
-    let link_secret = state.app_key_link_secret.clone();
+    let invite_pubkey = iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret)
+        .unwrap();
     state
         .record_inbound_app_key_link_request(
             profile_id,
             &linked_app_key_hex,
             Some("Phone".to_owned()),
-            &link_secret,
+            &invite_pubkey,
             42,
         )
         .unwrap();
@@ -1829,13 +1831,14 @@ fn owner_can_reject_inbound_app_key_link_request() {
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     let state = config.profile.as_mut().unwrap();
     let profile_id = state.profile_id;
-    let link_secret = state.app_key_link_secret.clone();
+    let invite_pubkey = iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret)
+        .unwrap();
     state
         .record_inbound_app_key_link_request(
             profile_id,
             &linked_app_key_hex,
             Some("Phone".to_owned()),
-            &link_secret,
+            &invite_pubkey,
             42,
         )
         .unwrap();
@@ -1999,7 +2002,8 @@ fn reset_invite_action_rotates_invite_and_clears_requests() {
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     let state = config.profile.as_mut().unwrap();
     let profile_id = state.profile_id;
-    let link_secret = state.app_key_link_secret.clone();
+    let invite_pubkey = iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret)
+        .unwrap();
     let linked_device =
         iris_drive_core::AppKey::generate(owner_dir.path().join("tmp-key")).pubkey_hex();
     state
@@ -2007,7 +2011,7 @@ fn reset_invite_action_rotates_invite_and_clears_requests() {
             profile_id,
             &linked_device,
             Some("Phone".to_owned()),
-            &link_secret,
+            &invite_pubkey,
             42,
         )
         .unwrap();
@@ -2037,7 +2041,8 @@ fn native_profile_roster_ops_refresh_authorized_member_roster() {
         .state
         .queue_outbound_app_key_link_request(
             owner.state.app_key_pubkey.clone(),
-            &owner.state.app_key_link_secret,
+            &iris_drive_core::app_key_link_invite_pubkey(&owner.state.app_key_link_secret)
+                .unwrap(),
             123,
         )
         .unwrap();

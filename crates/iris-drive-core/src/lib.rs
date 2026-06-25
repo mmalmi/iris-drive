@@ -122,7 +122,7 @@ pub use network_sync::{
 };
 pub use profile::{
     AppKeyAuthorizationState, KeyWrapRepairOutcome, Profile, ProfileError, ProfileLogoutReport,
-    ProfileState, logout_local_profile,
+    ProfileState, app_key_link_invite_keys, app_key_link_invite_pubkey, logout_local_profile,
 };
 pub use projection::{
     PrimaryMergedRoot, PrimaryMergedView, ProjectionError, primary_merged_root,

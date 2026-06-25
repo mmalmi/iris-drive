@@ -71,10 +71,8 @@ fn app_key_link_request_json_for_admin_state(
         state
             .outbound_app_key_link_request
             .as_ref()
-            .and_then(|request| {
-                (!request.link_secret.trim().is_empty()).then_some(request.link_secret.as_str())
-            })
-            .unwrap_or(state.app_key_link_secret.as_str()),
+            .map(|request| request.invite_pubkey.as_str())
+            .unwrap_or(""),
         state.app_key_label.as_deref(),
     );
 
@@ -111,10 +109,14 @@ fn app_key_link_invite_json_for_admin_state(
     if !can_admin_profile {
         return Value::Null;
     }
+    let Ok(invite_pubkey) = iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret)
+    else {
+        return Value::Null;
+    };
     let Ok(url) = iris_drive_core::app_key_link_invite::encode_app_key_link_invite(
         state.profile_id,
         &state.app_key_pubkey,
-        &state.app_key_link_secret,
+        &invite_pubkey,
     ) else {
         return Value::Null;
     };
@@ -135,7 +137,7 @@ pub(crate) fn inbound_app_key_link_requests_json(state: &ProfileState) -> Vec<Va
                 "url": encode_app_key_approval_request(
                     state.profile_id,
                     &request.app_key_pubkey,
-                    &request.link_secret,
+                    &request.invite_pubkey,
                     request.label.as_deref(),
                 ),
                 "profile_id": state.profile_id.to_string(),

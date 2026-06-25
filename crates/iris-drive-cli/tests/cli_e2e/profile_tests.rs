@@ -312,9 +312,11 @@ fn owner_invite_link_queues_fips_request_to_admin_app_key() {
             .outbound_app_key_link_request
             .as_ref()
             .unwrap()
-            .link_secret
+            .invite_pubkey
             .as_str(),
-        owner_state.app_key_link_secret.as_str()
+        iris_drive_core::app_key_link_invite_pubkey(&owner_state.app_key_link_secret)
+            .unwrap()
+            .as_str()
     );
 }
 

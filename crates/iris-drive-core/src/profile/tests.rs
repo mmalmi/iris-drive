@@ -2,6 +2,10 @@ use super::*;
 use crate::iris_profile::{IrisProfileKeyPurpose, KeyWrapStatus};
 use tempfile::tempdir;
 
+fn invite_pubkey(state: &ProfileState) -> String {
+    app_key_link_invite_pubkey(&state.app_key_link_secret).unwrap()
+}
+
 #[test]
 fn create_yields_admin_authorized_account() {
     let dir = tempdir().unwrap();
@@ -590,7 +594,7 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();
     let profile_id = acct.state.profile_id;
-    let link_secret = acct.state.app_key_link_secret.clone();
+    let invite_pubkey = invite_pubkey(&acct.state);
     let device = fresh_app_key_pubkey();
 
     assert!(
@@ -599,7 +603,7 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
                 profile_id,
                 &device,
                 Some(" phone ".to_string()),
-                &link_secret,
+                &invite_pubkey,
                 10,
             )
             .unwrap()
@@ -617,7 +621,7 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
                 profile_id,
                 &device,
                 Some("phone".to_string()),
-                &link_secret,
+                &invite_pubkey,
                 9,
             )
             .unwrap()
@@ -628,7 +632,7 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
                 profile_id,
                 &device,
                 Some("tablet".to_string()),
-                &link_secret,
+                &invite_pubkey,
                 11,
             )
             .unwrap()
@@ -641,7 +645,7 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
 }
 
 #[test]
-fn inbound_app_key_link_request_requires_link_secret() {
+fn inbound_app_key_link_request_requires_current_invite_pubkey() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();
     let profile_id = acct.state.profile_id;
@@ -654,7 +658,7 @@ fn inbound_app_key_link_request_requires_link_secret() {
                 profile_id,
                 &device,
                 Some("phone".to_string()),
-                "wrong-secret",
+                &fresh_app_key_pubkey(),
                 10,
             )
             .unwrap()
@@ -668,6 +672,7 @@ fn reset_app_key_link_secret_rotates_invite_and_clears_pending_requests() {
     let mut acct = Profile::create(dir.path(), None).unwrap();
     let profile_id = acct.state.profile_id;
     let old_secret = acct.state.app_key_link_secret.clone();
+    let old_invite_pubkey = invite_pubkey(&acct.state);
     let device = fresh_app_key_pubkey();
 
     acct.state
@@ -675,7 +680,7 @@ fn reset_app_key_link_secret_rotates_invite_and_clears_pending_requests() {
             profile_id,
             &device,
             Some("phone".to_string()),
-            &old_secret,
+            &old_invite_pubkey,
             10,
         )
         .unwrap();
@@ -691,7 +696,7 @@ fn reset_app_key_link_secret_rotates_invite_and_clears_pending_requests() {
                 profile_id,
                 &fresh_app_key_pubkey(),
                 Some("old".to_string()),
-                &old_secret,
+                &old_invite_pubkey,
                 11,
             )
             .unwrap()
@@ -703,7 +708,7 @@ fn rejected_inbound_app_key_link_request_does_not_replay() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();
     let profile_id = acct.state.profile_id;
-    let link_secret = acct.state.app_key_link_secret.clone();
+    let invite_pubkey = invite_pubkey(&acct.state);
     let device = fresh_app_key_pubkey();
 
     assert!(
@@ -712,7 +717,7 @@ fn rejected_inbound_app_key_link_request_does_not_replay() {
                 profile_id,
                 &device,
                 Some("phone".to_string()),
-                &link_secret,
+                &invite_pubkey,
                 10,
             )
             .unwrap()
@@ -731,7 +736,7 @@ fn rejected_inbound_app_key_link_request_does_not_replay() {
                 profile_id,
                 &device,
                 Some("phone".to_string()),
-                &link_secret,
+                &invite_pubkey,
                 10,
             )
             .unwrap()
@@ -744,7 +749,7 @@ fn rejected_inbound_app_key_link_request_does_not_replay() {
                 profile_id,
                 &device,
                 Some("phone".to_string()),
-                &link_secret,
+                &invite_pubkey,
                 11,
             )
             .unwrap()
@@ -829,7 +834,7 @@ fn approving_authorized_inbound_request_consumes_request_without_new_ops() {
         .push(crate::profile::InboundAppKeyLinkRequest {
             app_key_pubkey: target.clone(),
             label: Some("phone".into()),
-            link_secret: acct.state.app_key_link_secret.clone(),
+            invite_pubkey: invite_pubkey(&acct.state),
             requested_at: 42,
         });
     let before_op_count = acct.state.profile_roster_ops.len();
@@ -855,7 +860,7 @@ fn approving_tombstoned_device_readds_and_consumes_request() {
         .push(crate::profile::InboundAppKeyLinkRequest {
             app_key_pubkey: target.clone(),
             label: Some("phone".into()),
-            link_secret: acct.state.app_key_link_secret.clone(),
+            invite_pubkey: invite_pubkey(&acct.state),
             requested_at: 42,
         });
     let before_op_count = acct.state.profile_roster_ops.len();
@@ -893,7 +898,7 @@ fn sync_prunes_inbound_request_for_authorized_device() {
         .push(crate::profile::InboundAppKeyLinkRequest {
             app_key_pubkey: target.clone(),
             label: Some("phone".into()),
-            link_secret: acct.state.app_key_link_secret.clone(),
+            invite_pubkey: invite_pubkey(&acct.state),
             requested_at: 42,
         });
     assert_eq!(acct.state.inbound_app_key_link_requests.len(), 1);
@@ -914,7 +919,7 @@ fn recording_authorized_request_reports_cleanup_change() {
         .push(crate::profile::InboundAppKeyLinkRequest {
             app_key_pubkey: target.clone(),
             label: Some("phone".into()),
-            link_secret: acct.state.app_key_link_secret.clone(),
+            invite_pubkey: invite_pubkey(&acct.state),
             requested_at: 41,
         });
 
@@ -924,7 +929,7 @@ fn recording_authorized_request_reports_cleanup_change() {
             acct.state.profile_id,
             &target,
             Some("phone".into()),
-            &acct.state.app_key_link_secret.clone(),
+            &invite_pubkey(&acct.state),
             42,
         )
         .unwrap();
@@ -947,7 +952,7 @@ fn recording_authorized_request_without_app_keys_cache_stays_hidden() {
             acct.state.profile_id,
             &target,
             Some("phone".into()),
-            &acct.state.app_key_link_secret.clone(),
+            &invite_pubkey(&acct.state),
             42,
         )
         .unwrap();
@@ -962,7 +967,7 @@ fn recording_removed_request_ignores_stale_replay_but_allows_newer_rejoin() {
     let mut acct = Profile::create(dir.path(), None).unwrap();
     let target = fresh_app_key_pubkey();
     let profile_id = acct.state.profile_id;
-    let link_secret = acct.state.app_key_link_secret.clone();
+    let invite_pubkey = invite_pubkey(&acct.state);
     acct.approve_app_key(&target, Some("phone".into())).unwrap();
     acct.revoke_app_key(&target).unwrap();
     let removed_at = acct
@@ -980,7 +985,7 @@ fn recording_removed_request_ignores_stale_replay_but_allows_newer_rejoin() {
                 profile_id,
                 &target,
                 Some("phone".into()),
-                &link_secret,
+                &invite_pubkey,
                 u64::try_from(removed_at).unwrap().saturating_sub(1),
             )
             .unwrap()
@@ -993,7 +998,7 @@ fn recording_removed_request_ignores_stale_replay_but_allows_newer_rejoin() {
                 profile_id,
                 &target,
                 Some("phone".into()),
-                &link_secret,
+                &invite_pubkey,
                 u64::try_from(removed_at).unwrap() + 1,
             )
             .unwrap()

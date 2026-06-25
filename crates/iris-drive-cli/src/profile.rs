@@ -125,16 +125,14 @@ pub(crate) fn cmd_link_with_admin_app_key(
         label,
     )
     .context("linking AppKey")?;
-    let link_secret = if target.link_secret.trim().is_empty() {
-        profile.state.app_key_link_secret.clone()
-    } else {
-        target.link_secret
-    };
+    if target.invite_pubkey.trim().is_empty() {
+        return Err(anyhow::anyhow!("device invite is missing invite pubkey"));
+    }
     profile
         .state
         .queue_outbound_app_key_link_request(
             target.admin_app_key_hex,
-            &link_secret,
+            &target.invite_pubkey,
             unix_now_seconds(),
         )
         .context("queueing app-key link request")?;
@@ -911,12 +909,12 @@ async fn handle_app_key_link_request_app_message(
     }
     let app_key_hex =
         normalize_pubkey(&frame.app_key_pubkey).context("parsing link request device")?;
-    let link_secret = if frame.link_secret.trim().is_empty() {
+    let invite_pubkey = if frame.invite_pubkey.trim().is_empty() {
         decode_app_key_approval_request(&frame.url)?
-            .map(|request| request.link_secret)
+            .map(|request| request.invite_pubkey)
             .unwrap_or_default()
     } else {
-        frame.link_secret
+        frame.invite_pubkey
     };
 
     let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
@@ -929,7 +927,7 @@ async fn handle_app_key_link_request_app_message(
             frame.profile_id,
             &app_key_hex,
             frame.label,
-            &link_secret,
+            &invite_pubkey,
             frame.requested_at,
         )
         .context("recording inbound app-key link request")?;

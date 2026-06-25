@@ -3932,6 +3932,8 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "nostr-sdk",
+ "serde",
+ "serde_json",
  "uuid",
 ]
 

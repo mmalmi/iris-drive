@@ -179,13 +179,13 @@ fn drive_root_coordinate_does_not_match_other_30078_records() {
 fn app_key_link_request_event_round_trips_and_is_its_own_coordinate() {
     let admin = Keys::generate();
     let device = Keys::generate();
+    let invite = Keys::generate();
     let frame = crate::app_key_link_transport::AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: crate::IrisProfileId::new_v4(),
         admin_app_key_pubkey: admin.public_key().to_hex(),
         app_key_pubkey: device.public_key().to_hex(),
-        link_secret: "join-secret".to_string(),
-        link_secret_hash: String::new(),
+        invite_pubkey: invite.public_key().to_hex(),
         label: Some("phone".to_string()),
         requested_at: 123,
         url: "iris-drive://app-key-link?app_key=example".to_string(),
@@ -196,78 +196,54 @@ fn app_key_link_request_event_round_trips_and_is_its_own_coordinate() {
     assert!(is_app_key_link_request_event_coordinate(&event));
     assert!(!is_drive_root_event_coordinate(&event));
     assert_eq!(event.kind.as_u16(), nostr_identity::FACT_OP_KIND);
-    assert_eq!(event.content, "");
-    assert!(!event.as_json().contains("join-secret"));
-    let parsed = parse_app_key_link_request_event(&event).unwrap();
+    assert!(!event.content.is_empty());
+    assert_eq!(tag_value(&event, "p").as_deref(), Some(frame.invite_pubkey.as_str()));
+    assert!(event.tags.iter().all(|tag| tag.as_slice().first().is_none_or(|name| {
+        !matches!(name.as_str(), "admin_pubkey" | "key_pubkey" | "joining_pubkey" | "link_secret_hash")
+    })));
+    let parsed = parse_app_key_link_request_event(&event, &invite).unwrap();
     assert_eq!(parsed.profile_id, frame.profile_id);
     assert_eq!(parsed.admin_app_key_pubkey, frame.admin_app_key_pubkey);
     assert_eq!(parsed.app_key_pubkey, frame.app_key_pubkey);
-    assert_eq!(parsed.link_secret, "");
-    assert_eq!(
-        parsed.link_secret_hash,
-        crate::app_key_link_transport::app_key_link_secret_hash("join-secret")
-    );
+    assert_eq!(parsed.invite_pubkey, frame.invite_pubkey);
     assert_eq!(parsed.label, frame.label);
     assert_eq!(parsed.requested_at, frame.requested_at);
 }
 
 #[test]
-fn app_key_link_request_event_d_tag_is_profile_scoped() {
+fn old_app_key_link_request_30078_event_is_rejected() {
     let device = Keys::generate();
-    let frame = crate::app_key_link_transport::AppKeyLinkRequestFrame {
-        schema: 1,
-        profile_id: crate::IrisProfileId::new_v4(),
-        admin_app_key_pubkey: String::new(),
-        app_key_pubkey: device.public_key().to_hex(),
-        link_secret: "join-secret".to_string(),
-        link_secret_hash: String::new(),
-        label: None,
-        requested_at: 123,
-        url: "iris-drive://app-key-link?app_key=example".to_string(),
-    };
-    let other_profile = crate::IrisProfileId::new_v4();
     let event = EventBuilder::new(
-        Kind::from(KIND_APP_KEY_LINK_REQUEST),
-        serde_json::to_string(&frame).unwrap(),
+        Kind::from(KIND_DRIVE_ROOT),
+        r#"{"schema":1,"link_secret":"old"}"#,
     )
-    .tag(Tag::identifier(app_key_link_request_d_tag(other_profile)))
     .sign_with_keys(&device)
     .unwrap();
+    let invite = Keys::generate();
 
     assert!(matches!(
-        parse_app_key_link_request_event(&event),
-        Err(WireError::AppKeyLinkProfileMismatch { .. })
+        parse_app_key_link_request_event(&event, &invite),
+        Err(WireError::WrongKind { .. })
     ));
 }
 
 #[test]
 fn app_key_link_request_event_must_be_signed_by_requesting_device() {
     let device = Keys::generate();
-    let attacker = Keys::generate();
+    let invite = Keys::generate();
     let frame = crate::app_key_link_transport::AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: crate::IrisProfileId::new_v4(),
-        admin_app_key_pubkey: String::new(),
+        admin_app_key_pubkey: Keys::generate().public_key().to_hex(),
         app_key_pubkey: device.public_key().to_hex(),
-        link_secret: "join-secret".to_string(),
-        link_secret_hash: String::new(),
+        invite_pubkey: invite.public_key().to_hex(),
         label: None,
         requested_at: 123,
         url: "iris-drive://app-key-link?app_key=example".to_string(),
     };
 
-    let event = EventBuilder::new(
-        Kind::from(KIND_APP_KEY_LINK_REQUEST),
-        serde_json::to_string(&frame).unwrap(),
-    )
-    .tag(Tag::identifier(app_key_link_request_d_tag(
-        frame.profile_id,
-    )))
-    .sign_with_keys(&attacker)
-    .unwrap();
-
     assert!(matches!(
-        parse_app_key_link_request_event(&event),
+        build_app_key_link_request_event(&Keys::generate(), &frame),
         Err(WireError::AppKeyLinkSignerMismatch { .. })
     ));
 }
