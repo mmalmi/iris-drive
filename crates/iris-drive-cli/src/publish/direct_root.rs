@@ -319,16 +319,31 @@ impl DirectRootExchange {
         Ok(events)
     }
 
-    pub(crate) async fn drain_mesh_events(
+    pub(crate) async fn handle_mesh_events(
         &mut self,
         client: &nostr_sdk::Client,
         config_dir: &Path,
         sync: Arc<FsFipsBlockSync>,
         mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
         daemon_tasks: &DaemonTaskSet,
+        messages: Vec<FipsMeshPubsubEvent>,
     ) -> Result<bool> {
+        let received_messages = messages.len();
+        let (messages, skipped_roots) =
+            iris_drive_core::coalesce_direct_root_mesh_events(messages);
+        if skipped_roots > 0 {
+            println!(
+                "{}",
+                json!({
+                    "event": "direct_root_mesh_coalesced",
+                    "received_messages": received_messages,
+                    "applied_messages": messages.len(),
+                    "skipped_roots": skipped_roots,
+                })
+            );
+        }
         let mut should_announce = false;
-        for message in sync.drain_mesh_pubsub_events().await {
+        for message in messages {
             should_announce |= self
                 .handle_mesh_event(
                     client,

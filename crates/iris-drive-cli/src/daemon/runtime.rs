@@ -923,45 +923,35 @@ pub(crate) fn cmd_daemon(
                     }
                 } => {
                     if let Some(sync) = fips_blocks.as_ref() {
-                        let mut should_announce = false;
-                        let mut result = direct_roots
-                            .handle_mesh_event(
+                        let mut messages = vec![message];
+                        messages.extend(sync.drain_mesh_pubsub_events().await);
+                        let result = direct_roots
+                            .handle_mesh_events(
                                 &client,
                                 config_dir,
-	                                sync.clone(),
-	                                mount_refresh_tx.clone(),
-	                                &daemon_tasks,
-	                                message,
-	                            )
+                                sync.clone(),
+                                mount_refresh_tx.clone(),
+                                &daemon_tasks,
+                                messages,
+                            )
                             .await;
-                        if let Ok(changed) = result.as_ref() {
-                            should_announce |= *changed;
-                            result = direct_roots
-                                .drain_mesh_events(
-	                                    &client,
-	                                    config_dir,
-	                                    sync.clone(),
-	                                    mount_refresh_tx.clone(),
-	                                    &daemon_tasks,
-	                                )
-                                .await;
-                            if let Ok(changed) = result.as_ref() {
-                                should_announce |= *changed;
+                        match result {
+                            Ok(true) => {
+                                direct_root_change_announce_pending = true;
+                                direct_root_change_announce_timer.as_mut().reset(
+                                    tokio::time::Instant::now()
+                                        + std::time::Duration::from_millis(
+                                            DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS,
+                                        ),
+                                );
                             }
-                        }
-                        if let Err(error) = result {
-                            println!(
-                                "{}",
-                                json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
-                            );
-                        } else if should_announce {
-                            direct_root_change_announce_pending = true;
-                            direct_root_change_announce_timer.as_mut().reset(
-                                tokio::time::Instant::now()
-                                    + std::time::Duration::from_millis(
-                                        DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS,
-                                    ),
-                            );
+                            Ok(false) => {}
+                            Err(error) => {
+                                println!(
+                                    "{}",
+                                    json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
+                                );
+                            }
                         }
                     }
                 }

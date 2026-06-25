@@ -137,7 +137,18 @@ impl DirectRootExchange {
         config_dir: &Path,
         sync: &FsFipsBlockSync,
     ) -> Result<(), String> {
-        for message in sync.drain_mesh_pubsub_events().await {
+        let messages = sync.drain_mesh_pubsub_events().await;
+        let received_messages = messages.len();
+        let (messages, skipped_roots) = coalesce_direct_root_mesh_events(messages);
+        if skipped_roots > 0 {
+            tracing::debug!(
+                received_messages,
+                applied_messages = messages.len(),
+                skipped_roots,
+                "coalesced native direct-root FIPS mesh events"
+            );
+        }
+        for message in messages {
             self.handle_mesh_event(config_dir, sync, message).await?;
         }
         Ok(())
@@ -407,11 +418,56 @@ pub fn coalesce_direct_root_app_messages(
     (passthrough, skipped)
 }
 
+pub fn coalesce_direct_root_mesh_events(
+    messages: Vec<crate::FipsMeshPubsubEvent>,
+) -> (Vec<crate::FipsMeshPubsubEvent>, usize) {
+    let mut passthrough = Vec::new();
+    let mut latest_roots =
+        BTreeMap::<String, (DirectRootCacheSlot, crate::FipsMeshPubsubEvent)>::new();
+    let mut skipped = 0usize;
+
+    for message in messages {
+        let Some(slot) = direct_root_mesh_event_cache_slot(&message) else {
+            passthrough.push(message);
+            continue;
+        };
+        match latest_roots.entry(slot.family.clone()) {
+            std::collections::btree_map::Entry::Vacant(entry) => {
+                entry.insert((slot, message));
+            }
+            std::collections::btree_map::Entry::Occupied(mut entry) => {
+                if direct_root_slot_is_strictly_newer(&slot, &entry.get().0) {
+                    skipped = skipped.saturating_add(1);
+                    entry.insert((slot, message));
+                } else {
+                    skipped = skipped.saturating_add(1);
+                }
+            }
+        }
+    }
+
+    passthrough.extend(latest_roots.into_values().map(|(_, message)| message));
+    (passthrough, skipped)
+}
+
 fn direct_root_message_cache_slot(message: &crate::FipsAppMessage) -> Option<DirectRootCacheSlot> {
     if message.topic != DIRECT_ROOT_APP_TOPIC {
         return None;
     }
     let frame: DirectRootFrame = serde_json::from_slice(&message.data).ok()?;
+    direct_root_cache_slot(&frame.key)
+}
+
+fn direct_root_mesh_event_cache_slot(
+    message: &crate::FipsMeshPubsubEvent,
+) -> Option<DirectRootCacheSlot> {
+    if !message
+        .stream_id
+        .starts_with(DIRECT_ROOT_MESH_STREAM_PREFIX)
+    {
+        return None;
+    }
+    let frame: DirectRootFrame = serde_json::from_slice(&message.payload).ok()?;
     direct_root_cache_slot(&frame.key)
 }
 
@@ -839,6 +895,74 @@ mod tests {
     }
 
     #[test]
+    fn direct_root_mesh_event_coalescing_keeps_latest_root_per_family() {
+        let older_drive =
+            direct_root_mesh_event("drive-root:remote:main:7:old-hash:old-key:local,remote");
+        let newer_drive =
+            direct_root_mesh_event("drive-root:remote:main:8:new-hash:new-key:local,remote");
+        let duplicate_newer =
+            direct_root_mesh_event("drive-root:remote:main:8:new-hash:new-key:local,remote");
+        let share_root =
+            direct_root_mesh_event("share-root:share:remote:2:share-hash:share-key:local,remote");
+
+        let (messages, skipped) = coalesce_direct_root_mesh_events(vec![
+            older_drive,
+            share_root,
+            newer_drive,
+            duplicate_newer,
+        ]);
+
+        assert_eq!(skipped, 2);
+        assert_eq!(
+            direct_root_mesh_event_keys(&messages),
+            vec![
+                "drive-root:remote:main:8:new-hash:new-key:local,remote".to_string(),
+                "share-root:share:remote:2:share-hash:share-key:local,remote".to_string(),
+            ]
+        );
+    }
+
+    #[test]
+    fn direct_root_mesh_event_coalescing_preserves_unsequenced_messages() {
+        let profile = direct_root_mesh_event("profile-op:profile:event");
+        let broken = crate::FipsMeshPubsubEvent {
+            stream_id: direct_root_mesh_stream("scope"),
+            seq: 1,
+            origin_peer_id: "origin".to_string(),
+            from_peer_id: "peer".to_string(),
+            payload: b"not json".to_vec(),
+        };
+        let other_stream = crate::FipsMeshPubsubEvent {
+            stream_id: "other-stream".to_string(),
+            seq: 1,
+            origin_peer_id: "origin".to_string(),
+            from_peer_id: "peer".to_string(),
+            payload: b"not direct roots".to_vec(),
+        };
+        let older_drive =
+            direct_root_mesh_event("drive-root:remote:main:7:old-hash:old-key:local,remote");
+        let newer_drive =
+            direct_root_mesh_event("drive-root:remote:main:8:new-hash:new-key:local,remote");
+
+        let (messages, skipped) = coalesce_direct_root_mesh_events(vec![
+            profile.clone(),
+            broken.clone(),
+            older_drive,
+            other_stream.clone(),
+            newer_drive,
+        ]);
+
+        assert_eq!(skipped, 1);
+        assert_eq!(messages[0], profile);
+        assert_eq!(messages[1], broken);
+        assert_eq!(messages[2], other_stream);
+        assert_eq!(
+            direct_root_mesh_event_keys(&messages[3..]),
+            vec!["drive-root:remote:main:8:new-hash:new-key:local,remote".to_string()]
+        );
+    }
+
+    #[test]
     fn direct_root_cache_slot_parses_real_cid_shape() {
         assert_eq!(
             direct_root_cache_slot("drive-root:device:main:8:root-hash:root-key:device,remote"),
@@ -1039,6 +1163,29 @@ mod tests {
         messages
             .iter()
             .filter_map(|message| serde_json::from_slice::<DirectRootFrame>(&message.data).ok())
+            .map(|frame| frame.key)
+            .collect()
+    }
+
+    fn direct_root_mesh_event(key: &str) -> crate::FipsMeshPubsubEvent {
+        let frame = DirectRootFrame {
+            key: key.to_string(),
+            event_id: format!("{key}:event"),
+            event_json: "{}".to_string(),
+        };
+        crate::FipsMeshPubsubEvent {
+            stream_id: direct_root_mesh_stream("scope"),
+            seq: 1,
+            origin_peer_id: "origin".to_string(),
+            from_peer_id: "peer".to_string(),
+            payload: serde_json::to_vec(&frame).unwrap(),
+        }
+    }
+
+    fn direct_root_mesh_event_keys(messages: &[crate::FipsMeshPubsubEvent]) -> Vec<String> {
+        messages
+            .iter()
+            .filter_map(|message| serde_json::from_slice::<DirectRootFrame>(&message.payload).ok())
             .map(|frame| frame.key)
             .collect()
     }

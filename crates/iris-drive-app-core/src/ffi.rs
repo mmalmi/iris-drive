@@ -2012,12 +2012,24 @@ async fn run_app_key_link_exchange_async(
                 }
             }
             message = sync.recv_mesh_pubsub_event() => {
-                if let Err(error) = direct_roots.handle_mesh_event(config_dir, &sync, message).await {
-                    tracing::warn!(error = %error, "native direct-root FIPS mesh event failed");
-                    continue;
+                let mut messages = vec![message];
+                messages.extend(sync.drain_mesh_pubsub_events().await);
+                let received_messages = messages.len();
+                let (messages, skipped_roots) =
+                    iris_drive_core::coalesce_direct_root_mesh_events(messages);
+                if skipped_roots > 0 {
+                    tracing::debug!(
+                        received_messages,
+                        applied_messages = messages.len(),
+                        skipped_roots,
+                        "coalesced native direct-root FIPS mesh events"
+                    );
                 }
-                if let Err(error) = direct_roots.drain_mesh_events(config_dir, &sync).await {
-                    tracing::warn!(error = %error, "native direct-root FIPS mesh drain failed");
+                for message in messages {
+                    if let Err(error) = direct_roots.handle_mesh_event(config_dir, &sync, message).await {
+                        tracing::warn!(error = %error, "native direct-root FIPS mesh event failed");
+                        continue;
+                    }
                 }
             }
             message = app_messages.recv() => {
