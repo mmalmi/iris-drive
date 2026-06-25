@@ -890,8 +890,35 @@ pub(crate) fn record_block_sync(
     });
     merge_daemon_status(config_dir, |status| {
         status.insert("last_block_sync".to_string(), value.clone());
+        status.remove("last_block_sync_error");
         let entry = status
             .entry("block_sync_by_root".to_string())
+            .or_insert_with(|| json!({}));
+        if !entry.is_object() {
+            *entry = json!({});
+        }
+        if let Some(map) = entry.as_object_mut() {
+            map.insert(root_cid.to_string(), value);
+        }
+        if let Some(map) = status
+            .get_mut("block_sync_error_by_root")
+            .and_then(Value::as_object_mut)
+        {
+            map.remove(root_cid);
+        }
+    });
+}
+
+pub(crate) fn record_block_sync_error(config_dir: &Path, root_cid: &str, error: &str) {
+    let value = json!({
+        "root_cid": root_cid,
+        "updated_at": unix_now(),
+        "error": error,
+    });
+    merge_daemon_status(config_dir, |status| {
+        status.insert("last_block_sync_error".to_string(), value.clone());
+        let entry = status
+            .entry("block_sync_error_by_root".to_string())
             .or_insert_with(|| json!({}));
         if !entry.is_object() {
             *entry = json!({});

@@ -221,6 +221,7 @@ pub(crate) fn daemon_sync_status(daemon_status: Option<&Value>) -> String {
             .and_then(|fips| fips.get("status"))
             .and_then(Value::as_str)
             .is_some_and(|status| status == "timeout")
+        || status.get("last_block_sync_error").is_some()
     {
         return "sync error".to_owned();
     }

@@ -387,6 +387,7 @@ pub(crate) fn spawn_root_apply_followup(
                 }
             }
             if let Some(error) = last_error {
+                record_block_sync_error(&config_dir, &root_cid, &error);
                 println!(
                     "{}",
                     json!({

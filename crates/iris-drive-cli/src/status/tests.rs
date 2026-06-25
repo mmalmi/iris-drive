@@ -297,6 +297,16 @@ fn daemon_sync_status_is_normalized_for_clients() {
         }))),
         "sync error"
     );
+    assert_eq!(
+        daemon_sync_status(Some(&json!({
+            "running": true,
+            "last_block_sync_error": {
+                "root_cid": "root-a",
+                "error": "missing block on fips peers",
+            },
+        }))),
+        "sync error"
+    );
 }
 
 #[test]

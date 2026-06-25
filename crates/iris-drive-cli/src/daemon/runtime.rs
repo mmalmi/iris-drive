@@ -818,8 +818,16 @@ pub(crate) fn cmd_daemon(
                 } => {
                     match recv {
                         Some(Ok(message)) => {
+                            let should_coalesce_direct_roots =
+                                message.topic == iris_drive_core::DIRECT_ROOT_APP_TOPIC;
                             let mut messages = vec![message];
                             let mut receiver_closed = false;
+                            if should_coalesce_direct_roots {
+                                tokio::time::sleep(std::time::Duration::from_millis(
+                                    DIRECT_ROOT_RECEIVE_COALESCE_MS,
+                                ))
+                                .await;
+                            }
                             if let Some(rx) = direct_app_message_rx.as_mut() {
                                 while messages.len() < DIRECT_APP_MESSAGE_DRAIN_LIMIT {
                                     match rx.try_recv() {
@@ -922,6 +930,10 @@ pub(crate) fn cmd_daemon(
                 } => {
                     if let Some(sync) = fips_blocks.as_ref() {
                         let mut messages = vec![message];
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            DIRECT_ROOT_RECEIVE_COALESCE_MS,
+                        ))
+                        .await;
                         messages.extend(sync.drain_mesh_pubsub_events().await);
                         let result = direct_roots
                             .handle_mesh_events(

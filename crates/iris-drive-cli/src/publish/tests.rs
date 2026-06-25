@@ -327,6 +327,22 @@ fn direct_root_cache_slot_parses_real_cid_shape() {
 }
 
 #[test]
+fn direct_root_exchange_rejects_older_root_when_newer_is_cached() {
+    let mut exchange = DirectRootExchange::default();
+    exchange.cache_event(DirectRootEvent {
+        key: "drive-root:remote:main:9:new-root:new-key:local,remote".to_string(),
+        event_id: "new-event".to_string(),
+        kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
+        json: "{\"id\":\"new\"}".to_string(),
+    });
+
+    assert!(
+        !exchange
+            .should_cache_event_as_latest("drive-root:remote:main:8:old-root:old-key:local,remote")
+    );
+}
+
+#[test]
 fn direct_root_republish_collapses_recipient_list_variants() {
     let mut exchange = DirectRootExchange::default();
     let narrow = DirectRootEvent {

@@ -197,6 +197,9 @@ impl DirectRootExchange {
         daemon_tasks: &DaemonTaskSet,
         frame: DirectRootFrame,
     ) -> Result<DirectRootFrameOutcome> {
+        if !self.should_cache_event_as_latest(&frame.key) {
+            return Ok(DirectRootFrameOutcome::Ignored);
+        }
         if self.should_skip_seen_direct_root_frame(config_dir, &frame.key) {
             return Ok(DirectRootFrameOutcome::Ignored);
         }
