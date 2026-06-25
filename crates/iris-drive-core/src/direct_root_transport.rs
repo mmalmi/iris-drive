@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use hashtree_core::Cid;
@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::paths::{config_path_in, key_path_in};
 use crate::{
-    AppConfig, AppKey, FsFipsBlockSync, PRIMARY_DRIVE_ID, ProfileState,
+    AppConfig, AppKey, AppKeyRootRef, FsFipsBlockSync, PRIMARY_DRIVE_ID, ProfileState,
     drive_root_recipient_app_key_pubkeys,
 };
 
@@ -26,6 +26,19 @@ pub struct DirectRootFrame {
     pub key: String,
     pub event_id: String,
     pub event_json: String,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct DirectRootHintFrame {
+    pub key: String,
+    pub event_id: String,
+    pub hint: bool,
+}
+
+#[derive(Debug)]
+pub enum DirectRootWireFrame {
+    Full(DirectRootFrame),
+    Hint(DirectRootHintFrame),
 }
 
 #[derive(Debug, Clone)]
@@ -45,6 +58,40 @@ struct DirectRootPublishEvent {
 enum DirectRootPublishSource {
     LocalCurrent,
     CachedRelay,
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub enum DirectRootHintApply {
+    Applied,
+    AlreadyCurrent,
+    NotRootKey,
+    SenderMismatch,
+    NoAccount,
+    UnknownDrive,
+    UnauthorizedAppKey,
+    Stale,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub enum DirectRootHintScope {
+    Drive,
+    Share { share_id: String },
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct DirectRootKeyHint {
+    pub scope: DirectRootHintScope,
+    pub app_key_pubkey: String,
+    pub drive_id: String,
+    pub app_key_seq: u64,
+    pub root_cid: String,
+    pub recipient_count: usize,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct DirectRootHintApplyReport {
+    pub outcome: DirectRootHintApply,
+    pub root_cid: Option<String>,
 }
 
 #[derive(Default)]
@@ -90,6 +137,10 @@ impl DirectRootExchange {
             };
             let bytes = serde_json::to_vec(&frame)
                 .map_err(|error| format!("encoding direct root: {error}"))?;
+            let hint_bytes = should_publish_direct_root_hint(&event.key, source)
+                .then(|| encode_direct_root_hint_frame(&event.key, &event.event_id))
+                .transpose()
+                .map_err(|error| format!("encoding direct-root hint: {error}"))?;
             match sync
                 .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, bytes.clone())
                 .await
@@ -105,6 +156,23 @@ impl DirectRootExchange {
                     "sending direct-root event over FIPS failed"
                 ),
             }
+            if let Some(hint_bytes) = hint_bytes.as_ref() {
+                match sync
+                    .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, hint_bytes.clone())
+                    .await
+                {
+                    Ok(sent_peers) => tracing::debug!(
+                        root_key = event.key.as_str(),
+                        sent_peers,
+                        "sent direct-root hint over FIPS"
+                    ),
+                    Err(error) => tracing::warn!(
+                        root_key = event.key.as_str(),
+                        error = %error,
+                        "sending direct-root hint over FIPS failed"
+                    ),
+                }
+            }
             let seq = self.next_mesh_publish_seq();
             let publish = sync.publish_mesh_pubsub(stream.clone(), seq, bytes).await;
             tracing::debug!(
@@ -113,6 +181,18 @@ impl DirectRootExchange {
                 seq,
                 "published direct-root mesh event over FIPS"
             );
+            if let Some(hint_bytes) = hint_bytes {
+                let seq = self.next_mesh_publish_seq();
+                let publish = sync
+                    .publish_mesh_pubsub(stream.clone(), seq, hint_bytes)
+                    .await;
+                tracing::debug!(
+                    root_key = event.key.as_str(),
+                    sent_peers = publish.sent_peers,
+                    seq,
+                    "published direct-root mesh hint over FIPS"
+                );
+            }
         }
         self.prune_published_keys();
         Ok(())
@@ -127,9 +207,15 @@ impl DirectRootExchange {
         if message.topic != DIRECT_ROOT_APP_TOPIC {
             return Ok(false);
         }
-        let frame: DirectRootFrame = serde_json::from_slice(&message.data)
-            .map_err(|error| format!("parsing direct-root frame: {error}"))?;
-        self.apply_frame(config_dir, sync, frame).await
+        match decode_direct_root_wire_frame(&message.data)
+            .map_err(|error| format!("parsing direct-root frame: {error}"))?
+        {
+            DirectRootWireFrame::Full(frame) => self.apply_frame(config_dir, sync, frame).await,
+            DirectRootWireFrame::Hint(frame) => {
+                self.apply_hint_frame(config_dir, sync, frame, &message.peer_id)
+                    .await
+            }
+        }
     }
 
     pub async fn drain_mesh_events(
@@ -166,9 +252,17 @@ impl DirectRootExchange {
         {
             return Ok(());
         }
-        let frame: DirectRootFrame = serde_json::from_slice(&message.payload)
-            .map_err(|error| format!("parsing direct-root mesh frame: {error}"))?;
-        self.apply_frame(config_dir, sync, frame).await?;
+        match decode_direct_root_wire_frame(&message.payload)
+            .map_err(|error| format!("parsing direct-root mesh frame: {error}"))?
+        {
+            DirectRootWireFrame::Full(frame) => {
+                self.apply_frame(config_dir, sync, frame).await?;
+            }
+            DirectRootWireFrame::Hint(frame) => {
+                self.apply_hint_frame(config_dir, sync, frame, &message.origin_peer_id)
+                    .await?;
+            }
+        }
         Ok(())
     }
 
@@ -202,6 +296,22 @@ impl DirectRootExchange {
                 Err(format!("{error:#}"))
             }
         }
+    }
+
+    async fn apply_hint_frame(
+        &mut self,
+        config_dir: &Path,
+        sync: &FsFipsBlockSync,
+        frame: DirectRootHintFrame,
+        source_peer: &str,
+    ) -> Result<bool, String> {
+        if !frame.hint || !self.should_cache_event_as_latest(&frame.key) {
+            return Ok(false);
+        }
+        let changed = apply_direct_root_hint(config_dir, sync, &frame.key, source_peer)
+            .await
+            .map_err(|error| format!("{error:#}"))?;
+        Ok(changed)
     }
 
     async fn subscribe_profile_stream(&mut self, root_scope_id: &str, sync: &FsFipsBlockSync) {
@@ -391,17 +501,18 @@ pub fn coalesce_direct_root_app_messages(
     messages: Vec<crate::FipsAppMessage>,
 ) -> (Vec<crate::FipsAppMessage>, usize) {
     let mut passthrough = Vec::new();
-    let mut latest_roots = BTreeMap::<String, (DirectRootCacheSlot, crate::FipsAppMessage)>::new();
+    let mut latest_roots =
+        BTreeMap::<String, (DirectRootCacheSlot, bool, crate::FipsAppMessage)>::new();
     let mut unsequenced_indices = BTreeMap::<String, usize>::new();
     let mut skipped = 0usize;
 
     for message in messages {
-        let Some(frame_key) = direct_root_message_frame_key(&message) else {
+        let Some(frame) = direct_root_message_batch_frame(&message) else {
             passthrough.push(message);
             continue;
         };
-        let Some(slot) = direct_root_cache_slot(&frame_key) else {
-            if let Some(cache_key) = direct_root_unsequenced_batch_key(&frame_key) {
+        let Some(slot) = direct_root_cache_slot(&frame.key) else {
+            if let Some(cache_key) = direct_root_unsequenced_batch_key(&frame.key) {
                 if let Some(index) = unsequenced_indices.get(&cache_key).copied() {
                     passthrough[index] = message;
                     skipped = skipped.saturating_add(1);
@@ -416,12 +527,18 @@ pub fn coalesce_direct_root_app_messages(
         };
         match latest_roots.entry(slot.family.clone()) {
             std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert((slot, message));
+                entry.insert((slot, frame.hint, message));
             }
             std::collections::btree_map::Entry::Occupied(mut entry) => {
-                if direct_root_slot_is_strictly_newer(&slot, &entry.get().0) {
+                let (current_slot, current_is_hint, _) = entry.get();
+                if direct_root_should_replace_batched_frame(
+                    &slot,
+                    frame.hint,
+                    current_slot,
+                    *current_is_hint,
+                ) {
                     skipped = skipped.saturating_add(1);
-                    entry.insert((slot, message));
+                    entry.insert((slot, frame.hint, message));
                 } else {
                     skipped = skipped.saturating_add(1);
                 }
@@ -431,7 +548,7 @@ pub fn coalesce_direct_root_app_messages(
 
     let mut coalesced = latest_roots
         .into_values()
-        .map(|(_, message)| message)
+        .map(|(_, _, message)| message)
         .collect::<Vec<_>>();
     coalesced.extend(passthrough);
     (coalesced, skipped)
@@ -442,17 +559,17 @@ pub fn coalesce_direct_root_mesh_events(
 ) -> (Vec<crate::FipsMeshPubsubEvent>, usize) {
     let mut passthrough = Vec::new();
     let mut latest_roots =
-        BTreeMap::<String, (DirectRootCacheSlot, crate::FipsMeshPubsubEvent)>::new();
+        BTreeMap::<String, (DirectRootCacheSlot, bool, crate::FipsMeshPubsubEvent)>::new();
     let mut unsequenced_indices = BTreeMap::<String, usize>::new();
     let mut skipped = 0usize;
 
     for message in messages {
-        let Some(frame_key) = direct_root_mesh_event_frame_key(&message) else {
+        let Some(frame) = direct_root_mesh_event_batch_frame(&message) else {
             passthrough.push(message);
             continue;
         };
-        let Some(slot) = direct_root_cache_slot(&frame_key) else {
-            if let Some(cache_key) = direct_root_unsequenced_batch_key(&frame_key) {
+        let Some(slot) = direct_root_cache_slot(&frame.key) else {
+            if let Some(cache_key) = direct_root_unsequenced_batch_key(&frame.key) {
                 if let Some(index) = unsequenced_indices.get(&cache_key).copied() {
                     passthrough[index] = message;
                     skipped = skipped.saturating_add(1);
@@ -467,12 +584,18 @@ pub fn coalesce_direct_root_mesh_events(
         };
         match latest_roots.entry(slot.family.clone()) {
             std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert((slot, message));
+                entry.insert((slot, frame.hint, message));
             }
             std::collections::btree_map::Entry::Occupied(mut entry) => {
-                if direct_root_slot_is_strictly_newer(&slot, &entry.get().0) {
+                let (current_slot, current_is_hint, _) = entry.get();
+                if direct_root_should_replace_batched_frame(
+                    &slot,
+                    frame.hint,
+                    current_slot,
+                    *current_is_hint,
+                ) {
                     skipped = skipped.saturating_add(1);
-                    entry.insert((slot, message));
+                    entry.insert((slot, frame.hint, message));
                 } else {
                     skipped = skipped.saturating_add(1);
                 }
@@ -482,29 +605,64 @@ pub fn coalesce_direct_root_mesh_events(
 
     let mut coalesced = latest_roots
         .into_values()
-        .map(|(_, message)| message)
+        .map(|(_, _, message)| message)
         .collect::<Vec<_>>();
     coalesced.extend(passthrough);
     (coalesced, skipped)
 }
 
-fn direct_root_message_frame_key(message: &crate::FipsAppMessage) -> Option<String> {
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct DirectRootBatchFrame {
+    key: String,
+    hint: bool,
+}
+
+fn direct_root_message_batch_frame(
+    message: &crate::FipsAppMessage,
+) -> Option<DirectRootBatchFrame> {
     if message.topic != DIRECT_ROOT_APP_TOPIC {
         return None;
     }
-    let frame: DirectRootFrame = serde_json::from_slice(&message.data).ok()?;
-    Some(frame.key)
+    direct_root_batch_frame(&message.data)
 }
 
-fn direct_root_mesh_event_frame_key(message: &crate::FipsMeshPubsubEvent) -> Option<String> {
+fn direct_root_mesh_event_batch_frame(
+    message: &crate::FipsMeshPubsubEvent,
+) -> Option<DirectRootBatchFrame> {
     if !message
         .stream_id
         .starts_with(DIRECT_ROOT_MESH_STREAM_PREFIX)
     {
         return None;
     }
-    let frame: DirectRootFrame = serde_json::from_slice(&message.payload).ok()?;
-    Some(frame.key)
+    direct_root_batch_frame(&message.payload)
+}
+
+fn direct_root_batch_frame(data: &[u8]) -> Option<DirectRootBatchFrame> {
+    match decode_direct_root_wire_frame(data).ok()? {
+        DirectRootWireFrame::Full(frame) => Some(DirectRootBatchFrame {
+            key: frame.key,
+            hint: false,
+        }),
+        DirectRootWireFrame::Hint(frame) => Some(DirectRootBatchFrame {
+            key: frame.key,
+            hint: true,
+        }),
+    }
+}
+
+fn direct_root_should_replace_batched_frame(
+    candidate: &DirectRootCacheSlot,
+    candidate_is_hint: bool,
+    current: &DirectRootCacheSlot,
+    current_is_hint: bool,
+) -> bool {
+    direct_root_slot_is_strictly_newer(candidate, current)
+        || (candidate.family == current.family
+            && candidate.seq == current.seq
+            && candidate.recipient_count == current.recipient_count
+            && current_is_hint
+            && !candidate_is_hint)
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -601,6 +759,33 @@ fn direct_root_publish_throttle_key(key: &str, source: DirectRootPublishSource) 
         return format!("cached-relay:{key}");
     }
     key.to_string()
+}
+
+fn should_publish_direct_root_hint(key: &str, source: DirectRootPublishSource) -> bool {
+    source == DirectRootPublishSource::LocalCurrent && direct_root_cache_slot(key).is_some()
+}
+
+pub fn encode_direct_root_hint_frame(
+    key: &str,
+    event_id: &str,
+) -> Result<Vec<u8>, serde_json::Error> {
+    serde_json::to_vec(&DirectRootHintFrame {
+        key: key.to_string(),
+        event_id: event_id.to_string(),
+        hint: true,
+    })
+}
+
+pub fn decode_direct_root_wire_frame(
+    data: &[u8],
+) -> Result<DirectRootWireFrame, serde_json::Error> {
+    match serde_json::from_slice::<DirectRootFrame>(data) {
+        Ok(frame) => Ok(DirectRootWireFrame::Full(frame)),
+        Err(full_error) => match serde_json::from_slice::<DirectRootHintFrame>(data) {
+            Ok(frame) if frame.hint => Ok(DirectRootWireFrame::Hint(frame)),
+            _ => Err(full_error),
+        },
+    }
 }
 
 pub fn build_current_direct_root_events(
@@ -736,6 +921,249 @@ pub async fn apply_direct_root_event(
         return Ok(changed || materialized);
     }
     Ok(false)
+}
+
+pub async fn apply_direct_root_hint(
+    config_dir: &Path,
+    sync: &FsFipsBlockSync,
+    key: &str,
+    source_peer: &str,
+) -> Result<bool> {
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let report = apply_direct_root_key_hint_to_config(
+        &mut config,
+        key,
+        source_peer,
+        current_unix_seconds(),
+    )?;
+    let changed = matches!(report.outcome, DirectRootHintApply::Applied);
+    if changed {
+        config.save(config_path_in(config_dir))?;
+        sync.refresh_authorized_peers(&config).await;
+    }
+    let should_pull = matches!(
+        report.outcome,
+        DirectRootHintApply::Applied | DirectRootHintApply::AlreadyCurrent
+    );
+    let materialized = if let Some(root_cid) = report.root_cid.filter(|_| should_pull) {
+        download_direct_root(sync, &root_cid).await?;
+        if root_cid_belongs_to_peer(&config, &root_cid) {
+            let mut daemon =
+                crate::Daemon::open(config_dir).context("opening daemon to materialize merge")?;
+            daemon
+                .materialize_primary_merged_root()
+                .await
+                .context("materializing merged root")?
+                .is_some()
+        } else {
+            false
+        }
+    } else {
+        false
+    };
+    Ok(changed || materialized)
+}
+
+pub fn apply_direct_root_key_hint_to_config(
+    config: &mut AppConfig,
+    key: &str,
+    source_peer: &str,
+    published_at: i64,
+) -> Result<DirectRootHintApplyReport> {
+    let Some(hint) = parse_direct_root_key_hint(key) else {
+        return Ok(direct_root_hint_report(
+            DirectRootHintApply::NotRootKey,
+            None,
+        ));
+    };
+    Cid::parse(&hint.root_cid)
+        .with_context(|| format!("parsing direct-root hint root {}", hint.root_cid))?;
+    if !direct_root_hint_sender_matches(&hint.app_key_pubkey, source_peer) {
+        return Ok(direct_root_hint_report(
+            DirectRootHintApply::SenderMismatch,
+            Some(hint.root_cid),
+        ));
+    }
+    let Some(account) = config.profile.as_ref() else {
+        return Ok(direct_root_hint_report(
+            DirectRootHintApply::NoAccount,
+            Some(hint.root_cid),
+        ));
+    };
+
+    match &hint.scope {
+        DirectRootHintScope::Drive => {
+            let Some(drive_index) = config
+                .drives
+                .iter()
+                .position(|drive| drive.drive_id == hint.drive_id)
+            else {
+                return Ok(direct_root_hint_report(
+                    DirectRootHintApply::UnknownDrive,
+                    Some(hint.root_cid),
+                ));
+            };
+            if !crate::drive_root_app_key_can_write_roots(
+                account,
+                &config.drives[drive_index],
+                &hint.app_key_pubkey,
+            ) {
+                return Ok(direct_root_hint_report(
+                    DirectRootHintApply::UnauthorizedAppKey,
+                    Some(hint.root_cid),
+                ));
+            }
+            Ok(apply_direct_root_hint_to_roots(
+                &mut config.drives[drive_index].app_key_roots,
+                &hint,
+                published_at,
+            ))
+        }
+        DirectRootHintScope::Share { share_id } => {
+            if hint.drive_id != PRIMARY_DRIVE_ID {
+                return Ok(direct_root_hint_report(
+                    DirectRootHintApply::UnknownDrive,
+                    Some(hint.root_cid),
+                ));
+            }
+            let Ok(share_id) = share_id.parse::<crate::IrisProfileId>() else {
+                return Ok(direct_root_hint_report(
+                    DirectRootHintApply::UnknownDrive,
+                    Some(hint.root_cid),
+                ));
+            };
+            let Some(folder_index) = config
+                .shared_folders
+                .iter()
+                .position(|folder| folder.share_id == share_id)
+            else {
+                return Ok(direct_root_hint_report(
+                    DirectRootHintApply::UnknownDrive,
+                    Some(hint.root_cid),
+                ));
+            };
+            if !crate::shared_folder_app_key_can_write_roots(
+                &config.shared_folders[folder_index],
+                &hint.app_key_pubkey,
+            ) {
+                return Ok(direct_root_hint_report(
+                    DirectRootHintApply::UnauthorizedAppKey,
+                    Some(hint.root_cid),
+                ));
+            }
+            Ok(apply_direct_root_hint_to_roots(
+                &mut config.shared_folders[folder_index].app_key_roots,
+                &hint,
+                published_at,
+            ))
+        }
+    }
+}
+
+pub fn parse_direct_root_key_hint(key: &str) -> Option<DirectRootKeyHint> {
+    let (prefix, rest) = key.split_once(':')?;
+    match prefix {
+        "drive-root" => {
+            let mut parts = rest.splitn(4, ':');
+            let app_key_pubkey = parts.next()?.to_ascii_lowercase();
+            let drive_id = parts.next()?.to_string();
+            let app_key_seq = parts.next()?.parse().ok()?;
+            let root_and_recipients = parts.next()?;
+            let (root_cid, recipients) = root_and_recipients.rsplit_once(':')?;
+            Some(DirectRootKeyHint {
+                scope: DirectRootHintScope::Drive,
+                app_key_pubkey,
+                drive_id,
+                app_key_seq,
+                root_cid: root_cid.to_string(),
+                recipient_count: direct_root_recipient_count(recipients),
+            })
+        }
+        "share-root" => {
+            let mut parts = rest.splitn(4, ':');
+            let share_id = parts.next()?.to_string();
+            let app_key_pubkey = parts.next()?.to_ascii_lowercase();
+            let app_key_seq = parts.next()?.parse().ok()?;
+            let root_and_recipients = parts.next()?;
+            let (root_cid, recipients) = root_and_recipients.rsplit_once(':')?;
+            Some(DirectRootKeyHint {
+                scope: DirectRootHintScope::Share { share_id },
+                app_key_pubkey,
+                drive_id: PRIMARY_DRIVE_ID.to_string(),
+                app_key_seq,
+                root_cid: root_cid.to_string(),
+                recipient_count: direct_root_recipient_count(recipients),
+            })
+        }
+        _ => None,
+    }
+}
+
+fn apply_direct_root_hint_to_roots(
+    app_key_roots: &mut BTreeMap<String, AppKeyRootRef>,
+    hint: &DirectRootKeyHint,
+    published_at: i64,
+) -> DirectRootHintApplyReport {
+    if let Some(existing) = app_key_roots.get(&hint.app_key_pubkey) {
+        if existing.root_cid == hint.root_cid {
+            return direct_root_hint_report(
+                DirectRootHintApply::AlreadyCurrent,
+                Some(hint.root_cid.clone()),
+            );
+        }
+        if existing.app_key_seq > 0 || hint.app_key_seq > 0 {
+            if existing.app_key_seq >= hint.app_key_seq {
+                return direct_root_hint_report(
+                    DirectRootHintApply::Stale,
+                    Some(hint.root_cid.clone()),
+                );
+            }
+        } else if existing.published_at >= published_at {
+            return direct_root_hint_report(
+                DirectRootHintApply::Stale,
+                Some(hint.root_cid.clone()),
+            );
+        }
+    }
+
+    app_key_roots.insert(
+        hint.app_key_pubkey.clone(),
+        AppKeyRootRef {
+            root_cid: hint.root_cid.clone(),
+            published_at,
+            dck_generation: 0,
+            app_key_seq: hint.app_key_seq,
+            parents: Vec::new(),
+            observed: BTreeMap::new(),
+            local_only: false,
+        },
+    );
+    direct_root_hint_report(DirectRootHintApply::Applied, Some(hint.root_cid.clone()))
+}
+
+fn direct_root_hint_report(
+    outcome: DirectRootHintApply,
+    root_cid: Option<String>,
+) -> DirectRootHintApplyReport {
+    DirectRootHintApplyReport { outcome, root_cid }
+}
+
+fn direct_root_hint_sender_matches(app_key_pubkey: &str, source_peer: &str) -> bool {
+    let Ok(app_key_hex) = crate::normalize_app_key_pubkey(app_key_pubkey) else {
+        return false;
+    };
+    if let Ok(source_hex) = crate::normalize_app_key_pubkey(source_peer) {
+        return source_hex == app_key_hex;
+    }
+    crate::app_key_summary::pubkey_npub(&app_key_hex) == source_peer
+}
+
+fn current_unix_seconds() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| {
+            duration.as_secs().try_into().unwrap_or(i64::MAX)
+        })
 }
 
 fn root_cid_belongs_to_peer(config: &AppConfig, root_cid: &str) -> bool {
@@ -1018,6 +1446,107 @@ mod tests {
         assert_eq!(messages.len(), 2);
         assert_eq!(direct_root_app_message_event_json(&messages[0]), "latest");
         assert_eq!(messages[1], other_files_root);
+    }
+
+    #[test]
+    fn direct_root_hint_frame_fits_single_fips_app_packet() {
+        let local = "11".repeat(32);
+        let remote = "22".repeat(32);
+        let third = "33".repeat(32);
+        let root_cid = sample_root_cid('a', 'b');
+        let key = format!("drive-root:{remote}:main:7:{root_cid}:{local},{remote},{third}");
+        let hint_bytes = encode_direct_root_hint_frame(&key, &"44".repeat(32)).unwrap();
+        let full_bytes = serde_json::to_vec(&DirectRootFrame {
+            key,
+            event_id: "44".repeat(32),
+            event_json: "x".repeat(3000),
+        })
+        .unwrap();
+
+        assert!(hint_bytes.len() <= hashtree_fips_transport::FIPS_APP_FRAGMENT_SIZE);
+        assert!(full_bytes.len() > hashtree_fips_transport::FIPS_APP_FRAGMENT_SIZE);
+    }
+
+    #[test]
+    fn direct_root_hint_applies_authorized_drive_root_from_source_app_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let owner = Profile::create(dir.path(), Some("Mac".to_string())).unwrap();
+        let mut state = owner.state.clone();
+        state.profile_roster_ops.clear();
+        state.profile_roster_projection = None;
+        state.app_keys = None;
+        let remote = AppKey::generate(dir.path().join("remote-key"));
+        let remote_pubkey = remote.pubkey_hex();
+        let old_root = sample_root_cid('1', '2');
+        let new_root = sample_root_cid('3', '4');
+        let mut drive = Drive::primary(state.root_scope_id());
+        drive.app_key_roots.insert(
+            remote_pubkey.clone(),
+            AppKeyRootRef::legacy(old_root, 10, 1),
+        );
+        let mut config = AppConfig {
+            profile: Some(state),
+            drives: vec![drive],
+            ..AppConfig::default()
+        };
+        let key = format!("drive-root:{remote_pubkey}:main:2:{new_root}:{remote_pubkey}");
+
+        let report =
+            apply_direct_root_key_hint_to_config(&mut config, &key, &remote.pubkey_bech32(), 20)
+                .unwrap();
+        let stored = config.drives[0].app_key_roots.get(&remote_pubkey).unwrap();
+
+        assert_eq!(report.outcome, DirectRootHintApply::Applied);
+        assert_eq!(stored.root_cid, new_root);
+        assert_eq!(stored.app_key_seq, 2);
+        assert_eq!(stored.published_at, 20);
+    }
+
+    #[test]
+    fn direct_root_hint_rejects_sender_mismatch() {
+        let dir = tempfile::tempdir().unwrap();
+        let owner = Profile::create(dir.path(), Some("Mac".to_string())).unwrap();
+        let mut state = owner.state.clone();
+        state.profile_roster_ops.clear();
+        state.profile_roster_projection = None;
+        state.app_keys = None;
+        let remote = AppKey::generate(dir.path().join("remote-key"));
+        let impostor = AppKey::generate(dir.path().join("impostor-key"));
+        let remote_pubkey = remote.pubkey_hex();
+        let old_root = sample_root_cid('1', '2');
+        let new_root = sample_root_cid('3', '4');
+        let mut drive = Drive::primary(state.root_scope_id());
+        drive.app_key_roots.insert(
+            remote_pubkey.clone(),
+            AppKeyRootRef::legacy(old_root.clone(), 10, 1),
+        );
+        let mut config = AppConfig {
+            profile: Some(state),
+            drives: vec![drive],
+            ..AppConfig::default()
+        };
+        let key = format!("drive-root:{remote_pubkey}:main:2:{new_root}:{remote_pubkey}");
+
+        let report =
+            apply_direct_root_key_hint_to_config(&mut config, &key, &impostor.pubkey_bech32(), 20)
+                .unwrap();
+        let stored = config.drives[0].app_key_roots.get(&remote_pubkey).unwrap();
+
+        assert_eq!(report.outcome, DirectRootHintApply::SenderMismatch);
+        assert_eq!(stored.root_cid, old_root);
+    }
+
+    #[test]
+    fn direct_root_app_message_coalescing_prefers_full_frame_over_hint_for_same_root() {
+        let key = "drive-root:remote:main:8:new-hash:new-key:local,remote";
+        let hint = direct_root_app_hint_message(key);
+        let full = direct_root_app_message_with_event_json(key, "full");
+
+        let (messages, skipped) = coalesce_direct_root_app_messages(vec![hint, full]);
+
+        assert_eq!(skipped, 1);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(direct_root_app_message_event_json(&messages[0]), "full");
     }
 
     #[test]
@@ -1324,6 +1853,14 @@ mod tests {
         direct_root_app_message_with_event_json(key, "{}")
     }
 
+    fn direct_root_app_hint_message(key: &str) -> crate::FipsAppMessage {
+        crate::FipsAppMessage {
+            peer_id: "peer".to_string(),
+            topic: DIRECT_ROOT_APP_TOPIC.to_string(),
+            data: encode_direct_root_hint_frame(key, &format!("{key}:event")).unwrap(),
+        }
+    }
+
     fn direct_root_app_message_with_event_json(
         key: &str,
         event_json: &str,
@@ -1352,6 +1889,14 @@ mod tests {
         serde_json::from_slice::<DirectRootFrame>(&message.data)
             .unwrap()
             .event_json
+    }
+
+    fn sample_root_cid(hash_char: char, key_char: char) -> String {
+        format!(
+            "{}:{}",
+            hash_char.to_string().repeat(64),
+            key_char.to_string().repeat(64)
+        )
     }
 
     fn direct_root_mesh_event(key: &str) -> crate::FipsMeshPubsubEvent {

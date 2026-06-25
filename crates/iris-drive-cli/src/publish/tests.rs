@@ -612,6 +612,22 @@ fn direct_root_publish_bursts_root_frames_only() {
         2,
         "relayed drive roots should not be single-shot"
     );
+    assert!(should_publish_direct_root_hint(
+        drive_root,
+        DirectRootPublishSource::LocalCurrent
+    ));
+    assert!(should_publish_direct_root_hint(
+        share_root,
+        DirectRootPublishSource::LocalCurrent
+    ));
+    assert!(!should_publish_direct_root_hint(
+        drive_root,
+        DirectRootPublishSource::CachedRelay
+    ));
+    assert!(!should_publish_direct_root_hint(
+        "profile-op:profile:op",
+        DirectRootPublishSource::LocalCurrent
+    ));
     assert_eq!(direct_root_publish_attempts("files-root:device:main"), 2);
     assert_eq!(direct_root_publish_attempts("profile-op:profile:op"), 1);
 }

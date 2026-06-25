@@ -1,5 +1,6 @@
 use iris_drive_core::{
-    DIRECT_ROOT_APP_TOPIC, DIRECT_ROOT_MESH_STREAM_PREFIX, DirectRootFrame, FipsMeshPubsubEvent,
+    DIRECT_ROOT_APP_TOPIC, DIRECT_ROOT_MESH_STREAM_PREFIX, DirectRootFrame, DirectRootHintApply,
+    DirectRootHintFrame, DirectRootWireFrame, FipsMeshPubsubEvent,
 };
 
 #[derive(Debug, Clone)]
@@ -140,8 +141,34 @@ impl DirectRootExchange {
                 event_json: event.json.clone(),
             };
             let bytes = serde_json::to_vec(&frame)?;
+            let hint_bytes = should_publish_direct_root_hint(&event.key, source)
+                .then(|| iris_drive_core::encode_direct_root_hint_frame(&event.key, &event.event_id))
+                .transpose()
+                .context("encoding direct-root hint frame")?;
             let attempts = direct_root_publish_attempts_for_source(&event.key, source);
             for attempt in 0..attempts {
+                if let Some(hint_bytes) = hint_bytes.as_ref() {
+                    let selected_app_peers = sync.authorized_peer_ids().await.len();
+                    let sent_app_peers = sync
+                        .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, hint_bytes.clone())
+                        .await?;
+                    println!(
+                        "{}",
+                        json!({
+                            "event": "direct_root_app_hint_publish",
+                            "topic": DIRECT_ROOT_APP_TOPIC,
+                            "root_key": event.key.clone(),
+                            "root_event_id": event.event_id.clone(),
+                            "kind": event.kind,
+                            "source": source.as_str(),
+                            "attempt": attempt + 1,
+                            "attempts": attempts,
+                            "selected_peers": selected_app_peers,
+                            "sent_peers": sent_app_peers,
+                            "sent_bytes": hint_bytes.len(),
+                        })
+                    );
+                }
                 let selected_app_peers = sync.authorized_peer_ids().await.len();
                 let sent_app_peers = sync
                     .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, bytes.clone())
@@ -183,6 +210,29 @@ impl DirectRootExchange {
                         "sent_bytes": publish_stats.sent_bytes,
                     })
                 );
+                if let Some(hint_bytes) = hint_bytes.as_ref() {
+                    let seq = self.next_mesh_publish_seq();
+                    let publish_stats = sync
+                        .publish_mesh_pubsub(stream.clone(), seq, hint_bytes.clone())
+                        .await;
+                    println!(
+                        "{}",
+                        json!({
+                            "event": "direct_root_mesh_hint_publish",
+                            "stream": stream,
+                            "seq": seq,
+                            "root_key": event.key.clone(),
+                            "root_event_id": event.event_id.clone(),
+                            "kind": event.kind,
+                            "source": source.as_str(),
+                            "attempt": attempt + 1,
+                            "attempts": attempts,
+                            "selected_peers": publish_stats.selected_peers,
+                            "sent_peers": publish_stats.sent_peers,
+                            "sent_bytes": publish_stats.sent_bytes,
+                        })
+                    );
+                }
             }
         }
         Ok(())
@@ -231,6 +281,77 @@ impl DirectRootExchange {
             return Ok(DirectRootFrameOutcome::Changed);
         }
         Ok(DirectRootFrameOutcome::Cached)
+    }
+
+    async fn apply_direct_root_hint_frame(
+        &mut self,
+        config_dir: &Path,
+        sync: Arc<FsFipsBlockSync>,
+        mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+        daemon_tasks: &DaemonTaskSet,
+        frame: DirectRootHintFrame,
+        source_peer: &str,
+    ) -> Result<DirectRootFrameOutcome> {
+        if !frame.hint || !self.should_cache_event_as_latest(&frame.key) {
+            return Ok(DirectRootFrameOutcome::Ignored);
+        }
+        let config_lock = ConfigMutationLock::acquire(config_dir).await?;
+        let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+        let report = iris_drive_core::apply_direct_root_key_hint_to_config(
+            &mut config,
+            &frame.key,
+            source_peer,
+            direct_root_hint_published_at(),
+        )?;
+        let was_applied = matches!(report.outcome, DirectRootHintApply::Applied);
+        let already_current = matches!(report.outcome, DirectRootHintApply::AlreadyCurrent);
+        let root_blocks_already_synced = report
+            .root_cid
+            .as_deref()
+            .is_some_and(|root_cid| root_has_successful_block_sync(config_dir, root_cid));
+        let root_cid_to_pull = report
+            .root_cid
+            .as_ref()
+            .filter(|_| was_applied || (already_current && !root_blocks_already_synced))
+            .cloned();
+        let should_refresh_projection =
+            was_applied || (already_current && !root_blocks_already_synced);
+        println!(
+            "{}",
+            json!({
+                "event": "drive_root_hint",
+                "event_id": frame.event_id,
+                "source_peer": source_peer,
+                "outcome": format!("{:?}", report.outcome),
+                "root_key": frame.key,
+                "root_cid": root_cid_to_pull.clone(),
+            })
+        );
+        if was_applied {
+            config.save(config_path_in(config_dir))?;
+        }
+        drop(config_lock);
+        if was_applied {
+            sync.refresh_authorized_peers(&config).await;
+            self.invalidate_current_sync_events_cache();
+        }
+        enqueue_root_apply_followup(
+            config_dir.to_path_buf(),
+            config,
+            root_cid_to_pull,
+            Some(sync),
+            should_refresh_projection,
+            "projected_drive_root",
+            mount_refresh,
+            daemon_tasks,
+        );
+        Ok(if was_applied {
+            DirectRootFrameOutcome::Changed
+        } else if already_current {
+            DirectRootFrameOutcome::Cached
+        } else {
+            DirectRootFrameOutcome::Ignored
+        })
     }
 
     fn should_skip_seen_direct_root_frame(&self, config_dir: &Path, key: &str) -> bool {
@@ -376,20 +497,33 @@ impl DirectRootExchange {
         {
             return Ok(false);
         }
-        let frame: DirectRootFrame =
-            serde_json::from_slice(&message.payload).context("parsing mesh root frame")?;
-        let root_key = frame.key.clone();
-        let root_event_id = frame.event_id.clone();
-        let outcome = self
-            .apply_direct_root_frame(
-                client,
-                config_dir,
-                sync,
-                mount_refresh,
-                daemon_tasks,
-                frame,
-            )
-            .await?;
+        let frame = iris_drive_core::decode_direct_root_wire_frame(&message.payload)
+            .context("parsing mesh root frame")?;
+        let (root_key, root_event_id, frame_kind) = direct_root_wire_frame_log_fields(&frame);
+        let outcome = match frame {
+            DirectRootWireFrame::Full(frame) => {
+                self.apply_direct_root_frame(
+                    client,
+                    config_dir,
+                    sync,
+                    mount_refresh,
+                    daemon_tasks,
+                    frame,
+                )
+                .await?
+            }
+            DirectRootWireFrame::Hint(frame) => {
+                self.apply_direct_root_hint_frame(
+                    config_dir,
+                    sync,
+                    mount_refresh,
+                    daemon_tasks,
+                    frame,
+                    &message.origin_peer_id,
+                )
+                .await?
+            }
+        };
         if !outcome.should_log_event() {
             return Ok(false);
         }
@@ -403,6 +537,7 @@ impl DirectRootExchange {
                 "seq": message.seq,
                 "root_key": root_key,
                 "root_event_id": root_event_id,
+                "frame": frame_kind,
             })
         );
         Ok(outcome.should_schedule_announce())
@@ -420,13 +555,26 @@ impl DirectRootExchange {
         if message.topic != DIRECT_ROOT_APP_TOPIC {
             return Ok(false);
         }
-        let frame: DirectRootFrame =
-            serde_json::from_slice(&message.data).context("parsing app root frame")?;
-        let root_key = frame.key.clone();
-        let root_event_id = frame.event_id.clone();
-        let outcome = self
-            .apply_direct_root_frame(client, config_dir, sync, mount_refresh, daemon_tasks, frame)
-            .await?;
+        let frame = iris_drive_core::decode_direct_root_wire_frame(&message.data)
+            .context("parsing app root frame")?;
+        let (root_key, root_event_id, frame_kind) = direct_root_wire_frame_log_fields(&frame);
+        let outcome = match frame {
+            DirectRootWireFrame::Full(frame) => {
+                self.apply_direct_root_frame(client, config_dir, sync, mount_refresh, daemon_tasks, frame)
+                    .await?
+            }
+            DirectRootWireFrame::Hint(frame) => {
+                self.apply_direct_root_hint_frame(
+                    config_dir,
+                    sync,
+                    mount_refresh,
+                    daemon_tasks,
+                    frame,
+                    &message.peer_id,
+                )
+                .await?
+            }
+        };
         if !outcome.should_log_event() {
             return Ok(false);
         }
@@ -438,6 +586,7 @@ impl DirectRootExchange {
                 "peer": message.peer_id,
                 "root_key": root_key,
                 "root_event_id": root_event_id,
+                "frame": frame_kind,
             })
         );
         Ok(outcome.should_schedule_announce())
@@ -625,6 +774,29 @@ fn direct_root_publish_attempts_for_source(key: &str, source: DirectRootPublishS
     } else {
         1
     }
+}
+
+fn should_publish_direct_root_hint(key: &str, source: DirectRootPublishSource) -> bool {
+    source == DirectRootPublishSource::LocalCurrent && direct_root_cache_slot(key).is_some()
+}
+
+fn direct_root_wire_frame_log_fields(frame: &DirectRootWireFrame) -> (String, String, &'static str) {
+    match frame {
+        DirectRootWireFrame::Full(frame) => {
+            (frame.key.clone(), frame.event_id.clone(), "full")
+        }
+        DirectRootWireFrame::Hint(frame) => {
+            (frame.key.clone(), frame.event_id.clone(), "hint")
+        }
+    }
+}
+
+fn direct_root_hint_published_at() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| {
+            duration.as_secs().try_into().unwrap_or(i64::MAX)
+        })
 }
 
 fn direct_root_publish_throttle_key(key: &str, source: DirectRootPublishSource) -> String {
