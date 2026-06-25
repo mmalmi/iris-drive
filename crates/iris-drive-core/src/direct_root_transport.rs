@@ -65,6 +65,7 @@ struct DirectRootPublishEvent {
 enum DirectRootPublishSource {
     LocalCurrent,
     CachedRelay,
+    StateRequestReply,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -133,75 +134,116 @@ impl DirectRootExchange {
         );
         let now = Instant::now();
         for publish_event in events {
-            let DirectRootPublishEvent { event, source } = publish_event;
-            if !self.should_publish_candidate_key(&event.key, source, now) {
-                continue;
-            }
-            let frame = DirectRootFrame {
-                key: event.key.clone(),
-                event_id: event.event_id.clone(),
-                event_json: event.event_json.clone(),
-            };
-            let bytes = serde_json::to_vec(&frame)
-                .map_err(|error| format!("encoding direct root: {error}"))?;
-            let hint_bytes = should_publish_direct_root_hint(&event.key, source)
-                .then(|| encode_direct_root_hint_frame(&event.key, &event.event_id))
-                .transpose()
-                .map_err(|error| format!("encoding direct-root hint: {error}"))?;
+            self.publish_event(sync, &stream, publish_event, now)
+                .await?;
+        }
+        self.prune_published_keys();
+        Ok(())
+    }
+
+    async fn announce_state_request_reply(
+        &mut self,
+        config_dir: &Path,
+        sync: &FsFipsBlockSync,
+        config: &AppConfig,
+        state: &ProfileState,
+    ) -> Result<(), String> {
+        let root_scope_id = state.root_scope_id();
+        self.subscribe_profile_stream(&root_scope_id, sync).await;
+        let stream = direct_root_mesh_stream(&root_scope_id);
+        let events = build_current_direct_root_events(config_dir, config, state)
+            .map_err(|error| format!("{error:#}"))?
+            .into_iter()
+            .filter(|event| direct_root_cache_slot(&event.key).is_some())
+            .map(|event| DirectRootPublishEvent {
+                event,
+                source: DirectRootPublishSource::StateRequestReply,
+            });
+        let now = Instant::now();
+        for publish_event in events {
+            self.publish_event(sync, &stream, publish_event, now)
+                .await?;
+        }
+        self.prune_published_keys();
+        Ok(())
+    }
+
+    async fn publish_event(
+        &mut self,
+        sync: &FsFipsBlockSync,
+        stream: &str,
+        publish_event: DirectRootPublishEvent,
+        now: Instant,
+    ) -> Result<(), String> {
+        let DirectRootPublishEvent { event, source } = publish_event;
+        if !self.should_publish_candidate_key(&event.key, source, now) {
+            return Ok(());
+        }
+        let frame = DirectRootFrame {
+            key: event.key.clone(),
+            event_id: event.event_id.clone(),
+            event_json: event.event_json.clone(),
+        };
+        let bytes =
+            serde_json::to_vec(&frame).map_err(|error| format!("encoding direct root: {error}"))?;
+        let hint_bytes = should_publish_direct_root_hint(&event.key, source)
+            .then(|| encode_direct_root_hint_frame(&event.key, &event.event_id))
+            .transpose()
+            .map_err(|error| format!("encoding direct-root hint: {error}"))?;
+        match sync
+            .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, bytes.clone())
+            .await
+        {
+            Ok(sent_peers) => tracing::debug!(
+                root_key = event.key.as_str(),
+                sent_peers,
+                "sent direct-root event over FIPS"
+            ),
+            Err(error) => tracing::warn!(
+                root_key = event.key.as_str(),
+                error = %error,
+                "sending direct-root event over FIPS failed"
+            ),
+        }
+        if let Some(hint_bytes) = hint_bytes.as_ref() {
             match sync
-                .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, bytes.clone())
+                .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, hint_bytes.clone())
                 .await
             {
                 Ok(sent_peers) => tracing::debug!(
                     root_key = event.key.as_str(),
                     sent_peers,
-                    "sent direct-root event over FIPS"
+                    "sent direct-root hint over FIPS"
                 ),
                 Err(error) => tracing::warn!(
                     root_key = event.key.as_str(),
                     error = %error,
-                    "sending direct-root event over FIPS failed"
+                    "sending direct-root hint over FIPS failed"
                 ),
             }
-            if let Some(hint_bytes) = hint_bytes.as_ref() {
-                match sync
-                    .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, hint_bytes.clone())
-                    .await
-                {
-                    Ok(sent_peers) => tracing::debug!(
-                        root_key = event.key.as_str(),
-                        sent_peers,
-                        "sent direct-root hint over FIPS"
-                    ),
-                    Err(error) => tracing::warn!(
-                        root_key = event.key.as_str(),
-                        error = %error,
-                        "sending direct-root hint over FIPS failed"
-                    ),
-                }
-            }
+        }
+        let seq = self.next_mesh_publish_seq();
+        let publish = sync
+            .publish_mesh_pubsub(stream.to_string(), seq, bytes)
+            .await;
+        tracing::debug!(
+            root_key = event.key.as_str(),
+            sent_peers = publish.sent_peers,
+            seq,
+            "published direct-root mesh event over FIPS"
+        );
+        if let Some(hint_bytes) = hint_bytes {
             let seq = self.next_mesh_publish_seq();
-            let publish = sync.publish_mesh_pubsub(stream.clone(), seq, bytes).await;
+            let publish = sync
+                .publish_mesh_pubsub(stream.to_string(), seq, hint_bytes)
+                .await;
             tracing::debug!(
                 root_key = event.key.as_str(),
                 sent_peers = publish.sent_peers,
                 seq,
-                "published direct-root mesh event over FIPS"
+                "published direct-root mesh hint over FIPS"
             );
-            if let Some(hint_bytes) = hint_bytes {
-                let seq = self.next_mesh_publish_seq();
-                let publish = sync
-                    .publish_mesh_pubsub(stream.clone(), seq, hint_bytes)
-                    .await;
-                tracing::debug!(
-                    root_key = event.key.as_str(),
-                    sent_peers = publish.sent_peers,
-                    seq,
-                    "published direct-root mesh hint over FIPS"
-                );
-            }
         }
-        self.prune_published_keys();
         Ok(())
     }
 
@@ -293,15 +335,14 @@ impl DirectRootExchange {
         }
         let config = AppConfig::load_or_default(config_path_in(config_dir))
             .map_err(|error| format!("loading config: {error}"))?;
-        if !config
-            .profile
-            .as_ref()
-            .is_some_and(|state| state.root_scope_id() == frame.root_scope_id)
-        {
+        let Some(state) = config.profile.as_ref() else {
+            return Ok(());
+        };
+        if state.root_scope_id() != frame.root_scope_id {
             return Ok(());
         }
-        self.published_keys.clear();
-        self.announce_current_state(config_dir, sync).await
+        self.announce_state_request_reply(config_dir, sync, &config, state)
+            .await
     }
 
     async fn apply_frame(
@@ -784,6 +825,10 @@ fn direct_root_republish_interval_secs_for_source(
     key: &str,
     source: DirectRootPublishSource,
 ) -> u64 {
+    if source == DirectRootPublishSource::StateRequestReply && direct_root_cache_slot(key).is_some()
+    {
+        return 2;
+    }
     if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
         return DIRECT_ROOT_REPUBLISH_INTERVAL_SECS;
     }
@@ -795,6 +840,10 @@ fn direct_root_republish_interval_secs_for_source(
 }
 
 fn direct_root_publish_throttle_key(key: &str, source: DirectRootPublishSource) -> String {
+    if source == DirectRootPublishSource::StateRequestReply && direct_root_cache_slot(key).is_some()
+    {
+        return format!("state-request:{key}");
+    }
     if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
         return format!("cached-relay:{key}");
     }
@@ -802,7 +851,10 @@ fn direct_root_publish_throttle_key(key: &str, source: DirectRootPublishSource) 
 }
 
 fn should_publish_direct_root_hint(key: &str, source: DirectRootPublishSource) -> bool {
-    source == DirectRootPublishSource::LocalCurrent && direct_root_cache_slot(key).is_some()
+    matches!(
+        source,
+        DirectRootPublishSource::LocalCurrent | DirectRootPublishSource::StateRequestReply
+    ) && direct_root_cache_slot(key).is_some()
 }
 
 pub fn encode_direct_root_hint_frame(
@@ -1827,6 +1879,39 @@ mod tests {
             newer_key,
             DirectRootPublishSource::CachedRelay,
             now + Duration::from_millis(1)
+        ));
+    }
+
+    #[test]
+    fn direct_root_state_request_replies_use_separate_throttle() {
+        let mut exchange = DirectRootExchange::default();
+        let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
+        let now = Instant::now();
+
+        assert!(exchange.should_publish_candidate_key(
+            key,
+            DirectRootPublishSource::LocalCurrent,
+            now
+        ));
+        assert!(!exchange.should_publish_candidate_key(
+            key,
+            DirectRootPublishSource::LocalCurrent,
+            now + Duration::from_millis(500)
+        ));
+        assert!(exchange.should_publish_candidate_key(
+            key,
+            DirectRootPublishSource::StateRequestReply,
+            now + Duration::from_millis(500)
+        ));
+        assert!(!exchange.should_publish_candidate_key(
+            key,
+            DirectRootPublishSource::StateRequestReply,
+            now + Duration::from_secs(1)
+        ));
+        assert!(exchange.should_publish_candidate_key(
+            key,
+            DirectRootPublishSource::StateRequestReply,
+            now + Duration::from_secs(3)
         ));
     }
 

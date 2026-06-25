@@ -6,6 +6,11 @@ pub(crate) enum EventApplyOutcome {
 }
 
 const ROOT_APPLY_FOLLOWUP_COALESCE_MS: u64 = 750;
+const DIRECT_ROOT_STATE_REQUEST_MIN_INTERVAL_SECS: u64 = 5;
+
+static DIRECT_ROOT_STATE_REQUEST_THROTTLE: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::BTreeMap<String, std::time::Instant>>,
+> = std::sync::OnceLock::new();
 
 impl EventApplyOutcome {
     pub(crate) const fn should_cache_direct_root_frame(self) -> bool {
@@ -747,6 +752,17 @@ async fn request_latest_direct_root_state(
     let Some(root_scope_id) = config.profile.as_ref().map(ProfileState::root_scope_id) else {
         return;
     };
+    if !should_publish_direct_root_state_request(&root_scope_id) {
+        println!(
+            "{}",
+            json!({
+                "event": "direct_root_state_request_throttled",
+                "trigger": projection_event,
+                "root_scope_id": root_scope_id,
+            })
+        );
+        return;
+    }
     let bytes = match iris_drive_core::encode_direct_root_state_request_frame(&root_scope_id) {
         Ok(bytes) => bytes,
         Err(error) => {
@@ -787,6 +803,23 @@ async fn request_latest_direct_root_state(
             })
         ),
     }
+}
+
+fn should_publish_direct_root_state_request(root_scope_id: &str) -> bool {
+    let throttle = DIRECT_ROOT_STATE_REQUEST_THROTTLE
+        .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
+    let Ok(mut throttle) = throttle.lock() else {
+        return true;
+    };
+    let now = std::time::Instant::now();
+    if throttle.get(root_scope_id).is_some_and(|last| {
+        now.duration_since(*last)
+            < std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_MIN_INTERVAL_SECS)
+    }) {
+        return false;
+    }
+    throttle.insert(root_scope_id.to_string(), now);
+    true
 }
 
 fn should_try_blossom_download(

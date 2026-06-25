@@ -21,6 +21,7 @@ struct DirectRootPublishEvent {
 enum DirectRootPublishSource {
     LocalCurrent,
     CachedRelay,
+    StateRequestReply,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -45,6 +46,7 @@ impl DirectRootPublishSource {
         match self {
             Self::LocalCurrent => "local_current",
             Self::CachedRelay => "cached_relay",
+            Self::StateRequestReply => "state_request",
         }
     }
 }
@@ -128,55 +130,81 @@ impl DirectRootExchange {
         let events = self.events_for_publish(local_events);
         let now = std::time::Instant::now();
         for publish_event in events {
-            let DirectRootPublishEvent { event, source } = publish_event;
-            let event = self.event_for_publish(event);
-            let should_publish = self.should_publish_candidate_key(&event.key, source, now);
-            self.cache_event(event.clone());
-            if !should_publish {
-                continue;
-            }
-            let frame = DirectRootFrame {
-                key: event.key.clone(),
-                event_id: event.event_id.clone(),
-                event_json: event.json.clone(),
-            };
-            let bytes = serde_json::to_vec(&frame)?;
-            let hint_bytes = should_publish_direct_root_hint(&event.key, source)
-                .then(|| iris_drive_core::encode_direct_root_hint_frame(&event.key, &event.event_id))
-                .transpose()
-                .context("encoding direct-root hint frame")?;
-            let attempts = direct_root_publish_attempts_for_source(&event.key, source);
-            for attempt in 0..attempts {
-                if let Some(hint_bytes) = hint_bytes.as_ref() {
-                    let selected_app_peers = sync.authorized_peer_ids().await.len();
-                    let sent_app_peers = sync
-                        .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, hint_bytes.clone())
-                        .await?;
-                    println!(
-                        "{}",
-                        json!({
-                            "event": "direct_root_app_hint_publish",
-                            "topic": DIRECT_ROOT_APP_TOPIC,
-                            "root_key": event.key.clone(),
-                            "root_event_id": event.event_id.clone(),
-                            "kind": event.kind,
-                            "source": source.as_str(),
-                            "attempt": attempt + 1,
-                            "attempts": attempts,
-                            "selected_peers": selected_app_peers,
-                            "sent_peers": sent_app_peers,
-                            "sent_bytes": hint_bytes.len(),
-                        })
-                    );
-                }
+            self.publish_event(sync, &stream, publish_event, now).await?;
+        }
+        Ok(())
+    }
+
+    async fn announce_state_request_reply(
+        &mut self,
+        config_dir: &Path,
+        config: &AppConfig,
+        state: &ProfileState,
+        sync: &FsFipsBlockSync,
+    ) -> Result<()> {
+        let root_scope_id = state.root_scope_id();
+        self.subscribe_profile_stream(&root_scope_id, Some(sync)).await;
+        let stream = direct_root_mesh_stream(&root_scope_id);
+        let config_fingerprint = config_file_fingerprint(&config_path_in(config_dir))?;
+        let local_events = self
+            .cached_current_sync_events_from_config(config_fingerprint, || {
+                build_current_sync_events(config_dir, config, state)
+            })
+            .await?;
+        let now = std::time::Instant::now();
+        for event in local_events
+            .into_iter()
+            .filter(|event| direct_root_cache_slot(&event.key).is_some())
+        {
+            self.publish_event(
+                sync,
+                &stream,
+                DirectRootPublishEvent {
+                    event,
+                    source: DirectRootPublishSource::StateRequestReply,
+                },
+                now,
+            )
+            .await?;
+        }
+        Ok(())
+    }
+
+    async fn publish_event(
+        &mut self,
+        sync: &FsFipsBlockSync,
+        stream: &str,
+        publish_event: DirectRootPublishEvent,
+        now: std::time::Instant,
+    ) -> Result<()> {
+        let DirectRootPublishEvent { event, source } = publish_event;
+        let event = self.event_for_publish(event);
+        let should_publish = self.should_publish_candidate_key(&event.key, source, now);
+        self.cache_event(event.clone());
+        if !should_publish {
+            return Ok(());
+        }
+        let frame = DirectRootFrame {
+            key: event.key.clone(),
+            event_id: event.event_id.clone(),
+            event_json: event.json.clone(),
+        };
+        let bytes = serde_json::to_vec(&frame)?;
+        let hint_bytes = should_publish_direct_root_hint(&event.key, source)
+            .then(|| iris_drive_core::encode_direct_root_hint_frame(&event.key, &event.event_id))
+            .transpose()
+            .context("encoding direct-root hint frame")?;
+        let attempts = direct_root_publish_attempts_for_source(&event.key, source);
+        for attempt in 0..attempts {
+            if let Some(hint_bytes) = hint_bytes.as_ref() {
                 let selected_app_peers = sync.authorized_peer_ids().await.len();
                 let sent_app_peers = sync
-                    .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, bytes.clone())
+                    .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, hint_bytes.clone())
                     .await?;
                 println!(
                     "{}",
                     json!({
-                        "event": "direct_root_app_publish",
+                        "event": "direct_root_app_hint_publish",
                         "topic": DIRECT_ROOT_APP_TOPIC,
                         "root_key": event.key.clone(),
                         "root_event_id": event.event_id.clone(),
@@ -186,17 +214,60 @@ impl DirectRootExchange {
                         "attempts": attempts,
                         "selected_peers": selected_app_peers,
                         "sent_peers": sent_app_peers,
-                        "sent_bytes": bytes.len(),
+                        "sent_bytes": hint_bytes.len(),
                     })
                 );
+            }
+            let selected_app_peers = sync.authorized_peer_ids().await.len();
+            let sent_app_peers = sync
+                .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, bytes.clone())
+                .await?;
+            println!(
+                "{}",
+                json!({
+                    "event": "direct_root_app_publish",
+                    "topic": DIRECT_ROOT_APP_TOPIC,
+                    "root_key": event.key.clone(),
+                    "root_event_id": event.event_id.clone(),
+                    "kind": event.kind,
+                    "source": source.as_str(),
+                    "attempt": attempt + 1,
+                    "attempts": attempts,
+                    "selected_peers": selected_app_peers,
+                    "sent_peers": sent_app_peers,
+                    "sent_bytes": bytes.len(),
+                })
+            );
+            let seq = self.next_mesh_publish_seq();
+            let publish_stats = sync
+                .publish_mesh_pubsub(stream.to_string(), seq, bytes.clone())
+                .await;
+            println!(
+                "{}",
+                json!({
+                    "event": "direct_root_mesh_publish",
+                    "stream": stream,
+                    "seq": seq,
+                    "root_key": event.key.clone(),
+                    "root_event_id": event.event_id.clone(),
+                    "kind": event.kind,
+                    "source": source.as_str(),
+                    "attempt": attempt + 1,
+                    "attempts": attempts,
+                    "selected_peers": publish_stats.selected_peers,
+                    "sent_peers": publish_stats.sent_peers,
+                    "sent_bytes": publish_stats.sent_bytes,
+                })
+            );
+            if let Some(hint_bytes) = hint_bytes.as_ref() {
                 let seq = self.next_mesh_publish_seq();
                 let publish_stats = sync
-                    .publish_mesh_pubsub(stream.clone(), seq, bytes.clone())
+                    .publish_mesh_pubsub(stream.to_string(), seq, hint_bytes.clone())
                     .await;
                 println!(
                     "{}",
                     json!({
-                        "event": "direct_root_mesh_publish",
+                        "event": "direct_root_mesh_hint_publish",
                         "stream": stream,
                         "seq": seq,
                         "root_key": event.key.clone(),
@@ -210,29 +281,6 @@ impl DirectRootExchange {
                         "sent_bytes": publish_stats.sent_bytes,
                     })
                 );
-                if let Some(hint_bytes) = hint_bytes.as_ref() {
-                    let seq = self.next_mesh_publish_seq();
-                    let publish_stats = sync
-                        .publish_mesh_pubsub(stream.clone(), seq, hint_bytes.clone())
-                        .await;
-                    println!(
-                        "{}",
-                        json!({
-                            "event": "direct_root_mesh_hint_publish",
-                            "stream": stream,
-                            "seq": seq,
-                            "root_key": event.key.clone(),
-                            "root_event_id": event.event_id.clone(),
-                            "kind": event.kind,
-                            "source": source.as_str(),
-                            "attempt": attempt + 1,
-                            "attempts": attempts,
-                            "selected_peers": publish_stats.selected_peers,
-                            "sent_peers": publish_stats.sent_peers,
-                            "sent_bytes": publish_stats.sent_bytes,
-                        })
-                    );
-                }
             }
         }
         Ok(())
@@ -365,8 +413,6 @@ impl DirectRootExchange {
         if state.root_scope_id() != frame.root_scope_id {
             return Ok(());
         }
-        self.published_keys.clear();
-        self.invalidate_current_sync_events_cache();
         println!(
             "{}",
             json!({
@@ -374,7 +420,7 @@ impl DirectRootExchange {
                 "root_scope_id": frame.root_scope_id,
             })
         );
-        self.announce_current_state(config_dir, &config, state, Some(sync.as_ref()))
+        self.announce_state_request_reply(config_dir, &config, state, sync.as_ref())
             .await
     }
 
@@ -781,6 +827,10 @@ fn direct_root_republish_interval_secs_for_source(
     key: &str,
     source: DirectRootPublishSource,
 ) -> u64 {
+    if source == DirectRootPublishSource::StateRequestReply && direct_root_cache_slot(key).is_some()
+    {
+        return 2;
+    }
     if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
         return DIRECT_ROOT_REPUBLISH_INTERVAL_SECS;
     }
@@ -797,6 +847,9 @@ fn direct_root_publish_attempts(key: &str) -> usize {
 }
 
 fn direct_root_publish_attempts_for_source(key: &str, source: DirectRootPublishSource) -> usize {
+    if source == DirectRootPublishSource::StateRequestReply {
+        return 1;
+    }
     if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
         return 2;
     }
@@ -810,7 +863,10 @@ fn direct_root_publish_attempts_for_source(key: &str, source: DirectRootPublishS
 }
 
 fn should_publish_direct_root_hint(key: &str, source: DirectRootPublishSource) -> bool {
-    source == DirectRootPublishSource::LocalCurrent && direct_root_cache_slot(key).is_some()
+    matches!(
+        source,
+        DirectRootPublishSource::LocalCurrent | DirectRootPublishSource::StateRequestReply
+    ) && direct_root_cache_slot(key).is_some()
 }
 
 fn direct_root_wire_frame_log_fields(frame: &DirectRootWireFrame) -> (String, String, &'static str) {
@@ -836,6 +892,10 @@ fn direct_root_hint_published_at() -> i64 {
 }
 
 fn direct_root_publish_throttle_key(key: &str, source: DirectRootPublishSource) -> String {
+    if source == DirectRootPublishSource::StateRequestReply && direct_root_cache_slot(key).is_some()
+    {
+        return format!("state-request:{key}");
+    }
     if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
         return format!("cached-relay:{key}");
     }
