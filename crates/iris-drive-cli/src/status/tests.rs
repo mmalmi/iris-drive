@@ -39,6 +39,31 @@ fn remote_app_key_sync_state_requires_successful_block_sync() {
 }
 
 #[test]
+fn daemon_sync_status_reports_syncing_when_peer_blocks_are_pending() {
+    let daemon_status = json!({
+        "running": true,
+        "event": "drive_root",
+    });
+    let peers = vec![
+        json!({
+            "authorized": true,
+            "is_current_app_key": true,
+            "sync_state": "local",
+        }),
+        json!({
+            "authorized": true,
+            "is_current_app_key": false,
+            "sync_state": "blocks pending",
+        }),
+    ];
+
+    assert_eq!(
+        daemon_sync_status_with_peers(Some(&daemon_status), &peers),
+        "syncing"
+    );
+}
+
+#[test]
 fn block_stats_entry_limit_marks_truncated() {
     let dir = tempfile::tempdir().unwrap();
     for index in 0..3 {

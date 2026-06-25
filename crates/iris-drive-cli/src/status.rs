@@ -101,7 +101,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
     let backup_targets = backup_targets_status(&config);
     let backup_target_count = backup_targets.len();
     let profile_block = status_profile_block(&config);
-    let sync_status = daemon_sync_status(daemon_status.as_ref());
+    let sync_status = daemon_sync_status_with_peers(daemon_status.as_ref(), &peers);
     println!(
         "{}",
         json!({
@@ -258,6 +258,33 @@ pub(crate) fn daemon_sync_status(daemon_status: Option<&Value>) -> String {
         _ => "up to date",
     }
     .to_owned()
+}
+
+pub(crate) fn daemon_sync_status_with_peers(
+    daemon_status: Option<&Value>,
+    peers: &[Value],
+) -> String {
+    let status = daemon_sync_status(daemon_status);
+    if !matches!(status.as_str(), "up to date" | "root synced" | "synced") {
+        return status;
+    }
+    if peers.iter().any(|peer| {
+        peer.get("authorized")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            && !peer
+                .get("is_current_app_key")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            && peer
+                .get("sync_state")
+                .and_then(Value::as_str)
+                .is_some_and(|state| state == "blocks pending")
+    }) {
+        "syncing".to_owned()
+    } else {
+        status
+    }
 }
 
 pub(crate) fn cmd_nhash_resolver(

@@ -723,9 +723,9 @@ impl DirectRootExchange {
             .iter()
             .any(|peer| !self.known_publish_peers.contains(peer));
         if has_new_publish_peer {
-            self.known_publish_peers.extend(publish_peers);
             self.published_keys.clear();
         }
+        self.known_publish_peers = publish_peers;
         peers_changed
     }
 
