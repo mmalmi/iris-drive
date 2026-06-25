@@ -520,11 +520,14 @@ fn windows_cloud_cached_delete_recovery_detects_projection_misses() {
 }
 
 #[test]
-fn windows_cloud_periodic_validation_is_narrow_local_state_check() {
-    assert!(matches!(
+fn windows_cloud_periodic_validation_rescans_recent_local_changes() {
+    assert_eq!(
         windows_cloud_periodic_validate_change(),
-        WindowsCloudRootChange::ValidateLocalState
-    ));
+        WindowsCloudRootChange::Rescan {
+            full: false,
+            recover_cached_deletes: false,
+        }
+    );
 }
 
 #[test]

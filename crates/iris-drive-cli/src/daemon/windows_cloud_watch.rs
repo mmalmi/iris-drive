@@ -1,4 +1,4 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 #[cfg_attr(not(windows), allow(dead_code))]
 enum WindowsCloudRootChange {
     Upsert(String),
@@ -7,7 +7,6 @@ enum WindowsCloudRootChange {
         old_path: String,
         new_path: String,
     },
-    ValidateLocalState,
     Rescan {
         full: bool,
         recover_cached_deletes: bool,
@@ -88,7 +87,10 @@ fn start_windows_cloud_root_watch() -> Result<(
 
 #[cfg_attr(not(windows), allow(dead_code))]
 fn windows_cloud_periodic_validate_change() -> WindowsCloudRootChange {
-    WindowsCloudRootChange::ValidateLocalState
+    WindowsCloudRootChange::Rescan {
+        full: false,
+        recover_cached_deletes: false,
+    }
 }
 
 #[cfg(windows)]
@@ -210,7 +212,6 @@ async fn import_windows_cloud_root_changes_and_publish(
                     tombstone_paths.insert(old_path);
                 }
             }
-            WindowsCloudRootChange::ValidateLocalState => {}
             WindowsCloudRootChange::Rescan {
                 full,
                 recover_cached_deletes,
@@ -323,7 +324,6 @@ fn windows_cloud_protected_local_mutation_paths(
                 windows_cloud_insert_path_and_ancestors(&mut protected, new_path);
             }
             WindowsCloudRootChange::Delete(_)
-            | WindowsCloudRootChange::ValidateLocalState
             | WindowsCloudRootChange::Rescan { .. } => {}
         }
     }
