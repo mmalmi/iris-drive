@@ -51,10 +51,40 @@ fn recover_app_key_command_uses_saved_phrase_after_profile_log_sync() {
 
     let recovered_account = Profile::load(state.clone(), recovered_dir.path()).unwrap();
     let recovered_dck = recovered_account.current_dck().unwrap();
-    assert_ne!(recovered_dck, owner_dck);
+    assert_eq!(recovered_dck, owner_dck);
     owner.state.profile_roster_ops = state.profile_roster_ops;
     owner.state.sync_app_keys_from_profile();
     assert_eq!(owner.current_dck().unwrap(), recovered_dck);
+}
+
+#[test]
+fn revoke_command_can_use_recovery_secret() {
+    let dir = tempdir().unwrap();
+    let phrase = iris_drive_core::recovery_phrase::generate_recovery_phrase().unwrap();
+    let mut profile = Profile::restore(dir.path(), &phrase, Some("native".into())).unwrap();
+    let linked_app_key = nostr_sdk::Keys::generate().public_key().to_hex();
+    profile
+        .approve_app_key(&linked_app_key, Some("phone".into()))
+        .unwrap();
+    let gen_before = profile.state.app_keys.as_ref().unwrap().dck_generation;
+    let mut config = AppConfig {
+        profile: Some(profile.state.clone()),
+        ..AppConfig::default()
+    };
+    config.upsert_drive(Drive::primary(profile.state.profile_id.to_string()));
+    config.save(config_path_in(dir.path())).unwrap();
+    let recovery_nsec = iris_drive_core::recovery_phrase::recovery_phrase_to_nsec(&phrase)
+        .expect("recovery phrase derives nsec");
+
+    cmd_revoke(dir.path(), &linked_app_key, Some(&recovery_nsec)).unwrap();
+
+    let saved = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+    let state = saved.profile.expect("profile saved");
+    let snap = state.app_keys.as_ref().expect("app keys projection");
+    assert!(snap.dck_generation > gen_before);
+    assert!(!snap.contains(&linked_app_key));
+    assert!(!snap.wrapped_dck.contains_key(&linked_app_key));
+    assert!(state.can_admin_profile());
 }
 
 #[tokio::test]

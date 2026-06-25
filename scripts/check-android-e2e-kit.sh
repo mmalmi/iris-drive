@@ -38,6 +38,8 @@ require_file android/app/src/main/java/to/iris/drive/app/IrisWebActivity.kt
 require_file android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt
 require_file android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt
 require_file android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndroidGuiFlowTest.kt
+require_file android/app/src/androidTest/java/to/iris/drive/app/ShareActivityInstrumentedTest.kt
+require_file android/app/src/androidTest/java/to/iris/drive/app/provider/IrisDriveDocumentsProviderContractTest.kt
 require_file android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentsProvider.kt
 require_file scripts/mobile-android-smoke.sh
 require_file scripts/android-gui-linking-smoke.sh
@@ -58,6 +60,11 @@ require_contains android/app/src/main/java/to/iris/drive/app/provider/IrisDriveD
 require_contains android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentsProvider.kt "openDocument"
 require_contains android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentsProvider.kt "renameDocument"
 require_contains android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentsProvider.kt "deleteDocument"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/provider/IrisDriveDocumentsProviderContractTest.kt "DocumentsContract.createDocument"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/provider/IrisDriveDocumentsProviderContractTest.kt "openOutputStream"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/provider/IrisDriveDocumentsProviderContractTest.kt "openInputStream"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/provider/IrisDriveDocumentsProviderContractTest.kt "DocumentsContract.renameDocument"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/provider/IrisDriveDocumentsProviderContractTest.kt "DocumentsContract.deleteDocument"
 require_contains android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentStore.kt "isChildDocument"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "SetupRoute.Welcome ->"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "route = SetupRoute.CreateProfile"
@@ -80,6 +87,10 @@ require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "wa
 require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "localGatewayResponds"
 require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "HttpURLConnection"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.kt "Opening Iris Apps"
+require_contains android/app/src/main/AndroidManifest.xml "android.intent.action.SEND"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/ShareActivityInstrumentedTest.kt "Intent.ACTION_SEND"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/ShareActivityInstrumentedTest.kt "ActivityScenario.launch<ShareActivity>"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/ShareActivityInstrumentedTest.kt "Mobile share API.txt"
 require_file android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndroidIrisAppsButtonTest.kt
 require_contains android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndroidIrisAppsButtonTest.kt "openIrisAppsButtonStartsGatewayReadinessEvenBeforePortalUrlExists"
 require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "NativeActions.refreshProfile()"
@@ -90,11 +101,14 @@ require_absent android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel
 require_absent android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Approve Device"
 require_absent android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt "Approve Device"
 require_contains scripts/mobile-android-smoke.sh "PROVIDER_AUTHORITY"
+require_contains scripts/mobile-android-smoke.sh "to.iris.drive.debug.documents"
+require_contains scripts/mobile-android-smoke.sh 'Authority: "share"'
 require_contains scripts/mobile-android-smoke.sh "create-profile"
 require_contains android/app/build.gradle.kts "create(\"uiTest\")"
 require_contains scripts/android-gui-linking-smoke.sh "connectedUiTestAndroidTest"
 require_contains scripts/android-gui-linking-smoke.sh "to.iris.drive.uitest"
 require_contains scripts/android-gui-linking-smoke.sh "IrisDriveAndroidGuiFlowTest"
+require_contains scripts/android-gui-linking-smoke.sh "ShareActivityInstrumentedTest"
 require_absent android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndroidGuiFlowTest.kt "linkDeviceSubmit\").assertIsEnabled().performClick()"
 require_contains scripts/cross-vm-five-platform-e2e.sh "IRIS_DRIVE_E2E_ANDROID_HOST"
 require_contains scripts/cross-vm-five-platform-e2e.sh "scripts/android-gui-linking-smoke.sh"

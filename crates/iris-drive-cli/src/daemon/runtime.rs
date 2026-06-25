@@ -9,6 +9,9 @@ fn write_runtime_daemon_status(config_dir: &Path, payload: Value) -> Value {
     write_daemon_status(config_dir, payload)
 }
 
+const DIRECT_APP_MESSAGE_DRAIN_LIMIT: usize = 4096;
+const DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS: u64 = 750;
+
 #[allow(
     clippy::needless_pass_by_value,
     clippy::too_many_arguments,
@@ -27,7 +30,7 @@ pub(crate) fn cmd_daemon(
 ) -> Result<()> {
     use iris_drive_core::relay_sync;
     use nostr_sdk::RelayPoolNotification;
-    use tokio::sync::broadcast::error::RecvError;
+    use tokio::sync::broadcast::error::{RecvError, TryRecvError};
     use tokio::sync::mpsc;
 
     let _daemon_lock = DaemonProcessLock::acquire(config_dir)?;
@@ -271,7 +274,7 @@ pub(crate) fn cmd_daemon(
             })
         });
         let root_update_debounce = root_update_debounce_duration(watch_debounce_ms);
-        let subscribed_status = json!({
+        let mut subscribed_status = json!({
                 "event": "subscribed",
                 "relays": relays,
                 "current_app_key_npub": pubkey_npub(&state.app_key_pubkey),
@@ -289,6 +292,9 @@ pub(crate) fn cmd_daemon(
                 "fips_block_sync": startup_fips_block_sync_status,
                 "fips_block_sync_error": fips_block_sync_error,
         });
+        if let Some(hashtree) = primary_drive_status_payload(config_dir, &config).await {
+            subscribed_status["hashtree"] = hashtree;
+        }
         let subscribed_status = write_runtime_daemon_status(config_dir, subscribed_status);
         println!("{subscribed_status}");
         spawn_daemon_heartbeat(config_dir.to_path_buf());
@@ -296,7 +302,7 @@ pub(crate) fn cmd_daemon(
         let startup_config = config.clone();
         let startup_state = state.clone();
         for root_cid in startup_root_cids_needing_sync(config_dir, &config) {
-            if let Some(task) = spawn_root_apply_followup(
+            enqueue_root_apply_followup(
                 config_dir.to_path_buf(),
                 config.clone(),
                 Some(root_cid),
@@ -304,11 +310,10 @@ pub(crate) fn cmd_daemon(
                 true,
                 "startup_root_sync",
                 mount_refresh_tx.clone(),
-            ) {
-                daemon_tasks.push(task);
-            }
+                &daemon_tasks,
+            );
         }
-        if let Some(task) = spawn_root_apply_followup(
+        enqueue_root_apply_followup(
             config_dir.to_path_buf(),
             config.clone(),
             None,
@@ -316,9 +321,8 @@ pub(crate) fn cmd_daemon(
             true,
             "startup_projection",
             mount_refresh_tx.clone(),
-        ) {
-            daemon_tasks.push(task);
-        }
+            &daemon_tasks,
+        );
         daemon_tasks.push(spawn_initial_publish(
             client.clone(),
             config_dir.to_path_buf(),
@@ -354,6 +358,9 @@ pub(crate) fn cmd_daemon(
             direct_root_announce_period,
         );
         direct_root_announce_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut direct_root_change_announce_pending = false;
+        let mut direct_root_change_announce_timer =
+            Box::pin(tokio::time::sleep(std::time::Duration::from_secs(86_400)));
         let config_root_watch_active = config_root_change_rx.is_some();
         let mut provider_root_poll_timer =
             tokio::time::interval(provider_root_poll_period(watch_interval));
@@ -400,19 +407,14 @@ pub(crate) fn cmd_daemon(
                             .await
                             {
                                 Ok(outcome) if outcome.should_announce_current_state() => {
-                                    if let Err(error) =
-                                        announce_current_state_direct(
-                                            &mut direct_roots,
-                                            config_dir,
-                                            fips_blocks.as_deref(),
-                                        )
-                                        .await
-                                    {
-                                        println!(
-                                            "{}",
-                                            json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
-                                        );
-                                    }
+                                    direct_roots.invalidate_current_sync_events_cache();
+                                    direct_root_change_announce_pending = true;
+                                    direct_root_change_announce_timer.as_mut().reset(
+                                        tokio::time::Instant::now()
+                                            + std::time::Duration::from_millis(
+                                                DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS,
+                                            ),
+                                    );
                                 }
                                 Ok(_) => {}
                                 Err(e) => {
@@ -532,6 +534,14 @@ pub(crate) fn cmd_daemon(
                         tokio::time::sleep(root_update_debounce).await;
                         while rx.try_recv().is_ok() {}
                     }
+                    if let Some(rx) = provider_root_wake_rx.as_mut()
+                        && let Some(wake_payload) =
+                            drain_latest_provider_root_wake_payload(rx, None)
+                        && let Some(status_payload) =
+                            provider_root_wake_status_payload(&wake_payload)
+                    {
+                        emit_daemon_status_event(config_dir, status_payload);
+                    }
                     match publish_provider_root_if_changed(
                         &client,
 	                        config_dir,
@@ -551,15 +561,22 @@ pub(crate) fn cmd_daemon(
                         ),
                     }
                 }
-                Some(()) = async {
+                Some(wake_payload) = async {
                     if let Some(rx) = provider_root_wake_rx.as_mut() {
                         rx.recv().await
                     } else {
-                        std::future::pending::<Option<()>>().await
+                        std::future::pending::<Option<Option<Value>>>().await
                     }
                 } => {
+                    let mut latest_wake_payload = wake_payload;
                     if let Some(rx) = provider_root_wake_rx.as_mut() {
-                        while rx.try_recv().is_ok() {}
+                        latest_wake_payload =
+                            drain_latest_provider_root_wake_payload(rx, latest_wake_payload);
+                    }
+                    if let Some(wake_payload) = latest_wake_payload.as_ref()
+                        && let Some(status_payload) = provider_root_wake_status_payload(wake_payload)
+                    {
+                        emit_daemon_status_event(config_dir, status_payload);
                     }
                     match publish_provider_root_if_changed(
                         &client,
@@ -698,22 +715,50 @@ pub(crate) fn cmd_daemon(
                         config_dir.to_path_buf(),
                         fips_blocks.clone(),
                     ));
-                    direct_roots
+                    if let Err(error) = direct_roots
                         .request_roots_from_new_peers(config_dir, fips_blocks.as_deref())
-                        .await;
-                }
-                _ = direct_root_announce_timer.tick() => {
-                    if let Err(error) =
-	                        announce_current_state_direct(
-	                            &mut direct_roots,
-	                            config_dir,
-	                            fips_blocks.as_deref(),
-	                        )
                         .await
                     {
                         println!(
                             "{}",
+                            json!({"event": "direct_root_mesh_error", "trigger": "peer_refresh", "error": format!("{error:#}")})
+                        );
+                    }
+                    enqueue_pending_root_sync_followups(
+                        config_dir,
+                        fips_blocks.clone(),
+                        mount_refresh_tx.clone(),
+                        &daemon_tasks,
+                        "periodic_root_sync",
+                    );
+                }
+                _ = direct_root_announce_timer.tick() => {
+                    if let Err(error) = announce_local_root_heartbeat_direct(
+                        &mut direct_roots,
+                        config_dir,
+                        fips_blocks.as_deref(),
+                    )
+                    .await
+                    {
+                        println!(
+                            "{}",
                             json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
+                        );
+                    }
+                }
+                _ = &mut direct_root_change_announce_timer, if direct_root_change_announce_pending => {
+                    direct_root_change_announce_pending = false;
+                    if let Err(error) =
+                        announce_current_state_direct(
+                            &mut direct_roots,
+                            config_dir,
+                            fips_blocks.as_deref(),
+                        )
+                        .await
+                    {
+                        println!(
+                            "{}",
+                            json!({"event": "direct_root_mesh_error", "trigger": "changed_event_coalesced", "error": format!("{error:#}")})
                         );
                     }
                 }
@@ -779,40 +824,98 @@ pub(crate) fn cmd_daemon(
                 } => {
                     match recv {
                         Some(Ok(message)) => {
-                            match handle_app_key_link_app_message(
-                                config_dir,
-                                &message,
-                                fips_blocks.as_deref(),
-                                &mut acked_app_key_link_rosters,
-                            )
-                            .await
-                            {
-                                Ok(true) => continue,
-                                Ok(false) => {}
-                                Err(error) => {
-                                    println!(
-                                        "{}",
-                                        json!({"event": "app_key_link_request_receive_error", "error": format!("{error:#}")})
-                                    );
-                                    continue;
+                            let should_coalesce_direct_roots =
+                                message.topic == iris_drive_core::DIRECT_ROOT_APP_TOPIC;
+                            let mut messages = vec![message];
+                            let mut receiver_closed = false;
+                            if should_coalesce_direct_roots {
+                                tokio::time::sleep(std::time::Duration::from_millis(
+                                    DIRECT_ROOT_RECEIVE_COALESCE_MS,
+                                ))
+                                .await;
+                            }
+                            if let Some(rx) = direct_app_message_rx.as_mut() {
+                                while messages.len() < DIRECT_APP_MESSAGE_DRAIN_LIMIT {
+                                    match rx.try_recv() {
+                                        Ok(message) => messages.push(message),
+                                        Err(TryRecvError::Empty) => break,
+                                        Err(TryRecvError::Lagged(n)) => {
+                                            println!("{}", json!({"event": "direct_root_app_lagged", "skipped": n}));
+                                        }
+                                        Err(TryRecvError::Closed) => {
+                                            receiver_closed = true;
+                                            break;
+                                        }
+                                    }
                                 }
                             }
-                            if let Some(sync) = fips_blocks.as_ref()
-                                && let Err(error) = direct_roots
-	                                    .handle_app_message(
-	                                        &client,
-	                                        config_dir,
-	                                        sync.clone(),
-	                                        mount_refresh_tx.clone(),
-	                                        &daemon_tasks,
-	                                        message,
-	                                    )
-                                    .await
-                            {
+                            let received_messages = messages.len();
+                            let (messages, coalesced_roots) =
+                                iris_drive_core::coalesce_direct_root_app_messages(messages);
+                            if coalesced_roots > 0 {
                                 println!(
                                     "{}",
-                                    json!({"event": "direct_root_app_error", "error": format!("{error:#}")})
+                                    json!({
+                                        "event": "direct_root_app_coalesced",
+                                        "received_messages": received_messages,
+                                        "applied_messages": messages.len(),
+                                        "skipped_roots": coalesced_roots,
+                                    })
                                 );
+                            }
+                            for message in messages {
+                                match handle_app_key_link_app_message(
+                                    config_dir,
+                                    &message,
+                                    fips_blocks.as_deref(),
+                                    &mut acked_app_key_link_rosters,
+                                )
+                                .await
+                                {
+                                    Ok(true) => continue,
+                                    Ok(false) => {}
+                                    Err(error) => {
+                                        println!(
+                                            "{}",
+                                            json!({"event": "app_key_link_request_receive_error", "error": format!("{error:#}")})
+                                        );
+                                        continue;
+                                    }
+                                }
+                                if let Some(sync) = fips_blocks.as_ref() {
+                                    match direct_roots
+                                        .handle_app_message(
+                                            &client,
+                                            config_dir,
+                                            sync.clone(),
+                                            mount_refresh_tx.clone(),
+                                            &daemon_tasks,
+                                            message,
+                                        )
+                                        .await
+                                    {
+                                        Ok(true) => {
+                                            direct_root_change_announce_pending = true;
+                                            direct_root_change_announce_timer.as_mut().reset(
+                                                tokio::time::Instant::now()
+                                                    + std::time::Duration::from_millis(
+                                                        DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS,
+                                                    ),
+                                            );
+                                        }
+                                        Ok(false) => {}
+                                        Err(error) => {
+                                            println!(
+                                                "{}",
+                                                json!({"event": "direct_root_app_error", "error": format!("{error:#}")})
+                                            );
+                                        }
+                                    }
+                                }
+                            }
+                            if receiver_closed {
+                                direct_app_message_rx = None;
+                                println!("{}", json!({"event": "direct_root_app_closed"}));
                             }
                         }
                         Some(Err(RecvError::Lagged(n))) => {
@@ -832,32 +935,39 @@ pub(crate) fn cmd_daemon(
                     }
                 } => {
                     if let Some(sync) = fips_blocks.as_ref() {
-                        let mut result = direct_roots
-                            .handle_mesh_event(
+                        let mut messages = vec![message];
+                        tokio::time::sleep(std::time::Duration::from_millis(
+                            DIRECT_ROOT_RECEIVE_COALESCE_MS,
+                        ))
+                        .await;
+                        messages.extend(sync.drain_mesh_pubsub_events().await);
+                        let result = direct_roots
+                            .handle_mesh_events(
                                 &client,
                                 config_dir,
-	                                sync.clone(),
-	                                mount_refresh_tx.clone(),
-	                                &daemon_tasks,
-	                                message,
-	                            )
+                                sync.clone(),
+                                mount_refresh_tx.clone(),
+                                &daemon_tasks,
+                                messages,
+                            )
                             .await;
-                        if result.is_ok() {
-                            result = direct_roots
-                                .drain_mesh_events(
-	                                    &client,
-	                                    config_dir,
-	                                    sync.clone(),
-	                                    mount_refresh_tx.clone(),
-	                                    &daemon_tasks,
-	                                )
-                                .await;
-                        }
-                        if let Err(error) = result {
-                            println!(
-                                "{}",
-                                json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
-                            );
+                        match result {
+                            Ok(true) => {
+                                direct_root_change_announce_pending = true;
+                                direct_root_change_announce_timer.as_mut().reset(
+                                    tokio::time::Instant::now()
+                                        + std::time::Duration::from_millis(
+                                            DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS,
+                                        ),
+                                );
+                            }
+                            Ok(false) => {}
+                            Err(error) => {
+                                println!(
+                                    "{}",
+                                    json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
+                                );
+                            }
                         }
                     }
                 }

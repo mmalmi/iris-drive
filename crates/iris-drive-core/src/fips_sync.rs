@@ -33,7 +33,7 @@ use crate::identity::AppKey;
 const FIPS_REQUEST_TIMEOUT: Duration = Duration::from_millis(1_250);
 const FIPS_REQUEST_RETRY_INTERVAL: Duration = Duration::from_millis(250);
 const FIPS_REQUEST_MAX_ATTEMPTS: usize = 4;
-const FIPS_PACKET_CHANNEL_CAPACITY: usize = 1024;
+const FIPS_PACKET_CHANNEL_CAPACITY: usize = 8192;
 const FIPS_WEBRTC_MAX_CONNECTIONS: usize = 16;
 const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 0;
 const APP_KEY_LINK_OPEN_DISCOVERY_MAX_PENDING: usize = 16;
@@ -528,33 +528,53 @@ fn authorized_device_fips_peers(
     };
     let mut peers = Vec::new();
     let local_device = &account.app_key_pubkey;
-    if let Some(app_keys) = account.current_app_keys_projection() {
-        peers.extend(
-            app_keys
-                .app_actors
-                .iter()
-                .filter(|device| device.pubkey != *local_device)
-                .filter_map(|device| {
-                    PublicKey::from_hex(&device.pubkey)
-                        .ok()
-                        .and_then(|pubkey| pubkey.to_bech32().ok())
-                        .map(|npub| FipsPeerConfig {
-                            udp_addresses: static_peer_addresses_for_device(
-                                &settings.static_peer_hints,
-                                device,
-                                &npub,
-                            ),
-                            npub,
-                        })
-                }),
-        );
-    }
+    let devices = account.current_app_keys_projection().map_or_else(
+        || legacy_drive_root_app_actors(config, account),
+        |projection| projection.app_actors,
+    );
+    peers.extend(
+        devices
+            .iter()
+            .filter(|device| device.pubkey != *local_device)
+            .filter_map(|device| {
+                PublicKey::from_hex(&device.pubkey)
+                    .ok()
+                    .and_then(|pubkey| pubkey.to_bech32().ok())
+                    .map(|npub| FipsPeerConfig {
+                        udp_addresses: static_peer_addresses_for_device(
+                            &settings.static_peer_hints,
+                            device,
+                            &npub,
+                        ),
+                        npub,
+                    })
+            }),
+    );
     if let Some(pending) = pending_app_key_link_fips_peer(config, settings)
         && !peers.iter().any(|peer| peer.npub == pending.npub)
     {
         peers.push(pending);
     }
     peers
+}
+
+fn legacy_drive_root_app_actors(
+    config: &AppConfig,
+    account: &crate::ProfileState,
+) -> Vec<crate::AppActorEntry> {
+    let Some(drive) = config.drive(crate::PRIMARY_DRIVE_ID) else {
+        return Vec::new();
+    };
+    crate::drive_root_writer_app_key_pubkeys(account, drive)
+        .into_iter()
+        .map(|pubkey| {
+            if pubkey == account.app_key_pubkey {
+                crate::AppActorEntry::admin(pubkey, 0, account.app_key_label.clone())
+            } else {
+                crate::AppActorEntry::member(pubkey, 0, None)
+            }
+        })
+        .collect()
 }
 
 fn routing_fips_peers(config: &AppConfig, settings: &FipsTransportSettings) -> Vec<FipsPeerConfig> {
@@ -581,13 +601,19 @@ fn has_remote_authorized_app_key(config: &AppConfig) -> bool {
     let Some(account) = config.profile.as_ref() else {
         return false;
     };
-    let Some(app_keys) = account.current_app_keys_projection() else {
-        return false;
-    };
-    app_keys
-        .app_actors
-        .iter()
-        .any(|device| device.pubkey != account.app_key_pubkey)
+    account.current_app_keys_projection().map_or_else(
+        || {
+            legacy_drive_root_app_actors(config, account)
+                .iter()
+                .any(|device| device.pubkey != account.app_key_pubkey)
+        },
+        |app_keys| {
+            app_keys
+                .app_actors
+                .iter()
+                .any(|device| device.pubkey != account.app_key_pubkey)
+        },
+    )
 }
 
 fn pending_app_key_link_fips_peers(

@@ -132,6 +132,30 @@ func resetFileProviderDomain(
     removeFileProviderDomain(domain, reason: reason, finish)
 }
 
+func resetAllFileProviderDomains(
+    reason: String,
+    runtime: FileProviderRuntimeConfig,
+    _ completion: @escaping (FileProviderDomainState) -> Void
+) {
+    let domain = irisDriveFileProviderDomain(runtime: runtime)
+    let registrationIdentity = currentFileProviderRegistrationIdentity()
+    clearFileProviderRegistrationIdentity()
+    irisDriveDebugLog("Iris Drive FileProvider all-domain reset: \(reason)")
+    NSFileProviderManager.removeAllDomains { error in
+        if let error {
+            irisDriveDebugLog("Iris Drive FileProvider all-domain reset failed: \(error)")
+            completion(.unavailable)
+            return
+        }
+        addFreshFileProviderDomain(
+            domain,
+            currentIdentity: registrationIdentity,
+            reason: reason,
+            completion
+        )
+    }
+}
+
 func removeFileProviderDomainRegistration(
     reason: String,
     runtime: FileProviderRuntimeConfig? = nil

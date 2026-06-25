@@ -179,7 +179,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     finish(state)
                 }
                 if resetDomain {
-                    resetFileProviderDomain(
+                    resetAllFileProviderDomains(
                         reason: "startup reset requested",
                         runtime: runtime,
                         completion

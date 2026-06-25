@@ -5,7 +5,7 @@ import UniformTypeIdentifiers
 
 enum FileProviderStorage {
     private static let appGroupIdentifier = "group.to.iris.drive"
-    private static let domainIdentifier = NSFileProviderDomainIdentifier("main")
+    private static let domainIdentifier = NSFileProviderDomainIdentifier("primary-v1")
     private static let domainDisplayName = "Iris Drive"
     private static let storageDirectoryName = "IrisDrive"
     private static let providerSnapshotFileName = "ios-provider-snapshot.json"
@@ -167,19 +167,29 @@ enum FileProviderStorage {
         template: NSFileProviderItem,
         contents: URL?,
         mayAlreadyExist: Bool
-    ) throws -> FileProviderItem {
+    ) throws -> FileProviderItem? {
         let parent = path(for: template.parentItemIdentifier) ?? ""
-        let destination = try resolvedPath(parent: parent, name: template.filename)
+        let destination: NativeProviderResolvedPath
+        debugLog(
+            "create request name=\(template.filename) parent=\(parent) " +
+                "mayAlreadyExist=\(mayAlreadyExist) contents=\(contents != nil)"
+        )
         if mayAlreadyExist {
+            destination = try resolvedPath(parent: parent, name: template.filename)
             let state = loadStateForEnumeration()
             if let existing = state.entries.first(where: { $0.path == destination.path }) {
                 debugLog("create mayAlreadyExist resolved existing path=\(destination.path)")
                 return item(for: existing, anchor: state.anchor)
             }
-            debugLog("create mayAlreadyExist rejected absent path=\(destination.path)")
-            throw NSError.fileProviderErrorForNonExistentItem(
-                withIdentifier: identifier(for: destination.path)
+            debugLog(
+                "create mayAlreadyExist absent path=\(destination.path) " +
+                    "contents=\(contents != nil)"
             )
+            if contents == nil {
+                return nil
+            }
+        } else {
+            destination = try composedPath(parent: parent, name: template.filename)
         }
         if (template.contentType ?? .data).conforms(to: .folder) {
             try runProviderMutation(
@@ -192,13 +202,30 @@ enum FileProviderStorage {
             } else {
                 source = try emptyTemporaryFile()
             }
-            try runProviderMutation(
-                IrisDriveNativeProvider.write(
-                    dataDir: baseDirectory.path,
-                    path: destination.path,
-                    sourcePath: source.path
+            do {
+                try runProviderMutation(
+                    IrisDriveNativeProvider.write(
+                        dataDir: baseDirectory.path,
+                        path: destination.path,
+                        sourcePath: source.path
+                    )
                 )
-            )
+            } catch {
+                if isPlaceholderCopyError(error) {
+                    if let existing = existingPlaceholderFamilyItem(for: destination.path) {
+                        debugLog(
+                            "create placeholder copy resolved to existing " +
+                                "path=\(existing.itemIdentifier.rawValue)"
+                        )
+                        return existing
+                    }
+                    debugLog("create refused placeholder copy path=\(destination.path)")
+                    throw providerCannotSynchronizeError(
+                        "refusing duplicate FileProvider placeholder copy"
+                    )
+                }
+                throw error
+            }
         }
         signalProviderChanged()
         return optimisticItem(for: destination, template: template, contents: contents)
@@ -533,11 +560,89 @@ enum FileProviderStorage {
         return resolved
     }
 
+    private static func composedPath(
+        parent: String,
+        name: String
+    ) throws -> NativeProviderResolvedPath {
+        let resolved = IrisDriveNativeProvider.composePath(parentPath: parent, displayName: name)
+        if !resolved.error.isEmpty {
+            throw providerError(resolved.error)
+        }
+        guard !resolved.path.isEmpty else {
+            throw providerError("provider path composer returned no path")
+        }
+        return resolved
+    }
+
     private static func providerError(_ message: String) -> NSError {
         NSError(
             domain: NSFileProviderErrorDomain,
             code: NSFileProviderError.serverUnreachable.rawValue,
             userInfo: [NSLocalizedDescriptionKey: message]
         )
+    }
+
+    private static func providerCannotSynchronizeError(_ message: String) -> NSError {
+        NSError(
+            domain: NSFileProviderErrorDomain,
+            code: NSFileProviderError.cannotSynchronize.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        )
+    }
+
+    private static func isPlaceholderCopyError(_ error: Error) -> Bool {
+        (error as NSError).localizedDescription.contains("placeholder copy")
+    }
+
+    private static func existingPlaceholderFamilyItem(for path: String) -> FileProviderItem? {
+        let state = loadStateForEnumeration()
+        let family = collisionFamilyPath(path)
+        guard let existing = state.entries.first(where: { entry in
+            entry.kind == "file" && entry.size > 0 && collisionFamilyPath(entry.path) == family
+        }) else {
+            return nil
+        }
+        return item(for: existing, anchor: state.anchor)
+    }
+
+    private static func collisionFamilyPath(_ path: String) -> String {
+        let nsPath = path as NSString
+        let parent = nsPath.deletingLastPathComponent
+        let hasParent = !parent.isEmpty && parent != "." && parent != "/"
+        let namePath = nsPath.lastPathComponent as NSString
+        var stem = namePath.deletingPathExtension
+        let ext = namePath.pathExtension
+        while true {
+            if let stripped = strippingNumericCollisionSuffix(from: stem) {
+                stem = stripped
+                continue
+            }
+            if let stripped = strippingCopyCollisionSuffix(from: stem) {
+                stem = stripped
+                continue
+            }
+            break
+        }
+        let name = ext.isEmpty ? stem : "\(stem).\(ext)"
+        return hasParent ? "\(parent)/\(name)" : name
+    }
+
+    private static func strippingNumericCollisionSuffix(from stem: String) -> String? {
+        guard stem.hasSuffix(")") else { return nil }
+        let withoutClose = stem.dropLast()
+        guard let range = withoutClose.range(of: " (", options: .backwards) else { return nil }
+        let number = withoutClose[range.upperBound...]
+        guard !number.isEmpty, number.allSatisfy(\.isNumber) else { return nil }
+        return String(withoutClose[..<range.lowerBound])
+    }
+
+    private static func strippingCopyCollisionSuffix(from stem: String) -> String? {
+        if stem.hasSuffix(" copy") {
+            return String(stem.dropLast(" copy".count))
+        }
+        guard let range = stem.range(of: " copy ", options: .backwards) else { return nil }
+        let number = stem[range.upperBound...]
+        guard !number.isEmpty, number.allSatisfy(\.isNumber) else { return nil }
+        return String(stem[..<range.lowerBound])
     }
 }

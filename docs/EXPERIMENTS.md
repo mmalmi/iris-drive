@@ -4,6 +4,25 @@ Performance and integration experiments log. Omit identifying information
 (pubkeys, secrets, IPs, private hostnames, exact repo names, raw hashes)
 unless the user explicitly asks otherwise.
 
+## 2026-06-23 macOS FileProvider provider-list CPU
+
+- Reproduced the Finder CPU spike as FileProvider-triggered
+  `idrive provider list` helper processes. The installed helper repeatedly
+  measured about 1.54-1.55s real time and 1.40-1.42s user CPU for a read-only
+  list of the live provider surface.
+- The hot path built the merged provider view twice: once while materializing
+  the visible root and again while building the timestamp index for list
+  entries. Added a core helper that materializes the provider root from an
+  already-computed merged view, then switched CLI and native provider list
+  callers to reuse that view.
+- Added macOS FileProvider cache invalidation keyed by the daemon
+  `summary.provider_refresh_key`, with a local `updated_at` freshness check, so
+  unchanged Finder enumerations do not spawn another helper after the old 1s
+  TTL.
+- Patched optimized helper timing on the same provider surface: three runs at
+  about 0.08-0.10s real time and 0.03-0.04s user CPU. One debug-logging run
+  retired about 0.87B instructions versus about 12.1B for the installed helper.
+
 ## 2026-06-23 provider write viewer-to-viewer latency
 
 - Added an e2e latency probe that measures from a completed provider/viewer
@@ -18,6 +37,11 @@ unless the user explicitly asks otherwise.
   `cargo test -p idrive --test daemon_sync_matrix live_daemons_provider_write_viewer_to_viewer_latency_probe -- --exact --nocapture`.
   Passing run measured about 0.13s, 0.14s, and 0.14s from source viewer completion
   to target viewer visibility across the three client hops.
+- Isolated count-reaction probe used a throwaway `/tmp/iris-drive-latency.*`
+  config/data dir, not the user's FileProvider/CloudStorage directory. After
+  skipping the full provider-tree placeholder preflight for normal non-empty
+  writes, one provider write completed in 58 ms and the temp daemon status
+  file count changed in 69 ms.
 
 ## 2026-06-22 macOS roster/FIPS status CPU check
 

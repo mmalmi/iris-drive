@@ -6,14 +6,169 @@ use iris_drive_core::relay_config::normalize_relay_url;
 
 #[derive(Clone, Default)]
 pub(crate) struct DaemonTaskSet {
-    tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+    tasks: Arc<std::sync::Mutex<Vec<ManagedDaemonTask>>>,
+    keyed_tasks: Arc<std::sync::Mutex<KeyedDaemonTasks>>,
+}
+
+struct ManagedDaemonTask {
+    join: tokio::task::JoinHandle<()>,
+    abort_inner: Option<tokio::task::AbortHandle>,
+}
+
+#[derive(Default)]
+struct KeyedDaemonTasks {
+    next_id: u64,
+    active: std::collections::BTreeMap<String, ActiveKeyedTask>,
+    groups: std::collections::BTreeMap<String, std::collections::BTreeSet<String>>,
+}
+
+struct ActiveKeyedTask {
+    id: u64,
+    abort: tokio::task::AbortHandle,
+    group: Option<String>,
 }
 
 impl DaemonTaskSet {
     pub(crate) fn push(&self, task: tokio::task::JoinHandle<()>) {
         match self.tasks.lock() {
-            Ok(mut tasks) => tasks.push(task),
+            Ok(mut tasks) => tasks.push(ManagedDaemonTask {
+                join: task,
+                abort_inner: None,
+            }),
             Err(_) => task.abort(),
+        }
+    }
+
+    pub(crate) fn push_keyed(&self, key: String, task: tokio::task::JoinHandle<()>) -> bool {
+        self.push_keyed_inner(key, None, task)
+    }
+
+    pub(crate) fn push_keyed_replacing_group(
+        &self,
+        key: String,
+        group: String,
+        task: tokio::task::JoinHandle<()>,
+    ) -> bool {
+        self.push_keyed_inner(key, Some(group), task)
+    }
+
+    fn push_keyed_inner(
+        &self,
+        key: String,
+        group: Option<String>,
+        task: tokio::task::JoinHandle<()>,
+    ) -> bool {
+        let abort_inner = task.abort_handle();
+        let Ok(mut keyed_tasks) = self.keyed_tasks.lock() else {
+            task.abort();
+            return false;
+        };
+        if keyed_tasks.active.contains_key(&key) {
+            task.abort();
+            return false;
+        }
+        if let Some(group) = group.as_ref() {
+            let stale_keys = keyed_tasks
+                .groups
+                .get(group)
+                .into_iter()
+                .flat_map(|keys| keys.iter().cloned())
+                .collect::<Vec<_>>();
+            for stale_key in stale_keys {
+                if stale_key == key {
+                    continue;
+                }
+                if let Some(stale_task) = keyed_tasks.active.remove(&stale_key) {
+                    if let Some(stale_group) = stale_task.group.as_ref()
+                        && let Some(keys) = keyed_tasks.groups.get_mut(stale_group)
+                    {
+                        keys.remove(&stale_key);
+                        if keys.is_empty() {
+                            keyed_tasks.groups.remove(stale_group);
+                        }
+                    }
+                    stale_task.abort.abort();
+                }
+            }
+        }
+        keyed_tasks.next_id = keyed_tasks.next_id.wrapping_add(1);
+        let task_id = keyed_tasks.next_id;
+        keyed_tasks.active.insert(
+            key.clone(),
+            ActiveKeyedTask {
+                id: task_id,
+                abort: abort_inner.clone(),
+                group: group.clone(),
+            },
+        );
+        if let Some(group) = group.as_ref() {
+            keyed_tasks
+                .groups
+                .entry(group.clone())
+                .or_default()
+                .insert(key.clone());
+        }
+        drop(keyed_tasks);
+
+        let keyed_tasks = self.keyed_tasks.clone();
+        let task_key = key.clone();
+        let abort_inner_on_error = abort_inner.clone();
+        let join = tokio::spawn(async move {
+            let _ = task.await;
+            if let Ok(mut keyed_tasks) = keyed_tasks.lock()
+                && keyed_tasks
+                    .active
+                    .get(&task_key)
+                    .is_some_and(|active| active.id == task_id)
+            {
+                let group = keyed_tasks
+                    .active
+                    .get(&task_key)
+                    .and_then(|active| active.group.clone());
+                keyed_tasks.active.remove(&task_key);
+                if let Some(group) = group
+                    && let Some(keys) = keyed_tasks.groups.get_mut(&group)
+                {
+                    keys.remove(&task_key);
+                    if keys.is_empty() {
+                        keyed_tasks.groups.remove(&group);
+                    }
+                }
+            }
+        });
+        match self.tasks.lock() {
+            Ok(mut tasks) => {
+                tasks.push(ManagedDaemonTask {
+                    join,
+                    abort_inner: Some(abort_inner),
+                });
+                true
+            }
+            Err(_) => {
+                if let Ok(mut keyed_tasks) = self.keyed_tasks.lock()
+                    && keyed_tasks
+                        .active
+                        .get(&key)
+                        .is_some_and(|active| active.id == task_id)
+                {
+                    let group = keyed_tasks
+                        .active
+                        .get(&key)
+                        .and_then(|active| active.group.clone());
+                    keyed_tasks.active.remove(&key);
+                    if let Some(group) = group
+                        && let Some(keys) = keyed_tasks.groups.get_mut(&group)
+                    {
+                        keys.remove(&key);
+                        if keys.is_empty() {
+                            keyed_tasks.groups.remove(&group);
+                        }
+                    }
+                }
+                abort_inner_on_error.abort();
+                join.abort();
+                false
+            }
         }
     }
 
@@ -22,11 +177,21 @@ impl DaemonTaskSet {
             Ok(mut tasks) => std::mem::take(&mut *tasks),
             Err(_) => Vec::new(),
         };
+        if let Ok(mut keyed_tasks) = self.keyed_tasks.lock() {
+            for active in keyed_tasks.active.values() {
+                active.abort.abort();
+            }
+            keyed_tasks.active.clear();
+            keyed_tasks.groups.clear();
+        }
         for task in &tasks {
-            task.abort();
+            if let Some(abort_inner) = &task.abort_inner {
+                abort_inner.abort();
+            }
+            task.join.abort();
         }
         for task in tasks {
-            let _ = task.await;
+            let _ = task.join.await;
         }
     }
 }
@@ -91,6 +256,7 @@ async fn publish_provider_root_if_changed(
         return Ok(Some(updated_config));
     };
 
+    direct_roots.invalidate_current_sync_events_cache();
     let direct_root_mesh_error =
         match announce_current_state_direct(direct_roots, config_dir, fips_blocks).await {
             Ok(()) => None,
@@ -105,17 +271,31 @@ async fn publish_provider_root_if_changed(
         "provider_root_publish_finished",
         json!({"root_key": current_key.clone()}),
     ));
-    emit_daemon_status_event(
-        config_dir,
-        json!({
+    let mut payload = json!({
             "event": "provider_root_published",
             "root_key": current_key,
             "direct_root_mesh_error": direct_root_mesh_error,
             "publish": {"queued": true, "upload_blossom": true},
-        }),
-    );
+    });
+    if let Some(hashtree) = primary_drive_status_payload(config_dir, &updated_config).await {
+        payload["hashtree"] = hashtree;
+    }
+    emit_daemon_status_event(config_dir, payload);
 
     Ok(Some(updated_config))
+}
+
+async fn primary_drive_status_payload(config_dir: &Path, config: &AppConfig) -> Option<Value> {
+    let daemon = Daemon::open(config_dir).ok()?;
+    let merged = iris_drive_core::primary_merged_view(daemon.tree(), config)
+        .await
+        .ok()?;
+    Some(json!({
+        "current_root_cid": crate::status::current_primary_root_cid(config),
+        "file_count": merged.file_count(),
+        "top_level_entries": merged.top_level_entries(),
+        "visible_file_bytes": merged.view.files.iter().map(|entry| entry.size).sum::<u64>(),
+    }))
 }
 
 const PROVIDER_ROOT_SAFETY_POLL_MIN_SECS: u64 = 30;
@@ -169,6 +349,12 @@ enum RootApplyFollowupKey {
     MergedDriveRoots(String),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum RootApplyFollowupQueueKey {
+    AppKeyRoots(Vec<String>),
+    MergedDriveRoots(String),
+}
+
 fn update_last_provider_root_key(config_dir: &Path, last_root_key: &mut Option<String>) {
     if let Ok(config) = AppConfig::load_or_default(config_path_in(config_dir)) {
         *last_root_key = current_app_key_root_key(&config);
@@ -199,6 +385,30 @@ fn root_apply_followup_key(
     None
 }
 
+fn root_apply_followup_queue_key(
+    config: &AppConfig,
+    root_cid_to_pull: Option<&str>,
+    should_refresh_projection: bool,
+) -> Option<RootApplyFollowupQueueKey> {
+    if let Some(root_cid) = root_cid_to_pull
+        && let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
+    {
+        let roots = drive
+            .app_key_roots
+            .iter()
+            .filter(|(_, root)| root.root_cid == root_cid)
+            .map(|(device, _)| device.clone())
+            .collect::<Vec<_>>();
+        if !roots.is_empty() {
+            return Some(RootApplyFollowupQueueKey::AppKeyRoots(roots));
+        }
+    }
+    if should_refresh_projection {
+        return merged_drive_roots_key(config).map(RootApplyFollowupQueueKey::MergedDriveRoots);
+    }
+    None
+}
+
 fn root_apply_followup_is_stale(
     config_dir: &Path,
     expected_root_key: Option<&RootApplyFollowupKey>,
@@ -224,10 +434,6 @@ fn root_apply_followup_is_stale(
             merged_drive_roots_key(&config).as_deref() != Some(expected.as_str())
         }
     }
-}
-
-fn root_apply_followup_key_label(expected_root_key: Option<&RootApplyFollowupKey>) -> String {
-    expected_root_key.map_or_else(|| "none".to_string(), |key| format!("{key:?}"))
 }
 
 fn root_update_debounce_duration(watch_debounce_ms: u64) -> std::time::Duration {
@@ -262,17 +468,22 @@ async fn import_mount_visible_root_update(
     daemon_tasks: &DaemonTaskSet,
 ) -> Result<()> {
     let imported_visible_root = visible_root.clone();
-    let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
-    import_mount_root_and_publish(
-        client,
-        config_dir,
-        visible_root,
-        mount_tombstone_base.clone(),
-        direct_roots,
-        fips_blocks,
-        daemon_tasks,
-    )
-    .await?;
+    let config_lock = ConfigMutationLock::acquire(config_dir).await?;
+    let import =
+        import_mount_root_for_publish(config_dir, visible_root, mount_tombstone_base.clone(), None)
+            .await?;
+    drop(config_lock);
+    if let Some(import) = import {
+        publish_imported_mount_root(
+            client,
+            config_dir,
+            import,
+            direct_roots,
+            fips_blocks,
+            daemon_tasks,
+        )
+        .await?;
+    }
     *mount_tombstone_base = Some(imported_visible_root);
     Ok(())
 }
@@ -341,7 +552,7 @@ fn start_config_root_watch(
 async fn start_provider_root_wake_listener(
     config_dir: &Path,
 ) -> Result<(
-    tokio::sync::mpsc::UnboundedReceiver<()>,
+    tokio::sync::mpsc::UnboundedReceiver<Option<Value>>,
     tokio::task::JoinHandle<()>,
     Value,
 )> {
@@ -368,8 +579,20 @@ async fn start_provider_root_wake_listener(
 
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let task = tokio::spawn(async move {
-        while let Ok((_stream, _addr)) = listener.accept().await {
-            let _ = tx.send(());
+        use tokio::io::AsyncReadExt as _;
+
+        while let Ok((mut stream, _addr)) = listener.accept().await {
+            let mut bytes = vec![0_u8; 4096];
+            let payload = match tokio::time::timeout(
+                std::time::Duration::from_millis(200),
+                stream.read(&mut bytes),
+            )
+            .await
+            {
+                Ok(Ok(len)) if len > 0 => serde_json::from_slice::<Value>(&bytes[..len]).ok(),
+                _ => None,
+            };
+            let _ = tx.send(payload);
         }
     });
 
@@ -382,6 +605,37 @@ async fn start_provider_root_wake_listener(
             "path": wake_path.display().to_string(),
         }),
     ))
+}
+
+fn provider_root_wake_status_payload(wake_payload: &Value) -> Option<Value> {
+    let file_count = wake_payload.get("file_count").and_then(Value::as_u64)?;
+    let mut hashtree = json!({ "file_count": file_count });
+    if let Some(root_cid) = wake_payload.get("root_cid").and_then(Value::as_str) {
+        hashtree["current_root_cid"] = json!(root_cid);
+    }
+    if let Some(top_level_entries) = wake_payload
+        .get("top_level_entries")
+        .and_then(Value::as_u64)
+    {
+        hashtree["top_level_entries"] = json!(top_level_entries);
+    }
+    Some(json!({
+        "event": "provider_root_local_update",
+        "root_cid": wake_payload.get("root_cid").cloned(),
+        "hashtree": hashtree,
+    }))
+}
+
+fn drain_latest_provider_root_wake_payload(
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<Option<Value>>,
+    mut latest: Option<Value>,
+) -> Option<Value> {
+    while let Ok(next) = rx.try_recv() {
+        if next.is_some() {
+            latest = next;
+        }
+    }
+    latest
 }
 
 fn event_touches_config_root(event: &notify::Event, config_dir: &Path) -> bool {
@@ -433,19 +687,23 @@ pub(crate) fn spawn_status_probe(
             Ok(statuses) => statuses,
             Err(_) => vec![json!({"url": "*", "status": "timeout"})],
         };
-        let fips_status = match tokio::time::timeout(
+        let (fips_status, fips_block_sync_error) = match tokio::time::timeout(
             std::time::Duration::from_secs(STATUS_PROBE_TIMEOUT_SECS),
             fips_block_sync_status(fips_blocks.as_deref()),
         )
         .await
         {
-            Ok(status) => status,
-            Err(_) => Some(json!({"status": "timeout"})),
+            Ok(status) => (status, Value::Null),
+            Err(_) => (
+                Some(json!({"status": "timeout"})),
+                json!("FIPS status probe timed out"),
+            ),
         };
         let status = json!({
             "event": "relay_statuses",
             "relay_statuses": relay_statuses,
             "fips_block_sync": fips_status,
+            "fips_block_sync_error": fips_block_sync_error,
         });
         let status = write_daemon_status(&config_dir, status);
         println!("{status}");
@@ -576,12 +834,95 @@ pub(crate) struct ConfigMutationLock {
     path: PathBuf,
 }
 
+#[derive(Debug)]
+struct ConfigMutationLockTimeout {
+    path: PathBuf,
+}
+
+impl std::fmt::Display for ConfigMutationLockTimeout {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "timed out waiting for config mutation lock {}",
+            self.path.display()
+        )
+    }
+}
+
+impl std::error::Error for ConfigMutationLockTimeout {}
+
 impl ConfigMutationLock {
     const POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(25);
     const WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
     const STALE_AFTER: std::time::Duration = std::time::Duration::from_mins(2);
 
     pub(crate) async fn acquire(config_dir: &Path) -> Result<Self> {
+        Self::acquire_with_timeout(config_dir, Self::WAIT_TIMEOUT).await
+    }
+
+    async fn acquire_for_background<F>(config_dir: &Path, is_stale: F) -> Result<Option<Self>>
+    where
+        F: FnMut() -> bool,
+    {
+        let retry_delays = [
+            std::time::Duration::from_millis(250),
+            std::time::Duration::from_secs(1),
+            std::time::Duration::from_secs(2),
+            std::time::Duration::from_secs(4),
+        ];
+        Self::acquire_for_background_with_options(
+            config_dir,
+            is_stale,
+            Self::WAIT_TIMEOUT,
+            &retry_delays,
+        )
+        .await
+    }
+
+    async fn acquire_for_background_with_options<F>(
+        config_dir: &Path,
+        mut is_stale: F,
+        wait_timeout: std::time::Duration,
+        retry_delays: &[std::time::Duration],
+    ) -> Result<Option<Self>>
+    where
+        F: FnMut() -> bool,
+    {
+        for retry_delay in std::iter::once(std::time::Duration::ZERO).chain(
+            retry_delays
+                .iter()
+                .copied()
+                .filter(|delay| !delay.is_zero()),
+        ) {
+            if retry_delay > std::time::Duration::ZERO {
+                tokio::time::sleep(retry_delay).await;
+            }
+            if is_stale() {
+                return Ok(None);
+            }
+            match Self::acquire_with_timeout(config_dir, wait_timeout).await {
+                Ok(lock) => {
+                    if is_stale() {
+                        return Ok(None);
+                    }
+                    return Ok(Some(lock));
+                }
+                Err(error) if error.downcast_ref::<ConfigMutationLockTimeout>().is_some() => {}
+                Err(error) => return Err(error),
+            }
+        }
+        if is_stale() {
+            return Ok(None);
+        }
+        Self::acquire_with_timeout(config_dir, wait_timeout)
+            .await
+            .map(Some)
+    }
+
+    async fn acquire_with_timeout(
+        config_dir: &Path,
+        wait_timeout: std::time::Duration,
+    ) -> Result<Self> {
         std::fs::create_dir_all(config_dir)
             .with_context(|| format!("creating config dir {}", config_dir.display()))?;
         let path = config_dir.join("config-mutation.lock");
@@ -590,13 +931,10 @@ impl ConfigMutationLock {
         loop {
             match Self::try_create(&path) {
                 Ok(lock) => return Ok(lock),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                Err(error) if Self::lock_create_error_is_contention(&path, &error) => {
                     Self::remove_stale_lock(&path);
-                    if started.elapsed() >= Self::WAIT_TIMEOUT {
-                        return Err(anyhow::anyhow!(
-                            "timed out waiting for config mutation lock {}",
-                            path.display()
-                        ));
+                    if started.elapsed() >= wait_timeout {
+                        return Err(ConfigMutationLockTimeout { path }.into());
                     }
                     tokio::time::sleep(Self::POLL_INTERVAL).await;
                 }
@@ -607,6 +945,11 @@ impl ConfigMutationLock {
                 }
             }
         }
+    }
+
+    fn lock_create_error_is_contention(path: &Path, error: &std::io::Error) -> bool {
+        error.kind() == std::io::ErrorKind::AlreadyExists
+            || (error.kind() == std::io::ErrorKind::PermissionDenied && path.exists())
     }
 
     fn try_create(path: &Path) -> std::io::Result<Self> {
@@ -687,8 +1030,35 @@ pub(crate) fn record_block_sync(
     });
     merge_daemon_status(config_dir, |status| {
         status.insert("last_block_sync".to_string(), value.clone());
+        status.remove("last_block_sync_error");
         let entry = status
             .entry("block_sync_by_root".to_string())
+            .or_insert_with(|| json!({}));
+        if !entry.is_object() {
+            *entry = json!({});
+        }
+        if let Some(map) = entry.as_object_mut() {
+            map.insert(root_cid.to_string(), value);
+        }
+        if let Some(map) = status
+            .get_mut("block_sync_error_by_root")
+            .and_then(Value::as_object_mut)
+        {
+            map.remove(root_cid);
+        }
+    });
+}
+
+pub(crate) fn record_block_sync_error(config_dir: &Path, root_cid: &str, error: &str) {
+    let value = json!({
+        "root_cid": root_cid,
+        "updated_at": unix_now(),
+        "error": error,
+    });
+    merge_daemon_status(config_dir, |status| {
+        status.insert("last_block_sync_error".to_string(), value.clone());
+        let entry = status
+            .entry("block_sync_error_by_root".to_string())
             .or_insert_with(|| json!({}));
         if !entry.is_object() {
             *entry = json!({});

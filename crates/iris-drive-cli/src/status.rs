@@ -20,7 +20,7 @@ pub(crate) use iris_drive_core::fips_status::{
 use iris_drive_core::provider::provider_refresh_key;
 use iris_drive_core::relay_status::normalized_relay_statuses_for_relays;
 pub(crate) use network::fips_network_diagnostics;
-use peers::peer_statuses;
+use peers::{app_key_actors_for_status, peer_statuses};
 
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
@@ -101,7 +101,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
     let backup_targets = backup_targets_status(&config);
     let backup_target_count = backup_targets.len();
     let profile_block = status_profile_block(&config);
-    let sync_status = daemon_sync_status(daemon_status.as_ref());
+    let sync_status = daemon_sync_status_with_peers(daemon_status.as_ref(), &peers);
     println!(
         "{}",
         json!({
@@ -214,6 +214,18 @@ pub(crate) fn daemon_sync_status(daemon_status: Option<&Value>) -> String {
         return "paused".to_owned();
     }
     if status
+        .get("fips_block_sync_error")
+        .is_some_and(|error| !error.is_null())
+        || status
+            .get("fips_block_sync")
+            .and_then(|fips| fips.get("status"))
+            .and_then(Value::as_str)
+            .is_some_and(|status| status == "timeout")
+        || status.get("last_block_sync_error").is_some()
+    {
+        return "sync error".to_owned();
+    }
+    if status
         .get("blossom_upload")
         .and_then(Value::as_object)
         .is_some_and(|upload| {
@@ -246,6 +258,33 @@ pub(crate) fn daemon_sync_status(daemon_status: Option<&Value>) -> String {
         _ => "up to date",
     }
     .to_owned()
+}
+
+pub(crate) fn daemon_sync_status_with_peers(
+    daemon_status: Option<&Value>,
+    peers: &[Value],
+) -> String {
+    let status = daemon_sync_status(daemon_status);
+    if !matches!(status.as_str(), "up to date" | "root synced" | "synced") {
+        return status;
+    }
+    if peers.iter().any(|peer| {
+        peer.get("authorized")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+            && !peer
+                .get("is_current_app_key")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            && peer
+                .get("sync_state")
+                .and_then(Value::as_str)
+                .is_some_and(|state| state == "blocks pending")
+    }) {
+        "syncing".to_owned()
+    } else {
+        status
+    }
 }
 
 pub(crate) fn cmd_nhash_resolver(
@@ -437,6 +476,8 @@ pub(crate) fn write_daemon_status(config_dir: &Path, mut payload: Value) -> Valu
             "block_sync_by_root",
             "relays",
             "current_app_key_npub",
+            "summary",
+            "hashtree",
             "provider_update_mode",
             "watch_debounce_ms",
             "mount",
@@ -561,33 +602,32 @@ pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &m
     let (authorized_app_key_count, online_app_key_count) =
         daemon_summary_app_key_counts(&config, payload);
     let file_count = payload
-        .get("summary")
-        .and_then(|summary| summary.get("file_count"))
+        .get("hashtree")
+        .and_then(|hashtree| hashtree.get("file_count"))
         .or_else(|| {
             payload
-                .get("hashtree")
-                .and_then(|hashtree| hashtree.get("file_count"))
+                .get("summary")
+                .and_then(|summary| summary.get("file_count"))
         })
         .and_then(Value::as_u64)
         .and_then(|count| usize::try_from(count).ok());
     let visible_file_bytes = payload
-        .get("summary")
-        .and_then(|summary| summary.get("visible_file_bytes"))
+        .get("hashtree")
+        .and_then(|hashtree| hashtree.get("visible_file_bytes"))
         .or_else(|| {
             payload
-                .get("hashtree")
-                .and_then(|hashtree| hashtree.get("visible_file_bytes"))
+                .get("summary")
+                .and_then(|summary| summary.get("visible_file_bytes"))
         })
         .and_then(Value::as_u64);
-    let current_root_cid = current_primary_root_cid(&config);
-    let provider_refresh_key = payload
-        .get("summary")
-        .and_then(|summary| summary.get("provider_refresh_key"))
-        .and_then(Value::as_str)
-        .map_or_else(
-            || provider_refresh_key(current_root_cid.as_deref(), &[]),
-            ToOwned::to_owned,
-        );
+    let current_root_cid = current_primary_root_cid(&config).or_else(|| {
+        payload
+            .get("hashtree")
+            .and_then(|hashtree| hashtree.get("current_root_cid"))
+            .and_then(Value::as_str)
+            .map(ToOwned::to_owned)
+    });
+    let provider_refresh_key = provider_refresh_key(current_root_cid.as_deref(), &[]);
     let initialized = key_path_in(config_dir).exists()
         && config_path_in(config_dir).exists()
         && config.profile.is_some();
@@ -620,9 +660,10 @@ fn daemon_summary_app_key_counts(config: &AppConfig, payload: &Value) -> (usize,
     let Some(account) = config.profile.as_ref() else {
         return (0, 0);
     };
-    let Some(snapshot) = account.current_app_keys_projection() else {
+    let app_actors = app_key_actors_for_status(config);
+    if app_actors.is_empty() {
         return (0, 0);
-    };
+    }
     let fips_status = payload
         .get("fips_block_sync")
         .filter(|value| value.is_object());
@@ -643,9 +684,9 @@ fn daemon_summary_app_key_counts(config: &AppConfig, payload: &Value) -> (usize,
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let rows = app_key_roster_rows(
-        &snapshot.app_actors,
+        &app_actors,
         &account.app_key_pubkey,
-        snapshot.is_admin(&account.app_key_pubkey),
+        account.can_admin_profile(),
         daemon_running,
         &connectivity,
     );
@@ -1061,15 +1102,17 @@ pub(crate) fn app_key_sync_state(
     is_current_app_key: bool,
     has_root: bool,
     root_available: Option<bool>,
+    root_block_synced: bool,
 ) -> &'static str {
     if is_current_app_key {
         return if has_root { "local" } else { "not imported" };
     }
-    match (has_root, root_available) {
-        (false, _) => "waiting for root",
-        (true, Some(true)) => "synced",
-        (true, Some(false)) => "blocks pending",
-        (true, None) => "metadata only",
+    match (has_root, root_available, root_block_synced) {
+        (false, _, _) => "waiting for root",
+        (true, _, false) => "blocks pending",
+        (true, Some(true), true) => "synced",
+        (true, Some(false), true) => "blocks pending",
+        (true, None, true) => "metadata only",
     }
 }
 

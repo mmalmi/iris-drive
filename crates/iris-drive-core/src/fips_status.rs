@@ -276,29 +276,26 @@ pub fn fips_peer_connection_label(status: &Value) -> String {
 
 #[must_use]
 pub fn fips_online_devices_from_status(fips_status: Option<&Value>) -> Vec<String> {
-    let mut peers =
+    let mut direct_online =
         string_set_from_json_array(fips_status.and_then(|status| status.get("online_devices")));
-    peers.extend(string_set_from_json_array(
+    direct_online.extend(string_set_from_json_array(
         fips_status.and_then(|status| status.get("online_peers")),
     ));
-    peers.extend(string_set_from_json_array(
+    direct_online.extend(string_set_from_json_array(
         fips_status.and_then(|status| status.get("direct_devices")),
     ));
-    peers.extend(string_set_from_json_array(
+    direct_online.extend(string_set_from_json_array(
         fips_status.and_then(|status| status.get("direct_peers")),
     ));
-    peers.extend(string_set_from_json_array(
+    direct_online.extend(string_set_from_json_array(
         fips_status.and_then(|status| status.get("connected_peers")),
     ));
-    peers.extend(string_set_from_json_array(
-        fips_status.and_then(|status| status.get("mesh_devices")),
-    ));
-    peers.extend(string_set_from_json_array(
-        fips_status.and_then(|status| status.get("mesh_peers")),
-    ));
     if let Some(active_peers) = active_peer_ids_from_statuses(fips_status) {
-        peers = peers.intersection(&active_peers).cloned().collect();
+        direct_online = direct_online.intersection(&active_peers).cloned().collect();
     }
+
+    let mut peers = direct_online;
+    peers.extend(fips_mesh_devices_from_status(fips_status));
     peers.into_iter().collect()
 }
 
@@ -371,9 +368,6 @@ pub fn fips_mesh_devices_from_status(fips_status: Option<&Value>) -> Vec<String>
     if mesh_devices.is_empty() {
         mesh_devices =
             string_set_from_json_array(fips_status.and_then(|status| status.get("mesh_peers")));
-    }
-    if let Some(active_peers) = active_peer_ids_from_statuses(fips_status) {
-        mesh_devices = mesh_devices.intersection(&active_peers).cloned().collect();
     }
     mesh_devices.into_iter().collect()
 }

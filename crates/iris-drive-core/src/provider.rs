@@ -164,6 +164,22 @@ pub fn normalize_provider_parent_path(path: &str) -> anyhow::Result<String> {
     normalize_provider_path(trimmed)
 }
 
+pub fn compose_provider_path(
+    parent_path: &str,
+    display_name: &str,
+) -> anyhow::Result<(String, String, String)> {
+    let parent_path = normalize_provider_parent_path(parent_path)?;
+    let display_name = sanitized_provider_file_name(display_name);
+    let path = if parent_path.is_empty() {
+        display_name.clone()
+    } else {
+        format!("{parent_path}/{display_name}")
+    };
+    let path = normalize_provider_path(&path)?;
+    let (resolved_parent_path, resolved_display_name) = split_provider_path(&path)?;
+    Ok((resolved_parent_path, resolved_display_name, path))
+}
+
 pub fn optional_normalized_provider_path(path: &str) -> anyhow::Result<Option<String>> {
     let trimmed = path.trim_matches('/');
     if trimmed.is_empty() {
@@ -370,6 +386,16 @@ mod tests {
     fn provider_path_normalization_rejects_native_separator_aliases() {
         assert!(normalize_provider_path("Reports\\note.txt").is_err());
         assert!(normalize_provider_path("Reports:note.txt").is_err());
+    }
+
+    #[test]
+    fn provider_path_composition_sanitizes_without_collision_lookup() {
+        let (parent, display_name, path) =
+            compose_provider_path("Reports", " ../Quarter:1/report.txt ").unwrap();
+
+        assert_eq!(parent, "Reports");
+        assert_eq!(display_name, "Quarter_1_report.txt");
+        assert_eq!(path, "Reports/Quarter_1_report.txt");
     }
 
     #[test]

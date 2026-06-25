@@ -113,8 +113,8 @@ Environment:
   IRIS_DRIVE_DEV_VM_FIPS_OPEN_DISCOVERY_MAX_PENDING
                                       Override FIPS open discovery fanout for VM
                                       daemons. Defaults to 0 when static peer
-                                      hints are present, otherwise the app
-                                      default.
+                                      hints cover every VM edge, otherwise 16
+                                      so missing edges can be discovered.
   IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER=1
                                       Fail macOS runs unless the app is signed
                                       with FileProvider-capable entitlements.
@@ -346,6 +346,7 @@ declare -a SOCIAL_GRAPH_BARES=()
 declare -a CASHU_SERVICE_BARES=()
 declare -a ALL_OVERLAY_IPS=()
 declare -a STATIC_PEERS_BY_INDEX=()
+declare -a STATIC_PEERS_COMPLETE_BY_INDEX=()
 
 add_target_from_remotes() {
   local label="$1"
@@ -554,10 +555,14 @@ if (-not $TunnelIp -and $Nvpn) {
   try {
     $Status = & $Nvpn status --json | ConvertFrom-Json
     $Running = $true
+    $VpnActive = $true
     if ($Status.daemon -and $null -ne $Status.daemon.running) {
       $Running = [bool]$Status.daemon.running
     }
-    if ($Running -and $Status.tunnel_ip) {
+    if ($Status.daemon -and $Status.daemon.state -and $null -ne $Status.daemon.state.vpn_active) {
+      $VpnActive = [bool]$Status.daemon.state.vpn_active
+    }
+    if ($Running -and $VpnActive -and $Status.tunnel_ip) {
       $TunnelIp = (($Status.tunnel_ip -as [string]) -replace "/.*$", "")
     }
   } catch {}
@@ -578,7 +583,7 @@ for candidate in \
   "/Library/PrivilegedHelperTools/to.nostrvpn.nvpn"
 do
   [[ -n "$candidate" && -x "$candidate" ]] || continue
-  if "$candidate" status --json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); daemon=d.get("daemon") or {}; running=daemon.get("running"); source=d.get("status_source"); ip=(d.get("tunnel_ip") or "").split("/")[0]; invalid=not ip or (running is False and source != "daemon"); print(ip) if not invalid else None; sys.exit(1 if invalid else 0)'; then
+  if "$candidate" status --json 2>/dev/null | python3 -c 'import json,sys; d=json.load(sys.stdin); daemon=d.get("daemon") or {}; state=daemon.get("state") or {}; running=daemon.get("running"); vpn_active=state.get("vpn_active"); ip=(d.get("tunnel_ip") or "").split("/")[0]; invalid=not ip or running is False or vpn_active is False; print(ip) if not invalid else None; sys.exit(1 if invalid else 0)'; then
     exit 0
   fi
 done
@@ -645,6 +650,7 @@ build_static_peer_hints() {
     0|false|no|off|disabled)
       for i in "${!LABELS[@]}"; do
         STATIC_PEERS_BY_INDEX[$i]=""
+        STATIC_PEERS_COMPLETE_BY_INDEX[$i]="0"
       done
       log "not using nvpn static FIPS peer hints; disabled by IRIS_DRIVE_DEV_VM_USE_NVPN_STATIC_HINTS=$mode"
       return 0
@@ -692,9 +698,15 @@ build_static_peer_hints() {
     if [[ ${#pieces[@]} -gt 0 ]]; then
       local IFS=,
       STATIC_PEERS_BY_INDEX[$i]="${pieces[*]}"
+      if [[ ${#pieces[@]} -ge $((${#peer_labels[@]} - 1)) ]]; then
+        STATIC_PEERS_COMPLETE_BY_INDEX[$i]="1"
+      else
+        STATIC_PEERS_COMPLETE_BY_INDEX[$i]="0"
+      fi
       log "using static FIPS peer hints for ${LABELS[$i]} over nvpn: ${STATIC_PEERS_BY_INDEX[$i]}"
     else
       STATIC_PEERS_BY_INDEX[$i]=""
+      STATIC_PEERS_COMPLETE_BY_INDEX[$i]="0"
       log "not using nvpn static FIPS peer hints for ${LABELS[$i]}; no reachable overlay peers"
     fi
   done
@@ -734,6 +746,7 @@ run_posix_target() {
   local social_graph_bare="$7"
   local cashu_service_bare="$8"
   local static_peers="$9"
+  local static_peers_complete="${10}"
 
   {
     printf 'LABEL=%s\n' "$(sh_quote "$label")"
@@ -754,6 +767,7 @@ run_posix_target() {
     printf 'NO_RUN=%s\n' "$(sh_quote "$NO_RUN")"
     printf 'FIPS_PORT=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_FIPS_PORT:-22121}")"
     printf 'STATIC_PEERS=%s\n' "$(sh_quote "$static_peers")"
+    printf 'STATIC_PEERS_COMPLETE=%s\n' "$(sh_quote "$static_peers_complete")"
     printf 'FIPS_ENABLE_BOOTSTRAP=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_FIPS_ENABLE_BOOTSTRAP:-}")"
     printf 'FIPS_OPEN_DISCOVERY_MAX_PENDING=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_FIPS_OPEN_DISCOVERY_MAX_PENDING:-}")"
     printf 'MIN_FREE_KB=%s\n' "$(sh_quote "${IRIS_DRIVE_DEV_VM_MIN_FREE_KB:-6291456}")"
@@ -776,7 +790,7 @@ MACOS_XCODE_SIGNED_IDENTITY=""
 
 FIPS_ENABLE_BOOTSTRAP_EFFECTIVE="$FIPS_ENABLE_BOOTSTRAP"
 if [[ -z "$FIPS_ENABLE_BOOTSTRAP_EFFECTIVE" ]]; then
-  if [[ -n "$STATIC_PEERS" ]]; then
+  if [[ "$STATIC_PEERS_COMPLETE" == "1" ]]; then
     FIPS_ENABLE_BOOTSTRAP_EFFECTIVE="false"
   else
     FIPS_ENABLE_BOOTSTRAP_EFFECTIVE="true"
@@ -784,8 +798,12 @@ if [[ -z "$FIPS_ENABLE_BOOTSTRAP_EFFECTIVE" ]]; then
 fi
 
 FIPS_OPEN_DISCOVERY_MAX_PENDING_EFFECTIVE="$FIPS_OPEN_DISCOVERY_MAX_PENDING"
-if [[ -z "$FIPS_OPEN_DISCOVERY_MAX_PENDING_EFFECTIVE" && -n "$STATIC_PEERS" ]]; then
-  FIPS_OPEN_DISCOVERY_MAX_PENDING_EFFECTIVE="0"
+if [[ -z "$FIPS_OPEN_DISCOVERY_MAX_PENDING_EFFECTIVE" ]]; then
+  if [[ "$STATIC_PEERS_COMPLETE" == "1" ]]; then
+    FIPS_OPEN_DISCOVERY_MAX_PENDING_EFFECTIVE="0"
+  else
+    FIPS_OPEN_DISCOVERY_MAX_PENDING_EFFECTIVE="16"
+  fi
 fi
 
 log() {
@@ -980,13 +998,17 @@ terminate_pid() {
 
 detach_stale_mountpoint() {
   local mountpoint="$1"
-  local target=""
+  local mounted=0
   [[ -n "$mountpoint" ]] || return 0
-  [[ -e "$mountpoint" ]] || return 0
 
-  if command -v findmnt >/dev/null 2>&1; then
-    target="$(findmnt -rn --target "$mountpoint" --output TARGET 2>/dev/null | head -n 1 || true)"
-    [[ "$target" == "$mountpoint" ]] || return 0
+  if command -v mountpoint >/dev/null 2>&1 && mountpoint -q "$mountpoint"; then
+    mounted=1
+  elif command -v findmnt >/dev/null 2>&1 &&
+    findmnt -rn --mountpoint "$mountpoint" >/dev/null 2>&1; then
+    mounted=1
+  fi
+  if (( ! mounted )); then
+    return 0
   fi
 
   if command -v fusermount3 >/dev/null 2>&1; then
@@ -1199,9 +1221,10 @@ run_linux() {
   [[ "$NO_RUN" == "1" ]] && return 0
 
   log "restarting idrive daemon"
-  mkdir -p "$config_dir" "$mountpoint"
+  mkdir -p "$config_dir"
   pkill -u "$(id -u)" -f "$iris_repo/linux/target/debug/iris-drive" >/dev/null 2>&1 || true; rm -f "$config_dir/app.lock"
   stop_idrive_daemon "$config_dir" "$mountpoint"
+  mkdir -p "$mountpoint"
   rm -f "$config_dir/daemon.lock"
   nohup env \
     "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=0.0.0.0:$FIPS_PORT" \
@@ -1345,7 +1368,11 @@ macos_prepare_entitlements_for_signing() {
   fi
 
   output="$(mktemp -t iris-drive-entitlements.XXXXXX.plist)"
-  IRIS_DRIVE_MACOS_ENTITLEMENT_TEAM="$team" python3 - "$entitlements" "$output" <<'PY'
+  IRIS_DRIVE_MACOS_ENTITLEMENT_TEAM="$team" \
+  IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER="${IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER:-}" \
+  IRIS_DRIVE_DEV_VM_MACOS_KEEP_PROVISIONED_DEBUG_ENTITLEMENTS="${IRIS_DRIVE_DEV_VM_MACOS_KEEP_PROVISIONED_DEBUG_ENTITLEMENTS:-}" \
+  IRIS_DRIVE_DEV_VM_MACOS_KEEP_FILEPROVIDER_TESTING_MODE="${IRIS_DRIVE_DEV_VM_MACOS_KEEP_FILEPROVIDER_TESTING_MODE:-}" \
+    python3 - "$entitlements" "$output" <<'PY'
 import os
 import plistlib
 import sys
@@ -1356,7 +1383,7 @@ team = os.environ.get("IRIS_DRIVE_MACOS_ENTITLEMENT_TEAM", "").rstrip(".")
 
 def truthy(name, default=False):
     value = os.environ.get(name)
-    if value is None:
+    if value is None or value == "":
         return default
     return value in {"1", "true", "TRUE", "True", "yes", "YES", "Yes", "on", "ON", "On"}
 
@@ -1556,6 +1583,7 @@ run_macos() {
   local idrive="$iris_repo/target/debug/idrive"
   local built_app="$iris_repo/macos/.build/DerivedData/Build/Products/Debug/Iris Drive.app"
   local app="${IRIS_DRIVE_DEV_VM_MACOS_APP_PATH:-$iris_repo/macos/.build/Applications/Iris Drive.app}"
+  local daemon_idrive="$app/Contents/MacOS/idrive"
   local appex="$app/Contents/PlugIns/IrisDriveFileProvider.appex"
   local app_group
   app_group="$(macos_app_group_identifier)"
@@ -1686,14 +1714,14 @@ run_macos() {
     "IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=$FIPS_ENABLE_BOOTSTRAP_EFFECTIVE" \
     "IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING=$FIPS_OPEN_DISCOVERY_MAX_PENDING_EFFECTIVE" \
     "IRIS_DRIVE_FIPS_STATIC_PEERS=$STATIC_PEERS" \
-    "$idrive" --config-dir "$config_dir" daemon \
+    "$daemon_idrive" --config-dir "$config_dir" daemon \
       --watch-debounce-ms 100 \
       > "$daemon_log" 2>&1 < /dev/null &
   daemon_pid="$!"
   disown "$daemon_pid" >/dev/null 2>&1 || true
   local status_json=""
   local wait_status=0
-  status_json="$(wait_for_idrive_fips_status "$idrive" "$config_dir" "$daemon_pid")" || wait_status=$?
+  status_json="$(wait_for_idrive_fips_status "$daemon_idrive" "$config_dir" "$daemon_pid")" || wait_status=$?
   if [[ "$wait_status" == "2" ]]; then
     log "macOS idrive daemon exited during startup"
     tail -n 120 "$daemon_log" >&2 2>/dev/null || true
@@ -1704,7 +1732,7 @@ run_macos() {
     tail -n 160 "$daemon_log" >&2 2>/dev/null || true
     exit 4
   fi
-  if ! idrive_provider_list_retry "$idrive" "$config_dir" /tmp/iris-drive-macos-provider-list.json 120 1; then
+  if ! idrive_provider_list_retry "$daemon_idrive" "$config_dir" /tmp/iris-drive-macos-provider-list.json 120 1; then
     log "macOS virtual provider list failed"
     cat /tmp/iris-drive-macos-provider-list.json >&2 2>/dev/null || true
     tail -n 120 "$app_stderr" >&2 2>/dev/null || true
@@ -1725,6 +1753,7 @@ sign_macos_app() {
   local xcode_appex_entitlements="$iris_repo/macos/.build/DerivedData/Build/Intermediates.noindex/IrisDriveMac.build/Debug/IrisDriveFileProvider.build/IrisDriveFileProvider.appex.xcent"
   local app_dev_entitlements=""
   local appex_dev_entitlements=""
+  local helper_identifier="to.iris.drive.macos.idrive"
   local generated_app_entitlements=""
   local generated_appex_entitlements=""
   local entitlement_team=""
@@ -1805,12 +1834,14 @@ EOF
   if [[ -n "$MACOS_CODESIGN_KEYCHAIN" && "$sign_identity" != "-" ]]; then
     codesign_base+=(--keychain "$MACOS_CODESIGN_KEYCHAIN")
   fi
+  local helper_codesign_base=("${codesign_base[@]}")
+  helper_codesign_base+=(--identifier "$helper_identifier")
 
-  "${codesign_base[@]}" \
+  "${helper_codesign_base[@]}" \
     --entitlements "$helper_entitlements" \
     "$app/Contents/MacOS/idrive" >/dev/null
   if [[ -f "$appex/Contents/MacOS/idrive" ]]; then
-    "${codesign_base[@]}" \
+    "${helper_codesign_base[@]}" \
       --entitlements "$helper_entitlements" \
       "$appex/Contents/MacOS/idrive" >/dev/null
   fi
@@ -2036,6 +2067,7 @@ run_windows_target() {
   local social_graph_bare="$6"
   local cashu_service_bare="$7"
   local static_peers="$8"
+  local static_peers_complete="$9"
 
   {
     printf '$Label = %s\n' "$(ps_quote "$label")"
@@ -2055,6 +2087,7 @@ run_windows_target() {
     printf '$NoRun = %s\n' "$(ps_quote "$NO_RUN")"
     printf '$FipsPort = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_FIPS_PORT:-22121}")"
     printf '$StaticPeers = %s\n' "$(ps_quote "$static_peers")"
+    printf '$StaticPeersComplete = %s\n' "$(ps_quote "$static_peers_complete")"
     printf '$FipsEnableBootstrap = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_FIPS_ENABLE_BOOTSTRAP:-}")"
     printf '$FipsOpenDiscoveryMaxPending = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_FIPS_OPEN_DISCOVERY_MAX_PENDING:-}")"
     printf '$CargoIncrementalDefault = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_CARGO_INCREMENTAL:-0}")"
@@ -2065,16 +2098,20 @@ $ErrorActionPreference = "Stop"
 
 $FipsEnableBootstrapEffective = $FipsEnableBootstrap
 if ([string]::IsNullOrWhiteSpace($FipsEnableBootstrapEffective)) {
-  if ([string]::IsNullOrWhiteSpace($StaticPeers)) {
-    $FipsEnableBootstrapEffective = "true"
-  } else {
+  if ($StaticPeersComplete -eq "1") {
     $FipsEnableBootstrapEffective = "false"
+  } else {
+    $FipsEnableBootstrapEffective = "true"
   }
 }
 
 $FipsOpenDiscoveryMaxPendingEffective = $FipsOpenDiscoveryMaxPending
-if ([string]::IsNullOrWhiteSpace($FipsOpenDiscoveryMaxPendingEffective) -and -not [string]::IsNullOrWhiteSpace($StaticPeers)) {
-  $FipsOpenDiscoveryMaxPendingEffective = "0"
+if ([string]::IsNullOrWhiteSpace($FipsOpenDiscoveryMaxPendingEffective)) {
+  if ($StaticPeersComplete -eq "1") {
+    $FipsOpenDiscoveryMaxPendingEffective = "0"
+  } else {
+    $FipsOpenDiscoveryMaxPendingEffective = "16"
+  }
 }
 
 function Write-Log([string]$Message) {
@@ -2724,11 +2761,27 @@ try:
 except Exception as exc:
     print(f"invalid status json: {exc}")
     raise SystemExit(1)
-
-peers = {peer.get("label"): peer for peer in data.get("peers", [])}
+peers = {}
+for peer in data.get("peers", []):
+    for key in ("label", "display_label", "app_key_npub", "app_key_pubkey"):
+        value = peer.get(key)
+        if value:
+            peers[value] = peer
+fips = (data.get("network") or {}).get("fips") or {}
+online_fips = set(
+    (fips.get("online_peers") or [])
+    + (fips.get("online_devices") or [])
+    + (fips.get("direct_peers") or [])
+    + (fips.get("direct_devices") or [])
+    + (fips.get("connected_peers") or [])
+    + (fips.get("mesh_peers") or [])
+    + (fips.get("mesh_devices") or [])
+)
 missing = []
 for label in wanted:
     peer = peers.get(label)
+    if peer is None and label in online_fips:
+        continue
     if peer is None:
         missing.append(f"{label}:missing")
     elif peer.get("fips_online") is not True:
@@ -2740,9 +2793,25 @@ if missing:
     print("; ".join(missing))
     raise SystemExit(1)
 
-fips = (data.get("network") or {}).get("fips") or {}
 connected = fips.get("connected_peers") or []
 print("connected_peers=[" + ",".join(connected) + "]")
+PY
+}
+
+status_current_app_key_npub() {
+  local status="$1"
+  STATUS_JSON="$status" python3 <<'PY'
+import json
+import os
+
+data = json.loads(os.environ["STATUS_JSON"])
+npub = data.get("current_app_key_npub")
+if not npub:
+    npub = ((data.get("profile") or {}).get("profile") or {}).get("current_app_key_npub")
+if not npub:
+    npub = (data.get("profile") or {}).get("current_app_key_npub")
+if npub:
+    print(npub)
 PY
 }
 
@@ -2756,6 +2825,8 @@ check_dev_vm_connectivity() {
   local status=""
   local summary=""
   local failures=()
+  local statuses=()
+  local npubs=()
 
   [[ "$NO_RUN" == "1" ]] && return 0
   [[ "${IRIS_DRIVE_DEV_VM_SKIP_CONNECTIVITY_CHECK:-0}" == "1" ]] && return 0
@@ -2767,18 +2838,33 @@ check_dev_vm_connectivity() {
   start="$(date +%s)"
   while true; do
     failures=()
+    statuses=()
+    npubs=()
     for i in "${!LABELS[@]}"; do
+      if ! status="$(remote_status_json_retry "${KINDS[$i]}" "${SSH_HOSTS[$i]}" 3 0.5)"; then
+        failures+=("${LABELS[$i]}: status unavailable")
+        statuses[$i]=""
+        npubs[$i]=""
+        continue
+      fi
+      statuses[$i]="$status"
+      npubs[$i]="$(status_current_app_key_npub "$status")"
+      if [[ -z "${npubs[$i]}" ]]; then
+        failures+=("${LABELS[$i]}: current app-key npub unavailable")
+      fi
+    done
+
+    for i in "${!LABELS[@]}"; do
+      [[ -n "${statuses[$i]:-}" ]] || continue
       expected=()
       for j in "${!LABELS[@]}"; do
         [[ "$i" == "$j" ]] && continue
-        expected+=("$(target_peer_hint_key "${HOSTS[$j]}")")
+        if [[ -n "${npubs[$j]:-}" ]]; then
+          expected+=("${npubs[$j]}")
+        fi
       done
 
-      if ! status="$(remote_status_json_retry "${KINDS[$i]}" "${SSH_HOSTS[$i]}" 3 0.5)"; then
-        failures+=("${LABELS[$i]}: status unavailable")
-        continue
-      fi
-      if ! summary="$(status_missing_peers "$status" "${expected[@]}" 2>&1)"; then
+      if ! summary="$(status_missing_peers "${statuses[$i]}" "${expected[@]}" 2>&1)"; then
         failures+=("${LABELS[$i]}: $summary")
       else
         log "${LABELS[$i]} FIPS online: ${summary}"
@@ -2806,10 +2892,10 @@ for i in "${!LABELS[@]}"; do
   log "updating/building/running ${LABELS[$i]} on ${HOSTS[$i]} via ${SSH_HOSTS[$i]}"
   case "${KINDS[$i]}" in
     macos|linux)
-      run_posix_target "${LABELS[$i]}" "${KINDS[$i]}" "${SSH_HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}" "${SOCIAL_GRAPH_BARES[$i]}" "${CASHU_SERVICE_BARES[$i]}" "${STATIC_PEERS_BY_INDEX[$i]:-}"
+      run_posix_target "${LABELS[$i]}" "${KINDS[$i]}" "${SSH_HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}" "${SOCIAL_GRAPH_BARES[$i]}" "${CASHU_SERVICE_BARES[$i]}" "${STATIC_PEERS_BY_INDEX[$i]:-}" "${STATIC_PEERS_COMPLETE_BY_INDEX[$i]:-0}"
       ;;
     windows)
-      run_windows_target "${LABELS[$i]}" "${SSH_HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}" "${SOCIAL_GRAPH_BARES[$i]}" "${CASHU_SERVICE_BARES[$i]}" "${STATIC_PEERS_BY_INDEX[$i]:-}"
+      run_windows_target "${LABELS[$i]}" "${SSH_HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}" "${SOCIAL_GRAPH_BARES[$i]}" "${CASHU_SERVICE_BARES[$i]}" "${STATIC_PEERS_BY_INDEX[$i]:-}" "${STATIC_PEERS_COMPLETE_BY_INDEX[$i]:-0}"
       ;;
     *)
       die "unknown target kind: ${KINDS[$i]}"

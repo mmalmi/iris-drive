@@ -555,6 +555,16 @@ fn provider_resolve_path_normalizes_name_and_avoids_collisions() {
 }
 
 #[test]
+fn provider_compose_path_sanitizes_without_provider_state() {
+    let resolved = super::native_provider_compose_path_json("Reports", "../Quarter:1/report.txt");
+
+    assert_eq!(resolved["parent_path"], "Reports");
+    assert_eq!(resolved["display_name"], "Quarter_1_report.txt");
+    assert_eq!(resolved["path"], "Reports/Quarter_1_report.txt");
+    assert_eq!(resolved["error"], "");
+}
+
+#[test]
 fn provider_normalize_path_validates_native_document_paths() {
     let valid = super::native_provider_normalize_path_json("Reports/note.txt");
     assert_eq!(valid["path"], "Reports/note.txt");

@@ -241,6 +241,15 @@ run_android_gui_tests() {
   done
 }
 
+run_android_share_api_test() {
+  local class="to.iris.drive.app.ShareActivityInstrumentedTest"
+  (
+    cd "$ROOT"
+    ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedUiTestAndroidTest \
+      "-Pandroid.testInstrumentationRunnerArguments.class=$class"
+  )
+}
+
 ADB="$(resolve_adb)"
 serial="$(select_serial "$ADB")"
 if [[ -z "$serial" ]]; then
@@ -250,6 +259,7 @@ fi
 
 "$ADB" -s "$serial" wait-for-device
 run_android_gui_tests
+run_android_share_api_test
 
 if [[ ! -x "$IDRIVE" ]]; then
   cargo build -p idrive

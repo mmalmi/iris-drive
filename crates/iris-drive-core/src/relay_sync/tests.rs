@@ -770,6 +770,56 @@ fn apply_drive_root_event_authorizes_from_roster_without_runtime_app_keys_cache(
 }
 
 #[test]
+fn apply_drive_root_event_authorizes_from_existing_root_without_roster_or_cache() {
+    let dir = tempdir().unwrap();
+    let (mut cfg, acct) = config_with_owner_account(dir.path());
+
+    let device_b = Keys::generate();
+    let device_b_hex = device_b.public_key().to_hex();
+    {
+        let drive = cfg
+            .drives
+            .iter_mut()
+            .find(|drive| drive.drive_id == "main")
+            .unwrap();
+        drive.app_key_roots.insert(
+            acct.state.app_key_pubkey.clone(),
+            encrypted_root(0xa1, 10, 1),
+        );
+        drive
+            .app_key_roots
+            .insert(device_b_hex.clone(), encrypted_root(0xa2, 11, 1));
+    }
+    let mut state = acct.state.clone();
+    state.profile_roster_ops = Vec::new();
+    state.app_keys = None;
+    state.profile_roster_projection = None;
+    cfg.profile = Some(state);
+
+    let root = encrypted_root(0xa3, 20, 1);
+    let event = build_drive_root_event(
+        &device_b,
+        &acct.state.root_scope_id(),
+        "main",
+        &root,
+        &[acct.state.app_key_pubkey.clone(), device_b_hex.clone()],
+    )
+    .unwrap();
+    let outcome =
+        apply_remote_drive_root_event(&mut cfg, &event, Some(acct.app_key.keys())).unwrap();
+
+    assert_eq!(outcome, DriveRootApply::Applied);
+    assert_eq!(
+        cfg.drive("main")
+            .unwrap()
+            .app_key_roots
+            .get(&device_b_hex)
+            .map(|entry| entry.root_cid.as_str()),
+        Some(root.root_cid.as_str())
+    );
+}
+
+#[test]
 fn apply_drive_root_event_without_local_wrap_is_skipped() {
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();

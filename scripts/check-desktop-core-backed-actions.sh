@@ -24,7 +24,7 @@ require_absent() {
 
 require_contains linux/src/daemon_control.rs "iris_drive_app_core::FfiApp"
 require_contains linux/src/daemon_control.rs "dispatch_desktop_action"
-require_contains linux/src/actions.rs "Reject"
+require_contains linux/src/setup.rs "RejectDevice"
 require_contains linux/src/render.rs "state.ui.app_actors"
 require_contains linux/src/render.rs "share.source_path"
 require_contains linux/src/render.rs "missing access wrap"

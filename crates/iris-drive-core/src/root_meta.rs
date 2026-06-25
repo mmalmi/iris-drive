@@ -11,13 +11,16 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RootParent {
+    #[serde(alias = "device_id")]
     pub app_key_pubkey: String,
+    #[serde(alias = "device_seq")]
     pub app_key_seq: u64,
     pub root_cid: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RootObservation {
+    #[serde(alias = "device_seq")]
     pub app_key_seq: u64,
     pub root_cid: String,
 }
@@ -26,7 +29,9 @@ pub struct RootObservation {
 pub struct DriveRootMeta {
     pub schema: u16,
     pub drive_id: String,
+    #[serde(alias = "device_id")]
     pub app_key_pubkey: String,
+    #[serde(alias = "device_seq")]
     pub app_key_seq: u64,
     pub dck_generation: u64,
     /// Local bookkeeping root that should not be announced as this

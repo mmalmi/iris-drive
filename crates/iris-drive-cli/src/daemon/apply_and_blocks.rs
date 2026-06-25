@@ -5,6 +5,13 @@ pub(crate) enum EventApplyOutcome {
     RetryablePrerequisiteMissing,
 }
 
+const ROOT_APPLY_FOLLOWUP_COALESCE_MS: u64 = 750;
+const DIRECT_ROOT_STATE_REQUEST_MIN_INTERVAL_SECS: u64 = 5;
+
+static DIRECT_ROOT_STATE_REQUEST_THROTTLE: std::sync::OnceLock<
+    std::sync::Mutex<std::collections::BTreeMap<String, std::time::Instant>>,
+> = std::sync::OnceLock::new();
+
 impl EventApplyOutcome {
     pub(crate) const fn should_cache_direct_root_frame(self) -> bool {
         !matches!(self, Self::RetryablePrerequisiteMissing)
@@ -41,7 +48,7 @@ pub(crate) async fn apply_one_event(
     daemon_tasks: &DaemonTaskSet,
 ) -> Result<EventApplyOutcome> {
     use iris_drive_core::relay_sync;
-    let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
+    let config_lock = ConfigMutationLock::acquire(config_dir).await?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let kind = event.kind.as_u16();
     if iris_drive_core::nostr_events::is_app_key_link_request_event_coordinate(event) {
@@ -77,6 +84,7 @@ pub(crate) async fn apply_one_event(
         );
         if matches!(outcome, relay_sync::IrisProfileRosterOpApply::Applied) {
             config.save(config_path_in(config_dir))?;
+            drop(config_lock);
             if let Some(sync) = fips_blocks.as_deref() {
                 sync.refresh_authorized_peers(&config).await;
             }
@@ -96,6 +104,7 @@ pub(crate) async fn apply_one_event(
         );
         if matches!(outcome, relay_sync::ShareAccessSnapshotApply::Applied) {
             config.save(config_path_in(config_dir))?;
+            drop(config_lock);
             if let Some(sync) = fips_blocks.as_deref() {
                 sync.refresh_authorized_peers(&config).await;
             }
@@ -146,11 +155,12 @@ pub(crate) async fn apply_one_event(
         if was_applied {
             config.save(config_path_in(config_dir))?;
         }
+        drop(config_lock);
         if let Some(sync) = fips_blocks.as_deref() {
             sync.refresh_authorized_peers(&config).await;
         }
 
-        if let Some(task) = spawn_root_apply_followup(
+        enqueue_root_apply_followup(
             config_dir.to_path_buf(),
             config.clone(),
             root_cid_to_pull,
@@ -158,9 +168,8 @@ pub(crate) async fn apply_one_event(
             followup.refresh_projection,
             "projected_drive_root",
             mount_refresh,
-        ) {
-            daemon_tasks.push(task);
-        }
+            daemon_tasks,
+        );
         return Ok(if retryable {
             EventApplyOutcome::RetryablePrerequisiteMissing
         } else if was_applied {
@@ -239,7 +248,7 @@ pub(crate) fn apply_files_root_event(
     if was_applied {
         config.save(config_path_in(config_dir))?;
     }
-    if let Some(task) = spawn_root_apply_followup(
+    enqueue_root_apply_followup(
         config_dir.to_path_buf(),
         config.clone(),
         root_cid_to_pull,
@@ -247,9 +256,8 @@ pub(crate) fn apply_files_root_event(
         was_applied && tree_name == iris_drive_core::PRIMARY_DRIVE_ID,
         "projected_files_root",
         mount_refresh,
-    ) {
-        daemon_tasks.push(task);
-    }
+        daemon_tasks,
+    );
     Ok(if was_applied {
         EventApplyOutcome::Changed
     } else {
@@ -266,15 +274,15 @@ struct DriveRootFollowupPlan {
 fn drive_root_followup_plan(
     was_applied: bool,
     stale_current_root: bool,
-    root_blocks_already_synced: bool,
+    _root_blocks_already_synced: bool,
 ) -> DriveRootFollowupPlan {
     DriveRootFollowupPlan {
         pull_blocks: was_applied || stale_current_root,
-        refresh_projection: was_applied || (stale_current_root && !root_blocks_already_synced),
+        refresh_projection: was_applied || stale_current_root,
     }
 }
 
-fn root_has_successful_block_sync(config_dir: &Path, root_cid: &str) -> bool {
+pub(crate) fn root_has_successful_block_sync(config_dir: &Path, root_cid: &str) -> bool {
     load_daemon_status(config_dir)
         .and_then(|status| {
             status
@@ -298,6 +306,45 @@ fn startup_root_cids_needing_sync(config_dir: &Path, config: &AppConfig) -> Vec<
         .collect()
 }
 
+pub(crate) fn enqueue_pending_root_sync_followups(
+    config_dir: &Path,
+    fips_blocks: Option<Arc<FsFipsBlockSync>>,
+    mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+    daemon_tasks: &DaemonTaskSet,
+    projection_event: &'static str,
+) -> usize {
+    let Ok(config) = AppConfig::load_or_default(config_path_in(config_dir)) else {
+        return 0;
+    };
+    let roots = startup_root_cids_needing_sync(config_dir, &config);
+    let mut enqueued = 0;
+    for root_cid in roots {
+        if enqueue_root_apply_followup(
+            config_dir.to_path_buf(),
+            config.clone(),
+            Some(root_cid),
+            fips_blocks.clone(),
+            true,
+            projection_event,
+            mount_refresh.clone(),
+            daemon_tasks,
+        ) {
+            enqueued += 1;
+        }
+    }
+    if enqueued > 0 {
+        println!(
+            "{}",
+            json!({
+                "event": "pending_root_sync_retry_enqueued",
+                "count": enqueued,
+                "trigger": projection_event,
+            })
+        );
+    }
+    enqueued
+}
+
 #[allow(clippy::too_many_lines)]
 pub(crate) fn spawn_root_apply_followup(
     config_dir: PathBuf,
@@ -317,9 +364,33 @@ pub(crate) fn spawn_root_apply_followup(
         .as_ref()
         .filter(|root_cid| root_cid_belongs_to_peer(&config, root_cid))
         .cloned();
+    let should_coalesce_followup =
+        root_cid_to_pull.is_some() && expected_projection_root_key.is_some();
 
     Some(tokio::spawn(async move {
+        if should_coalesce_followup {
+            tokio::time::sleep(std::time::Duration::from_millis(
+                ROOT_APPLY_FOLLOWUP_COALESCE_MS,
+            ))
+            .await;
+        }
         if let Some(root_cid) = root_cid_to_pull {
+            if root_apply_followup_is_stale(&config_dir, expected_projection_root_key.as_ref()) {
+                println!(
+                    "{}",
+                    json!({
+                        "event": "root_apply_followup_skipped_stale",
+                        "root_cid": root_cid,
+                    })
+                );
+                return;
+            }
+            request_latest_direct_root_state(
+                &config,
+                fips_blocks.as_deref(),
+                projection_event,
+            )
+            .await;
             let mut last_error = None;
             for delay_secs in event_block_pull_retry_delays(&config) {
                 if root_apply_followup_is_stale(&config_dir, expected_projection_root_key.as_ref())
@@ -376,6 +447,7 @@ pub(crate) fn spawn_root_apply_followup(
                 }
             }
             if let Some(error) = last_error {
+                record_block_sync_error(&config_dir, &root_cid, &error);
                 println!(
                     "{}",
                     json!({
@@ -390,15 +462,21 @@ pub(crate) fn spawn_root_apply_followup(
         }
 
         if root_cid_for_materialize.is_some() {
-            match materialize_primary_merged_root_for_followup(&config_dir).await {
-                Ok(Some(report)) => println!(
-                    "{}",
+            match materialize_primary_merged_root_for_followup(&config_dir).await
+            {
+                Ok(Some(report)) => emit_daemon_status_event(
+                    &config_dir,
                     json!({
                         "event": "merged_root_materialized",
-                        "root_cid": report.root_cid,
+                        "root_cid": report.root_cid.clone(),
                         "file_count": report.file_count,
                         "top_level_entries": report.top_level_entries,
-                    })
+                        "hashtree": {
+                            "current_root_cid": report.root_cid,
+                            "file_count": report.file_count,
+                            "top_level_entries": report.top_level_entries,
+                        },
+                    }),
                 ),
                 Ok(None) => {}
                 Err(error) => {
@@ -415,16 +493,6 @@ pub(crate) fn spawn_root_apply_followup(
         }
 
         if should_refresh_projection {
-            if root_apply_followup_is_stale(&config_dir, expected_projection_root_key.as_ref()) {
-                println!(
-                    "{}",
-                    json!({
-                        "event": "root_apply_projection_refresh_skipped_stale",
-                        "root_key": root_apply_followup_key_label(expected_projection_root_key.as_ref()),
-                    })
-                );
-                return;
-            }
             let mut refreshed_windows_cloud = false;
             if let Some(sync_root) = windows_cloud_projection_root() {
                 match refresh_windows_cloud_local_projection(&config_dir, &sync_root).await {
@@ -473,10 +541,74 @@ pub(crate) fn spawn_root_apply_followup(
     }))
 }
 
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn enqueue_root_apply_followup(
+    config_dir: PathBuf,
+    config: AppConfig,
+    root_cid_to_pull: Option<String>,
+    fips_blocks: Option<Arc<FsFipsBlockSync>>,
+    should_refresh_projection: bool,
+    projection_event: &'static str,
+    mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+    daemon_tasks: &DaemonTaskSet,
+) -> bool {
+    let Some(task) = spawn_root_apply_followup(
+        config_dir,
+        config.clone(),
+        root_cid_to_pull.clone(),
+        fips_blocks,
+        should_refresh_projection,
+        projection_event,
+        mount_refresh,
+    ) else {
+        return false;
+    };
+    let exact_key = root_apply_followup_key(
+        &config,
+        root_cid_to_pull.as_deref(),
+        should_refresh_projection,
+    )
+    .map(|key| format!("root_apply_followup:{key:?}"));
+    let group_key = root_apply_followup_queue_key(
+        &config,
+        root_cid_to_pull.as_deref(),
+        should_refresh_projection,
+    )
+    .map(|key| format!("root_apply_followup_group:{key:?}"));
+
+    let enqueued = match (exact_key.clone(), group_key.clone()) {
+        (Some(key), Some(group)) => daemon_tasks.push_keyed_replacing_group(key, group, task),
+        (Some(key), None) | (None, Some(key)) => daemon_tasks.push_keyed(key, task),
+        (None, None) => {
+            daemon_tasks.push(task);
+            return true;
+        }
+    };
+
+    if enqueued {
+        true
+    } else {
+        println!(
+            "{}",
+            json!({
+                "event": "root_apply_followup_coalesced",
+                "root_cid": root_cid_to_pull,
+                "key": exact_key,
+                "group": group_key,
+            })
+        );
+        false
+    }
+}
+
 async fn materialize_primary_merged_root_for_followup(
     config_dir: &Path,
 ) -> Result<Option<iris_drive_core::ImportReport>> {
-    let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
+    let Some(_config_lock) =
+        ConfigMutationLock::acquire_for_background(config_dir, || false).await?
+    else {
+        return Ok(None);
+    };
     let mut daemon =
         iris_drive_core::Daemon::open(config_dir).context("opening daemon to materialize merge")?;
     daemon
@@ -607,6 +739,87 @@ pub(crate) async fn pull_blocks_for_root(
             "no block download transport available for {root_cid_str}"
         ))
     }
+}
+
+async fn request_latest_direct_root_state(
+    config: &AppConfig,
+    fips_blocks: Option<&FsFipsBlockSync>,
+    projection_event: &'static str,
+) {
+    let Some(sync) = fips_blocks else {
+        return;
+    };
+    let Some(root_scope_id) = config.profile.as_ref().map(ProfileState::root_scope_id) else {
+        return;
+    };
+    if !should_publish_direct_root_state_request(&root_scope_id) {
+        println!(
+            "{}",
+            json!({
+                "event": "direct_root_state_request_throttled",
+                "trigger": projection_event,
+                "root_scope_id": root_scope_id,
+            })
+        );
+        return;
+    }
+    let bytes = match iris_drive_core::encode_direct_root_state_request_frame(&root_scope_id) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            println!(
+                "{}",
+                json!({
+                    "event": "direct_root_state_request_error",
+                    "trigger": projection_event,
+                    "error": format!("{error:#}"),
+                })
+            );
+            return;
+        }
+    };
+    let selected_peers = sync.authorized_peer_ids().await.len();
+    match sync
+        .broadcast_app_message(iris_drive_core::DIRECT_ROOT_APP_TOPIC, bytes)
+        .await
+    {
+        Ok(sent_peers) => println!(
+            "{}",
+            json!({
+                "event": "direct_root_state_request_publish",
+                "trigger": projection_event,
+                "root_scope_id": root_scope_id,
+                "selected_peers": selected_peers,
+                "sent_peers": sent_peers,
+            })
+        ),
+        Err(error) => println!(
+            "{}",
+            json!({
+                "event": "direct_root_state_request_error",
+                "trigger": projection_event,
+                "root_scope_id": root_scope_id,
+                "selected_peers": selected_peers,
+                "error": format!("{error:#}"),
+            })
+        ),
+    }
+}
+
+fn should_publish_direct_root_state_request(root_scope_id: &str) -> bool {
+    let throttle = DIRECT_ROOT_STATE_REQUEST_THROTTLE
+        .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
+    let Ok(mut throttle) = throttle.lock() else {
+        return true;
+    };
+    let now = std::time::Instant::now();
+    if throttle.get(root_scope_id).is_some_and(|last| {
+        now.duration_since(*last)
+            < std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_MIN_INTERVAL_SECS)
+    }) {
+        return false;
+    }
+    throttle.insert(root_scope_id.to_string(), now);
+    true
 }
 
 fn should_try_blossom_download(

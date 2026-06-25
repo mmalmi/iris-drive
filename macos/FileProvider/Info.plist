@@ -8,6 +8,14 @@
   <string>Iris Drive</string>
   <key>CFBundleExecutable</key>
   <string>$(EXECUTABLE_NAME)</string>
+  <key>CFBundleIcons</key>
+  <dict>
+    <key>CFBundlePrimaryIcon</key>
+    <dict>
+      <key>CFBundleSymbolName</key>
+      <string>smallcircle.filled.circle</string>
+    </dict>
+  </dict>
   <key>CFBundleIdentifier</key>
   <string>$(PRODUCT_BUNDLE_IDENTIFIER)</string>
   <key>CFBundleInfoDictionaryVersion</key>

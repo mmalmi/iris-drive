@@ -66,6 +66,21 @@ fn provider_mutation_requires_live_daemon() {
 }
 
 #[test]
+fn provider_compose_path_does_not_require_live_daemon() {
+    let config_dir = tempfile::tempdir().unwrap();
+    init_config(config_dir.path());
+
+    cmd_provider(
+        config_dir.path(),
+        ProviderCmd::ComposePath {
+            parent_path: "Reports".into(),
+            display_name: "../Quarter:1/report.txt".into(),
+        },
+    )
+    .unwrap();
+}
+
+#[test]
 fn provider_mutation_accepts_fresh_daemon_status_when_pid_probe_fails() {
     let config_dir = tempfile::tempdir().unwrap();
     init_config(config_dir.path());
@@ -329,9 +344,28 @@ fn provider_import_retries_windows_transient_missing_store_reads() {
     assert!(provider_import_error_message_is_retryable(
         "index: tree: Missing chunk: abc123"
     ));
+    assert!(provider_import_error_message_is_retryable(
+        "local store is missing provider root block abc123"
+    ));
     assert!(!provider_import_error_message_is_retryable(
         "config: invalid json"
     ));
+}
+
+#[test]
+fn provider_import_retries_long_enough_for_peer_root_warmup() {
+    let retry_budget_ms: u64 = PROVIDER_IMPORT_RETRY_DELAYS_MS.iter().sum();
+
+    assert!(
+        retry_budget_ms >= 60_000,
+        "provider root warmup retry budget was only {retry_budget_ms}ms"
+    );
+    assert!(
+        PROVIDER_IMPORT_RETRY_DELAYS_MS
+            .iter()
+            .all(|delay| *delay <= 16_000),
+        "individual provider retry sleeps should stay bounded"
+    );
 }
 
 #[test]
@@ -353,13 +387,42 @@ fn provider_list_entry_serializes_core_path_metadata() {
 }
 
 #[test]
-fn provider_entry_modified_at_reads_directory_metadata() {
-    let meta = std::collections::HashMap::from([(
-        "modified_at".to_string(),
-        serde_json::json!(1_700_000_000_i64),
-    )]);
+fn provider_modified_at_index_projects_child_timestamps_to_directories() {
+    let view = iris_drive_core::projection::PrimaryMergedView {
+        view: iris_drive_core::merge::MergedView {
+            files: vec![
+                iris_drive_core::merge::MergedEntry {
+                    path: "Reports/nested.txt".to_string(),
+                    source_path: None,
+                    hash: [1; 32],
+                    size: 12,
+                    whole_file_hash: None,
+                    modified_at: Some(1_700_000_000),
+                    source_app_key_pubkey: "app-key".to_string(),
+                    published_at: 1_700_000_001,
+                },
+                iris_drive_core::merge::MergedEntry {
+                    path: "Reports/epoch.txt".to_string(),
+                    source_path: None,
+                    hash: [2; 32],
+                    size: 12,
+                    whole_file_hash: None,
+                    modified_at: Some(0),
+                    source_app_key_pubkey: "app-key".to_string(),
+                    published_at: 1_700_000_001,
+                },
+            ],
+            ..Default::default()
+        },
+        authorized_app_keys: 1,
+        app_key_roots_present: 1,
+    };
 
-    assert_eq!(provider_entry_modified_at(Some(&meta)), Some(1_700_000_000));
+    let index = provider_modified_at_index(&view);
+
+    assert_eq!(index.get("Reports/nested.txt"), Some(&1_700_000_000));
+    assert_eq!(index.get("Reports"), Some(&1_700_000_000));
+    assert_eq!(index.get("Reports/epoch.txt"), None);
 }
 
 #[test]

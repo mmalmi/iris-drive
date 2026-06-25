@@ -1,4 +1,4 @@
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 #[cfg_attr(not(windows), allow(dead_code))]
 enum WindowsCloudRootChange {
     Upsert(String),
@@ -7,7 +7,6 @@ enum WindowsCloudRootChange {
         old_path: String,
         new_path: String,
     },
-    ValidateLocalState,
     Rescan {
         full: bool,
         recover_cached_deletes: bool,
@@ -88,7 +87,10 @@ fn start_windows_cloud_root_watch() -> Result<(
 
 #[cfg_attr(not(windows), allow(dead_code))]
 fn windows_cloud_periodic_validate_change() -> WindowsCloudRootChange {
-    WindowsCloudRootChange::ValidateLocalState
+    WindowsCloudRootChange::Rescan {
+        full: false,
+        recover_cached_deletes: false,
+    }
 }
 
 #[cfg(windows)]
@@ -146,7 +148,7 @@ async fn import_windows_cloud_root_changes_and_publish(
     fips_blocks: Option<&FsFipsBlockSync>,
     daemon_tasks: &DaemonTaskSet,
 ) -> Result<WindowsCloudImportOutcome> {
-    let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
+    let config_lock = ConfigMutationLock::acquire(config_dir).await?;
     let daemon = Daemon::open(config_dir).context("opening daemon for Windows Cloud Files root")?;
     let visible = iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
         .await
@@ -210,7 +212,6 @@ async fn import_windows_cloud_root_changes_and_publish(
                     tombstone_paths.insert(old_path);
                 }
             }
-            WindowsCloudRootChange::ValidateLocalState => {}
             WindowsCloudRootChange::Rescan {
                 full,
                 recover_cached_deletes,
@@ -271,18 +272,27 @@ async fn import_windows_cloud_root_changes_and_publish(
         return Ok(WindowsCloudImportOutcome::Unchanged);
     }
 
-    import_mount_root_and_publish_with_tombstone_paths(
-        client,
+    let import = import_mount_root_for_publish(
         config_dir,
         root.clone(),
         Some(before),
         Some(&tombstone_paths),
-        direct_roots,
-        fips_blocks,
-        daemon_tasks,
     )
     .await
-    .context("publishing Windows Cloud Files root")?;
+    .context("importing Windows Cloud Files root")?;
+    drop(config_lock);
+    if let Some(import) = import {
+        publish_imported_mount_root(
+            client,
+            config_dir,
+            import,
+            direct_roots,
+            fips_blocks,
+            daemon_tasks,
+        )
+        .await
+        .context("publishing Windows Cloud Files root")?;
+    }
 
     // Write synced local-state only after the config root has advanced. If this
     // cache wins the race against provider list, the Windows app can mistake a
@@ -314,7 +324,6 @@ fn windows_cloud_protected_local_mutation_paths(
                 windows_cloud_insert_path_and_ancestors(&mut protected, new_path);
             }
             WindowsCloudRootChange::Delete(_)
-            | WindowsCloudRootChange::ValidateLocalState
             | WindowsCloudRootChange::Rescan { .. } => {}
         }
     }

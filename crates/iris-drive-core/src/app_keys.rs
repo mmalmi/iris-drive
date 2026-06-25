@@ -77,13 +77,19 @@ impl AppActorEntry {
 #[serde(deny_unknown_fields)]
 pub struct AppKeysProjection {
     /// Stable `IrisProfile` UUID string that scopes this roster.
+    #[serde(default)]
     pub profile_id: String,
     /// Pubkey of the admin `AppKey` that signed the key epoch represented by
     /// this projection.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        alias = "owner_pubkey",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub signed_by_pubkey: Option<String>,
     /// Created-at timestamp of the key epoch represented by this projection.
     pub created_at: i64,
+    #[serde(alias = "devices")]
     pub app_actors: Vec<AppActorEntry>,
     /// Monotonically-increasing counter. Bumped each time the DCK
     /// rotates (on approve, revoke, or explicit `rotate_dck`).

@@ -77,9 +77,63 @@ if ! grep -F 'CARGO_PROFILE_DEV_DEBUG="${CARGO_PROFILE_DEV_DEBUG_DEFAULT}"' "$RO
   exit 1
 fi
 
+if ! grep -F 'local_head="$(git -C "$ROOT" rev-parse HEAD)"' "$ROOT/scripts/dev-vm-smoke.sh" >/dev/null ||
+  ! grep -F 'git -C ~/src/iris-drive rev-parse HEAD' "$ROOT/scripts/dev-vm-smoke.sh" >/dev/null ||
+  ! grep -F 'rev-parse HEAD' "$ROOT/scripts/dev-vm-smoke.sh" >/dev/null; then
+  echo "dev VM smoke revision checks must compare full commit IDs, not ambiguous short hashes" >&2
+  exit 1
+fi
+
+if grep -F 'rev-parse --short HEAD' "$ROOT/scripts/dev-vm-smoke.sh" >/dev/null; then
+  echo "dev VM smoke must not compare git rev-parse --short HEAD output across machines" >&2
+  exit 1
+fi
+
+python3 - "$ROOT/scripts/dev-vm-smoke.sh" <<'PY'
+import pathlib
+import re
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text()
+functions = re.findall(r"macos_config_dir\(\) \{(.*?)\n\}", text, re.S)
+if len(functions) < 2:
+    raise SystemExit("expected macos_config_dir helpers in dev-vm-smoke.sh")
+for body in functions:
+    newest = body.find("best_mtime")
+    wildcard = body.find("Group\\ Containers/*.to.iris.drive")
+    status = body.find("daemon-status.json")
+    if newest < 0 or wildcard < 0 or status < 0:
+        raise SystemExit(
+            "macOS dev VM smoke must pick the active app-group config by daemon-status freshness"
+        )
+PY
+
 if ! grep -F "IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR=%s" "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
   ! grep -F "IRIS_DRIVE_DEV_VM_LINUX_MOUNTPOINT=%s" "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
   echo "POSIX VM runs must forward explicit Linux config and mountpoint overrides" >&2
+  exit 1
+fi
+
+if grep -F '[[ -e "$mountpoint" ]] || return 0' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F 'local mounted=0' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F 'findmnt -rn --mountpoint "$mountpoint"' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "dev VM stale FUSE detach must not rely on -e because broken mounts report ENOTCONN" >&2
+  exit 1
+fi
+
+if ! grep -F 'STATIC_PEERS_COMPLETE_BY_INDEX' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F 'STATIC_PEERS_COMPLETE=' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F 'if [[ "$STATIC_PEERS_COMPLETE" == "1" ]]' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F 'FIPS_OPEN_DISCOVERY_MAX_PENDING_EFFECTIVE="16"' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F '$FipsOpenDiscoveryMaxPendingEffective = "16"' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F '$StaticPeersComplete' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "partial static FIPS hints must keep bootstrap/open discovery enabled for missing VM edges" >&2
+  exit 1
+fi
+
+if ! grep -F 'vpn_active' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F '$VpnActive' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "nvpn static hint detection must reject stale tunnel_ip values when vpn_active is false" >&2
   exit 1
 fi
 
@@ -120,6 +174,31 @@ if ! grep -F 'entitlements.pop("com.apple.developer.associated-domains", None)' 
   ! grep -F 'entitlements.pop("com.apple.developer.fileprovider.testing-mode", None)' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
   ! grep -F 'entitlements.pop("com.apple.security.application-groups", None)' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
   echo "macOS dev VM signing must strip provisioned-only entitlements unless FileProvider is explicitly required" >&2
+  exit 1
+fi
+
+if ! grep -F 'IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER="${IRIS_DRIVE_DEV_VM_REQUIRE_FILEPROVIDER:-}"' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F 'IRIS_DRIVE_DEV_VM_MACOS_KEEP_PROVISIONED_DEBUG_ENTITLEMENTS="${IRIS_DRIVE_DEV_VM_MACOS_KEEP_PROVISIONED_DEBUG_ENTITLEMENTS:-}"' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F 'IRIS_DRIVE_DEV_VM_MACOS_KEEP_FILEPROVIDER_TESTING_MODE="${IRIS_DRIVE_DEV_VM_MACOS_KEEP_FILEPROVIDER_TESTING_MODE:-}"' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "macOS dev VM entitlement filtering must pass FileProvider keep flags into Python" >&2
+  exit 1
+fi
+
+if ! grep -F 'if value is None or value == "":' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "macOS dev VM entitlement filtering must treat empty keep flags as defaulted" >&2
+  exit 1
+fi
+
+if ! grep -F 'local daemon_idrive="$app/Contents/MacOS/idrive"' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F '"$daemon_idrive" --config-dir "$config_dir" daemon' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F 'wait_for_idrive_fips_status "$daemon_idrive" "$config_dir" "$daemon_pid"' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "macOS dev VM daemon must run the bundled signed idrive helper, not target/debug/idrive" >&2
+  exit 1
+fi
+
+if ! grep -F 'local helper_identifier="to.iris.drive.macos.idrive"' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  ! grep -F 'helper_codesign_base+=(--identifier "$helper_identifier")' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "macOS dev VM helper signing must use a stable Iris Drive code-signing identifier" >&2
   exit 1
 fi
 

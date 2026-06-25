@@ -73,8 +73,13 @@ pub use conflict::{
 pub use daemon::{Daemon, DaemonError, ImportReport, PRIMARY_DRIVE_ID};
 pub use direct_root_transport::{
     DIRECT_ROOT_APP_TOPIC, DIRECT_ROOT_MESH_STREAM_PREFIX, DirectRootEvent, DirectRootExchange,
-    DirectRootFrame, apply_direct_root_event, build_current_direct_root_events,
-    direct_root_mesh_stream,
+    DirectRootFrame, DirectRootHintApply, DirectRootHintApplyReport, DirectRootHintFrame,
+    DirectRootHintScope, DirectRootKeyHint, DirectRootStateRequestFrame, DirectRootWireFrame,
+    apply_direct_root_event, apply_direct_root_key_hint_to_config,
+    build_current_direct_root_events, coalesce_direct_root_app_messages,
+    coalesce_direct_root_mesh_events, decode_direct_root_wire_frame, direct_root_mesh_stream,
+    encode_direct_root_hint_frame, encode_direct_root_state_request_frame,
+    parse_direct_root_key_hint,
 };
 pub use fips_sync::{FipsBlockSync, FipsSyncError, FsFipsBlockSync};
 pub use gateway::{GatewayBind, GatewayError, GatewayProxyServer, GatewayServer};
@@ -111,15 +116,17 @@ pub use merge::{
 };
 pub use network_sync::{
     DriveRootEventApplyReport, NetworkSyncOptions, NetworkSyncReport, apply_drive_root_events,
-    authorized_app_key_pubkeys, sync_once as network_sync_once, sync_once_with_fips,
-    sync_once_with_options,
+    authorized_app_key_pubkeys, drive_root_app_key_can_write_roots,
+    drive_root_recipient_app_key_pubkeys, drive_root_writer_app_key_pubkeys,
+    sync_once as network_sync_once, sync_once_with_fips, sync_once_with_options,
 };
 pub use profile::{
     AppKeyAuthorizationState, KeyWrapRepairOutcome, Profile, ProfileError, ProfileLogoutReport,
     ProfileState, logout_local_profile,
 };
 pub use projection::{
-    PrimaryMergedRoot, PrimaryMergedView, ProjectionError, primary_merged_root, primary_merged_view,
+    PrimaryMergedRoot, PrimaryMergedView, ProjectionError, primary_merged_root,
+    primary_merged_root_from_view, primary_merged_view,
 };
 pub use root_meta::{DriveRootMeta, RootObservation, RootParent};
 pub use share_actions::{

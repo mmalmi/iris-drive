@@ -16,11 +16,12 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::str::FromStr;
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
 use nostr_sdk::{Keys, PublicKey, SecretKey};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
@@ -125,8 +126,11 @@ pub struct HandledAppKeyLinkRequest {
 
 /// Persisted local profile state. Lives inside `AppConfig`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
 pub struct ProfileState {
+    #[serde(
+        alias = "owner_pubkey",
+        deserialize_with = "deserialize_profile_id_or_legacy_owner"
+    )]
     pub profile_id: IrisProfileId,
     #[serde(alias = "device_pubkey")]
     pub app_key_pubkey: String,
@@ -139,7 +143,7 @@ pub struct ProfileState {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub app_key_label: Option<String>,
     /// Runtime projection cache derived from `profile_roster_ops`.
-    #[serde(skip)]
+    #[serde(default, skip_serializing)]
     pub app_keys: Option<AppKeysProjection>,
     /// Runtime roster projection cache derived from `profile_roster_ops`.
     #[serde(skip)]
@@ -152,6 +156,39 @@ pub struct ProfileState {
     pub inbound_app_key_link_requests: Vec<InboundAppKeyLinkRequest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub handled_app_key_link_requests: Vec<HandledAppKeyLinkRequest>,
+}
+
+fn deserialize_profile_id_or_legacy_owner<'de, D>(
+    deserializer: D,
+) -> Result<IrisProfileId, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = String::deserialize(deserializer)?;
+    if let Ok(profile_id) = IrisProfileId::from_str(&value) {
+        return Ok(profile_id);
+    }
+    legacy_profile_id_from_owner_pubkey(&value).ok_or_else(|| {
+        serde::de::Error::custom("profile_id must be a UUID or legacy 64-character owner_pubkey")
+    })
+}
+
+fn legacy_profile_id_from_owner_pubkey(value: &str) -> Option<IrisProfileId> {
+    if value.len() != 64 {
+        return None;
+    }
+    let mut decoded = [0_u8; 32];
+    for (index, chunk) in value.as_bytes().chunks_exact(2).enumerate() {
+        let hex = std::str::from_utf8(chunk).ok()?;
+        decoded[index] = u8::from_str_radix(hex, 16).ok()?;
+    }
+    let mut uuid_bytes = [0_u8; 16];
+    for index in 0..16 {
+        uuid_bytes[index] = decoded[index] ^ decoded[index + 16];
+    }
+    uuid_bytes[6] = (uuid_bytes[6] & 0x0f) | 0x80;
+    uuid_bytes[8] = (uuid_bytes[8] & 0x3f) | 0x80;
+    Some(IrisProfileId::from_uuid(Uuid::from_bytes(uuid_bytes)))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1011,6 +1048,132 @@ impl Profile {
         self.current_app_keys_projection()
     }
 
+    /// Revoke an `AppKey` with a recovery phrase, then rotate the DCK so the
+    /// removed `AppKey` loses access to future content.
+    pub fn revoke_app_key_with_recovery_phrase(
+        &mut self,
+        recovery_phrase: &str,
+        app_key_pubkey_hex: &str,
+    ) -> Result<&AppKeysProjection, ProfileError> {
+        let recovery_phrase = validate_recovery_phrase(recovery_phrase)?;
+        let recovery_key = RecoveryKey::from_recovery_phrase(&recovery_phrase, PathBuf::new())?;
+        self.revoke_app_key_with_authority_keys(
+            recovery_key.keys(),
+            IrisProfileKeyPurpose::RecoveryPhrase,
+            app_key_pubkey_hex,
+        )
+    }
+
+    /// Revoke an `AppKey` with a recovery secret. Accepts a 12-word recovery
+    /// phrase, nsec1, or 64-char hex secret and matches the active recovery
+    /// authority purpose already recorded in the profile.
+    pub fn revoke_app_key_with_recovery_secret(
+        &mut self,
+        recovery_secret: &str,
+        app_key_pubkey_hex: &str,
+    ) -> Result<&AppKeysProjection, ProfileError> {
+        let recovery_phrase = validate_recovery_phrase(recovery_secret).ok();
+        let recovery_key = if let Some(phrase) = recovery_phrase.as_deref() {
+            RecoveryKey::from_recovery_phrase(phrase, PathBuf::new())?
+        } else {
+            RecoveryKey::from_secret(recovery_secret, PathBuf::new())?
+        };
+        let authority_pubkey = recovery_key.pubkey_hex();
+        let expected_purpose = recovery_authority_purpose(
+            &self.state.profile_projection(),
+            &authority_pubkey,
+            recovery_phrase
+                .as_ref()
+                .map(|_| IrisProfileKeyPurpose::RecoveryPhrase),
+        )?;
+        self.revoke_app_key_with_authority_keys(
+            recovery_key.keys(),
+            expected_purpose,
+            app_key_pubkey_hex,
+        )
+    }
+
+    /// Revoke an `AppKey` with a configured NIP-46 recovery authority. The
+    /// caller owns the actual remote-signer transport; this method receives the
+    /// already-authorized signing/decryption keys used by tests and local flows.
+    pub fn revoke_app_key_with_nip46_keys(
+        &mut self,
+        nip46_keys: &Keys,
+        app_key_pubkey_hex: &str,
+    ) -> Result<&AppKeysProjection, ProfileError> {
+        self.revoke_app_key_with_authority_keys(
+            nip46_keys,
+            IrisProfileKeyPurpose::Nip46Signer,
+            app_key_pubkey_hex,
+        )
+    }
+
+    fn revoke_app_key_with_authority_keys(
+        &mut self,
+        authority_keys: &Keys,
+        expected_purpose: IrisProfileKeyPurpose,
+        app_key_pubkey_hex: &str,
+    ) -> Result<&AppKeysProjection, ProfileError> {
+        let target_pubkey = PublicKey::from_hex(app_key_pubkey_hex)
+            .map_err(|e| ProfileError::InvalidAppKeyPubkey(e.to_string()))?
+            .to_hex();
+        let authority_pubkey = authority_keys.public_key().to_hex();
+        {
+            let projection = self.state.profile_projection();
+            let Some(authority_facet) = projection.active_facets.get(&authority_pubkey) else {
+                return Err(ProfileError::RecoveryAuthorityUnavailable);
+            };
+            if !authority_facet.has_purpose(expected_purpose)
+                || !authority_facet.capabilities.can_recover_app_keys
+            {
+                return Err(ProfileError::RecoveryAuthorityUnavailable);
+            }
+            if !authority_facet.capabilities.can_decrypt_key_epochs {
+                return Err(ProfileError::RecoveryAuthorityUnavailable);
+            }
+            if !authority_facet.capabilities.can_change_key_epochs() {
+                return Err(ProfileError::RecoveryCannotRotateKeyEpochs);
+            }
+            let Some(target_facet) = projection.active_facets.get(&target_pubkey) else {
+                return Err(ProfileError::AppKeyNotInRoster);
+            };
+            if !target_facet.is_app_key() {
+                return Err(ProfileError::AppKeyNotInRoster);
+            }
+            if target_facet.capabilities.can_admin_profile {
+                let active_admin_count = projection
+                    .active_facets
+                    .values()
+                    .filter(|facet| facet.is_app_key() && facet.capabilities.can_admin_profile)
+                    .count();
+                if active_admin_count <= 1 {
+                    return Err(ProfileError::CannotRemoveLastAdmin);
+                }
+            }
+        }
+
+        self.current_dck_from_authority_keys(authority_keys, expected_purpose)?;
+        let now = next_profile_timestamp(&self.state);
+        let parents = iris_profile_roster_parent_ids(&self.state.profile_roster_ops);
+        let remove_op = signed_profile_roster_op_with_parents(
+            authority_keys,
+            self.state.profile_id,
+            parents,
+            IrisProfileRosterOp::TombstoneFacet {
+                pubkey: target_pubkey,
+                reason: None,
+            },
+            now,
+        )?;
+        self.state.profile_roster_ops.push(remove_op);
+        self.state.profile_roster_projection = None;
+
+        let dck = generate_dck();
+        self.rotate_profile_dck_epoch_with_signer(authority_keys, &dck, now + 1)?;
+        self.state.sync_app_keys_from_profile();
+        self.current_app_keys_projection()
+    }
+
     /// Rotate the DCK without changing the `AppKey` roster. Useful for
     /// periodic key freshness ("rotate weekly even with no membership
     /// churn"). Admin-only.
@@ -1121,7 +1284,7 @@ impl Profile {
     ///
     /// The recovery phrase stays a recovery/admin facet only: it proves it can
     /// decrypt the current epoch, signs the `AppKey` admission, then signs a
-    /// coherent new key epoch wrapped to every active recipient.
+    /// coherent new key epoch that rewraps the same DCK to every active recipient.
     pub fn admit_current_app_key_with_recovery_phrase(
         &mut self,
         recovery_phrase: &str,
@@ -1176,13 +1339,15 @@ impl Profile {
         if projection.can_write_roots(&self.state.app_key_pubkey) {
             return Err(ProfileError::AppKeyAlreadyAuthorized);
         }
-        let should_rotate_epoch = authority_facet.capabilities.can_decrypt_key_epochs;
-        if should_rotate_epoch {
-            self.current_dck_from_authority_keys(authority_keys, expected_purpose)?;
+        let dck_to_rewrap = if authority_facet.capabilities.can_decrypt_key_epochs {
+            let dck = self.current_dck_from_authority_keys(authority_keys, expected_purpose)?;
             if !authority_facet.capabilities.can_change_key_epochs() {
                 return Err(ProfileError::RecoveryCannotRotateKeyEpochs);
             }
-        }
+            Some(dck)
+        } else {
+            None
+        };
 
         let now = next_profile_timestamp(&self.state);
         let parents = iris_profile_roster_parent_ids(&self.state.profile_roster_ops);
@@ -1204,8 +1369,7 @@ impl Profile {
         self.state.profile_roster_ops.push(add_op);
         self.state.profile_roster_projection = None;
 
-        if should_rotate_epoch {
-            let dck = generate_dck();
+        if let Some(dck) = dck_to_rewrap {
             self.rotate_profile_dck_epoch_with_signer(authority_keys, &dck, now + 1)?;
         }
         self.state.sync_app_keys_from_profile();

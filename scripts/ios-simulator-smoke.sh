@@ -290,6 +290,54 @@ SIM_APP_BASE_DIR="$GROUP_CONTAINER/IrisDrive"
 safe_remove_sim_container "$SIM_APP_BASE_DIR"
 mkdir -p "$SIM_APP_BASE_DIR"
 
+PROVIDER_SMOKE_DIR="$GROUP_CONTAINER/IrisDriveProviderSmoke"
+safe_remove_sim_container "$PROVIDER_SMOKE_DIR"
+mkdir -p "$PROVIDER_SMOKE_DIR"
+provider_smoke_name="iOS provider smoke.txt"
+provider_smoke_content="iOS provider smoke contents"
+SIMCTL_CHILD_IRIS_DRIVE_DEBUG_ACTION=reset-and-seed-provider-file \
+  SIMCTL_CHILD_IRIS_DRIVE_DEBUG_PROVIDER_FILE_NAME="$provider_smoke_name" \
+  SIMCTL_CHILD_IRIS_DRIVE_DEBUG_PROVIDER_FILE_CONTENT="$provider_smoke_content" \
+  SIMCTL_CHILD_IRIS_DRIVE_UI_TEST_BASE_DIR="$PROVIDER_SMOKE_DIR" \
+  xcrun simctl launch --terminate-running-process "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null
+PROVIDER_STATE_FILE="$PROVIDER_SMOKE_DIR/debug-state.json"
+if ! wait_for_debug_state \
+  "$PROVIDER_STATE_FILE" \
+  'import json,sys; s=json.load(sys.stdin); ui=s.get("ui",{}); raise SystemExit(0 if ui.get("file_count") == 1 and ui.get("visible_file_bytes") == len("iOS provider smoke contents") else 1)' \
+  20; then
+  echo "FAIL: iOS provider debug seed did not update app state." >&2
+  [[ -f "$PROVIDER_STATE_FILE" ]] && cat "$PROVIDER_STATE_FILE" >&2
+  exit 1
+fi
+provider_json="$("$IDRIVE" --config-dir "$PROVIDER_SMOKE_DIR" provider list)"
+if ! PROVIDER_JSON="$provider_json" python3 - "$provider_smoke_name" "$provider_smoke_content" <<'PY'; then
+import json
+import os
+import sys
+
+expected_name = sys.argv[1]
+expected_size = len(sys.argv[2].encode("utf-8"))
+provider = json.loads(os.environ["PROVIDER_JSON"])
+entries = provider.get("entries") or []
+ok = (
+    provider.get("file_count") == 1
+    and any(
+        entry.get("path") == expected_name
+        and entry.get("kind") == "file"
+        and entry.get("size") == expected_size
+        for entry in entries
+    )
+)
+raise SystemExit(0 if ok else 1)
+PY
+  echo "FAIL: iOS provider list did not include seeded file." >&2
+  echo "$provider_json" >&2
+  exit 1
+fi
+
+safe_remove_sim_container "$SIM_APP_BASE_DIR"
+mkdir -p "$SIM_APP_BASE_DIR"
+
 SIMCTL_CHILD_IRIS_DRIVE_DEBUG_ACTION=link-device \
   SIMCTL_CHILD_IRIS_DRIVE_DEBUG_OWNER="$owner_invite" \
   SIMCTL_CHILD_IRIS_DRIVE_UI_TEST_BASE_DIR="$SIM_APP_BASE_DIR" \

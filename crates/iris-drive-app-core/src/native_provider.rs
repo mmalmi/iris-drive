@@ -8,11 +8,12 @@ use hashtree_provider::{HashTreeProviderFs, ItemKind, ProviderFs};
 use iris_drive_core::config::DEFAULT_RELAYS;
 use iris_drive_core::paths::config_path_in;
 use iris_drive_core::provider::{
-    ProviderListEntry, normalize_provider_document_path, normalize_provider_parent_path,
-    normalize_provider_path, optional_normalized_provider_path,
-    provider_entry_is_probable_os_placeholder, provider_list_summary,
-    provider_path_is_child_document, provider_write_is_probable_os_placeholder,
-    sanitized_provider_file_name, split_provider_path, unique_provider_path,
+    ProviderListEntry, compose_provider_path, normalize_provider_document_path,
+    normalize_provider_parent_path, normalize_provider_path, optional_normalized_provider_path,
+    provider_entry_is_probable_os_placeholder, provider_file_probable_os_placeholder_family,
+    provider_list_summary, provider_path_is_child_document,
+    provider_write_is_probable_os_placeholder, sanitized_provider_file_name, split_provider_path,
+    unique_provider_path,
 };
 use iris_drive_core::{AppConfig, Profile};
 use serde_json::json;
@@ -124,6 +125,21 @@ pub(crate) fn native_provider_resolve_path_json(
     match run_native_provider_resolve_path(data_dir, parent_path, display_name, excluding_path) {
         Ok(value) => value,
         Err(error) => json!({"error": format!("{error:#}")}),
+    }
+}
+
+pub(crate) fn native_provider_compose_path_json(
+    parent_path: &str,
+    display_name: &str,
+) -> serde_json::Value {
+    match run_native_provider_compose_path(parent_path, display_name) {
+        Ok(value) => value,
+        Err(error) => json!({
+            "path": "",
+            "parent_path": "",
+            "display_name": "",
+            "error": format!("{error:#}"),
+        }),
     }
 }
 
@@ -274,6 +290,19 @@ fn run_native_provider_normalize_path(path: &str) -> anyhow::Result<serde_json::
     }))
 }
 
+fn run_native_provider_compose_path(
+    parent_path: &str,
+    display_name: &str,
+) -> anyhow::Result<serde_json::Value> {
+    let (parent_path, display_name, path) = compose_provider_path(parent_path, display_name)?;
+    Ok(json!({
+        "parent_path": parent_path,
+        "display_name": display_name,
+        "path": path,
+        "error": "",
+    }))
+}
+
 fn run_native_provider_resolve_path(
     data_dir: &str,
     parent_path: &str,
@@ -316,9 +345,13 @@ pub(crate) fn run_native_provider_list(data_dir: &str) -> anyhow::Result<serde_j
             .await
             .context("building provider view")?;
         let modified_at_by_path = provider_modified_at_index(&visible_view);
-        let visible_root = iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
-            .await
-            .context("building provider root")?;
+        let visible_root = iris_drive_core::primary_merged_root_from_view(
+            daemon.tree(),
+            daemon.config(),
+            &visible_view,
+        )
+        .await
+        .context("building provider root")?;
         let provider =
             HashTreeProviderFs::open(daemon.tree_handle(), visible_root.root_cid.clone())
                 .await
@@ -377,9 +410,11 @@ fn run_native_provider_write(
         let bytes = std::fs::read(source_path)
             .with_context(|| format!("reading {}", Path::new(source_path).display()))?;
         let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
-        let entries = provider_entries(&provider, &BTreeMap::new()).await?;
-        if provider_write_is_probable_os_placeholder(&entries, &path, &bytes) {
-            anyhow::bail!("refusing probable FileProvider placeholder copy: {path}");
+        if provider_file_probable_os_placeholder_family(&path, bytes.len() as u64).is_some() {
+            let entries = provider_entries(&provider, &BTreeMap::new()).await?;
+            if provider_write_is_probable_os_placeholder(&entries, &path, &bytes) {
+                anyhow::bail!("refusing probable FileProvider placeholder copy: {path}");
+            }
         }
         write_provider_file(&provider, &path, &bytes).await?;
         import_provider_mutation(&mut daemon, &provider, &path, Some(visible_root)).await
@@ -587,7 +622,7 @@ async fn publish_current_app_key_root(config_dir: &Path) -> anyhow::Result<serde
         config.relays.clone()
     };
     let client = iris_drive_core::relay_sync::connect(&relays).await?;
-    let authorized_app_keys = authorized_app_key_pubkeys(account);
+    let authorized_app_keys = iris_drive_core::drive_root_recipient_app_key_pubkeys(account, drive);
     let result = iris_drive_core::relay_sync::publish_drive_root(
         &client,
         loaded_account.app_key.keys(),
@@ -643,10 +678,6 @@ pub(crate) fn native_sync_status_label(
     } else {
         "up to date"
     }
-}
-
-fn authorized_app_key_pubkeys(state: &iris_drive_core::ProfileState) -> Vec<String> {
-    state.active_root_writer_app_key_pubkeys()
 }
 
 async fn write_provider_file<P>(provider: &P, path: &str, bytes: &[u8]) -> anyhow::Result<()>

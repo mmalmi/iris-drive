@@ -15,6 +15,7 @@ use serde::Serialize;
 use crate::{
     FfiApp, NativeAppAction, NativeAppState,
     ffi::native_calendar_export_json,
+    ffi::native_provider_compose_path_json,
     ffi::native_provider_delete_json,
     ffi::native_provider_import_shared_file_json,
     ffi::native_provider_is_child_document_json,
@@ -328,6 +329,17 @@ pub extern "C" fn iris_drive_provider_resolve_path_json(
         &c_string_lossy(parent_path),
         &c_string_lossy(display_name),
         &c_string_lossy(excluding_path),
+    ))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_provider_compose_path_json(
+    parent_path: *const c_char,
+    display_name: *const c_char,
+) -> *mut c_char {
+    json_string(&native_provider_compose_path_json(
+        &c_string_lossy(parent_path),
+        &c_string_lossy(display_name),
     ))
 }
 

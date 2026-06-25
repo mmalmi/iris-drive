@@ -30,6 +30,40 @@ fn retry_interrupted_io_returns_non_interrupted_errors() {
 }
 
 #[test]
+fn remote_app_key_sync_state_requires_successful_block_sync() {
+    assert_eq!(
+        app_key_sync_state(false, true, Some(true), false),
+        "blocks pending"
+    );
+    assert_eq!(app_key_sync_state(false, true, Some(true), true), "synced");
+}
+
+#[test]
+fn daemon_sync_status_reports_syncing_when_peer_blocks_are_pending() {
+    let daemon_status = json!({
+        "running": true,
+        "event": "drive_root",
+    });
+    let peers = vec![
+        json!({
+            "authorized": true,
+            "is_current_app_key": true,
+            "sync_state": "local",
+        }),
+        json!({
+            "authorized": true,
+            "is_current_app_key": false,
+            "sync_state": "blocks pending",
+        }),
+    ];
+
+    assert_eq!(
+        daemon_sync_status_with_peers(Some(&daemon_status), &peers),
+        "syncing"
+    );
+}
+
+#[test]
 fn block_stats_entry_limit_marks_truncated() {
     let dir = tempfile::tempdir().unwrap();
     for index in 0..3 {
@@ -274,6 +308,30 @@ fn daemon_sync_status_is_normalized_for_clients() {
         daemon_sync_status(Some(&json!({"running": true, "event": "apply_error"}))),
         "sync error"
     );
+    assert_eq!(
+        daemon_sync_status(Some(&json!({
+            "running": true,
+            "fips_block_sync_error": "FIPS status probe timed out",
+        }))),
+        "sync error"
+    );
+    assert_eq!(
+        daemon_sync_status(Some(&json!({
+            "running": true,
+            "fips_block_sync": {"status": "timeout"},
+        }))),
+        "sync error"
+    );
+    assert_eq!(
+        daemon_sync_status(Some(&json!({
+            "running": true,
+            "last_block_sync_error": {
+                "root_cid": "root-a",
+                "error": "missing block on fips peers",
+            },
+        }))),
+        "sync error"
+    );
 }
 
 #[test]
@@ -285,14 +343,13 @@ fn fips_diagnostics_emit_normalized_device_counts_and_sets() {
         "fips_block_sync": {
             "authorized_peers": ["npub1b", "npub1c"],
             "connected_peers": ["npub1b"],
-            "mesh_peers": ["npub1c", "npub1x"],
+            "mesh_peers": ["npub1c", "npub1m", "npub1x"],
             "peer_statuses": [{
                 "npub": "npub1b",
                 "transport_type": "tcp",
                 "srtt_ms": 12
             }, {
-                "npub": "npub1c",
-                "transport_type": "webrtc"
+                "npub": "npub1c"
             }, {
                 "npub": "npub1x",
                 "transport_type": "udp",
@@ -307,13 +364,13 @@ fn fips_diagnostics_emit_normalized_device_counts_and_sets() {
     assert_eq!(fips["state_label"], "Running");
     assert_eq!(fips["roster_label"], "2/2 online");
     assert_eq!(fips["direct_devices"], json!(["npub1b"]));
-    assert_eq!(fips["mesh_devices"], json!(["npub1c", "npub1x"]));
+    assert_eq!(fips["mesh_devices"], json!(["npub1c", "npub1m", "npub1x"]));
     assert_eq!(
         fips["online_devices"],
-        json!(["npub1b", "npub1c", "npub1x"])
+        json!(["npub1b", "npub1c", "npub1m", "npub1x"])
     );
     assert_eq!(fips["roster_online_device_count"], 2);
-    assert_eq!(fips["other_peer_count"], 1);
+    assert_eq!(fips["other_peer_count"], 2);
     assert_eq!(fips["peer_statuses"][0]["connection_label"], "TCP, 12 ms");
 }
 
@@ -374,6 +431,100 @@ fn peer_statuses_emit_rust_owned_labels_and_connection_state() {
     assert_eq!(linked["can_revoke"], true);
     assert_eq!(linked["can_appoint_admin"], true);
     assert_eq!(linked["can_demote_admin"], false);
+}
+
+#[test]
+fn peer_statuses_show_mesh_only_app_key_online() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut owner = Profile::create(dir.path(), Some("Mac".into())).unwrap();
+    let linked_device = nostr_sdk::Keys::generate().public_key().to_hex();
+    owner
+        .approve_app_key(&linked_device, Some("Windows".into()))
+        .unwrap();
+    let config = AppConfig {
+        profile: Some(owner.state.clone()),
+        ..AppConfig::default()
+    };
+
+    let linked_npub = pubkey_npub(&linked_device);
+    let daemon_status = json!({
+        "running": true,
+        "fresh": true,
+        "fips_block_sync": {
+            "mesh_peers": [linked_npub],
+            "peer_statuses": [{
+                "npub": linked_npub,
+                "connection_label": "Discovered"
+            }]
+        }
+    });
+
+    let peers = peer_statuses(dir.path(), &config, Some(&daemon_status));
+    let linked = peers
+        .iter()
+        .find(|peer| peer["app_key_npub"] == linked_npub)
+        .expect("linked AppKey peer");
+
+    assert_eq!(linked["fips_online"], true);
+    assert_eq!(linked["fips_direct_online"], false);
+    assert_eq!(linked["fips_mesh_online"], true);
+    assert_eq!(linked["fips_online_via"], "mesh");
+    assert_eq!(linked["connection_state"], "mesh");
+    assert_eq!(linked["connection_label"], "Online (Mesh)");
+}
+
+#[test]
+fn peer_statuses_show_legacy_drive_root_app_keys_without_roster_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let owner = Profile::create(dir.path(), Some("Mac".into())).unwrap();
+    let linked_keys = nostr_sdk::Keys::generate();
+    let linked_device = linked_keys.public_key().to_hex();
+    let linked_npub = pubkey_npub(&linked_device);
+    let root_cid = Cid::encrypted([0x33; 32], [0x44; 32]).to_string();
+    let mut drive = Drive::primary(owner.state.root_scope_id());
+    drive.app_key_roots.insert(
+        owner.state.app_key_pubkey.clone(),
+        AppKeyRootRef::legacy(&root_cid, 10, 1),
+    );
+    drive.app_key_roots.insert(
+        linked_device.clone(),
+        AppKeyRootRef::legacy("linked-root", 11, 1),
+    );
+    let mut state = owner.state.clone();
+    state.profile_roster_ops = Vec::new();
+    state.app_keys = None;
+    state.profile_roster_projection = None;
+    let config = AppConfig {
+        profile: Some(state),
+        drives: vec![drive],
+        ..AppConfig::default()
+    };
+    let daemon_status = json!({
+        "running": true,
+        "fresh": true,
+        "fips_block_sync": {
+            "connected_peers": [linked_npub],
+            "peer_statuses": [{
+                "npub": linked_npub,
+                "transport_type": "udp",
+                "srtt_ms": 5
+            }]
+        }
+    });
+
+    let peers = peer_statuses(dir.path(), &config, Some(&daemon_status));
+    assert_eq!(peers.len(), 2);
+    let linked = peers
+        .iter()
+        .find(|peer| peer["app_key_pubkey"] == linked_device)
+        .expect("legacy linked AppKey peer");
+    assert_eq!(linked["display_label"], linked["app_key_npub"]);
+    assert_eq!(linked["fips_online"], true);
+    assert_eq!(linked["connection_state"], "direct");
+
+    let fips = fips_network_diagnostics(&config, Some(&daemon_status));
+    assert_eq!(fips["authorized_peer_count"], 1);
+    assert_eq!(fips["roster_online_device_count"], 1);
 }
 
 #[test]

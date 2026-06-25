@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		0657326FB44784D56F1EE4D5 /* IrisDriveIOSUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2924EE6BC887DE0B5E1E045D /* IrisDriveIOSUITests.swift */; };
+		0BCF72504B29C05F66B5CC1B /* ShareItemImporterTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE2C4253593D33F7F23D75FE /* ShareItemImporterTests.swift */; };
 		0E0EA5ABF3A312874452F666 /* IrisDriveMobileBackups.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31FD6FE77F71CF8F6241C514 /* IrisDriveMobileBackups.swift */; };
 		1AD14AA0F5B7D9B4C1124FC7 /* IrisDriveMobileModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D087872557C2BC55EDB84930 /* IrisDriveMobileModel.swift */; };
 		2676BB10C5BF12BE68411FE0 /* FileProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = C789203391687925DEAB3576 /* FileProviderItem.swift */; };
@@ -21,6 +22,7 @@
 		4BEA90FF19E22C4AC1DBD5BF /* IrisDriveRootView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 050F38C17BF67B7645C1572B /* IrisDriveRootView.swift */; };
 		4CE6371A48B56109DAF96C93 /* external-links.html in Resources */ = {isa = PBXBuildFile; fileRef = 5FC65A0B497BC4727996F907 /* external-links.html */; };
 		4F5EE2D9DAE2D8B802124579 /* FileProviderExtension.swift in Sources */ = {isa = PBXBuildFile; fileRef = C490A3FFF0BAED4EB2A1E5F9 /* FileProviderExtension.swift */; };
+		531CAA83BC533E5193143794 /* ShareSourceApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = C7B171CE73B56E84471C78AD /* ShareSourceApp.swift */; };
 		6D070FE16A7563F4606BA7A6 /* IrisDriveNativeCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A215568D3B9E51946DE326 /* IrisDriveNativeCore.swift */; };
 		6D1D9D55F60F25701702EE14 /* IrisDriveBackupViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2262CD0A76753FF6C6D773B /* IrisDriveBackupViews.swift */; };
 		7416D3315363238D639AFF6E /* IrisDriveContentLinkDialog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 380C73AB07C0999D07F8E4ED /* IrisDriveContentLinkDialog.swift */; };
@@ -35,8 +37,10 @@
 		A2D69683D223341A6401A814 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A63880B58F406AD06ACD2A66 /* Assets.xcassets */; };
 		BCDFE7E8107DAF5CC4C726DC /* StartupLoadingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 57ECD37803B00AFA445E6080 /* StartupLoadingView.swift */; };
 		CAE91FE838AF86B78E47EEB2 /* IrisDriveIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09D6DB93662CEF48C0C9A246 /* IrisDriveIOSApp.swift */; };
+		CF2234DAD4994BC3D9CDA1D8 /* ShareItemImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFFCB22B1FE65968BC0862BE /* ShareItemImporter.swift */; };
 		D3FE62286547E94FA6B5DDA5 /* IrisDriveBackgroundSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06140F5A8590769EE11B0EC6 /* IrisDriveBackgroundSync.swift */; };
 		D47A6409051387D5D36CEB1F /* IrisWebBrowserURLIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 438598A8B3E5334B56EC8C2B /* IrisWebBrowserURLIdentity.swift */; };
+		DF01644D115BD8E0B2580704 /* ShareItemImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFFCB22B1FE65968BC0862BE /* ShareItemImporter.swift */; };
 		E8C9614F1C94BB1141210E7E /* QRCodeScannerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0FAD09F152A81F2977621CC8 /* QRCodeScannerView.swift */; };
 		EDB65234DF8B98FA5A85E5BF /* IrisDriveContentLinks.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5776131C4E7DA77C3A533FB /* IrisDriveContentLinks.swift */; };
 		FCA07D9E0FCE8AD5D196A8CB /* browser-footer.html in Resources */ = {isa = PBXBuildFile; fileRef = 5F7984AB4A917CEB5A16EB9A /* browser-footer.html */; };
@@ -57,12 +61,26 @@
 			remoteGlobalIDString = F8BA9ACB95AFB2250E4FE292;
 			remoteInfo = IrisDriveFileProvider;
 		};
+		7B469916E589F85B2B98A72D /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 01F8372FFC4B24BE323F6D62 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 2AEF53C9FE79D54F9AB8EE95;
+			remoteInfo = IrisDriveIOS;
+		};
 		AF939187950D4DF463B00166 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = 01F8372FFC4B24BE323F6D62 /* Project object */;
 			proxyType = 1;
 			remoteGlobalIDString = 0B4BA6D0DE3050B42370896F;
 			remoteInfo = IrisDriveShareExtension;
+		};
+		CE23C31D642600CBB7E2C44E /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 01F8372FFC4B24BE323F6D62 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 6DFD6B6D65667A6359D62B22;
+			remoteInfo = IrisDriveShareSource;
 		};
 /* End PBXContainerItemProxy section */
 
@@ -100,8 +118,10 @@
 		59222C8CE8FD8C001461A472 /* FileProvider.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FileProvider.entitlements; sourceTree = "<group>"; };
 		5F7984AB4A917CEB5A16EB9A /* browser-footer.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "browser-footer.html"; sourceTree = "<group>"; };
 		5FC65A0B497BC4727996F907 /* external-links.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "external-links.html"; sourceTree = "<group>"; };
+		74CE010BD2B6A8A3362FE749 /* IrisDriveIOSShareExtensionTests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = IrisDriveIOSShareExtensionTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		7CA3DF1C0E66C469EE9CCFB8 /* back-hit-test.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "back-hit-test.html"; sourceTree = "<group>"; };
 		977A7BAB3E96F1AD9B1C5AB9 /* ShareExtension.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = ShareExtension.entitlements; sourceTree = "<group>"; };
+		A204FC3B2E2C9BFE5A01B6FD /* IrisDriveShareSource.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = IrisDriveShareSource.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A2262CD0A76753FF6C6D773B /* IrisDriveBackupViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveBackupViews.swift; sourceTree = "<group>"; };
 		A63880B58F406AD06ACD2A66 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		ACA849B0E0B0455493C3B441 /* ShareViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareViewController.swift; sourceTree = "<group>"; };
@@ -111,9 +131,12 @@
 		C490A3FFF0BAED4EB2A1E5F9 /* FileProviderExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderExtension.swift; sourceTree = "<group>"; };
 		C5776131C4E7DA77C3A533FB /* IrisDriveContentLinks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveContentLinks.swift; sourceTree = "<group>"; };
 		C789203391687925DEAB3576 /* FileProviderItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderItem.swift; sourceTree = "<group>"; };
+		C7B171CE73B56E84471C78AD /* ShareSourceApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareSourceApp.swift; sourceTree = "<group>"; };
+		CE2C4253593D33F7F23D75FE /* ShareItemImporterTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareItemImporterTests.swift; sourceTree = "<group>"; };
 		D087872557C2BC55EDB84930 /* IrisDriveMobileModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveMobileModel.swift; sourceTree = "<group>"; };
 		D4FC18243848BE0ED14785D0 /* IrisDriveShareExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = IrisDriveShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		DBC171DD1C2DE89B561ADE85 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
+		DFFCB22B1FE65968BC0862BE /* ShareItemImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareItemImporter.swift; sourceTree = "<group>"; };
 		E41F97CC4C0E1F6DFCF75979 /* keyboard-viewport.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "keyboard-viewport.html"; sourceTree = "<group>"; };
 		F5DF48D5DED6EBB1E1A738ED /* IrisDriveAppleCalendarSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveAppleCalendarSync.swift; sourceTree = "<group>"; };
 		FE91FC48A66D089D44B648C1 /* IrisDriveIOSUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = IrisDriveIOSUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -121,6 +144,14 @@
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
+		14B10359D2E3EF761CCD5D9E /* UnitTests */ = {
+			isa = PBXGroup;
+			children = (
+				CE2C4253593D33F7F23D75FE /* ShareItemImporterTests.swift */,
+			);
+			path = UnitTests;
+			sourceTree = "<group>";
+		};
 		3F04BE704FC717FE46900774 /* FileProvider */ = {
 			isa = PBXGroup;
 			children = (
@@ -140,8 +171,10 @@
 			children = (
 				4257294BF467D6B229B52DBD /* IrisDriveFileProvider.appex */,
 				24260482AACE6AF69CE462AF /* IrisDriveIOS.app */,
+				74CE010BD2B6A8A3362FE749 /* IrisDriveIOSShareExtensionTests.xctest */,
 				FE91FC48A66D089D44B648C1 /* IrisDriveIOSUITests.xctest */,
 				D4FC18243848BE0ED14785D0 /* IrisDriveShareExtension.appex */,
+				A204FC3B2E2C9BFE5A01B6FD /* IrisDriveShareSource.app */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -193,6 +226,7 @@
 			children = (
 				DBC171DD1C2DE89B561ADE85 /* Info.plist */,
 				977A7BAB3E96F1AD9B1C5AB9 /* ShareExtension.entitlements */,
+				DFFCB22B1FE65968BC0862BE /* ShareItemImporter.swift */,
 				ACA849B0E0B0455493C3B441 /* ShareViewController.swift */,
 			);
 			path = ShareExtension;
@@ -213,10 +247,20 @@
 				3F04BE704FC717FE46900774 /* FileProvider */,
 				5D4ACC90757B9F0220701EA0 /* Resources */,
 				8A06E088309C364ADBD46BB6 /* ShareExtension */,
+				FB07911264114C1353A8196F /* ShareSource */,
 				7A1D5291928F47D312DCDA64 /* Sources */,
 				CAC4D48A8119E28C45FEADD9 /* UITests */,
+				14B10359D2E3EF761CCD5D9E /* UnitTests */,
 				5A5970F457E3C18DF858E1F2 /* Products */,
 			);
+			sourceTree = "<group>";
+		};
+		FB07911264114C1353A8196F /* ShareSource */ = {
+			isa = PBXGroup;
+			children = (
+				C7B171CE73B56E84471C78AD /* ShareSourceApp.swift */,
+			);
+			path = ShareSource;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -260,6 +304,24 @@
 			productReference = 24260482AACE6AF69CE462AF /* IrisDriveIOS.app */;
 			productType = "com.apple.product-type.application";
 		};
+		60284211D6933E6DA8E51E59 /* IrisDriveIOSShareExtensionTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = BD4C698F8B0B2F756858B657 /* Build configuration list for PBXNativeTarget "IrisDriveIOSShareExtensionTests" */;
+			buildPhases = (
+				9D5BC698A40313586C6A4937 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				8B432369F6739507F94430CA /* PBXTargetDependency */,
+			);
+			name = IrisDriveIOSShareExtensionTests;
+			packageProductDependencies = (
+			);
+			productName = IrisDriveIOSShareExtensionTests;
+			productReference = 74CE010BD2B6A8A3362FE749 /* IrisDriveIOSShareExtensionTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 		67B67C05CCBE0A7C7C7E41CA /* IrisDriveIOSUITests */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 00442C1579679BD22CC4C088 /* Build configuration list for PBXNativeTarget "IrisDriveIOSUITests" */;
@@ -271,6 +333,7 @@
 			);
 			dependencies = (
 				86B6CC214396FE4E89BBF4E1 /* PBXTargetDependency */,
+				F62051A01A93FE2D6E6F2018 /* PBXTargetDependency */,
 			);
 			name = IrisDriveIOSUITests;
 			packageProductDependencies = (
@@ -278,6 +341,23 @@
 			productName = IrisDriveIOSUITests;
 			productReference = FE91FC48A66D089D44B648C1 /* IrisDriveIOSUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		6DFD6B6D65667A6359D62B22 /* IrisDriveShareSource */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4D764173E9C4A1E480B19BA4 /* Build configuration list for PBXNativeTarget "IrisDriveShareSource" */;
+			buildPhases = (
+				869852E5C6035ECBE2116FF3 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = IrisDriveShareSource;
+			packageProductDependencies = (
+			);
+			productName = IrisDriveShareSource;
+			productReference = A204FC3B2E2C9BFE5A01B6FD /* IrisDriveShareSource.app */;
+			productType = "com.apple.product-type.application";
 		};
 		F8BA9ACB95AFB2250E4FE292 /* IrisDriveFileProvider */ = {
 			isa = PBXNativeTarget;
@@ -313,10 +393,19 @@
 						DevelopmentTeam = J8PPJKD7TA;
 						ProvisioningStyle = Manual;
 					};
+					60284211D6933E6DA8E51E59 = {
+						DevelopmentTeam = J8PPJKD7TA;
+						ProvisioningStyle = Automatic;
+						TestTargetID = 2AEF53C9FE79D54F9AB8EE95;
+					};
 					67B67C05CCBE0A7C7C7E41CA = {
 						DevelopmentTeam = J8PPJKD7TA;
 						ProvisioningStyle = Automatic;
 						TestTargetID = 2AEF53C9FE79D54F9AB8EE95;
+					};
+					6DFD6B6D65667A6359D62B22 = {
+						DevelopmentTeam = J8PPJKD7TA;
+						ProvisioningStyle = Automatic;
 					};
 					F8BA9ACB95AFB2250E4FE292 = {
 						DevelopmentTeam = J8PPJKD7TA;
@@ -340,8 +429,10 @@
 			targets = (
 				F8BA9ACB95AFB2250E4FE292 /* IrisDriveFileProvider */,
 				2AEF53C9FE79D54F9AB8EE95 /* IrisDriveIOS */,
+				60284211D6933E6DA8E51E59 /* IrisDriveIOSShareExtensionTests */,
 				67B67C05CCBE0A7C7C7E41CA /* IrisDriveIOSUITests */,
 				0B4BA6D0DE3050B42370896F /* IrisDriveShareExtension */,
+				6DFD6B6D65667A6359D62B22 /* IrisDriveShareSource */,
 			);
 		};
 /* End PBXProject section */
@@ -392,6 +483,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		869852E5C6035ECBE2116FF3 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				531CAA83BC533E5193143794 /* ShareSourceApp.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		8A8501A960B83F58C9DF6800 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -404,6 +503,15 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		9D5BC698A40313586C6A4937 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				DF01644D115BD8E0B2580704 /* ShareItemImporter.swift in Sources */,
+				0BCF72504B29C05F66B5CC1B /* ShareItemImporterTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A310B027798871F3A10648F2 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -411,6 +519,7 @@
 				43ED8C459203E2A04C503823 /* FileProviderItem.swift in Sources */,
 				89D8B799C3537B200EACD87A /* FileProviderStorage.swift in Sources */,
 				42DC352648243213A7638096 /* IrisDriveNativeCore.swift in Sources */,
+				CF2234DAD4994BC3D9CDA1D8 /* ShareItemImporter.swift in Sources */,
 				45ACE487D08A90186C70D195 /* ShareViewController.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -436,10 +545,20 @@
 			target = 2AEF53C9FE79D54F9AB8EE95 /* IrisDriveIOS */;
 			targetProxy = 5775ADF28900F0E53C5CD23F /* PBXContainerItemProxy */;
 		};
+		8B432369F6739507F94430CA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 2AEF53C9FE79D54F9AB8EE95 /* IrisDriveIOS */;
+			targetProxy = 7B469916E589F85B2B98A72D /* PBXContainerItemProxy */;
+		};
 		AA8DF5D06F3D7E145D31439E /* PBXTargetDependency */ = {
 			isa = PBXTargetDependency;
 			target = F8BA9ACB95AFB2250E4FE292 /* IrisDriveFileProvider */;
 			targetProxy = 63D8063487523AC7A8A7FCED /* PBXContainerItemProxy */;
+		};
+		F62051A01A93FE2D6E6F2018 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 6DFD6B6D65667A6359D62B22 /* IrisDriveShareSource */;
+			targetProxy = CE23C31D642600CBB7E2C44E /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -531,6 +650,26 @@
 			};
 			name = Release;
 		};
+		27B249300AA767CF94BC03E9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Iris Drive Share Source";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = to.iris.drive.ios.ShareSource;
+				PRODUCT_MODULE_NAME = IrisDriveShareSource;
+				PRODUCT_NAME = "Iris Drive Share Source";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		4C4750CD9F14F5341FDF74A7 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -552,6 +691,25 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 			};
 			name = Release;
+		};
+		4C48A63F1E7F07A6B847BD01 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = to.iris.drive.ios.ShareExtensionTests;
+				PRODUCT_NAME = IrisDriveIOSShareExtensionTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Iris Drive.app/Iris Drive";
+				TEST_TARGET_NAME = IrisDriveIOS;
+			};
+			name = Debug;
 		};
 		51525B451FF626A2D48527AF /* Release */ = {
 			isa = XCBuildConfiguration;
@@ -699,6 +857,45 @@
 			};
 			name = Release;
 		};
+		C1678760AA9382F14C2B776B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = to.iris.drive.ios.ShareExtensionTests;
+				PRODUCT_NAME = IrisDriveIOSShareExtensionTests;
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Iris Drive.app/Iris Drive";
+				TEST_TARGET_NAME = IrisDriveIOS;
+			};
+			name = Release;
+		};
+		E6B13389B3B9AD16B812B756 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_IDENTITY = "iPhone Developer";
+				CODE_SIGN_STYLE = Automatic;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_CFBundleDisplayName = "Iris Drive Share Source";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				PRODUCT_BUNDLE_IDENTIFIER = to.iris.drive.ios.ShareSource;
+				PRODUCT_MODULE_NAME = IrisDriveShareSource;
+				PRODUCT_NAME = "Iris Drive Share Source";
+				SDKROOT = iphoneos;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		EE0E225E69A7ACD160EA710A /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -773,6 +970,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;
 		};
+		4D764173E9C4A1E480B19BA4 /* Build configuration list for PBXNativeTarget "IrisDriveShareSource" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				27B249300AA767CF94BC03E9 /* Debug */,
+				E6B13389B3B9AD16B812B756 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
 		4EC715E225C1F23BDE6DA98B /* Build configuration list for PBXNativeTarget "IrisDriveFileProvider" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -787,6 +993,15 @@
 			buildConfigurations = (
 				7B73E115784016B86EA89D80 /* Debug */,
 				4C4750CD9F14F5341FDF74A7 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		BD4C698F8B0B2F756858B657 /* Build configuration list for PBXNativeTarget "IrisDriveIOSShareExtensionTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4C48A63F1E7F07A6B847BD01 /* Debug */,
+				C1678760AA9382F14C2B776B /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Debug;

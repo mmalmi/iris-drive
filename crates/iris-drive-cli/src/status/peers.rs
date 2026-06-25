@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use iris_drive_core::app_key_summary::{
     AppKeyConnectionDetails, AppKeyConnectivity, AppKeyRosterRow, app_key_roster_rows,
 };
+use iris_drive_core::{AppActorEntry, PRIMARY_DRIVE_ID};
 
 #[allow(clippy::too_many_lines)]
 pub(crate) fn peer_statuses(
@@ -15,9 +16,10 @@ pub(crate) fn peer_statuses(
     let Some(account) = config.profile.as_ref() else {
         return Vec::new();
     };
-    let Some(snapshot) = account.current_app_keys_projection() else {
+    let app_actors = app_key_actors_for_status(config);
+    if app_actors.is_empty() {
         return Vec::new();
-    };
+    }
     let primary_drive = config.drive(iris_drive_core::PRIMARY_DRIVE_ID);
 
     let daemon_running = daemon_status
@@ -66,7 +68,7 @@ pub(crate) fn peer_statuses(
     let can_admin_profile = account.can_admin_profile();
 
     app_key_roster_rows(
-        &snapshot.app_actors,
+        &app_actors,
         &account.app_key_pubkey,
         can_admin_profile,
         daemon_running,
@@ -81,11 +83,15 @@ pub(crate) fn peer_statuses(
             .as_deref()
             .map(|root| root_file_count(config_dir, root).is_some());
         let fips_peer_status = fips_peer_statuses.get(&app_key.npub);
-        let sync_state =
-            app_key_sync_state(app_key.is_current_app_key, root.is_some(), root_available);
         let last_block_sync = root_cid
             .as_ref()
             .and_then(|root| block_sync_by_root.and_then(|map| map.get(root)).cloned());
+        let sync_state = app_key_sync_state(
+            app_key.is_current_app_key,
+            root.is_some(),
+            root_available,
+            last_block_sync.is_some(),
+        );
         let detail = peer_detail(
             app_key,
             sync_state,
@@ -144,6 +150,28 @@ pub(crate) fn peer_statuses(
         })
     })
     .collect()
+}
+
+pub(crate) fn app_key_actors_for_status(config: &AppConfig) -> Vec<AppActorEntry> {
+    let Some(account) = config.profile.as_ref() else {
+        return Vec::new();
+    };
+    if let Some(snapshot) = account.current_app_keys_projection() {
+        return snapshot.app_actors;
+    }
+    let Some(drive) = config.drive(PRIMARY_DRIVE_ID) else {
+        return Vec::new();
+    };
+    iris_drive_core::drive_root_writer_app_key_pubkeys(account, drive)
+        .into_iter()
+        .map(|pubkey| {
+            if pubkey == account.app_key_pubkey {
+                AppActorEntry::admin(pubkey, 0, account.app_key_label.clone())
+            } else {
+                AppActorEntry::member(pubkey, 0, None)
+            }
+        })
+        .collect()
 }
 
 fn fips_peer_statuses_by_npub(value: Option<&Value>) -> BTreeMap<String, Value> {

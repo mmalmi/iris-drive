@@ -76,18 +76,20 @@ const FIPS_DOWNLOAD_BEFORE_BLOSSOM_RETRY_DELAYS: &[u64] = &[];
 const FIPS_DOWNLOAD_ATTEMPT_TIMEOUT_SECS: u64 = 8;
 const FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS: u64 = 3;
 const STARTUP_NETWORK_TIMEOUT_SECS: u64 = 20;
+const DIRECT_ROOT_RECEIVE_COALESCE_MS: u64 = 750;
 const EVENT_BLOCK_PULL_TIMEOUT_SECS: u64 = 3;
 const EVENT_BLOCK_PULL_RETRY_DELAYS: &[u64] = &[0, 1, 2];
 const EVENT_BLOCK_PULL_WITH_BLOSSOM_HEADROOM_SECS: u64 = 5;
-const EVENT_BLOCK_PULL_WITH_BLOSSOM_RETRY_DELAYS: &[u64] = &[0];
+const EVENT_BLOCK_PULL_WITH_BLOSSOM_RETRY_DELAYS: &[u64] = &[0, 1];
 const RELAY_PUBLISH_TIMEOUT_SECS: u64 = 10;
-const STATUS_PROBE_TIMEOUT_SECS: u64 = 2;
+const STATUS_PROBE_TIMEOUT_SECS: u64 = 5;
 const BLOSSOM_DOWNLOAD_RETRY_DELAYS: &[u64] = &[1, 2, 4];
 const BLOSSOM_UPLOAD_TIMEOUT_SECS: u64 = 10;
 const ROOT_UPDATE_THROTTLE_MS: u64 = 150;
 const DIRECT_ROOT_EVENT_CACHE_CAP: usize = 128;
 const DIRECT_ROOT_REPUBLISH_INTERVAL_SECS: u64 = 5;
-const DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS: u64 = 60;
+const DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS: u64 = 300;
+const DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS: u64 = 5;
 const LOCAL_ROOT_AVAILABILITY_RETRY_DELAYS_MS: &[u64] = &[250, 500, 1_000, 2_000, 4_000, 8_000];
 
 #[cfg(windows)]
@@ -109,6 +111,7 @@ fn main() -> ExitCode {
     run_cli()
 }
 
+#[allow(clippy::too_many_lines)]
 fn run_cli() -> ExitCode {
     let _ = rustls::crypto::ring::default_provider().install_default();
     init_tracing();
@@ -157,7 +160,10 @@ fn run_cli() -> ExitCode {
         } => cmd_link(&config_dir, &invite, force, label),
         Command::Logout => cmd_logout(&config_dir),
         Command::Approve { app_key, label } => cmd_approve(&config_dir, &app_key, label),
-        Command::Revoke { app_key } => cmd_revoke(&config_dir, &app_key),
+        Command::Revoke {
+            app_key,
+            recovery_secret,
+        } => cmd_revoke(&config_dir, &app_key, recovery_secret.as_deref()),
         Command::Roster => cmd_roster(&config_dir),
         Command::RotateDck => cmd_rotate_dck(&config_dir),
         Command::Status => cmd_status(&config_dir),

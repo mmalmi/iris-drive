@@ -6,16 +6,20 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 APP="$ROOT/macos/Sources/IrisDriveMacApp.swift"
 STARTUP="$ROOT/macos/Sources/IrisDriveStartup.swift"
 LIFECYCLE="$ROOT/macos/Sources/IrisDriveMacFileProvider.swift"
+MACOS_INFO="$ROOT/macos/Info.plist"
 FILEPROVIDER_ITEM="$ROOT/macos/FileProvider/FileProviderItem.swift"
+FILEPROVIDER_INFO="$ROOT/macos/FileProvider/Info.plist"
 HELPER_ENTITLEMENTS="$ROOT/macos/idrive-helper.entitlements"
+MACOS_PROJECT="$ROOT/macos/project.yml"
 DEV_APP="$ROOT/scripts/macos-dev-app.sh"
 DAEMON_RUNTIME="$ROOT/crates/iris-drive-cli/src/daemon/runtime.rs"
+PROVIDER_COMMANDS="$ROOT/crates/iris-drive-cli/src/commands.rs"
 
 require_contains() {
   local file="$1"
   local label="$2"
   local needle="$3"
-  if ! grep -Fq "$needle" "$file"; then
+  if ! grep -Fq -- "$needle" "$file"; then
     echo "missing '$needle' in $label" >&2
     exit 1
   fi
@@ -25,7 +29,7 @@ require_not_contains() {
   local file="$1"
   local label="$2"
   local needle="$3"
-  if grep -Fq "$needle" "$file"; then
+  if grep -Fq -- "$needle" "$file"; then
     echo "unexpected '$needle' in $label" >&2
     exit 1
   fi
@@ -41,7 +45,22 @@ require_not_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "Iris Drive mo
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" 'let irisDriveFileProviderDomainDisplayName = ""'
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "irisDriveUserFacingDriveName"
 require_not_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "selectFile(nil, inFileViewerRootedAtPath:"
+require_contains "$MACOS_INFO" "macos/Info.plist" "NSLocalNetworkUsageDescription"
+require_contains "$MACOS_INFO" "macos/Info.plist" "Find and connect directly to nearby Iris Drive devices on your local network."
+require_contains "$MACOS_INFO" "macos/Info.plist" "NSBonjourServices"
+require_contains "$MACOS_INFO" "macos/Info.plist" "_fips._udp"
+require_contains "$MACOS_INFO" "macos/Info.plist" "NSAllowsLocalNetworking"
 require_contains "$FILEPROVIDER_ITEM" "macos/FileProvider/FileProviderItem.swift" 'filename: "Iris Drive"'
+require_contains "$FILEPROVIDER_ITEM" "macos/FileProvider/FileProviderItem.swift" "rootCid"
+require_contains "$FILEPROVIDER_ITEM" "macos/FileProvider/FileProviderItem.swift" "--base-root-cid"
+require_contains "$FILEPROVIDER_ITEM" "macos/FileProvider/FileProviderItem.swift" '"provider", "compose-path"'
+require_contains "$FILEPROVIDER_ITEM" "macos/FileProvider/FileProviderItem.swift" "mutationBaseRootCid"
+require_contains "$PROVIDER_COMMANDS" "crates/iris-drive-cli/src/commands.rs" "base_root_cid"
+require_contains "$PROVIDER_COMMANDS" "crates/iris-drive-cli/src/commands.rs" "ComposePath"
+require_contains "$MACOS_PROJECT" "macos/project.yml" "IrisDriveFileProvider:"
+require_contains "$FILEPROVIDER_INFO" "macos/FileProvider/Info.plist" "CFBundleIcons"
+require_contains "$FILEPROVIDER_INFO" "macos/FileProvider/Info.plist" "CFBundleSymbolName"
+require_contains "$FILEPROVIDER_INFO" "macos/FileProvider/Info.plist" "smallcircle.filled.circle"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "irisDriveFileProviderRegistrationIdentityKey"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "currentFileProviderProfileRegistrationIdentity"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "currentFileProviderAppRegistrationIdentity"
@@ -55,6 +74,7 @@ require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "fi
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "shouldRepairFileProviderRegistration"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "repairFileProviderRegistration"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "removeAllDomains"
+require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "resetAllFileProviderDomains"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "repairAllFileProviderRegistrations"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "addFreshFileProviderDomain"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "Iris Drive repairing orphaned FileProvider domains"
@@ -83,6 +103,7 @@ require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "service install --launch
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "macos_process_command_matches"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "macos/.build/Applications/Iris Drive.app"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "IRIS_DRIVE_DISABLE_LOGIN_AGENT_SYNC=true"
+require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "IRIS_DRIVE_FILEPROVIDER_RESET_ON_START=true"
 require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'pkill -TERM -x "$APP_PROCESS_NAME"'
 require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'pkill -x "$APP_PROCESS_NAME"'
 require_contains "$STARTUP" "macos/Sources/IrisDriveStartup.swift" "launchAgentSyncDisabled"

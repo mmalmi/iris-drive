@@ -18,6 +18,9 @@ CONFIGURATION="${IRIS_DRIVE_IOS_XCODE_CONFIGURATION:-Debug}"
 DERIVED_DATA="$ROOT/ios/.build/DerivedData"
 BUILD_LOG="${IRIS_DRIVE_IOS_UI_BUILD_LOG:-/tmp/iris-drive-ios-ui-tests.log}"
 BUNDLE_ID="to.iris.drive.ios"
+SHARE_SOURCE_BUNDLE_ID="to.iris.drive.ios.ShareSource"
+SHARE_SHEET_SMOKE_FILE="Iris Drive Share Sheet Smoke.txt"
+SHARE_SHEET_SMOKE_CONTENT="shared from iOS share sheet"
 DEVICE_NAME="${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-}"
 TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
 IDRIVE="${IRIS_DRIVE_IDRIVE_BIN:-$TARGET_DIR/debug/idrive}"
@@ -227,6 +230,14 @@ resolve_app_path() {
     -quit 2>/dev/null
 }
 
+resolve_share_source_app_path() {
+  find "$DERIVED_DATA/Build/Products" \
+    -path "*/$CONFIGURATION-iphonesimulator/Iris Drive Share Source.app" \
+    -type d \
+    -print \
+    -quit 2>/dev/null
+}
+
 assert_static_app_core_linkage() {
   local app_path="$1"
   local offenders
@@ -247,16 +258,40 @@ assert_static_app_core_linkage() {
 }
 
 run_ui_test() {
+  local use_app_group=0
+  if [[ "${1:-}" == "--app-group" ]]; then
+    use_app_group=1
+    shift
+  fi
   local only_testing="$1"
   shift
   local run_stem
   local run_file
+  local env_updates=()
+  local -a python_args
+  while [[ $# -gt 0 ]]; do
+    env_updates+=("$1")
+    shift
+  done
   run_stem="$(mktemp "$DERIVED_DATA/Build/Products/IrisDriveIOS-ui.XXXXXX")"
   run_file="$run_stem.xctestrun"
   mv "$run_stem" "$run_file"
   cp "$XCTESTRUN" "$run_file"
 
-  python3 - "$run_file" "IRIS_DRIVE_UI_TEST_BASE_DIR=$SIM_APP_BASE_DIR" "$@" <<'PY'
+  if [[ "$use_app_group" != "1" ]]; then
+    if [[ "${#env_updates[@]}" -gt 0 ]]; then
+      env_updates=("IRIS_DRIVE_UI_TEST_BASE_DIR=$SIM_APP_BASE_DIR" "${env_updates[@]}")
+    else
+      env_updates=("IRIS_DRIVE_UI_TEST_BASE_DIR=$SIM_APP_BASE_DIR")
+    fi
+  fi
+
+  python_args=("$run_file")
+  if [[ "${#env_updates[@]}" -gt 0 ]]; then
+    python_args+=("${env_updates[@]}")
+  fi
+
+  python3 - "${python_args[@]}" <<'PY'
 import plistlib
 import sys
 
@@ -293,6 +328,78 @@ PY
     test-without-building >>"$BUILD_LOG" || status=$?
   rm -f "$run_file"
   return "$status"
+}
+
+reset_sim_app_group_state() {
+  local data_container group_container
+
+  xcrun simctl uninstall "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  xcrun simctl uninstall "$DEVICE_UDID" "$SHARE_SOURCE_BUNDLE_ID" >/dev/null 2>&1 || true
+  xcrun simctl install "$DEVICE_UDID" "$APP_PATH" >/dev/null
+  xcrun simctl install "$DEVICE_UDID" "$SHARE_SOURCE_APP_PATH" >/dev/null
+  data_container="$(xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" data 2>/dev/null || true)"
+  group_container="$(xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" group.to.iris.drive 2>/dev/null || true)"
+  if [[ -z "$data_container" ]]; then
+    echo "FAIL: simulator app data container was not created for share-sheet smoke." >&2
+    exit 1
+  fi
+  if [[ -z "$group_container" ]]; then
+    echo "FAIL: simulator app group container was not created for share-sheet smoke." >&2
+    exit 1
+  fi
+  xcrun simctl terminate "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  xcrun simctl terminate "$DEVICE_UDID" "$SHARE_SOURCE_BUNDLE_ID" >/dev/null 2>&1 || true
+  safe_remove_sim_container "$data_container/Library/Application Support/IrisDrive"
+  safe_remove_sim_container "$group_container/IrisDrive"
+  SIM_APP_BASE_DIR="$group_container/IrisDrive"
+  mkdir -p "$SIM_APP_BASE_DIR"
+  clear_sim_env IRIS_DRIVE_UI_TEST_BASE_DIR
+}
+
+verify_share_sheet_import() {
+  local provider_json
+  local output
+
+  provider_json="$("$IDRIVE" --config-dir "$SIM_APP_BASE_DIR" provider list)"
+  if ! PROVIDER_JSON="$provider_json" python3 - "$SHARE_SHEET_SMOKE_FILE" "$SHARE_SHEET_SMOKE_CONTENT" <<'PY'; then
+import json
+import os
+import sys
+
+expected_name = sys.argv[1]
+expected_size = len(sys.argv[2].encode("utf-8"))
+provider = json.loads(os.environ["PROVIDER_JSON"])
+entries = provider.get("entries") or []
+ok = (
+    provider.get("file_count") == 1
+    and any(
+        entry.get("path") == expected_name
+        and entry.get("kind") == "file"
+        and entry.get("size") == expected_size
+        for entry in entries
+    )
+)
+raise SystemExit(0 if ok else 1)
+PY
+    echo "FAIL: iOS share-sheet import did not produce the expected provider entry." >&2
+    echo "$provider_json" >&2
+    exit 1
+  fi
+
+  output="$(mktemp -t iris-drive-ios-share-sheet.XXXXXX)"
+  "$IDRIVE" --config-dir "$SIM_APP_BASE_DIR" provider read "$SHARE_SHEET_SMOKE_FILE" "$output" >/dev/null
+  if ! python3 - "$output" "$SHARE_SHEET_SMOKE_CONTENT" <<'PY'; then
+import pathlib
+import sys
+
+actual = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+expected = sys.argv[2]
+raise SystemExit(0 if actual == expected else 1)
+PY
+    echo "FAIL: iOS share-sheet import bytes did not match expected content." >&2
+    exit 1
+  fi
+  rm -f "$output"
 }
 
 cargo build -p idrive
@@ -332,6 +439,11 @@ if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
   echo "FAIL: built iOS app not found. Build log: $BUILD_LOG" >&2
   exit 1
 fi
+SHARE_SOURCE_APP_PATH="$(resolve_share_source_app_path)"
+if [[ -z "$SHARE_SOURCE_APP_PATH" || ! -d "$SHARE_SOURCE_APP_PATH" ]]; then
+  echo "FAIL: built iOS share source app not found. Build log: $BUILD_LOG" >&2
+  exit 1
+fi
 assert_static_app_core_linkage "$APP_PATH"
 iris_drive_ios_assert_simulator_entitlements "$DERIVED_DATA" "$CONFIGURATION"
 
@@ -344,8 +456,18 @@ fi
 xcrun simctl boot "$DEVICE_UDID" >/dev/null 2>&1 || true
 xcrun simctl bootstatus "$DEVICE_UDID" -b >/dev/null
 
+run_ui_test "IrisDriveIOSShareExtensionTests"
+
 reset_sim_app_state
 run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testWelcomeRoutesWithoutSetupTitle"
+
+reset_sim_app_group_state
+run_ui_test \
+  --app-group \
+  "IrisDriveIOSUITests/IrisDriveIOSUITests/testShareSheetImportsFileFromExternalSender" \
+  "IRIS_DRIVE_UI_TEST_SHARE_SHEET_FILE=$SHARE_SHEET_SMOKE_FILE" \
+  "IRIS_DRIVE_UI_TEST_SHARE_SHEET_CONTENT=$SHARE_SHEET_SMOKE_CONTENT"
+verify_share_sheet_import
 
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
 owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["app_key_link_invite"]["url"])' <<<"$owner_json")"

@@ -550,7 +550,7 @@ async fn root_apply_followup_skips_refresh_when_blocks_are_missing() {
 }
 
 #[test]
-fn stale_drive_root_followup_refreshes_projection_until_blocks_sync() {
+fn stale_drive_root_followup_refreshes_projection_after_blocks_sync() {
     assert_eq!(
         drive_root_followup_plan(false, true, false),
         DriveRootFollowupPlan {
@@ -562,7 +562,7 @@ fn stale_drive_root_followup_refreshes_projection_until_blocks_sync() {
         drive_root_followup_plan(false, true, true),
         DriveRootFollowupPlan {
             pull_blocks: true,
-            refresh_projection: false,
+            refresh_projection: true,
         }
     );
     assert_eq!(
@@ -611,6 +611,31 @@ fn startup_root_sync_collects_unsynced_remote_roots() {
     let roots = startup_root_cids_needing_sync(config_dir.path(), &config);
 
     assert_eq!(roots, vec!["needs-sync".to_string()]);
+}
+
+#[test]
+fn startup_root_sync_retries_failed_remote_roots() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let mut drive = Drive {
+        root_scope_id: iris_drive_core::IrisProfileId::new_v4().to_string(),
+        drive_id: PRIMARY_DRIVE_ID.to_string(),
+        display_name: "My Drive".to_string(),
+        role: DriveRole::Owner,
+        app_key_roots: BTreeMap::new(),
+        last_root_cid: None,
+        key_hex: None,
+    };
+    drive.app_key_roots.insert(
+        "device-a".to_string(),
+        AppKeyRootRef::legacy("failed-root", 10, 1),
+    );
+    let mut config = AppConfig::default();
+    config.drives.push(drive);
+    record_block_sync_error(config_dir.path(), "failed-root", "timed out after 15s");
+
+    let roots = startup_root_cids_needing_sync(config_dir.path(), &config);
+
+    assert_eq!(roots, vec!["failed-root".to_string()]);
 }
 
 #[tokio::test]

@@ -308,6 +308,25 @@ wait_for_file() {
   return 1
 }
 
+mkdir_p_or_fail() {
+  local path="$1"
+  local seconds="${2:-10}"
+
+  python3 - "$path" "$seconds" <<'PY'
+import subprocess
+import sys
+
+path = sys.argv[1]
+seconds = float(sys.argv[2])
+try:
+    subprocess.run(["mkdir", "-p", path], check=True, timeout=seconds)
+except subprocess.TimeoutExpired:
+    raise SystemExit(f"FAIL: mkdir -p timed out after {seconds:g}s: {path}")
+except subprocess.CalledProcessError as error:
+    raise SystemExit(f"FAIL: mkdir -p failed with exit {error.returncode}: {path}")
+PY
+}
+
 wait_for_linked_authorized() {
   local seconds="$1"
   local status_json authorization_state
@@ -805,7 +824,7 @@ run_user_journey() {
   local approve_json roster_size roster_json roster_devices import_json list_json
   local sync_json check_json
 
-  mkdir -p "$owner_config_dir"
+  mkdir_p_or_fail "$owner_config_dir"
   owner_json="$("$idrive" --config-dir "$owner_config_dir" init --force --label "macOS owner")" || {
     echo "FAIL: could not initialize owner profile for link journey." >&2
     return 1
@@ -928,7 +947,7 @@ run_user_journey() {
     return 1
   fi
 
-  mkdir -p "$source_dir/docs"
+  mkdir_p_or_fail "$source_dir/docs"
   printf 'macOS GUI journey file\n' >"$source_dir/docs/mac-gui-note.txt"
   import_json="$("$idrive" --config-dir "$owner_config_dir" import "$source_dir")" || {
     echo "FAIL: owner could not import journey files." >&2
@@ -950,7 +969,7 @@ run_user_journey() {
     return 1
   fi
 
-  mkdir -p "$backup_dir"
+  mkdir_p_or_fail "$backup_dir"
   "$idrive" --config-dir "$owner_config_dir" \
     backups add "fs:$backup_dir" --label "macOS smoke replica" >/dev/null || {
     echo "FAIL: could not add journey backup target." >&2
@@ -995,9 +1014,9 @@ fi
 terminate_app_process
 rm -rf "$SMOKE_APP_DATA"
 if run_create_profile_smoke || run_user_journey_smoke; then
-  mkdir -p "$SMOKE_HOME"
+  mkdir_p_or_fail "$SMOKE_HOME"
 else
-  mkdir -p "$SMOKE_CONFIG_DIR"
+  mkdir_p_or_fail "$SMOKE_CONFIG_DIR"
   "$IDRIVE_CLI" \
     --config-dir "$SMOKE_CONFIG_DIR" \
     init --force --label "macOS smoke" >/dev/null

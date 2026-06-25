@@ -233,7 +233,7 @@
 
       <Border Background="{StaticResource IrisSidebarBrush}">
         <StackPanel Margin="12,18">
-          <Button x:Name="NavDriveButton" Tag="Drive" Style="{StaticResource NavButton}" Click="Nav_Click">
+          <Button x:Name="NavDriveButton" Tag="Drive" Style="{StaticResource NavButton}" Click="Nav_Click" AutomationProperties.Name="My Drive">
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="&#xE8B7;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
               <TextBlock Text="My Drive" />
@@ -245,31 +245,31 @@
               <TextBlock Text="Open" />
             </StackPanel>
           </Button>
-          <Button x:Name="NavDevicesButton" Tag="Devices" Style="{StaticResource NavButton}" Click="Nav_Click">
+          <Button x:Name="NavDevicesButton" Tag="Devices" Style="{StaticResource NavButton}" Click="Nav_Click" AutomationProperties.Name="Devices">
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="&#xE716;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
               <TextBlock Text="Devices" />
             </StackPanel>
           </Button>
-          <Button x:Name="NavSharesButton" Tag="Shares" Style="{StaticResource NavButton}" Click="Nav_Click">
+          <Button x:Name="NavSharesButton" Tag="Shares" Style="{StaticResource NavButton}" Click="Nav_Click" AutomationProperties.Name="Shares">
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="&#xE8D7;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
               <TextBlock Text="Shares" />
             </StackPanel>
           </Button>
-          <Button x:Name="NavBackupsButton" Tag="Backups" Style="{StaticResource NavButton}" Click="Nav_Click">
+          <Button x:Name="NavBackupsButton" Tag="Backups" Style="{StaticResource NavButton}" Click="Nav_Click" AutomationProperties.Name="Backup">
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="&#xE8C7;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
               <TextBlock Text="Backup" />
             </StackPanel>
           </Button>
-          <Button x:Name="NavNetworkButton" Tag="Network" Style="{StaticResource NavButton}" Click="Nav_Click">
+          <Button x:Name="NavNetworkButton" Tag="Network" Style="{StaticResource NavButton}" Click="Nav_Click" AutomationProperties.Name="Network">
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="&#xE968;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
               <TextBlock Text="Network" />
             </StackPanel>
           </Button>
-          <Button x:Name="NavSettingsButton" Tag="Settings" Style="{StaticResource NavButton}" Click="Nav_Click">
+          <Button x:Name="NavSettingsButton" Tag="Settings" Style="{StaticResource NavButton}" Click="Nav_Click" AutomationProperties.Name="Settings">
             <StackPanel Orientation="Horizontal">
               <TextBlock Text="&#xE713;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
               <TextBlock Text="Settings" />

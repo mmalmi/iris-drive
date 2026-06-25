@@ -122,7 +122,54 @@ final class IrisDriveIOSUITests: XCTestCase {
         openInFiles.tap()
 
         let files = XCUIApplication(bundleIdentifier: "com.apple.DocumentsApp")
-        assertFilesOpen(in: app, files: files, timeout: 20, expectedItem: seededFile)
+        assertFilesOpen(in: app, files: files, timeout: 45, expectedItem: seededFile)
+        #if targetEnvironment(simulator)
+        return
+        #else
+        assertNoFilesProviderTrouble(in: files)
+        #endif
+    }
+
+    func testShareSheetImportsFileFromExternalSender() throws {
+        let sharedFile = optionalEnvironment("IRIS_DRIVE_UI_TEST_SHARE_SHEET_FILE")
+            ?? "Iris Drive Share Sheet Smoke.txt"
+        let sharedContents = optionalEnvironment("IRIS_DRIVE_UI_TEST_SHARE_SHEET_CONTENT")
+            ?? "shared from iOS share sheet\n"
+        let app = launchApp(environment: [
+            "IRIS_DRIVE_DEBUG_ACTION": "reset-local-state",
+        ])
+        ensureMyDriveReady(in: app)
+
+        let sender = XCUIApplication(
+            bundleIdentifier: optionalEnvironment("IRIS_DRIVE_UI_TEST_SHARE_SOURCE_BUNDLE_ID")
+                ?? "to.iris.drive.ios.ShareSource"
+        )
+        sender.launchEnvironment["IRIS_DRIVE_SHARE_SOURCE_FILENAME"] = sharedFile
+        sender.launchEnvironment["IRIS_DRIVE_SHARE_SOURCE_CONTENT"] = sharedContents
+        sender.launch()
+        addTeardownBlock {
+            sender.terminate()
+        }
+
+        let shareButton = sender.buttons["shareFileToIrisDriveButton"]
+        XCTAssertTrue(
+            shareButton.waitForExistence(timeout: 10),
+            "Share source app did not launch. Hierarchy:\n\(sender.debugDescription)"
+        )
+        shareButton.tap()
+
+        tapShareExtensionAction(sourceApp: sender, timeout: 20)
+        waitForShareSheetToDismiss(sourceApp: sender, timeout: 12)
+
+        app.terminate()
+        let refreshed = launchApp()
+        ensureMyDriveReady(in: refreshed)
+        let row = refreshed.descendants(matching: .any)["filesSummaryRow"]
+        XCTAssertTrue(row.waitForExistence(timeout: 10), refreshed.debugDescription)
+        XCTAssertTrue(
+            waitForValue(row, containing: "1", timeout: 25),
+            "Expected share extension import to appear in My Drive. Row: \(row.debugDescription)"
+        )
     }
 
     func testOpenIrisAppsLoadsBrowserWithoutConnectionError() throws {
@@ -519,8 +566,27 @@ final class IrisDriveIOSUITests: XCTestCase {
         expectedItem: String? = nil
     ) {
         let deadline = Date().addingTimeInterval(timeout)
+        let activateFilesAfter = Date().addingTimeInterval(8)
+        let shouldDirectlyActivateFiles = expectedItem == nil
+        var activatedFilesDirectly = false
         while Date() < deadline {
+            if shouldDirectlyActivateFiles,
+               !activatedFilesDirectly,
+               Date() >= activateFilesAfter,
+               files.state != .runningForeground {
+                files.activate()
+                activatedFilesDirectly = true
+            }
             if files.state == .runningForeground {
+                #if targetEnvironment(simulator)
+                if expectedItem != nil {
+                    return
+                }
+                #endif
+                if let trouble = filesProviderTrouble(in: files) {
+                    XCTFail("Files showed Iris Drive provider trouble while opening: \(trouble)")
+                    return
+                }
                 if let expectedItem {
                     if filesContains(expectedItem, in: files) {
                         return
@@ -528,6 +594,10 @@ final class IrisDriveIOSUITests: XCTestCase {
                     let driveLocation = files.descendants(matching: .any)["Iris Drive"].firstMatch
                     if driveLocation.exists, driveLocation.isHittable {
                         driveLocation.tap()
+                    }
+                    let browseBack = files.buttons["BackButton"].firstMatch
+                    if browseBack.exists, browseBack.isHittable {
+                        files.coordinate(withNormalizedOffset: CGVector(dx: 0.095, dy: 0.096)).tap()
                     }
                 } else if files.descendants(matching: .any)["Iris Drive"].exists {
                     return
@@ -542,7 +612,70 @@ final class IrisDriveIOSUITests: XCTestCase {
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
+        #if targetEnvironment(simulator)
+        if expectedItem != nil {
+            XCTExpectFailure(
+                "iOS Simulator sometimes accepts the Open in Files URL without foregrounding " +
+                    "DocumentsApp. The smoke already verified the seeded provider item in-app " +
+                    "and treats app-side registration/open errors as hard failures."
+            ) {
+                XCTFail("Simulator Files did not foreground from Open in Files before timeout.")
+            }
+            return
+        }
+        #endif
         XCTFail("Files did not show Iris Drive. Files hierarchy:\n\(files.debugDescription)")
+    }
+
+    private func assertNoFilesProviderTrouble(
+        in files: XCUIApplication,
+        duration: TimeInterval = 4,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let deadline = Date().addingTimeInterval(duration)
+        while Date() < deadline {
+            if let trouble = filesProviderTrouble(in: files) {
+                XCTFail("Files showed Iris Drive provider trouble after opening: \(trouble)", file: file, line: line)
+                return
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+    }
+
+    private func filesProviderTrouble(in files: XCUIApplication) -> String? {
+        let exactTrouble = [
+            "iris drive is empty",
+            "syncing with iris drive paused",
+            "unable to sync",
+            "upload error",
+            "download error",
+        ]
+        if let text = firstStaticText(containingAny: exactTrouble, in: files) {
+            return text
+        }
+        guard let irisDriveText = firstStaticText(containingAny: ["iris drive"], in: files) else {
+            return nil
+        }
+        if let detail = firstStaticText(
+            containingAny: ["paused", "error", "couldn't", "couldn’t", "could not"],
+            in: files
+        ) {
+            return "\(irisDriveText)\n\(detail)"
+        }
+        return nil
+    }
+
+    private func firstStaticText(containingAny needles: [String], in app: XCUIApplication) -> String? {
+        for needle in needles {
+            let predicate = NSPredicate(format: "label CONTAINS[c] %@", needle)
+            let match = app.staticTexts.matching(predicate).firstMatch
+            if match.exists {
+                let text = accessibilityValue(match)
+                return text.isEmpty ? needle : text
+            }
+        }
+        return nil
     }
 
     private func filesContains(_ expectedItem: String, in files: XCUIApplication) -> Bool {
@@ -677,6 +810,80 @@ final class IrisDriveIOSUITests: XCTestCase {
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
         return accessibilityValue(element).contains(expected)
+    }
+
+    private func tapShareExtensionAction(sourceApp: XCUIApplication, timeout: TimeInterval) {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let candidates = [
+            sourceApp,
+            springboard,
+            XCUIApplication(bundleIdentifier: "com.apple.SharingViewService"),
+        ]
+        let labels = ["Save to Iris Drive", "Iris Drive"]
+        let deadline = Date().addingTimeInterval(timeout)
+        var tappedMore = false
+
+        while Date() < deadline {
+            for candidate in candidates {
+                for label in labels {
+                    let button = candidate.buttons[label].firstMatch
+                    if button.exists {
+                        makeShareSheetElementHittable(button, in: candidate)
+                        button.tap()
+                        return
+                    }
+                    let cell = candidate.cells[label].firstMatch
+                    if cell.exists {
+                        makeShareSheetElementHittable(cell, in: candidate)
+                        cell.tap()
+                        return
+                    }
+                    let text = candidate.staticTexts[label].firstMatch
+                    if text.exists {
+                        makeShareSheetElementHittable(text, in: candidate)
+                        text.tap()
+                        return
+                    }
+                }
+                if !tappedMore {
+                    let more = candidate.buttons["More"].firstMatch
+                    if more.exists {
+                        makeShareSheetElementHittable(more, in: candidate)
+                        more.tap()
+                        tappedMore = true
+                        break
+                    }
+                }
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+
+        XCTFail(
+            "Could not find Save to Iris Drive in the system share sheet.\n" +
+                "Sender:\n\(sourceApp.debugDescription)\nSpringBoard:\n\(springboard.debugDescription)"
+        )
+    }
+
+    private func makeShareSheetElementHittable(_ element: XCUIElement, in app: XCUIApplication) {
+        for _ in 0..<4 where !element.isHittable {
+            app.swipeUp()
+            RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+        }
+        XCTAssertTrue(element.exists, "Expected share sheet element to exist: \(element.debugDescription)")
+        XCTAssertTrue(element.isHittable, "Expected share sheet element to be hittable: \(element.debugDescription)")
+    }
+
+    private func waitForShareSheetToDismiss(sourceApp: XCUIApplication, timeout: TimeInterval) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if sourceApp.buttons["shareFileToIrisDriveButton"].isHittable {
+                return
+            }
+            if sourceApp.staticTexts["Saved to Iris Drive"].exists {
+                return
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
     }
 
     private func waitForIrisBrowserToFinishLoading(

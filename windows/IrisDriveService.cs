@@ -17,9 +17,11 @@ public sealed partial class IrisDriveService
 
     public IrisDriveService()
     {
+        WindowsShellTrace.Write("IrisDriveService constructor entered");
         nativeCore = new Lazy<IrisDriveNativeCore>(() => new IrisDriveNativeCore(
             DefaultConfigDirectory,
             AppVersion));
+        WindowsShellTrace.Write("IrisDriveService constructor completed");
     }
 
     private IrisDriveNativeCore NativeCore => nativeCore.Value;

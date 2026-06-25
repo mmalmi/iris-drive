@@ -25,6 +25,9 @@ Environment:
   IRIS_DRIVE_E2E_TIMEOUT_SECS    Convergence timeout per step (default: 60).
   IRIS_DRIVE_E2E_REMOTE_TIMEOUT_SECS
                                   Per SSH command timeout; 0 disables (default: 60).
+  IRIS_DRIVE_E2E_SETUP_REMOTE_TIMEOUT_SECS
+                                  Per host setup/build SSH command timeout only;
+                                  does not affect file-sync convergence (default: 180).
   IRIS_DRIVE_E2E_MANY_FILES      Many-file test count (default: 32).
   IRIS_DRIVE_E2E_LARGE_BYTES     Large-file test bytes (default: 262144).
   IRIS_DRIVE_E2E_MOUNT_LABELS    Space-separated POSIX labels that should expose FUSE mounts.
@@ -32,7 +35,7 @@ Environment:
   IRIS_DRIVE_E2E_PROVIDER_MUTATIONS
                                   Use provider commands instead of projection surfaces when set to 1.
   IRIS_DRIVE_E2E_SIDELOAD_APPKEYS
-                                  Copy the owner AppKeys snapshot into temp peer configs after approval
+                                  Copy the owner profile roster snapshot into temp peer configs after approval
                                   so VM file-sync tests do not depend on public relay timing (default: 1).
   IRIS_DRIVE_E2E_KEEP            Keep remote temp dirs/daemons when set to 1.
 USAGE
@@ -42,6 +45,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_ID="run-$(date +%Y%m%d%H%M%S)-$$"
 TIMEOUT_SECS="${IRIS_DRIVE_E2E_TIMEOUT_SECS:-60}"
 REMOTE_TIMEOUT_SECS="${IRIS_DRIVE_E2E_REMOTE_TIMEOUT_SECS:-60}"
+SETUP_REMOTE_TIMEOUT_SECS="${IRIS_DRIVE_E2E_SETUP_REMOTE_TIMEOUT_SECS:-180}"
 POLL_SECS="${IRIS_DRIVE_E2E_POLL_SECS:-3}"
 MANY_FILES="${IRIS_DRIVE_E2E_MANY_FILES:-32}"
 LARGE_BYTES="${IRIS_DRIVE_E2E_LARGE_BYTES:-262144}"
@@ -223,13 +227,18 @@ run_remote_exec() {
 }
 
 remote_exec() {
+  remote_exec_with_timeout "$1" "$2" "$REMOTE_TIMEOUT_SECS"
+}
+
+remote_exec_with_timeout() {
   local label="$1"
   local script="$2"
+  local timeout_secs="$3"
   local pid
   local watchdog
   local status
 
-  if (( REMOTE_TIMEOUT_SECS <= 0 )); then
+  if (( timeout_secs <= 0 )); then
     run_remote_exec "$label" "$script"
     return
   fi
@@ -237,10 +246,10 @@ remote_exec() {
   run_remote_exec "$label" "$script" &
   pid="$!"
   (
-    deadline=$((SECONDS + REMOTE_TIMEOUT_SECS))
+    deadline=$((SECONDS + timeout_secs))
     while kill -0 "$pid" 2>/dev/null; do
       if (( SECONDS >= deadline )); then
-        echo "remote command timed out after ${REMOTE_TIMEOUT_SECS}s on $label" >&2
+        echo "remote command timed out after ${timeout_secs}s on $label" >&2
         kill "$pid" 2>/dev/null || true
         sleep 1
         kill -9 "$pid" 2>/dev/null || true
@@ -275,16 +284,48 @@ if (Test-Path -LiteralPath \$base) { Remove-Item -LiteralPath \$base -Recurse -F
 if (Test-Path -LiteralPath \$projectionE2e) { Remove-Item -LiteralPath \$projectionE2e -Recurse -Force }
 \$config = Join-Path \$base 'config'; \$work = Join-Path \$base 'work'
 New-Item -ItemType Directory -Force -Path \$config,\$work | Out-Null
-\$repoIdrive = Join-Path \$HOME 'src\iris-drive\target\debug\idrive.exe'
-\$idrive = \$repoIdrive
-if (-not (Test-Path -LiteralPath \$idrive)) {
+\$repo = Join-Path \$HOME 'src\iris-drive'
+\$repoIdrive = Join-Path \$repo 'target\debug\idrive.exe'
+\$overrideIdrive = $(ps_quote "${IRIS_DRIVE_E2E_IDRIVE:-}")
+function Test-IrisDriveCli([string]\$candidate) {
+  if ([string]::IsNullOrWhiteSpace(\$candidate) -or -not (Test-Path -LiteralPath \$candidate)) { return \$false }
+  & \$candidate app-keys --help *> \$null
+  return \$LASTEXITCODE -eq 0
+}
+\$idrive = \$overrideIdrive
+if ([string]::IsNullOrWhiteSpace(\$idrive) -and (Test-IrisDriveCli \$repoIdrive)) {
+  \$idrive = \$repoIdrive
+}
+if ([string]::IsNullOrWhiteSpace(\$idrive)) {
+  if (Test-Path -LiteralPath (Join-Path \$repo 'Cargo.toml')) {
+    \$cargo = Get-Command cargo -ErrorAction SilentlyContinue
+    if (\$cargo) {
+      Push-Location \$repo
+      cargo build -q -p idrive --bin idrive
+      Pop-Location
+      \$idrive = \$repoIdrive
+    }
+  }
+}
+if ([string]::IsNullOrWhiteSpace(\$idrive) -or -not (Test-IrisDriveCli \$idrive)) {
+  \$idrive = \$repoIdrive
+}
+if (-not (Test-IrisDriveCli \$idrive)) {
   \$idrive = Join-Path \$HOME '.cargo\bin\idrive.exe'
   if (-not (Test-Path -LiteralPath \$idrive)) {
     \$cmd = Get-Command idrive.exe -ErrorAction SilentlyContinue
     if (\$cmd) { \$idrive = \$cmd.Source }
   }
 }
-if (-not (Test-Path -LiteralPath \$idrive)) { throw \"idrive.exe not found for \$label\" }
+if (-not (Test-IrisDriveCli \$idrive)) {
+  if (Test-Path -LiteralPath (Join-Path \$repo 'Cargo.toml')) {
+    Push-Location \$repo
+    cargo build -q -p idrive --bin idrive
+    Pop-Location
+    \$idrive = \$repoIdrive
+  }
+}
+if (-not (Test-IrisDriveCli \$idrive)) { throw \"current idrive.exe with app-keys support not found for \$label\" }
 Write-Output \"base=\$base\"
 Write-Output \"config=\$config\"
 Write-Output \"work=\$work\"
@@ -301,14 +342,46 @@ run=$(sh_quote "$RUN_ID")
 base=\"\${TMPDIR:-/tmp}/iris-drive-e2e-\${run}-\${label}\"
 rm -rf \"\$base\"
 mkdir -p \"\$base/config\" \"\$base/work\"
-idrive=\"\${IRIS_DRIVE_E2E_IDRIVE:-\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/debug/idrive}}\"; idrive=\"\${idrive:-\$HOME/src/iris-drive/target/debug/idrive}\"
-[[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cache/cargo-target/debug/idrive\"
-[[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cargo/bin/idrive\"
-if [[ ! -x \"\$idrive\" ]]; then
-  idrive=\"\$(command -v idrive || true)\"
+supports_app_keys() {
+  [[ -x \"\$1\" ]] && \"\$1\" app-keys --help >/dev/null 2>&1
+}
+repo=\"\$HOME/src/iris-drive\"
+idrive=$(sh_quote "${IRIS_DRIVE_E2E_IDRIVE:-}")
+if [[ -z \"\$idrive\" ]]; then
+  for candidate in \\
+    \"\$repo/target/debug/idrive\" \\
+    \"\$HOME/.cache/cargo-target/debug/idrive\" \\
+    \"\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/debug/idrive}\" \\
+    \"\$HOME/.cargo/bin/idrive\" \\
+    \"\$(command -v idrive || true)\"
+  do
+    if supports_app_keys \"\$candidate\"; then
+      idrive=\"\$candidate\"
+      break
+    fi
+  done
 fi
-if [[ -z \"\$idrive\" || ! -x \"\$idrive\" ]]; then
-  echo \"idrive not found for \$label\" >&2
+if ! supports_app_keys \"\$idrive\" && [[ -f \"\$repo/Cargo.toml\" ]] && command -v cargo >/dev/null 2>&1; then
+  (cd \"\$repo\" && cargo build -q -p idrive --bin idrive)
+  idrive=\"\$repo/target/debug/idrive\"
+  [[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cache/cargo-target/debug/idrive\"
+  [[ -x \"\$idrive\" ]] || idrive=\"\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/debug/idrive}\"
+fi
+if ! supports_app_keys \"\$idrive\"; then
+  idrive=\"\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/debug/idrive}\"; idrive=\"\${idrive:-\$repo/target/debug/idrive}\"
+fi
+supports_app_keys \"\$idrive\" || idrive=\"\$HOME/.cache/cargo-target/debug/idrive\"
+supports_app_keys \"\$idrive\" || idrive=\"\$HOME/.cargo/bin/idrive\"
+supports_app_keys \"\$idrive\" || idrive=\"\$(command -v idrive || true)\"
+if ! supports_app_keys \"\$idrive\"; then
+  if [[ -f \"\$repo/Cargo.toml\" ]] && command -v cargo >/dev/null 2>&1; then
+    (cd \"\$repo\" && cargo build -q -p idrive --bin idrive)
+    idrive=\"\$repo/target/debug/idrive\"
+    [[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cache/cargo-target/debug/idrive\"
+  fi
+fi
+if ! supports_app_keys \"\$idrive\"; then
+  echo \"current idrive with app-keys support not found for \$label\" >&2
   exit 1
 fi
 printf 'base=%s\n' \"\$base\"
@@ -320,7 +393,7 @@ printf 'err=%s\n' \"\$base/daemon.err.log\"
 printf 'pid=%s\n' \"\$base/daemon.pid\"
 "
   fi
-  meta="$(remote_exec "$label" "$script")"
+  meta="$(remote_exec_with_timeout "$label" "$script" "$SETUP_REMOTE_TIMEOUT_SECS")"
   while IFS='=' read -r key value; do
     value="${value%$'\r'}"
     case "$key" in
@@ -374,7 +447,7 @@ config=$(sh_quote "$config")
   remote_exec "$label" "$script" | tr -d '\r'
 }
 
-owner_app_keys_b64() {
+owner_profile_roster_ops_b64() {
   local label="$1"
   local kind
   local config
@@ -385,23 +458,23 @@ owner_app_keys_b64() {
     script="
 \$config = $(ps_quote "$config")
 \$text = Get-Content -LiteralPath (Join-Path \$config 'config.toml') -Raw
-\$match = [regex]::Match(\$text, '(?s)\\[account\\.app_keys\\].*?(?=\\r?\\n\\[\\[drives\\]\\])')
-if (-not \$match.Success) { throw 'owner AppKeys block not found' }
+\$match = [regex]::Match(\$text, '(?s)\\[\\[profile\\.profile_roster_ops\\]\\].*?(?=\\r?\\n\\[\\[drives\\]\\])')
+if (-not \$match.Success) { throw 'owner profile roster ops block not found' }
 [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(\$match.Value))
 "
   else
     script="
 set -Eeuo pipefail
 config=$(sh_quote "$config")
-awk 'BEGIN{copy=0} /^\\[account\\.app_keys\\]/{copy=1} /^\\[\\[drives\\]\\]/{copy=0} copy{print}' \"\$config/config.toml\" | base64 | tr -d '\\n'
+awk 'BEGIN{copy=0} /^\\[\\[profile\\.profile_roster_ops\\]\\]/{copy=1} /^\\[\\[drives\\]\\]/{copy=0} copy{print}' \"\$config/config.toml\" | base64 | tr -d '\\n'
 "
   fi
   remote_exec "$label" "$script" | tr -d '\r\n'
 }
 
-sideload_app_keys() {
+sideload_profile_roster_ops() {
   local label="$1"
-  local appkeys_b64="$2"
+  local roster_ops_b64="$2"
   local kind
   local config
   local script
@@ -411,32 +484,32 @@ sideload_app_keys() {
     script="
 \$config = $(ps_quote "$config")
 \$path = Join-Path \$config 'config.toml'
-\$appKeys = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($(ps_quote "$appkeys_b64")))
+\$rosterOps = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($(ps_quote "$roster_ops_b64")))
 \$text = Get-Content -LiteralPath \$path -Raw
 \$text = \$text.Replace('authorization_state = \"awaiting_approval\"', 'authorization_state = \"authorized\"')
 \$lf = [string][char]10
-\$pattern = '(?s)\\r?\\n\\[account\\.app_keys\\].*?(?=\\r?\\n\\[\\[drives\\]\\])'
+\$pattern = '(?s)\\r?\\n\\[\\[profile\\.profile_roster_ops\\]\\].*?(?=\\r?\\n\\[\\[drives\\]\\])'
 if ([regex]::IsMatch(\$text, \$pattern)) {
-  \$text = [regex]::Replace(\$text, \$pattern, (\$lf + \$appKeys + \$lf), 1)
+  \$text = [regex]::Replace(\$text, \$pattern, (\$lf + \$rosterOps + \$lf), 1)
 } else {
-  \$text = \$text.Replace(\$lf + '[[drives]]', \$lf + \$appKeys + \$lf + '[[drives]]')
+  \$text = \$text.Replace(\$lf + '[[drives]]', \$lf + \$rosterOps + \$lf + '[[drives]]')
 }
 Set-Content -LiteralPath \$path -Value \$text -NoNewline
 "
   else
     script="
 set -Eeuo pipefail
-CONFIG_PATH=$(sh_quote "$config") APPKEYS_B64=$(sh_quote "$appkeys_b64") python3 - <<'PY'
+CONFIG_PATH=$(sh_quote "$config") ROSTER_OPS_B64=$(sh_quote "$roster_ops_b64") python3 - <<'PY'
 import base64, os, re
 from pathlib import Path
 
 path = Path(os.environ['CONFIG_PATH']) / 'config.toml'
-appkeys = base64.b64decode(os.environ['APPKEYS_B64']).decode()
+roster_ops = base64.b64decode(os.environ['ROSTER_OPS_B64']).decode()
 text = path.read_text()
 text = text.replace('authorization_state = \"awaiting_approval\"', 'authorization_state = \"authorized\"')
-text = re.sub(r'\\n\\[account\\.app_keys\\].*?(?=\\n\\[\\[drives\\]\\])', '\\n' + appkeys + '\\n', text, count=1, flags=re.S)
-if '[account.app_keys]' not in text:
-    text = text.replace('\\n[[drives]]', '\\n' + appkeys + '\\n[[drives]]', 1)
+text = re.sub(r'\\n\\[\\[profile\\.profile_roster_ops\\]\\].*?(?=\\n\\[\\[drives\\]\\])', '\\n' + roster_ops + '\\n', text, count=1, flags=re.S)
+if '[[profile.profile_roster_ops]]' not in text:
+    text = text.replace('\\n[[drives]]', '\\n' + roster_ops + '\\n[[drives]]', 1)
 path.write_text(text)
 PY
 "
@@ -883,6 +956,29 @@ snapshot() {
     LC_ALL=C sort
 }
 
+snapshot_all_once() {
+  local out_dir="$1"
+  local label pid status
+  local -a labels=()
+  local -a pids=()
+  mkdir -p "$out_dir"
+  for label in "${LABELS[@]}"; do
+    (
+      snapshot "$label" >"$out_dir/$label.snapshot"
+    ) &
+    labels+=("$label")
+    pids+=("$!")
+  done
+  status=0
+  for i in "${!pids[@]}"; do
+    if ! wait "${pids[$i]}"; then
+      echo "snapshot failed for ${labels[$i]}" >&2
+      status=1
+    fi
+  done
+  return "$status"
+}
+
 filter_ignored_snapshot_paths() {
   python3 -c '
 import sys
@@ -967,9 +1063,92 @@ print_statuses() {
   local label
   for label in "${LABELS[@]}"; do
     echo "---- $label status ----" >&2
-    idrive_cmd "$label" status >&2 || true
+    idrive_cmd "$label" status |
+      jq '{
+        daemon: {
+          running: .daemon.running,
+          fresh: .daemon.fresh
+        },
+        summary: {
+          file_count: .summary.file_count,
+          sync_status: .summary.sync_status,
+          sync_status_label: .summary.sync_status_label,
+          online_app_key_count: .summary.online_app_key_count
+        },
+        fips: {
+          state: .network.fips.state,
+          state_label: .network.fips.state_label,
+          endpoint_npub: .network.fips.endpoint_npub,
+          roster_peer_count: .network.fips.roster_peer_count,
+          roster_online_peer_count: .network.fips.roster_online_peer_count,
+          roster_connected_peer_count: .network.fips.roster_connected_peer_count,
+          connected_peer_count: .network.fips.connected_peer_count,
+          other_peer_count: .network.fips.other_peer_count,
+          error: .network.fips.error
+        },
+        peers: [
+          .peers[]? | {
+            label,
+            connection_state,
+            sync_state,
+            root_available,
+            root_cid,
+            last_block_sync
+          }
+        ]
+      }' >&2 || true
     echo "---- $label snapshot ----" >&2
     snapshot "$label" >&2 || true
+    if [[ -n "${EXPECTED_SNAPSHOT:-}" ]]; then
+      local current missing extra
+      current="$(snapshot "$label" || true)"
+      missing="$(
+        comm -23 \
+          <(printf "%s\n" "$EXPECTED_SNAPSHOT" | sed '/^$/d') \
+          <(printf "%s\n" "$current" | sed '/^$/d') || true
+      )"
+      extra="$(
+        comm -13 \
+          <(printf "%s\n" "$EXPECTED_SNAPSHOT" | sed '/^$/d') \
+          <(printf "%s\n" "$current" | sed '/^$/d') || true
+      )"
+      if [[ -n "$missing" || -n "$extra" ]]; then
+        echo "---- $label snapshot diff ----" >&2
+        if [[ -n "$missing" ]]; then
+          echo "missing:" >&2
+          printf "%s\n" "$missing" | sed -n '1,40p' >&2
+        fi
+        if [[ -n "$extra" ]]; then
+          echo "extra:" >&2
+          printf "%s\n" "$extra" | sed -n '1,40p' >&2
+        fi
+      fi
+      if [[ "$PROVIDER_MUTATIONS" != "1" ]] && projection_enabled "$label"; then
+        local projection_current projection_missing projection_extra
+        projection_current="$(projection_snapshot "$label" || true)"
+        projection_missing="$(
+          comm -23 \
+            <(printf "%s\n" "$EXPECTED_SNAPSHOT" | sed '/^$/d') \
+            <(printf "%s\n" "$projection_current" | sed '/^$/d') || true
+        )"
+        projection_extra="$(
+          comm -13 \
+            <(printf "%s\n" "$EXPECTED_SNAPSHOT" | sed '/^$/d') \
+            <(printf "%s\n" "$projection_current" | sed '/^$/d') || true
+        )"
+        if [[ -n "$projection_missing" || -n "$projection_extra" ]]; then
+          echo "---- $label projection snapshot diff ----" >&2
+          if [[ -n "$projection_missing" ]]; then
+            echo "missing:" >&2
+            printf "%s\n" "$projection_missing" | sed -n '1,40p' >&2
+          fi
+          if [[ -n "$projection_extra" ]]; then
+            echo "extra:" >&2
+            printf "%s\n" "$projection_extra" | sed -n '1,40p' >&2
+          fi
+        fi
+      fi
+    fi
   done
 }
 
@@ -1011,9 +1190,16 @@ all_fresh() {
 
 all_have_direct_peer() {
   local label status
+  local expected_peers
+  expected_peers=$((${#LABELS[@]} - 1))
   for label in "${LABELS[@]}"; do
     status="$(idrive_cmd "$label" status 2>/dev/null || true)"
-    jq -e '.network.fips.connected_peer_count >= 1' >/dev/null 2>&1 <<<"$status" || return 1
+    jq -e --argjson expected "$expected_peers" '
+      .network.fips.running == true and
+      .network.fips.fresh == true and
+      (.network.fips.roster_peer_count // 0) >= $expected and
+      (.network.fips.roster_connected_peer_count // 0) >= $expected
+    ' >/dev/null 2>&1 <<<"$status" || return 1
   done
 }
 
@@ -1039,25 +1225,39 @@ wait_for_converged_union() {
 }
 
 snapshots_match_expected() {
-  local host_label current
+  local host_label current tmp
+  tmp="$(mktemp -d)"
+  if ! snapshot_all_once "$tmp"; then
+    rm -rf "$tmp"
+    return 1
+  fi
   for host_label in "${LABELS[@]}"; do
-    current="$(snapshot "$host_label")"
+    current="$(cat "$tmp/$host_label.snapshot")"
     if [[ "$current" != "$EXPECTED_SNAPSHOT" ]]; then
+      rm -rf "$tmp"
       return 1
     fi
   done
+  rm -rf "$tmp"
   return 0
 }
 
 snapshots_match_current_union() {
-  local expected host_label current
-  expected="$(union_snapshots)"
+  local expected host_label current tmp
+  tmp="$(mktemp -d)"
+  if ! snapshot_all_once "$tmp"; then
+    rm -rf "$tmp"
+    return 1
+  fi
+  expected="$(cat "$tmp"/*.snapshot | LC_ALL=C sort -u)"
   for host_label in "${LABELS[@]}"; do
-    current="$(snapshot "$host_label")"
+    current="$(cat "$tmp/$host_label.snapshot")"
     if [[ "$current" != "$expected" ]]; then
+      rm -rf "$tmp"
       return 1
     fi
   done
+  rm -rf "$tmp"
   return 0
 }
 
@@ -1111,6 +1311,36 @@ run_step() {
   echo
   echo "== $name =="
   "$@"
+}
+
+run_for_all_labels_parallel() {
+  local label status
+  local -a labels=()
+  local -a pids=()
+  local fn="$1"
+  for label in "${LABELS[@]}"; do
+    (
+      "$fn" "$label"
+    ) &
+    labels+=("$label")
+    pids+=("$!")
+  done
+  status=0
+  for i in "${!pids[@]}"; do
+    if ! wait "${pids[$i]}"; then
+      echo "$fn failed for ${labels[$i]}" >&2
+      status=1
+    fi
+  done
+  return "$status"
+}
+
+write_initial_seed_files() {
+  local label="$1"
+  write_file "$label" "seed/$label.txt" "seed from $label in $RUN_ID
+"
+  write_file "$label" "shared/same.txt" "same bytes from all devices
+"
 }
 
 step_create_edit_rename_delete() {
@@ -1310,7 +1540,7 @@ echo "initializing owner on $owner_label"
 owner_json="$(idrive_cmd "$owner_label" init --label "$owner_label")"
 owner_profile_id="$(jq -r '.profile_id' <<<"$owner_json")"
 admin_app_key_npub="$(jq -r '.current_app_key_npub' <<<"$owner_json")"
-invite_json="$(idrive_cmd "$owner_label" devices invite)"
+invite_json="$(idrive_cmd "$owner_label" app-keys invite)"
 invite_url="$(jq -r '.url' <<<"$invite_json")"
 invite_admin_app_key_npub="$(jq -r '.admin_app_key_npub' <<<"$invite_json")"
 if [[ "$invite_url" != https://drive.iris.to/invite/* ]]; then
@@ -1327,7 +1557,7 @@ for label in "${LABELS[@]}"; do
     continue
   fi
   echo "requesting invite-based link for $label"
-  link_json="$(idrive_cmd "$label" devices request "$invite_url" --label "$label")"
+  link_json="$(idrive_cmd "$label" app-keys request "$invite_url" --label "$label")"
   linked_app_key_npub="$(jq -r '.current_app_key_npub' <<<"$link_json")"
   request_url="$(jq -r '.app_key_link_request.url' <<<"$link_json")"
   request_profile_id="$(jq -r '.app_key_link_request.profile_id' <<<"$link_json")"
@@ -1348,17 +1578,17 @@ for label in "${LABELS[@]}"; do
     echo "$label request URL leaked placeholder ids: $request_url" >&2
     exit 1
   fi
-  idrive_cmd "$owner_label" devices approve "$request_url" --label "$label" >/dev/null
+  idrive_cmd "$owner_label" app-keys approve "$request_url" --label "$label" >/dev/null
 done
 
 if [[ "$SIDELOAD_APPKEYS" == "1" ]]; then
-  echo "side-loading approved AppKeys into peer temp configs"
-  appkeys_b64="$(owner_app_keys_b64 "$owner_label")"
+  echo "side-loading approved profile roster ops into peer temp configs"
+  roster_ops_b64="$(owner_profile_roster_ops_b64 "$owner_label")"
   for label in "${LABELS[@]}"; do
     if [[ "$label" == "$owner_label" ]]; then
       continue
     fi
-    sideload_app_keys "$label" "$appkeys_b64"
+    sideload_profile_roster_ops "$label" "$roster_ops_b64"
   done
 fi
 
@@ -1368,17 +1598,12 @@ done
 
 run_step "authorization" wait_until "all devices authorized" all_authorized
 run_step "fresh daemons" wait_until "all daemon statuses fresh" all_fresh
+run_step "direct FIPS peer discovery" wait_until "every device has a direct peer" all_have_direct_peer
 
-for label in "${LABELS[@]}"; do
-  write_file "$label" "seed/$label.txt" "seed from $label in $RUN_ID
-"
-  write_file "$label" "shared/same.txt" "same bytes from all devices
-"
-done
+run_step "initial seed writes" run_for_all_labels_parallel write_initial_seed_files
 
 run_step "initial multi-device merge" wait_for_converged_union "initial merge"
 
-run_step "direct FIPS peer discovery" wait_until "every device has a direct peer" all_have_direct_peer
 run_step "create edit rename delete from $source_label" step_create_edit_rename_delete
 run_step "nested create/delete from $target_label" step_nested_create_delete
 run_step "windows projection stale remote edit" step_windows_projection_replaces_stale_remote_edit
