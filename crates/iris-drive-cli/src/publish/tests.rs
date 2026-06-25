@@ -595,13 +595,22 @@ const _: () = {
 
 #[test]
 fn direct_root_publish_bursts_root_frames_only() {
+    let drive_root = "drive-root:device:main:8:root-hash:root-key:device,remote";
+    let share_root = "share-root:share:device:9:root-hash:root-key:device,remote";
     assert_eq!(
-        direct_root_publish_attempts("drive-root:device:main:8:root-hash:root-key:device,remote"),
-        2
+        direct_root_publish_attempts(drive_root),
+        4,
+        "local drive roots need a short redundant burst"
     );
     assert_eq!(
-        direct_root_publish_attempts("share-root:share:device:9:root-hash:root-key:device,remote"),
-        2
+        direct_root_publish_attempts(share_root),
+        4,
+        "local share roots need the same delivery burst"
+    );
+    assert_eq!(
+        direct_root_publish_attempts_for_source(drive_root, DirectRootPublishSource::CachedRelay),
+        2,
+        "relayed drive roots should not be single-shot"
     );
     assert_eq!(direct_root_publish_attempts("files-root:device:main"), 2);
     assert_eq!(direct_root_publish_attempts("profile-op:profile:op"), 1);

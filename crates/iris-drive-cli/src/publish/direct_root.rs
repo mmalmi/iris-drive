@@ -616,9 +616,11 @@ fn direct_root_publish_attempts(key: &str) -> usize {
 
 fn direct_root_publish_attempts_for_source(key: &str, source: DirectRootPublishSource) -> usize {
     if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
-        return 1;
+        return 2;
     }
-    if direct_root_cache_slot(key).is_some() || key.starts_with("files-root:") {
+    if direct_root_cache_slot(key).is_some() {
+        4
+    } else if key.starts_with("files-root:") {
         2
     } else {
         1
