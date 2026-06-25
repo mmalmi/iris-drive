@@ -305,17 +305,12 @@ impl DirectRootExchange {
         )?;
         let was_applied = matches!(report.outcome, DirectRootHintApply::Applied);
         let already_current = matches!(report.outcome, DirectRootHintApply::AlreadyCurrent);
-        let root_blocks_already_synced = report
-            .root_cid
-            .as_deref()
-            .is_some_and(|root_cid| root_has_successful_block_sync(config_dir, root_cid));
         let root_cid_to_pull = report
             .root_cid
             .as_ref()
-            .filter(|_| was_applied || (already_current && !root_blocks_already_synced))
+            .filter(|_| was_applied || already_current)
             .cloned();
-        let should_refresh_projection =
-            was_applied || (already_current && !root_blocks_already_synced);
+        let should_refresh_projection = was_applied || already_current;
         println!(
             "{}",
             json!({

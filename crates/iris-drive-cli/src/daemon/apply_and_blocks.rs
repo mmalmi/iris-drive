@@ -269,11 +269,11 @@ struct DriveRootFollowupPlan {
 fn drive_root_followup_plan(
     was_applied: bool,
     stale_current_root: bool,
-    root_blocks_already_synced: bool,
+    _root_blocks_already_synced: bool,
 ) -> DriveRootFollowupPlan {
     DriveRootFollowupPlan {
         pull_blocks: was_applied || stale_current_root,
-        refresh_projection: was_applied || (stale_current_root && !root_blocks_already_synced),
+        refresh_projection: was_applied || stale_current_root,
     }
 }
 

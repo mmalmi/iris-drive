@@ -550,7 +550,7 @@ async fn root_apply_followup_skips_refresh_when_blocks_are_missing() {
 }
 
 #[test]
-fn stale_drive_root_followup_refreshes_projection_until_blocks_sync() {
+fn stale_drive_root_followup_refreshes_projection_after_blocks_sync() {
     assert_eq!(
         drive_root_followup_plan(false, true, false),
         DriveRootFollowupPlan {
@@ -562,7 +562,7 @@ fn stale_drive_root_followup_refreshes_projection_until_blocks_sync() {
         drive_root_followup_plan(false, true, true),
         DriveRootFollowupPlan {
             pull_blocks: true,
-            refresh_projection: false,
+            refresh_projection: true,
         }
     );
     assert_eq!(
