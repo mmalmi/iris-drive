@@ -611,7 +611,6 @@ struct NativeProfile: Codable {
     var profileId: String
     var currentAppKeyPubkey: String
     var currentAppKeyNpub: String
-    var approvalAdminAppKeyNpub: String?
     var currentAppKeyLabel: String
     var appKeyLabel: String
     var authorizationState: String
@@ -628,7 +627,6 @@ struct NativeProfile: Codable {
         case profileId = "profile_id"
         case currentAppKeyPubkey = "current_app_key_pubkey"
         case currentAppKeyNpub = "current_app_key_npub"
-        case approvalAdminAppKeyNpub = "approval_admin_app_key_npub"
         case currentAppKeyLabel = "current_app_key_label"
         case appKeyLabel = "app_key_label"
         case authorizationState = "authorization_state"

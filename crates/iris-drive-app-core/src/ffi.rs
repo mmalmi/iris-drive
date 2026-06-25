@@ -1466,7 +1466,6 @@ impl NativeAppRuntime {
             profile_id: profile.profile_id,
             current_app_key_pubkey: profile.current_app_key_pubkey_hex,
             current_app_key_npub: profile.current_app_key_npub,
-            approval_admin_app_key_npub: approval_admin_app_key_npub(&account),
             current_app_key_label: profile.current_app_key_label.unwrap_or_default(),
             app_key_label: account.app_key_label.clone().unwrap_or_default(),
             authorization_state: profile.authorization_state,
@@ -3266,17 +3265,6 @@ fn app_key_link_request_url(state: &iris_drive_core::ProfileState) -> String {
             .unwrap_or(state.app_key_link_secret.as_str()),
         state.app_key_label.as_deref(),
     )
-}
-
-fn approval_admin_app_key_npub(state: &iris_drive_core::ProfileState) -> String {
-    if state.authorization_state != AppKeyAuthorizationState::AwaitingApproval {
-        return String::new();
-    }
-    state
-        .outbound_app_key_link_request
-        .as_ref()
-        .map(|request| pubkey_npub(&request.admin_app_key_pubkey))
-        .unwrap_or_default()
 }
 
 fn app_key_link_invite_url(state: &iris_drive_core::ProfileState) -> String {

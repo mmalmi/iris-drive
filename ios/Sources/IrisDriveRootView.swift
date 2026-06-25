@@ -213,14 +213,11 @@ private struct AwaitingApprovalSetupView: View {
                 }
 
                 Section("Waiting for approval") {
-                    if !model.approvalAdminAppKeyNpub.isEmpty {
-                        LabeledContent("Current Device Key", value: model.approvalAdminAppKeyNpub)
-                    }
-                    LabeledContent("Join Requesting Device Key", value: model.currentAppKeyNpub)
+                    LabeledContent("Current Device Key", value: model.devicePublicKey)
                     Button {
                         model.copyDeviceKey()
                     } label: {
-                        Label("Copy Join Requesting Device Key", systemImage: "doc.on.doc")
+                        Label("Copy Device Key", systemImage: "doc.on.doc")
                     }
                 }
 

@@ -454,13 +454,10 @@ private fun AwaitingApprovalContent(
         ) {
             SetupBrand()
             Text("Waiting for approval", color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
-            if (profile.approvalAdminAppKeyNpub.isNotBlank()) {
-                AwaitingApprovalKey("Current Device Key", profile.approvalAdminAppKeyNpub)
-            }
-            AwaitingApprovalKey("Join Requesting Device Key", profile.currentAppKeyNpub)
+            AwaitingApprovalKey("Current Device Key", profile.devicePubkey)
             SetupSecondaryButton(
-                text = "Copy Join Requesting Device Key",
-                onClick = { onCopyText("Join requesting device key", profile.devicePubkey) },
+                text = "Copy Device Key",
+                onClick = { onCopyText("Device key", profile.devicePubkey) },
             )
             OutlinedButton(
                 onClick = onLogout,

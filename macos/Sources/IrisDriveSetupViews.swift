@@ -74,13 +74,10 @@ struct AwaitingApprovalSetupView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Waiting for approval")
                 .font(.title2.weight(.semibold))
-            if let currentDeviceKey = status.approvalAdminAppKeyNpub, !currentDeviceKey.isEmpty {
-                keyedValue("Current Device Key", currentDeviceKey)
-            }
-            if let requestKey = status.currentAppKeyNpub, !requestKey.isEmpty {
-                keyedValue("Join Requesting Device Key", requestKey)
+            if let device = status.deviceNpub, !device.isEmpty {
+                keyedValue("Current Device Key", device)
                 IrisDriveCopyButton(
-                    title: "Copy Join Requesting Device Key",
+                    title: "Copy Device Key",
                     systemImage: "doc.on.doc",
                     fillsWidth: true
                 ) {

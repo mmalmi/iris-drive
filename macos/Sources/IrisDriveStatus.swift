@@ -32,7 +32,6 @@ final class IrisDriveStatus: ObservableObject {
     @Published var initialized = false
     @Published var driveName = "Iris Drive"
     @Published var currentAppKeyNpub: String?
-    @Published var approvalAdminAppKeyNpub: String?
     @Published var deviceNpub: String?
     @Published var profileId: String?
     @Published var appKeyLinkInviteURL: String?

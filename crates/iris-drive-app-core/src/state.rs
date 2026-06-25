@@ -101,7 +101,6 @@ pub struct UiProfile {
     pub profile_id: String,
     pub current_app_key_pubkey: String,
     pub current_app_key_npub: String,
-    pub approval_admin_app_key_npub: String,
     pub current_app_key_label: String,
     pub app_key_label: String,
     pub authorization_state: String,

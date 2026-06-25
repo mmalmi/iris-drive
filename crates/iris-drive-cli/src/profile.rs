@@ -515,10 +515,6 @@ pub(crate) fn profile_identity_json_map(state: &ProfileState) -> serde_json::Map
         json!(summary.current_app_key_npub),
     );
     output.insert(
-        "approval_admin_app_key_npub".to_string(),
-        json!(approval_admin_app_key_npub(state)),
-    );
-    output.insert(
         "current_app_key_label".to_string(),
         json!(summary.current_app_key_label),
     );
@@ -535,17 +531,6 @@ pub(crate) fn profile_identity_json_map(state: &ProfileState) -> serde_json::Map
         json!(summary.can_admin_profile),
     );
     output
-}
-
-fn approval_admin_app_key_npub(state: &ProfileState) -> String {
-    if state.authorization_state != iris_drive_core::AppKeyAuthorizationState::AwaitingApproval {
-        return String::new();
-    }
-    state
-        .outbound_app_key_link_request
-        .as_ref()
-        .map(|request| pubkey_npub(&request.admin_app_key_pubkey))
-        .unwrap_or_default()
 }
 
 fn iris_profile_summary_json(

@@ -170,13 +170,11 @@
         <StackPanel x:Name="AwaitingPanel" Visibility="Collapsed">
           <TextBlock Text="Waiting for approval" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,12" />
           <TextBlock Text="Current Device Key" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
-          <TextBox x:Name="AwaitingCurrentDeviceBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
-          <TextBlock Text="Join Requesting Device Key" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
-          <TextBox x:Name="AwaitingJoinRequestBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
+          <TextBox x:Name="AwaitingDeviceBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
           <Button Style="{StaticResource SetupPrimaryButton}" Click="CopyAwaitingDevice_Click" Margin="0,0,0,10">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
               <TextBlock Text="&#xE8C8;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
-              <TextBlock Text="Copy Join Requesting Device Key" />
+              <TextBlock Text="Copy Device Key" />
             </StackPanel>
           </Button>
           <Button Style="{StaticResource SetupButton}" Click="Logout_Click">

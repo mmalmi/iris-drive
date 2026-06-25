@@ -28,19 +28,11 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
     container.append(&header);
 
     let account = profile(state);
-    let current_device_key = account
-        .map(|account| account.approval_admin_app_key_npub.as_str())
-        .filter(|key| !key.is_empty());
-    if let Some(current_device_key) = current_device_key {
-        container.append(&field_title("Current Device Key"));
-        container.append(&readonly_entry(current_device_key));
-    }
-
-    let join_request_key = account
+    let device_key = account
         .map(|account| account.current_app_key_npub.as_str())
         .unwrap_or("-");
-    let device = readonly_entry(join_request_key);
-    container.append(&field_title("Join Requesting Device Key"));
+    let device = readonly_entry(device_key);
+    container.append(&field_title("Current Device Key"));
     container.append(&device);
 
     let notice = setup_notice();
@@ -50,7 +42,7 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
         "Daemon offline"
     });
 
-    let copy = primary_button("Copy Join Requesting Device Key");
+    let copy = primary_button("Copy Device Key");
     {
         let device = account
             .map(|account| account.current_app_key_npub.clone())
@@ -61,7 +53,7 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
                 notice.set_text("Nothing to copy");
             } else if let Some(display) = gtk::gdk::Display::default() {
                 display.clipboard().set_text(&device);
-                notice.set_text("Join requesting device key copied");
+                notice.set_text("Device key copied");
             } else {
                 notice.set_text("Clipboard unavailable");
             }
