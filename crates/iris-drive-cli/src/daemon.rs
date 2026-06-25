@@ -7,12 +7,18 @@ use iris_drive_core::relay_config::normalize_relay_url;
 #[derive(Clone, Default)]
 pub(crate) struct DaemonTaskSet {
     tasks: Arc<std::sync::Mutex<Vec<ManagedDaemonTask>>>,
-    active_keys: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
+    keyed_tasks: Arc<std::sync::Mutex<KeyedDaemonTasks>>,
 }
 
 struct ManagedDaemonTask {
     join: tokio::task::JoinHandle<()>,
     abort_inner: Option<tokio::task::AbortHandle>,
+}
+
+#[derive(Default)]
+struct KeyedDaemonTasks {
+    next_id: u64,
+    active: std::collections::BTreeMap<String, (u64, tokio::task::AbortHandle)>,
 }
 
 impl DaemonTaskSet {
@@ -27,24 +33,33 @@ impl DaemonTaskSet {
     }
 
     pub(crate) fn push_keyed(&self, key: String, task: tokio::task::JoinHandle<()>) -> bool {
-        let Ok(mut active_keys) = self.active_keys.lock() else {
+        let abort_inner = task.abort_handle();
+        let Ok(mut keyed_tasks) = self.keyed_tasks.lock() else {
             task.abort();
             return false;
         };
-        if !active_keys.insert(key.clone()) {
-            task.abort();
-            return false;
+        keyed_tasks.next_id = keyed_tasks.next_id.wrapping_add(1);
+        let task_id = keyed_tasks.next_id;
+        if let Some((_, old_abort)) = keyed_tasks
+            .active
+            .insert(key.clone(), (task_id, abort_inner.clone()))
+        {
+            old_abort.abort();
         }
-        drop(active_keys);
+        drop(keyed_tasks);
 
-        let active_keys = self.active_keys.clone();
+        let keyed_tasks = self.keyed_tasks.clone();
         let task_key = key.clone();
-        let abort_inner = task.abort_handle();
         let abort_inner_on_error = abort_inner.clone();
         let join = tokio::spawn(async move {
             let _ = task.await;
-            if let Ok(mut active_keys) = active_keys.lock() {
-                active_keys.remove(&task_key);
+            if let Ok(mut keyed_tasks) = keyed_tasks.lock()
+                && keyed_tasks
+                    .active
+                    .get(&task_key)
+                    .is_some_and(|(active_id, _)| *active_id == task_id)
+            {
+                keyed_tasks.active.remove(&task_key);
             }
         });
         match self.tasks.lock() {
@@ -56,8 +71,13 @@ impl DaemonTaskSet {
                 true
             }
             Err(_) => {
-                if let Ok(mut active_keys) = self.active_keys.lock() {
-                    active_keys.remove(&key);
+                if let Ok(mut keyed_tasks) = self.keyed_tasks.lock()
+                    && keyed_tasks
+                        .active
+                        .get(&key)
+                        .is_some_and(|(active_id, _)| *active_id == task_id)
+                {
+                    keyed_tasks.active.remove(&key);
                 }
                 abort_inner_on_error.abort();
                 join.abort();
@@ -71,8 +91,11 @@ impl DaemonTaskSet {
             Ok(mut tasks) => std::mem::take(&mut *tasks),
             Err(_) => Vec::new(),
         };
-        if let Ok(mut active_keys) = self.active_keys.lock() {
-            active_keys.clear();
+        if let Ok(mut keyed_tasks) = self.keyed_tasks.lock() {
+            for (_, abort_inner) in keyed_tasks.active.values() {
+                abort_inner.abort();
+            }
+            keyed_tasks.active.clear();
         }
         for task in &tasks {
             if let Some(abort_inner) = &task.abort_inner {
