@@ -401,12 +401,12 @@ pub fn coalesce_direct_root_app_messages(
             continue;
         };
         let Some(slot) = direct_root_cache_slot(&frame_key) else {
-            if should_cache_unsequenced_direct_root_key(&frame_key) {
-                if let Some(index) = unsequenced_indices.get(&frame_key).copied() {
+            if let Some(cache_key) = direct_root_unsequenced_batch_key(&frame_key) {
+                if let Some(index) = unsequenced_indices.get(&cache_key).copied() {
                     passthrough[index] = message;
                     skipped = skipped.saturating_add(1);
                 } else {
-                    unsequenced_indices.insert(frame_key, passthrough.len());
+                    unsequenced_indices.insert(cache_key, passthrough.len());
                     passthrough.push(message);
                 }
             } else {
@@ -429,8 +429,12 @@ pub fn coalesce_direct_root_app_messages(
         }
     }
 
-    passthrough.extend(latest_roots.into_values().map(|(_, message)| message));
-    (passthrough, skipped)
+    let mut coalesced = latest_roots
+        .into_values()
+        .map(|(_, message)| message)
+        .collect::<Vec<_>>();
+    coalesced.extend(passthrough);
+    (coalesced, skipped)
 }
 
 pub fn coalesce_direct_root_mesh_events(
@@ -448,12 +452,12 @@ pub fn coalesce_direct_root_mesh_events(
             continue;
         };
         let Some(slot) = direct_root_cache_slot(&frame_key) else {
-            if should_cache_unsequenced_direct_root_key(&frame_key) {
-                if let Some(index) = unsequenced_indices.get(&frame_key).copied() {
+            if let Some(cache_key) = direct_root_unsequenced_batch_key(&frame_key) {
+                if let Some(index) = unsequenced_indices.get(&cache_key).copied() {
                     passthrough[index] = message;
                     skipped = skipped.saturating_add(1);
                 } else {
-                    unsequenced_indices.insert(frame_key, passthrough.len());
+                    unsequenced_indices.insert(cache_key, passthrough.len());
                     passthrough.push(message);
                 }
             } else {
@@ -476,8 +480,12 @@ pub fn coalesce_direct_root_mesh_events(
         }
     }
 
-    passthrough.extend(latest_roots.into_values().map(|(_, message)| message));
-    (passthrough, skipped)
+    let mut coalesced = latest_roots
+        .into_values()
+        .map(|(_, message)| message)
+        .collect::<Vec<_>>();
+    coalesced.extend(passthrough);
+    (coalesced, skipped)
 }
 
 fn direct_root_message_frame_key(message: &crate::FipsAppMessage) -> Option<String> {
@@ -565,6 +573,13 @@ fn should_cache_unsequenced_direct_root_key(key: &str) -> bool {
     !key.starts_with("drive-root:")
         && !key.starts_with("share-root:")
         && !key.starts_with("files-root:")
+}
+
+fn direct_root_unsequenced_batch_key(key: &str) -> Option<String> {
+    if should_cache_unsequenced_direct_root_key(key) || key.starts_with("files-root:") {
+        return Some(key.to_string());
+    }
+    None
 }
 
 fn direct_root_republish_interval_secs_for_source(
@@ -913,13 +928,13 @@ mod tests {
         ]);
 
         assert_eq!(skipped, 1);
-        assert_eq!(messages[0], profile);
-        assert_eq!(messages[1], broken);
-        assert_eq!(messages[2], other_topic);
         assert_eq!(
-            direct_root_app_message_keys(&messages[3..]),
+            direct_root_app_message_keys(&messages[..1]),
             vec!["drive-root:remote:main:8:new-hash:new-key:local,remote".to_string()]
         );
+        assert_eq!(messages[1], profile);
+        assert_eq!(messages[2], broken);
+        assert_eq!(messages[3], other_topic);
     }
 
     #[test]
@@ -941,6 +956,33 @@ mod tests {
         assert_eq!(messages.len(), 2);
         assert_eq!(direct_root_app_message_event_json(&messages[0]), "latest");
         assert_eq!(messages[1], other_profile);
+    }
+
+    #[test]
+    fn direct_root_app_message_coalescing_dedupes_files_root_frames() {
+        let first_files_root = direct_root_app_message_with_event_json(
+            "files-root:remote:main:root-hash:root-key",
+            "old",
+        );
+        let latest_files_root = direct_root_app_message_with_event_json(
+            "files-root:remote:main:root-hash:root-key",
+            "latest",
+        );
+        let other_files_root = direct_root_app_message_with_event_json(
+            "files-root:remote:main:other-root:other-key",
+            "other",
+        );
+
+        let (messages, skipped) = coalesce_direct_root_app_messages(vec![
+            first_files_root,
+            other_files_root.clone(),
+            latest_files_root,
+        ]);
+
+        assert_eq!(skipped, 1);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(direct_root_app_message_event_json(&messages[0]), "latest");
+        assert_eq!(messages[1], other_files_root);
     }
 
     #[test]
@@ -1002,13 +1044,13 @@ mod tests {
         ]);
 
         assert_eq!(skipped, 1);
-        assert_eq!(messages[0], profile);
-        assert_eq!(messages[1], broken);
-        assert_eq!(messages[2], other_stream);
         assert_eq!(
-            direct_root_mesh_event_keys(&messages[3..]),
+            direct_root_mesh_event_keys(&messages[..1]),
             vec!["drive-root:remote:main:8:new-hash:new-key:local,remote".to_string()]
         );
+        assert_eq!(messages[1], profile);
+        assert_eq!(messages[2], broken);
+        assert_eq!(messages[3], other_stream);
     }
 
     #[test]
@@ -1030,6 +1072,33 @@ mod tests {
         assert_eq!(messages.len(), 2);
         assert_eq!(direct_root_mesh_event_event_json(&messages[0]), "latest");
         assert_eq!(messages[1], other_profile);
+    }
+
+    #[test]
+    fn direct_root_mesh_event_coalescing_dedupes_files_root_frames() {
+        let first_files_root = direct_root_mesh_event_with_event_json(
+            "files-root:remote:main:root-hash:root-key",
+            "old",
+        );
+        let latest_files_root = direct_root_mesh_event_with_event_json(
+            "files-root:remote:main:root-hash:root-key",
+            "latest",
+        );
+        let other_files_root = direct_root_mesh_event_with_event_json(
+            "files-root:remote:main:other-root:other-key",
+            "other",
+        );
+
+        let (messages, skipped) = coalesce_direct_root_mesh_events(vec![
+            first_files_root,
+            other_files_root.clone(),
+            latest_files_root,
+        ]);
+
+        assert_eq!(skipped, 1);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(direct_root_mesh_event_event_json(&messages[0]), "latest");
+        assert_eq!(messages[1], other_files_root);
     }
 
     #[test]
