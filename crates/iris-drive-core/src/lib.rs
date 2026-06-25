@@ -74,10 +74,11 @@ pub use daemon::{Daemon, DaemonError, ImportReport, PRIMARY_DRIVE_ID};
 pub use direct_root_transport::{
     DIRECT_ROOT_APP_TOPIC, DIRECT_ROOT_MESH_STREAM_PREFIX, DirectRootEvent, DirectRootExchange,
     DirectRootFrame, DirectRootHintApply, DirectRootHintApplyReport, DirectRootHintFrame,
-    DirectRootHintScope, DirectRootKeyHint, DirectRootWireFrame, apply_direct_root_event,
-    apply_direct_root_key_hint_to_config, build_current_direct_root_events,
-    coalesce_direct_root_app_messages, coalesce_direct_root_mesh_events,
-    decode_direct_root_wire_frame, direct_root_mesh_stream, encode_direct_root_hint_frame,
+    DirectRootHintScope, DirectRootKeyHint, DirectRootStateRequestFrame, DirectRootWireFrame,
+    apply_direct_root_event, apply_direct_root_key_hint_to_config,
+    build_current_direct_root_events, coalesce_direct_root_app_messages,
+    coalesce_direct_root_mesh_events, decode_direct_root_wire_frame, direct_root_mesh_stream,
+    encode_direct_root_hint_frame, encode_direct_root_state_request_frame,
     parse_direct_root_key_hint,
 };
 pub use fips_sync::{FipsBlockSync, FipsSyncError, FsFipsBlockSync};

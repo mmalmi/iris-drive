@@ -1,6 +1,6 @@
 use iris_drive_core::{
     DIRECT_ROOT_APP_TOPIC, DIRECT_ROOT_MESH_STREAM_PREFIX, DirectRootFrame, DirectRootHintApply,
-    DirectRootHintFrame, DirectRootWireFrame, FipsMeshPubsubEvent,
+    DirectRootHintFrame, DirectRootStateRequestFrame, DirectRootWireFrame, FipsMeshPubsubEvent,
 };
 
 #[derive(Debug, Clone)]
@@ -349,6 +349,35 @@ impl DirectRootExchange {
         })
     }
 
+    async fn handle_state_request_frame(
+        &mut self,
+        config_dir: &Path,
+        sync: Arc<FsFipsBlockSync>,
+        frame: DirectRootStateRequestFrame,
+    ) -> Result<()> {
+        if !frame.request {
+            return Ok(());
+        }
+        let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+        let Some(state) = config.profile.as_ref() else {
+            return Ok(());
+        };
+        if state.root_scope_id() != frame.root_scope_id {
+            return Ok(());
+        }
+        self.published_keys.clear();
+        self.invalidate_current_sync_events_cache();
+        println!(
+            "{}",
+            json!({
+                "event": "direct_root_state_request",
+                "root_scope_id": frame.root_scope_id,
+            })
+        );
+        self.announce_current_state(config_dir, &config, state, Some(sync.as_ref()))
+            .await
+    }
+
     fn should_skip_seen_direct_root_frame(&self, config_dir: &Path, key: &str) -> bool {
         if !self.seen_keys.contains(key) {
             return false;
@@ -518,6 +547,10 @@ impl DirectRootExchange {
                 )
                 .await?
             }
+            DirectRootWireFrame::Request(frame) => {
+                self.handle_state_request_frame(config_dir, sync, frame).await?;
+                DirectRootFrameOutcome::Ignored
+            }
         };
         if !outcome.should_log_event() {
             return Ok(false);
@@ -568,6 +601,10 @@ impl DirectRootExchange {
                     &message.peer_id,
                 )
                 .await?
+            }
+            DirectRootWireFrame::Request(frame) => {
+                self.handle_state_request_frame(config_dir, sync, frame).await?;
+                DirectRootFrameOutcome::Ignored
             }
         };
         if !outcome.should_log_event() {
@@ -783,6 +820,9 @@ fn direct_root_wire_frame_log_fields(frame: &DirectRootWireFrame) -> (String, St
         }
         DirectRootWireFrame::Hint(frame) => {
             (frame.key.clone(), frame.event_id.clone(), "hint")
+        }
+        DirectRootWireFrame::Request(frame) => {
+            (frame.root_scope_id.clone(), String::new(), "request")
         }
     }
 }

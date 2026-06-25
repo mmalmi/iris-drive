@@ -21,24 +21,31 @@ const DIRECT_ROOT_REPUBLISH_INTERVAL_SECS: u64 = 5;
 const DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS: u64 = 300;
 const DIRECT_ROOT_DOWNLOAD_TIMEOUT_SECS: u64 = 8;
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirectRootFrame {
     pub key: String,
     pub event_id: String,
     pub event_json: String,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DirectRootHintFrame {
     pub key: String,
     pub event_id: String,
     pub hint: bool,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DirectRootStateRequestFrame {
+    pub root_scope_id: String,
+    pub request: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DirectRootWireFrame {
     Full(DirectRootFrame),
     Hint(DirectRootHintFrame),
+    Request(DirectRootStateRequestFrame),
 }
 
 #[derive(Debug, Clone)]
@@ -215,6 +222,11 @@ impl DirectRootExchange {
                 self.apply_hint_frame(config_dir, sync, frame, &message.peer_id)
                     .await
             }
+            DirectRootWireFrame::Request(frame) => {
+                self.handle_state_request_frame(config_dir, sync, frame)
+                    .await?;
+                Ok(false)
+            }
         }
     }
 
@@ -262,8 +274,34 @@ impl DirectRootExchange {
                 self.apply_hint_frame(config_dir, sync, frame, &message.origin_peer_id)
                     .await?;
             }
+            DirectRootWireFrame::Request(frame) => {
+                self.handle_state_request_frame(config_dir, sync, frame)
+                    .await?;
+            }
         }
         Ok(())
+    }
+
+    async fn handle_state_request_frame(
+        &mut self,
+        config_dir: &Path,
+        sync: &FsFipsBlockSync,
+        frame: DirectRootStateRequestFrame,
+    ) -> Result<(), String> {
+        if !frame.request {
+            return Ok(());
+        }
+        let config = AppConfig::load_or_default(config_path_in(config_dir))
+            .map_err(|error| format!("loading config: {error}"))?;
+        if !config
+            .profile
+            .as_ref()
+            .is_some_and(|state| state.root_scope_id() == frame.root_scope_id)
+        {
+            return Ok(());
+        }
+        self.published_keys.clear();
+        self.announce_current_state(config_dir, sync).await
     }
 
     async fn apply_frame(
@@ -649,6 +687,7 @@ fn direct_root_batch_frame(data: &[u8]) -> Option<DirectRootBatchFrame> {
             key: frame.key,
             hint: true,
         }),
+        DirectRootWireFrame::Request(_) => None,
     }
 }
 
@@ -777,6 +816,15 @@ pub fn encode_direct_root_hint_frame(
     })
 }
 
+pub fn encode_direct_root_state_request_frame(
+    root_scope_id: &str,
+) -> Result<Vec<u8>, serde_json::Error> {
+    serde_json::to_vec(&DirectRootStateRequestFrame {
+        root_scope_id: root_scope_id.to_string(),
+        request: true,
+    })
+}
+
 pub fn decode_direct_root_wire_frame(
     data: &[u8],
 ) -> Result<DirectRootWireFrame, serde_json::Error> {
@@ -784,7 +832,10 @@ pub fn decode_direct_root_wire_frame(
         Ok(frame) => Ok(DirectRootWireFrame::Full(frame)),
         Err(full_error) => match serde_json::from_slice::<DirectRootHintFrame>(data) {
             Ok(frame) if frame.hint => Ok(DirectRootWireFrame::Hint(frame)),
-            _ => Err(full_error),
+            _ => match serde_json::from_slice::<DirectRootStateRequestFrame>(data) {
+                Ok(frame) if frame.request => Ok(DirectRootWireFrame::Request(frame)),
+                _ => Err(full_error),
+            },
         },
     }
 }
@@ -1548,6 +1599,37 @@ mod tests {
         assert_eq!(skipped, 1);
         assert_eq!(messages.len(), 1);
         assert_eq!(direct_root_app_message_event_json(&messages[0]), "full");
+    }
+
+    #[test]
+    fn direct_root_state_request_frame_decodes() {
+        let bytes = encode_direct_root_state_request_frame("profile-scope").unwrap();
+        let frame = decode_direct_root_wire_frame(&bytes).unwrap();
+
+        assert_eq!(
+            frame,
+            DirectRootWireFrame::Request(DirectRootStateRequestFrame {
+                root_scope_id: "profile-scope".to_string(),
+                request: true,
+            })
+        );
+    }
+
+    #[test]
+    fn direct_root_state_request_app_messages_are_not_coalesced() {
+        let request = crate::FipsAppMessage {
+            peer_id: "peer".to_string(),
+            topic: DIRECT_ROOT_APP_TOPIC.to_string(),
+            data: encode_direct_root_state_request_frame("profile-scope").unwrap(),
+        };
+        let root =
+            direct_root_app_message("drive-root:remote:main:7:old-hash:old-key:local,remote");
+
+        let (messages, skipped) = coalesce_direct_root_app_messages(vec![request.clone(), root]);
+
+        assert_eq!(skipped, 0);
+        assert_eq!(messages.len(), 2);
+        assert!(messages.contains(&request));
     }
 
     #[test]

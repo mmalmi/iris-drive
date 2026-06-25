@@ -370,6 +370,22 @@ pub(crate) fn spawn_root_apply_followup(
             .await;
         }
         if let Some(root_cid) = root_cid_to_pull {
+            if root_apply_followup_is_stale(&config_dir, expected_projection_root_key.as_ref()) {
+                println!(
+                    "{}",
+                    json!({
+                        "event": "root_apply_followup_skipped_stale",
+                        "root_cid": root_cid,
+                    })
+                );
+                return;
+            }
+            request_latest_direct_root_state(
+                &config,
+                fips_blocks.as_deref(),
+                projection_event,
+            )
+            .await;
             let mut last_error = None;
             for delay_secs in event_block_pull_retry_delays(&config) {
                 if root_apply_followup_is_stale(&config_dir, expected_projection_root_key.as_ref())
@@ -717,6 +733,59 @@ pub(crate) async fn pull_blocks_for_root(
         Err(anyhow::anyhow!(
             "no block download transport available for {root_cid_str}"
         ))
+    }
+}
+
+async fn request_latest_direct_root_state(
+    config: &AppConfig,
+    fips_blocks: Option<&FsFipsBlockSync>,
+    projection_event: &'static str,
+) {
+    let Some(sync) = fips_blocks else {
+        return;
+    };
+    let Some(root_scope_id) = config.profile.as_ref().map(ProfileState::root_scope_id) else {
+        return;
+    };
+    let bytes = match iris_drive_core::encode_direct_root_state_request_frame(&root_scope_id) {
+        Ok(bytes) => bytes,
+        Err(error) => {
+            println!(
+                "{}",
+                json!({
+                    "event": "direct_root_state_request_error",
+                    "trigger": projection_event,
+                    "error": format!("{error:#}"),
+                })
+            );
+            return;
+        }
+    };
+    let selected_peers = sync.authorized_peer_ids().await.len();
+    match sync
+        .broadcast_app_message(iris_drive_core::DIRECT_ROOT_APP_TOPIC, bytes)
+        .await
+    {
+        Ok(sent_peers) => println!(
+            "{}",
+            json!({
+                "event": "direct_root_state_request_publish",
+                "trigger": projection_event,
+                "root_scope_id": root_scope_id,
+                "selected_peers": selected_peers,
+                "sent_peers": sent_peers,
+            })
+        ),
+        Err(error) => println!(
+            "{}",
+            json!({
+                "event": "direct_root_state_request_error",
+                "trigger": projection_event,
+                "root_scope_id": root_scope_id,
+                "selected_peers": selected_peers,
+                "error": format!("{error:#}"),
+            })
+        ),
     }
 }
 
