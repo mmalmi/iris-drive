@@ -149,15 +149,15 @@ const NATIVE_FIPS_STATUS_FRESH_SECS: u64 = 20;
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 const NATIVE_SYNC_RELAY_TIMEOUT_SECS: u64 = 10;
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
-const APP_KEY_LINK_REQUEST_RETRY_SECS: u64 = 10;
+const APP_KEY_LINK_REQUEST_RETRY_SECS: u64 = 30;
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 const APP_KEY_LINK_REQUEST_STARTUP_RETRY_MILLIS: u64 = 1_000;
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
-const APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS: u8 = 40;
+const APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS: u8 = 3;
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 const APP_KEY_LINK_ROSTER_RETRY_SECS: u64 = 2;
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
-const APP_KEY_LINK_EXCHANGE_TICK_MILLIS: u64 = 1_000;
+const APP_KEY_LINK_EXCHANGE_TICK_MILLIS: u64 = 5_000;
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 const NATIVE_DIRECT_ROOT_EXCHANGE_MILLIS: u64 = 10_000;
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]

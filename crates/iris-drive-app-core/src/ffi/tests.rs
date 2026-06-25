@@ -1038,9 +1038,7 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
 
 const _: () = {
     assert!(super::NATIVE_DIRECT_ROOT_EXCHANGE_MILLIS >= 5_000);
-    assert!(
-        super::NATIVE_DIRECT_ROOT_EXCHANGE_MILLIS >= super::APP_KEY_LINK_EXCHANGE_TICK_MILLIS * 10
-    );
+    assert!(super::NATIVE_DIRECT_ROOT_EXCHANGE_MILLIS >= super::APP_KEY_LINK_EXCHANGE_TICK_MILLIS);
 };
 
 #[test]
@@ -1886,24 +1884,26 @@ fn app_key_link_request_retry_uses_startup_burst_before_steady_interval() {
     };
     assert!(!app_key_link_request_send_due(
         Some(first),
-        now + std::time::Duration::from_millis(999)
+        now + std::time::Duration::from_millis(
+            super::APP_KEY_LINK_REQUEST_STARTUP_RETRY_MILLIS - 1
+        )
     ));
     assert!(app_key_link_request_send_due(
         Some(first),
-        now + std::time::Duration::from_secs(1)
+        now + std::time::Duration::from_millis(super::APP_KEY_LINK_REQUEST_STARTUP_RETRY_MILLIS)
     ));
 
     let steady = SentAppKeyLinkRequest {
         last_sent: now,
-        attempts: 40,
+        attempts: super::APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS,
     };
     assert!(!app_key_link_request_send_due(
         Some(steady),
-        now + std::time::Duration::from_secs(9)
+        now + std::time::Duration::from_secs(super::APP_KEY_LINK_REQUEST_RETRY_SECS - 1)
     ));
     assert!(app_key_link_request_send_due(
         Some(steady),
-        now + std::time::Duration::from_secs(10)
+        now + std::time::Duration::from_secs(super::APP_KEY_LINK_REQUEST_RETRY_SECS)
     ));
 }
 

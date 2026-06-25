@@ -719,10 +719,12 @@ final class IrisDriveMobileModel: ObservableObject {
         maybeRunAppleCalendarSync()
     }
 
-    func refreshProfileStatusInBackground() async {
+    func refreshProfileStatusInBackground(scheduleBackgroundSync: Bool = true) async {
         await dispatchInBackground(["type": "refresh_profile"])
         ensureFileProviderDomainIfProfileExists()
-        scheduleBackgroundSyncIfNeeded()
+        if scheduleBackgroundSync {
+            scheduleBackgroundSyncIfNeeded()
+        }
     }
 
     func refreshAfterStartup() { Task { await refreshInBackground() } }
@@ -752,7 +754,7 @@ final class IrisDriveMobileModel: ObservableObject {
             while !Task.isCancelled {
                 await self.syncOnceIfRunning()
                 do {
-                    try await Task.sleep(nanoseconds: foregroundSyncIntervalNanoseconds)
+                    try await Task.sleep(nanoseconds: self.foregroundSyncDelayNanoseconds)
                 } catch {
                     return
                 }
@@ -956,10 +958,17 @@ final class IrisDriveMobileModel: ObservableObject {
             if isSetupComplete {
                 await dispatchInBackground(["type": "restart_sync"])
             } else {
-                await refreshInBackground()
+                await refreshProfileStatusInBackground(scheduleBackgroundSync: false)
             }
         }
         await runAppleCalendarSyncIfEnabled()
+    }
+
+    private var foregroundSyncDelayNanoseconds: UInt64 {
+        if isAwaitingApproval && !isSetupComplete {
+            return awaitingApprovalForegroundSyncIntervalNanoseconds
+        }
+        return foregroundSyncIntervalNanoseconds
     }
 
     func createProfile(username: String = "", profilePhotoName: String = "") {

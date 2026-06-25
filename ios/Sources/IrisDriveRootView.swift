@@ -231,11 +231,11 @@ private struct AwaitingApprovalSetupView: View {
             }
             .accessibilityIdentifier("awaitingApprovalView")
             .task {
+                await model.refreshProfileStatusInBackground(scheduleBackgroundSync: false)
                 while model.isAwaitingApproval {
-                    await model.refreshProfileStatusInBackground()
-                    if !model.isAwaitingApproval { return }
-                    try? await Task.sleep(nanoseconds: 1_000_000_000)
+                    try? await Task.sleep(nanoseconds: awaitingApprovalScreenRefreshIntervalNanoseconds)
                     guard !Task.isCancelled else { return }
+                    await model.refreshProfileStatusInBackground(scheduleBackgroundSync: false)
                 }
             }
         }
