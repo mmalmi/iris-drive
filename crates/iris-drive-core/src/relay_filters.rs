@@ -40,6 +40,9 @@ pub fn subscription_filters_for_shared_roots(
     let mut filters = Vec::new();
     if let Ok(profile_id) = root_scope_id.parse::<IrisProfileId>() {
         filters.push(iris_profile_roster_op_filter(profile_id));
+        // The roster-op filter also receives current identity-link requests
+        // (`kind=7368`). Keep this old `30078` filter only for compatibility
+        // with clients that have not migrated their request publisher yet.
         filters.push(
             Filter::new()
                 .kind(nostr_sdk::Kind::from(KIND_APP_KEY_LINK_REQUEST))

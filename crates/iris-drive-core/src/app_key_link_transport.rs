@@ -17,9 +17,13 @@ pub const APP_KEY_APPROVAL_REQUEST_WEB_PREFIX: &str = "https://drive.iris.to/app
 pub struct AppKeyLinkRequestFrame {
     pub schema: u32,
     pub profile_id: IrisProfileId,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub admin_app_key_pubkey: String,
     pub app_key_pubkey: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub link_secret: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub link_secret_hash: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
     pub requested_at: u64,
@@ -74,8 +78,10 @@ pub fn pending_app_key_link_request_frame(state: &ProfileState) -> Option<AppKey
     Some(AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: state.profile_id,
+        admin_app_key_pubkey: pending.admin_app_key_pubkey.clone(),
         app_key_pubkey: state.app_key_pubkey.clone(),
         link_secret: link_secret.clone(),
+        link_secret_hash: app_key_link_secret_hash(&link_secret),
         label: state.app_key_label.clone(),
         requested_at: pending.requested_at,
         url: encode_app_key_approval_request(
@@ -85,6 +91,13 @@ pub fn pending_app_key_link_request_frame(state: &ProfileState) -> Option<AppKey
             state.app_key_label.as_deref(),
         ),
     })
+}
+
+#[must_use]
+pub fn app_key_link_secret_hash(link_secret: &str) -> String {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+
+    URL_SAFE_NO_PAD.encode(Sha256::digest(link_secret.trim().as_bytes()))
 }
 
 #[must_use]

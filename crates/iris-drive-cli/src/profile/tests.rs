@@ -103,8 +103,12 @@ async fn app_key_link_app_message_records_inbound_request_for_owner_admin() {
     let frame = AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: account.state.profile_id,
+        admin_app_key_pubkey: account.state.app_key_pubkey.clone(),
         app_key_pubkey: linked_device.clone(),
         link_secret: link_secret.clone(),
+        link_secret_hash: iris_drive_core::app_key_link_transport::app_key_link_secret_hash(
+            &link_secret,
+        ),
         label: Some(" phone ".into()),
         requested_at: 123,
         url: encode_app_key_approval_request(
@@ -149,8 +153,12 @@ async fn app_key_link_app_message_ignores_wrong_link_secret() {
     let frame = AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: account.state.profile_id,
+        admin_app_key_pubkey: account.state.app_key_pubkey.clone(),
         app_key_pubkey: linked_device.clone(),
         link_secret: "wrong-secret".into(),
+        link_secret_hash: iris_drive_core::app_key_link_transport::app_key_link_secret_hash(
+            "wrong-secret",
+        ),
         label: Some("phone".into()),
         requested_at: 123,
         url: encode_app_key_approval_request(

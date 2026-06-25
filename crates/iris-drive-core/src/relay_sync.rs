@@ -20,7 +20,7 @@ use std::time::Duration;
 use nostr_sdk::{Client, ClientOptions, Event, Filter, JsonUtil, Keys, PublicKey, SingleLetterTag};
 use thiserror::Error;
 
-use crate::app_key_link_transport::AppKeyLinkRosterFrame;
+use crate::app_key_link_transport::{AppKeyLinkRosterFrame, app_key_link_secret_hash};
 use crate::app_keys::{AppKeysProjection, ApplyDecision};
 use crate::calendar::CALENDAR_TREE_NAME;
 use crate::config::{AppConfig, AppKeyRootRef, Drive, DriveRole};
@@ -140,8 +140,31 @@ pub fn apply_remote_app_key_link_request_event(
     if !account.can_admin_profile() {
         return Ok(AppKeyLinkRequestApply::NotAdmin);
     }
+    if !frame.admin_app_key_pubkey.trim().is_empty()
+        && frame.admin_app_key_pubkey != account.app_key_pubkey
+    {
+        return Ok(AppKeyLinkRequestApply::NotAdmin);
+    }
+    let link_secret = if frame.link_secret.trim().is_empty() {
+        let expected_secret = account.app_key_link_secret.trim().to_string();
+        if expected_secret.is_empty()
+            || frame.link_secret_hash.trim().is_empty()
+            || app_key_link_secret_hash(&expected_secret) != frame.link_secret_hash.trim()
+        {
+            return Ok(AppKeyLinkRequestApply::InvalidSecret);
+        }
+        expected_secret
+    } else {
+        let link_secret = frame.link_secret.trim().to_string();
+        if !frame.link_secret_hash.trim().is_empty()
+            && app_key_link_secret_hash(&link_secret) != frame.link_secret_hash.trim()
+        {
+            return Ok(AppKeyLinkRequestApply::InvalidSecret);
+        }
+        link_secret
+    };
     let expected_secret = account.app_key_link_secret.trim();
-    if !expected_secret.is_empty() && frame.link_secret.trim() != expected_secret {
+    if !expected_secret.is_empty() && link_secret != expected_secret {
         return Ok(AppKeyLinkRequestApply::InvalidSecret);
     }
 
@@ -149,7 +172,7 @@ pub fn apply_remote_app_key_link_request_event(
         frame.profile_id,
         &frame.app_key_pubkey,
         frame.label,
-        &frame.link_secret,
+        &link_secret,
         frame.requested_at,
     )?;
     if changed {

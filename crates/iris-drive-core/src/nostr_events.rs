@@ -11,6 +11,9 @@
 //! - **`KIND_SHARE_ACCESS_SNAPSHOT = 30078`** — AppKey-signed canonical share
 //!   access snapshot. d-tag: bare share UUID; l-tag:
 //!   `"iris-drive/share-access"`. Pubkey = authorized share admin `AppKey`.
+//! - **AppKey-link requests** — AppKey-signed identity fact events
+//!   (`kind=7368`, `type=nostr_identity_link_request`). The previous
+//!   profile-scoped `30078` JSON request is parse-only compatibility.
 //!
 //! All events are signed by the appropriate key and verify under the
 //! event's own pubkey. Build functions return a signed `Event`; parse
@@ -18,20 +21,26 @@
 //! application-level type.
 
 use hashtree_core::{Cid, from_hex, to_hex};
+use nostr_identity::{
+    FACT_OP_KIND, NOSTR_IDENTITY_LINK_REQUEST_TYPE, build_identity_link_request_event,
+    parse_identity_link_request_event,
+};
 use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
 use nostr_sdk::{Event, EventBuilder, Keys, Kind, PublicKey, Tag};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::IrisProfileId;
-use crate::app_key_link_transport::AppKeyLinkRequestFrame;
+use crate::app_key_link_transport::{
+    AppKeyLinkRequestFrame, app_key_link_secret_hash, encode_app_key_approval_request,
+};
 use crate::config::AppKeyRootRef;
 use crate::root_meta::{RootObservation, RootParent};
 
 /// NIP-78 parameterized-replaceable kind for AppKey-signed drive roots.
 pub const KIND_DRIVE_ROOT: u16 = 30078;
 
-/// NIP-78 parameterized-replaceable kind for AppKey-signed join requests.
+/// Legacy NIP-78 parameterized-replaceable kind for parse-only AppKey-link requests.
 pub const KIND_APP_KEY_LINK_REQUEST: u16 = 30078;
 
 /// Standard hashtree mutable-root kind used by drive.iris.to.
@@ -60,11 +69,12 @@ pub fn is_drive_root_event_coordinate(event: &Event) -> bool {
 
 #[must_use]
 pub fn is_app_key_link_request_event_coordinate(event: &Event) -> bool {
-    event.kind.as_u16() == KIND_APP_KEY_LINK_REQUEST
-        && event
-            .tags
-            .identifier()
-            .is_some_and(|d_tag| parse_app_key_link_request_d_tag(d_tag).is_ok())
+    is_identity_app_key_link_request_event(event)
+        || (event.kind.as_u16() == KIND_APP_KEY_LINK_REQUEST
+            && event
+                .tags
+                .identifier()
+                .is_some_and(|d_tag| parse_app_key_link_request_d_tag(d_tag).is_ok()))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -132,26 +142,85 @@ fn is_zero(value: &u64) -> bool {
     *value == 0
 }
 
-/// Build a signed app-key-link request event. Signed by the requesting `AppKey`;
-/// the profile-scoped d-tag routes the request to admins for that `IrisProfile`.
+/// Build a signed app-key-link request event.
+///
+/// New requests are neutral identity fact events signed by the requesting
+/// `AppKey`; the legacy profile-scoped `30078` JSON shape is parse-only.
 pub fn build_app_key_link_request_event(
     device_keys: &Keys,
     frame: &AppKeyLinkRequestFrame,
 ) -> Result<Event, WireError> {
     PublicKey::from_hex(&frame.app_key_pubkey)
         .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
-    let content_json =
-        serde_json::to_string(frame).map_err(|e| WireError::BadContent(e.to_string()))?;
-    let builder = EventBuilder::new(Kind::from(KIND_APP_KEY_LINK_REQUEST), content_json).tag(
-        Tag::identifier(app_key_link_request_d_tag(frame.profile_id)),
-    );
-    builder
-        .sign_with_keys(device_keys)
-        .map_err(|e| WireError::Event(e.to_string()))
+    let signer = device_keys.public_key().to_hex();
+    if signer != frame.app_key_pubkey {
+        return Err(WireError::AppKeyLinkSignerMismatch {
+            signer,
+            device: frame.app_key_pubkey.clone(),
+        });
+    }
+    PublicKey::from_hex(&frame.admin_app_key_pubkey)
+        .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
+    let link_secret_hash = if frame.link_secret_hash.trim().is_empty() {
+        if frame.link_secret.trim().is_empty() {
+            return Err(WireError::BadContent(
+                "app-key-link request is missing link secret hash".to_string(),
+            ));
+        }
+        app_key_link_secret_hash(&frame.link_secret)
+    } else {
+        frame.link_secret_hash.trim().to_string()
+    };
+    build_identity_link_request_event(
+        device_keys,
+        frame.profile_id.as_uuid(),
+        frame.admin_app_key_pubkey.clone(),
+        link_secret_hash,
+        format!("app-key-link-{}", frame.requested_at),
+        frame.label.clone(),
+        frame.requested_at,
+    )
+    .map_err(|e| WireError::Event(e.to_string()))
 }
 
 /// Parse + verify a signed app-key-link request event.
 pub fn parse_app_key_link_request_event(
+    event: &Event,
+) -> Result<AppKeyLinkRequestFrame, WireError> {
+    if is_identity_app_key_link_request_event(event) {
+        return parse_identity_app_key_link_request_event(event);
+    }
+    parse_legacy_app_key_link_request_event(event)
+}
+
+fn parse_identity_app_key_link_request_event(
+    event: &Event,
+) -> Result<AppKeyLinkRequestFrame, WireError> {
+    event
+        .verify()
+        .map_err(|e| WireError::SignatureFailed(e.to_string()))?;
+    let signed = parse_identity_link_request_event(event)
+        .map_err(|e| WireError::BadContent(format!("Nostr identity link request: {e}")))?;
+    let profile_id = IrisProfileId::from_uuid(signed.content.identity);
+    Ok(AppKeyLinkRequestFrame {
+        schema: 1,
+        profile_id,
+        admin_app_key_pubkey: signed.content.admin_pubkey.clone(),
+        app_key_pubkey: signed.content.key_pubkey.clone(),
+        link_secret: String::new(),
+        link_secret_hash: signed.content.link_secret_hash.clone(),
+        label: signed.content.label.clone(),
+        requested_at: signed.content.requested_at,
+        url: encode_app_key_approval_request(
+            profile_id,
+            &signed.content.key_pubkey,
+            "",
+            signed.content.label.as_deref(),
+        ),
+    })
+}
+
+fn parse_legacy_app_key_link_request_event(
     event: &Event,
 ) -> Result<AppKeyLinkRequestFrame, WireError> {
     let kind = event.kind.as_u16();
@@ -166,8 +235,11 @@ pub fn parse_app_key_link_request_event(
     event
         .verify()
         .map_err(|e| WireError::SignatureFailed(e.to_string()))?;
-    let frame: AppKeyLinkRequestFrame =
+    let mut frame: AppKeyLinkRequestFrame =
         serde_json::from_str(&event.content).map_err(|e| WireError::BadContent(e.to_string()))?;
+    if frame.link_secret_hash.trim().is_empty() && !frame.link_secret.trim().is_empty() {
+        frame.link_secret_hash = app_key_link_secret_hash(&frame.link_secret);
+    }
     PublicKey::from_hex(&frame.app_key_pubkey)
         .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
     if d_tag_profile != frame.profile_id {
@@ -184,6 +256,17 @@ pub fn parse_app_key_link_request_event(
         });
     }
     Ok(frame)
+}
+
+fn is_identity_app_key_link_request_event(event: &Event) -> bool {
+    event.kind.as_u16() == FACT_OP_KIND
+        && event.tags.iter().any(|tag| {
+            let fields = tag.as_slice();
+            fields.first().is_some_and(|name| name == "type")
+                && fields
+                    .get(1)
+                    .is_some_and(|value| value == NOSTR_IDENTITY_LINK_REQUEST_TYPE)
+        })
 }
 
 fn parse_app_key_link_request_d_tag(d_tag: &str) -> Result<IrisProfileId, WireError> {

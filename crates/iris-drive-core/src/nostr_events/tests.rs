@@ -177,12 +177,15 @@ fn drive_root_coordinate_does_not_match_other_30078_records() {
 
 #[test]
 fn app_key_link_request_event_round_trips_and_is_its_own_coordinate() {
+    let admin = Keys::generate();
     let device = Keys::generate();
     let frame = crate::app_key_link_transport::AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: crate::IrisProfileId::new_v4(),
+        admin_app_key_pubkey: admin.public_key().to_hex(),
         app_key_pubkey: device.public_key().to_hex(),
         link_secret: "join-secret".to_string(),
+        link_secret_hash: String::new(),
         label: Some("phone".to_string()),
         requested_at: 123,
         url: "iris-drive://app-key-link?app_key=example".to_string(),
@@ -192,11 +195,20 @@ fn app_key_link_request_event_round_trips_and_is_its_own_coordinate() {
 
     assert!(is_app_key_link_request_event_coordinate(&event));
     assert!(!is_drive_root_event_coordinate(&event));
+    assert_eq!(event.kind.as_u16(), nostr_identity::FACT_OP_KIND);
+    assert_eq!(event.content, "");
+    assert!(!event.as_json().contains("join-secret"));
+    let parsed = parse_app_key_link_request_event(&event).unwrap();
+    assert_eq!(parsed.profile_id, frame.profile_id);
+    assert_eq!(parsed.admin_app_key_pubkey, frame.admin_app_key_pubkey);
+    assert_eq!(parsed.app_key_pubkey, frame.app_key_pubkey);
+    assert_eq!(parsed.link_secret, "");
     assert_eq!(
-        event.tags.identifier(),
-        Some(app_key_link_request_d_tag(frame.profile_id).as_str())
+        parsed.link_secret_hash,
+        crate::app_key_link_transport::app_key_link_secret_hash("join-secret")
     );
-    assert_eq!(parse_app_key_link_request_event(&event).unwrap(), frame);
+    assert_eq!(parsed.label, frame.label);
+    assert_eq!(parsed.requested_at, frame.requested_at);
 }
 
 #[test]
@@ -205,8 +217,10 @@ fn app_key_link_request_event_d_tag_is_profile_scoped() {
     let frame = crate::app_key_link_transport::AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: crate::IrisProfileId::new_v4(),
+        admin_app_key_pubkey: String::new(),
         app_key_pubkey: device.public_key().to_hex(),
         link_secret: "join-secret".to_string(),
+        link_secret_hash: String::new(),
         label: None,
         requested_at: 123,
         url: "iris-drive://app-key-link?app_key=example".to_string(),
@@ -233,14 +247,24 @@ fn app_key_link_request_event_must_be_signed_by_requesting_device() {
     let frame = crate::app_key_link_transport::AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: crate::IrisProfileId::new_v4(),
+        admin_app_key_pubkey: String::new(),
         app_key_pubkey: device.public_key().to_hex(),
         link_secret: "join-secret".to_string(),
+        link_secret_hash: String::new(),
         label: None,
         requested_at: 123,
         url: "iris-drive://app-key-link?app_key=example".to_string(),
     };
 
-    let event = build_app_key_link_request_event(&attacker, &frame).unwrap();
+    let event = EventBuilder::new(
+        Kind::from(KIND_APP_KEY_LINK_REQUEST),
+        serde_json::to_string(&frame).unwrap(),
+    )
+    .tag(Tag::identifier(app_key_link_request_d_tag(
+        frame.profile_id,
+    )))
+    .sign_with_keys(&attacker)
+    .unwrap();
 
     assert!(matches!(
         parse_app_key_link_request_event(&event),
