@@ -503,9 +503,12 @@ pub(crate) fn enqueue_root_apply_followup(
     ) else {
         return false;
     };
-    let Some(key) =
-        root_apply_followup_key(&config, root_cid_to_pull.as_deref(), should_refresh_projection)
-            .map(|key| format!("root_apply_followup:{key:?}"))
+    let Some(key) = root_apply_followup_queue_key(
+        &config,
+        root_cid_to_pull.as_deref(),
+        should_refresh_projection,
+    )
+    .map(|key| format!("root_apply_followup:{key:?}"))
     else {
         daemon_tasks.push(task);
         return true;

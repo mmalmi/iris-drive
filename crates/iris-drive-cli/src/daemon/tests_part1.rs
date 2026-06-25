@@ -328,6 +328,66 @@ fn stale_root_apply_followup_detects_superseded_app_key_root() {
     assert!(!root_apply_followup_is_stale(config_dir.path(), None));
 }
 
+#[test]
+fn root_apply_followup_queue_key_groups_superseded_app_key_roots() {
+    let mut drive = Drive {
+        root_scope_id: iris_drive_core::IrisProfileId::new_v4().to_string(),
+        drive_id: PRIMARY_DRIVE_ID.to_string(),
+        display_name: "My Drive".to_string(),
+        role: DriveRole::Owner,
+        app_key_roots: BTreeMap::new(),
+        last_root_cid: None,
+        key_hex: None,
+    };
+    drive.app_key_roots.insert(
+        "device-a".to_string(),
+        AppKeyRootRef::legacy("root-a", 10, 1),
+    );
+    drive.app_key_roots.insert(
+        "device-b".to_string(),
+        AppKeyRootRef::legacy("remote-root-a", 11, 1),
+    );
+    let mut config = AppConfig {
+        profile: Some(ProfileState {
+            profile_id: iris_drive_core::IrisProfileId::new_v4(),
+            app_key_pubkey: "device-a".to_string(),
+            profile_roster_ops: Vec::new(),
+            app_key_link_secret: "link-secret".to_string(),
+            authorization_state: iris_drive_core::AppKeyAuthorizationState::Authorized,
+            app_key_label: None,
+            app_keys: None,
+            profile_roster_projection: None,
+            outbound_app_key_link_request: None,
+            inbound_app_key_link_requests: Vec::new(),
+            handled_app_key_link_requests: Vec::new(),
+        }),
+        drives: vec![drive],
+        ..AppConfig::default()
+    };
+
+    let queue_a = root_apply_followup_queue_key(&config, Some("remote-root-a"), true)
+        .expect("initial queue key");
+    let stale_a =
+        root_apply_followup_key(&config, Some("remote-root-a"), true).expect("initial stale key");
+
+    let remote_root = config
+        .drives
+        .get_mut(0)
+        .unwrap()
+        .app_key_roots
+        .get_mut("device-b")
+        .unwrap();
+    remote_root.root_cid = "remote-root-b".to_string();
+    remote_root.app_key_seq = 12;
+    let queue_b = root_apply_followup_queue_key(&config, Some("remote-root-b"), true)
+        .expect("updated queue key");
+    let stale_b =
+        root_apply_followup_key(&config, Some("remote-root-b"), true).expect("updated stale key");
+
+    assert_eq!(queue_a, queue_b);
+    assert_ne!(stale_a, stale_b);
+}
+
 #[tokio::test]
 async fn pending_mount_update_drain_keeps_latest_after_debounce() {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();

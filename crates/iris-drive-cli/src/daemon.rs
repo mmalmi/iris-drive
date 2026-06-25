@@ -262,6 +262,12 @@ enum RootApplyFollowupKey {
     MergedDriveRoots(String),
 }
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum RootApplyFollowupQueueKey {
+    AppKeyRoots(Vec<String>),
+    MergedDriveRoots(String),
+}
+
 fn update_last_provider_root_key(config_dir: &Path, last_root_key: &mut Option<String>) {
     if let Ok(config) = AppConfig::load_or_default(config_path_in(config_dir)) {
         *last_root_key = current_app_key_root_key(&config);
@@ -288,6 +294,30 @@ fn root_apply_followup_key(
     }
     if should_refresh_projection {
         return merged_drive_roots_key(config).map(RootApplyFollowupKey::MergedDriveRoots);
+    }
+    None
+}
+
+fn root_apply_followup_queue_key(
+    config: &AppConfig,
+    root_cid_to_pull: Option<&str>,
+    should_refresh_projection: bool,
+) -> Option<RootApplyFollowupQueueKey> {
+    if let Some(root_cid) = root_cid_to_pull
+        && let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
+    {
+        let roots = drive
+            .app_key_roots
+            .iter()
+            .filter(|(_, root)| root.root_cid == root_cid)
+            .map(|(device, _)| device.clone())
+            .collect::<Vec<_>>();
+        if !roots.is_empty() {
+            return Some(RootApplyFollowupQueueKey::AppKeyRoots(roots));
+        }
+    }
+    if should_refresh_projection {
+        return merged_drive_roots_key(config).map(RootApplyFollowupQueueKey::MergedDriveRoots);
     }
     None
 }
