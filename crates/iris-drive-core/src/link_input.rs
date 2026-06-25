@@ -757,8 +757,12 @@ mod tests {
         assert!(!short_app_key.is_complete);
         assert!(!short_app_key.is_valid);
 
-        let request =
-            encode_app_key_approval_request(profile_id, &admin.to_hex(), &invite_key.to_hex(), None);
+        let request = encode_app_key_approval_request(
+            profile_id,
+            &admin.to_hex(),
+            &invite_key.to_hex(),
+            None,
+        );
         let approval = classify_link_input(&request);
         assert_eq!(approval.kind, "app_key_approval");
         assert!(approval.is_complete);
@@ -930,9 +934,8 @@ mod tests {
         let profile_id = IrisProfileId::new_v4();
         let admin = Keys::generate().public_key();
         let invite_key = Keys::generate().public_key();
-        let invite =
-            encode_app_key_link_invite(profile_id, &admin.to_hex(), &invite_key.to_hex())
-                .expect("invite");
+        let invite = encode_app_key_link_invite(profile_id, &admin.to_hex(), &invite_key.to_hex())
+            .expect("invite");
 
         let from_invite = resolve_app_key_link_target(&invite, None).expect("invite target");
         assert_eq!(from_invite.profile_id, profile_id);

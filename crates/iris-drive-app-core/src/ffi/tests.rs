@@ -1346,8 +1346,8 @@ fn approving_tombstoned_inbound_request_readds_device() {
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     let state = config.profile.as_mut().unwrap();
     let profile_id = state.profile_id;
-    let invite_pubkey = iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret)
-        .unwrap();
+    let invite_pubkey =
+        iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret).unwrap();
     let removed_at = state
         .profile_projection()
         .tombstones
@@ -1782,8 +1782,8 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     let state = config.profile.as_mut().unwrap();
     let profile_id = state.profile_id;
-    let invite_pubkey = iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret)
-        .unwrap();
+    let invite_pubkey =
+        iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret).unwrap();
     state
         .record_inbound_app_key_link_request(
             profile_id,
@@ -1841,8 +1841,8 @@ fn owner_can_reject_inbound_app_key_link_request() {
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     let state = config.profile.as_mut().unwrap();
     let profile_id = state.profile_id;
-    let invite_pubkey = iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret)
-        .unwrap();
+    let invite_pubkey =
+        iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret).unwrap();
     state
         .record_inbound_app_key_link_request(
             profile_id,
@@ -2012,8 +2012,8 @@ fn reset_invite_action_rotates_invite_and_clears_requests() {
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     let state = config.profile.as_mut().unwrap();
     let profile_id = state.profile_id;
-    let invite_pubkey = iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret)
-        .unwrap();
+    let invite_pubkey =
+        iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret).unwrap();
     let linked_device =
         iris_drive_core::AppKey::generate(owner_dir.path().join("tmp-key")).pubkey_hex();
     state
@@ -2051,8 +2051,7 @@ fn native_profile_roster_ops_refresh_authorized_member_roster() {
         .state
         .queue_outbound_app_key_link_request(
             owner.state.app_key_pubkey.clone(),
-            &iris_drive_core::app_key_link_invite_pubkey(&owner.state.app_key_link_secret)
-                .unwrap(),
+            &iris_drive_core::app_key_link_invite_pubkey(&owner.state.app_key_link_secret).unwrap(),
             123,
         )
         .unwrap();

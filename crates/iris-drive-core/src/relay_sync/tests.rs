@@ -101,8 +101,7 @@ fn linked_config_after_initial_roster() -> (Profile, AppConfig) {
         .state
         .queue_outbound_app_key_link_request(
             admin.state.app_key_pubkey.clone(),
-            &crate::profile::app_key_link_invite_pubkey(&admin.state.app_key_link_secret)
-                .unwrap(),
+            &crate::profile::app_key_link_invite_pubkey(&admin.state.app_key_link_secret).unwrap(),
             123,
         )
         .unwrap();
@@ -180,8 +179,7 @@ fn apply_app_key_link_roster_is_profile_scoped_and_ownerless() {
         .state
         .queue_outbound_app_key_link_request(
             admin.state.app_key_pubkey.clone(),
-            &crate::profile::app_key_link_invite_pubkey(&admin.state.app_key_link_secret)
-                .unwrap(),
+            &crate::profile::app_key_link_invite_pubkey(&admin.state.app_key_link_secret).unwrap(),
             123,
         )
         .unwrap();

@@ -197,10 +197,21 @@ fn app_key_link_request_event_round_trips_and_is_its_own_coordinate() {
     assert!(!is_drive_root_event_coordinate(&event));
     assert_eq!(event.kind.as_u16(), nostr_identity::FACT_OP_KIND);
     assert!(!event.content.is_empty());
-    assert_eq!(tag_value(&event, "p").as_deref(), Some(frame.invite_pubkey.as_str()));
-    assert!(event.tags.iter().all(|tag| tag.as_slice().first().is_none_or(|name| {
-        !matches!(name.as_str(), "admin_pubkey" | "key_pubkey" | "joining_pubkey" | "link_secret_hash")
-    })));
+    assert_eq!(
+        tag_value(&event, "p").as_deref(),
+        Some(frame.invite_pubkey.as_str())
+    );
+    assert!(
+        event
+            .tags
+            .iter()
+            .all(|tag| tag.as_slice().first().is_none_or(|name| {
+                !matches!(
+                    name.as_str(),
+                    "admin_pubkey" | "key_pubkey" | "joining_pubkey" | "link_secret_hash"
+                )
+            }))
+    );
     let parsed = parse_app_key_link_request_event(&event, &invite).unwrap();
     assert_eq!(parsed.profile_id, frame.profile_id);
     assert_eq!(parsed.admin_app_key_pubkey, frame.admin_app_key_pubkey);

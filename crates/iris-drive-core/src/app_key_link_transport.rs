@@ -208,7 +208,9 @@ pub fn encode_app_key_approval_request(
     );
     if !invite_pubkey.trim().is_empty() {
         url.push_str("&invite=");
-        url.push_str(&percent_encode_component(&pubkey_npub(invite_pubkey.trim())));
+        url.push_str(&percent_encode_component(&pubkey_npub(
+            invite_pubkey.trim(),
+        )));
     }
     if let Some(label) = label.map(str::trim).filter(|label| !label.is_empty()) {
         url.push_str("&label=");

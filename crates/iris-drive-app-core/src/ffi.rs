@@ -45,8 +45,8 @@ use iris_drive_core::relay_status::normalized_relay_statuses_for_relays;
 use iris_drive_core::{AppConfig, AppKeyAuthorizationState, BackupTarget, Drive, Profile};
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 use iris_drive_core::{Daemon, GatewayBind, GatewayProxyServer, GatewayServer};
-use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
+use nostr_sdk::{Event, PublicKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -182,6 +182,57 @@ struct NativeConfigFileFingerprint {
 struct NativeAppConfigCache {
     fingerprint: Option<NativeConfigFileFingerprint>,
     config: Option<AppConfig>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum NativeAppKeyLinkRelayEventApply {
+    Ignored,
+    Current,
+    RecordedRequest,
+    AppliedRoster,
+}
+
+fn apply_native_app_key_link_relay_event_to_config(
+    config: &mut AppConfig,
+    event: &Event,
+) -> Result<NativeAppKeyLinkRelayEventApply, String> {
+    if iris_drive_core::nostr_events::is_app_key_link_request_event_coordinate(event) {
+        let outcome =
+            iris_drive_core::relay_sync::apply_remote_app_key_link_request_event(config, event)
+                .map_err(|error| format!("applying app-key link request relay event: {error}"))?;
+        return Ok(match outcome {
+            iris_drive_core::relay_sync::AppKeyLinkRequestApply::Recorded => {
+                NativeAppKeyLinkRelayEventApply::RecordedRequest
+            }
+            iris_drive_core::relay_sync::AppKeyLinkRequestApply::Current => {
+                NativeAppKeyLinkRelayEventApply::Current
+            }
+            iris_drive_core::relay_sync::AppKeyLinkRequestApply::NotOurProfile
+            | iris_drive_core::relay_sync::AppKeyLinkRequestApply::NotAdmin
+            | iris_drive_core::relay_sync::AppKeyLinkRequestApply::InvalidInvite => {
+                NativeAppKeyLinkRelayEventApply::Ignored
+            }
+        });
+    }
+
+    if event.kind.as_u16() == iris_drive_core::KIND_IRIS_PROFILE_ROSTER_OP {
+        let outcome =
+            iris_drive_core::relay_sync::apply_remote_iris_profile_roster_op_event(config, event)
+                .map_err(|error| format!("applying IrisProfile roster relay event: {error}"))?;
+        return Ok(match outcome {
+            iris_drive_core::relay_sync::IrisProfileRosterOpApply::Applied => {
+                NativeAppKeyLinkRelayEventApply::AppliedRoster
+            }
+            iris_drive_core::relay_sync::IrisProfileRosterOpApply::Current => {
+                NativeAppKeyLinkRelayEventApply::Current
+            }
+            iris_drive_core::relay_sync::IrisProfileRosterOpApply::NotOurProfile => {
+                NativeAppKeyLinkRelayEventApply::Ignored
+            }
+        });
+    }
+
+    Ok(NativeAppKeyLinkRelayEventApply::Ignored)
 }
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
@@ -2084,8 +2135,8 @@ async fn run_app_key_link_exchange_async(
             notification = relay_notifications.recv() => {
                 match notification {
                     Ok(nostr_sdk::RelayPoolNotification::Event { event, .. }) => {
-                        if let Err(error) = handle_native_app_key_link_request_event(config_dir, &event) {
-                            tracing::warn!(error = %error, event_id = %event.id.to_hex(), "handling native app-key-link relay request failed");
+                        if let Err(error) = handle_native_app_key_link_relay_event(config_dir, &event) {
+                            tracing::warn!(error = %error, event_id = %event.id.to_hex(), "handling native app-key-link relay event failed");
                         }
                     }
                     Ok(nostr_sdk::RelayPoolNotification::Shutdown) => {
@@ -2339,32 +2390,39 @@ fn handle_native_app_key_link_request(
 }
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
-fn handle_native_app_key_link_request_event(
+fn handle_native_app_key_link_relay_event(
     config_dir: &Path,
     event: &nostr_sdk::Event,
 ) -> Result<bool, String> {
-    if !iris_drive_core::nostr_events::is_app_key_link_request_event_coordinate(event) {
-        return Ok(false);
-    }
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))
         .map_err(|error| format!("loading config: {error}"))?;
-    let outcome =
-        iris_drive_core::relay_sync::apply_remote_app_key_link_request_event(&mut config, event)
-            .map_err(|error| format!("applying app-key link request relay event: {error}"))?;
-    if matches!(
-        outcome,
-        iris_drive_core::relay_sync::AppKeyLinkRequestApply::Recorded
-    ) {
-        config
-            .save(config_path_in(config_dir))
-            .map_err(|error| format!("saving config: {error}"))?;
-        tracing::debug!(
-            event_id = %event.id.to_hex(),
-            app_key_npub = pubkey_npub(&event.pubkey.to_hex()),
-            "received native app-key-link request over relay"
-        );
+    let outcome = apply_native_app_key_link_relay_event_to_config(&mut config, event)?;
+    match outcome {
+        NativeAppKeyLinkRelayEventApply::RecordedRequest => {
+            config
+                .save(config_path_in(config_dir))
+                .map_err(|error| format!("saving config: {error}"))?;
+            tracing::debug!(
+                event_id = %event.id.to_hex(),
+                app_key_npub = pubkey_npub(&event.pubkey.to_hex()),
+                "received native app-key-link request over relay"
+            );
+            Ok(true)
+        }
+        NativeAppKeyLinkRelayEventApply::AppliedRoster => {
+            config
+                .save(config_path_in(config_dir))
+                .map_err(|error| format!("saving config: {error}"))?;
+            tracing::debug!(
+                event_id = %event.id.to_hex(),
+                app_key_npub = pubkey_npub(&event.pubkey.to_hex()),
+                "applied native app-key-link roster op over relay"
+            );
+            Ok(true)
+        }
+        NativeAppKeyLinkRelayEventApply::Current => Ok(true),
+        NativeAppKeyLinkRelayEventApply::Ignored => Ok(false),
     }
-    Ok(true)
 }
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
