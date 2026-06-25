@@ -613,6 +613,31 @@ fn startup_root_sync_collects_unsynced_remote_roots() {
     assert_eq!(roots, vec!["needs-sync".to_string()]);
 }
 
+#[test]
+fn startup_root_sync_retries_failed_remote_roots() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let mut drive = Drive {
+        root_scope_id: iris_drive_core::IrisProfileId::new_v4().to_string(),
+        drive_id: PRIMARY_DRIVE_ID.to_string(),
+        display_name: "My Drive".to_string(),
+        role: DriveRole::Owner,
+        app_key_roots: BTreeMap::new(),
+        last_root_cid: None,
+        key_hex: None,
+    };
+    drive.app_key_roots.insert(
+        "device-a".to_string(),
+        AppKeyRootRef::legacy("failed-root", 10, 1),
+    );
+    let mut config = AppConfig::default();
+    config.drives.push(drive);
+    record_block_sync_error(config_dir.path(), "failed-root", "timed out after 15s");
+
+    let roots = startup_root_cids_needing_sync(config_dir.path(), &config);
+
+    assert_eq!(roots, vec!["failed-root".to_string()]);
+}
+
 #[tokio::test]
 async fn windows_cloud_upsert_skips_matching_existing_file() {
     let (_blocks, provider) = fresh_test_provider().await;

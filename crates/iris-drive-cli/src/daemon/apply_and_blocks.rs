@@ -301,6 +301,45 @@ fn startup_root_cids_needing_sync(config_dir: &Path, config: &AppConfig) -> Vec<
         .collect()
 }
 
+pub(crate) fn enqueue_pending_root_sync_followups(
+    config_dir: &Path,
+    fips_blocks: Option<Arc<FsFipsBlockSync>>,
+    mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+    daemon_tasks: &DaemonTaskSet,
+    projection_event: &'static str,
+) -> usize {
+    let Ok(config) = AppConfig::load_or_default(config_path_in(config_dir)) else {
+        return 0;
+    };
+    let roots = startup_root_cids_needing_sync(config_dir, &config);
+    let mut enqueued = 0;
+    for root_cid in roots {
+        if enqueue_root_apply_followup(
+            config_dir.to_path_buf(),
+            config.clone(),
+            Some(root_cid),
+            fips_blocks.clone(),
+            true,
+            projection_event,
+            mount_refresh.clone(),
+            daemon_tasks,
+        ) {
+            enqueued += 1;
+        }
+    }
+    if enqueued > 0 {
+        println!(
+            "{}",
+            json!({
+                "event": "pending_root_sync_retry_enqueued",
+                "count": enqueued,
+                "trigger": projection_event,
+            })
+        );
+    }
+    enqueued
+}
+
 #[allow(clippy::too_many_lines)]
 pub(crate) fn spawn_root_apply_followup(
     config_dir: PathBuf,
