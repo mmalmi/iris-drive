@@ -10,6 +10,7 @@ fn write_runtime_daemon_status(config_dir: &Path, payload: Value) -> Value {
 }
 
 const DIRECT_APP_MESSAGE_DRAIN_LIMIT: usize = 4096;
+const DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS: u64 = 750;
 
 #[allow(
     clippy::needless_pass_by_value,
@@ -359,6 +360,9 @@ pub(crate) fn cmd_daemon(
             direct_root_announce_period,
         );
         direct_root_announce_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut direct_root_change_announce_pending = false;
+        let mut direct_root_change_announce_timer =
+            Box::pin(tokio::time::sleep(std::time::Duration::from_secs(86_400)));
         let config_root_watch_active = config_root_change_rx.is_some();
         let mut provider_root_poll_timer =
             tokio::time::interval(provider_root_poll_period(watch_interval));
@@ -405,19 +409,14 @@ pub(crate) fn cmd_daemon(
                             .await
                             {
                                 Ok(outcome) if outcome.should_announce_current_state() => {
-                                    if let Err(error) =
-                                        announce_current_state_direct(
-                                            &mut direct_roots,
-                                            config_dir,
-                                            fips_blocks.as_deref(),
-                                        )
-                                        .await
-                                    {
-                                        println!(
-                                            "{}",
-                                            json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
-                                        );
-                                    }
+                                    direct_roots.invalidate_current_sync_events_cache();
+                                    direct_root_change_announce_pending = true;
+                                    direct_root_change_announce_timer.as_mut().reset(
+                                        tokio::time::Instant::now()
+                                            + std::time::Duration::from_millis(
+                                                DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS,
+                                            ),
+                                    );
                                 }
                                 Ok(_) => {}
                                 Err(e) => {
@@ -743,6 +742,22 @@ pub(crate) fn cmd_daemon(
                         );
                     }
                 }
+                _ = &mut direct_root_change_announce_timer, if direct_root_change_announce_pending => {
+                    direct_root_change_announce_pending = false;
+                    if let Err(error) =
+                        announce_current_state_direct(
+                            &mut direct_roots,
+                            config_dir,
+                            fips_blocks.as_deref(),
+                        )
+                        .await
+                    {
+                        println!(
+                            "{}",
+                            json!({"event": "direct_root_mesh_error", "trigger": "changed_event_coalesced", "error": format!("{error:#}")})
+                        );
+                    }
+                }
                 _ = provider_root_poll_timer.tick(), if provider_root_poll_enabled(config_root_watch_active) => {
                     match publish_provider_root_if_changed(
                         &client,
@@ -855,8 +870,8 @@ pub(crate) fn cmd_daemon(
                                         continue;
                                     }
                                 }
-                                if let Some(sync) = fips_blocks.as_ref()
-                                    && let Err(error) = direct_roots
+                                if let Some(sync) = fips_blocks.as_ref() {
+                                    match direct_roots
                                         .handle_app_message(
                                             &client,
                                             config_dir,
@@ -866,11 +881,24 @@ pub(crate) fn cmd_daemon(
                                             message,
                                         )
                                         .await
-                                {
-                                    println!(
-                                        "{}",
-                                        json!({"event": "direct_root_app_error", "error": format!("{error:#}")})
-                                    );
+                                    {
+                                        Ok(true) => {
+                                            direct_root_change_announce_pending = true;
+                                            direct_root_change_announce_timer.as_mut().reset(
+                                                tokio::time::Instant::now()
+                                                    + std::time::Duration::from_millis(
+                                                        DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS,
+                                                    ),
+                                            );
+                                        }
+                                        Ok(false) => {}
+                                        Err(error) => {
+                                            println!(
+                                                "{}",
+                                                json!({"event": "direct_root_app_error", "error": format!("{error:#}")})
+                                            );
+                                        }
+                                    }
                                 }
                             }
                             if receiver_closed {
@@ -895,6 +923,7 @@ pub(crate) fn cmd_daemon(
                     }
                 } => {
                     if let Some(sync) = fips_blocks.as_ref() {
+                        let mut should_announce = false;
                         let mut result = direct_roots
                             .handle_mesh_event(
                                 &client,
@@ -905,7 +934,8 @@ pub(crate) fn cmd_daemon(
 	                                message,
 	                            )
                             .await;
-                        if result.is_ok() {
+                        if let Ok(changed) = result.as_ref() {
+                            should_announce |= *changed;
                             result = direct_roots
                                 .drain_mesh_events(
 	                                    &client,
@@ -915,11 +945,22 @@ pub(crate) fn cmd_daemon(
 	                                    &daemon_tasks,
 	                                )
                                 .await;
+                            if let Ok(changed) = result.as_ref() {
+                                should_announce |= *changed;
+                            }
                         }
                         if let Err(error) = result {
                             println!(
                                 "{}",
                                 json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
+                            );
+                        } else if should_announce {
+                            direct_root_change_announce_pending = true;
+                            direct_root_change_announce_timer.as_mut().reset(
+                                tokio::time::Instant::now()
+                                    + std::time::Duration::from_millis(
+                                        DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS,
+                                    ),
                             );
                         }
                     }

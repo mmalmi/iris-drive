@@ -22,6 +22,23 @@ enum DirectRootPublishSource {
     CachedRelay,
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum DirectRootFrameOutcome {
+    Ignored,
+    Cached,
+    Changed,
+}
+
+impl DirectRootFrameOutcome {
+    pub(crate) const fn should_log_event(self) -> bool {
+        !matches!(self, Self::Ignored)
+    }
+
+    pub(crate) const fn should_schedule_announce(self) -> bool {
+        matches!(self, Self::Changed)
+    }
+}
+
 impl DirectRootPublishSource {
     fn as_str(self) -> &'static str {
         match self {
@@ -179,9 +196,9 @@ impl DirectRootExchange {
         mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
         daemon_tasks: &DaemonTaskSet,
         frame: DirectRootFrame,
-    ) -> Result<bool> {
+    ) -> Result<DirectRootFrameOutcome> {
         if self.should_skip_seen_direct_root_frame(config_dir, &frame.key) {
-            return Ok(false);
+            return Ok(DirectRootFrameOutcome::Ignored);
         }
         let event: Event =
             serde_json::from_str(&frame.event_json).context("parsing direct root event")?;
@@ -203,18 +220,14 @@ impl DirectRootExchange {
             Err(error) => return Err(error),
         };
         if !outcome.should_cache_direct_root_frame() {
-            return Ok(false);
+            return Ok(DirectRootFrameOutcome::Ignored);
         }
         self.cache_event(direct_event);
         if outcome.should_announce_current_state() {
             self.invalidate_current_sync_events_cache();
-            let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
-            if let Some(state) = config.profile.as_ref() {
-                self.announce_current_state(config_dir, &config, state, Some(sync.as_ref()))
-                    .await?;
-            }
+            return Ok(DirectRootFrameOutcome::Changed);
         }
-        Ok(true)
+        Ok(DirectRootFrameOutcome::Cached)
     }
 
     fn should_skip_seen_direct_root_frame(&self, config_dir: &Path, key: &str) -> bool {
@@ -313,19 +326,21 @@ impl DirectRootExchange {
         sync: Arc<FsFipsBlockSync>,
         mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
         daemon_tasks: &DaemonTaskSet,
-    ) -> Result<()> {
+    ) -> Result<bool> {
+        let mut should_announce = false;
         for message in sync.drain_mesh_pubsub_events().await {
-            self.handle_mesh_event(
-                client,
-                config_dir,
-                sync.clone(),
-                mount_refresh.clone(),
-                daemon_tasks,
-                message,
-            )
-            .await?;
+            should_announce |= self
+                .handle_mesh_event(
+                    client,
+                    config_dir,
+                    sync.clone(),
+                    mount_refresh.clone(),
+                    daemon_tasks,
+                    message,
+                )
+                .await?;
         }
-        Ok(())
+        Ok(should_announce)
     }
 
     pub(crate) async fn handle_mesh_event(
@@ -336,22 +351,29 @@ impl DirectRootExchange {
         mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
         daemon_tasks: &DaemonTaskSet,
         message: FipsMeshPubsubEvent,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         if !message
             .stream_id
             .starts_with(DIRECT_ROOT_MESH_STREAM_PREFIX)
         {
-            return Ok(());
+            return Ok(false);
         }
         let frame: DirectRootFrame =
             serde_json::from_slice(&message.payload).context("parsing mesh root frame")?;
         let root_key = frame.key.clone();
         let root_event_id = frame.event_id.clone();
-        if !self
-            .apply_direct_root_frame(client, config_dir, sync, mount_refresh, daemon_tasks, frame)
-            .await?
-        {
-            return Ok(());
+        let outcome = self
+            .apply_direct_root_frame(
+                client,
+                config_dir,
+                sync,
+                mount_refresh,
+                daemon_tasks,
+                frame,
+            )
+            .await?;
+        if !outcome.should_log_event() {
+            return Ok(false);
         }
         println!(
             "{}",
@@ -365,7 +387,7 @@ impl DirectRootExchange {
                 "root_event_id": root_event_id,
             })
         );
-        Ok(())
+        Ok(outcome.should_schedule_announce())
     }
 
     pub(crate) async fn handle_app_message(
@@ -376,19 +398,19 @@ impl DirectRootExchange {
         mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
         daemon_tasks: &DaemonTaskSet,
         message: iris_drive_core::FipsAppMessage,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         if message.topic != DIRECT_ROOT_APP_TOPIC {
-            return Ok(());
+            return Ok(false);
         }
         let frame: DirectRootFrame =
             serde_json::from_slice(&message.data).context("parsing app root frame")?;
         let root_key = frame.key.clone();
         let root_event_id = frame.event_id.clone();
-        if !self
+        let outcome = self
             .apply_direct_root_frame(client, config_dir, sync, mount_refresh, daemon_tasks, frame)
-            .await?
-        {
-            return Ok(());
+            .await?;
+        if !outcome.should_log_event() {
+            return Ok(false);
         }
         println!(
             "{}",
@@ -400,7 +422,7 @@ impl DirectRootExchange {
                 "root_event_id": root_event_id,
             })
         );
-        Ok(())
+        Ok(outcome.should_schedule_announce())
     }
 
     fn cache_event(&mut self, event: DirectRootEvent) {

@@ -181,7 +181,6 @@ impl DirectRootExchange {
             Ok(changed) => {
                 if changed {
                     self.cache_event(direct_event);
-                    self.announce_current_state(config_dir, sync).await?;
                 } else {
                     self.seen_keys.remove(&frame.key);
                 }
