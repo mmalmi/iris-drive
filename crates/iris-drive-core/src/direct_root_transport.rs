@@ -483,10 +483,8 @@ fn direct_root_republish_interval_secs_for_source(
 }
 
 fn direct_root_publish_throttle_key(key: &str, source: DirectRootPublishSource) -> String {
-    if source == DirectRootPublishSource::CachedRelay
-        && let Some(slot) = direct_root_cache_slot(key)
-    {
-        return format!("cached-relay:{}", slot.family);
+    if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
+        return format!("cached-relay:{key}");
     }
     key.to_string()
 }
@@ -884,7 +882,7 @@ mod tests {
     }
 
     #[test]
-    fn direct_root_cached_relay_roots_share_family_cadence() {
+    fn direct_root_cached_relay_roots_publish_newer_sequence_immediately() {
         let mut exchange = DirectRootExchange::default();
         let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
         let newer_key = "drive-root:device:main:9:new-root-hash:new-root-key:device,remote";
@@ -896,14 +894,14 @@ mod tests {
             now
         ));
         assert!(!exchange.should_publish_candidate_key(
-            newer_key,
+            key,
             DirectRootPublishSource::CachedRelay,
             now + Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS - 1)
         ));
         assert!(exchange.should_publish_candidate_key(
             newer_key,
             DirectRootPublishSource::CachedRelay,
-            now + Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
+            now + Duration::from_millis(1)
         ));
     }
 
