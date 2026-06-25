@@ -76,6 +76,7 @@ internal data class AppState(
 internal data class ProfileState(
     val profileId: String,
     val currentAppKeyNpub: String,
+    val approvalAdminAppKeyNpub: String = "",
     val devicePubkey: String,
     val appKeyLabel: String,
     val authorizationState: String,
@@ -477,6 +478,7 @@ private fun JSONObject.toProfile(): ProfileState =
     ProfileState(
         profileId = optString("profile_id"),
         currentAppKeyNpub = optString("current_app_key_npub"),
+        approvalAdminAppKeyNpub = optString("approval_admin_app_key_npub"),
         devicePubkey = optString("current_app_key_npub"),
         appKeyLabel = optString("app_key_label"),
         authorizationState = optString("authorization_state"),

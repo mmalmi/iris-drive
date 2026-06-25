@@ -71,6 +71,7 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var deviceLabel = UIDevice.current.name
     @Published var profileLinkTarget = ""
     @Published var currentAppKeyNpub = ""
+    @Published var approvalAdminAppKeyNpub = ""
     @Published var devicePublicKey = "local-device"
     @Published var restoreSecret = ""
     @Published var profileUsername = ""
@@ -1920,6 +1921,7 @@ final class IrisDriveMobileModel: ObservableObject {
         guard let state = lastState else {
             profileLinkTarget = ""
             currentAppKeyNpub = ""
+            approvalAdminAppKeyNpub = ""
             devicePublicKey = "local-device"
             authorizationState = "Not linked"
             devices = []
@@ -1946,6 +1948,7 @@ final class IrisDriveMobileModel: ObservableObject {
         }
 
         currentAppKeyNpub = state.ui.profile?.currentAppKeyNpub ?? ""
+        approvalAdminAppKeyNpub = state.ui.profile?.approvalAdminAppKeyNpub ?? ""
         devicePublicKey = state.ui.profile?.devicePubkey ?? "local-device"
         deviceLabel = state.ui.profile?.appKeyLabel.isEmpty == false
             ? state.ui.profile?.appKeyLabel ?? deviceLabel

@@ -454,11 +454,13 @@ private fun AwaitingApprovalContent(
         ) {
             SetupBrand()
             Text("Waiting for approval", color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
-            Text(profile.currentAppKeyNpub, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Text(profile.devicePubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            if (profile.approvalAdminAppKeyNpub.isNotBlank()) {
+                AwaitingApprovalKey("Current Device Key", profile.approvalAdminAppKeyNpub)
+            }
+            AwaitingApprovalKey("Join Requesting Device Key", profile.currentAppKeyNpub)
             SetupSecondaryButton(
-                text = "Copy Device Key",
-                onClick = { onCopyText("Device key", profile.devicePubkey) },
+                text = "Copy Join Requesting Device Key",
+                onClick = { onCopyText("Join requesting device key", profile.devicePubkey) },
             )
             OutlinedButton(
                 onClick = onLogout,
@@ -468,6 +470,17 @@ private fun AwaitingApprovalContent(
                 Text("Log out")
             }
         }
+    }
+}
+
+@Composable
+private fun AwaitingApprovalKey(label: String, value: String) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        Text(label, color = Ink, fontWeight = FontWeight.SemiBold)
+        Text(value, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
 

@@ -1218,6 +1218,10 @@ fn link_action_tracks_pending_approval() {
     assert_eq!(account.profile_id, owner_profile_id);
     assert_eq!(account.app_key_label, "iPhone");
     assert_eq!(account.authorization_state, "awaiting_approval");
+    assert_eq!(
+        account.approval_admin_app_key_npub,
+        owner_account.current_app_key_npub
+    );
     assert!(!account.can_admin_profile);
     assert!(account.app_key_link_request.contains("app_key=npub1"));
     assert!(

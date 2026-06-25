@@ -170,6 +170,7 @@ final class IrisDriveIOSUITests: XCTestCase {
             waitForValue(row, containing: "1", timeout: 25),
             "Expected share extension import to appear in My Drive. Row: \(row.debugDescription)"
         )
+        assertSharedFileVisibleInFiles(sharedFile, in: refreshed)
     }
 
     func testOpenIrisAppsLoadsBrowserWithoutConnectionError() throws {
@@ -619,12 +620,25 @@ final class IrisDriveIOSUITests: XCTestCase {
                     "DocumentsApp. The smoke already verified the seeded provider item in-app " +
                     "and treats app-side registration/open errors as hard failures."
             ) {
-                XCTFail("Simulator Files did not foreground from Open in Files before timeout.")
+                XCTFail(
+                    "Simulator Files did not expose the Iris Drive location. " +
+                        "Simulator Files did not foreground from Open in Files before timeout."
+                )
             }
             return
         }
         #endif
         XCTFail("Files did not show Iris Drive. Files hierarchy:\n\(files.debugDescription)")
+    }
+
+    private func assertSharedFileVisibleInFiles(_ sharedFile: String, in app: XCUIApplication) {
+        let files = XCUIApplication(bundleIdentifier: "com.apple.DocumentsApp")
+        files.terminate()
+        let openInFiles = app.buttons["openInFilesButton"]
+        makeHittable(openInFiles, in: app)
+        openInFiles.tap()
+        assertFilesOpen(in: app, files: files, timeout: 25, expectedItem: sharedFile)
+        assertNoFilesProviderTrouble(in: files)
     }
 
     private func assertNoFilesProviderTrouble(

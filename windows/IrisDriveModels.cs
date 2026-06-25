@@ -10,6 +10,7 @@ public sealed class IrisDriveStatusData
     public bool Initialized { get; init; }
     public string DriveName { get; init; } = "My Drive";
     public string? CurrentAppKeyNpub { get; init; }
+    public string? ApprovalAdminAppKeyNpub { get; init; }
     public string? DeviceNpub { get; init; }
     public bool CanAdminProfile { get; init; }
     public bool CanExportRecoveryPhrase { get; init; }
@@ -87,6 +88,7 @@ public sealed class IrisDriveStatusData
             Initialized = profile.HasValue,
             DriveName = NativeDriveName(ui),
             CurrentAppKeyNpub = profile.HasValue ? String(profile.Value, "current_app_key_npub") : null,
+            ApprovalAdminAppKeyNpub = profile.HasValue ? String(profile.Value, "approval_admin_app_key_npub") : null,
             DeviceNpub = profile.HasValue ? String(profile.Value, "current_app_key_npub") : null,
             CanAdminProfile =
                 profile.HasValue && Bool(profile.Value, "can_admin_profile"),

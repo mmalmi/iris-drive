@@ -1969,6 +1969,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let account {
                 status.profileId = account["profile_id"] as? String
                 status.currentAppKeyNpub = account["current_app_key_npub"] as? String
+                status.approvalAdminAppKeyNpub = account["approval_admin_app_key_npub"] as? String
                 status.deviceNpub = account["current_app_key_npub"] as? String
                 status.canAdminProfile =
                     account["can_admin_profile"] as? Bool ?? false
@@ -1982,6 +1983,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             } else {
                 status.profileId = nil
                 status.currentAppKeyNpub = nil
+                status.approvalAdminAppKeyNpub = nil
                 status.deviceNpub = nil
                 status.appKeyLinkInviteURL = nil
                 status.inboundAppKeyLinkRequests = []
@@ -2123,6 +2125,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
             if let account = json["profile"] as? [String: Any] {
                 status.currentAppKeyNpub = account["current_app_key_npub"] as? String
+                status.approvalAdminAppKeyNpub =
+                    account["approval_admin_app_key_npub"] as? String
+                    ?? (account["app_key_link_request"] as? [String: Any])?["admin_app_key_npub"] as? String
                 status.deviceNpub = account["current_app_key_npub"] as? String
                 status.canAdminProfile =
                     account["can_admin_profile"] as? Bool ?? false
@@ -2137,6 +2142,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     .map(IrisDriveAppKeyLinkRequestStatus.init(json:))
             } else {
                 status.currentAppKeyNpub = nil
+                status.approvalAdminAppKeyNpub = nil
                 status.deviceNpub = nil
                 status.appKeyLinkInviteURL = nil
                 status.inboundAppKeyLinkRequests = []
