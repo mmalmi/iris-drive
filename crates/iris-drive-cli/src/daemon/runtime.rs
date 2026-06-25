@@ -302,7 +302,7 @@ pub(crate) fn cmd_daemon(
         let startup_config = config.clone();
         let startup_state = state.clone();
         for root_cid in startup_root_cids_needing_sync(config_dir, &config) {
-            if let Some(task) = spawn_root_apply_followup(
+            enqueue_root_apply_followup(
                 config_dir.to_path_buf(),
                 config.clone(),
                 Some(root_cid),
@@ -310,11 +310,10 @@ pub(crate) fn cmd_daemon(
                 true,
                 "startup_root_sync",
                 mount_refresh_tx.clone(),
-            ) {
-                daemon_tasks.push(task);
-            }
+                &daemon_tasks,
+            );
         }
-        if let Some(task) = spawn_root_apply_followup(
+        enqueue_root_apply_followup(
             config_dir.to_path_buf(),
             config.clone(),
             None,
@@ -322,9 +321,8 @@ pub(crate) fn cmd_daemon(
             true,
             "startup_projection",
             mount_refresh_tx.clone(),
-        ) {
-            daemon_tasks.push(task);
-        }
+            &daemon_tasks,
+        );
         daemon_tasks.push(spawn_initial_publish(
             client.clone(),
             config_dir.to_path_buf(),

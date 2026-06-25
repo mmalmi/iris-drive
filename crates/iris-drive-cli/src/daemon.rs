@@ -6,14 +6,63 @@ use iris_drive_core::relay_config::normalize_relay_url;
 
 #[derive(Clone, Default)]
 pub(crate) struct DaemonTaskSet {
-    tasks: Arc<std::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>,
+    tasks: Arc<std::sync::Mutex<Vec<ManagedDaemonTask>>>,
+    active_keys: Arc<std::sync::Mutex<std::collections::BTreeSet<String>>>,
+}
+
+struct ManagedDaemonTask {
+    join: tokio::task::JoinHandle<()>,
+    abort_inner: Option<tokio::task::AbortHandle>,
 }
 
 impl DaemonTaskSet {
     pub(crate) fn push(&self, task: tokio::task::JoinHandle<()>) {
         match self.tasks.lock() {
-            Ok(mut tasks) => tasks.push(task),
+            Ok(mut tasks) => tasks.push(ManagedDaemonTask {
+                join: task,
+                abort_inner: None,
+            }),
             Err(_) => task.abort(),
+        }
+    }
+
+    pub(crate) fn push_keyed(&self, key: String, task: tokio::task::JoinHandle<()>) -> bool {
+        let Ok(mut active_keys) = self.active_keys.lock() else {
+            task.abort();
+            return false;
+        };
+        if !active_keys.insert(key.clone()) {
+            task.abort();
+            return false;
+        }
+        drop(active_keys);
+
+        let active_keys = self.active_keys.clone();
+        let task_key = key.clone();
+        let abort_inner = task.abort_handle();
+        let abort_inner_on_error = abort_inner.clone();
+        let join = tokio::spawn(async move {
+            let _ = task.await;
+            if let Ok(mut active_keys) = active_keys.lock() {
+                active_keys.remove(&task_key);
+            }
+        });
+        match self.tasks.lock() {
+            Ok(mut tasks) => {
+                tasks.push(ManagedDaemonTask {
+                    join,
+                    abort_inner: Some(abort_inner),
+                });
+                true
+            }
+            Err(_) => {
+                if let Ok(mut active_keys) = self.active_keys.lock() {
+                    active_keys.remove(&key);
+                }
+                abort_inner_on_error.abort();
+                join.abort();
+                false
+            }
         }
     }
 
@@ -22,11 +71,17 @@ impl DaemonTaskSet {
             Ok(mut tasks) => std::mem::take(&mut *tasks),
             Err(_) => Vec::new(),
         };
+        if let Ok(mut active_keys) = self.active_keys.lock() {
+            active_keys.clear();
+        }
         for task in &tasks {
-            task.abort();
+            if let Some(abort_inner) = &task.abort_inner {
+                abort_inner.abort();
+            }
+            task.join.abort();
         }
         for task in tasks {
-            let _ = task.await;
+            let _ = task.join.await;
         }
     }
 }

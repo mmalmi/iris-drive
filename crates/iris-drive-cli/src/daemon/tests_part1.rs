@@ -383,6 +383,44 @@ async fn background_config_mutation_lock_stops_when_followup_becomes_stale() {
     mark_stale.await.unwrap();
 }
 
+#[tokio::test]
+async fn daemon_task_set_coalesces_active_keyed_tasks() {
+    let tasks = DaemonTaskSet::default();
+    let (started_tx, mut started_rx) = tokio::sync::mpsc::channel(2);
+    let (release_tx, release_rx) = tokio::sync::oneshot::channel();
+
+    assert!(tasks.push_keyed(
+        "root:one".to_string(),
+        tokio::spawn(async move {
+            started_tx.send(()).await.unwrap();
+            let _ = release_rx.await;
+        }),
+    ));
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(200), started_rx.recv())
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert!(!tasks.push_keyed(
+        "root:one".to_string(),
+        tokio::spawn(async {
+            panic!("duplicate keyed task should be aborted");
+        }),
+    ));
+
+    release_tx.send(()).unwrap();
+    for _ in 0..20 {
+        if tasks.push_keyed("root:one".to_string(), tokio::spawn(async {})) {
+            tasks.abort_all().await;
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    tasks.abort_all().await;
+    panic!("keyed task was not released after completion");
+}
+
 #[test]
 fn event_block_pull_retry_budget_stays_short_without_blossom() {
     let config = AppConfig {

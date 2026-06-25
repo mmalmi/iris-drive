@@ -155,7 +155,7 @@ pub(crate) async fn apply_one_event(
             sync.refresh_authorized_peers(&config).await;
         }
 
-        if let Some(task) = spawn_root_apply_followup(
+        enqueue_root_apply_followup(
             config_dir.to_path_buf(),
             config.clone(),
             root_cid_to_pull,
@@ -163,9 +163,8 @@ pub(crate) async fn apply_one_event(
             followup.refresh_projection,
             "projected_drive_root",
             mount_refresh,
-        ) {
-            daemon_tasks.push(task);
-        }
+            daemon_tasks,
+        );
         return Ok(if retryable {
             EventApplyOutcome::RetryablePrerequisiteMissing
         } else if was_applied {
@@ -244,7 +243,7 @@ pub(crate) fn apply_files_root_event(
     if was_applied {
         config.save(config_path_in(config_dir))?;
     }
-    if let Some(task) = spawn_root_apply_followup(
+    enqueue_root_apply_followup(
         config_dir.to_path_buf(),
         config.clone(),
         root_cid_to_pull,
@@ -252,9 +251,8 @@ pub(crate) fn apply_files_root_event(
         was_applied && tree_name == iris_drive_core::PRIMARY_DRIVE_ID,
         "projected_files_root",
         mount_refresh,
-    ) {
-        daemon_tasks.push(task);
-    }
+        daemon_tasks,
+    );
     Ok(if was_applied {
         EventApplyOutcome::Changed
     } else {
@@ -480,6 +478,51 @@ pub(crate) fn spawn_root_apply_followup(
             );
         }
     }))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn enqueue_root_apply_followup(
+    config_dir: PathBuf,
+    config: AppConfig,
+    root_cid_to_pull: Option<String>,
+    fips_blocks: Option<Arc<FsFipsBlockSync>>,
+    should_refresh_projection: bool,
+    projection_event: &'static str,
+    mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+    daemon_tasks: &DaemonTaskSet,
+) -> bool {
+    let Some(task) = spawn_root_apply_followup(
+        config_dir,
+        config.clone(),
+        root_cid_to_pull.clone(),
+        fips_blocks,
+        should_refresh_projection,
+        projection_event,
+        mount_refresh,
+    ) else {
+        return false;
+    };
+    let Some(key) =
+        root_apply_followup_key(&config, root_cid_to_pull.as_deref(), should_refresh_projection)
+            .map(|key| format!("root_apply_followup:{key:?}"))
+    else {
+        daemon_tasks.push(task);
+        return true;
+    };
+
+    if daemon_tasks.push_keyed(key.clone(), task) {
+        true
+    } else {
+        println!(
+            "{}",
+            json!({
+                "event": "root_apply_followup_coalesced",
+                "root_cid": root_cid_to_pull,
+                "key": key,
+            })
+        );
+        false
+    }
 }
 
 async fn materialize_primary_merged_root_for_followup(
