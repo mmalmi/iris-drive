@@ -1001,9 +1001,19 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
     assert!(!short_npub.is_valid);
 
     let profile_id = owner_account.profile_id.clone();
-    let approval = super::classify_link_input(format!(
-        "iris-drive://app-key-link?profile={profile_id}&app_key={admin_app_key_npub}"
-    ));
+    let parsed_invite = iris_drive_core::app_key_link_invite::parse_app_key_link_invite(
+        &owner_account.app_key_link_invite,
+    )
+    .unwrap()
+    .unwrap();
+    let approval = super::classify_link_input(
+        iris_drive_core::app_key_link_transport::encode_app_key_approval_request(
+            profile_id.parse().unwrap(),
+            &iris_drive_core::normalize_app_key_pubkey(&admin_app_key_npub).unwrap(),
+            &parsed_invite.invite_pubkey,
+            None,
+        ),
+    );
     assert_eq!(approval.kind, "app_key_approval");
     assert!(approval.is_complete);
     assert!(approval.is_valid);

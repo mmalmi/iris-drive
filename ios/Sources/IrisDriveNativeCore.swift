@@ -450,7 +450,7 @@ struct NativeLinkInputClassification: Codable {
     var normalizedInput: String = ""
     var appKeyPubkey: String = ""
     var adminAppKeyPubkey: String = ""
-    var hasLinkSecret: Bool = false
+    var hasInvitePubkey: Bool = false
     var shareSourcePath: String = ""
     var shareDisplayName: String = ""
     var shareRecipientNpubHint: String = ""
@@ -473,7 +473,7 @@ struct NativeLinkInputClassification: Codable {
         case normalizedInput = "normalized_input"
         case appKeyPubkey = "app_key_pubkey"
         case adminAppKeyPubkey = "admin_app_key_pubkey"
-        case hasLinkSecret = "has_link_secret"
+        case hasInvitePubkey = "has_invite_pubkey"
         case shareSourcePath = "share_source_path"
         case shareDisplayName = "share_display_name"
         case shareRecipientNpubHint = "share_recipient_npub_hint"
