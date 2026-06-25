@@ -557,8 +557,11 @@ impl DirectRootExchange {
         if peers_changed {
             self.known_mesh_peers = root_peers;
         }
-        if publish_peers != self.known_publish_peers {
-            self.known_publish_peers = publish_peers;
+        let has_new_publish_peer = publish_peers
+            .iter()
+            .any(|peer| !self.known_publish_peers.contains(peer));
+        if has_new_publish_peer {
+            self.known_publish_peers.extend(publish_peers);
             self.published_keys.clear();
         }
         peers_changed

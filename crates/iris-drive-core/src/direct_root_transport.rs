@@ -227,8 +227,11 @@ impl DirectRootExchange {
         if peers_changed {
             self.known_mesh_peers = root_peers;
         }
-        if publish_peers != self.known_publish_peers {
-            self.known_publish_peers = publish_peers;
+        let has_new_publish_peer = publish_peers
+            .iter()
+            .any(|peer| !self.known_publish_peers.contains(peer));
+        if has_new_publish_peer {
+            self.known_publish_peers.extend(publish_peers);
             self.published_keys.clear();
         }
         peers_changed
@@ -945,7 +948,34 @@ mod tests {
     }
 
     #[test]
-    fn direct_root_authorized_peer_churn_clears_republish_throttle() {
+    fn direct_root_authorized_peer_loss_does_not_clear_republish_throttle() {
+        let mut exchange = DirectRootExchange::default();
+        let key = "drive-root:device:main:7:root-hash:root-key:device,remote";
+        let now = Instant::now();
+
+        assert!(exchange.refresh_known_root_peer_sets(
+            ["authorized-a".to_string(), "authorized-b".to_string()],
+            ["mesh-a".to_string()],
+        ));
+        assert!(exchange.should_publish_candidate_key(
+            key,
+            DirectRootPublishSource::CachedRelay,
+            now
+        ));
+
+        assert!(exchange.refresh_known_root_peer_sets(
+            ["authorized-a".to_string()],
+            ["mesh-a".to_string()],
+        ));
+        assert!(!exchange.should_publish_candidate_key(
+            key,
+            DirectRootPublishSource::CachedRelay,
+            now + Duration::from_millis(500)
+        ));
+    }
+
+    #[test]
+    fn direct_root_new_authorized_peer_clears_republish_throttle() {
         let mut exchange = DirectRootExchange::default();
         let key = "drive-root:device:main:7:root-hash:root-key:device,remote";
         let now = Instant::now();

@@ -180,7 +180,25 @@ fn direct_root_mesh_route_churn_does_not_clear_cached_relay_throttle() {
 }
 
 #[test]
-fn direct_root_peer_churn_clears_republish_throttle() {
+fn direct_root_authorized_peer_loss_does_not_clear_republish_throttle() {
+    let mut exchange = DirectRootExchange::default();
+    let key = "drive-root:device:main:7:root-hash:root-key:device,remote";
+    let now = std::time::Instant::now();
+
+    assert!(exchange.refresh_known_root_peers(
+        ["authorized-a".to_string(), "authorized-b".to_string()],
+        ["mesh-a".to_string()],
+    ));
+    assert!(exchange.should_publish_key(key, now));
+
+    assert!(
+        exchange.refresh_known_root_peers(["authorized-a".to_string()], ["mesh-a".to_string()],)
+    );
+    assert!(!exchange.should_publish_key(key, now + std::time::Duration::from_millis(500)));
+}
+
+#[test]
+fn direct_root_new_authorized_peer_clears_republish_throttle() {
     let mut exchange = DirectRootExchange::default();
     let key = "drive-root:device:main:7:root-hash:root-key:device,remote";
     let now = std::time::Instant::now();
@@ -267,7 +285,7 @@ fn direct_root_peer_change_allows_cached_relay_once() {
     assert!(exchange.should_publish_candidate_key(
         key,
         DirectRootPublishSource::CachedRelay,
-        now + std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS + 1)
+        now + std::time::Duration::from_secs(1)
     ));
 }
 
