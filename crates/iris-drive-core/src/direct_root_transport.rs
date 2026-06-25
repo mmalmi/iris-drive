@@ -609,40 +609,39 @@ pub fn build_current_direct_root_events(
     state: &ProfileState,
 ) -> Result<Vec<DirectRootEvent>> {
     let mut events = Vec::new();
-    for op in &state.profile_roster_ops {
-        let event =
-            Event::from_json(&op.event_json).context("parsing IrisProfile roster op event")?;
-        events.push(direct_root_event(
-            format!("profile-op:{}:{}", state.profile_id, op.op_id),
-            &event,
-        ));
-    }
     if state.can_write_roots()
         && let Some(drive) = config.drive(PRIMARY_DRIVE_ID)
         && let Some(root) = drive.app_key_roots.get(&state.app_key_pubkey)
     {
         let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
         let authorized_app_keys = drive_root_recipient_app_key_pubkeys(state, drive);
-        if authorized_app_keys.is_empty() {
-            return Ok(events);
+        if !authorized_app_keys.is_empty() {
+            let event = crate::nostr_events::build_drive_root_event(
+                device.keys(),
+                &state.root_scope_id(),
+                &drive.drive_id,
+                root,
+                &authorized_app_keys,
+            )
+            .context("building drive-root event")?;
+            events.push(direct_root_event(
+                format!(
+                    "drive-root:{}:{}:{}:{}:{}",
+                    state.app_key_pubkey,
+                    drive.drive_id,
+                    root.app_key_seq,
+                    root.root_cid,
+                    authorized_app_keys.join(",")
+                ),
+                &event,
+            ));
         }
-        let event = crate::nostr_events::build_drive_root_event(
-            device.keys(),
-            &state.root_scope_id(),
-            &drive.drive_id,
-            root,
-            &authorized_app_keys,
-        )
-        .context("building drive-root event")?;
+    }
+    for op in &state.profile_roster_ops {
+        let event =
+            Event::from_json(&op.event_json).context("parsing IrisProfile roster op event")?;
         events.push(direct_root_event(
-            format!(
-                "drive-root:{}:{}:{}:{}:{}",
-                state.app_key_pubkey,
-                drive.drive_id,
-                root.app_key_seq,
-                root.root_cid,
-                authorized_app_keys.join(",")
-            ),
+            format!("profile-op:{}:{}", state.profile_id, op.op_id),
             &event,
         ));
     }
@@ -826,6 +825,42 @@ mod tests {
             drive_root
                 .key
                 .ends_with(&format!(":{}", expected.join(",")))
+        );
+    }
+
+    #[test]
+    fn current_direct_root_events_prioritize_roots_before_profile_metadata() {
+        let dir = tempfile::tempdir().unwrap();
+        let owner = Profile::create(dir.path(), Some("Windows".to_string())).unwrap();
+        let state = owner.state.clone();
+        let mut drive = Drive::primary(state.root_scope_id());
+        drive.app_key_roots.insert(
+            state.app_key_pubkey.clone(),
+            AppKeyRootRef::legacy(
+                "63c49f803c85645412e6fd431633b21f8ede15dd39150e709a087bc1b7cd960c:3e9a2656d97761cc705a80c405827bbd204e34fb83cb80ef59bcbad30bfec5e4",
+                11,
+                2,
+            ),
+        );
+        let config = AppConfig {
+            profile: Some(state.clone()),
+            drives: vec![drive],
+            ..AppConfig::default()
+        };
+
+        let events = build_current_direct_root_events(dir.path(), &config, &state).unwrap();
+        let root_index = events
+            .iter()
+            .position(|event| event.key.starts_with("drive-root:"))
+            .expect("drive root event");
+        let profile_index = events
+            .iter()
+            .position(|event| event.key.starts_with("profile-op:"))
+            .expect("profile metadata event");
+
+        assert!(
+            root_index < profile_index,
+            "drive roots should be published before profile metadata"
         );
     }
 

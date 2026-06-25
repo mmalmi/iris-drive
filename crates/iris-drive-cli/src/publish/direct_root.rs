@@ -639,10 +639,10 @@ pub(crate) async fn build_current_sync_events(
 ) -> Result<Vec<DirectRootEvent>> {
     let mut events = Vec::new();
 
-    append_profile_roster_events(&mut events, state)?;
-    append_share_access_snapshot_events(&mut events, config_dir, config, state)?;
     append_primary_drive_root_events(&mut events, config_dir, config, state).await?;
     append_share_root_events(&mut events, config_dir, config, state).await?;
+    append_profile_roster_events(&mut events, state)?;
+    append_share_access_snapshot_events(&mut events, config_dir, config, state)?;
 
     Ok(events)
 }

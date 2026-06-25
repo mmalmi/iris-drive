@@ -635,6 +635,56 @@ fn direct_root_publish_includes_profile_roster_ops() {
 }
 
 #[test]
+fn direct_root_publish_prioritizes_roots_before_profile_metadata() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let account = Profile::create(config_dir.path(), Some("native".to_string())).unwrap();
+    let mut initial_config = AppConfig {
+        profile: Some(account.state.clone()),
+        ..AppConfig::default()
+    };
+    initial_config.upsert_drive(Drive::primary(account.state.root_scope_id()));
+    initial_config
+        .save(config_path_in(config_dir.path()))
+        .unwrap();
+    std::fs::write(work.path().join("local.txt"), b"local root").unwrap();
+    let mut daemon = Daemon::open(config_dir.path()).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime
+        .block_on(daemon.import_source_dir(work.path()))
+        .unwrap();
+    let config = AppConfig {
+        profile: Some(account.state.clone()),
+        drives: daemon.config().drives.clone(),
+        ..AppConfig::default()
+    };
+
+    let events = runtime
+        .block_on(build_current_sync_events(
+            config_dir.path(),
+            &config,
+            &account.state,
+        ))
+        .unwrap();
+
+    let root_index = events
+        .iter()
+        .position(|event| event.key.starts_with("drive-root:"))
+        .expect("drive root should be announced");
+    let profile_index = events
+        .iter()
+        .position(|event| event.key.starts_with("profile-op:"))
+        .expect("profile metadata should be announced");
+    assert!(
+        root_index < profile_index,
+        "drive roots should hit the direct-root fast lane before profile metadata"
+    );
+}
+
+#[test]
 fn direct_root_publish_skips_private_root_without_key_recipients() {
     let config_dir = tempfile::tempdir().unwrap();
     let work = tempfile::tempdir().unwrap();
