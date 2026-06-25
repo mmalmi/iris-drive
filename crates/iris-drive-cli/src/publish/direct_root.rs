@@ -38,6 +38,7 @@ pub(crate) struct DirectRootExchange {
     seen_keys: BTreeSet<String>,
     subscribed_streams: BTreeSet<String>,
     known_mesh_peers: BTreeSet<String>,
+    known_publish_peers: BTreeSet<String>,
     next_mesh_publish_seq: u64,
     profile_stream_cache: Option<CachedDirectRootProfileStream>,
     current_sync_events_cache: Option<CachedCurrentSyncEvents>,
@@ -526,14 +527,19 @@ impl DirectRootExchange {
         authorized_peers: impl IntoIterator<Item = String>,
         mesh_peers: impl IntoIterator<Item = String>,
     ) -> bool {
-        let mut root_peers = authorized_peers.into_iter().collect::<BTreeSet<_>>();
+        let publish_peers = authorized_peers.into_iter().collect::<BTreeSet<_>>();
+        let mut root_peers = publish_peers.clone();
         root_peers.extend(mesh_peers);
-        if root_peers != self.known_mesh_peers {
+
+        let peers_changed = root_peers != self.known_mesh_peers;
+        if peers_changed {
             self.known_mesh_peers = root_peers;
-            self.published_keys.clear();
-            return true;
         }
-        false
+        if publish_peers != self.known_publish_peers {
+            self.known_publish_peers = publish_peers;
+            self.published_keys.clear();
+        }
+        peers_changed
     }
 
     fn next_mesh_publish_seq(&mut self) -> u64 {

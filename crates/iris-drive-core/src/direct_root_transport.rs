@@ -54,6 +54,7 @@ pub struct DirectRootExchange {
     seen_keys: BTreeSet<String>,
     subscribed_streams: BTreeSet<String>,
     known_mesh_peers: BTreeSet<String>,
+    known_publish_peers: BTreeSet<String>,
     next_mesh_publish_seq: u64,
 }
 
@@ -208,18 +209,30 @@ impl DirectRootExchange {
     }
 
     async fn refresh_known_root_peers(&mut self, sync: &FsFipsBlockSync) -> bool {
-        let mut root_peers = sync
-            .authorized_peer_ids()
-            .await
-            .into_iter()
-            .collect::<BTreeSet<_>>();
-        root_peers.extend(sync.mesh_peer_ids().await);
-        if root_peers != self.known_mesh_peers {
+        self.refresh_known_root_peer_sets(
+            sync.authorized_peer_ids().await,
+            sync.mesh_peer_ids().await,
+        )
+    }
+
+    fn refresh_known_root_peer_sets(
+        &mut self,
+        authorized_peers: impl IntoIterator<Item = String>,
+        mesh_peers: impl IntoIterator<Item = String>,
+    ) -> bool {
+        let publish_peers = authorized_peers.into_iter().collect::<BTreeSet<_>>();
+        let mut root_peers = publish_peers.clone();
+        root_peers.extend(mesh_peers);
+
+        let peers_changed = root_peers != self.known_mesh_peers;
+        if peers_changed {
             self.known_mesh_peers = root_peers;
-            self.published_keys.clear();
-            return true;
         }
-        false
+        if publish_peers != self.known_publish_peers {
+            self.known_publish_peers = publish_peers;
+            self.published_keys.clear();
+        }
+        peers_changed
     }
 
     fn next_mesh_publish_seq(&mut self) -> u64 {
@@ -902,6 +915,64 @@ mod tests {
             newer_key,
             DirectRootPublishSource::CachedRelay,
             now + Duration::from_millis(1)
+        ));
+    }
+
+    #[test]
+    fn direct_root_mesh_route_churn_does_not_clear_cached_relay_throttle() {
+        let mut exchange = DirectRootExchange::default();
+        let key = "drive-root:device:main:7:root-hash:root-key:device,remote";
+        let now = Instant::now();
+
+        assert!(exchange.refresh_known_root_peer_sets(
+            ["authorized-a".to_string(), "authorized-b".to_string()],
+            ["mesh-a".to_string()],
+        ));
+        assert!(exchange.should_publish_candidate_key(
+            key,
+            DirectRootPublishSource::CachedRelay,
+            now
+        ));
+
+        assert!(exchange.refresh_known_root_peer_sets(
+            ["authorized-a".to_string(), "authorized-b".to_string()],
+            ["mesh-b".to_string()],
+        ));
+        assert!(!exchange.should_publish_candidate_key(
+            key,
+            DirectRootPublishSource::CachedRelay,
+            now + Duration::from_millis(500)
+        ));
+    }
+
+    #[test]
+    fn direct_root_authorized_peer_churn_clears_republish_throttle() {
+        let mut exchange = DirectRootExchange::default();
+        let key = "drive-root:device:main:7:root-hash:root-key:device,remote";
+        let now = Instant::now();
+
+        assert!(exchange.refresh_known_root_peer_sets(
+            ["authorized-a".to_string(), "authorized-b".to_string()],
+            ["mesh-a".to_string()],
+        ));
+        assert!(exchange.should_publish_candidate_key(
+            key,
+            DirectRootPublishSource::CachedRelay,
+            now
+        ));
+
+        assert!(exchange.refresh_known_root_peer_sets(
+            [
+                "authorized-a".to_string(),
+                "authorized-b".to_string(),
+                "authorized-c".to_string(),
+            ],
+            ["mesh-a".to_string()],
+        ));
+        assert!(exchange.should_publish_candidate_key(
+            key,
+            DirectRootPublishSource::CachedRelay,
+            now + Duration::from_secs(1)
         ));
     }
 
