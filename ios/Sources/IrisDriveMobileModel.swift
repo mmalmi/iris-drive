@@ -1103,10 +1103,20 @@ final class IrisDriveMobileModel: ObservableObject {
     func logout() {
         let before = configIdentitySnapshot()
         cancelBackgroundSync()
-        stopSync()
         appleCalendarSync.setEnabled(false)
         refreshAppleCalendarSyncState()
-        dispatch(["type": "logout"])
+        clearLocalProfileUiForLogout()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.dispatchInBackground(["type": "logout"], invalidatePendingState: true)
+            self.recordConfigMutation(action: "logout", before: before)
+        }
+    }
+
+    private func clearLocalProfileUiForLogout() {
+        stateGeneration &+= 1
+        lastState = nil
+        stateLoaded = true
         restoreSecret = ""
         approveDeviceKey = ""
         approveDeviceLabel = ""
@@ -1114,9 +1124,9 @@ final class IrisDriveMobileModel: ObservableObject {
         profilePhotoName = ""
         fileProviderError = ""
         fileProviderStatus = "Files provider not registered"
+        rebuildDerivedState()
         removeFileProviderDomain()
         persistLocalSettings()
-        recordConfigMutation(action: "logout", before: before)
     }
 
     func revokeDevice(label: String) {
