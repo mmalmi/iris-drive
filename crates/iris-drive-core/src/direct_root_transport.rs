@@ -478,10 +478,11 @@ impl DirectRootExchange {
         self.cached_events
             .keys()
             .filter(|key| {
-                direct_root_cache_slot(key).is_some_and(|cached| {
-                    cached.family == incoming.family
-                        && !direct_root_slot_is_strictly_newer(&cached, &incoming)
-                })
+                key.as_str() != incoming_key
+                    && direct_root_cache_slot(key).is_some_and(|cached| {
+                        cached.family == incoming.family
+                            && !direct_root_slot_is_strictly_newer(&cached, &incoming)
+                    })
             })
             .cloned()
             .collect()
@@ -1744,6 +1745,28 @@ mod tests {
             newer_key,
             DirectRootPublishSource::CachedRelay,
             now + Duration::from_millis(1)
+        ));
+    }
+
+    #[test]
+    fn direct_root_cache_event_preserves_same_key_republish_throttle() {
+        let mut exchange = DirectRootExchange::default();
+        let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
+        let now = Instant::now();
+        let event = DirectRootEvent {
+            key: key.to_string(),
+            event_id: "event".to_string(),
+            event_json: "{\"id\":\"event\"}".to_string(),
+        };
+
+        assert!(exchange.should_publish_key(key, now));
+        exchange.cache_event(event.clone());
+
+        assert!(!exchange.should_publish_key(key, now + Duration::from_millis(500)));
+        exchange.cache_event(event);
+        assert!(!exchange.should_publish_key(
+            key,
+            now + Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS - 1)
         ));
     }
 

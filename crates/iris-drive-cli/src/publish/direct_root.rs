@@ -667,10 +667,11 @@ impl DirectRootExchange {
         self.cached_events
             .keys()
             .filter(|key| {
-                direct_root_cache_slot(key).is_some_and(|cached| {
-                    cached.family == incoming.family
-                        && !direct_root_slot_is_strictly_newer(&cached, &incoming)
-                })
+                key.as_str() != incoming_key
+                    && direct_root_cache_slot(key).is_some_and(|cached| {
+                        cached.family == incoming.family
+                            && !direct_root_slot_is_strictly_newer(&cached, &incoming)
+                    })
             })
             .cloned()
             .collect()
