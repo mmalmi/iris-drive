@@ -1,5 +1,7 @@
 use super::*;
 use crate::iris_profile::{IrisProfileKeyPurpose, KeyWrapStatus};
+use crate::{IrisProfileRosterOp, parse_iris_profile_roster_op_event};
+use nostr_sdk::{Event, JsonUtil};
 use tempfile::tempdir;
 
 fn invite_pubkey(state: &ProfileState) -> String {
@@ -1111,6 +1113,66 @@ fn authorization_recomputes_from_profile_without_app_keys_cache() {
         AppKeyAuthorizationState::Authorized
     );
     assert!(acct.state.can_admin_profile());
+}
+
+#[test]
+fn authorization_waits_for_profile_key_epoch() {
+    let owner_dir = tempdir().unwrap();
+    let mut owner = Profile::create(owner_dir.path(), Some("owner".into())).unwrap();
+    let linked_dir = tempdir().unwrap();
+    let mut linked = Profile::link_to_profile(
+        linked_dir.path(),
+        owner.state.profile_id,
+        owner.state.app_key_pubkey.clone(),
+        Some("phone".into()),
+    )
+    .unwrap();
+
+    owner
+        .approve_app_key(&linked.state.app_key_pubkey, Some("phone".into()))
+        .unwrap();
+    linked.state.profile_roster_ops = owner
+        .state
+        .profile_roster_ops
+        .iter()
+        .filter(|op| {
+            let event = Event::from_json(&op.event_json).unwrap();
+            let parsed = parse_iris_profile_roster_op_event(&event).unwrap();
+            !matches!(
+                parsed.content.op,
+                IrisProfileRosterOp::RotateKeyEpoch { .. }
+                    | IrisProfileRosterOp::RepairKeyWraps { .. }
+            )
+        })
+        .cloned()
+        .collect();
+    linked.state.app_keys = None;
+    linked.state.profile_roster_projection = None;
+
+    linked.state.recompute_authorization();
+
+    assert_eq!(
+        linked.state.authorization_state,
+        AppKeyAuthorizationState::AwaitingApproval
+    );
+    assert!(linked.state.current_app_keys_projection().is_none());
+
+    linked.state.authorization_state = AppKeyAuthorizationState::Authorized;
+    linked.state.recompute_authorization();
+    assert_eq!(
+        linked.state.authorization_state,
+        AppKeyAuthorizationState::AwaitingApproval
+    );
+
+    linked.state.profile_roster_ops = owner.state.profile_roster_ops.clone();
+    linked.state.profile_roster_projection = None;
+    linked.state.recompute_authorization();
+
+    assert_eq!(
+        linked.state.authorization_state,
+        AppKeyAuthorizationState::Authorized
+    );
+    assert!(linked.state.current_app_keys_projection().is_some());
 }
 
 #[test]

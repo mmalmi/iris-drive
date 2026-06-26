@@ -613,6 +613,8 @@ impl Drive {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{IrisProfileRosterOp, parse_iris_profile_roster_op_event};
+    use nostr_sdk::{Event, JsonUtil};
     use tempfile::tempdir;
 
     #[test]
@@ -918,6 +920,55 @@ dck_generation = 1
         );
         assert!(projection.can_write_roots(&loaded_account.app_key_pubkey));
         assert!(projection.can_admin_profile(&loaded_account.app_key_pubkey));
+    }
+
+    #[test]
+    fn load_downgrades_authorized_profile_without_key_epoch() {
+        let owner_dir = tempdir().unwrap();
+        let mut owner =
+            crate::profile::Profile::create(owner_dir.path(), Some("Owner".into())).unwrap();
+        let linked_dir = tempdir().unwrap();
+        let mut linked = crate::profile::Profile::link_to_profile(
+            linked_dir.path(),
+            owner.state.profile_id,
+            owner.state.app_key_pubkey.clone(),
+            Some("Phone".into()),
+        )
+        .unwrap();
+        owner
+            .approve_app_key(&linked.state.app_key_pubkey, Some("Phone".into()))
+            .unwrap();
+        linked.state.profile_roster_ops = owner
+            .state
+            .profile_roster_ops
+            .iter()
+            .filter(|op| {
+                let event = Event::from_json(&op.event_json).unwrap();
+                let parsed = parse_iris_profile_roster_op_event(&event).unwrap();
+                !matches!(
+                    parsed.content.op,
+                    IrisProfileRosterOp::RotateKeyEpoch { .. }
+                        | IrisProfileRosterOp::RepairKeyWraps { .. }
+                )
+            })
+            .cloned()
+            .collect();
+        linked.state.authorization_state = crate::AppKeyAuthorizationState::Authorized;
+        linked.state.app_keys = None;
+        let cfg = AppConfig {
+            profile: Some(linked.state),
+            ..AppConfig::default()
+        };
+        let path = linked_dir.path().join("config.toml");
+        cfg.save(&path).unwrap();
+
+        let loaded = AppConfig::load_or_default(&path).unwrap();
+        let loaded_account = loaded.profile.expect("profile persisted");
+        assert_eq!(
+            loaded_account.authorization_state,
+            crate::AppKeyAuthorizationState::AwaitingApproval
+        );
+        assert!(loaded_account.current_app_keys_projection().is_none());
     }
 
     #[test]

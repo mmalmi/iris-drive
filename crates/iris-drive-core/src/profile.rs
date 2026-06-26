@@ -285,6 +285,7 @@ impl ProfileState {
             });
             let requests_changed = self.inbound_app_key_link_requests.len() != request_count_before;
             self.profile_roster_projection = Some(profile_projection);
+            self.recompute_authorization();
             return requests_changed;
         };
         let app_keys_changed = self.app_keys.as_ref() != Some(&projection);
@@ -367,12 +368,22 @@ impl ProfileState {
     pub fn recompute_authorization(&mut self) {
         let projection =
             project_iris_profile_roster(self.profile_id, self.profile_roster_ops.clone());
-        self.authorization_state = if projection.can_write_roots(&self.app_key_pubkey) {
+        let app_keys = app_keys_from_profile_projection(&projection);
+        let current_app_key_has_usable_profile = app_keys
+            .as_ref()
+            .is_some_and(|keys| keys.contains(&self.app_key_pubkey))
+            && projection.can_write_roots(&self.app_key_pubkey);
+        self.authorization_state = if current_app_key_has_usable_profile {
             AppKeyAuthorizationState::Authorized
         } else if projection.tombstones.contains_key(&self.app_key_pubkey)
-            || self.authorization_state == AppKeyAuthorizationState::Authorized
+            || (self.authorization_state == AppKeyAuthorizationState::Authorized
+                && app_keys.is_some())
         {
             AppKeyAuthorizationState::Revoked
+        } else if self.authorization_state == AppKeyAuthorizationState::Authorized
+            && self.has_profile_roster_evidence()
+        {
+            AppKeyAuthorizationState::AwaitingApproval
         } else {
             self.authorization_state
         };

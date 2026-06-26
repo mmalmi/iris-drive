@@ -933,6 +933,9 @@ private struct DevicesView: View {
 private struct AddDeviceSection: View {
     @ObservedObject var model: IrisDriveMobileModel
     @Binding var isExpanded: Bool
+    @State private var inviteQrMatrix = QrMatrix()
+    @State private var inviteQrValue = ""
+    @State private var inviteQrTask: Task<Void, Never>?
 
     private var canAddManualDevice: Bool {
         IrisDriveNativeLinkInput.isComplete(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -970,9 +973,16 @@ private struct AddDeviceSection: View {
                 .disabled(!canAddManualDevice)
 
                 if !model.appKeyLinkInvite.isEmpty {
-                    QrCodeView(matrix: model.qrMatrix(for: model.appKeyLinkInvite))
-                        .frame(width: 260, height: 260)
-                        .frame(maxWidth: .infinity, alignment: .center)
+                    if inviteQrMatrix.width > 0, inviteQrValue == model.appKeyLinkInvite {
+                        QrCodeView(matrix: inviteQrMatrix)
+                            .frame(width: 260, height: 260)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                    } else {
+                        ProgressView()
+                            .frame(width: 260, height: 260)
+                            .frame(maxWidth: .infinity, alignment: .center)
+                            .accessibilityIdentifier("inviteQrLoading")
+                    }
                     Text(model.appKeyLinkInvite)
                         .font(.footnote)
                         .foregroundStyle(.secondary)
@@ -1029,7 +1039,40 @@ private struct AddDeviceSection: View {
         }
         .onAppear {
             prefillUiTestDeviceFields()
+            renderInviteQrIfNeeded()
         }
+        .onChange(of: isExpanded) { _, _ in
+            renderInviteQrIfNeeded()
+        }
+        .onChange(of: model.appKeyLinkInvite) { _, _ in
+            resetInviteQr()
+            renderInviteQrIfNeeded()
+        }
+        .onDisappear {
+            inviteQrTask?.cancel()
+            inviteQrTask = nil
+        }
+    }
+
+    private func renderInviteQrIfNeeded() {
+        let invite = model.appKeyLinkInvite.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard isExpanded, !invite.isEmpty else { return }
+        guard inviteQrValue != invite || inviteQrMatrix.width == 0 else { return }
+        inviteQrTask?.cancel()
+        inviteQrValue = invite
+        inviteQrMatrix = QrMatrix()
+        inviteQrTask = Task { @MainActor in
+            let matrix = await model.qrMatrixInBackground(for: invite)
+            guard !Task.isCancelled, inviteQrValue == invite else { return }
+            inviteQrMatrix = matrix
+        }
+    }
+
+    private func resetInviteQr() {
+        inviteQrTask?.cancel()
+        inviteQrTask = nil
+        inviteQrValue = ""
+        inviteQrMatrix = QrMatrix()
     }
 
     private func prefillUiTestDeviceFields() {

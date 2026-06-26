@@ -139,6 +139,13 @@ final class IrisDriveNativeCore {
     }
 
     func qrMatrix(text: String) -> QrMatrix {
+        #if DEBUG
+        let debugDelay = ProcessInfo.processInfo.environment["IRIS_DRIVE_DEBUG_QR_DELAY_MS"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if let delayMs = UInt64(debugDelay), delayMs > 0 {
+            Thread.sleep(forTimeInterval: Double(delayMs) / 1000)
+        }
+        #endif
         let json = text.withCString { pointer in
             takeString(irisDriveQrMatrixJson(pointer))
         }
@@ -681,7 +688,7 @@ struct NativeAppKeyLinkRequest: Codable {
     }
 }
 
-struct QrMatrix: Codable, Equatable {
+struct QrMatrix: Codable, Equatable, Sendable {
     var width: Int = 0
     var cells: [Bool] = []
     var error: String = ""

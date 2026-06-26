@@ -441,6 +441,32 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTAssertTrue(tabButton("Devices", in: app).isSelected)
     }
 
+    func testDevicesTabDoesNotWaitForInviteQrRendering() throws {
+        let baseDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iris-drive-ui-test-devices-qr-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: baseDir, withIntermediateDirectories: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: baseDir)
+        }
+        let app = launchApp(environment: [
+            "IRIS_DRIVE_UI_TEST_BASE_DIR": baseDir.path,
+            "IRIS_DRIVE_DEBUG_QR_DELAY_MS": "6000",
+        ])
+        ensureMyDriveReady(in: app)
+
+        let devices = tabButton("Devices", in: app)
+        XCTAssertTrue(devices.waitForExistence(timeout: 10))
+        let started = Date()
+        devices.tap()
+
+        XCTAssertTrue(app.navigationBars["Devices"].waitForExistence(timeout: 3), app.debugDescription)
+        XCTAssertLessThan(Date().timeIntervalSince(started), 4)
+        XCTAssertFalse(
+            app.staticTexts["No devices yet"].exists,
+            "Fresh profile should at least show the current device. Static texts:\n\(staticTextLabels(in: app))"
+        )
+    }
+
     func testSharesTabExposesSharingView() throws {
         let app = launchApp()
         ensureMyDriveReady(in: app)

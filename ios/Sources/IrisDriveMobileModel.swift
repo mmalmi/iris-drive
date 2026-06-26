@@ -1262,6 +1262,16 @@ final class IrisDriveMobileModel: ObservableObject {
         runNative { $0.qrMatrix(text: value) }
     }
 
+    func qrMatrixInBackground(for value: String) async -> QrMatrix {
+        let nativeCore = nativeCore
+        let nativeCoreQueue = nativeCoreQueue
+        return await withCheckedContinuation { continuation in
+            nativeCoreQueue.async {
+                continuation.resume(returning: nativeCore.qrMatrix(text: value))
+            }
+        }
+    }
+
     func copySnapshotLink() {
         guard !snapshotLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
         copyToClipboard(snapshotLink, feedback: "drive.iris.to link copied")
