@@ -415,7 +415,7 @@ async fn download_roots(
     if report.fips_download.is_none() && !config.blossom_servers.is_empty() {
         match download_roots_over_blossom(config_dir, config, root_cid_strs).await {
             Ok(download) => report.blossom_download = Some(download),
-            Err(error) => report.blossom_download_error = Some(error.to_string()),
+            Err(error) => report.blossom_download_error = Some(format!("{error:#}")),
         }
     }
 }

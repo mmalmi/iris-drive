@@ -624,6 +624,13 @@ pub fn app_keys_from_profile_projection(
     if app_key_pubkeys.is_empty() {
         return None;
     }
+    if !projection
+        .active_facets
+        .values()
+        .any(|facet| facet.is_app_key() && facet.capabilities.can_admin_profile)
+    {
+        return None;
+    }
     let mut app_actors = projection
         .active_facets
         .values()

@@ -559,6 +559,8 @@ pub(crate) const APP_KEY_LINK_ROSTER_STARTUP_RETRY_SECS: u64 = 2;
 pub(crate) const APP_KEY_LINK_ROSTER_STEADY_RETRY_SECS: u64 = 60;
 pub(crate) const APP_KEY_LINK_ROSTER_STARTUP_BURST_ATTEMPTS: u8 = 5;
 pub(crate) const APP_KEY_LINK_TICK_MILLIS: u64 = 1_000;
+const APP_KEY_LINK_RELAY_PUBLISH_TIMEOUT_SECS: u64 = 5;
+const APP_KEY_LINK_FIPS_SEND_TIMEOUT_SECS: u64 = 2;
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct SentAppKeyLinkRequest {
@@ -679,23 +681,33 @@ pub(crate) async fn send_pending_app_key_link_request(
     let bytes = serde_json::to_vec(&frame)?;
     let device =
         iris_drive_core::AppKey::load(key_path_in(config_dir)).context("loading app key")?;
-    let relay_event_id =
-        iris_drive_core::relay_sync::publish_app_key_link_request(client, device.keys(), &frame)
-            .await?;
+    let relay_event_id = tokio::time::timeout(
+        std::time::Duration::from_secs(APP_KEY_LINK_RELAY_PUBLISH_TIMEOUT_SECS),
+        iris_drive_core::relay_sync::publish_app_key_link_request(client, device.keys(), &frame),
+    )
+    .await
+    .context("publishing AppKey-link request timed out")??;
     let mut fips_sent = false;
     let mut fips_error = None;
     if let Some(sync) = fips_blocks {
         sync.refresh_authorized_peers(&config).await;
-        match sync
-            .send_app_message(&admin_npub, APP_KEY_LINK_REQUEST_APP_TOPIC, bytes.clone())
-            .await
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(APP_KEY_LINK_FIPS_SEND_TIMEOUT_SECS),
+            sync.send_app_message(&admin_npub, APP_KEY_LINK_REQUEST_APP_TOPIC, bytes.clone()),
+        )
+        .await
         {
-            Ok(()) => {
-                fips_sent = true;
+            Err(_) => {
+                fips_error = Some("timed out sending AppKey-link request over FIPS".to_string());
             }
-            Err(error) => {
-                fips_error = Some(error.to_string());
-            }
+            Ok(result) => match result {
+                Ok(()) => {
+                    fips_sent = true;
+                }
+                Err(error) => {
+                    fips_error = Some(error.to_string());
+                }
+            },
         }
     }
     let attempts = sent_cache

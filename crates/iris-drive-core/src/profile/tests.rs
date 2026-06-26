@@ -1176,6 +1176,59 @@ fn authorization_waits_for_profile_key_epoch() {
 }
 
 #[test]
+fn authorization_waits_for_admin_roster_facet() {
+    let owner_dir = tempdir().unwrap();
+    let mut owner = Profile::create(owner_dir.path(), Some("owner".into())).unwrap();
+    let linked_dir = tempdir().unwrap();
+    let mut linked = Profile::link_to_profile(
+        linked_dir.path(),
+        owner.state.profile_id,
+        owner.state.app_key_pubkey.clone(),
+        Some("phone".into()),
+    )
+    .unwrap();
+
+    owner
+        .approve_app_key(&linked.state.app_key_pubkey, Some("phone".into()))
+        .unwrap();
+    linked.state.profile_roster_ops = owner
+        .state
+        .profile_roster_ops
+        .iter()
+        .filter(|op| {
+            let event = Event::from_json(&op.event_json).unwrap();
+            let parsed = parse_iris_profile_roster_op_event(&event).unwrap();
+            !matches!(
+                parsed.content.op,
+                IrisProfileRosterOp::AddFacet { ref facet }
+                    if facet.pubkey == owner.state.app_key_pubkey
+            )
+        })
+        .cloned()
+        .collect();
+    linked.state.app_keys = None;
+    linked.state.profile_roster_projection = None;
+
+    linked.state.recompute_authorization();
+
+    assert_eq!(
+        linked.state.authorization_state,
+        AppKeyAuthorizationState::AwaitingApproval
+    );
+    assert!(linked.state.current_app_keys_projection().is_none());
+
+    linked.state.profile_roster_ops = owner.state.profile_roster_ops.clone();
+    linked.state.profile_roster_projection = None;
+    linked.state.recompute_authorization();
+
+    assert_eq!(
+        linked.state.authorization_state,
+        AppKeyAuthorizationState::Authorized
+    );
+    assert!(linked.state.current_app_keys_projection().is_some());
+}
+
+#[test]
 fn approve_rotates_dck_generation_and_wraps_to_all_devices() {
     let dir = tempdir().unwrap();
     let mut acct = Profile::create(dir.path(), None).unwrap();

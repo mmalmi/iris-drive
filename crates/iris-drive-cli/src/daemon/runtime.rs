@@ -783,6 +783,31 @@ pub(crate) fn cmd_daemon(
                     }
                 }
                 _ = app_key_link_timer.tick() => {
+                    match backfill_pending_app_key_link_roster_ops(
+                        &client,
+                        config_dir,
+                        fips_blocks.clone(),
+                        mount_refresh_tx.clone(),
+                        &daemon_tasks,
+                    )
+                    .await
+                    {
+                        Ok(Some(outcome)) if outcome.should_announce_current_state() => {
+                            direct_roots.invalidate_current_sync_events_cache();
+                            direct_root_change_announce_pending = true;
+                            direct_root_change_announce_timer.as_mut().reset(
+                                tokio::time::Instant::now()
+                                    + std::time::Duration::from_millis(
+                                        DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS,
+                                    ),
+                            );
+                        }
+                        Ok(_) => {}
+                        Err(error) => println!(
+                            "{}",
+                            json!({"event": "app_key_link_roster_backfill_error", "error": format!("{error:#}")})
+                        ),
+                    }
                     match send_pending_app_key_link_request(
                         config_dir,
                         &client,
@@ -1004,4 +1029,57 @@ pub(crate) fn cmd_daemon(
         relay_sync::shutdown_client_for_process_exit(client).await;
         Ok::<_, anyhow::Error>(())
     })
+}
+
+async fn backfill_pending_app_key_link_roster_ops(
+    client: &nostr_sdk::Client,
+    config_dir: &Path,
+    fips_blocks: Option<Arc<FsFipsBlockSync>>,
+    mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
+    daemon_tasks: &DaemonTaskSet,
+) -> Result<Option<EventApplyOutcome>> {
+    let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
+    let Some(state) = config.profile.as_ref() else {
+        return Ok(None);
+    };
+    if state.authorization_state != iris_drive_core::AppKeyAuthorizationState::AwaitingApproval
+        || state.outbound_app_key_link_request.is_none()
+    {
+        return Ok(None);
+    }
+
+    let events = iris_drive_core::relay_sync::fetch_iris_profile_roster_ops(
+        client,
+        state.profile_id,
+        std::time::Duration::from_secs(2),
+    )
+    .await
+    .context("fetching pending AppKey-link roster ops")?;
+
+    let mut changed = false;
+    let mut retryable = false;
+    for event in events {
+        match apply_one_event(
+            client,
+            config_dir,
+            &event,
+            fips_blocks.clone(),
+            mount_refresh.clone(),
+            daemon_tasks,
+        )
+        .await?
+        {
+            EventApplyOutcome::Changed => changed = true,
+            EventApplyOutcome::RetryablePrerequisiteMissing => retryable = true,
+            EventApplyOutcome::Unchanged => {}
+        }
+    }
+
+    if changed {
+        Ok(Some(EventApplyOutcome::Changed))
+    } else if retryable {
+        Ok(Some(EventApplyOutcome::RetryablePrerequisiteMissing))
+    } else {
+        Ok(Some(EventApplyOutcome::Unchanged))
+    }
 }
