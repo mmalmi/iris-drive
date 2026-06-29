@@ -9,7 +9,7 @@ use thiserror::Error;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::CONFIG_SCHEMA_VERSION;
-use crate::iris_profile::IrisProfileId;
+use crate::nostr_identity::NostrIdentityId;
 use crate::profile::ProfileState;
 use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
 use crate::sharing::{ShareShortcut, SharedFolder};
@@ -42,7 +42,7 @@ pub const DEFAULT_BLOSSOM_SERVERS: &[&str] = &["https://upload.iris.to"];
 #[serde(deny_unknown_fields)]
 pub struct AppConfig {
     pub schema_version: u32,
-    /// Local `IrisProfile` state. `None` until the user has run a create /
+    /// Local `NostrIdentity` state. `None` until the user has run a create /
     /// restore / link flow.
     #[serde(default, alias = "account")]
     pub profile: Option<ProfileState>,
@@ -164,7 +164,7 @@ impl AppConfig {
     }
 
     #[must_use]
-    pub fn shared_folder(&self, share_id: IrisProfileId) -> Option<&SharedFolder> {
+    pub fn shared_folder(&self, share_id: NostrIdentityId) -> Option<&SharedFolder> {
         self.shared_folders
             .iter()
             .find(|share| share.share_id == share_id)
@@ -184,7 +184,7 @@ impl AppConfig {
         }
     }
 
-    pub fn remove_shared_folder(&mut self, share_id: IrisProfileId) -> Option<SharedFolder> {
+    pub fn remove_shared_folder(&mut self, share_id: NostrIdentityId) -> Option<SharedFolder> {
         let pos = self
             .shared_folders
             .iter()
@@ -208,7 +208,7 @@ impl AppConfig {
 
     pub fn remove_share_shortcuts_for_share(
         &mut self,
-        share_id: IrisProfileId,
+        share_id: NostrIdentityId,
     ) -> Vec<ShareShortcut> {
         let mut removed = Vec::new();
         self.share_shortcuts.retain(|shortcut| {
@@ -257,7 +257,7 @@ impl AppConfig {
         Self::load_or_default_with_profile_sync(path, true)
     }
 
-    /// Load from path without reprojecting `IrisProfile` roster ops.
+    /// Load from path without reprojecting `NostrIdentity` roster ops.
     ///
     /// Read-only hot paths such as daemon startup, status refresh, and gateway
     /// requests should use the cached app-key projection persisted in config
@@ -291,7 +291,7 @@ impl AppConfig {
                 app_keys.profile_id = account.profile_id.to_string();
             }
             let adopted = sync_profile && account.adopt_single_roster_profile_id();
-            if !adopted && sync_profile {
+            if !adopted && sync_profile && account.has_profile_roster_evidence() {
                 account.sync_app_keys_from_profile();
             }
             adopted.then(|| account.root_scope_id())
@@ -467,7 +467,7 @@ impl DriveRole {
 }
 
 /// A drive is one logical mount-point. The user's primary "My Drive" is
-/// stored as `drive_id = "main", role = Owner, root_scope_id = IrisProfileId`.
+/// stored as `drive_id = "main", role = Owner, root_scope_id = NostrIdentityId`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 pub struct Drive {
@@ -613,7 +613,7 @@ impl Drive {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{IrisProfileRosterOp, parse_iris_profile_roster_op_event};
+    use crate::{NostrIdentityRosterOp, parse_nostr_identity_roster_op_event};
     use nostr_sdk::{Event, JsonUtil};
     use tempfile::tempdir;
 
@@ -867,9 +867,9 @@ dck_generation = 1
     #[test]
     fn round_trip_through_toml() {
         let mut cfg = AppConfig::default();
-        cfg.upsert_drive(Drive::primary(crate::IrisProfileId::new_v4().to_string()));
+        cfg.upsert_drive(Drive::primary(crate::NostrIdentityId::new_v4().to_string()));
         cfg.upsert_drive(Drive {
-            root_scope_id: crate::IrisProfileId::new_v4().to_string(),
+            root_scope_id: crate::NostrIdentityId::new_v4().to_string(),
             drive_id: "shared-photos".into(),
             display_name: "Photos from Alice".into(),
             role: DriveRole::Reader,
@@ -944,11 +944,11 @@ dck_generation = 1
             .iter()
             .filter(|op| {
                 let event = Event::from_json(&op.event_json).unwrap();
-                let parsed = parse_iris_profile_roster_op_event(&event).unwrap();
+                let parsed = parse_nostr_identity_roster_op_event(&event).unwrap();
                 !matches!(
                     parsed.content.op,
-                    IrisProfileRosterOp::RotateKeyEpoch { .. }
-                        | IrisProfileRosterOp::RepairKeyWraps { .. }
+                    NostrIdentityRosterOp::RotateSecretEpoch { .. }
+                        | NostrIdentityRosterOp::RepairSecretWraps { .. }
                 )
             })
             .cloned()
@@ -1014,7 +1014,7 @@ dck_generation = 1
 
         let mut newer = AppConfig {
             profile: Some(ProfileState {
-                profile_id: crate::IrisProfileId::new_v4(),
+                profile_id: crate::NostrIdentityId::new_v4(),
                 app_key_pubkey: "device-a".into(),
                 profile_roster_ops: Vec::new(),
                 app_key_link_secret: "link-secret".into(),
@@ -1028,7 +1028,7 @@ dck_generation = 1
             }),
             ..AppConfig::default()
         };
-        let mut newer_drive = Drive::primary(crate::IrisProfileId::new_v4().to_string());
+        let mut newer_drive = Drive::primary(crate::NostrIdentityId::new_v4().to_string());
         newer_drive.app_key_roots.insert(
             "device-a".into(),
             AppKeyRootRef {
@@ -1080,7 +1080,7 @@ dck_generation = 1
         let path = dir.path().join("config.toml");
 
         let mut older = AppConfig::default();
-        let mut older_drive = Drive::primary(crate::IrisProfileId::new_v4().to_string());
+        let mut older_drive = Drive::primary(crate::NostrIdentityId::new_v4().to_string());
         older_drive.app_key_roots.insert(
             "device-a".into(),
             AppKeyRootRef {
@@ -1269,7 +1269,7 @@ dck_generation = 1
     #[test]
     fn upsert_replaces_by_drive_id() {
         let mut cfg = AppConfig::default();
-        let root_scope_id = crate::IrisProfileId::new_v4().to_string();
+        let root_scope_id = crate::NostrIdentityId::new_v4().to_string();
         assert!(cfg.upsert_drive(Drive::primary(root_scope_id.clone())));
         let mut updated = Drive::primary(root_scope_id);
         updated.display_name = "Renamed".into();
@@ -1281,7 +1281,7 @@ dck_generation = 1
     #[test]
     fn remove_drive_returns_removed() {
         let mut cfg = AppConfig::default();
-        let root_scope_id = crate::IrisProfileId::new_v4().to_string();
+        let root_scope_id = crate::NostrIdentityId::new_v4().to_string();
         cfg.upsert_drive(Drive::primary(root_scope_id.clone()));
         let removed = cfg.remove_drive("main").unwrap();
         assert_eq!(removed.root_scope_id, root_scope_id);
@@ -1313,7 +1313,7 @@ dck_generation = 1
 
     #[test]
     fn primary_drive_uses_root_scope_named_main() {
-        let root_scope_id = crate::IrisProfileId::new_v4().to_string();
+        let root_scope_id = crate::NostrIdentityId::new_v4().to_string();
         let d = Drive::primary(root_scope_id.clone());
         assert_eq!(d.drive_id, "main");
         assert_eq!(d.root_scope_id, root_scope_id);

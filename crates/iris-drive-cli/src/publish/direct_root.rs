@@ -963,7 +963,7 @@ fn append_profile_roster_events(
 ) -> Result<()> {
     for op in &state.profile_roster_ops {
         let event =
-            Event::from_json(&op.event_json).context("parsing IrisProfile roster op event")?;
+            Event::from_json(&op.event_json).context("parsing NostrIdentity roster op event")?;
         events.push(direct_root_event(
             format!("profile-op:{}:{}", state.profile_id, op.op_id),
             &event,

@@ -583,7 +583,7 @@ fn startup_root_sync_collects_unsynced_remote_roots() {
     let mut projected = AppKeyRootRef::legacy("local-only", 30, 1);
     projected.local_only = true;
     let mut drive = Drive {
-        root_scope_id: iris_drive_core::IrisProfileId::new_v4().to_string(),
+        root_scope_id: iris_drive_core::NostrIdentityId::new_v4().to_string(),
         drive_id: PRIMARY_DRIVE_ID.to_string(),
         display_name: "My Drive".to_string(),
         role: DriveRole::Owner,
@@ -617,7 +617,7 @@ fn startup_root_sync_collects_unsynced_remote_roots() {
 fn startup_root_sync_retries_failed_remote_roots() {
     let config_dir = tempfile::tempdir().unwrap();
     let mut drive = Drive {
-        root_scope_id: iris_drive_core::IrisProfileId::new_v4().to_string(),
+        root_scope_id: iris_drive_core::NostrIdentityId::new_v4().to_string(),
         drive_id: PRIMARY_DRIVE_ID.to_string(),
         display_name: "My Drive".to_string(),
         role: DriveRole::Owner,

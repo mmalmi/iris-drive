@@ -41,11 +41,11 @@ pub mod gateway;
 pub mod history;
 pub mod identity;
 pub mod indexer;
-pub mod iris_profile;
 pub mod link_input;
 pub mod merge;
 pub mod network_sync;
 pub mod nostr_events;
+pub mod nostr_identity;
 pub mod paths;
 pub mod projection;
 pub mod provider;
@@ -89,21 +89,6 @@ pub use indexer::{
     IndexError, filter_ignored_entries_from_root, index_dir, layer_conflict_records,
     path_has_ignored_component, read_conflict_records, should_ignore_name,
 };
-pub use iris_profile::{
-    IRIS_PROFILE_FACET_ACCEPTANCE_SCHEMA, IRIS_PROFILE_ROSTER_SCHEMA, IrisProfileCapabilities,
-    IrisProfileError, IrisProfileFacet, IrisProfileFacetAcceptanceContent, IrisProfileId,
-    IrisProfileKeyEpoch, IrisProfileKeyPurpose, IrisProfileRosterLog, IrisProfileRosterOp,
-    IrisProfileRosterOpContent, IrisProfileRosterProjection, IrisProfileTombstone,
-    KIND_IRIS_PROFILE_FACET_ACCEPTANCE, KIND_IRIS_PROFILE_ROSTER_OP, KeyWrapStatus,
-    SignedIrisProfileFacetAcceptance, SignedIrisProfileRosterOp,
-    build_iris_profile_facet_acceptance_event, build_iris_profile_roster_op_event,
-    iris_profile_candidate_ids_for_pubkey_from_events, iris_profile_facet_acceptance_d_tag,
-    iris_profile_ids_from_facet_acceptances, iris_profile_roster_op_d_tag,
-    iris_profile_roster_parent_ids, iris_profile_tag_kind,
-    is_iris_profile_facet_acceptance_event_coordinate, is_iris_profile_roster_op_event_coordinate,
-    parse_iris_profile_facet_acceptance_event, parse_iris_profile_roster_op_event,
-    project_iris_profile_roster,
-};
 pub use link_input::{
     AppKeyLinkTarget, LinkInputClassification, classify_link_input, normalize_app_key_pubkey,
     resolve_app_key_link_target,
@@ -120,9 +105,27 @@ pub use network_sync::{
     drive_root_recipient_app_key_pubkeys, drive_root_writer_app_key_pubkeys,
     sync_once as network_sync_once, sync_once_with_fips, sync_once_with_options,
 };
+pub use nostr_identity::{
+    KIND_NOSTR_IDENTITY_FACET_ACCEPTANCE, KIND_NOSTR_IDENTITY_ROSTER_OP,
+    NOSTR_IDENTITY_FACET_ACCEPTANCE_SCHEMA, NOSTR_IDENTITY_ROSTER_SCHEMA,
+    NostrIdentityCapabilities, NostrIdentityError, NostrIdentityFacet,
+    NostrIdentityFacetAcceptanceContent, NostrIdentityId, NostrIdentityKeyPurpose,
+    NostrIdentityRosterLog, NostrIdentityRosterOp, NostrIdentityRosterOpContent,
+    NostrIdentityRosterProjection, NostrIdentitySecretEpoch, NostrIdentityTombstone,
+    SecretWrapStatus, SignedNostrIdentityFacetAcceptance, SignedNostrIdentityRosterOp,
+    build_nostr_identity_facet_acceptance_event, build_nostr_identity_roster_op_event,
+    is_nostr_identity_facet_acceptance_event_coordinate,
+    is_nostr_identity_roster_op_event_coordinate,
+    nostr_identity_candidate_ids_for_pubkey_from_events, nostr_identity_facet_acceptance_d_tag,
+    nostr_identity_ids_from_facet_acceptances, nostr_identity_roster_op_d_tag,
+    nostr_identity_roster_parent_ids, nostr_identity_tag_kind,
+    parse_nostr_identity_facet_acceptance_event, parse_nostr_identity_roster_op_event,
+    project_nostr_identity_roster,
+};
 pub use profile::{
-    AppKeyAuthorizationState, KeyWrapRepairOutcome, Profile, ProfileError, ProfileLogoutReport,
-    ProfileState, app_key_link_invite_keys, app_key_link_invite_pubkey, logout_local_profile,
+    AppKeyAuthorizationState, Profile, ProfileError, ProfileLogoutReport, ProfileState,
+    SecretWrapRepairOutcome, app_key_link_invite_keys, app_key_link_invite_pubkey,
+    logout_local_profile,
 };
 pub use projection::{
     PrimaryMergedRoot, PrimaryMergedView, ProjectionError, primary_merged_root,
@@ -178,6 +181,7 @@ pub const CONFIG_SCHEMA_VERSION: u32 = 5;
 
 #[cfg(test)]
 mod tests {
+    use nostr_identity::IdentityRosterOp;
     use nostr_sdk::Keys;
 
     #[test]
@@ -188,5 +192,34 @@ mod tests {
 
         assert_eq!(client.write_servers(), std::slice::from_ref(&write_server));
         assert_eq!(client.read_servers(), std::slice::from_ref(&write_server));
+    }
+
+    #[test]
+    fn nostr_identity_app_key_labels_are_not_written_to_identity_roster_events() {
+        let keys = Keys::generate();
+        let profile_id = super::NostrIdentityId::new_v4();
+        let event = super::build_nostr_identity_roster_op_event(
+            &keys,
+            profile_id,
+            Vec::new(),
+            None,
+            super::NostrIdentityRosterOp::AddFacet {
+                facet: super::NostrIdentityFacet::app_key(
+                    keys.public_key().to_hex(),
+                    1,
+                    Some("Pixel".to_owned()),
+                    super::NostrIdentityCapabilities::app_admin(),
+                ),
+            },
+            1,
+        )
+        .unwrap();
+
+        let signed = nostr_identity::parse_identity_roster_op_event(&event).unwrap();
+        let IdentityRosterOp::AddKey { key } = signed.content.op else {
+            panic!("expected add-key profile op");
+        };
+
+        assert_eq!(key.label, None);
     }
 }

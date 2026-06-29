@@ -9,7 +9,7 @@ use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::{FromBech32, ToBech32};
 use serde::{Deserialize, Serialize};
 
-use crate::IrisProfileId;
+use crate::NostrIdentityId;
 
 pub const APP_KEY_LINK_INVITE_PREFIX: &str = "https://drive.iris.to/invite/";
 pub const APP_KEY_LINK_INVITE_WEB_PREFIX: &str = APP_KEY_LINK_INVITE_PREFIX;
@@ -19,20 +19,20 @@ pub const APP_KEY_LINK_INVITE_VERSION: u8 = 1;
 #[serde(rename_all = "camelCase")]
 struct AppKeyLinkInvitePayload {
     v: u8,
-    profile_id: IrisProfileId,
+    profile_id: NostrIdentityId,
     admin_app_key_npub: String,
     invite_npub: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedAppKeyLinkInvite {
-    pub profile_id: Option<IrisProfileId>,
+    pub profile_id: Option<NostrIdentityId>,
     pub admin_app_key_hex: String,
     pub invite_pubkey: String,
 }
 
 pub fn encode_app_key_link_invite(
-    profile_id: IrisProfileId,
+    profile_id: NostrIdentityId,
     admin_app_key_hex: &str,
     invite_pubkey: &str,
 ) -> Result<String> {
@@ -137,7 +137,7 @@ mod tests {
 
     #[test]
     fn canonical_invite_round_trips_profile_admin_and_invite_pubkey() {
-        let profile_id = IrisProfileId::new_v4();
+        let profile_id = NostrIdentityId::new_v4();
         let admin = Keys::generate().public_key();
         let invite = Keys::generate().public_key();
 
@@ -158,7 +158,7 @@ mod tests {
 
     #[test]
     fn custom_scheme_invite_is_not_canonical_input() {
-        let profile_id = IrisProfileId::new_v4();
+        let profile_id = NostrIdentityId::new_v4();
         let admin = Keys::generate().public_key();
         let invite = Keys::generate().public_key();
         let url = encode_app_key_link_invite(profile_id, &admin.to_hex(), &invite.to_hex())

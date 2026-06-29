@@ -6,7 +6,7 @@ use nostr_sdk::nips::nip19::FromBech32;
 use serde::{Deserialize, Serialize};
 
 use crate::config::AppConfig;
-use crate::iris_profile::IrisProfileId;
+use crate::nostr_identity::NostrIdentityId;
 use crate::paths::{config_path_in, key_path_in};
 use crate::profile::Profile;
 use crate::sharing::{
@@ -28,11 +28,11 @@ pub enum ShareAction {
         display_name: Option<String>,
     },
     DeleteShare {
-        share_id: IrisProfileId,
+        share_id: NostrIdentityId,
     },
     InviteShareMember {
-        share_id: IrisProfileId,
-        profile_id: IrisProfileId,
+        share_id: NostrIdentityId,
+        profile_id: NostrIdentityId,
         app_key: String,
         role: ShareRole,
         #[serde(default)]
@@ -43,14 +43,14 @@ pub enum ShareAction {
         label: Option<String>,
     },
     InviteShareMemberFromEvidence {
-        share_id: IrisProfileId,
+        share_id: NostrIdentityId,
         evidence_json: String,
         role: ShareRole,
         #[serde(default)]
         display_name: Option<String>,
     },
     RecordPendingShareInvite {
-        share_id: IrisProfileId,
+        share_id: NostrIdentityId,
         representative_npub_hint: String,
         role: ShareRole,
         #[serde(default)]
@@ -60,18 +60,18 @@ pub enum ShareAction {
         invite: String,
     },
     RevokeShareMember {
-        share_id: IrisProfileId,
-        profile_id: IrisProfileId,
+        share_id: NostrIdentityId,
+        profile_id: NostrIdentityId,
         #[serde(default)]
         reason: Option<String>,
     },
     SetShareMemberRole {
-        share_id: IrisProfileId,
-        profile_id: IrisProfileId,
+        share_id: NostrIdentityId,
+        profile_id: NostrIdentityId,
         role: ShareRole,
     },
     AddShareShortcut {
-        share_id: IrisProfileId,
+        share_id: NostrIdentityId,
         #[serde(default)]
         path: Option<String>,
         #[serde(default)]
@@ -80,7 +80,7 @@ pub enum ShareAction {
         target_path: Option<String>,
     },
     RepairShareWraps {
-        share_id: IrisProfileId,
+        share_id: NostrIdentityId,
     },
 }
 
@@ -88,9 +88,9 @@ pub enum ShareAction {
 pub struct ShareActionResult {
     pub shares: Vec<SharedFolderView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub share_id: Option<IrisProfileId>,
+    pub share_id: Option<NostrIdentityId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile_id: Option<IrisProfileId>,
+    pub profile_id: Option<NostrIdentityId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub role: Option<ShareRole>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -113,8 +113,8 @@ pub struct ShareActionResult {
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 struct ShareActionMetadata {
-    share_id: Option<IrisProfileId>,
-    profile_id: Option<IrisProfileId>,
+    share_id: Option<NostrIdentityId>,
+    profile_id: Option<NostrIdentityId>,
     role: Option<ShareRole>,
     epoch: Option<u64>,
     last_share_invite: Option<String>,
@@ -304,8 +304,8 @@ fn apply_share_action(
 fn revoke_share_member_action(
     config_dir: &Path,
     config: &mut AppConfig,
-    share_id: IrisProfileId,
-    profile_id: IrisProfileId,
+    share_id: NostrIdentityId,
+    profile_id: NostrIdentityId,
     reason: Option<String>,
     now_seconds: i64,
 ) -> Result<ShareActionMetadata> {
@@ -351,7 +351,7 @@ fn create_share(
     })
 }
 
-fn delete_share(config: &mut AppConfig, share_id: IrisProfileId) -> Result<ShareActionMetadata> {
+fn delete_share(config: &mut AppConfig, share_id: NostrIdentityId) -> Result<ShareActionMetadata> {
     config
         .remove_shared_folder(share_id)
         .with_context(|| format!("share not found: {share_id}"))?;
@@ -365,7 +365,7 @@ fn delete_share(config: &mut AppConfig, share_id: IrisProfileId) -> Result<Share
 fn invite_share_member(
     config_dir: &Path,
     config: &mut AppConfig,
-    share_id: IrisProfileId,
+    share_id: NostrIdentityId,
     recipient: ShareRecipient,
     now_seconds: i64,
 ) -> Result<ShareActionMetadata> {
@@ -389,7 +389,7 @@ fn invite_share_member(
 fn invite_share_member_from_evidence(
     config_dir: &Path,
     config: &mut AppConfig,
-    share_id: IrisProfileId,
+    share_id: NostrIdentityId,
     evidence_json: &str,
     role: ShareRole,
     display_name: Option<String>,
@@ -424,7 +424,7 @@ fn invite_share_member_from_evidence(
 fn record_pending_invite(
     config_dir: &Path,
     config: &mut AppConfig,
-    share_id: IrisProfileId,
+    share_id: NostrIdentityId,
     representative_npub_hint: &str,
     role: ShareRole,
     display_name: Option<String>,
@@ -476,8 +476,8 @@ fn accept_share_invite(
 fn revoke_share_member(
     config_dir: &Path,
     config: &mut AppConfig,
-    share_id: IrisProfileId,
-    profile_id: IrisProfileId,
+    share_id: NostrIdentityId,
+    profile_id: NostrIdentityId,
     reason: Option<&str>,
     now_seconds: i64,
 ) -> Result<ShareActionMetadata> {
@@ -506,8 +506,8 @@ fn revoke_share_member(
 fn set_share_member_role(
     config_dir: &Path,
     config: &mut AppConfig,
-    share_id: IrisProfileId,
-    profile_id: IrisProfileId,
+    share_id: NostrIdentityId,
+    profile_id: NostrIdentityId,
     role: ShareRole,
     now_seconds: i64,
 ) -> Result<ShareActionMetadata> {
@@ -534,7 +534,7 @@ fn set_share_member_role(
 
 fn add_share_shortcut(
     config: &mut AppConfig,
-    share_id: IrisProfileId,
+    share_id: NostrIdentityId,
     path: Option<&str>,
     parent: Option<&str>,
     target_path: Option<&str>,
@@ -567,7 +567,7 @@ fn add_share_shortcut(
 
 fn ensure_default_share_shortcut(
     config: &mut AppConfig,
-    share_id: IrisProfileId,
+    share_id: NostrIdentityId,
     display_name: &str,
 ) -> Result<Option<ShareShortcut>> {
     if config
@@ -599,7 +599,7 @@ pub fn repair_missing_share_shortcuts(config: &mut AppConfig) -> Result<bool> {
 fn repair_share_wraps(
     config_dir: &Path,
     config: &mut AppConfig,
-    share_id: IrisProfileId,
+    share_id: NostrIdentityId,
     now_seconds: i64,
 ) -> Result<ShareActionMetadata> {
     let account = load_profile(config_dir, config)?;
@@ -824,7 +824,7 @@ mod tests {
         let owner = Profile::create(owner_dir.path(), Some("Owner".into())).unwrap();
         init_config(owner_dir.path(), &owner);
         let recipient = nostr_sdk::Keys::generate();
-        let recipient_profile_id = IrisProfileId::new_v4();
+        let recipient_profile_id = NostrIdentityId::new_v4();
         let recipient_pubkey = recipient.public_key().to_hex();
 
         let created = dispatch_share_action(
@@ -963,7 +963,7 @@ mod tests {
         );
 
         let recipient_keys = nostr_sdk::Keys::generate();
-        let recipient_profile_id = IrisProfileId::new_v4();
+        let recipient_profile_id = NostrIdentityId::new_v4();
         let invited = dispatch_share_action(
             owner_dir.path(),
             ShareAction::InviteShareMember {
@@ -998,7 +998,7 @@ mod tests {
         let owner = Profile::create(owner_dir.path(), Some("Owner".into())).unwrap();
         init_config(owner_dir.path(), &owner);
         let recipient = nostr_sdk::Keys::generate();
-        let recipient_profile_id = IrisProfileId::new_v4();
+        let recipient_profile_id = NostrIdentityId::new_v4();
         let recipient_pubkey = recipient.public_key().to_hex();
 
         let share_id = dispatch_share_action(
@@ -1035,7 +1035,7 @@ mod tests {
             .unwrap();
         let current_epoch = folder
             .projection()
-            .key_epochs
+            .secret_epochs
             .keys()
             .next_back()
             .copied()
@@ -1045,7 +1045,7 @@ mod tests {
             .key_epochs
             .get_mut(&current_epoch)
             .unwrap()
-            .wrapped_dck
+            .wrapped_secrets
             .remove(&recipient_pubkey);
         assert_eq!(
             shared_folder_missing_key_wrap_pubkeys(folder, current_epoch),

@@ -11,7 +11,7 @@ pub(crate) fn normalize_pubkey(input: &str) -> Result<String> {
 
 pub(crate) fn resolve_app_key_approval_input(
     input: &str,
-    expected_profile_id: iris_drive_core::IrisProfileId,
+    expected_profile_id: iris_drive_core::NostrIdentityId,
     explicit_label: Option<String>,
 ) -> Result<(String, Option<String>)> {
     if let Some(request) = decode_app_key_approval_request(input)? {

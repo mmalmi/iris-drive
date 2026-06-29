@@ -250,7 +250,7 @@ fn provider_root_wake_payload_carries_file_count_status() {
 fn stale_root_apply_followup_detects_superseded_app_key_root() {
     let config_dir = tempfile::tempdir().unwrap();
     let mut drive = Drive {
-        root_scope_id: iris_drive_core::IrisProfileId::new_v4().to_string(),
+        root_scope_id: iris_drive_core::NostrIdentityId::new_v4().to_string(),
         drive_id: PRIMARY_DRIVE_ID.to_string(),
         display_name: "My Drive".to_string(),
         role: DriveRole::Owner,
@@ -268,7 +268,7 @@ fn stale_root_apply_followup_detects_superseded_app_key_root() {
     );
     let mut config = AppConfig {
         profile: Some(ProfileState {
-            profile_id: iris_drive_core::IrisProfileId::new_v4(),
+            profile_id: iris_drive_core::NostrIdentityId::new_v4(),
             app_key_pubkey: "device-a".to_string(),
             profile_roster_ops: Vec::new(),
             app_key_link_secret: "link-secret".to_string(),
@@ -333,7 +333,7 @@ fn stale_root_apply_followup_detects_superseded_app_key_root() {
 #[test]
 fn root_apply_followup_queue_key_groups_superseded_app_key_roots() {
     let mut drive = Drive {
-        root_scope_id: iris_drive_core::IrisProfileId::new_v4().to_string(),
+        root_scope_id: iris_drive_core::NostrIdentityId::new_v4().to_string(),
         drive_id: PRIMARY_DRIVE_ID.to_string(),
         display_name: "My Drive".to_string(),
         role: DriveRole::Owner,
@@ -351,7 +351,7 @@ fn root_apply_followup_queue_key_groups_superseded_app_key_roots() {
     );
     let mut config = AppConfig {
         profile: Some(ProfileState {
-            profile_id: iris_drive_core::IrisProfileId::new_v4(),
+            profile_id: iris_drive_core::NostrIdentityId::new_v4(),
             app_key_pubkey: "device-a".to_string(),
             profile_roster_ops: Vec::new(),
             app_key_link_secret: "link-secret".to_string(),

@@ -415,7 +415,7 @@ pub(crate) async fn publish_current_state(
 
     let mut report = PublishStateReport::default();
     if !state.profile_roster_ops.is_empty() {
-        match relay_publish_with_timeout(relay_sync::publish_iris_profile_roster_ops(
+        match relay_publish_with_timeout(relay_sync::publish_nostr_identity_roster_ops(
             client,
             &state.profile_roster_ops,
         ))

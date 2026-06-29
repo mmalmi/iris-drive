@@ -141,7 +141,7 @@ fn import_persists_to_blocks_dir_and_advances_root() {
     let drive_scope = v["drives"][0]["root_scope_id"].as_str().unwrap();
     assert!(
         drive_scope
-            .parse::<iris_drive_core::IrisProfileId>()
+            .parse::<iris_drive_core::NostrIdentityId>()
             .is_ok()
     );
     assert_eq!(

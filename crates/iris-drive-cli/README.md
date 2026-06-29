@@ -31,7 +31,7 @@ for linked app installs and their scoped AppKey authority.
 
 Backup targets accept Blossom URLs, FIPS AppKey npubs, `fs:/path`, and
 `lmdb:/path`. Filesystem and LMDB targets receive only encrypted hashtree blobs;
-root keys and IrisProfile recovery/AppKey material stay in the local Iris Drive config.
+root keys and NostrIdentity recovery/AppKey material stay in the local Iris Drive config.
 
 ## Repository
 

@@ -71,18 +71,18 @@ pub(crate) async fn apply_one_event(
         } else {
             EventApplyOutcome::Unchanged
         });
-    } else if iris_drive_core::is_iris_profile_roster_op_event_coordinate(event) {
-        let outcome = relay_sync::apply_remote_iris_profile_roster_op_event(&mut config, event)?;
+    } else if iris_drive_core::is_nostr_identity_roster_op_event_coordinate(event) {
+        let outcome = relay_sync::apply_remote_nostr_identity_roster_op_event(&mut config, event)?;
         emit_daemon_status_event(
             config_dir,
             json!({
-                "event": "iris_profile_roster_op",
+                "event": "nostr_identity_roster_op",
                 "event_id": event.id.to_hex(),
                 "author": pubkey_npub(&event.pubkey.to_hex()),
                 "outcome": format!("{outcome:?}"),
             }),
         );
-        if matches!(outcome, relay_sync::IrisProfileRosterOpApply::Applied) {
+        if matches!(outcome, relay_sync::NostrIdentityRosterOpApply::Applied) {
             config.save(config_path_in(config_dir))?;
             drop(config_lock);
             if let Some(sync) = fips_blocks.as_deref() {

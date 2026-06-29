@@ -1,6 +1,6 @@
 use super::*;
-use crate::iris_profile::{
-    IrisProfileCapabilities, IrisProfileFacet, IrisProfileId, IrisProfileRosterOp,
+use crate::nostr_identity::{
+    NostrIdentityCapabilities, NostrIdentityFacet, NostrIdentityId, NostrIdentityRosterOp,
 };
 use nostr_sdk::JsonUtil;
 use std::collections::BTreeMap;
@@ -19,7 +19,7 @@ fn tag_value(event: &Event, tag_name: &str) -> Option<String> {
 #[test]
 fn drive_root_event_roundtrip() {
     let device = Keys::generate();
-    let root_scope_id = IrisProfileId::new_v4().to_string();
+    let root_scope_id = NostrIdentityId::new_v4().to_string();
     let authorized_app_keys = vec![device.public_key().to_hex()];
     let root = AppKeyRootRef::legacy(
         Cid::encrypted([0x12; 32], [0x34; 32]).to_string(),
@@ -44,7 +44,7 @@ fn drive_root_event_roundtrip() {
 #[test]
 fn drive_root_event_roundtrip_preserves_causal_fields() {
     let device = Keys::generate();
-    let root_scope_id = IrisProfileId::new_v4().to_string();
+    let root_scope_id = NostrIdentityId::new_v4().to_string();
     let parent = RootParent {
         app_key_pubkey: device.public_key().to_hex(),
         app_key_seq: 2,
@@ -85,7 +85,7 @@ fn drive_root_event_roundtrip_preserves_causal_fields() {
 #[test]
 fn drive_root_event_does_not_publish_root_key_in_cleartext() {
     let device = Keys::generate();
-    let root_scope_id = IrisProfileId::new_v4().to_string();
+    let root_scope_id = NostrIdentityId::new_v4().to_string();
     let root_key = [0x44; 32];
     let root = AppKeyRootRef::legacy(
         Cid::encrypted([0x33; 32], root_key).to_string(),
@@ -115,7 +115,7 @@ fn retired_drive_root_kind_is_rejected() {
     let device = Keys::generate();
     let event = EventBuilder::new(Kind::from(30079u16), "{}".to_string())
         .tag(Tag::identifier(drive_root_d_tag(
-            &IrisProfileId::new_v4().to_string(),
+            &NostrIdentityId::new_v4().to_string(),
             "main",
         )))
         .custom_created_at(nostr_sdk::Timestamp::from(1_700_000_000))
@@ -135,7 +135,7 @@ fn retired_drive_root_kind_is_rejected() {
 fn drive_root_coordinate_does_not_match_other_30078_records() {
     let owner = Keys::generate();
     let device = Keys::generate();
-    let root_scope_id = IrisProfileId::new_v4().to_string();
+    let root_scope_id = NostrIdentityId::new_v4().to_string();
     let root = AppKeyRootRef::legacy(
         Cid::encrypted([0x33; 32], [0x44; 32]).to_string(),
         1_700_000_000,
@@ -155,18 +155,18 @@ fn drive_root_coordinate_does_not_match_other_30078_records() {
     let files_event = build_private_hashtree_root_event(&owner, "main", &root).unwrap();
     assert!(!is_drive_root_event_coordinate(&files_event));
 
-    let profile_id = IrisProfileId::new_v4();
-    let profile_event = crate::build_iris_profile_roster_op_event(
+    let profile_id = NostrIdentityId::new_v4();
+    let profile_event = crate::build_nostr_identity_roster_op_event(
         &owner,
         profile_id,
         Vec::new(),
         Some(1),
-        IrisProfileRosterOp::AddFacet {
-            facet: IrisProfileFacet::app_key(
+        NostrIdentityRosterOp::AddFacet {
+            facet: NostrIdentityFacet::app_key(
                 owner.public_key().to_hex(),
                 1_700_000_000,
                 Some("owner app".to_string()),
-                IrisProfileCapabilities::app_admin(),
+                NostrIdentityCapabilities::app_admin(),
             ),
         },
         1_700_000_000,
@@ -182,7 +182,7 @@ fn app_key_link_request_event_round_trips_and_is_its_own_coordinate() {
     let invite = Keys::generate();
     let frame = crate::app_key_link_transport::AppKeyLinkRequestFrame {
         schema: 1,
-        profile_id: crate::IrisProfileId::new_v4(),
+        profile_id: crate::NostrIdentityId::new_v4(),
         admin_app_key_pubkey: admin.public_key().to_hex(),
         app_key_pubkey: device.public_key().to_hex(),
         invite_pubkey: invite.public_key().to_hex(),
@@ -244,7 +244,7 @@ fn app_key_link_request_event_must_be_signed_by_requesting_device() {
     let invite = Keys::generate();
     let frame = crate::app_key_link_transport::AppKeyLinkRequestFrame {
         schema: 1,
-        profile_id: crate::IrisProfileId::new_v4(),
+        profile_id: crate::NostrIdentityId::new_v4(),
         admin_app_key_pubkey: Keys::generate().public_key().to_hex(),
         app_key_pubkey: device.public_key().to_hex(),
         invite_pubkey: invite.public_key().to_hex(),
@@ -292,7 +292,7 @@ fn private_hashtree_root_event_is_files_app_compatible() {
 #[test]
 fn drive_root_event_builder_rejects_unencrypted_root() {
     let device = Keys::generate();
-    let root_scope_id = IrisProfileId::new_v4().to_string();
+    let root_scope_id = NostrIdentityId::new_v4().to_string();
     let root = AppKeyRootRef::legacy(Cid::public([0x11; 32]).to_string(), 1_700_000_000, 1);
 
     assert!(
@@ -310,7 +310,7 @@ fn drive_root_event_builder_rejects_unencrypted_root() {
 #[test]
 fn drive_root_event_builder_always_wraps_for_signing_device() {
     let device = Keys::generate();
-    let root_scope_id = IrisProfileId::new_v4().to_string();
+    let root_scope_id = NostrIdentityId::new_v4().to_string();
     let root = AppKeyRootRef::legacy(
         Cid::encrypted([0x22; 32], [0x33; 32]).to_string(),
         1_700_000_000,
@@ -325,7 +325,7 @@ fn drive_root_event_builder_always_wraps_for_signing_device() {
 #[test]
 fn drive_root_event_with_zero_published_at_uses_wall_clock() {
     let device = Keys::generate();
-    let root_scope_id = IrisProfileId::new_v4().to_string();
+    let root_scope_id = NostrIdentityId::new_v4().to_string();
     let root = AppKeyRootRef::legacy(
         Cid::encrypted([0x56; 32], [0x78; 32]).to_string(),
         0, // caller has not stamped; use wall-clock time
@@ -347,7 +347,7 @@ fn drive_root_event_with_zero_published_at_uses_wall_clock() {
 #[test]
 fn drive_root_publish_event_advances_past_stored_root_timestamp() {
     let device = Keys::generate();
-    let root_scope_id = IrisProfileId::new_v4().to_string();
+    let root_scope_id = NostrIdentityId::new_v4().to_string();
     let root = AppKeyRootRef::legacy(
         Cid::encrypted([0x56; 32], [0x78; 32]).to_string(),
         1_700_000_000,
@@ -369,14 +369,14 @@ fn drive_root_publish_event_advances_past_stored_root_timestamp() {
 
 #[test]
 fn drive_root_d_tag_format() {
-    let scope = IrisProfileId::new_v4().to_string();
+    let scope = NostrIdentityId::new_v4().to_string();
     let tag = drive_root_d_tag(&scope, "main");
     assert_eq!(tag, format!("iris-drive/{scope}/main/root"));
 }
 
 #[test]
 fn drive_root_d_tag_parse_round_trip() {
-    let root_scope_id = IrisProfileId::new_v4().to_string();
+    let root_scope_id = NostrIdentityId::new_v4().to_string();
     let drive_id = "shared-photos";
     let tag = drive_root_d_tag(&root_scope_id, drive_id);
     let (parsed_scope, parsed_drive) = parse_drive_root_d_tag(&tag).unwrap();
@@ -402,7 +402,7 @@ fn drive_root_event_wrong_kind_rejected() {
     let device = Keys::generate();
     let other = EventBuilder::new(Kind::from(1u16), "{}".to_string())
         .tag(Tag::identifier(drive_root_d_tag(
-            &IrisProfileId::new_v4().to_string(),
+            &NostrIdentityId::new_v4().to_string(),
             "main",
         )))
         .sign_with_keys(&device)
@@ -420,7 +420,7 @@ fn drive_root_event_attributes_to_device_signer() {
     // merge engine can attribute each root to the right app actor.
     let device_a = Keys::generate();
     let device_b = Keys::generate();
-    let root_scope_id = IrisProfileId::new_v4().to_string();
+    let root_scope_id = NostrIdentityId::new_v4().to_string();
     let root = AppKeyRootRef::legacy(Cid::encrypted([0x88; 32], [0x99; 32]).to_string(), 0, 1);
     let ev_a = build_drive_root_event(
         &device_a,

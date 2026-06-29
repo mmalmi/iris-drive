@@ -20,7 +20,7 @@ use iris_drive_core::app_key_link_transport::{
     AppKeyApprovalRequest, encode_app_key_approval_request, parse_app_key_approval_request,
 };
 use iris_drive_core::app_key_summary::{
-    AppKeyConnectionDetails, AppKeyConnectivity, app_key_roster_rows, iris_profile_summary,
+    AppKeyConnectionDetails, AppKeyConnectivity, app_key_roster_rows, nostr_identity_summary,
     primary_status_for_setup_state, primary_status_label, setup_label_for_setup_state,
     setup_state_flags, sync_status_label,
 };
@@ -215,18 +215,18 @@ fn apply_native_app_key_link_relay_event_to_config(
         });
     }
 
-    if event.kind.as_u16() == iris_drive_core::KIND_IRIS_PROFILE_ROSTER_OP {
+    if event.kind.as_u16() == iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP {
         let outcome =
-            iris_drive_core::relay_sync::apply_remote_iris_profile_roster_op_event(config, event)
-                .map_err(|error| format!("applying IrisProfile roster relay event: {error}"))?;
+            iris_drive_core::relay_sync::apply_remote_nostr_identity_roster_op_event(config, event)
+                .map_err(|error| format!("applying NostrIdentity roster relay event: {error}"))?;
         return Ok(match outcome {
-            iris_drive_core::relay_sync::IrisProfileRosterOpApply::Applied => {
+            iris_drive_core::relay_sync::NostrIdentityRosterOpApply::Applied => {
                 NativeAppKeyLinkRelayEventApply::AppliedRoster
             }
-            iris_drive_core::relay_sync::IrisProfileRosterOpApply::Current => {
+            iris_drive_core::relay_sync::NostrIdentityRosterOpApply::Current => {
                 NativeAppKeyLinkRelayEventApply::Current
             }
-            iris_drive_core::relay_sync::IrisProfileRosterOpApply::NotOurProfile => {
+            iris_drive_core::relay_sync::NostrIdentityRosterOpApply::NotOurProfile => {
                 NativeAppKeyLinkRelayEventApply::Ignored
             }
         });
@@ -1511,7 +1511,7 @@ impl NativeAppRuntime {
                 )
             })
             .unwrap_or_default();
-        let profile = iris_profile_summary(&account);
+        let profile = nostr_identity_summary(&account);
         self.state.ui.profile = Some(UiProfile {
             profile_id: profile.profile_id,
             current_app_key_pubkey: profile.current_app_key_pubkey_hex,
@@ -2924,11 +2924,11 @@ fn export_recovery_secret_value(data_dir: &str) -> RecoverySecretExport {
             .active_facets
             .get(&recovery_pubkey)
             .is_some_and(|facet| {
-                facet.has_purpose(iris_drive_core::IrisProfileKeyPurpose::RecoveryPhrase)
+                facet.has_purpose(iris_drive_core::NostrIdentityKeyPurpose::RecoveryPhrase)
             });
     if !phrase_matches_profile {
         return RecoverySecretExport {
-            error: "recovery phrase does not match IrisProfile".to_owned(),
+            error: "recovery phrase does not match NostrIdentity".to_owned(),
             ..RecoverySecretExport::default()
         };
     }
@@ -3141,8 +3141,8 @@ fn app_actors_from_account(
             .map(|app_key| UiAppActor {
                 actor_kind: "device".to_owned(),
                 pubkey: app_key.npub.clone(),
-                label: app_key.label.clone().unwrap_or_default(),
-                display_label: app_key.display_label.clone(),
+                label: local_app_key_row_label(state, app_key),
+                display_label: local_app_key_row_display_label(state, app_key),
                 state: app_key.state.clone(),
                 state_label: app_key.state_label.clone(),
                 connection_label: app_key.connection_label.clone(),
@@ -3162,18 +3162,41 @@ fn app_actors_from_account(
     rows
 }
 
+fn local_app_key_row_label(
+    state: &iris_drive_core::ProfileState,
+    app_key: &iris_drive_core::app_key_summary::AppKeyRosterRow,
+) -> String {
+    if app_key.is_current_app_key {
+        state.app_key_label.clone().unwrap_or_default()
+    } else {
+        app_key.label.clone().unwrap_or_default()
+    }
+}
+
+fn local_app_key_row_display_label(
+    state: &iris_drive_core::ProfileState,
+    app_key: &iris_drive_core::app_key_summary::AppKeyRosterRow,
+) -> String {
+    let label = local_app_key_row_label(state, app_key);
+    if label.trim().is_empty() {
+        app_key.display_label.clone()
+    } else {
+        label
+    }
+}
+
 fn recovery_devices_from_account(state: &iris_drive_core::ProfileState) -> Vec<UiAppActor> {
     let projection = state.profile_projection();
-    let current_epoch = projection.key_epochs.keys().next_back().copied();
+    let current_epoch = projection.secret_epochs.keys().next_back().copied();
     projection
         .active_facets
         .values()
-        .filter(|facet| facet.has_purpose(iris_drive_core::IrisProfileKeyPurpose::RecoveryPhrase))
+        .filter(|facet| facet.has_purpose(iris_drive_core::NostrIdentityKeyPurpose::RecoveryPhrase))
         .map(|facet| {
             let npub = pubkey_npub(&facet.pubkey);
             let has_current_wrap = current_epoch.is_some_and(|epoch| {
-                projection.key_wrap_status(&facet.pubkey, epoch)
-                    == iris_drive_core::KeyWrapStatus::Available
+                projection.secret_wrap_status(&facet.pubkey, epoch)
+                    == iris_drive_core::SecretWrapStatus::Available
             });
             let label = facet
                 .label
@@ -3363,8 +3386,8 @@ fn inbound_app_key_link_requests(
 
 fn resolve_app_key_link_target(input: &str) -> Result<iris_drive_core::AppKeyLinkTarget, String> {
     iris_drive_core::resolve_app_key_link_target(input, None).map_err(|error| {
-        if error.to_string().contains("IrisProfile UUID") {
-            "paste an IrisProfile invite URL to link this device".to_owned()
+        if error.to_string().contains("NostrIdentity UUID") {
+            "paste an NostrIdentity invite URL to link this device".to_owned()
         } else {
             error.to_string()
         }

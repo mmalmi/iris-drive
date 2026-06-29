@@ -425,7 +425,7 @@ pub(crate) fn cmd_repair_key_wraps(config_dir: &std::path::Path) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     let mut profile = Profile::load(state, config_dir).context("loading profile")?;
     let repair = profile
-        .repair_current_key_epoch_wraps()
+        .repair_current_secret_epoch_wraps()
         .context("repairing current key epoch wraps")?;
     let remaining_missing_key_wraps = profile
         .state
@@ -500,9 +500,9 @@ fn unix_now_seconds() -> u64 {
 }
 
 pub(crate) fn profile_identity_json_map(state: &ProfileState) -> serde_json::Map<String, Value> {
-    let summary = iris_drive_core::app_key_summary::iris_profile_summary(state);
+    let summary = iris_drive_core::app_key_summary::nostr_identity_summary(state);
     let mut output = serde_json::Map::new();
-    output.insert("profile".to_string(), iris_profile_summary_json(&summary));
+    output.insert("profile".to_string(), nostr_identity_summary_json(&summary));
     output.insert("profile_id".to_string(), json!(summary.profile_id));
     output.insert(
         "current_app_key_pubkey".to_string(),
@@ -531,8 +531,8 @@ pub(crate) fn profile_identity_json_map(state: &ProfileState) -> serde_json::Map
     output
 }
 
-fn iris_profile_summary_json(
-    summary: &iris_drive_core::app_key_summary::IrisProfileSummary,
+fn nostr_identity_summary_json(
+    summary: &iris_drive_core::app_key_summary::NostrIdentitySummary,
 ) -> Value {
     json!({
         "profile_id": &summary.profile_id,

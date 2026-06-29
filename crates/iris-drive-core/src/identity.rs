@@ -4,10 +4,10 @@
 //!
 //! - [`AppKey`] (`<config>/key`) - generated for every app install
 //!   or runtime. A person can have more than one `AppKey` on the same hardware.
-//!   Authorized `AppKeys` sign drive roots and `IrisProfile` roster ops.
+//!   Authorized `AppKeys` sign drive roots and `NostrIdentity` roster ops.
 //! - [`RecoveryKey`] - a transient recovery-authority key loaded from an
 //!   nsec/hex secret or 12-word phrase. It can admit a fresh `AppKey` when that
-//!   authority is present in a roster, but it is not the stable `IrisProfile` id.
+//!   authority is present in a roster, but it is not the stable `NostrIdentity` id.
 //!
 //! Create, restore, and link all generate a fresh `AppKey`. Restore from a
 //! recovery phrase may keep that user-supplied phrase for later admission of

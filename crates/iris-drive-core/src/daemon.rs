@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use hashtree_core::{Cid, HashTree, HashTreeConfig, nhash_decode};
+use hashtree_core::{Cid, HashTree, HashTreeConfig};
 use hashtree_fs::FsBlobStore;
 use serde_json::json;
 use thiserror::Error;
@@ -60,8 +60,7 @@ impl EmbeddedHashtreeHost {
         }
 
         let runtime = hashtree_embedded::HostDaemonRuntime::start(
-            hashtree_embedded::HostDaemonOptions::new(state_root)
-                .with_initial_tree_roots(embedded_browser_initial_tree_roots()),
+            hashtree_embedded::HostDaemonOptions::new(state_root),
         )?;
         let status = runtime.status();
         Ok(Self { runtime, status })
@@ -115,23 +114,6 @@ fn embedded_browser_nostr_relays(config: &AppConfig) -> Vec<String> {
         }
     }
     relays
-}
-
-fn embedded_browser_initial_tree_roots() -> Vec<(String, Cid)> {
-    let Ok(root) = nhash_decode(crate::gateway::IRIS_SITES_PORTAL_BOOTSTRAP_NHASH) else {
-        return Vec::new();
-    };
-    vec![(
-        format!(
-            "{}/{}",
-            crate::gateway::IRIS_SITES_PORTAL_NPUB,
-            crate::gateway::IRIS_SITES_PORTAL_TREE
-        ),
-        Cid {
-            hash: root.hash,
-            key: root.decrypt_key,
-        },
-    )]
 }
 
 fn same_relay(left: &str, right: &str) -> bool {
@@ -477,6 +459,15 @@ impl Daemon {
             meta.local_only = local_only;
         }
         let mut scoped_tombstone_paths = None;
+        let projection_root = if tombstone_base_root.is_some() && drive_id == PRIMARY_DRIVE_ID {
+            Some(
+                crate::primary_merged_root(&self.tree, &self.config)
+                    .await?
+                    .root_cid,
+            )
+        } else {
+            tombstone_base_root.clone()
+        };
         let import_root = if let Some(tombstone_base_root) = tombstone_base_root.as_ref() {
             let phase = std::time::Instant::now();
             let delta = local_visible_root_for_mount_import(
@@ -484,7 +475,7 @@ impl Daemon {
                 &root,
                 previous_root.as_ref(),
                 tombstone_base_root,
-                Some(tombstone_base_root),
+                projection_root.as_ref(),
                 tombstone_paths,
             )
             .await?;

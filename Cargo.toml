@@ -42,7 +42,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.44", default-features = false, features = ["nip06", "nip44", "nip59"] }
-nostr-identity = { version = "0.1.0", path = "../nostr-social-graph/rust/crates/nostr-identity" }
+nostr-identity = "0.1.0"
 # In-flight hashtree path deps — hashtree-provider and FIPS-backed embedded
 # daemon support have not shipped to crates.io yet. Keep all hashtree crates
 # pinned to the same checkout so the Store trait and transport stack line up.

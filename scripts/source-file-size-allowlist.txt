@@ -11,7 +11,7 @@ crates/iris-drive-cli/tests/daemon_sync_matrix/scenario_tests.rs 1150 Scenario m
 crates/iris-drive-core/src/daemon/tests/mod.rs 1020 Daemon integration coverage currently shares setup helpers in one module; pending scenario/helper split.
 crates/iris-drive-core/src/gateway.rs 1360 Local gateway routing and response hardening now include the CalDAV dispatcher; pending route-module split.
 crates/iris-drive-core/src/gateway/tests.rs 1100 Local gateway route coverage includes mixed browser/API/WebDAV scenarios; pending route test-module split.
-crates/iris-drive-core/src/iris_profile.rs 2100 IrisProfile authority model needs a later roster-event-projection module split.
+crates/iris-drive-core/src/nostr_identity.rs 2100 NostrIdentity authority shim needs a later roster-event-projection module split.
 crates/iris-drive-core/src/profile.rs 1610 Profile create, recovery, admission, projection guards, and DCK flows need a later lifecycle/helper split.
 crates/iris-drive-core/src/profile/tests.rs 1100 Profile recovery and AppKey authority scenarios need a later test-module split.
 crates/iris-drive-core/src/relay_sync/tests.rs 1300 Relay/app-key/share sync coverage needs a later test-module split.

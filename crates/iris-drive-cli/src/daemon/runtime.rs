@@ -1048,7 +1048,7 @@ async fn backfill_pending_app_key_link_roster_ops(
         return Ok(None);
     }
 
-    let events = iris_drive_core::relay_sync::fetch_iris_profile_roster_ops(
+    let events = iris_drive_core::relay_sync::fetch_nostr_identity_roster_ops(
         client,
         state.profile_id,
         std::time::Duration::from_secs(2),

@@ -98,7 +98,7 @@ fn cmd_shares_create(config_dir: &Path, source_path: &str, name: Option<&str>) -
 
 fn cmd_shares_delete(config_dir: &Path, share_id: &str) -> Result<()> {
     let share_id = share_id
-        .parse::<iris_drive_core::IrisProfileId>()
+        .parse::<iris_drive_core::NostrIdentityId>()
         .context("parsing share id")?;
     let result = dispatch_cli_share_action(
         config_dir,
@@ -126,7 +126,7 @@ fn cmd_shares_list(config_dir: &Path, diagnostics: bool) -> Result<()> {
 
 fn cmd_shares_members(config_dir: &Path, share_id: &str) -> Result<()> {
     let share_id = share_id
-        .parse::<iris_drive_core::IrisProfileId>()
+        .parse::<iris_drive_core::NostrIdentityId>()
         .context("parsing share id")?;
     let result = iris_drive_core::share_action_state(config_dir).context("reading share state")?;
     let view = result
@@ -165,7 +165,7 @@ fn cmd_shares_invite(
     label: Option<String>,
 ) -> Result<()> {
     let share_id = share_id
-        .parse::<iris_drive_core::IrisProfileId>()
+        .parse::<iris_drive_core::NostrIdentityId>()
         .context("parsing share id")?;
     let role = parse_share_role(role)?;
     let action = if let Some(path) = recipient_evidence_path {
@@ -201,8 +201,8 @@ fn cmd_shares_invite(
             }
             (Some(profile_id), Some(app_key), representative_npub_hint) => {
                 let profile_id = profile_id
-                    .parse::<iris_drive_core::IrisProfileId>()
-                    .context("parsing recipient IrisProfile id")?;
+                    .parse::<iris_drive_core::NostrIdentityId>()
+                    .context("parsing recipient NostrIdentity id")?;
                 iris_drive_core::ShareAction::InviteShareMember {
                     share_id,
                     profile_id,
@@ -275,11 +275,11 @@ fn cmd_shares_revoke(
     diagnostics: bool,
 ) -> Result<()> {
     let share_id = share_id
-        .parse::<iris_drive_core::IrisProfileId>()
+        .parse::<iris_drive_core::NostrIdentityId>()
         .context("parsing share id")?;
     let profile_id = profile_id
-        .parse::<iris_drive_core::IrisProfileId>()
-        .context("parsing member IrisProfile id")?;
+        .parse::<iris_drive_core::NostrIdentityId>()
+        .context("parsing member NostrIdentity id")?;
     let result = dispatch_cli_share_action(
         config_dir,
         iris_drive_core::ShareAction::RevokeShareMember {
@@ -303,11 +303,11 @@ fn cmd_shares_revoke(
 
 fn cmd_shares_role(config_dir: &Path, share_id: &str, profile_id: &str, role: &str) -> Result<()> {
     let share_id = share_id
-        .parse::<iris_drive_core::IrisProfileId>()
+        .parse::<iris_drive_core::NostrIdentityId>()
         .context("parsing share id")?;
     let profile_id = profile_id
-        .parse::<iris_drive_core::IrisProfileId>()
-        .context("parsing member IrisProfile id")?;
+        .parse::<iris_drive_core::NostrIdentityId>()
+        .context("parsing member NostrIdentity id")?;
     let role = parse_share_role(role)?;
     let result = dispatch_cli_share_action(
         config_dir,
@@ -343,7 +343,7 @@ fn cmd_shares_shortcut(
     target_path: &str,
 ) -> Result<()> {
     let share_id = share_id
-        .parse::<iris_drive_core::IrisProfileId>()
+        .parse::<iris_drive_core::NostrIdentityId>()
         .context("parsing share id")?;
     let result = dispatch_cli_share_action(
         config_dir,
@@ -373,7 +373,7 @@ fn cmd_shares_shortcut(
 
 fn cmd_shares_repair_wraps(config_dir: &Path, share_id: &str, diagnostics: bool) -> Result<()> {
     let share_id = share_id
-        .parse::<iris_drive_core::IrisProfileId>()
+        .parse::<iris_drive_core::NostrIdentityId>()
         .context("parsing share id")?;
     let result = dispatch_cli_share_action(
         config_dir,
@@ -473,8 +473,8 @@ fn share_member_json(member: &iris_drive_core::SharedFolderMemberView) -> Value 
 fn share_revoke_result_json(
     result: &iris_drive_core::ShareActionResult,
     view: &iris_drive_core::SharedFolderView,
-    share_id: iris_drive_core::IrisProfileId,
-    profile_id: iris_drive_core::IrisProfileId,
+    share_id: iris_drive_core::NostrIdentityId,
+    profile_id: iris_drive_core::NostrIdentityId,
     diagnostics: bool,
 ) -> Value {
     let mut value = json!({
@@ -496,7 +496,7 @@ fn share_revoke_result_json(
 
 fn share_repair_result_json(
     result: &iris_drive_core::ShareActionResult,
-    share_id: iris_drive_core::IrisProfileId,
+    share_id: iris_drive_core::NostrIdentityId,
     diagnostics: bool,
 ) -> Value {
     let mut value = json!({
@@ -596,10 +596,10 @@ mod tests {
     use tempfile::tempdir;
 
     fn recipient_evidence_file(dir: &Path, recipient: &Profile, display_name: &str) -> PathBuf {
-        let acceptance_event = iris_drive_core::build_iris_profile_facet_acceptance_event(
+        let acceptance_event = iris_drive_core::build_nostr_identity_facet_acceptance_event(
             recipient.app_key.keys(),
             recipient.state.profile_id,
-            [iris_drive_core::IrisProfileKeyPurpose::AppKey],
+            [iris_drive_core::NostrIdentityKeyPurpose::AppKey],
             recipient
                 .state
                 .profile_roster_ops
@@ -615,7 +615,7 @@ mod tests {
             display_name: Some(display_name.to_string()),
             roster_ops: recipient.state.profile_roster_ops.clone(),
             acceptances: vec![
-                iris_drive_core::parse_iris_profile_facet_acceptance_event(&acceptance_event)
+                iris_drive_core::parse_nostr_identity_facet_acceptance_event(&acceptance_event)
                     .unwrap(),
             ],
         };
@@ -819,7 +819,7 @@ mod tests {
         let config_dir = tempdir().unwrap();
         let account = Profile::create(config_dir.path(), Some("Mac".into())).unwrap();
         let recipient_keys = nostr_sdk::Keys::generate();
-        let recipient_profile_id = iris_drive_core::IrisProfileId::new_v4();
+        let recipient_profile_id = iris_drive_core::NostrIdentityId::new_v4();
         let folder = iris_drive_core::create_shared_folder(
             account.app_key.keys(),
             account.state.profile_id,
@@ -870,7 +870,7 @@ mod tests {
         let config_dir = tempdir().unwrap();
         let account = Profile::create(config_dir.path(), Some("Mac".into())).unwrap();
         let recipient_keys = nostr_sdk::Keys::generate();
-        let recipient_profile_id = iris_drive_core::IrisProfileId::new_v4();
+        let recipient_profile_id = iris_drive_core::NostrIdentityId::new_v4();
         let folder = iris_drive_core::create_shared_folder(
             account.app_key.keys(),
             account.state.profile_id,
@@ -911,7 +911,7 @@ mod tests {
         let config_dir = tempdir().unwrap();
         let account = Profile::create(config_dir.path(), Some("Mac".into())).unwrap();
         let recipient_keys = nostr_sdk::Keys::generate();
-        let recipient_profile_id = iris_drive_core::IrisProfileId::new_v4();
+        let recipient_profile_id = iris_drive_core::NostrIdentityId::new_v4();
         let folder = iris_drive_core::create_shared_folder(
             account.app_key.keys(),
             account.state.profile_id,
@@ -956,21 +956,21 @@ mod tests {
                 .status,
             iris_drive_core::ShareMemberStatus::Revoked
         );
-        assert!(projection.key_epochs.contains_key(&2));
+        assert!(projection.secret_epochs.contains_key(&2));
         assert!(
             projection
-                .key_epochs
+                .secret_epochs
                 .get(&2)
                 .unwrap()
-                .wrapped_dck
+                .wrapped_secrets
                 .contains_key(&account.state.app_key_pubkey)
         );
         assert!(
             !projection
-                .key_epochs
+                .secret_epochs
                 .get(&2)
                 .unwrap()
-                .wrapped_dck
+                .wrapped_secrets
                 .contains_key(&recipient_keys.public_key().to_hex())
         );
     }
@@ -980,7 +980,7 @@ mod tests {
         let config_dir = tempdir().unwrap();
         let account = Profile::create(config_dir.path(), Some("Mac".into())).unwrap();
         let recipient_keys = nostr_sdk::Keys::generate();
-        let recipient_profile_id = iris_drive_core::IrisProfileId::new_v4();
+        let recipient_profile_id = iris_drive_core::NostrIdentityId::new_v4();
         let folder = iris_drive_core::create_shared_folder(
             account.app_key.keys(),
             account.state.profile_id,
@@ -1035,7 +1035,7 @@ mod tests {
         let config_dir = tempdir().unwrap();
         let account = Profile::create(config_dir.path(), Some("Mac".into())).unwrap();
         let recipient_keys = nostr_sdk::Keys::generate();
-        let recipient_profile_id = iris_drive_core::IrisProfileId::new_v4();
+        let recipient_profile_id = iris_drive_core::NostrIdentityId::new_v4();
         let folder = iris_drive_core::create_shared_folder(
             account.app_key.keys(),
             account.state.profile_id,
@@ -1226,7 +1226,7 @@ mod tests {
         let account = Profile::create(config_dir.path(), Some("Mac".into())).unwrap();
         let recipient_keys = nostr_sdk::Keys::generate();
         let recipient_pubkey = recipient_keys.public_key().to_hex();
-        let recipient_profile_id = iris_drive_core::IrisProfileId::new_v4();
+        let recipient_profile_id = iris_drive_core::NostrIdentityId::new_v4();
         let mut folder = iris_drive_core::create_shared_folder(
             account.app_key.keys(),
             account.state.profile_id,
@@ -1253,7 +1253,7 @@ mod tests {
         .unwrap();
         let current_epoch = folder
             .projection()
-            .key_epochs
+            .secret_epochs
             .keys()
             .next_back()
             .copied()
@@ -1263,7 +1263,7 @@ mod tests {
             .key_epochs
             .get_mut(&current_epoch)
             .unwrap()
-            .wrapped_dck
+            .wrapped_secrets
             .remove(&recipient_pubkey);
         assert_eq!(
             iris_drive_core::shared_folder_missing_key_wrap_pubkeys(&folder, current_epoch),
@@ -1292,7 +1292,7 @@ mod tests {
 
     #[test]
     fn shares_repair_json_hides_app_key_wrap_lists_without_diagnostics() {
-        let share_id = iris_drive_core::IrisProfileId::new_v4();
+        let share_id = iris_drive_core::NostrIdentityId::new_v4();
         let missing_pubkey = nostr_sdk::Keys::generate().public_key().to_hex();
         let repaired_pubkey = nostr_sdk::Keys::generate().public_key().to_hex();
         let result = iris_drive_core::ShareActionResult {

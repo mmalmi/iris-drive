@@ -159,6 +159,7 @@ require_contains scripts/ios-simulator-smoke.sh "wait_for_simulator_boot"
 require_contains scripts/ios-simulator-smoke.sh "SIMCTL_CHILD_IRIS_DRIVE_DEBUG_ACTION"
 require_contains scripts/ios-gui-linking-smoke.sh "testLinkThisDeviceFromWelcome"
 require_contains scripts/ios-gui-linking-smoke.sh "testAddLinkedDeviceFromDevices"
+require_contains scripts/ios-gui-linking-smoke.sh "testOpenIrisAppsLoadsBrowserWithoutConnectionError"
 require_contains scripts/ios-gui-linking-smoke.sh "testOpenIrisAppsLoadsBrowserWhenSyncPaused"
 require_contains scripts/ios-gui-linking-smoke.sh "testShareSheetImportsFileFromExternalSender"
 require_contains scripts/ios-gui-linking-smoke.sh "Iris Drive Share Source.app"
@@ -180,6 +181,7 @@ require_contains ios/UITests/IrisDriveIOSUITests.swift "CGVector(dx: 0.095, dy: 
 require_contains ios/UITests/IrisDriveIOSUITests.swift "Simulator Files did not expose the Iris Drive location."
 require_contains ios/UITests/IrisDriveIOSUITests.swift "Save to Iris Drive"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "testOpenIrisAppsLoadsBrowserWhenSyncPaused"
+require_contains ios/UITests/IrisDriveIOSUITests.swift "assertIrisAppsLauncherContentLoaded"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "assertNoFilesProviderTrouble"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "syncing with iris drive paused"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "testIrisWebLauncherExternalLinksOpenSystemBrowser"
@@ -193,6 +195,7 @@ require_contains scripts/cross-vm-four-platform-e2e.sh "IRIS_DRIVE_E2E_IOS_HOST"
 require_contains scripts/cross-vm-four-platform-e2e.sh "scripts/ios-gui-linking-smoke.sh"
 require_contains scripts/cross-vm-four-platform-e2e.sh 'run_host_repo_command "$IOS_HOST"'
 require_contains scripts/cross-vm-five-platform-e2e.sh 'run_host_repo_command "$IOS_HOST"'
+require_contains scripts/cross-vm-five-platform-e2e.sh "scripts/ios-device-iris-apps-smoke.sh"
 require_contains scripts/cross-vm-e2e.sh '"local"'
 require_contains scripts/cross-vm-e2e.sh 'CARGO_TARGET_DIR'
 require_contains Justfile "ios-build"

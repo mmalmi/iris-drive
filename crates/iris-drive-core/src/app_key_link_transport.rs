@@ -4,7 +4,7 @@ use nostr_sdk::nips::nip19::{FromBech32, ToBech32};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-use crate::{AppKeyAuthorizationState, IrisProfileId, ProfileState, SignedIrisProfileRosterOp};
+use crate::{AppKeyAuthorizationState, NostrIdentityId, ProfileState, SignedNostrIdentityRosterOp};
 
 pub const APP_KEY_LINK_REQUEST_APP_TOPIC: &str = "iris-drive/app-key-link/v1/request";
 pub const APP_KEY_LINK_ROSTER_APP_TOPIC: &str = "iris-drive/app-key-link/v1/roster";
@@ -16,7 +16,7 @@ pub const APP_KEY_APPROVAL_REQUEST_WEB_PREFIX: &str = "https://drive.iris.to/app
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppKeyLinkRequestFrame {
     pub schema: u32,
-    pub profile_id: IrisProfileId,
+    pub profile_id: NostrIdentityId,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub admin_app_key_pubkey: String,
     pub app_key_pubkey: String,
@@ -30,7 +30,7 @@ pub struct AppKeyLinkRequestFrame {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppKeyApprovalRequest {
-    pub profile_id: Option<IrisProfileId>,
+    pub profile_id: Option<NostrIdentityId>,
     pub app_key_hex: String,
     pub invite_pubkey: String,
     pub label: Option<String>,
@@ -39,9 +39,9 @@ pub struct AppKeyApprovalRequest {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppKeyLinkRosterFrame {
     pub schema: u32,
-    pub profile_id: IrisProfileId,
+    pub profile_id: NostrIdentityId,
     pub admin_app_key_pubkey: String,
-    pub profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
+    pub profile_roster_ops: Vec<SignedNostrIdentityRosterOp>,
     pub sent_at: u64,
 }
 
@@ -166,8 +166,8 @@ pub fn app_key_link_roster_ack_matches_state(
 #[must_use]
 pub fn app_key_link_roster_fingerprint(
     app_key_pubkey: &str,
-    profile_id: IrisProfileId,
-    profile_roster_ops: &[SignedIrisProfileRosterOp],
+    profile_id: NostrIdentityId,
+    profile_roster_ops: &[SignedNostrIdentityRosterOp],
 ) -> String {
     let mut op_ids = profile_roster_ops
         .iter()
@@ -196,7 +196,7 @@ fn current_app_key_is_authorized(state: &ProfileState) -> bool {
 
 #[must_use]
 pub fn encode_app_key_approval_request(
-    profile_id: IrisProfileId,
+    profile_id: NostrIdentityId,
     app_key_hex: &str,
     invite_pubkey: &str,
     label: Option<&str>,
@@ -435,7 +435,7 @@ mod tests {
 
     #[test]
     fn approval_request_round_trips_profile_app_key_invite_and_label_without_owner() {
-        let profile_id = IrisProfileId::new_v4();
+        let profile_id = NostrIdentityId::new_v4();
         let app_key = nostr_sdk::Keys::generate().public_key();
         let invite = nostr_sdk::Keys::generate().public_key();
 
@@ -458,7 +458,7 @@ mod tests {
 
     #[test]
     fn approval_request_parser_accepts_aliases_and_rejects_nearby_routes() {
-        let profile_id = IrisProfileId::new_v4();
+        let profile_id = NostrIdentityId::new_v4();
         let app_key = nostr_sdk::Keys::generate().public_key();
         let invite = nostr_sdk::Keys::generate().public_key();
         let url = format!(

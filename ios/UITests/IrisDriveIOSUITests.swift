@@ -419,11 +419,32 @@ final class IrisDriveIOSUITests: XCTestCase {
         waitForIrisBrowserToFinishLoading(in: app, file: file, line: line)
 
         XCTAssertFalse(app.staticTexts["irisWebError"].exists, file: file, line: line)
+        assertIrisAppsLauncherContentLoaded(in: app, file: file, line: line)
         address.tap()
         let focusedAddress = app.textFields["irisWebAddressField"]
         XCTAssertTrue(focusedAddress.waitForExistence(timeout: 5), app.debugDescription, file: file, line: line)
         XCTAssertTrue(accessibilityValue(focusedAddress).contains("iris.localhost"), file: file, line: line)
         app.buttons["irisWebCloseButton"].tap()
+    }
+
+    private func assertIrisAppsLauncherContentLoaded(
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let webView = app.webViews.firstMatch
+        XCTAssertTrue(webView.waitForExistence(timeout: 5), app.debugDescription, file: file, line: line)
+        for marker in ["Drive", "Chat", "Contacts"] {
+            let predicate = NSPredicate(format: "label CONTAINS[c] %@", marker)
+            let inWebView = webView.descendants(matching: .any).matching(predicate).firstMatch
+            let anywhere = app.descendants(matching: .any).matching(predicate).firstMatch
+            XCTAssertTrue(
+                inWebView.waitForExistence(timeout: 10) || anywhere.exists,
+                "Expected Iris Apps launcher marker \(marker). App hierarchy:\n\(app.debugDescription)",
+                file: file,
+                line: line
+            )
+        }
     }
 
     func testMyDriveDevicesSummaryOpensDevices() throws {

@@ -12,10 +12,10 @@ fn share_recipient_evidence_json(config_dir: &Path, display_name: &str) -> Strin
     let config = AppConfig::load_or_default(config_path_in(config_dir)).unwrap();
     let state = config.profile.unwrap();
     let account = iris_drive_core::Profile::load(state, config_dir).unwrap();
-    let acceptance_event = iris_drive_core::build_iris_profile_facet_acceptance_event(
+    let acceptance_event = iris_drive_core::build_nostr_identity_facet_acceptance_event(
         account.app_key.keys(),
         account.state.profile_id,
-        [iris_drive_core::IrisProfileKeyPurpose::AppKey],
+        [iris_drive_core::NostrIdentityKeyPurpose::AppKey],
         account
             .state
             .profile_roster_ops
@@ -31,7 +31,8 @@ fn share_recipient_evidence_json(config_dir: &Path, display_name: &str) -> Strin
         display_name: Some(display_name.to_owned()),
         roster_ops: account.state.profile_roster_ops,
         acceptances: vec![
-            iris_drive_core::parse_iris_profile_facet_acceptance_event(&acceptance_event).unwrap(),
+            iris_drive_core::parse_nostr_identity_facet_acceptance_event(&acceptance_event)
+                .unwrap(),
         ],
     };
     serde_json::to_string(&evidence).unwrap()
@@ -114,7 +115,7 @@ fn remove_share_wrap_for_epoch(
         .key_epochs
         .get_mut(&epoch)
         .unwrap_or_else(|| panic!("share key epoch {epoch} not found"))
-        .wrapped_dck
+        .wrapped_secrets
         .remove(removed_pubkey);
 }
 
@@ -414,7 +415,7 @@ fn app_state_surfaces_share_missing_wrap_detail() {
         "Alpha",
         Some("Mac".to_owned()),
         vec![iris_drive_core::ShareRecipient {
-            profile_id: iris_drive_core::IrisProfileId::new_v4(),
+            profile_id: iris_drive_core::NostrIdentityId::new_v4(),
             app_pubkey: recipient_pubkey.clone(),
             role: iris_drive_core::ShareRole::Reader,
             label: Some("Phone".to_owned()),
@@ -426,7 +427,7 @@ fn app_state_surfaces_share_missing_wrap_detail() {
     .unwrap();
     let current_epoch = folder
         .projection()
-        .key_epochs
+        .secret_epochs
         .keys()
         .next_back()
         .copied()
@@ -1071,7 +1072,7 @@ fn link_device_rejects_bare_app_key_without_profile_target() {
     assert!(
         state
             .error
-            .contains("paste an IrisProfile invite URL to link this device")
+            .contains("paste an NostrIdentity invite URL to link this device")
     );
 }
 
@@ -1233,7 +1234,7 @@ fn link_action_tracks_pending_approval() {
             .app_key_link_request
             .contains(&format!("profile={owner_profile_id}"))
     );
-    assert!(account.app_key_link_request.contains("secret="));
+    assert!(account.app_key_link_request.contains("invite=npub1"));
     assert!(!account.app_key_link_request.contains("local-owner"));
     assert!(!account.app_key_link_request.contains("app_key=device-"));
     assert!(
@@ -1274,7 +1275,7 @@ fn owner_can_approve_and_revoke_linked_app_keys() {
 
     assert!(state.ui.app_actors.iter().any(|device| {
         device.pubkey == linked_device
-            && device.label == "Phone"
+            && device.label.is_empty()
             && device.role == "member"
             && device.can_revoke
             && device.can_appoint_admin
@@ -1385,7 +1386,7 @@ fn approving_tombstoned_inbound_request_readds_device() {
     let account = readded.ui.profile.as_ref().unwrap();
     assert!(account.inbound_app_key_link_requests.is_empty());
     assert!(readded.ui.app_actors.iter().any(|device| {
-        device.pubkey == linked_device && device.label == "Phone again" && device.role == "member"
+        device.pubkey == linked_device && device.label.is_empty() && device.role == "member"
     }));
     assert_eq!(
         AppConfig::load_or_default(&config_path)
@@ -1807,7 +1808,7 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
             .request_link
             .starts_with("iris-drive://app-key-link?")
     );
-    assert!(request.request_link.contains("secret="));
+    assert!(request.request_link.contains("invite=npub1"));
 
     let approved = app.dispatch(NativeAppAction::ApproveDevice {
         request: request.request_link.clone(),
@@ -1815,7 +1816,7 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
     });
     assert!(approved.error.is_empty());
     assert!(approved.ui.app_actors.iter().any(|device| {
-        device.pubkey == linked_device && device.label == "Phone" && device.role == "member"
+        device.pubkey == linked_device && device.label.is_empty() && device.role == "member"
     }));
 }
 

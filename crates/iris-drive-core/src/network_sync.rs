@@ -141,15 +141,15 @@ async fn sync_once_inner(
     };
 
     let profile_events =
-        relay_sync::fetch_iris_profile_roster_ops(&client, state.profile_id, timeout)
+        relay_sync::fetch_nostr_identity_roster_ops(&client, state.profile_id, timeout)
             .await
-            .context("fetching IrisProfile roster ops")?;
+            .context("fetching NostrIdentity roster ops")?;
     report.profile_roster_ops_seen = profile_events.len();
     for event in &profile_events {
         if matches!(
-            relay_sync::apply_remote_iris_profile_roster_op_event(&mut config, event)
-                .context("applying IrisProfile roster op")?,
-            relay_sync::IrisProfileRosterOpApply::Applied
+            relay_sync::apply_remote_nostr_identity_roster_op_event(&mut config, event)
+                .context("applying NostrIdentity roster op")?,
+            relay_sync::NostrIdentityRosterOpApply::Applied
         ) {
             report.profile_roster_ops_applied += 1;
         }

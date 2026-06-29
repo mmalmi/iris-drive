@@ -970,7 +970,7 @@ pub fn build_current_direct_root_events(
     }
     for op in &state.profile_roster_ops {
         let event =
-            Event::from_json(&op.event_json).context("parsing IrisProfile roster op event")?;
+            Event::from_json(&op.event_json).context("parsing NostrIdentity roster op event")?;
         events.push(direct_root_event(
             format!("profile-op:{}:{}", state.profile_id, op.op_id),
             &event,
@@ -998,12 +998,12 @@ pub async fn apply_direct_root_event(
     sync: Option<&FsFipsBlockSync>,
 ) -> Result<bool> {
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    if crate::is_iris_profile_roster_op_event_coordinate(event) {
+    if crate::is_nostr_identity_roster_op_event_coordinate(event) {
         let outcome =
-            crate::relay_sync::apply_remote_iris_profile_roster_op_event(&mut config, event)?;
+            crate::relay_sync::apply_remote_nostr_identity_roster_op_event(&mut config, event)?;
         let changed = matches!(
             outcome,
-            crate::relay_sync::IrisProfileRosterOpApply::Applied
+            crate::relay_sync::NostrIdentityRosterOpApply::Applied
         );
         config.save(config_path_in(config_dir))?;
         if let Some(sync) = sync {
@@ -1172,7 +1172,7 @@ pub fn apply_direct_root_key_hint_to_config(
                     Some(hint.root_cid),
                 ));
             }
-            let Ok(share_id) = share_id.parse::<crate::IrisProfileId>() else {
+            let Ok(share_id) = share_id.parse::<crate::NostrIdentityId>() else {
                 return Ok(direct_root_hint_report(
                     DirectRootHintApply::UnknownDrive,
                     Some(hint.root_cid),

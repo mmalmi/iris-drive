@@ -98,7 +98,7 @@ fn direct_root_heartbeat_publishes_local_root_events_only() {
     let profile = DirectRootEvent {
         key: "profile-op:profile:op".to_string(),
         event_id: "profile-event".to_string(),
-        kind: iris_drive_core::KIND_IRIS_PROFILE_ROSTER_OP,
+        kind: iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP,
         json: "{\"id\":\"profile\"}".to_string(),
     };
 
@@ -750,7 +750,7 @@ fn direct_root_publish_includes_profile_roster_ops() {
         .unwrap();
 
     assert!(events.iter().any(|event| {
-        event.kind == iris_drive_core::KIND_IRIS_PROFILE_ROSTER_OP
+        event.kind == iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP
             && event.key.starts_with("profile-op:")
     }));
 }

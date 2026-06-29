@@ -22,7 +22,7 @@
 
 use hashtree_core::{Cid, from_hex, to_hex};
 use nostr_identity::{
-    FACT_OP_KIND, NOSTR_IDENTITY_LINK_REQUEST_TYPE, build_identity_link_request_event,
+    FACT_OP_KIND, IDENTITY_GRAPH_LINK_REQUEST_TYPE, build_identity_link_request_event,
     parse_identity_link_request_event,
 };
 use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
@@ -30,7 +30,7 @@ use nostr_sdk::{Event, EventBuilder, Keys, Kind, PublicKey, Tag};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::IrisProfileId;
+use crate::NostrIdentityId;
 use crate::app_key_link_transport::{AppKeyLinkRequestFrame, encode_app_key_approval_request};
 use crate::config::AppKeyRootRef;
 use crate::root_meta::{RootObservation, RootParent};
@@ -172,7 +172,7 @@ fn parse_identity_app_key_link_request_event(
         .map_err(|e| WireError::SignatureFailed(e.to_string()))?;
     let signed = parse_identity_link_request_event(event, invite_keys)
         .map_err(|e| WireError::BadContent(format!("Nostr identity link request: {e}")))?;
-    let profile_id = IrisProfileId::from_uuid(signed.content.identity);
+    let profile_id = NostrIdentityId::from_uuid(signed.content.identity);
     Ok(AppKeyLinkRequestFrame {
         schema: 1,
         profile_id,
@@ -197,7 +197,7 @@ fn is_identity_app_key_link_request_event(event: &Event) -> bool {
             fields.first().is_some_and(|name| name == "type")
                 && fields
                     .get(1)
-                    .is_some_and(|value| value == NOSTR_IDENTITY_LINK_REQUEST_TYPE)
+                    .is_some_and(|value| value == IDENTITY_GRAPH_LINK_REQUEST_TYPE)
         })
 }
 

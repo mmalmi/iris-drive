@@ -16,7 +16,7 @@ Runs the multidevice sync harness across five labeled peers:
   ubuntu   posix
   windows  windows
   macos    posix
-  ios      posix daemon peer plus iOS simulator app smoke
+  ios      posix daemon peer plus iOS simulator app smoke and physical Iris Apps smoke
   android  posix daemon peer plus Android adb app smoke
 
 The iOS and Android hosts may be SSH targets with the iris-drive checkout at
@@ -77,6 +77,9 @@ run_host_repo_command "$IOS_HOST" scripts/ios-simulator-smoke.sh
 
 echo "[e2e-5devices] running iOS GUI linking smoke on $IOS_HOST" >&2
 run_host_repo_command "$IOS_HOST" scripts/ios-gui-linking-smoke.sh
+
+echo "[e2e-5devices] running iOS physical Iris Apps WebView smoke on $IOS_HOST" >&2
+run_host_repo_command "$IOS_HOST" scripts/ios-device-iris-apps-smoke.sh
 
 echo "[e2e-5devices] running Android GUI linking smoke on $ANDROID_HOST" >&2
 run_host_repo_command "$ANDROID_HOST" \

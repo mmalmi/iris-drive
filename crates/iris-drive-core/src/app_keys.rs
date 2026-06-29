@@ -1,9 +1,9 @@
 //! Derived `AppKey` roster projection.
 //!
 //! Iris Drive's authoritative profile membership state is the signed
-//! `IrisProfile` roster-op log. This module owns the app-facing projection of
+//! `NostrIdentity` roster-op log. This module owns the app-facing projection of
 //! that log: active `AppKey` actors, their roles, and current drive content key
-//! wraps. `profile_id` is an `IrisProfile` UUID string, never a Nostr pubkey.
+//! wraps. `profile_id` is an `NostrIdentity` UUID string, never a Nostr pubkey.
 
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -63,7 +63,7 @@ impl AppActorEntry {
     }
 }
 
-/// Derived active `AppKey` actor view for one `IrisProfile` roster.
+/// Derived active `AppKey` actor view for one `NostrIdentity` roster.
 ///
 /// This is a deterministic cache rebuilt from signed roster ops, not a signed
 /// full-roster authority. It carries the current drive content key (DCK)
@@ -76,7 +76,7 @@ impl AppActorEntry {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AppKeysProjection {
-    /// Stable `IrisProfile` UUID string that scopes this roster.
+    /// Stable `NostrIdentity` UUID string that scopes this roster.
     #[serde(default)]
     pub profile_id: String,
     /// Pubkey of the admin `AppKey` that signed the key epoch represented by
