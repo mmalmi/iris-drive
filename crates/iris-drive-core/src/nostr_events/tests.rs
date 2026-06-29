@@ -31,14 +31,20 @@ fn drive_root_event_roundtrip() {
         build_drive_root_event(&device, &root_scope_id, "main", &root, &authorized_app_keys)
             .unwrap();
     assert_eq!(event.kind.as_u16(), KIND_DRIVE_ROOT);
+    assert_eq!(
+        tag_value(&event, "ms").as_deref(),
+        Some("1700000000000")
+    );
     let (device_pk, parsed_scope, drive_id, parsed_root) =
         parse_drive_root_event_for_device(&event, &device).unwrap();
+    let preview = parse_drive_root_event_preview(&event).unwrap();
     assert_eq!(device_pk, device.public_key().to_hex());
     assert_eq!(parsed_scope, root_scope_id);
     assert_eq!(drive_id, "main");
     assert_eq!(parsed_root.root_cid, root.root_cid);
     assert_eq!(parsed_root.dck_generation, root.dck_generation);
     assert_eq!(parsed_root.published_at, root.published_at);
+    assert_eq!(preview.published_at_ms, Some(1_700_000_000_000));
 }
 
 #[test]

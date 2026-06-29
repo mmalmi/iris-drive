@@ -26,7 +26,7 @@ use nostr_identity::{
     parse_identity_link_request_event,
 };
 use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
-use nostr_sdk::{Event, EventBuilder, Keys, Kind, PublicKey, Tag};
+use nostr_sdk::{Event, EventBuilder, Keys, Kind, PublicKey, Tag, TagKind};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -68,6 +68,7 @@ pub struct DriveRootEventPreview {
     pub root_scope_id: String,
     pub drive_id: String,
     pub published_at: i64,
+    pub published_at_ms: Option<u64>,
     pub dck_generation: u64,
     pub app_key_seq: u64,
 }
@@ -229,6 +230,7 @@ pub fn build_drive_root_event(
         root,
         authorized_app_key_pubkeys,
         drive_root_timestamp_from_root(root),
+        None,
     )
 }
 
@@ -258,6 +260,7 @@ pub fn build_drive_root_publish_event(
         root,
         authorized_app_key_pubkeys,
         ts,
+        Some(unix_now_millis().max(ts.saturating_mul(1000))),
     )
 }
 
@@ -275,6 +278,12 @@ fn unix_now_secs() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
+fn unix_now_millis() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
+}
+
 fn build_drive_root_event_at(
     device_keys: &Keys,
     root_scope_id: &str,
@@ -282,6 +291,7 @@ fn build_drive_root_event_at(
     root: &AppKeyRootRef,
     authorized_app_key_pubkeys: &[String],
     created_at: u64,
+    created_at_ms: Option<u64>,
 ) -> Result<Event, WireError> {
     let root_cid =
         Cid::parse(&root.root_cid).map_err(|e| WireError::InvalidRootCid(e.to_string()))?;
@@ -320,8 +330,10 @@ fn build_drive_root_event_at(
     let content_json =
         serde_json::to_string(&content).map_err(|e| WireError::BadContent(e.to_string()))?;
     let d_tag = drive_root_d_tag(root_scope_id, drive_id);
+    let ms_tag = created_at_ms.unwrap_or_else(|| created_at.saturating_mul(1000));
     let builder = EventBuilder::new(Kind::from(KIND_DRIVE_ROOT), content_json)
         .tag(Tag::identifier(d_tag))
+        .tag(Tag::custom(TagKind::Custom("ms".into()), vec![ms_tag.to_string()]))
         .custom_created_at(nostr_sdk::Timestamp::from(created_at));
     let event = builder
         .sign_with_keys(device_keys)
@@ -381,6 +393,7 @@ pub fn parse_drive_root_event_preview(event: &Event) -> Result<DriveRootEventPre
         root_scope_id,
         drive_id,
         published_at,
+        published_at_ms: read_ms_tag(event),
         dck_generation: content.dck_generation,
         app_key_seq: content.app_key_seq,
     })
@@ -485,6 +498,17 @@ fn parse_drive_root_d_tag(d_tag: &str) -> Result<(String, String), WireError> {
         )));
     }
     Ok((root_scope_id.to_string(), drive.to_string()))
+}
+
+fn read_ms_tag(event: &Event) -> Option<u64> {
+    event.tags.iter().find_map(|tag| {
+        let fields = tag.as_slice();
+        if fields.first().is_some_and(|name| name == "ms") {
+            fields.get(1)?.parse::<u64>().ok()
+        } else {
+            None
+        }
+    })
 }
 
 #[cfg(test)]

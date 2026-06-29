@@ -1013,14 +1013,30 @@ fn drive_root_event_is_newer(candidate: &Event, current: &Event) -> bool {
         parse_drive_root_event_preview(candidate),
         parse_drive_root_event_preview(current),
     ) {
-        (Ok(candidate), Ok(current)) => candidate
-            .app_key_seq
-            .cmp(&current.app_key_seq)
-            .then_with(|| candidate.published_at.cmp(&current.published_at))
-            .then_with(|| candidate.dck_generation.cmp(&current.dck_generation))
-            .is_gt(),
+        (Ok(candidate), Ok(current)) => {
+            let same_app_key = candidate.app_key_pubkey_hex == current.app_key_pubkey_hex;
+            let seq_order = if same_app_key {
+                candidate.app_key_seq.cmp(&current.app_key_seq)
+            } else {
+                std::cmp::Ordering::Equal
+            };
+            seq_order
+                .then_with(|| candidate.published_at.cmp(&current.published_at))
+                .then_with(|| {
+                    drive_root_preview_ms(&candidate).cmp(&drive_root_preview_ms(&current))
+                })
+                .then_with(|| candidate.dck_generation.cmp(&current.dck_generation))
+                .then_with(|| candidate.app_key_pubkey_hex.cmp(&current.app_key_pubkey_hex))
+                .is_gt()
+        }
         _ => candidate.created_at.as_secs() > current.created_at.as_secs(),
     }
+}
+
+fn drive_root_preview_ms(preview: &crate::nostr_events::DriveRootEventPreview) -> u64 {
+    preview
+        .published_at_ms
+        .unwrap_or_else(|| u64::try_from(preview.published_at).unwrap_or(0).saturating_mul(1000))
 }
 
 #[cfg(test)]

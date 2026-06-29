@@ -257,10 +257,11 @@ async fn sync_once_inner(
         &mut report,
     )
     .await;
-    if root_cids_to_download
-        .iter()
-        .any(|root_cid| root_cid_belongs_to_peer(&config, root_cid))
-        && (report.fips_download.is_some() || report.blossom_download.is_some())
+    let downloaded_roots = report.fips_download.is_some() || report.blossom_download.is_some();
+    let applied_remote_root =
+        report.drive_root_events_applied > 0 || report.files_root_event_outcome == "applied";
+    if downloaded_roots
+        && should_materialize_after_sync(&config, &root_cids_to_download, applied_remote_root)
     {
         let mut daemon =
             Daemon::open(config_dir).context("opening daemon to materialize merged root")?;
@@ -374,6 +375,17 @@ fn root_cid_belongs_to_peer(config: &AppConfig, root_cid: &str) -> bool {
             .into_iter()
             .any(|(device, root)| device != &account.app_key_pubkey && root.root_cid == root_cid)
     })
+}
+
+fn should_materialize_after_sync(
+    config: &AppConfig,
+    root_cid_strs: &[String],
+    applied_remote_root: bool,
+) -> bool {
+    applied_remote_root
+        || root_cid_strs
+            .iter()
+            .any(|root_cid| root_cid_belongs_to_peer(config, root_cid))
 }
 
 async fn download_roots(
@@ -552,7 +564,11 @@ fn push_unique(values: &mut Vec<String>, value: String) {
 
 #[cfg(test)]
 mod tests {
-    use super::{DirectFipsDownloadDecision, NetworkSyncOptions, direct_fips_download_decision};
+    use super::{
+        DirectFipsDownloadDecision, NetworkSyncOptions, direct_fips_download_decision,
+        should_materialize_after_sync,
+    };
+    use crate::config::AppConfig;
 
     #[test]
     fn default_sync_options_preserve_existing_temporary_fips_download() {
@@ -575,5 +591,13 @@ mod tests {
             direct_fips_download_decision(true, options),
             DirectFipsDownloadDecision::UseSupplied
         );
+    }
+
+    #[test]
+    fn applied_remote_roots_request_materialization_even_without_peer_root() {
+        let config = AppConfig::default();
+
+        assert!(should_materialize_after_sync(&config, &[], true));
+        assert!(!should_materialize_after_sync(&config, &[], false));
     }
 }

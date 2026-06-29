@@ -2,7 +2,8 @@ use super::*;
 use crate::app_key_link_transport::AppKeyLinkRosterFrame;
 use crate::config::Drive;
 use crate::nostr_events::{
-    build_app_key_link_request_event, build_drive_root_event, build_private_hashtree_root_event,
+    KIND_DRIVE_ROOT, build_app_key_link_request_event, build_drive_root_event,
+    build_private_hashtree_root_event, drive_root_d_tag,
 };
 use crate::nostr_identity::{
     NostrIdentityCapabilities, NostrIdentityFacet, NostrIdentityId, NostrIdentityRosterOp,
@@ -15,6 +16,7 @@ use crate::sharing::{
 };
 use hashtree_core::Cid;
 use nostr_sdk::filter::MatchEventOptions;
+use nostr_sdk::{EventBuilder, Kind, Tag};
 use tempfile::tempdir;
 
 fn config_with_owner_account(dir: &std::path::Path) -> (AppConfig, Profile) {
@@ -1373,6 +1375,58 @@ fn same_second_drive_root_selection_prefers_higher_app_key_seq() {
         build_drive_root_event(&device, &root_scope_id, "main", &older, &authorized).unwrap();
     let newer_event =
         build_drive_root_event(&device, &root_scope_id, "main", &newer, &authorized).unwrap();
+
+    assert!(drive_root_event_is_newer(&newer_event, &older_event));
+    assert!(!drive_root_event_is_newer(&older_event, &newer_event));
+}
+
+#[test]
+fn same_author_same_second_drive_root_selection_uses_ms_after_app_key_seq() {
+    let device = Keys::generate();
+    let root_scope_id = NostrIdentityId::new_v4().to_string();
+    let build = |root_hash: &str, ms: &str| {
+        EventBuilder::new(
+            Kind::from(KIND_DRIVE_ROOT),
+            serde_json::json!({
+                "root_hash": root_hash,
+                "dck_generation": 1,
+                "app_key_seq": 2,
+            })
+            .to_string(),
+        )
+        .tag(Tag::identifier(drive_root_d_tag(&root_scope_id, "main")))
+        .tag(Tag::custom(
+            nostr_sdk::TagKind::Custom("ms".into()),
+            vec![ms.to_string()],
+        ))
+        .custom_created_at(nostr_sdk::Timestamp::from(1_700_000_000))
+        .sign_with_keys(&device)
+        .unwrap()
+    };
+    let older_event = build(&"41".repeat(32), "1700000000100");
+    let newer_event = build(&"42".repeat(32), "1700000000900");
+
+    assert!(drive_root_event_is_newer(&newer_event, &older_event));
+    assert!(!drive_root_event_is_newer(&older_event, &newer_event));
+}
+
+#[test]
+fn drive_root_selection_ignores_app_key_seq_across_authors() {
+    let older_device = Keys::generate();
+    let newer_device = Keys::generate();
+    let root_scope_id = NostrIdentityId::new_v4().to_string();
+    let older = causal_encrypted_root(0x43, 1_700_000_000, 1, 500);
+    let newer = causal_encrypted_root(0x44, 1_700_000_001, 1, 1);
+    let authorized = vec![
+        older_device.public_key().to_hex(),
+        newer_device.public_key().to_hex(),
+    ];
+    let older_event =
+        build_drive_root_event(&older_device, &root_scope_id, "main", &older, &authorized)
+            .unwrap();
+    let newer_event =
+        build_drive_root_event(&newer_device, &root_scope_id, "main", &newer, &authorized)
+            .unwrap();
 
     assert!(drive_root_event_is_newer(&newer_event, &older_event));
     assert!(!drive_root_event_is_newer(&older_event, &newer_event));
