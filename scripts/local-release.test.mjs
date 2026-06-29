@@ -872,13 +872,19 @@ test('TestFlight helper documents iris-drive App Store Connect inputs', () => {
   assert.match(result.stdout, /IRIS_DRIVE_TESTFLIGHT_GROUPS/)
 })
 
-test('iOS build keeps App Store Connect auth out of Xcode signing', () => {
+test('iOS manual build keeps App Store Connect auth out of Xcode signing', () => {
   const script = readFileSync(
     fileURLToPath(new URL('./ios-build', import.meta.url)),
     'utf8',
   )
+  const manualArchive = script.match(
+    /return\n  fi\n\n([\s\S]*?xcodebuild[\s\S]*?CODE_SIGN_STYLE=Manual[\s\S]*?archive)/,
+  )?.[1] ?? ''
 
-  assert.doesNotMatch(script, /-authenticationKeyPath/)
+  assert.match(manualArchive, /CODE_SIGN_STYLE=Manual/)
+  assert.doesNotMatch(manualArchive, /-authenticationKeyPath/)
+  assert.doesNotMatch(manualArchive, /\$\{auth_args\[@\]\}/)
+  assert.match(script, /xcode_auth_args\(\)/)
   assert.match(script, /scripts\/ios-profiles/)
   assert.match(script, /CODE_SIGN_STYLE=Manual/)
 })
@@ -930,9 +936,11 @@ test('iOS provisioning helper covers the app and extension bundle IDs', () => {
     'utf8',
   )
 
-  assert.match(script, /to\.iris\.drive\.ios/)
-  assert.match(script, /to\.iris\.drive\.ios\.FileProvider/)
-  assert.match(script, /to\.iris\.drive\.ios\.ShareExtension/)
+  assert.match(script, /defaultIosBundleId = 'to\.iris\.drive\.ios'/)
+  assert.match(script, /\$\{iosBundleId\}\.FileProvider/)
+  assert.match(script, /\$\{iosBundleId\}\.ShareExtension/)
+  assert.match(script, /IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID/)
+  assert.match(script, /IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID/)
   assert.match(script, /IRIS_DRIVE_ASC_AUTH_KEY_PATH/)
   assert.match(script, /IRIS_DRIVE_IOS_PROFILES_ENV_PATH/)
   assert.match(script, /IRIS_DRIVE_IOS_PROFILE_RECREATE/)
@@ -1109,11 +1117,16 @@ test('iOS FileProvider declares the required App Store document group', () => {
     fileURLToPath(new URL('../ios/FileProvider/Info.plist', import.meta.url)),
     'utf8',
   )
+  const project = readFileSync(
+    fileURLToPath(new URL('../ios/project.yml', import.meta.url)),
+    'utf8',
+  )
 
   assert.match(
     plist,
-    /<key>NSExtensionFileProviderDocumentGroup<\/key>\s*<string>group\.to\.iris\.drive<\/string>/,
+    /<key>NSExtensionFileProviderDocumentGroup<\/key>\s*<string>\$\(IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER\)<\/string>/,
   )
+  assert.match(project, /IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER: group\.to\.iris\.drive/)
 })
 
 test('iOS app icons have no alpha channel', () => {

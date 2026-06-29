@@ -333,7 +333,10 @@ fn build_drive_root_event_at(
     let ms_tag = created_at_ms.unwrap_or_else(|| created_at.saturating_mul(1000));
     let builder = EventBuilder::new(Kind::from(KIND_DRIVE_ROOT), content_json)
         .tag(Tag::identifier(d_tag))
-        .tag(Tag::custom(TagKind::Custom("ms".into()), vec![ms_tag.to_string()]))
+        .tag(Tag::custom(
+            TagKind::Custom("ms".into()),
+            vec![ms_tag.to_string()],
+        ))
         .custom_created_at(nostr_sdk::Timestamp::from(created_at));
     let event = builder
         .sign_with_keys(device_keys)

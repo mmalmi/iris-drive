@@ -420,7 +420,7 @@ fn share_member_row(
     let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
     labels.set_hexpand(true);
     let title = gtk::Label::new(Some(if member.display_name.is_empty() {
-        "IrisProfile"
+        "NostrIdentity"
     } else {
         &member.display_name
     }));

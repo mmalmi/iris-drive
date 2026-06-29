@@ -1422,11 +1422,9 @@ fn drive_root_selection_ignores_app_key_seq_across_authors() {
         newer_device.public_key().to_hex(),
     ];
     let older_event =
-        build_drive_root_event(&older_device, &root_scope_id, "main", &older, &authorized)
-            .unwrap();
+        build_drive_root_event(&older_device, &root_scope_id, "main", &older, &authorized).unwrap();
     let newer_event =
-        build_drive_root_event(&newer_device, &root_scope_id, "main", &newer, &authorized)
-            .unwrap();
+        build_drive_root_event(&newer_device, &root_scope_id, "main", &newer, &authorized).unwrap();
 
     assert!(drive_root_event_is_newer(&newer_event, &older_event));
     assert!(!drive_root_event_is_newer(&older_event, &newer_event));

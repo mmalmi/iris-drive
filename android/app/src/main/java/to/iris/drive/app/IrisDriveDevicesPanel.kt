@@ -75,7 +75,7 @@ internal fun DevicesPanel(
     val deviceActors = remember(devices) { devices.filter { it.isDeviceActor } }
     val recoveryKeyActors = remember(devices) { devices.filterNot { it.isDeviceActor } }
     val manualRequestIsComplete = remember(request) {
-        NativeCore.isCompleteLinkInput(request)
+        NativeCore.isCompleteDeviceApprovalInput(request)
     }
 
     if (canApprove) {

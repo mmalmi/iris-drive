@@ -274,10 +274,6 @@ internal fun IrisDriveAndroidApp(
                         padding = padding,
                         state = state,
                         onCopyText = onCopyText,
-                        onRelink = {
-                            val label = profile.appKeyLabel.ifBlank { "Android" }
-                            onLinkDevice(profile.currentAppKeyNpub, label)
-                        },
                         onLogout = onLogout,
                     )
                 } else if (state.isAwaitingApproval && profile != null) {
@@ -368,7 +364,6 @@ private fun RevokedDeviceContent(
     padding: PaddingValues,
     state: AppState,
     onCopyText: (String, String) -> Unit,
-    onRelink: () -> Unit,
     onLogout: () -> Unit,
 ) {
     val profile = state.profile ?: return
@@ -386,11 +381,6 @@ private fun RevokedDeviceContent(
             Text("This device no longer has access to Iris Drive.", color = Muted)
             Text(profile.currentAppKeyNpub, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(profile.devicePubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            SetupPrimaryButton(
-                text = "Link this device again",
-                onClick = onRelink,
-                testTag = "relinkRevokedDevice",
-            )
             SetupSecondaryButton(
                 text = "Copy Device Key",
                 onClick = { onCopyText("Device key", profile.devicePubkey) },
@@ -589,7 +579,7 @@ private fun SetupContent(
     var showLinkScanner by remember { mutableStateOf(false) }
     val context = LocalContext.current
     val linkOwnerIsComplete = remember(linkOwner) {
-        NativeCore.isCompleteLinkInput(linkOwner)
+        NativeCore.isCompleteDeviceInviteInput(linkOwner)
     }
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         selectedPhoto = uri?.lastPathSegment.orEmpty()
@@ -597,7 +587,7 @@ private fun SetupContent(
     fun submitLinkOwner(value: String, force: Boolean) {
         val trimmed = value.trim()
         if (trimmed.isBlank()) return
-        if (!NativeCore.isCompleteLinkInput(trimmed)) return
+        if (!NativeCore.isCompleteDeviceInviteInput(trimmed)) return
         if (submittedLinkOwner == trimmed) return
         submittedLinkOwner = trimmed
         onLinkDevice(trimmed)
@@ -842,7 +832,7 @@ private fun SetupContent(
                         },
                         modifier = Modifier.fillMaxWidth().testTag("linkOwnerInput"),
                         singleLine = true,
-                        label = { Text("IrisProfile invite link or admin device key") },
+                        label = { Text("Device invite link") },
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
                         keyboardActions = KeyboardActions(
                             onDone = { submitLinkOwner(linkOwner, force = true) },

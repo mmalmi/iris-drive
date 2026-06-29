@@ -108,28 +108,6 @@ pub(crate) fn render_revoked_device(model: &AppRef, state: &NativeAppState) {
     let notice = setup_notice();
     notice.set_text("Device removed");
 
-    let relink = primary_button("Link this device again");
-    {
-        let model = Rc::clone(model);
-        let link_target = app_key_npub.to_string();
-        let notice = notice.clone();
-        relink.connect_clicked(move |button| {
-            if link_target.trim().is_empty() || link_target == "-" {
-                notice.set_text("Device key unavailable");
-                return;
-            }
-            button.set_sensitive(false);
-            match relink_device(&link_target) {
-                Ok(()) => refresh(&model),
-                Err(error) => {
-                    notice.set_text(&error);
-                    button.set_sensitive(true);
-                }
-            }
-        });
-    }
-    container.append(&relink);
-
     let copy = pill_button("Copy Device Key");
     {
         let device = device_npub.to_string();
@@ -516,7 +494,7 @@ pub(crate) fn render_restore_secret_key_profile(model: &AppRef) {
 
 pub(crate) fn render_link_device(model: &AppRef) {
     let container = setup_container(model, "Link device");
-    let link_target = setup_entry("IrisProfile invite link or admin device key");
+    let link_target = setup_entry("Device invite link");
     container.append(&link_target);
 
     let notice = setup_notice();
@@ -565,7 +543,7 @@ fn submit_link_device(
 ) {
     let link_target_value = link_target.text().trim().to_string();
     if link_target_value.is_empty() {
-        notice.set_text("IrisProfile invite link or admin device key is required.");
+        notice.set_text("Device invite link is required.");
         return;
     }
     button.set_sensitive(false);
@@ -582,7 +560,7 @@ fn submit_link_device(
 }
 
 fn link_target_input_is_complete(value: &str) -> bool {
-    iris_drive_app_core::validate_link_input(value.to_string()).is_complete
+    iris_drive_app_core::validate_device_invite_input(value.to_string()).is_complete
 }
 
 fn clamp_recovery_word_index(model: &AppRef) {

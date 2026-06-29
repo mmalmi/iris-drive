@@ -297,7 +297,7 @@ struct IrisDriveControlPanel: View {
             guard setupLinkTarget.trimmingCharacters(in: .whitespacesAndNewlines) == query else {
                 return
             }
-            controller.classifyLinkInput(query) { input, isComplete in
+            controller.classifyDeviceInviteInput(query) { input, isComplete in
                 guard setupLinkTarget.trimmingCharacters(in: .whitespacesAndNewlines) == input else {
                     return
                 }
@@ -317,7 +317,7 @@ struct IrisDriveControlPanel: View {
             guard approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines) == query else {
                 return
             }
-            controller.classifyLinkInput(query) { input, isComplete in
+            controller.classifyDeviceApprovalInput(query) { input, isComplete in
                 guard approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines) == input else {
                     return
                 }
@@ -490,8 +490,8 @@ struct IrisDriveControlPanel: View {
             }
         case .link:
             setupForm(title: "Link device", backTarget: .restoreOptions) {
-                TextField("Invite link or device key", text: $setupLinkTarget)
-                    .accessibilityLabel("Invite link or device key")
+                TextField("Device invite link", text: $setupLinkTarget)
+                    .accessibilityLabel("Device invite link")
                     .onSubmit {
                         submitSetupLinkTarget(
                             setupLinkTarget,
@@ -2571,7 +2571,7 @@ private struct PeerRow: View {
 
             if expanded {
                 VStack(alignment: .leading, spacing: 8) {
-                    DetailRow(label: "Public key", value: peer.npub, copyable: true)
+                    DetailRow(label: "Device key", value: peer.npub, copyable: true)
                     DetailRow(label: "Role", value: peer.roleLabel)
                     if let root = peer.rootCID {
                         DetailRow(label: "Root", value: root, copyable: true)

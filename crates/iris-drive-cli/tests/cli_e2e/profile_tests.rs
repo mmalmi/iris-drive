@@ -226,6 +226,12 @@ fn link_creates_awaiting_device_with_no_owner_key() {
         v["app_key_link_request"]["url"]
             .as_str()
             .unwrap()
+            .contains("invite=npub1")
+    );
+    assert!(
+        !v["app_key_link_request"]["url"]
+            .as_str()
+            .unwrap()
             .contains("secret=")
     );
     let status = run_json(dir.path(), &["status"]);
@@ -437,6 +443,7 @@ fn owner_approves_device_request_link() {
         &["link", &owner_invite, "--label", "windows-peer"],
     );
     let request_url = linked["app_key_link_request"]["url"].as_str().unwrap();
+    let linked_app_key = current_app_key_npub(&linked);
 
     idrive(other_owner_dir.path())
         .args(["approve", request_url])
@@ -449,11 +456,9 @@ fn owner_approves_device_request_link() {
 
     let roster = run_json(owner_dir.path(), &["roster"]);
     let app_actors = roster["app_keys"]["app_actors"].as_array().unwrap();
-    assert!(
-        app_actors
-            .iter()
-            .any(|device| device["label"].as_str() == Some("windows-peer"))
-    );
+    assert!(app_actors.iter().any(|device| {
+        device["npub"].as_str() == Some(linked_app_key) && device["role"].as_str() == Some("member")
+    }));
 }
 
 #[test]
@@ -475,7 +480,8 @@ fn owner_rejects_device_request_link() {
         let mut config = iris_drive_core::AppConfig::load_or_default(&config_path).unwrap();
         let state = config.profile.as_mut().unwrap();
         let profile_id = state.profile_id;
-        let link_secret = state.app_key_link_secret.clone();
+        let invite_pubkey =
+            iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret).unwrap();
         let linked_hex = iris_drive_core::AppConfig::load_or_default(
             iris_drive_core::paths::config_path_in(linked_dir.path()),
         )
@@ -488,7 +494,7 @@ fn owner_rejects_device_request_link() {
                 profile_id,
                 &linked_hex,
                 Some("rejected-phone".into()),
-                &link_secret,
+                &invite_pubkey,
                 42,
             )
             .unwrap();
@@ -540,7 +546,8 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
     assert!(request_url.starts_with("iris-drive://app-key-link?"));
     assert!(!request_url.contains("owner="));
     assert!(request_url.contains("app_key=npub1"));
-    assert!(request_url.contains("secret="));
+    assert!(request_url.contains("invite=npub1"));
+    assert!(!request_url.contains("secret="));
     assert!(!request_url.contains("local-owner"));
     assert!(!request_url.contains("app_key=device-"));
     assert_eq!(
@@ -616,12 +623,13 @@ fn app_keys_reset_invite_rotates_secret_and_clears_inbound_requests() {
     let state = config.profile.as_mut().unwrap();
     let profile_id = state.profile_id;
     let old_secret = state.app_key_link_secret.clone();
+    let old_invite_pubkey = iris_drive_core::app_key_link_invite_pubkey(&old_secret).unwrap();
     state
         .record_inbound_app_key_link_request(
             profile_id,
             &linked_app_key,
             Some("phone".to_string()),
-            &old_secret,
+            &old_invite_pubkey,
             linked["app_key_link_request"]["requested_at"]
                 .as_u64()
                 .unwrap(),
@@ -650,7 +658,7 @@ fn app_keys_reset_invite_rotates_secret_and_clears_inbound_requests() {
                 profile_id,
                 &linked_app_key,
                 Some("phone".to_string()),
-                &old_secret,
+                &old_invite_pubkey,
                 999,
             )
             .unwrap()
@@ -661,7 +669,7 @@ fn app_keys_reset_invite_rotates_secret_and_clears_inbound_requests() {
 }
 
 #[test]
-fn app_keys_request_manual_profile_and_admin_app_key_queues_fips_request() {
+fn app_keys_request_rejects_manual_profile_without_invite_pubkey() {
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
 
@@ -669,9 +677,8 @@ fn app_keys_request_manual_profile_and_admin_app_key_queues_fips_request() {
     let admin_app_key_npub = current_app_key_npub(&owner);
     let profile_id = owner["profile_id"].as_str().unwrap();
 
-    let linked = run_json(
-        linked_dir.path(),
-        &[
+    idrive(linked_dir.path())
+        .args([
             "app-keys",
             "request",
             profile_id,
@@ -679,22 +686,10 @@ fn app_keys_request_manual_profile_and_admin_app_key_queues_fips_request() {
             admin_app_key_npub,
             "--label",
             "manual laptop",
-        ],
-    );
-
-    assert_eq!(linked["authorization_state"], "awaiting_approval");
-    assert_eq!(
-        linked["app_key_link_request"]["admin_app_key_npub"].as_str(),
-        Some(admin_app_key_npub)
-    );
-    assert_eq!(
-        linked["app_key_link_request"]["profile_id"].as_str(),
-        Some(profile_id)
-    );
-    assert_eq!(
-        linked["app_key_link_request"]["sent_over_fips"],
-        serde_json::Value::Bool(true)
-    );
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("device invite is missing invite pubkey"));
 }
 
 #[test]

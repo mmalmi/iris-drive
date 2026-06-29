@@ -138,7 +138,7 @@ public partial class MainWindow
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var display = string.IsNullOrWhiteSpace(member.DisplayName)
-            ? "IrisProfile"
+            ? "NostrIdentity"
             : member.DisplayName;
         var role = string.IsNullOrWhiteSpace(member.RoleLabel) ? member.Role : member.RoleLabel;
         var status = string.IsNullOrWhiteSpace(member.StatusLabel) ? member.Status : member.StatusLabel;
@@ -713,7 +713,7 @@ public partial class MainWindow
 
         if (WpfMessageBox.Show(
                 this,
-                $"Remove this IrisProfile from the share?\n\n{tag.ProfileId}",
+                $"Remove this identity from the share?\n\n{tag.ProfileId}",
                 "Remove share member",
                 MessageBoxButton.YesNo,
                 MessageBoxImage.Warning) != MessageBoxResult.Yes)

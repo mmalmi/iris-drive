@@ -237,7 +237,7 @@ pub(crate) fn show_invite_share_member_dialog(
     body.append(&evidence_label);
     body.append(&evidence);
 
-    let profile_id = setup_entry("IrisProfile UUID");
+    let profile_id = setup_entry("NostrIdentity UUID");
     let app_key = setup_entry("Recipient device key");
     let npub_hint = setup_entry("User ID");
     let display_name = setup_entry("Name");
@@ -287,7 +287,7 @@ pub(crate) fn show_invite_share_member_dialog(
                 if profile_id.is_empty() && app_key.is_empty() {
                     if representative_npub_hint.is_empty() {
                         model.ui.notice.set_text(
-                            "Recipient evidence, IrisProfile/device key, or User ID is required",
+                            "Recipient evidence, NostrIdentity/device key, or User ID is required",
                         );
                         return;
                     }
@@ -309,7 +309,7 @@ pub(crate) fn show_invite_share_member_dialog(
                         model
                             .ui
                             .notice
-                            .set_text("Both IrisProfile UUID and device key are required");
+                            .set_text("Both NostrIdentity UUID and device key are required");
                         return;
                     }
                     dispatch_desktop_action(NativeAppAction::InviteShareMember {
@@ -483,7 +483,7 @@ pub(crate) fn show_revoke_share_member_dialog(
     body.append(&title);
 
     let message = gtk::Label::new(Some(&format!(
-        "Revoke {display_name} from this share? Future key epochs will not be wrapped for this IrisProfile."
+        "Revoke {display_name} from this share? Future key epochs will not be wrapped for this identity."
     )));
     message.add_css_class("iris-muted");
     message.set_xalign(0.0);

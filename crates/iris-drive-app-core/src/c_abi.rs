@@ -28,7 +28,8 @@ use crate::{
     ffi::native_provider_write_json,
     ffi::{
         classify_link_input, drive_link_for_cid, export_recovery_secret, generate_recovery_key,
-        recovery_pubkey_for_phrase, validate_link_input,
+        recovery_pubkey_for_phrase, validate_device_approval_input, validate_device_invite_input,
+        validate_link_input,
     },
     native_provider::install_rustls_crypto_provider,
 };
@@ -171,6 +172,18 @@ pub extern "C" fn iris_drive_classify_link_input_json(text: *const c_char) -> *m
 #[unsafe(no_mangle)]
 pub extern "C" fn iris_drive_validate_link_input_json(text: *const c_char) -> *mut c_char {
     json_string(&validate_link_input(c_string_lossy(text)))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_validate_device_invite_input_json(text: *const c_char) -> *mut c_char {
+    json_string(&validate_device_invite_input(c_string_lossy(text)))
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_validate_device_approval_input_json(
+    text: *const c_char,
+) -> *mut c_char {
+    json_string(&validate_device_approval_input(c_string_lossy(text)))
 }
 
 #[unsafe(no_mangle)]
@@ -493,6 +506,28 @@ pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_validateLinkInputJ
 ) -> jstring {
     let text = jni_string_lossy(&mut env, &text);
     jni_json_string(env, &validate_link_input(text))
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_validateDeviceInviteInputJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    text: JString<'_>,
+) -> jstring {
+    let text = jni_string_lossy(&mut env, &text);
+    jni_json_string(env, &validate_device_invite_input(text))
+}
+
+#[cfg(target_os = "android")]
+#[unsafe(no_mangle)]
+pub extern "system" fn Java_to_iris_drive_app_core_NativeCore_validateDeviceApprovalInputJson(
+    mut env: JNIEnv<'_>,
+    _class: JClass<'_>,
+    text: JString<'_>,
+) -> jstring {
+    let text = jni_string_lossy(&mut env, &text);
+    jni_json_string(env, &validate_device_approval_input(text))
 }
 
 #[cfg(target_os = "android")]
@@ -916,7 +951,9 @@ mod tests {
     use super::{
         iris_drive_app_dispatch_json, iris_drive_app_free, iris_drive_app_new,
         iris_drive_app_state_json, iris_drive_install_rustls_crypto_provider,
-        iris_drive_qr_matrix_json, iris_drive_string_free, iris_drive_validate_link_input_json,
+        iris_drive_qr_matrix_json, iris_drive_string_free,
+        iris_drive_validate_device_approval_input_json,
+        iris_drive_validate_device_invite_input_json, iris_drive_validate_link_input_json,
     };
 
     #[test]
@@ -972,6 +1009,25 @@ mod tests {
 
         assert_eq!(validation["kind"], "app_key_pubkey");
         assert_eq!(validation["is_complete"], false);
+    }
+
+    #[test]
+    fn c_abi_splits_device_invite_and_approval_validation() {
+        let device_key =
+            CString::new("0000000000000000000000000000000000000000000000000000000000000001")
+                .expect("device key CString");
+        let invite_json = take_string(iris_drive_validate_device_invite_input_json(
+            device_key.as_ptr(),
+        ));
+        let invite: Value = serde_json::from_str(&invite_json).expect("invite JSON");
+        assert_eq!(invite["is_complete"], false);
+
+        let approval_json = take_string(iris_drive_validate_device_approval_input_json(
+            device_key.as_ptr(),
+        ));
+        let approval: Value = serde_json::from_str(&approval_json).expect("approval JSON");
+        assert_eq!(approval["kind"], "app_key_pubkey");
+        assert_eq!(approval["is_complete"], true);
     }
 
     fn take_string(ptr: *mut std::ffi::c_char) -> String {

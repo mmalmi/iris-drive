@@ -1392,7 +1392,7 @@ private fun displayShareName(share: ShareState): String =
     share.displayName.ifBlank { "Shared folder" }
 
 private fun displayMemberName(member: ShareMemberState): String =
-    member.displayName.ifBlank { "IrisProfile" }
+    member.displayName.ifBlank { "NostrIdentity" }
 
 private fun displayPendingInviteName(invite: PendingShareInviteState): String =
     invite.displayName.ifBlank { "Pending contact" }

@@ -30,6 +30,12 @@ private func irisDriveClassifyLinkInputJson(_ text: UnsafePointer<CChar>) -> Uns
 @_silgen_name("iris_drive_validate_link_input_json")
 private func irisDriveValidateLinkInputJson(_ text: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("iris_drive_validate_device_invite_input_json")
+private func irisDriveValidateDeviceInviteInputJson(_ text: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+
+@_silgen_name("iris_drive_validate_device_approval_input_json")
+private func irisDriveValidateDeviceApprovalInputJson(_ text: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("iris_drive_export_recovery_secret_json")
 private func irisDriveExportRecoverySecretJson(_ dataDir: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
@@ -233,8 +239,31 @@ enum IrisDriveNativeLinkInput {
     }
 
     static func validate(_ text: String) -> NativeLinkInputClassification {
+        validateWith(text, irisDriveValidateLinkInputJson)
+    }
+
+    static func validateDeviceInvite(_ text: String) -> NativeLinkInputClassification {
+        validateWith(text, irisDriveValidateDeviceInviteInputJson)
+    }
+
+    static func validateDeviceApproval(_ text: String) -> NativeLinkInputClassification {
+        validateWith(text, irisDriveValidateDeviceApprovalInputJson)
+    }
+
+    static func isComplete(_ text: String) -> Bool {
+        validate(text).isComplete
+    }
+
+    static func isCompleteDeviceApproval(_ text: String) -> Bool {
+        validateDeviceApproval(text).isComplete
+    }
+
+    private static func validateWith(
+        _ text: String,
+        _ validator: (UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+    ) -> NativeLinkInputClassification {
         let json = text.withCString { pointer in
-            takeString(irisDriveValidateLinkInputJson(pointer))
+            takeString(validator(pointer))
         }
         guard let data = json.data(using: .utf8),
               let value = try? JSONDecoder().decode(NativeLinkInputClassification.self, from: data)
@@ -242,10 +271,6 @@ enum IrisDriveNativeLinkInput {
             return NativeLinkInputClassification(error: "native link validator returned invalid JSON")
         }
         return value
-    }
-
-    static func isComplete(_ text: String) -> Bool {
-        validate(text).isComplete
     }
 
     private static func takeString(_ pointer: UnsafeMutablePointer<CChar>?) -> String {

@@ -23,7 +23,7 @@ require_absent() {
 }
 
 require_contains linux/Cargo.toml 'iris-drive-app-core = { path = "../crates/iris-drive-app-core" }'
-require_contains linux/src/setup.rs 'iris_drive_app_core::validate_link_input(value.to_string()).is_complete'
+require_contains linux/src/setup.rs 'iris_drive_app_core::validate_device_invite_input(value.to_string()).is_complete'
 require_contains linux/src/main.rs 'NativeAppAction, NativeAppState, UiState'
 require_contains linux/src/daemon_control.rs 'pub(crate) fn desktop_state() -> Result<NativeAppState, String>'
 require_contains linux/src/daemon_control.rs 'pub(crate) fn dispatch_desktop_action(action: NativeAppAction)'

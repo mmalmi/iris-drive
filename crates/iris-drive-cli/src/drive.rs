@@ -9,7 +9,13 @@ use iris_drive_core::provider::{
 };
 
 mod commands;
+mod provider_retry;
 pub(crate) use commands::*;
+use provider_retry::{
+    ensure_provider_root_locally_available, import_provider_root_with_retry,
+    primary_merged_root_from_view_with_retry, primary_merged_root_with_retry,
+    primary_merged_view_with_retry,
+};
 
 pub(crate) fn cmd_drives(config_dir: &std::path::Path) -> Result<()> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
@@ -233,7 +239,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
         let supplied_base_root_cid = provider_command_base_root_cid(&command)?;
         let visible_view = if provider_command_needs_merged_view(&command) {
             let phase = std::time::Instant::now();
-            let view = iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
+            let view = primary_merged_view_with_retry(&daemon)
                 .await
                 .context("building virtual provider timestamp index")?;
             tracing::debug!(
@@ -253,13 +259,9 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                 top_level_entries: 0,
             }
         } else if let Some(visible_view) = visible_view.as_ref() {
-            iris_drive_core::primary_merged_root_from_view(
-                daemon.tree(),
-                daemon.config(),
-                visible_view,
-            )
-            .await
-            .context("building virtual provider root")?
+            primary_merged_root_from_view_with_retry(&daemon, visible_view)
+                .await
+                .context("building virtual provider root")?
         } else {
             primary_merged_root_with_retry(&daemon)
                 .await
@@ -797,83 +799,6 @@ pub(crate) async fn delete_provider_path(
     Ok(())
 }
 
-const PROVIDER_IMPORT_RETRY_DELAYS_MS: &[u64] = &[
-    250, 500, 1_000, 2_000, 4_000, 8_000, 12_000, 16_000, 16_000, 16_000,
-];
-
-async fn ensure_provider_root_locally_available(daemon: &Daemon, root: &Cid) -> Result<()> {
-    let mut attempt = 0;
-    loop {
-        match check_provider_root_locally_available(daemon, root).await {
-            Ok(()) => return Ok(()),
-            Err(error)
-                if attempt < PROVIDER_IMPORT_RETRY_DELAYS_MS.len()
-                    && provider_import_error_message_is_retryable(&format!("{error:#}")) =>
-            {
-                let delay_ms = PROVIDER_IMPORT_RETRY_DELAYS_MS[attempt];
-                attempt += 1;
-                tracing::warn!(
-                    error = %error,
-                    delay_ms,
-                    root_cid = %root,
-                    "provider command hit a transient local root read; retrying mutation preflight"
-                );
-                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
-            }
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!("provider root {root} is not locally readable for mutation")
-                });
-            }
-        }
-    }
-}
-
-async fn check_provider_root_locally_available(daemon: &Daemon, root: &Cid) -> Result<()> {
-    let hashes = iris_drive_core::block_sync::collect_live_sync_hashes(daemon.tree(), root, 4)
-        .await
-        .context("walking local provider root blocks")?;
-    let store = daemon.tree().get_store().clone();
-    for hash in hashes {
-        if !store
-            .has(&hash)
-            .await
-            .with_context(|| format!("checking local block {}", hashtree_core::to_hex(&hash)))?
-        {
-            anyhow::bail!(
-                "local store is missing provider root block {}",
-                hashtree_core::to_hex(&hash)
-            );
-        }
-    }
-    Ok(())
-}
-
-async fn primary_merged_root_with_retry(
-    daemon: &Daemon,
-) -> Result<iris_drive_core::PrimaryMergedRoot> {
-    let mut attempt = 0;
-    loop {
-        match iris_drive_core::primary_merged_root(daemon.tree(), daemon.config()).await {
-            Ok(root) => return Ok(root),
-            Err(error)
-                if attempt < PROVIDER_IMPORT_RETRY_DELAYS_MS.len()
-                    && provider_import_error_message_is_retryable(&error.to_string()) =>
-            {
-                let delay_ms = PROVIDER_IMPORT_RETRY_DELAYS_MS[attempt];
-                attempt += 1;
-                tracing::warn!(
-                    error = %error,
-                    delay_ms,
-                    "provider command hit a transient store read; retrying merged root build"
-                );
-                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
-            }
-            Err(error) => return Err(error.into()),
-        }
-    }
-}
-
 pub(crate) async fn rename_provider_path(
     provider: &HashTreeProviderFs<FsBlobStore>,
     old_path: &str,
@@ -980,45 +905,6 @@ async fn wake_provider_root_publisher(
         let _ = stream.shutdown().await;
     }
     Ok(())
-}
-
-async fn import_provider_root_with_retry(
-    daemon: &mut Daemon,
-    root: Cid,
-    tombstone_base_root: Option<Cid>,
-) -> Result<iris_drive_core::daemon::ImportReport> {
-    let mut attempt = 0;
-    loop {
-        match daemon
-            .import_visible_root_with_tombstone_base(root.clone(), tombstone_base_root.clone())
-            .await
-        {
-            Ok(report) => return Ok(report),
-            Err(error)
-                if attempt < PROVIDER_IMPORT_RETRY_DELAYS_MS.len()
-                    && provider_import_error_message_is_retryable(&error.to_string()) =>
-            {
-                let delay_ms = PROVIDER_IMPORT_RETRY_DELAYS_MS[attempt];
-                attempt += 1;
-                tracing::warn!(
-                    error = %error,
-                    delay_ms,
-                    "provider import hit a transient store read; retrying"
-                );
-                tokio::time::sleep(std::time::Duration::from_millis(delay_ms)).await;
-            }
-            Err(error) => return Err(error.into()),
-        }
-    }
-}
-
-fn provider_import_error_message_is_retryable(message: &str) -> bool {
-    message.contains("Store error")
-        && (message.contains("os error 2")
-            || message.contains("No such file or directory")
-            || message.contains("The system cannot find the file specified"))
-        || message.contains("Missing chunk")
-        || message.contains("local store is missing provider root block")
 }
 
 #[cfg(test)]

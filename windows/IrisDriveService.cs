@@ -80,25 +80,20 @@ public sealed partial class IrisDriveService
     {
         if (string.IsNullOrWhiteSpace(target))
         {
-            throw new InvalidOperationException("IrisProfile invite link or admin device key is required.");
+            throw new InvalidOperationException("Device invite link is required.");
         }
 
         return FinishSetupAsync(new[] { "link", target.Trim() });
     }
 
-    public Task<bool> IsCompleteLinkInputAsync(string input)
+    public Task<bool> IsCompleteDeviceInviteInputAsync(string input)
     {
-        return Task.FromResult(IrisDriveNativeCore.IsCompleteLinkInput(input));
+        return Task.FromResult(IrisDriveNativeCore.IsCompleteDeviceInviteInput(input));
     }
 
-    public Task RelinkDeviceAsync(string target)
+    public Task<bool> IsCompleteDeviceApprovalInputAsync(string input)
     {
-        if (string.IsNullOrWhiteSpace(target))
-        {
-            throw new InvalidOperationException("IrisProfile invite link or admin device key is required.");
-        }
-
-        return FinishSetupAsync(new[] { "link", target.Trim(), "--force" });
+        return Task.FromResult(IrisDriveNativeCore.IsCompleteDeviceApprovalInput(input));
     }
 
     public async Task ApproveDeviceAsync(string device, string label)

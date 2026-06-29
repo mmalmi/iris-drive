@@ -65,23 +65,24 @@ just run-cli list
 just run-cli update --check
 ```
 
-Common AppKey and backup flows:
+Common device-link and backup flows:
 
 ```bash
 just run-cli app-keys invite
-just run-cli app-keys request <owner-npub-or-invite-url> --label "Laptop"
-just run-cli app-keys approve <app-key-request-url-or-npub>
+just run-cli app-keys request <device-invite-url> --label "Laptop"
+just run-cli app-keys request <nostr-identity-uuid> --admin-app-key <admin-device-npub> --label "Laptop"
+just run-cli app-keys approve <device-request-url-or-device-npub>
 just run-cli app-keys list
 just run-cli app-keys repair-wraps
 just run-cli shares create "Projects/Alpha" --name "Alpha"
 just run-cli shares recipient-evidence --display-name "Alice" > recipient-profile.json
 just run-cli shares invite <share-id> --recipient-evidence recipient-profile.json --role reader
-just run-cli shares invite <share-id> --profile <iris-profile-id> --app-key <recipient-appkey-npub> --role reader
+just run-cli shares invite <share-id> --profile <nostr-identity-id> --app-key <recipient-device-npub> --role reader
 just run-cli shares accept <share-invite-url>
 just run-cli shares list
 just run-cli shares members <share-id>
-just run-cli shares role <share-id> <iris-profile-id> editor
-just run-cli shares revoke <share-id> <iris-profile-id>
+just run-cli shares role <share-id> <nostr-identity-id> editor
+just run-cli shares revoke <share-id> <nostr-identity-id>
 just run-cli shares shortcut <share-id> --parent "Projects"
 just run-cli shares repair-wraps <share-id>
 just run-cli shares list --diagnostics
@@ -90,21 +91,21 @@ just run-cli backups sync
 ```
 
 Native apps expose the same share operations from the **Shares** tab: create a
-shared folder, invite an IrisProfile member, accept an invite, change member
+shared folder, invite a NostrIdentity member, accept an invite, change member
 roles, revoke a member, add a shortcut, and repair missing key wraps. The UI
 shows people/profile members first; invite dialogs prefer signed
 recipient-evidence JSON. `idrive shares recipient-evidence` or the app-core
-`export_share_recipient_evidence` action exports the local IrisProfile/AppKey
+`export_share_recipient_evidence` action exports the local NostrIdentity/device
 proof bundle another user can pass to `idrive shares invite
 --recipient-evidence` or `invite_share_member_from_evidence`; native share
-screens expose this as **Copy my share identity**. Direct AppKey entry remains
-an admin fallback.
+screens expose this as **Copy my share identity**. Direct device-key entry
+remains an admin fallback.
 
-CLI share JSON follows the same shape by default: members are IrisProfile
-entities and repair/revocation output reports counts. Raw AppKey lists are
+CLI share JSON follows the same shape by default: members are NostrIdentity
+entities and repair/revocation output reports counts. Raw device-key lists are
 available only from explicit diagnostics output such as
 `idrive shares list --diagnostics`,
-`idrive shares revoke <share-id> <iris-profile-id> --diagnostics`, and
+`idrive shares revoke <share-id> <nostr-identity-id> --diagnostics`, and
 `idrive shares repair-wraps <share-id> --diagnostics`.
 
 OS share/open integrations do not grant access by themselves. They open the app
@@ -228,18 +229,18 @@ product detail above; keep agent/operator reference material here.
 
 ### Config Model
 
-`idrive init` creates an IrisProfile and a fresh per-install AppKey. Recovery
+`idrive init` creates a NostrIdentity and a fresh per-install device key. Recovery
 phrases are explicit recovery material, not part of normal profile creation.
-`idrive restore` creates a fresh AppKey for the restored install, and
-`idrive link` creates a fresh AppKey that waits for admin approval.
+`idrive restore` creates a fresh device key for the restored install, and
+`idrive link` creates a fresh device key that waits for admin approval.
 
 By default, CLI config lives under the OS config directory with the
 `iris-drive` suffix. Set `IRIS_DRIVE_CONFIG_DIR` or pass `--config-dir` for
 isolated development and tests. Important files live under that directory:
 
 - `config.toml`: app config, relays, drives, roster, backup targets
-- `key`: this app install's AppKey signing key
-- `recovery_phrase`: 12-word IrisProfile recovery authority, when available
+- `key`: this app install's device signing key
+- `recovery_phrase`: 12-word NostrIdentity recovery authority, when available
 - `blocks/`: Iris Drive htree block store
 - `Hashtree/`: embedded hashtree daemon runtime state
 

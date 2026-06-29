@@ -597,7 +597,7 @@ run_ui_test \
 STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
 if ! wait_for_debug_state \
   "$STATE_FILE" \
-  'import json,sys; s=json.load(sys.stdin); ui=s.get("ui",{}); devices=ui.get("app_actors") or ui.get("devices") or []; raise SystemExit(0 if any((d.get("display_label") or d.get("label")) == "iOS UI linked" for d in devices) and len(devices) >= 2 else 1)' \
+  'import json,sys; s=json.load(sys.stdin); ui=s.get("ui",{}); devices=ui.get("app_actors") or ui.get("devices") or []; raise SystemExit(0 if any(d.get("role") == "member" and d.get("state") == "Linked" for d in devices) and len(devices) >= 2 else 1)' \
   15; then
   echo "FAIL: iOS Add Device UI did not add the linked device." >&2
   [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2

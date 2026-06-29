@@ -244,7 +244,6 @@ public partial class MainWindow : Window
         ShowSetupPanel(RevokedPanel);
         RevokedAppKeyBox.Text = status.CurrentAppKeyNpub ?? "";
         RevokedDeviceBox.Text = status.DeviceNpub ?? "";
-        RevokedRelinkButton.IsEnabled = !string.IsNullOrWhiteSpace(status.CurrentAppKeyNpub);
         SetupNotice.Text = notice ?? "Device removed";
         UpdateTrayText(false);
     }
@@ -925,29 +924,6 @@ public partial class MainWindow : Window
     private void CopyRevokedDevice_Click(object sender, RoutedEventArgs e)
     {
         CopySetupText(currentStatus?.DeviceNpub, "Device key copied");
-    }
-
-    private async void RelinkRevokedDevice_Click(object sender, RoutedEventArgs e)
-    {
-        var target = currentStatus?.CurrentAppKeyNpub;
-        if (string.IsNullOrWhiteSpace(target))
-        {
-            SetupNotice.Text = "Device key unavailable";
-            return;
-        }
-
-        try
-        {
-            RevokedRelinkButton.IsEnabled = false;
-            SetupNotice.Text = "Linking device";
-            await service.RelinkDeviceAsync(target);
-            await RefreshAsync();
-        }
-        catch (Exception error)
-        {
-            SetupNotice.Text = error.Message;
-            RevokedRelinkButton.IsEnabled = true;
-        }
     }
 
     private async void AddRelay_Click(object sender, RoutedEventArgs e)

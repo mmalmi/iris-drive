@@ -298,7 +298,7 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     let last_share_invite = value_label();
     let copy_last_share_invite_button = icon_button("edit-copy-symbolic", "Copy invite");
     let share_identity_placeholder = value_label();
-    share_identity_placeholder.set_text("Signed IrisProfile proof");
+    share_identity_placeholder.set_text("Signed NostrIdentity proof");
     let copy_share_identity_button = icon_button("edit-copy-symbolic", "Copy my share identity");
     add_copy_field(
         &last_invite_grid,

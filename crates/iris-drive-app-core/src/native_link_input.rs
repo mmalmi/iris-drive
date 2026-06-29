@@ -68,9 +68,45 @@ pub fn validate_link_input(input: String) -> LinkInputClassification {
     classification
 }
 
+#[uniffi::export]
+#[must_use]
+#[allow(clippy::needless_pass_by_value)]
+pub fn validate_device_invite_input(input: String) -> LinkInputClassification {
+    let mut classification: LinkInputClassification =
+        iris_drive_core::classify_link_input(&input).into();
+    if classification.kind != "invite" || !classification.has_invite_pubkey {
+        if classification.kind == "invite" && classification.is_complete && classification.is_valid
+        {
+            "device invite is missing invite key".clone_into(&mut classification.error);
+        }
+        classification.is_complete = false;
+        classification.is_valid = false;
+    }
+    classification
+}
+
+#[uniffi::export]
+#[must_use]
+#[allow(clippy::needless_pass_by_value)]
+pub fn validate_device_approval_input(input: String) -> LinkInputClassification {
+    let mut classification: LinkInputClassification =
+        iris_drive_core::classify_link_input(&input).into();
+    if !matches!(
+        classification.kind.as_str(),
+        "app_key_pubkey" | "app_key_approval"
+    ) {
+        classification.is_complete = false;
+        classification.is_valid = false;
+    }
+    classification
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{classify_link_input, validate_link_input};
+    use super::{
+        classify_link_input, validate_device_approval_input, validate_device_invite_input,
+        validate_link_input,
+    };
 
     #[test]
     fn classify_nhash_file_exposes_native_open_target() {
@@ -91,5 +127,47 @@ mod tests {
         assert_eq!(browser.kind, "iris_web");
         assert!(!browser.is_complete);
         assert!(!browser.is_valid);
+    }
+
+    #[test]
+    fn validate_link_input_keeps_legacy_generic_link_semantics() {
+        let admin = nostr_sdk::Keys::generate();
+        let invite = nostr_sdk::Keys::generate();
+        let profile_id = iris_drive_core::NostrIdentityId::new_v4();
+        let url = iris_drive_core::app_key_link_invite::encode_app_key_link_invite(
+            profile_id,
+            &admin.public_key().to_hex(),
+            &invite.public_key().to_hex(),
+        )
+        .expect("invite url");
+
+        let classification = validate_link_input(url);
+        assert_eq!(classification.kind, "invite");
+        assert!(classification.is_complete);
+        assert!(classification.is_valid);
+    }
+
+    #[test]
+    fn validate_device_invite_input_only_accepts_canonical_invites() {
+        let admin_key = "0000000000000000000000000000000000000000000000000000000000000001";
+        let admin = validate_device_invite_input(admin_key.to_owned());
+        assert_eq!(admin.kind, "app_key_pubkey");
+        assert!(!admin.is_complete);
+        assert!(!admin.is_valid);
+
+        let old = validate_device_invite_input(
+            "iris-drive://link-device?admin=0000000000000000000000000000000000000000000000000000000000000001&secret=s"
+                .to_owned(),
+        );
+        assert!(!old.is_complete);
+        assert!(!old.is_valid);
+    }
+
+    #[test]
+    fn validate_device_approval_input_rejects_invites() {
+        let invite = validate_device_approval_input("https://drive.iris.to/invite/test".to_owned());
+        assert_eq!(invite.kind, "invite");
+        assert!(!invite.is_complete);
+        assert!(!invite.is_valid);
     }
 }

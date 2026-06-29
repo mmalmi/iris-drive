@@ -27,6 +27,12 @@ private func irisDriveAppDispatchJson(
 @_silgen_name("iris_drive_validate_link_input_json")
 private func irisDriveValidateLinkInputJson(_ text: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("iris_drive_validate_device_invite_input_json")
+private func irisDriveValidateDeviceInviteInputJson(_ text: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+
+@_silgen_name("iris_drive_validate_device_approval_input_json")
+private func irisDriveValidateDeviceApprovalInputJson(_ text: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("iris_drive_classify_link_input_json")
 private func irisDriveClassifyLinkInputJson(_ text: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
@@ -103,15 +109,21 @@ final class IrisDriveDesktopCore {
     }
 
     static func validateLinkInput(_ text: String) -> Bool {
-        let json = text.withCString { pointer in
-            takeString(irisDriveValidateLinkInputJson(pointer))
+        isCompleteValidation(text) { pointer in
+            irisDriveValidateLinkInputJson(pointer)
         }
-        guard let data = json.data(using: .utf8),
-              let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-        else {
-            return false
+    }
+
+    static func validateDeviceInviteInput(_ text: String) -> Bool {
+        isCompleteValidation(text) { pointer in
+            irisDriveValidateDeviceInviteInputJson(pointer)
         }
-        return payload["is_complete"] as? Bool ?? false
+    }
+
+    static func validateDeviceApprovalInput(_ text: String) -> Bool {
+        isCompleteValidation(text) { pointer in
+            irisDriveValidateDeviceApprovalInputJson(pointer)
+        }
     }
 
     static func classifyLinkInput(_ text: String) -> [String: Any] {
@@ -124,6 +136,21 @@ final class IrisDriveDesktopCore {
             return ["error": "native link classifier returned invalid JSON"]
         }
         return payload
+    }
+
+    private static func isCompleteValidation(
+        _ text: String,
+        call: (UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+    ) -> Bool {
+        let json = text.withCString { pointer in
+            takeString(call(pointer))
+        }
+        guard let data = json.data(using: .utf8),
+              let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return false
+        }
+        return payload["is_complete"] as? Bool ?? false
     }
 
     static func exportRecoverySecret(dataDir: String) -> [String: Any] {

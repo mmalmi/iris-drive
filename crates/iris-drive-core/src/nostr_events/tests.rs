@@ -31,10 +31,7 @@ fn drive_root_event_roundtrip() {
         build_drive_root_event(&device, &root_scope_id, "main", &root, &authorized_app_keys)
             .unwrap();
     assert_eq!(event.kind.as_u16(), KIND_DRIVE_ROOT);
-    assert_eq!(
-        tag_value(&event, "ms").as_deref(),
-        Some("1700000000000")
-    );
+    assert_eq!(tag_value(&event, "ms").as_deref(), Some("1700000000000"));
     let (device_pk, parsed_scope, drive_id, parsed_root) =
         parse_drive_root_event_for_device(&event, &device).unwrap();
     let preview = parse_drive_root_event_preview(&event).unwrap();

@@ -161,11 +161,6 @@ private struct RevokedDeviceSetupView: View {
                     LabeledContent("Device", value: model.currentAppKeyNpub)
                     LabeledContent("Current Device Key", value: model.devicePublicKey)
                     Button {
-                        model.relinkDevice()
-                    } label: {
-                        Label("Link this device again", systemImage: "link")
-                    }
-                    Button {
                         model.copyDeviceKey()
                     } label: {
                         Label("Copy Device Key", systemImage: "doc.on.doc")
@@ -573,7 +568,7 @@ private struct LinkDeviceSetupView: View {
     var body: some View {
         Form {
             Section {
-                TextField("IrisProfile invite link or admin device key", text: $linkTarget)
+                TextField("Device invite link", text: $linkTarget)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .accessibilityIdentifier("linkTargetInput")
@@ -631,7 +626,7 @@ private struct LinkDeviceSetupView: View {
             }
             return
         }
-        let linkInput = IrisDriveNativeLinkInput.validate(trimmed)
+        let linkInput = IrisDriveNativeLinkInput.validateDeviceInvite(trimmed)
         guard linkInput.isComplete, linkInput.isValid else {
             if force {
                 linkValidationMessage = linkValidationFailureMessage(linkInput)
@@ -654,7 +649,7 @@ private struct LinkDeviceSetupView: View {
         case "invite":
             return "Scan or paste the full device invite link."
         case "app_key_pubkey":
-            return "Paste the full admin device key."
+            return "Scan or paste the device invite link."
         default:
             return "Scan or paste an Iris Drive device invite link."
         }
@@ -734,6 +729,7 @@ private struct DriveHomeView: View {
                         systemImage: "safari"
                     )
                 }
+                .accessibilityIdentifier("openIrisAppsButton")
                 .disabled(!model.localNhashResolverEnabled || model.isOpeningIrisApps)
                 Button {
                     model.copySnapshotLink()
@@ -938,7 +934,7 @@ private struct AddDeviceSection: View {
     @State private var inviteQrTask: Task<Void, Never>?
 
     private var canAddManualDevice: Bool {
-        IrisDriveNativeLinkInput.isComplete(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines))
+        IrisDriveNativeLinkInput.isCompleteDeviceApproval(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     private func submitManualDevice() {
@@ -2716,7 +2712,7 @@ private func shareOpenPath(_ share: IrisDriveShare) -> String {
 
 private func memberDisplayName(_ member: IrisDriveShareMember) -> String {
     member.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        ? "IrisProfile"
+        ? "NostrIdentity"
         : member.displayName
 }
 

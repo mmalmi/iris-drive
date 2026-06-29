@@ -34,7 +34,7 @@ public partial class MainWindow
         {
             return;
         }
-        if (!await service.IsCompleteLinkInputAsync(target))
+        if (!await service.IsCompleteDeviceInviteInputAsync(target))
         {
             return;
         }

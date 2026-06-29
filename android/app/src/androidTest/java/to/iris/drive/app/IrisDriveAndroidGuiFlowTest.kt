@@ -695,16 +695,18 @@ class IrisDriveAndroidGuiFlowTest {
             NativeActions.approveDevice(linked.devicePubkey, "Pixel"),
         )
         assertTrue(approved.error, approved.error.isBlank())
-        val pixel = approved.devices.single { it.label == "Pixel" }
-        assertFalse(pixel.isOnline)
+        val linkedDevice = approved.devices.single { it.pubkey == linked.devicePubkey }
+        assertFalse(linkedDevice.isOnline)
+        assertEquals("member", linkedDevice.role)
+        assertEquals("Linked", linkedDevice.state)
         assertEquals(2, approved.authorizedDeviceCount)
 
         render(state = approved)
         compose.onNodeWithText("/2 devices", substring = true).assertIsDisplayed()
         compose.onNodeWithTag("tabDevices").activate()
-        compose.onNodeWithTag("devicesContent").performScrollToNode(hasText("Pixel"))
-        compose.onNodeWithText("Pixel").assertIsDisplayed()
-        compose.onNodeWithContentDescription("Pixel offline").assertIsDisplayed()
+        compose.onNodeWithTag("devicesContent")
+            .performScrollToNode(hasText("Member | Linked | Offline"))
+        compose.onNodeWithText("Member | Linked | Offline").assertIsDisplayed()
     }
 
     @Test

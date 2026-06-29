@@ -12,7 +12,10 @@ pub use ffi::{
     export_recovery_secret, generate_recovery_key, recovery_pubkey_for_phrase,
 };
 pub use iris_drive_core::updater::UpdateAutoCheckPolicy;
-pub use native_link_input::{LinkInputClassification, classify_link_input, validate_link_input};
+pub use native_link_input::{
+    LinkInputClassification, classify_link_input, validate_device_approval_input,
+    validate_device_invite_input, validate_link_input,
+};
 pub use state::{NativeAppState, UiState};
 
 uniffi::setup_scaffolding!();

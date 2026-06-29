@@ -17,13 +17,6 @@ struct RevokedDeviceSetupView: View {
             if let device = status.deviceNpub, !device.isEmpty {
                 keyedValue("Current Device Key", device)
             }
-            Button {
-                controller.linkDevice(target: target)
-            } label: {
-                buttonLabel("Link this device again", systemImage: "link")
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(target.isEmpty)
             if status.deviceNpub?.isEmpty == false {
                 IrisDriveCopyButton(
                     title: "Copy Device Key",

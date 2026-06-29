@@ -1026,7 +1026,11 @@ fn drive_root_event_is_newer(candidate: &Event, current: &Event) -> bool {
                     drive_root_preview_ms(&candidate).cmp(&drive_root_preview_ms(&current))
                 })
                 .then_with(|| candidate.dck_generation.cmp(&current.dck_generation))
-                .then_with(|| candidate.app_key_pubkey_hex.cmp(&current.app_key_pubkey_hex))
+                .then_with(|| {
+                    candidate
+                        .app_key_pubkey_hex
+                        .cmp(&current.app_key_pubkey_hex)
+                })
                 .is_gt()
         }
         _ => candidate.created_at.as_secs() > current.created_at.as_secs(),
@@ -1034,9 +1038,11 @@ fn drive_root_event_is_newer(candidate: &Event, current: &Event) -> bool {
 }
 
 fn drive_root_preview_ms(preview: &crate::nostr_events::DriveRootEventPreview) -> u64 {
-    preview
-        .published_at_ms
-        .unwrap_or_else(|| u64::try_from(preview.published_at).unwrap_or(0).saturating_mul(1000))
+    preview.published_at_ms.unwrap_or_else(|| {
+        u64::try_from(preview.published_at)
+            .unwrap_or(0)
+            .saturating_mul(1000)
+    })
 }
 
 #[cfg(test)]

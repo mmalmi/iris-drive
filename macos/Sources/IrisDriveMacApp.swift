@@ -740,14 +740,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func linkDevice(target: String) {
         let target = target.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !target.isEmpty else {
-            updateStatus("Invite link or device key required")
+            updateStatus("Device invite link required")
             return
         }
         let args = setupArguments(command: "link", label: "", extra: [target, "--force"])
         finishSetup(arguments: args)
     }
 
-    func classifyLinkInput(_ input: String, completion: @escaping (String, Bool) -> Void) {
+    func classifyDeviceInviteInput(_ input: String, completion: @escaping (String, Bool) -> Void) {
+        validateInput(input, completion: completion) { text in
+            IrisDriveDesktopCore.validateDeviceInviteInput(text)
+        }
+    }
+
+    func classifyDeviceApprovalInput(_ input: String, completion: @escaping (String, Bool) -> Void) {
+        validateInput(input, completion: completion) { text in
+            IrisDriveDesktopCore.validateDeviceApprovalInput(text)
+        }
+    }
+
+    private func validateInput(
+        _ input: String,
+        completion: @escaping (String, Bool) -> Void,
+        validator: @escaping (String) -> Bool
+    ) {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             DispatchQueue.main.async {
@@ -757,7 +773,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         DispatchQueue.global(qos: .utility).async {
-            let isComplete = IrisDriveDesktopCore.validateLinkInput(trimmed)
+            let isComplete = validator(trimmed)
             DispatchQueue.main.async {
                 completion(trimmed, isComplete)
             }

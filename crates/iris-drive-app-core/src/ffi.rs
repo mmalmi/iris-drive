@@ -51,7 +51,10 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::actions::NativeAppAction;
-pub use crate::native_link_input::{classify_link_input, validate_link_input};
+pub use crate::native_link_input::{
+    classify_link_input, validate_device_approval_input, validate_device_invite_input,
+    validate_link_input,
+};
 #[cfg(test)]
 pub(crate) use crate::native_provider::run_native_sync_once_with_drive_root_events_for_test;
 use crate::native_provider::{

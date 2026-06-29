@@ -104,7 +104,7 @@ public partial class MainWindow
         {
             var sequence = ++deviceValidationSequence;
             add.IsEnabled = false;
-            var isComplete = await service.IsCompleteLinkInputAsync(deviceBox.Text);
+            var isComplete = await service.IsCompleteDeviceApprovalInputAsync(deviceBox.Text);
             if (sequence == deviceValidationSequence)
             {
                 add.IsEnabled = isComplete;
@@ -113,7 +113,7 @@ public partial class MainWindow
 
         async Task SubmitDeviceAsync()
         {
-            if (!await service.IsCompleteLinkInputAsync(deviceBox.Text))
+            if (!await service.IsCompleteDeviceApprovalInputAsync(deviceBox.Text))
             {
                 notice.Text = "Paste the complete device key or request link.";
                 add.IsEnabled = false;
