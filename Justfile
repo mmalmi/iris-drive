@@ -206,6 +206,7 @@ structure:
     ./scripts/check-macos-gateway-default.sh
     ./scripts/check-macos-fileprovider-lifecycle.sh
     ./scripts/check-macos-provider-summary.sh
+    ./scripts/check-ios-idle-work-gates.sh
     ./scripts/check-macos-relay-status-rendering.sh
     ./scripts/check-updater-wiring.sh
     ./scripts/check-relay-config-normalization.sh

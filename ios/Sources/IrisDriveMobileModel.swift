@@ -255,6 +255,10 @@ final class IrisDriveMobileModel: ObservableObject {
         shouldRunDriveBackgroundSync || shouldRunAppleCalendarSync
     }
 
+    private var shouldRunForegroundWork: Bool {
+        shouldRunDriveBackgroundSync || shouldRunAppleCalendarSync
+    }
+
     var canAdminProfile: Bool {
         lastState?.ui.profile?.canAdminProfile ?? false
     }
@@ -745,7 +749,24 @@ final class IrisDriveMobileModel: ObservableObject {
         scheduleBackgroundSyncIfNeeded()
     }
 
+    func reconcileForegroundWork(isActive: Bool) {
+        if isActive {
+            startForegroundSyncLoop()
+        } else {
+            stopForegroundSyncLoop()
+            scheduleBackgroundSyncIfNeeded()
+        }
+    }
+
     func startForegroundSyncLoop() {
+        guard UIApplication.shared.applicationState == .active else {
+            stopForegroundSyncLoop()
+            return
+        }
+        guard shouldRunForegroundWork else {
+            stopForegroundSyncLoop()
+            return
+        }
         startNativeFipsStatusWatcher()
         startProviderRootSignalWatcher()
         guard foregroundSyncTask == nil else { return }
@@ -1135,6 +1156,7 @@ final class IrisDriveMobileModel: ObservableObject {
         fileProviderStatus = "Files provider not registered"
         rebuildDerivedState()
         removeFileProviderDomain()
+        stopForegroundSyncLoop()
         persistLocalSettings()
     }
 
@@ -1148,17 +1170,20 @@ final class IrisDriveMobileModel: ObservableObject {
         guard isSetupComplete else { return }
         dispatch(["type": "start_sync"])
         scheduleBackgroundSyncIfNeeded()
+        reconcileForegroundWorkIfAppActive()
     }
 
     func stopSync() {
         dispatch(["type": "stop_sync"])
         scheduleBackgroundSyncIfNeeded()
+        reconcileForegroundWorkIfAppActive()
     }
 
     func restartSync() {
         guard isSetupComplete else { return }
         dispatch(["type": "restart_sync"])
         scheduleBackgroundSyncIfNeeded()
+        reconcileForegroundWorkIfAppActive()
     }
 
     func setAppleCalendarSyncEnabled(_ enabled: Bool) {
@@ -1168,6 +1193,7 @@ final class IrisDriveMobileModel: ObservableObject {
                 self.appleCalendarSync.setEnabled(false)
                 self.refreshAppleCalendarSyncState()
                 self.scheduleBackgroundSyncIfNeeded()
+                self.reconcileForegroundWorkIfAppActive()
                 return
             }
 
@@ -1178,11 +1204,13 @@ final class IrisDriveMobileModel: ObservableObject {
                     self.refreshAppleCalendarSyncState()
                     self.appleCalendarSyncStatus = "Calendar access denied"
                     self.scheduleBackgroundSyncIfNeeded()
+                    self.reconcileForegroundWorkIfAppActive()
                     return
                 }
                 self.appleCalendarSync.setEnabled(true)
                 self.refreshAppleCalendarSyncState()
                 self.scheduleBackgroundSyncIfNeeded()
+                self.reconcileForegroundWorkIfAppActive()
                 await self.runAppleCalendarSyncIfEnabled(force: true)
             } catch {
                 self.appleCalendarSync.setEnabled(false)
@@ -1191,6 +1219,7 @@ final class IrisDriveMobileModel: ObservableObject {
                     ? "Apple Calendar access failed"
                     : error.localizedDescription
                 self.scheduleBackgroundSyncIfNeeded()
+                self.reconcileForegroundWorkIfAppActive()
             }
         }
     }
@@ -2165,16 +2194,25 @@ final class IrisDriveMobileModel: ObservableObject {
         guard let data = json.data(using: .utf8),
               let state = try? JSONDecoder().decode(NativeAppState.self, from: data)
         else {
+            lastState = nil
+            syncRunning = false
             stateLoaded = true
             statusTitle = "Native state failed"
             statusDetail = json
             writeDebugState(json)
+            reconcileForegroundWorkIfAppActive()
             return
         }
         stateLoaded = true
         lastState = state
         rebuildDerivedState()
         writeDebugState(json)
+        reconcileForegroundWorkIfAppActive()
+    }
+
+    private func reconcileForegroundWorkIfAppActive() {
+        guard UIApplication.shared.applicationState == .active else { return }
+        startForegroundSyncLoop()
     }
 
     private func writeDebugState(_ json: String) {

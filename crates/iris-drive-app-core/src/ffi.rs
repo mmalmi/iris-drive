@@ -426,9 +426,9 @@ impl NativeAppRuntime {
         let mut state = NativeAppState::default();
         state.ui.paths = paths_for(&data_dir);
         state.ui.sync = UiSyncStatus {
-            running: true,
-            status: "running".to_owned(),
-            status_label: sync_status_label("running"),
+            running: false,
+            status: "paused".to_owned(),
+            status_label: sync_status_label("paused"),
         };
 
         let mut runtime = Self {
@@ -1451,6 +1451,7 @@ impl NativeAppRuntime {
         self.reset_ui_for_reload(paths, sync);
 
         let Ok(mut config) = self.load_config() else {
+            self.set_sync_running(false);
             self.refresh_ui_summary(None);
             return;
         };
@@ -1491,6 +1492,7 @@ impl NativeAppRuntime {
         };
 
         let Some(raw_account) = config.profile.as_ref() else {
+            self.set_sync_running(false);
             self.refresh_ui_summary(None);
             return;
         };
@@ -3483,6 +3485,8 @@ mod app_key_link_flow_tests;
 mod backup_tests;
 #[cfg(test)]
 mod browser_gateway_tests;
+#[cfg(test)]
+mod idle_tests;
 #[cfg(test)]
 mod provider_tests;
 #[cfg(test)]
