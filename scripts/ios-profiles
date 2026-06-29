@@ -51,6 +51,8 @@ const profileNameSuffix = envValue(
     ? ['IRIS_DRIVE_MACOS_PROFILE_NAME_SUFFIX']
     : ['IRIS_DRIVE_IOS_PROFILE_NAME_SUFFIX'],
 )
+const defaultIosBundleId = 'to.iris.drive.ios'
+const iosBundleId = envValue(['IRIS_DRIVE_IOS_BUNDLE_ID'], defaultIosBundleId)
 const recreateProfiles = boolEnv(
   profilePlatform === 'macos'
     ? 'IRIS_DRIVE_MACOS_PROFILE_RECREATE'
@@ -204,7 +206,7 @@ function profileTargets(platform, label) {
   return [
     {
       role: 'app',
-      identifier: envValue(['IRIS_DRIVE_IOS_BUNDLE_ID'], 'to.iris.drive.ios'),
+      identifier: iosBundleId,
       profileName: envValue(['IRIS_DRIVE_IOS_PROFILE_NAME'], `Iris Drive ${label} main`),
       envKey: 'IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID',
     },
@@ -212,7 +214,7 @@ function profileTargets(platform, label) {
       role: 'file_provider',
       identifier: envValue(
         ['IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID'],
-        'to.iris.drive.ios.FileProvider',
+        `${iosBundleId}.FileProvider`,
       ),
       profileName: envValue(
         ['IRIS_DRIVE_IOS_FILE_PROVIDER_PROFILE_NAME'],
@@ -224,7 +226,7 @@ function profileTargets(platform, label) {
       role: 'share_extension',
       identifier: envValue(
         ['IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID'],
-        'to.iris.drive.ios.ShareExtension',
+        `${iosBundleId}.ShareExtension`,
       ),
       profileName: envValue(
         ['IRIS_DRIVE_IOS_SHARE_EXTENSION_PROFILE_NAME'],

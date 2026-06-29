@@ -20,6 +20,8 @@
   <string>$(MARKETING_VERSION)</string>
   <key>CFBundleVersion</key>
   <string>$(CURRENT_PROJECT_VERSION)</string>
+  <key>IrisDriveAppGroupIdentifier</key>
+  <string>$(IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER)</string>
   <key>NSExtension</key>
   <dict>
     <key>NSExtensionFileProviderSupportsEnumeration</key>
@@ -29,7 +31,7 @@
     <key>NSExtensionFileProviderDownloadPipelineDepth</key>
     <integer>4</integer>
     <key>NSExtensionFileProviderDocumentGroup</key>
-    <string>group.to.iris.drive</string>
+    <string>$(IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER)</string>
     <key>NSExtensionPointIdentifier</key>
     <string>com.apple.fileprovider-nonui</string>
     <key>NSExtensionPrincipalClass</key>

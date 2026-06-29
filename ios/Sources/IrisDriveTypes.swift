@@ -117,7 +117,9 @@ struct IrisDriveRoot: Identifiable, Equatable {
 }
 
 enum IrisDriveSharedContainer {
-    static let appGroupIdentifier = "group.to.iris.drive"
+    static let appGroupIdentifier = Bundle.main.object(
+        forInfoDictionaryKey: "IrisDriveAppGroupIdentifier"
+    ) as? String ?? "group.to.iris.drive"
     static let storageDirectoryName = "IrisDrive"
 
     static var baseDirectory: URL {

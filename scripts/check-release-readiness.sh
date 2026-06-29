@@ -71,6 +71,10 @@ require_contains android/app/build.gradle.kts "irisDriveVersionName"
 require_contains scripts/ios-build "ios-testflight-public"
 require_contains scripts/ios-build "scripts/ios-profiles"
 require_contains scripts/ios-build "testflight-internal"
+require_contains scripts/ios-build 'FILE_PROVIDER_BUNDLE_ID="${IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID:-$BUNDLE_ID.FileProvider}"'
+require_contains scripts/ios-build "IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER"
+require_contains scripts/ios-build "IRIS_DRIVE_IOS_SIGNING_STYLE"
+require_contains scripts/ios-build "-authenticationKeyPath"
 require_contains scripts/testflight-internal "testflight-app-store-connect.mjs"
 require_contains scripts/testflight-public "testflight-app-store-connect.mjs"
 require_contains scripts/testflight-app-store-connect.mjs "betaAppReviewSubmissions"
@@ -117,6 +121,11 @@ require_contains .env.release.example "IRIS_DRIVE_IOS_TESTFLIGHT_CHANNELS=intern
 require_contains .env.release.example "IRIS_DRIVE_IOS_PROFILE_RECREATE=true"
 require_contains .env.release.example "IRIS_DRIVE_IOS_PROFILES_ENV_PATH="
 require_contains .env.release.example "IRIS_DRIVE_IOS_PUBLIC_TESTFLIGHT=1"
+require_contains .env.release.example "IRIS_DRIVE_IOS_BUNDLE_ID=fi.siriusbusiness.drive"
+require_contains .env.release.example "IRIS_DRIVE_IOS_SIGNING_STYLE=automatic"
+require_contains ios/project.yml 'PRODUCT_BUNDLE_IDENTIFIER: $(IRIS_DRIVE_IOS_BUNDLE_ID)'
+require_contains ios/project.yml 'PRODUCT_BUNDLE_IDENTIFIER: $(IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID)'
+require_contains ios/project.yml 'PRODUCT_BUNDLE_IDENTIFIER: $(IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID)'
 require_contains .env.release.example "IRIS_DRIVE_MACOS_CODESIGN_RETRY_DELAY_SECONDS="
 require_contains .env.release.example "IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE="
 require_contains .env.release.example "IRIS_DRIVE_MACOS_KEEP_PROVISIONED_ENTITLEMENTS="
