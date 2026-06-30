@@ -702,6 +702,7 @@ private fun SetupContent(
                         text = if (selectedPhoto.isBlank()) "Later" else "Create profile",
                         onClick = { onCreateProfile() },
                         icon = true,
+                        testTag = "createPhotoSubmit",
                     )
                 }
                 SetupRoute.RestoreOptions -> {

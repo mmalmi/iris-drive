@@ -70,19 +70,55 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     @Test
-    fun createProfileFlowClicksThroughFirstRunUi() {
+    fun createProfileFlowDoesNotRequireUsernameOrProfilePhoto() {
         val handle = newNativeHandle()
+        val createdLabels = mutableListOf<String>()
 
         render(
             state = AppState(),
-            onCreateProfile = { label -> dispatch(handle, NativeActions.createProfile(label)) },
+            onCreateProfile = { label ->
+                createdLabels += label
+                dispatch(handle, NativeActions.createProfile(label))
+            },
             onAddRoot = { name, path -> dispatch(handle, NativeActions.addRoot(name, path)) },
         )
 
         compose.onAllNodesWithText("Setup").assertCountEquals(0)
         compose.onNodeWithTag("welcomeCreateProfile").assertIsDisplayed().activate()
-        compose.onNodeWithTag("createProfileSubmit").assertIsDisplayed().activate()
+        compose.onNodeWithTag("createUsername").assertIsDisplayed()
+        compose.onNodeWithText("Username (optional)").assertIsDisplayed()
+        compose.onNodeWithTag("createProfileSubmit").assertIsDisplayed().assertIsEnabled().activate()
+        compose.onAllNodesWithText("Profile photo").assertCountEquals(0)
 
+        assertEquals(listOf(""), createdLabels)
+        val state = appState(handle)
+        assertEquals("authorized", state.profile?.authorizationState)
+        assertTrue(state.profile?.canAdminProfile == true)
+        assertEquals(1, state.roots.size)
+    }
+
+    @Test
+    fun createProfileFlowWithUsernameCanSkipProfilePhoto() {
+        val handle = newNativeHandle()
+        val createdLabels = mutableListOf<String>()
+
+        render(
+            state = AppState(),
+            onCreateProfile = { label ->
+                createdLabels += label
+                dispatch(handle, NativeActions.createProfile(label))
+            },
+            onAddRoot = { name, path -> dispatch(handle, NativeActions.addRoot(name, path)) },
+        )
+
+        compose.onNodeWithTag("welcomeCreateProfile").assertIsDisplayed().activate()
+        compose.onNodeWithTag("createUsername").assertIsDisplayed().performTextInput("Ada")
+        closeSoftKeyboard()
+        compose.onNodeWithTag("createProfileSubmit").assertIsDisplayed().assertIsEnabled().activate()
+        compose.onNodeWithText("Profile photo").assertIsDisplayed()
+        compose.onNodeWithTag("createPhotoSubmit").assertIsDisplayed().assertIsEnabled().activate()
+
+        assertEquals(1, createdLabels.size)
         val state = appState(handle)
         assertEquals("authorized", state.profile?.authorizationState)
         assertTrue(state.profile?.canAdminProfile == true)
