@@ -218,11 +218,23 @@ pub fn encode_app_key_approval_request(
             request_secret: None,
             requested_at: requested_at_i64,
             request_type: Some("device_link".to_owned()),
-            resources: vec![NostrIdentityDeviceApprovalRequestedResource {
-                resource_type: "nostr_identity_profile".to_owned(),
-                id: profile_id.to_string(),
-                scopes: vec!["app_key".to_owned()],
-            }],
+            resources: vec![
+                NostrIdentityDeviceApprovalRequestedResource {
+                    resource_type: "nostr_identity_profile".to_owned(),
+                    id: profile_id.to_string(),
+                    scopes: vec!["app_key".to_owned()],
+                },
+                NostrIdentityDeviceApprovalRequestedResource {
+                    resource_type: "iris_drive".to_owned(),
+                    id: "drive.iris.to".to_owned(),
+                    scopes: vec![
+                        "app_key".to_owned(),
+                        "write_roots".to_owned(),
+                        "receive_secret_wraps".to_owned(),
+                        "decrypt_secret_epochs".to_owned(),
+                    ],
+                },
+            ],
             expires_at: None,
             profile_id: Some(profile_id),
             admin_app_key_pubkey: admin_app_key_pubkey.map(str::to_owned),
@@ -381,6 +393,19 @@ mod tests {
         assert_eq!(parsed.app_key_hex, app_key.public_key().to_hex());
         assert!(parsed.invite_pubkey.is_empty());
         assert_eq!(parsed.label.as_deref(), Some("Web + Native"));
+        let raw = nostr_identity::parse_nostr_identity_device_approval_request(
+            &url,
+            &[APP_KEY_APPROVAL_REQUEST_PREFIX],
+        )
+        .expect("parse raw approval request")
+        .expect("raw approval request");
+        assert!(raw.resources.iter().any(|resource| {
+            resource.resource_type == "iris_drive"
+                && resource.id == "drive.iris.to"
+                && ["app_key", "write_roots", "receive_secret_wraps", "decrypt_secret_epochs"]
+                    .iter()
+                    .all(|scope| resource.scopes.iter().any(|candidate| candidate == scope))
+        }));
         assert!(!url.contains("owner="));
     }
 
