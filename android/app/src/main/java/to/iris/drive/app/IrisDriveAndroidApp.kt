@@ -194,7 +194,6 @@ internal fun IrisDriveAndroidApp(
     onOpenDriveFolder: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRejectDevice: (String) -> Unit,
-    onResetInvite: () -> Unit,
     onAddRecoveryKey: (String) -> Unit,
     onDeleteDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
@@ -320,14 +319,12 @@ internal fun IrisDriveAndroidApp(
                     onExportRecoverySecret = onExportRecoverySecret,
                     androidCalendarSyncEnabled = androidCalendarSyncEnabled,
                     onSetAndroidCalendarSync = onSetAndroidCalendarSync,
-                    onCopyLinkInvite = { onCopyText("Invite link", activeProfile.appKeyLinkInvite) },
                     onCopySnapshotLink = { onCopyText("drive.iris.to link", state.snapshotLink) },
                     onOpenSnapshotLink = { onOpenUrl(state.snapshotLink) },
                     onOpenIrisApps = { onOpenIrisApps(state.sitesPortalUrl) },
                     onOpenDriveFolder = onOpenDriveFolder,
                     onApproveDevice = onApproveDevice,
                     onRejectDevice = onRejectDevice,
-                    onResetInvite = onResetInvite,
                     onAddRecoveryKey = onAddRecoveryKey,
                     onDeleteDevice = onDeleteDevice,
                     onAppointAdmin = onAppointAdmin,
@@ -444,6 +441,23 @@ private fun AwaitingApprovalContent(
         ) {
             SetupBrand()
             Text("Waiting for approval", color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
+            if (profile.appKeyLinkRequest.isNotBlank()) {
+                QrCode(
+                    value = profile.appKeyLinkRequest,
+                    side = 220.dp,
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                )
+                Text(
+                    profile.appKeyLinkRequest,
+                    color = Muted,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                SetupPrimaryButton(
+                    text = "Copy Request Link",
+                    onClick = { onCopyText("Request link", profile.appKeyLinkRequest) },
+                )
+            }
             AwaitingApprovalKey("Current Device Key", profile.devicePubkey)
             SetupSecondaryButton(
                 text = "Copy Device Key",

@@ -402,9 +402,14 @@ mod tests {
         assert!(raw.resources.iter().any(|resource| {
             resource.resource_type == "iris_drive"
                 && resource.id == "drive.iris.to"
-                && ["app_key", "write_roots", "receive_secret_wraps", "decrypt_secret_epochs"]
-                    .iter()
-                    .all(|scope| resource.scopes.iter().any(|candidate| candidate == scope))
+                && [
+                    "app_key",
+                    "write_roots",
+                    "receive_secret_wraps",
+                    "decrypt_secret_epochs",
+                ]
+                .iter()
+                .all(|scope| resource.scopes.iter().any(|candidate| candidate == scope))
         }));
         assert!(!url.contains("owner="));
     }

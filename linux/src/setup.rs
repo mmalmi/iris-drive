@@ -28,19 +28,40 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
     container.append(&header);
 
     let account = profile(state);
-    let device_key = account
-        .map(|account| account.current_app_key_npub.as_str())
-        .unwrap_or("-");
-    let device = readonly_entry(device_key);
-    container.append(&field_title("Current Device Key"));
-    container.append(&device);
-
     let notice = setup_notice();
     notice.set_text(if sync_running {
         "Waiting for approval"
     } else {
         "Daemon offline"
     });
+    let request_link = account
+        .map(|account| account.app_key_link_request.as_str())
+        .unwrap_or_default();
+    if !request_link.is_empty() {
+        container.append(&field_title("Request Link"));
+        container.append(&readonly_entry(request_link));
+        let copy_request = primary_button("Copy Request Link");
+        {
+            let request = request_link.to_string();
+            let notice_for_button = notice.clone();
+            copy_request.connect_clicked(move |_| {
+                if let Some(display) = gtk::gdk::Display::default() {
+                    display.clipboard().set_text(&request);
+                    notice_for_button.set_text("Request link copied");
+                } else {
+                    notice_for_button.set_text("Clipboard unavailable");
+                }
+            });
+            container.append(&copy_request);
+        }
+    }
+
+    let device_key = account
+        .map(|account| account.current_app_key_npub.as_str())
+        .unwrap_or("-");
+    let device = readonly_entry(device_key);
+    container.append(&field_title("Current Device Key"));
+    container.append(&device);
 
     let copy = primary_button("Copy Device Key");
     {

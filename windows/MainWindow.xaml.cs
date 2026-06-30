@@ -233,6 +233,7 @@ public partial class MainWindow : Window
         SetupRoot.Visibility = Visibility.Visible;
         MainRoot.Visibility = Visibility.Collapsed;
         ShowSetupPanel(AwaitingPanel);
+        AwaitingRequestBox.Text = status.AppKeyLinkRequestUrl ?? "";
         AwaitingDeviceBox.Text = status.DeviceNpub ?? status.CurrentAppKeyNpub ?? "";
         SetupNotice.Text = notice ?? status.PrimaryStatusLabel;
     }
@@ -919,6 +920,11 @@ public partial class MainWindow : Window
     private void CopyAwaitingDevice_Click(object sender, RoutedEventArgs e)
     {
         CopySetupText(currentStatus?.DeviceNpub ?? currentStatus?.CurrentAppKeyNpub, "Device key copied");
+    }
+
+    private void CopyAwaitingRequest_Click(object sender, RoutedEventArgs e)
+    {
+        CopySetupText(currentStatus?.AppKeyLinkRequestUrl, "Request link copied");
     }
 
     private void CopyRevokedDevice_Click(object sender, RoutedEventArgs e)

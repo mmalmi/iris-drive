@@ -188,7 +188,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     var syncStateTitle: String {
-        lastState?.ui.sync.statusLabel ?? "Sync paused"
+        lastState?.ui.sync.statusLabel ?? "Ready"
     }
 
     var snapshotLink: String {
@@ -1281,10 +1281,6 @@ final class IrisDriveMobileModel: ObservableObject {
 
     func copyLinkRequest() {
         copyToClipboard(appKeyLinkRequest, feedback: "Request link copied")
-    }
-
-    func copyLinkInvite() {
-        copyToClipboard(appKeyLinkInvite, feedback: "Invite link copied")
     }
 
     func qrMatrix(for value: String) -> QrMatrix {

@@ -174,7 +174,6 @@ class MainActivity : ComponentActivity() {
                 onRejectDevice = { request ->
                     dispatch(NativeActions.rejectDevice(request))
                 },
-                onResetInvite = { dispatch(NativeActions.resetInvite()) },
                 onAddRecoveryKey = { recoveryPubkey ->
                     dispatch(NativeActions.addRecoveryDevice(recoveryPubkey))
                 },

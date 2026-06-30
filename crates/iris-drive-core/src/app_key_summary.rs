@@ -69,9 +69,10 @@ pub fn sync_status_label(sync_status: &str) -> String {
         "root synced" => "Root synced".to_owned(),
         "profile synced" => "Profile synced".to_owned(),
         "up to date" => "Up to date".to_owned(),
+        "ready" => "Ready".to_owned(),
         "sync error" => "Sync failed".to_owned(),
         "paused" => "Sync paused".to_owned(),
-        value if value.trim().is_empty() => "Sync paused".to_owned(),
+        value if value.trim().is_empty() => "Ready".to_owned(),
         value => value.to_owned(),
     }
 }
@@ -466,6 +467,8 @@ mod tests {
         assert_eq!(sync_status_label("running"), "Sync on");
         assert_eq!(sync_status_label("profile synced"), "Profile synced");
         assert_eq!(sync_status_label("up to date"), "Up to date");
+        assert_eq!(sync_status_label("ready"), "Ready");
+        assert_eq!(sync_status_label(""), "Ready");
         assert_eq!(sync_status_label("paused"), "Sync paused");
 
         assert_eq!(app_actor_role_key(AppActorRole::Admin), "admin");

@@ -921,7 +921,6 @@ class IrisDriveAndroidGuiFlowTest {
                 onOpenDriveFolder = {},
                 onApproveDevice = onApproveDevice,
                 onRejectDevice = onRejectDevice,
-                onResetInvite = {},
                 onAddRecoveryKey = onAddRecoveryKey,
                 onDeleteDevice = onDeleteDevice,
                 onAppointAdmin = { _ -> },

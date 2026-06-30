@@ -13,6 +13,15 @@ require_file_contains() {
   fi
 }
 
+require_file_absent() {
+  local file="$1"
+  local pattern="$2"
+  if grep -F "$pattern" "$ROOT/$file" >/dev/null; then
+    echo "unexpected '$pattern' in $file" >&2
+    exit 1
+  fi
+}
+
 require_file_contains scripts/desktop-gui-smoke.sh "xdotool search --onlyvisible --name '^Iris Drive$'"
 require_file_contains scripts/desktop-gui-smoke.sh "Xvfb"
 require_file_contains scripts/desktop-gui-smoke.sh "IRIS_DRIVE_DISABLE_TRAY=1"
@@ -43,6 +52,18 @@ require_file_contains windows/MainWindow.xaml.cs "if (launchArguments.Length == 
 require_file_contains windows/MainWindow.xaml.cs "ShowFromTray();"
 require_file_contains macos/Sources/IrisDriveMacApp.swift "controlPanelWindow"
 require_file_contains macos/Sources/IrisDriveMacApp.swift "irisDriveDebugLog(\"Iris Drive menu bar item installed\")"
+require_file_contains macos/Sources/IrisDriveSetupViews.swift "Copy Request Link"
+require_file_contains macos/Sources/IrisDriveControlPanel.swift "Request link or device key"
+require_file_absent macos/Sources/IrisDriveControlPanel.swift "Copy invite link"
+require_file_absent macos/Sources/IrisDriveControlPanel.swift "Reset invite"
+require_file_contains linux/src/setup.rs "Copy Request Link"
+require_file_contains linux/src/ui.rs "Request link or device key"
+require_file_absent linux/src/ui.rs "Copy invite link"
+require_file_absent linux/src/ui.rs "Reset invite"
+require_file_contains windows/MainWindow.xaml "Copy Request Link"
+require_file_contains windows/MainWindowDevices.cs "Request link or device key"
+require_file_absent windows/MainWindow.xaml "Reset invite"
+require_file_absent windows/MainWindowDevices.cs "ResetInvite_Click"
 require_file_contains docs/PARITY.md "Linux GTK and Windows WPF GUI smokes"
 
 echo "DESKTOP_GUI_E2E_KIT_OK"

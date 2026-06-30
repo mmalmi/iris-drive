@@ -427,16 +427,24 @@ enum ProviderSummaryMode {
     Refresh,
 }
 
+fn ui_sync_status(running: bool, status: &str) -> UiSyncStatus {
+    UiSyncStatus {
+        running,
+        status: status.to_owned(),
+        status_label: sync_status_label(status),
+    }
+}
+
+fn ready_ui_sync_status() -> UiSyncStatus {
+    ui_sync_status(false, "ready")
+}
+
 impl NativeAppRuntime {
     fn new(data_dir: String, app_version: String) -> Self {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let mut state = NativeAppState::default();
         state.ui.paths = paths_for(&data_dir);
-        state.ui.sync = UiSyncStatus {
-            running: false,
-            status: "paused".to_owned(),
-            status_label: sync_status_label("paused"),
-        };
+        state.ui.sync = ready_ui_sync_status();
 
         let mut runtime = Self {
             state,
@@ -898,7 +906,7 @@ impl NativeAppRuntime {
                 self.stop_browser_gateway();
                 self.state.ui.roots.clear();
                 self.state.ui.app_actors.clear();
-                self.set_sync_running(false);
+                self.set_sync_ready();
             }
             Err(error) => {
                 self.state.error = format!("logging out: {error}");
@@ -1499,7 +1507,7 @@ impl NativeAppRuntime {
         };
 
         let Some(raw_account) = config.profile.as_ref() else {
-            self.set_sync_running(false);
+            self.set_sync_ready();
             self.refresh_ui_summary(None);
             return;
         };
@@ -1650,12 +1658,12 @@ impl NativeAppRuntime {
         }
     }
 
+    fn set_sync_ready(&mut self) {
+        self.state.ui.sync = ready_ui_sync_status();
+    }
+
     fn set_sync_status(&mut self, running: bool, status: &str) {
-        self.state.ui.sync = UiSyncStatus {
-            running,
-            status: status.to_owned(),
-            status_label: sync_status_label(status),
-        };
+        self.state.ui.sync = ui_sync_status(running, status);
     }
 
     fn refresh_sync_status_label(&mut self) {

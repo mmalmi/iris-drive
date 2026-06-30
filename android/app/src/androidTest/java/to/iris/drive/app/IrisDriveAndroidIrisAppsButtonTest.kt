@@ -78,7 +78,6 @@ class IrisDriveAndroidIrisAppsButtonTest {
                 onOpenDriveFolder = {},
                 onApproveDevice = { _, _ -> },
                 onRejectDevice = {},
-                onResetInvite = {},
                 onAddRecoveryKey = {},
                 onDeleteDevice = {},
                 onAppointAdmin = {},

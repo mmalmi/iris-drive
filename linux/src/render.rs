@@ -57,16 +57,6 @@ pub(crate) fn render_peers(model: &AppRef, state: &NativeAppState) {
 
 pub(crate) fn render_add_device_section(model: &AppRef, state: &NativeAppState) {
     let account = profile(state);
-    let invite = account
-        .map(|account| account.app_key_link_invite.as_str())
-        .unwrap_or_default();
-    model.ui.add_device_invite.set_text(if invite.is_empty() {
-        "Invite link unavailable"
-    } else {
-        invite
-    });
-    model.ui.copy_invite_button.set_sensitive(!invite.is_empty());
-
     let requests = account
         .map(|account| account.inbound_app_key_link_requests.as_slice())
         .unwrap_or_default();

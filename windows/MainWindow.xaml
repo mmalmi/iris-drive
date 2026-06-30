@@ -169,6 +169,14 @@
 
         <StackPanel x:Name="AwaitingPanel" Visibility="Collapsed">
           <TextBlock Text="Waiting for approval" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,12" />
+          <TextBlock Text="Request Link" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
+          <TextBox x:Name="AwaitingRequestBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
+          <Button Style="{StaticResource SetupPrimaryButton}" Click="CopyAwaitingRequest_Click" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <TextBlock Text="&#xE71B;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+              <TextBlock Text="Copy Request Link" />
+            </StackPanel>
+          </Button>
           <TextBlock Text="Current Device Key" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
           <TextBox x:Name="AwaitingDeviceBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
           <Button Style="{StaticResource SetupPrimaryButton}" Click="CopyAwaitingDevice_Click" Margin="0,0,0,10">
@@ -441,12 +449,6 @@
                   <StackPanel Orientation="Horizontal">
                     <TextBlock Text="&#xE72E;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
                     <TextBlock Text="Add Recovery Key" />
-                  </StackPanel>
-                </Button>
-                <Button Click="ResetInvite_Click" Margin="0,8,0,0">
-                  <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="&#xE72C;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
-                    <TextBlock Text="Reset invite" />
                   </StackPanel>
                 </Button>
               </StackPanel>

@@ -679,10 +679,7 @@ struct IrisDriveControlPanel: View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 16) {
-                    Image(systemName: heroIcon)
-                        .font(.system(size: 40, weight: .semibold))
-                        .foregroundStyle(heroColor)
-                        .frame(width: 48)
+                    heroStatusIcon
                     VStack(alignment: .leading, spacing: 3) {
                         Text(status.driveName)
                             .font(.title2.weight(.semibold))
@@ -729,11 +726,37 @@ struct IrisDriveControlPanel: View {
         }
     }
 
+    @ViewBuilder
+    private var heroStatusIcon: some View {
+        switch syncState {
+        case .paused:
+            Button(action: controller.startSync) {
+                heroIconImage
+            }
+            .buttonStyle(.plain)
+            .help("Resume sync")
+            .accessibilityLabel("Resume sync")
+        case .upToDate, .syncing, .attention:
+            heroIconImage
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var heroIconImage: some View {
+        Image(systemName: heroIcon)
+            .font(.system(size: 40, weight: .semibold))
+            .foregroundStyle(heroColor)
+            .frame(width: 48, height: 48)
+    }
+
     private var syncState: IrisDriveSyncState {
-        if !status.daemonRunning || status.syncStatus == "paused" {
+        if status.syncStatus == "paused" {
             return .paused
         }
         if status.syncStatus == "sync error" {
+            return .attention
+        }
+        if !status.daemonRunning {
             return .attention
         }
         if let upload = status.lastUpload,
@@ -903,21 +926,6 @@ struct IrisDriveControlPanel: View {
 
     private var addDevicePanel: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if let invite = status.appKeyLinkInviteURL, !invite.isEmpty {
-                IrisDriveQRCodeView(value: invite)
-                    .frame(width: 220, height: 220)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                HStack(spacing: 8) {
-                    IrisDriveCopyButton(title: "Copy invite link", systemImage: "link") {
-                        irisDriveCopyToPasteboard(invite, feedback: "Invite link copied")
-                    }
-                    Button {
-                        controller.resetInvite()
-                    } label: {
-                        Label("Reset invite", systemImage: "arrow.clockwise")
-                    }
-                }
-            }
             if !status.inboundAppKeyLinkRequests.isEmpty {
                 Text("Device requests")
                     .font(.headline)
@@ -925,10 +933,10 @@ struct IrisDriveControlPanel: View {
                     AppKeyLinkRequestRow(request: request, controller: controller)
                 }
             }
-            Text("Paste the device key.")
+            Text("Paste a request link from the joining device, or paste its device key.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
-            TextField("Device key", text: $approveDeviceKey)
+            TextField("Request link or device key", text: $approveDeviceKey)
                 .textFieldStyle(.roundedBorder)
                 .disableAutocorrection(true)
                 .onChange(of: approveDeviceKey) { _, newValue in
@@ -940,7 +948,7 @@ struct IrisDriveControlPanel: View {
                 }
             if !approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                !approveDeviceKeyIsComplete {
-                Text("That is not a complete device key.")
+                Text("That is not a complete request link or device key.")
                     .font(.caption)
                     .foregroundStyle(.red)
             }
@@ -1969,7 +1977,7 @@ private func irisDriveQRCodePayload(from url: URL) -> String? {
         .first { !$0.isEmpty }
 }
 
-private struct IrisDriveQRCodeView: View {
+struct IrisDriveQRCodeView: View {
     let value: String
 
     var body: some View {

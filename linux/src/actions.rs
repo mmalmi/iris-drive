@@ -567,32 +567,6 @@ pub(crate) fn reset_relays(model: &AppRef) {
     }
 }
 
-pub(crate) fn reset_invite(model: &AppRef) {
-    match dispatch_desktop_action(NativeAppAction::ResetInvite) {
-        Ok(_) => {
-            model.ui.notice.set_text("Invite reset");
-            refresh(model);
-        }
-        Err(error) => model.ui.notice.set_text(&error),
-    }
-}
-
-pub(crate) fn copy_app_key_link_invite(model: &AppRef) {
-    match desktop_state() {
-        Ok(state) => {
-            let invite = profile(&state)
-                .map(|account| account.app_key_link_invite.as_str())
-                .unwrap_or_default();
-            if invite.is_empty() {
-                model.ui.notice.set_text("Invite link unavailable");
-            } else {
-                copy_text(model, invite, "Invite link copied");
-            }
-        }
-        Err(error) => model.ui.notice.set_text(&error),
-    }
-}
-
 pub(crate) fn logout(model: &AppRef) {
     stop_daemon(model);
     match dispatch_desktop_action(NativeAppAction::Logout) {

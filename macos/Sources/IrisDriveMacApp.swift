@@ -516,6 +516,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         copyText(IrisDriveStatus.shared.deviceNpub, statusMessage: "Device key copied")
     }
 
+    @objc func copyAppKeyLinkRequest() {
+        copyText(IrisDriveStatus.shared.appKeyLinkRequestURL, statusMessage: "Request link copied")
+    }
+
     private func copyText(_ value: String?, statusMessage: String) {
         guard let value = value?.trimmingCharacters(in: .whitespacesAndNewlines),
               !value.isEmpty
@@ -798,11 +802,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     ) {
         let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !device.isEmpty else {
-            updateStatus("Device key required")
+            updateStatus("Device request required")
             completion?(.failure(NSError(
                 domain: "IrisDriveMac",
                 code: 40,
-                userInfo: [NSLocalizedDescriptionKey: "Device key required"]
+                userInfo: [NSLocalizedDescriptionKey: "Device request required"]
             )))
             return
         }
@@ -1990,6 +1994,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     account["can_admin_profile"] as? Bool ?? false
                 status.canExportRecoveryPhrase =
                     account["can_export_recovery_phrase"] as? Bool ?? false
+                let request = account["app_key_link_request"] as? String ?? ""
+                status.appKeyLinkRequestURL = request.isEmpty ? nil : request
                 let invite = account["app_key_link_invite"] as? String ?? ""
                 status.appKeyLinkInviteURL = invite.isEmpty ? nil : invite
                 status.inboundAppKeyLinkRequests =
@@ -1999,6 +2005,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.profileId = nil
                 status.currentAppKeyNpub = nil
                 status.deviceNpub = nil
+                status.appKeyLinkRequestURL = nil
                 status.appKeyLinkInviteURL = nil
                 status.inboundAppKeyLinkRequests = []
                 status.canAdminProfile = false
@@ -2145,6 +2152,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.canExportRecoveryPhrase =
                     account["can_export_recovery_phrase"] as? Bool
                     ?? (status.currentAppKeyNpub == status.deviceNpub && status.currentAppKeyNpub != nil)
+                status.appKeyLinkRequestURL =
+                    account["app_key_link_request"] as? String
+                    ?? (account["app_key_link_request"] as? [String: Any])?["url"] as? String
                 status.appKeyLinkInviteURL =
                     account["app_key_link_invite"] as? String
                     ?? (account["app_key_link_invite"] as? [String: Any])?["url"] as? String
@@ -2154,6 +2164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             } else {
                 status.currentAppKeyNpub = nil
                 status.deviceNpub = nil
+                status.appKeyLinkRequestURL = nil
                 status.appKeyLinkInviteURL = nil
                 status.inboundAppKeyLinkRequests = []
                 status.canAdminProfile = false

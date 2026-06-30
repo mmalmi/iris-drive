@@ -21,7 +21,7 @@ public partial class MainWindow
     {
         var deviceBox = new WpfTextBox
         {
-            Tag = "Device key",
+            Tag = "Request link or device key",
             MinHeight = 34,
             MinWidth = 360,
             Margin = new Thickness(0, 4, 0, 10),
@@ -83,7 +83,7 @@ public partial class MainWindow
         }
 
         body.Children.Add(notice);
-        body.Children.Add(new TextBlock { Text = "Device key", Style = (Style)FindResource("FieldName") });
+        body.Children.Add(new TextBlock { Text = "Request link or device key", Style = (Style)FindResource("FieldName") });
         body.Children.Add(deviceBox);
         body.Children.Add(new TextBlock { Text = "Name (optional)", Style = (Style)FindResource("FieldName") });
         body.Children.Add(labelBox);
@@ -115,7 +115,7 @@ public partial class MainWindow
         {
             if (!await service.IsCompleteDeviceApprovalInputAsync(deviceBox.Text))
             {
-                notice.Text = "Paste the complete device key or request link.";
+                notice.Text = "Paste the complete request link or device key.";
                 add.IsEnabled = false;
                 return;
             }
@@ -251,20 +251,6 @@ public partial class MainWindow
         await service.RejectDeviceAsync(request);
         NoticeText.Text = "Device request rejected";
         await RefreshAsync();
-    }
-
-    private async void ResetInvite_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            await service.ResetInviteAsync();
-            NoticeText.Text = "Invite reset";
-            await RefreshAsync();
-        }
-        catch (Exception error)
-        {
-            NoticeText.Text = error.Message;
-        }
     }
 
     private async void DeleteDevice_Click(object sender, RoutedEventArgs e)

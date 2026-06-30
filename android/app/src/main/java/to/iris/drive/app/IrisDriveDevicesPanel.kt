@@ -55,11 +55,8 @@ import to.iris.drive.app.core.NativeCore
 @Composable
 internal fun DevicesPanel(
     devices: List<DeviceState>,
-    linkInvite: String,
     inboundRequests: List<AppKeyLinkRequestState>,
     canApprove: Boolean,
-    onCopyLinkInvite: () -> Unit,
-    onResetInvite: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRejectDevice: (String) -> Unit,
     onAddRecoveryKey: (String) -> Unit,
@@ -85,7 +82,6 @@ internal fun DevicesPanel(
             onToggle = { showAddDevice = !showAddDevice },
         ) {
             AddDevicePanel(
-                linkInvite = linkInvite,
                 inboundRequests = inboundRequests,
                 canApprove = canApprove,
                 request = request,
@@ -93,8 +89,6 @@ internal fun DevicesPanel(
                 label = label,
                 onRequestChange = { request = it },
                 onLabelChange = { label = it },
-                onCopyLinkInvite = onCopyLinkInvite,
-                onResetInvite = onResetInvite,
                 onApproveDevice = onApproveDevice,
                 onRejectDevice = onRejectDevice,
                 onAdded = {
@@ -337,7 +331,6 @@ private fun AddDeviceDisclosureSection(
 
 @Composable
 private fun AddDevicePanel(
-    linkInvite: String,
     inboundRequests: List<AppKeyLinkRequestState>,
     canApprove: Boolean,
     request: String,
@@ -345,8 +338,6 @@ private fun AddDevicePanel(
     label: String,
     onRequestChange: (String) -> Unit,
     onLabelChange: (String) -> Unit,
-    onCopyLinkInvite: () -> Unit,
-    onResetInvite: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRejectDevice: (String) -> Unit,
     onAdded: () -> Unit,
@@ -366,21 +357,6 @@ private fun AddDevicePanel(
             .testTag("addDevicePanel"),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        if (linkInvite.isNotBlank()) {
-            QrCode(linkInvite, side = 220.dp, modifier = Modifier.align(Alignment.CenterHorizontally))
-            Text(linkInvite, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                OutlinedButton(onClick = onCopyLinkInvite, modifier = Modifier.weight(1f)) {
-                    Text("Copy invite link", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                OutlinedButton(onClick = onResetInvite, modifier = Modifier.weight(1f)) {
-                    Text("Reset invite", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-        }
         if (inboundRequests.isNotEmpty()) {
             Text("Device requests", fontWeight = FontWeight.SemiBold)
             inboundRequests.forEach { inbound ->
@@ -413,7 +389,7 @@ private fun AddDevicePanel(
             }
         }
         Text(
-            "Paste the device key.",
+            "Paste a request link from the joining device, or paste its device key.",
             color = Muted,
         )
         OutlinedTextField(
@@ -421,7 +397,7 @@ private fun AddDevicePanel(
             onValueChange = onRequestChange,
             modifier = Modifier.fillMaxWidth().testTag("manualDeviceId"),
             singleLine = true,
-            label = { Text("Device key") },
+            label = { Text("Request link or device key") },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
         )
         OutlinedTextField(
@@ -595,7 +571,7 @@ private fun org.json.JSONArray?.toStringList(): List<String> {
 }
 
 @Composable
-private fun QrCode(
+internal fun QrCode(
     value: String,
     modifier: Modifier = Modifier,
     side: Dp = 180.dp,

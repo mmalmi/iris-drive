@@ -191,8 +191,8 @@ internal data class PathState(
 
 internal data class SyncState(
     val running: Boolean = false,
-    val status: String = "",
-    val statusLabel: String = "Sync paused",
+    val status: String = "ready",
+    val statusLabel: String = "Ready",
 )
 
 internal data class FipsState(
@@ -537,8 +537,8 @@ private fun JSONObject.toPaths(): PathState =
 private fun JSONObject.toSync(): SyncState =
     SyncState(
         running = optBoolean("running"),
-        status = optString("status"),
-        statusLabel = optString("status_label", "Sync paused"),
+        status = optString("status", "ready"),
+        statusLabel = optString("status_label", "Ready"),
     )
 
 private fun JSONObject.toFips(): FipsState =

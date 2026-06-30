@@ -23,7 +23,7 @@
 use hashtree_core::{Cid, from_hex, to_hex};
 use nostr_identity::{
     FACT_OP_KIND, IDENTITY_GRAPH_LINK_REQUEST_TYPE, build_identity_link_request_event,
-    parse_identity_link_request_event,
+    parse_identity_link_request_event_for_invite_pubkey,
 };
 use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
 use nostr_sdk::{Event, EventBuilder, Keys, Kind, PublicKey, Tag, TagKind};
@@ -171,8 +171,12 @@ fn parse_identity_app_key_link_request_event(
     event
         .verify()
         .map_err(|e| WireError::SignatureFailed(e.to_string()))?;
-    let signed = parse_identity_link_request_event(event, invite_keys)
-        .map_err(|e| WireError::BadContent(format!("Nostr identity link request: {e}")))?;
+    let signed = parse_identity_link_request_event_for_invite_pubkey(
+        event,
+        invite_keys,
+        invite_keys.public_key().to_hex(),
+    )
+    .map_err(|e| WireError::BadContent(format!("Nostr identity link request: {e}")))?;
     let profile_id = NostrIdentityId::from_uuid(signed.content.identity);
     Ok(AppKeyLinkRequestFrame {
         schema: 1,

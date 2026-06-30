@@ -100,7 +100,7 @@ public sealed partial class IrisDriveService
     {
         if (string.IsNullOrWhiteSpace(device))
         {
-            throw new InvalidOperationException("Device key is required.");
+            throw new InvalidOperationException("Device request is required.");
         }
 
         await DispatchNativeActionAsync(

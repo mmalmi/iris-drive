@@ -67,6 +67,20 @@ struct AwaitingApprovalSetupView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Waiting for approval")
                 .font(.title2.weight(.semibold))
+            if let request = status.appKeyLinkRequestURL, !request.isEmpty {
+                IrisDriveQRCodeView(value: request)
+                    .frame(width: 220, height: 220)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                keyedValue("Request Link", request)
+                IrisDriveCopyButton(
+                    title: "Copy Request Link",
+                    systemImage: "link",
+                    fillsWidth: true
+                ) {
+                    controller.copyAppKeyLinkRequest()
+                }
+                .buttonStyle(.borderedProminent)
+            }
             if let device = status.deviceNpub, !device.isEmpty {
                 keyedValue("Current Device Key", device)
                 IrisDriveCopyButton(

@@ -1196,8 +1196,8 @@ fn logout_clears_local_profile_state_and_key_material() {
     assert!(state.ui.app_actors.is_empty());
     assert!(state.ui.roots.is_empty());
     assert!(!state.ui.sync.running);
-    assert_eq!(state.ui.sync.status, "paused");
-    assert_eq!(state.ui.sync.status_label, "Sync paused");
+    assert_eq!(state.ui.sync.status, "ready");
+    assert_eq!(state.ui.sync.status_label, "Ready");
     assert!(!dir.path().join("key").exists());
     let config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
     assert!(config.profile.is_none());
