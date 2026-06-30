@@ -3928,9 +3928,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-identity"
-version = "0.1.0"
+version = "0.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ccac8542fe1d5c56b6ffec6d62f789f5487a0eae0bfdf6d92d7ac7d36c191ce"
+checksum = "13737b7b87f32a95096b7a1a59a48f3b7139948a1be9cf74831eb9c8b2deec15"
 dependencies = [
  "anyhow",
  "nostr-sdk",

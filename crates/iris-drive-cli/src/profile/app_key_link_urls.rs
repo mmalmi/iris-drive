@@ -4,6 +4,7 @@ pub(crate) use iris_drive_core::app_key_link_transport::{
     encode_app_key_approval_request,
     parse_app_key_approval_request as decode_app_key_approval_request,
 };
+use nostr_sdk::Keys;
 
 pub(crate) fn normalize_pubkey(input: &str) -> Result<String> {
     iris_drive_core::normalize_app_key_pubkey(input)
@@ -47,17 +48,18 @@ fn cached_can_admin_profile(state: &ProfileState) -> bool {
         .is_some_and(|snapshot| snapshot.is_admin(&state.app_key_pubkey))
 }
 
-pub(crate) fn app_key_link_request_json(state: &ProfileState) -> Value {
-    app_key_link_request_json_for_admin_state(state, state.can_admin_profile())
+pub(crate) fn app_key_link_request_json_with_keys(state: &ProfileState, keys: &Keys) -> Value {
+    app_key_link_request_json_for_admin_state(state, state.can_admin_profile(), Some(keys))
 }
 
 pub(crate) fn cached_app_key_link_request_json(state: &ProfileState) -> Value {
-    app_key_link_request_json_for_admin_state(state, cached_can_admin_profile(state))
+    app_key_link_request_json_for_admin_state(state, cached_can_admin_profile(state), None)
 }
 
 fn app_key_link_request_json_for_admin_state(
     state: &ProfileState,
     can_admin_profile: bool,
+    keys: Option<&Keys>,
 ) -> Value {
     if can_admin_profile
         || state.authorization_state != iris_drive_core::AppKeyAuthorizationState::AwaitingApproval
@@ -65,30 +67,29 @@ fn app_key_link_request_json_for_admin_state(
         return Value::Null;
     }
 
-    let url = encode_app_key_approval_request(
+    let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
+        return Value::Null;
+    };
+    let Some(keys) = keys else {
+        return Value::Null;
+    };
+    let Ok(url) = encode_app_key_approval_request(
+        keys,
         state.profile_id,
-        &state.app_key_pubkey,
-        state
-            .outbound_app_key_link_request
-            .as_ref()
-            .map(|request| request.invite_pubkey.as_str())
-            .unwrap_or(""),
+        Some(&pending.admin_app_key_pubkey),
         state.app_key_label.as_deref(),
-    );
+        pending.requested_at,
+    ) else {
+        return Value::Null;
+    };
 
     json!({
         "url": url,
         "profile_id": state.profile_id.to_string(),
         "app_key_npub": pubkey_npub(&state.app_key_pubkey),
         "label": state.app_key_label.as_deref(),
-        "admin_app_key_npub": state
-            .outbound_app_key_link_request
-            .as_ref()
-            .map(|request| pubkey_npub(&request.admin_app_key_pubkey)),
-        "requested_at": state
-            .outbound_app_key_link_request
-            .as_ref()
-            .map(|request| request.requested_at),
+        "admin_app_key_npub": pubkey_npub(&pending.admin_app_key_pubkey),
+        "requested_at": pending.requested_at,
         "sent_over_relay": state.outbound_app_key_link_request.is_some(),
         "sent_over_fips": state.outbound_app_key_link_request.is_some(),
     })
@@ -133,13 +134,14 @@ pub(crate) fn inbound_app_key_link_requests_json(state: &ProfileState) -> Vec<Va
         .inbound_app_key_link_requests
         .iter()
         .map(|request| {
+            let request_url = request.request_url.trim();
+            let url = if request_url.is_empty() {
+                pubkey_npub(&request.app_key_pubkey)
+            } else {
+                request.request_url.clone()
+            };
             json!({
-                "url": encode_app_key_approval_request(
-                    state.profile_id,
-                    &request.app_key_pubkey,
-                    &request.invite_pubkey,
-                    request.label.as_deref(),
-                ),
+                "url": url,
                 "profile_id": state.profile_id.to_string(),
                 "app_key_npub": pubkey_npub(&request.app_key_pubkey),
                 "label": request.label.as_deref(),

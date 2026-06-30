@@ -31,7 +31,7 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::NostrIdentityId;
-use crate::app_key_link_transport::{AppKeyLinkRequestFrame, encode_app_key_approval_request};
+use crate::app_key_link_transport::AppKeyLinkRequestFrame;
 use crate::config::AppKeyRootRef;
 use crate::root_meta::{RootObservation, RootParent};
 
@@ -182,12 +182,7 @@ fn parse_identity_app_key_link_request_event(
         invite_pubkey: signed.content.invite_pubkey.clone(),
         label: signed.content.label.clone(),
         requested_at: signed.content.requested_at,
-        url: encode_app_key_approval_request(
-            profile_id,
-            &signed.content.joining_pubkey,
-            &signed.content.invite_pubkey,
-            signed.content.label.as_deref(),
-        ),
+        url: signed.content.joining_pubkey.clone(),
     })
 }
 

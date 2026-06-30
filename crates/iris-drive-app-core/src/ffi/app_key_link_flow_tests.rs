@@ -22,6 +22,7 @@ fn record_inbound_request(config_dir: &Path, device: &str, label: &str, requeste
             &device_hex,
             Some(label.to_owned()),
             &invite_pubkey,
+            None,
             requested_at,
         )
         .unwrap();

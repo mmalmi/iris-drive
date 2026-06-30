@@ -160,7 +160,7 @@ pub(crate) fn finish_profile_init(
     );
     output.insert(
         "app_key_link_request".to_string(),
-        app_key_link_request_json(&profile.state),
+        app_key_link_request_json_with_keys(&profile.state, profile.app_key.keys()),
     );
     output.insert(
         "app_key_link_invite".to_string(),
@@ -459,11 +459,13 @@ pub(crate) fn cmd_whoami(config_dir: &std::path::Path) -> Result<()> {
     let state = config
         .profile
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
+    let request_json = iris_drive_core::AppKey::load(key_path_in(config_dir))
+        .ok()
+        .map_or(Value::Null, |app_key| {
+            app_key_link_request_json_with_keys(&state, app_key.keys())
+        });
     let mut output = profile_identity_json_map(&state);
-    output.insert(
-        "app_key_link_request".to_string(),
-        app_key_link_request_json(&state),
-    );
+    output.insert("app_key_link_request".to_string(), request_json);
     output.insert(
         "app_key_link_invite".to_string(),
         app_key_link_invite_json(&state),
@@ -673,14 +675,16 @@ pub(crate) async fn send_pending_app_key_link_request(
         return Ok(None);
     }
 
-    let Some(frame) =
-        iris_drive_core::app_key_link_transport::pending_app_key_link_request_frame(state)
+    let device =
+        iris_drive_core::AppKey::load(key_path_in(config_dir)).context("loading app key")?;
+    let Some(frame) = iris_drive_core::app_key_link_transport::pending_app_key_link_request_frame(
+        state,
+        device.keys(),
+    )?
     else {
         return Ok(None);
     };
     let bytes = serde_json::to_vec(&frame)?;
-    let device =
-        iris_drive_core::AppKey::load(key_path_in(config_dir)).context("loading app key")?;
     let relay_event_id = tokio::time::timeout(
         std::time::Duration::from_secs(APP_KEY_LINK_RELAY_PUBLISH_TIMEOUT_SECS),
         iris_drive_core::relay_sync::publish_app_key_link_request(client, device.keys(), &frame),
@@ -940,6 +944,7 @@ async fn handle_app_key_link_request_app_message(
             &app_key_hex,
             frame.label,
             &invite_pubkey,
+            Some(frame.url),
             frame.requested_at,
         )
         .context("recording inbound app-key link request")?;

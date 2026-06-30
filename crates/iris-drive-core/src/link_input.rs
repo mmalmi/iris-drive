@@ -14,7 +14,9 @@ use crate::NostrIdentityId;
 use crate::app_key_link_invite::{
     APP_KEY_LINK_INVITE_PREFIX, APP_KEY_LINK_INVITE_WEB_PREFIX, parse_app_key_link_invite,
 };
-use crate::app_key_link_transport::{app_key_approval_query, parse_app_key_approval_request};
+use crate::app_key_link_transport::{
+    app_key_approval_input_has_prefix, parse_app_key_approval_request,
+};
 use crate::app_key_summary::pubkey_npub;
 use crate::gateway::{
     DEFAULT_GATEWAY_PORT, IRIS_SITES_PORTAL_NPUB, is_dns_site_label, local_mutable_site_url,
@@ -166,43 +168,25 @@ pub fn normalize_app_key_pubkey(input: &str) -> Result<String> {
 }
 
 fn classify_app_key_approval_link_input(input: &str) -> Option<LinkInputClassification> {
-    let query = app_key_approval_query(input)?;
-    let profile =
-        raw_query_value(query, "profile").or_else(|| raw_query_value(query, "profile_id"));
-    let app_key = raw_query_value(query, "app_key").or_else(|| raw_query_value(query, "appKey"));
-    let is_complete = profile
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty())
-        && app_key
-            .as_deref()
-            .is_some_and(app_key_pubkey_input_is_complete)
-        && raw_query_value(query, "invite")
-            .or_else(|| raw_query_value(query, "invite_pubkey"))
-            .or_else(|| raw_query_value(query, "invitePubkey"))
-            .as_deref()
-            .is_some_and(app_key_pubkey_input_is_complete);
+    if !app_key_approval_input_has_prefix(input) {
+        return None;
+    }
     let mut classification = LinkInputClassification {
         kind: "app_key_approval".to_owned(),
         normalized_input: input.to_owned(),
-        is_complete,
+        is_complete: true,
         ..LinkInputClassification::default()
     };
-    if is_complete {
-        match parse_app_key_approval_request(input) {
-            Ok(Some(request)) => {
-                classification.is_valid = true;
-                classification.app_key_pubkey = pubkey_npub(&request.app_key_hex);
-            }
-            Ok(None) => {
-                "device request was not recognized".clone_into(&mut classification.error);
-            }
-            Err(error) => classification.error = error.to_string(),
+    match parse_app_key_approval_request(input) {
+        Ok(Some(request)) => {
+            classification.is_valid = true;
+            classification.app_key_pubkey = pubkey_npub(&request.app_key_hex);
         }
+        Ok(None) => {
+            "device request was not recognized".clone_into(&mut classification.error);
+        }
+        Err(error) => classification.error = error.to_string(),
     }
-    classification.has_invite_pubkey = parse_app_key_approval_request(input)
-        .ok()
-        .flatten()
-        .is_some_and(|request| !request.invite_pubkey.trim().is_empty());
     Some(classification)
 }
 
@@ -757,18 +741,22 @@ mod tests {
         assert!(!short_app_key.is_complete);
         assert!(!short_app_key.is_valid);
 
+        let request_device = Keys::generate();
+        let request_device_npub = request_device.public_key().to_bech32().expect("npub");
         let request = encode_app_key_approval_request(
+            &request_device,
             profile_id,
-            &admin.to_hex(),
-            &invite_key.to_hex(),
+            Some(&admin.to_hex()),
             None,
-        );
+            123,
+        )
+        .expect("approval request");
         let approval = classify_link_input(&request);
         assert_eq!(approval.kind, "app_key_approval");
         assert!(approval.is_complete);
         assert!(approval.is_valid);
-        assert_eq!(approval.app_key_pubkey, app_key_npub);
-        assert!(approval.has_invite_pubkey);
+        assert_eq!(approval.app_key_pubkey, request_device_npub);
+        assert!(!approval.has_invite_pubkey);
     }
 
     #[test]

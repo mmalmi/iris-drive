@@ -1002,23 +1002,23 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
     assert!(!short_npub.is_valid);
 
     let profile_id = owner_account.profile_id.clone();
-    let parsed_invite = iris_drive_core::app_key_link_invite::parse_app_key_link_invite(
-        &owner_account.app_key_link_invite,
-    )
-    .unwrap()
-    .unwrap();
+    let request_device = nostr_sdk::Keys::generate();
+    let request_device_npub =
+        iris_drive_core::app_key_summary::pubkey_npub(&request_device.public_key().to_hex());
     let approval = super::classify_link_input(
         iris_drive_core::app_key_link_transport::encode_app_key_approval_request(
+            &request_device,
             profile_id.parse().unwrap(),
-            &iris_drive_core::normalize_app_key_pubkey(&admin_app_key_npub).unwrap(),
-            &parsed_invite.invite_pubkey,
+            Some(&iris_drive_core::normalize_app_key_pubkey(&admin_app_key_npub).unwrap()),
             None,
-        ),
+            123,
+        )
+        .unwrap(),
     );
     assert_eq!(approval.kind, "app_key_approval");
     assert!(approval.is_complete);
     assert!(approval.is_valid);
-    assert_eq!(approval.app_key_pubkey, admin_app_key_npub);
+    assert_eq!(approval.app_key_pubkey, request_device_npub);
 
     let web_invite_route =
         super::classify_link_input("https://drive.iris.to/invite/demo".to_owned());
@@ -1228,13 +1228,21 @@ fn link_action_tracks_pending_approval() {
     assert_eq!(account.app_key_label, "iPhone");
     assert_eq!(account.authorization_state, "awaiting_approval");
     assert!(!account.can_admin_profile);
-    assert!(account.app_key_link_request.contains("app_key=npub1"));
     assert!(
         account
             .app_key_link_request
-            .contains(&format!("profile={owner_profile_id}"))
+            .starts_with("https://drive.iris.to/approve-device/")
     );
-    assert!(account.app_key_link_request.contains("invite=npub1"));
+    let request = iris_drive_core::app_key_link_transport::parse_app_key_approval_request(
+        &account.app_key_link_request,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(request.profile_id, Some(owner_profile_id.parse().unwrap()));
+    assert_eq!(
+        iris_drive_core::app_key_summary::pubkey_npub(&request.app_key_hex),
+        account.current_app_key_npub
+    );
     assert!(!account.app_key_link_request.contains("local-owner"));
     assert!(!account.app_key_link_request.contains("app_key=device-"));
     assert!(
@@ -1361,6 +1369,7 @@ fn approving_tombstoned_inbound_request_readds_device() {
             &linked_app_key_hex,
             Some("Phone".to_owned()),
             &invite_pubkey,
+            None,
             u64::try_from(removed_at).unwrap() + 1,
         )
         .unwrap();
@@ -1510,7 +1519,11 @@ fn revoked_current_device_refresh_pauses_sync_and_keeps_relink_context() {
     assert_eq!(account.authorization_state, "awaiting_approval");
     assert_ne!(account.current_app_key_npub, linked_device);
     assert_eq!(account.app_key_label, "Phone");
-    assert!(account.app_key_link_request.contains("app_key=npub1"));
+    assert!(
+        account
+            .app_key_link_request
+            .starts_with("https://drive.iris.to/approve-device/")
+    );
 }
 
 #[test]
@@ -1791,6 +1804,7 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
             &linked_app_key_hex,
             Some("Phone".to_owned()),
             &invite_pubkey,
+            None,
             42,
         )
         .unwrap();
@@ -1803,12 +1817,7 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
     assert_eq!(request.app_key_pubkey, linked_device);
     assert_eq!(request.label, "Phone");
     assert_eq!(request.requested_at, 42);
-    assert!(
-        request
-            .request_link
-            .starts_with("iris-drive://app-key-link?")
-    );
-    assert!(request.request_link.contains("invite=npub1"));
+    assert_eq!(request.request_link, linked_device);
 
     let approved = app.dispatch(NativeAppAction::ApproveDevice {
         request: request.request_link.clone(),
@@ -1850,6 +1859,7 @@ fn owner_can_reject_inbound_app_key_link_request() {
             &linked_app_key_hex,
             Some("Phone".to_owned()),
             &invite_pubkey,
+            None,
             42,
         )
         .unwrap();
@@ -2023,6 +2033,7 @@ fn reset_invite_action_rotates_invite_and_clears_requests() {
             &linked_device,
             Some("Phone".to_owned()),
             &invite_pubkey,
+            None,
             42,
         )
         .unwrap();

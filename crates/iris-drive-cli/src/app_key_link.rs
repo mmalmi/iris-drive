@@ -80,10 +80,13 @@ pub(crate) fn cmd_app_keys_requests(config_dir: &std::path::Path) -> Result<()> 
         .profile
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
+    let app_key = iris_drive_core::AppKey::load(key_path_in(config_dir)).ok();
     println!(
         "{}",
         json!({
-            "outbound": app_key_link_request_json(state),
+            "outbound": app_key
+                .as_ref()
+                .map_or(Value::Null, |app_key| app_key_link_request_json_with_keys(state, app_key.keys())),
             "inbound": inbound_app_key_link_requests_json(state),
         })
     );

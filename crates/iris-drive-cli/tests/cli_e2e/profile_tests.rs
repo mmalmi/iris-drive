@@ -210,24 +210,20 @@ fn link_creates_awaiting_device_with_no_owner_key() {
         v["app_key_link_request"]["app_key_npub"],
         v["current_app_key_npub"]
     );
+    let request_url = v["app_key_link_request"]["url"].as_str().unwrap();
     assert!(
-        v["app_key_link_request"]["url"]
-            .as_str()
-            .unwrap()
-            .starts_with("iris-drive://app-key-link?")
+        request_url
+            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_REQUEST_PREFIX)
     );
-    assert!(
-        v["app_key_link_request"]["url"]
-            .as_str()
+    let request =
+        iris_drive_core::app_key_link_transport::parse_app_key_approval_request(request_url)
             .unwrap()
-            .contains("app_key=npub1")
+            .unwrap();
+    assert_eq!(
+        iris_drive_core::app_key_summary::pubkey_npub(&request.app_key_hex),
+        v["current_app_key_npub"].as_str().unwrap()
     );
-    assert!(
-        v["app_key_link_request"]["url"]
-            .as_str()
-            .unwrap()
-            .contains("invite=npub1")
-    );
+    assert!(request.invite_pubkey.is_empty());
     assert!(
         !v["app_key_link_request"]["url"]
             .as_str()
@@ -495,6 +491,7 @@ fn owner_rejects_device_request_link() {
                 &linked_hex,
                 Some("rejected-phone".into()),
                 &invite_pubkey,
+                None,
                 42,
             )
             .unwrap();
@@ -543,10 +540,20 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
     );
     assert_eq!(linked["authorization_state"], "awaiting_approval");
     let request_url = linked["app_key_link_request"]["url"].as_str().unwrap();
-    assert!(request_url.starts_with("iris-drive://app-key-link?"));
+    assert!(
+        request_url
+            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_REQUEST_PREFIX)
+    );
+    let request =
+        iris_drive_core::app_key_link_transport::parse_app_key_approval_request(request_url)
+            .unwrap()
+            .unwrap();
+    assert_eq!(
+        iris_drive_core::app_key_summary::pubkey_npub(&request.app_key_hex),
+        linked["current_app_key_npub"].as_str().unwrap()
+    );
     assert!(!request_url.contains("owner="));
-    assert!(request_url.contains("app_key=npub1"));
-    assert!(request_url.contains("invite=npub1"));
+    assert!(request.invite_pubkey.is_empty());
     assert!(!request_url.contains("secret="));
     assert!(!request_url.contains("local-owner"));
     assert!(!request_url.contains("app_key=device-"));
@@ -630,6 +637,7 @@ fn app_keys_reset_invite_rotates_secret_and_clears_inbound_requests() {
             &linked_app_key,
             Some("phone".to_string()),
             &old_invite_pubkey,
+            None,
             linked["app_key_link_request"]["requested_at"]
                 .as_u64()
                 .unwrap(),
@@ -659,6 +667,7 @@ fn app_keys_reset_invite_rotates_secret_and_clears_inbound_requests() {
                 &linked_app_key,
                 Some("phone".to_string()),
                 &old_invite_pubkey,
+                None,
                 999,
             )
             .unwrap()

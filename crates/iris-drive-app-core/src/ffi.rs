@@ -45,8 +45,10 @@ use iris_drive_core::relay_status::normalized_relay_statuses_for_relays;
 use iris_drive_core::{AppConfig, AppKeyAuthorizationState, BackupTarget, Drive, Profile};
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 use iris_drive_core::{Daemon, GatewayBind, GatewayProxyServer, GatewayServer};
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
+use nostr_sdk::Event;
+use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
-use nostr_sdk::{Event, PublicKey};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -187,6 +189,7 @@ struct NativeAppConfigCache {
     config: Option<AppConfig>,
 }
 
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NativeAppKeyLinkRelayEventApply {
     Ignored,
@@ -195,6 +198,7 @@ enum NativeAppKeyLinkRelayEventApply {
     AppliedRoster,
 }
 
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 fn apply_native_app_key_link_relay_event_to_config(
     config: &mut AppConfig,
     event: &Event,
@@ -1534,7 +1538,7 @@ impl NativeAppRuntime {
             social_profile_facet_count: profile.social_profile_facet_count as u64,
             missing_key_wraps: profile.missing_key_wrap_npubs,
             can_export_recovery_phrase: recovery_phrase_path_in(Path::new(&self.data_dir)).exists(),
-            app_key_link_request: app_key_link_request_url(&account),
+            app_key_link_request: app_key_link_request_url(&account, Path::new(&self.data_dir)),
             app_key_link_invite: app_key_link_invite_url(&account),
             inbound_app_key_link_requests: inbound_app_key_link_requests(&account),
         });
@@ -2201,7 +2205,9 @@ async fn send_native_pending_app_key_link_request(
     state: &iris_drive_core::ProfileState,
     sent_requests: &mut BTreeMap<String, SentAppKeyLinkRequest>,
 ) -> Result<(), String> {
-    let Some(frame) = pending_app_key_link_request_frame(state) else {
+    let Some(frame) = pending_app_key_link_request_frame(state, device_keys)
+        .map_err(|error| format!("building app-key link request frame: {error}"))?
+    else {
         return Ok(());
     };
     let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
@@ -2377,6 +2383,7 @@ fn handle_native_app_key_link_request(
             &app_key_hex,
             frame.label,
             &invite_pubkey,
+            Some(frame.url),
             frame.requested_at,
         )
         .map_err(|error| format!("recording inbound app-key link request: {error}"))?;
@@ -3332,22 +3339,26 @@ fn app_key_connectivity_from_fips_status(fips_status: &UiFipsStatus) -> AppKeyCo
     }
 }
 
-fn app_key_link_request_url(state: &iris_drive_core::ProfileState) -> String {
+fn app_key_link_request_url(state: &iris_drive_core::ProfileState, config_dir: &Path) -> String {
     if state.can_admin_profile()
         || state.authorization_state != AppKeyAuthorizationState::AwaitingApproval
     {
         return String::new();
     }
+    let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
+        return String::new();
+    };
+    let Ok(app_key) = iris_drive_core::AppKey::load(key_path_in(config_dir)) else {
+        return String::new();
+    };
     encode_app_key_approval_request(
+        app_key.keys(),
         state.profile_id,
-        &state.app_key_pubkey,
-        state
-            .outbound_app_key_link_request
-            .as_ref()
-            .map(|request| request.invite_pubkey.as_str())
-            .unwrap_or(""),
+        Some(&pending.admin_app_key_pubkey),
         state.app_key_label.as_deref(),
+        pending.requested_at,
     )
+    .unwrap_or_default()
 }
 
 fn app_key_link_invite_url(state: &iris_drive_core::ProfileState) -> String {
@@ -3375,16 +3386,18 @@ fn inbound_app_key_link_requests(
     state
         .inbound_app_key_link_requests
         .iter()
-        .map(|request| UiAppKeyLinkRequest {
-            app_key_pubkey: pubkey_npub(&request.app_key_pubkey),
-            label: request.label.clone().unwrap_or_default(),
-            requested_at: request.requested_at,
-            request_link: encode_app_key_approval_request(
-                state.profile_id,
-                &request.app_key_pubkey,
-                &request.invite_pubkey,
-                request.label.as_deref(),
-            ),
+        .map(|request| {
+            let request_link = request.request_url.trim();
+            UiAppKeyLinkRequest {
+                app_key_pubkey: pubkey_npub(&request.app_key_pubkey),
+                label: request.label.clone().unwrap_or_default(),
+                requested_at: request.requested_at,
+                request_link: if request_link.is_empty() {
+                    pubkey_npub(&request.app_key_pubkey)
+                } else {
+                    request.request_url.clone()
+                },
+            }
         })
         .collect()
 }

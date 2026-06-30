@@ -158,6 +158,7 @@ pub fn apply_remote_app_key_link_request_event(
         &frame.app_key_pubkey,
         frame.label,
         &frame.invite_pubkey,
+        Some(frame.url),
         frame.requested_at,
     )?;
     if changed {

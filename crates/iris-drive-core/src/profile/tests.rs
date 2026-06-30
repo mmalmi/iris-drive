@@ -628,6 +628,7 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
                 &device,
                 Some(" phone ".to_string()),
                 &invite_pubkey,
+                None,
                 10,
             )
             .unwrap()
@@ -646,6 +647,7 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
                 &device,
                 Some("phone".to_string()),
                 &invite_pubkey,
+                None,
                 9,
             )
             .unwrap()
@@ -657,6 +659,7 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
                 &device,
                 Some("tablet".to_string()),
                 &invite_pubkey,
+                None,
                 11,
             )
             .unwrap()
@@ -683,6 +686,7 @@ fn inbound_app_key_link_request_requires_current_invite_pubkey() {
                 &device,
                 Some("phone".to_string()),
                 &fresh_app_key_pubkey(),
+                None,
                 10,
             )
             .unwrap()
@@ -705,6 +709,7 @@ fn reset_app_key_link_secret_rotates_invite_and_clears_pending_requests() {
             &device,
             Some("phone".to_string()),
             &old_invite_pubkey,
+            None,
             10,
         )
         .unwrap();
@@ -721,6 +726,7 @@ fn reset_app_key_link_secret_rotates_invite_and_clears_pending_requests() {
                 &fresh_app_key_pubkey(),
                 Some("old".to_string()),
                 &old_invite_pubkey,
+                None,
                 11,
             )
             .unwrap()
@@ -742,6 +748,7 @@ fn rejected_inbound_app_key_link_request_does_not_replay() {
                 &device,
                 Some("phone".to_string()),
                 &invite_pubkey,
+                None,
                 10,
             )
             .unwrap()
@@ -761,6 +768,7 @@ fn rejected_inbound_app_key_link_request_does_not_replay() {
                 &device,
                 Some("phone".to_string()),
                 &invite_pubkey,
+                None,
                 10,
             )
             .unwrap()
@@ -774,6 +782,7 @@ fn rejected_inbound_app_key_link_request_does_not_replay() {
                 &device,
                 Some("phone".to_string()),
                 &invite_pubkey,
+                None,
                 11,
             )
             .unwrap()
@@ -860,6 +869,7 @@ fn approving_authorized_inbound_request_consumes_request_without_new_ops() {
             app_key_pubkey: target.clone(),
             label: Some("phone".into()),
             invite_pubkey: invite_pubkey(&acct.state),
+            request_url: String::new(),
             requested_at: 42,
         });
     let before_op_count = acct.state.profile_roster_ops.len();
@@ -886,6 +896,7 @@ fn approving_tombstoned_device_readds_and_consumes_request() {
             app_key_pubkey: target.clone(),
             label: Some("phone".into()),
             invite_pubkey: invite_pubkey(&acct.state),
+            request_url: String::new(),
             requested_at: 42,
         });
     let before_op_count = acct.state.profile_roster_ops.len();
@@ -924,6 +935,7 @@ fn sync_prunes_inbound_request_for_authorized_device() {
             app_key_pubkey: target.clone(),
             label: Some("phone".into()),
             invite_pubkey: invite_pubkey(&acct.state),
+            request_url: String::new(),
             requested_at: 42,
         });
     assert_eq!(acct.state.inbound_app_key_link_requests.len(), 1);
@@ -945,6 +957,7 @@ fn recording_authorized_request_reports_cleanup_change() {
             app_key_pubkey: target.clone(),
             label: Some("phone".into()),
             invite_pubkey: invite_pubkey(&acct.state),
+            request_url: String::new(),
             requested_at: 41,
         });
 
@@ -955,6 +968,7 @@ fn recording_authorized_request_reports_cleanup_change() {
             &target,
             Some("phone".into()),
             &invite_pubkey(&acct.state),
+            None,
             42,
         )
         .unwrap();
@@ -978,6 +992,7 @@ fn recording_authorized_request_without_app_keys_cache_stays_hidden() {
             &target,
             Some("phone".into()),
             &invite_pubkey(&acct.state),
+            None,
             42,
         )
         .unwrap();
@@ -1011,6 +1026,7 @@ fn recording_removed_request_ignores_stale_replay_but_allows_newer_rejoin() {
                 &target,
                 Some("phone".into()),
                 &invite_pubkey,
+                None,
                 u64::try_from(removed_at).unwrap().saturating_sub(1),
             )
             .unwrap()
@@ -1024,6 +1040,7 @@ fn recording_removed_request_ignores_stale_replay_but_allows_newer_rejoin() {
                 &target,
                 Some("phone".into()),
                 &invite_pubkey,
+                None,
                 u64::try_from(removed_at).unwrap() + 1,
             )
             .unwrap()

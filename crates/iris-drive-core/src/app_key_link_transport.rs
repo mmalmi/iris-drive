@@ -1,6 +1,10 @@
-use anyhow::{Context, Result, anyhow};
-use nostr_sdk::PublicKey;
-use nostr_sdk::nips::nip19::{FromBech32, ToBech32};
+use anyhow::{Context, Result};
+use nostr_identity::{
+    CreateNostrIdentityDeviceApprovalRequestOptions, NOSTR_IDENTITY_DEVICE_APPROVAL_REQUEST_PREFIX,
+    NostrIdentityDeviceApprovalRequestedResource, create_nostr_identity_device_approval_request,
+    encode_nostr_identity_device_approval_request, parse_nostr_identity_device_approval_request,
+};
+use nostr_sdk::Keys;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -9,9 +13,7 @@ use crate::{AppKeyAuthorizationState, NostrIdentityId, ProfileState, SignedNostr
 pub const APP_KEY_LINK_REQUEST_APP_TOPIC: &str = "iris-drive/app-key-link/v1/request";
 pub const APP_KEY_LINK_ROSTER_APP_TOPIC: &str = "iris-drive/app-key-link/v1/roster";
 pub const APP_KEY_LINK_ROSTER_ACK_APP_TOPIC: &str = "iris-drive/app-key-link/v1/roster-ack";
-pub const APP_KEY_APPROVAL_REQUEST_PREFIX: &str = "iris-drive://app-key-link";
-const APP_KEY_APPROVAL_REQUEST_SINGLE_SLASH_PREFIX: &str = "iris-drive:/app-key-link";
-pub const APP_KEY_APPROVAL_REQUEST_WEB_PREFIX: &str = "https://drive.iris.to/app-key-link";
+pub const APP_KEY_APPROVAL_REQUEST_PREFIX: &str = "https://drive.iris.to/approve-device/";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppKeyLinkRequestFrame {
@@ -60,15 +62,26 @@ pub struct AppKeyLinkRosterRecipient {
     pub roster_fingerprint: String,
 }
 
-#[must_use]
-pub fn pending_app_key_link_request_frame(state: &ProfileState) -> Option<AppKeyLinkRequestFrame> {
+pub fn pending_app_key_link_request_frame(
+    state: &ProfileState,
+    app_key_keys: &Keys,
+) -> Result<Option<AppKeyLinkRequestFrame>> {
     if state.can_admin_profile()
         || state.authorization_state != AppKeyAuthorizationState::AwaitingApproval
     {
-        return None;
+        return Ok(None);
     }
-    let pending = state.outbound_app_key_link_request.as_ref()?;
-    Some(AppKeyLinkRequestFrame {
+    let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
+        return Ok(None);
+    };
+    let url = encode_app_key_approval_request(
+        app_key_keys,
+        state.profile_id,
+        Some(&pending.admin_app_key_pubkey),
+        state.app_key_label.as_deref(),
+        pending.requested_at,
+    )?;
+    Ok(Some(AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: state.profile_id,
         admin_app_key_pubkey: pending.admin_app_key_pubkey.clone(),
@@ -76,13 +89,8 @@ pub fn pending_app_key_link_request_frame(state: &ProfileState) -> Option<AppKey
         invite_pubkey: pending.invite_pubkey.clone(),
         label: state.app_key_label.clone(),
         requested_at: pending.requested_at,
-        url: encode_app_key_approval_request(
-            state.profile_id,
-            &state.app_key_pubkey,
-            &pending.invite_pubkey,
-            state.app_key_label.as_deref(),
-        ),
-    })
+        url,
+    }))
 }
 
 #[must_use]
@@ -194,154 +202,69 @@ fn current_app_key_is_authorized(state: &ProfileState) -> bool {
         .is_some_and(|app_keys| app_keys.contains(&state.app_key_pubkey))
 }
 
-#[must_use]
 pub fn encode_app_key_approval_request(
+    device_app_key_keys: &Keys,
     profile_id: NostrIdentityId,
-    app_key_hex: &str,
-    invite_pubkey: &str,
+    admin_app_key_pubkey: Option<&str>,
     label: Option<&str>,
-) -> String {
-    let mut url = format!(
-        "{APP_KEY_APPROVAL_REQUEST_PREFIX}?profile={}&app_key={}",
-        profile_id,
-        pubkey_npub(app_key_hex)
-    );
-    if !invite_pubkey.trim().is_empty() {
-        url.push_str("&invite=");
-        url.push_str(&percent_encode_component(&pubkey_npub(
-            invite_pubkey.trim(),
-        )));
-    }
-    if let Some(label) = label.map(str::trim).filter(|label| !label.is_empty()) {
-        url.push_str("&label=");
-        url.push_str(&percent_encode_component(label));
-    }
-    url
+    requested_at: u64,
+) -> Result<String> {
+    let requested_at_i64 =
+        i64::try_from(requested_at).context("app-key approval requested_at overflows i64")?;
+    let local = create_nostr_identity_device_approval_request(
+        device_app_key_keys,
+        CreateNostrIdentityDeviceApprovalRequestOptions {
+            request_keys: None,
+            request_secret: None,
+            requested_at: requested_at_i64,
+            request_type: Some("device_link".to_owned()),
+            resources: vec![NostrIdentityDeviceApprovalRequestedResource {
+                resource_type: "nostr_identity_profile".to_owned(),
+                id: profile_id.to_string(),
+                scopes: vec!["app_key".to_owned()],
+            }],
+            expires_at: None,
+            profile_id: Some(profile_id),
+            admin_app_key_pubkey: admin_app_key_pubkey.map(str::to_owned),
+            label: label.map(str::to_owned),
+        },
+    )
+    .context("building app-key approval request")?;
+    encode_nostr_identity_device_approval_request(
+        &local.request,
+        Some(APP_KEY_APPROVAL_REQUEST_PREFIX),
+    )
+    .context("encoding app-key approval request")
 }
 
 pub fn parse_app_key_approval_request(input: &str) -> Result<Option<AppKeyApprovalRequest>> {
-    let trimmed = input.trim();
-    let Some(query) = app_key_approval_query(trimmed) else {
+    let Some(request) = parse_nostr_identity_device_approval_request(
+        input.trim(),
+        &[APP_KEY_APPROVAL_REQUEST_PREFIX],
+    )
+    .context("parsing app-key approval request")?
+    else {
         return Ok(None);
     };
 
-    let mut profile_id = None;
-    let mut app_key = None;
-    let mut invite_pubkey = None;
-    let mut label = None;
-    for pair in query.split('&') {
-        if pair.is_empty() {
-            continue;
-        }
-        let (raw_key, raw_value) = pair.split_once('=').unwrap_or((pair, ""));
-        let key = percent_decode_component(raw_key)?;
-        let value = percent_decode_component(raw_value)?;
-        match key.as_str() {
-            "profile" | "profile_id" | "profileId" if !value.trim().is_empty() => {
-                profile_id = Some(value.trim().parse().context("parsing request profile id")?);
-            }
-            "app_key" | "appKey" if !value.trim().is_empty() => app_key = Some(value),
-            "invite" | "invite_pubkey" | "invitePubkey" if !value.trim().is_empty() => {
-                invite_pubkey = Some(value);
-            }
-            "label" if !value.trim().is_empty() => label = Some(value),
-            _ => {}
-        }
-    }
-
-    let profile_id = profile_id.ok_or_else(|| anyhow!("AppKey-link request is missing profile"))?;
-    let app_key = app_key.ok_or_else(|| anyhow!("AppKey-link request is missing AppKey"))?;
-    let invite_pubkey =
-        invite_pubkey.ok_or_else(|| anyhow!("AppKey-link request is missing invite pubkey"))?;
-
     Ok(Some(AppKeyApprovalRequest {
-        profile_id: Some(profile_id),
-        app_key_hex: normalize_pubkey_hex(&app_key).context("parsing request AppKey")?,
-        invite_pubkey: normalize_pubkey_hex(&invite_pubkey).context("parsing request invite")?,
-        label,
+        profile_id: request.profile_id,
+        app_key_hex: request.device_app_key_pubkey,
+        invite_pubkey: String::new(),
+        label: request.label,
     }))
 }
 
 #[must_use]
-pub fn app_key_approval_query(input: &str) -> Option<&str> {
-    if let Some(rest) = input.strip_prefix(APP_KEY_APPROVAL_REQUEST_PREFIX) {
-        return rest.strip_prefix('?');
-    }
-    if let Some(rest) = input.strip_prefix(APP_KEY_APPROVAL_REQUEST_SINGLE_SLASH_PREFIX) {
-        return rest.strip_prefix('?');
-    }
-    if let Some(rest) = input.strip_prefix(APP_KEY_APPROVAL_REQUEST_WEB_PREFIX) {
-        return rest.strip_prefix('?');
-    }
-    None
+pub fn app_key_approval_input_has_prefix(input: &str) -> bool {
+    let value = input.trim();
+    let value = value.strip_prefix("nostr:").unwrap_or(value);
+    starts_with_ignore_ascii_case(value, APP_KEY_APPROVAL_REQUEST_PREFIX)
+        || starts_with_ignore_ascii_case(value, NOSTR_IDENTITY_DEVICE_APPROVAL_REQUEST_PREFIX)
 }
 
-fn pubkey_npub(hex: &str) -> String {
-    PublicKey::from_hex(hex)
-        .ok()
-        .and_then(|pk| pk.to_bech32().ok())
-        .unwrap_or_else(|| hex.to_string())
-}
-
-fn normalize_pubkey_hex(input: &str) -> Result<String> {
-    let trimmed = input.trim();
-    if trimmed.starts_with("npub1") {
-        let pubkey = PublicKey::from_bech32(trimmed).context("parsing npub")?;
-        return Ok(pubkey.to_hex());
-    }
-    if trimmed.len() == 64 && trimmed.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        return Ok(trimmed.to_ascii_lowercase());
-    }
-    Err(anyhow!(
-        "expected npub1... or 64-char hex pubkey, got {trimmed}"
-    ))
-}
-
-fn percent_encode_component(input: &str) -> String {
-    let mut encoded = String::with_capacity(input.len());
-    for byte in input.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
-            encoded.push(byte as char);
-        } else {
-            encoded.push('%');
-            encoded.push(hex_digit(byte >> 4));
-            encoded.push(hex_digit(byte & 0x0f));
-        }
-    }
-    encoded
-}
-
-fn percent_decode_component(value: &str) -> Result<String> {
-    let bytes = value.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut index = 0;
-    while index < bytes.len() {
-        match bytes[index] {
-            b'%' if index + 2 < bytes.len() => {
-                let hex = std::str::from_utf8(&bytes[index + 1..index + 3])
-                    .context("invalid percent escape")?;
-                let byte = u8::from_str_radix(hex, 16).context("invalid percent escape")?;
-                out.push(byte);
-                index += 3;
-            }
-            b'+' => {
-                out.push(b' ');
-                index += 1;
-            }
-            byte => {
-                out.push(byte);
-                index += 1;
-            }
-        }
-    }
-    String::from_utf8(out).context("invalid utf-8 in percent escape")
-}
-
-fn hex_digit(value: u8) -> char {
-    match value {
-        0..=9 => (b'0' + value) as char,
-        _ => (b'A' + (value - 10)) as char,
-    }
+fn starts_with_ignore_ascii_case(value: &str, prefix: &str) -> bool {
+    value.len() >= prefix.len() && value[..prefix.len()].eq_ignore_ascii_case(prefix)
 }
 
 #[cfg(test)]
@@ -423,56 +346,73 @@ mod tests {
             )
             .unwrap();
 
-        let frame = pending_app_key_link_request_frame(&linked.state).expect("pending frame");
+        let frame = pending_app_key_link_request_frame(&linked.state, linked.app_key.keys())
+            .expect("build pending frame")
+            .expect("pending frame");
 
         assert_eq!(frame.profile_id, owner.state.profile_id);
-        assert!(
-            frame
-                .url
-                .contains(&format!("profile={}", owner.state.profile_id))
-        );
+        let parsed = parse_app_key_approval_request(&frame.url)
+            .expect("parse request")
+            .expect("request");
+        assert_eq!(parsed.profile_id, Some(owner.state.profile_id));
+        assert_eq!(parsed.app_key_hex, linked.state.app_key_pubkey);
+        assert!(frame.url.starts_with(APP_KEY_APPROVAL_REQUEST_PREFIX));
     }
 
     #[test]
     fn approval_request_round_trips_profile_app_key_invite_and_label_without_owner() {
         let profile_id = NostrIdentityId::new_v4();
-        let app_key = nostr_sdk::Keys::generate().public_key();
-        let invite = nostr_sdk::Keys::generate().public_key();
+        let app_key = nostr_sdk::Keys::generate();
+        let admin = nostr_sdk::Keys::generate().public_key();
 
         let url = encode_app_key_approval_request(
+            &app_key,
             profile_id,
-            &app_key.to_hex(),
-            &invite.to_hex(),
+            Some(&admin.to_hex()),
             Some("Web + Native"),
-        );
+            123,
+        )
+        .expect("encode request");
         let parsed = parse_app_key_approval_request(&url)
             .expect("parse request")
             .expect("request");
 
         assert_eq!(parsed.profile_id, Some(profile_id));
-        assert_eq!(parsed.app_key_hex, app_key.to_hex());
-        assert_eq!(parsed.invite_pubkey, invite.to_hex());
+        assert_eq!(parsed.app_key_hex, app_key.public_key().to_hex());
+        assert!(parsed.invite_pubkey.is_empty());
         assert_eq!(parsed.label.as_deref(), Some("Web + Native"));
         assert!(!url.contains("owner="));
     }
 
     #[test]
-    fn approval_request_parser_accepts_aliases_and_rejects_nearby_routes() {
+    fn approval_request_parser_accepts_shared_prefix_and_rejects_nearby_routes() {
         let profile_id = NostrIdentityId::new_v4();
-        let app_key = nostr_sdk::Keys::generate().public_key();
-        let invite = nostr_sdk::Keys::generate().public_key();
-        let url = format!(
-            "iris-drive:/app-key-link?profile_id={profile_id}&app_key={}&invite={}&label=Phone+Browser",
-            app_key.to_hex(),
-            invite.to_hex()
-        );
+        let app_key = nostr_sdk::Keys::generate();
+        let local = nostr_identity::create_nostr_identity_device_approval_request(
+            &app_key,
+            nostr_identity::CreateNostrIdentityDeviceApprovalRequestOptions {
+                request_keys: None,
+                request_secret: Some("secret_abcdefghijklmnopqrstuvwxyz123456".to_owned()),
+                requested_at: 123,
+                request_type: Some("device_link".to_owned()),
+                resources: Vec::new(),
+                expires_at: None,
+                profile_id: Some(profile_id),
+                admin_app_key_pubkey: None,
+                label: Some("Phone Browser".to_owned()),
+            },
+        )
+        .expect("request");
+        let url =
+            nostr_identity::encode_nostr_identity_device_approval_request(&local.request, None)
+                .expect("encode request");
         let parsed = parse_app_key_approval_request(&url)
             .expect("parse request")
             .expect("request");
 
         assert_eq!(parsed.profile_id, Some(profile_id));
-        assert_eq!(parsed.app_key_hex, app_key.to_hex());
-        assert_eq!(parsed.invite_pubkey, invite.to_hex());
+        assert_eq!(parsed.app_key_hex, app_key.public_key().to_hex());
+        assert!(parsed.invite_pubkey.is_empty());
         assert_eq!(parsed.label.as_deref(), Some("Phone Browser"));
         assert!(
             parse_app_key_approval_request("https://drive.iris.to/app-key-linker?owner=x")

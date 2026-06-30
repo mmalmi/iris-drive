@@ -114,6 +114,8 @@ pub struct InboundAppKeyLinkRequest {
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub invite_pubkey: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub request_url: String,
     pub requested_at: u64,
 }
 
@@ -444,6 +446,7 @@ impl ProfileState {
         app_key_pubkey: &str,
         label: Option<String>,
         invite_pubkey: &str,
+        request_url: Option<String>,
         requested_at: u64,
     ) -> Result<bool, ProfileError> {
         if profile_id != self.profile_id || !self.can_admin_profile() {
@@ -466,6 +469,10 @@ impl ProfileState {
                 (!trimmed.is_empty()).then(|| trimmed.to_string())
             }),
             invite_pubkey,
+            request_url: request_url
+                .map(|url| url.trim().to_string())
+                .filter(|url| !url.is_empty())
+                .unwrap_or_default(),
             requested_at,
         };
         let profile_projection = self.profile_projection();
