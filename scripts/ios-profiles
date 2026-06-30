@@ -51,7 +51,7 @@ const profileNameSuffix = envValue(
     ? ['IRIS_DRIVE_MACOS_PROFILE_NAME_SUFFIX']
     : ['IRIS_DRIVE_IOS_PROFILE_NAME_SUFFIX'],
 )
-const defaultIosBundleId = 'to.iris.drive.ios'
+const defaultIosBundleId = 'fi.siriusbusiness.drive'
 const iosBundleId = envValue(['IRIS_DRIVE_IOS_BUNDLE_ID'], defaultIosBundleId)
 const recreateProfiles = boolEnv(
   profilePlatform === 'macos'

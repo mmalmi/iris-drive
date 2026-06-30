@@ -120,7 +120,7 @@ final class IrisDriveMobileModel: ObservableObject {
     private let defaults = UserDefaults.standard
     private let nativeCore: IrisDriveNativeCore
     private let appleCalendarSync = IrisDriveAppleCalendarSync.shared
-    private let nativeCoreQueue = DispatchQueue(label: "to.iris.drive.ios.native-core", qos: .utility)
+    private let nativeCoreQueue = DispatchQueue(label: "fi.siriusbusiness.drive.native-core", qos: .utility)
     private var lastState: NativeAppState?
     private var fileProviderOpenAttempt = 0
     private var currentProviderSignalKey = ""

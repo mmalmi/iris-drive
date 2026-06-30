@@ -163,7 +163,7 @@ final class IrisDriveIOSUITests: XCTestCase {
 
         let sender = XCUIApplication(
             bundleIdentifier: optionalEnvironment("IRIS_DRIVE_UI_TEST_SHARE_SOURCE_BUNDLE_ID")
-                ?? "to.iris.drive.ios.ShareSource"
+                ?? "fi.siriusbusiness.drive.ShareSource"
         )
         sender.launchEnvironment["IRIS_DRIVE_SHARE_SOURCE_FILENAME"] = sharedFile
         sender.launchEnvironment["IRIS_DRIVE_SHARE_SOURCE_CONTENT"] = sharedContents

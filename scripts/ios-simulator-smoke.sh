@@ -17,10 +17,10 @@ SCHEME="IrisDriveIOS"
 CONFIGURATION="${IRIS_DRIVE_IOS_XCODE_CONFIGURATION:-Debug}"
 DERIVED_DATA="$ROOT/ios/.build/DerivedData"
 BUILD_LOG="${IRIS_DRIVE_IOS_BUILD_LOG:-/tmp/iris-drive-ios-build.log}"
-BUNDLE_ID="to.iris.drive.ios"
+BUNDLE_ID="${IRIS_DRIVE_IOS_BUNDLE_ID:-fi.siriusbusiness.drive}"
 DEVICE_NAME="${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-}"
 SIMULATOR_BOOT_TIMEOUT_SECONDS="${IRIS_DRIVE_IOS_SIMULATOR_BOOT_TIMEOUT_SECONDS:-60}"
-APP_GROUP_ID="group.to.iris.drive"
+APP_GROUP_ID="${IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER:-group.fi.siriusbusiness.drive}"
 TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
 IDRIVE="${IRIS_DRIVE_IDRIVE_BIN:-$TARGET_DIR/debug/idrive}"
 RUST_IOS_TARGET="${IRIS_DRIVE_IOS_RUST_TARGET:-aarch64-apple-ios-sim}"
@@ -131,7 +131,7 @@ assert_static_app_core_linkage() {
 }
 
 app_group_container() {
-  xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" group.to.iris.drive 2>/dev/null
+  xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" "$APP_GROUP_ID" 2>/dev/null
 }
 
 app_data_container() {

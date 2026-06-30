@@ -17,8 +17,9 @@ SCHEME="IrisDriveIOS"
 CONFIGURATION="${IRIS_DRIVE_IOS_XCODE_CONFIGURATION:-Debug}"
 DERIVED_DATA="$ROOT/ios/.build/DerivedData"
 BUILD_LOG="${IRIS_DRIVE_IOS_UI_BUILD_LOG:-/tmp/iris-drive-ios-ui-tests.log}"
-BUNDLE_ID="to.iris.drive.ios"
-SHARE_SOURCE_BUNDLE_ID="to.iris.drive.ios.ShareSource"
+BUNDLE_ID="${IRIS_DRIVE_IOS_BUNDLE_ID:-fi.siriusbusiness.drive}"
+SHARE_SOURCE_BUNDLE_ID="${IRIS_DRIVE_IOS_SHARE_SOURCE_BUNDLE_ID:-fi.siriusbusiness.drive.ShareSource}"
+APP_GROUP_ID="${IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER:-group.fi.siriusbusiness.drive}"
 SHARE_SHEET_SMOKE_FILE="Iris Drive Share Sheet Smoke.txt"
 SHARE_SHEET_SMOKE_CONTENT="shared from iOS share sheet"
 DEVICE_NAME="${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-}"
@@ -99,7 +100,7 @@ reset_sim_app_state() {
   xcrun simctl uninstall "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
   xcrun simctl install "$DEVICE_UDID" "$APP_PATH" >/dev/null
   data_container="$(xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" data 2>/dev/null || true)"
-  group_container="$(xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" group.to.iris.drive 2>/dev/null || true)"
+  group_container="$(xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" "$APP_GROUP_ID" 2>/dev/null || true)"
   if [[ -z "$data_container" ]]; then
     echo "FAIL: simulator app data container was not created." >&2
     exit 1
@@ -338,7 +339,7 @@ reset_sim_app_group_state() {
   xcrun simctl install "$DEVICE_UDID" "$APP_PATH" >/dev/null
   xcrun simctl install "$DEVICE_UDID" "$SHARE_SOURCE_APP_PATH" >/dev/null
   data_container="$(xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" data 2>/dev/null || true)"
-  group_container="$(xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" group.to.iris.drive 2>/dev/null || true)"
+  group_container="$(xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" "$APP_GROUP_ID" 2>/dev/null || true)"
   if [[ -z "$data_container" ]]; then
     echo "FAIL: simulator app data container was not created for share-sheet smoke." >&2
     exit 1

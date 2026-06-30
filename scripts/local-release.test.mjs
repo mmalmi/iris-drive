@@ -936,7 +936,7 @@ test('iOS provisioning helper covers the app and extension bundle IDs', () => {
     'utf8',
   )
 
-  assert.match(script, /defaultIosBundleId = 'to\.iris\.drive\.ios'/)
+  assert.match(script, /defaultIosBundleId = 'fi\.siriusbusiness\.drive'/)
   assert.match(script, /\$\{iosBundleId\}\.FileProvider/)
   assert.match(script, /\$\{iosBundleId\}\.ShareExtension/)
   assert.match(script, /IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID/)
@@ -992,7 +992,7 @@ test('TestFlight helper creates a missing App Store Connect app record', async (
           {
             type: 'bundleIds',
             id: 'BUNDLE123',
-            attributes: { identifier: 'to.iris.drive.ios' },
+            attributes: { identifier: 'fi.siriusbusiness.drive' },
           },
         ],
       })
@@ -1003,7 +1003,7 @@ test('TestFlight helper creates a missing App Store Connect app record', async (
         data: {
           type: 'apps',
           id: 'APP123',
-          attributes: { name: body.data.attributes.name, bundleId: 'to.iris.drive.ios' },
+          attributes: { name: body.data.attributes.name, bundleId: 'fi.siriusbusiness.drive' },
         },
       })
       return
@@ -1021,7 +1021,7 @@ test('TestFlight helper creates a missing App Store Connect app record', async (
       IRIS_DRIVE_ASC_AUTH_KEY_PATH: keyPath,
       IRIS_DRIVE_ASC_AUTH_KEY_ID: 'TESTKEY123',
       IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID: '00000000-0000-0000-0000-000000000000',
-      IRIS_DRIVE_IOS_BUNDLE_ID: 'to.iris.drive.ios',
+      IRIS_DRIVE_IOS_BUNDLE_ID: 'fi.siriusbusiness.drive',
       IRIS_DRIVE_ASC_APP_NAME: 'Iris Drive',
     },
   })
@@ -1036,7 +1036,7 @@ test('TestFlight helper creates a missing App Store Connect app record', async (
       attributes: {
         name: 'Iris Drive',
         primaryLocale: 'en-US',
-        sku: 'to.iris.drive.ios',
+        sku: 'fi.siriusbusiness.drive',
         platform: 'IOS',
       },
       relationships: {
@@ -1069,7 +1069,7 @@ test('TestFlight helper explains App Store Connect app creation permission failu
           {
             type: 'bundleIds',
             id: 'BUNDLE123',
-            attributes: { identifier: 'to.iris.drive.ios' },
+            attributes: { identifier: 'fi.siriusbusiness.drive' },
           },
         ],
       })
@@ -1100,7 +1100,7 @@ test('TestFlight helper explains App Store Connect app creation permission failu
       IRIS_DRIVE_ASC_AUTH_KEY_PATH: keyPath,
       IRIS_DRIVE_ASC_AUTH_KEY_ID: 'TESTKEY123',
       IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID: '00000000-0000-0000-0000-000000000000',
-      IRIS_DRIVE_IOS_BUNDLE_ID: 'to.iris.drive.ios',
+      IRIS_DRIVE_IOS_BUNDLE_ID: 'fi.siriusbusiness.drive',
       IRIS_DRIVE_ASC_APP_NAME: 'Iris Drive',
     },
   })
@@ -1108,8 +1108,8 @@ test('TestFlight helper explains App Store Connect app creation permission failu
   assert.equal(result.status, 1)
   assert.match(result.stderr, /cannot create App Store Connect app records/)
   assert.match(result.stderr, /Name: Iris Drive/)
-  assert.match(result.stderr, /Bundle ID: to\.iris\.drive\.ios/)
-  assert.match(result.stderr, /SKU: to\.iris\.drive\.ios/)
+  assert.match(result.stderr, /Bundle ID: fi\.siriusbusiness\.drive/)
+  assert.match(result.stderr, /SKU: fi\.siriusbusiness\.drive/)
 })
 
 test('iOS FileProvider declares the required App Store document group', () => {
@@ -1126,7 +1126,7 @@ test('iOS FileProvider declares the required App Store document group', () => {
     plist,
     /<key>NSExtensionFileProviderDocumentGroup<\/key>\s*<string>\$\(IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER\)<\/string>/,
   )
-  assert.match(project, /IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER: group\.to\.iris\.drive/)
+  assert.match(project, /IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER: group\.fi\.siriusbusiness\.drive/)
 })
 
 test('iOS app icons have no alpha channel', () => {

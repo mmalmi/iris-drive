@@ -69,7 +69,7 @@ if (mode === 'public' && !publicActions.has(action)) {
 }
 
 const appName = envValue(['IRIS_DRIVE_ASC_APP_NAME'], 'Iris Drive')
-const bundleId = envValue(['IRIS_DRIVE_IOS_BUNDLE_ID'], 'to.iris.drive.ios')
+const bundleId = envValue(['IRIS_DRIVE_IOS_BUNDLE_ID'], 'fi.siriusbusiness.drive')
 const appSku = envValue(['IRIS_DRIVE_ASC_APP_SKU'], bundleId)
 const appPrimaryLocale = envValue(['IRIS_DRIVE_ASC_APP_PRIMARY_LOCALE'], 'en-US')
 const versionName = envValue(['IRIS_DRIVE_IOS_MARKETING_VERSION'], workspaceVersion())

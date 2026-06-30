@@ -53,7 +53,7 @@ require_contains "func finishNativeStatusRefresh()"
 require_contains "nativeCoreQueue.async { [weak self] in"
 require_contains "self.scheduleNativeStatusRefresh()"
 require_absent "let state = try nativeStatePayload(from: desktopCore.refreshJson())"
-require_file_contains "$IOS_MODEL" 'private let nativeCoreQueue = DispatchQueue(label: "to.iris.drive.ios.native-core"'
+require_file_contains "$IOS_MODEL" 'private let nativeCoreQueue = DispatchQueue(label: "fi.siriusbusiness.drive.native-core"'
 require_file_contains "$IOS_MODEL" "nativeCoreQueue.async"
 require_file_contains "$IOS_MODEL" "nativeCoreQueue.sync"
 require_file_contains "$IOS_MODEL" "private func runNative<T>"

@@ -386,29 +386,29 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					0B4BA6D0DE3050B42370896F = {
-						DevelopmentTeam = J8PPJKD7TA;
+						DevelopmentTeam = 8G9P8AN75D;
 						ProvisioningStyle = Manual;
 					};
 					2AEF53C9FE79D54F9AB8EE95 = {
-						DevelopmentTeam = J8PPJKD7TA;
+						DevelopmentTeam = 8G9P8AN75D;
 						ProvisioningStyle = Manual;
 					};
 					60284211D6933E6DA8E51E59 = {
-						DevelopmentTeam = J8PPJKD7TA;
+						DevelopmentTeam = 8G9P8AN75D;
 						ProvisioningStyle = Automatic;
 						TestTargetID = 2AEF53C9FE79D54F9AB8EE95;
 					};
 					67B67C05CCBE0A7C7C7E41CA = {
-						DevelopmentTeam = J8PPJKD7TA;
+						DevelopmentTeam = 8G9P8AN75D;
 						ProvisioningStyle = Automatic;
 						TestTargetID = 2AEF53C9FE79D54F9AB8EE95;
 					};
 					6DFD6B6D65667A6359D62B22 = {
-						DevelopmentTeam = J8PPJKD7TA;
+						DevelopmentTeam = 8G9P8AN75D;
 						ProvisioningStyle = Automatic;
 					};
 					F8BA9ACB95AFB2250E4FE292 = {
-						DevelopmentTeam = J8PPJKD7TA;
+						DevelopmentTeam = 8G9P8AN75D;
 						ProvisioningStyle = Manual;
 					};
 				};
@@ -600,7 +600,7 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1016;
 				DEBUG_INFORMATION_FORMAT = dwarf;
-				DEVELOPMENT_TEAM = J8PPJKD7TA;
+				DEVELOPMENT_TEAM = 8G9P8AN75D;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -618,14 +618,14 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER = group.to.iris.drive;
-				IRIS_DRIVE_IOS_BACKGROUND_SYNC_TASK_IDENTIFIER = "to.iris.drive.ios.background-sync";
-				IRIS_DRIVE_IOS_BUNDLE_ID = to.iris.drive.ios;
-				IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID = to.iris.drive.ios.FileProvider;
-				IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID = to.iris.drive.ios.ShareExtension;
-				IRIS_DRIVE_IOS_SHARE_EXTENSION_TESTS_BUNDLE_ID = to.iris.drive.ios.ShareExtensionTests;
-				IRIS_DRIVE_IOS_SHARE_SOURCE_BUNDLE_ID = to.iris.drive.ios.ShareSource;
-				IRIS_DRIVE_IOS_UI_TESTS_BUNDLE_ID = to.iris.drive.ios.UITests;
+				IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER = group.fi.siriusbusiness.drive;
+				IRIS_DRIVE_IOS_BACKGROUND_SYNC_TASK_IDENTIFIER = "fi.siriusbusiness.drive.background-sync";
+				IRIS_DRIVE_IOS_BUNDLE_ID = fi.siriusbusiness.drive;
+				IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID = fi.siriusbusiness.drive.FileProvider;
+				IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID = fi.siriusbusiness.drive.ShareExtension;
+				IRIS_DRIVE_IOS_SHARE_EXTENSION_TESTS_BUNDLE_ID = fi.siriusbusiness.drive.ShareExtensionTests;
+				IRIS_DRIVE_IOS_SHARE_SOURCE_BUNDLE_ID = fi.siriusbusiness.drive.ShareSource;
+				IRIS_DRIVE_IOS_UI_TESTS_BUNDLE_ID = fi.siriusbusiness.drive.UITests;
 				MARKETING_VERSION = 0.1.16;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
@@ -756,7 +756,7 @@
 				COPY_PHASE_STRIP = NO;
 				CURRENT_PROJECT_VERSION = 1016;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
-				DEVELOPMENT_TEAM = J8PPJKD7TA;
+				DEVELOPMENT_TEAM = 8G9P8AN75D;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				GCC_C_LANGUAGE_STANDARD = gnu11;
@@ -768,14 +768,14 @@
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER = group.to.iris.drive;
-				IRIS_DRIVE_IOS_BACKGROUND_SYNC_TASK_IDENTIFIER = "to.iris.drive.ios.background-sync";
-				IRIS_DRIVE_IOS_BUNDLE_ID = to.iris.drive.ios;
-				IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID = to.iris.drive.ios.FileProvider;
-				IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID = to.iris.drive.ios.ShareExtension;
-				IRIS_DRIVE_IOS_SHARE_EXTENSION_TESTS_BUNDLE_ID = to.iris.drive.ios.ShareExtensionTests;
-				IRIS_DRIVE_IOS_SHARE_SOURCE_BUNDLE_ID = to.iris.drive.ios.ShareSource;
-				IRIS_DRIVE_IOS_UI_TESTS_BUNDLE_ID = to.iris.drive.ios.UITests;
+				IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER = group.fi.siriusbusiness.drive;
+				IRIS_DRIVE_IOS_BACKGROUND_SYNC_TASK_IDENTIFIER = "fi.siriusbusiness.drive.background-sync";
+				IRIS_DRIVE_IOS_BUNDLE_ID = fi.siriusbusiness.drive;
+				IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID = fi.siriusbusiness.drive.FileProvider;
+				IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID = fi.siriusbusiness.drive.ShareExtension;
+				IRIS_DRIVE_IOS_SHARE_EXTENSION_TESTS_BUNDLE_ID = fi.siriusbusiness.drive.ShareExtensionTests;
+				IRIS_DRIVE_IOS_SHARE_SOURCE_BUNDLE_ID = fi.siriusbusiness.drive.ShareSource;
+				IRIS_DRIVE_IOS_UI_TESTS_BUNDLE_ID = fi.siriusbusiness.drive.UITests;
 				MARKETING_VERSION = 0.1.16;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
