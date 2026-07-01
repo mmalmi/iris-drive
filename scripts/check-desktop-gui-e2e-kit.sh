@@ -58,6 +58,8 @@ require_file_contains macos/Sources/IrisDriveMacApp.swift '"type": "start_join_r
 require_file_contains macos/Sources/IrisDriveControlPanel.swift "Request link or device key"
 require_file_contains macos/Sources/IrisDriveControlPanel.swift "scanApprovalRequestQr"
 require_file_contains macos/Sources/IrisDriveControlPanel.swift "Approve this device?"
+require_file_contains macos/Sources/IrisDriveMacApp.swift '"app_key_approval"'
+require_file_absent macos/Sources/IrisDriveSetupViews.swift 'keyedValue("Device"'
 require_file_absent macos/Sources/IrisDriveControlPanel.swift "Device invite link"
 require_file_absent macos/Sources/IrisDriveControlPanel.swift "Copy invite link"
 require_file_absent macos/Sources/IrisDriveControlPanel.swift "Reset invite"
@@ -66,6 +68,9 @@ require_file_contains linux/src/setup.rs "Show join QR"
 require_file_contains linux/src/setup.rs "StartJoinRequest"
 require_file_contains linux/src/ui.rs "Request link or device key"
 require_file_contains linux/src/actions.rs "Approve this device?"
+require_file_contains linux/src/main.rs "apply_app_key_approval_link"
+require_file_contains linux/src/render.rs "Copy device key"
+require_file_absent linux/src/setup.rs 'field_title("Device"'
 require_file_absent linux/src/ui.rs "Name (optional)"
 require_file_absent linux/src/ui.rs "Copy invite link"
 require_file_absent linux/src/ui.rs "Reset invite"
@@ -74,7 +79,10 @@ require_file_contains windows/MainWindow.xaml "Show join request"
 require_file_contains windows/IrisDriveService.cs '"start_join_request"'
 require_file_contains windows/MainWindowDevices.cs "Request link or device key"
 require_file_contains windows/MainWindowDevices.cs "Approve this device?"
+require_file_contains windows/MainWindow.xaml.cs '"app_key_approval"'
+require_file_contains windows/MainWindow.xaml.cs "CopyPeerDevice_Click"
 require_file_absent windows/MainWindow.xaml "Device invite link"
+require_file_absent windows/MainWindow.xaml 'Text="Device"'
 require_file_absent windows/MainWindowDevices.cs "Name (optional)"
 require_file_absent windows/MainWindow.xaml "Reset invite"
 require_file_absent windows/MainWindowDevices.cs "ResetInvite_Click"

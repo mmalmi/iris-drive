@@ -76,7 +76,6 @@ use crate::state::{
     UiPaths, UiPendingShareInvite, UiProfile, UiRelayStatus, UiShare, UiShareMember, UiState,
     UiSyncRoot, UiSyncStatus,
 };
-
 #[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RecoverySecretExport {
     pub can_export: bool,
@@ -118,7 +117,6 @@ pub fn generate_recovery_key() -> GeneratedRecoveryKey {
 pub fn recovery_pubkey_for_phrase(recovery_phrase: String) -> GeneratedRecoveryKey {
     recovery_pubkey_for_phrase_value(&recovery_phrase)
 }
-
 #[uniffi::export]
 #[must_use]
 #[allow(clippy::needless_pass_by_value)]
@@ -197,6 +195,19 @@ enum NativeAppKeyLinkRelayEventApply {
     RecordedRequest,
     AppliedRoster,
 }
+
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
+#[path = "ffi/app_key_approval_backfill.rs"]
+mod app_key_approval_backfill;
+#[cfg(test)]
+use app_key_approval_backfill::apply_native_app_key_link_roster_candidate_to_config;
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+use app_key_approval_backfill::backfill_native_unbound_app_key_approval_candidates;
+#[path = "ffi/app_key_link_urls.rs"]
+mod app_key_link_urls;
+use app_key_link_urls::{
+    app_key_link_invite_url, app_key_link_request_url, ensure_cached_app_key_link_request_url,
+};
 
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 fn apply_native_app_key_link_relay_event_to_config(
@@ -2255,6 +2266,14 @@ async fn drive_app_key_link_exchange_tick(
     };
 
     sync.refresh_authorized_peers(&config).await;
+    if backfill_native_unbound_app_key_approval_candidates(config_dir, relay_client, sync, state)
+        .await?
+    {
+        if let Err(error) = write_native_fips_status(config_dir, sync, None).await {
+            tracing::warn!(error = %error, "writing native FIPS status failed");
+        }
+        return Ok(true);
+    }
     send_native_pending_app_key_link_request(relay_client, device_keys, sync, state, sent_requests)
         .await?;
     send_native_authorized_app_key_link_rosters(
@@ -3414,117 +3433,6 @@ fn app_key_connectivity_from_fips_status(fips_status: &UiFipsStatus) -> AppKeyCo
             })
             .collect(),
     }
-}
-
-fn app_key_link_request_url(state: &iris_drive_core::ProfileState, config_dir: &Path) -> String {
-    if state.can_admin_profile()
-        || state.authorization_state != AppKeyAuthorizationState::AwaitingApproval
-    {
-        return String::new();
-    }
-    let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
-        return String::new();
-    };
-    if !pending.request_url.trim().is_empty() {
-        return pending.request_url.clone();
-    }
-    let Ok(app_key) = iris_drive_core::AppKey::load(key_path_in(config_dir)) else {
-        return String::new();
-    };
-    encode_app_key_approval_request(
-        app_key.keys(),
-        pending_request_profile_id(state, pending),
-        pending_admin_app_key_pubkey(pending),
-        state.app_key_label.as_deref(),
-        pending.requested_at,
-    )
-    .unwrap_or_default()
-}
-
-fn pending_request_profile_id(
-    state: &iris_drive_core::ProfileState,
-    pending: &iris_drive_core::profile::PendingAppKeyLinkRequest,
-) -> Option<iris_drive_core::NostrIdentityId> {
-    (!pending.admin_app_key_pubkey.trim().is_empty()).then_some(state.profile_id)
-}
-
-fn pending_admin_app_key_pubkey(
-    pending: &iris_drive_core::profile::PendingAppKeyLinkRequest,
-) -> Option<&str> {
-    let admin = pending.admin_app_key_pubkey.trim();
-    (!admin.is_empty()).then_some(admin)
-}
-
-fn request_profile_id(
-    profile_id: iris_drive_core::NostrIdentityId,
-    admin_app_key_pubkey: &str,
-) -> Option<iris_drive_core::NostrIdentityId> {
-    (!admin_app_key_pubkey.trim().is_empty()).then_some(profile_id)
-}
-
-fn request_admin_app_key_pubkey(admin_app_key_pubkey: &str) -> Option<&str> {
-    let admin = admin_app_key_pubkey.trim();
-    (!admin.is_empty()).then_some(admin)
-}
-
-fn ensure_cached_app_key_link_request_url(
-    config: &mut AppConfig,
-    config_dir: &Path,
-) -> Result<(), String> {
-    let Some(state) = config.profile.as_ref() else {
-        return Ok(());
-    };
-    if state.can_admin_profile()
-        || state.authorization_state != AppKeyAuthorizationState::AwaitingApproval
-    {
-        return Ok(());
-    }
-    let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
-        return Ok(());
-    };
-    if !pending.request_url.trim().is_empty() {
-        return Ok(());
-    }
-    let profile_id = state.profile_id;
-    let admin_app_key_pubkey = pending.admin_app_key_pubkey.clone();
-    let app_key_label = state.app_key_label.clone();
-    let requested_at = pending.requested_at;
-    let app_key = iris_drive_core::AppKey::load(key_path_in(config_dir))
-        .map_err(|error| error.to_string())?;
-    let request_url = encode_app_key_approval_request(
-        app_key.keys(),
-        request_profile_id(profile_id, &admin_app_key_pubkey),
-        request_admin_app_key_pubkey(&admin_app_key_pubkey),
-        app_key_label.as_deref(),
-        requested_at,
-    )
-    .map_err(|error| error.to_string())?;
-    if let Some(pending) = config
-        .profile
-        .as_mut()
-        .and_then(|state| state.outbound_app_key_link_request.as_mut())
-    {
-        pending.request_url = request_url;
-    }
-    config
-        .save(config_path_in(config_dir))
-        .map_err(|error| error.to_string())
-}
-
-fn app_key_link_invite_url(state: &iris_drive_core::ProfileState) -> String {
-    if !state.can_admin_profile() {
-        return String::new();
-    }
-    let Ok(invite_pubkey) = iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret)
-    else {
-        return String::new();
-    };
-    iris_drive_core::app_key_link_invite::encode_app_key_link_invite(
-        state.profile_id,
-        &state.app_key_pubkey,
-        &invite_pubkey,
-    )
-    .unwrap_or_default()
 }
 
 fn inbound_app_key_link_requests(

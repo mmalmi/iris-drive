@@ -158,7 +158,6 @@ private struct RevokedDeviceSetupView: View {
 
                 Section("Device removed") {
                     Text("This device no longer has access to Iris Drive.")
-                    LabeledContent("Device", value: model.currentAppKeyNpub)
                     LabeledContent("Current Device Key", value: model.devicePublicKey)
                     Button {
                         model.copyDeviceKey()
@@ -845,13 +844,29 @@ private struct DevicesView: View {
     @ViewBuilder
     private func deviceRow(_ device: IrisDriveDevice, showPresence: Bool) -> some View {
         DisclosureGroup {
-            if device.detail == model.devicePublicKey {
-                LabeledContent("Device Key", value: model.devicePublicKey)
+            if device.isCurrentDevice {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 10) {
+                        Text(model.devicePublicKey)
+                            .font(.footnote.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                        Spacer()
+                        Button {
+                            model.copyDeviceKey()
+                        } label: {
+                            Label("Copy Device Key", systemImage: "doc.on.doc")
+                        }
+                    }
+                }
+            } else if !device.detail.isEmpty {
+                Text(device.detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
             }
-            Text(device.detail)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
             if device.canAppointAdmin || device.canDemoteAdmin || device.canRevoke {
                 HStack {
                     if device.canAppointAdmin {
@@ -963,9 +978,6 @@ private struct AddDeviceSection: View {
     var body: some View {
         Section {
             DisclosureGroup(isExpanded: $isExpanded) {
-                Text("Paste a request link from the joining device, or paste its device key.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
                 TextField("Request link or device key", text: $model.approveDeviceKey)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -2489,13 +2501,7 @@ private struct SettingsView: View {
             Section("Device") {
                 TextField("Device label", text: $model.deviceLabel)
                     .onSubmit { model.persist() }
-                LabeledContent("Device", value: model.currentAppKeyNpub)
                 LabeledContent("Current Device Key", value: model.devicePublicKey)
-                Button {
-                    model.copyAppKey()
-                } label: {
-                    Label("Copy Device", systemImage: "doc.on.doc")
-                }
                 Button {
                     model.copyDeviceKey()
                 } label: {

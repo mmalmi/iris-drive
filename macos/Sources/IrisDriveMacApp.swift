@@ -389,6 +389,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             linkDevice(target: url.absoluteString)
             return true
         }
+        if classification["kind"] as? String == "app_key_approval" {
+            showControlPanel()
+            guard classification["is_valid"] as? Bool ?? false else {
+                let error = (classification["error"] as? String ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                updateStatus(error.isEmpty ? "Invalid device request" : error)
+                return true
+            }
+            approveDevice(url.absoluteString, label: "")
+            return true
+        }
         guard isIrisWebURL(url) else {
             return false
         }
@@ -872,7 +883,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func deleteDevice(_ device: String) {
         let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !device.isEmpty else {
-            updateStatus("Device key required")
+            updateStatus("Device Key required")
             return
         }
 
@@ -887,7 +898,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func setDeviceAdminRole(_ device: String, makeAdmin: Bool) {
         let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !device.isEmpty else {
-            updateStatus("Device key required")
+            updateStatus("Device Key required")
             return
         }
 

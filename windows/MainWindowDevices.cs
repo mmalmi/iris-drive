@@ -31,7 +31,7 @@ public partial class MainWindow
             Foreground = (WpfBrush)FindResource("IrisMutedBrush"),
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 12),
-            Text = "Paste the device key or request link.",
+            Text = "",
         };
         var cancel = new WpfButton { Content = "Cancel", MinWidth = 92 };
         var buttons = new StackPanel
@@ -204,7 +204,7 @@ public partial class MainWindow
         if (string.IsNullOrWhiteSpace(trimmed) ||
             !await service.IsCompleteDeviceApprovalInputAsync(trimmed))
         {
-            notice.Text = "Paste the complete request link or device key.";
+            notice.Text = "Enter a complete request link or device key.";
             return;
         }
 

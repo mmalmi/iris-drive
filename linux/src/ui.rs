@@ -161,10 +161,8 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
 
     let peers_page = page_box();
     peers_page.append(&section_title("Devices"));
-    let account_app_key = value_label();
     let account_device = value_label();
     let account_authorization = value_label();
-    let copy_app_key_button = icon_button("edit-copy-symbolic", "Copy device key");
     let copy_device_button = icon_button("edit-copy-symbolic", "Copy device key");
     let account_grid = gtk::Grid::new();
     account_grid.add_css_class("iris-summary");
@@ -174,13 +172,6 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     add_copy_field(
         &account_grid,
         0,
-        "Device",
-        &account_app_key,
-        &copy_app_key_button,
-    );
-    add_copy_field(
-        &account_grid,
-        1,
         "Current Device Key",
         &account_device,
         &copy_device_button,
@@ -201,13 +192,6 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     add_device_requests.set_selection_mode(gtk::SelectionMode::None);
     add_device_requests.set_visible(false);
     add_device_body.append(&add_device_requests);
-    let add_device_help = gtk::Label::new(Some(
-        "Paste a request link from the joining device, or paste its device key.",
-    ));
-    add_device_help.add_css_class("iris-muted");
-    add_device_help.set_xalign(0.0);
-    add_device_help.set_wrap(true);
-    add_device_body.append(&add_device_help);
     let manual_controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let add_device_entry = setup_entry("Request link or device key");
     add_device_entry.set_hexpand(true);
@@ -503,7 +487,6 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
             files,
             storage,
             devices,
-            account_app_key,
             account_device,
             account_authorization,
             approve_box,
@@ -608,11 +591,6 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
         let button = model.ui.open_snapshot_button.clone();
         let model = Rc::clone(&model);
         button.connect_clicked(move |_| open_snapshot_link(&model));
-    }
-    {
-        let model = Rc::clone(&model);
-        copy_app_key_button
-            .connect_clicked(move |_| copy_account_key(&model, "current_app_key_npub"));
     }
     {
         let model = Rc::clone(&model);

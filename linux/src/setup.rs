@@ -112,12 +112,6 @@ pub(crate) fn render_revoked_device(model: &AppRef, state: &NativeAppState) {
     container.append(&detail);
 
     let account = profile(state);
-    let app_key_npub = account
-        .map(|account| account.current_app_key_npub.as_str())
-        .unwrap_or("-");
-    container.append(&field_title("Device"));
-    container.append(&readonly_entry(app_key_npub));
-
     let device_npub = account
         .map(|account| account.current_app_key_npub.as_str())
         .unwrap_or("-");

@@ -197,6 +197,7 @@ impl DaemonTaskSet {
 }
 
 include!("daemon/runtime.rs");
+include!("daemon/app_key_link_backfill.rs");
 
 #[derive(Debug, Default)]
 struct ProviderRootPublishCache {

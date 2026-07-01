@@ -68,7 +68,6 @@ internal fun AuthenticatedContent(
     androidCalendarSyncEnabled: Boolean,
     onStartSync: () -> Unit,
     onStopSync: () -> Unit,
-    onCopyAppKey: () -> Unit,
     onCopyDeviceKey: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onExportRecoverySecret: () -> RecoverySecretExport,
@@ -123,6 +122,7 @@ internal fun AuthenticatedContent(
         MainTab.Devices -> DevicesContent(
             padding = padding,
             state = state,
+            onCopyText = onCopyText,
             onAddRecoveryKey = onAddRecoveryKey,
             onApproveDevice = onApproveDevice,
             onRejectDevice = onRejectDevice,
@@ -161,7 +161,6 @@ internal fun AuthenticatedContent(
             state = state,
             selfUpdateState = selfUpdateState,
             selfUpdateActions = selfUpdateActions,
-            onCopyAppKey = onCopyAppKey,
             onCopyDeviceKey = onCopyDeviceKey,
             onCopyText = onCopyText,
             onExportRecoverySecret = onExportRecoverySecret,
@@ -235,6 +234,7 @@ private fun DriveContent(
 private fun DevicesContent(
     padding: PaddingValues,
     state: AppState,
+    onCopyText: (String, String) -> Unit,
     onAddRecoveryKey: (String) -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRejectDevice: (String) -> Unit,
@@ -264,6 +264,7 @@ private fun DevicesContent(
                 onDeleteDevice = onDeleteDevice,
                 onAppointAdmin = onAppointAdmin,
                 onDemoteAdmin = onDemoteAdmin,
+                onCopyDeviceKey = { onCopyText("Device Key", it) },
             )
         }
     }
@@ -359,7 +360,6 @@ private fun SettingsContent(
     state: AppState,
     selfUpdateState: AndroidSelfUpdateState,
     selfUpdateActions: SelfUpdateActions,
-    onCopyAppKey: () -> Unit,
     onCopyDeviceKey: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onExportRecoverySecret: () -> RecoverySecretExport,
@@ -386,7 +386,6 @@ private fun SettingsContent(
                 state = state,
                 selfUpdateState = selfUpdateState,
                 selfUpdateActions = selfUpdateActions,
-                onCopyAppKey = onCopyAppKey,
                 onCopyDeviceKey = onCopyDeviceKey,
                 onCopyText = onCopyText,
                 onExportRecoverySecret = onExportRecoverySecret,
@@ -1009,7 +1008,6 @@ private fun SettingsPanel(
     state: AppState,
     selfUpdateState: AndroidSelfUpdateState,
     selfUpdateActions: SelfUpdateActions,
-    onCopyAppKey: () -> Unit,
     onCopyDeviceKey: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onExportRecoverySecret: () -> RecoverySecretExport,
@@ -1099,14 +1097,9 @@ private fun SettingsPanel(
                 Text("Reset relay")
             }
         }
-        Text("Device", fontWeight = FontWeight.SemiBold)
-        Text(profile?.currentAppKeyNpub.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text("Current Device Key", fontWeight = FontWeight.SemiBold)
         Text(profile?.devicePubkey.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onCopyAppKey) {
-                Text("Copy Device")
-            }
             OutlinedButton(onClick = onCopyDeviceKey) {
                 Text("Copy Device Key")
             }

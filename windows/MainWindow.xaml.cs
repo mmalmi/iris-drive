@@ -128,10 +128,45 @@ public partial class MainWindow : Window
             {
                 continue;
             }
-            if (!OpenShareDialogFromLink(argument))
+            HandleLaunchArgument(argument);
+        }
+    }
+
+    private async void HandleLaunchArgument(string argument)
+    {
+        try
+        {
+            if (OpenShareDialogFromLink(argument) || OpenContentLinkFromLink(argument))
             {
-                OpenContentLinkFromLink(argument);
+                return;
             }
+
+            var classification = IrisDriveNativeCore.ClassifyLinkInput(argument);
+            if (string.Equals(classification.Kind, "invite", StringComparison.Ordinal))
+            {
+                ShowFromTray();
+                await service.LinkDeviceAsync(argument);
+                NoticeText.Text = "Device linked";
+                await RefreshAsync();
+                return;
+            }
+            if (string.Equals(classification.Kind, "app_key_approval", StringComparison.Ordinal))
+            {
+                ShowFromTray();
+                if (!classification.IsValid)
+                {
+                    NoticeText.Text = string.IsNullOrWhiteSpace(classification.Error)
+                        ? "Invalid device request"
+                        : classification.Error.Trim();
+                    return;
+                }
+                await ApproveDeviceAsync(argument, "");
+            }
+        }
+        catch (Exception error)
+        {
+            ShowFromTray();
+            NoticeText.Text = error.Message;
         }
     }
 
@@ -220,7 +255,6 @@ public partial class MainWindow : Window
         StorageValue.Text = "0 B";
         DevicesValue.Text = "0/0";
         NoticeText.Text = "";
-        AppKeyValue.Text = "-";
         DeviceValue.Text = "-";
         AuthValue.Text = "-";
     }
@@ -241,7 +275,6 @@ public partial class MainWindow : Window
         SetupRoot.Visibility = Visibility.Visible;
         MainRoot.Visibility = Visibility.Collapsed;
         ShowSetupPanel(RevokedPanel);
-        RevokedAppKeyBox.Text = status.CurrentAppKeyNpub ?? "";
         RevokedDeviceBox.Text = status.DeviceNpub ?? "";
         SetupNotice.Text = notice ?? "Device removed";
         UpdateTrayText(false);
@@ -266,7 +299,6 @@ public partial class MainWindow : Window
         StartButton.Visibility = syncRunning ? Visibility.Collapsed : Visibility.Visible;
         StopButton.Visibility = syncRunning ? Visibility.Visible : Visibility.Collapsed;
 
-        AppKeyValue.Text = status.CurrentAppKeyNpub ?? "-";
         DeviceValue.Text = status.DeviceNpub ?? "-";
         AuthValue.Text = status.SetupLabel;
         RecoveryPhraseButton.Visibility =
@@ -312,7 +344,6 @@ public partial class MainWindow : Window
         StorageValue.Text = "0 B";
         DevicesValue.Text = "0/0";
         NoticeText.Text = message;
-        AppKeyValue.Text = "-";
         DeviceValue.Text = "-";
         AuthValue.Text = "-";
         CopySnapshotButton.IsEnabled = false;
@@ -381,13 +412,22 @@ public partial class MainWindow : Window
         }
         if (peer.IsCurrentDevice && !string.IsNullOrWhiteSpace(peer.DeviceNpub))
         {
-            stack.Children.Add(new TextBlock
+            var keyRow = new StackPanel
             {
-                Text = $"Device key: {peer.DeviceNpub}",
+                Orientation = WpfOrientation.Horizontal,
+                HorizontalAlignment = WpfHorizontalAlignment.Left,
+            };
+            keyRow.Children.Add(new TextBlock
+            {
+                Text = peer.DeviceNpub,
                 Foreground = (WpfBrush)WpfApplication.Current.Resources["IrisMutedBrush"],
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 FontSize = 12,
             });
+            var copyCurrent = PeerActionButton("\uE8C8", "Copy device key", peer.DeviceNpub);
+            copyCurrent.Click += CopyPeerDevice_Click;
+            keyRow.Children.Add(copyCurrent);
+            stack.Children.Add(keyRow);
         }
 
         var grid = new Grid();
@@ -459,6 +499,14 @@ public partial class MainWindow : Window
             Margin = new Thickness(8, 0, 0, 0),
             ToolTip = toolTip,
         };
+    }
+
+    private void CopyPeerDevice_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is WpfButton { Tag: string deviceNpub })
+        {
+            CopyText(deviceNpub, "Device key copied");
+        }
     }
 
     private static WpfBrush PeerConnectivityBrush(PeerRow peer)
@@ -799,11 +847,6 @@ public partial class MainWindow : Window
     private void CopyCalDav_Click(object sender, RoutedEventArgs e)
     {
         CopyText(currentStatus?.CalDavUrl, "CalDAV URL copied");
-    }
-
-    private void CopyAppKey_Click(object sender, RoutedEventArgs e)
-    {
-        CopyText(currentStatus?.CurrentAppKeyNpub, "Device key copied");
     }
 
     private void CopyDevice_Click(object sender, RoutedEventArgs e)

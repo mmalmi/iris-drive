@@ -100,7 +100,7 @@ pub(crate) enum Command {
     /// Approve a pending install by adding its device key to the `NostrIdentity`
     /// roster. Only usable by profile admins.
     Approve {
-        /// Device pubkey to authorize (npub1... or 64-char hex).
+        /// Device Key to authorize (npub1... or 64-char hex).
         app_key: String,
         /// Optional app install label to record alongside.
         #[arg(long)]
@@ -108,7 +108,7 @@ pub(crate) enum Command {
     },
     /// Revoke an authorized device key and rotate the drive content key.
     Revoke {
-        /// Device pubkey to revoke (npub1... or 64-char hex).
+        /// Device Key to revoke (npub1... or 64-char hex).
         app_key: String,
         /// Optional recovery phrase, nsec1, or 64-char hex secret used to
         /// revoke without relying on this install's device key as an admin.
@@ -463,7 +463,7 @@ pub(crate) enum AppKeysCmd {
     Requests,
     /// Approve a pending device-link request.
     Approve {
-        /// Device pubkey or device-link approval URL.
+        /// Device Key or device-link approval URL.
         request: String,
         /// Optional app install label to record alongside.
         #[arg(long)]
@@ -481,7 +481,7 @@ pub(crate) enum AppKeysCmd {
     RepairWraps,
     /// Revoke an authorized device key and rotate the drive content key.
     Revoke {
-        /// Device pubkey to revoke (npub1... or 64-char hex).
+        /// Device Key to revoke (npub1... or 64-char hex).
         app_key: String,
     },
     /// Promote an authorized device to admin.

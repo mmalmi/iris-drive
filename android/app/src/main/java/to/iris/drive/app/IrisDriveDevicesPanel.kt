@@ -63,6 +63,7 @@ internal fun DevicesPanel(
     onDeleteDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
     onDemoteAdmin: (String) -> Unit,
+    onCopyDeviceKey: (String) -> Unit,
 ) {
     var request by remember { mutableStateOf("") }
     var showAddDevice by remember { mutableStateOf(false) }
@@ -91,7 +92,7 @@ internal fun DevicesPanel(
             onScanned = { code ->
                 val trimmed = code.trim()
                 if (!NativeCore.isCompleteDeviceApprovalInput(trimmed)) {
-                    "Scan a request link from the joining device."
+                    "Invalid device request."
                 } else {
                     request = trimmed
                     showApprovalScanner = false
@@ -168,6 +169,7 @@ internal fun DevicesPanel(
                 onAppointAdmin = onAppointAdmin,
                 onDemoteAdmin = onDemoteAdmin,
                 onDelete = { devicePendingDelete = it },
+                onCopyDeviceKey = onCopyDeviceKey,
             )
         }
     }
@@ -181,6 +183,7 @@ internal fun DevicesPanel(
                     onAppointAdmin = onAppointAdmin,
                     onDemoteAdmin = onDemoteAdmin,
                     onDelete = { devicePendingDelete = it },
+                    onCopyDeviceKey = onCopyDeviceKey,
                 )
             }
         }
@@ -215,6 +218,7 @@ private fun DeviceActorRow(
     onAppointAdmin: (String) -> Unit,
     onDemoteAdmin: (String) -> Unit,
     onDelete: (DeviceState) -> Unit,
+    onCopyDeviceKey: (String) -> Unit,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         if (showStatusDot) {
@@ -234,13 +238,25 @@ private fun DeviceActorRow(
                 style = MaterialTheme.typography.bodySmall,
             )
             if (device.isCurrentDevice) {
-                Text(
-                    "Device key: ${device.pubkey}",
-                    color = Muted,
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        device.pubkey,
+                        color = Muted,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(
+                        onClick = { onCopyDeviceKey(device.pubkey) },
+                        modifier = Modifier.testTag("copyCurrentDeviceKey"),
+                    ) {
+                        Text("Copy Device Key")
+                    }
+                }
+            } else if (device.detail.isNotBlank()) {
+                Text(device.detail, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Text(device.detail, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (device.canAppointAdmin) {
             TextButton(onClick = { onAppointAdmin(device.pubkey) }) {
@@ -430,10 +446,6 @@ private fun AddDevicePanel(
                 }
             }
         }
-        Text(
-            "Paste a request link from the joining device, or paste its device key.",
-            color = Muted,
-        )
         OutlinedTextField(
             value = request,
             onValueChange = onRequestChange,

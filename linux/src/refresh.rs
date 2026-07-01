@@ -49,10 +49,6 @@ pub(crate) fn refresh(model: &AppRef) {
             let device_npub = account.map(|account| account.current_app_key_npub.as_str());
             model.ui.app_key.set_text(&short_value(app_key_npub));
             model.ui.device.set_text(&short_value(device_npub));
-            model
-                .ui
-                .account_app_key
-                .set_text(app_key_npub.unwrap_or("-"));
             model.ui.account_device.set_text(device_npub.unwrap_or("-"));
             model
                 .ui
@@ -144,7 +140,6 @@ pub(crate) fn refresh(model: &AppRef) {
                 .set_text(&default_drive_dir().display().to_string());
             model.ui.app_key.set_text("-");
             model.ui.device.set_text("-");
-            model.ui.account_app_key.set_text("-");
             model.ui.account_device.set_text("-");
             model.ui.account_authorization.set_text("-");
             model.ui.approve_box.set_visible(false);

@@ -312,8 +312,7 @@ internal fun IrisDriveAndroidApp(
                     isOpeningIrisApps = isOpeningIrisApps,
                     onStartSync = onStartSync,
                     onStopSync = onStopSync,
-                    onCopyAppKey = { onCopyText("Device", activeProfile.currentAppKeyNpub) },
-                    onCopyDeviceKey = { onCopyText("Device key", activeProfile.devicePubkey) },
+                    onCopyDeviceKey = { onCopyText("Device Key", activeProfile.devicePubkey) },
                     onCopyText = onCopyText,
                     onExportRecoverySecret = onExportRecoverySecret,
                     androidCalendarSyncEnabled = androidCalendarSyncEnabled,
@@ -375,11 +374,10 @@ private fun RevokedDeviceContent(
             SetupBrand()
             Text("Device removed", color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
             Text("This device no longer has access to Iris Drive.", color = Muted)
-            Text(profile.currentAppKeyNpub, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(profile.devicePubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             SetupSecondaryButton(
                 text = "Copy Device Key",
-                onClick = { onCopyText("Device key", profile.devicePubkey) },
+                onClick = { onCopyText("Device Key", profile.devicePubkey) },
             )
             OutlinedButton(
                 onClick = onLogout,
@@ -454,7 +452,7 @@ private fun AwaitingApprovalContent(
             AwaitingApprovalKey("Current Device Key", profile.devicePubkey)
             SetupSecondaryButton(
                 text = "Copy Device Key",
-                onClick = { onCopyText("Device key", profile.devicePubkey) },
+                onClick = { onCopyText("Device Key", profile.devicePubkey) },
             )
             OutlinedButton(
                 onClick = onLogout,

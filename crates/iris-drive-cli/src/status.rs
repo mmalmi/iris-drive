@@ -25,8 +25,10 @@ use peers::{app_key_actors_for_status, peer_statuses};
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
     let initialized = already_initialized(config_dir);
-    let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))
+    let mut config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))
         .with_context(|| format!("reading config at {}", config_path_in(config_dir).display()))?;
+    ensure_cached_app_key_link_request(&mut config, config_dir)
+        .context("ensuring AppKey-link request URL")?;
     let daemon_status = load_daemon_status(config_dir);
     let blocks_dir = config_dir.join("blocks");
     let block_stats =

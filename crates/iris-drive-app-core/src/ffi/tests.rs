@@ -1231,14 +1231,14 @@ fn link_action_tracks_pending_approval() {
     assert!(
         account
             .app_key_link_request
-            .starts_with("https://drive.iris.to/approve-device/")
+            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_COMPACT_PREFIX)
     );
     let request = iris_drive_core::app_key_link_transport::parse_app_key_approval_request(
         &account.app_key_link_request,
     )
     .unwrap()
     .unwrap();
-    assert_eq!(request.profile_id, Some(owner_profile_id.parse().unwrap()));
+    assert_eq!(request.profile_id, None);
     assert_eq!(
         iris_drive_core::app_key_summary::pubkey_npub(&request.app_key_hex),
         account.current_app_key_npub
@@ -1280,7 +1280,9 @@ fn app_key_link_request_url_is_stable_across_profile_refreshes() {
         .expect("linked profile")
         .app_key_link_request
         .clone();
-    assert!(first.starts_with("https://drive.iris.to/approve-device/"));
+    assert!(
+        first.starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_COMPACT_PREFIX)
+    );
 
     let second = linked_app
         .dispatch(NativeAppAction::RefreshProfile)
@@ -1572,7 +1574,7 @@ fn revoked_current_device_refresh_logs_out_and_allows_fresh_relink() {
     assert!(
         account
             .app_key_link_request
-            .starts_with("https://drive.iris.to/approve-device/")
+            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_COMPACT_PREFIX)
     );
 }
 

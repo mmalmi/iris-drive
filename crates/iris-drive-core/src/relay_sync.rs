@@ -10,9 +10,11 @@
 //!
 //! - **Network (live)** — `publish_nostr_identity_roster_ops`,
 //!   `publish_drive_root`, `fetch_nostr_identity_roster_ops`,
-//!   `fetch_nostr_identity_restore_candidates`, and `fetch_drive_roots` wrap
-//!   nostr-sdk's `Client` for actual relay I/O. Tested manually against real
-//!   relays; the wire/apply layers below them are what we cover automatically.
+//!   `fetch_nostr_identity_restore_candidates`,
+//!   `fetch_nostr_identity_app_key_approval_candidates`, and `fetch_drive_roots`
+//!   wrap nostr-sdk's `Client` for actual relay I/O. Tested manually against
+//!   real relays; the wire/apply layers below them are what we cover
+//!   automatically.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -109,6 +111,14 @@ pub struct NostrIdentityRestoreCandidate {
     pub latest_roster_op_created_at: Option<i64>,
     pub profile_roster_ops: Vec<SignedNostrIdentityRosterOp>,
 }
+
+#[path = "relay_sync/app_key_approval_candidates.rs"]
+mod app_key_approval_candidates;
+pub use app_key_approval_candidates::{
+    NostrIdentityAppKeyApprovalCandidate, fetch_nostr_identity_app_key_approval_candidates,
+    nostr_identity_app_key_approval_candidate_filters,
+    nostr_identity_app_key_approval_candidates_from_events,
+};
 
 /// Result of applying an app-key-link request sent over relay metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1051,6 +1061,9 @@ fn drive_root_preview_ms(preview: &crate::nostr_events::DriveRootEventPreview) -
     })
 }
 
+#[cfg(test)]
+#[path = "relay_sync/app_key_approval_candidate_tests.rs"]
+mod app_key_approval_candidate_tests;
 #[cfg(test)]
 mod calendar_tests;
 #[cfg(test)]

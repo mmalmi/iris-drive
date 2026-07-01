@@ -213,7 +213,7 @@ fn link_creates_awaiting_device_with_no_owner_key() {
     let request_url = v["app_key_link_request"]["url"].as_str().unwrap();
     assert!(
         request_url
-            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_REQUEST_PREFIX)
+            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_COMPACT_PREFIX)
     );
     let request =
         iris_drive_core::app_key_link_transport::parse_app_key_approval_request(request_url)
@@ -542,7 +542,7 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
     let request_url = linked["app_key_link_request"]["url"].as_str().unwrap();
     assert!(
         request_url
-            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_REQUEST_PREFIX)
+            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_COMPACT_PREFIX)
     );
     let request =
         iris_drive_core::app_key_link_transport::parse_app_key_approval_request(request_url)

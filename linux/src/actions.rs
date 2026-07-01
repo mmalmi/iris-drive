@@ -980,7 +980,7 @@ fn add_recovery_device_pubkey(model: &AppRef, recovery_pubkey: &str) -> Result<(
 
 pub(crate) fn approve_device_values(model: &AppRef, device: String, label: String) -> bool {
     if device.trim().is_empty() {
-        model.ui.notice.set_text("Device key is required");
+        model.ui.notice.set_text("Device Key is required");
         return false;
     }
 
@@ -1013,7 +1013,7 @@ pub(crate) fn confirm_approve_device(model: &AppRef, request: String) {
         model
             .ui
             .notice
-            .set_text("Paste the complete request link or device key.");
+            .set_text("Enter a complete request link or device key.");
         return;
     }
     let Some(window) = model.application.active_window() else {

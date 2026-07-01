@@ -5,15 +5,11 @@ struct RevokedDeviceSetupView: View {
     let controller: AppDelegate
 
     var body: some View {
-        let target = status.currentAppKeyNpub ?? ""
         VStack(alignment: .leading, spacing: 12) {
             Text("Device removed")
                 .font(.title2.weight(.semibold))
             Text("This device no longer has access to Iris Drive.")
                 .foregroundStyle(.secondary)
-            if !target.isEmpty {
-                keyedValue("Device", target)
-            }
             if let device = status.deviceNpub, !device.isEmpty {
                 keyedValue("Current Device Key", device)
             }

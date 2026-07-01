@@ -152,9 +152,6 @@ fn append_peer_actor_row(
     let mut metadata = Vec::new();
     if actor.is_current_app_key {
         metadata.push("this device".to_string());
-        if !app_key_pubkey.is_empty() {
-            metadata.push(format!("Device key: {app_key_pubkey}"));
-        }
     }
     metadata.push(if actor.role_label.is_empty() {
         "Member".to_string()
@@ -164,7 +161,7 @@ fn append_peer_actor_row(
     if !actor.state_label.is_empty() {
         metadata.push(actor.state_label.clone());
     }
-    if !actor.detail.is_empty() {
+    if !actor.detail.is_empty() && !(actor.is_current_app_key && actor.detail == app_key_pubkey) {
         metadata.push(actor.detail.clone());
     }
     let connection = if actor.connection_label.is_empty() {
@@ -180,6 +177,7 @@ fn append_peer_actor_row(
         actor.is_online,
         show_status_dot,
         app_key_pubkey,
+        actor.is_current_app_key,
         actor.can_appoint_admin,
         actor.can_demote_admin,
         actor.can_revoke,
@@ -676,6 +674,7 @@ pub(crate) fn peer_row(
     is_online: bool,
     show_status_dot: bool,
     app_key_pubkey: &str,
+    is_current_device: bool,
     can_appoint_admin: bool,
     can_demote_admin: bool,
     can_revoke: bool,
@@ -718,6 +717,16 @@ pub(crate) fn peer_row(
         labels.append(&subtitle_label);
     }
     body.append(&labels);
+
+    if is_current_device && !app_key_pubkey.is_empty() {
+        let copy = icon_button("edit-copy-symbolic", "Copy device key");
+        let model = Rc::clone(model);
+        let app_key_pubkey = app_key_pubkey.to_string();
+        copy.connect_clicked(move |_| {
+            copy_text(&model, &app_key_pubkey, "Device key copied");
+        });
+        body.append(&copy);
+    }
 
     if can_appoint_admin {
         let appoint = icon_button("contact-new-symbolic", "Make admin");

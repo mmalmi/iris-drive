@@ -953,9 +953,6 @@ struct IrisDriveControlPanel: View {
                     }
                 }
             }
-            Text("Paste a request link from the joining device, or paste its device key.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
             TextField("Request link or device key", text: $approveDeviceKey)
                 .textFieldStyle(.roundedBorder)
                 .disableAutocorrection(true)
@@ -1619,9 +1616,6 @@ struct IrisDriveControlPanel: View {
             }
 
             Section("Account") {
-                AccountKeyRow(title: "Device", value: status.currentAppKeyNpub) {
-                    controller.copyAppKey()
-                }
                 AccountKeyRow(title: "Current Device Key", value: status.deviceNpub) {
                     controller.copyDeviceKey()
                 }
@@ -2591,7 +2585,19 @@ private struct PeerRow: View {
 
             if expanded {
                 VStack(alignment: .leading, spacing: 8) {
-                    DetailRow(label: "Device key", value: peer.npub, copyable: true)
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text(peer.npub)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        IrisDriveCopyButton(title: "Copy Device Key", systemImage: "doc.on.doc") {
+                            irisDriveCopyToPasteboard(peer.npub)
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                    }
                     DetailRow(label: "Role", value: peer.roleLabel)
                     if let root = peer.rootCID {
                         DetailRow(label: "Root", value: root, copyable: true)

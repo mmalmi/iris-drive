@@ -73,7 +73,6 @@ struct Ui {
     files: gtk::Label,
     storage: gtk::Label,
     devices: gtk::Label,
-    account_app_key: gtk::Label,
     account_device: gtk::Label,
     account_authorization: gtk::Label,
     approve_box: gtk::Box,
@@ -275,7 +274,25 @@ fn apply_launch_input(model: &AppRef, input: &str) {
         open_content_link(model, &classification);
     } else if classification.kind == "invite" {
         apply_invite_link(model, input, &classification);
+    } else if classification.kind == "app_key_approval" {
+        apply_app_key_approval_link(model, input, &classification);
     }
+}
+
+fn apply_app_key_approval_link(
+    model: &AppRef,
+    input: &str,
+    classification: &LinkInputClassification,
+) {
+    if !classification.is_valid {
+        model.ui.notice.set_text(if classification.error.trim().is_empty() {
+            "Invalid device request"
+        } else {
+            classification.error.trim()
+        });
+        return;
+    }
+    confirm_approve_device(model, input.to_string());
 }
 
 fn apply_invite_link(model: &AppRef, input: &str, classification: &LinkInputClassification) {

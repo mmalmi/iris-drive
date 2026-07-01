@@ -1,6 +1,6 @@
 use super::{
     FfiApp, NativeAppKeyLinkRelayEventApply, apply_native_app_key_link_relay_event_to_config,
-    normalize_pubkey,
+    apply_native_app_key_link_roster_candidate_to_config, normalize_pubkey,
 };
 use crate::NativeAppAction;
 use iris_drive_core::paths::config_path_in;
@@ -219,7 +219,7 @@ fn start_join_request_tracks_pending_manual_approval() {
     assert!(
         account
             .app_key_link_request
-            .starts_with("https://drive.iris.to/approve-device/")
+            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_COMPACT_PREFIX)
     );
     let request = iris_drive_core::app_key_link_transport::parse_app_key_approval_request(
         &account.app_key_link_request,
@@ -244,6 +244,106 @@ fn start_join_request_tracks_pending_manual_approval() {
     assert!(!state.ui.setup_complete);
     assert!(state.ui.awaiting_approval);
     assert_eq!(state.ui.primary_status, "awaiting_approval");
+}
+
+#[test]
+fn pending_request_refresh_rewrites_stale_full_approval_url() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+    let owner = owner_app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "Owner".to_owned(),
+    });
+    let invite = owner.ui.profile.unwrap().app_key_link_invite;
+
+    let linked_dir = tempfile::tempdir().unwrap();
+    let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
+    let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
+        link_target: invite,
+        app_key_label: "iPhone".to_owned(),
+    });
+    assert!(linked.error.is_empty(), "{}", linked.error);
+
+    let config_path = config_path_in(linked_dir.path());
+    let mut config = AppConfig::load_or_default(&config_path).unwrap();
+    config
+        .profile
+        .as_mut()
+        .unwrap()
+        .outbound_app_key_link_request
+        .as_mut()
+        .unwrap()
+        .request_url = "https://drive.iris.to/approve-device/stale-full-request".to_owned();
+    config.save(&config_path).unwrap();
+
+    let refreshed = linked_app.refresh();
+    assert!(refreshed.error.is_empty(), "{}", refreshed.error);
+    let request = refreshed.ui.profile.unwrap().app_key_link_request;
+    assert!(
+        request
+            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_COMPACT_PREFIX)
+    );
+    let saved = AppConfig::load_or_default(&config_path).unwrap();
+    assert_eq!(
+        saved
+            .profile
+            .unwrap()
+            .outbound_app_key_link_request
+            .unwrap()
+            .request_url,
+        request
+    );
+}
+
+#[test]
+fn refresh_recreates_missing_manual_join_request_url() {
+    let linked_dir = tempfile::tempdir().unwrap();
+    let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
+    let linked = linked_app.dispatch(NativeAppAction::StartJoinRequest {
+        app_key_label: "Mac waiting".to_owned(),
+    });
+    assert!(linked.error.is_empty(), "{}", linked.error);
+    let linked_account = linked.ui.profile.expect("linked profile");
+    assert!(
+        linked_account
+            .app_key_link_request
+            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_COMPACT_PREFIX)
+    );
+
+    let mut config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
+    config
+        .profile
+        .as_mut()
+        .unwrap()
+        .outbound_app_key_link_request = None;
+    config.save(config_path_in(linked_dir.path())).unwrap();
+
+    let refreshed = linked_app.dispatch(NativeAppAction::RefreshProfile);
+    assert!(refreshed.error.is_empty(), "{}", refreshed.error);
+    let refreshed_account = refreshed.ui.profile.expect("refreshed profile");
+    assert!(
+        refreshed_account
+            .app_key_link_request
+            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_COMPACT_PREFIX)
+    );
+    let request = iris_drive_core::app_key_link_transport::parse_app_key_approval_request(
+        &refreshed_account.app_key_link_request,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(
+        iris_drive_core::app_key_summary::pubkey_npub(&request.app_key_hex),
+        linked_account.current_app_key_npub
+    );
+    let saved = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
+    assert!(
+        saved
+            .profile
+            .as_ref()
+            .unwrap()
+            .outbound_app_key_link_request
+            .as_ref()
+            .is_some_and(|pending| pending.request_url == refreshed_account.app_key_link_request)
+    );
 }
 
 #[test]
@@ -304,4 +404,80 @@ fn manual_join_request_approval_roster_authorizes_waiting_native_device_e2e() {
     );
     assert_eq!(linked_state.profile_id, owner_state.profile_id);
     assert!(linked_state.outbound_app_key_link_request.is_none());
+    linked_config
+        .save(config_path_in(linked_dir.path()))
+        .expect("save linked config");
+    let refreshed = linked_app.refresh();
+    assert!(refreshed.error.is_empty(), "{}", refreshed.error);
+    let refreshed_account = refreshed.ui.profile.expect("linked profile");
+    assert_eq!(
+        refreshed_account.profile_id,
+        owner_state.profile_id.to_string()
+    );
+    assert_eq!(refreshed_account.authorization_state, "authorized");
+    assert!(refreshed_account.app_key_link_request.is_empty());
+    assert!(refreshed.ui.setup_complete);
+    assert!(!refreshed.ui.awaiting_approval);
+}
+
+#[test]
+fn relay_approval_candidate_authorizes_unbound_waiting_native_device_e2e() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+    let owner = owner_app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "iOS owner".to_owned(),
+    });
+    assert!(owner.error.is_empty(), "{}", owner.error);
+
+    let linked_dir = tempfile::tempdir().unwrap();
+    let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
+    let linked = linked_app.dispatch(NativeAppAction::StartJoinRequest {
+        app_key_label: "Waiting phone".to_owned(),
+    });
+    assert!(linked.error.is_empty(), "{}", linked.error);
+    let linked_account = linked.ui.profile.unwrap();
+
+    let approved = owner_app.dispatch(NativeAppAction::ApproveDevice {
+        request: linked_account.app_key_link_request,
+        label: String::new(),
+    });
+    assert!(approved.error.is_empty(), "{}", approved.error);
+    let owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
+    let owner_state = owner_config.profile.as_ref().unwrap();
+    let relay_events = owner_state
+        .profile_roster_ops
+        .iter()
+        .map(|op| Event::from_json(&op.event_json).unwrap())
+        .collect::<Vec<_>>();
+    let candidates =
+        iris_drive_core::relay_sync::nostr_identity_app_key_approval_candidates_from_events(
+            &normalize_pubkey(&linked_account.current_app_key_npub).unwrap(),
+            &relay_events,
+        )
+        .unwrap();
+    assert_eq!(candidates.len(), 1);
+
+    let mut linked_config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
+    linked_config
+        .profile
+        .as_mut()
+        .unwrap()
+        .outbound_app_key_link_request = None;
+    let outcome =
+        apply_native_app_key_link_roster_candidate_to_config(&mut linked_config, &candidates[0])
+            .unwrap();
+    assert_eq!(outcome, NativeAppKeyLinkRelayEventApply::AppliedRoster);
+    linked_config
+        .save(config_path_in(linked_dir.path()))
+        .expect("save linked config");
+
+    let refreshed = linked_app.refresh();
+    assert!(refreshed.error.is_empty(), "{}", refreshed.error);
+    let refreshed_account = refreshed.ui.profile.expect("linked profile");
+    assert_eq!(refreshed_account.authorization_state, "authorized");
+    assert_eq!(
+        refreshed_account.profile_id,
+        owner_state.profile_id.to_string()
+    );
+    assert!(!refreshed.ui.awaiting_approval);
 }

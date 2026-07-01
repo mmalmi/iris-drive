@@ -222,6 +222,7 @@ public sealed class IrisDriveStatusData
             var connectionState = String(device, "connection_state") ?? "";
             var actorKind = String(device, "actor_kind") ??
                 (role == "recovery" || connectionState == "recovery" ? "recovery_key" : "device");
+            var isCurrentDevice = Bool(device, "is_current_app_key");
             var metadata = new List<string>();
             foreach (var value in new[]
             {
@@ -230,7 +231,8 @@ public sealed class IrisDriveStatusData
                 String(device, "detail"),
             })
             {
-                if (!string.IsNullOrWhiteSpace(value))
+                if (!string.IsNullOrWhiteSpace(value)
+                    && !(isCurrentDevice && string.Equals(value, pubkey, StringComparison.Ordinal)))
                 {
                     metadata.Add(value);
                 }
@@ -245,7 +247,7 @@ public sealed class IrisDriveStatusData
                 string.Join(" | ", metadata),
                 String(device, "connection_label") ?? "",
                 Bool(device, "is_online"),
-                Bool(device, "is_current_app_key"),
+                isCurrentDevice,
                 canManagePeer && Bool(device, "can_revoke"),
                 canManagePeer && Bool(device, "can_appoint_admin"),
                 canManagePeer && Bool(device, "can_demote_admin")));
