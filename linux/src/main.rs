@@ -80,8 +80,6 @@ struct Ui {
     add_device_expander: gtk::Expander,
     add_device_requests: gtk::ListBox,
     add_device_entry: gtk::Entry,
-    add_device_label_entry: gtk::Entry,
-    add_device_submit_button: gtk::Button,
     add_recovery_key_button: gtk::Button,
     notice: gtk::Label,
     drives: gtk::ListBox,

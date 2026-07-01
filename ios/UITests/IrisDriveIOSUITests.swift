@@ -7,7 +7,7 @@ final class IrisDriveIOSUITests: XCTestCase {
     }
 
     func testWelcomeRoutesWithoutSetupTitle() throws {
-        let app = launchApp()
+        let app = launchApp(environment: try isolatedBaseEnvironment())
         XCTAssertFalse(app.navigationBars["Setup"].exists)
         XCTAssertTrue(app.buttons["welcomeCreateProfile"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["welcomeSignIn"].waitForExistence(timeout: 5))
@@ -22,52 +22,50 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTAssertTrue(app.buttons["openRecoveryPhrase"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["openSecretKey"].waitForExistence(timeout: 5))
         app.buttons["openLinkDevice"].tap()
-        XCTAssertTrue(app.navigationBars["Link device"].waitForExistence(timeout: 5))
+        let startJoinRequest = app.buttons["startJoinRequest"]
+        let awaitingApproval = app.descendants(matching: .any)["awaitingApprovalView"]
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline, !startJoinRequest.exists, !awaitingApproval.exists {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertTrue(startJoinRequest.exists || awaitingApproval.exists)
+        XCTAssertFalse(app.textFields["linkTargetInput"].exists)
+        XCTAssertFalse(app.staticTexts["Device invite link"].exists)
     }
 
     func testLinkThisDeviceFromWelcome() throws {
-        let invite = try requiredEnvironment("IRIS_DRIVE_UI_TEST_OWNER_INVITE")
-        let app = launchApp()
+        let app = launchApp(environment: try isolatedBaseEnvironment())
 
         app.buttons["welcomeSignIn"].tap()
         app.buttons["openLinkDevice"].tap()
 
         let awaitingApproval = app.descendants(matching: .any)["awaitingApprovalView"]
         let deadline = Date().addingTimeInterval(30)
-        var checkedPrefilledTarget = false
         while Date() < deadline {
             if awaitingApproval.exists {
+                XCTAssertFalse(app.textFields["linkTargetInput"].exists)
                 return
-            }
-            let owner = app.textFields["linkTargetInput"]
-            if owner.exists, !checkedPrefilledTarget {
-                XCTAssertTrue(accessibilityValue(owner).contains("drive.iris"), invite)
-                checkedPrefilledTarget = true
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
         XCTFail(app.debugDescription)
     }
 
-    func testLinkDeviceShowsInvalidInviteReason() throws {
-        let baseDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("iris-drive-ui-test-invalid-link-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: baseDir, withIntermediateDirectories: true)
-        addTeardownBlock {
-            try? FileManager.default.removeItem(at: baseDir)
-        }
-        let app = launchApp(environment: [
-            "IRIS_DRIVE_UI_TEST_BASE_DIR": baseDir.path,
-            "IRIS_DRIVE_UI_TEST_OWNER_INVITE_B64": "aHR0cHM6Ly9kcml2ZS5pcmlzLnRvL2ludml0ZS9kZW1v",
-        ])
+    func testLinkDeviceDoesNotRenderInviteInput() throws {
+        let app = launchApp(environment: try isolatedBaseEnvironment())
 
         app.buttons["welcomeSignIn"].tap()
         app.buttons["openLinkDevice"].tap()
 
-        let error = app.staticTexts["linkDeviceErrorMessage"]
-        XCTAssertTrue(error.waitForExistence(timeout: 5))
-        XCTAssertTrue(accessibilityValue(error).contains("full device invite"))
-        XCTAssertFalse(app.descendants(matching: .any)["awaitingApprovalView"].exists)
+        let startJoinRequest = app.buttons["startJoinRequest"]
+        let awaitingApproval = app.descendants(matching: .any)["awaitingApprovalView"]
+        let deadline = Date().addingTimeInterval(5)
+        while Date() < deadline, !startJoinRequest.exists, !awaitingApproval.exists {
+            RunLoop.current.run(until: Date().addingTimeInterval(0.1))
+        }
+        XCTAssertTrue(startJoinRequest.exists || awaitingApproval.exists)
+        XCTAssertFalse(app.textFields["linkTargetInput"].exists)
+        XCTAssertFalse(app.staticTexts["Device invite link"].exists)
     }
 
     func testCreateProfileFromWelcome() throws {
@@ -617,10 +615,8 @@ final class IrisDriveIOSUITests: XCTestCase {
         makeHittable(deviceField, in: app)
         XCTAssertEqual(deviceField.value as? String, linkedDevice)
 
-        let nameField = app.textFields["manualDeviceName"]
-        makeHittable(nameField, in: app)
-        XCTAssertEqual(nameField.value as? String, "iOS UI linked")
-        app.buttons["manualDeviceAdd"].tap()
+        XCTAssertTrue(app.buttons["Approve"].waitForExistence(timeout: 5))
+        app.buttons["Approve"].tap()
 
         XCTAssertTrue(
             waitForStaticText(linkedDevice, in: app, timeout: 15)
@@ -640,6 +636,16 @@ final class IrisDriveIOSUITests: XCTestCase {
         }
         app.launch()
         return app
+    }
+
+    private func isolatedBaseEnvironment() throws -> [String: String] {
+        let baseDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iris-drive-ui-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: baseDir, withIntermediateDirectories: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: baseDir)
+        }
+        return ["IRIS_DRIVE_UI_TEST_BASE_DIR": baseDir.path]
     }
 
     private func ensureMyDriveReady(in app: XCUIApplication) {

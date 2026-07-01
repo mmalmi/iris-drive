@@ -744,11 +744,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func linkDevice(target: String) {
         let target = target.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !target.isEmpty else {
-            updateStatus("Device invite link required")
+            updateStatus("Device link target required")
             return
         }
         let args = setupArguments(command: "link", label: "", extra: [target, "--force"])
         finishSetup(arguments: args)
+    }
+
+    func startJoinRequest() {
+        dispatchNativeAction(
+            ["type": "start_join_request", "app_key_label": ""],
+            progress: "Preparing join request",
+            success: "Join request ready",
+            restartSyncAfterSuccess: true
+        )
     }
 
     func classifyDeviceInviteInput(_ input: String, completion: @escaping (String, Bool) -> Void) {

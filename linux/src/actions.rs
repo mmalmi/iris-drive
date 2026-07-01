@@ -1003,6 +1003,39 @@ pub(crate) fn approve_device_values(model: &AppRef, device: String, label: Strin
     }
 }
 
+pub(crate) fn confirm_approve_device(model: &AppRef, request: String) {
+    let request = request.trim().to_string();
+    if request.is_empty() {
+        model.ui.notice.set_text("Device request is required");
+        return;
+    }
+    if !iris_drive_app_core::validate_device_approval_input(request.clone()).is_complete {
+        model
+            .ui
+            .notice
+            .set_text("Paste the complete request link or device key.");
+        return;
+    }
+    let Some(window) = model.application.active_window() else {
+        approve_device_values(model, request, String::new());
+        return;
+    };
+    let dialog = adw::AlertDialog::builder()
+        .heading("Approve this device?")
+        .body("This will add the joining device to Iris Drive.")
+        .close_response("cancel")
+        .default_response("approve")
+        .build();
+    dialog.add_responses(&[("cancel", "Cancel"), ("approve", "Approve")]);
+    let model = Rc::clone(model);
+    dialog.choose(&window, None::<&gio::Cancellable>, move |response| {
+        if response == "approve" {
+            approve_device_values(&model, request.clone(), String::new());
+            model.ui.add_device_entry.set_text("");
+        }
+    });
+}
+
 pub(crate) fn show_delete_device_dialog(model: &AppRef, device_npub: String, label: String) {
     let dialog = gtk::Window::builder()
         .application(&model.application)

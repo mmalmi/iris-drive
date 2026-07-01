@@ -201,3 +201,107 @@ fn web_published_roster_ops_authorize_waiting_native_device() {
         AppKeyAuthorizationState::Authorized
     );
 }
+
+#[test]
+fn start_join_request_tracks_pending_manual_approval() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+
+    let state = app.dispatch(NativeAppAction::StartJoinRequest {
+        app_key_label: "iPhone".to_owned(),
+    });
+
+    assert!(state.error.is_empty(), "{}", state.error);
+    let account = state.ui.profile.expect("account exists");
+    assert_eq!(account.app_key_label, "iPhone");
+    assert_eq!(account.authorization_state, "awaiting_approval");
+    assert!(!account.can_admin_profile);
+    assert!(
+        account
+            .app_key_link_request
+            .starts_with("https://drive.iris.to/approve-device/")
+    );
+    let request = iris_drive_core::app_key_link_transport::parse_app_key_approval_request(
+        &account.app_key_link_request,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(request.profile_id, None);
+    assert_eq!(
+        iris_drive_core::app_key_summary::pubkey_npub(&request.app_key_hex),
+        account.current_app_key_npub
+    );
+    let config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+    let pending = config
+        .profile
+        .as_ref()
+        .and_then(|profile| profile.outbound_app_key_link_request.as_ref())
+        .expect("pending request");
+    assert!(pending.admin_app_key_pubkey.is_empty());
+    assert!(pending.invite_pubkey.is_empty());
+    assert_eq!(pending.request_url, account.app_key_link_request);
+    assert_eq!(state.ui.setup_state, "awaiting_approval");
+    assert!(!state.ui.setup_complete);
+    assert!(state.ui.awaiting_approval);
+    assert_eq!(state.ui.primary_status, "awaiting_approval");
+}
+
+#[test]
+fn manual_join_request_approval_roster_authorizes_waiting_native_device_e2e() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+    let owner = owner_app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "Mac".to_owned(),
+    });
+    assert!(owner.error.is_empty(), "{}", owner.error);
+
+    let linked_dir = tempfile::tempdir().unwrap();
+    let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
+    let linked = linked_app.dispatch(NativeAppAction::StartJoinRequest {
+        app_key_label: "iPhone".to_owned(),
+    });
+    assert!(linked.error.is_empty(), "{}", linked.error);
+    let linked_account = linked.ui.profile.unwrap();
+    let parsed_request = iris_drive_core::app_key_link_transport::parse_app_key_approval_request(
+        &linked_account.app_key_link_request,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(parsed_request.profile_id, None);
+
+    let approved = owner_app.dispatch(NativeAppAction::ApproveDevice {
+        request: linked_account.app_key_link_request,
+        label: String::new(),
+    });
+    assert!(approved.error.is_empty(), "{}", approved.error);
+    assert!(approved.ui.app_actors.iter().any(|device| {
+        device.pubkey == linked_account.current_app_key_npub && device.role == "member"
+    }));
+
+    let owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
+    let owner_state = owner_config.profile.as_ref().unwrap();
+    let frame =
+        iris_drive_core::app_key_link_transport::app_key_link_roster_frame(owner_state, 456)
+            .expect("owner roster frame");
+    let mut linked_config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
+    let outcome = iris_drive_core::relay_sync::apply_app_key_link_roster_frame(
+        &mut linked_config,
+        &frame,
+        &owner_state.app_key_pubkey,
+    )
+    .unwrap();
+
+    assert!(matches!(
+        outcome,
+        iris_drive_core::relay_sync::AppKeyLinkRosterApply::Applied(
+            iris_drive_core::app_keys::ApplyDecision::Adopted
+        )
+    ));
+    let linked_state = linked_config.profile.as_ref().unwrap();
+    assert_eq!(
+        linked_state.authorization_state,
+        AppKeyAuthorizationState::Authorized
+    );
+    assert_eq!(linked_state.profile_id, owner_state.profile_id);
+    assert!(linked_state.outbound_app_key_link_request.is_none());
+}

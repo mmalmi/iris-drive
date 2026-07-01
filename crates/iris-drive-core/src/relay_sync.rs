@@ -201,14 +201,19 @@ pub fn apply_app_key_link_roster_frame(
     }
 
     let has_current_roster = account.app_keys.is_some() || !account.profile_roster_ops.is_empty();
-    let pending_from_admin = account
-        .outbound_app_key_link_request
-        .as_ref()
-        .is_some_and(|pending| pending.admin_app_key_pubkey == admin_app_key_pubkey);
-    if !has_current_roster && !pending_from_admin {
+    let pending_request = account.outbound_app_key_link_request.as_ref();
+    let pending_from_admin = pending_request.is_some_and(|pending| {
+        !pending.admin_app_key_pubkey.trim().is_empty()
+            && pending.admin_app_key_pubkey == admin_app_key_pubkey
+    });
+    let pending_unbound_manual_join =
+        pending_request.is_some_and(|pending| pending.admin_app_key_pubkey.trim().is_empty());
+    let pending_allows_first_roster = pending_from_admin || pending_unbound_manual_join;
+    if !has_current_roster && !pending_allows_first_roster {
         return Ok(AppKeyLinkRosterApply::Ignored);
     }
-    if pending_from_admin && !incoming_projection.can_write_roots(&account.app_key_pubkey) {
+    if pending_allows_first_roster && !incoming_projection.can_write_roots(&account.app_key_pubkey)
+    {
         return Ok(AppKeyLinkRosterApply::Ignored);
     }
 

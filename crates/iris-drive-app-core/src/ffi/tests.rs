@@ -1008,7 +1008,7 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
     let approval = super::classify_link_input(
         iris_drive_core::app_key_link_transport::encode_app_key_approval_request(
             &request_device,
-            profile_id.parse().unwrap(),
+            Some(profile_id.parse().unwrap()),
             Some(&iris_drive_core::normalize_app_key_pubkey(&admin_app_key_npub).unwrap()),
             None,
             123,

@@ -112,7 +112,7 @@ async fn app_key_link_app_message_records_inbound_request_for_owner_admin() {
         requested_at: 123,
         url: encode_app_key_approval_request(
             &linked_device,
-            account.state.profile_id,
+            Some(account.state.profile_id),
             Some(&account.state.app_key_pubkey),
             Some(" phone "),
             123,
@@ -163,7 +163,7 @@ async fn app_key_link_app_message_ignores_wrong_link_secret() {
         requested_at: 123,
         url: encode_app_key_approval_request(
             &linked_device,
-            account.state.profile_id,
+            Some(account.state.profile_id),
             Some(&account.state.app_key_pubkey),
             Some("phone"),
             123,

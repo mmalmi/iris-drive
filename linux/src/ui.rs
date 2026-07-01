@@ -211,12 +211,7 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     let manual_controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     let add_device_entry = setup_entry("Request link or device key");
     add_device_entry.set_hexpand(true);
-    let add_device_label_entry = setup_entry("Name (optional)");
-    add_device_label_entry.set_width_request(160);
-    let add_device_submit_button = primary_button("Add");
     manual_controls.append(&add_device_entry);
-    manual_controls.append(&add_device_label_entry);
-    manual_controls.append(&add_device_submit_button);
     add_device_body.append(&manual_controls);
     add_device_expander.set_child(Some(&add_device_body));
     let add_recovery_key_button = action_button(
@@ -515,8 +510,6 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
             add_device_expander,
             add_device_requests,
             add_device_entry,
-            add_device_label_entry,
-            add_device_submit_button,
             add_recovery_key_button,
             notice,
             drives,
@@ -626,34 +619,33 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
         copy_device_button.connect_clicked(move |_| copy_account_key(&model, "device_npub"));
     }
     {
-        let button = model.ui.add_device_submit_button.clone();
         let device = model.ui.add_device_entry.clone();
-        let label = model.ui.add_device_label_entry.clone();
         let model = Rc::clone(&model);
-        button.connect_clicked(move |_| {
-            if approve_device_values(
-                &model,
-                device.text().trim().to_string(),
-                label.text().trim().to_string(),
-            ) {
-                device.set_text("");
-                label.set_text("");
+        let last_prompted = Rc::new(RefCell::new(String::new()));
+        {
+            let model = Rc::clone(&model);
+            let last_prompted = Rc::clone(&last_prompted);
+            device.connect_changed(move |entry| {
+                let request = entry.text().trim().to_string();
+                if request.is_empty()
+                    || *last_prompted.borrow() == request
+                    || !iris_drive_app_core::validate_device_approval_input(request.clone())
+                        .is_complete
+                {
+                    return;
+                }
+                last_prompted.replace(request.clone());
+                confirm_approve_device(&model, request);
+            });
+        }
+        device.connect_activate(move |entry| {
+            let request = entry.text().trim().to_string();
+            if request.is_empty() {
+                model.ui.notice.set_text("Device request is required");
+                return;
             }
+            confirm_approve_device(&model, request);
         });
-    }
-    {
-        let add = model.ui.add_device_submit_button.clone();
-        model
-            .ui
-            .add_device_entry
-            .connect_activate(move |_| add.emit_clicked());
-    }
-    {
-        let add = model.ui.add_device_submit_button.clone();
-        model
-            .ui
-            .add_device_label_entry
-            .connect_activate(move |_| add.emit_clicked());
     }
     {
         let button = model.ui.add_recovery_key_button.clone();

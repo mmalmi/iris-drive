@@ -43,7 +43,6 @@ public partial class MainWindow : Window
     private bool updateAvailable;
     private string updateStatus = "";
     private bool quitRequested;
-    private string submittedLinkTarget = "";
     private const int RecoveryPhraseWordCount = 12;
     private readonly string[] recoveryWords = new string[RecoveryPhraseWordCount];
     private int recoveryWordIndex;
@@ -233,7 +232,6 @@ public partial class MainWindow : Window
         SetupRoot.Visibility = Visibility.Visible;
         MainRoot.Visibility = Visibility.Collapsed;
         ShowSetupPanel(AwaitingPanel);
-        AwaitingRequestBox.Text = status.AppKeyLinkRequestUrl ?? "";
         AwaitingDeviceBox.Text = status.DeviceNpub ?? status.CurrentAppKeyNpub ?? "";
         SetupNotice.Text = notice ?? status.PrimaryStatusLabel;
     }
@@ -1222,7 +1220,7 @@ public partial class MainWindow : Window
     private void ShowLink_Click(object sender, RoutedEventArgs e)
     {
         ShowSetupPanel(LinkPanel);
-        LinkTargetBox.Focus();
+        _ = StartJoinRequestAsync();
     }
 
     private void ShowRecoveryPhrase_Click(object sender, RoutedEventArgs e)

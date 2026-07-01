@@ -134,9 +134,9 @@ class MainActivity : ComponentActivity() {
                         ::autoStartSyncIfNeeded,
                     )
                 },
-                onLinkDevice = { linkTarget, deviceLabel ->
+                onStartJoinRequest = { deviceLabel ->
                     dispatch(
-                        NativeActions.linkDevice(linkTarget, resolveDeviceLabel(deviceLabel)),
+                        NativeActions.startJoinRequest(resolveDeviceLabel(deviceLabel)),
                         ::autoStartSyncIfNeeded,
                     )
                 },

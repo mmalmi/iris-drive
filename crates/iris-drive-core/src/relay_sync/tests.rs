@@ -211,6 +211,79 @@ fn apply_app_key_link_roster_is_profile_scoped_and_ownerless() {
 }
 
 #[test]
+fn apply_app_key_link_roster_accepts_unbound_manual_join_request() {
+    let admin_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+    let mut admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
+    let mut linked = Profile::start_join_request(linked_dir.path(), Some("phone".into())).unwrap();
+    let placeholder_profile_id = linked.state.profile_id;
+    let linked_pubkey = linked.state.app_key_pubkey.clone();
+    linked.state.queue_unbound_app_key_join_request(
+        123,
+        "https://drive.iris.to/approve-device/test".into(),
+    );
+
+    admin
+        .approve_app_key(&linked_pubkey, Some("phone".into()))
+        .unwrap();
+    let mut cfg = AppConfig {
+        profile: Some(linked.state.clone()),
+        ..AppConfig::default()
+    };
+    cfg.upsert_drive(Drive::primary(placeholder_profile_id.to_string()));
+
+    let frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 456);
+    let outcome =
+        apply_app_key_link_roster_frame(&mut cfg, &frame, &admin.state.app_key_pubkey).unwrap();
+
+    assert!(matches!(
+        outcome,
+        AppKeyLinkRosterApply::Applied(ApplyDecision::Adopted)
+    ));
+    let linked_state = cfg.profile.as_ref().unwrap();
+    assert_eq!(linked_state.profile_id, admin.state.profile_id);
+    assert_eq!(
+        linked_state.authorization_state,
+        AppKeyAuthorizationState::Authorized
+    );
+    assert!(linked_state.outbound_app_key_link_request.is_none());
+    assert_eq!(
+        cfg.drive(crate::PRIMARY_DRIVE_ID).unwrap().root_scope_id,
+        admin.state.profile_id.to_string()
+    );
+}
+
+#[test]
+fn apply_app_key_link_roster_rejects_unbound_roster_without_joining_app_key() {
+    let admin_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+    let admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
+    let mut linked = Profile::start_join_request(linked_dir.path(), Some("phone".into())).unwrap();
+    let placeholder_profile_id = linked.state.profile_id;
+    linked.state.queue_unbound_app_key_join_request(
+        123,
+        "https://drive.iris.to/approve-device/test".into(),
+    );
+    let mut cfg = AppConfig {
+        profile: Some(linked.state.clone()),
+        ..AppConfig::default()
+    };
+    cfg.upsert_drive(Drive::primary(placeholder_profile_id.to_string()));
+
+    let frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 456);
+    let outcome =
+        apply_app_key_link_roster_frame(&mut cfg, &frame, &admin.state.app_key_pubkey).unwrap();
+
+    assert_eq!(outcome, AppKeyLinkRosterApply::Ignored);
+    let linked_state = cfg.profile.as_ref().unwrap();
+    assert_eq!(linked_state.profile_id, placeholder_profile_id);
+    assert_eq!(
+        linked_state.authorization_state,
+        AppKeyAuthorizationState::AwaitingApproval
+    );
+}
+
+#[test]
 fn apply_app_key_link_roster_merges_older_branch_without_downgrading_epoch() {
     let (mut admin, mut cfg) = linked_config_after_initial_roster();
     let branch_base_ops = admin.state.profile_roster_ops.clone();

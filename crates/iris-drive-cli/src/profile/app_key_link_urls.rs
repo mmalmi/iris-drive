@@ -75,14 +75,15 @@ fn app_key_link_request_json_for_admin_state(
     };
     let Ok(url) = encode_app_key_approval_request(
         keys,
-        state.profile_id,
-        Some(&pending.admin_app_key_pubkey),
+        request_profile_id(state, pending),
+        request_admin_app_key_pubkey(pending),
         state.app_key_label.as_deref(),
         pending.requested_at,
     ) else {
         return Value::Null;
     };
 
+    let has_network_target = !pending.admin_app_key_pubkey.trim().is_empty();
     json!({
         "url": url,
         "profile_id": state.profile_id.to_string(),
@@ -90,9 +91,23 @@ fn app_key_link_request_json_for_admin_state(
         "label": state.app_key_label.as_deref(),
         "admin_app_key_npub": pubkey_npub(&pending.admin_app_key_pubkey),
         "requested_at": pending.requested_at,
-        "sent_over_relay": state.outbound_app_key_link_request.is_some(),
-        "sent_over_fips": state.outbound_app_key_link_request.is_some(),
+        "sent_over_relay": has_network_target,
+        "sent_over_fips": has_network_target,
     })
+}
+
+fn request_profile_id(
+    state: &ProfileState,
+    pending: &iris_drive_core::profile::PendingAppKeyLinkRequest,
+) -> Option<iris_drive_core::NostrIdentityId> {
+    (!pending.admin_app_key_pubkey.trim().is_empty()).then_some(state.profile_id)
+}
+
+fn request_admin_app_key_pubkey(
+    pending: &iris_drive_core::profile::PendingAppKeyLinkRequest,
+) -> Option<&str> {
+    let admin = pending.admin_app_key_pubkey.trim();
+    (!admin.is_empty()).then_some(admin)
 }
 
 pub(crate) fn app_key_link_invite_json(state: &ProfileState) -> Value {

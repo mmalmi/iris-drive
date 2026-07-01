@@ -253,6 +253,12 @@ internal object NativeActions {
             .put("app_key_label", deviceLabel)
             .toString()
 
+    fun startJoinRequest(deviceLabel: String): String =
+        JSONObject()
+            .put("type", "start_join_request")
+            .put("app_key_label", deviceLabel)
+            .toString()
+
     fun logout(): String = JSONObject().put("type", "logout").toString()
 
     fun approveDevice(request: String, label: String): String =

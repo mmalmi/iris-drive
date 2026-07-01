@@ -664,6 +664,9 @@ pub(crate) async fn send_pending_app_key_link_request(
     let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
         return Ok(None);
     };
+    if pending.admin_app_key_pubkey.trim().is_empty() {
+        return Ok(None);
+    }
 
     let admin_npub = pubkey_npub(&pending.admin_app_key_pubkey);
     let fingerprint = format!(

@@ -80,11 +80,18 @@ public sealed partial class IrisDriveService
     {
         if (string.IsNullOrWhiteSpace(target))
         {
-            throw new InvalidOperationException("Device invite link is required.");
+            throw new InvalidOperationException("Device link target is required.");
         }
 
         return FinishSetupAsync(new[] { "link", target.Trim() });
     }
+
+    public Task StartJoinRequestAsync() => DispatchNativeActionAsync(
+        new Dictionary<string, object>
+        {
+            ["type"] = "start_join_request",
+            ["app_key_label"] = "",
+        });
 
     public Task<bool> IsCompleteDeviceInviteInputAsync(string input)
     {

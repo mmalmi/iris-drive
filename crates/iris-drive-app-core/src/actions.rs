@@ -23,6 +23,9 @@ pub enum NativeAppAction {
         link_target: String,
         app_key_label: String,
     },
+    StartJoinRequest {
+        app_key_label: String,
+    },
     Logout,
     ApproveDevice {
         request: String,

@@ -443,6 +443,22 @@ impl ProfileState {
         Ok(changed)
     }
 
+    pub fn queue_unbound_app_key_join_request(
+        &mut self,
+        requested_at: u64,
+        request_url: String,
+    ) -> bool {
+        let next = PendingAppKeyLinkRequest {
+            admin_app_key_pubkey: String::new(),
+            invite_pubkey: String::new(),
+            request_url,
+            requested_at,
+        };
+        let changed = self.outbound_app_key_link_request.as_ref() != Some(&next);
+        self.outbound_app_key_link_request = Some(next);
+        changed
+    }
+
     pub fn record_inbound_app_key_link_request(
         &mut self,
         profile_id: NostrIdentityId,
@@ -1016,6 +1032,38 @@ impl Profile {
         if !is_pubkey_hex(&admin_app_key_hex) {
             return Err(ProfileError::InvalidAppKeyPubkey(admin_app_key_hex));
         }
+        let device = AppKey::generate(key_path_in(config_dir));
+        device.save()?;
+        let app_key_label = resolve_app_key_label(app_key_label, &device.pubkey_hex());
+
+        let state = ProfileState {
+            profile_id,
+            app_key_pubkey: device.pubkey_hex(),
+            profile_roster_ops: Vec::new(),
+            app_key_link_secret: default_app_key_link_secret(),
+            authorization_state: AppKeyAuthorizationState::AwaitingApproval,
+            app_key_label,
+            app_keys: None,
+            profile_roster_projection: None,
+            outbound_app_key_link_request: None,
+            inbound_app_key_link_requests: Vec::new(),
+            handled_app_key_link_requests: Vec::new(),
+        };
+
+        Ok(Self {
+            state,
+            app_key: device,
+        })
+    }
+
+    /// Start a manual join request when the joining device does not yet know
+    /// which profile/admin will approve it. The first signed roster returned
+    /// by an admin binds this install to the real profile id.
+    pub fn start_join_request(
+        config_dir: &Path,
+        app_key_label: Option<String>,
+    ) -> Result<Self, ProfileError> {
+        let profile_id = NostrIdentityId::new_v4();
         let device = AppKey::generate(key_path_in(config_dir));
         device.save()?;
         let app_key_label = resolve_app_key_label(app_key_label, &device.pubkey_hex());

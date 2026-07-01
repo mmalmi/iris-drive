@@ -745,7 +745,7 @@ mod tests {
         let request_device_npub = request_device.public_key().to_bech32().expect("npub");
         let request = encode_app_key_approval_request(
             &request_device,
-            profile_id,
+            Some(profile_id),
             Some(&admin.to_hex()),
             None,
             123,

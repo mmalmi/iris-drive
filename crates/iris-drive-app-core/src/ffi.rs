@@ -504,6 +504,9 @@ impl NativeAppRuntime {
             } => {
                 self.link_device(&link_target, &app_key_label);
             }
+            NativeAppAction::StartJoinRequest { app_key_label } => {
+                self.start_join_request(&app_key_label);
+            }
             NativeAppAction::Logout => self.logout(),
             NativeAppAction::ApproveDevice { request, label } => {
                 self.approve_app_key(&request, &label);
@@ -887,7 +890,7 @@ impl NativeAppRuntime {
         let requested_at = unix_now_seconds();
         let request_url = match encode_app_key_approval_request(
             account.app_key.keys(),
-            account.state.profile_id,
+            Some(account.state.profile_id),
             Some(&target.admin_app_key_hex),
             account.state.app_key_label.as_deref(),
             requested_at,
@@ -909,6 +912,45 @@ impl NativeAppRuntime {
         if let Some(pending) = account.state.outbound_app_key_link_request.as_mut() {
             pending.request_url = request_url;
         }
+        if let Err(error) = self.finish_profile_init(&account) {
+            self.state.error = error;
+        } else {
+            self.set_sync_running(true);
+        }
+    }
+
+    fn start_join_request(&mut self, app_key_label: &str) {
+        if self.initialized() && !self.current_device_is_revoked() {
+            "already initialized".clone_into(&mut self.state.error);
+            return;
+        }
+        let mut account = match Profile::start_join_request(
+            Path::new(&self.data_dir),
+            label_option(app_key_label),
+        ) {
+            Ok(account) => account,
+            Err(error) => {
+                self.state.error = format!("creating join request: {error}");
+                return;
+            }
+        };
+        let requested_at = unix_now_seconds();
+        let request_url = match encode_app_key_approval_request(
+            account.app_key.keys(),
+            None,
+            None,
+            account.state.app_key_label.as_deref(),
+            requested_at,
+        ) {
+            Ok(url) => url,
+            Err(error) => {
+                self.state.error = format!("building app-key join request: {error}");
+                return;
+            }
+        };
+        account
+            .state
+            .queue_unbound_app_key_join_request(requested_at, request_url);
         if let Err(error) = self.finish_profile_init(&account) {
             self.state.error = error;
         } else {
@@ -2237,12 +2279,15 @@ async fn send_native_pending_app_key_link_request(
     state: &iris_drive_core::ProfileState,
     sent_requests: &mut BTreeMap<String, SentAppKeyLinkRequest>,
 ) -> Result<(), String> {
+    let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
+        return Ok(());
+    };
+    if pending.admin_app_key_pubkey.trim().is_empty() {
+        return Ok(());
+    }
     let Some(frame) = pending_app_key_link_request_frame(state, device_keys)
         .map_err(|error| format!("building app-key link request frame: {error}"))?
     else {
-        return Ok(());
-    };
-    let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
         return Ok(());
     };
     let fingerprint = format!(
@@ -3388,12 +3433,38 @@ fn app_key_link_request_url(state: &iris_drive_core::ProfileState, config_dir: &
     };
     encode_app_key_approval_request(
         app_key.keys(),
-        state.profile_id,
-        Some(&pending.admin_app_key_pubkey),
+        pending_request_profile_id(state, pending),
+        pending_admin_app_key_pubkey(pending),
         state.app_key_label.as_deref(),
         pending.requested_at,
     )
     .unwrap_or_default()
+}
+
+fn pending_request_profile_id(
+    state: &iris_drive_core::ProfileState,
+    pending: &iris_drive_core::profile::PendingAppKeyLinkRequest,
+) -> Option<iris_drive_core::NostrIdentityId> {
+    (!pending.admin_app_key_pubkey.trim().is_empty()).then_some(state.profile_id)
+}
+
+fn pending_admin_app_key_pubkey(
+    pending: &iris_drive_core::profile::PendingAppKeyLinkRequest,
+) -> Option<&str> {
+    let admin = pending.admin_app_key_pubkey.trim();
+    (!admin.is_empty()).then_some(admin)
+}
+
+fn request_profile_id(
+    profile_id: iris_drive_core::NostrIdentityId,
+    admin_app_key_pubkey: &str,
+) -> Option<iris_drive_core::NostrIdentityId> {
+    (!admin_app_key_pubkey.trim().is_empty()).then_some(profile_id)
+}
+
+fn request_admin_app_key_pubkey(admin_app_key_pubkey: &str) -> Option<&str> {
+    let admin = admin_app_key_pubkey.trim();
+    (!admin.is_empty()).then_some(admin)
 }
 
 fn ensure_cached_app_key_link_request_url(
@@ -3422,8 +3493,8 @@ fn ensure_cached_app_key_link_request_url(
         .map_err(|error| error.to_string())?;
     let request_url = encode_app_key_approval_request(
         app_key.keys(),
-        profile_id,
-        Some(&admin_app_key_pubkey),
+        request_profile_id(profile_id, &admin_app_key_pubkey),
+        request_admin_app_key_pubkey(&admin_app_key_pubkey),
         app_key_label.as_deref(),
         requested_at,
     )

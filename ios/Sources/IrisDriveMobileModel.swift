@@ -92,7 +92,6 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var syncRunning = false
     @Published var fileProviderStatus = "Files provider not registered"
     @Published var approveDeviceKey = ""
-    @Published var approveDeviceLabel = ""
     @Published var devices: [IrisDriveDevice] = []
     @Published var inboundAppKeyLinkRequests: [IrisDriveAppKeyLinkRequest] = []
     @Published var backups: [IrisDriveBackup] = []
@@ -1063,8 +1062,25 @@ final class IrisDriveMobileModel: ObservableObject {
         linkDevice()
     }
 
+    func startJoinRequest() {
+        let before = configIdentitySnapshot()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.dispatchInBackground(
+                [
+                    "type": "start_join_request",
+                    "app_key_label": self.deviceLabel,
+                ],
+                invalidatePendingState: true
+            )
+            self.ensureFileProviderDomainIfProfileExists()
+            self.scheduleBackgroundSyncIfNeeded()
+            self.recordConfigMutation(action: "start_join_request", before: before)
+        }
+    }
+
     func approveDevice() {
-        approveDevice(request: approveDeviceKey, label: approveDeviceLabel)
+        approveDevice(request: approveDeviceKey, label: "")
     }
 
     func approveDevice(request: String, label: String) {
@@ -1074,7 +1090,6 @@ final class IrisDriveMobileModel: ObservableObject {
             "label": label,
         ])
         approveDeviceKey = ""
-        approveDeviceLabel = ""
     }
 
     func rejectDevice(request: String) {
@@ -1149,7 +1164,6 @@ final class IrisDriveMobileModel: ObservableObject {
         stateLoaded = true
         restoreSecret = ""
         approveDeviceKey = ""
-        approveDeviceLabel = ""
         profileUsername = ""
         profilePhotoName = ""
         fileProviderError = ""
@@ -1839,7 +1853,7 @@ final class IrisDriveMobileModel: ObservableObject {
         }
 
         if canAdminProfile, linkInput.isComplete {
-            approveDevice(request: url.absoluteString, label: "Linked device")
+            approveDevice(request: url.absoluteString, label: "")
             return
         }
 

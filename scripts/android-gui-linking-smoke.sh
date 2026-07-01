@@ -210,12 +210,14 @@ run_android_gui_tests() {
     documentsProviderListsNativeProviderRoot
     authenticatedAppShowsBottomTabsAndSeparateDevicesView
     settingsViewUsesNativeRelayStatusRows
-    createProfileFlowClicksThroughFirstRunUi
+    createProfileFlowDoesNotRequireUsernameOrProfilePhoto
+    createProfileFlowWithUsernameCanSkipProfilePhoto
     linkThisDeviceFlowClicksThroughSignInUi
-    linkDeviceSubmitRequiresCompleteNativeLinkInput
-    addDeviceDialogRequiresCompleteNativeLinkInput
+    linkDeviceFlowDoesNotRenderInviteInput
+    addDeviceSectionRequiresCompleteNativeLinkInput
+    addDeviceSectionDispatchesManualDeviceApproval
     acceptedLinkedDeviceShowsSyncedFileCountInGui
-    linkAnotherDeviceFlowApprovesFromAddDeviceDialog
+    inboundDeviceRequestApprovalKeepsInlineAddDevicePanelOpen
     deleteDeviceRequiresConfirmation
     acceptedLinkedDeviceThatIsNotOnlineShowsOfflineInGui
     syncPanelShowsOnlyTheAvailableAction

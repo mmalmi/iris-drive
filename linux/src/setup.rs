@@ -38,8 +38,6 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
         .map(|account| account.app_key_link_request.as_str())
         .unwrap_or_default();
     if !request_link.is_empty() {
-        container.append(&field_title("Request Link"));
-        container.append(&readonly_entry(request_link));
         let copy_request = primary_button("Copy Request Link");
         {
             let request = request_link.to_string();
@@ -515,60 +513,44 @@ pub(crate) fn render_restore_secret_key_profile(model: &AppRef) {
 
 pub(crate) fn render_link_device(model: &AppRef) {
     let container = setup_container(model, "Link device");
-    let link_target = setup_entry("Device invite link");
-    container.append(&link_target);
-
     let notice = setup_notice();
-    let submit = primary_button("Link device");
-    let submitted_link_target = Rc::new(RefCell::new(String::new()));
+    notice.set_text("Preparing join request");
+    container.append(&notice);
+
+    let submit = primary_button("Show join QR");
+    let started = Rc::new(Cell::new(false));
     {
         let model = Rc::clone(model);
         let notice = notice.clone();
-        let submit = submit.clone();
-        let submitted_link_target = Rc::clone(&submitted_link_target);
-        link_target.connect_changed(move |entry| {
-            let link_target_value = entry.text().trim().to_string();
-            if !link_target_input_is_complete(&link_target_value)
-                || *submitted_link_target.borrow() == link_target_value
-            {
-                return;
-            }
-            submitted_link_target.replace(link_target_value);
-            submit_link_device(&model, entry, &notice, &submit);
-        });
-    }
-    {
-        let model = Rc::clone(model);
-        let link_target = link_target.clone();
-        let notice = notice.clone();
+        let started = Rc::clone(&started);
         submit.connect_clicked(move |button| {
-            submit_link_device(&model, &link_target, &notice, button);
+            start_join_request_from_setup(&model, &notice, button, &started);
         });
     }
     {
+        let model = Rc::clone(model);
+        let notice = notice.clone();
         let submit = submit.clone();
-        link_target.connect_activate(move |_| submit.emit_clicked());
+        let started = Rc::clone(&started);
+        glib::idle_add_local_once(move || {
+            start_join_request_from_setup(&model, &notice, &submit, &started);
+        });
     }
     container.append(&submit);
-    container.append(&notice);
     append_centered_setup(model, &container);
-
-    link_target.grab_focus();
 }
 
-fn submit_link_device(
+fn start_join_request_from_setup(
     model: &AppRef,
-    link_target: &gtk::Entry,
     notice: &gtk::Label,
     button: &gtk::Button,
+    started: &Rc<Cell<bool>>,
 ) {
-    let link_target_value = link_target.text().trim().to_string();
-    if link_target_value.is_empty() {
-        notice.set_text("Device invite link is required.");
+    if started.replace(true) {
         return;
     }
     button.set_sensitive(false);
-    match link_device(&link_target_value) {
+    match start_join_request() {
         Ok(()) => {
             *model.setup_screen.borrow_mut() = SetupScreen::Welcome;
             refresh(model);
@@ -576,12 +558,9 @@ fn submit_link_device(
         Err(error) => {
             notice.set_text(&error);
             button.set_sensitive(true);
+            started.set(false);
         }
     }
-}
-
-fn link_target_input_is_complete(value: &str) -> bool {
-    iris_drive_app_core::validate_device_invite_input(value.to_string()).is_complete
 }
 
 fn clamp_recovery_word_index(model: &AppRef) {
@@ -764,8 +743,11 @@ pub(crate) fn restore_profile(recovery_secret: &str) -> Result<(), String> {
     run_idrive_owned(&["restore".to_string(), recovery_secret.to_string()])
 }
 
-pub(crate) fn link_device(link_target: &str) -> Result<(), String> {
-    run_idrive_owned(&["link".to_string(), link_target.to_string()])
+pub(crate) fn start_join_request() -> Result<(), String> {
+    dispatch_desktop_action(NativeAppAction::StartJoinRequest {
+        app_key_label: String::new(),
+    })
+    .map(|_| ())
 }
 
 pub(crate) fn relink_device(link_target: &str) -> Result<(), String> {

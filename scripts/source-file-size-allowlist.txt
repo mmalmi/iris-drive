@@ -3,7 +3,7 @@ windows/WindowsCloudFiles.cs 2600 Windows Cloud Files interop is still monolithi
 android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndroidGuiFlowTest.kt 1100 Android GUI linking/share/browser smoke coverage needs a later scenario split.
 android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.kt 1450 Legacy Android Compose shell pending panel-module split.
 crates/iris-drive-app-core/src/c_abi.rs 1100 C ABI/JNI bridge includes platform validators and test fixtures; split pending FFI module cleanup.
-crates/iris-drive-app-core/src/ffi.rs 3600 Legacy app-core FFI runtime now includes native browser, CalDAV status, and app-key-link exchange paths; split pending action/provider/app-key-link modules.
+crates/iris-drive-app-core/src/ffi.rs 3670 Legacy app-core FFI runtime now includes native browser, CalDAV status, and manual app-key join request paths; split pending action/provider/app-key-link modules.
 crates/iris-drive-app-core/src/ffi/tests.rs 2200 App-core parity and native action fixtures include startup defaults; split pending scenario modules.
 crates/iris-drive-cli/src/daemon.rs 1150 CLI daemon orchestration is legacy monolith pending runtime helper split.
 crates/iris-drive-cli/src/daemon/runtime.rs 1100 CLI daemon runtime is legacy monolith pending lifecycle/helper split.
@@ -22,11 +22,11 @@ crates/iris-drive-core/src/direct_root_transport.rs 2300 Direct-root sync transp
 crates/iris-drive-core/src/gateway.rs 1360 Local gateway routing and response hardening now include the CalDAV dispatcher; pending route-module split.
 crates/iris-drive-core/src/gateway/tests.rs 1100 Local gateway route coverage includes mixed browser/API/WebDAV scenarios; pending route test-module split.
 crates/iris-drive-core/src/nostr_identity.rs 2100 NostrIdentity authority shim needs a later roster-event-projection module split.
-crates/iris-drive-core/src/profile.rs 2150 Profile create, recovery, admission, projection guards, and DCK flows need a later lifecycle/helper split.
+crates/iris-drive-core/src/profile.rs 2170 Profile create, recovery, admission, projection guards, DCK flows, and manual join requests need a later lifecycle/helper split.
 crates/iris-drive-core/src/profile/tests.rs 1700 Profile recovery and AppKey authority scenarios need a later test-module split.
 crates/iris-drive-core/src/projection/tests.rs 1150 Projection conflict and merged-root coverage needs a later scenario split.
 crates/iris-drive-core/src/relay_sync.rs 1100 Relay sync root/app-key/share dispatcher needs a later event-handler split.
-crates/iris-drive-core/src/relay_sync/tests.rs 1500 Relay/app-key/share sync coverage needs a later test-module split.
+crates/iris-drive-core/src/relay_sync/tests.rs 1510 Relay/app-key/share sync coverage now includes unbound join roster adoption; needs a later test-module split.
 crates/iris-drive-core/src/share_actions.rs 1100 Share action dispatcher needs a later action-module split.
 crates/iris-drive-core/src/sharing.rs 5200 Share roster, key epoch, and shortcut model needs a later module/test split.
 crates/iris-drive-core/src/fips_sync.rs 1100 FIPS sync runtime needs a later transport/state split.
@@ -43,5 +43,5 @@ scripts/macos-smoke.sh 1250 macOS smoke harness now includes path-scoped cleanup
 macos/Sources/IrisDriveControlPanel.swift 2850 Legacy macOS control panel includes backup target and device approval controls; pending view split.
 scripts/local-release.mjs 1500 Local release orchestration needs a later module split.
 scripts/local-release.test.mjs 1250 Local release test coverage needs a later fixture/helper split.
-windows/IrisDriveService.cs 1020 Legacy Windows service bridge pending command-client split.
+windows/IrisDriveService.cs 1025 Legacy Windows service bridge now includes start-join dispatch; pending command-client split.
 windows/MainWindow.xaml.cs 1800 Legacy Windows window controller pending view-model split.

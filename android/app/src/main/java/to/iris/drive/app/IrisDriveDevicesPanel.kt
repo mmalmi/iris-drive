@@ -65,15 +65,24 @@ internal fun DevicesPanel(
     onDemoteAdmin: (String) -> Unit,
 ) {
     var request by remember { mutableStateOf("") }
-    var label by remember { mutableStateOf("") }
     var showAddDevice by remember { mutableStateOf(false) }
     var showApprovalScanner by remember { mutableStateOf(false) }
     var showAddRecoveryKey by remember { mutableStateOf(false) }
     var devicePendingDelete by remember { mutableStateOf<DeviceState?>(null) }
+    var pendingApprovalRequest by remember { mutableStateOf<String?>(null) }
+    var lastPromptedApprovalRequest by remember { mutableStateOf("") }
     val deviceActors = remember(devices) { devices.filter { it.isDeviceActor } }
     val recoveryKeyActors = remember(devices) { devices.filterNot { it.isDeviceActor } }
     val manualRequestIsComplete = remember(request) {
         NativeCore.isCompleteDeviceApprovalInput(request)
+    }
+    fun confirmApproval(value: String, force: Boolean = false): Boolean {
+        val trimmed = value.trim()
+        if (!NativeCore.isCompleteDeviceApprovalInput(trimmed)) return false
+        if (!force && lastPromptedApprovalRequest == trimmed) return true
+        pendingApprovalRequest = trimmed
+        lastPromptedApprovalRequest = trimmed
+        return true
     }
 
     if (showApprovalScanner) {
@@ -86,7 +95,33 @@ internal fun DevicesPanel(
                 } else {
                     request = trimmed
                     showApprovalScanner = false
+                    confirmApproval(trimmed, force = true)
                     null
+                }
+            },
+        )
+    }
+
+    pendingApprovalRequest?.let { pendingRequest ->
+        AlertDialog(
+            onDismissRequest = { pendingApprovalRequest = null },
+            title = { Text("Approve this device?") },
+            text = { Text("This will add the joining device to Iris Drive.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onApproveDevice(pendingRequest, "")
+                        request = ""
+                        pendingApprovalRequest = null
+                        lastPromptedApprovalRequest = ""
+                    },
+                ) {
+                    Text("Approve")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingApprovalRequest = null }) {
+                    Text("Cancel")
                 }
             },
         )
@@ -103,16 +138,13 @@ internal fun DevicesPanel(
                 canApprove = canApprove,
                 request = request,
                 manualRequestIsComplete = manualRequestIsComplete,
-                label = label,
-                onRequestChange = { request = it },
-                onLabelChange = { label = it },
-                onApproveDevice = onApproveDevice,
+                onRequestChange = {
+                    request = it
+                    confirmApproval(it)
+                },
                 onRejectDevice = onRejectDevice,
                 onScanQr = { showApprovalScanner = true },
-                onAdded = {
-                    request = ""
-                    label = ""
-                },
+                onConfirmApproval = { confirmApproval(it, force = true) },
             )
         }
     }
@@ -353,20 +385,11 @@ private fun AddDevicePanel(
     canApprove: Boolean,
     request: String,
     manualRequestIsComplete: Boolean,
-    label: String,
     onRequestChange: (String) -> Unit,
-    onLabelChange: (String) -> Unit,
-    onApproveDevice: (String, String) -> Unit,
     onRejectDevice: (String) -> Unit,
     onScanQr: () -> Unit,
-    onAdded: () -> Unit,
+    onConfirmApproval: (String) -> Unit,
 ) {
-    fun submitManualDevice() {
-        if (!canApprove || !manualRequestIsComplete) return
-        onApproveDevice(request, label)
-        onAdded()
-    }
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -397,11 +420,11 @@ private fun AddDevicePanel(
                             Text("Reject", color = Danger)
                         }
                         Button(
-                            onClick = { onApproveDevice(inbound.requestLink, inbound.label) },
+                            onClick = { onConfirmApproval(inbound.requestLink) },
                             enabled = canApprove,
-                            modifier = Modifier.testTag("requestDeviceAdd"),
+                            modifier = Modifier.testTag("requestDeviceReview"),
                         ) {
-                            Text("Add")
+                            Text("Review")
                         }
                     }
                 }
@@ -417,7 +440,12 @@ private fun AddDevicePanel(
             modifier = Modifier.fillMaxWidth().testTag("manualDeviceId"),
             singleLine = true,
             label = { Text("Request link or device key") },
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
+            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+            keyboardActions = KeyboardActions(onDone = {
+                if (canApprove && manualRequestIsComplete) {
+                    onConfirmApproval(request)
+                }
+            }),
         )
         OutlinedButton(
             onClick = onScanQr,
@@ -425,22 +453,6 @@ private fun AddDevicePanel(
             modifier = Modifier.testTag("scanApprovalRequestQr"),
         ) {
             Text("Scan QR")
-        }
-        OutlinedTextField(
-            value = label,
-            onValueChange = onLabelChange,
-            modifier = Modifier.fillMaxWidth().testTag("manualDeviceName"),
-            singleLine = true,
-            label = { Text("Name (optional)") },
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { submitManualDevice() }),
-        )
-        Button(
-            onClick = { submitManualDevice() },
-            enabled = canApprove && manualRequestIsComplete,
-            modifier = Modifier.testTag("manualDeviceAdd"),
-        ) {
-            Text("Add")
         }
     }
 }

@@ -77,8 +77,8 @@ pub fn pending_app_key_link_request_frame(
     let url = if pending.request_url.trim().is_empty() {
         encode_app_key_approval_request(
             app_key_keys,
-            state.profile_id,
-            Some(&pending.admin_app_key_pubkey),
+            pending_request_profile_id(state, pending),
+            pending_admin_app_key_pubkey(pending),
             state.app_key_label.as_deref(),
             pending.requested_at,
         )?
@@ -95,6 +95,20 @@ pub fn pending_app_key_link_request_frame(
         requested_at: pending.requested_at,
         url,
     }))
+}
+
+fn pending_request_profile_id(
+    state: &ProfileState,
+    pending: &crate::profile::PendingAppKeyLinkRequest,
+) -> Option<NostrIdentityId> {
+    (!pending.admin_app_key_pubkey.trim().is_empty()).then_some(state.profile_id)
+}
+
+fn pending_admin_app_key_pubkey(
+    pending: &crate::profile::PendingAppKeyLinkRequest,
+) -> Option<&str> {
+    let admin = pending.admin_app_key_pubkey.trim();
+    (!admin.is_empty()).then_some(admin)
 }
 
 #[must_use]
@@ -208,13 +222,33 @@ fn current_app_key_is_authorized(state: &ProfileState) -> bool {
 
 pub fn encode_app_key_approval_request(
     device_app_key_keys: &Keys,
-    profile_id: NostrIdentityId,
+    profile_id: Option<NostrIdentityId>,
     admin_app_key_pubkey: Option<&str>,
     label: Option<&str>,
     requested_at: u64,
 ) -> Result<String> {
     let requested_at_i64 =
         i64::try_from(requested_at).context("app-key approval requested_at overflows i64")?;
+    let mut resources = vec![NostrIdentityDeviceApprovalRequestedResource {
+        resource_type: "iris_drive".to_owned(),
+        id: "drive.iris.to".to_owned(),
+        scopes: vec![
+            "app_key".to_owned(),
+            "write_roots".to_owned(),
+            "receive_secret_wraps".to_owned(),
+            "decrypt_secret_epochs".to_owned(),
+        ],
+    }];
+    if let Some(profile_id) = profile_id {
+        resources.insert(
+            0,
+            NostrIdentityDeviceApprovalRequestedResource {
+                resource_type: "nostr_identity_profile".to_owned(),
+                id: profile_id.to_string(),
+                scopes: vec!["app_key".to_owned()],
+            },
+        );
+    }
     let local = create_nostr_identity_device_approval_request(
         device_app_key_keys,
         CreateNostrIdentityDeviceApprovalRequestOptions {
@@ -222,25 +256,9 @@ pub fn encode_app_key_approval_request(
             request_secret: None,
             requested_at: requested_at_i64,
             request_type: Some("device_link".to_owned()),
-            resources: vec![
-                NostrIdentityDeviceApprovalRequestedResource {
-                    resource_type: "nostr_identity_profile".to_owned(),
-                    id: profile_id.to_string(),
-                    scopes: vec!["app_key".to_owned()],
-                },
-                NostrIdentityDeviceApprovalRequestedResource {
-                    resource_type: "iris_drive".to_owned(),
-                    id: "drive.iris.to".to_owned(),
-                    scopes: vec![
-                        "app_key".to_owned(),
-                        "write_roots".to_owned(),
-                        "receive_secret_wraps".to_owned(),
-                        "decrypt_secret_epochs".to_owned(),
-                    ],
-                },
-            ],
+            resources,
             expires_at: None,
-            profile_id: Some(profile_id),
+            profile_id,
             admin_app_key_pubkey: admin_app_key_pubkey.map(str::to_owned),
             label: label.map(str::to_owned),
         },
@@ -383,7 +401,7 @@ mod tests {
 
         let url = encode_app_key_approval_request(
             &app_key,
-            profile_id,
+            Some(profile_id),
             Some(&admin.to_hex()),
             Some("Web + Native"),
             123,
@@ -416,6 +434,38 @@ mod tests {
                 .all(|scope| resource.scopes.iter().any(|candidate| candidate == scope))
         }));
         assert!(!url.contains("owner="));
+    }
+
+    #[test]
+    fn approval_request_round_trips_without_profile_for_manual_join() {
+        let app_key = nostr_sdk::Keys::generate();
+
+        let url = encode_app_key_approval_request(&app_key, None, None, Some("iPhone"), 123)
+            .expect("encode manual join request");
+        let parsed = parse_app_key_approval_request(&url)
+            .expect("parse request")
+            .expect("request");
+
+        assert_eq!(parsed.profile_id, None);
+        assert_eq!(parsed.app_key_hex, app_key.public_key().to_hex());
+        assert_eq!(parsed.label.as_deref(), Some("iPhone"));
+        let raw = nostr_identity::parse_nostr_identity_device_approval_request(
+            &url,
+            &[APP_KEY_APPROVAL_REQUEST_PREFIX],
+        )
+        .expect("parse raw approval request")
+        .expect("raw approval request");
+        assert_eq!(raw.profile_id, None);
+        assert!(
+            !raw.resources
+                .iter()
+                .any(|resource| resource.resource_type == "nostr_identity_profile")
+        );
+        assert!(
+            raw.resources
+                .iter()
+                .any(|resource| resource.resource_type == "iris_drive")
+        );
     }
 
     #[test]

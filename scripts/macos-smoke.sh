@@ -544,11 +544,9 @@ on run argv
 
   if mode is "link" then
     my clickSetupButton(appName, "Sign in", 2)
-    my waitForSetupText(appName, "Sign in", 5)
-    my clickSetupButton(appName, "Link this device", 3)
-    my waitForSetupText(appName, "Link this device", 5)
-    my fillFirstTextField(appName, fieldValue, "Owner")
-    my clickSetupButton(appName, "Link device", 2)
+    my waitForSetupText(appName, "Restore", 5)
+    my clickSetupButton(appName, "Link device", 3)
+    my waitForSetupText(appName, "Waiting for approval", 10)
     return
   end if
 

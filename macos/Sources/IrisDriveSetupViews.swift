@@ -71,7 +71,6 @@ struct AwaitingApprovalSetupView: View {
                 IrisDriveQRCodeView(value: request)
                     .frame(width: 220, height: 220)
                     .frame(maxWidth: .infinity, alignment: .center)
-                keyedValue("Request Link", request)
                 IrisDriveCopyButton(
                     title: "Copy Request Link",
                     systemImage: "link",

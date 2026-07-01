@@ -40,17 +40,17 @@ require_contains macos/Sources/IrisDriveDesktopCore.swift "static func validateD
 require_contains macos/Sources/IrisDriveMacApp.swift 'IrisDriveDesktopCore.validateDeviceInviteInput(text)'
 require_contains macos/Sources/IrisDriveMacApp.swift 'IrisDriveDesktopCore.validateDeviceApprovalInput(text)'
 require_contains macos/Sources/AppKeyLinkInput.swift "inputIsComplete"
-require_contains macos/Sources/IrisDriveControlPanel.swift "setupLinkTargetInputIsComplete"
+require_contains macos/Sources/IrisDriveControlPanel.swift "controller.startJoinRequest()"
 require_contains macos/Sources/IrisDriveControlPanel.swift "approveDeviceKeyIsComplete"
-require_contains macos/Sources/IrisDriveControlPanel.swift ".disabled(!setupLinkTargetInputIsComplete)"
-require_contains macos/Sources/IrisDriveControlPanel.swift ".disabled(!approveDeviceKeyIsComplete || approveDevicePending)"
+require_contains macos/Sources/IrisDriveControlPanel.swift 'setupSubmit("Show join QR")'
+require_contains macos/Sources/IrisDriveControlPanel.swift "IrisDriveDesktopCore.validateDeviceApprovalInput(request)"
 require_contains windows/IrisDriveNativeCore.cs "iris_drive_validate_device_invite_input_json"
 require_contains windows/IrisDriveNativeCore.cs "iris_drive_validate_device_approval_input_json"
 require_contains windows/IrisDriveNativeCore.cs "public static bool IsCompleteDeviceInviteInput"
 require_contains windows/IrisDriveNativeCore.cs "public static bool IsCompleteDeviceApprovalInput"
 require_contains windows/IrisDriveService.cs "IrisDriveNativeCore.IsCompleteDeviceInviteInput(input)"
 require_contains windows/IrisDriveService.cs "IrisDriveNativeCore.IsCompleteDeviceApprovalInput(input)"
-require_contains windows/AppKeyLinkInput.cs "IsCompleteDeviceInviteInputAsync"
+require_contains windows/AppKeyLinkInput.cs "StartJoinRequestAsync"
 require_contains windows/MainWindowDevices.cs "RefreshAddDeviceInputAsync"
 require_contains windows/MainWindowDevices.cs "IsCompleteDeviceApprovalInputAsync(deviceBox.Text)"
 require_absent macos/Sources/IrisDriveControlPanel.swift ".disabled(setupOwner.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)"

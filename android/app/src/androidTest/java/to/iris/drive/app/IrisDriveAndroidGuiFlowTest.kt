@@ -152,34 +152,40 @@ class IrisDriveAndroidGuiFlowTest {
 
         render(
             state = AppState(),
-            onLinkDevice = { ownerInvite, label ->
-                dispatch(linkedHandle, NativeActions.linkDevice(ownerInvite, label))
+            onStartJoinRequest = { label ->
+                dispatch(linkedHandle, NativeActions.startJoinRequest(label))
             },
         )
 
         compose.onNodeWithTag("welcomeSignIn").assertIsDisplayed().activate()
         compose.onNodeWithTag("openLinkDevice").assertIsDisplayed().activate()
-        compose.onNodeWithTag("linkOwnerInput").assertIsDisplayed().performTextInput(owner.invite)
-        dismissSoftKeyboard()
+        compose.onNodeWithTag("startJoinRequest").assertIsDisplayed()
+        compose.waitUntil(timeoutMillis = 5_000) {
+            appState(linkedHandle).profile?.appKeyLinkRequest?.isNotBlank() == true
+        }
 
         val linked = appState(linkedHandle).profile
         assertEquals("awaiting_approval", linked?.authorizationState)
         assertTrue(linked?.appKeyLinkRequest?.isNotBlank() == true)
 
-        dispatch(owner.handle, NativeActions.approveDevice(linked!!.appKeyLinkRequest, "Android UI linked"))
+        dispatch(owner.handle, NativeActions.approveDevice(linked!!.appKeyLinkRequest, ""))
         assertEquals(2, appState(owner.handle).devices.size)
     }
 
     @Test
-    fun linkDeviceSubmitRequiresCompleteNativeLinkInput() {
-        render(state = AppState())
+    fun linkDeviceFlowDoesNotRenderInviteInput() {
+        var joinRequests = 0
+        render(
+            state = AppState(),
+            onStartJoinRequest = { joinRequests += 1 },
+        )
 
         compose.onNodeWithTag("welcomeSignIn").assertIsDisplayed().activate()
         compose.onNodeWithTag("openLinkDevice").assertIsDisplayed().activate()
-        compose.onNodeWithTag("linkOwnerInput").assertIsDisplayed().performTextInput("npub1short")
-
-        compose.onNodeWithTag("linkDeviceSubmit").assertIsNotEnabled()
-        dismissSoftKeyboard()
+        compose.onNodeWithTag("startJoinRequest").assertIsDisplayed()
+        compose.onAllNodesWithTag("linkOwnerInput").assertCountEquals(0)
+        compose.onAllNodesWithText("Device invite link").assertCountEquals(0)
+        compose.waitUntil(timeoutMillis = 5_000) { joinRequests == 1 }
     }
 
     @Test
@@ -203,12 +209,10 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithTag("addDeviceToggle").activate()
         compose.onNodeWithTag("manualDeviceId").performScrollTo().assertIsDisplayed()
             .performTextInput(devicePubkey)
-        compose.onNodeWithTag("manualDeviceName").performScrollTo().assertIsDisplayed()
-            .performTextInput("Android UI linked")
         dismissSoftKeyboard()
-        compose.onNodeWithTag("manualDeviceAdd").assertIsEnabled().activate()
+        compose.onNodeWithText("Approve").assertIsDisplayed().activate()
 
-        assertEquals(listOf(devicePubkey to "Android UI linked"), approvedRequests)
+        assertEquals(listOf(devicePubkey to ""), approvedRequests)
     }
 
     @Test
@@ -227,7 +231,7 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithTag("manualDeviceId").performScrollTo().assertIsDisplayed()
             .performTextInput("npub1short")
 
-        compose.onNodeWithTag("manualDeviceAdd").assertIsNotEnabled()
+        compose.onAllNodesWithText("Approve").assertCountEquals(0)
         dismissSoftKeyboard()
     }
 
@@ -839,7 +843,7 @@ class IrisDriveAndroidGuiFlowTest {
     @Test
     fun inboundDeviceRequestApprovalKeepsInlineAddDevicePanelOpen() {
         val approvedRequests = mutableListOf<Pair<String, String>>()
-        val requestLink = "iris-drive://request/device-b"
+        val requestLink = "npub1260n42s06vzc7796w0fh3ny7zcpw6tlk4gq3940gmfrzl5c9pv2s3657q8"
         val state = AppState(
             profile = profileState().copy(
                 inboundAppKeyLinkRequests = listOf(
@@ -864,9 +868,9 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceToggle"))
         compose.onNodeWithTag("addDeviceToggle").assertIsDisplayed().activate()
         compose.onNodeWithText("Device requests").performScrollTo().assertIsDisplayed()
-        compose.onNodeWithTag("requestDeviceAdd").performScrollTo().assertIsDisplayed().activate()
-
-        assertEquals(listOf(requestLink to "Tablet"), approvedRequests)
+        compose.onNodeWithTag("requestDeviceReview").performScrollTo().assertIsDisplayed().activate()
+        compose.onNodeWithText("Approve").assertIsDisplayed().activate()
+        assertEquals(listOf(requestLink to ""), approvedRequests)
         compose.onNodeWithTag("addDevicePanel").assertIsDisplayed()
         compose.onNodeWithText("Device requests").assertIsDisplayed()
     }
@@ -893,7 +897,7 @@ class IrisDriveAndroidGuiFlowTest {
     private fun render(
         state: AppState,
         onCreateProfile: (String) -> Unit = {},
-        onLinkDevice: (String, String) -> Unit = { _, _ -> },
+        onStartJoinRequest: (String) -> Unit = {},
         onApproveDevice: (String, String) -> Unit = { _, _ -> },
         onRejectDevice: (String) -> Unit = {},
         onAddRecoveryKey: (String) -> Unit = {},
@@ -948,7 +952,7 @@ class IrisDriveAndroidGuiFlowTest {
                 ),
                 onCreateProfile = onCreateProfile,
                 onRestoreProfile = { _, _ -> },
-                onLinkDevice = onLinkDevice,
+                onStartJoinRequest = onStartJoinRequest,
                 onCopyText = { _, _ -> },
                 onExportRecoverySecret = onExportRecoverySecret,
                 onSetAndroidCalendarSync = onSetAndroidCalendarSync,

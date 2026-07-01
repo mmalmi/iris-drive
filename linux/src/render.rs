@@ -110,7 +110,7 @@ fn app_key_link_request_row(
 
     let reject = pill_button("Reject");
     reject.add_css_class("destructive-action");
-    let add_request = primary_button("Add");
+    let add_request = primary_button("Review");
     {
         let model = Rc::clone(model);
         let request_url = request_url.clone();
@@ -125,9 +125,8 @@ fn app_key_link_request_row(
     {
         let model = Rc::clone(model);
         let request_url = request_url.clone();
-        let request_label = request_label.clone();
         add_request.connect_clicked(move |_| {
-            approve_device_values(&model, request_url.clone(), request_label.clone());
+            confirm_approve_device(&model, request_url.clone());
         });
     }
     row.append(&reject);

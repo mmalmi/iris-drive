@@ -26,13 +26,6 @@ public partial class MainWindow
             MinWidth = 360,
             Margin = new Thickness(0, 4, 0, 10),
         };
-        var labelBox = new WpfTextBox
-        {
-            Tag = "Name (optional)",
-            MinHeight = 34,
-            MinWidth = 360,
-            Margin = new Thickness(0, 4, 0, 14),
-        };
         var notice = new TextBlock
         {
             Foreground = (WpfBrush)FindResource("IrisMutedBrush"),
@@ -41,21 +34,12 @@ public partial class MainWindow
             Text = "Paste the device key or request link.",
         };
         var cancel = new WpfButton { Content = "Cancel", MinWidth = 92 };
-        var add = new WpfButton
-        {
-            Content = "Add",
-            Style = (Style)FindResource("PrimaryButton"),
-            MinWidth = 92,
-            Margin = new Thickness(8, 0, 0, 0),
-            IsEnabled = false,
-        };
         var buttons = new StackPanel
         {
             Orientation = WpfOrientation.Horizontal,
             HorizontalAlignment = WpfHorizontalAlignment.Right,
         };
         buttons.Children.Add(cancel);
-        buttons.Children.Add(add);
 
         var body = new StackPanel { Margin = new Thickness(18), Width = 400 };
         body.Children.Add(new TextBlock
@@ -85,8 +69,6 @@ public partial class MainWindow
         body.Children.Add(notice);
         body.Children.Add(new TextBlock { Text = "Request link or device key", Style = (Style)FindResource("FieldName") });
         body.Children.Add(deviceBox);
-        body.Children.Add(new TextBlock { Text = "Name (optional)", Style = (Style)FindResource("FieldName") });
-        body.Children.Add(labelBox);
         body.Children.Add(buttons);
 
         dialog = new Window
@@ -100,52 +82,27 @@ public partial class MainWindow
         };
 
         var deviceValidationSequence = 0;
+        var lastPromptedDevice = "";
         async Task RefreshAddDeviceInputAsync()
         {
             var sequence = ++deviceValidationSequence;
-            add.IsEnabled = false;
             var isComplete = await service.IsCompleteDeviceApprovalInputAsync(deviceBox.Text);
-            if (sequence == deviceValidationSequence)
+            var trimmed = deviceBox.Text.Trim();
+            if (sequence == deviceValidationSequence && isComplete && lastPromptedDevice != trimmed)
             {
-                add.IsEnabled = isComplete;
+                lastPromptedDevice = trimmed;
+                await ConfirmAndApproveDeviceAsync(trimmed, notice, () => dialog?.Close());
             }
         }
 
         async Task SubmitDeviceAsync()
         {
-            if (!await service.IsCompleteDeviceApprovalInputAsync(deviceBox.Text))
-            {
-                notice.Text = "Paste the complete request link or device key.";
-                add.IsEnabled = false;
-                return;
-            }
-
-            add.IsEnabled = false;
-            try
-            {
-                await ApproveDeviceAsync(deviceBox.Text, labelBox.Text);
-                dialog?.Close();
-            }
-            catch (Exception error)
-            {
-                notice.Text = error.Message;
-                await RefreshAddDeviceInputAsync();
-            }
+            await ConfirmAndApproveDeviceAsync(deviceBox.Text, notice, () => dialog?.Close());
         }
 
         cancel.Click += (_, _) => dialog?.Close();
-        add.Click += async (_, _) => await SubmitDeviceAsync();
         deviceBox.TextChanged += async (_, _) => await RefreshAddDeviceInputAsync();
         deviceBox.KeyDown += async (_, key) =>
-        {
-            if (key.Key != Key.Enter)
-            {
-                return;
-            }
-            key.Handled = true;
-            await SubmitDeviceAsync();
-        };
-        labelBox.KeyDown += async (_, key) =>
         {
             if (key.Key != Key.Enter)
             {
@@ -197,7 +154,7 @@ public partial class MainWindow
         };
         var addRequest = new WpfButton
         {
-            Content = "Add",
+            Content = "Review",
             Tag = request,
             Style = (Style)FindResource("PrimaryButton"),
             MinWidth = 74,
@@ -217,15 +174,7 @@ public partial class MainWindow
         };
         addRequest.Click += async (_, _) =>
         {
-            try
-            {
-                await ApproveDeviceAsync(request.RequestUrl, request.Label);
-                closeDialog();
-            }
-            catch (Exception error)
-            {
-                notice.Text = error.Message;
-            }
+            await ConfirmAndApproveDeviceAsync(request.RequestUrl, notice, closeDialog);
         };
         requestButtons.Children.Add(rejectRequest);
         requestButtons.Children.Add(addRequest);
@@ -244,6 +193,41 @@ public partial class MainWindow
         }
         NoticeText.Text = "Device approved";
         await RefreshAsync();
+    }
+
+    private async Task ConfirmAndApproveDeviceAsync(
+        string device,
+        TextBlock notice,
+        Action closeDialog)
+    {
+        var trimmed = device.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed) ||
+            !await service.IsCompleteDeviceApprovalInputAsync(trimmed))
+        {
+            notice.Text = "Paste the complete request link or device key.";
+            return;
+        }
+
+        var confirmed = WpfMessageBox.Show(
+            this,
+            "This will add the joining device to Iris Drive.",
+            "Approve this device?",
+            MessageBoxButton.YesNo,
+            MessageBoxImage.Question) == MessageBoxResult.Yes;
+        if (!confirmed)
+        {
+            return;
+        }
+
+        try
+        {
+            await ApproveDeviceAsync(trimmed, "");
+            closeDialog();
+        }
+        catch (Exception error)
+        {
+            notice.Text = error.Message;
+        }
     }
 
     private async Task RejectDeviceAsync(string request)

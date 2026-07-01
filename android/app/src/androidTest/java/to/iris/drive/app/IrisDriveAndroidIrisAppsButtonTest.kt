@@ -69,7 +69,7 @@ class IrisDriveAndroidIrisAppsButtonTest {
                 ),
                 onCreateProfile = {},
                 onRestoreProfile = { _, _ -> },
-                onLinkDevice = { _, _ -> },
+                onStartJoinRequest = {},
                 onCopyText = { _, _ -> },
                 onExportRecoverySecret = { RecoverySecretExport() },
                 onSetAndroidCalendarSync = {},
