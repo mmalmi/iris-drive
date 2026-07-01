@@ -1,9 +1,12 @@
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result};
 use nostr_identity::{
-    NOSTR_IDENTITY_DEVICE_APPROVAL_REQUEST_PREFIX, parse_nostr_identity_device_approval_request,
+    NOSTR_IDENTITY_DEVICE_APPROVAL_REQUEST_PREFIX,
+    compact_nostr_identity_device_approval_request_has_prefix,
+    encode_compact_nostr_identity_device_approval_request,
+    parse_compact_nostr_identity_device_approval_request,
+    parse_nostr_identity_device_approval_request,
 };
-use nostr_sdk::nips::nip19::FromBech32;
-use nostr_sdk::{Keys, PublicKey};
+use nostr_sdk::Keys;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -13,6 +16,7 @@ pub const APP_KEY_LINK_REQUEST_APP_TOPIC: &str = "iris-drive/app-key-link/v1/req
 pub const APP_KEY_LINK_ROSTER_APP_TOPIC: &str = "iris-drive/app-key-link/v1/roster";
 pub const APP_KEY_LINK_ROSTER_ACK_APP_TOPIC: &str = "iris-drive/app-key-link/v1/roster-ack";
 pub const APP_KEY_APPROVAL_COMPACT_PREFIX: &str = "iris-drive://app-key-link";
+const APP_KEY_APPROVAL_COMPACT_ONE_SLASH_PREFIX: &str = "iris-drive:/app-key-link?";
 pub const APP_KEY_APPROVAL_REQUEST_PREFIX: &str = "https://drive.iris.to/approve-device/";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -223,10 +227,11 @@ pub fn encode_app_key_approval_request(
     _label: Option<&str>,
     _requested_at: u64,
 ) -> Result<String> {
-    Ok(format!(
-        "{APP_KEY_APPROVAL_COMPACT_PREFIX}?app_key={}",
-        device_app_key_keys.public_key().to_hex()
-    ))
+    encode_compact_nostr_identity_device_approval_request(
+        &device_app_key_keys.public_key().to_hex(),
+        Some(APP_KEY_APPROVAL_COMPACT_PREFIX),
+    )
+    .context("encoding compact app-key approval request")
 }
 
 pub fn parse_app_key_approval_request(input: &str) -> Result<Option<AppKeyApprovalRequest>> {
@@ -253,99 +258,34 @@ pub fn parse_app_key_approval_request(input: &str) -> Result<Option<AppKeyApprov
 #[must_use]
 pub fn app_key_approval_input_has_prefix(input: &str) -> bool {
     let value = input.trim();
-    let value = value.strip_prefix("nostr:").unwrap_or(value);
-    compact_app_key_query(value).is_some()
-        || starts_with_ignore_ascii_case(value, APP_KEY_APPROVAL_REQUEST_PREFIX)
+    compact_nostr_identity_device_approval_request_has_prefix(
+        value,
+        &[
+            APP_KEY_APPROVAL_COMPACT_PREFIX,
+            APP_KEY_APPROVAL_COMPACT_ONE_SLASH_PREFIX,
+        ],
+    ) || starts_with_ignore_ascii_case(value, APP_KEY_APPROVAL_REQUEST_PREFIX)
         || starts_with_ignore_ascii_case(value, NOSTR_IDENTITY_DEVICE_APPROVAL_REQUEST_PREFIX)
 }
 
 fn parse_compact_app_key_approval_request(input: &str) -> Result<Option<AppKeyApprovalRequest>> {
-    let value = input.strip_prefix("nostr:").unwrap_or(input);
-    let Some(query) = compact_app_key_query(value) else {
+    let Some(request) = parse_compact_nostr_identity_device_approval_request(
+        input,
+        &[
+            APP_KEY_APPROVAL_COMPACT_PREFIX,
+            APP_KEY_APPROVAL_COMPACT_ONE_SLASH_PREFIX,
+        ],
+    )
+    .context("parsing compact app-key approval request")?
+    else {
         return Ok(None);
     };
-    let app_key = query_value(query, "app_key")
-        .or_else(|| query_value(query, "device"))
-        .ok_or_else(|| anyhow!("device request is missing app_key"))?;
-    let app_key_hex = normalize_compact_app_key_pubkey(&app_key)?;
     Ok(Some(AppKeyApprovalRequest {
         profile_id: None,
-        app_key_hex,
+        app_key_hex: request.device_app_key_pubkey,
         invite_pubkey: String::new(),
         label: None,
     }))
-}
-
-fn compact_app_key_query(value: &str) -> Option<&str> {
-    if let Some(rest) = strip_prefix_ignore_ascii_case(value, APP_KEY_APPROVAL_COMPACT_PREFIX)
-        && let Some(query) = rest.strip_prefix('?')
-    {
-        return Some(query);
-    }
-    strip_prefix_ignore_ascii_case(value, "iris-drive:/app-key-link?")
-}
-
-fn query_value(query: &str, name: &str) -> Option<String> {
-    query.split('&').find_map(|part| {
-        let (key, value) = part.split_once('=').unwrap_or((part, ""));
-        (key == name).then(|| percent_decode(value))
-    })
-}
-
-fn normalize_compact_app_key_pubkey(input: &str) -> Result<String> {
-    let value = input.trim();
-    if value.starts_with("npub1") {
-        return PublicKey::from_bech32(value)
-            .map(|pubkey| pubkey.to_hex())
-            .context("parsing app_key npub");
-    }
-    if value.len() == 64 && value.chars().all(|ch| ch.is_ascii_hexdigit()) {
-        return Ok(value.to_ascii_lowercase());
-    }
-    Err(anyhow!("device request app_key is not a pubkey"))
-}
-
-fn percent_decode(value: &str) -> String {
-    let mut out = Vec::with_capacity(value.len());
-    let mut bytes = value.as_bytes().iter().copied();
-    while let Some(byte) = bytes.next() {
-        if byte == b'%' {
-            let hi = bytes.next();
-            let lo = bytes.next();
-            if let (Some(hi), Some(lo)) = (hi, lo)
-                && let (Some(hi), Some(lo)) = (hex_digit(hi), hex_digit(lo))
-            {
-                out.push((hi << 4) | lo);
-                continue;
-            }
-            out.push(byte);
-            if let Some(hi) = hi {
-                out.push(hi);
-            }
-            if let Some(lo) = lo {
-                out.push(lo);
-            }
-        } else {
-            out.push(byte);
-        }
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
-fn hex_digit(byte: u8) -> Option<u8> {
-    match byte {
-        b'0'..=b'9' => Some(byte - b'0'),
-        b'a'..=b'f' => Some(byte - b'a' + 10),
-        b'A'..=b'F' => Some(byte - b'A' + 10),
-        _ => None,
-    }
-}
-
-fn strip_prefix_ignore_ascii_case<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
-    if value.len() < prefix.len() || !value[..prefix.len()].eq_ignore_ascii_case(prefix) {
-        return None;
-    }
-    Some(&value[prefix.len()..])
 }
 
 fn starts_with_ignore_ascii_case(value: &str, prefix: &str) -> bool {
