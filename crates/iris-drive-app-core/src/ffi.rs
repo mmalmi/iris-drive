@@ -884,13 +884,30 @@ impl NativeAppRuntime {
             "device invite is missing invite pubkey".clone_into(&mut self.state.error);
             return;
         }
+        let requested_at = unix_now_seconds();
+        let request_url = match encode_app_key_approval_request(
+            account.app_key.keys(),
+            account.state.profile_id,
+            Some(&target.admin_app_key_hex),
+            account.state.app_key_label.as_deref(),
+            requested_at,
+        ) {
+            Ok(url) => url,
+            Err(error) => {
+                self.state.error = format!("building app-key link request: {error}");
+                return;
+            }
+        };
         if let Err(error) = account.state.queue_outbound_app_key_link_request(
             target.admin_app_key_hex,
             &target.invite_pubkey,
-            unix_now_seconds(),
+            requested_at,
         ) {
             self.state.error = format!("queueing app-key link request: {error}");
             return;
+        }
+        if let Some(pending) = account.state.outbound_app_key_link_request.as_mut() {
+            pending.request_url = request_url;
         }
         if let Err(error) = self.finish_profile_init(&account) {
             self.state.error = error;
@@ -1480,6 +1497,11 @@ impl NativeAppRuntime {
             Err(error) => {
                 self.state.error = format!("repairing share shortcuts: {error:#}");
             }
+        }
+        if let Err(error) =
+            ensure_cached_app_key_link_request_url(&mut config, Path::new(&self.data_dir))
+        {
+            self.state.error = format!("saving app-key link request: {error}");
         }
         self.state.ui.local_nhash_resolver_enabled = config.local_nhash_resolver_enabled;
         self.state.ui.launch_on_startup = config.launch_on_startup;
@@ -3356,6 +3378,9 @@ fn app_key_link_request_url(state: &iris_drive_core::ProfileState, config_dir: &
     let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
         return String::new();
     };
+    if !pending.request_url.trim().is_empty() {
+        return pending.request_url.clone();
+    }
     let Ok(app_key) = iris_drive_core::AppKey::load(key_path_in(config_dir)) else {
         return String::new();
     };
@@ -3367,6 +3392,50 @@ fn app_key_link_request_url(state: &iris_drive_core::ProfileState, config_dir: &
         pending.requested_at,
     )
     .unwrap_or_default()
+}
+
+fn ensure_cached_app_key_link_request_url(
+    config: &mut AppConfig,
+    config_dir: &Path,
+) -> Result<(), String> {
+    let Some(state) = config.profile.as_ref() else {
+        return Ok(());
+    };
+    if state.can_admin_profile()
+        || state.authorization_state != AppKeyAuthorizationState::AwaitingApproval
+    {
+        return Ok(());
+    }
+    let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
+        return Ok(());
+    };
+    if !pending.request_url.trim().is_empty() {
+        return Ok(());
+    }
+    let profile_id = state.profile_id;
+    let admin_app_key_pubkey = pending.admin_app_key_pubkey.clone();
+    let app_key_label = state.app_key_label.clone();
+    let requested_at = pending.requested_at;
+    let app_key = iris_drive_core::AppKey::load(key_path_in(config_dir))
+        .map_err(|error| error.to_string())?;
+    let request_url = encode_app_key_approval_request(
+        app_key.keys(),
+        profile_id,
+        Some(&admin_app_key_pubkey),
+        app_key_label.as_deref(),
+        requested_at,
+    )
+    .map_err(|error| error.to_string())?;
+    if let Some(pending) = config
+        .profile
+        .as_mut()
+        .and_then(|state| state.outbound_app_key_link_request.as_mut())
+    {
+        pending.request_url = request_url;
+    }
+    config
+        .save(config_path_in(config_dir))
+        .map_err(|error| error.to_string())
 }
 
 fn app_key_link_invite_url(state: &iris_drive_core::ProfileState) -> String {

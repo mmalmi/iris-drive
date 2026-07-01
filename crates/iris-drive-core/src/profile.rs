@@ -103,6 +103,8 @@ pub struct PendingAppKeyLinkRequest {
     pub admin_app_key_pubkey: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub invite_pubkey: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub request_url: String,
     pub requested_at: u64,
 }
 
@@ -433,6 +435,7 @@ impl ProfileState {
         let next = PendingAppKeyLinkRequest {
             admin_app_key_pubkey,
             invite_pubkey,
+            request_url: String::new(),
             requested_at,
         };
         let changed = self.outbound_app_key_link_request.as_ref() != Some(&next);

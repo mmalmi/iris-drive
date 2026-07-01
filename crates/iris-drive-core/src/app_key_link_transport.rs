@@ -74,13 +74,17 @@ pub fn pending_app_key_link_request_frame(
     let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
         return Ok(None);
     };
-    let url = encode_app_key_approval_request(
-        app_key_keys,
-        state.profile_id,
-        Some(&pending.admin_app_key_pubkey),
-        state.app_key_label.as_deref(),
-        pending.requested_at,
-    )?;
+    let url = if pending.request_url.trim().is_empty() {
+        encode_app_key_approval_request(
+            app_key_keys,
+            state.profile_id,
+            Some(&pending.admin_app_key_pubkey),
+            state.app_key_label.as_deref(),
+            pending.requested_at,
+        )?
+    } else {
+        pending.request_url.clone()
+    };
     Ok(Some(AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: state.profile_id,

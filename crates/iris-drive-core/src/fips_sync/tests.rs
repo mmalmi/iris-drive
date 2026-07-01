@@ -651,6 +651,7 @@ fn pending_app_key_link_admin_is_allowed_for_roster_app_messages() {
             outbound_app_key_link_request: Some(crate::profile::PendingAppKeyLinkRequest {
                 admin_app_key_pubkey: admin_pubkey,
                 invite_pubkey: "ee".repeat(32),
+                request_url: String::new(),
                 requested_at: 42,
             }),
             inbound_app_key_link_requests: Vec::new(),

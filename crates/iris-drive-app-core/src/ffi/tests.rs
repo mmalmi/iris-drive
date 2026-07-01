@@ -1259,6 +1259,58 @@ fn link_action_tracks_pending_approval() {
 }
 
 #[test]
+fn app_key_link_request_url_is_stable_across_profile_refreshes() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+    let owner = owner_app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "Owner".to_owned(),
+    });
+    let invite = owner.ui.profile.unwrap().app_key_link_invite;
+
+    let linked_dir = tempfile::tempdir().unwrap();
+    let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
+    let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
+        link_target: invite,
+        app_key_label: "iPhone".to_owned(),
+    });
+    let first = linked
+        .ui
+        .profile
+        .as_ref()
+        .expect("linked profile")
+        .app_key_link_request
+        .clone();
+    assert!(first.starts_with("https://drive.iris.to/approve-device/"));
+
+    let second = linked_app
+        .dispatch(NativeAppAction::RefreshProfile)
+        .ui
+        .profile
+        .as_ref()
+        .expect("refreshed profile")
+        .app_key_link_request
+        .clone();
+    let third = linked_app
+        .refresh()
+        .ui
+        .profile
+        .as_ref()
+        .expect("refreshed profile")
+        .app_key_link_request
+        .clone();
+
+    assert_eq!(first, second);
+    assert_eq!(first, third);
+    let config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
+    let pending = config
+        .profile
+        .as_ref()
+        .and_then(|profile| profile.outbound_app_key_link_request.as_ref())
+        .expect("pending request");
+    assert_eq!(pending.request_url, first);
+}
+
+#[test]
 fn owner_can_approve_and_revoke_linked_app_keys() {
     let owner_dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());

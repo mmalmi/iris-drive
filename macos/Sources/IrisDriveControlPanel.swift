@@ -960,6 +960,16 @@ struct IrisDriveControlPanel: View {
             TextField("Name (optional)", text: $approveDeviceLabel)
                 .textFieldStyle(.roundedBorder)
             HStack {
+                Button {
+                    scanQRCodeFromImage { code in
+                        approveDeviceKey = code
+                        approveDeviceError = ""
+                        refreshApproveAppKeyLinkInput(code)
+                    }
+                } label: {
+                    Label("Scan QR", systemImage: "qrcode.viewfinder")
+                }
+                .accessibilityIdentifier("scanApprovalRequestQr")
                 Spacer()
                 Button("Add") {
                     approveDevicePending = true

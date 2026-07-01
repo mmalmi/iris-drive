@@ -67,12 +67,29 @@ internal fun DevicesPanel(
     var request by remember { mutableStateOf("") }
     var label by remember { mutableStateOf("") }
     var showAddDevice by remember { mutableStateOf(false) }
+    var showApprovalScanner by remember { mutableStateOf(false) }
     var showAddRecoveryKey by remember { mutableStateOf(false) }
     var devicePendingDelete by remember { mutableStateOf<DeviceState?>(null) }
     val deviceActors = remember(devices) { devices.filter { it.isDeviceActor } }
     val recoveryKeyActors = remember(devices) { devices.filterNot { it.isDeviceActor } }
     val manualRequestIsComplete = remember(request) {
         NativeCore.isCompleteDeviceApprovalInput(request)
+    }
+
+    if (showApprovalScanner) {
+        QrScannerDialog(
+            onDismiss = { showApprovalScanner = false },
+            onScanned = { code ->
+                val trimmed = code.trim()
+                if (!NativeCore.isCompleteDeviceApprovalInput(trimmed)) {
+                    "Scan a request link from the joining device."
+                } else {
+                    request = trimmed
+                    showApprovalScanner = false
+                    null
+                }
+            },
+        )
     }
 
     if (canApprove) {
@@ -91,6 +108,7 @@ internal fun DevicesPanel(
                 onLabelChange = { label = it },
                 onApproveDevice = onApproveDevice,
                 onRejectDevice = onRejectDevice,
+                onScanQr = { showApprovalScanner = true },
                 onAdded = {
                     request = ""
                     label = ""
@@ -340,6 +358,7 @@ private fun AddDevicePanel(
     onLabelChange: (String) -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRejectDevice: (String) -> Unit,
+    onScanQr: () -> Unit,
     onAdded: () -> Unit,
 ) {
     fun submitManualDevice() {
@@ -400,6 +419,13 @@ private fun AddDevicePanel(
             label = { Text("Request link or device key") },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
         )
+        OutlinedButton(
+            onClick = onScanQr,
+            enabled = canApprove,
+            modifier = Modifier.testTag("scanApprovalRequestQr"),
+        ) {
+            Text("Scan QR")
+        }
         OutlinedTextField(
             value = label,
             onValueChange = onLabelChange,

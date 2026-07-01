@@ -211,28 +211,32 @@ private struct AwaitingApprovalSetupView: View {
                 }
 
                 Section("Waiting for approval") {
+                    Text("This device is waiting for an admin to approve it.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
                     if !model.appKeyLinkRequest.isEmpty {
-                        if requestQrMatrix.width > 0, requestQrValue == model.appKeyLinkRequest {
-                            QrCodeView(matrix: requestQrMatrix)
-                                .frame(width: 260, height: 260)
-                                .frame(maxWidth: .infinity, alignment: .center)
-                        } else {
-                            ProgressView()
-                                .frame(width: 260, height: 260)
-                                .frame(maxWidth: .infinity, alignment: .center)
-                                .accessibilityIdentifier("requestQrLoading")
-                        }
-                        Text(model.appKeyLinkRequest)
-                            .font(.footnote)
-                            .foregroundStyle(.secondary)
-                            .textSelection(.enabled)
-                        Button {
-                            model.copyLinkRequest()
+                        DisclosureGroup {
+                            if requestQrMatrix.width > 0, requestQrValue == model.appKeyLinkRequest {
+                                QrCodeView(matrix: requestQrMatrix)
+                                    .frame(width: 260, height: 260)
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                            } else {
+                                ProgressView()
+                                    .frame(width: 260, height: 260)
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                    .accessibilityIdentifier("requestQrLoading")
+                            }
+                            Button {
+                                model.copyLinkRequest()
+                            } label: {
+                                Label("Copy Request Link", systemImage: "link")
+                            }
                         } label: {
-                            Label("Copy Request Link", systemImage: "link")
+                            Label("Manual approval request", systemImage: "qrcode")
                         }
+                        .accessibilityIdentifier("manualApprovalRequestDisclosure")
                     }
-                    LabeledContent("Current Device Key", value: model.devicePublicKey)
+                    LabeledContent("Current Device", value: compactIdentifier(model.devicePublicKey))
                     Button {
                         model.copyDeviceKey()
                     } label: {
@@ -289,6 +293,12 @@ private struct AwaitingApprovalSetupView: View {
         requestQrTask = nil
         requestQrValue = ""
         requestQrMatrix = QrMatrix()
+    }
+
+    private func compactIdentifier(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > 24 else { return trimmed }
+        return "\(trimmed.prefix(12))...\(trimmed.suffix(8))"
     }
 }
 
@@ -985,6 +995,7 @@ private struct DevicesView: View {
 private struct AddDeviceSection: View {
     @ObservedObject var model: IrisDriveMobileModel
     @Binding var isExpanded: Bool
+    @State private var scannerPresented = false
 
     private var canAddManualDevice: Bool {
         IrisDriveNativeLinkInput.isCompleteDeviceApproval(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines))
@@ -1008,6 +1019,12 @@ private struct AddDeviceSection: View {
                     .onSubmit {
                         submitManualDevice()
                     }
+                Button {
+                    scannerPresented = true
+                } label: {
+                    Label("Scan QR", systemImage: "qrcode.viewfinder")
+                }
+                .accessibilityIdentifier("scanApprovalRequestQr")
                 TextField("Name (optional)", text: $model.approveDeviceLabel)
                     .accessibilityIdentifier("manualDeviceName")
                     .onSubmit {
@@ -1059,6 +1076,11 @@ private struct AddDeviceSection: View {
         }
         .onAppear {
             prefillUiTestDeviceFields()
+        }
+        .sheet(isPresented: $scannerPresented) {
+            QRCodeScannerSheet { code in
+                model.approveDeviceKey = code.trimmingCharacters(in: .whitespacesAndNewlines)
+            }
         }
     }
 
