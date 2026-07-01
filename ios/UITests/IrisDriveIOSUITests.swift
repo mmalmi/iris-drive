@@ -79,6 +79,22 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTAssertTrue(tabButton("My Drive", in: app).waitForExistence(timeout: 15))
     }
 
+    func testCreateProfileWithUsernameCanSkipProfilePhoto() throws {
+        let app = launchApp()
+
+        app.buttons["welcomeCreateProfile"].tap()
+        let username = app.textFields["createUsername"]
+        XCTAssertTrue(username.waitForExistence(timeout: 5))
+        username.tap()
+        username.typeText("Ada")
+        app.buttons["createProfileSubmit"].tap()
+
+        XCTAssertTrue(app.navigationBars["Profile photo"].waitForExistence(timeout: 5))
+        app.buttons["createPhotoSubmit"].tap()
+
+        XCTAssertTrue(tabButton("My Drive", in: app).waitForExistence(timeout: 15))
+    }
+
     func testDebugResetLocalStateReturnsToWelcome() throws {
         let baseDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("iris-drive-ui-test-reset-\(UUID().uuidString)")

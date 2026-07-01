@@ -430,6 +430,7 @@ private struct ProfilePhotoSetupView: View {
                 } label: {
                     Label(selectedPhoto == nil ? "Later" : "Create profile", systemImage: "plus")
                 }
+                .accessibilityIdentifier("createPhotoSubmit")
             }
             SetupErrorSection(message: model.setupErrorMessage)
         }
