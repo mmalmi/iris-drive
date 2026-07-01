@@ -30,6 +30,7 @@ fn record_inbound_request(config_dir: &Path, device: &str, label: &str, requeste
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn owner_can_reject_then_approve_join_requests_e2e() {
     let owner_dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());

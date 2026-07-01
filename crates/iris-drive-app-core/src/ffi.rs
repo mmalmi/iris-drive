@@ -1534,6 +1534,10 @@ impl NativeAppRuntime {
             return;
         };
         let account = raw_account.clone();
+        if account.authorization_state == AppKeyAuthorizationState::Revoked {
+            self.logout_current_revoked_device(provider_summary);
+            return;
+        }
         let gateway_port = if config.local_nhash_resolver_enabled && account.is_authorized() {
             native_browser_gateway_port_for_state(Path::new(&self.data_dir))
         } else {
@@ -1573,15 +1577,6 @@ impl NativeAppRuntime {
             inbound_app_key_link_requests: inbound_app_key_link_requests(&account),
         });
         self.state.ui.shares = ui_shares_for_config(&config, &account.app_key_pubkey);
-        if account.authorization_state == AppKeyAuthorizationState::Revoked {
-            self.set_sync_running(false);
-            self.state.ui.roots.clear();
-            self.state.ui.shares.clear();
-            self.state.ui.app_actors.clear();
-            self.state.ui.snapshot_link.clear();
-            self.refresh_ui_summary(None);
-            return;
-        }
         let ui_fips_status = ui_fips_status_for_config_dir(Path::new(&self.data_dir));
         self.state.ui.app_actors = app_actors_from_account(&account, &ui_fips_status);
         update_snapshot_link(&mut self.state, &config);
@@ -1589,6 +1584,13 @@ impl NativeAppRuntime {
             self.refresh_provider_summary();
         }
         self.refresh_ui_summary(Some(ui_fips_status));
+    }
+
+    fn logout_current_revoked_device(&mut self, provider_summary: ProviderSummaryMode) {
+        self.logout();
+        if self.state.error.is_empty() {
+            self.reload_from_disk(provider_summary);
+        }
     }
 
     fn reset_ui_for_reload(&mut self, paths: UiPaths, sync: UiSyncStatus) {
@@ -1962,7 +1964,7 @@ fn native_browser_gateway_status_port(config_dir: &Path) -> Option<u16> {
 
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 fn native_browser_gateway_status_value_port(value: &Value) -> Option<u16> {
-    if value.get("running")?.as_bool()? != true {
+    if !value.get("running")?.as_bool()? {
         return None;
     }
     value

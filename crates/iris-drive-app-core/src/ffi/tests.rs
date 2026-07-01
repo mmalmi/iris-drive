@@ -1507,7 +1507,7 @@ fn delete_device_json_action_revokes_linked_device() {
 }
 
 #[test]
-fn revoked_current_device_refresh_pauses_sync_and_keeps_relink_context() {
+fn revoked_current_device_refresh_logs_out_and_allows_fresh_relink() {
     let owner_dir = tempfile::tempdir().unwrap();
     let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
 
@@ -1548,19 +1548,17 @@ fn revoked_current_device_refresh_pauses_sync_and_keeps_relink_context() {
     apply_latest_profile_roster_frame(owner_dir.path(), linked_dir.path());
 
     let refreshed = linked_app.refresh();
-    let account = refreshed.ui.profile.as_ref().expect("account exists");
-    assert_eq!(account.authorization_state, "revoked");
-    assert_eq!(account.current_app_key_npub, linked_device);
-    assert_eq!(account.app_key_label, "Phone");
-    assert!(account.app_key_link_request.is_empty());
-    assert!(account.app_key_link_invite.is_empty());
-    assert!(account.inbound_app_key_link_requests.is_empty());
+    assert!(refreshed.error.is_empty(), "{}", refreshed.error);
+    assert!(refreshed.ui.profile.is_none());
     assert!(refreshed.ui.app_actors.is_empty());
     assert!(refreshed.ui.roots.is_empty());
     assert!(refreshed.ui.snapshot_link.is_empty());
     assert!(!refreshed.ui.sync.running);
-    assert_eq!(refreshed.ui.sync.status, "paused");
-    assert_eq!(refreshed.ui.sync.status_label, "Sync paused");
+    assert_eq!(refreshed.ui.sync.status, "ready");
+    assert_eq!(refreshed.ui.sync.status_label, "Ready");
+    assert!(!linked_dir.path().join("key").exists());
+    let linked_config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
+    assert!(linked_config.profile.is_none());
 
     let relinked = linked_app.dispatch(NativeAppAction::LinkDevice {
         link_target: owner_invite,
