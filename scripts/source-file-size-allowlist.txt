@@ -32,14 +32,14 @@ crates/iris-drive-core/src/sharing.rs 5200 Share roster, key epoch, and shortcut
 crates/iris-drive-core/src/fips_sync.rs 1100 FIPS sync runtime needs a later transport/state split.
 ios/Sources/IrisDriveMobileModel.swift 2500 Legacy iOS model includes FileProvider, browser gateway, and approval refresh plumbing; pending FileProvider/model split.
 ios/Sources/IrisDriveRootView.swift 2800 Legacy iOS SwiftUI shell includes setup, drive, sharing, and browser views; pending view split.
-ios/UITests/IrisDriveIOSUITests.swift 1150 iOS UI smoke scenarios are legacy monolith pending scenario split.
+ios/UITests/IrisDriveIOSUITests.swift 1160 iOS UI smoke scenarios are legacy monolith pending scenario split; current onboarding coverage is slightly over the old cap.
 linux/src/actions.rs 1500 Legacy Linux action handlers now include desktop startup settings; split pending dialog/action modules.
 macos/FileProvider/FileProviderItem.swift 1100 macOS FileProvider item model is legacy monolith pending metadata/helper split.
 macos/Sources/IrisDriveMacApp.swift 3070 Legacy macOS shell pending view/runtime split; daemon service-mode branches remain here while helpers live in IrisDriveDaemonService.swift.
 scripts/dev-vm-smoke.sh 2450 Multi-platform dev VM smoke harness keeps thin desktop GUI smoke dispatch until the harness split.
 scripts/dev-vm-update-run.sh 2950 Cross-platform VM orchestration needs a later split; includes sibling repo sync for hashtree path deps and VM Cargo build env for small disks.
 scripts/cross-vm-e2e.sh 1650 Multi-device e2e harness needs a later split.
-scripts/macos-smoke.sh 1200 macOS smoke harness needs a later helper split.
+scripts/macos-smoke.sh 1250 macOS smoke harness now includes path-scoped cleanup and survival assertions; needs a later helper split.
 macos/Sources/IrisDriveControlPanel.swift 2850 Legacy macOS control panel includes backup target and device approval controls; pending view split.
 scripts/local-release.mjs 1500 Local release orchestration needs a later module split.
 scripts/local-release.test.mjs 1250 Local release test coverage needs a later fixture/helper split.

@@ -204,6 +204,7 @@ structure:
     ./scripts/check-macos-native-link-input.sh
     ./scripts/check-macos-normalized-status.sh
     ./scripts/check-macos-gateway-default.sh
+    ./scripts/check-macos-smoke-process-scope.sh
     ./scripts/check-macos-fileprovider-lifecycle.sh
     ./scripts/check-macos-provider-summary.sh
     ./scripts/check-ios-idle-work-gates.sh
