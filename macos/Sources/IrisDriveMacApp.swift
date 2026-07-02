@@ -1450,10 +1450,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func openFileProviderItem(path targetPath: String?) {
+    private func openFileProviderItem(path targetPath: String?, repairedAfterFailure: Bool = false) {
         let domain = irisDriveFileProviderDomain(runtime: currentFileProviderRuntimeConfig())
         guard let manager = NSFileProviderManager(for: domain) else {
             NSLog("Iris Drive FileProvider manager unavailable")
+            if repairFileProviderDomainForOpenIfNeeded(
+                reason: "manager unavailable",
+                targetPath: targetPath,
+                alreadyRepaired: repairedAfterFailure
+            ) {
+                return
+            }
             handleFileProviderOpenFailure("manager unavailable")
             return
         }
@@ -1470,6 +1477,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
                     if let error {
                         NSLog("Iris Drive mounted folder unavailable for \(targetPath ?? "root"): \(error)")
+                        if self.repairFileProviderDomainForOpenIfNeeded(
+                            error: error,
+                            reason: "user-visible URL unavailable",
+                            targetPath: targetPath,
+                            alreadyRepaired: repairedAfterFailure
+                        ) {
+                            return
+                        }
                     } else {
                         NSLog("Iris Drive mounted folder unavailable for \(targetPath ?? "root")")
                     }
@@ -1477,6 +1492,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
         }
+    }
+
+    private func repairFileProviderDomainForOpenIfNeeded(
+        error: Error,
+        reason: String,
+        targetPath: String?,
+        alreadyRepaired: Bool
+    ) -> Bool {
+        guard shouldRepairFileProviderDomain(after: error) else {
+            return false
+        }
+        return repairFileProviderDomainForOpenIfNeeded(
+            reason: "\(reason): \((error as NSError).domain) \((error as NSError).code)",
+            targetPath: targetPath,
+            alreadyRepaired: alreadyRepaired
+        )
+    }
+
+    private func repairFileProviderDomainForOpenIfNeeded(
+        reason: String,
+        targetPath: String?,
+        alreadyRepaired: Bool
+    ) -> Bool {
+        guard !alreadyRepaired else {
+            return false
+        }
+        updateStatus("Repairing FileProvider")
+        let runtime = currentFileProviderRuntimeConfig()
+        NSLog("Iris Drive FileProvider open repair requested: \(reason)")
+        resetFileProviderDomain(reason: "open failed: \(reason)", runtime: runtime) { [weak self] state in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.fileProviderDomainState = state
+                guard state == .registered else {
+                    self.handleFileProviderOpenFailure("repair failed: \(reason)")
+                    return
+                }
+                self.openFileProviderItem(path: targetPath, repairedAfterFailure: true)
+            }
+        }
+        return true
     }
 
     private func refreshFileProviderDomainForOpen(manager: NSFileProviderManager, completion: @escaping () -> Void) {

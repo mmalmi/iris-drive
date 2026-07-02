@@ -1,11 +1,13 @@
 use super::{
     FfiApp, NativeAppKeyLinkRelayEventApply, apply_native_app_key_link_relay_event_to_config,
-    apply_native_app_key_link_roster_candidate_to_config, normalize_pubkey,
+    apply_native_app_key_link_roster_candidate_to_config,
+    native_profile_roster_ops_pending_publish, normalize_pubkey,
 };
 use crate::NativeAppAction;
 use iris_drive_core::paths::config_path_in;
 use iris_drive_core::{AppConfig, AppKeyAuthorizationState};
 use nostr_sdk::{Event, JsonUtil};
+use std::collections::BTreeSet;
 use std::path::Path;
 
 fn record_inbound_request(config_dir: &Path, device: &str, label: &str, requested_at: u64) {
@@ -480,4 +482,60 @@ fn relay_approval_candidate_authorizes_unbound_waiting_native_device_e2e() {
         owner_state.profile_id.to_string()
     );
     assert!(!refreshed.ui.awaiting_approval);
+}
+
+#[test]
+fn native_owner_approval_selects_roster_ops_for_relay_publish() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+    let owner = owner_app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "iOS owner".to_owned(),
+    });
+    assert!(owner.error.is_empty(), "{}", owner.error);
+
+    let linked_dir = tempfile::tempdir().unwrap();
+    let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
+    let linked = linked_app.dispatch(NativeAppAction::StartJoinRequest {
+        app_key_label: "Mac waiting".to_owned(),
+    });
+    assert!(linked.error.is_empty(), "{}", linked.error);
+    let linked_account = linked.ui.profile.unwrap();
+
+    let before = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
+    let before_state = before.profile.as_ref().unwrap();
+    let mut published = before_state
+        .profile_roster_ops
+        .iter()
+        .map(|op| op.op_id.clone())
+        .collect::<BTreeSet<_>>();
+
+    let approved = owner_app.dispatch(NativeAppAction::ApproveDevice {
+        request: linked_account.app_key_link_request,
+        label: String::new(),
+    });
+    assert!(approved.error.is_empty(), "{}", approved.error);
+
+    let owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
+    let owner_state = owner_config.profile.as_ref().unwrap();
+    let pending_ops = native_profile_roster_ops_pending_publish(owner_state, &published);
+    assert!(
+        pending_ops.len() >= 2,
+        "approval should publish add-facet plus DCK rotation ops"
+    );
+    let linked_pubkey = normalize_pubkey(&linked_account.current_app_key_npub).unwrap();
+    let relay_events = owner_state
+        .profile_roster_ops
+        .iter()
+        .map(|op| Event::from_json(&op.event_json).unwrap())
+        .collect::<Vec<_>>();
+    let candidates =
+        iris_drive_core::relay_sync::nostr_identity_app_key_approval_candidates_from_events(
+            &linked_pubkey,
+            &relay_events,
+        )
+        .unwrap();
+    assert_eq!(candidates.len(), 1);
+
+    published.extend(pending_ops.into_iter().map(|op| op.op_id));
+    assert!(native_profile_roster_ops_pending_publish(owner_state, &published).is_empty());
 }

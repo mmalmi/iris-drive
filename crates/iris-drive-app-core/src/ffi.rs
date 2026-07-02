@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
@@ -2099,6 +2099,7 @@ async fn run_app_key_link_exchange_async(
     let mut app_messages = sync.subscribe_app_messages();
     let mut sent_requests = BTreeMap::new();
     let mut sent_rosters = BTreeMap::new();
+    let mut published_roster_op_ids = BTreeSet::new();
     let mut acked_rosters = BTreeSet::new();
     let mut app_key_link_config_cache = NativeAppConfigCache::default();
     let mut direct_roots = iris_drive_core::DirectRootExchange::default();
@@ -2119,6 +2120,7 @@ async fn run_app_key_link_exchange_async(
         &sync,
         &mut sent_requests,
         &mut sent_rosters,
+        &mut published_roster_op_ids,
         &acked_rosters,
         &mut app_key_link_config_cache,
     )
@@ -2143,6 +2145,7 @@ async fn run_app_key_link_exchange_async(
                     &sync,
                     &mut sent_requests,
                     &mut sent_rosters,
+                    &mut published_roster_op_ids,
                     &acked_rosters,
                     &mut app_key_link_config_cache,
                 ).await?;
@@ -2257,6 +2260,7 @@ async fn drive_app_key_link_exchange_tick(
     sync: &iris_drive_core::FsFipsBlockSync,
     sent_requests: &mut BTreeMap<String, SentAppKeyLinkRequest>,
     sent_rosters: &mut BTreeMap<String, std::time::Instant>,
+    published_roster_op_ids: &mut BTreeSet<String>,
     acked_rosters: &BTreeSet<String>,
     config_cache: &mut NativeAppConfigCache,
 ) -> Result<bool, String> {
@@ -2276,6 +2280,7 @@ async fn drive_app_key_link_exchange_tick(
     }
     send_native_pending_app_key_link_request(relay_client, device_keys, sync, state, sent_requests)
         .await?;
+    publish_native_profile_roster_ops(relay_client, state, published_roster_op_ids).await?;
     send_native_authorized_app_key_link_rosters(
         config_dir,
         sync,
@@ -2288,6 +2293,47 @@ async fn drive_app_key_link_exchange_tick(
         tracing::warn!(error = %error, "writing native FIPS status failed");
     }
     Ok(true)
+}
+
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
+fn native_profile_roster_ops_pending_publish(
+    state: &iris_drive_core::ProfileState,
+    published_roster_op_ids: &BTreeSet<String>,
+) -> Vec<iris_drive_core::SignedNostrIdentityRosterOp> {
+    if !state.can_admin_profile() || state.profile_roster_ops.is_empty() {
+        return Vec::new();
+    }
+    state
+        .profile_roster_ops
+        .iter()
+        .filter(|op| !published_roster_op_ids.contains(&op.op_id))
+        .cloned()
+        .collect()
+}
+
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+async fn publish_native_profile_roster_ops(
+    relay_client: &nostr_sdk::Client,
+    state: &iris_drive_core::ProfileState,
+    published_roster_op_ids: &mut BTreeSet<String>,
+) -> Result<(), String> {
+    let pending_ops = native_profile_roster_ops_pending_publish(state, published_roster_op_ids);
+    if pending_ops.is_empty() {
+        return Ok(());
+    }
+
+    tokio::time::timeout(
+        std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS),
+        iris_drive_core::relay_sync::publish_nostr_identity_roster_ops(relay_client, &pending_ops),
+    )
+    .await
+    .map_err(|_| "publishing native profile roster ops timed out".to_string())?
+    .map_err(|error| format!("publishing native profile roster ops: {error}"))?;
+
+    for op in pending_ops {
+        published_roster_op_ids.insert(op.op_id);
+    }
+    Ok(())
 }
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]

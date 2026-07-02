@@ -283,7 +283,16 @@ private func addFileProviderDomain(
             }
         } else {
             markFileProviderRegistrationCurrent(registrationIdentity)
-            queryFileProviderDomainState { state in
+            queryFileProviderDomainStateWithError { state, queryError in
+                if let queryError, shouldRepairFileProviderDomain(after: queryError) {
+                    repairAllFileProviderRegistrations(
+                        reason: "domain query failed after add",
+                        runtime: runtime,
+                        currentIdentity: registrationIdentity,
+                        completion
+                    )
+                    return
+                }
                 if state == .registered || state == .disabled {
                     completion(state)
                 } else {
@@ -384,17 +393,24 @@ private func addFreshFileProviderDomain(
 private func queryFileProviderDomainState(
     _ completion: @escaping (FileProviderDomainState) -> Void
 ) {
+    queryFileProviderDomainStateWithError { state, _ in
+        completion(state)
+    }
+}
+
+private func queryFileProviderDomainStateWithError(
+    _ completion: @escaping (FileProviderDomainState, Error?) -> Void
+) {
     NSFileProviderManager.getDomainsWithCompletionHandler { domains, error in
         if let error {
             irisDriveDebugLog("Iris Drive FileProvider domain query failed: \(error)")
         }
-        guard let domain = domains.first(where: { $0.identifier == irisDriveDomainIdentifier })
-        else {
-            completion(.unavailable)
+        guard let domain = domains.first(where: { $0.identifier == irisDriveDomainIdentifier }) else {
+            completion(.unavailable, error)
             return
         }
 
-        completion(fileProviderDomainState(for: domain))
+        completion(fileProviderDomainState(for: domain), error)
     }
 }
 
