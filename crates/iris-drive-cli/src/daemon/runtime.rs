@@ -71,6 +71,7 @@ pub(crate) fn cmd_daemon(
     if filters.is_empty() {
         return Err(anyhow::anyhow!("no filters to subscribe to"));
     }
+    let subscription_policy = relay_sync::event_retention_policy(filters.clone());
     let embedded_hashtree_requested = enable_gateway && config.local_nhash_resolver_enabled;
     let (embedded_hashtree, embedded_hashtree_status) = if embedded_hashtree_requested {
         match EmbeddedHashtreeHost::start(config_dir, &config) {
@@ -396,6 +397,10 @@ pub(crate) fn cmd_daemon(
                 } => {
                     match recv {
                         Some(Ok(RelayPoolNotification::Event { event, .. })) => {
+                            if !relay_sync::relay_event_matches_policy(&subscription_policy, &event)
+                            {
+                                continue;
+                            }
                             match apply_one_event(
                                 &client,
                                 config_dir,

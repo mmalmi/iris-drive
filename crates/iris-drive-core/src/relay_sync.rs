@@ -42,6 +42,8 @@ use crate::{
     project_nostr_identity_roster,
 };
 
+pub const RELAY_SYNC_EVENT_CACHE_LIMIT: usize = 4096;
+
 #[derive(Debug, Error)]
 pub enum RelayError {
     #[error("wire: {0}")]
@@ -62,6 +64,42 @@ pub enum RelayError {
     ShareAccess(#[from] crate::sharing::SharingError),
     #[error("app-key-link roster: {0}")]
     AppKeyLinkRoster(String),
+}
+
+#[must_use]
+pub fn relay_source_routes(relay_urls: &[String]) -> Vec<nostr_pubsub::SourceRoute> {
+    relay_urls
+        .iter()
+        .map(|url| {
+            nostr_pubsub::SourceRoute::relay(url.clone()).with_reason("iris-drive app relay config")
+        })
+        .collect()
+}
+
+#[must_use]
+pub fn relay_urls_from_source_routes(routes: &[nostr_pubsub::SourceRoute]) -> Vec<String> {
+    routes
+        .iter()
+        .filter(|route| route.source.kind == nostr_pubsub::EventSourceKind::Relay)
+        .filter_map(|route| route.source.url.clone())
+        .collect()
+}
+
+#[must_use]
+pub fn event_retention_policy(filters: Vec<Filter>) -> nostr_pubsub::EventRetentionPolicy {
+    nostr_pubsub::EventRetentionPolicy::new(RELAY_SYNC_EVENT_CACHE_LIMIT, filters)
+}
+
+#[must_use]
+pub fn relay_event_matches_policy(
+    policy: &nostr_pubsub::EventRetentionPolicy,
+    event: &Event,
+) -> bool {
+    if event.verify().is_err() {
+        return false;
+    }
+    nostr_pubsub::VerifiedEvent::try_from(event.clone())
+        .is_ok_and(|verified| policy.accepts(&verified))
 }
 
 /// Result of applying signed profile roster ops over the direct app-key-link channel.
@@ -643,8 +681,10 @@ fn incoming_root_is_stale(
 /// Connect a fresh client to the given relays. Caller manages the
 /// client's lifecycle (disconnect when done).
 pub async fn connect(relay_urls: &[String]) -> Result<Client, RelayError> {
+    let source_routes = relay_source_routes(relay_urls);
+    let relay_urls = relay_urls_from_source_routes(&source_routes);
     let client = Client::builder().opts(ClientOptions::new()).build();
-    for url in relay_urls {
+    for url in &relay_urls {
         client
             .add_relay(url)
             .await
@@ -773,14 +813,22 @@ async fn fetch_events(
     filters: Vec<Filter>,
     timeout: Duration,
 ) -> Result<Vec<Event>, RelayError> {
+    let policy = event_retention_policy(filters);
     let mut events = Vec::new();
-    for filter in filters {
-        events.extend(
-            client
-                .fetch_events(filter, timeout)
-                .await
-                .map_err(|e| RelayError::Client(e.to_string()))?,
-        );
+    for filter in policy.filters.clone() {
+        for event in client
+            .fetch_events(filter, timeout)
+            .await
+            .map_err(|e| RelayError::Client(e.to_string()))?
+        {
+            if !relay_event_matches_policy(&policy, &event) {
+                continue;
+            }
+            events.push(event);
+            if events.len() >= policy.max_events {
+                return Ok(events);
+            }
+        }
     }
     Ok(events)
 }

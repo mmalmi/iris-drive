@@ -48,6 +48,46 @@ fn filter_matches(filter: &Filter, event: &Event) -> bool {
     filter.match_event(event, MatchEventOptions::default())
 }
 
+#[test]
+fn relay_config_feeds_pubsub_relay_sources() {
+    let relays = vec![
+        "wss://relay-a.example".to_string(),
+        "wss://relay-b.example".to_string(),
+    ];
+
+    let routes = relay_source_routes(&relays);
+    let route_urls = relay_urls_from_source_routes(&routes);
+
+    assert_eq!(route_urls, relays);
+    assert_eq!(routes.len(), 2);
+    assert_eq!(routes[0].source.kind, nostr_pubsub::EventSourceKind::Relay);
+    assert_eq!(routes[0].priority, nostr_pubsub::SOURCE_PRIORITY_RELAY);
+    assert_eq!(
+        routes[0].source.url.as_deref(),
+        Some("wss://relay-a.example")
+    );
+}
+
+#[test]
+fn relay_event_retention_policy_accepts_subscription_events() {
+    let dir = tempdir().unwrap();
+    let (_cfg, acct) = config_with_owner_account(dir.path());
+    let profile_op = profile_event(&acct.state.profile_roster_ops[0]);
+    let filters = subscription_filters(
+        &acct.state.app_key_pubkey,
+        &acct.state.root_scope_id(),
+        crate::PRIMARY_DRIVE_ID,
+    );
+    let policy = event_retention_policy(filters);
+    let unrelated = EventBuilder::new(Kind::TextNote, "")
+        .sign_with_keys(acct.app_key.keys())
+        .unwrap();
+
+    assert_eq!(policy.max_events, RELAY_SYNC_EVENT_CACHE_LIMIT);
+    assert!(relay_event_matches_policy(&policy, &profile_op));
+    assert!(!relay_event_matches_policy(&policy, &unrelated));
+}
+
 fn encrypted_root(seed: u8, published_at: i64, dck_generation: u64) -> AppKeyRootRef {
     AppKeyRootRef::legacy(
         Cid::encrypted([seed; 32], [seed.wrapping_add(1); 32]).to_string(),

@@ -809,7 +809,7 @@ dependencies = [
 
 [[package]]
 name = "cashu-service"
-version = "0.2.56"
+version = "0.2.57"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1776,7 +1776,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.3.77"
+version = "0.3.78"
 dependencies = [
  "bluer",
  "bytes",
@@ -1789,6 +1789,7 @@ dependencies = [
  "libc",
  "mdns-sd",
  "nostr",
+ "nostr-pubsub",
  "nostr-sdk",
  "portable-atomic",
  "procfs",
@@ -1808,6 +1809,7 @@ dependencies = [
  "tokio-socks",
  "tracing",
  "tun",
+ "uuid",
  "webrtc",
  "wintun",
 ]
@@ -3244,6 +3246,7 @@ dependencies = [
  "http",
  "mime_guess",
  "nostr-identity",
+ "nostr-pubsub",
  "nostr-sdk",
  "reqwest",
  "rustls 0.23.40",
@@ -3938,6 +3941,15 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "uuid",
+]
+
+[[package]]
+name = "nostr-pubsub"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "nostr",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

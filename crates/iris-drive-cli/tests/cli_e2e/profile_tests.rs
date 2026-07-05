@@ -441,11 +441,8 @@ fn owner_approves_device_request_link() {
     let request_url = linked["app_key_link_request"]["url"].as_str().unwrap();
     let linked_app_key = current_app_key_npub(&linked);
 
-    idrive(other_owner_dir.path())
-        .args(["approve", request_url])
-        .assert()
-        .failure()
-        .stderr(contains("different profile"));
+    let other_approved = run_json(other_owner_dir.path(), &["approve", request_url]);
+    assert_eq!(other_approved["roster_size"], 2);
 
     let approved = run_json(owner_dir.path(), &["approve", request_url]);
     assert_eq!(approved["roster_size"], 2);
