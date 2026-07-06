@@ -948,9 +948,9 @@ impl ConfigMutationLock {
         }
     }
 
-    fn lock_create_error_is_contention(path: &Path, error: &std::io::Error) -> bool {
+    fn lock_create_error_is_contention(_path: &Path, error: &std::io::Error) -> bool {
         error.kind() == std::io::ErrorKind::AlreadyExists
-            || (error.kind() == std::io::ErrorKind::PermissionDenied && path.exists())
+            || error.kind() == std::io::ErrorKind::PermissionDenied
     }
 
     fn try_create(path: &Path) -> std::io::Result<Self> {

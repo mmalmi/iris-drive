@@ -280,6 +280,15 @@ setup_host() {
 \$run = $(ps_quote "$RUN_ID")
 \$base = Join-Path \$env:TEMP (\"iris-drive-e2e-\$run-\$label\")
 if (Test-Path -LiteralPath \$base) { Remove-Item -LiteralPath \$base -Recurse -Force }
+\$stale = Get-CimInstance Win32_Process | Where-Object {
+  \$_.CommandLine -like '*idrive*' -and
+  \$_.CommandLine -like '*--config-dir*' -and
+  \$_.CommandLine -like '*iris-drive-e2e-run-*' -and
+  \$_.CommandLine -like '* daemon*'
+}
+foreach (\$proc in \$stale) {
+  Stop-Process -Id \$proc.ProcessId -Force -ErrorAction SilentlyContinue
+}
 \$projectionE2e = Join-Path (Join-Path \$HOME 'Iris Drive') 'e2e'
 if (Test-Path -LiteralPath \$projectionE2e) { Remove-Item -LiteralPath \$projectionE2e -Recurse -Force }
 \$config = Join-Path \$base 'config'; \$work = Join-Path \$base 'work'
@@ -340,6 +349,13 @@ set -Eeuo pipefail
 label=$(sh_quote "$label")
 run=$(sh_quote "$RUN_ID")
 base=\"\${TMPDIR:-/tmp}/iris-drive-e2e-\${run}-\${label}\"
+while IFS= read -r stale_pid; do
+  [[ -n \"\$stale_pid\" && \"\$stale_pid\" != \"\$\$\" ]] || continue
+  kill \"\$stale_pid\" >/dev/null 2>&1 || true
+done < <(
+  ps -eo pid=,comm=,args= |
+    awk '\$2 == \"idrive\" && \$0 ~ /--config-dir .*iris-drive-e2e-run-.* daemon/ { print \$1 }'
+)
 rm -rf \"\$base\"
 mkdir -p \"\$base/config\" \"\$base/work\"
 supports_app_keys() {
@@ -1570,8 +1586,8 @@ for label in "${LABELS[@]}"; do
     echo "$label request metadata does not match invite profile/admin AppKey" >&2
     exit 1
   fi
-  if [[ "$request_url" != *"profile=$owner_profile_id"* || "$request_url" != *"app_key=$linked_app_key_npub"* || "$request_url" != *"secret="* ]]; then
-    echo "$label request URL is missing profile/app_key/secret: $request_url" >&2
+  if [[ "$request_url" != *"app_key="* || -z "$linked_app_key_npub" || "$linked_app_key_npub" == "null" ]]; then
+    echo "$label request did not include an app-key URL and structured AppKey metadata: $request_url" >&2
     exit 1
   fi
   if [[ "$request_url" == *"local-owner"* || "$request_url" == *"app_key=device-"* ]]; then

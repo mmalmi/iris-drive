@@ -141,6 +141,11 @@ find_window() {
 
 window_id="$(find_window || true)"
 if [[ -z "$window_id" ]]; then
+  if pgrep -f -- "$app" >/dev/null 2>&1; then
+    log "stopping stale Linux GTK shell process without a visible window"
+    pkill -f -- "$app" >/dev/null 2>&1 || true
+    sleep 0.5
+  fi
   log "launching Linux GTK shell on DISPLAY=$DISPLAY"
   mkdir -p "$config_dir"
   if (( use_xvfb )); then
