@@ -2366,13 +2366,45 @@ async fn send_native_pending_app_key_link_request(
     let admin_npub = pubkey_npub(&pending.admin_app_key_pubkey);
     let bytes = serde_json::to_vec(&frame)
         .map_err(|error| format!("encoding app-key link request: {error}"))?;
-    let relay_event_id = iris_drive_core::relay_sync::publish_app_key_link_request(
-        relay_client,
-        device_keys,
-        &frame,
+
+    let fips_error = match sync
+        .send_app_message(&admin_npub, APP_KEY_LINK_REQUEST_APP_TOPIC, bytes)
+        .await
+    {
+        Ok(()) => None,
+        Err(error) => Some(error.to_string()),
+    };
+    let relay_result = tokio::time::timeout(
+        std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS),
+        iris_drive_core::relay_sync::publish_app_key_link_request(
+            relay_client,
+            device_keys,
+            &frame,
+        ),
     )
-    .await
-    .map_err(|error| format!("publishing app-key link request relay event: {error}"))?;
+    .await;
+    let (relay_event_id, relay_error) = match relay_result {
+        Ok(Ok(event_id)) => (Some(event_id.to_hex()), None),
+        Ok(Err(error)) => (
+            None,
+            Some(format!(
+                "publishing app-key link request relay event: {error}"
+            )),
+        ),
+        Err(_) => (
+            None,
+            Some("publishing app-key link request relay event timed out".to_string()),
+        ),
+    };
+
+    if fips_error.is_some() && relay_error.is_some() {
+        return Err(format!(
+            "sending app-key link request failed over relay ({}) and FIPS ({})",
+            relay_error.as_deref().unwrap_or("unknown relay error"),
+            fips_error.as_deref().unwrap_or("unknown FIPS error")
+        ));
+    }
+
     let attempts = sent_requests
         .get(&fingerprint)
         .map_or(1, |sent| sent.attempts.saturating_add(1));
@@ -2383,24 +2415,26 @@ async fn send_native_pending_app_key_link_request(
             attempts,
         },
     );
-    match sync
-        .send_app_message(&admin_npub, APP_KEY_LINK_REQUEST_APP_TOPIC, bytes)
-        .await
-    {
-        Ok(()) => {
-            tracing::debug!(
-                admin_npub,
-                relay_event_id = %relay_event_id.to_hex(),
-                requested_at = frame.requested_at,
-                "sent native app-key-link request over relay and FIPS"
-            );
-        }
-        Err(error) => tracing::warn!(
+    match (relay_event_id.as_deref(), fips_error.as_deref()) {
+        (Some(relay_event_id), None) => tracing::debug!(
             admin_npub,
-            relay_event_id = %relay_event_id.to_hex(),
-            error = %error,
+            relay_event_id,
+            requested_at = frame.requested_at,
+            "sent native app-key-link request over relay and FIPS"
+        ),
+        (Some(relay_event_id), Some(error)) => tracing::warn!(
+            admin_npub,
+            relay_event_id,
+            error,
             "sent native app-key-link request over relay, FIPS send failed"
         ),
+        (None, None) => tracing::warn!(
+            admin_npub,
+            relay_error = relay_error.as_deref().unwrap_or("unknown relay error"),
+            requested_at = frame.requested_at,
+            "sent native app-key-link request over FIPS, relay publish failed"
+        ),
+        (None, Some(_)) => unreachable!("both app-key-link transports failed"),
     }
     Ok(())
 }
@@ -2960,11 +2994,21 @@ async fn write_native_fips_status(
     let online_devices = online_device_ids(&direct_devices, &mesh_devices);
     let updated_at = unix_now_seconds();
     let error_value = error.map_or(Value::Null, |error| Value::String(error.to_owned()));
+    let transport_settings = sync.transport_settings();
     let raw = json!({
         "running": error.is_none(),
         "updated_at": updated_at,
         "endpoint_npub": sync.endpoint_npub(),
         "discovery_scope": sync.discovery_scope(),
+        "udp_enabled": transport_settings.enable_udp,
+        "udp_bind_addr": transport_settings.udp_bind_addr,
+        "udp_public": transport_settings.udp_public,
+        "udp_external_addr": transport_settings.udp_external_addr,
+        "webrtc_enabled": transport_settings.enable_webrtc,
+        "webrtc_max_connections": transport_settings.webrtc_max_connections,
+        "open_discovery_max_pending": transport_settings.open_discovery_max_pending,
+        "static_peer_hint_count": transport_settings.static_peer_hints.len(),
+        "bootstrap_peer_hint_count": transport_settings.bootstrap_peer_hints.len(),
         "authorized_peers": sync.authorized_peer_ids().await,
         "online_devices": online_devices.clone(),
         "online_peers": online_devices,

@@ -6,6 +6,8 @@ PACKAGE_NAME="${IRIS_DRIVE_ANDROID_PACKAGE:-to.iris.drive.uitest}"
 MAIN_ACTIVITY="${IRIS_DRIVE_ANDROID_ACTIVITY:-to.iris.drive.uitest/to.iris.drive.app.MainActivity}"
 DEBUG_ACTION_EXTRA="${IRIS_DRIVE_ANDROID_DEBUG_ACTION_EXTRA:-to.iris.drive.DEBUG_ACTION}"
 DEBUG_OWNER_EXTRA="${IRIS_DRIVE_ANDROID_DEBUG_OWNER_EXTRA:-to.iris.drive.DEBUG_OWNER}"
+DEBUG_NETWORK_HOST_EXTRA="${IRIS_DRIVE_ANDROID_DEBUG_NETWORK_HOST_EXTRA:-to.iris.drive.DEBUG_NETWORK_HOST}"
+DEBUG_NETWORK_PORT_EXTRA="${IRIS_DRIVE_ANDROID_DEBUG_NETWORK_PORT_EXTRA:-to.iris.drive.DEBUG_NETWORK_PORT}"
 APK_PATH="${IRIS_DRIVE_ANDROID_APK:-$ROOT/android/app/build/outputs/apk/uiTest/app-uiTest.apk}"
 TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
 IDRIVE="${IRIS_DRIVE_IDRIVE_BIN:-$TARGET_DIR/debug/idrive}"
@@ -18,6 +20,8 @@ OWNER_HOST_ADDR="${IRIS_DRIVE_ANDROID_HOST_ADDR:-}"
 USE_DIRECT_STATIC_PEER="${IRIS_DRIVE_ANDROID_USE_DIRECT_STATIC_PEER:-true}"
 LINK_TIMEOUT_SECS="${IRIS_DRIVE_ANDROID_LINK_TIMEOUT_SECS:-90}"
 PUBLISH_TIMEOUT_SECS="${IRIS_DRIVE_ANDROID_PUBLISH_TIMEOUT_SECS:-3}"
+NETWORK_PROBE_HOST="${IRIS_DRIVE_ANDROID_NETWORK_PROBE_HOST:-1.1.1.1}"
+NETWORK_PROBE_PORT="${IRIS_DRIVE_ANDROID_NETWORK_PROBE_PORT:-443}"
 serial="${IRIS_DRIVE_ANDROID_SERIAL:-${ANDROID_SERIAL:-}}"
 
 cleanup() {
@@ -94,6 +98,21 @@ bool_true() {
     1 | true | TRUE | True | yes | YES | Yes | on | ON | On) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+shell_quote() {
+  printf "'"
+  printf '%s' "$1" | sed "s/'/'\\\\''/g"
+  printf "'"
+}
+
+adb_am_start() {
+  local command="am start"
+  local arg
+  for arg in "$@"; do
+    command+=" $(shell_quote "$arg")"
+  done
+  "$ADB" -s "$serial" shell "$command"
 }
 
 android_host_addr() {
@@ -182,7 +201,7 @@ wait_for_android_provider_entry() {
   local expected_path="$1"
   local seconds="$2"
   for _ in $(seq 1 "$((seconds * 2))"); do
-    "$ADB" -s "$serial" shell am start -n "$MAIN_ACTIVITY" \
+    adb_am_start -n "$MAIN_ACTIVITY" \
       --es "$DEBUG_ACTION_EXTRA" dump-provider-list >/dev/null
     if "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-provider-list.json 2>/dev/null \
       | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; entries=s.get("entries") or []; raise SystemExit(0 if any(e.get("path") == expected for e in entries) else 1)' "$expected_path" >/dev/null 2>&1; then
@@ -198,8 +217,77 @@ dump_android_debug_files() {
   "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-state.json >&2 || true
   echo "--- Android native-fips-status.json ---" >&2
   "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/native-fips-status.json >&2 || true
+  echo "--- Android debug-env.json ---" >&2
+  "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-env.json >&2 || true
+  echo "--- Android debug-network-probe.json ---" >&2
+  "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-network-probe.json >&2 || true
   echo "--- Android debug-provider-list.json ---" >&2
   "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-provider-list.json >&2 || true
+}
+
+run_android_network_probe() {
+  local host="$1"
+  local port="$2"
+  local seconds="$3"
+  local json classification
+  "$ADB" -s "$serial" shell run-as "$PACKAGE_NAME" rm -f files/debug-network-probe.json >/dev/null 2>&1 || true
+  adb_am_start -n "$MAIN_ACTIVITY" \
+    --es "$DEBUG_ACTION_EXTRA" probe-network \
+    --es "$DEBUG_NETWORK_HOST_EXTRA" "$host" \
+    --es "$DEBUG_NETWORK_PORT_EXTRA" "$port" >/dev/null
+
+  for _ in $(seq 1 "$((seconds * 5))"); do
+    json="$("$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-network-probe.json 2>/dev/null || true)"
+    classification="$(python3 -c '
+import json, sys
+try:
+    status = json.loads(sys.stdin.read())
+except Exception:
+    raise SystemExit(2)
+if status.get("ok"):
+    print("ok")
+    raise SystemExit(0)
+error = str(status.get("error") or "")
+if "EACCES" in error or "Permission denied" in error:
+    print("permission-denied")
+    raise SystemExit(0)
+print("other")
+' <<<"$json" 2>/dev/null || true)"
+    case "$classification" in
+      ok) return 0 ;;
+      permission-denied) return 2 ;;
+      other) return 1 ;;
+    esac
+    sleep 0.2
+  done
+  return 1
+}
+
+require_android_app_network_permission() {
+  local probe_status=0
+  local vpn_app vpn_lockdown vpn_whitelist
+  run_android_network_probe "$NETWORK_PROBE_HOST" "$NETWORK_PROBE_PORT" 8 || probe_status="$?"
+  case "$probe_status" in
+    0) return 0 ;;
+    2)
+      echo "FAIL: Android app process cannot open network sockets; debug probe to $NETWORK_PROBE_HOST:$NETWORK_PROBE_PORT returned EACCES/Permission denied." >&2
+      echo "Grant the OS-level Network/Internet permission for $PACKAGE_NAME on this device, then rerun the smoke." >&2
+      vpn_app="$("$ADB" -s "$serial" shell settings get secure always_on_vpn_app 2>/dev/null | tr -d '\r' || true)"
+      vpn_lockdown="$("$ADB" -s "$serial" shell settings get secure always_on_vpn_lockdown 2>/dev/null | tr -d '\r' || true)"
+      vpn_whitelist="$("$ADB" -s "$serial" shell settings get secure always_on_vpn_lockdown_whitelist 2>/dev/null | tr -d '\r' || true)"
+      if [[ "$vpn_lockdown" == "1" ]]; then
+        echo "Android always-on VPN lockdown is enabled for ${vpn_app:-unknown VPN}; disable 'Block connections without VPN' or route/allow $PACKAGE_NAME before rerunning." >&2
+        echo "VPN lockdown whitelist: ${vpn_whitelist:-<empty>}" >&2
+      fi
+      dump_android_debug_files
+      return 1
+      ;;
+    *)
+      echo "WARN: Android app network probe to $NETWORK_PROBE_HOST:$NETWORK_PROBE_PORT did not confirm connectivity; continuing to the FIPS smoke." >&2
+      "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-network-probe.json >&2 || true
+      return 0
+      ;;
+  esac
 }
 
 run_android_gui_tests() {
@@ -271,9 +359,13 @@ if [[ ! -f "$APK_PATH" ]]; then
   exit 1
 fi
 
-"$ADB" -s "$serial" install -r "$APK_PATH" >/dev/null
+"$ADB" -s "$serial" install -r -g "$APK_PATH" >/dev/null
 "$ADB" -s "$serial" shell pm clear "$PACKAGE_NAME" >/dev/null
-"$ADB" -s "$serial" shell am start -S -n "$MAIN_ACTIVITY" \
+if ! require_android_app_network_permission; then
+  exit 1
+fi
+"$ADB" -s "$serial" shell pm clear "$PACKAGE_NAME" >/dev/null
+adb_am_start -S -n "$MAIN_ACTIVITY" \
   --es "$DEBUG_ACTION_EXTRA" create-profile >/dev/null
 
 if ! wait_for_debug_state \
@@ -327,7 +419,7 @@ if ! wait_for_owner_fips 20; then
 fi
 
 "$ADB" -s "$serial" shell pm clear "$PACKAGE_NAME" >/dev/null
-"$ADB" -s "$serial" shell am start -S -n "$MAIN_ACTIVITY" \
+adb_am_start -S -n "$MAIN_ACTIVITY" \
   --es "$DEBUG_ACTION_EXTRA" link-device \
   --es "$DEBUG_OWNER_EXTRA" "$owner_invite" \
   "${android_fips_args[@]}" >/dev/null
@@ -373,7 +465,7 @@ if ! wait_for_android_authorized "$linked_device" "$LINK_TIMEOUT_SECS"; then
   exit 1
 fi
 
-"$ADB" -s "$serial" shell am start -n "$MAIN_ACTIVITY" \
+adb_am_start -n "$MAIN_ACTIVITY" \
   --es "$DEBUG_ACTION_EXTRA" start-sync \
   "${android_fips_args[@]}" >/dev/null
 

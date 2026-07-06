@@ -11,7 +11,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.DocumentsContract
-import android.system.Os
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -29,7 +28,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
-import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.util.concurrent.Executors
@@ -68,7 +66,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        applyDebugEnvironment(intent)
+        AndroidDebugSupport.applyEnvironment(this, intent)
         refreshAndroidCalendarSyncEnabled()
         selfUpdateManager =
             AndroidSelfUpdateManager(
@@ -304,7 +302,7 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
-        applyDebugEnvironment(intent)
+        AndroidDebugSupport.applyEnvironment(this, intent)
         handleLaunchIntent(intent)
     }
 
@@ -340,7 +338,7 @@ class MainActivity : ComponentActivity() {
                     nativeHandle = handle
                     installed = true
                     stateFlow.value = initialState
-                    writeDebugState(initialJson)
+                    AndroidDebugSupport.writeState(this@MainActivity, initialJson)
                     IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, initialState)
                     refresh(::autoStartSyncIfNeeded)
                     refreshJob = lifecycleScope.launch {
@@ -399,7 +397,7 @@ class MainActivity : ComponentActivity() {
         debugJson: String? = null,
     ) {
         stateFlow.value = state
-        writeDebugState(debugJson)
+        AndroidDebugSupport.writeState(this, debugJson)
         IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, state)
         maybeRunAndroidCalendarAutoSync(state)
         onState?.invoke(state)
@@ -450,7 +448,7 @@ class MainActivity : ComponentActivity() {
                     val state = stateFromJson(json)
                     withContext(Dispatchers.Main) {
                         stateFlow.value = state
-                        writeDebugState(json)
+                        AndroidDebugSupport.writeState(this@MainActivity, json)
                         IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, state)
                         backupCheckProgressFlow.value = BackupCheckProgress(
                             checked = index + 1,
@@ -867,14 +865,14 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        when (intent?.getStringExtra(DEBUG_ACTION_EXTRA)) {
+        when (intent?.getStringExtra(AndroidDebugSupport.ACTION_EXTRA)) {
             "create-profile" -> dispatch(NativeActions.createProfile("Android smoke"))
             "link-device" -> {
-                val owner = intent.getStringExtra(DEBUG_OWNER_EXTRA).orEmpty()
+                val owner = intent.getStringExtra(AndroidDebugSupport.OWNER_EXTRA).orEmpty()
                 dispatch(NativeActions.linkDevice(owner, "Android smoke"))
             }
             "approve-device" -> {
-                val request = intent.getStringExtra(DEBUG_REQUEST_EXTRA).orEmpty()
+                val request = intent.getStringExtra(AndroidDebugSupport.REQUEST_EXTRA).orEmpty()
                 dispatch(NativeActions.approveDevice(request, "Android smoke"))
             }
             "add-root" -> dispatch(
@@ -884,37 +882,9 @@ class MainActivity : ComponentActivity() {
                 ),
             )
             "start-sync" -> dispatch(NativeActions.startSync())
-            "dump-provider-list" -> writeDebugProviderList()
+            "dump-provider-list" -> AndroidDebugSupport.writeProviderList(this)
+            "probe-network" -> AndroidDebugSupport.writeNetworkProbe(this, lifecycleScope, intent)
             "refresh" -> refresh()
-        }
-    }
-
-    private fun applyDebugEnvironment(intent: Intent?) {
-        if (!BuildConfig.DEBUG) return
-        val extras = intent?.extras ?: return
-        extras.keySet()
-            .filter { it.startsWith(DEBUG_ENV_EXTRA_PREFIX) }
-            .forEach { key ->
-                val value = extras.getString(key) ?: return@forEach
-                runCatching {
-                    Os.setenv(key, value, true)
-                }
-            }
-    }
-
-    private fun writeDebugState(jsonText: String?) {
-        if (!BuildConfig.DEBUG) return
-        if (jsonText.isNullOrBlank()) return
-        runCatching {
-            File(filesDir, DEBUG_STATE_FILE).writeText(jsonText)
-        }
-    }
-
-    private fun writeDebugProviderList() {
-        if (!BuildConfig.DEBUG) return
-        runCatching {
-            File(filesDir, DEBUG_PROVIDER_LIST_FILE)
-                .writeText(NativeCore.providerListJson(filesDir.absolutePath))
         }
     }
 
@@ -948,12 +918,6 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
-        const val DEBUG_ACTION_EXTRA = "to.iris.drive.DEBUG_ACTION"
-        const val DEBUG_OWNER_EXTRA = "to.iris.drive.DEBUG_OWNER"
-        const val DEBUG_REQUEST_EXTRA = "to.iris.drive.DEBUG_REQUEST"
-        const val DEBUG_STATE_FILE = "debug-state.json"
-        const val DEBUG_PROVIDER_LIST_FILE = "debug-provider-list.json"
-        private const val DEBUG_ENV_EXTRA_PREFIX = "IRIS_DRIVE_"
         private const val DOCUMENTS_ROOT_DOCUMENT_ID = "root"
         private const val ANDROID_CALENDAR_SYNC_CHECK_INTERVAL_MS = 60_000L
     }
