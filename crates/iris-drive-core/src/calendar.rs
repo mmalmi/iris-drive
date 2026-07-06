@@ -459,11 +459,15 @@ pub fn root_propfind_multistatus(href: &str, principal_href: &str, home_href: &s
 
 fn collection_prop_response(href: &str, data: &CalendarData) -> String {
     let collection_tag = calendar_collection_ctag(data);
+    let sync_token = calendar_sync_token(data);
     format!(
-        "<D:response><D:href>{}</D:href><D:propstat><D:prop><D:displayname>{}</D:displayname><D:resourcetype><D:collection/><C:calendar/></D:resourcetype><C:supported-calendar-component-set><C:comp name=\"VEVENT\"/></C:supported-calendar-component-set><D:current-user-privilege-set><D:privilege><D:read/></D:privilege><D:privilege><D:write/></D:privilege></D:current-user-privilege-set><D:getctag>{}</D:getctag></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat><D:propstat><D:prop><D:sync-token/></D:prop><D:status>HTTP/1.1 404 Not Found</D:status></D:propstat></D:response>",
+        "<D:response><D:href>{}</D:href><D:propstat><D:prop><D:displayname>{}</D:displayname><D:resourcetype><D:collection/><C:calendar/></D:resourcetype><D:getcontenttype>text/calendar; charset=utf-8</D:getcontenttype><D:getetag>{}</D:getetag><C:calendar-description>{}</C:calendar-description><C:supported-calendar-component-set><C:comp name=\"VEVENT\"/></C:supported-calendar-component-set><D:supported-report-set><D:supported-report><D:report><C:calendar-query/></D:report></D:supported-report><D:supported-report><D:report><C:calendar-multiget/></D:report></D:supported-report><D:supported-report><D:report><D:sync-collection/></D:report></D:supported-report></D:supported-report-set><D:current-user-privilege-set><D:privilege><D:read/></D:privilege><D:privilege><D:write/></D:privilege></D:current-user-privilege-set><CS:getctag>{}</CS:getctag><D:sync-token>{}</D:sync-token><IC:calendar-color symbolic-color=\"custom\">#AC7F5E</IC:calendar-color><IC:calendar-order>0</IC:calendar-order></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
         xml_escape(href),
         xml_escape(&data.title),
         xml_escape(&collection_tag),
+        xml_escape(&data.title),
+        xml_escape(&collection_tag),
+        xml_escape(&sync_token),
     )
 }
 
@@ -477,7 +481,7 @@ fn event_prop_response(href: &str, event: &CalendarEvent) -> String {
 
 fn multistatus(responses: &str) -> String {
     format!(
-        "<?xml version=\"1.0\" encoding=\"utf-8\"?><D:multistatus xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">{responses}</D:multistatus>"
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?><D:multistatus xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\" xmlns:CS=\"http://calendarserver.org/ns/\" xmlns:IC=\"http://apple.com/ns/ical/\">{responses}</D:multistatus>"
     )
 }
 

@@ -66,6 +66,53 @@ async fn gateway_caldav_put_report_get_and_delete_round_trip_calendar_event() {
         "{apple_proppatch}"
     );
 
+    let apple_collection_propfind = http_request(
+        server.local_addr(),
+        "PROPFIND",
+        "localhost",
+        &calendar_href,
+        &[("Depth", "0"), ("Content-Type", "application/xml")],
+        br#"<?xml version="1.0" encoding="UTF-8"?><A:propfind xmlns:A="DAV:"><A:prop><C:getctag xmlns:C="http://calendarserver.org/ns/"/><A:sync-token/></A:prop></A:propfind>"#,
+    )
+    .await;
+    assert!(
+        apple_collection_propfind.starts_with("HTTP/1.1 207 Multi-Status"),
+        "{apple_collection_propfind}"
+    );
+    assert!(
+        apple_collection_propfind.contains("xmlns:CS=\"http://calendarserver.org/ns/\""),
+        "{apple_collection_propfind}"
+    );
+    assert!(
+        apple_collection_propfind.contains("<CS:getctag>"),
+        "{apple_collection_propfind}"
+    );
+    assert!(
+        apple_collection_propfind
+            .contains("<D:getcontenttype>text/calendar; charset=utf-8</D:getcontenttype>"),
+        "{apple_collection_propfind}"
+    );
+    assert!(
+        apple_collection_propfind.contains("<D:getetag>&quot;"),
+        "{apple_collection_propfind}"
+    );
+    assert!(
+        apple_collection_propfind.contains("<D:supported-report-set>"),
+        "{apple_collection_propfind}"
+    );
+    assert!(
+        !apple_collection_propfind.contains("<D:getctag>"),
+        "{apple_collection_propfind}"
+    );
+    assert!(
+        apple_collection_propfind.contains("<D:sync-token>urn:iris-drive:caldav-sync:"),
+        "{apple_collection_propfind}"
+    );
+    assert!(
+        !apple_collection_propfind.contains("HTTP/1.1 404 Not Found"),
+        "{apple_collection_propfind}"
+    );
+
     let put = http_request(
         server.local_addr(),
         "PUT",

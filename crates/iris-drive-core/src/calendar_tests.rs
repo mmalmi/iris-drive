@@ -128,6 +128,10 @@ fn caldav_collection_tag_changes_when_events_change() {
         collection_propfind_multistatus(&data, "/caldav/calendars/iris/calendar/", "0");
 
     assert_ne!(empty, with_event);
+    assert!(with_event.contains("xmlns:CS=\"http://calendarserver.org/ns/\""));
+    assert!(with_event.contains("<CS:getctag>"));
+    assert!(with_event.contains("<D:sync-token>urn:iris-drive:caldav-sync:"));
+    assert!(!with_event.contains("<D:getctag>"));
     assert!(!empty.contains("event-123"));
     assert!(!with_event.contains("event-123"));
 }
