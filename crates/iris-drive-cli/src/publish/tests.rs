@@ -729,6 +729,71 @@ fn direct_root_heartbeat_uses_single_hinted_attempt_with_local_throttle() {
 }
 
 #[test]
+fn direct_root_state_request_reply_includes_cached_remote_roots() {
+    let mut exchange = DirectRootExchange::default();
+    let local = DirectRootEvent {
+        key: "drive-root:local:main:8:local-hash:local-key:local,remote".to_string(),
+        event_id: "local-event".to_string(),
+        kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
+        json: "{\"id\":\"local\"}".to_string(),
+    };
+    let remote = DirectRootEvent {
+        key: "drive-root:remote:main:9:remote-hash:remote-key:local,remote".to_string(),
+        event_id: "remote-event".to_string(),
+        kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
+        json: "{\"id\":\"remote\"}".to_string(),
+    };
+
+    exchange.cache_event(remote.clone());
+    let events = exchange.state_request_events_for_publish(vec![local.clone()]);
+
+    assert_eq!(events.len(), 2);
+    let local_reply = events
+        .iter()
+        .find(|event| event.event.event_id == local.event_id)
+        .unwrap();
+    assert_eq!(
+        local_reply.source,
+        DirectRootPublishSource::StateRequestReply
+    );
+    let cached_reply = events
+        .iter()
+        .find(|event| event.event.event_id == remote.event_id)
+        .unwrap();
+    assert_eq!(
+        cached_reply.source,
+        DirectRootPublishSource::CachedStateRequestReply
+    );
+    assert_eq!(
+        direct_root_publish_attempts_for_source(
+            &remote.key,
+            DirectRootPublishSource::CachedStateRequestReply,
+        ),
+        1
+    );
+    assert!(!should_publish_direct_root_hint(
+        &remote.key,
+        DirectRootPublishSource::CachedStateRequestReply,
+    ));
+}
+
+#[test]
+fn direct_root_periodic_state_requests_are_throttled() {
+    let mut exchange = DirectRootExchange::default();
+    let now = std::time::Instant::now();
+
+    assert!(exchange.should_publish_state_request("scope", now));
+    assert!(!exchange.should_publish_state_request(
+        "scope",
+        now + std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS - 1),
+    ));
+    assert!(exchange.should_publish_state_request(
+        "scope",
+        now + std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS),
+    ));
+}
+
+#[test]
 fn direct_root_publish_includes_profile_roster_ops() {
     let config_dir = tempfile::tempdir().unwrap();
     let account = Profile::create(config_dir.path(), Some("native".to_string())).unwrap();

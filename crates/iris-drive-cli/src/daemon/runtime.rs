@@ -729,6 +729,19 @@ pub(crate) fn cmd_daemon(
                             json!({"event": "direct_root_mesh_error", "trigger": "peer_refresh", "error": format!("{error:#}")})
                         );
                     }
+                    if let Err(error) = direct_roots
+                        .request_current_state_from_peers(
+                            config_dir,
+                            fips_blocks.as_deref(),
+                            "periodic_peer_refresh",
+                        )
+                        .await
+                    {
+                        println!(
+                            "{}",
+                            json!({"event": "direct_root_state_request_error", "trigger": "periodic_peer_refresh", "error": format!("{error:#}")})
+                        );
+                    }
                     enqueue_pending_root_sync_followups(
                         config_dir,
                         fips_blocks.clone(),

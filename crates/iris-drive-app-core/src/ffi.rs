@@ -2128,6 +2128,12 @@ async fn run_app_key_link_exchange_async(
     if let Err(error) = direct_roots.announce_current_state(config_dir, &sync).await {
         tracing::warn!(error = %error, "native direct-root FIPS exchange failed");
     }
+    if let Err(error) = direct_roots
+        .request_current_state_from_peers(config_dir, &sync)
+        .await
+    {
+        tracing::warn!(error = %error, "native direct-root state request failed");
+    }
     if let Err(error) = direct_roots.drain_mesh_events(config_dir, &sync).await {
         tracing::warn!(error = %error, "native direct-root FIPS mesh drain failed");
     }
@@ -2156,6 +2162,12 @@ async fn run_app_key_link_exchange_async(
                 }
                 if let Err(error) = direct_roots.announce_current_state(config_dir, &sync).await {
                     tracing::warn!(error = %error, "native direct-root FIPS exchange failed");
+                }
+                if let Err(error) = direct_roots
+                    .request_current_state_from_peers(config_dir, &sync)
+                    .await
+                {
+                    tracing::warn!(error = %error, "native direct-root state request failed");
                 }
             }
             message = sync.recv_mesh_pubsub_event() => {

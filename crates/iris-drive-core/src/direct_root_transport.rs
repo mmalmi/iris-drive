@@ -18,6 +18,7 @@ pub const DIRECT_ROOT_MESH_STREAM_PREFIX: &str = "iris-drive/root-events/v1";
 
 const DIRECT_ROOT_EVENT_CACHE_CAP: usize = 128;
 const DIRECT_ROOT_REPUBLISH_INTERVAL_SECS: u64 = 5;
+const DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS: u64 = 10;
 const DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS: u64 = 300;
 const DIRECT_ROOT_DOWNLOAD_TIMEOUT_SECS: u64 = 8;
 
@@ -67,6 +68,7 @@ enum DirectRootPublishSource {
     LocalHeartbeat,
     CachedRelay,
     StateRequestReply,
+    CachedStateRequestReply,
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -112,6 +114,7 @@ pub struct DirectRootExchange {
     known_mesh_peers: BTreeSet<String>,
     known_publish_peers: BTreeSet<String>,
     next_mesh_publish_seq: u64,
+    state_request_times: BTreeMap<String, Instant>,
 }
 
 impl DirectRootExchange {
@@ -179,10 +182,9 @@ impl DirectRootExchange {
         let root_scope_id = state.root_scope_id();
         self.subscribe_profile_stream(&root_scope_id, sync).await;
         let stream = direct_root_mesh_stream(&root_scope_id);
-        let events = self.local_root_events_for_publish(
+        let events = self.state_request_events_for_publish(
             build_current_direct_root_events(config_dir, config, state)
                 .map_err(|error| format!("{error:#}"))?,
-            DirectRootPublishSource::StateRequestReply,
         );
         let now = Instant::now();
         for publish_event in events {
@@ -190,6 +192,53 @@ impl DirectRootExchange {
                 .await?;
         }
         self.prune_published_keys();
+        Ok(())
+    }
+
+    pub async fn request_current_state_from_peers(
+        &mut self,
+        config_dir: &Path,
+        sync: &FsFipsBlockSync,
+    ) -> Result<(), String> {
+        let config = AppConfig::load_or_default(config_path_in(config_dir))
+            .map_err(|error| format!("loading config: {error}"))?;
+        let Some(state) = config.profile.as_ref() else {
+            return Ok(());
+        };
+        let root_scope_id = state.root_scope_id();
+        let now = Instant::now();
+        if !self.should_publish_state_request(&root_scope_id, now) {
+            tracing::debug!(root_scope_id, "native direct-root state request throttled");
+            return Ok(());
+        }
+        self.subscribe_profile_stream(&root_scope_id, sync).await;
+        let bytes = encode_direct_root_state_request_frame(&root_scope_id)
+            .map_err(|error| format!("encoding direct-root state request: {error}"))?;
+        match sync
+            .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, bytes.clone())
+            .await
+        {
+            Ok(sent_peers) => tracing::debug!(
+                root_scope_id,
+                sent_peers,
+                "requested current direct-root state over FIPS"
+            ),
+            Err(error) => tracing::warn!(
+                root_scope_id,
+                error = %error,
+                "requesting current direct-root state over FIPS failed"
+            ),
+        }
+        let stream = direct_root_mesh_stream(&root_scope_id);
+        let seq = self.next_mesh_publish_seq();
+        let publish = sync.publish_mesh_pubsub(stream.clone(), seq, bytes).await;
+        tracing::debug!(
+            root_scope_id,
+            stream,
+            seq,
+            sent_peers = publish.sent_peers,
+            "requested current direct-root state over FIPS mesh"
+        );
         Ok(())
     }
 
@@ -489,6 +538,28 @@ impl DirectRootExchange {
         true
     }
 
+    fn should_publish_state_request(&mut self, root_scope_id: &str, now: Instant) -> bool {
+        if self
+            .state_request_times
+            .get(root_scope_id)
+            .is_some_and(|last| {
+                now.duration_since(*last)
+                    < Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS)
+            })
+        {
+            return false;
+        }
+        self.state_request_times
+            .insert(root_scope_id.to_string(), now);
+        while self.state_request_times.len() > DIRECT_ROOT_EVENT_CACHE_CAP {
+            let Some(oldest) = self.state_request_times.keys().next().cloned() else {
+                break;
+            };
+            self.state_request_times.remove(&oldest);
+        }
+        true
+    }
+
     fn remember_seen_key(&mut self, key: String) {
         self.seen_keys.insert(key);
         while self.seen_keys.len() > DIRECT_ROOT_EVENT_CACHE_CAP {
@@ -576,6 +647,47 @@ impl DirectRootExchange {
                 source,
             })
             .collect()
+    }
+
+    fn state_request_events_for_publish(
+        &self,
+        local_events: Vec<DirectRootEvent>,
+    ) -> Vec<DirectRootPublishEvent> {
+        let mut events = Vec::with_capacity(local_events.len() + self.cached_events.len());
+        let mut keys = BTreeSet::new();
+        let mut local_slots = BTreeMap::new();
+        for event in local_events {
+            let event = self.event_for_publish(event);
+            keys.insert(event.key.clone());
+            if let Some(slot) = direct_root_cache_slot(&event.key) {
+                local_slots.insert(slot.family.clone(), slot);
+                events.push(DirectRootPublishEvent {
+                    event,
+                    source: DirectRootPublishSource::StateRequestReply,
+                });
+            }
+        }
+        events.extend(
+            self.cached_events
+                .values()
+                .filter(|event| {
+                    if keys.contains(&event.key) {
+                        return false;
+                    }
+                    let Some(slot) = direct_root_cache_slot(&event.key) else {
+                        return false;
+                    };
+                    local_slots
+                        .get(&slot.family)
+                        .is_none_or(|local_slot| direct_root_slot_is_newer(&slot, local_slot))
+                })
+                .cloned()
+                .map(|event| DirectRootPublishEvent {
+                    event,
+                    source: DirectRootPublishSource::CachedStateRequestReply,
+                }),
+        );
+        events
     }
 
     fn should_cache_event_as_latest(&self, incoming_key: &str) -> bool {
@@ -865,7 +977,11 @@ fn direct_root_republish_interval_secs_for_source(
     key: &str,
     source: DirectRootPublishSource,
 ) -> u64 {
-    if source == DirectRootPublishSource::StateRequestReply && direct_root_cache_slot(key).is_some()
+    if matches!(
+        source,
+        DirectRootPublishSource::StateRequestReply
+            | DirectRootPublishSource::CachedStateRequestReply
+    ) && direct_root_cache_slot(key).is_some()
     {
         return 2;
     }
@@ -883,6 +999,11 @@ fn direct_root_publish_throttle_key(key: &str, source: DirectRootPublishSource) 
     if source == DirectRootPublishSource::StateRequestReply && direct_root_cache_slot(key).is_some()
     {
         return format!("state-request:{key}");
+    }
+    if source == DirectRootPublishSource::CachedStateRequestReply
+        && direct_root_cache_slot(key).is_some()
+    {
+        return format!("state-request-cached:{key}");
     }
     if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
         return format!("cached-relay:{key}");
@@ -1942,6 +2063,46 @@ mod tests {
     }
 
     #[test]
+    fn direct_root_state_request_reply_includes_cached_remote_roots() {
+        let mut exchange = DirectRootExchange::default();
+        let local = DirectRootEvent {
+            key: "drive-root:local:main:8:local-hash:local-key:local,remote".to_string(),
+            event_id: "local-event".to_string(),
+            event_json: "{\"id\":\"local\"}".to_string(),
+        };
+        let remote = DirectRootEvent {
+            key: "drive-root:remote:main:9:remote-hash:remote-key:local,remote".to_string(),
+            event_id: "remote-event".to_string(),
+            event_json: "{\"id\":\"remote\"}".to_string(),
+        };
+
+        exchange.cache_event(remote.clone());
+        let events = exchange.state_request_events_for_publish(vec![local.clone()]);
+
+        assert_eq!(events.len(), 2);
+        let local_reply = events
+            .iter()
+            .find(|event| event.event.event_id == local.event_id)
+            .unwrap();
+        assert_eq!(
+            local_reply.source,
+            DirectRootPublishSource::StateRequestReply
+        );
+        let cached_reply = events
+            .iter()
+            .find(|event| event.event.event_id == remote.event_id)
+            .unwrap();
+        assert_eq!(
+            cached_reply.source,
+            DirectRootPublishSource::CachedStateRequestReply
+        );
+        assert!(!should_publish_direct_root_hint(
+            &remote.key,
+            DirectRootPublishSource::CachedStateRequestReply,
+        ));
+    }
+
+    #[test]
     fn direct_root_cached_relay_roots_publish_newer_sequence_immediately() {
         let mut exchange = DirectRootExchange::default();
         let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
@@ -1995,6 +2156,37 @@ mod tests {
             key,
             DirectRootPublishSource::StateRequestReply,
             now + Duration::from_secs(3)
+        ));
+        assert!(exchange.should_publish_candidate_key(
+            key,
+            DirectRootPublishSource::CachedStateRequestReply,
+            now + Duration::from_millis(500)
+        ));
+        assert!(!exchange.should_publish_candidate_key(
+            key,
+            DirectRootPublishSource::CachedStateRequestReply,
+            now + Duration::from_secs(1)
+        ));
+        assert!(exchange.should_publish_candidate_key(
+            key,
+            DirectRootPublishSource::CachedStateRequestReply,
+            now + Duration::from_secs(3)
+        ));
+    }
+
+    #[test]
+    fn direct_root_periodic_state_requests_are_throttled() {
+        let mut exchange = DirectRootExchange::default();
+        let now = Instant::now();
+
+        assert!(exchange.should_publish_state_request("scope", now));
+        assert!(!exchange.should_publish_state_request(
+            "scope",
+            now + Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS - 1),
+        ));
+        assert!(exchange.should_publish_state_request(
+            "scope",
+            now + Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS),
         ));
     }
 
