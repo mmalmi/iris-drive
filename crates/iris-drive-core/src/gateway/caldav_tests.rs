@@ -52,6 +52,20 @@ async fn gateway_caldav_put_report_get_and_delete_round_trip_calendar_event() {
     assert!(options.starts_with("HTTP/1.1 204 No Content"), "{options}");
     assert!(options.to_ascii_lowercase().contains("dav:"), "{options}");
 
+    let apple_proppatch = http_request(
+        server.local_addr(),
+        "PROPPATCH",
+        "localhost",
+        &calendar_href,
+        &[("Content-Type", "application/xml")],
+        br#"<?xml version="1.0" encoding="UTF-8"?><A:propertyupdate xmlns:A="DAV:"><A:set><A:prop><D:calendar-order xmlns:D="http://apple.com/ns/ical/">0</D:calendar-order></A:prop></A:set></A:propertyupdate>"#,
+    )
+    .await;
+    assert!(
+        apple_proppatch.starts_with("HTTP/1.1 204 No Content"),
+        "{apple_proppatch}"
+    );
+
     let put = http_request(
         server.local_addr(),
         "PUT",
@@ -76,6 +90,59 @@ async fn gateway_caldav_put_report_get_and_delete_round_trip_calendar_event() {
     assert!(report.starts_with("HTTP/1.1 207 Multi-Status"), "{report}");
     assert!(report.contains(&event_href), "{report}");
     assert!(report.contains("SUMMARY:WebDAV bridge"), "{report}");
+
+    let apple_multiget_body = format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?><B:calendar-multiget xmlns:B="urn:ietf:params:xml:ns:caldav"><A:prop xmlns:A="DAV:"><A:getetag/><B:calendar-data/></A:prop><A:href xmlns:A="DAV:">{event_href}</A:href></B:calendar-multiget>"#
+    );
+    let apple_multiget = http_request(
+        server.local_addr(),
+        "REPORT",
+        "localhost",
+        &calendar_href,
+        &[("Depth", "1"), ("Content-Type", "application/xml")],
+        apple_multiget_body.as_bytes(),
+    )
+    .await;
+    assert!(
+        apple_multiget.starts_with("HTTP/1.1 207 Multi-Status"),
+        "{apple_multiget}"
+    );
+    assert!(apple_multiget.contains(&event_href), "{apple_multiget}");
+    assert!(
+        apple_multiget.contains("SUMMARY:WebDAV bridge"),
+        "{apple_multiget}"
+    );
+
+    let apple_sync_collection = http_request(
+        server.local_addr(),
+        "REPORT",
+        "localhost",
+        &calendar_href,
+        &[("Depth", "1"), ("Content-Type", "application/xml")],
+        br#"<?xml version="1.0" encoding="UTF-8"?><A:sync-collection xmlns:A="DAV:"><A:sync-token>"old-token"</A:sync-token><A:sync-level>1</A:sync-level><A:prop><A:getetag/><A:getcontenttype/></A:prop></A:sync-collection>"#,
+    )
+    .await;
+    assert!(
+        apple_sync_collection.starts_with("HTTP/1.1 207 Multi-Status"),
+        "{apple_sync_collection}"
+    );
+    assert!(
+        apple_sync_collection.contains("<D:sync-token>"),
+        "{apple_sync_collection}"
+    );
+    assert!(
+        apple_sync_collection.contains("urn:iris-drive:caldav-sync:"),
+        "{apple_sync_collection}"
+    );
+    assert!(
+        apple_sync_collection.contains(&event_href),
+        "{apple_sync_collection}"
+    );
+    assert!(
+        apple_sync_collection
+            .contains("<D:getcontenttype>text/calendar; charset=utf-8</D:getcontenttype>"),
+        "{apple_sync_collection}"
+    );
 
     let get = http_request(
         server.local_addr(),
