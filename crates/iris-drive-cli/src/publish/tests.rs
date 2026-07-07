@@ -786,6 +786,38 @@ fn direct_root_state_request_reply_includes_cached_remote_roots() {
 }
 
 #[test]
+fn direct_root_state_request_reply_throttle_is_per_target_peer() {
+    let mut exchange = DirectRootExchange::default();
+    let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
+    let now = std::time::Instant::now();
+
+    assert!(exchange.should_publish_candidate_key_for_target(
+        key,
+        DirectRootPublishSource::CachedStateRequestReply,
+        Some("peer-a"),
+        now
+    ));
+    assert!(!exchange.should_publish_candidate_key_for_target(
+        key,
+        DirectRootPublishSource::CachedStateRequestReply,
+        Some("peer-a"),
+        now + std::time::Duration::from_millis(500)
+    ));
+    assert!(exchange.should_publish_candidate_key_for_target(
+        key,
+        DirectRootPublishSource::CachedStateRequestReply,
+        Some("peer-b"),
+        now + std::time::Duration::from_millis(500)
+    ));
+    assert!(exchange.should_publish_candidate_key_for_target(
+        key,
+        DirectRootPublishSource::StateRequestReply,
+        Some("peer-a"),
+        now + std::time::Duration::from_millis(500)
+    ));
+}
+
+#[test]
 fn direct_root_periodic_state_requests_are_throttled() {
     let mut exchange = DirectRootExchange::default();
     let now = std::time::Instant::now();
