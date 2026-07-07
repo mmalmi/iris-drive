@@ -725,7 +725,7 @@ async fn ensure_parent_dirs<S: Store>(
     Ok(root)
 }
 
-async fn remove_visible_path_if_present<S: Store>(
+pub(crate) async fn remove_visible_path_if_present<S: Store>(
     tree: &HashTree<S>,
     root: &Cid,
     path: &str,
@@ -740,9 +740,26 @@ async fn remove_visible_path_if_present<S: Store>(
     if entries.iter().all(|entry| entry.name != name) {
         return Ok(root.clone());
     }
-    tree.remove_entry(root, &parent, name)
+    let mut root = tree
+        .remove_entry(root, &parent, name)
         .await
-        .map_err(Into::into)
+        .map_err(IndexError::from)?;
+    for depth in (1..=parent.len()).rev() {
+        let dir_path = &parent[..depth];
+        let dir_cid = match resolve_dir(tree, &root, dir_path).await {
+            Ok(dir_cid) => dir_cid,
+            Err(IndexError::Tree(HashTreeError::PathNotFound(_))) => continue,
+            Err(error) => return Err(error),
+        };
+        if !tree.list_directory(&dir_cid).await?.is_empty() {
+            continue;
+        }
+        root = tree
+            .remove_entry(&root, &parent[..depth - 1], parent[depth - 1])
+            .await
+            .map_err(IndexError::from)?;
+    }
+    Ok(root)
 }
 
 fn split_visible_path(path: &str) -> Result<(Vec<&str>, &str), IndexError> {
