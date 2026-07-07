@@ -10,8 +10,8 @@ crates/iris-drive-cli/src/daemon/runtime.rs 1100 CLI daemon runtime is legacy mo
 crates/iris-drive-cli/src/drive.rs 1050 CLI drive command surface is legacy monolith pending command split.
 crates/iris-drive-cli/src/shares.rs 1350 CLI share command surface needs a later command/test split.
 crates/iris-drive-cli/src/profile.rs 1150 CLI profile command surface already exceeds default; pending command/test split.
-crates/iris-drive-cli/src/publish/direct_root.rs 1720 Direct-root publish path includes targeted hint/state-reply throttling; pending protocol/helper split.
-crates/iris-drive-cli/src/publish/tests.rs 1220 Direct-root throttling coverage shares CLI publish fixtures; pending focused test-module split.
+crates/iris-drive-cli/src/publish/direct_root.rs 1720 Direct-root publish path includes v0.1.18 hint/reply throttling hardening; pending protocol/helper split.
+crates/iris-drive-cli/src/publish/tests.rs 1230 Direct-root release-hardening coverage shares CLI publish fixtures and v0.1.18 hint throttling checks; pending focused test-module split.
 crates/iris-drive-cli/src/status.rs 1150 CLI status normalization already exceeds default; pending status module split.
 crates/iris-drive-cli/tests/cli_e2e.rs 1050 CLI e2e scenarios are legacy monolith pending scenario split.
 crates/iris-drive-cli/tests/daemon_sync_matrix/harness.rs 1150 Live daemon matrix harness includes bounded CLI/refresh diagnostics; pending helper-module split.
@@ -31,7 +31,7 @@ crates/iris-drive-core/src/relay_sync/tests.rs 1510 Relay/app-key/share sync cov
 crates/iris-drive-core/src/share_actions.rs 1100 Share action dispatcher needs a later action-module split.
 crates/iris-drive-core/src/sharing.rs 5200 Share roster, key epoch, and shortcut model needs a later module/test split.
 crates/iris-drive-core/src/fips_sync.rs 1100 FIPS sync runtime needs a later transport/state split.
-ios/Sources/IrisDriveMobileModel.swift 2520 Legacy iOS model includes FileProvider, browser gateway, approval refresh, and foreground sync throttling; pending FileProvider/model split.
+ios/Sources/IrisDriveMobileModel.swift 2520 Legacy iOS model includes FileProvider, browser gateway, approval refresh plumbing, and v0.1.18 foreground sync gating; pending FileProvider/model split.
 ios/Sources/IrisDriveRootView.swift 2800 Legacy iOS SwiftUI shell includes setup, drive, sharing, and browser views; pending view split.
 ios/UITests/IrisDriveIOSUITests.swift 1160 iOS UI smoke scenarios are legacy monolith pending scenario split; current onboarding coverage is slightly over the old cap.
 linux/src/actions.rs 1500 Legacy Linux action handlers now include desktop startup settings; split pending dialog/action modules.

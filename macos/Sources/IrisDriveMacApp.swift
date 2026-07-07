@@ -14,7 +14,7 @@ private let irisDriveControlPanelWindowID = "control-panel"
 private let irisDriveFileProviderRuntimeFileName = "fileprovider-runtime.json"
 private let irisDriveFileProviderPathIdentifierPrefix = "path:"
 let irisDriveFileProviderRegistrationIdentityKey = "fileProviderRegistrationIdentity"
-private let irisDriveAppManagedDaemonStatusRefreshMinimumInterval: TimeInterval = 10
+let irisDriveAppManagedDaemonStatusRefreshMinimumInterval: TimeInterval = 10
 private let irisDriveShowControlPanelNotification =
     Notification.Name("to.iris.drive.showControlPanel")
 private let irisDriveShowDriveFolderNotification =

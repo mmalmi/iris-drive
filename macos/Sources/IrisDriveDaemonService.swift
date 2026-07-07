@@ -38,7 +38,7 @@ extension AppDelegate {
             if IrisDriveStatus.shared.setupComplete {
                 prepareFileProviderRuntime(paths: paths, idrive: idrive)
             }
-            startStatusRefreshTimer(interval: 5.0)
+            startStatusRefreshTimer(interval: irisDriveAppManagedDaemonStatusRefreshMinimumInterval)
             startExternalDaemonStatusWatcher(paths: paths)
             refreshStatus()
         } catch {
