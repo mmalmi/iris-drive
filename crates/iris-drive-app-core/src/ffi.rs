@@ -550,6 +550,12 @@ impl NativeAppRuntime {
             NativeAppAction::DemoteAdmin { app_key_pubkey } => {
                 self.set_device_admin_role(&app_key_pubkey, false);
             }
+            NativeAppAction::RenameDevice {
+                app_key_pubkey,
+                label,
+            } => {
+                self.rename_device(&app_key_pubkey, &label);
+            }
             NativeAppAction::AddRelay { url } => self.add_relay(&url),
             NativeAppAction::RemoveRelay { url } => self.remove_relay(&url),
             NativeAppAction::ResetRelays => self.reset_relays(),
@@ -3695,6 +3701,7 @@ mod app_key_link_flow_tests;
 mod backup_tests;
 #[cfg(test)]
 mod browser_gateway_tests;
+mod device_actions;
 #[cfg(test)]
 mod idle_tests;
 #[cfg(test)]

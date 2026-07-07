@@ -317,6 +317,37 @@ pub(crate) fn cmd_demote_admin(config_dir: &std::path::Path, device: &str) -> Re
     set_device_admin_role(config_dir, device, false)
 }
 
+pub(crate) fn cmd_rename_app_key(
+    config_dir: &std::path::Path,
+    device: &str,
+    label: &str,
+) -> Result<()> {
+    let app_key_hex = normalize_pubkey(device).context("parsing AppKey pubkey")?;
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let state = config
+        .profile
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
+    let mut profile = Profile::load(state, config_dir).context("loading profile")?;
+    let snap = profile
+        .rename_app_key(&app_key_hex, label.to_owned())
+        .context("renaming AppKey")?;
+    let label = snap
+        .app_actor(&app_key_hex)
+        .and_then(|actor| actor.label.clone())
+        .unwrap_or_default();
+    config.profile = Some(profile.state.clone());
+    config.save(config_path_in(config_dir))?;
+    println!(
+        "{}",
+        json!({
+            "app_key_npub": pubkey_npub(&app_key_hex),
+            "label": label,
+        })
+    );
+    Ok(())
+}
+
 fn set_device_admin_role(
     config_dir: &std::path::Path,
     device: &str,

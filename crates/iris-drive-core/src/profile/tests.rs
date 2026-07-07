@@ -861,6 +861,90 @@ fn approve_adds_device_to_roster() {
 }
 
 #[test]
+fn admin_can_rename_authorized_device_labels() {
+    let dir = tempdir().unwrap();
+    let mut acct = Profile::create(dir.path(), Some("Mac".into())).unwrap();
+    let new_device = fresh_app_key_pubkey();
+    acct.approve_app_key(&new_device, Some("phone".into()))
+        .unwrap();
+
+    let snap = acct
+        .rename_app_key(&new_device, "  iPhone   16  ".into())
+        .unwrap();
+    let renamed = snap.app_actor(&new_device).unwrap();
+    assert_eq!(renamed.label.as_deref(), Some("iPhone 16"));
+    assert_eq!(renamed.role, AppActorRole::Member);
+
+    let latest_event = Event::from_json(
+        &acct
+            .state
+            .profile_roster_ops
+            .last()
+            .expect("rename roster op")
+            .event_json,
+    )
+    .unwrap();
+    assert!(!latest_event.as_json().contains("iPhone 16"));
+    let encrypted_labels =
+        crate::nostr_identity::encrypted_device_label_payloads_from_nostr_identity_roster_op_event(
+            &latest_event,
+        );
+    assert_eq!(encrypted_labels.len(), 1);
+    let labels =
+        decrypt_drive_device_labels_with_dck(&encrypted_labels[0], &acct.current_dck().unwrap())
+            .unwrap()
+            .labels;
+    assert_eq!(
+        labels.get(&new_device).map(String::as_str),
+        Some("iPhone 16")
+    );
+
+    let reloaded = Profile::load(acct.state.clone(), dir.path()).unwrap();
+    assert_eq!(
+        reloaded
+            .state
+            .app_keys
+            .as_ref()
+            .unwrap()
+            .app_actor(&new_device)
+            .and_then(|device| device.label.as_deref()),
+        Some("iPhone 16")
+    );
+}
+
+#[test]
+fn admin_rename_updates_current_app_key_label() {
+    let dir = tempdir().unwrap();
+    let mut acct = Profile::create(dir.path(), Some("Mac".into())).unwrap();
+    let current = acct.state.app_key_pubkey.clone();
+
+    acct.rename_app_key(&current, "Studio Mac".into()).unwrap();
+
+    assert_eq!(acct.state.app_key_label.as_deref(), Some("Studio Mac"));
+    assert_eq!(
+        acct.state
+            .app_keys
+            .as_ref()
+            .unwrap()
+            .app_actor(&current)
+            .and_then(|device| device.label.as_deref()),
+        Some("Studio Mac")
+    );
+}
+
+#[test]
+fn admin_rename_rejects_empty_label() {
+    let dir = tempdir().unwrap();
+    let mut acct = Profile::create(dir.path(), Some("Mac".into())).unwrap();
+    let current = acct.state.app_key_pubkey.clone();
+
+    match acct.rename_app_key(&current, "   ".into()) {
+        Err(ProfileError::InvalidAppKeyLabel) => {}
+        other => panic!("expected InvalidAppKeyLabel, got {other:?}"),
+    }
+}
+
+#[test]
 fn approve_without_admin_authority_errors() {
     let dir = tempdir().unwrap();
     // Use a real x-only pubkey hex; the test only ever fails on the authority

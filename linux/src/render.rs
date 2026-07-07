@@ -29,6 +29,11 @@ pub(crate) fn render_peers(model: &AppRef, state: &NativeAppState) {
     let list = &model.ui.peers;
     clear_list(list);
     let app_actors = &state.ui.app_actors;
+    let can_admin = state
+        .ui
+        .profile
+        .as_ref()
+        .is_some_and(|profile| profile.can_admin_profile);
     let device_actors = app_actors
         .iter()
         .filter(|actor| actor.actor_kind == "device")
@@ -41,7 +46,7 @@ pub(crate) fn render_peers(model: &AppRef, state: &NativeAppState) {
         list.append(&simple_row("No devices yet", ""));
     } else {
         for actor in device_actors {
-            append_peer_actor_row(model, list, actor, true);
+            append_peer_actor_row(model, list, actor, true, can_admin);
         }
     }
     if !recovery_key_actors.is_empty() {
@@ -50,7 +55,7 @@ pub(crate) fn render_peers(model: &AppRef, state: &NativeAppState) {
             &recovery_key_actors.len().to_string(),
         ));
         for actor in recovery_key_actors {
-            append_peer_actor_row(model, list, actor, false);
+            append_peer_actor_row(model, list, actor, false, can_admin);
         }
     }
 }
@@ -65,10 +70,16 @@ pub(crate) fn render_add_device_section(model: &AppRef, state: &NativeAppState) 
         1 => "Add Device (1 request)".to_string(),
         count => format!("Add Device ({count} requests)"),
     };
-    model.ui.add_device_expander.set_label(Some(&expander_label));
+    model
+        .ui
+        .add_device_expander
+        .set_label(Some(&expander_label));
 
     clear_list(&model.ui.add_device_requests);
-    model.ui.add_device_requests.set_visible(!requests.is_empty());
+    model
+        .ui
+        .add_device_requests
+        .set_visible(!requests.is_empty());
     for request in requests {
         model
             .ui
@@ -142,6 +153,7 @@ fn append_peer_actor_row(
     list: &gtk::ListBox,
     actor: &iris_drive_app_core::state::UiAppActor,
     show_status_dot: bool,
+    can_admin: bool,
 ) {
     let title = if actor.display_label.is_empty() {
         "Device"
@@ -178,6 +190,7 @@ fn append_peer_actor_row(
         show_status_dot,
         app_key_pubkey,
         actor.is_current_app_key,
+        can_admin && actor.actor_kind == "device",
         actor.can_appoint_admin,
         actor.can_demote_admin,
         actor.can_revoke,
@@ -675,6 +688,7 @@ pub(crate) fn peer_row(
     show_status_dot: bool,
     app_key_pubkey: &str,
     is_current_device: bool,
+    can_rename: bool,
     can_appoint_admin: bool,
     can_demote_admin: bool,
     can_revoke: bool,
@@ -726,6 +740,17 @@ pub(crate) fn peer_row(
             copy_text(&model, &app_key_pubkey, "Device key copied");
         });
         body.append(&copy);
+    }
+
+    if can_rename {
+        let rename = icon_button("document-edit-symbolic", "Rename device");
+        let model = Rc::clone(model);
+        let app_key_pubkey = app_key_pubkey.to_string();
+        let title = title.to_string();
+        rename.connect_clicked(move |_| {
+            show_rename_device_dialog(&model, app_key_pubkey.clone(), title.clone());
+        });
+        body.append(&rename);
     }
 
     if can_appoint_admin {

@@ -184,6 +184,9 @@ class MainActivity : ComponentActivity() {
                 onDemoteAdmin = { devicePubkey ->
                     dispatch(NativeActions.demoteAdmin(devicePubkey))
                 },
+                onRenameDevice = { devicePubkey, label ->
+                    dispatch(NativeActions.renameDevice(devicePubkey, label))
+                },
                 onLogout = {
                     IrisDriveBackgroundSync.cancel(applicationContext)
                     stopSyncService()

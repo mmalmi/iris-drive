@@ -1200,6 +1200,16 @@ final class IrisDriveMobileModel: ObservableObject {
         ])
     }
 
+    func renameDevice(id: String, label: String) {
+        let label = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !label.isEmpty else { return }
+        dispatch([
+            "type": "rename_device",
+            "app_key_pubkey": id,
+            "label": label,
+        ])
+    }
+
     func logout() {
         let before = configIdentitySnapshot()
         cancelBackgroundSync()

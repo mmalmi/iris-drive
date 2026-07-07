@@ -105,6 +105,38 @@ fn revoke_command_can_use_recovery_secret() {
     assert!(state.can_admin_profile());
 }
 
+#[test]
+fn app_keys_rename_command_updates_device_label() {
+    let dir = tempdir().unwrap();
+    let mut profile = Profile::create(dir.path(), Some("native".into())).unwrap();
+    let linked_app_key = nostr_sdk::Keys::generate().public_key().to_hex();
+    profile
+        .approve_app_key(&linked_app_key, Some("phone".into()))
+        .unwrap();
+    let mut config = AppConfig {
+        profile: Some(profile.state.clone()),
+        ..AppConfig::default()
+    };
+    config.upsert_drive(Drive::primary(profile.state.profile_id.to_string()));
+    config.save(config_path_in(dir.path())).unwrap();
+
+    cmd_rename_app_key(dir.path(), &linked_app_key, "iPhone").unwrap();
+
+    let saved = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+    let state = saved.profile.expect("profile saved");
+    let profile = Profile::load(state, dir.path()).unwrap();
+    assert_eq!(
+        profile
+            .state
+            .app_keys
+            .as_ref()
+            .unwrap()
+            .app_actor(&linked_app_key)
+            .and_then(|device| device.label.as_deref()),
+        Some("iPhone")
+    );
+}
+
 #[tokio::test]
 async fn app_key_link_app_message_records_inbound_request_for_owner_admin() {
     let config_dir = tempdir().unwrap();

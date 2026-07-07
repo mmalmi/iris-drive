@@ -2542,6 +2542,8 @@ private struct PeerRow: View {
     let controller: AppDelegate
     @State private var expanded = false
     @State private var showDeleteConfirmation = false
+    @State private var showRenameDialog = false
+    @State private var renameLabel = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -2608,8 +2610,16 @@ private struct PeerRow: View {
                     if let published = peer.publishedAt {
                         DetailRow(label: "Updated", value: irisDriveDateString(published))
                     }
-                    if canManagePeer {
+                    if canRenamePeer || canManagePeer {
                         HStack(spacing: 8) {
+                            if canRenamePeer {
+                                Button {
+                                    renameLabel = title
+                                    showRenameDialog = true
+                                } label: {
+                                    Label("Rename", systemImage: "pencil")
+                                }
+                            }
                             if peer.role == "admin" {
                                 if adminCount > 1 {
                                     Button {
@@ -2652,6 +2662,13 @@ private struct PeerRow: View {
         } message: {
             Text("This removes the device from Iris Drive and rotates access keys.")
         }
+        .alert("Rename Device", isPresented: $showRenameDialog) {
+            TextField("Device name", text: $renameLabel)
+            Button("Save") {
+                controller.renameDevice(peer.npub, label: renameLabel)
+            }
+            Button("Cancel", role: .cancel) {}
+        }
     }
 
     private var title: String {
@@ -2672,6 +2689,10 @@ private struct PeerRow: View {
 
     private var canManagePeer: Bool {
         canManageDevices && !peer.isCurrentDevice && peer.role != "recovery"
+    }
+
+    private var canRenamePeer: Bool {
+        canManageDevices && peer.isDeviceActor
     }
 
     private var peerOnlineForDisplay: Bool {

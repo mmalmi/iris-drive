@@ -770,6 +770,8 @@ private struct DevicesView: View {
     @State private var showingAddDevice = false
     @State private var showingAddRecoveryKey = false
     @State private var devicePendingDelete: IrisDriveDevice?
+    @State private var devicePendingRename: IrisDriveDevice?
+    @State private var deviceRenameLabel = ""
 
     private var deviceActors: [IrisDriveDevice] {
         model.devices.filter(\.isDeviceActor)
@@ -818,6 +820,29 @@ private struct DevicesView: View {
             AddRecoveryKeySheet(model: model, isPresented: $showingAddRecoveryKey)
         }
         .alert(
+            "Rename Device",
+            isPresented: Binding(
+                get: { devicePendingRename != nil },
+                set: { presented in
+                    if !presented {
+                        devicePendingRename = nil
+                    }
+                }
+            ),
+            presenting: devicePendingRename
+        ) { device in
+            TextField("Device name", text: $deviceRenameLabel)
+            Button("Save") {
+                model.renameDevice(id: device.id, label: deviceRenameLabel)
+                devicePendingRename = nil
+                deviceRenameLabel = ""
+            }
+            Button("Cancel", role: .cancel) {
+                devicePendingRename = nil
+                deviceRenameLabel = ""
+            }
+        }
+        .alert(
             "Remove Device?",
             isPresented: Binding(
                 get: { devicePendingDelete != nil },
@@ -843,6 +868,7 @@ private struct DevicesView: View {
 
     @ViewBuilder
     private func deviceRow(_ device: IrisDriveDevice, showPresence: Bool) -> some View {
+        let canRename = model.canAdminProfile && device.isDeviceActor
         DisclosureGroup {
             if device.isCurrentDevice {
                 VStack(alignment: .leading, spacing: 6) {
@@ -867,8 +893,15 @@ private struct DevicesView: View {
                     .foregroundStyle(.secondary)
                     .textSelection(.enabled)
             }
-            if device.canAppointAdmin || device.canDemoteAdmin || device.canRevoke {
+            if canRename || device.canAppointAdmin || device.canDemoteAdmin || device.canRevoke {
                 HStack {
+                    if canRename {
+                        Button {
+                            beginRenaming(device)
+                        } label: {
+                            Label("Rename", systemImage: "pencil")
+                        }
+                    }
                     if device.canAppointAdmin {
                         Button {
                             model.appointAdmin(id: device.id)
@@ -908,6 +941,13 @@ private struct DevicesView: View {
             }
         }
         .swipeActions {
+            if canRename {
+                Button {
+                    beginRenaming(device)
+                } label: {
+                    Label("Rename", systemImage: "pencil")
+                }
+            }
             if device.canAppointAdmin {
                 Button {
                     model.appointAdmin(id: device.id)
@@ -930,6 +970,11 @@ private struct DevicesView: View {
                 }
             }
         }
+    }
+
+    private func beginRenaming(_ device: IrisDriveDevice) {
+        deviceRenameLabel = device.label
+        devicePendingRename = device
     }
 
     private func deviceSubtitle(_ device: IrisDriveDevice, includeConnection: Bool) -> String {

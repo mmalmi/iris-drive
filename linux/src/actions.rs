@@ -1097,6 +1097,73 @@ pub(crate) fn show_delete_device_dialog(model: &AppRef, device_npub: String, lab
     dialog.present();
 }
 
+pub(crate) fn show_rename_device_dialog(model: &AppRef, device_npub: String, label: String) {
+    let dialog = gtk::Window::builder()
+        .application(&model.application)
+        .title("Rename Device")
+        .modal(true)
+        .default_width(360)
+        .build();
+    if let Some(parent) = model.application.active_window() {
+        dialog.set_transient_for(Some(&parent));
+    }
+
+    let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
+    body.set_margin_top(18);
+    body.set_margin_bottom(18);
+    body.set_margin_start(18);
+    body.set_margin_end(18);
+
+    let title = gtk::Label::new(Some("Rename Device"));
+    title.add_css_class("title-2");
+    title.set_xalign(0.0);
+    body.append(&title);
+
+    let name = setup_entry("Device name");
+    name.set_text(&label);
+    body.append(&name);
+
+    let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
+    buttons.set_halign(gtk::Align::End);
+    let cancel = pill_button("Cancel");
+    let save = primary_button("Save");
+    buttons.append(&cancel);
+    buttons.append(&save);
+    body.append(&buttons);
+
+    {
+        let dialog = dialog.clone();
+        cancel.connect_clicked(move |_| dialog.close());
+    }
+
+    let save_action = Rc::new({
+        let model = Rc::clone(model);
+        let dialog = dialog.clone();
+        let device_npub = device_npub.clone();
+        let name = name.clone();
+        move || match rename_device(&device_npub, name.text().trim()) {
+            Ok(()) => {
+                model.ui.notice.set_text("Device renamed");
+                refresh(&model);
+                dialog.close();
+            }
+            Err(error) => model.ui.notice.set_text(&error),
+        }
+    });
+
+    {
+        let save_action = Rc::clone(&save_action);
+        save.connect_clicked(move |_| save_action());
+    }
+    {
+        let save_action = Rc::clone(&save_action);
+        name.connect_activate(move |_| save_action());
+    }
+
+    dialog.set_child(Some(&body));
+    dialog.present();
+}
+
 pub(crate) fn open_drive_folder(model: &AppRef) {
     if !ensure_daemon_running(model) {
         model.ui.notice.set_text("Could not start sync");

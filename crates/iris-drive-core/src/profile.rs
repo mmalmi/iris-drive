@@ -67,6 +67,8 @@ pub enum ProfileError {
     AppKeyAlreadyAuthorized,
     #[error("AppKey not in roster")]
     AppKeyNotInRoster,
+    #[error("AppKey label is required")]
+    InvalidAppKeyLabel,
     #[error("cannot remove the last admin AppKey")]
     CannotRemoveLastAdmin,
     #[error("no AppKeys projection yet")]
@@ -1719,6 +1721,65 @@ impl Profile {
         self.set_device_role(app_key_pubkey_hex, AppActorRole::Member)
     }
 
+    pub fn rename_app_key(
+        &mut self,
+        app_key_pubkey_hex: &str,
+        label: String,
+    ) -> Result<&AppKeysProjection, ProfileError> {
+        if !self.state.can_admin_profile() {
+            return Err(ProfileError::NoAdminAuthority);
+        }
+        let label = normalize_app_key_label(&label).ok_or(ProfileError::InvalidAppKeyLabel)?;
+        let (already_has_label, role) = {
+            let snap = self
+                .state
+                .app_keys
+                .as_ref()
+                .ok_or(ProfileError::NoCurrentAppKeysProjection)?;
+            let current = snap
+                .app_actor(app_key_pubkey_hex)
+                .ok_or(ProfileError::AppKeyNotInRoster)?;
+            (
+                current.label.as_deref() == Some(label.as_str()),
+                current.role,
+            )
+        };
+        let current_app_key_label_changed = app_key_pubkey_hex == self.state.app_key_pubkey
+            && self.state.app_key_label.as_deref() != Some(label.as_str());
+        if already_has_label && !current_app_key_label_changed {
+            return self.current_app_keys_projection();
+        }
+
+        let capabilities = match role {
+            AppActorRole::Admin => NostrIdentityCapabilities::app_admin(),
+            AppActorRole::Member => NostrIdentityCapabilities::app_writer(),
+        };
+        let now = next_profile_timestamp(&self.state);
+        let dck = self.current_dck()?;
+        let secret_epoch =
+            next_profile_secret_epoch(&self.state.profile_projection()).saturating_sub(1);
+        let encrypted_device_labels = self.encrypted_device_labels_for_dck(
+            &dck,
+            secret_epoch,
+            now,
+            BTreeMap::from([(app_key_pubkey_hex.to_string(), label.clone())]),
+            &[],
+        )?;
+        self.append_profile_roster_op_with_device_labels(
+            NostrIdentityRosterOp::SetCapabilities {
+                pubkey: app_key_pubkey_hex.to_string(),
+                capabilities,
+            },
+            now,
+            encrypted_device_labels,
+        )?;
+        if app_key_pubkey_hex == self.state.app_key_pubkey {
+            self.state.app_key_label = Some(label);
+        }
+        self.sync_app_keys_from_profile_with_device_labels();
+        self.current_app_keys_projection()
+    }
+
     fn set_device_role(
         &mut self,
         app_key_pubkey_hex: &str,
@@ -1777,8 +1838,17 @@ impl Profile {
         op: NostrIdentityRosterOp,
         created_at: i64,
     ) -> Result<(), ProfileError> {
-        let parents = nostr_identity_roster_parent_ids(&self.state.profile_roster_ops);
         let encrypted_device_labels = self.encrypted_current_device_labels(created_at)?;
+        self.append_profile_roster_op_with_device_labels(op, created_at, encrypted_device_labels)
+    }
+
+    fn append_profile_roster_op_with_device_labels(
+        &mut self,
+        op: NostrIdentityRosterOp,
+        created_at: i64,
+        encrypted_device_labels: Option<String>,
+    ) -> Result<(), ProfileError> {
+        let parents = nostr_identity_roster_parent_ids(&self.state.profile_roster_ops);
         let signed = signed_profile_roster_op_with_parents_and_device_labels(
             self.app_key.keys(),
             self.state.profile_id,

@@ -306,6 +306,13 @@ internal object NativeActions {
             .put("app_key_pubkey", devicePubkey)
             .toString()
 
+    fun renameDevice(devicePubkey: String, label: String): String =
+        JSONObject()
+            .put("type", "rename_device")
+            .put("app_key_pubkey", devicePubkey)
+            .put("label", label)
+            .toString()
+
     fun addRelay(url: String): String =
         JSONObject()
             .put("type", "add_relay")

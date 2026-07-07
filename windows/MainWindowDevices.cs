@@ -237,6 +237,95 @@ public partial class MainWindow
         await RefreshAsync();
     }
 
+    private async void RenameDevice_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not WpfButton { Tag: PeerRow peer } ||
+            string.IsNullOrWhiteSpace(peer.DeviceNpub))
+        {
+            return;
+        }
+
+        var nameBox = new WpfTextBox
+        {
+            Text = peer.Title,
+            MinHeight = 34,
+            MinWidth = 320,
+            Margin = new Thickness(0, 4, 0, 10),
+        };
+        var notice = new TextBlock
+        {
+            Foreground = (WpfBrush)FindResource("IrisMutedBrush"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 12),
+        };
+        var cancel = new WpfButton { Content = "Cancel", MinWidth = 92 };
+        var save = new WpfButton
+        {
+            Content = "Save",
+            Style = (Style)FindResource("PrimaryButton"),
+            MinWidth = 92,
+            Margin = new Thickness(8, 0, 0, 0),
+        };
+        var buttons = new StackPanel
+        {
+            Orientation = WpfOrientation.Horizontal,
+            HorizontalAlignment = WpfHorizontalAlignment.Right,
+        };
+        buttons.Children.Add(cancel);
+        buttons.Children.Add(save);
+
+        var body = new StackPanel { Margin = new Thickness(18), Width = 380 };
+        body.Children.Add(new TextBlock
+        {
+            Text = "Rename Device",
+            FontSize = 20,
+            FontWeight = FontWeights.SemiBold,
+            Margin = new Thickness(0, 0, 0, 10),
+        });
+        body.Children.Add(new TextBlock { Text = "Device name", Style = (Style)FindResource("FieldName") });
+        body.Children.Add(nameBox);
+        body.Children.Add(notice);
+        body.Children.Add(buttons);
+
+        var dialog = new Window
+        {
+            Title = "Rename Device",
+            Owner = this,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            ResizeMode = ResizeMode.NoResize,
+            SizeToContent = SizeToContent.WidthAndHeight,
+            Content = body,
+        };
+
+        async Task SaveAsync()
+        {
+            try
+            {
+                await service.RenameDeviceAsync(peer.DeviceNpub, nameBox.Text);
+                NoticeText.Text = "Device renamed";
+                await RefreshAsync();
+                dialog.Close();
+            }
+            catch (Exception error)
+            {
+                notice.Text = error.Message;
+            }
+        }
+
+        cancel.Click += (_, _) => dialog.Close();
+        save.Click += async (_, _) => await SaveAsync();
+        nameBox.KeyDown += async (_, key) =>
+        {
+            if (key.Key != Key.Enter)
+            {
+                return;
+            }
+            key.Handled = true;
+            await SaveAsync();
+        };
+        dialog.ShowDialog();
+    }
+
     private async void DeleteDevice_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not WpfButton { Tag: string deviceNpub })

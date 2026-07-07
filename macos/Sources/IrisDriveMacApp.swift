@@ -732,7 +732,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 extra += ["--profile-photo", profilePhotoPath]
             }
         }
-        let args = setupArguments(command: "init", label: "", extra: extra)
+        let args = setupArguments(command: "init", label: defaultDeviceLabel(), extra: extra)
         finishSetup(arguments: args)
     }
 
@@ -742,7 +742,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             updateStatus("Recovery phrase or secret key required")
             return
         }
-        let args = setupArguments(command: "restore", label: "", extra: [recoverySecret, "--force"])
+        let args = setupArguments(
+            command: "restore",
+            label: defaultDeviceLabel(),
+            extra: [recoverySecret, "--force"]
+        )
         finishSetup(arguments: args)
     }
 
@@ -761,13 +765,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             updateStatus("Device link target required")
             return
         }
-        let args = setupArguments(command: "link", label: "", extra: [target, "--force"])
+        let args = setupArguments(command: "link", label: defaultDeviceLabel(), extra: [target, "--force"])
         finishSetup(arguments: args)
     }
 
     func startJoinRequest() {
         dispatchNativeAction(
-            ["type": "start_join_request", "app_key_label": ""],
+            ["type": "start_join_request", "app_key_label": defaultDeviceLabel()],
             progress: "Preparing join request",
             success: "Join request ready",
             restartSyncAfterSuccess: true
@@ -881,6 +885,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func demoteAdmin(_ device: String) {
         setDeviceAdminRole(device, makeAdmin: false)
+    }
+
+    func renameDevice(_ device: String, label: String) {
+        let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
+        let label = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !device.isEmpty else {
+            updateStatus("Device Key required")
+            return
+        }
+        guard !label.isEmpty else {
+            updateStatus("Device name required")
+            return
+        }
+
+        dispatchNativeAction(
+            ["type": "rename_device", "app_key_pubkey": device, "label": label],
+            progress: "Renaming device",
+            success: "Device renamed"
+        )
     }
 
     func deleteDevice(_ device: String) {
@@ -1372,6 +1395,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             arguments += ["--label", label]
         }
         return arguments
+    }
+
+    private func defaultDeviceLabel() -> String {
+        let candidates = [
+            Host.current().localizedName,
+            ProcessInfo.processInfo.hostName,
+        ]
+        for candidate in candidates {
+            let label = candidate?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .split(separator: ".")
+                .first
+                .map(String.init) ?? ""
+            if !label.isEmpty && label.lowercased() != "localhost" {
+                return label
+            }
+        }
+        return "Mac"
     }
 
     private func finishSetup(arguments: [String]) {

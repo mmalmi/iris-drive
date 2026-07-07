@@ -53,6 +53,8 @@ public sealed partial class IrisDriveService
     public Task CreateProfileAsync(string username, string profilePhotoPath)
     {
         var args = new[] { "init", "--force" }.ToList();
+        args.Add("--label");
+        args.Add(DefaultDeviceLabel());
         if (!string.IsNullOrWhiteSpace(username))
         {
             args.Add("--username");
@@ -73,7 +75,7 @@ public sealed partial class IrisDriveService
             throw new InvalidOperationException("Secret key is required.");
         }
 
-        return FinishSetupAsync(new[] { "restore", secret.Trim() });
+        return FinishSetupAsync(new[] { "restore", secret.Trim(), "--label", DefaultDeviceLabel() });
     }
 
     public Task LinkDeviceAsync(string target)
@@ -83,14 +85,14 @@ public sealed partial class IrisDriveService
             throw new InvalidOperationException("Device link target is required.");
         }
 
-        return FinishSetupAsync(new[] { "link", target.Trim() });
+        return FinishSetupAsync(new[] { "link", target.Trim(), "--label", DefaultDeviceLabel() });
     }
 
     public Task StartJoinRequestAsync() => DispatchNativeActionAsync(
         new Dictionary<string, object>
         {
             ["type"] = "start_join_request",
-            ["app_key_label"] = "",
+            ["app_key_label"] = DefaultDeviceLabel(),
         });
 
     public Task<bool> IsCompleteDeviceInviteInputAsync(string input)
@@ -187,6 +189,27 @@ public sealed partial class IrisDriveService
             {
                 ["type"] = "demote_admin",
                 ["app_key_pubkey"] = device.Trim(),
+            });
+    }
+
+    public Task RenameDeviceAsync(string device, string label)
+    {
+        if (string.IsNullOrWhiteSpace(device))
+        {
+            throw new InvalidOperationException("Device Key is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(label))
+        {
+            throw new InvalidOperationException("Device name is required.");
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "rename_device",
+                ["app_key_pubkey"] = device.Trim(),
+                ["label"] = label.Trim(),
             });
     }
 
@@ -662,6 +685,20 @@ public sealed partial class IrisDriveService
     private async Task FinishSetupAsync(string[] arguments)
     {
         await RunAsync(arguments);
+    }
+
+    private static string DefaultDeviceLabel()
+    {
+        var machineName = Environment.MachineName?.Trim() ?? "";
+        var label = string.Join(
+            " ",
+            machineName
+                .Split(new[] { ' ', '\t', '\r', '\n', '.' }, StringSplitOptions.RemoveEmptyEntries)
+                .Take(8));
+        return string.IsNullOrWhiteSpace(label) ||
+            string.Equals(label, "localhost", StringComparison.OrdinalIgnoreCase)
+                ? "Windows PC"
+                : label;
     }
 
     private async Task<string> ResolveShareSourcePathForCreateAsync(string sourcePath)

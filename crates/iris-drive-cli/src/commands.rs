@@ -496,6 +496,14 @@ pub(crate) enum AppKeysCmd {
         /// Device pubkey to demote (npub1... or 64-char hex).
         app_key: String,
     },
+    /// Rename an authorized device.
+    Rename {
+        /// Device pubkey to rename (npub1... or 64-char hex).
+        app_key: String,
+        /// Human-readable device label.
+        #[arg(long)]
+        label: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]

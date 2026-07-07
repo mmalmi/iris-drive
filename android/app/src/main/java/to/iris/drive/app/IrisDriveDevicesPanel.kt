@@ -63,6 +63,7 @@ internal fun DevicesPanel(
     onDeleteDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
     onDemoteAdmin: (String) -> Unit,
+    onRenameDevice: (String, String) -> Unit,
     onCopyDeviceKey: (String) -> Unit,
 ) {
     var request by remember { mutableStateOf("") }
@@ -70,6 +71,8 @@ internal fun DevicesPanel(
     var showApprovalScanner by remember { mutableStateOf(false) }
     var showAddRecoveryKey by remember { mutableStateOf(false) }
     var devicePendingDelete by remember { mutableStateOf<DeviceState?>(null) }
+    var devicePendingRename by remember { mutableStateOf<DeviceState?>(null) }
+    var deviceRenameLabel by remember { mutableStateOf("") }
     var pendingApprovalRequest by remember { mutableStateOf<String?>(null) }
     var lastPromptedApprovalRequest by remember { mutableStateOf("") }
     val deviceActors = remember(devices) { devices.filter { it.isDeviceActor } }
@@ -166,6 +169,11 @@ internal fun DevicesPanel(
             DeviceActorRow(
                 device = device,
                 showStatusDot = true,
+                canRename = canApprove && device.isDeviceActor,
+                onRename = {
+                    deviceRenameLabel = it.displayLabel
+                    devicePendingRename = it
+                },
                 onAppointAdmin = onAppointAdmin,
                 onDemoteAdmin = onDemoteAdmin,
                 onDelete = { devicePendingDelete = it },
@@ -180,6 +188,8 @@ internal fun DevicesPanel(
                 DeviceActorRow(
                     device = device,
                     showStatusDot = false,
+                    canRename = false,
+                    onRename = {},
                     onAppointAdmin = onAppointAdmin,
                     onDemoteAdmin = onDemoteAdmin,
                     onDelete = { devicePendingDelete = it },
@@ -200,6 +210,48 @@ internal fun DevicesPanel(
         )
     }
 
+    devicePendingRename?.let { device ->
+        AlertDialog(
+            onDismissRequest = {
+                devicePendingRename = null
+                deviceRenameLabel = ""
+            },
+            title = { Text("Rename device") },
+            text = {
+                OutlinedTextField(
+                    value = deviceRenameLabel,
+                    onValueChange = { deviceRenameLabel = it },
+                    singleLine = true,
+                    label = { Text("Device name") },
+                )
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        val label = deviceRenameLabel.trim()
+                        if (label.isNotEmpty()) {
+                            onRenameDevice(device.pubkey, label)
+                            devicePendingRename = null
+                            deviceRenameLabel = ""
+                        }
+                    },
+                ) {
+                    Text("Save")
+                }
+            },
+            dismissButton = {
+                TextButton(
+                    onClick = {
+                        devicePendingRename = null
+                        deviceRenameLabel = ""
+                    },
+                ) {
+                    Text("Cancel")
+                }
+            },
+        )
+    }
+
     if (showAddRecoveryKey) {
         AddRecoveryKeyDialog(
             onDismiss = { showAddRecoveryKey = false },
@@ -215,6 +267,8 @@ internal fun DevicesPanel(
 private fun DeviceActorRow(
     device: DeviceState,
     showStatusDot: Boolean,
+    canRename: Boolean,
+    onRename: (DeviceState) -> Unit,
     onAppointAdmin: (String) -> Unit,
     onDemoteAdmin: (String) -> Unit,
     onDelete: (DeviceState) -> Unit,
@@ -256,6 +310,11 @@ private fun DeviceActorRow(
                 }
             } else if (device.detail.isNotBlank()) {
                 Text(device.detail, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        if (canRename) {
+            TextButton(onClick = { onRename(device) }) {
+                Text("Rename")
             }
         }
         if (device.canAppointAdmin) {

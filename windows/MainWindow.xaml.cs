@@ -381,15 +381,15 @@ public partial class MainWindow : Window
         if (devicePeers.Count == 0)
             PeersList.Items.Add(Row("No devices yet", "", ""));
         foreach (var peer in devicePeers)
-            PeersList.Items.Add(PeerListRow(peer));
+            PeersList.Items.Add(PeerListRow(peer, status.CanAdminProfile));
         if (recoveryKeyPeers.Count == 0)
             return;
         PeersList.Items.Add(Row("Recovery Keys", recoveryKeyPeers.Count.ToString(), ""));
         foreach (var peer in recoveryKeyPeers)
-            PeersList.Items.Add(PeerListRow(peer));
+            PeersList.Items.Add(PeerListRow(peer, status.CanAdminProfile));
     }
 
-    private Border PeerListRow(PeerRow peer)
+    private Border PeerListRow(PeerRow peer, bool canAdminProfile)
     {
         var titleBlock = new TextBlock
         {
@@ -454,6 +454,14 @@ public partial class MainWindow : Window
             Orientation = WpfOrientation.Horizontal,
             HorizontalAlignment = WpfHorizontalAlignment.Right,
         };
+
+        if (canAdminProfile && peer.IsDeviceActor)
+        {
+            var rename = PeerActionButton("\uE70F", "Rename device", peer.DeviceNpub);
+            rename.Tag = peer;
+            rename.Click += RenameDevice_Click;
+            actions.Children.Add(rename);
+        }
 
         if (peer.CanAppointAdmin)
         {

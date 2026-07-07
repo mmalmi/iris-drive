@@ -45,6 +45,10 @@ pub enum NativeAppAction {
     DemoteAdmin {
         app_key_pubkey: String,
     },
+    RenameDevice {
+        app_key_pubkey: String,
+        label: String,
+    },
     AddRelay {
         url: String,
     },

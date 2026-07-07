@@ -721,6 +721,8 @@ pub(crate) fn initialize_drive(model: &AppRef) {
 
 pub(crate) fn create_profile(username: &str, photo_path: Option<&str>) -> Result<(), String> {
     let mut args = vec!["init".to_string(), "--force".to_string()];
+    args.push("--label".to_string());
+    args.push(default_device_label());
     let username = username.trim();
     if !username.is_empty() {
         args.push("--username".to_string());
@@ -734,12 +736,17 @@ pub(crate) fn create_profile(username: &str, photo_path: Option<&str>) -> Result
 }
 
 pub(crate) fn restore_profile(recovery_secret: &str) -> Result<(), String> {
-    run_idrive_owned(&["restore".to_string(), recovery_secret.to_string()])
+    run_idrive_owned(&[
+        "restore".to_string(),
+        recovery_secret.to_string(),
+        "--label".to_string(),
+        default_device_label(),
+    ])
 }
 
 pub(crate) fn start_join_request() -> Result<(), String> {
     dispatch_desktop_action(NativeAppAction::StartJoinRequest {
-        app_key_label: String::new(),
+        app_key_label: default_device_label(),
     })
     .map(|_| ())
 }
@@ -749,6 +756,8 @@ pub(crate) fn relink_device(link_target: &str) -> Result<(), String> {
         "link".to_string(),
         link_target.to_string(),
         "--force".to_string(),
+        "--label".to_string(),
+        default_device_label(),
     ])
 }
 
@@ -782,4 +791,46 @@ pub(crate) fn demote_admin(device: &str) -> Result<(), String> {
         app_key_pubkey: device.to_string(),
     })
     .map(|_| ())
+}
+
+pub(crate) fn rename_device(device: &str, label: &str) -> Result<(), String> {
+    dispatch_desktop_action(NativeAppAction::RenameDevice {
+        app_key_pubkey: device.to_string(),
+        label: label.to_string(),
+    })
+    .map(|_| ())
+}
+
+fn default_device_label() -> String {
+    let env_label = ["IRIS_DRIVE_DEVICE_NAME", "HOSTNAME"]
+        .iter()
+        .find_map(|key| std::env::var(key).ok())
+        .and_then(|value| normalize_device_label(&value));
+    if let Some(label) = env_label {
+        return label;
+    }
+    Command::new("hostname")
+        .output()
+        .ok()
+        .filter(|output| output.status.success())
+        .and_then(|output| String::from_utf8(output.stdout).ok())
+        .and_then(|value| normalize_device_label(&value))
+        .unwrap_or_else(|| "Linux PC".to_string())
+}
+
+fn normalize_device_label(value: &str) -> Option<String> {
+    let label = value
+        .trim()
+        .trim_matches('.')
+        .split('.')
+        .next()
+        .unwrap_or_default()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if label.is_empty() || label.eq_ignore_ascii_case("localhost") {
+        None
+    } else {
+        Some(label.chars().take(64).collect())
+    }
 }

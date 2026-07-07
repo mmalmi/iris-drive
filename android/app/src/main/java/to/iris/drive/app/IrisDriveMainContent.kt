@@ -82,6 +82,7 @@ internal fun AuthenticatedContent(
     onDeleteDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
     onDemoteAdmin: (String) -> Unit,
+    onRenameDevice: (String, String) -> Unit,
     onLogout: () -> Unit,
     onAddRelay: (String) -> Unit,
     onRemoveRelay: (String) -> Unit,
@@ -129,6 +130,7 @@ internal fun AuthenticatedContent(
             onDeleteDevice = onDeleteDevice,
             onAppointAdmin = onAppointAdmin,
             onDemoteAdmin = onDemoteAdmin,
+            onRenameDevice = onRenameDevice,
         )
         MainTab.Backups -> BackupsContent(
             padding = padding,
@@ -241,6 +243,7 @@ private fun DevicesContent(
     onDeleteDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
     onDemoteAdmin: (String) -> Unit,
+    onRenameDevice: (String, String) -> Unit,
 ) {
     LazyColumn(
         modifier = Modifier
@@ -264,6 +267,7 @@ private fun DevicesContent(
                 onDeleteDevice = onDeleteDevice,
                 onAppointAdmin = onAppointAdmin,
                 onDemoteAdmin = onDemoteAdmin,
+                onRenameDevice = onRenameDevice,
                 onCopyDeviceKey = { onCopyText("Device Key", it) },
             )
         }
