@@ -2,12 +2,14 @@
 use super::*;
 
 mod backups;
+mod config_load;
 mod network;
 mod peers;
 
 #[cfg(test)]
 pub(crate) use backups::backup_target_status;
 pub(crate) use backups::{backup_targets_status, configured_backup_targets_status};
+use config_load::{daemon_status_config, status_config_from_path};
 use iris_drive_core::app_key_summary::{
     AppKeyConnectivity, app_key_roster_rows, primary_status_for_setup_state, primary_status_label,
     setup_label_for_setup_state, setup_state_flags, sync_status_label,
@@ -25,8 +27,9 @@ use peers::{app_key_actors_for_status, peer_statuses};
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
     let initialized = already_initialized(config_dir);
-    let mut config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))
-        .with_context(|| format!("reading config at {}", config_path_in(config_dir).display()))?;
+    let config_path = config_path_in(config_dir);
+    let mut config = status_config_from_path(&config_path)
+        .with_context(|| format!("reading config at {}", config_path.display()))?;
     ensure_cached_app_key_link_request(&mut config, config_dir)
         .context("ensuring AppKey-link request URL")?;
     let daemon_status = load_daemon_status(config_dir);
@@ -400,23 +403,6 @@ pub(crate) fn current_primary_root_cid(config: &AppConfig) -> Option<String> {
 const DAEMON_STATUS_SCHEMA: u32 = 1;
 const DAEMON_STATUS_FRESH_SECS: i64 = 15;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-struct DaemonStatusConfigFingerprint {
-    exists: bool,
-    modified_nanos: Option<u128>,
-    len: u64,
-}
-
-#[derive(Clone)]
-struct DaemonStatusConfigCacheEntry {
-    fingerprint: DaemonStatusConfigFingerprint,
-    config: AppConfig,
-}
-
-static DAEMON_STATUS_CONFIG_CACHE: std::sync::LazyLock<
-    std::sync::Mutex<BTreeMap<PathBuf, DaemonStatusConfigCacheEntry>>,
-> = std::sync::LazyLock::new(|| std::sync::Mutex::new(BTreeMap::new()));
-
 pub(crate) fn daemon_status_path(config_dir: &Path) -> PathBuf {
     config_dir.join("daemon-status.json")
 }
@@ -522,81 +508,6 @@ pub(crate) fn write_daemon_status(config_dir: &Path, mut payload: Value) -> Valu
         let _ = std::fs::write(daemon_status_path(config_dir), bytes);
     }
     payload
-}
-
-fn daemon_status_config_fingerprint(
-    path: &Path,
-) -> std::result::Result<DaemonStatusConfigFingerprint, iris_drive_core::config::ConfigError> {
-    match std::fs::metadata(path) {
-        Ok(metadata) => {
-            let modified_nanos = metadata
-                .modified()
-                .ok()
-                .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|duration| duration.as_nanos());
-            Ok(DaemonStatusConfigFingerprint {
-                exists: true,
-                modified_nanos,
-                len: metadata.len(),
-            })
-        }
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Ok(DaemonStatusConfigFingerprint {
-                exists: false,
-                modified_nanos: None,
-                len: 0,
-            })
-        }
-        Err(error) => Err(error.into()),
-    }
-}
-
-fn daemon_status_config(
-    config_dir: &Path,
-) -> std::result::Result<AppConfig, iris_drive_core::config::ConfigError> {
-    let path = config_path_in(config_dir);
-    let fingerprint = daemon_status_config_fingerprint(&path)?;
-    if let Ok(cache) = DAEMON_STATUS_CONFIG_CACHE.lock()
-        && let Some(entry) = cache.get(&path)
-        && entry.fingerprint == fingerprint
-    {
-        return Ok(entry.config.clone());
-    }
-
-    let mut config = AppConfig::load_or_default_cached_profile(&path)?;
-    if daemon_status_config_needs_roster_sidecar(&config) {
-        config = AppConfig::load_or_default(&path)?;
-    }
-    hydrate_daemon_status_profile_cache(&mut config);
-    if let Ok(mut cache) = DAEMON_STATUS_CONFIG_CACHE.lock() {
-        cache.insert(
-            path,
-            DaemonStatusConfigCacheEntry {
-                fingerprint,
-                config: config.clone(),
-            },
-        );
-    }
-    Ok(config)
-}
-
-fn daemon_status_config_needs_roster_sidecar(config: &AppConfig) -> bool {
-    config.profile.as_ref().is_some_and(|profile| {
-        !profile.has_profile_roster_evidence()
-            && (profile.app_keys.is_none() || profile.profile_roster_projection.is_none())
-    })
-}
-
-fn hydrate_daemon_status_profile_cache(config: &mut AppConfig) {
-    let Some(profile) = config.profile.as_mut() else {
-        return;
-    };
-    if !profile.has_profile_roster_evidence() {
-        return;
-    }
-    if profile.app_keys.is_none() || profile.profile_roster_projection.is_none() {
-        profile.sync_app_keys_from_profile();
-    }
 }
 
 pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &mut Value) {

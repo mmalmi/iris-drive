@@ -56,6 +56,8 @@ APP_DEBUG_LOG="$APP_DEBUG_LOG_DIR/macos-app-debug.log"
 USER_JOURNEY_OPENED_DRIVE_FOLDER=0
 OWNER_DAEMON_PID=""
 
+source "$ROOT/scripts/macos-smoke-processes.sh"
+
 run_ui_smoke() {
   truthy "${IRIS_DRIVE_MACOS_SMOKE_UI:-0}"
 }
@@ -217,7 +219,7 @@ cleanup() {
   fi
   if [[ -n "$APP_PATH" ]]; then
     terminate_app_process
-    pkill -f "$APP_PATH/Contents/MacOS/idrive daemon" >/dev/null 2>&1 || true
+    terminate_smoke_daemon_processes
   fi
   if run_ui_smoke || run_user_journey_smoke; then
     osascript "$SMOKE_DIR" >/dev/null 2>&1 <<'APPLESCRIPT' || true
@@ -267,31 +269,6 @@ show_recent_logs() {
     2>/dev/null || true
 }
 
-process_command_matches() {
-  local pid="$1"
-  local path_fragment="$2"
-  local command
-
-  command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
-  [[ "$command" == *"$path_fragment"* ]]
-}
-
-app_process_pids() {
-  local pid
-  local path_fragment="$APP_PATH/Contents/MacOS/$APP_PROCESS_NAME"
-
-  [[ -n "${APP_PATH:-}" ]] || return 0
-  pgrep -x "$APP_PROCESS_NAME" 2>/dev/null | while IFS= read -r pid; do
-    if process_command_matches "$pid" "$path_fragment"; then
-      printf '%s\n' "$pid"
-    fi
-  done
-}
-
-app_is_running() {
-  [[ -n "$(app_process_pids)" ]]
-}
-
 wait_for_app_process() {
   local seconds="$1"
 
@@ -317,7 +294,7 @@ assert_app_running() {
 assert_daemon_running() {
   local context="$1"
 
-  if ! pgrep -f "$APP_PATH/Contents/MacOS/idrive.*daemon" >/dev/null 2>&1; then
+  if [[ -z "$(daemon_process_pids)" ]]; then
     echo "FAIL: bundled idrive daemon exited $context." >&2
     show_recent_logs >&2
     exit 1
@@ -328,7 +305,7 @@ wait_for_daemon() {
   local seconds="$1"
 
   for _ in $(seq 1 "$((seconds * 10))"); do
-    if pgrep -f "$APP_PATH/Contents/MacOS/idrive.*daemon" >/dev/null 2>&1; then
+    if [[ -n "$(daemon_process_pids)" ]]; then
       return 0
     fi
     sleep 0.1
@@ -1069,6 +1046,7 @@ fi
 
 terminate_app_process
 uninstall_smoke_daemon_service
+terminate_smoke_daemon_processes
 rm -rf "$SMOKE_APP_DATA"
 if run_create_profile_smoke || run_user_journey_smoke; then
   mkdir_p_or_fail "$SMOKE_HOME"

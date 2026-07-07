@@ -890,7 +890,6 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithTag("tabSettings").activate()
         compose.onNodeWithTag("settingsContent").performScrollToNode(hasTestTag("androidCalendarSyncToggle"))
         compose.onNodeWithTag("androidCalendarSyncToggle").assertIsDisplayed().activate()
-
         assertEquals(listOf(true), syncStates)
     }
 
@@ -965,6 +964,7 @@ class IrisDriveAndroidGuiFlowTest {
                 onDeleteDevice = onDeleteDevice,
                 onAppointAdmin = { _ -> },
                 onDemoteAdmin = { _ -> },
+                onRenameDevice = { _, _ -> },
                 onLogout = {},
                 onAddRelay = { _ -> },
                 onRemoveRelay = { _ -> },

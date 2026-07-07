@@ -77,6 +77,7 @@ run_parallel_checks() {
 }
 
 run_rust_tests() {
+  run cargo build -p idrive --bin idrive
   run cargo test -p idrive --bin idrive --test cli_e2e --test link_input_e2e -- --test-threads=1
   run cargo test -p idrive --test daemon_sync_matrix -- --test-threads=1
 }
@@ -138,7 +139,7 @@ case "$(uname -s)" in
     if ! bool_true "${IRIS_DRIVE_RELEASE_GATE_ANDROID_SKIP:-0}" \
       && [[ "${IRIS_DRIVE_RELEASE_GATE_ANDROID:-1}" != "0" ]]; then
       run just android-build
-      run just android-gui-smoke
+      run env IRIS_DRIVE_ANDROID_KEEP_TEST_APP=true just android-gui-smoke
       if idle_cpu_gate_enabled; then
         run env \
           IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="${IRIS_DRIVE_RELEASE_GATE_ANDROID_IDLE_CPU_ROLES:-app}" \

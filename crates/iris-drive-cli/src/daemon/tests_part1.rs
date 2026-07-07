@@ -212,16 +212,29 @@ fn provider_root_poll_is_safety_sweep_only_without_config_watch() {
 fn provider_root_publish_cache_matches_fingerprint_and_root_key() {
     let fingerprint = ConfigFileFingerprint::for_test(10);
     let other_fingerprint = ConfigFileFingerprint::for_test(11);
-    let root_key = Some("primary:device:root-a".to_string());
-    let other_root_key = Some("primary:device:root-b".to_string());
+    let publish_key = ProviderRootPublishKey {
+        current_root_key: Some("primary:device:root-a".to_string()),
+        profile_roster_key: Some("profile:op-a".to_string()),
+    };
+    let other_root_key = ProviderRootPublishKey {
+        current_root_key: Some("primary:device:root-b".to_string()),
+        profile_roster_key: publish_key.profile_roster_key.clone(),
+    };
+    let other_roster_key = ProviderRootPublishKey {
+        current_root_key: publish_key.current_root_key.clone(),
+        profile_roster_key: Some("profile:op-a,op-b".to_string()),
+    };
     let mut cache = ProviderRootPublishCache::default();
 
-    assert!(!cache.is_current(&fingerprint, root_key.as_ref()));
-    cache.update(fingerprint.clone(), root_key.clone());
+    assert!(!cache.is_current(&fingerprint, &publish_key));
+    cache.update(fingerprint.clone(), publish_key.clone());
 
-    assert!(cache.is_current(&fingerprint, root_key.as_ref()));
-    assert!(!cache.is_current(&other_fingerprint, root_key.as_ref()));
-    assert!(!cache.is_current(&fingerprint, other_root_key.as_ref()));
+    assert!(cache.is_current(&fingerprint, &publish_key));
+    assert!(!cache.is_current(&other_fingerprint, &publish_key));
+    assert!(!cache.is_current(&fingerprint, &other_root_key));
+    assert!(!cache.is_current(&fingerprint, &other_roster_key));
+    assert!(cache.publish_key_matches(&publish_key));
+    assert!(!cache.publish_key_matches(&other_roster_key));
 }
 
 #[test]

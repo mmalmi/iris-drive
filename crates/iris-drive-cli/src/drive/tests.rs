@@ -619,6 +619,118 @@ fn provider_write_does_not_tombstone_unrelated_missing_peer_file() {
 }
 
 #[test]
+fn provider_write_preserves_known_peer_root_with_partial_sidecar_roster() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let account = init_config(config_dir.path());
+    mark_daemon_live(config_dir.path());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let remote =
+        iris_drive_core::identity::Identity::generate(config_dir.path().join("remote.key"))
+            .pubkey_hex();
+    let remote_meta = DriveRootMeta {
+        schema: DriveRootMeta::SCHEMA,
+        drive_id: PRIMARY_DRIVE_ID.into(),
+        app_key_pubkey: remote.clone(),
+        app_key_seq: 1,
+        dck_generation: 1,
+        local_only: false,
+        parents: Vec::new(),
+        observed: BTreeMap::new(),
+        created_at: 100,
+    };
+    let remote_root = runtime.block_on(async {
+        let daemon = Daemon::open(config_dir.path()).unwrap();
+        let remote_dir = tempfile::tempdir().unwrap();
+        std::fs::write(remote_dir.path().join("foreign.txt"), b"from remote").unwrap();
+        iris_drive_core::indexer::index_dir_with_history_and_meta(
+            daemon.tree(),
+            remote_dir.path(),
+            None,
+            remote_meta.created_at,
+            Some(&remote_meta),
+        )
+        .await
+        .unwrap()
+    });
+
+    // Linked devices can learn peer roots before their local sidecar roster is
+    // a complete authority for every root writer. Keep the known peer root in
+    // config while leaving the sidecar roster as the local install's initial op.
+    let mut config =
+        AppConfig::load_or_default_cached_profile(config_path_in(config_dir.path())).unwrap();
+    let mut drive = config.drive(PRIMARY_DRIVE_ID).unwrap().clone();
+    drive.app_key_roots.insert(
+        remote.clone(),
+        AppKeyRootRef::from_meta(
+            remote_root.to_string(),
+            remote_meta.created_at,
+            &remote_meta,
+        ),
+    );
+    config.upsert_drive(drive);
+    config.save(config_path_in(config_dir.path())).unwrap();
+
+    let full = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
+    assert!(
+        full.profile
+            .as_ref()
+            .unwrap()
+            .active_root_writer_app_key_pubkeys()
+            .contains(&account.state.app_key_pubkey)
+    );
+    assert!(
+        !full
+            .profile
+            .as_ref()
+            .unwrap()
+            .active_root_writer_app_key_pubkeys()
+            .contains(&remote),
+        "test setup needs partial roster evidence"
+    );
+
+    let source_dir = tempfile::tempdir().unwrap();
+    let source = source_dir.path().join("local.txt");
+    std::fs::write(&source, b"from local").unwrap();
+
+    cmd_provider(
+        config_dir.path(),
+        ProviderCmd::Write {
+            base_root_cid: None,
+            path: "local.txt".into(),
+            source,
+        },
+    )
+    .unwrap();
+
+    runtime.block_on(async {
+        let daemon = Daemon::open(config_dir.path()).unwrap();
+        let drive = daemon.config().drive(PRIMARY_DRIVE_ID).unwrap();
+        assert!(
+            drive.app_key_roots.contains_key(&remote),
+            "provider write dropped known peer root from config"
+        );
+        let merged = iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
+            .await
+            .unwrap();
+        let paths = merged
+            .view
+            .files
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            paths.contains(&"foreign.txt"),
+            "known peer file should remain visible after local provider write: {merged:#?}"
+        );
+        assert!(paths.contains(&"local.txt"));
+    });
+}
+
+#[test]
 fn provider_import_tombstone_scope_preserves_unrelated_base_file() {
     let config_dir = tempfile::tempdir().unwrap();
     let (_account, remote, remote_meta) = init_config_with_remote_device(config_dir.path());

@@ -890,6 +890,23 @@ pub(crate) fn cmd_daemon(
                             json!({"event": "app_key_link_roster_send_error", "error": format!("{error:#}")})
                         ),
                     }
+                    match publish_provider_root_if_changed(
+                        &client,
+                        config_dir,
+                        &mut last_provider_root_key,
+                        &mut provider_root_publish_cache,
+                        &mut direct_roots,
+                        fips_blocks.as_deref(),
+                        &daemon_tasks,
+                    )
+                    .await
+                    {
+                        Ok(_) => {}
+                        Err(error) => println!(
+                            "{}",
+                            json!({"event": "provider_root_publish_error", "trigger": "app_key_link_timer", "error": format!("{error:#}")})
+                        ),
+                    }
                 }
                 recv = async {
                     if let Some(rx) = direct_app_message_rx.as_mut() {

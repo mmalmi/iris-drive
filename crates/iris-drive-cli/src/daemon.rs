@@ -206,29 +206,56 @@ include!("daemon/app_key_link_backfill.rs");
 #[derive(Debug, Default)]
 struct ProviderRootPublishCache {
     last_config_fingerprint: Option<ConfigFileFingerprint>,
-    last_current_key: ProviderRootKeySnapshot,
+    last_publish_key: ProviderRootPublishKeySnapshot,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-enum ProviderRootKeySnapshot {
+enum ProviderRootPublishKeySnapshot {
     #[default]
     Unknown,
-    Current(Option<String>),
+    Current(ProviderRootPublishKey),
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+struct ProviderRootPublishKey {
+    current_root_key: Option<String>,
+    profile_roster_key: Option<String>,
 }
 
 impl ProviderRootPublishCache {
+    fn fingerprint_matches(&self, fingerprint: &ConfigFileFingerprint) -> bool {
+        self.last_config_fingerprint.as_ref() == Some(fingerprint)
+    }
+
     fn is_current(
         &self,
         fingerprint: &ConfigFileFingerprint,
-        current_key: Option<&String>,
+        publish_key: &ProviderRootPublishKey,
     ) -> bool {
         self.last_config_fingerprint.as_ref() == Some(fingerprint)
-            && self.last_current_key == ProviderRootKeySnapshot::Current(current_key.cloned())
+            && self.last_publish_key == ProviderRootPublishKeySnapshot::Current(publish_key.clone())
     }
 
-    fn update(&mut self, fingerprint: ConfigFileFingerprint, current_key: Option<String>) {
+    fn publish_key_matches(&self, publish_key: &ProviderRootPublishKey) -> bool {
+        self.last_publish_key == ProviderRootPublishKeySnapshot::Current(publish_key.clone())
+    }
+
+    fn update(&mut self, fingerprint: ConfigFileFingerprint, publish_key: ProviderRootPublishKey) {
         self.last_config_fingerprint = Some(fingerprint);
-        self.last_current_key = ProviderRootKeySnapshot::Current(current_key);
+        self.last_publish_key = ProviderRootPublishKeySnapshot::Current(publish_key);
+    }
+}
+
+impl ProviderRootPublishKey {
+    fn from_config(config: &AppConfig, current_root_key: Option<String>) -> Self {
+        Self {
+            current_root_key,
+            profile_roster_key: profile_roster_publish_key(config),
+        }
+    }
+
+    const fn has_publishable_state(&self) -> bool {
+        self.current_root_key.is_some() || self.profile_roster_key.is_some()
     }
 }
 
@@ -243,20 +270,25 @@ async fn publish_provider_root_if_changed(
 ) -> Result<Option<AppConfig>> {
     let config_path = config_path_in(config_dir);
     let config_fingerprint = config_file_fingerprint(&config_path)?;
-    if cache.is_current(&config_fingerprint, last_root_key.as_ref()) {
+    if cache.fingerprint_matches(&config_fingerprint) {
         return Ok(None);
     }
-
     let updated_config = AppConfig::load_or_default(&config_path)?;
     let current_key = current_app_key_root_key(&updated_config);
-    cache.update(config_fingerprint, current_key.clone());
-    if current_key == *last_root_key {
+    let publish_key = ProviderRootPublishKey::from_config(&updated_config, current_key.clone());
+    if cache.is_current(&config_fingerprint, &publish_key) {
         return Ok(None);
     }
+    if cache.publish_key_matches(&publish_key) {
+        cache.update(config_fingerprint, publish_key);
+        last_root_key.clone_from(&current_key);
+        return Ok(None);
+    }
+    cache.update(config_fingerprint, publish_key.clone());
     last_root_key.clone_from(&current_key);
-    let Some(current_key) = current_key else {
+    if !publish_key.has_publishable_state() {
         return Ok(Some(updated_config));
-    };
+    }
     let Some(updated_state) = updated_config.profile.clone() else {
         return Ok(Some(updated_config));
     };
@@ -277,8 +309,9 @@ async fn publish_provider_root_if_changed(
         json!({"root_key": current_key.clone()}),
     ));
     let mut payload = json!({
-            "event": "provider_root_published",
+        "event": "provider_root_published",
             "root_key": current_key,
+            "profile_roster_key": publish_key.profile_roster_key,
             "direct_root_mesh_error": direct_root_mesh_error,
             "publish": {"queued": true, "upload_blossom": true},
     });
@@ -288,6 +321,20 @@ async fn publish_provider_root_if_changed(
     emit_daemon_status_event(config_dir, payload);
 
     Ok(Some(updated_config))
+}
+
+fn profile_roster_publish_key(config: &AppConfig) -> Option<String> {
+    let profile = config.profile.as_ref()?;
+    if profile.profile_roster_ops.is_empty() {
+        return None;
+    }
+    let mut op_ids = profile
+        .profile_roster_ops
+        .iter()
+        .map(|op| op.op_id.as_str())
+        .collect::<Vec<_>>();
+    op_ids.sort_unstable();
+    Some(format!("{}:{}", profile.profile_id, op_ids.join(",")))
 }
 
 async fn primary_drive_status_payload(config_dir: &Path, config: &AppConfig) -> Option<Value> {

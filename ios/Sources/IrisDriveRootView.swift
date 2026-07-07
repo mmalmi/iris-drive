@@ -1105,7 +1105,9 @@ private struct AddDeviceSection: View {
     }
 
     private func prefillUiTestDeviceFields() {
-        let request = iosUiTestValue("IRIS_DRIVE_UI_TEST_LINKED_DEVICE")
+        let requestLink = iosUiTestValue("IRIS_DRIVE_UI_TEST_LINKED_DEVICE_REQUEST")
+        let deviceKey = iosUiTestValue("IRIS_DRIVE_UI_TEST_LINKED_DEVICE")
+        let request = requestLink.isEmpty ? deviceKey : requestLink
         if !request.isEmpty,
            model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             model.approveDeviceKey = request

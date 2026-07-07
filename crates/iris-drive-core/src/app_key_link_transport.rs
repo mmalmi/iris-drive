@@ -224,14 +224,19 @@ pub fn encode_app_key_approval_request(
     device_app_key_keys: &Keys,
     _profile_id: Option<NostrIdentityId>,
     _admin_app_key_pubkey: Option<&str>,
-    _label: Option<&str>,
+    label: Option<&str>,
     _requested_at: u64,
 ) -> Result<String> {
-    encode_compact_nostr_identity_device_approval_request(
+    let mut url = encode_compact_nostr_identity_device_approval_request(
         &device_app_key_keys.public_key().to_hex(),
         Some(APP_KEY_APPROVAL_COMPACT_PREFIX),
     )
-    .context("encoding compact app-key approval request")
+    .context("encoding compact app-key approval request")?;
+    if let Some(label) = normalize_compact_label(label) {
+        url.push_str("&label=");
+        url.push_str(&percent_encode_query_value(&label));
+    }
+    Ok(url)
 }
 
 pub fn parse_app_key_approval_request(input: &str) -> Result<Option<AppKeyApprovalRequest>> {
@@ -280,12 +285,124 @@ fn parse_compact_app_key_approval_request(input: &str) -> Result<Option<AppKeyAp
     else {
         return Ok(None);
     };
+    let label = compact_app_key_approval_query(input)
+        .and_then(|query| query_value(query, "label"))
+        .and_then(|value| normalize_compact_label(Some(value.as_str())));
     Ok(Some(AppKeyApprovalRequest {
         profile_id: None,
         app_key_hex: request.device_app_key_pubkey,
         invite_pubkey: String::new(),
-        label: None,
+        label,
     }))
+}
+
+fn compact_app_key_approval_query(input: &str) -> Option<&str> {
+    let value = input.trim();
+    for prefix in [
+        APP_KEY_APPROVAL_COMPACT_PREFIX,
+        APP_KEY_APPROVAL_COMPACT_ONE_SLASH_PREFIX.trim_end_matches('?'),
+    ] {
+        let Some(rest) = strip_prefix_ignore_ascii_case(value, prefix) else {
+            continue;
+        };
+        let query = rest
+            .strip_prefix('?')?
+            .split('#')
+            .next()
+            .unwrap_or("")
+            .trim();
+        if !query.is_empty() {
+            return Some(query);
+        }
+    }
+    None
+}
+
+fn strip_prefix_ignore_ascii_case<'a>(value: &'a str, prefix: &str) -> Option<&'a str> {
+    (value.len() >= prefix.len() && value[..prefix.len()].eq_ignore_ascii_case(prefix))
+        .then_some(&value[prefix.len()..])
+}
+
+fn query_value(query: &str, name: &str) -> Option<String> {
+    query.split('&').find_map(|part| {
+        let (key, value) = part.split_once('=').unwrap_or((part, ""));
+        key.eq_ignore_ascii_case(name)
+            .then(|| percent_decode_query_value(value))
+    })
+}
+
+fn normalize_compact_label(label: Option<&str>) -> Option<String> {
+    let normalized = label?
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .trim_matches(['.', '-'])
+        .trim()
+        .to_owned();
+    if normalized.is_empty() {
+        return None;
+    }
+    Some(normalized.chars().take(64).collect())
+}
+
+fn percent_encode_query_value(value: &str) -> String {
+    let mut encoded = String::with_capacity(value.len());
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            encoded.push('%');
+            encoded.push(hex_char(byte >> 4));
+            encoded.push(hex_char(byte & 0x0f));
+        }
+    }
+    encoded
+}
+
+fn percent_decode_query_value(value: &str) -> String {
+    let mut out = Vec::with_capacity(value.len());
+    let mut bytes = value.as_bytes().iter().copied();
+    while let Some(byte) = bytes.next() {
+        if byte == b'+' {
+            out.push(b' ');
+        } else if byte == b'%' {
+            let hi = bytes.next();
+            let lo = bytes.next();
+            if let (Some(hi), Some(lo)) = (hi, lo)
+                && let (Some(hi), Some(lo)) = (hex_digit(hi), hex_digit(lo))
+            {
+                out.push((hi << 4) | lo);
+                continue;
+            }
+            out.push(byte);
+            if let Some(hi) = hi {
+                out.push(hi);
+            }
+            if let Some(lo) = lo {
+                out.push(lo);
+            }
+        } else {
+            out.push(byte);
+        }
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+fn hex_digit(byte: u8) -> Option<u8> {
+    match byte {
+        b'0'..=b'9' => Some(byte - b'0'),
+        b'a'..=b'f' => Some(byte - b'a' + 10),
+        b'A'..=b'F' => Some(byte - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn hex_char(nibble: u8) -> char {
+    match nibble {
+        0..=9 => char::from(b'0' + nibble),
+        10..=15 => char::from(b'A' + (nibble - 10)),
+        _ => unreachable!("nibble is masked to four bits"),
+    }
 }
 
 fn starts_with_ignore_ascii_case(value: &str, prefix: &str) -> bool {
@@ -381,6 +498,7 @@ mod tests {
             .expect("request");
         assert_eq!(parsed.profile_id, None);
         assert_eq!(parsed.app_key_hex, linked.state.app_key_pubkey);
+        assert_eq!(parsed.label.as_deref(), Some("Phone"));
         assert!(frame.url.starts_with(APP_KEY_APPROVAL_COMPACT_PREFIX));
         assert!(
             frame.url.len() < 120,
@@ -412,17 +530,16 @@ mod tests {
         assert_eq!(parsed.profile_id, None);
         assert_eq!(parsed.app_key_hex, app_key.public_key().to_hex());
         assert!(parsed.invite_pubkey.is_empty());
-        assert_eq!(parsed.label, None);
+        assert_eq!(parsed.label.as_deref(), Some("Web + Native"));
         assert!(url.starts_with(APP_KEY_APPROVAL_COMPACT_PREFIX));
-        assert!(url.len() < 120, "approval URL was {}", url.len());
+        assert!(url.len() < 160, "approval URL was {}", url.len());
         assert!(!url.contains(&profile_id.to_string()));
         assert!(!url.contains(&admin.to_hex()));
-        assert!(!url.contains("Web"));
         assert!(!url.contains("owner="));
     }
 
     #[test]
-    fn approval_request_round_trips_without_profile_for_manual_join() {
+    fn approval_request_round_trips_label_without_profile_for_manual_join() {
         let app_key = nostr_sdk::Keys::generate();
 
         let url = encode_app_key_approval_request(&app_key, None, None, Some("iPhone"), 123)
@@ -433,7 +550,7 @@ mod tests {
 
         assert_eq!(parsed.profile_id, None);
         assert_eq!(parsed.app_key_hex, app_key.public_key().to_hex());
-        assert_eq!(parsed.label, None);
+        assert_eq!(parsed.label.as_deref(), Some("iPhone"));
         assert!(url.starts_with(APP_KEY_APPROVAL_COMPACT_PREFIX));
         assert!(url.len() < 120, "approval URL was {}", url.len());
     }
@@ -449,6 +566,7 @@ mod tests {
 
         assert_eq!(parsed.profile_id, None);
         assert_eq!(parsed.app_key_hex, app_key_hex);
+        assert_eq!(parsed.label, None);
         assert!(app_key_approval_input_has_prefix(&url));
         assert!(
             parse_app_key_approval_request("iris-drive://app-key-link?app_key=not-a-key").is_err()

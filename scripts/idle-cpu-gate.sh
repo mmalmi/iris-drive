@@ -21,6 +21,7 @@ Environment:
   IRIS_DRIVE_IDLE_CPU_ANDROID_PACKAGE=to.iris.drive
   IRIS_DRIVE_IDLE_CPU_IOS_BUNDLE_ID=fi.siriusbusiness.drive
   IRIS_DRIVE_IDLE_CPU_IOS_DEVICE=<device name or UDID>
+  IRIS_DRIVE_IDLE_CPU_IOS_HOST_APP_MAX=10
   ANDROID_SERIAL / IRIS_DRIVE_ANDROID_DEVICE / IRIS_DRIVE_ANDROID_SERIAL
 USAGE
 }
@@ -247,30 +248,41 @@ PY
     adb_bin="$(resolve_adb)"
     package="${IRIS_DRIVE_IDLE_CPU_ANDROID_PACKAGE:-${IRIS_DRIVE_ANDROID_PACKAGE:-to.iris.drive}}"
     serial="${IRIS_DRIVE_ANDROID_DEVICE:-${IRIS_DRIVE_ANDROID_SERIAL:-${ANDROID_SERIAL:-}}}"
-    adb_args=()
-    if [[ -n "$serial" ]]; then
-      adb_args=(-s "$serial")
-    fi
+    adb_cmd() {
+      if [[ -n "$serial" ]]; then
+        "$adb_bin" -s "$serial" "$@"
+      else
+        "$adb_bin" "$@"
+      fi
+    }
     required_env="${IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES:-app}"
     if [[ ! " ${required_env//,/ } " =~ [[:space:]]app[[:space:]] ]]; then
       echo "[idle-cpu] FAIL: Android exposes app/service CPU under package processes, not separate roles: $required_env" >&2
       exit 1
     fi
     echo "[idle-cpu] warmup ${warmup}s, sample ${duration}s every ${interval}s" >&2
+    if [[ "${IRIS_DRIVE_IDLE_CPU_ANDROID_LAUNCH:-1}" != "0" ]]; then
+      adb_cmd shell monkey -p "$package" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
+    fi
     sleep "$warmup"
     tmp="$(mktemp -t iris-drive-android-idle-cpu.XXXXXX)"
     trap 'rm -f "$tmp"' EXIT
     end=$((SECONDS + duration))
     while (( SECONDS <= end )); do
-      "$adb_bin" "${adb_args[@]}" shell dumpsys cpuinfo 2>/dev/null |
+      sample="$(adb_cmd shell dumpsys cpuinfo 2>/dev/null |
         tr -d '\r' |
         awk -v package="$package" '
           $0 ~ package {
-            gsub("%", "", $1)
+            gsub("[+%]", "", $1)
             if ($1 ~ /^[0-9.]+$/) { total += $1; seen = 1 }
           }
           END { if (seen) print total }
-        ' >>"$tmp" || true
+        ' || true)"
+      if [[ -n "$sample" ]]; then
+        printf '%s\n' "$sample" >>"$tmp"
+      elif adb_cmd shell pidof "$package" >/dev/null 2>&1; then
+        printf '0\n' >>"$tmp"
+      fi
       sleep "$interval"
     done
     python3 - "$tmp" <<'PY'
@@ -318,29 +330,195 @@ PY
       echo "iOS idle CPU gate needs IRIS_DRIVE_IDLE_CPU_IOS_DEVICE or a booted iOS simulator" >&2
       exit 2
     fi
-    if [[ "${IRIS_DRIVE_IDLE_CPU_IOS_LAUNCH:-1}" != "0" ]]; then
-      xcrun simctl launch --terminate-running-process "$ios_device" "$bundle_id" >/dev/null 2>&1 ||
+    launch_ios_app() {
+      xcrun simctl launch "$ios_device" "$bundle_id" >/dev/null 2>&1 ||
         xcrun devicectl device process launch --device "$ios_device" "$bundle_id" >/dev/null 2>&1 ||
         true
+    }
+    run_ios_host_process_sampler() {
+      if [[ "${IRIS_DRIVE_IDLE_CPU_IOS_XCTRACE_REQUIRED:-0}" == "1" ]]; then
+        return 1
+      fi
+      if [[ "${IRIS_DRIVE_IDLE_CPU_IOS_LAUNCH:-1}" != "0" ]]; then
+        launch_ios_app
+      fi
+      echo "[idle-cpu] warmup ${warmup}s, host process delta ${duration}s every ${interval}s on simulator ${ios_device}" >&2
+      python3 - "$ios_device" "$warmup" "$duration" "$interval" <<'PY'
+import json
+import os
+import subprocess
+import sys
+import time
+
+ios_device, warmup, duration, interval = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+device_fragment = f"/CoreSimulator/Devices/{ios_device}/"
+thresholds = {
+    "app": float(os.environ.get("IRIS_DRIVE_IDLE_CPU_IOS_HOST_APP_MAX", os.environ.get("IRIS_DRIVE_IDLE_CPU_APP_MAX", "5"))),
+    "provider": float(os.environ.get("IRIS_DRIVE_IDLE_CPU_PROVIDER_MAX", "3")),
+}
+required_env = os.environ.get("IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES", "").strip()
+required = {item for item in required_env.replace(",", " ").split() if item} or {"app", "provider"}
+
+def classify(command: str):
+    if device_fragment not in command:
+        return None
+    if "/IrisDriveFileProvider.appex/IrisDriveFileProvider" in command:
+        return "provider"
+    if "/Iris Drive.app/Iris Drive" in command and "/PlugIns/" not in command:
+        return "app"
+    return None
+
+def parse_cpu_time(value: str) -> float:
+    days = 0
+    if "-" in value:
+        day_value, value = value.split("-", 1)
+        days = int(day_value)
+    parts = value.split(":")
+    if len(parts) == 3:
+        hours, minutes, seconds = parts
+    elif len(parts) == 2:
+        hours = "0"
+        minutes, seconds = parts
+    else:
+        return float(value)
+    return days * 86400 + int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+def snapshot():
+    output = subprocess.check_output(["ps", "-axo", "pid=,time=,command="], text=True)
+    processes = {}
+    for raw in output.splitlines():
+        parts = raw.strip().split(None, 2)
+        if len(parts) < 3:
+            continue
+        pid, cpu_time, command = parts
+        role = classify(command)
+        if not role:
+            continue
+        try:
+            value = parse_cpu_time(cpu_time)
+        except ValueError:
+            continue
+        processes[int(pid)] = {"role": role, "cpu_seconds": value}
+    return processes
+
+time.sleep(warmup)
+samples = {role: [] for role in thresholds}
+seen = {role: set() for role in thresholds}
+deadline = time.monotonic() + duration
+previous_time = time.monotonic()
+previous = snapshot()
+while time.monotonic() < deadline:
+    time.sleep(interval)
+    now = time.monotonic()
+    current = snapshot()
+    elapsed = max(now - previous_time, 0.001)
+    totals = {role: 0.0 for role in thresholds}
+    observed_roles = set()
+    for pid, process in current.items():
+        role = process["role"]
+        observed_roles.add(role)
+        seen.setdefault(role, set()).add(pid)
+        previous_process = previous.get(pid)
+        if previous_process and previous_process["role"] == role:
+            delta = max(process["cpu_seconds"] - previous_process["cpu_seconds"], 0.0)
+            totals[role] = totals.get(role, 0.0) + (delta / elapsed * 100.0)
+    for role in observed_roles:
+        samples.setdefault(role, []).append(totals.get(role, 0.0))
+    previous = current
+    previous_time = now
+
+summary = {}
+failures = []
+for role in sorted(required | set(samples)):
+    values = samples.get(role, [])
+    if not values:
+        if role in required:
+            failures.append(f"{role}: required simulator process role was not observed")
+        continue
+    avg = sum(values) / len(values)
+    peak = max(values)
+    limit = thresholds.get(role, thresholds["app"])
+    summary[role] = {
+        "avg_cpu": round(avg, 2),
+        "peak_cpu": round(peak, 2),
+        "samples": len(values),
+        "pids": sorted(seen.get(role, set())),
+        "limit": limit,
+    }
+    if avg > limit:
+        failures.append(f"{role}: avg CPU {avg:.2f}% > {limit:.2f}%")
+
+print(json.dumps({
+    "platform": "ios",
+    "method": "host-process-delta",
+    "required_roles": sorted(required),
+    "roles": summary,
+}, indent=2, sort_keys=True))
+if failures:
+    for failure in failures:
+        print(f"[idle-cpu] FAIL: {failure}", file=sys.stderr)
+    sys.exit(1)
+print("[idle-cpu] OK", file=sys.stderr)
+PY
+    }
+    if [[ "${IRIS_DRIVE_IDLE_CPU_IOS_LAUNCH:-1}" != "0" ]]; then
+      launch_ios_app
     fi
     trace_dir="$(mktemp -d -t iris-drive-ios-idle-cpu.XXXXXX)"
     trap 'rm -rf "$trace_dir"' EXIT
-    trace="$trace_dir/idle.trace"
-    echo "[idle-cpu] warmup ${warmup}s, xctrace Activity Monitor ${duration}s on ${ios_device}" >&2
+    start_trace="$trace_dir/start.trace"
+    end_trace="$trace_dir/end.trace"
+    start_xml="$trace_dir/start.xml"
+    end_xml="$trace_dir/end.xml"
+    snapshot_secs="${IRIS_DRIVE_IDLE_CPU_IOS_SNAPSHOT_SECS:-5}"
+    record_ios_activity_snapshot() {
+      local output="$1"
+      rm -rf "$output"
+      xcrun xctrace record --quiet --template 'Activity Monitor' --device "$ios_device" \
+        --all-processes --time-limit "${snapshot_secs}s" --output "$output" >/dev/null
+    }
+    echo "[idle-cpu] warmup ${warmup}s, xctrace Activity Monitor delta ${duration}s on ${ios_device}" >&2
     sleep "$warmup"
-    xcrun xctrace record --quiet --template 'Activity Monitor' --device "$ios_device" \
-      --all-processes --time-limit "${duration}s" --output "$trace" >/dev/null
-    xcrun xctrace export --input "$trace" \
-      --xpath '/trace-toc/run[@number="1"]/data/table[@schema="activity-monitor-process-ledger"]' |
-      python3 - "$duration" <<'PY'
+    start_epoch="$(python3 -c 'import time; print(time.time())')"
+    if ! record_ios_activity_snapshot "$start_trace"; then
+      echo "[idle-cpu] WARN: xctrace Activity Monitor start snapshot failed for ${ios_device}; trying host process sampler" >&2
+      run_ios_host_process_sampler
+      exit $?
+    fi
+    sleep "$duration"
+    if [[ "${IRIS_DRIVE_IDLE_CPU_IOS_LAUNCH:-1}" != "0" ]]; then
+      launch_ios_app
+    fi
+    if ! record_ios_activity_snapshot "$end_trace"; then
+      echo "[idle-cpu] WARN: xctrace Activity Monitor end snapshot failed for ${ios_device}; trying host process sampler" >&2
+      run_ios_host_process_sampler
+      exit $?
+    fi
+    end_epoch="$(python3 -c 'import time; print(time.time())')"
+    if ! xcrun xctrace export --input "$start_trace" \
+      --xpath '/trace-toc/run[@number="1"]/data/table[@schema="activity-monitor-process-ledger"]' >"$start_xml"; then
+      echo "[idle-cpu] WARN: xctrace Activity Monitor start export failed for ${ios_device}; trying host process sampler" >&2
+      run_ios_host_process_sampler
+      exit $?
+    fi
+    if ! xcrun xctrace export --input "$end_trace" \
+      --xpath '/trace-toc/run[@number="1"]/data/table[@schema="activity-monitor-process-ledger"]' >"$end_xml"; then
+      echo "[idle-cpu] WARN: xctrace Activity Monitor end export failed for ${ios_device}; trying host process sampler" >&2
+      run_ios_host_process_sampler
+      exit $?
+    fi
+    if ! python3 - "$start_epoch" "$end_epoch" "$start_xml" "$end_xml" <<'PY'
 import json
 import os
 import re
 import sys
 import xml.etree.ElementTree as ET
 
-duration = max(float(sys.argv[1]), 1.0)
-xml = sys.stdin.read()
+start_epoch = float(sys.argv[1])
+end_epoch = float(sys.argv[2])
+start_xml = sys.argv[3]
+end_xml = sys.argv[4]
+elapsed = max(end_epoch - start_epoch, 0.001)
 thresholds = {
     "app": float(os.environ.get("IRIS_DRIVE_IDLE_CPU_APP_MAX", "5")),
     "provider": float(os.environ.get("IRIS_DRIVE_IDLE_CPU_PROVIDER_MAX", "3")),
@@ -348,16 +526,18 @@ thresholds = {
 required_env = os.environ.get("IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES", "").strip()
 required = {item for item in required_env.replace(",", " ").split() if item} or {"app", "provider"}
 app_match = re.compile(os.environ.get("IRIS_DRIVE_IDLE_CPU_IOS_APP_MATCH", r"^(Iris Drive|fi\.siriusbusiness\.drive)$"))
-provider_match = re.compile(os.environ.get("IRIS_DRIVE_IDLE_CPU_IOS_PROVIDER_MATCH", r"(IrisDriveFileProvider|FileProvider)"))
+provider_match = re.compile(os.environ.get("IRIS_DRIVE_IDLE_CPU_IOS_PROVIDER_MATCH", r"^IrisDriveFileProvider$"))
 
 def local_name(tag):
     return tag.rsplit("}", 1)[-1]
 
-def process_name(element):
+def process_identity(element):
     fmt = element.attrib.get("fmt", "")
     if fmt:
-        return re.sub(r"\s+\(\d+\)$", "", fmt)
-    return (element.text or "").strip()
+        pid_match = re.search(r"\((\d+)\)$", fmt)
+        pid = int(pid_match.group(1)) if pid_match else 0
+        return re.sub(r"\s+\(\d+\)$", "", fmt), pid
+    return (element.text or "").strip(), 0
 
 def classify(name):
     if provider_match.search(name):
@@ -366,71 +546,87 @@ def classify(name):
         return "app"
     return None
 
-try:
-    root = ET.fromstring(xml)
-except ET.ParseError as error:
-    print(f"[idle-cpu] FAIL: could not parse xctrace XML: {error}", file=sys.stderr)
-    sys.exit(1)
-
-tables = [node for node in root.iter() if local_name(node.tag) == "node"]
-rows = []
-for table in tables:
-    rows.extend([child for child in table if local_name(child.tag) == "row"])
-if not rows:
-    print("[idle-cpu] FAIL: xctrace Activity Monitor table had no rows", file=sys.stderr)
-    sys.exit(1)
-
-totals = {}
-pids = {}
-for row in rows:
-    cells = list(row)
-    if len(cells) < 8:
-        continue
-    proc = cells[1]
-    pid = cells[4]
-    cpu = cells[7]
-    if local_name(proc.tag) != "process":
-        continue
-    name = process_name(proc)
-    role = classify(name)
-    if not role:
-        continue
+def read_snapshot(path):
     try:
-        cpu_ns = float((cpu.text or "0").strip())
-    except ValueError:
-        cpu_ns = 0.0
-    totals[role] = totals.get(role, 0.0) + cpu_ns
-    try:
-        pids.setdefault(role, set()).add(int((pid.text or "0").strip()))
-    except ValueError:
-        pass
+        root = ET.parse(path).getroot()
+    except ET.ParseError as error:
+        print(f"[idle-cpu] FAIL: could not parse xctrace XML: {error}", file=sys.stderr)
+        sys.exit(1)
+    rows = []
+    for table in root.iter():
+        if local_name(table.tag) == "node":
+            rows.extend([child for child in table if local_name(child.tag) == "row"])
+    if not rows:
+        print("[idle-cpu] FAIL: xctrace Activity Monitor table had no rows", file=sys.stderr)
+        sys.exit(1)
+    snapshot = {}
+    for row in rows:
+        cells = list(row)
+        if len(cells) < 8:
+            continue
+        proc = cells[1]
+        cpu = cells[7]
+        if local_name(proc.tag) != "process":
+            continue
+        name, pid = process_identity(proc)
+        role = classify(name)
+        if not role:
+            continue
+        try:
+            cpu_ns = float((cpu.text or "0").strip())
+        except ValueError:
+            cpu_ns = 0.0
+        previous = snapshot.get(role)
+        if previous is None or cpu_ns > previous["cpu_ns"]:
+            snapshot[role] = {"name": name, "pid": pid, "cpu_ns": cpu_ns}
+    return snapshot
 
+start = read_snapshot(start_xml)
+end = read_snapshot(end_xml)
 summary = {}
 failures = []
-for role in sorted(required | set(totals)):
-    if role not in totals:
+for role in sorted(required | set(start) | set(end)):
+    if role not in start or role not in end:
         if role in required:
-            failures.append(f"{role}: required process role was not observed")
+            failures.append(f"{role}: required process role was not observed in both snapshots")
         continue
-    avg = totals[role] / 1_000_000_000.0 / duration * 100.0
+    if start[role]["pid"] and end[role]["pid"] and start[role]["pid"] != end[role]["pid"]:
+        failures.append(f"{role}: process restarted during idle sample")
+        continue
+    delta_ns = end[role]["cpu_ns"] - start[role]["cpu_ns"]
+    if delta_ns < 0:
+        failures.append(f"{role}: cumulative CPU counter decreased during idle sample")
+        continue
+    avg = delta_ns / 1_000_000_000.0 / elapsed * 100.0
     limit = thresholds.get(role, thresholds["app"])
     summary[role] = {
         "avg_cpu": round(avg, 2),
         "peak_cpu": round(avg, 2),
-        "samples": 1,
-        "pids": sorted(pids.get(role, set())),
+        "samples": 2,
+        "elapsed_secs": round(elapsed, 2),
+        "cpu_delta_ns": int(delta_ns),
+        "pids": sorted({start[role]["pid"], end[role]["pid"]} - {0}),
         "limit": limit,
     }
     if avg > limit:
         failures.append(f"{role}: avg CPU {avg:.2f}% > {limit:.2f}%")
 
-print(json.dumps({"platform": "ios", "required_roles": sorted(required), "roles": summary}, indent=2, sort_keys=True))
+print(json.dumps({
+    "platform": "ios",
+    "method": "xctrace activity-monitor cumulative delta",
+    "required_roles": sorted(required),
+    "roles": summary,
+}, indent=2, sort_keys=True))
 if failures:
     for failure in failures:
         print(f"[idle-cpu] FAIL: {failure}", file=sys.stderr)
     sys.exit(1)
 print("[idle-cpu] OK", file=sys.stderr)
 PY
+    then
+      run_ios_host_process_sampler
+      exit $?
+    fi
     ;;
   *)
     echo "unsupported idle CPU gate platform: $platform" >&2

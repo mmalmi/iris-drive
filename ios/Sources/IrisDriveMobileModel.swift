@@ -121,6 +121,7 @@ final class IrisDriveMobileModel: ObservableObject {
     private let nativeCore: IrisDriveNativeCore
     private let appleCalendarSync = IrisDriveAppleCalendarSync.shared
     private let nativeCoreQueue = DispatchQueue(label: "fi.siriusbusiness.drive.native-core", qos: .utility)
+    private var lastAppliedStateJson = ""
     private var lastState: NativeAppState?
     private var fileProviderOpenAttempt = 0
     private var currentProviderSignalKey = ""
@@ -129,7 +130,7 @@ final class IrisDriveMobileModel: ObservableObject {
     private var providerSignalRetryTask: Task<Void, Never>?
     private var currentProviderDirectoryPaths: [String] = []
     private var foregroundSyncTask: Task<Void, Never>?
-    private var copyFeedbackTask: Task<Void, Never>?
+    var copyFeedbackTask: Task<Void, Never>?
     private var fileProviderDomainRemovalInFlight = false
     private var stateGeneration: UInt64 = 0
     private var nativeFipsStatusDirectorySource: DispatchSourceFileSystemObject?
@@ -137,6 +138,8 @@ final class IrisDriveMobileModel: ObservableObject {
     private var nativeFipsStatusDirectoryDescriptor: CInt = -1
     private var nativeFipsStatusFileDescriptor: CInt = -1
     private var nativeFipsStatusRefreshTask: Task<Void, Never>?
+    var lastNativeFipsStatusFingerprint = ""
+    var lastNativeFipsStatusRefreshAt = Date.distantPast
     private var providerRootSignalDirectorySource: DispatchSourceFileSystemObject?
     private var providerRootSignalFileSource: DispatchSourceFileSystemObject?
     private var providerRootSignalDirectoryDescriptor: CInt = -1
@@ -249,7 +252,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private var shouldRunDriveForegroundRefresh: Bool {
-        !isRevoked && (isSetupComplete || isAwaitingApproval)
+        syncRunning && !isRevoked && (isSetupComplete || isAwaitingApproval)
     }
 
     private var shouldRunAppleCalendarSync: Bool {
@@ -467,7 +470,7 @@ final class IrisDriveMobileModel: ObservableObject {
                     if self.retryOpenRegisteredDriveFolder(attempt: attempt, path: path, identifier: identifier, visibleURLAttempt: visibleURLAttempt, error: error) {
                         return
                     }
-                    self.showFileProviderError("Files could not locate Iris Drive.")
+                    self.openFilesRootFallback(attempt: attempt)
                     return
                 }
                 guard let filesURL = self.filesAppURL(for: url) else {
@@ -556,16 +559,26 @@ final class IrisDriveMobileModel: ObservableObject {
                     self.fileProviderOpenAttempt += 1
                     return
                 }
-                guard let filesRoot = URL(string: "shareddocuments://") else { return }
-                UIApplication.shared.open(filesRoot, options: [:]) { [weak self] opened in
-                    Task { @MainActor in
-                        guard let self, self.fileProviderOpenAttempt == attempt else { return }
-                        if opened {
-                            self.fileProviderOpenAttempt += 1
-                        } else {
-                            self.showFileProviderError("Files refused to open Iris Drive.")
-                        }
-                    }
+                self.openFilesRootFallback(attempt: attempt)
+            }
+        }
+    }
+
+    private func openFilesRootFallback(attempt: Int) {
+        guard let filesRoot = URL(string: "shareddocuments://") else {
+            showFileProviderError("Files could not locate Iris Drive.")
+            return
+        }
+        UIApplication.shared.open(filesRoot, options: [:]) { [weak self] opened in
+            Task { @MainActor in
+                guard let self, self.fileProviderOpenAttempt == attempt else { return }
+                if opened {
+                    self.fileProviderOpenAttempt += 1
+                    self.fileProviderError = ""
+                    self.fileProviderStatus = "Files provider open"
+                    self.rebuildDerivedState()
+                } else {
+                    self.showFileProviderError("Files refused to open Iris Drive.")
                 }
             }
         }
@@ -917,6 +930,11 @@ final class IrisDriveMobileModel: ObservableObject {
         nativeFipsStatusRefreshTask = Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 50_000_000)
             guard let self else { return }
+            let statusURL = IrisDriveSharedContainer.baseDirectory
+                .appendingPathComponent(nativeFipsStatusFileName, isDirectory: false)
+            if !self.nativeFipsStatusRefreshIsDue(statusURL: statusURL) {
+                return
+            }
             NSLog("Iris Drive native FIPS status file changed")
             await self.refreshInBackground()
         }
@@ -1352,18 +1370,6 @@ final class IrisDriveMobileModel: ObservableObject {
         }
     }
 
-    func copyAppKey() {
-        copyToClipboard(currentAppKeyNpub, feedback: "Device copied")
-    }
-
-    func copyDeviceKey() {
-        copyToClipboard(devicePublicKey, feedback: "Device key copied")
-    }
-
-    func copyLinkRequest() {
-        copyToClipboard(appKeyLinkRequest, feedback: "Request link copied")
-    }
-
     func qrMatrix(for value: String) -> QrMatrix {
         runNative { $0.qrMatrix(text: value) }
     }
@@ -1375,39 +1381,6 @@ final class IrisDriveMobileModel: ObservableObject {
             nativeCoreQueue.async {
                 continuation.resume(returning: nativeCore.qrMatrix(text: value))
             }
-        }
-    }
-
-    func copySnapshotLink() {
-        guard !snapshotLink.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        copyToClipboard(snapshotLink, feedback: "drive.iris.to link copied")
-    }
-
-    func copyLastShareInvite() {
-        guard !lastShareInvite.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        copyToClipboard(lastShareInvite, feedback: "Share invite copied")
-    }
-
-    func copyShareRecipientEvidence() {
-        exportShareRecipientEvidence(displayName: deviceLabel)
-        guard !lastShareRecipientEvidence.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        copyToClipboard(lastShareRecipientEvidence, feedback: "Share identity copied")
-    }
-
-    func copyToClipboard(_ value: String, feedback: String) {
-        let value = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.isEmpty else { return }
-        UIPasteboard.general.string = value
-        showCopyFeedback(feedback)
-    }
-
-    private func showCopyFeedback(_ message: String) {
-        copyFeedbackTask?.cancel()
-        copyFeedback = message
-        copyFeedbackTask = Task { @MainActor in
-            try? await Task.sleep(nanoseconds: 2_000_000_000)
-            guard !Task.isCancelled else { return }
-            copyFeedback = ""
         }
     }
 
@@ -2280,6 +2253,10 @@ final class IrisDriveMobileModel: ObservableObject {
             reconcileForegroundWorkIfAppActive()
             return
         }
+        if json == lastAppliedStateJson && stateLoaded {
+            return
+        }
+        lastAppliedStateJson = json
         stateLoaded = true
         lastState = state
         rebuildDerivedState()

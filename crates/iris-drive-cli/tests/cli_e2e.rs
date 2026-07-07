@@ -746,6 +746,34 @@ fn status_reports_fips_latency_for_direct_peer() {
 }
 
 #[test]
+fn status_hydrates_encrypted_device_labels_after_approval() {
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+    let owner = run_json(owner_dir.path(), &["init", "--label", "Owner"]);
+    let owner_invite = app_key_link_invite_url(&owner).to_string();
+    let linked = run_json(
+        linked_dir.path(),
+        &["link", &owner_invite, "--label", "Phone"],
+    );
+    let linked_device = current_app_key_npub(&linked).to_string();
+    let request = linked["app_key_link_request"]["url"]
+        .as_str()
+        .expect("linked request URL");
+
+    run_json(owner_dir.path(), &["approve", request, "--label", "Phone"]);
+
+    let status = run_json(owner_dir.path(), &["status"]);
+    let linked_peer = status["peers"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|peer| peer["app_key_npub"] == linked_device)
+        .expect("linked AppKey peer");
+    assert_eq!(linked_peer["label"], "Phone");
+    assert_eq!(linked_peer["display_label"], "Phone");
+}
+
+#[test]
 fn status_marks_mesh_fips_peer_online_without_direct_endpoint_link() {
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();

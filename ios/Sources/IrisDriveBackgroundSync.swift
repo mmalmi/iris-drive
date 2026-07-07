@@ -1,6 +1,6 @@
 import Foundation
 
-let foregroundSyncIntervalNanoseconds: UInt64 = 5_000_000_000
+let foregroundSyncIntervalNanoseconds: UInt64 = 30_000_000_000
 let foregroundDriveSyncMinimumIntervalSeconds: TimeInterval = 60
 let awaitingApprovalForegroundSyncIntervalNanoseconds: UInt64 = 15_000_000_000
 let awaitingApprovalScreenRefreshIntervalNanoseconds: UInt64 = 3_000_000_000

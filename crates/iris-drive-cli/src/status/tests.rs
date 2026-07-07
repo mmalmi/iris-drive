@@ -518,7 +518,8 @@ fn peer_statuses_show_legacy_drive_root_app_keys_without_roster_cache() {
         .iter()
         .find(|peer| peer["app_key_pubkey"] == linked_device)
         .expect("legacy linked AppKey peer");
-    assert_eq!(linked["display_label"], linked["app_key_npub"]);
+    assert_eq!(linked["display_label"], "Linked device");
+    assert_ne!(linked["display_label"], linked["app_key_npub"]);
     assert_eq!(linked["fips_online"], true);
     assert_eq!(linked["connection_state"], "direct");
 

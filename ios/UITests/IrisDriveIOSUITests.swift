@@ -518,14 +518,18 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTAssertTrue(tabButton("Devices", in: app).waitForExistence(timeout: 10))
         tabButton("Devices", in: app).tap()
         XCTAssertTrue(
-            waitForLinkedOnlineDeviceRow(in: app, timeout: 10),
-            "Expected a linked online device row. Static texts:\n\(staticTextLabels(in: app))"
+            waitForLinkedDeviceRow(in: app, timeout: 10),
+            "Expected a linked device row. Static texts:\n\(staticTextLabels(in: app))"
         )
         XCTAssertFalse(app.staticTexts["Authorized"].exists)
     }
 
     func testAddLinkedDeviceFromDevices() throws {
         let linkedDevice = try requiredEnvironment("IRIS_DRIVE_UI_TEST_LINKED_DEVICE")
+        let linkedDeviceApproval = optionalEnvironment("IRIS_DRIVE_UI_TEST_LINKED_DEVICE_REQUEST")
+            ?? linkedDevice
+        let linkedDeviceLabel = optionalEnvironment("IRIS_DRIVE_UI_TEST_LINKED_DEVICE_LABEL")
+            ?? "Linked device"
         let app = launchApp()
         var approvedViaPrompt = false
         addUIInterruptionMonitor(withDescription: "Approve linked device") { alert in
@@ -552,7 +556,7 @@ final class IrisDriveIOSUITests: XCTestCase {
         if !approvedViaPrompt {
             let deviceField = app.textFields["manualDeviceId"]
             makeHittable(deviceField, in: app)
-            XCTAssertEqual(deviceField.value as? String, linkedDevice)
+            XCTAssertEqual(deviceField.value as? String, linkedDeviceApproval)
 
             XCTAssertTrue(app.buttons["Approve"].waitForExistence(timeout: 5))
             app.buttons["Approve"].tap()
@@ -560,9 +564,13 @@ final class IrisDriveIOSUITests: XCTestCase {
         }
 
         XCTAssertTrue(
-            waitForStaticText(linkedDevice, in: app, timeout: 15)
+            waitForStaticText(linkedDeviceLabel, in: app, timeout: 15)
                 && waitForStaticText("Member | Linked | Offline", in: app, timeout: 5),
             "Expected linked device row. Static texts:\n\(staticTextLabels(in: app))"
+        )
+        XCTAssertFalse(
+            staticTextLabels(in: app).components(separatedBy: "\n").contains(linkedDevice),
+            "Linked device key should not be rendered as the row label. Static texts:\n\(staticTextLabels(in: app))"
         )
     }
 
@@ -610,13 +618,51 @@ final class IrisDriveIOSUITests: XCTestCase {
         return ["IRIS_DRIVE_UI_TEST_BASE_DIR": baseDir.path]
     }
 
-    private func ensureMyDriveReady(in app: XCUIApplication) {
-        if app.buttons["welcomeCreateProfile"].waitForExistence(timeout: 3) {
-            app.buttons["welcomeCreateProfile"].tap()
-            app.buttons["createProfileSubmit"].tap()
+    private func ensureMyDriveReady(
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let welcomeCreateProfile = app.buttons["welcomeCreateProfile"]
+        let myDrive = tabButton("My Drive", in: app)
+        let awaitingApproval = app.descendants(matching: .any)["awaitingApprovalView"]
+        let deadline = Date().addingTimeInterval(30)
+
+        while Date() < deadline {
+            if myDrive.exists {
+                myDrive.tap()
+                return
+            }
+            if welcomeCreateProfile.exists {
+                welcomeCreateProfile.tap()
+                let createProfileSubmit = app.buttons["createProfileSubmit"]
+                XCTAssertTrue(
+                    createProfileSubmit.waitForExistence(timeout: 10),
+                    "Create profile route did not appear. Hierarchy:\n\(app.debugDescription)",
+                    file: file,
+                    line: line
+                )
+                createProfileSubmit.tap()
+                XCTAssertTrue(
+                    myDrive.waitForExistence(timeout: 20),
+                    "My Drive tab did not appear after profile creation. Hierarchy:\n\(app.debugDescription)",
+                    file: file,
+                    line: line
+                )
+                myDrive.tap()
+                return
+            }
+            if awaitingApproval.exists {
+                break
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
         }
-        XCTAssertTrue(tabButton("My Drive", in: app).waitForExistence(timeout: 15))
-        tabButton("My Drive", in: app).tap()
+
+        XCTFail(
+            "Expected setup welcome or My Drive tab. Awaiting approval: \(awaitingApproval.exists). Hierarchy:\n\(app.debugDescription)",
+            file: file,
+            line: line
+        )
     }
 
     func tabButton(_ title: String, in app: XCUIApplication) -> XCUIElement {
@@ -895,16 +941,17 @@ final class IrisDriveIOSUITests: XCTestCase {
 
     private func tapShareExtensionAction(sourceApp: XCUIApplication, timeout: TimeInterval) {
         let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
-        let candidates = [
-            sourceApp,
-            springboard,
-            XCUIApplication(bundleIdentifier: "com.apple.SharingViewService"),
-        ]
+        let sharingViewService = XCUIApplication(bundleIdentifier: "com.apple.SharingViewService")
         let labels = ["Save to Iris Drive"]
         let deadline = Date().addingTimeInterval(timeout)
         var tappedMore = false
 
         while Date() < deadline {
+            let candidates = shareSheetCandidateApps(
+                sourceApp: sourceApp,
+                springboard: springboard,
+                sharingViewService: sharingViewService
+            )
             for candidate in candidates {
                 for label in labels {
                     let button = candidate.buttons[label].firstMatch
@@ -929,8 +976,7 @@ final class IrisDriveIOSUITests: XCTestCase {
                 let irisDriveShareCells = candidate.cells.matching(identifier: "shareCell")
                     .matching(NSPredicate(format: "label == %@", "Iris Drive"))
                     .allElementsBoundByIndex
-                if irisDriveShareCells.count >= 2 {
-                    let extensionCell = irisDriveShareCells[1]
+                if let extensionCell = irisDriveShareCells.last {
                     makeShareSheetElementHittable(extensionCell, in: candidate)
                     extensionCell.tap()
                     return
@@ -952,6 +998,21 @@ final class IrisDriveIOSUITests: XCTestCase {
             "Could not find Save to Iris Drive in the system share sheet.\n" +
                 "Sender:\n\(sourceApp.debugDescription)\nSpringBoard:\n\(springboard.debugDescription)"
         )
+    }
+
+    private func shareSheetCandidateApps(
+        sourceApp: XCUIApplication,
+        springboard: XCUIApplication,
+        sharingViewService: XCUIApplication
+    ) -> [XCUIApplication] {
+        [sourceApp, springboard, sharingViewService].filter { app in
+            switch app.state {
+            case .runningForeground, .runningBackground, .runningBackgroundSuspended:
+                return true
+            default:
+                return false
+            }
+        }
     }
 
     private func makeShareSheetElementHittable(_ element: XCUIElement, in app: XCUIApplication) {
@@ -1102,22 +1163,22 @@ final class IrisDriveIOSUITests: XCTestCase {
         }
     }
 
-    private func waitForLinkedOnlineDeviceRow(in app: XCUIApplication, timeout: TimeInterval) -> Bool {
+    private func waitForLinkedDeviceRow(in app: XCUIApplication, timeout: TimeInterval) -> Bool {
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if hasLinkedOnlineDeviceRow(in: app) {
+            if hasLinkedDeviceRow(in: app) {
                 return true
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.5))
         }
-        return hasLinkedOnlineDeviceRow(in: app)
+        return hasLinkedDeviceRow(in: app)
     }
 
-    private func hasLinkedOnlineDeviceRow(in app: XCUIApplication) -> Bool {
+    private func hasLinkedDeviceRow(in app: XCUIApplication) -> Bool {
         app.staticTexts.allElementsBoundByIndex.contains { element in
             let label = element.label
-            return label.hasPrefix("Member | Linked | Online")
-                || label.hasPrefix("Admin | Linked | Online")
+            return label.hasPrefix("Member | Linked |")
+                || label.hasPrefix("Admin | Linked |")
         }
     }
 

@@ -32,6 +32,7 @@ require_absent() {
 
 require_file ios/project.yml
 require_file ios/Sources/IrisDriveIOSApp.swift
+require_file ios/Sources/IrisDriveClipboard.swift
 require_file ios/Sources/IrisDriveMobileModel.swift
 require_file ios/Sources/IrisDriveNativeCore.swift
 require_file ios/Sources/IrisDriveTypes.swift
@@ -65,7 +66,7 @@ require_contains ios/Sources/IrisDriveMobileModel.swift "NSFileProviderManager.a
 require_contains ios/Sources/IrisDriveMobileModel.swift "fileProviderRegistrationIdentity"
 require_contains ios/Sources/IrisDriveMobileModel.swift "shouldRepairFileProviderRegistration"
 require_contains ios/Sources/IrisDriveMobileModel.swift "repairFileProviderRegistration"
-require_contains ios/Sources/IrisDriveMobileModel.swift "copyLinkRequest"
+require_contains ios/Sources/IrisDriveClipboard.swift "copyLinkRequest"
 require_contains ios/Sources/IrisDriveNativeCore.swift "iris_drive_provider_compose_path_json"
 require_contains ios/FileProvider/FileProviderStorage.swift "IrisDriveNativeProvider.composePath"
 require_contains ios/FileProvider/FileProviderStorage.swift "create mayAlreadyExist absent path="

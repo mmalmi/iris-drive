@@ -95,15 +95,27 @@ pub fn app_actor_role_label(role: AppActorRole) -> &'static str {
 
 #[must_use]
 pub fn app_key_display_label(
-    _is_current_app_key: bool,
+    is_current_app_key: bool,
     label: Option<&str>,
     fallback: &str,
 ) -> String {
-    label
-        .map(str::trim)
-        .filter(|label| !label.is_empty())
-        .unwrap_or(fallback)
-        .to_owned()
+    if let Some(label) = label.map(str::trim).filter(|label| !label.is_empty()) {
+        return label.to_owned();
+    }
+    let fallback = fallback.trim();
+    if !fallback.is_empty() && !looks_like_public_key_label(fallback) {
+        return fallback.to_owned();
+    }
+    if is_current_app_key {
+        "This device".to_owned()
+    } else {
+        "Linked device".to_owned()
+    }
+}
+
+fn looks_like_public_key_label(value: &str) -> bool {
+    value.starts_with("npub1")
+        || (value.len() == 64 && value.chars().all(|c| c.is_ascii_hexdigit()))
 }
 
 #[allow(clippy::fn_params_excessive_bools)]
@@ -478,7 +490,18 @@ mod tests {
             app_key_display_label(false, Some("  Phone  "), "npub1x"),
             "Phone"
         );
-        assert_eq!(app_key_display_label(false, Some("  "), "npub1x"), "npub1x");
+        assert_eq!(
+            app_key_display_label(false, Some("  "), "npub1x"),
+            "Linked device"
+        );
+        assert_eq!(
+            app_key_display_label(
+                true,
+                None,
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            ),
+            "This device"
+        );
 
         let direct = app_key_connection_state(false, true, true, false);
         assert_eq!(direct, "direct");
@@ -560,6 +583,29 @@ mod tests {
         assert!(rows[1].can_revoke);
         assert!(rows[1].can_appoint_admin);
         assert!(!rows[1].can_demote_admin);
+    }
+
+    #[test]
+    fn shared_app_key_rows_do_not_promote_pubkeys_to_display_labels() {
+        let current = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        let remote = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb";
+        let app_actors = vec![
+            crate::app_keys::AppActorEntry::admin(current.to_owned(), 10, None),
+            crate::app_keys::AppActorEntry::member(remote.to_owned(), 11, None),
+        ];
+
+        let rows = app_key_roster_rows(
+            &app_actors,
+            current,
+            true,
+            true,
+            &AppKeyConnectivity::default(),
+        );
+
+        assert_eq!(rows[0].npub, pubkey_npub(current));
+        assert_eq!(rows[0].display_label, "This device");
+        assert_eq!(rows[1].npub, pubkey_npub(remote));
+        assert_eq!(rows[1].display_label, "Linked device");
     }
 
     #[test]

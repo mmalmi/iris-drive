@@ -487,7 +487,7 @@ impl NativeAppRuntime {
         };
         runtime.reset_native_browser_gateway_status_for_new_process();
         runtime.reload_from_disk(ProviderSummaryMode::Skip);
-        runtime.start_app_key_link_exchange_if_needed();
+        runtime.reconcile_app_key_link_exchange();
         runtime.start_browser_gateway_if_needed();
         runtime
     }
@@ -608,7 +608,7 @@ impl NativeAppRuntime {
             }
         }
         self.reload_from_disk_preserving_error(provider_summary);
-        self.start_app_key_link_exchange_if_needed();
+        self.reconcile_app_key_link_exchange();
         self.start_browser_gateway_if_needed();
     }
 
@@ -1397,46 +1397,6 @@ impl NativeAppRuntime {
     }
 
     #[allow(clippy::unused_self)]
-    fn start_app_key_link_exchange_if_needed(&mut self) {
-        #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
-        {
-            let Ok(config) = self.load_config() else {
-                return;
-            };
-            if config.profile.is_none() {
-                return;
-            }
-            if self
-                .app_key_link_exchange_running
-                .swap(true, Ordering::AcqRel)
-            {
-                return;
-            }
-
-            self.app_key_link_exchange_stop
-                .store(false, Ordering::Release);
-            let data_dir = self.data_dir.clone();
-            let running = self.app_key_link_exchange_running.clone();
-            let stop = self.app_key_link_exchange_stop.clone();
-            std::thread::spawn(move || {
-                if let Err(error) = run_app_key_link_exchange(&data_dir, stop) {
-                    tracing::warn!(error = %error, "native app-key-link FIPS exchange stopped");
-                }
-                running.store(false, Ordering::Release);
-            });
-        }
-    }
-
-    #[allow(clippy::unused_self)]
-    fn stop_app_key_link_exchange(&mut self) {
-        #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
-        {
-            self.app_key_link_exchange_stop
-                .store(true, Ordering::Release);
-        }
-    }
-
-    #[allow(clippy::unused_self)]
     fn start_browser_gateway_if_needed(&mut self) {
         #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
         {
@@ -1889,7 +1849,7 @@ fn run_app_key_link_exchange(data_dir: &str, stop: Arc<AtomicBool>) -> Result<()
         .map_err(|error| format!("building app-key-link exchange runtime: {error}"))?;
     let result = runtime.block_on(run_app_key_link_exchange_async(data_dir, stop));
     if let Err(error) = &result {
-        write_native_fips_error(Path::new(data_dir), error);
+        mobile_fips_status::write_native_fips_error(Path::new(data_dir), error);
     }
     result
 }
@@ -3025,6 +2985,7 @@ fn native_fips_status_is_fresh(status: &Value) -> bool {
 }
 
 #[cfg(any(test, target_os = "ios", target_os = "android"))]
+#[cfg(any(test, target_os = "ios", target_os = "android"))]
 fn native_fips_status_path(config_dir: &Path) -> PathBuf {
     config_dir.join(NATIVE_FIPS_STATUS_FILE_NAME)
 }
@@ -3079,45 +3040,7 @@ async fn write_native_fips_status(
         error_value,
         &[],
     );
-    write_native_fips_status_value(config_dir, &value)
-}
-
-#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
-fn write_native_fips_error(config_dir: &Path, error: &str) {
-    let raw = json!({
-        "running": false,
-        "updated_at": unix_now_seconds(),
-        "online_devices": [],
-        "online_peers": [],
-        "direct_devices": [],
-        "direct_peers": [],
-        "connected_peers": [],
-        "mesh_devices": [],
-        "mesh_peers": [],
-        "peer_statuses": [],
-        "error": error,
-    });
-    let value = normalize_fips_status_value(
-        Some(&raw),
-        false,
-        false,
-        Value::String(error.to_owned()),
-        &[],
-    );
-    if let Err(write_error) = write_native_fips_status_value(config_dir, &value) {
-        tracing::warn!(error = %write_error, "writing native FIPS error failed");
-    }
-}
-
-#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
-fn write_native_fips_status_value(
-    config_dir: &Path,
-    value: &serde_json::Value,
-) -> Result<(), String> {
-    let path = native_fips_status_path(config_dir);
-    let data =
-        serde_json::to_vec(value).map_err(|error| format!("encoding FIPS status: {error}"))?;
-    std::fs::write(&path, data).map_err(|error| format!("writing {}: {error}", path.display()))
+    mobile_fips_status::write_native_fips_status_value(config_dir, &value)
 }
 
 fn paths_for(data_dir: &str) -> UiPaths {
@@ -3704,6 +3627,9 @@ mod browser_gateway_tests;
 mod device_actions;
 #[cfg(test)]
 mod idle_tests;
+mod mobile_fips_status;
+#[cfg(test)]
+mod mobile_idle_tests;
 #[cfg(test)]
 mod provider_tests;
 #[cfg(test)]

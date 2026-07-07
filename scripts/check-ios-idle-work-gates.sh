@@ -68,6 +68,15 @@ else:
     elif int(interval_match.group("value").replace("_", "")) < 30:
         failures.append("foreground drive sync should not run more often than every 30 seconds.")
 
+foreground_interval_match = re.search(
+    r"foregroundSyncIntervalNanoseconds\s*:\s*UInt64\s*=\s*(?P<value>[0-9_]+)",
+    background,
+)
+if not foreground_interval_match:
+    failures.append("iOS foreground status refresh interval was not found.")
+elif int(foreground_interval_match.group("value").replace("_", "")) < 30_000_000_000:
+    failures.append("iOS foreground status refresh should not poll native state more often than every 30 seconds.")
+
 sync_once_match = re.search(
     r"private func syncOnceIfRunning\(\) async \{(?P<body>.*?)\n    private var foregroundSyncDelayNanoseconds",
     model,

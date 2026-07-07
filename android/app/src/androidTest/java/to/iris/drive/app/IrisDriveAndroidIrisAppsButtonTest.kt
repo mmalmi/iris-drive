@@ -82,6 +82,7 @@ class IrisDriveAndroidIrisAppsButtonTest {
                 onDeleteDevice = {},
                 onAppointAdmin = {},
                 onDemoteAdmin = {},
+                onRenameDevice = { _, _ -> },
                 onLogout = {},
                 onAddRelay = {},
                 onRemoveRelay = {},
