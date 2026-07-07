@@ -679,6 +679,30 @@ fn windows_cloud_periodic_validation_rescans_recent_local_changes() {
 }
 
 #[test]
+fn windows_cloud_root_setting_supports_default_disable_and_override() {
+    assert_eq!(
+        windows_cloud_root_setting_from_env_value(None).unwrap(),
+        WindowsCloudRootSetting::Default
+    );
+    assert_eq!(
+        windows_cloud_root_setting_from_env_value(Some("  ")).unwrap(),
+        WindowsCloudRootSetting::Default
+    );
+    assert_eq!(
+        windows_cloud_root_setting_from_env_value(Some("off")).unwrap(),
+        WindowsCloudRootSetting::Disabled
+    );
+    assert_eq!(
+        windows_cloud_root_setting_from_env_value(Some("DISABLED")).unwrap(),
+        WindowsCloudRootSetting::Disabled
+    );
+    assert_eq!(
+        windows_cloud_root_setting_from_env_value(Some("C:\\\\IrisDriveE2E")).unwrap(),
+        WindowsCloudRootSetting::Path(PathBuf::from("C:\\\\IrisDriveE2E"))
+    );
+}
+
+#[test]
 fn windows_cloud_detects_missing_previous_local_state_after_rename_to_event() {
     let sync_root = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(sync_root.path().join("renames")).unwrap();

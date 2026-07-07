@@ -34,6 +34,10 @@ Environment:
                                   Defaults to every POSIX host in this run.
   IRIS_DRIVE_E2E_PROVIDER_MUTATIONS
                                   Use provider commands instead of projection surfaces when set to 1.
+  IRIS_DRIVE_E2E_WINDOWS_CLOUD_ROOT
+                                  Windows Cloud Files root for the daemon; defaults to "off" so
+                                  provider-bridge e2e runs do not import the VM user's real
+                                  ~/Iris Drive contents. Set to empty to use the production default.
   IRIS_DRIVE_E2E_SIDELOAD_APPKEYS
                                   Copy the owner profile roster snapshot into temp peer configs after approval
                                   so VM file-sync tests do not depend on public relay timing (default: 1).
@@ -563,6 +567,7 @@ start_daemon() {
   local script
   local ssh_host
   local daemon_ssh_pid
+  local windows_cloud_root
   kind="$(host_value "$label" kind)"
   idrive="$(host_value "$label" idrive)"
   config="$(host_value "$label" config)"
@@ -571,6 +576,10 @@ start_daemon() {
   work="$(host_value "$label" work)"
   pidfile="$(host_value "$label" pid)"
   if [[ "$kind" == "windows" ]]; then
+    windows_cloud_root="${IRIS_DRIVE_E2E_WINDOWS_CLOUD_ROOT:-off}"
+    if [[ "${IRIS_DRIVE_E2E_WINDOWS_PROJECTION_MUTATIONS:-0}" == "1" && -z "${IRIS_DRIVE_E2E_WINDOWS_CLOUD_ROOT+x}" ]]; then
+      windows_cloud_root=""
+    fi
     ssh_host="$(host_value "$label" ssh)"
     daemon_ssh_pid="$(host_value "$label" daemon_ssh_pid)"
     if [[ -n "$daemon_ssh_pid" ]]; then
@@ -585,6 +594,7 @@ start_daemon() {
 \$log = $(ps_quote "$log")
 \$err = $(ps_quote "$err")
 \$pidFile = $(ps_quote "$pidfile")
+\$env:IRIS_DRIVE_WINDOWS_CLOUD_ROOT = $(ps_quote "$windows_cloud_root")
 if (Test-Path -LiteralPath \$pidFile) {
   \$old = Get-Content -LiteralPath \$pidFile -ErrorAction SilentlyContinue
   if (\$old) { Stop-Process -Id ([int]\$old) -Force -ErrorAction SilentlyContinue }
