@@ -266,100 +266,103 @@ impl DirectRootExchange {
             .then(|| encode_direct_root_hint_frame(&event.key, &event.event_id))
             .transpose()
             .map_err(|error| format!("encoding direct-root hint: {error}"))?;
-        if let Some(target_peer) = target_peer {
-            match sync
-                .send_app_message(target_peer, DIRECT_ROOT_APP_TOPIC, bytes.clone())
-                .await
-            {
-                Ok(()) => tracing::debug!(
-                    root_key = event.key.as_str(),
-                    target_peer,
-                    "sent targeted direct-root event over FIPS"
-                ),
-                Err(error) => tracing::warn!(
-                    root_key = event.key.as_str(),
-                    target_peer,
-                    error = %error,
-                    "sending targeted direct-root event over FIPS failed"
-                ),
-            }
-        } else {
-            match sync
-                .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, bytes.clone())
-                .await
-            {
-                Ok(sent_peers) => tracing::debug!(
-                    root_key = event.key.as_str(),
-                    sent_peers,
-                    "sent direct-root event over FIPS"
-                ),
-                Err(error) => tracing::warn!(
-                    root_key = event.key.as_str(),
-                    error = %error,
-                    "sending direct-root event over FIPS failed"
-                ),
-            }
-        }
-        if let Some(hint_bytes) = hint_bytes.as_ref() {
+        let attempts = direct_root_publish_attempts_for_source(&event.key, source);
+        for _attempt in 0..attempts {
             if let Some(target_peer) = target_peer {
                 match sync
-                    .send_app_message(target_peer, DIRECT_ROOT_APP_TOPIC, hint_bytes.clone())
+                    .send_app_message(target_peer, DIRECT_ROOT_APP_TOPIC, bytes.clone())
                     .await
                 {
                     Ok(()) => tracing::debug!(
                         root_key = event.key.as_str(),
                         target_peer,
-                        "sent targeted direct-root hint over FIPS"
+                        "sent targeted direct-root event over FIPS"
                     ),
                     Err(error) => tracing::warn!(
                         root_key = event.key.as_str(),
                         target_peer,
                         error = %error,
-                        "sending targeted direct-root hint over FIPS failed"
+                        "sending targeted direct-root event over FIPS failed"
                     ),
                 }
             } else {
                 match sync
-                    .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, hint_bytes.clone())
+                    .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, bytes.clone())
                     .await
                 {
                     Ok(sent_peers) => tracing::debug!(
                         root_key = event.key.as_str(),
                         sent_peers,
-                        "sent direct-root hint over FIPS"
+                        "sent direct-root event over FIPS"
                     ),
                     Err(error) => tracing::warn!(
                         root_key = event.key.as_str(),
                         error = %error,
-                        "sending direct-root hint over FIPS failed"
+                        "sending direct-root event over FIPS failed"
                     ),
                 }
             }
-        }
-        if target_peer.is_some() {
-            return Ok(());
-        }
-        let seq = self.next_mesh_publish_seq();
-        let publish = sync
-            .publish_mesh_pubsub(stream.to_string(), seq, bytes)
-            .await;
-        tracing::debug!(
-            root_key = event.key.as_str(),
-            sent_peers = publish.sent_peers,
-            seq,
-            "published direct-root mesh event over FIPS"
-        );
-        if let Some(hint_bytes) = hint_bytes {
+            if let Some(hint_bytes) = hint_bytes.as_ref() {
+                if let Some(target_peer) = target_peer {
+                    match sync
+                        .send_app_message(target_peer, DIRECT_ROOT_APP_TOPIC, hint_bytes.clone())
+                        .await
+                    {
+                        Ok(()) => tracing::debug!(
+                            root_key = event.key.as_str(),
+                            target_peer,
+                            "sent targeted direct-root hint over FIPS"
+                        ),
+                        Err(error) => tracing::warn!(
+                            root_key = event.key.as_str(),
+                            target_peer,
+                            error = %error,
+                            "sending targeted direct-root hint over FIPS failed"
+                        ),
+                    }
+                } else {
+                    match sync
+                        .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, hint_bytes.clone())
+                        .await
+                    {
+                        Ok(sent_peers) => tracing::debug!(
+                            root_key = event.key.as_str(),
+                            sent_peers,
+                            "sent direct-root hint over FIPS"
+                        ),
+                        Err(error) => tracing::warn!(
+                            root_key = event.key.as_str(),
+                            error = %error,
+                            "sending direct-root hint over FIPS failed"
+                        ),
+                    }
+                }
+            }
+            if target_peer.is_some() {
+                continue;
+            }
             let seq = self.next_mesh_publish_seq();
             let publish = sync
-                .publish_mesh_pubsub(stream.to_string(), seq, hint_bytes)
+                .publish_mesh_pubsub(stream.to_string(), seq, bytes.clone())
                 .await;
             tracing::debug!(
                 root_key = event.key.as_str(),
                 sent_peers = publish.sent_peers,
                 seq,
-                "published direct-root mesh hint over FIPS"
+                "published direct-root mesh event over FIPS"
             );
+            if let Some(hint_bytes) = hint_bytes.as_ref() {
+                let seq = self.next_mesh_publish_seq();
+                let publish = sync
+                    .publish_mesh_pubsub(stream.to_string(), seq, hint_bytes.clone())
+                    .await;
+                tracing::debug!(
+                    root_key = event.key.as_str(),
+                    sent_peers = publish.sent_peers,
+                    seq,
+                    "published direct-root mesh hint over FIPS"
+                );
+            }
         }
         Ok(())
     }
@@ -1047,6 +1050,37 @@ fn direct_root_republish_interval_secs_for_source(
         DIRECT_ROOT_REPUBLISH_INTERVAL_SECS
     } else {
         DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS
+    }
+}
+
+fn direct_root_publish_attempts_for_source(key: &str, source: DirectRootPublishSource) -> usize {
+    if matches!(
+        source,
+        DirectRootPublishSource::LocalHeartbeat | DirectRootPublishSource::StateRequestReply
+    ) && direct_root_cache_slot(key).is_some()
+    {
+        return 4;
+    }
+    if matches!(
+        source,
+        DirectRootPublishSource::LocalHeartbeat | DirectRootPublishSource::StateRequestReply
+    ) {
+        return 1;
+    }
+    if source == DirectRootPublishSource::CachedStateRequestReply
+        && direct_root_cache_slot(key).is_some()
+    {
+        return 4;
+    }
+    if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
+        return 2;
+    }
+    if direct_root_cache_slot(key).is_some() {
+        4
+    } else if key.starts_with("files-root:") {
+        2
+    } else {
+        1
     }
 }
 
@@ -2153,6 +2187,13 @@ mod tests {
             local_reply.source,
             DirectRootPublishSource::StateRequestReply
         );
+        assert_eq!(
+            direct_root_publish_attempts_for_source(
+                &local.key,
+                DirectRootPublishSource::StateRequestReply,
+            ),
+            4
+        );
         let cached_reply = events
             .iter()
             .find(|event| event.event.event_id == remote.event_id)
@@ -2160,6 +2201,13 @@ mod tests {
         assert_eq!(
             cached_reply.source,
             DirectRootPublishSource::CachedStateRequestReply
+        );
+        assert_eq!(
+            direct_root_publish_attempts_for_source(
+                &remote.key,
+                DirectRootPublishSource::CachedStateRequestReply,
+            ),
+            4
         );
         assert!(!should_publish_direct_root_hint(
             &remote.key,
@@ -2293,6 +2341,10 @@ mod tests {
         let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
         let now = Instant::now();
 
+        assert_eq!(
+            direct_root_publish_attempts_for_source(key, DirectRootPublishSource::LocalHeartbeat),
+            4
+        );
         assert!(should_publish_direct_root_hint(
             key,
             DirectRootPublishSource::LocalHeartbeat

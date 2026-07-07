@@ -188,6 +188,8 @@ wait_for_android_authorized() {
   local expected_device="$1"
   local seconds="$2"
   for _ in $(seq 1 "$((seconds * 5))"); do
+    adb_am_start -n "$MAIN_ACTIVITY" \
+      --es "$DEBUG_ACTION_EXTRA" refresh >/dev/null
     if "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-state.json 2>/dev/null \
       | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; ui=s.get("ui",{}); a=ui.get("profile") or {}; actors=ui.get("app_actors") or ui.get("devices") or []; ok=a.get("authorization_state") == "authorized" and any(row.get("pubkey") == expected and (row.get("is_current_app_key") or row.get("is_current_device")) for row in actors); raise SystemExit(0 if ok else 1)' "$expected_device" >/dev/null 2>&1; then
       return 0
