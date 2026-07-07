@@ -4,6 +4,8 @@ use iris_drive_core::{
 };
 
 const DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS: u64 = 10;
+const DIRECT_ROOT_HINT_REPEAT_INTERVAL_SECS: u64 = 30;
+const DIRECT_ROOT_HINT_CACHE_MAX_ENTRIES: usize = 2048;
 
 #[derive(Debug, Clone)]
 pub(crate) struct DirectRootEvent {
@@ -69,6 +71,7 @@ pub(crate) struct DirectRootExchange {
     profile_stream_cache: Option<CachedDirectRootProfileStream>,
     current_sync_events_cache: Option<CachedCurrentSyncEvents>,
     state_request_times: BTreeMap<String, std::time::Instant>,
+    recent_hint_times: BTreeMap<String, std::time::Instant>,
 }
 
 #[derive(Debug, Clone)]
@@ -126,7 +129,8 @@ impl DirectRootExchange {
             return Ok(());
         };
         let root_scope_id = state.root_scope_id();
-        self.subscribe_profile_stream(&root_scope_id, Some(sync)).await;
+        self.subscribe_profile_stream(&root_scope_id, Some(sync))
+            .await;
         let stream = direct_root_mesh_stream(&root_scope_id);
         let config_fingerprint = config_file_fingerprint(&config_path_in(config_dir))?;
         let local_events = self
@@ -152,7 +156,8 @@ impl DirectRootExchange {
         reply_peer: &str,
     ) -> Result<()> {
         let root_scope_id = state.root_scope_id();
-        self.subscribe_profile_stream(&root_scope_id, Some(sync)).await;
+        self.subscribe_profile_stream(&root_scope_id, Some(sync))
+            .await;
         let stream = direct_root_mesh_stream(&root_scope_id);
         let config_fingerprint = config_file_fingerprint(&config_path_in(config_dir))?;
         let local_events = self
@@ -179,7 +184,8 @@ impl DirectRootExchange {
             return Ok(());
         };
         let root_scope_id = state.root_scope_id();
-        self.subscribe_profile_stream(&root_scope_id, Some(sync)).await;
+        self.subscribe_profile_stream(&root_scope_id, Some(sync))
+            .await;
         let stream = direct_root_mesh_stream(&root_scope_id);
         let config_fingerprint = config_file_fingerprint(&config_path_in(config_dir))?;
         let local_events = self
@@ -188,8 +194,8 @@ impl DirectRootExchange {
             })
             .await?;
         let now = std::time::Instant::now();
-        for publish_event in
-            self.local_root_events_for_publish(local_events, DirectRootPublishSource::LocalHeartbeat)
+        for publish_event in self
+            .local_root_events_for_publish(local_events, DirectRootPublishSource::LocalHeartbeat)
         {
             self.publish_event(sync, &stream, publish_event, None, now)
                 .await?;
@@ -397,6 +403,14 @@ impl DirectRootExchange {
         if !frame.hint || !self.should_cache_event_as_latest(&frame.key) {
             return Ok(DirectRootFrameOutcome::Ignored);
         }
+        if self.should_skip_recent_direct_root_hint(
+            config_dir,
+            source_peer,
+            &frame.key,
+            std::time::Instant::now(),
+        ) {
+            return Ok(DirectRootFrameOutcome::Ignored);
+        }
         let config_lock = ConfigMutationLock::acquire(config_dir).await?;
         let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
         let report = iris_drive_core::apply_direct_root_key_hint_to_config(
@@ -461,13 +475,23 @@ impl DirectRootExchange {
         if !frame.request {
             return Ok(());
         }
-        let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+        let Some(root_scope_id) = self.cached_profile_stream_root_scope_id(config_dir)? else {
+            return Ok(());
+        };
+        if root_scope_id != frame.root_scope_id {
+            return Ok(());
+        }
+        if !self.should_reply_state_request(
+            &frame.root_scope_id,
+            reply_peer,
+            std::time::Instant::now(),
+        ) {
+            return Ok(());
+        }
+        let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
         let Some(state) = config.profile.as_ref() else {
             return Ok(());
         };
-        if state.root_scope_id() != frame.root_scope_id {
-            return Ok(());
-        }
         println!(
             "{}",
             json!({
@@ -488,6 +512,41 @@ impl DirectRootExchange {
             return true;
         };
         root_has_successful_block_sync(config_dir, &root_cid)
+    }
+
+    fn should_skip_recent_direct_root_hint(
+        &mut self,
+        config_dir: &Path,
+        source_peer: &str,
+        key: &str,
+        now: std::time::Instant,
+    ) -> bool {
+        if let Some(root_cid) = direct_root_retry_root_cid(key)
+            && !root_has_successful_block_sync(config_dir, &root_cid)
+        {
+            return false;
+        }
+        let throttle_key = direct_root_hint_throttle_key(source_peer, key);
+        let repeat_interval = std::time::Duration::from_secs(DIRECT_ROOT_HINT_REPEAT_INTERVAL_SECS);
+        if self
+            .recent_hint_times
+            .get(&throttle_key)
+            .is_some_and(|last| now.duration_since(*last) < repeat_interval)
+        {
+            return true;
+        }
+        self.recent_hint_times.insert(throttle_key, now);
+        if self.recent_hint_times.len() > DIRECT_ROOT_HINT_CACHE_MAX_ENTRIES {
+            self.recent_hint_times
+                .retain(|_, last| now.duration_since(*last) < repeat_interval);
+        }
+        while self.recent_hint_times.len() > DIRECT_ROOT_HINT_CACHE_MAX_ENTRIES {
+            let Some(key) = self.recent_hint_times.keys().next().cloned() else {
+                break;
+            };
+            self.recent_hint_times.remove(&key);
+        }
+        false
     }
 
     pub(crate) async fn request_roots_from_new_peers(
@@ -653,8 +712,7 @@ impl DirectRootExchange {
         messages: Vec<FipsMeshPubsubEvent>,
     ) -> Result<bool> {
         let received_messages = messages.len();
-        let (messages, skipped_roots) =
-            iris_drive_core::coalesce_direct_root_mesh_events(messages);
+        let (messages, skipped_roots) = iris_drive_core::coalesce_direct_root_mesh_events(messages);
         if skipped_roots > 0 {
             println!(
                 "{}",
@@ -765,8 +823,15 @@ impl DirectRootExchange {
         let (root_key, root_event_id, frame_kind) = direct_root_wire_frame_log_fields(&frame);
         let outcome = match frame {
             DirectRootWireFrame::Full(frame) => {
-                self.apply_direct_root_frame(client, config_dir, sync, mount_refresh, daemon_tasks, frame)
-                    .await?
+                self.apply_direct_root_frame(
+                    client,
+                    config_dir,
+                    sync,
+                    mount_refresh,
+                    daemon_tasks,
+                    frame,
+                )
+                .await?
             }
             DirectRootWireFrame::Hint(frame) => {
                 self.apply_direct_root_hint_frame(
@@ -825,7 +890,10 @@ impl DirectRootExchange {
         self.cached_events.get(&event.key).cloned().unwrap_or(event)
     }
 
-    fn events_for_publish(&self, local_events: Vec<DirectRootEvent>) -> Vec<DirectRootPublishEvent> {
+    fn events_for_publish(
+        &self,
+        local_events: Vec<DirectRootEvent>,
+    ) -> Vec<DirectRootPublishEvent> {
         let mut events = Vec::with_capacity(local_events.len() + self.cached_events.len());
         let mut keys = BTreeSet::new();
         let mut local_slots = BTreeMap::new();
@@ -983,14 +1051,50 @@ impl DirectRootExchange {
         true
     }
 
-    fn should_publish_state_request(&mut self, root_scope_id: &str, now: std::time::Instant) -> bool {
-        if self.state_request_times.get(root_scope_id).is_some_and(|last| {
-            now.duration_since(*last)
-                < std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS)
-        }) {
+    fn should_publish_state_request(
+        &mut self,
+        root_scope_id: &str,
+        now: std::time::Instant,
+    ) -> bool {
+        if self
+            .state_request_times
+            .get(root_scope_id)
+            .is_some_and(|last| {
+                now.duration_since(*last)
+                    < std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS)
+            })
+        {
             return false;
         }
-        self.state_request_times.insert(root_scope_id.to_string(), now);
+        self.state_request_times
+            .insert(root_scope_id.to_string(), now);
+        while self.state_request_times.len() > DIRECT_ROOT_EVENT_CACHE_CAP {
+            let Some(key) = self.state_request_times.keys().next().cloned() else {
+                break;
+            };
+            self.state_request_times.remove(&key);
+        }
+        true
+    }
+
+    fn should_reply_state_request(
+        &mut self,
+        root_scope_id: &str,
+        reply_peer: &str,
+        now: std::time::Instant,
+    ) -> bool {
+        let throttle_key = format!("reply:{reply_peer}:{root_scope_id}");
+        if self
+            .state_request_times
+            .get(&throttle_key)
+            .is_some_and(|last| {
+                now.duration_since(*last)
+                    < std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS)
+            })
+        {
+            return false;
+        }
+        self.state_request_times.insert(throttle_key, now);
         while self.state_request_times.len() > DIRECT_ROOT_EVENT_CACHE_CAP {
             let Some(key) = self.state_request_times.keys().next().cloned() else {
                 break;
@@ -1124,14 +1228,12 @@ fn should_publish_direct_root_full_frame(
     true
 }
 
-fn direct_root_wire_frame_log_fields(frame: &DirectRootWireFrame) -> (String, String, &'static str) {
+fn direct_root_wire_frame_log_fields(
+    frame: &DirectRootWireFrame,
+) -> (String, String, &'static str) {
     match frame {
-        DirectRootWireFrame::Full(frame) => {
-            (frame.key.clone(), frame.event_id.clone(), "full")
-        }
-        DirectRootWireFrame::Hint(frame) => {
-            (frame.key.clone(), frame.event_id.clone(), "hint")
-        }
+        DirectRootWireFrame::Full(frame) => (frame.key.clone(), frame.event_id.clone(), "full"),
+        DirectRootWireFrame::Hint(frame) => (frame.key.clone(), frame.event_id.clone(), "hint"),
         DirectRootWireFrame::Request(frame) => {
             (frame.root_scope_id.clone(), String::new(), "request")
         }
@@ -1144,6 +1246,10 @@ fn direct_root_hint_published_at() -> i64 {
         .map_or(0, |duration| {
             duration.as_secs().try_into().unwrap_or(i64::MAX)
         })
+}
+
+fn direct_root_hint_throttle_key(source_peer: &str, key: &str) -> String {
+    format!("{source_peer}:{key}")
 }
 
 fn direct_root_publish_throttle_key(
@@ -1274,7 +1380,10 @@ fn direct_root_recipient_count(recipients: &str) -> usize {
         .count()
 }
 
-fn direct_root_slot_is_newer(candidate: &DirectRootCacheSlot, current: &DirectRootCacheSlot) -> bool {
+fn direct_root_slot_is_newer(
+    candidate: &DirectRootCacheSlot,
+    current: &DirectRootCacheSlot,
+) -> bool {
     candidate.seq > current.seq
         || (candidate.seq == current.seq && candidate.recipient_count > current.recipient_count)
 }
@@ -1335,7 +1444,8 @@ async fn append_primary_drive_root_events(
         let Some(root) = publishable_app_key_root(config_dir, drive, state).await? else {
             return Ok(());
         };
-        let authorized_app_keys = iris_drive_core::drive_root_recipient_app_key_pubkeys(state, drive);
+        let authorized_app_keys =
+            iris_drive_core::drive_root_recipient_app_key_pubkeys(state, drive);
         if authorized_app_keys.is_empty() {
             return Ok(());
         }

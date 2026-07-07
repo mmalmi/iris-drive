@@ -46,6 +46,11 @@ pub fn provider_root_wake_path_in(config_dir: &std::path::Path) -> PathBuf {
     config_dir.join("provider-root.wake.json")
 }
 
+#[must_use]
+pub fn provider_root_staging_path_in(config_dir: &std::path::Path) -> PathBuf {
+    config_dir.join("provider-root.staged.json")
+}
+
 pub fn touch_provider_root_signal_in(config_dir: &std::path::Path) -> std::io::Result<()> {
     if let Some(parent) = provider_root_signal_path_in(config_dir).parent() {
         std::fs::create_dir_all(parent)?;
@@ -92,6 +97,10 @@ mod tests {
         assert_eq!(
             provider_root_wake_path_in(base),
             PathBuf::from("/tmp/x/provider-root.wake.json")
+        );
+        assert_eq!(
+            provider_root_staging_path_in(base),
+            PathBuf::from("/tmp/x/provider-root.staged.json")
         );
         assert_eq!(
             sync_cache_path_in(base),

@@ -315,6 +315,154 @@ fn provider_writes_with_same_stale_base_accumulate_all_files() {
 }
 
 #[test]
+fn provider_duplicate_replace_batch_does_not_publish_intermediate_deletes() {
+    let config_dir = tempfile::tempdir().unwrap();
+    init_config(config_dir.path());
+    mark_daemon_live(config_dir.path());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let source_dir = tempfile::tempdir().unwrap();
+    for index in 1..=7 {
+        std::fs::write(
+            source_dir.path().join(format!("file-{index}.txt")),
+            format!("original {index}"),
+        )
+        .unwrap();
+    }
+    cmd_import(config_dir.path(), source_dir.path()).unwrap();
+    let base_root = runtime.block_on(async {
+        let daemon = Daemon::open(config_dir.path()).unwrap();
+        iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
+            .await
+            .unwrap()
+            .root_cid
+    });
+    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::fs::write(
+        iris_drive_core::paths::provider_root_wake_path_in(config_dir.path()),
+        serde_json::to_vec(&json!({ "port": port })).unwrap(),
+    )
+    .unwrap();
+    let wake_reader = std::thread::spawn(move || {
+        use std::io::Read as _;
+
+        for _ in 0..12 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut bytes = Vec::new();
+            stream.read_to_end(&mut bytes).unwrap();
+        }
+    });
+    let pasted_dir = tempfile::tempdir().unwrap();
+    for name in ["new-a.txt", "new-b.txt"] {
+        let source = pasted_dir.path().join(name);
+        std::fs::write(&source, format!("new {name}")).unwrap();
+        cmd_provider(
+            config_dir.path(),
+            ProviderCmd::Write {
+                base_root_cid: Some(base_root.to_string()),
+                path: name.to_string(),
+                source,
+            },
+        )
+        .unwrap();
+    }
+    for index in 1..=5 {
+        cmd_provider(
+            config_dir.path(),
+            ProviderCmd::Delete {
+                base_root_cid: Some(base_root.to_string()),
+                path: format!("file-{index}.txt"),
+            },
+        )
+        .unwrap();
+    }
+    for index in 1..=5 {
+        let source = pasted_dir.path().join(format!("replacement-{index}.txt"));
+        std::fs::write(&source, format!("replacement {index}")).unwrap();
+        cmd_provider(
+            config_dir.path(),
+            ProviderCmd::Write {
+                base_root_cid: Some(base_root.to_string()),
+                path: format!("file-{index}.txt"),
+                source,
+            },
+        )
+        .unwrap();
+    }
+    wake_reader.join().unwrap();
+
+    runtime.block_on(async {
+        let daemon = Daemon::open(config_dir.path()).unwrap();
+        let merged = iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
+            .await
+            .unwrap();
+        let paths = merged
+            .view
+            .files
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            paths,
+            vec![
+                "file-1.txt",
+                "file-2.txt",
+                "file-3.txt",
+                "file-4.txt",
+                "file-5.txt",
+                "file-6.txt",
+                "file-7.txt",
+            ],
+            "provider replacement batch should not publish partial roots before daemon coalescing"
+        );
+    });
+
+    runtime.block_on(async {
+        let staged = crate::provider_staging::read_provider_staging(config_dir.path())
+            .unwrap()
+            .expect("replacement batch should leave a staged provider root");
+        let mut daemon = Daemon::open(config_dir.path()).unwrap();
+        daemon
+            .import_visible_root_with_tombstone_base_and_paths(
+                staged.root().unwrap(),
+                staged.tombstone_base_root().unwrap(),
+                Some(&staged.tombstone_paths),
+            )
+            .await
+            .unwrap();
+        crate::provider_staging::clear_provider_staging(config_dir.path()).unwrap();
+        let daemon = Daemon::open(config_dir.path()).unwrap();
+        let merged = iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
+            .await
+            .unwrap();
+        let paths = merged
+            .view
+            .files
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            paths,
+            vec![
+                "file-1.txt",
+                "file-2.txt",
+                "file-3.txt",
+                "file-4.txt",
+                "file-5.txt",
+                "file-6.txt",
+                "file-7.txt",
+                "new-a.txt",
+                "new-b.txt",
+            ],
+            "coalesced replacement batch should publish the final provider root"
+        );
+    });
+}
+
+#[test]
 fn provider_delete_tombstones_foreign_visible_files() {
     let config_dir = tempfile::tempdir().unwrap();
     let (_account, remote, remote_meta) = init_config_with_remote_device(config_dir.path());

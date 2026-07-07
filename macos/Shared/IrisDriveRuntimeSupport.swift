@@ -16,6 +16,7 @@ enum IrisDriveEnvironment {
 enum IrisDriveAppGroup {
     private static let appGroupName = "to.iris.drive"
     private static let legacyAppGroupIdentifier = "group.to.iris.drive"
+    private static let applicationSupportName = "Iris Drive"
 
     static func containerURL(teamIdentifier: String?) -> URL? {
         for identifier in identifiers(teamIdentifier: teamIdentifier) {
@@ -30,13 +31,16 @@ enum IrisDriveAppGroup {
 
     static func applicationSupportDirectory(teamIdentifier: String?) -> URL {
         if let shared = containerURL(teamIdentifier: teamIdentifier) {
-            return shared.appendingPathComponent("Iris Drive", isDirectory: true)
+            return shared.appendingPathComponent(applicationSupportName, isDirectory: true)
+        }
+        if let existing = existingAppGroupApplicationSupportDirectory() {
+            return existing
         }
         let base = FileManager.default.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first ?? FileManager.default.homeDirectoryForCurrentUser
-        return base.appendingPathComponent("Iris Drive", isDirectory: true)
+        return base.appendingPathComponent(applicationSupportName, isDirectory: true)
     }
 
     private static func identifiers(teamIdentifier: String?) -> [String] {
@@ -52,6 +56,37 @@ enum IrisDriveAppGroup {
 
         var seen = Set<String>()
         return identifiers.filter { seen.insert($0).inserted }
+    }
+
+    private static func existingAppGroupApplicationSupportDirectory() -> URL? {
+        let groupContainers = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library", isDirectory: true)
+            .appendingPathComponent("Group Containers", isDirectory: true)
+        let containers = (try? FileManager.default.contentsOfDirectory(
+            at: groupContainers,
+            includingPropertiesForKeys: [.contentModificationDateKey],
+            options: [.skipsHiddenFiles]
+        )) ?? []
+
+        let candidates = containers.compactMap { container -> (url: URL, modified: Date)? in
+            guard container.lastPathComponent.hasSuffix(".to.iris.drive") else { return nil }
+            let support = container.appendingPathComponent(applicationSupportName, isDirectory: true)
+            let config = support
+                .appendingPathComponent("Config", isDirectory: true)
+                .appendingPathComponent("config.toml", isDirectory: false)
+            guard FileManager.default.fileExists(atPath: config.path) else { return nil }
+            let modified = (try? config.resourceValues(
+                forKeys: [.contentModificationDateKey]
+            ).contentModificationDate) ?? Date.distantPast
+            return (support, modified)
+        }
+
+        return candidates.sorted { left, right in
+            if left.modified == right.modified {
+                return left.url.path < right.url.path
+            }
+            return left.modified > right.modified
+        }.first?.url
     }
 }
 

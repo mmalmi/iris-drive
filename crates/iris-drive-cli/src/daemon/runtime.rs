@@ -47,10 +47,13 @@ pub(crate) fn cmd_daemon(
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     if state.authorization_state == iris_drive_core::AppKeyAuthorizationState::Revoked {
-        write_runtime_daemon_status(config_dir, json!({
-            "event": "revoked",
-            "error": "device removed",
-        }));
+        write_runtime_daemon_status(
+            config_dir,
+            json!({
+                "event": "revoked",
+                "error": "device removed",
+            }),
+        );
         return Err(anyhow::anyhow!(
             "this device has been removed from Iris Drive; link it again or log out"
         ));
@@ -245,6 +248,23 @@ pub(crate) fn cmd_daemon(
         let mut direct_roots = DirectRootExchange::default();
         let startup_fips_block_sync_status = fips_block_sync_status(fips_blocks.as_deref()).await;
         let mut config = config.clone();
+        match import_staged_provider_root(config_dir).await {
+            Ok(Some(report)) => {
+                emit_daemon_status_event(
+                    config_dir,
+                    provider_root_import_status_payload(
+                        "provider_root_staged_imported_on_startup",
+                        &report,
+                    ),
+                );
+                config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
+            }
+            Ok(None) => {}
+            Err(error) => println!(
+                "{}",
+                json!({"event": "provider_root_staged_import_error", "trigger": "startup", "error": format!("{error:#}")})
+            ),
+        }
         let mut mounted_drive = if mount_drive {
             let mountpoint = mountpoint
                 .clone()
@@ -373,6 +393,7 @@ pub(crate) fn cmd_daemon(
         app_key_link_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut sent_app_key_link_requests = BTreeMap::new();
         let mut app_key_link_request_config_cache = AppConfigLoadCache::default();
+        let mut app_key_link_backfill_config_cache = AppConfigLoadCache::default();
         let mut sent_app_key_link_rosters = AuthorizedAppKeyLinkRosterSendCache::default();
         let mut acked_app_key_link_rosters = BTreeSet::new();
         let mut last_provider_root_key = current_app_key_root_key(&config);
@@ -542,10 +563,13 @@ pub(crate) fn cmd_daemon(
                     if let Some(rx) = provider_root_wake_rx.as_mut()
                         && let Some(wake_payload) =
                             drain_latest_provider_root_wake_payload(rx, None)
-                        && let Some(status_payload) =
-                            provider_root_wake_status_payload(&wake_payload)
                     {
-                        emit_daemon_status_event(config_dir, status_payload);
+                        handle_provider_root_wake_payload(
+                            config_dir,
+                            &wake_payload,
+                            "config_root_watch",
+                        )
+                        .await;
                     }
                     match publish_provider_root_if_changed(
                         &client,
@@ -583,10 +607,13 @@ pub(crate) fn cmd_daemon(
                             )
                             .await;
                     }
-                    if let Some(wake_payload) = latest_wake_payload.as_ref()
-                        && let Some(status_payload) = provider_root_wake_status_payload(wake_payload)
-                    {
-                        emit_daemon_status_event(config_dir, status_payload);
+                    if let Some(wake_payload) = latest_wake_payload.as_ref() {
+                        handle_provider_root_wake_payload(
+                            config_dir,
+                            wake_payload,
+                            "provider_root_wake",
+                        )
+                        .await;
                     }
                     match publish_provider_root_if_changed(
                         &client,
@@ -812,6 +839,7 @@ pub(crate) fn cmd_daemon(
                         fips_blocks.clone(),
                         mount_refresh_tx.clone(),
                         &daemon_tasks,
+                        &mut app_key_link_backfill_config_cache,
                     )
                     .await
                     {

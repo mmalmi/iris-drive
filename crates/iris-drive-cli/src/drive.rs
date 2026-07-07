@@ -8,6 +8,11 @@ use iris_drive_core::provider::{
     split_provider_path, unique_provider_path,
 };
 
+use crate::provider_staging::{
+    ProviderStagedRoot, clear_provider_staging, read_provider_staging, unix_now_seconds,
+    write_provider_staging,
+};
+
 mod commands;
 mod provider_retry;
 pub(crate) use commands::*;
@@ -236,6 +241,8 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
             elapsed_ms = started.elapsed().as_millis(),
             "provider command opened daemon"
         );
+        let staged_root =
+            read_provider_staging(config_dir).context("reading staged provider root")?;
         let supplied_base_root_cid = provider_command_base_root_cid(&command)?;
         let visible_view = if provider_command_needs_merged_view(&command) {
             let phase = std::time::Instant::now();
@@ -251,7 +258,14 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
             None
         };
         let phase = std::time::Instant::now();
-        let visible = if let Some(root_cid) = supplied_base_root_cid.clone() {
+        let visible = if let Some(staged) = staged_root.as_ref() {
+            tracing::debug!("provider command using staged visible root anchor");
+            iris_drive_core::projection::PrimaryMergedRoot {
+                root_cid: staged.root()?,
+                file_count: 0,
+                top_level_entries: 0,
+            }
+        } else if let Some(root_cid) = supplied_base_root_cid.clone() {
             tracing::debug!("provider command using supplied visible root anchor");
             iris_drive_core::projection::PrimaryMergedRoot {
                 root_cid,
@@ -272,7 +286,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
             "provider command built merged root"
         );
         if provider_command_is_mutation(&command) {
-            if supplied_base_root_cid.is_none() {
+            if staged_root.is_none() && supplied_base_root_cid.is_none() {
                 let phase = std::time::Instant::now();
                 ensure_provider_root_locally_available(&daemon, &visible.root_cid).await?;
                 tracing::debug!(
@@ -283,6 +297,16 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                 tracing::debug!("provider command skipped provider root availability preflight");
             }
         }
+        let tombstone_base_root = if provider_command_is_mutation(&command) {
+            match staged_root.as_ref() {
+                Some(staged) => staged
+                    .tombstone_base_root()?
+                    .or_else(|| Some(visible.root_cid.clone())),
+                None => Some(visible.root_cid.clone()),
+            }
+        } else {
+            None
+        };
         let phase = std::time::Instant::now();
         let provider =
             HashTreeProviderFs::open(daemon.tree_handle(), visible.root_cid.clone()).await?;
@@ -312,7 +336,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                         "anchor": provider.anchor().await.as_str(),
                         "root_cid": visible.root_cid.to_string(),
                         "file_count": summary.file_count,
-                        "top_level_entries": visible.top_level_entries,
+                        "top_level_entries": top_level_entry_count(&entries),
                         "visible_file_bytes": summary.visible_file_bytes,
                         "directory_paths": summary.directory_paths,
                         "change_key": summary.change_key,
@@ -434,8 +458,11 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     &mut daemon,
                     &provider,
                     &path,
-                    Some(visible.root_cid.clone()),
-                    Some(&BTreeSet::from([path.clone()])),
+                    tombstone_base_root.clone(),
+                    provider_mutation_tombstone_paths(
+                        staged_root.as_ref(),
+                        BTreeSet::from([path.clone()]),
+                    ),
                 )
                 .await?;
             }
@@ -454,8 +481,11 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     &mut daemon,
                     &provider,
                     &path,
-                    Some(visible.root_cid.clone()),
-                    Some(&BTreeSet::from([path.clone()])),
+                    tombstone_base_root.clone(),
+                    provider_mutation_tombstone_paths(
+                        staged_root.as_ref(),
+                        BTreeSet::from([path.clone()]),
+                    ),
                 )
                 .await?;
             }
@@ -474,8 +504,11 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     &mut daemon,
                     &provider,
                     &path,
-                    Some(visible.root_cid.clone()),
-                    Some(&BTreeSet::from([path.clone()])),
+                    tombstone_base_root.clone(),
+                    provider_mutation_tombstone_paths(
+                        staged_root.as_ref(),
+                        BTreeSet::from([path.clone()]),
+                    ),
                 )
                 .await?;
             }
@@ -496,8 +529,11 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     &mut daemon,
                     &provider,
                     &new_path,
-                    Some(visible.root_cid.clone()),
-                    Some(&BTreeSet::from([old_path.clone(), new_path.clone()])),
+                    tombstone_base_root.clone(),
+                    provider_mutation_tombstone_paths(
+                        staged_root.as_ref(),
+                        BTreeSet::from([old_path.clone(), new_path.clone()]),
+                    ),
                 )
                 .await?;
             }
@@ -612,6 +648,24 @@ fn remember_provider_modified_at(index: &mut BTreeMap<String, i64>, path: &str, 
         .entry(path.to_owned())
         .and_modify(|existing| *existing = (*existing).max(modified_at))
         .or_insert(modified_at);
+}
+
+fn top_level_entry_count(entries: &[ProviderListEntry]) -> usize {
+    entries
+        .iter()
+        .filter(|entry| entry.parent_path.is_empty())
+        .count()
+}
+
+fn provider_mutation_tombstone_paths(
+    staged: Option<&ProviderStagedRoot>,
+    changed_paths: BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut tombstone_paths = staged
+        .map(|staged| staged.tombstone_paths.clone())
+        .unwrap_or_default();
+    tombstone_paths.extend(changed_paths);
+    tombstone_paths
 }
 
 #[derive(Default)]
@@ -828,7 +882,7 @@ async fn print_provider_mutation(
     provider: &HashTreeProviderFs<FsBlobStore>,
     changed_path: &str,
     tombstone_base_root: Option<Cid>,
-    tombstone_paths: Option<&BTreeSet<String>>,
+    tombstone_paths: BTreeSet<String>,
 ) -> Result<()> {
     let phase = std::time::Instant::now();
     let root = provider.current_root().await;
@@ -837,39 +891,93 @@ async fn print_provider_mutation(
         "provider command read current root"
     );
     let phase = std::time::Instant::now();
-    let report =
-        import_provider_root_with_retry(daemon, root, tombstone_base_root, tombstone_paths).await?;
-    wake_provider_root_publisher(daemon.config_dir(), Some(&report))
-        .await
-        .context("waking provider root publisher")?;
+    let report = provider_root_report(daemon.tree(), &root).await?;
+    let staged = ProviderStagedRoot {
+        root_cid: root.to_string(),
+        tombstone_base_root_cid: tombstone_base_root.as_ref().map(ToString::to_string),
+        tombstone_paths: tombstone_paths.clone(),
+        updated_at: unix_now_seconds(),
+    };
+    write_provider_staging(daemon.config_dir(), &staged)?;
+    let wake_payload = json!({
+        "root_cid": report.root_cid,
+        "file_count": report.file_count,
+        "top_level_entries": report.top_level_entries,
+        "staged": true,
+    });
+    let woke = match wake_provider_root_publisher(daemon.config_dir(), Some(wake_payload)).await {
+        Ok(woke) => woke,
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "provider root wake failed; importing staged root immediately"
+            );
+            false
+        }
+    };
+    let (root_cid, file_count, top_level_entries, staged) = if woke {
+        (
+            report.root_cid,
+            report.file_count,
+            report.top_level_entries,
+            true,
+        )
+    } else {
+        clear_provider_staging(daemon.config_dir())?;
+        let report = import_provider_root_with_retry(
+            daemon,
+            root,
+            tombstone_base_root,
+            Some(&tombstone_paths),
+        )
+        .await?;
+        let wake_payload = json!({
+            "root_cid": report.root_cid,
+            "file_count": report.file_count,
+            "top_level_entries": report.top_level_entries,
+        });
+        if let Err(error) =
+            wake_provider_root_publisher(daemon.config_dir(), Some(wake_payload)).await
+        {
+            tracing::warn!(
+                error = %error,
+                "provider root wake failed after immediate provider import"
+            );
+        }
+        (
+            report.root_cid,
+            u64::try_from(report.file_count).unwrap_or(u64::MAX),
+            report.top_level_entries,
+            false,
+        )
+    };
     iris_drive_core::paths::touch_provider_root_signal_in(daemon.config_dir())
         .context("signaling provider root change")?;
     tracing::debug!(
         elapsed_ms = phase.elapsed().as_millis(),
-        "provider command imported provider root"
+        staged,
+        "provider command staged provider root"
     );
     println!(
         "{}",
         json!({
             "path": changed_path,
-            "root_cid": report.root_cid,
-            "file_count": report.file_count,
-            "top_level_entries": report.top_level_entries,
+            "root_cid": root_cid,
+            "file_count": file_count,
+            "top_level_entries": top_level_entries,
+            "staged": staged,
         })
     );
     Ok(())
 }
 
-async fn wake_provider_root_publisher(
-    config_dir: &Path,
-    report: Option<&iris_drive_core::daemon::ImportReport>,
-) -> Result<()> {
+async fn wake_provider_root_publisher(config_dir: &Path, payload: Option<Value>) -> Result<bool> {
     use tokio::io::AsyncWriteExt as _;
 
     let wake_path = iris_drive_core::paths::provider_root_wake_path_in(config_dir);
     let raw = match tokio::fs::read_to_string(&wake_path).await {
         Ok(raw) => raw,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
         Err(error) => {
             return Err(error).with_context(|| {
                 format!(
@@ -897,12 +1005,7 @@ async fn wake_provider_root_publisher(
     .await
     .context("provider root wake timed out")?
     .with_context(|| format!("connecting to provider root wake endpoint on port {port}"))?;
-    if let Some(report) = report {
-        let payload = json!({
-            "root_cid": report.root_cid.clone(),
-            "file_count": report.file_count,
-            "top_level_entries": report.top_level_entries,
-        });
+    if let Some(payload) = payload {
         let bytes = serde_json::to_vec(&payload)?;
         stream
             .write_all(&bytes)
@@ -910,7 +1013,26 @@ async fn wake_provider_root_publisher(
             .context("writing provider root wake payload")?;
         let _ = stream.shutdown().await;
     }
-    Ok(())
+    Ok(true)
+}
+
+struct ProviderRootReport {
+    root_cid: String,
+    file_count: u64,
+    top_level_entries: usize,
+}
+
+async fn provider_root_report(
+    tree: &HashTree<FsBlobStore>,
+    root: &Cid,
+) -> Result<ProviderRootReport> {
+    let entries = provider_entries(tree, root, &BTreeMap::new()).await?;
+    let summary = provider_list_summary(&root.to_string(), &entries);
+    Ok(ProviderRootReport {
+        root_cid: root.to_string(),
+        file_count: summary.file_count,
+        top_level_entries: top_level_entry_count(&entries),
+    })
 }
 
 #[cfg(test)]

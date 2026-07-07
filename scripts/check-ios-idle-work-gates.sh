@@ -13,6 +13,7 @@ root = Path(sys.argv[1])
 app = (root / "ios/Sources/IrisDriveIOSApp.swift").read_text(encoding="utf-8")
 model = (root / "ios/Sources/IrisDriveMobileModel.swift").read_text(encoding="utf-8")
 root_view = (root / "ios/Sources/IrisDriveRootView.swift").read_text(encoding="utf-8")
+background = (root / "ios/Sources/IrisDriveBackgroundSync.swift").read_text(encoding="utf-8")
 
 failures = []
 
@@ -41,6 +42,32 @@ else:
 
 if "reconcileForegroundWorkIfAppActive()" not in model:
     failures.append("state changes must re-check whether foreground work should start or stop.")
+
+if "foregroundDriveSyncMinimumIntervalSeconds" not in background:
+    failures.append("iOS foreground drive sync needs a separate minimum interval from UI status refresh.")
+else:
+    interval_match = re.search(
+        r"foregroundDriveSyncMinimumIntervalSeconds\s*:\s*TimeInterval\s*=\s*(?P<value>[0-9_]+)",
+        background,
+    )
+    if not interval_match:
+        failures.append("foregroundDriveSyncMinimumIntervalSeconds must be a numeric TimeInterval constant.")
+    elif int(interval_match.group("value").replace("_", "")) < 30:
+        failures.append("foreground drive sync should not run more often than every 30 seconds.")
+
+sync_once_match = re.search(
+    r"private func syncOnceIfRunning\(\) async \{(?P<body>.*?)\n    private var foregroundSyncDelayNanoseconds",
+    model,
+    flags=re.S,
+)
+if not sync_once_match:
+    failures.append("syncOnceIfRunning was not found.")
+else:
+    sync_once_body = sync_once_match.group("body")
+    if "foregroundDriveSyncIsDue()" not in sync_once_body:
+        failures.append("syncOnceIfRunning must throttle full foreground drive sync attempts.")
+    if 'await refreshInBackground()' not in sync_once_body:
+        failures.append("foreground throttle should still refresh visible status between full sync attempts.")
 
 setup_match = re.search(
     r"private struct SetupWelcomeView: View \{(?P<body>.*?)\nprivate struct ",

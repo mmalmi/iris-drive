@@ -144,6 +144,7 @@ final class IrisDriveMobileModel: ObservableObject {
     private var providerRootSignalRefreshTask: Task<Void, Never>?
     private var appleCalendarSyncInFlight = false
     private var lastAppleCalendarSyncCheck = Date.distantPast
+    private var lastForegroundDriveSyncStartedAt = Date.distantPast
     private var irisWebPublisherProfileNameTasks: [String: Task<Void, Never>] = [:]
     private var irisWebPublisherProfileNameMisses: [String: Date] = [:]
 
@@ -1014,12 +1015,26 @@ final class IrisDriveMobileModel: ObservableObject {
     private func syncOnceIfRunning() async {
         if syncRunning, isSetupComplete || isAwaitingApproval {
             if isSetupComplete {
-                await dispatchInBackground(["type": "restart_sync"])
+                if foregroundDriveSyncIsDue() {
+                    await dispatchInBackground(["type": "restart_sync"])
+                } else {
+                    await refreshInBackground()
+                    return
+                }
             } else {
                 await refreshProfileStatusInBackground(scheduleBackgroundSync: false)
             }
         }
         await runAppleCalendarSyncIfEnabled()
+    }
+
+    private func foregroundDriveSyncIsDue(now: Date = Date()) -> Bool {
+        let elapsed = now.timeIntervalSince(lastForegroundDriveSyncStartedAt)
+        guard elapsed < 0 || elapsed >= foregroundDriveSyncMinimumIntervalSeconds else {
+            return false
+        }
+        lastForegroundDriveSyncStartedAt = now
+        return true
     }
 
     private var foregroundSyncDelayNanoseconds: UInt64 {
@@ -1220,6 +1235,7 @@ final class IrisDriveMobileModel: ObservableObject {
 
     func startSync() {
         guard isSetupComplete else { return }
+        lastForegroundDriveSyncStartedAt = Date()
         dispatch(["type": "start_sync"])
         scheduleBackgroundSyncIfNeeded()
         reconcileForegroundWorkIfAppActive()
@@ -1233,6 +1249,7 @@ final class IrisDriveMobileModel: ObservableObject {
 
     func restartSync() {
         guard isSetupComplete else { return }
+        lastForegroundDriveSyncStartedAt = Date()
         dispatch(["type": "restart_sync"])
         scheduleBackgroundSyncIfNeeded()
         reconcileForegroundWorkIfAppActive()

@@ -480,6 +480,56 @@ fn direct_root_seen_drive_root_retries_until_blocks_sync() {
 }
 
 #[test]
+fn direct_root_hint_repeat_throttle_is_per_source_and_expires() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let mut exchange = DirectRootExchange::default();
+    let key = "drive-root:remote:main:8:root-hash:root-key:local,remote";
+    let now = std::time::Instant::now();
+
+    assert!(!exchange.should_skip_recent_direct_root_hint(config_dir.path(), "peer-a", key, now));
+    assert!(!exchange.should_skip_recent_direct_root_hint(
+        config_dir.path(),
+        "peer-a",
+        key,
+        now + std::time::Duration::from_secs(1)
+    ));
+
+    write_daemon_status(
+        config_dir.path(),
+        json!({
+            "event": "test",
+            "block_sync_by_root": {
+                "root-hash:root-key": {
+                    "transport": "fips",
+                    "total_hashes": 3,
+                    "fetched": 3,
+                }
+            }
+        }),
+    );
+
+    assert!(!exchange.should_skip_recent_direct_root_hint(config_dir.path(), "peer-a", key, now));
+    assert!(exchange.should_skip_recent_direct_root_hint(
+        config_dir.path(),
+        "peer-a",
+        key,
+        now + std::time::Duration::from_secs(1)
+    ));
+    assert!(!exchange.should_skip_recent_direct_root_hint(
+        config_dir.path(),
+        "peer-b",
+        key,
+        now + std::time::Duration::from_secs(1)
+    ));
+    assert!(!exchange.should_skip_recent_direct_root_hint(
+        config_dir.path(),
+        "peer-a",
+        key,
+        now + std::time::Duration::from_secs(DIRECT_ROOT_HINT_REPEAT_INTERVAL_SECS)
+    ));
+}
+
+#[test]
 fn direct_root_retry_policy_keeps_prerequisite_skips_uncached() {
     use iris_drive_core::relay_sync::DriveRootApply;
 
@@ -896,6 +946,29 @@ fn direct_root_periodic_state_requests_are_throttled() {
     ));
     assert!(exchange.should_publish_state_request(
         "scope",
+        now + std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS),
+    ));
+}
+
+#[test]
+fn direct_root_incoming_state_request_replies_are_throttled_per_peer() {
+    let mut exchange = DirectRootExchange::default();
+    let now = std::time::Instant::now();
+
+    assert!(exchange.should_reply_state_request("scope", "peer-a", now));
+    assert!(!exchange.should_reply_state_request(
+        "scope",
+        "peer-a",
+        now + std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS - 1),
+    ));
+    assert!(exchange.should_reply_state_request(
+        "scope",
+        "peer-b",
+        now + std::time::Duration::from_secs(1),
+    ));
+    assert!(exchange.should_reply_state_request(
+        "scope",
+        "peer-a",
         now + std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS),
     ));
 }

@@ -14,6 +14,7 @@ private let irisDriveControlPanelWindowID = "control-panel"
 private let irisDriveFileProviderRuntimeFileName = "fileprovider-runtime.json"
 private let irisDriveFileProviderPathIdentifierPrefix = "path:"
 let irisDriveFileProviderRegistrationIdentityKey = "fileProviderRegistrationIdentity"
+private let irisDriveAppManagedDaemonStatusRefreshMinimumInterval: TimeInterval = 10
 private let irisDriveShowControlPanelNotification =
     Notification.Name("to.iris.drive.showControlPanel")
 private let irisDriveShowDriveFolderNotification =
@@ -89,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var externalStatusFileDescriptor: CInt = -1
     private var externalStatusDirectoryDescriptor: CInt = -1
     private var externalStatusRefreshWorkItem: DispatchWorkItem?
+    private var lastAppManagedDaemonStatusRefreshAt = Date.distantPast
     var updatePollTimer: Timer?
     var startupUpdateCheckDone = false
     var installingAppUpdate = false
@@ -1766,7 +1768,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if self.externalDaemonMode || self.daemonServiceActive {
                 self.refreshExternalDaemonStatusFile(paths: paths)
             } else {
-                irisDriveDebugLog("Iris Drive app-managed daemon status file changed")
+                let now = Date()
+                guard now.timeIntervalSince(self.lastAppManagedDaemonStatusRefreshAt)
+                    >= irisDriveAppManagedDaemonStatusRefreshMinimumInterval
+                else {
+                    return
+                }
+                self.lastAppManagedDaemonStatusRefreshAt = now
+                irisDriveDebugLog("Iris Drive app-managed daemon status file refresh")
                 self.scheduleNativeStatusRefresh()
             }
         }

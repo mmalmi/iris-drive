@@ -35,6 +35,7 @@ mod daemon;
 mod drive;
 mod mount;
 mod profile;
+mod provider_staging;
 mod publish;
 mod service;
 mod shares;

@@ -4,8 +4,9 @@ async fn backfill_pending_app_key_link_roster_ops(
     fips_blocks: Option<Arc<FsFipsBlockSync>>,
     mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
     daemon_tasks: &DaemonTaskSet,
+    config_cache: &mut AppConfigLoadCache,
 ) -> Result<Option<EventApplyOutcome>> {
-    let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
+    let config = load_app_config_cached(&config_path_in(config_dir), config_cache)?;
     let Some(state) = config.profile.as_ref() else {
         return Ok(None);
     };

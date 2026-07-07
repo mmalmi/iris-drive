@@ -4,6 +4,8 @@ use iris_drive_core::daemon_liveness::{daemon_lock_path, process_is_running};
 use iris_drive_core::provider::normalize_provider_path;
 use iris_drive_core::relay_config::normalize_relay_url;
 
+use crate::provider_staging::{clear_provider_staging, read_provider_staging};
+
 #[derive(Clone, Default)]
 pub(crate) struct DaemonTaskSet {
     tasks: Arc<std::sync::Mutex<Vec<ManagedDaemonTask>>>,
@@ -297,6 +299,62 @@ async fn primary_drive_status_payload(config_dir: &Path, config: &AppConfig) -> 
         "top_level_entries": merged.top_level_entries(),
         "visible_file_bytes": merged.view.files.iter().map(|entry| entry.size).sum::<u64>(),
     }))
+}
+
+async fn import_staged_provider_root(
+    config_dir: &Path,
+) -> Result<Option<iris_drive_core::daemon::ImportReport>> {
+    let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
+    let Some(staged) = read_provider_staging(config_dir)? else {
+        return Ok(None);
+    };
+    let root = staged.root()?;
+    let tombstone_base_root = staged.tombstone_base_root()?;
+    let tombstone_paths = staged.tombstone_paths;
+    let mut daemon = Daemon::open(config_dir)
+        .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
+    let report = daemon
+        .import_visible_root_with_tombstone_base_and_paths(
+            root,
+            tombstone_base_root,
+            Some(&tombstone_paths),
+        )
+        .await?;
+    clear_provider_staging(config_dir)?;
+    Ok(Some(report))
+}
+
+fn provider_root_import_status_payload(
+    event: &str,
+    report: &iris_drive_core::daemon::ImportReport,
+) -> Value {
+    json!({
+        "event": event,
+        "root_cid": report.root_cid.clone(),
+        "hashtree": {
+            "current_root_cid": report.root_cid.clone(),
+            "file_count": report.file_count,
+            "top_level_entries": report.top_level_entries,
+        },
+    })
+}
+
+async fn handle_provider_root_wake_payload(config_dir: &Path, wake_payload: &Value, trigger: &str) {
+    if provider_root_wake_payload_is_staged(wake_payload) {
+        match import_staged_provider_root(config_dir).await {
+            Ok(Some(report)) => emit_daemon_status_event(
+                config_dir,
+                provider_root_import_status_payload("provider_root_staged_imported", &report),
+            ),
+            Ok(None) => {}
+            Err(error) => println!(
+                "{}",
+                json!({"event": "provider_root_staged_import_error", "trigger": trigger, "error": format!("{error:#}")})
+            ),
+        }
+    } else if let Some(status_payload) = provider_root_wake_status_payload(wake_payload) {
+        emit_daemon_status_event(config_dir, status_payload);
+    }
 }
 
 const PROVIDER_ROOT_SAFETY_POLL_MIN_SECS: u64 = 30;
@@ -609,6 +667,9 @@ async fn start_provider_root_wake_listener(
 }
 
 fn provider_root_wake_status_payload(wake_payload: &Value) -> Option<Value> {
+    if provider_root_wake_payload_is_staged(wake_payload) {
+        return None;
+    }
     let file_count = wake_payload.get("file_count").and_then(Value::as_u64)?;
     let mut hashtree = json!({ "file_count": file_count });
     if let Some(root_cid) = wake_payload.get("root_cid").and_then(Value::as_str) {
@@ -625,6 +686,13 @@ fn provider_root_wake_status_payload(wake_payload: &Value) -> Option<Value> {
         "root_cid": wake_payload.get("root_cid").cloned(),
         "hashtree": hashtree,
     }))
+}
+
+fn provider_root_wake_payload_is_staged(wake_payload: &Value) -> bool {
+    wake_payload
+        .get("staged")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
 }
 
 fn drain_latest_provider_root_wake_payload(

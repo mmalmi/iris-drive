@@ -26,6 +26,8 @@ use tokio::sync::Mutex;
 mod support;
 
 include!("daemon_sync_matrix/harness.rs");
+#[path = "daemon_sync_matrix/provider_harness.rs"]
+mod provider_harness;
 use support::{LocalBlossomServer, LocalNostrRelay};
 
 const WAIT_TIMEOUT: Duration = Duration::from_mins(3);
@@ -345,6 +347,7 @@ async fn live_daemons_initial_merge_existing_trees_from_both_peers() {
     })
     .await;
     cluster.wait_until_authorized().await;
+    cluster.wait_until_direct_peers_connected().await;
 
     let mut expected = dir_snapshot(cluster.path(Client::Windows));
     expected.extend(dir_snapshot(cluster.path(Client::Ubuntu)));

@@ -246,6 +246,21 @@ fn provider_root_wake_payload_carries_file_count_status() {
     assert_eq!(status["hashtree"]["top_level_entries"], 4);
 }
 
+#[test]
+fn staged_provider_root_wake_payload_waits_for_import() {
+    let status = provider_root_wake_status_payload(&json!({
+        "root_cid": "root-a",
+        "file_count": 4,
+        "top_level_entries": 4,
+        "staged": true,
+    }));
+
+    assert!(
+        status.is_none(),
+        "staged provider roots should not update GUI counts before daemon import"
+    );
+}
+
 #[tokio::test]
 async fn provider_root_wake_drain_keeps_latest_after_debounce() {
     let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
@@ -255,13 +270,13 @@ async fn provider_root_wake_drain_keeps_latest_after_debounce() {
     tx.send(Some(second)).unwrap();
     let delayed = tx.clone();
     tokio::spawn(async move {
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        tokio::time::sleep(std::time::Duration::from_millis(25)).await;
         delayed.send(Some(third)).unwrap();
     });
 
     let drained = drain_latest_provider_root_wake_payload_after_debounce(
         &mut rx,
-        std::time::Duration::from_millis(25),
+        std::time::Duration::from_millis(150),
         Some(first),
     )
     .await;
