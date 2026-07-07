@@ -21,6 +21,7 @@ private let fileProviderRegistrationIdentityKey = "fileProviderRegistrationIdent
 private let fileProviderRegistrationVersion = 5
 private let fileProviderRegistrationVersionKey = "fileProviderRegistrationVersion"
 private let fileProviderAddRetryLimit = 8
+private let fileProviderVisibleURLRetryLimit = 12
 private let fileProviderRemovalWaitPolls = 450
 private let providerRootSignalFileName = "provider-root.changed"
 private let nativeFipsStatusFileName = "native-fips-status.json"
@@ -446,19 +447,20 @@ final class IrisDriveMobileModel: ObservableObject {
         }
     }
 
-    private func openRegisteredDriveFolder(attempt: Int, path: String = "") {
+    private func openRegisteredDriveFolder(attempt: Int, path: String = "", visibleURLAttempt: Int = 0) {
         let domain = irisDriveFileProviderDomain()
         guard let manager = NSFileProviderManager(for: domain) else {
             showFileProviderError("Files provider manager is unavailable.")
             return
         }
-        manager.getUserVisibleURL(for: fileProviderIdentifier(for: path)) { [weak self] url, error in
+        let identifier = fileProviderIdentifier(for: path)
+        manager.getUserVisibleURL(for: identifier) { [weak self] url, error in
             Task { @MainActor in
                 guard let self else { return }
                 guard self.fileProviderOpenAttempt == attempt else { return }
                 guard let url else {
-                    if let error {
-                        NSLog("Iris Drive Files provider URL unavailable: \(error)")
+                    if self.retryOpenRegisteredDriveFolder(attempt: attempt, path: path, identifier: identifier, visibleURLAttempt: visibleURLAttempt, error: error) {
+                        return
                     }
                     self.showFileProviderError("Files could not locate Iris Drive.")
                     return
@@ -488,6 +490,42 @@ final class IrisDriveMobileModel: ObservableObject {
                 }
             }
         }
+    }
+
+    private func retryOpenRegisteredDriveFolder(
+        attempt: Int,
+        path: String,
+        identifier: NSFileProviderItemIdentifier,
+        visibleURLAttempt: Int,
+        error: Error?
+    ) -> Bool {
+        if let error {
+            NSLog("Iris Drive Files provider URL unavailable attempt \(visibleURLAttempt + 1): \(error)")
+        }
+        guard visibleURLAttempt < fileProviderVisibleURLRetryLimit else { return false }
+        fileProviderStatus = "Opening Files provider"
+        rebuildDerivedState()
+        if let manager = NSFileProviderManager(for: irisDriveFileProviderDomain()) {
+            if #available(iOS 16.0, *) {
+                manager.reimportItems(below: .rootContainer) { error in
+                    if let error { NSLog("Iris Drive Files provider open reimport failed: \(error)") }
+                }
+            }
+            let signalIdentifiers = identifier == .rootContainer ? [identifier] : [identifier, .rootContainer]
+            for signalIdentifier in signalIdentifiers {
+                manager.signalEnumerator(for: signalIdentifier) { error in
+                    if let error {
+                        NSLog("Iris Drive Files provider open signal failed for \(signalIdentifier.rawValue): \(error)")
+                    }
+                }
+            }
+        }
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard let self, self.fileProviderOpenAttempt == attempt else { return }
+            self.openRegisteredDriveFolder(attempt: attempt, path: path, visibleURLAttempt: visibleURLAttempt + 1)
+        }
+        return true
     }
 
     private func filesAppURL(for userVisibleURL: URL) -> URL? {

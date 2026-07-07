@@ -3,7 +3,6 @@
 use std::fs;
 use std::path::Path;
 
-use nostr_sdk::{Event, JsonUtil};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
@@ -14,7 +13,18 @@ use crate::nostr_identity::NostrIdentityId;
 use crate::profile::ProfileState;
 use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
 use crate::sharing::{ShareShortcut, SharedFolder};
-use crate::{SignedNostrIdentityRosterOp, parse_nostr_identity_roster_op_event};
+
+mod backup_target;
+mod profile_roster_events;
+
+pub use backup_target::{BackupTarget, BackupTargetCheck, BackupTargetKind, BackupTargetSync};
+#[cfg(test)]
+use profile_roster_events::{
+    PROFILE_ROSTER_EVENTS_SCHEMA_VERSION, ProfileRosterEventStore, profile_roster_events_path,
+};
+use profile_roster_events::{
+    load_profile_roster_events, merge_profile_roster_ops, save_profile_roster_events,
+};
 
 #[derive(Debug, Error)]
 pub enum ConfigError {
@@ -38,9 +48,6 @@ pub const DEFAULT_RELAYS: &[&str] = hashtree_config::DEFAULT_RELAYS;
 /// `upload.iris.to` rejects unencrypted uploads, matching Iris Drive's
 /// private-by-default model.
 pub const DEFAULT_BLOSSOM_SERVERS: &[&str] = &["https://upload.iris.to"];
-
-const PROFILE_ROSTER_EVENTS_FILE: &str = "profile-roster-events.json";
-const PROFILE_ROSTER_EVENTS_SCHEMA_VERSION: u32 = 1;
 
 /// Top-level app state stored at `<config_dir>/config.toml`.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -405,114 +412,6 @@ impl AppConfig {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
-struct ProfileRosterEventStore {
-    schema_version: u32,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    profile_id: Option<NostrIdentityId>,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    events: Vec<String>,
-}
-
-fn profile_roster_events_path(config_path: &Path) -> std::path::PathBuf {
-    config_path
-        .parent()
-        .unwrap_or_else(|| Path::new("."))
-        .join(PROFILE_ROSTER_EVENTS_FILE)
-}
-
-fn load_profile_roster_events(
-    config_path: &Path,
-    expected_profile_id: Option<NostrIdentityId>,
-) -> Result<Vec<SignedNostrIdentityRosterOp>, ConfigError> {
-    let path = profile_roster_events_path(config_path);
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let raw = fs::read_to_string(&path)?;
-    let store: ProfileRosterEventStore =
-        serde_json::from_str(&raw).map_err(|error| ConfigError::Parse(error.to_string()))?;
-    if store.schema_version > PROFILE_ROSTER_EVENTS_SCHEMA_VERSION {
-        return Ok(Vec::new());
-    }
-    Ok(known_profile_roster_ops_from_events(
-        &store.events,
-        expected_profile_id.or(store.profile_id),
-    ))
-}
-
-fn save_profile_roster_events(
-    config_path: &Path,
-    profile_id: NostrIdentityId,
-    ops: &[SignedNostrIdentityRosterOp],
-) -> Result<(), ConfigError> {
-    let path = profile_roster_events_path(config_path);
-    let mut events = if path.exists() {
-        let raw = fs::read_to_string(&path)?;
-        serde_json::from_str::<ProfileRosterEventStore>(&raw)
-            .map(|store| store.events)
-            .unwrap_or_default()
-    } else {
-        Vec::new()
-    };
-    events.extend(ops.iter().map(|op| op.event_json.clone()));
-    events = dedupe_event_json(events);
-    let store = ProfileRosterEventStore {
-        schema_version: PROFILE_ROSTER_EVENTS_SCHEMA_VERSION,
-        profile_id: Some(profile_id),
-        events,
-    };
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let raw = serde_json::to_string_pretty(&store)
-        .map_err(|error| ConfigError::Serialize(error.to_string()))?;
-    fs::write(path, raw)?;
-    Ok(())
-}
-
-fn known_profile_roster_ops_from_events(
-    events: &[String],
-    expected_profile_id: Option<NostrIdentityId>,
-) -> Vec<SignedNostrIdentityRosterOp> {
-    let mut by_id = BTreeMap::new();
-    for event_json in events {
-        let Ok(event) = Event::from_json(event_json) else {
-            continue;
-        };
-        let Ok(op) = parse_nostr_identity_roster_op_event(&event) else {
-            continue;
-        };
-        if expected_profile_id.is_some_and(|profile_id| op.content.profile_id != profile_id) {
-            continue;
-        }
-        by_id.insert(op.op_id.clone(), op);
-    }
-    by_id.into_values().collect()
-}
-
-fn merge_profile_roster_ops(
-    current: &[SignedNostrIdentityRosterOp],
-    incoming: &[SignedNostrIdentityRosterOp],
-) -> Vec<SignedNostrIdentityRosterOp> {
-    let mut by_id = BTreeMap::new();
-    for op in current.iter().chain(incoming.iter()) {
-        by_id.insert(op.op_id.clone(), op.clone());
-    }
-    by_id.into_values().collect()
-}
-
-fn dedupe_event_json(events: Vec<String>) -> Vec<String> {
-    let mut by_key = BTreeMap::new();
-    for event_json in events {
-        let key = Event::from_json(&event_json)
-            .map(|event| event.id.to_string())
-            .unwrap_or_else(|_| format!("raw:{event_json}"));
-        by_key.insert(key, event_json);
-    }
-    by_key.into_values().collect()
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DriveRole {
@@ -522,66 +421,6 @@ pub enum DriveRole {
     Editor,
     /// Shared with this user read-only.
     Reader,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BackupTargetKind {
-    Blossom,
-    Fips,
-    Filesystem,
-    Lmdb,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BackupTarget {
-    pub id: String,
-    pub kind: BackupTargetKind,
-    pub target: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-    #[serde(default = "default_true")]
-    pub enabled: bool,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_sync: Option<BackupTargetSync>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_check: Option<BackupTargetCheck>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BackupTargetSync {
-    pub state: String,
-    pub root_cid: String,
-    pub synced_at: i64,
-    pub total_hashes: usize,
-    pub uploaded: usize,
-    pub already_present: usize,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct BackupTargetCheck {
-    pub state: String,
-    pub root_cid: String,
-    pub checked_at: i64,
-    pub total_hashes: usize,
-    pub sample_size: usize,
-    pub sampled_hashes: usize,
-    pub present: usize,
-    pub missing: usize,
-    pub unknown: usize,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub latency_ms: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub download_bytes: Option<usize>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub download_ms: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub download_bytes_per_second: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
 }
 
 fn default_true() -> bool {

@@ -297,8 +297,7 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
         if base_files
             .get(path)
             .is_some_and(|base| visible_entry_matches(base, previous))
-            || (tombstone_paths.is_none()
-                && !base_files.contains_key(path)
+            || (!base_files.contains_key(path)
                 && !edited_files.contains_key(path)
                 && !tombstone_path_selected(tombstone_paths, path))
         {
