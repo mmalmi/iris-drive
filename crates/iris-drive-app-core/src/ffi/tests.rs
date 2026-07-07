@@ -1,6 +1,7 @@
 use super::{
-    FfiApp, NATIVE_RUNTIME_CONFIG_CACHE, SentAppKeyLinkRequest, app_key_link_request_send_due,
-    load_native_runtime_config_cached, native_calendar_export_json, normalize_pubkey,
+    FfiApp, NATIVE_RUNTIME_CONFIG_CACHE, NativeAppConfigCache, SentAppKeyLinkRequest,
+    app_key_link_request_send_due, load_native_runtime_config_cached, native_calendar_export_json,
+    normalize_pubkey,
 };
 use crate::NativeAppAction;
 use crate::state::{UiShare, UiShareMember};
@@ -70,6 +71,57 @@ fn native_runtime_config_cache_reuses_unchanged_config_and_invalidates_on_save()
 
     let refreshed = load_native_runtime_config_cached(&config_path).unwrap();
     assert_eq!(refreshed.relays, vec!["wss://changed.example"]);
+}
+
+#[test]
+fn native_runtime_config_cache_invalidates_same_metadata_content_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = config_path_in(dir.path());
+    let fixed_time = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(12_345);
+    NATIVE_RUNTIME_CONFIG_CACHE.lock().unwrap().clear();
+
+    save_config_with_fixed_time(&config_path, "wss://one.example", fixed_time);
+    let first = load_native_runtime_config_cached(&config_path).unwrap();
+    assert_eq!(first.relays, vec!["wss://one.example"]);
+
+    save_config_with_fixed_time(&config_path, "wss://two.example", fixed_time);
+    let refreshed = load_native_runtime_config_cached(&config_path).unwrap();
+
+    assert_eq!(refreshed.relays, vec!["wss://two.example"]);
+}
+
+#[test]
+fn native_app_key_link_config_cache_invalidates_same_metadata_content_change() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = config_path_in(dir.path());
+    let fixed_time = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(67_890);
+    let mut cache = NativeAppConfigCache::default();
+
+    save_config_with_fixed_time(&config_path, "wss://one.example", fixed_time);
+    let first = cache.load(dir.path()).unwrap();
+    assert_eq!(first.relays, vec!["wss://one.example"]);
+
+    save_config_with_fixed_time(&config_path, "wss://two.example", fixed_time);
+    let refreshed = cache.load(dir.path()).unwrap();
+
+    assert_eq!(refreshed.relays, vec!["wss://two.example"]);
+}
+
+fn save_config_with_fixed_time(config_path: &Path, relay: &str, timestamp: std::time::SystemTime) {
+    let config = AppConfig {
+        relays: vec![relay.to_owned()],
+        ..AppConfig::default()
+    };
+    config.save(config_path).unwrap();
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(config_path)
+        .unwrap();
+    let times = std::fs::FileTimes::new()
+        .set_accessed(timestamp)
+        .set_modified(timestamp);
+    file.set_times(times).unwrap();
 }
 
 #[test]

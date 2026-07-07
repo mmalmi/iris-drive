@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 use std::collections::BTreeSet;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 
@@ -173,14 +175,15 @@ struct SentAppKeyLinkRequest {
     attempts: u8,
 }
 
-#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NativeConfigFileFingerprint {
     len: u64,
     modified: Option<std::time::SystemTime>,
+    content_hash: Option<u64>,
 }
 
-#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 #[derive(Debug, Default)]
 struct NativeAppConfigCache {
     fingerprint: Option<NativeConfigFileFingerprint>,
@@ -253,7 +256,7 @@ fn apply_native_app_key_link_relay_event_to_config(
     Ok(NativeAppKeyLinkRelayEventApply::Ignored)
 }
 
-#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 impl NativeAppConfigCache {
     fn load(&mut self, config_dir: &Path) -> Result<AppConfig, String> {
         let config_path = config_path_in(config_dir);
@@ -273,17 +276,19 @@ impl NativeAppConfigCache {
     }
 }
 
-#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 fn native_config_file_fingerprint(path: &Path) -> std::io::Result<NativeConfigFileFingerprint> {
     match std::fs::metadata(path) {
         Ok(metadata) => Ok(NativeConfigFileFingerprint {
             len: metadata.len(),
             modified: metadata.modified().ok(),
+            content_hash: Some(config_file_content_hash(path)?),
         }),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             Ok(NativeConfigFileFingerprint {
                 len: 0,
                 modified: None,
+                content_hash: None,
             })
         }
         Err(error) => Err(error),
@@ -314,6 +319,7 @@ fn app_key_link_request_retry_interval(attempts: u8) -> std::time::Duration {
 struct RuntimeConfigFileFingerprint {
     len: u64,
     modified: Option<std::time::SystemTime>,
+    content_hash: Option<u64>,
 }
 
 #[derive(Clone)]
@@ -354,15 +360,24 @@ fn runtime_config_file_fingerprint(path: &Path) -> std::io::Result<RuntimeConfig
         Ok(metadata) => Ok(RuntimeConfigFileFingerprint {
             len: metadata.len(),
             modified: metadata.modified().ok(),
+            content_hash: Some(config_file_content_hash(path)?),
         }),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             Ok(RuntimeConfigFileFingerprint {
                 len: 0,
                 modified: None,
+                content_hash: None,
             })
         }
         Err(error) => Err(error),
     }
+}
+
+fn config_file_content_hash(path: &Path) -> std::io::Result<u64> {
+    let bytes = std::fs::read(path)?;
+    let mut hasher = DefaultHasher::new();
+    bytes.hash(&mut hasher);
+    Ok(hasher.finish())
 }
 
 #[derive(uniffi::Object, Debug)]
@@ -2127,7 +2142,7 @@ async fn run_app_key_link_exchange_async(
         direct_root_period,
     );
     direct_root_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    let _ = drive_app_key_link_exchange_tick(
+    if let Err(error) = drive_app_key_link_exchange_tick(
         config_dir,
         &relay_client,
         device.keys(),
@@ -2138,7 +2153,10 @@ async fn run_app_key_link_exchange_async(
         &acked_rosters,
         &mut app_key_link_config_cache,
     )
-    .await?;
+    .await
+    {
+        tracing::warn!(error = %error, "native app-key-link FIPS startup tick failed");
+    }
     if let Err(error) = direct_roots.announce_current_state(config_dir, &sync).await {
         tracing::warn!(error = %error, "native direct-root FIPS exchange failed");
     }
@@ -2158,7 +2176,7 @@ async fn run_app_key_link_exchange_async(
                 if stop.load(Ordering::Acquire) {
                     break;
                 }
-                let _ = drive_app_key_link_exchange_tick(
+                if let Err(error) = drive_app_key_link_exchange_tick(
                     config_dir,
                     &relay_client,
                     device.keys(),
@@ -2168,7 +2186,9 @@ async fn run_app_key_link_exchange_async(
                     &mut published_roster_op_ids,
                     &acked_rosters,
                     &mut app_key_link_config_cache,
-                ).await?;
+                ).await {
+                    tracing::warn!(error = %error, "native app-key-link FIPS tick failed");
+                }
             }
             _ = direct_root_tick.tick() => {
                 if stop.load(Ordering::Acquire) {
