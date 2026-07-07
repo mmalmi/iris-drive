@@ -4,6 +4,8 @@ import ImageIO
 import Security
 import UniformTypeIdentifiers
 
+private func fileProviderVersionData(_ value: String) -> Data { let data = Data(value.utf8); return data.count <= 128 ? data : Data(data.prefix(128)) }
+
 final class FileProviderItem: NSObject, NSFileProviderItem {
     let itemIdentifier: NSFileProviderItemIdentifier
     let parentItemIdentifier: NSFileProviderItemIdentifier
@@ -31,7 +33,7 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
         self.itemSize = itemSize
         self.created = created
         self.modified = modified
-        let version = Data(versionIdentifier.utf8)
+        let version = fileProviderVersionData(versionIdentifier)
         self.itemVersion = NSFileProviderItemVersion(
             contentVersion: version,
             metadataVersion: version
@@ -681,7 +683,7 @@ enum FileProviderStorage {
         return data as Data
     }
 
-    private static func item(for entry: ProviderEntry, anchor: String?) -> FileProviderItem {
+    private static func item(for entry: ProviderEntry, anchor _: String?) -> FileProviderItem {
         let isDirectory = entry.kind == "directory"
         let contentType: UTType = isDirectory
             ? UTType.folder
@@ -694,8 +696,13 @@ enum FileProviderStorage {
             itemSize: isDirectory ? nil : NSNumber(value: entry.size),
             created: displayDate(from: entry.modifiedAt),
             modified: displayDate(from: entry.modifiedAt),
-            versionIdentifier: "\(providerItemVersionPrefix):\(anchor ?? "unavailable"):\(entry.kind):\(entry.path):\(entry.size):\(entry.modifiedAt ?? 0)"
+            versionIdentifier: providerItemVersionIdentifier(for: entry)
         )
+    }
+
+    private static func providerItemVersionIdentifier(for entry: ProviderEntry) -> String {
+        let version = (entry.version ?? "").trimmingCharacters(in: .whitespacesAndNewlines); if let primary = version.split(separator: ":").first, !primary.isEmpty { return "\(providerItemVersionPrefix):entry:\(entry.kind):\(primary)" }
+        return "\(providerItemVersionPrefix):fallback:\(entry.kind):\(entry.size):\(entry.modifiedAt ?? 0):\(entry.path.suffix(40))"
     }
 
     private static func displayDate(from unixSeconds: Int64?) -> Date? {

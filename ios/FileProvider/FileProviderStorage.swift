@@ -14,6 +14,7 @@ enum FileProviderStorage {
     private static let debugLogFileName = "ios-fileprovider-extension.log"
     private static let pathPrefix = "path:"
     private static let tempDirectoryName = "FileProviderTmp"
+    private static let providerItemVersionPrefix = "iris-drive-ios-provider-v2"
     private static let minDisplayUnixSeconds: Int64 = 946_684_800
 
     private struct ProviderState: Decodable {
@@ -405,7 +406,7 @@ enum FileProviderStorage {
         return ProviderState(anchor: anchor, entries: list.entries)
     }
 
-    private static func item(for entry: ProviderEntry, anchor: String) -> FileProviderItem {
+    private static func item(for entry: ProviderEntry, anchor _: String) -> FileProviderItem {
         let isDirectory = entry.kind == "directory"
         let type = isDirectory
             ? UTType.folder
@@ -418,8 +419,13 @@ enum FileProviderStorage {
             itemSize: isDirectory ? nil : NSNumber(value: entry.size),
             created: displayDate(from: entry.modifiedAt),
             modified: displayDate(from: entry.modifiedAt),
-            versionIdentifier: "\(anchor):\(entry.version ?? "unknown"):\(entry.path):\(entry.size):\(entry.modifiedAt ?? 0)"
+            versionIdentifier: providerItemVersionIdentifier(for: entry)
         )
+    }
+
+    private static func providerItemVersionIdentifier(for entry: ProviderEntry) -> String {
+        let version = (entry.version ?? "").trimmingCharacters(in: .whitespacesAndNewlines); if let primary = version.split(separator: ":").first, !primary.isEmpty { return "\(providerItemVersionPrefix):entry:\(entry.kind):\(primary)" }
+        return "\(providerItemVersionPrefix):fallback:\(entry.kind):\(entry.size):\(entry.modifiedAt ?? 0):\(entry.path.suffix(40))"
     }
 
     private static func optimisticItem(

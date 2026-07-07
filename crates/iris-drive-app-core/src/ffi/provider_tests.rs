@@ -492,6 +492,62 @@ fn provider_list_includes_modified_at_for_empty_directories() {
 }
 
 #[test]
+fn provider_list_keeps_unchanged_entry_versions_stable_across_root_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let _ = app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "iPhone".to_owned(),
+    });
+    mark_daemon_live(dir.path());
+    let first = dir.path().join("first.txt");
+    let second = dir.path().join("second.txt");
+    std::fs::write(&first, b"first bytes").unwrap();
+    std::fs::write(&second, b"second bytes").unwrap();
+
+    assert!(
+        super::native_provider_write_json(
+            &dir.path().display().to_string(),
+            "first.txt",
+            &first.display().to_string(),
+        )["error"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty()
+    );
+    let before = super::native_provider_list_json(&dir.path().display().to_string());
+    let before_version = before["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["path"] == "first.txt")
+        .and_then(|entry| entry["version"].as_str())
+        .expect("provider list includes first file version")
+        .to_owned();
+
+    assert!(
+        super::native_provider_write_json(
+            &dir.path().display().to_string(),
+            "second.txt",
+            &second.display().to_string(),
+        )["error"]
+            .as_str()
+            .unwrap_or_default()
+            .is_empty()
+    );
+    let after = super::native_provider_list_json(&dir.path().display().to_string());
+    let after_version = after["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["path"] == "first.txt")
+        .and_then(|entry| entry["version"].as_str())
+        .expect("provider list keeps first file version")
+        .to_owned();
+
+    assert_eq!(after_version, before_version);
+}
+
+#[test]
 fn app_constructor_defers_provider_summary_until_refresh() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());

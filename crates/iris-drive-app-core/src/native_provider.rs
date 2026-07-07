@@ -540,7 +540,7 @@ where
                 display_name: child.name,
                 kind,
                 size: item.size,
-                version: provider.anchor().await.as_str().to_owned(),
+                version: item.version,
                 modified_at,
             });
         }

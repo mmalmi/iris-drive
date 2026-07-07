@@ -1037,11 +1037,11 @@ public static partial class WindowsCloudFiles
             return null;
         }
 
-        var separator = entry.Version.LastIndexOf(':');
-        var candidate = separator >= 0
-            ? entry.Version[(separator + 1)..]
-            : entry.Version;
-        candidate = candidate.Trim();
+        var candidate = entry.Version.Trim();
+        if (candidate.Contains(':', StringComparison.Ordinal))
+        {
+            return null;
+        }
         if (candidate.Length != 64 || candidate.Any(ch => !Uri.IsHexDigit(ch)))
         {
             return null;

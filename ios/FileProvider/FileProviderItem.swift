@@ -2,6 +2,8 @@ import Foundation
 import FileProvider
 import UniformTypeIdentifiers
 
+private func fileProviderVersionData(_ value: String) -> Data { let data = Data(value.utf8); return data.count <= 128 ? data : Data(data.prefix(128)) }
+
 final class FileProviderItem: NSObject, NSFileProviderItem {
     let itemIdentifier: NSFileProviderItemIdentifier
     let parentItemIdentifier: NSFileProviderItemIdentifier
@@ -29,7 +31,7 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
         self.itemSize = itemSize
         self.created = created
         self.modified = modified
-        let version = Data(String(versionIdentifier.prefix(128)).utf8)
+        let version = fileProviderVersionData(versionIdentifier)
         self.itemVersion = NSFileProviderItemVersion(
             contentVersion: version,
             metadataVersion: version

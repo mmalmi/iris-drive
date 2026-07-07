@@ -214,6 +214,7 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
             name: name.to_string(),
             kind: kind_from_link(resolved.link_type),
             size: resolved.size,
+            version: resolved.cid.to_string(),
             modified_at: modified_at_from_meta(resolved.meta.as_ref()),
         })
     }
@@ -226,6 +227,7 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
             name,
             kind: kind_from_link(resolved.link_type),
             size: resolved.size,
+            version: resolved.cid.to_string(),
             modified_at: modified_at_from_meta(resolved.meta.as_ref()),
         })
     }
@@ -325,6 +327,7 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
             name: name.to_string(),
             kind: ItemKind::File,
             size,
+            version: cid.to_string(),
             modified_at,
         })
     }
@@ -366,6 +369,7 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
             name: name.to_string(),
             kind: ItemKind::Directory,
             size: 0,
+            version: dir_cid.to_string(),
             modified_at,
         })
     }

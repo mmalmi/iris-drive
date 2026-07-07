@@ -35,6 +35,9 @@ pub struct Item<Id> {
     pub name: String,
     pub kind: ItemKind,
     pub size: u64,
+    /// Stable content identity for this item. For hashtree-backed items this
+    /// is the item's own CID, not the containing root CID.
+    pub version: String,
     pub modified_at: Option<i64>,
 }
 
