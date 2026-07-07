@@ -1125,6 +1125,71 @@ test('TestFlight helper explains App Store Connect app creation permission failu
   assert.match(result.stderr, /SKU: fi\.siriusbusiness\.drive/)
 })
 
+test('TestFlight helper matches builds by marketing version and build number', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-asc-test-'))
+  const keyPath = join(root, 'AuthKey_TESTKEY123.p8')
+  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+  writeFileSync(keyPath, privateKey.export({ type: 'pkcs8', format: 'pem' }))
+
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, `http://${request.headers.host}`)
+    if (request.method === 'GET' && url.pathname === '/v1/apps') {
+      writeJson(response, 200, {
+        data: [
+          {
+            type: 'apps',
+            id: 'APP123',
+            attributes: { name: 'Iris Drive', bundleId: 'fi.siriusbusiness.drive' },
+          },
+        ],
+      })
+      return
+    }
+    if (request.method === 'GET' && url.pathname === '/v1/builds') {
+      writeJson(response, 200, {
+        data: [
+          {
+            type: 'builds',
+            id: 'OLD1017',
+            attributes: { version: '1017', processingState: 'VALID' },
+            relationships: {
+              preReleaseVersion: { data: { type: 'preReleaseVersions', id: 'PR016' } },
+            },
+          },
+        ],
+        included: [
+          {
+            type: 'preReleaseVersions',
+            id: 'PR016',
+            attributes: { version: '0.1.16', platform: 'IOS' },
+          },
+        ],
+      })
+      return
+    }
+    writeJson(response, 404, { errors: [{ title: 'unexpected request' }] })
+  })
+  t.after(() => server.close())
+  await listen(server)
+
+  const result = await spawnForTest('bash', ['scripts/testflight-internal', 'status'], {
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
+    env: {
+      ...process.env,
+      IRIS_DRIVE_ASC_BASE_URL: `http://127.0.0.1:${server.address().port}/v1/`,
+      IRIS_DRIVE_ASC_AUTH_KEY_PATH: keyPath,
+      IRIS_DRIVE_ASC_AUTH_KEY_ID: 'TESTKEY123',
+      IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID: '00000000-0000-0000-0000-000000000000',
+      IRIS_DRIVE_IOS_BUNDLE_ID: 'fi.siriusbusiness.drive',
+      IRIS_DRIVE_IOS_MARKETING_VERSION: '0.1.17',
+      IRIS_DRIVE_IOS_BUILD_NUMBER: '1017',
+    },
+  })
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /No TestFlight build 0\.1\.17 \(1017\) found/)
+})
+
 test('iOS FileProvider declares the required App Store document group', () => {
   const plist = readFileSync(
     fileURLToPath(new URL('../ios/FileProvider/Info.plist', import.meta.url)),
