@@ -20,18 +20,23 @@ use std::str::FromStr;
 
 use nostr_sdk::nips::nip19::FromBech32;
 use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
-use nostr_sdk::{Keys, PublicKey, SecretKey};
+use nostr_sdk::{Event, JsonUtil, Keys, PublicKey, SecretKey};
 use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
 use crate::app_keys::{AppActorEntry, AppActorRole, AppKeysProjection};
 use crate::config::{AppConfig, ConfigError};
+use crate::device_labels::{
+    decrypt_drive_device_labels_with_dck, drive_device_label_payload,
+    encrypt_drive_device_labels_with_dck, normalize_drive_device_labels,
+};
 use crate::identity::{AppKey, IdentityError, RecoveryKey};
 use crate::nostr_identity::{
     NostrIdentityCapabilities, NostrIdentityError, NostrIdentityFacet, NostrIdentityId,
     NostrIdentityKeyPurpose, NostrIdentityRosterOp, NostrIdentityRosterProjection,
-    SignedNostrIdentityRosterOp, build_nostr_identity_roster_op_event,
+    SignedNostrIdentityRosterOp, build_nostr_identity_roster_op_event_with_encrypted_device_labels,
+    encrypted_device_label_payloads_from_nostr_identity_roster_op_event,
     nostr_identity_roster_parent_ids, parse_nostr_identity_roster_op_event,
     project_nostr_identity_roster,
 };
@@ -722,10 +727,10 @@ fn local_app_key_label(
     current_app_key_pubkey: Option<&str>,
     current_app_key_label: Option<&str>,
 ) -> Option<String> {
-    if current_app_key_pubkey == Some(pubkey) {
-        if let Some(label) = current_app_key_label.and_then(normalize_app_key_label) {
-            return Some(label);
-        }
+    if current_app_key_pubkey == Some(pubkey)
+        && let Some(label) = current_app_key_label.and_then(normalize_app_key_label)
+    {
+        return Some(label);
     }
     local_projection
         .and_then(|projection| {
@@ -738,17 +743,42 @@ fn local_app_key_label(
         .and_then(normalize_app_key_label)
 }
 
-fn set_local_app_key_label(projection: &mut AppKeysProjection, pubkey: &str, label: Option<&str>) {
-    let Some(label) = label.and_then(normalize_app_key_label) else {
-        return;
-    };
-    if let Some(actor) = projection
-        .app_actors
-        .iter_mut()
-        .find(|actor| actor.pubkey == pubkey)
-    {
-        actor.label = Some(label);
+fn app_key_labels_from_projection(
+    projection: Option<&AppKeysProjection>,
+) -> BTreeMap<String, String> {
+    projection.map_or_else(BTreeMap::new, |projection| {
+        projection
+            .app_actors
+            .iter()
+            .filter_map(|actor| {
+                actor
+                    .label
+                    .as_deref()
+                    .and_then(normalize_app_key_label)
+                    .map(|label| (actor.pubkey.clone(), label))
+            })
+            .collect()
+    })
+}
+
+fn apply_app_key_labels_to_projection(
+    projection: &mut AppKeysProjection,
+    labels: &BTreeMap<String, String>,
+) -> bool {
+    let mut changed = false;
+    for actor in &mut projection.app_actors {
+        let Some(label) = labels
+            .get(&actor.pubkey)
+            .and_then(|label| normalize_app_key_label(label))
+        else {
+            continue;
+        };
+        if actor.label.as_deref() != Some(label.as_str()) {
+            actor.label = Some(label);
+            changed = true;
+        }
     }
+    changed
 }
 
 /// In-memory profile: persisted state + the keypairs it references.
@@ -763,6 +793,115 @@ impl Profile {
             .app_keys
             .as_ref()
             .ok_or(ProfileError::NoCurrentAppKeysProjection)
+    }
+
+    fn sync_app_keys_from_profile_with_device_labels(&mut self) -> bool {
+        let changed = self.state.sync_app_keys_from_profile();
+        let Ok(dck) = self.current_dck() else {
+            return changed;
+        };
+        let labels = self.decrypted_device_labels_with_dck(&dck);
+        let labels_changed = self
+            .state
+            .app_keys
+            .as_mut()
+            .is_some_and(|projection| apply_app_key_labels_to_projection(projection, &labels));
+        changed || labels_changed
+    }
+
+    fn decrypted_device_labels_with_dck(&self, dck: &[u8; 32]) -> BTreeMap<String, String> {
+        let mut payloads = self
+            .state
+            .profile_roster_ops
+            .iter()
+            .flat_map(|op| {
+                Event::from_json(&op.event_json)
+                    .ok()
+                    .into_iter()
+                    .flat_map(|event| {
+                        encrypted_device_label_payloads_from_nostr_identity_roster_op_event(&event)
+                    })
+                    .filter_map(|ciphertext| {
+                        decrypt_drive_device_labels_with_dck(&ciphertext, dck).ok()
+                    })
+            })
+            .filter(|payload| payload.profile_id == self.state.profile_id)
+            .collect::<Vec<_>>();
+        payloads.sort_by(|left, right| {
+            left.updated_at
+                .cmp(&right.updated_at)
+                .then_with(|| left.secret_epoch.cmp(&right.secret_epoch))
+        });
+
+        let mut labels = BTreeMap::new();
+        for payload in payloads {
+            labels.extend(payload.labels);
+        }
+        normalize_drive_device_labels(labels)
+    }
+
+    fn app_key_labels_for_payload(
+        &self,
+        dck: Option<&[u8; 32]>,
+        extra_labels: BTreeMap<String, String>,
+        removed_pubkeys: &[&str],
+    ) -> BTreeMap<String, String> {
+        let mut labels = dck.map_or_else(BTreeMap::new, |dck| {
+            self.decrypted_device_labels_with_dck(dck)
+        });
+        labels.extend(app_key_labels_from_projection(self.state.app_keys.as_ref()));
+        if let Some(label) = self
+            .state
+            .app_key_label
+            .as_deref()
+            .and_then(normalize_app_key_label)
+        {
+            labels.insert(self.state.app_key_pubkey.clone(), label);
+        }
+        let extra_pubkeys = extra_labels.keys().cloned().collect::<BTreeSet<_>>();
+        labels.extend(extra_labels);
+        for pubkey in removed_pubkeys {
+            labels.remove(*pubkey);
+        }
+        let active_pubkeys = self
+            .state
+            .profile_projection()
+            .active_app_key_pubkeys()
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        labels
+            .retain(|pubkey, _| active_pubkeys.contains(pubkey) || extra_pubkeys.contains(pubkey));
+        normalize_drive_device_labels(labels)
+    }
+
+    fn encrypted_device_labels_for_dck(
+        &self,
+        dck: &[u8; 32],
+        secret_epoch: u64,
+        updated_at: i64,
+        extra_labels: BTreeMap<String, String>,
+        removed_pubkeys: &[&str],
+    ) -> Result<Option<String>, ProfileError> {
+        let labels = self.app_key_labels_for_payload(Some(dck), extra_labels, removed_pubkeys);
+        encrypted_device_labels_from_map(
+            self.state.profile_id,
+            secret_epoch,
+            labels,
+            dck,
+            updated_at,
+        )
+    }
+
+    fn encrypted_current_device_labels(
+        &self,
+        updated_at: i64,
+    ) -> Result<Option<String>, ProfileError> {
+        let Ok(dck) = self.current_dck() else {
+            return Ok(None);
+        };
+        let secret_epoch =
+            next_profile_secret_epoch(&self.state.profile_projection()).saturating_sub(1);
+        self.encrypted_device_labels_for_dck(&dck, secret_epoch, updated_at, BTreeMap::new(), &[])
     }
 
     /// **Create** flow — fresh `AppKey` saved to the config dir. The `AppKey` is
@@ -793,12 +932,12 @@ impl Profile {
         let dck = generate_dck();
         state.profile_roster_ops =
             initial_profile_roster_ops(device.keys(), profile_id, &app_actor, None, &dck, now)?;
-        state.sync_app_keys_from_profile();
 
-        let profile = Self {
+        let mut profile = Self {
             state,
             app_key: device,
         };
+        profile.sync_app_keys_from_profile_with_device_labels();
         Ok(profile)
     }
 
@@ -849,12 +988,11 @@ impl Profile {
             &dck,
             now,
         )?;
-        state.sync_app_keys_from_profile();
-
-        let profile = Self {
+        let mut profile = Self {
             state,
             app_key: device,
         };
+        profile.sync_app_keys_from_profile_with_device_labels();
         Ok(profile)
     }
 
@@ -993,7 +1131,7 @@ impl Profile {
         self.state.outbound_app_key_link_request = None;
         self.state.inbound_app_key_link_requests.clear();
         self.state.handled_app_key_link_requests.clear();
-        self.state.sync_app_keys_from_profile();
+        self.sync_app_keys_from_profile_with_device_labels();
 
         if self
             .state
@@ -1092,13 +1230,14 @@ impl Profile {
     /// view from the persisted `ProfileState` plus the on-disk key
     /// files. Errors if the app key is missing — caller should run a
     /// create/restore/link flow first.
-    pub fn load(mut state: ProfileState, config_dir: &Path) -> Result<Self, ProfileError> {
+    pub fn load(state: ProfileState, config_dir: &Path) -> Result<Self, ProfileError> {
         let device = AppKey::load(key_path_in(config_dir))?;
-        state.sync_app_keys_from_profile();
-        Ok(Self {
+        let mut profile = Self {
             state,
             app_key: device,
-        })
+        };
+        profile.sync_app_keys_from_profile_with_device_labels();
+        Ok(profile)
     }
 
     /// Approve a new `AppKey` by appending it to the roster
@@ -1129,8 +1268,23 @@ impl Profile {
             return Err(ProfileError::AppKeyAlreadyAuthorized);
         }
         let now = next_profile_timestamp(&self.state);
-        let local_label = label.clone();
-        self.append_profile_roster_op(
+        let dck = generate_dck();
+        let secret_epoch = next_profile_secret_epoch(&self.state.profile_projection());
+        let app_key_label = label.and_then(|label| normalize_app_key_label(&label));
+        let encrypted_device_labels = self.encrypted_device_labels_for_dck(
+            &dck,
+            secret_epoch,
+            now,
+            app_key_label
+                .map(|label| BTreeMap::from([(app_key_pubkey_hex.to_string(), label)]))
+                .unwrap_or_default(),
+            &[],
+        )?;
+        let parents = nostr_identity_roster_parent_ids(&self.state.profile_roster_ops);
+        let signed = signed_profile_roster_op_with_parents_and_device_labels(
+            self.app_key.keys(),
+            self.state.profile_id,
+            parents,
             NostrIdentityRosterOp::AddFacet {
                 facet: NostrIdentityFacet::app_key(
                     app_key_pubkey_hex.to_string(),
@@ -1140,13 +1294,12 @@ impl Profile {
                 ),
             },
             now,
+            encrypted_device_labels,
         )?;
-        let dck = generate_dck();
+        self.state.profile_roster_ops.push(signed);
+        self.state.profile_roster_projection = None;
         self.rotate_profile_dck_epoch(&dck, now + 1)?;
-        self.state.sync_app_keys_from_profile();
-        if let Some(projection) = self.state.app_keys.as_mut() {
-            set_local_app_key_label(projection, app_key_pubkey_hex, local_label.as_deref());
-        }
+        self.sync_app_keys_from_profile_with_device_labels();
         self.state
             .inbound_app_key_link_requests
             .retain(|request| request.app_key_pubkey != app_key_pubkey_hex);
@@ -1177,16 +1330,31 @@ impl Profile {
             return Err(ProfileError::CannotRemoveLastAdmin);
         }
         let now = next_profile_timestamp(&self.state);
-        self.append_profile_roster_op(
+        let dck = generate_dck();
+        let secret_epoch = next_profile_secret_epoch(&self.state.profile_projection());
+        let encrypted_device_labels = self.encrypted_device_labels_for_dck(
+            &dck,
+            secret_epoch,
+            now,
+            BTreeMap::new(),
+            &[app_key_pubkey_hex],
+        )?;
+        let parents = nostr_identity_roster_parent_ids(&self.state.profile_roster_ops);
+        let signed = signed_profile_roster_op_with_parents_and_device_labels(
+            self.app_key.keys(),
+            self.state.profile_id,
+            parents,
             NostrIdentityRosterOp::TombstoneFacet {
                 pubkey: app_key_pubkey_hex.to_string(),
                 reason: None,
             },
             now,
+            encrypted_device_labels,
         )?;
-        let dck = generate_dck();
+        self.state.profile_roster_ops.push(signed);
+        self.state.profile_roster_projection = None;
         self.rotate_profile_dck_epoch(&dck, now + 1)?;
-        self.state.sync_app_keys_from_profile();
+        self.sync_app_keys_from_profile_with_device_labels();
         self.current_app_keys_projection()
     }
 
@@ -1312,7 +1480,7 @@ impl Profile {
 
         let dck = generate_dck();
         self.rotate_profile_dck_epoch_with_signer(authority_keys, &dck, now + 1)?;
-        self.state.sync_app_keys_from_profile();
+        self.sync_app_keys_from_profile_with_device_labels();
         self.current_app_keys_projection()
     }
 
@@ -1331,7 +1499,7 @@ impl Profile {
         let dck = generate_dck();
         let now = next_profile_timestamp(&self.state).max(next_local_timestamp(Some(snap)));
         self.rotate_profile_dck_epoch(&dck, now)?;
-        self.state.sync_app_keys_from_profile();
+        self.sync_app_keys_from_profile_with_device_labels();
         self.current_app_keys_projection()
     }
 
@@ -1373,7 +1541,7 @@ impl Profile {
             let dck = generate_dck();
             self.rotate_profile_dck_epoch(&dck, now + 1)?;
         }
-        self.state.sync_app_keys_from_profile();
+        self.sync_app_keys_from_profile_with_device_labels();
         Ok(())
     }
 
@@ -1417,7 +1585,7 @@ impl Profile {
         )?;
         let dck = generate_dck();
         self.rotate_profile_dck_epoch(&dck, now + 1)?;
-        self.state.sync_app_keys_from_profile();
+        self.sync_app_keys_from_profile_with_device_labels();
         Ok(recovery_pubkey)
     }
 
@@ -1495,7 +1663,24 @@ impl Profile {
         let parents = nostr_identity_roster_parent_ids(&self.state.profile_roster_ops);
         let label = label.or_else(|| self.state.app_key_label.clone());
         self.state.app_key_label.clone_from(&label);
-        let add_op = signed_profile_roster_op_with_parents(
+        let encrypted_device_labels = dck_to_rewrap
+            .as_ref()
+            .map(|dck| {
+                self.encrypted_device_labels_for_dck(
+                    dck,
+                    next_profile_secret_epoch(&projection),
+                    now,
+                    label
+                        .as_deref()
+                        .and_then(normalize_app_key_label)
+                        .map(|label| BTreeMap::from([(self.state.app_key_pubkey.clone(), label)]))
+                        .unwrap_or_default(),
+                    &[],
+                )
+            })
+            .transpose()?
+            .flatten();
+        let add_op = signed_profile_roster_op_with_parents_and_device_labels(
             authority_keys,
             self.state.profile_id,
             parents,
@@ -1508,6 +1693,7 @@ impl Profile {
                 ),
             },
             now,
+            encrypted_device_labels,
         )?;
         self.state.profile_roster_ops.push(add_op);
         self.state.profile_roster_projection = None;
@@ -1515,7 +1701,7 @@ impl Profile {
         if let Some(dck) = dck_to_rewrap {
             self.rotate_profile_dck_epoch_with_signer(authority_keys, &dck, now + 1)?;
         }
-        self.state.sync_app_keys_from_profile();
+        self.sync_app_keys_from_profile_with_device_labels();
         self.current_app_keys_projection()
     }
 
@@ -1582,7 +1768,7 @@ impl Profile {
         )?;
         let dck = generate_dck();
         self.rotate_profile_dck_epoch(&dck, now + 1)?;
-        self.state.sync_app_keys_from_profile();
+        self.sync_app_keys_from_profile_with_device_labels();
         self.current_app_keys_projection()
     }
 
@@ -1592,12 +1778,14 @@ impl Profile {
         created_at: i64,
     ) -> Result<(), ProfileError> {
         let parents = nostr_identity_roster_parent_ids(&self.state.profile_roster_ops);
-        let signed = signed_profile_roster_op_with_parents(
+        let encrypted_device_labels = self.encrypted_current_device_labels(created_at)?;
+        let signed = signed_profile_roster_op_with_parents_and_device_labels(
             self.app_key.keys(),
             self.state.profile_id,
             parents,
             op,
             created_at,
+            encrypted_device_labels,
         )?;
         self.state.profile_roster_ops.push(signed);
         self.state.profile_roster_projection = None;
@@ -1633,7 +1821,9 @@ impl Profile {
             .next_back()
             .map_or(1, |epoch| epoch + 1);
         let parents = nostr_identity_roster_parent_ids(&self.state.profile_roster_ops);
-        let signed = signed_profile_roster_op_with_parents(
+        let encrypted_device_labels =
+            self.encrypted_device_labels_for_dck(dck, epoch, created_at, BTreeMap::new(), &[])?;
+        let signed = signed_profile_roster_op_with_parents_and_device_labels(
             signer_keys,
             self.state.profile_id,
             parents,
@@ -1642,6 +1832,7 @@ impl Profile {
                 wrapped_secrets: wrapped_dck,
             },
             created_at,
+            encrypted_device_labels,
         )?;
         self.state.profile_roster_ops.push(signed);
         self.state.profile_roster_projection = None;
@@ -1672,7 +1863,7 @@ impl Profile {
 
         let missing_pubkeys = projection.active_key_recipients_missing_wraps(*epoch);
         if missing_pubkeys.is_empty() {
-            self.state.sync_app_keys_from_profile();
+            self.sync_app_keys_from_profile_with_device_labels();
             return Ok(SecretWrapRepairOutcome {
                 epoch: *epoch,
                 repaired_pubkeys: Vec::new(),
@@ -1704,7 +1895,7 @@ impl Profile {
         )?;
         self.state.profile_roster_ops.push(signed);
         self.state.profile_roster_projection = None;
-        self.state.sync_app_keys_from_profile();
+        self.sync_app_keys_from_profile_with_device_labels();
         Ok(SecretWrapRepairOutcome {
             epoch: *epoch,
             repaired_pubkeys: missing_pubkeys,
@@ -1862,9 +2053,18 @@ fn initial_profile_roster_ops(
     created_at: i64,
 ) -> Result<Vec<SignedNostrIdentityRosterOp>, ProfileError> {
     let app_pubkey = app_entry.pubkey.clone();
-    let app_op = signed_profile_roster_op(
+    let encrypted_device_labels = app_entry
+        .label
+        .as_deref()
+        .and_then(normalize_app_key_label)
+        .map(|label| BTreeMap::from([(app_pubkey.clone(), label)]))
+        .map(|labels| encrypted_device_labels_from_map(profile_id, 1, labels, dck, created_at))
+        .transpose()?
+        .flatten();
+    let app_op = signed_profile_roster_op_with_parents_and_device_labels(
         signer_keys,
         profile_id,
+        Vec::new(),
         NostrIdentityRosterOp::AddFacet {
             facet: NostrIdentityFacet::app_key(
                 app_pubkey.clone(),
@@ -1874,6 +2074,7 @@ fn initial_profile_roster_ops(
             ),
         },
         created_at,
+        encrypted_device_labels,
     )?;
     let mut ops = vec![app_op];
     let mut recipients = vec![app_pubkey.as_str()];
@@ -1938,15 +2139,6 @@ fn recovery_authority_purpose(
     .ok_or(ProfileError::RecoveryAuthorityUnavailable)
 }
 
-fn signed_profile_roster_op(
-    signer_keys: &Keys,
-    profile_id: NostrIdentityId,
-    op: NostrIdentityRosterOp,
-    created_at: i64,
-) -> Result<SignedNostrIdentityRosterOp, ProfileError> {
-    signed_profile_roster_op_with_parents(signer_keys, profile_id, Vec::new(), op, created_at)
-}
-
 fn signed_profile_roster_op_with_parents(
     signer_keys: &Keys,
     profile_id: NostrIdentityId,
@@ -1954,15 +2146,59 @@ fn signed_profile_roster_op_with_parents(
     op: NostrIdentityRosterOp,
     created_at: i64,
 ) -> Result<SignedNostrIdentityRosterOp, ProfileError> {
-    let event = build_nostr_identity_roster_op_event(
+    signed_profile_roster_op_with_parents_and_device_labels(
+        signer_keys,
+        profile_id,
+        parents,
+        op,
+        created_at,
+        None,
+    )
+}
+
+fn signed_profile_roster_op_with_parents_and_device_labels(
+    signer_keys: &Keys,
+    profile_id: NostrIdentityId,
+    parents: Vec<String>,
+    op: NostrIdentityRosterOp,
+    created_at: i64,
+    encrypted_device_labels: Option<String>,
+) -> Result<SignedNostrIdentityRosterOp, ProfileError> {
+    let event = build_nostr_identity_roster_op_event_with_encrypted_device_labels(
         signer_keys,
         profile_id,
         parents,
         None,
         op,
         created_at,
+        encrypted_device_labels,
     )?;
     parse_nostr_identity_roster_op_event(&event).map_err(ProfileError::from)
+}
+
+fn next_profile_secret_epoch(projection: &NostrIdentityRosterProjection) -> u64 {
+    projection
+        .secret_epochs
+        .keys()
+        .next_back()
+        .map_or(1, |epoch| epoch + 1)
+}
+
+fn encrypted_device_labels_from_map(
+    profile_id: NostrIdentityId,
+    secret_epoch: u64,
+    labels: BTreeMap<String, String>,
+    dck: &[u8; 32],
+    updated_at: i64,
+) -> Result<Option<String>, ProfileError> {
+    let labels = normalize_drive_device_labels(labels);
+    if labels.is_empty() {
+        return Ok(None);
+    }
+    let payload = drive_device_label_payload(profile_id, secret_epoch, labels, updated_at);
+    encrypt_drive_device_labels_with_dck(&payload, dck)
+        .map(Some)
+        .map_err(|error| ProfileError::Wrap(error.to_string()))
 }
 
 fn current_unix_seconds() -> i64 {

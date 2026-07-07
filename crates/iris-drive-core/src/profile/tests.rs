@@ -54,6 +54,35 @@ fn create_yields_admin_authorized_account() {
 }
 
 #[test]
+fn profile_roster_ops_encrypt_app_key_labels() {
+    let dir = tempdir().unwrap();
+    let acct = Profile::create(dir.path(), Some("my-laptop".into())).unwrap();
+    let add_event = Event::from_json(&acct.state.profile_roster_ops[0].event_json).unwrap();
+
+    assert!(!add_event.as_json().contains("my-laptop"));
+    let encrypted_labels =
+        crate::nostr_identity::encrypted_device_label_payloads_from_nostr_identity_roster_op_event(
+            &add_event,
+        );
+    assert_eq!(encrypted_labels.len(), 1);
+
+    let dck = acct.current_dck().unwrap();
+    let labels = decrypt_drive_device_labels_with_dck(&encrypted_labels[0], &dck)
+        .unwrap()
+        .labels;
+    assert_eq!(
+        labels.get(&acct.state.app_key_pubkey).map(String::as_str),
+        Some("my-laptop")
+    );
+
+    let signed = parse_nostr_identity_roster_op_event(&add_event).unwrap();
+    let NostrIdentityRosterOp::AddFacet { facet } = signed.content.op else {
+        panic!("expected app-key add facet");
+    };
+    assert_eq!(facet.label, None);
+}
+
+#[test]
 fn sync_app_keys_refreshes_profile_roster_projection_cache() {
     let dir = tempdir().unwrap();
     let acct = Profile::create(dir.path(), Some("native".into())).unwrap();

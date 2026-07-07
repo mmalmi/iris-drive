@@ -1019,7 +1019,13 @@ impl NativeAppRuntime {
             "device request is for a different profile".clone_into(&mut self.state.error);
             return;
         }
-        let label = label_option(label).or(request.label);
+        let label = label_option(label).or(request.label).or_else(|| {
+            state
+                .inbound_app_key_link_requests
+                .iter()
+                .find(|pending| pending.app_key_pubkey == request.app_key_hex)
+                .and_then(|pending| pending.label.clone())
+        });
         let mut account = match Profile::load(state, Path::new(&self.data_dir)) {
             Ok(account) => account,
             Err(error) => {
@@ -1586,7 +1592,15 @@ impl NativeAppRuntime {
             self.refresh_ui_summary(None);
             return;
         };
-        let account = raw_account.clone();
+        let account = match Profile::load(raw_account.clone(), Path::new(&self.data_dir)) {
+            Ok(profile) => profile.state,
+            Err(error) => {
+                if self.state.error.is_empty() {
+                    self.state.error = format!("loading profile key: {error}");
+                }
+                raw_account.clone()
+            }
+        };
         if account.authorization_state == AppKeyAuthorizationState::Revoked {
             self.logout_current_revoked_device(provider_summary);
             return;

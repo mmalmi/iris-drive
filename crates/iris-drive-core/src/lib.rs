@@ -9,6 +9,7 @@ pub mod blossom_sync;
 pub mod calendar;
 pub mod config;
 pub mod daemon_liveness;
+pub mod device_labels;
 pub mod direct_root_transport;
 pub mod fips_status;
 pub mod fips_sync;

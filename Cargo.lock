@@ -3225,6 +3225,7 @@ dependencies = [
 name = "iris-drive-core"
 version = "0.1.17"
 dependencies = [
+ "aes-gcm",
  "anyhow",
  "async-trait",
  "axum",

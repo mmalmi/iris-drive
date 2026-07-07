@@ -125,7 +125,7 @@ fn owner_can_reject_then_approve_join_requests_e2e() {
             .is_empty()
     );
     assert!(after_approve.ui.app_actors.iter().any(|device| {
-        device.pubkey == approved_device && device.label.is_empty() && device.role == "member"
+        device.pubkey == approved_device && device.label == "iPhone" && device.role == "member"
     }));
     assert!(
         after_approve
@@ -138,7 +138,7 @@ fn owner_can_reject_then_approve_join_requests_e2e() {
     let final_refresh = app.refresh();
     assert!(final_refresh.error.is_empty());
     assert!(final_refresh.ui.app_actors.iter().any(|device| {
-        device.pubkey == approved_device && device.label.is_empty() && device.role == "member"
+        device.pubkey == approved_device && device.label == "iPhone" && device.role == "member"
     }));
     assert!(
         final_refresh

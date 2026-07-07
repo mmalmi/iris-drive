@@ -1337,7 +1337,7 @@ fn owner_can_approve_and_revoke_linked_app_keys() {
 
     assert!(state.ui.app_actors.iter().any(|device| {
         device.pubkey == linked_device
-            && device.label.is_empty()
+            && device.label == "Phone"
             && device.role == "member"
             && device.can_revoke
             && device.can_appoint_admin
@@ -1449,7 +1449,7 @@ fn approving_tombstoned_inbound_request_readds_device() {
     let account = readded.ui.profile.as_ref().unwrap();
     assert!(account.inbound_app_key_link_requests.is_empty());
     assert!(readded.ui.app_actors.iter().any(|device| {
-        device.pubkey == linked_device && device.label.is_empty() && device.role == "member"
+        device.pubkey == linked_device && device.label == "Phone again" && device.role == "member"
     }));
     assert_eq!(
         AppConfig::load_or_default(&config_path)
@@ -1538,6 +1538,11 @@ fn revoked_current_device_refresh_logs_out_and_allows_fresh_relink() {
     assert_eq!(account.authorization_state, "authorized");
     assert!(authorized.ui.app_actors.iter().any(|device| {
         device.pubkey == linked_device && device.label == "Phone" && device.is_current_app_key
+    }));
+    assert!(authorized.ui.app_actors.iter().any(|device| {
+        device.pubkey == owner_account.current_app_key_npub
+            && device.label == "Mac"
+            && !device.is_current_app_key
     }));
 
     let running = linked_app.dispatch(NativeAppAction::StartSync);
@@ -1877,7 +1882,7 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
     });
     assert!(approved.error.is_empty());
     assert!(approved.ui.app_actors.iter().any(|device| {
-        device.pubkey == linked_device && device.label.is_empty() && device.role == "member"
+        device.pubkey == linked_device && device.label == "Phone" && device.role == "member"
     }));
 }
 

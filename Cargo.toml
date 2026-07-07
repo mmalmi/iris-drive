@@ -18,6 +18,7 @@ repository = "htree://self/iris-drive"
 
 [workspace.dependencies]
 anyhow = "1"
+aes-gcm = "0.10"
 async-trait = "0.1"
 axum = "0.7"
 base64 = "0.22"
