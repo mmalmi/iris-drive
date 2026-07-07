@@ -577,6 +577,59 @@ async fn visible_root_import_preserves_directory_metadata_after_child_file() {
 }
 
 #[tokio::test]
+async fn visible_root_import_preserves_post_base_local_files_from_stale_provider_base() {
+    let tree = new_tree();
+    let base_root = tree.put_directory(Vec::new()).await.unwrap();
+    let (one_cid, one_size) = tree.put_file(b"one").await.unwrap();
+    let previous_root = tree
+        .set_entry(
+            &base_root,
+            &[],
+            "one.txt",
+            &one_cid,
+            one_size,
+            LinkType::Blob,
+        )
+        .await
+        .unwrap();
+    let (two_cid, two_size) = tree.put_file(b"two").await.unwrap();
+    let edited_root = tree
+        .set_entry(
+            &base_root,
+            &[],
+            "two.txt",
+            &two_cid,
+            two_size,
+            LinkType::Blob,
+        )
+        .await
+        .unwrap();
+
+    let delta = local_visible_root_for_mount_import(
+        &tree,
+        &edited_root,
+        Some(&previous_root),
+        &base_root,
+        Some(&base_root),
+        None,
+    )
+    .await
+    .unwrap();
+    let (files, tombstones) = crate::merge::walk_app_key_tree(&tree, &delta.root)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["one.txt", "two.txt"]
+    );
+    assert!(tombstones.is_empty());
+}
+
+#[tokio::test]
 async fn visible_root_import_tombstones_deleted_scoped_directory_tree() {
     let tree = new_tree();
     let base_dir = tempdir().unwrap();

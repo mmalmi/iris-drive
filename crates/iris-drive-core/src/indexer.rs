@@ -279,16 +279,21 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
     collect_visible_dirs(tree, &previous_visible_root, "", &mut previous_dirs).await?;
 
     let mut root = tree.put_directory(Vec::new()).await?;
-    for (path, previous) in previous_dirs
-        .iter()
-        .filter(|(path, _previous)| base_dirs.contains_key(*path))
-    {
+    for (path, previous) in &previous_dirs {
+        if !base_dirs.contains_key(path)
+            && (edited_dirs.contains_key(path) || tombstone_path_selected(tombstone_paths, path))
+        {
+            continue;
+        }
         root = set_visible_dir_entry(tree, root, path, previous).await?;
     }
     for (path, previous) in &previous_files {
         if base_files
             .get(path)
             .is_some_and(|base| visible_entry_matches(base, previous))
+            || (!base_files.contains_key(path)
+                && !edited_files.contains_key(path)
+                && !tombstone_path_selected(tombstone_paths, path))
         {
             root = set_visible_file_entry(tree, &root, path, previous).await?;
         }
@@ -515,6 +520,10 @@ fn tombstone_path_allowed(tombstone_paths: Option<&BTreeSet<String>>, path: &str
         }),
         None => true,
     }
+}
+
+fn tombstone_path_selected(tombstone_paths: Option<&BTreeSet<String>>, path: &str) -> bool {
+    tombstone_paths.is_some_and(|paths| tombstone_path_allowed(Some(paths), path))
 }
 
 fn collect_visible_files<'a, S: Store>(

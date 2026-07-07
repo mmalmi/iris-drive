@@ -268,6 +268,53 @@ fn provider_write_rejects_probable_os_placeholder_collision() {
 }
 
 #[test]
+fn provider_writes_with_same_stale_base_accumulate_all_files() {
+    let config_dir = tempfile::tempdir().unwrap();
+    init_config(config_dir.path());
+    mark_daemon_live(config_dir.path());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    let base_root = runtime.block_on(async {
+        let daemon = Daemon::open(config_dir.path()).unwrap();
+        daemon.tree().put_directory(Vec::new()).await.unwrap()
+    });
+    let source_dir = tempfile::tempdir().unwrap();
+
+    for index in 1..=4 {
+        let source = source_dir.path().join(format!("file-{index}.txt"));
+        std::fs::write(&source, format!("file {index}")).unwrap();
+        cmd_provider(
+            config_dir.path(),
+            ProviderCmd::Write {
+                base_root_cid: Some(base_root.to_string()),
+                path: format!("file-{index}.txt"),
+                source,
+            },
+        )
+        .unwrap();
+    }
+
+    runtime.block_on(async {
+        let daemon = Daemon::open(config_dir.path()).unwrap();
+        let merged = iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
+            .await
+            .unwrap();
+        let paths = merged
+            .view
+            .files
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            paths,
+            vec!["file-1.txt", "file-2.txt", "file-3.txt", "file-4.txt"]
+        );
+    });
+}
+
+#[test]
 fn provider_delete_tombstones_foreign_visible_files() {
     let config_dir = tempfile::tempdir().unwrap();
     let (_account, remote, remote_meta) = init_config_with_remote_device(config_dir.path());
