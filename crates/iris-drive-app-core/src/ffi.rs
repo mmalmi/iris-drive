@@ -10,7 +10,6 @@ use anyhow::Context;
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use hashtree_core::{Cid, NHashData, nhash_encode_full};
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 use iris_drive_core::app_key_link_transport::{
     APP_KEY_LINK_REQUEST_APP_TOPIC, APP_KEY_LINK_ROSTER_ACK_APP_TOPIC,
@@ -211,6 +210,7 @@ mod app_key_link_urls;
 use app_key_link_urls::{
     app_key_link_invite_url, app_key_link_request_url, ensure_cached_app_key_link_request_url,
 };
+use snapshot_link::{drive_link_for_cid_value, update_snapshot_link};
 
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 fn apply_native_app_key_link_relay_event_to_config(
@@ -3184,19 +3184,6 @@ fn recovery_pubkey_for_phrase_value(recovery_phrase: &str) -> GeneratedRecoveryK
     }
 }
 
-fn drive_link_for_cid_value(root_cid: &str) -> DriveLinkForCid {
-    match drive_iris_to_nhash_url_for_root(root_cid) {
-        Some(url) => DriveLinkForCid {
-            url,
-            error: String::new(),
-        },
-        None => DriveLinkForCid {
-            error: "invalid content id".to_owned(),
-            ..DriveLinkForCid::default()
-        },
-    }
-}
-
 fn path_join(data_dir: &str, child: &str) -> String {
     if data_dir.is_empty() {
         child.to_owned()
@@ -3585,39 +3572,6 @@ fn unix_now_seconds() -> u64 {
         .map_or(0, |duration| duration.as_secs())
 }
 
-fn update_snapshot_link(state: &mut NativeAppState, config: &AppConfig) {
-    state.ui.snapshot_link = current_primary_root_cid(config)
-        .and_then(|root| drive_iris_to_nhash_url_for_root(&root))
-        .unwrap_or_default();
-}
-
-fn current_primary_root_cid(config: &AppConfig) -> Option<String> {
-    config
-        .profile
-        .as_ref()
-        .and_then(|account| {
-            config
-                .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-                .and_then(|drive| drive.app_key_roots.get(&account.app_key_pubkey))
-                .map(|root| root.root_cid.clone())
-        })
-        .or_else(|| {
-            config
-                .drive(iris_drive_core::PRIMARY_DRIVE_ID)
-                .and_then(|drive| drive.last_root_cid.clone())
-        })
-}
-
-fn drive_iris_to_nhash_url_for_root(root_cid: &str) -> Option<String> {
-    let cid = Cid::parse(root_cid).ok()?;
-    let nhash = nhash_encode_full(&NHashData {
-        hash: cid.hash,
-        decrypt_key: cid.key,
-    })
-    .ok()?;
-    Some(format!("https://drive.iris.to/#/{nhash}"))
-}
-
 #[cfg(test)]
 mod app_key_link_flow_tests;
 #[cfg(test)]
@@ -3632,5 +3586,6 @@ mod mobile_fips_status;
 mod mobile_idle_tests;
 #[cfg(test)]
 mod provider_tests;
+mod snapshot_link;
 #[cfg(test)]
 mod tests;
