@@ -248,6 +248,10 @@ final class IrisDriveMobileModel: ObservableObject {
         syncRunning && !isRevoked && (isSetupComplete || isAwaitingApproval)
     }
 
+    private var shouldRunDriveForegroundRefresh: Bool {
+        !isRevoked && (isSetupComplete || isAwaitingApproval)
+    }
+
     private var shouldRunAppleCalendarSync: Bool {
         appleCalendarSync.isActive && isSetupComplete && !isRevoked
     }
@@ -257,7 +261,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private var shouldRunForegroundWork: Bool {
-        shouldRunDriveBackgroundSync || shouldRunAppleCalendarSync
+        shouldRunDriveForegroundRefresh || shouldRunAppleCalendarSync
     }
 
     var canAdminProfile: Bool {
@@ -1013,17 +1017,15 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private func syncOnceIfRunning() async {
-        if syncRunning, isSetupComplete || isAwaitingApproval {
-            if isSetupComplete {
-                if foregroundDriveSyncIsDue() {
-                    await dispatchInBackground(["type": "restart_sync"])
-                } else {
-                    await refreshInBackground()
-                    return
-                }
+        if !isRevoked, isSetupComplete {
+            if syncRunning, foregroundDriveSyncIsDue() {
+                await dispatchInBackground(["type": "restart_sync"])
             } else {
-                await refreshProfileStatusInBackground(scheduleBackgroundSync: false)
+                await refreshInBackground()
+                return
             }
+        } else if !isRevoked, isAwaitingApproval {
+            await refreshProfileStatusInBackground(scheduleBackgroundSync: false)
         }
         await runAppleCalendarSyncIfEnabled()
     }

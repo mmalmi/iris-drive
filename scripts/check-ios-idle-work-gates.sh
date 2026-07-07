@@ -26,6 +26,19 @@ if "reconcileForegroundWork(isActive:" not in app:
 if "private var shouldRunForegroundWork" not in model:
     failures.append("IrisDriveMobileModel needs a single foreground-work predicate.")
 
+if "private var shouldRunDriveForegroundRefresh" not in model:
+    failures.append("iOS foreground work must keep refreshing authorized drive state while sync is paused.")
+
+foreground_work_match = re.search(
+    r"private var shouldRunForegroundWork: Bool \{(?P<body>.*?)\n    \}",
+    model,
+    flags=re.S,
+)
+if not foreground_work_match:
+    failures.append("shouldRunForegroundWork was not found.")
+elif "shouldRunDriveForegroundRefresh" not in foreground_work_match.group("body"):
+    failures.append("shouldRunForegroundWork must include paused foreground drive refreshes.")
+
 start_match = re.search(
     r"func startForegroundSyncLoop\(\) \{(?P<body>.*?)\n    func stopForegroundSyncLoop\(\)",
     model,
@@ -68,6 +81,10 @@ else:
         failures.append("syncOnceIfRunning must throttle full foreground drive sync attempts.")
     if 'await refreshInBackground()' not in sync_once_body:
         failures.append("foreground throttle should still refresh visible status between full sync attempts.")
+    if "if !isRevoked, isSetupComplete" not in sync_once_body:
+        failures.append("authorized foreground sessions must refresh visible state even when sync is paused.")
+    if "if syncRunning, foregroundDriveSyncIsDue()" not in sync_once_body:
+        failures.append("foreground drive sync throttle must only gate native sync, not visible refresh.")
 
 setup_match = re.search(
     r"private struct SetupWelcomeView: View \{(?P<body>.*?)\nprivate struct ",
