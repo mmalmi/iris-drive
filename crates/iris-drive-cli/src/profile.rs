@@ -586,12 +586,33 @@ struct SentAppKeyLinkRoster {
 pub(crate) struct ConfigFileFingerprint {
     pub(crate) len: u64,
     pub(crate) modified: Option<std::time::SystemTime>,
+    pub(crate) profile_roster_events_len: u64,
+    pub(crate) profile_roster_events_modified: Option<std::time::SystemTime>,
+}
+
+#[cfg(test)]
+impl ConfigFileFingerprint {
+    pub(crate) fn for_test(len: u64) -> Self {
+        Self {
+            len,
+            modified: None,
+            profile_roster_events_len: 0,
+            profile_roster_events_modified: None,
+        }
+    }
 }
 
 #[derive(Debug, Default)]
 pub(crate) struct AppConfigLoadCache {
     fingerprint: Option<ConfigFileFingerprint>,
     config: Option<AppConfig>,
+}
+
+impl AppConfigLoadCache {
+    pub(crate) fn clear(&mut self) {
+        self.fingerprint = None;
+        self.config = None;
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -848,17 +869,27 @@ pub(crate) fn load_app_config_cached(
 }
 
 pub(crate) fn config_file_fingerprint(path: &Path) -> Result<ConfigFileFingerprint> {
-    match std::fs::metadata(path) {
-        Ok(metadata) => Ok(ConfigFileFingerprint {
-            len: metadata.len(),
-            modified: metadata.modified().ok(),
-        }),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(ConfigFileFingerprint {
-            len: 0,
-            modified: None,
-        }),
-        Err(error) => Err(error.into()),
-    }
+    let (len, modified) = match std::fs::metadata(path) {
+        Ok(metadata) => (metadata.len(), metadata.modified().ok()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (0, None),
+        Err(error) => return Err(error.into()),
+    };
+    let profile_roster_events_path = path
+        .parent()
+        .unwrap_or_else(|| Path::new("."))
+        .join("profile-roster-events.json");
+    let (profile_roster_events_len, profile_roster_events_modified) =
+        match std::fs::metadata(profile_roster_events_path) {
+            Ok(metadata) => (metadata.len(), metadata.modified().ok()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (0, None),
+            Err(error) => return Err(error.into()),
+        };
+    Ok(ConfigFileFingerprint {
+        len,
+        modified,
+        profile_roster_events_len,
+        profile_roster_events_modified,
+    })
 }
 
 fn authorized_app_key_link_roster_snapshot(

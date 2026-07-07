@@ -17,6 +17,8 @@ enum IrisDriveAppGroup {
     private static let appGroupName = "to.iris.drive"
     private static let legacyAppGroupIdentifier = "group.to.iris.drive"
     private static let applicationSupportName = "Iris Drive"
+    private static let cacheLock = NSLock()
+    private static var applicationSupportDirectoryCache = [String: URL]()
 
     static func containerURL(teamIdentifier: String?) -> URL? {
         for identifier in identifiers(teamIdentifier: teamIdentifier) {
@@ -30,17 +32,34 @@ enum IrisDriveAppGroup {
     }
 
     static func applicationSupportDirectory(teamIdentifier: String?) -> URL {
-        if let shared = containerURL(teamIdentifier: teamIdentifier) {
-            return shared.appendingPathComponent(applicationSupportName, isDirectory: true)
+        let normalizedTeamIdentifier = teamIdentifier?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let cacheKey = normalizedTeamIdentifier?.isEmpty == false ? normalizedTeamIdentifier! : ""
+
+        cacheLock.lock()
+        if let cached = applicationSupportDirectoryCache[cacheKey] {
+            cacheLock.unlock()
+            return cached
         }
-        if let existing = existingAppGroupApplicationSupportDirectory() {
-            return existing
+        cacheLock.unlock()
+
+        let resolved: URL
+        if let shared = containerURL(teamIdentifier: normalizedTeamIdentifier) {
+            resolved = shared.appendingPathComponent(applicationSupportName, isDirectory: true)
+        } else if let existing = existingAppGroupApplicationSupportDirectory() {
+            resolved = existing
+        } else {
+            let base = FileManager.default.urls(
+                for: .applicationSupportDirectory,
+                in: .userDomainMask
+            ).first ?? FileManager.default.homeDirectoryForCurrentUser
+            resolved = base.appendingPathComponent(applicationSupportName, isDirectory: true)
         }
-        let base = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first ?? FileManager.default.homeDirectoryForCurrentUser
-        return base.appendingPathComponent(applicationSupportName, isDirectory: true)
+
+        cacheLock.lock()
+        applicationSupportDirectoryCache[cacheKey] = resolved
+        cacheLock.unlock()
+        return resolved
     }
 
     private static func identifiers(teamIdentifier: String?) -> [String] {

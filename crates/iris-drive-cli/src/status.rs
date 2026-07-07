@@ -468,6 +468,10 @@ pub(crate) fn load_daemon_status(config_dir: &Path) -> Option<Value> {
 
 pub(crate) fn write_daemon_status(config_dir: &Path, mut payload: Value) -> Value {
     let now = unix_now();
+    let heartbeat = payload
+        .get("event")
+        .and_then(Value::as_str)
+        .is_some_and(|event| event == "heartbeat");
     if let Some(payload_object) = payload.as_object_mut()
         && let Ok(raw) = std::fs::read_to_string(daemon_status_path(config_dir))
         && let Ok(existing) = serde_json::from_str::<Value>(&raw)
@@ -508,7 +512,9 @@ pub(crate) fn write_daemon_status(config_dir: &Path, mut payload: Value) -> Valu
             json!(env!("CARGO_PKG_VERSION")),
         );
     }
-    normalize_daemon_status_for_clients(config_dir, &mut payload);
+    if !heartbeat {
+        normalize_daemon_status_for_clients(config_dir, &mut payload);
+    }
     if let Some(parent) = daemon_status_path(config_dir).parent() {
         let _ = std::fs::create_dir_all(parent);
     }
@@ -558,6 +564,9 @@ fn daemon_status_config(
     }
 
     let mut config = AppConfig::load_or_default_cached_profile(&path)?;
+    if daemon_status_config_needs_roster_sidecar(&config) {
+        config = AppConfig::load_or_default(&path)?;
+    }
     hydrate_daemon_status_profile_cache(&mut config);
     if let Ok(mut cache) = DAEMON_STATUS_CONFIG_CACHE.lock() {
         cache.insert(
@@ -569,6 +578,13 @@ fn daemon_status_config(
         );
     }
     Ok(config)
+}
+
+fn daemon_status_config_needs_roster_sidecar(config: &AppConfig) -> bool {
+    config.profile.as_ref().is_some_and(|profile| {
+        !profile.has_profile_roster_evidence()
+            && (profile.app_keys.is_none() || profile.profile_roster_projection.is_none())
+    })
 }
 
 fn hydrate_daemon_status_profile_cache(config: &mut AppConfig) {

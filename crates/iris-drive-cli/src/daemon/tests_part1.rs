@@ -210,14 +210,8 @@ fn provider_root_poll_is_safety_sweep_only_without_config_watch() {
 
 #[test]
 fn provider_root_publish_cache_matches_fingerprint_and_root_key() {
-    let fingerprint = ConfigFileFingerprint {
-        len: 10,
-        modified: None,
-    };
-    let other_fingerprint = ConfigFileFingerprint {
-        len: 11,
-        modified: None,
-    };
+    let fingerprint = ConfigFileFingerprint::for_test(10);
+    let other_fingerprint = ConfigFileFingerprint::for_test(11);
     let root_key = Some("primary:device:root-a".to_string());
     let other_root_key = Some("primary:device:root-b".to_string());
     let mut cache = ProviderRootPublishCache::default();

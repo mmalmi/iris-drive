@@ -3,9 +3,10 @@ use iris_drive_core::{
     DirectRootHintFrame, DirectRootStateRequestFrame, DirectRootWireFrame, FipsMeshPubsubEvent,
 };
 
-const DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS: u64 = 10;
+const DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS: u64 = 60;
 const DIRECT_ROOT_HINT_REPEAT_INTERVAL_SECS: u64 = 30;
 const DIRECT_ROOT_HINT_CACHE_MAX_ENTRIES: usize = 2048;
+const DIRECT_ROOT_SEEN_FRAME_RETRY_INTERVAL_SECS: u64 = 30;
 
 #[derive(Debug, Clone)]
 pub(crate) struct DirectRootEvent {
@@ -70,8 +71,11 @@ pub(crate) struct DirectRootExchange {
     next_mesh_publish_seq: u64,
     profile_stream_cache: Option<CachedDirectRootProfileStream>,
     current_sync_events_cache: Option<CachedCurrentSyncEvents>,
+    hint_config_cache: AppConfigLoadCache,
     state_request_times: BTreeMap<String, std::time::Instant>,
+    state_request_reply_times: BTreeMap<String, std::time::Instant>,
     recent_hint_times: BTreeMap<String, std::time::Instant>,
+    seen_frame_retry_times: BTreeMap<String, std::time::Instant>,
 }
 
 #[derive(Debug, Clone)]
@@ -147,24 +151,36 @@ impl DirectRootExchange {
         Ok(())
     }
 
-    async fn announce_state_request_reply(
+    async fn announce_state_request_reply_cached(
         &mut self,
         config_dir: &Path,
-        config: &AppConfig,
-        state: &ProfileState,
+        config_fingerprint: ConfigFileFingerprint,
+        root_scope_id: &str,
         sync: &FsFipsBlockSync,
         reply_peer: &str,
     ) -> Result<()> {
-        let root_scope_id = state.root_scope_id();
-        self.subscribe_profile_stream(&root_scope_id, Some(sync))
-            .await;
-        let stream = direct_root_mesh_stream(&root_scope_id);
-        let config_fingerprint = config_file_fingerprint(&config_path_in(config_dir))?;
-        let local_events = self
-            .cached_current_sync_events_from_config(config_fingerprint, || {
-                build_current_sync_events(config_dir, config, state)
+        self.subscribe_profile_stream(root_scope_id, Some(sync)).await;
+        let stream = direct_root_mesh_stream(root_scope_id);
+        let local_events = if let Some(cached) = self
+            .current_sync_events_cache
+            .as_ref()
+            .filter(|cached| cached.config_fingerprint == config_fingerprint)
+        {
+            cached.events.clone()
+        } else {
+            let config_path = config_path_in(config_dir);
+            let config = AppConfig::load_or_default_cached_profile(&config_path)?;
+            let Some(state) = config.profile.as_ref() else {
+                return Ok(());
+            };
+            if state.root_scope_id() != root_scope_id {
+                return Ok(());
+            }
+            self.cached_current_sync_events_from_config(config_fingerprint, || {
+                build_current_sync_events(config_dir, &config, state)
             })
-            .await?;
+            .await?
+        };
         let now = std::time::Instant::now();
         for publish_event in self.state_request_events_for_publish(local_events) {
             self.publish_event(sync, &stream, publish_event, Some(reply_peer), now)
@@ -193,6 +209,68 @@ impl DirectRootExchange {
                 build_current_sync_events(config_dir, config, state)
             })
             .await?;
+        let now = std::time::Instant::now();
+        for publish_event in self
+            .local_root_events_for_publish(local_events, DirectRootPublishSource::LocalHeartbeat)
+        {
+            self.publish_event(sync, &stream, publish_event, None, now)
+                .await?;
+        }
+        Ok(())
+    }
+
+    async fn announce_local_root_heartbeat_cached(
+        &mut self,
+        config_dir: &Path,
+        fips_blocks: Option<&FsFipsBlockSync>,
+    ) -> Result<()> {
+        let Some(sync) = fips_blocks else {
+            return Ok(());
+        };
+        let config_path = config_path_in(config_dir);
+        let config_fingerprint = config_file_fingerprint(&config_path)?;
+        if let Some(local_events) = self
+            .current_sync_events_cache
+            .as_ref()
+            .filter(|cached| cached.config_fingerprint == config_fingerprint)
+            .map(|cached| cached.events.clone())
+        {
+            let Some(root_scope_id) =
+                self.cached_profile_stream_root_scope_id_from_config(config_fingerprint, || {
+                    Ok(AppConfig::load_or_default_cached_profile(&config_path)?)
+                })?
+            else {
+                return Ok(());
+            };
+            self.publish_local_root_heartbeat_events(&root_scope_id, sync, local_events)
+                .await?;
+            return Ok(());
+        }
+
+        let config = AppConfig::load_or_default_cached_profile(&config_path)?;
+        let Some(state) = config.profile.as_ref() else {
+            self.profile_stream_cache = Some(CachedDirectRootProfileStream {
+                config_fingerprint,
+                root_scope_id: None,
+            });
+            return Ok(());
+        };
+        self.profile_stream_cache = Some(CachedDirectRootProfileStream {
+            config_fingerprint,
+            root_scope_id: Some(state.root_scope_id()),
+        });
+        self.announce_local_root_heartbeat(config_dir, &config, state, Some(sync))
+            .await
+    }
+
+    async fn publish_local_root_heartbeat_events(
+        &mut self,
+        root_scope_id: &str,
+        sync: &FsFipsBlockSync,
+        local_events: Vec<DirectRootEvent>,
+    ) -> Result<()> {
+        self.subscribe_profile_stream(root_scope_id, Some(sync)).await;
+        let stream = direct_root_mesh_stream(root_scope_id);
         let now = std::time::Instant::now();
         for publish_event in self
             .local_root_events_for_publish(local_events, DirectRootPublishSource::LocalHeartbeat)
@@ -358,7 +436,7 @@ impl DirectRootExchange {
         if !self.should_cache_event_as_latest(&frame.key) {
             return Ok(DirectRootFrameOutcome::Ignored);
         }
-        if self.should_skip_seen_direct_root_frame(config_dir, &frame.key) {
+        if self.should_skip_seen_direct_root_frame(&frame.key, std::time::Instant::now()) {
             return Ok(DirectRootFrameOutcome::Ignored);
         }
         let event: Event =
@@ -404,7 +482,6 @@ impl DirectRootExchange {
             return Ok(DirectRootFrameOutcome::Ignored);
         }
         if self.should_skip_recent_direct_root_hint(
-            config_dir,
             source_peer,
             &frame.key,
             std::time::Instant::now(),
@@ -412,7 +489,8 @@ impl DirectRootExchange {
             return Ok(DirectRootFrameOutcome::Ignored);
         }
         let config_lock = ConfigMutationLock::acquire(config_dir).await?;
-        let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+        let config_path = config_path_in(config_dir);
+        let mut config = load_app_config_cached(&config_path, &mut self.hint_config_cache)?;
         let report = iris_drive_core::apply_direct_root_key_hint_to_config(
             &mut config,
             &frame.key,
@@ -439,7 +517,8 @@ impl DirectRootExchange {
             })
         );
         if was_applied {
-            config.save(config_path_in(config_dir))?;
+            config.save(config_path)?;
+            self.hint_config_cache.clear();
         }
         drop(config_lock);
         if was_applied {
@@ -475,7 +554,13 @@ impl DirectRootExchange {
         if !frame.request {
             return Ok(());
         }
-        let Some(root_scope_id) = self.cached_profile_stream_root_scope_id(config_dir)? else {
+        let config_path = config_path_in(config_dir);
+        let config_fingerprint = config_file_fingerprint(&config_path)?;
+        let Some(root_scope_id) = self.cached_profile_stream_root_scope_id_from_config(
+            config_fingerprint.clone(),
+            || Ok(AppConfig::load_or_default_cached_profile(&config_path)?),
+        )?
+        else {
             return Ok(());
         };
         if root_scope_id != frame.root_scope_id {
@@ -488,10 +573,6 @@ impl DirectRootExchange {
         ) {
             return Ok(());
         }
-        let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
-        let Some(state) = config.profile.as_ref() else {
-            return Ok(());
-        };
         println!(
             "{}",
             json!({
@@ -500,32 +581,48 @@ impl DirectRootExchange {
                 "reply_peer": reply_peer,
             })
         );
-        self.announce_state_request_reply(config_dir, &config, state, sync.as_ref(), reply_peer)
-            .await
+        self.announce_state_request_reply_cached(
+            config_dir,
+            config_fingerprint,
+            &root_scope_id,
+            sync.as_ref(),
+            reply_peer,
+        )
+        .await
     }
 
-    fn should_skip_seen_direct_root_frame(&self, config_dir: &Path, key: &str) -> bool {
+    fn should_skip_seen_direct_root_frame(&mut self, key: &str, now: std::time::Instant) -> bool {
         if !self.seen_keys.contains(key) {
             return false;
         }
-        let Some(root_cid) = direct_root_retry_root_cid(key) else {
+        if direct_root_retry_root_cid(key).is_none() {
             return true;
-        };
-        root_has_successful_block_sync(config_dir, &root_cid)
+        }
+        let repeat_interval =
+            std::time::Duration::from_secs(DIRECT_ROOT_SEEN_FRAME_RETRY_INTERVAL_SECS);
+        if self
+            .seen_frame_retry_times
+            .get(key)
+            .is_some_and(|last| now.duration_since(*last) < repeat_interval)
+        {
+            return true;
+        }
+        self.seen_frame_retry_times.insert(key.to_string(), now);
+        while self.seen_frame_retry_times.len() > DIRECT_ROOT_HINT_CACHE_MAX_ENTRIES {
+            let Some(key) = self.seen_frame_retry_times.keys().next().cloned() else {
+                break;
+            };
+            self.seen_frame_retry_times.remove(&key);
+        }
+        false
     }
 
     fn should_skip_recent_direct_root_hint(
         &mut self,
-        config_dir: &Path,
         source_peer: &str,
         key: &str,
         now: std::time::Instant,
     ) -> bool {
-        if let Some(root_cid) = direct_root_retry_root_cid(key)
-            && !root_has_successful_block_sync(config_dir, &root_cid)
-        {
-            return false;
-        }
         let throttle_key = direct_root_hint_throttle_key(source_peer, key);
         let repeat_interval = std::time::Duration::from_secs(DIRECT_ROOT_HINT_REPEAT_INTERVAL_SECS);
         if self
@@ -869,12 +966,17 @@ impl DirectRootExchange {
 
     fn cache_event(&mut self, event: DirectRootEvent) {
         self.seen_keys.insert(event.key.clone());
+        if direct_root_retry_root_cid(&event.key).is_some() {
+            self.seen_frame_retry_times
+                .insert(event.key.clone(), std::time::Instant::now());
+        }
         if !self.should_cache_event_as_latest(&event.key) {
             return;
         }
         for key in self.superseded_cached_event_keys(&event.key) {
             self.cached_events.remove(&key);
             self.published_keys.remove(&key);
+            self.seen_frame_retry_times.remove(&key);
         }
         self.cached_events.insert(event.key.clone(), event);
         while self.cached_events.len() > DIRECT_ROOT_EVENT_CACHE_CAP {
@@ -883,6 +985,7 @@ impl DirectRootExchange {
             };
             self.cached_events.remove(&key);
             self.published_keys.remove(&key);
+            self.seen_frame_retry_times.remove(&key);
         }
     }
 
@@ -1085,7 +1188,7 @@ impl DirectRootExchange {
     ) -> bool {
         let throttle_key = format!("reply:{reply_peer}:{root_scope_id}");
         if self
-            .state_request_times
+            .state_request_reply_times
             .get(&throttle_key)
             .is_some_and(|last| {
                 now.duration_since(*last)
@@ -1094,12 +1197,12 @@ impl DirectRootExchange {
         {
             return false;
         }
-        self.state_request_times.insert(throttle_key, now);
-        while self.state_request_times.len() > DIRECT_ROOT_EVENT_CACHE_CAP {
-            let Some(key) = self.state_request_times.keys().next().cloned() else {
+        self.state_request_reply_times.insert(throttle_key, now);
+        while self.state_request_reply_times.len() > DIRECT_ROOT_EVENT_CACHE_CAP {
+            let Some(key) = self.state_request_reply_times.keys().next().cloned() else {
                 break;
             };
-            self.state_request_times.remove(&key);
+            self.state_request_reply_times.remove(&key);
         }
         true
     }
@@ -1249,7 +1352,8 @@ fn direct_root_hint_published_at() -> i64 {
 }
 
 fn direct_root_hint_throttle_key(source_peer: &str, key: &str) -> String {
-    format!("{source_peer}:{key}")
+    let root_key = direct_root_cache_slot(key).map_or_else(|| key.to_string(), |slot| slot.family);
+    format!("{source_peer}:{root_key}")
 }
 
 fn direct_root_publish_throttle_key(

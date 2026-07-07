@@ -6,6 +6,8 @@ use iris_drive_core::relay_config::normalize_relay_url;
 
 use crate::provider_staging::{clear_provider_staging, read_provider_staging};
 
+const PARENT_EXIT_POLL_SECS: u64 = 60;
+
 #[derive(Clone, Default)]
 pub(crate) struct DaemonTaskSet {
     tasks: Arc<std::sync::Mutex<Vec<ManagedDaemonTask>>>,
@@ -415,7 +417,7 @@ enum RootApplyFollowupQueueKey {
 }
 
 fn update_last_provider_root_key(config_dir: &Path, last_root_key: &mut Option<String>) {
-    if let Ok(config) = AppConfig::load_or_default(config_path_in(config_dir)) {
+    if let Ok(config) = AppConfig::load_or_default_cached_profile(config_path_in(config_dir)) {
         *last_root_key = current_app_key_root_key(&config);
     }
 }
@@ -475,7 +477,7 @@ fn root_apply_followup_is_stale(
     let Some(expected_root_key) = expected_root_key else {
         return false;
     };
-    let Ok(config) = AppConfig::load_or_default(config_path_in(config_dir)) else {
+    let Ok(config) = AppConfig::load_or_default_cached_profile(config_path_in(config_dir)) else {
         return false;
     };
     match expected_root_key {
@@ -922,7 +924,7 @@ pub(crate) async fn parent_exit_signal(service_mode: bool) {
     };
 
     loop {
-        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+        tokio::time::sleep(std::time::Duration::from_secs(PARENT_EXIT_POLL_SECS)).await;
         if !process_is_running(parent_pid) {
             return;
         }

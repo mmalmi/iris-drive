@@ -31,6 +31,8 @@ require_contains() {
 }
 
 require_executable scripts/release-gate.sh
+require_executable scripts/idle-cpu-gate.sh
+require_file scripts/idle-cpu-gate-windows.ps1
 require_executable scripts/macos-release-smoke.sh
 require_executable scripts/macos-profiles
 require_executable scripts/ios-build
@@ -88,14 +90,23 @@ require_contains scripts/release-gate.sh "cargo test --workspace --exclude idriv
 require_contains scripts/release-gate.sh "cargo test -p idrive --test daemon_sync_matrix"
 require_contains scripts/release-gate.sh "cargo build --workspace --release"
 require_contains scripts/release-gate.sh "IRIS_DRIVE_RELEASE_GATE_FULL"
+require_contains scripts/release-gate.sh "IRIS_DRIVE_RELEASE_GATE_IDLE_CPU"
 require_contains scripts/release-gate.sh "just macos-build"
 require_contains scripts/release-gate.sh "just smoke-macos"
+require_contains scripts/release-gate.sh "idle-cpu-gate.sh --platform macos"
 require_contains scripts/release-gate.sh "just ios-build"
 require_contains scripts/release-gate.sh "just ios-smoke"
 require_contains scripts/release-gate.sh "just ios-gui-smoke"
+require_contains scripts/release-gate.sh "idle-cpu-gate.sh --platform ios"
 require_contains scripts/release-gate.sh "just android-build"
 require_contains scripts/release-gate.sh "just android-gui-smoke"
+require_contains scripts/release-gate.sh "idle-cpu-gate.sh --platform android"
 require_contains scripts/release-gate.sh "just e2e-5devices"
+require_contains scripts/idle-cpu-gate.sh "IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES"
+require_contains scripts/idle-cpu-gate.sh "IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH"
+require_contains scripts/idle-cpu-gate.sh "idle-cpu-gate-windows.ps1"
+require_contains scripts/idle-cpu-gate-windows.ps1 "IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES"
+require_contains scripts/idle-cpu-gate-windows.ps1 "IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH"
 require_contains crates/iris-drive-core/src/daemon/tests/mod.rs "embedded_browser_does_not_pin_iris_sites_bootstrap_root"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "assertIrisAppsLauncherContentLoaded"
 require_contains scripts/ios-gui-linking-smoke.sh "testOpenIrisAppsLoadsBrowserWithoutConnectionError"
@@ -111,6 +122,10 @@ require_contains scripts/cross-vm-five-platform-e2e.sh "desktop-gui-smoke.sh\" w
 require_contains scripts/cross-vm-five-platform-e2e.sh "scripts/ios-gui-linking-smoke.sh"
 require_contains scripts/cross-vm-five-platform-e2e.sh "scripts/android-gui-linking-smoke.sh"
 require_contains scripts/cross-vm-five-platform-e2e.sh "scripts/mobile-android-smoke.sh --no-build"
+require_contains scripts/cross-vm-e2e.sh "IRIS_DRIVE_E2E_IDLE_CPU_GATE"
+require_contains scripts/cross-vm-e2e.sh "idle daemon CPU gate"
+require_contains scripts/cross-vm-e2e.sh "idle-cpu-gate-windows.ps1"
+require_contains scripts/cross-vm-e2e.sh 'idle-cpu-gate.sh\" --platform auto'
 require_contains scripts/dev-vm-update-run.sh "IRIS_DRIVE_SOCIAL_GRAPH_ROOT"
 require_contains scripts/dev-vm-update-run.sh "SOCIAL_GRAPH_BARE"
 require_contains scripts/dev-vm-update-run.sh "nostr-social-graph"

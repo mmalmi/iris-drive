@@ -313,7 +313,7 @@ pub(crate) fn enqueue_pending_root_sync_followups(
     daemon_tasks: &DaemonTaskSet,
     projection_event: &'static str,
 ) -> usize {
-    let Ok(config) = AppConfig::load_or_default(config_path_in(config_dir)) else {
+    let Ok(config) = AppConfig::load_or_default_cached_profile(config_path_in(config_dir)) else {
         return 0;
     };
     let roots = startup_root_cids_needing_sync(config_dir, &config);

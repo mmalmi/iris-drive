@@ -585,6 +585,44 @@ fn daemon_status_writer_persists_normalized_relay_and_fips_statuses() {
 }
 
 #[test]
+fn daemon_status_heartbeat_preserves_cached_client_fields_without_config_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let config = AppConfig {
+        relays: vec!["wss://relay.example/".to_owned()],
+        ..AppConfig::default()
+    };
+    config.save(config_path_in(dir.path())).unwrap();
+
+    write_daemon_status(
+        dir.path(),
+        json!({
+            "event": "relay_statuses",
+            "relay_statuses": [
+                {"url": "wss://relay.example", "status": "connected"}
+            ]
+        }),
+    );
+    std::fs::remove_file(config_path_in(dir.path())).unwrap();
+
+    write_daemon_status(dir.path(), json!({"event": "heartbeat"}));
+
+    let status: Value =
+        serde_json::from_str(&std::fs::read_to_string(daemon_status_path(dir.path())).unwrap())
+            .unwrap();
+    assert_eq!(
+        status["relay_statuses"],
+        json!([
+            {
+                "url": "wss://relay.example",
+                "status": "connected",
+                "status_label": "connected",
+                "health": "online",
+            }
+        ])
+    );
+}
+
+#[test]
 fn daemon_status_writer_persists_normalized_summary_for_clients() {
     let dir = tempfile::tempdir().unwrap();
     let mut owner = Profile::create(dir.path(), Some("Mac".into())).unwrap();

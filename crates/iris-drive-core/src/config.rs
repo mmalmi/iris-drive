@@ -297,10 +297,12 @@ impl AppConfig {
         }
         parsed.schema_version = CONFIG_SCHEMA_VERSION;
         let adopted_root_scope_id = if let Some(account) = parsed.profile.as_mut() {
-            let sidecar_ops = load_profile_roster_events(path, Some(account.profile_id))?;
-            if !sidecar_ops.is_empty() {
-                account.profile_roster_ops =
-                    merge_profile_roster_ops(&account.profile_roster_ops, &sidecar_ops);
+            if sync_profile {
+                let sidecar_ops = load_profile_roster_events(path, Some(account.profile_id))?;
+                if !sidecar_ops.is_empty() {
+                    account.profile_roster_ops =
+                        merge_profile_roster_ops(&account.profile_roster_ops, &sidecar_ops);
+                }
             }
             if let Some(app_keys) = account.app_keys.as_mut()
                 && app_keys.profile_id.is_empty()
@@ -649,6 +651,24 @@ mod tests {
 
         let projected = AppConfig::load_or_default(&path).unwrap();
         assert!(projected.profile.as_ref().unwrap().app_keys.is_some());
+    }
+
+    #[test]
+    fn cached_profile_load_does_not_read_roster_sidecar() {
+        let dir = tempdir().unwrap();
+        let owner = crate::profile::Profile::create(dir.path(), Some("Mac".into())).unwrap();
+        let config = AppConfig {
+            profile: Some(owner.state.clone()),
+            ..AppConfig::default()
+        };
+        let path = dir.path().join("config.toml");
+        config.save(&path).unwrap();
+        std::fs::write(profile_roster_events_path(&path), "{ definitely not json").unwrap();
+
+        let cached = AppConfig::load_or_default_cached_profile(&path).unwrap();
+
+        assert!(cached.profile.is_some());
+        assert!(AppConfig::load_or_default(&path).is_err());
     }
 
     #[test]

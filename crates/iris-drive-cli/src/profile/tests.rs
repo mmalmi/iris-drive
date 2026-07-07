@@ -2,6 +2,24 @@ use super::*;
 use tempfile::tempdir;
 
 #[test]
+fn config_fingerprint_changes_when_profile_roster_sidecar_changes() {
+    let dir = tempdir().unwrap();
+    let config_path = config_path_in(dir.path());
+    std::fs::write(&config_path, "schema_version = 1\n").unwrap();
+    let initial = config_file_fingerprint(&config_path).unwrap();
+
+    std::fs::write(
+        dir.path().join("profile-roster-events.json"),
+        r#"{"schema_version":1,"events":["event-a"]}"#,
+    )
+    .unwrap();
+    let changed = config_file_fingerprint(&config_path).unwrap();
+
+    assert_ne!(initial, changed);
+    assert!(changed.profile_roster_events_len > 0);
+}
+
+#[test]
 fn recover_app_key_command_uses_saved_phrase_after_profile_log_sync() {
     let owner_dir = tempdir().unwrap();
     let phrase = iris_drive_core::recovery_phrase::generate_recovery_phrase().unwrap();

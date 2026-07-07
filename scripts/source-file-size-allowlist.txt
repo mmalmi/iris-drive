@@ -9,15 +9,15 @@ crates/iris-drive-cli/src/daemon.rs 1150 CLI daemon orchestration is legacy mono
 crates/iris-drive-cli/src/daemon/runtime.rs 1100 CLI daemon runtime is legacy monolith pending lifecycle/helper split.
 crates/iris-drive-cli/src/drive.rs 1050 CLI drive command surface is legacy monolith pending command split.
 crates/iris-drive-cli/src/shares.rs 1350 CLI share command surface needs a later command/test split.
-crates/iris-drive-cli/src/profile.rs 1150 CLI profile command surface already exceeds default; pending command/test split.
-crates/iris-drive-cli/src/publish/direct_root.rs 1720 Direct-root publish path includes v0.1.18 hint/reply throttling hardening; pending protocol/helper split.
+crates/iris-drive-cli/src/profile.rs 1170 CLI profile command surface includes config + profile-roster sidecar fingerprint caching; pending command/test split.
+crates/iris-drive-cli/src/publish/direct_root.rs 1810 Direct-root publish path includes idle heartbeat cache and hint/reply throttling hardening; pending protocol/helper split.
 crates/iris-drive-cli/src/publish/tests.rs 1230 Direct-root release-hardening coverage shares CLI publish fixtures and v0.1.18 hint throttling checks; pending focused test-module split.
 crates/iris-drive-cli/src/status.rs 1150 CLI status normalization already exceeds default; pending status module split.
 crates/iris-drive-cli/tests/cli_e2e.rs 1050 CLI e2e scenarios are legacy monolith pending scenario split.
 crates/iris-drive-cli/tests/daemon_sync_matrix/harness.rs 1150 Live daemon matrix harness includes bounded CLI/refresh diagnostics; pending helper-module split.
 crates/iris-drive-cli/tests/daemon_sync_matrix/scenario_tests.rs 1150 Scenario matrix includes focused Seafile release split; pending scenario-module split.
 crates/iris-drive-core/src/calendar.rs 1050 Calendar import/export and CalDAV helpers are legacy monolith pending module split.
-crates/iris-drive-core/src/config.rs 1350 Config loading, migration, and env plumbing are legacy monolith pending section split.
+crates/iris-drive-core/src/config.rs 1370 Config loading, migration, and env plumbing are legacy monolith pending section split.
 crates/iris-drive-core/src/daemon/tests/mod.rs 1020 Daemon integration coverage currently shares setup helpers in one module; pending scenario/helper split.
 crates/iris-drive-core/src/direct_root_transport.rs 2700 Direct-root sync transport includes targeted state-reply hardening for v0.1.16; pending protocol/state split.
 crates/iris-drive-core/src/gateway.rs 1360 Local gateway routing and response hardening now include the CalDAV dispatcher; pending route-module split.
@@ -39,7 +39,7 @@ macos/FileProvider/FileProviderItem.swift 1100 macOS FileProvider item model is 
 macos/Sources/IrisDriveMacApp.swift 3070 Legacy macOS shell pending view/runtime split; daemon service-mode branches remain here while helpers live in IrisDriveDaemonService.swift.
 scripts/dev-vm-smoke.sh 2450 Multi-platform dev VM smoke harness keeps thin desktop GUI smoke dispatch until the harness split.
 scripts/dev-vm-update-run.sh 2950 Cross-platform VM orchestration needs a later split; includes sibling repo sync for hashtree path deps and VM Cargo build env for small disks.
-scripts/cross-vm-e2e.sh 1650 Multi-device e2e harness needs a later split.
+scripts/cross-vm-e2e.sh 1720 Multi-device e2e harness includes final idle daemon CPU gate; pending harness helper split.
 scripts/macos-smoke.sh 1250 macOS smoke harness now includes path-scoped cleanup and survival assertions; needs a later helper split.
 macos/Sources/IrisDriveControlPanel.swift 2850 Legacy macOS control panel includes backup target and device approval controls; pending view split.
 scripts/local-release.mjs 1500 Local release orchestration needs a later module split.

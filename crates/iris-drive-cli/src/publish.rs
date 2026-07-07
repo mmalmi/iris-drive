@@ -98,12 +98,8 @@ pub(crate) async fn announce_local_root_heartbeat_direct(
     config_dir: &Path,
     fips_blocks: Option<&FsFipsBlockSync>,
 ) -> Result<()> {
-    let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
-    let Some(state) = config.profile.as_ref() else {
-        return Ok(());
-    };
     direct_roots
-        .announce_local_root_heartbeat(config_dir, &config, state, fips_blocks)
+        .announce_local_root_heartbeat_cached(config_dir, fips_blocks)
         .await
 }
 

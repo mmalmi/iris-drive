@@ -14,7 +14,8 @@ private let irisDriveControlPanelWindowID = "control-panel"
 private let irisDriveFileProviderRuntimeFileName = "fileprovider-runtime.json"
 private let irisDriveFileProviderPathIdentifierPrefix = "path:"
 let irisDriveFileProviderRegistrationIdentityKey = "fileProviderRegistrationIdentity"
-let irisDriveAppManagedDaemonStatusRefreshMinimumInterval: TimeInterval = 10
+let irisDriveAppManagedDaemonStatusRefreshMinimumInterval: TimeInterval = 30
+let irisDriveProviderSignalRepeatInterval: TimeInterval = 60
 private let irisDriveShowControlPanelNotification =
     Notification.Name("to.iris.drive.showControlPanel")
 private let irisDriveShowDriveFolderNotification =
@@ -2439,7 +2440,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 Self.applyDaemonSyncStatus(sync, to: status)
             }
         }
-        refreshStatus()
+        scheduleAppManagedDaemonStatusRefresh()
     }
 
     func updateStatus(_ message: String) {
@@ -2625,6 +2626,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         for directory in fileProviderRuntimeDirectories(paths: paths) {
             try ensureDirectory(directory)
             let url = directory.appendingPathComponent(irisDriveFileProviderRuntimeFileName)
+            if let existing = try? Data(contentsOf: url), existing == data {
+                continue
+            }
             try data.write(to: url)
         }
     }
@@ -2835,7 +2839,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard !providerRefreshKey.isEmpty else { return }
         let now = Date()
         if providerRefreshKey == lastProviderSignalProbeKey
-            && now.timeIntervalSince(lastProviderSignalProbeAt) < 10 {
+            && now.timeIntervalSince(lastProviderSignalProbeAt) < irisDriveProviderSignalRepeatInterval {
             return
         }
         guard !providerSignalSummaryInFlight else { return }
@@ -2876,7 +2880,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard !key.isEmpty else { return }
         let now = Date()
         let changed = key != lastExternalFileProviderSignalKey
-        guard changed || now.timeIntervalSince(lastExternalFileProviderSignalAt) >= 10 else {
+        guard changed
+            || now.timeIntervalSince(lastExternalFileProviderSignalAt) >= irisDriveProviderSignalRepeatInterval
+        else {
             return
         }
         lastExternalFileProviderSignalKey = key
@@ -2890,15 +2896,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func schedulePeerStatusRefresh() {
         guard peerStatusRefreshWorkItem == nil else { return }
         let elapsed = Date().timeIntervalSince(lastPeerStatusRefreshAt)
-        let delay = max(0, 5 - elapsed)
+        let delay = max(0, irisDriveAppManagedDaemonStatusRefreshMinimumInterval - elapsed)
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.peerStatusRefreshWorkItem = nil
             self.lastPeerStatusRefreshAt = Date()
-            self.refreshStatus()
+            self.scheduleAppManagedDaemonStatusRefresh()
         }
         peerStatusRefreshWorkItem = workItem
         DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: workItem)
+    }
+
+    private func scheduleAppManagedDaemonStatusRefresh() {
+        guard Thread.isMainThread else {
+            DispatchQueue.main.async { [weak self] in
+                self?.scheduleAppManagedDaemonStatusRefresh()
+            }
+            return
+        }
+        if externalDaemonMode || daemonServiceActive {
+            refreshStatus()
+            return
+        }
+        let now = Date()
+        guard now.timeIntervalSince(lastAppManagedDaemonStatusRefreshAt)
+            >= irisDriveAppManagedDaemonStatusRefreshMinimumInterval
+        else {
+            return
+        }
+        lastAppManagedDaemonStatusRefreshAt = now
+        scheduleNativeStatusRefresh()
     }
 
     func setDaemonRunning(_ running: Bool) {

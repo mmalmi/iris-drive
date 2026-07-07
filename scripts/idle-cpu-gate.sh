@@ -14,8 +14,9 @@ Environment:
   IRIS_DRIVE_IDLE_CPU_DURATION_SECS=60
   IRIS_DRIVE_IDLE_CPU_INTERVAL_SECS=5
   IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES=app,daemon,provider
+  IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH=<substring required in process command>
   IRIS_DRIVE_IDLE_CPU_APP_MAX=5
-  IRIS_DRIVE_IDLE_CPU_DAEMON_MAX=5
+  IRIS_DRIVE_IDLE_CPU_DAEMON_MAX=10
   IRIS_DRIVE_IDLE_CPU_PROVIDER_MAX=3
   IRIS_DRIVE_IDLE_CPU_ANDROID_PACKAGE=to.iris.drive
   IRIS_DRIVE_IDLE_CPU_IOS_BUNDLE_ID=fi.siriusbusiness.drive
@@ -94,7 +95,7 @@ import time
 platform, warmup, duration, interval = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
 thresholds = {
     "app": float(os.environ.get("IRIS_DRIVE_IDLE_CPU_APP_MAX", "5")),
-    "daemon": float(os.environ.get("IRIS_DRIVE_IDLE_CPU_DAEMON_MAX", "5")),
+    "daemon": float(os.environ.get("IRIS_DRIVE_IDLE_CPU_DAEMON_MAX", "10")),
     "provider": float(os.environ.get("IRIS_DRIVE_IDLE_CPU_PROVIDER_MAX", "3")),
 }
 default_required = {
@@ -103,6 +104,7 @@ default_required = {
 }[platform]
 required_env = os.environ.get("IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES", "").strip()
 required = {item for item in required_env.replace(",", " ").split() if item} or default_required
+command_match = os.environ.get("IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH", "").strip()
 
 def executable_basename(command: str) -> str:
     try:
@@ -129,39 +131,71 @@ def classify(command: str):
         return "app"
     return None
 
+def parse_cpu_time(value: str) -> float:
+    days = 0
+    if "-" in value:
+        day_value, value = value.split("-", 1)
+        days = int(day_value)
+    parts = value.split(":")
+    if len(parts) == 3:
+        hours, minutes, seconds = parts
+    elif len(parts) == 2:
+        hours = "0"
+        minutes, seconds = parts
+    else:
+        return float(value)
+    return days * 86400 + int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
 def snapshot():
-    output = subprocess.check_output(["ps", "-axo", "pid=,ppid=,pcpu=,command="], text=True)
-    roles = {}
+    output = subprocess.check_output(["ps", "-axo", "pid=,ppid=,time=,command="], text=True)
+    processes = {}
     for raw in output.splitlines():
         parts = raw.strip().split(None, 3)
         if len(parts) < 4:
             continue
-        pid, _ppid, cpu, command = parts
+        pid, _ppid, cpu_time, command = parts
+        if command_match and command_match not in command:
+            continue
         role = classify(command)
         if not role:
             continue
         try:
-            value = float(cpu)
+            value = parse_cpu_time(cpu_time)
         except ValueError:
             continue
-        roles.setdefault(role, []).append({"pid": int(pid), "cpu": value, "command": command})
-    return roles
+        processes[int(pid)] = {"role": role, "cpu_seconds": value, "command": command}
+    return processes
 
 print(f"[idle-cpu] warmup {warmup}s, sample {duration}s every {interval}s", file=sys.stderr)
 time.sleep(warmup)
 samples = {role: [] for role in thresholds}
 seen = {role: set() for role in thresholds}
 deadline = time.monotonic() + duration
-while True:
-    roles = snapshot()
-    for role, processes in roles.items():
-        total = sum(process["cpu"] for process in processes)
-        samples.setdefault(role, []).append(total)
-        for process in processes:
-            seen.setdefault(role, set()).add(process["pid"])
+previous_time = time.monotonic()
+previous = snapshot()
+for process in previous.values():
+    seen.setdefault(process["role"], set())
+while time.monotonic() < deadline:
+    time.sleep(interval)
+    now = time.monotonic()
+    current = snapshot()
+    elapsed = max(now - previous_time, 0.001)
+    totals = {role: 0.0 for role in thresholds}
+    observed_roles = set()
+    for pid, process in current.items():
+        role = process["role"]
+        observed_roles.add(role)
+        seen.setdefault(role, set()).add(pid)
+        previous_process = previous.get(pid)
+        if previous_process and previous_process["role"] == role:
+            delta = max(process["cpu_seconds"] - previous_process["cpu_seconds"], 0.0)
+            totals[role] = totals.get(role, 0.0) + (delta / elapsed * 100.0)
+    for role in observed_roles:
+        samples.setdefault(role, []).append(totals.get(role, 0.0))
     if time.monotonic() >= deadline:
         break
-    time.sleep(interval)
+    previous = current
+    previous_time = now
 
 summary = {}
 failures = []

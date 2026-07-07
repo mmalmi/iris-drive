@@ -453,76 +453,47 @@ fn direct_root_republish_skips_cached_files_root_events() {
 }
 
 #[test]
-fn direct_root_seen_drive_root_retries_until_blocks_sync() {
-    let config_dir = tempfile::tempdir().unwrap();
+fn direct_root_seen_drive_root_retries_after_interval_without_status_read() {
     let mut exchange = DirectRootExchange::default();
     let key = "drive-root:remote:main:8:root-hash:root-key:local,remote".to_string();
+    let now = std::time::Instant::now();
 
     exchange.seen_keys.insert(key.clone());
+    exchange.seen_frame_retry_times.insert(key.clone(), now);
 
-    assert!(!exchange.should_skip_seen_direct_root_frame(config_dir.path(), &key));
-
-    write_daemon_status(
-        config_dir.path(),
-        json!({
-            "event": "test",
-            "block_sync_by_root": {
-                "root-hash:root-key": {
-                    "transport": "fips",
-                    "total_hashes": 3,
-                    "fetched": 3,
-                }
-            }
-        }),
+    assert!(
+        exchange.should_skip_seen_direct_root_frame(&key, now + std::time::Duration::from_secs(1))
     );
-
-    assert!(exchange.should_skip_seen_direct_root_frame(config_dir.path(), &key));
+    assert!(!exchange.should_skip_seen_direct_root_frame(
+        &key,
+        now + std::time::Duration::from_secs(DIRECT_ROOT_SEEN_FRAME_RETRY_INTERVAL_SECS)
+    ));
 }
 
 #[test]
 fn direct_root_hint_repeat_throttle_is_per_source_and_expires() {
-    let config_dir = tempfile::tempdir().unwrap();
     let mut exchange = DirectRootExchange::default();
     let key = "drive-root:remote:main:8:root-hash:root-key:local,remote";
+    let newer_key = "drive-root:remote:main:9:new-root:new-key:local,remote";
     let now = std::time::Instant::now();
 
-    assert!(!exchange.should_skip_recent_direct_root_hint(config_dir.path(), "peer-a", key, now));
-    assert!(!exchange.should_skip_recent_direct_root_hint(
-        config_dir.path(),
-        "peer-a",
-        key,
-        now + std::time::Duration::from_secs(1)
-    ));
-
-    write_daemon_status(
-        config_dir.path(),
-        json!({
-            "event": "test",
-            "block_sync_by_root": {
-                "root-hash:root-key": {
-                    "transport": "fips",
-                    "total_hashes": 3,
-                    "fetched": 3,
-                }
-            }
-        }),
-    );
-
-    assert!(!exchange.should_skip_recent_direct_root_hint(config_dir.path(), "peer-a", key, now));
+    assert!(!exchange.should_skip_recent_direct_root_hint("peer-a", key, now));
     assert!(exchange.should_skip_recent_direct_root_hint(
-        config_dir.path(),
         "peer-a",
         key,
         now + std::time::Duration::from_secs(1)
     ));
+    assert!(exchange.should_skip_recent_direct_root_hint(
+        "peer-a",
+        newer_key,
+        now + std::time::Duration::from_secs(1)
+    ));
     assert!(!exchange.should_skip_recent_direct_root_hint(
-        config_dir.path(),
         "peer-b",
         key,
         now + std::time::Duration::from_secs(1)
     ));
     assert!(!exchange.should_skip_recent_direct_root_hint(
-        config_dir.path(),
         "peer-a",
         key,
         now + std::time::Duration::from_secs(DIRECT_ROOT_HINT_REPEAT_INTERVAL_SECS)
@@ -562,10 +533,7 @@ fn direct_root_profile_stream_cache_reuses_unchanged_config() {
     };
     let mut exchange = DirectRootExchange::default();
     let mut loads = 0;
-    let initial_fingerprint = ConfigFileFingerprint {
-        len: 10,
-        modified: None,
-    };
+    let initial_fingerprint = ConfigFileFingerprint::for_test(10);
 
     let first = exchange
         .cached_profile_stream_root_scope_id_from_config(initial_fingerprint.clone(), || {
@@ -581,10 +549,7 @@ fn direct_root_profile_stream_cache_reuses_unchanged_config() {
         .unwrap();
     let changed = exchange
         .cached_profile_stream_root_scope_id_from_config(
-            ConfigFileFingerprint {
-                len: 11,
-                modified: None,
-            },
+            ConfigFileFingerprint::for_test(11),
             || {
                 loads += 1;
                 Ok(AppConfig::default())
@@ -601,14 +566,8 @@ fn direct_root_profile_stream_cache_reuses_unchanged_config() {
 #[test]
 fn direct_root_publish_cache_reuses_unchanged_local_events() {
     let mut exchange = DirectRootExchange::default();
-    let initial_fingerprint = ConfigFileFingerprint {
-        len: 10,
-        modified: None,
-    };
-    let changed_fingerprint = ConfigFileFingerprint {
-        len: 11,
-        modified: None,
-    };
+    let initial_fingerprint = ConfigFileFingerprint::for_test(10);
+    let changed_fingerprint = ConfigFileFingerprint::for_test(11);
     let first = DirectRootEvent {
         key: "drive-root:first".to_string(),
         event_id: "event-a".to_string(),
@@ -662,10 +621,7 @@ fn direct_root_publish_cache_reuses_unchanged_local_events() {
 #[test]
 fn direct_root_publish_cache_can_be_invalidated_for_provider_updates() {
     let mut exchange = DirectRootExchange::default();
-    let fingerprint = ConfigFileFingerprint {
-        len: 10,
-        modified: None,
-    };
+    let fingerprint = ConfigFileFingerprint::for_test(10);
     let first = DirectRootEvent {
         key: "drive-root:first".to_string(),
         event_id: "event-a".to_string(),

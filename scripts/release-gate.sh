@@ -18,6 +18,7 @@ Environment:
   IRIS_DRIVE_RELEASE_GATE_ANDROID=0    Skip local Android build/smoke.
   IRIS_DRIVE_RELEASE_GATE_IOS=0        Skip local iOS build/smoke.
   IRIS_DRIVE_RELEASE_GATE_MACOS=0      Skip local macOS build/smoke.
+  IRIS_DRIVE_RELEASE_GATE_IDLE_CPU=0   Skip idle CPU sampling gates.
 USAGE
 }
 
@@ -26,6 +27,10 @@ bool_true() {
     1 | true | TRUE | True | yes | YES | Yes | on | ON | On) return 0 ;;
     *) return 1 ;;
   esac
+}
+
+idle_cpu_gate_enabled() {
+  [[ "${IRIS_DRIVE_RELEASE_GATE_IDLE_CPU:-1}" != "0" ]]
 }
 
 run() {
@@ -112,21 +117,43 @@ case "$(uname -s)" in
       && [[ "${IRIS_DRIVE_RELEASE_GATE_MACOS:-1}" != "0" ]]; then
       run just macos-build
       run env IRIS_DRIVE_MACOS_SIGNING="${IRIS_DRIVE_MACOS_SIGNING:-none}" just smoke-macos
+      if idle_cpu_gate_enabled; then
+        run ./scripts/macos-dev-app.sh run
+        run env \
+          IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="${IRIS_DRIVE_RELEASE_GATE_MACOS_IDLE_CPU_ROLES:-app,daemon,provider}" \
+          ./scripts/idle-cpu-gate.sh --platform macos
+      fi
     fi
     if ! bool_true "${IRIS_DRIVE_RELEASE_GATE_IOS_SKIP:-0}" \
       && [[ "${IRIS_DRIVE_RELEASE_GATE_IOS:-1}" != "0" ]]; then
       run just ios-build
       run just ios-smoke
       run just ios-gui-smoke
+      if idle_cpu_gate_enabled; then
+        run env \
+          IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="${IRIS_DRIVE_RELEASE_GATE_IOS_IDLE_CPU_ROLES:-app}" \
+          ./scripts/idle-cpu-gate.sh --platform ios
+      fi
     fi
     if ! bool_true "${IRIS_DRIVE_RELEASE_GATE_ANDROID_SKIP:-0}" \
       && [[ "${IRIS_DRIVE_RELEASE_GATE_ANDROID:-1}" != "0" ]]; then
       run just android-build
       run just android-gui-smoke
+      if idle_cpu_gate_enabled; then
+        run env \
+          IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="${IRIS_DRIVE_RELEASE_GATE_ANDROID_IDLE_CPU_ROLES:-app}" \
+          IRIS_DRIVE_IDLE_CPU_ANDROID_PACKAGE="${IRIS_DRIVE_ANDROID_PACKAGE:-to.iris.drive.uitest}" \
+          ./scripts/idle-cpu-gate.sh --platform android
+      fi
     fi
     ;;
   Linux)
     run just linux-build
+    if idle_cpu_gate_enabled && bool_true "${IRIS_DRIVE_RELEASE_GATE_LINUX_IDLE_CPU:-0}"; then
+      run env \
+        IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="${IRIS_DRIVE_RELEASE_GATE_LINUX_IDLE_CPU_ROLES:-daemon}" \
+        ./scripts/idle-cpu-gate.sh --platform linux
+    fi
     ;;
 esac
 

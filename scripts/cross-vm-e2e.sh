@@ -41,6 +41,7 @@ Environment:
   IRIS_DRIVE_E2E_SIDELOAD_APPKEYS
                                   Copy the owner profile roster snapshot into temp peer configs after approval
                                   so VM file-sync tests do not depend on public relay timing (default: 1).
+  IRIS_DRIVE_E2E_IDLE_CPU_GATE    Sample every host daemon's idle CPU after convergence (default: 1).
   IRIS_DRIVE_E2E_KEEP            Keep remote temp dirs/daemons when set to 1.
 USAGE
 }
@@ -57,6 +58,7 @@ KEEP="${IRIS_DRIVE_E2E_KEEP:-0}"
 MOUNT_LABELS="${IRIS_DRIVE_E2E_MOUNT_LABELS:-}"
 SIDELOAD_APPKEYS="${IRIS_DRIVE_E2E_SIDELOAD_APPKEYS:-1}"
 PROVIDER_MUTATIONS="${IRIS_DRIVE_E2E_PROVIDER_MUTATIONS:-0}"
+IDLE_CPU_GATE="${IRIS_DRIVE_E2E_IDLE_CPU_GATE:-1}"
 
 declare -a LABELS=()
 declare -a KINDS=()
@@ -129,6 +131,13 @@ set_host_value() {
     pid) PIDS[$idx]="$value" ;;
     daemon_ssh_pid) DAEMON_SSH_PIDS[$idx]="$value" ;;
     *) echo "unknown mutable host field: $field" >&2; exit 1 ;;
+  esac
+}
+
+bool_true() {
+  case "${1:-}" in
+    1 | true | TRUE | True | yes | YES | Yes | on | ON | On) return 0 ;;
+    *) return 1 ;;
   esac
 }
 
@@ -1361,6 +1370,60 @@ run_for_all_labels_parallel() {
   return "$status"
 }
 
+idle_cpu_gate_enabled() {
+  bool_true "$IDLE_CPU_GATE"
+}
+
+idle_cpu_remote_timeout_secs() {
+  if [[ -n "${IRIS_DRIVE_E2E_IDLE_CPU_TIMEOUT_SECS:-}" ]]; then
+    printf "%s" "$IRIS_DRIVE_E2E_IDLE_CPU_TIMEOUT_SECS"
+    return
+  fi
+  local warmup="${IRIS_DRIVE_IDLE_CPU_WARMUP_SECS:-30}"
+  local duration="${IRIS_DRIVE_IDLE_CPU_DURATION_SECS:-60}"
+  printf "%s" $((warmup + duration + 90))
+}
+
+idle_cpu_gate_label() {
+  local label="$1"
+  local kind config timeout script repo_line
+  kind="$(host_value "$label" kind)"
+  config="$(host_value "$label" config)"
+  timeout="$(idle_cpu_remote_timeout_secs)"
+  if [[ "$kind" == "windows" ]]; then
+    script="
+\$ErrorActionPreference = 'Stop'
+\$repo = Join-Path \$HOME 'src\iris-drive'
+\$env:IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES = 'daemon'
+\$env:IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH = $(ps_quote "$config")
+\$env:IRIS_DRIVE_IDLE_CPU_WARMUP_SECS = $(ps_quote "${IRIS_DRIVE_IDLE_CPU_WARMUP_SECS:-30}")
+\$env:IRIS_DRIVE_IDLE_CPU_DURATION_SECS = $(ps_quote "${IRIS_DRIVE_IDLE_CPU_DURATION_SECS:-60}")
+\$env:IRIS_DRIVE_IDLE_CPU_INTERVAL_SECS = $(ps_quote "${IRIS_DRIVE_IDLE_CPU_INTERVAL_SECS:-5}")
+\$env:IRIS_DRIVE_IDLE_CPU_DAEMON_MAX = $(ps_quote "${IRIS_DRIVE_IDLE_CPU_DAEMON_MAX:-10}")
+& (Join-Path \$repo 'scripts\idle-cpu-gate-windows.ps1')
+exit \$LASTEXITCODE
+"
+  else
+    if [[ "$(host_value "$label" ssh)" == "local" ]]; then
+      repo_line="repo=$(sh_quote "$ROOT")"
+    else
+      repo_line='repo="$HOME/src/iris-drive"'
+    fi
+    script="
+set -Eeuo pipefail
+${repo_line}
+export IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES=daemon
+export IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH=$(sh_quote "$config")
+export IRIS_DRIVE_IDLE_CPU_WARMUP_SECS=$(sh_quote "${IRIS_DRIVE_IDLE_CPU_WARMUP_SECS:-30}")
+export IRIS_DRIVE_IDLE_CPU_DURATION_SECS=$(sh_quote "${IRIS_DRIVE_IDLE_CPU_DURATION_SECS:-60}")
+export IRIS_DRIVE_IDLE_CPU_INTERVAL_SECS=$(sh_quote "${IRIS_DRIVE_IDLE_CPU_INTERVAL_SECS:-5}")
+export IRIS_DRIVE_IDLE_CPU_DAEMON_MAX=$(sh_quote "${IRIS_DRIVE_IDLE_CPU_DAEMON_MAX:-10}")
+\"\$repo/scripts/idle-cpu-gate.sh\" --platform auto
+"
+  fi
+  remote_exec_with_timeout "$label" "$script" "$timeout"
+}
+
 write_initial_seed_files() {
   local label="$1"
   write_file "$label" "seed/$label.txt" "seed from $label in $RUN_ID
@@ -1644,6 +1707,9 @@ run_step "large file" step_large_file
 
 run_step "final fresh daemons" wait_until "all daemon statuses fresh" all_fresh
 run_step "final direct FIPS peer discovery" wait_until "every device has a direct peer" all_have_direct_peer
+if idle_cpu_gate_enabled; then
+  run_step "idle daemon CPU gate" run_for_all_labels_parallel idle_cpu_gate_label
+fi
 
 echo
 echo "cross-vm e2e passed for: ${LABELS[*]}"
