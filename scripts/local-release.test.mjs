@@ -601,7 +601,7 @@ test('local-release dry-run stages Linux CLI binary for cargo-deb', () => {
   assert.match(result.stdout, /\$ mkdir -p .*target\/release/)
   assert.match(
     result.stdout,
-    /\$ cp .*target\/x86_64-unknown-linux-gnu\/release\/idrive .*target\/release\/idrive[\s\S]*\$ cargo deb --no-build/,
+    /\$ cp .*target\/x86_64-unknown-linux-gnu\/release\/idrive .*linux\/target\/release\/idrive[\s\S]*\$ cargo deb --no-build/,
   )
 })
 

@@ -327,7 +327,7 @@ function packageUnixCliTarball({ binaryPath, targetTriple, tag, dryRun }) {
 
 function stageLinuxDebCliBinary({ env, targetTriple, dryRun }) {
   const sourcePath = join(cargoTargetDir(env), targetTriple, 'release', 'idrive')
-  const releaseDir = join(repoRoot, 'target', 'release')
+  const releaseDir = join(repoRoot, 'linux', 'target', 'release')
   const destPath = join(releaseDir, 'idrive')
   if (dryRun) {
     console.log(`$ mkdir -p ${quote(releaseDir)}`)

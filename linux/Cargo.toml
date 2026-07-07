@@ -31,7 +31,7 @@ priority = "optional"
 depends = "$auto, xdg-utils"
 assets = [
     ["target/release/iris-drive", "usr/bin/", "755"],
-    ["../target/release/idrive", "usr/bin/", "755"],
+    ["target/release/idrive", "usr/bin/", "755"],
     ["resources/iris-drive.svg", "usr/share/icons/hicolor/scalable/apps/iris-drive.svg", "644"],
     ["resources/iris-drive.desktop", "usr/share/applications/iris-drive.desktop", "644"],
 ]
