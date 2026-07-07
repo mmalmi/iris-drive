@@ -19,6 +19,8 @@ Environment:
   IRIS_DRIVE_RELEASE_GATE_IOS=0        Skip local iOS build/smoke.
   IRIS_DRIVE_RELEASE_GATE_MACOS=0      Skip local macOS build/smoke.
   IRIS_DRIVE_RELEASE_GATE_IDLE_CPU=0   Skip idle CPU sampling gates.
+  IRIS_DRIVE_RELEASE_GATE_MACOS_IDLE_CPU_WARMUP_SECS=60
+                                        Override macOS idle CPU warmup.
 USAGE
 }
 
@@ -122,6 +124,7 @@ case "$(uname -s)" in
         run ./scripts/macos-dev-app.sh run
         run env \
           IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="${IRIS_DRIVE_RELEASE_GATE_MACOS_IDLE_CPU_ROLES:-app,daemon,provider}" \
+          IRIS_DRIVE_IDLE_CPU_WARMUP_SECS="${IRIS_DRIVE_RELEASE_GATE_MACOS_IDLE_CPU_WARMUP_SECS:-60}" \
           ./scripts/idle-cpu-gate.sh --platform macos
       fi
     fi
