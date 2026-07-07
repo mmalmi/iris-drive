@@ -246,6 +246,29 @@ fn provider_root_wake_payload_carries_file_count_status() {
     assert_eq!(status["hashtree"]["top_level_entries"], 4);
 }
 
+#[tokio::test]
+async fn provider_root_wake_drain_keeps_latest_after_debounce() {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let first = json!({"root_cid": "root-a", "file_count": 1});
+    let second = json!({"root_cid": "root-b", "file_count": 2});
+    let third = json!({"root_cid": "root-c", "file_count": 3});
+    tx.send(Some(second)).unwrap();
+    let delayed = tx.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        delayed.send(Some(third)).unwrap();
+    });
+
+    let drained = drain_latest_provider_root_wake_payload_after_debounce(
+        &mut rx,
+        std::time::Duration::from_millis(25),
+        Some(first),
+    )
+    .await;
+
+    assert_eq!(drained, Some(json!({"root_cid": "root-c", "file_count": 3})));
+}
+
 #[test]
 fn stale_root_apply_followup_detects_superseded_app_key_root() {
     let config_dir = tempfile::tempdir().unwrap();

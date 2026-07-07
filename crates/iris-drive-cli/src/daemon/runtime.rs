@@ -576,7 +576,12 @@ pub(crate) fn cmd_daemon(
                     let mut latest_wake_payload = wake_payload;
                     if let Some(rx) = provider_root_wake_rx.as_mut() {
                         latest_wake_payload =
-                            drain_latest_provider_root_wake_payload(rx, latest_wake_payload);
+                            drain_latest_provider_root_wake_payload_after_debounce(
+                                rx,
+                                root_update_debounce,
+                                latest_wake_payload,
+                            )
+                            .await;
                     }
                     if let Some(wake_payload) = latest_wake_payload.as_ref()
                         && let Some(status_payload) = provider_root_wake_status_payload(wake_payload)

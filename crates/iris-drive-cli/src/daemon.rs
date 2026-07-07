@@ -639,6 +639,15 @@ fn drain_latest_provider_root_wake_payload(
     latest
 }
 
+async fn drain_latest_provider_root_wake_payload_after_debounce(
+    rx: &mut tokio::sync::mpsc::UnboundedReceiver<Option<Value>>,
+    debounce: std::time::Duration,
+    latest: Option<Value>,
+) -> Option<Value> {
+    tokio::time::sleep(debounce).await;
+    drain_latest_provider_root_wake_payload(rx, latest)
+}
+
 fn event_touches_config_root(event: &notify::Event, config_dir: &Path) -> bool {
     event.paths.is_empty()
         || event.paths.iter().any(|path| {
