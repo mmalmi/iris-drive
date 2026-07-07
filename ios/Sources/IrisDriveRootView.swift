@@ -158,13 +158,7 @@ private struct RevokedDeviceSetupView: View {
 
                 Section("Device removed") {
                     Text("This device no longer has access to Iris Drive.")
-                    LabeledContent("Device", value: model.currentAppKeyNpub)
                     LabeledContent("Current Device Key", value: model.devicePublicKey)
-                    Button {
-                        model.relinkDevice()
-                    } label: {
-                        Label("Link this device again", systemImage: "link")
-                    }
                     Button {
                         model.copyDeviceKey()
                     } label: {
@@ -195,6 +189,9 @@ private struct RevokedDeviceSetupView: View {
 
 private struct AwaitingApprovalSetupView: View {
     @ObservedObject var model: IrisDriveMobileModel
+    @State private var requestQrMatrix = QrMatrix()
+    @State private var requestQrValue = ""
+    @State private var requestQrTask: Task<Void, Never>?
 
     var body: some View {
         NavigationStack {
@@ -213,7 +210,32 @@ private struct AwaitingApprovalSetupView: View {
                 }
 
                 Section("Waiting for approval") {
-                    LabeledContent("Current Device Key", value: model.devicePublicKey)
+                    Text("This device is waiting for an admin to approve it.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                    if !model.appKeyLinkRequest.isEmpty {
+                        DisclosureGroup {
+                            if requestQrMatrix.width > 0, requestQrValue == model.appKeyLinkRequest {
+                                QrCodeView(matrix: requestQrMatrix)
+                                    .frame(width: 260, height: 260)
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                            } else {
+                                ProgressView()
+                                    .frame(width: 260, height: 260)
+                                    .frame(maxWidth: .infinity, alignment: .center)
+                                    .accessibilityIdentifier("requestQrLoading")
+                            }
+                            Button {
+                                model.copyLinkRequest()
+                            } label: {
+                                Label("Copy Request Link", systemImage: "link")
+                            }
+                        } label: {
+                            Label("Manual approval request", systemImage: "qrcode")
+                        }
+                        .accessibilityIdentifier("manualApprovalRequestDisclosure")
+                    }
+                    LabeledContent("Current Device", value: compactIdentifier(model.devicePublicKey))
                     Button {
                         model.copyDeviceKey()
                     } label: {
@@ -231,14 +253,51 @@ private struct AwaitingApprovalSetupView: View {
             }
             .accessibilityIdentifier("awaitingApprovalView")
             .task {
+                renderRequestQrIfNeeded()
                 await model.refreshProfileStatusInBackground(scheduleBackgroundSync: false)
                 while model.isAwaitingApproval {
                     try? await Task.sleep(nanoseconds: awaitingApprovalScreenRefreshIntervalNanoseconds)
                     guard !Task.isCancelled else { return }
                     await model.refreshProfileStatusInBackground(scheduleBackgroundSync: false)
+                    renderRequestQrIfNeeded()
                 }
             }
+            .onChange(of: model.appKeyLinkRequest) { _, _ in
+                resetRequestQr()
+                renderRequestQrIfNeeded()
+            }
+            .onDisappear {
+                requestQrTask?.cancel()
+                requestQrTask = nil
+            }
         }
+    }
+
+    private func renderRequestQrIfNeeded() {
+        let request = model.appKeyLinkRequest.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !request.isEmpty else { return }
+        guard requestQrValue != request || requestQrMatrix.width == 0 else { return }
+        requestQrTask?.cancel()
+        requestQrValue = request
+        requestQrMatrix = QrMatrix()
+        requestQrTask = Task { @MainActor in
+            let matrix = await model.qrMatrixInBackground(for: request)
+            guard !Task.isCancelled, requestQrValue == request else { return }
+            requestQrMatrix = matrix
+        }
+    }
+
+    private func resetRequestQr() {
+        requestQrTask?.cancel()
+        requestQrTask = nil
+        requestQrValue = ""
+        requestQrMatrix = QrMatrix()
+    }
+
+    private func compactIdentifier(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count > 24 else { return trimmed }
+        return "\(trimmed.prefix(12))...\(trimmed.suffix(8))"
     }
 }
 
@@ -380,6 +439,7 @@ private struct ProfilePhotoSetupView: View {
                 } label: {
                     Label(selectedPhoto == nil ? "Later" : "Create profile", systemImage: "plus")
                 }
+                .accessibilityIdentifier("createPhotoSubmit")
             }
             SetupErrorSection(message: model.setupErrorMessage)
         }
@@ -413,7 +473,7 @@ private struct RestoreOptionsSetupView: View {
         Form {
             Section {
                 Button(action: openLinkDevice) {
-                    Label("Link device", systemImage: "link")
+                    Label("Link device", systemImage: "qrcode")
                 }
                 .accessibilityIdentifier("openLinkDevice")
                 Button(action: openRecoveryPhrase) {
@@ -560,104 +620,38 @@ private struct RestoreSecretKeySetupView: View {
 
 private struct LinkDeviceSetupView: View {
     @ObservedObject var model: IrisDriveMobileModel
-    @State private var linkTarget = ""
-    @State private var submittedLinkTarget = ""
-    @State private var linkValidationMessage = ""
-    @State private var scannerPresented = false
-
-    init(model: IrisDriveMobileModel) {
-        self.model = model
-        _linkTarget = State(initialValue: iosUiTestDecodedValue("IRIS_DRIVE_UI_TEST_OWNER_INVITE"))
-    }
+    @State private var requested = false
 
     var body: some View {
         Form {
             Section {
-                TextField("IrisProfile invite link or admin device key", text: $linkTarget)
-                    .textInputAutocapitalization(.never)
-                    .autocorrectionDisabled()
-                    .accessibilityIdentifier("linkTargetInput")
-                    .onSubmit {
-                        submitLinkDevice(linkTarget, force: true)
-                    }
-                    .onChange(of: linkTarget) { _, newValue in
-                        submitLinkDevice(newValue, force: false)
-                    }
+                HStack(spacing: 12) {
+                    ProgressView()
+                    Text("Preparing join request")
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity, alignment: .center)
+                .padding(.vertical, 12)
                 Button {
-                    submitLinkDevice(linkTarget, force: true)
+                    startJoinRequestIfNeeded()
                 } label: {
-                    Label("Link device", systemImage: "link")
+                    Label("Show join QR", systemImage: "qrcode")
                 }
-                .accessibilityIdentifier("linkDeviceSubmit")
-                .disabled(linkTarget.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                Button {
-                    scannerPresented = true
-                } label: {
-                    Label("Scan invite QR", systemImage: "qrcode.viewfinder")
-                }
-            }
-            if !linkValidationMessage.isEmpty {
-                Section {
-                    Text(linkValidationMessage)
-                        .font(.footnote)
-                        .foregroundStyle(.red)
-                        .textSelection(.enabled)
-                        .accessibilityIdentifier("linkDeviceErrorMessage")
-                }
+                .accessibilityIdentifier("startJoinRequest")
             }
             SetupErrorSection(message: model.setupErrorMessage)
         }
         .navigationTitle("Link device")
         .toolbar(.visible, for: .navigationBar)
         .onAppear {
-            submitLinkDevice(
-                linkTarget,
-                force: !linkTarget.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-            )
-        }
-        .sheet(isPresented: $scannerPresented) {
-            QRCodeScannerSheet { code in
-                linkTarget = code
-                submitLinkDevice(code, force: true)
-            }
+            startJoinRequestIfNeeded()
         }
     }
 
-    private func submitLinkDevice(_ value: String, force: Bool) {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            if force {
-                linkValidationMessage = ""
-            }
-            return
-        }
-        let linkInput = IrisDriveNativeLinkInput.validate(trimmed)
-        guard linkInput.isComplete, linkInput.isValid else {
-            if force {
-                linkValidationMessage = linkValidationFailureMessage(linkInput)
-            }
-            return
-        }
-        guard submittedLinkTarget != trimmed else { return }
-        linkValidationMessage = ""
-        submittedLinkTarget = trimmed
-        model.profileLinkTarget = trimmed
-        model.linkDevice()
-    }
-
-    private func linkValidationFailureMessage(_ linkInput: NativeLinkInputClassification) -> String {
-        let error = linkInput.error.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !error.isEmpty {
-            return error
-        }
-        switch linkInput.kind {
-        case "invite":
-            return "Scan or paste the full device invite link."
-        case "app_key_pubkey":
-            return "Paste the full admin device key."
-        default:
-            return "Scan or paste an Iris Drive device invite link."
-        }
+    private func startJoinRequestIfNeeded() {
+        guard !requested else { return }
+        requested = true
+        model.startJoinRequest()
     }
 }
 
@@ -734,6 +728,7 @@ private struct DriveHomeView: View {
                         systemImage: "safari"
                     )
                 }
+                .accessibilityIdentifier("openIrisAppsButton")
                 .disabled(!model.localNhashResolverEnabled || model.isOpeningIrisApps)
                 Button {
                     model.copySnapshotLink()
@@ -849,13 +844,29 @@ private struct DevicesView: View {
     @ViewBuilder
     private func deviceRow(_ device: IrisDriveDevice, showPresence: Bool) -> some View {
         DisclosureGroup {
-            if device.detail == model.devicePublicKey {
-                LabeledContent("Device Key", value: model.devicePublicKey)
+            if device.isCurrentDevice {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 10) {
+                        Text(model.devicePublicKey)
+                            .font(.footnote.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                        Spacer()
+                        Button {
+                            model.copyDeviceKey()
+                        } label: {
+                            Label("Copy Device Key", systemImage: "doc.on.doc")
+                        }
+                    }
+                }
+            } else if !device.detail.isEmpty {
+                Text(device.detail)
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
             }
-            Text(device.detail)
-                .font(.footnote)
-                .foregroundStyle(.secondary)
-                .textSelection(.enabled)
             if device.canAppointAdmin || device.canDemoteAdmin || device.canRevoke {
                 HStack {
                     if device.canAppointAdmin {
@@ -933,72 +944,61 @@ private struct DevicesView: View {
 private struct AddDeviceSection: View {
     @ObservedObject var model: IrisDriveMobileModel
     @Binding var isExpanded: Bool
-    @State private var inviteQrMatrix = QrMatrix()
-    @State private var inviteQrValue = ""
-    @State private var inviteQrTask: Task<Void, Never>?
+    @State private var scannerPresented = false
+    @State private var approvalConfirmationPresented = false
+    @State private var pendingApprovalRequest = ""
+    @State private var lastPromptedApprovalRequest = ""
 
     private var canAddManualDevice: Bool {
-        IrisDriveNativeLinkInput.isComplete(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines))
+        IrisDriveNativeLinkInput.isCompleteDeviceApproval(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines))
+    }
+
+    private func confirmManualDevice(_ value: String, force: Bool = false) {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard IrisDriveNativeLinkInput.isCompleteDeviceApproval(trimmed) else { return }
+        guard force || lastPromptedApprovalRequest != trimmed else { return }
+        pendingApprovalRequest = trimmed
+        lastPromptedApprovalRequest = trimmed
+        approvalConfirmationPresented = true
+    }
+
+    private func approvePendingDevice() {
+        let request = pendingApprovalRequest
+        guard IrisDriveNativeLinkInput.isCompleteDeviceApproval(request) else { return }
+        model.approveDevice(request: request, label: "")
+        pendingApprovalRequest = ""
+        lastPromptedApprovalRequest = ""
     }
 
     private func submitManualDevice() {
         guard canAddManualDevice else { return }
-        model.approveDevice()
+        confirmManualDevice(model.approveDeviceKey, force: true)
     }
 
     var body: some View {
         Section {
             DisclosureGroup(isExpanded: $isExpanded) {
-                Text("Paste the device key.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                TextField("Device key", text: $model.approveDeviceKey)
+                TextField("Request link or device key", text: $model.approveDeviceKey)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .accessibilityIdentifier("manualDeviceId")
                     .onSubmit {
                         submitManualDevice()
                     }
-                TextField("Name (optional)", text: $model.approveDeviceLabel)
-                    .accessibilityIdentifier("manualDeviceName")
-                    .onSubmit {
-                        submitManualDevice()
+                    .onChange(of: model.approveDeviceKey) { _, newValue in
+                        confirmManualDevice(newValue)
                     }
                 Button {
-                    submitManualDevice()
+                    scannerPresented = true
                 } label: {
-                    Label("Add", systemImage: "plus")
+                    Label("Scan QR", systemImage: "qrcode.viewfinder")
                 }
-                .accessibilityIdentifier("manualDeviceAdd")
-                .disabled(!canAddManualDevice)
-
-                if !model.appKeyLinkInvite.isEmpty {
-                    if inviteQrMatrix.width > 0, inviteQrValue == model.appKeyLinkInvite {
-                        QrCodeView(matrix: inviteQrMatrix)
-                            .frame(width: 260, height: 260)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                    } else {
-                        ProgressView()
-                            .frame(width: 260, height: 260)
-                            .frame(maxWidth: .infinity, alignment: .center)
-                            .accessibilityIdentifier("inviteQrLoading")
-                    }
-                    Text(model.appKeyLinkInvite)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                    HStack {
-                        Button {
-                            model.copyLinkInvite()
-                        } label: {
-                            Label("Copy invite link", systemImage: "link")
-                        }
-                        Button {
-                            model.resetInvite()
-                        } label: {
-                            Label("Reset invite", systemImage: "arrow.clockwise")
-                        }
-                    }
+                .accessibilityIdentifier("scanApprovalRequestQr")
+                if !model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                   !canAddManualDevice {
+                    Text("That is not a complete request link or device key.")
+                        .font(.caption)
+                        .foregroundStyle(.red)
                 }
 
                 if !model.inboundAppKeyLinkRequests.isEmpty {
@@ -1013,9 +1013,9 @@ private struct AddDeviceSection: View {
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
                             Button {
-                                model.approveDevice(request: request.requestLink, label: request.label)
+                                confirmManualDevice(request.requestLink, force: true)
                             } label: {
-                                Label("Add", systemImage: "plus")
+                                Label("Review", systemImage: "checkmark.circle")
                             }
                             Button(role: .destructive) {
                                 model.rejectDevice(request: request.requestLink)
@@ -1039,40 +1039,24 @@ private struct AddDeviceSection: View {
         }
         .onAppear {
             prefillUiTestDeviceFields()
-            renderInviteQrIfNeeded()
         }
-        .onChange(of: isExpanded) { _, _ in
-            renderInviteQrIfNeeded()
+        .alert("Approve this device?", isPresented: $approvalConfirmationPresented) {
+            Button("Cancel", role: .cancel) {
+                pendingApprovalRequest = ""
+            }
+            Button("Approve") {
+                approvePendingDevice()
+            }
+        } message: {
+            Text("This will add the joining device to Iris Drive.")
         }
-        .onChange(of: model.appKeyLinkInvite) { _, _ in
-            resetInviteQr()
-            renderInviteQrIfNeeded()
+        .sheet(isPresented: $scannerPresented) {
+            QRCodeScannerSheet { code in
+                let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
+                model.approveDeviceKey = trimmed
+                confirmManualDevice(trimmed, force: true)
+            }
         }
-        .onDisappear {
-            inviteQrTask?.cancel()
-            inviteQrTask = nil
-        }
-    }
-
-    private func renderInviteQrIfNeeded() {
-        let invite = model.appKeyLinkInvite.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isExpanded, !invite.isEmpty else { return }
-        guard inviteQrValue != invite || inviteQrMatrix.width == 0 else { return }
-        inviteQrTask?.cancel()
-        inviteQrValue = invite
-        inviteQrMatrix = QrMatrix()
-        inviteQrTask = Task { @MainActor in
-            let matrix = await model.qrMatrixInBackground(for: invite)
-            guard !Task.isCancelled, inviteQrValue == invite else { return }
-            inviteQrMatrix = matrix
-        }
-    }
-
-    private func resetInviteQr() {
-        inviteQrTask?.cancel()
-        inviteQrTask = nil
-        inviteQrValue = ""
-        inviteQrMatrix = QrMatrix()
     }
 
     private func prefillUiTestDeviceFields() {
@@ -1080,12 +1064,7 @@ private struct AddDeviceSection: View {
         if !request.isEmpty,
            model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             model.approveDeviceKey = request
-        }
-
-        let label = iosUiTestValue("IRIS_DRIVE_UI_TEST_LINKED_DEVICE_LABEL")
-        if !label.isEmpty,
-           model.approveDeviceLabel.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            model.approveDeviceLabel = label
+            confirmManualDevice(request)
         }
     }
 }
@@ -1247,20 +1226,6 @@ private struct AddRecoveryKeySheet: View {
 private func iosUiTestValue(_ name: String) -> String {
     #if DEBUG
     ProcessInfo.processInfo.environment[name] ?? ""
-    #else
-    ""
-    #endif
-}
-
-private func iosUiTestDecodedValue(_ name: String) -> String {
-    #if DEBUG
-    let environment = ProcessInfo.processInfo.environment
-    if let encoded = environment["\(name)_B64"],
-       let data = Data(base64Encoded: encoded),
-       let value = String(data: data, encoding: .utf8) {
-        return value
-    }
-    return environment[name] ?? ""
     #else
     ""
     #endif
@@ -2536,13 +2501,7 @@ private struct SettingsView: View {
             Section("Device") {
                 TextField("Device label", text: $model.deviceLabel)
                     .onSubmit { model.persist() }
-                LabeledContent("Device", value: model.currentAppKeyNpub)
                 LabeledContent("Current Device Key", value: model.devicePublicKey)
-                Button {
-                    model.copyAppKey()
-                } label: {
-                    Label("Copy Device", systemImage: "doc.on.doc")
-                }
                 Button {
                     model.copyDeviceKey()
                 } label: {
@@ -2716,7 +2675,7 @@ private func shareOpenPath(_ share: IrisDriveShare) -> String {
 
 private func memberDisplayName(_ member: IrisDriveShareMember) -> String {
     member.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        ? "IrisProfile"
+        ? "NostrIdentity"
         : member.displayName
 }
 

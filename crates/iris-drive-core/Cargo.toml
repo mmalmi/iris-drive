@@ -10,6 +10,7 @@ readme = "README.md"
 
 [dependencies]
 anyhow.workspace = true
+aes-gcm.workspace = true
 async-trait.workspace = true
 axum = { workspace = true, features = ["ws"] }
 base64.workspace = true
@@ -30,6 +31,7 @@ http.workspace = true
 mime_guess.workspace = true
 nostr-identity.workspace = true
 nostr-sdk.workspace = true
+nostr-pubsub.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
 serde.workspace = true

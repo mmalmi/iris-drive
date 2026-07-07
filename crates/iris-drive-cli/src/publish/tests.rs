@@ -98,7 +98,7 @@ fn direct_root_heartbeat_publishes_local_root_events_only() {
     let profile = DirectRootEvent {
         key: "profile-op:profile:op".to_string(),
         event_id: "profile-event".to_string(),
-        kind: iris_drive_core::KIND_IRIS_PROFILE_ROSTER_OP,
+        kind: iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP,
         json: "{\"id\":\"profile\"}".to_string(),
     };
 
@@ -681,6 +681,14 @@ fn direct_root_publish_bursts_root_frames_only() {
         2,
         "relayed drive roots should not be single-shot"
     );
+    assert_eq!(
+        direct_root_publish_attempts_for_source(
+            drive_root,
+            DirectRootPublishSource::CachedStateRequestReply
+        ),
+        4,
+        "state-request recovery for relayed roots needs full-frame redundancy"
+    );
     assert!(should_publish_direct_root_hint(
         drive_root,
         DirectRootPublishSource::LocalCurrent
@@ -688,6 +696,41 @@ fn direct_root_publish_bursts_root_frames_only() {
     assert!(should_publish_direct_root_hint(
         share_root,
         DirectRootPublishSource::LocalCurrent
+    ));
+    assert!(should_publish_direct_root_full_frame(
+        drive_root,
+        DirectRootPublishSource::LocalCurrent,
+        0
+    ));
+    assert!(!should_publish_direct_root_full_frame(
+        drive_root,
+        DirectRootPublishSource::LocalCurrent,
+        1
+    ));
+    assert!(!should_publish_direct_root_full_frame(
+        drive_root,
+        DirectRootPublishSource::LocalHeartbeat,
+        0
+    ));
+    assert!(should_publish_direct_root_full_frame(
+        drive_root,
+        DirectRootPublishSource::StateRequestReply,
+        0
+    ));
+    assert!(!should_publish_direct_root_full_frame(
+        drive_root,
+        DirectRootPublishSource::StateRequestReply,
+        1
+    ));
+    assert!(should_publish_direct_root_full_frame(
+        drive_root,
+        DirectRootPublishSource::CachedRelay,
+        1
+    ));
+    assert!(should_publish_direct_root_full_frame(
+        "profile-op:profile:op",
+        DirectRootPublishSource::LocalCurrent,
+        1
     ));
     assert!(!should_publish_direct_root_hint(
         drive_root,
@@ -702,18 +745,28 @@ fn direct_root_publish_bursts_root_frames_only() {
 }
 
 #[test]
-fn direct_root_heartbeat_uses_single_hinted_attempt_with_local_throttle() {
+fn direct_root_heartbeat_retries_hinted_roots_with_local_throttle() {
     let mut exchange = DirectRootExchange::default();
     let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
     let now = std::time::Instant::now();
 
     assert_eq!(
         direct_root_publish_attempts_for_source(key, DirectRootPublishSource::LocalHeartbeat),
-        1
+        4
     );
     assert!(should_publish_direct_root_hint(
         key,
         DirectRootPublishSource::LocalHeartbeat
+    ));
+    assert!(!should_publish_direct_root_full_frame(
+        key,
+        DirectRootPublishSource::LocalHeartbeat,
+        0
+    ));
+    assert!(!should_publish_direct_root_full_frame(
+        key,
+        DirectRootPublishSource::LocalHeartbeat,
+        3
     ));
     assert!(exchange.should_publish_candidate_key(key, DirectRootPublishSource::LocalCurrent, now));
     assert!(!exchange.should_publish_candidate_key(
@@ -725,6 +778,125 @@ fn direct_root_heartbeat_uses_single_hinted_attempt_with_local_throttle() {
         key,
         DirectRootPublishSource::LocalHeartbeat,
         now + std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
+    ));
+}
+
+#[test]
+fn direct_root_state_request_reply_includes_cached_remote_roots() {
+    let mut exchange = DirectRootExchange::default();
+    let local = DirectRootEvent {
+        key: "drive-root:local:main:8:local-hash:local-key:local,remote".to_string(),
+        event_id: "local-event".to_string(),
+        kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
+        json: "{\"id\":\"local\"}".to_string(),
+    };
+    let remote = DirectRootEvent {
+        key: "drive-root:remote:main:9:remote-hash:remote-key:local,remote".to_string(),
+        event_id: "remote-event".to_string(),
+        kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
+        json: "{\"id\":\"remote\"}".to_string(),
+    };
+
+    exchange.cache_event(remote.clone());
+    let events = exchange.state_request_events_for_publish(vec![local.clone()]);
+
+    assert_eq!(events.len(), 2);
+    let local_reply = events
+        .iter()
+        .find(|event| event.event.event_id == local.event_id)
+        .unwrap();
+    assert_eq!(
+        local_reply.source,
+        DirectRootPublishSource::StateRequestReply
+    );
+    let cached_reply = events
+        .iter()
+        .find(|event| event.event.event_id == remote.event_id)
+        .unwrap();
+    assert_eq!(
+        cached_reply.source,
+        DirectRootPublishSource::CachedStateRequestReply
+    );
+    assert_eq!(
+        direct_root_publish_attempts_for_source(
+            &local.key,
+            DirectRootPublishSource::StateRequestReply,
+        ),
+        4
+    );
+    assert!(should_publish_direct_root_full_frame(
+        &local.key,
+        DirectRootPublishSource::StateRequestReply,
+        0
+    ));
+    assert!(!should_publish_direct_root_full_frame(
+        &local.key,
+        DirectRootPublishSource::StateRequestReply,
+        1
+    ));
+    assert_eq!(
+        direct_root_publish_attempts_for_source(
+            &remote.key,
+            DirectRootPublishSource::CachedStateRequestReply,
+        ),
+        4
+    );
+    assert!(should_publish_direct_root_full_frame(
+        &remote.key,
+        DirectRootPublishSource::CachedStateRequestReply,
+        3
+    ));
+    assert!(!should_publish_direct_root_hint(
+        &remote.key,
+        DirectRootPublishSource::CachedStateRequestReply,
+    ));
+}
+
+#[test]
+fn direct_root_state_request_reply_throttle_is_per_target_peer() {
+    let mut exchange = DirectRootExchange::default();
+    let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
+    let now = std::time::Instant::now();
+
+    assert!(exchange.should_publish_candidate_key_for_target(
+        key,
+        DirectRootPublishSource::CachedStateRequestReply,
+        Some("peer-a"),
+        now
+    ));
+    assert!(!exchange.should_publish_candidate_key_for_target(
+        key,
+        DirectRootPublishSource::CachedStateRequestReply,
+        Some("peer-a"),
+        now + std::time::Duration::from_millis(500)
+    ));
+    assert!(exchange.should_publish_candidate_key_for_target(
+        key,
+        DirectRootPublishSource::CachedStateRequestReply,
+        Some("peer-b"),
+        now + std::time::Duration::from_millis(500)
+    ));
+    assert!(exchange.should_publish_candidate_key_for_target(
+        key,
+        DirectRootPublishSource::StateRequestReply,
+        Some("peer-a"),
+        now + std::time::Duration::from_millis(500)
+    ));
+}
+
+#[test]
+fn direct_root_periodic_state_requests_are_throttled() {
+    let mut exchange = DirectRootExchange::default();
+    let now = std::time::Instant::now();
+
+    assert!(exchange.should_publish_state_request("scope", now));
+    assert!(!exchange.should_publish_state_request(
+        "scope",
+        now + std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS - 1),
+    ));
+    assert!(exchange.should_publish_state_request(
+        "scope",
+        now + std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS),
     ));
 }
 
@@ -750,7 +922,7 @@ fn direct_root_publish_includes_profile_roster_ops() {
         .unwrap();
 
     assert!(events.iter().any(|event| {
-        event.kind == iris_drive_core::KIND_IRIS_PROFILE_ROSTER_OP
+        event.kind == iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP
             && event.key.starts_with("profile-op:")
     }));
 }

@@ -1,6 +1,6 @@
 //! Profile state machine.
 //!
-//! Wraps the profile roster model — stable `IrisProfile` id, this app install's
+//! Wraps the profile roster model — stable `NostrIdentity` id, this app install's
 //! `AppKey`, whether the `AppKey` is an admin in the current roster, and the
 //! current authorization state.
 //!
@@ -9,7 +9,7 @@
 //! 1. **Create** — fresh `AppKey`. Single-install default; this `AppKey`
 //!    is the first admin and signs the first roster.
 //! 2. **Restore** — import recovery authority or an existing admin `AppKey`.
-//! 3. **Link** — paste/scan an `IrisProfile`/admin `AppKey` invite. Generate a
+//! 3. **Link** — paste/scan an `NostrIdentity`/admin `AppKey` invite. Generate a
 //!    fresh `AppKey` and wait in `AwaitingApproval` until an admin accepts it.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -20,19 +20,25 @@ use std::str::FromStr;
 
 use nostr_sdk::nips::nip19::FromBech32;
 use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
-use nostr_sdk::{Keys, PublicKey, SecretKey};
+use nostr_sdk::{Event, JsonUtil, Keys, PublicKey, SecretKey};
 use serde::{Deserialize, Deserializer, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
 use crate::app_keys::{AppActorEntry, AppActorRole, AppKeysProjection};
 use crate::config::{AppConfig, ConfigError};
+use crate::device_labels::{
+    decrypt_drive_device_labels_with_dck, drive_device_label_payload,
+    encrypt_drive_device_labels_with_dck, normalize_drive_device_labels,
+};
 use crate::identity::{AppKey, IdentityError, RecoveryKey};
-use crate::iris_profile::{
-    IrisProfileCapabilities, IrisProfileError, IrisProfileFacet, IrisProfileId,
-    IrisProfileKeyPurpose, IrisProfileRosterOp, IrisProfileRosterProjection,
-    SignedIrisProfileRosterOp, build_iris_profile_roster_op_event, iris_profile_roster_parent_ids,
-    parse_iris_profile_roster_op_event, project_iris_profile_roster,
+use crate::nostr_identity::{
+    NostrIdentityCapabilities, NostrIdentityError, NostrIdentityFacet, NostrIdentityId,
+    NostrIdentityKeyPurpose, NostrIdentityRosterOp, NostrIdentityRosterProjection,
+    SignedNostrIdentityRosterOp, build_nostr_identity_roster_op_event_with_encrypted_device_labels,
+    encrypted_device_label_payloads_from_nostr_identity_roster_op_event,
+    nostr_identity_roster_parent_ids, parse_nostr_identity_roster_op_event,
+    project_nostr_identity_roster,
 };
 use crate::paths::{config_path_in, key_path_in, recovery_phrase_path_in, sync_cache_path_in};
 use crate::recovery_phrase::{RecoveryPhraseError, save_recovery_phrase, validate_recovery_phrase};
@@ -42,13 +48,13 @@ pub enum ProfileError {
     #[error("identity: {0}")]
     Identity(#[from] IdentityError),
     #[error("iris profile: {0}")]
-    IrisProfile(#[from] IrisProfileError),
+    NostrIdentity(#[from] NostrIdentityError),
     #[error("recovery phrase: {0}")]
     RecoveryPhrase(#[from] RecoveryPhraseError),
-    #[error("recovery authority is not active in this IrisProfile")]
+    #[error("recovery authority is not active in this NostrIdentity")]
     RecoveryAuthorityUnavailable,
-    #[error("recovery authority cannot rotate key epochs")]
-    RecoveryCannotRotateKeyEpochs,
+    #[error("recovery authority cannot rotate secret epochs")]
+    RecoveryCannotRotateSecretEpochs,
     #[error("current app key was tombstoned and cannot be re-added")]
     CurrentAppKeyTombstoned,
     #[error("invalid AppKey pubkey: {0}")]
@@ -67,8 +73,8 @@ pub enum ProfileError {
     NoCurrentAppKeysProjection,
     #[error("no DCK wrap for this AppKey (revoked or never authorized)")]
     NoWrapForThisAppKey,
-    #[error("current AppKey cannot repair key epoch signed by {signed_by_pubkey}")]
-    CurrentAppKeyCannotRepairKeyEpoch { signed_by_pubkey: String },
+    #[error("current AppKey cannot repair secret epoch signed by {signed_by_pubkey}")]
+    CurrentAppKeyCannotRepairSecretEpoch { signed_by_pubkey: String },
     #[error("failed to wrap DCK: {0}")]
     Wrap(String),
     #[error("failed to unwrap DCK: {0}")]
@@ -81,7 +87,7 @@ pub enum ProfileError {
     Io(#[from] std::io::Error),
 }
 
-/// Current `AppKey` authorization status relative to the `IrisProfile` roster.
+/// Current `AppKey` authorization status relative to the `NostrIdentity` roster.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AppKeyAuthorizationState {
@@ -97,17 +103,17 @@ pub const MAX_INBOUND_APP_KEY_LINK_REQUESTS: usize = 32;
 pub const MAX_HANDLED_APP_KEY_LINK_REQUESTS: usize = 128;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
 pub struct PendingAppKeyLinkRequest {
     #[serde(alias = "admin_device_pubkey")]
     pub admin_app_key_pubkey: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub invite_pubkey: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub request_url: String,
     pub requested_at: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
 pub struct InboundAppKeyLinkRequest {
     #[serde(alias = "device_pubkey")]
     pub app_key_pubkey: String,
@@ -115,6 +121,8 @@ pub struct InboundAppKeyLinkRequest {
     pub label: Option<String>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub invite_pubkey: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub request_url: String,
     pub requested_at: u64,
 }
 
@@ -133,11 +141,11 @@ pub struct ProfileState {
         alias = "owner_pubkey",
         deserialize_with = "deserialize_profile_id_or_legacy_owner"
     )]
-    pub profile_id: IrisProfileId,
+    pub profile_id: NostrIdentityId,
     #[serde(alias = "device_pubkey")]
     pub app_key_pubkey: String,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
+    pub profile_roster_ops: Vec<SignedNostrIdentityRosterOp>,
     #[serde(default = "default_app_key_link_secret", alias = "device_link_secret")]
     pub app_key_link_secret: String,
     pub authorization_state: AppKeyAuthorizationState,
@@ -149,7 +157,7 @@ pub struct ProfileState {
     pub app_keys: Option<AppKeysProjection>,
     /// Runtime roster projection cache derived from `profile_roster_ops`.
     #[serde(skip)]
-    pub profile_roster_projection: Option<IrisProfileRosterProjection>,
+    pub profile_roster_projection: Option<NostrIdentityRosterProjection>,
     #[serde(alias = "outbound_device_link_request")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outbound_app_key_link_request: Option<PendingAppKeyLinkRequest>,
@@ -162,12 +170,12 @@ pub struct ProfileState {
 
 fn deserialize_profile_id_or_legacy_owner<'de, D>(
     deserializer: D,
-) -> Result<IrisProfileId, D::Error>
+) -> Result<NostrIdentityId, D::Error>
 where
     D: Deserializer<'de>,
 {
     let value = String::deserialize(deserializer)?;
-    if let Ok(profile_id) = IrisProfileId::from_str(&value) {
+    if let Ok(profile_id) = NostrIdentityId::from_str(&value) {
         return Ok(profile_id);
     }
     legacy_profile_id_from_owner_pubkey(&value).ok_or_else(|| {
@@ -175,7 +183,7 @@ where
     })
 }
 
-fn legacy_profile_id_from_owner_pubkey(value: &str) -> Option<IrisProfileId> {
+fn legacy_profile_id_from_owner_pubkey(value: &str) -> Option<NostrIdentityId> {
     if value.len() != 64 {
         return None;
     }
@@ -190,11 +198,11 @@ fn legacy_profile_id_from_owner_pubkey(value: &str) -> Option<IrisProfileId> {
     }
     uuid_bytes[6] = (uuid_bytes[6] & 0x0f) | 0x80;
     uuid_bytes[8] = (uuid_bytes[8] & 0x3f) | 0x80;
-    Some(IrisProfileId::from_uuid(Uuid::from_bytes(uuid_bytes)))
+    Some(NostrIdentityId::from_uuid(Uuid::from_bytes(uuid_bytes)))
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct KeyWrapRepairOutcome {
+pub struct SecretWrapRepairOutcome {
     pub epoch: u64,
     pub repaired_pubkeys: Vec<String>,
     pub projection: AppKeysProjection,
@@ -207,11 +215,11 @@ impl ProfileState {
     }
 
     #[must_use]
-    pub fn profile_projection(&self) -> IrisProfileRosterProjection {
+    pub fn profile_projection(&self) -> NostrIdentityRosterProjection {
         if let Some(projection) = self.profile_roster_projection.as_ref() {
             return projection.clone();
         }
-        project_iris_profile_roster(self.profile_id, self.profile_roster_ops.clone())
+        project_nostr_identity_roster(self.profile_id, self.profile_roster_ops.clone())
     }
 
     #[must_use]
@@ -221,7 +229,12 @@ impl ProfileState {
 
     #[must_use]
     pub fn app_keys_from_profile(&self) -> Option<AppKeysProjection> {
-        app_keys_from_profile_projection(&self.profile_projection())
+        app_keys_from_profile_projection_with_local_labels(
+            &self.profile_projection(),
+            self.app_keys.as_ref(),
+            Some(&self.app_key_pubkey),
+            self.app_key_label.as_deref(),
+        )
     }
 
     #[must_use]
@@ -277,8 +290,13 @@ impl ProfileState {
 
     pub fn sync_app_keys_from_profile(&mut self) -> bool {
         let profile_projection =
-            project_iris_profile_roster(self.profile_id, self.profile_roster_ops.clone());
-        let Some(projection) = app_keys_from_profile_projection(&profile_projection) else {
+            project_nostr_identity_roster(self.profile_id, self.profile_roster_ops.clone());
+        let Some(projection) = app_keys_from_profile_projection_with_local_labels(
+            &profile_projection,
+            self.app_keys.as_ref(),
+            Some(&self.app_key_pubkey),
+            self.app_key_label.as_deref(),
+        ) else {
             let request_count_before = self.inbound_app_key_link_requests.len();
             self.inbound_app_key_link_requests.retain(|request| {
                 !request_is_handled_by_profile_projection(request, &profile_projection, None)
@@ -305,7 +323,7 @@ impl ProfileState {
     }
 
     /// Adopt the profile UUID carried by local roster evidence when that
-    /// evidence unambiguously belongs to one `IrisProfile`.
+    /// evidence unambiguously belongs to one `NostrIdentity`.
     ///
     /// Offline restore creates a fresh temporary UUID because the recovery
     /// secret must not derive identity. Once signed roster ops arrive, their
@@ -333,7 +351,7 @@ impl ProfileState {
         )
     }
 
-    /// Can this install's `AppKey` administer the `IrisProfile` roster?
+    /// Can this install's `AppKey` administer the `NostrIdentity` roster?
     #[must_use]
     pub fn can_admin_profile(&self) -> bool {
         if self.has_profile_roster_evidence() {
@@ -367,7 +385,7 @@ impl ProfileState {
     /// Recompute `authorization_state` from the current profile roster projection.
     pub fn recompute_authorization(&mut self) {
         let projection =
-            project_iris_profile_roster(self.profile_id, self.profile_roster_ops.clone());
+            project_nostr_identity_roster(self.profile_id, self.profile_roster_ops.clone());
         let app_keys = app_keys_from_profile_projection(&projection);
         let current_app_key_has_usable_profile = app_keys
             .as_ref()
@@ -422,6 +440,7 @@ impl ProfileState {
         let next = PendingAppKeyLinkRequest {
             admin_app_key_pubkey,
             invite_pubkey,
+            request_url: String::new(),
             requested_at,
         };
         let changed = self.outbound_app_key_link_request.as_ref() != Some(&next);
@@ -429,12 +448,29 @@ impl ProfileState {
         Ok(changed)
     }
 
+    pub fn queue_unbound_app_key_join_request(
+        &mut self,
+        requested_at: u64,
+        request_url: String,
+    ) -> bool {
+        let next = PendingAppKeyLinkRequest {
+            admin_app_key_pubkey: String::new(),
+            invite_pubkey: String::new(),
+            request_url,
+            requested_at,
+        };
+        let changed = self.outbound_app_key_link_request.as_ref() != Some(&next);
+        self.outbound_app_key_link_request = Some(next);
+        changed
+    }
+
     pub fn record_inbound_app_key_link_request(
         &mut self,
-        profile_id: IrisProfileId,
+        profile_id: NostrIdentityId,
         app_key_pubkey: &str,
         label: Option<String>,
         invite_pubkey: &str,
+        request_url: Option<String>,
         requested_at: u64,
     ) -> Result<bool, ProfileError> {
         if profile_id != self.profile_id || !self.can_admin_profile() {
@@ -457,6 +493,10 @@ impl ProfileState {
                 (!trimmed.is_empty()).then(|| trimmed.to_string())
             }),
             invite_pubkey,
+            request_url: request_url
+                .map(|url| url.trim().to_string())
+                .filter(|url| !url.is_empty())
+                .unwrap_or_default(),
             requested_at,
         };
         let profile_projection = self.profile_projection();
@@ -576,7 +616,7 @@ impl ProfileState {
 
 fn request_is_handled_by_profile_projection(
     request: &InboundAppKeyLinkRequest,
-    profile_projection: &IrisProfileRosterProjection,
+    profile_projection: &NostrIdentityRosterProjection,
     app_keys_projection: Option<&AppKeysProjection>,
 ) -> bool {
     if app_keys_projection.is_some_and(|projection| projection.contains(&request.app_key_pubkey)) {
@@ -593,8 +633,8 @@ fn request_is_handled_by_profile_projection(
 
 #[must_use]
 pub fn single_roster_profile_id(
-    profile_roster_ops: &[SignedIrisProfileRosterOp],
-) -> Option<IrisProfileId> {
+    profile_roster_ops: &[SignedNostrIdentityRosterOp],
+) -> Option<NostrIdentityId> {
     let mut ids = profile_roster_ops
         .iter()
         .map(|op| op.content.profile_id)
@@ -608,18 +648,28 @@ pub fn single_roster_profile_id(
 
 #[must_use]
 pub fn app_keys_from_profile_roster(
-    profile_id: IrisProfileId,
-    profile_roster_ops: &[SignedIrisProfileRosterOp],
+    profile_id: NostrIdentityId,
+    profile_roster_ops: &[SignedNostrIdentityRosterOp],
 ) -> Option<AppKeysProjection> {
-    let projection = project_iris_profile_roster(profile_id, profile_roster_ops.iter().cloned());
+    let projection = project_nostr_identity_roster(profile_id, profile_roster_ops.iter().cloned());
     app_keys_from_profile_projection(&projection)
 }
 
 #[must_use]
 pub fn app_keys_from_profile_projection(
-    projection: &IrisProfileRosterProjection,
+    projection: &NostrIdentityRosterProjection,
 ) -> Option<AppKeysProjection> {
-    let key_epoch = projection.key_epochs.values().next_back()?;
+    app_keys_from_profile_projection_with_local_labels(projection, None, None, None)
+}
+
+#[must_use]
+pub fn app_keys_from_profile_projection_with_local_labels(
+    projection: &NostrIdentityRosterProjection,
+    local_projection: Option<&AppKeysProjection>,
+    current_app_key_pubkey: Option<&str>,
+    current_app_key_label: Option<&str>,
+) -> Option<AppKeysProjection> {
+    let key_epoch = projection.secret_epochs.values().next_back()?;
     let app_key_pubkeys: BTreeSet<_> = projection.active_app_key_pubkeys().into_iter().collect();
     if app_key_pubkeys.is_empty() {
         return None;
@@ -644,14 +694,19 @@ pub fn app_keys_from_profile_projection(
             AppActorEntry {
                 pubkey: facet.pubkey.clone(),
                 added_at: facet.added_at,
-                label: facet.label.clone(),
+                label: local_app_key_label(
+                    &facet.pubkey,
+                    local_projection,
+                    current_app_key_pubkey,
+                    current_app_key_label,
+                ),
                 role,
             }
         })
         .collect::<Vec<_>>();
     app_actors.sort_by(|left, right| left.pubkey.cmp(&right.pubkey));
     let wrapped_dck = key_epoch
-        .wrapped_dck
+        .wrapped_secrets
         .iter()
         .filter(|(pubkey, _)| app_key_pubkeys.contains(*pubkey))
         .map(|(pubkey, wrap)| (pubkey.clone(), wrap.clone()))
@@ -664,6 +719,66 @@ pub fn app_keys_from_profile_projection(
         dck_generation: key_epoch.epoch,
         wrapped_dck,
     })
+}
+
+fn local_app_key_label(
+    pubkey: &str,
+    local_projection: Option<&AppKeysProjection>,
+    current_app_key_pubkey: Option<&str>,
+    current_app_key_label: Option<&str>,
+) -> Option<String> {
+    if current_app_key_pubkey == Some(pubkey)
+        && let Some(label) = current_app_key_label.and_then(normalize_app_key_label)
+    {
+        return Some(label);
+    }
+    local_projection
+        .and_then(|projection| {
+            projection
+                .app_actors
+                .iter()
+                .find(|actor| actor.pubkey == pubkey)
+        })
+        .and_then(|actor| actor.label.as_deref())
+        .and_then(normalize_app_key_label)
+}
+
+fn app_key_labels_from_projection(
+    projection: Option<&AppKeysProjection>,
+) -> BTreeMap<String, String> {
+    projection.map_or_else(BTreeMap::new, |projection| {
+        projection
+            .app_actors
+            .iter()
+            .filter_map(|actor| {
+                actor
+                    .label
+                    .as_deref()
+                    .and_then(normalize_app_key_label)
+                    .map(|label| (actor.pubkey.clone(), label))
+            })
+            .collect()
+    })
+}
+
+fn apply_app_key_labels_to_projection(
+    projection: &mut AppKeysProjection,
+    labels: &BTreeMap<String, String>,
+) -> bool {
+    let mut changed = false;
+    for actor in &mut projection.app_actors {
+        let Some(label) = labels
+            .get(&actor.pubkey)
+            .and_then(|label| normalize_app_key_label(label))
+        else {
+            continue;
+        };
+        if actor.label.as_deref() != Some(label.as_str()) {
+            actor.label = Some(label);
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// In-memory profile: persisted state + the keypairs it references.
@@ -680,11 +795,120 @@ impl Profile {
             .ok_or(ProfileError::NoCurrentAppKeysProjection)
     }
 
+    fn sync_app_keys_from_profile_with_device_labels(&mut self) -> bool {
+        let changed = self.state.sync_app_keys_from_profile();
+        let Ok(dck) = self.current_dck() else {
+            return changed;
+        };
+        let labels = self.decrypted_device_labels_with_dck(&dck);
+        let labels_changed = self
+            .state
+            .app_keys
+            .as_mut()
+            .is_some_and(|projection| apply_app_key_labels_to_projection(projection, &labels));
+        changed || labels_changed
+    }
+
+    fn decrypted_device_labels_with_dck(&self, dck: &[u8; 32]) -> BTreeMap<String, String> {
+        let mut payloads = self
+            .state
+            .profile_roster_ops
+            .iter()
+            .flat_map(|op| {
+                Event::from_json(&op.event_json)
+                    .ok()
+                    .into_iter()
+                    .flat_map(|event| {
+                        encrypted_device_label_payloads_from_nostr_identity_roster_op_event(&event)
+                    })
+                    .filter_map(|ciphertext| {
+                        decrypt_drive_device_labels_with_dck(&ciphertext, dck).ok()
+                    })
+            })
+            .filter(|payload| payload.profile_id == self.state.profile_id)
+            .collect::<Vec<_>>();
+        payloads.sort_by(|left, right| {
+            left.updated_at
+                .cmp(&right.updated_at)
+                .then_with(|| left.secret_epoch.cmp(&right.secret_epoch))
+        });
+
+        let mut labels = BTreeMap::new();
+        for payload in payloads {
+            labels.extend(payload.labels);
+        }
+        normalize_drive_device_labels(labels)
+    }
+
+    fn app_key_labels_for_payload(
+        &self,
+        dck: Option<&[u8; 32]>,
+        extra_labels: BTreeMap<String, String>,
+        removed_pubkeys: &[&str],
+    ) -> BTreeMap<String, String> {
+        let mut labels = dck.map_or_else(BTreeMap::new, |dck| {
+            self.decrypted_device_labels_with_dck(dck)
+        });
+        labels.extend(app_key_labels_from_projection(self.state.app_keys.as_ref()));
+        if let Some(label) = self
+            .state
+            .app_key_label
+            .as_deref()
+            .and_then(normalize_app_key_label)
+        {
+            labels.insert(self.state.app_key_pubkey.clone(), label);
+        }
+        let extra_pubkeys = extra_labels.keys().cloned().collect::<BTreeSet<_>>();
+        labels.extend(extra_labels);
+        for pubkey in removed_pubkeys {
+            labels.remove(*pubkey);
+        }
+        let active_pubkeys = self
+            .state
+            .profile_projection()
+            .active_app_key_pubkeys()
+            .into_iter()
+            .collect::<BTreeSet<_>>();
+        labels
+            .retain(|pubkey, _| active_pubkeys.contains(pubkey) || extra_pubkeys.contains(pubkey));
+        normalize_drive_device_labels(labels)
+    }
+
+    fn encrypted_device_labels_for_dck(
+        &self,
+        dck: &[u8; 32],
+        secret_epoch: u64,
+        updated_at: i64,
+        extra_labels: BTreeMap<String, String>,
+        removed_pubkeys: &[&str],
+    ) -> Result<Option<String>, ProfileError> {
+        let labels = self.app_key_labels_for_payload(Some(dck), extra_labels, removed_pubkeys);
+        encrypted_device_labels_from_map(
+            self.state.profile_id,
+            secret_epoch,
+            labels,
+            dck,
+            updated_at,
+        )
+    }
+
+    fn encrypted_current_device_labels(
+        &self,
+        updated_at: i64,
+    ) -> Result<Option<String>, ProfileError> {
+        let Ok(dck) = self.current_dck() else {
+            return Ok(None);
+        };
+        let secret_epoch =
+            next_profile_secret_epoch(&self.state.profile_projection()).saturating_sub(1);
+        self.encrypted_device_labels_for_dck(&dck, secret_epoch, updated_at, BTreeMap::new(), &[])
+    }
+
     /// **Create** flow — fresh `AppKey` saved to the config dir. The `AppKey` is
     /// auto-authorized as the first admin via a self-signed single-entry
-    /// `IrisProfile` roster op log.
+    /// `NostrIdentity` roster op log.
     pub fn create(config_dir: &Path, app_key_label: Option<String>) -> Result<Self, ProfileError> {
-        let profile_id = IrisProfileId::new_v4();
+        let profile_id = NostrIdentityId::new_v4();
         let device = AppKey::generate(key_path_in(config_dir));
         device.save()?;
         let app_key_label = resolve_app_key_label(app_key_label, &device.pubkey_hex());
@@ -708,12 +932,12 @@ impl Profile {
         let dck = generate_dck();
         state.profile_roster_ops =
             initial_profile_roster_ops(device.keys(), profile_id, &app_actor, None, &dck, now)?;
-        state.sync_app_keys_from_profile();
 
-        let profile = Self {
+        let mut profile = Self {
             state,
             app_key: device,
         };
+        profile.sync_app_keys_from_profile_with_device_labels();
         Ok(profile)
     }
 
@@ -730,7 +954,7 @@ impl Profile {
         } else {
             RecoveryKey::from_secret(recovery_secret, PathBuf::new())?
         };
-        let profile_id = IrisProfileId::new_v4();
+        let profile_id = NostrIdentityId::new_v4();
         let device = AppKey::generate(key_path_in(config_dir));
         device.save()?;
         if let Some(phrase) = recovery_phrase.as_deref() {
@@ -764,24 +988,23 @@ impl Profile {
             &dck,
             now,
         )?;
-        state.sync_app_keys_from_profile();
-
-        let profile = Self {
+        let mut profile = Self {
             state,
             app_key: device,
         };
+        profile.sync_app_keys_from_profile_with_device_labels();
         Ok(profile)
     }
 
-    /// Restore an existing `IrisProfile` when the UUID and roster log came
+    /// Restore an existing `NostrIdentity` when the UUID and roster log came
     /// from verified evidence such as relay roster ops, an invite, or an
     /// export. The recovery secret proves authority; it does not determine the
     /// UUID.
     pub fn restore_with_profile_roster_ops(
         config_dir: &Path,
         recovery_secret: &str,
-        profile_id: IrisProfileId,
-        profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
+        profile_id: NostrIdentityId,
+        profile_roster_ops: Vec<SignedNostrIdentityRosterOp>,
         app_key_label: Option<String>,
     ) -> Result<Self, ProfileError> {
         let recovery_phrase = validate_recovery_phrase(recovery_secret).ok();
@@ -791,13 +1014,13 @@ impl Profile {
             RecoveryKey::from_secret(recovery_secret, PathBuf::new())?
         };
         let authority_pubkey = recovery_key.pubkey_hex();
-        let projection = project_iris_profile_roster(profile_id, profile_roster_ops.clone());
+        let projection = project_nostr_identity_roster(profile_id, profile_roster_ops.clone());
         let expected_purpose = recovery_authority_purpose(
             &projection,
             &authority_pubkey,
             recovery_phrase
                 .as_ref()
-                .map(|_| IrisProfileKeyPurpose::RecoveryPhrase),
+                .map(|_| NostrIdentityKeyPurpose::RecoveryPhrase),
         )?;
 
         let device = AppKey::generate(key_path_in(config_dir));
@@ -839,8 +1062,8 @@ impl Profile {
     pub fn reconcile_with_profile_roster_ops(
         &mut self,
         recovery_secret: &str,
-        profile_id: IrisProfileId,
-        profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
+        profile_id: NostrIdentityId,
+        profile_roster_ops: Vec<SignedNostrIdentityRosterOp>,
         label: Option<String>,
     ) -> Result<AppKeysProjection, ProfileError> {
         let recovery_phrase = validate_recovery_phrase(recovery_secret).ok();
@@ -849,13 +1072,13 @@ impl Profile {
         } else {
             RecoveryKey::from_secret(recovery_secret, PathBuf::new())?
         };
-        let projection = project_iris_profile_roster(profile_id, profile_roster_ops.clone());
+        let projection = project_nostr_identity_roster(profile_id, profile_roster_ops.clone());
         let expected_purpose = recovery_authority_purpose(
             &projection,
             &recovery_key.pubkey_hex(),
             recovery_phrase
                 .as_ref()
-                .map(|_| IrisProfileKeyPurpose::RecoveryPhrase),
+                .map(|_| NostrIdentityKeyPurpose::RecoveryPhrase),
         )?;
         self.reconcile_with_profile_roster_ops_and_authority_keys(
             recovery_key.keys(),
@@ -872,15 +1095,15 @@ impl Profile {
     pub fn reconcile_with_profile_roster_ops_using_nip46_keys(
         &mut self,
         nip46_keys: &Keys,
-        profile_id: IrisProfileId,
-        profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
+        profile_id: NostrIdentityId,
+        profile_roster_ops: Vec<SignedNostrIdentityRosterOp>,
         label: Option<String>,
     ) -> Result<AppKeysProjection, ProfileError> {
-        let projection = project_iris_profile_roster(profile_id, profile_roster_ops.clone());
+        let projection = project_nostr_identity_roster(profile_id, profile_roster_ops.clone());
         let expected_purpose = recovery_authority_purpose(
             &projection,
             &nip46_keys.public_key().to_hex(),
-            Some(IrisProfileKeyPurpose::Nip46Signer),
+            Some(NostrIdentityKeyPurpose::Nip46Signer),
         )?;
         self.reconcile_with_profile_roster_ops_and_authority_keys(
             nip46_keys,
@@ -894,9 +1117,9 @@ impl Profile {
     fn reconcile_with_profile_roster_ops_and_authority_keys(
         &mut self,
         authority_keys: &Keys,
-        expected_purpose: IrisProfileKeyPurpose,
-        profile_id: IrisProfileId,
-        profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
+        expected_purpose: NostrIdentityKeyPurpose,
+        profile_id: NostrIdentityId,
+        profile_roster_ops: Vec<SignedNostrIdentityRosterOp>,
         label: Option<String>,
     ) -> Result<AppKeysProjection, ProfileError> {
         let original_state = self.state.clone();
@@ -908,7 +1131,7 @@ impl Profile {
         self.state.outbound_app_key_link_request = None;
         self.state.inbound_app_key_link_requests.clear();
         self.state.handled_app_key_link_requests.clear();
-        self.state.sync_app_keys_from_profile();
+        self.sync_app_keys_from_profile_with_device_labels();
 
         if self
             .state
@@ -935,12 +1158,12 @@ impl Profile {
         }
     }
 
-    /// **Link** flow — generate a fresh `AppKey` for a known `IrisProfile`.
+    /// **Link** flow — generate a fresh `AppKey` for a known `NostrIdentity`.
     /// The admin `AppKey` is used only as the request target; the new local
     /// `AppKey` starts in `AwaitingApproval` until a roster admin accepts it.
     pub fn link_to_profile(
         config_dir: &Path,
-        profile_id: IrisProfileId,
+        profile_id: NostrIdentityId,
         admin_app_key_hex: String,
         app_key_label: Option<String>,
     ) -> Result<Self, ProfileError> {
@@ -971,17 +1194,50 @@ impl Profile {
         })
     }
 
-    /// Load a profile from its config dir. Reconstructs the in-memory
-    /// view from the persisted `ProfileState` plus the on-disk key
-    /// files. Errors if the app key is missing — caller should run a
-    /// create/restore/link flow first.
-    pub fn load(mut state: ProfileState, config_dir: &Path) -> Result<Self, ProfileError> {
-        let device = AppKey::load(key_path_in(config_dir))?;
-        state.sync_app_keys_from_profile();
+    /// Start a manual join request when the joining device does not yet know
+    /// which profile/admin will approve it. The first signed roster returned
+    /// by an admin binds this install to the real profile id.
+    pub fn start_join_request(
+        config_dir: &Path,
+        app_key_label: Option<String>,
+    ) -> Result<Self, ProfileError> {
+        let profile_id = NostrIdentityId::new_v4();
+        let device = AppKey::generate(key_path_in(config_dir));
+        device.save()?;
+        let app_key_label = resolve_app_key_label(app_key_label, &device.pubkey_hex());
+
+        let state = ProfileState {
+            profile_id,
+            app_key_pubkey: device.pubkey_hex(),
+            profile_roster_ops: Vec::new(),
+            app_key_link_secret: default_app_key_link_secret(),
+            authorization_state: AppKeyAuthorizationState::AwaitingApproval,
+            app_key_label,
+            app_keys: None,
+            profile_roster_projection: None,
+            outbound_app_key_link_request: None,
+            inbound_app_key_link_requests: Vec::new(),
+            handled_app_key_link_requests: Vec::new(),
+        };
+
         Ok(Self {
             state,
             app_key: device,
         })
+    }
+
+    /// Load a profile from its config dir. Reconstructs the in-memory
+    /// view from the persisted `ProfileState` plus the on-disk key
+    /// files. Errors if the app key is missing — caller should run a
+    /// create/restore/link flow first.
+    pub fn load(state: ProfileState, config_dir: &Path) -> Result<Self, ProfileError> {
+        let device = AppKey::load(key_path_in(config_dir))?;
+        let mut profile = Self {
+            state,
+            app_key: device,
+        };
+        profile.sync_app_keys_from_profile_with_device_labels();
+        Ok(profile)
     }
 
     /// Approve a new `AppKey` by appending it to the roster
@@ -1012,20 +1268,38 @@ impl Profile {
             return Err(ProfileError::AppKeyAlreadyAuthorized);
         }
         let now = next_profile_timestamp(&self.state);
-        self.append_profile_roster_op(
-            IrisProfileRosterOp::AddFacet {
-                facet: IrisProfileFacet::app_key(
+        let dck = generate_dck();
+        let secret_epoch = next_profile_secret_epoch(&self.state.profile_projection());
+        let app_key_label = label.and_then(|label| normalize_app_key_label(&label));
+        let encrypted_device_labels = self.encrypted_device_labels_for_dck(
+            &dck,
+            secret_epoch,
+            now,
+            app_key_label
+                .map(|label| BTreeMap::from([(app_key_pubkey_hex.to_string(), label)]))
+                .unwrap_or_default(),
+            &[],
+        )?;
+        let parents = nostr_identity_roster_parent_ids(&self.state.profile_roster_ops);
+        let signed = signed_profile_roster_op_with_parents_and_device_labels(
+            self.app_key.keys(),
+            self.state.profile_id,
+            parents,
+            NostrIdentityRosterOp::AddFacet {
+                facet: NostrIdentityFacet::app_key(
                     app_key_pubkey_hex.to_string(),
                     now,
-                    label,
-                    IrisProfileCapabilities::app_writer(),
+                    None,
+                    NostrIdentityCapabilities::app_writer(),
                 ),
             },
             now,
+            encrypted_device_labels,
         )?;
-        let dck = generate_dck();
+        self.state.profile_roster_ops.push(signed);
+        self.state.profile_roster_projection = None;
         self.rotate_profile_dck_epoch(&dck, now + 1)?;
-        self.state.sync_app_keys_from_profile();
+        self.sync_app_keys_from_profile_with_device_labels();
         self.state
             .inbound_app_key_link_requests
             .retain(|request| request.app_key_pubkey != app_key_pubkey_hex);
@@ -1056,16 +1330,31 @@ impl Profile {
             return Err(ProfileError::CannotRemoveLastAdmin);
         }
         let now = next_profile_timestamp(&self.state);
-        self.append_profile_roster_op(
-            IrisProfileRosterOp::TombstoneFacet {
+        let dck = generate_dck();
+        let secret_epoch = next_profile_secret_epoch(&self.state.profile_projection());
+        let encrypted_device_labels = self.encrypted_device_labels_for_dck(
+            &dck,
+            secret_epoch,
+            now,
+            BTreeMap::new(),
+            &[app_key_pubkey_hex],
+        )?;
+        let parents = nostr_identity_roster_parent_ids(&self.state.profile_roster_ops);
+        let signed = signed_profile_roster_op_with_parents_and_device_labels(
+            self.app_key.keys(),
+            self.state.profile_id,
+            parents,
+            NostrIdentityRosterOp::TombstoneFacet {
                 pubkey: app_key_pubkey_hex.to_string(),
                 reason: None,
             },
             now,
+            encrypted_device_labels,
         )?;
-        let dck = generate_dck();
+        self.state.profile_roster_ops.push(signed);
+        self.state.profile_roster_projection = None;
         self.rotate_profile_dck_epoch(&dck, now + 1)?;
-        self.state.sync_app_keys_from_profile();
+        self.sync_app_keys_from_profile_with_device_labels();
         self.current_app_keys_projection()
     }
 
@@ -1080,7 +1369,7 @@ impl Profile {
         let recovery_key = RecoveryKey::from_recovery_phrase(&recovery_phrase, PathBuf::new())?;
         self.revoke_app_key_with_authority_keys(
             recovery_key.keys(),
-            IrisProfileKeyPurpose::RecoveryPhrase,
+            NostrIdentityKeyPurpose::RecoveryPhrase,
             app_key_pubkey_hex,
         )
     }
@@ -1105,7 +1394,7 @@ impl Profile {
             &authority_pubkey,
             recovery_phrase
                 .as_ref()
-                .map(|_| IrisProfileKeyPurpose::RecoveryPhrase),
+                .map(|_| NostrIdentityKeyPurpose::RecoveryPhrase),
         )?;
         self.revoke_app_key_with_authority_keys(
             recovery_key.keys(),
@@ -1124,7 +1413,7 @@ impl Profile {
     ) -> Result<&AppKeysProjection, ProfileError> {
         self.revoke_app_key_with_authority_keys(
             nip46_keys,
-            IrisProfileKeyPurpose::Nip46Signer,
+            NostrIdentityKeyPurpose::Nip46Signer,
             app_key_pubkey_hex,
         )
     }
@@ -1132,7 +1421,7 @@ impl Profile {
     fn revoke_app_key_with_authority_keys(
         &mut self,
         authority_keys: &Keys,
-        expected_purpose: IrisProfileKeyPurpose,
+        expected_purpose: NostrIdentityKeyPurpose,
         app_key_pubkey_hex: &str,
     ) -> Result<&AppKeysProjection, ProfileError> {
         let target_pubkey = PublicKey::from_hex(app_key_pubkey_hex)
@@ -1149,11 +1438,11 @@ impl Profile {
             {
                 return Err(ProfileError::RecoveryAuthorityUnavailable);
             }
-            if !authority_facet.capabilities.can_decrypt_key_epochs {
+            if !authority_facet.capabilities.can_decrypt_secret_epochs {
                 return Err(ProfileError::RecoveryAuthorityUnavailable);
             }
-            if !authority_facet.capabilities.can_change_key_epochs() {
-                return Err(ProfileError::RecoveryCannotRotateKeyEpochs);
+            if !authority_facet.capabilities.can_change_secret_epochs() {
+                return Err(ProfileError::RecoveryCannotRotateSecretEpochs);
             }
             let Some(target_facet) = projection.active_facets.get(&target_pubkey) else {
                 return Err(ProfileError::AppKeyNotInRoster);
@@ -1175,12 +1464,12 @@ impl Profile {
 
         self.current_dck_from_authority_keys(authority_keys, expected_purpose)?;
         let now = next_profile_timestamp(&self.state);
-        let parents = iris_profile_roster_parent_ids(&self.state.profile_roster_ops);
+        let parents = nostr_identity_roster_parent_ids(&self.state.profile_roster_ops);
         let remove_op = signed_profile_roster_op_with_parents(
             authority_keys,
             self.state.profile_id,
             parents,
-            IrisProfileRosterOp::TombstoneFacet {
+            NostrIdentityRosterOp::TombstoneFacet {
                 pubkey: target_pubkey,
                 reason: None,
             },
@@ -1191,7 +1480,7 @@ impl Profile {
 
         let dck = generate_dck();
         self.rotate_profile_dck_epoch_with_signer(authority_keys, &dck, now + 1)?;
-        self.state.sync_app_keys_from_profile();
+        self.sync_app_keys_from_profile_with_device_labels();
         self.current_app_keys_projection()
     }
 
@@ -1210,18 +1499,18 @@ impl Profile {
         let dck = generate_dck();
         let now = next_profile_timestamp(&self.state).max(next_local_timestamp(Some(snap)));
         self.rotate_profile_dck_epoch(&dck, now)?;
-        self.state.sync_app_keys_from_profile();
+        self.sync_app_keys_from_profile_with_device_labels();
         self.current_app_keys_projection()
     }
 
-    /// Add a NIP-46 signer as an `IrisProfile` recovery authority. When
-    /// `can_decrypt_key_epochs` is true, the current admin rotates the key
+    /// Add a NIP-46 signer as an `NostrIdentity` recovery authority. When
+    /// `can_decrypt_secret_epochs` is true, the current admin rotates the key
     /// epoch so the signer receives a DCK wrap immediately.
     pub fn add_nip46_recovery(
         &mut self,
         nip46_pubkey_hex: &str,
         label: Option<String>,
-        can_decrypt_key_epochs: bool,
+        can_decrypt_secret_epochs: bool,
     ) -> Result<(), ProfileError> {
         if !self.state.can_admin_profile() {
             return Err(ProfileError::NoAdminAuthority);
@@ -1238,25 +1527,25 @@ impl Profile {
 
         let now = next_profile_timestamp(&self.state);
         self.append_profile_roster_op(
-            IrisProfileRosterOp::AddFacet {
-                facet: IrisProfileFacet::nip46(
+            NostrIdentityRosterOp::AddFacet {
+                facet: NostrIdentityFacet::nip46(
                     nip46_pubkey_hex.to_string(),
                     now,
                     label,
-                    can_decrypt_key_epochs,
+                    can_decrypt_secret_epochs,
                 ),
             },
             now,
         )?;
-        if can_decrypt_key_epochs {
+        if can_decrypt_secret_epochs {
             let dck = generate_dck();
             self.rotate_profile_dck_epoch(&dck, now + 1)?;
         }
-        self.state.sync_app_keys_from_profile();
+        self.sync_app_keys_from_profile_with_device_labels();
         Ok(())
     }
 
-    /// Add a recovery phrase as an `IrisProfile` recovery authority by
+    /// Add a recovery phrase as an `NostrIdentity` recovery authority by
     /// deriving its public key. This does not save the phrase.
     pub fn add_recovery_phrase(&mut self, recovery_phrase: &str) -> Result<String, ProfileError> {
         let recovery_phrase = validate_recovery_phrase(recovery_phrase)?;
@@ -1278,7 +1567,7 @@ impl Profile {
             .to_hex();
         let projection = self.state.profile_projection();
         if let Some(facet) = projection.active_facets.get(&recovery_pubkey) {
-            if facet.has_purpose(IrisProfileKeyPurpose::RecoveryPhrase) {
+            if facet.has_purpose(NostrIdentityKeyPurpose::RecoveryPhrase) {
                 return Ok(recovery_pubkey);
             }
             return Err(ProfileError::AppKeyAlreadyAuthorized);
@@ -1289,19 +1578,19 @@ impl Profile {
 
         let now = next_profile_timestamp(&self.state);
         self.append_profile_roster_op(
-            IrisProfileRosterOp::AddFacet {
-                facet: IrisProfileFacet::recovery_phrase(recovery_pubkey.clone(), now),
+            NostrIdentityRosterOp::AddFacet {
+                facet: NostrIdentityFacet::recovery_phrase(recovery_pubkey.clone(), now),
             },
             now,
         )?;
         let dck = generate_dck();
         self.rotate_profile_dck_epoch(&dck, now + 1)?;
-        self.state.sync_app_keys_from_profile();
+        self.sync_app_keys_from_profile_with_device_labels();
         Ok(recovery_pubkey)
     }
 
     /// Use the profile's recovery phrase authority to admit this install's
-    /// fresh `AppKey` into an already-known `IrisProfile` roster.
+    /// fresh `AppKey` into an already-known `NostrIdentity` roster.
     ///
     /// The recovery phrase stays a recovery/admin facet only: it proves it can
     /// decrypt the current epoch, signs the `AppKey` admission, then signs a
@@ -1315,7 +1604,7 @@ impl Profile {
         let recovery_key = RecoveryKey::from_recovery_phrase(&recovery_phrase, PathBuf::new())?;
         self.admit_current_app_key_with_authority_keys(
             recovery_key.keys(),
-            IrisProfileKeyPurpose::RecoveryPhrase,
+            NostrIdentityKeyPurpose::RecoveryPhrase,
             label,
         )
     }
@@ -1330,7 +1619,7 @@ impl Profile {
     ) -> Result<&AppKeysProjection, ProfileError> {
         self.admit_current_app_key_with_authority_keys(
             nip46_keys,
-            IrisProfileKeyPurpose::Nip46Signer,
+            NostrIdentityKeyPurpose::Nip46Signer,
             label,
         )
     }
@@ -1338,7 +1627,7 @@ impl Profile {
     fn admit_current_app_key_with_authority_keys(
         &mut self,
         authority_keys: &Keys,
-        expected_purpose: IrisProfileKeyPurpose,
+        expected_purpose: NostrIdentityKeyPurpose,
         label: Option<String>,
     ) -> Result<&AppKeysProjection, ProfileError> {
         let authority_pubkey = authority_keys.public_key().to_hex();
@@ -1360,10 +1649,10 @@ impl Profile {
         if projection.can_write_roots(&self.state.app_key_pubkey) {
             return Err(ProfileError::AppKeyAlreadyAuthorized);
         }
-        let dck_to_rewrap = if authority_facet.capabilities.can_decrypt_key_epochs {
+        let dck_to_rewrap = if authority_facet.capabilities.can_decrypt_secret_epochs {
             let dck = self.current_dck_from_authority_keys(authority_keys, expected_purpose)?;
-            if !authority_facet.capabilities.can_change_key_epochs() {
-                return Err(ProfileError::RecoveryCannotRotateKeyEpochs);
+            if !authority_facet.capabilities.can_change_secret_epochs() {
+                return Err(ProfileError::RecoveryCannotRotateSecretEpochs);
             }
             Some(dck)
         } else {
@@ -1371,21 +1660,40 @@ impl Profile {
         };
 
         let now = next_profile_timestamp(&self.state);
-        let parents = iris_profile_roster_parent_ids(&self.state.profile_roster_ops);
+        let parents = nostr_identity_roster_parent_ids(&self.state.profile_roster_ops);
         let label = label.or_else(|| self.state.app_key_label.clone());
-        let add_op = signed_profile_roster_op_with_parents(
+        self.state.app_key_label.clone_from(&label);
+        let encrypted_device_labels = dck_to_rewrap
+            .as_ref()
+            .map(|dck| {
+                self.encrypted_device_labels_for_dck(
+                    dck,
+                    next_profile_secret_epoch(&projection),
+                    now,
+                    label
+                        .as_deref()
+                        .and_then(normalize_app_key_label)
+                        .map(|label| BTreeMap::from([(self.state.app_key_pubkey.clone(), label)]))
+                        .unwrap_or_default(),
+                    &[],
+                )
+            })
+            .transpose()?
+            .flatten();
+        let add_op = signed_profile_roster_op_with_parents_and_device_labels(
             authority_keys,
             self.state.profile_id,
             parents,
-            IrisProfileRosterOp::AddFacet {
-                facet: IrisProfileFacet::app_key(
+            NostrIdentityRosterOp::AddFacet {
+                facet: NostrIdentityFacet::app_key(
                     self.state.app_key_pubkey.clone(),
                     now,
-                    label,
-                    IrisProfileCapabilities::app_admin(),
+                    None,
+                    NostrIdentityCapabilities::app_admin(),
                 ),
             },
             now,
+            encrypted_device_labels,
         )?;
         self.state.profile_roster_ops.push(add_op);
         self.state.profile_roster_projection = None;
@@ -1393,7 +1701,7 @@ impl Profile {
         if let Some(dck) = dck_to_rewrap {
             self.rotate_profile_dck_epoch_with_signer(authority_keys, &dck, now + 1)?;
         }
-        self.state.sync_app_keys_from_profile();
+        self.sync_app_keys_from_profile_with_device_labels();
         self.current_app_keys_projection()
     }
 
@@ -1447,12 +1755,12 @@ impl Profile {
             return Err(ProfileError::CannotRemoveLastAdmin);
         }
         let capabilities = match role {
-            AppActorRole::Admin => IrisProfileCapabilities::app_admin(),
-            AppActorRole::Member => IrisProfileCapabilities::app_writer(),
+            AppActorRole::Admin => NostrIdentityCapabilities::app_admin(),
+            AppActorRole::Member => NostrIdentityCapabilities::app_writer(),
         };
         let now = next_profile_timestamp(&self.state);
         self.append_profile_roster_op(
-            IrisProfileRosterOp::SetCapabilities {
+            NostrIdentityRosterOp::SetCapabilities {
                 pubkey: app_key_pubkey_hex.to_string(),
                 capabilities,
             },
@@ -1460,22 +1768,24 @@ impl Profile {
         )?;
         let dck = generate_dck();
         self.rotate_profile_dck_epoch(&dck, now + 1)?;
-        self.state.sync_app_keys_from_profile();
+        self.sync_app_keys_from_profile_with_device_labels();
         self.current_app_keys_projection()
     }
 
     fn append_profile_roster_op(
         &mut self,
-        op: IrisProfileRosterOp,
+        op: NostrIdentityRosterOp,
         created_at: i64,
     ) -> Result<(), ProfileError> {
-        let parents = iris_profile_roster_parent_ids(&self.state.profile_roster_ops);
-        let signed = signed_profile_roster_op_with_parents(
+        let parents = nostr_identity_roster_parent_ids(&self.state.profile_roster_ops);
+        let encrypted_device_labels = self.encrypted_current_device_labels(created_at)?;
+        let signed = signed_profile_roster_op_with_parents_and_device_labels(
             self.app_key.keys(),
             self.state.profile_id,
             parents,
             op,
             created_at,
+            encrypted_device_labels,
         )?;
         self.state.profile_roster_ops.push(signed);
         self.state.profile_roster_projection = None;
@@ -1501,52 +1811,60 @@ impl Profile {
         let recipients = projection
             .active_facets
             .values()
-            .filter(|facet| facet.capabilities.can_receive_key_wraps)
+            .filter(|facet| facet.capabilities.can_receive_secret_wraps)
             .map(|facet| facet.pubkey.as_str())
             .collect::<Vec<_>>();
         let wrapped_dck = wrap_dck_for_pubkeys(signer_keys.secret_key(), recipients, dck)?;
         let epoch = projection
-            .key_epochs
+            .secret_epochs
             .keys()
             .next_back()
             .map_or(1, |epoch| epoch + 1);
-        let parents = iris_profile_roster_parent_ids(&self.state.profile_roster_ops);
-        let signed = signed_profile_roster_op_with_parents(
+        let parents = nostr_identity_roster_parent_ids(&self.state.profile_roster_ops);
+        let encrypted_device_labels =
+            self.encrypted_device_labels_for_dck(dck, epoch, created_at, BTreeMap::new(), &[])?;
+        let signed = signed_profile_roster_op_with_parents_and_device_labels(
             signer_keys,
             self.state.profile_id,
             parents,
-            IrisProfileRosterOp::RotateKeyEpoch { epoch, wrapped_dck },
+            NostrIdentityRosterOp::RotateSecretEpoch {
+                epoch,
+                wrapped_secrets: wrapped_dck,
+            },
             created_at,
+            encrypted_device_labels,
         )?;
         self.state.profile_roster_ops.push(signed);
         self.state.profile_roster_projection = None;
         Ok(())
     }
 
-    /// Add missing DCK wraps for the current key epoch without rotating the
+    /// Add missing DCK wraps for the current secret epoch without rotating the
     /// DCK. Only the `AppKey` that signed the epoch may repair it, keeping the
     /// epoch's encryption authority unambiguous after divergent roster merges.
-    pub fn repair_current_key_epoch_wraps(&mut self) -> Result<KeyWrapRepairOutcome, ProfileError> {
+    pub fn repair_current_secret_epoch_wraps(
+        &mut self,
+    ) -> Result<SecretWrapRepairOutcome, ProfileError> {
         let projection = self.state.profile_projection();
-        let Some((epoch, key_epoch)) = projection.key_epochs.iter().next_back() else {
+        let Some((epoch, key_epoch)) = projection.secret_epochs.iter().next_back() else {
             return Err(ProfileError::NoCurrentAppKeysProjection);
         };
         if key_epoch.signed_by_pubkey != self.state.app_key_pubkey {
-            return Err(ProfileError::CurrentAppKeyCannotRepairKeyEpoch {
+            return Err(ProfileError::CurrentAppKeyCannotRepairSecretEpoch {
                 signed_by_pubkey: key_epoch.signed_by_pubkey.clone(),
             });
         }
         let Some(current_facet) = projection.active_facets.get(&self.state.app_key_pubkey) else {
             return Err(ProfileError::NoAdminAuthority);
         };
-        if !current_facet.capabilities.can_change_key_epochs() {
+        if !current_facet.capabilities.can_change_secret_epochs() {
             return Err(ProfileError::NoAdminAuthority);
         }
 
         let missing_pubkeys = projection.active_key_recipients_missing_wraps(*epoch);
         if missing_pubkeys.is_empty() {
-            self.state.sync_app_keys_from_profile();
-            return Ok(KeyWrapRepairOutcome {
+            self.sync_app_keys_from_profile_with_device_labels();
+            return Ok(SecretWrapRepairOutcome {
                 epoch: *epoch,
                 repaired_pubkeys: Vec::new(),
                 projection: self
@@ -1564,21 +1882,21 @@ impl Profile {
             missing_pubkeys.iter().map(String::as_str),
             &dck,
         )?;
-        let parents = iris_profile_roster_parent_ids(&self.state.profile_roster_ops);
+        let parents = nostr_identity_roster_parent_ids(&self.state.profile_roster_ops);
         let signed = signed_profile_roster_op_with_parents(
             self.app_key.keys(),
             self.state.profile_id,
             parents,
-            IrisProfileRosterOp::RepairKeyWraps {
+            NostrIdentityRosterOp::RepairSecretWraps {
                 epoch: *epoch,
-                wrapped_dck,
+                wrapped_secrets: wrapped_dck,
             },
             next_profile_timestamp(&self.state),
         )?;
         self.state.profile_roster_ops.push(signed);
         self.state.profile_roster_projection = None;
-        self.state.sync_app_keys_from_profile();
-        Ok(KeyWrapRepairOutcome {
+        self.sync_app_keys_from_profile_with_device_labels();
+        Ok(SecretWrapRepairOutcome {
             epoch: *epoch,
             repaired_pubkeys: missing_pubkeys,
             projection: self
@@ -1596,12 +1914,12 @@ impl Profile {
     pub fn current_dck(&self) -> Result<[u8; 32], ProfileError> {
         let projection = self.state.profile_projection();
         let key_epoch = projection
-            .key_epochs
+            .secret_epochs
             .values()
             .next_back()
             .ok_or(ProfileError::NoCurrentAppKeysProjection)?;
         let wrap = key_epoch
-            .wrapped_dck
+            .wrapped_secrets
             .get(&self.state.app_key_pubkey)
             .ok_or(ProfileError::NoWrapForThisAppKey)?;
         let signer_pk = PublicKey::from_hex(&key_epoch.signed_by_pubkey)
@@ -1623,34 +1941,34 @@ impl Profile {
         let recovery_key = RecoveryKey::from_recovery_phrase(&recovery_phrase, PathBuf::new())?;
         self.current_dck_from_authority_keys(
             recovery_key.keys(),
-            IrisProfileKeyPurpose::RecoveryPhrase,
+            NostrIdentityKeyPurpose::RecoveryPhrase,
         )
     }
 
     pub fn current_dck_from_nip46_keys(&self, nip46_keys: &Keys) -> Result<[u8; 32], ProfileError> {
-        self.current_dck_from_authority_keys(nip46_keys, IrisProfileKeyPurpose::Nip46Signer)
+        self.current_dck_from_authority_keys(nip46_keys, NostrIdentityKeyPurpose::Nip46Signer)
     }
 
     fn current_dck_from_authority_keys(
         &self,
         authority_keys: &Keys,
-        expected_purpose: IrisProfileKeyPurpose,
+        expected_purpose: NostrIdentityKeyPurpose,
     ) -> Result<[u8; 32], ProfileError> {
         let authority_pubkey = authority_keys.public_key().to_hex();
         let projection = self.state.profile_projection();
         let Some(facet) = projection.active_facets.get(&authority_pubkey) else {
             return Err(ProfileError::RecoveryAuthorityUnavailable);
         };
-        if !facet.has_purpose(expected_purpose) || !facet.capabilities.can_decrypt_key_epochs {
+        if !facet.has_purpose(expected_purpose) || !facet.capabilities.can_decrypt_secret_epochs {
             return Err(ProfileError::RecoveryAuthorityUnavailable);
         }
         let key_epoch = projection
-            .key_epochs
+            .secret_epochs
             .values()
             .next_back()
             .ok_or(ProfileError::NoCurrentAppKeysProjection)?;
         let wrap = key_epoch
-            .wrapped_dck
+            .wrapped_secrets
             .get(&authority_pubkey)
             .ok_or(ProfileError::NoWrapForThisAppKey)?;
         let signer_pk = PublicKey::from_hex(&key_epoch.signed_by_pubkey)
@@ -1728,26 +2046,35 @@ where
 
 fn initial_profile_roster_ops(
     signer_keys: &Keys,
-    profile_id: IrisProfileId,
+    profile_id: NostrIdentityId,
     app_entry: &AppActorEntry,
     recovery_pubkey: Option<&str>,
     dck: &[u8; 32],
     created_at: i64,
-) -> Result<Vec<SignedIrisProfileRosterOp>, ProfileError> {
+) -> Result<Vec<SignedNostrIdentityRosterOp>, ProfileError> {
     let app_pubkey = app_entry.pubkey.clone();
-    let app_label = app_entry.label.clone();
-    let app_op = signed_profile_roster_op(
+    let encrypted_device_labels = app_entry
+        .label
+        .as_deref()
+        .and_then(normalize_app_key_label)
+        .map(|label| BTreeMap::from([(app_pubkey.clone(), label)]))
+        .map(|labels| encrypted_device_labels_from_map(profile_id, 1, labels, dck, created_at))
+        .transpose()?
+        .flatten();
+    let app_op = signed_profile_roster_op_with_parents_and_device_labels(
         signer_keys,
         profile_id,
-        IrisProfileRosterOp::AddFacet {
-            facet: IrisProfileFacet::app_key(
+        Vec::new(),
+        NostrIdentityRosterOp::AddFacet {
+            facet: NostrIdentityFacet::app_key(
                 app_pubkey.clone(),
                 created_at,
-                app_label,
-                IrisProfileCapabilities::app_admin(),
+                None,
+                NostrIdentityCapabilities::app_admin(),
             ),
         },
         created_at,
+        encrypted_device_labels,
     )?;
     let mut ops = vec![app_op];
     let mut recipients = vec![app_pubkey.as_str()];
@@ -1755,9 +2082,9 @@ fn initial_profile_roster_ops(
         let recovery_op = signed_profile_roster_op_with_parents(
             signer_keys,
             profile_id,
-            iris_profile_roster_parent_ids(&ops),
-            IrisProfileRosterOp::AddFacet {
-                facet: IrisProfileFacet::recovery_phrase(
+            nostr_identity_roster_parent_ids(&ops),
+            NostrIdentityRosterOp::AddFacet {
+                facet: NostrIdentityFacet::recovery_phrase(
                     recovery_pubkey.to_string(),
                     created_at + 1,
                 ),
@@ -1774,10 +2101,10 @@ fn initial_profile_roster_ops(
     let epoch_op = signed_profile_roster_op_with_parents(
         signer_keys,
         profile_id,
-        iris_profile_roster_parent_ids(&ops),
-        IrisProfileRosterOp::RotateKeyEpoch {
+        nostr_identity_roster_parent_ids(&ops),
+        NostrIdentityRosterOp::RotateSecretEpoch {
             epoch: 1,
-            wrapped_dck,
+            wrapped_secrets: wrapped_dck,
         },
         epoch_created_at,
     )?;
@@ -1786,10 +2113,10 @@ fn initial_profile_roster_ops(
 }
 
 fn recovery_authority_purpose(
-    projection: &IrisProfileRosterProjection,
+    projection: &NostrIdentityRosterProjection,
     authority_pubkey: &str,
-    expected_purpose: Option<IrisProfileKeyPurpose>,
-) -> Result<IrisProfileKeyPurpose, ProfileError> {
+    expected_purpose: Option<NostrIdentityKeyPurpose>,
+) -> Result<NostrIdentityKeyPurpose, ProfileError> {
     let Some(facet) = projection.active_facets.get(authority_pubkey) else {
         return Err(ProfileError::RecoveryAuthorityUnavailable);
     };
@@ -1804,33 +2131,74 @@ fn recovery_authority_purpose(
         };
     }
     [
-        IrisProfileKeyPurpose::RecoveryPhrase,
-        IrisProfileKeyPurpose::Nip46Signer,
+        NostrIdentityKeyPurpose::RecoveryPhrase,
+        NostrIdentityKeyPurpose::Nip46Signer,
     ]
     .into_iter()
     .find(|purpose| facet.has_purpose(*purpose))
     .ok_or(ProfileError::RecoveryAuthorityUnavailable)
 }
 
-fn signed_profile_roster_op(
-    signer_keys: &Keys,
-    profile_id: IrisProfileId,
-    op: IrisProfileRosterOp,
-    created_at: i64,
-) -> Result<SignedIrisProfileRosterOp, ProfileError> {
-    signed_profile_roster_op_with_parents(signer_keys, profile_id, Vec::new(), op, created_at)
-}
-
 fn signed_profile_roster_op_with_parents(
     signer_keys: &Keys,
-    profile_id: IrisProfileId,
+    profile_id: NostrIdentityId,
     parents: Vec<String>,
-    op: IrisProfileRosterOp,
+    op: NostrIdentityRosterOp,
     created_at: i64,
-) -> Result<SignedIrisProfileRosterOp, ProfileError> {
-    let event =
-        build_iris_profile_roster_op_event(signer_keys, profile_id, parents, None, op, created_at)?;
-    parse_iris_profile_roster_op_event(&event).map_err(ProfileError::from)
+) -> Result<SignedNostrIdentityRosterOp, ProfileError> {
+    signed_profile_roster_op_with_parents_and_device_labels(
+        signer_keys,
+        profile_id,
+        parents,
+        op,
+        created_at,
+        None,
+    )
+}
+
+fn signed_profile_roster_op_with_parents_and_device_labels(
+    signer_keys: &Keys,
+    profile_id: NostrIdentityId,
+    parents: Vec<String>,
+    op: NostrIdentityRosterOp,
+    created_at: i64,
+    encrypted_device_labels: Option<String>,
+) -> Result<SignedNostrIdentityRosterOp, ProfileError> {
+    let event = build_nostr_identity_roster_op_event_with_encrypted_device_labels(
+        signer_keys,
+        profile_id,
+        parents,
+        None,
+        op,
+        created_at,
+        encrypted_device_labels,
+    )?;
+    parse_nostr_identity_roster_op_event(&event).map_err(ProfileError::from)
+}
+
+fn next_profile_secret_epoch(projection: &NostrIdentityRosterProjection) -> u64 {
+    projection
+        .secret_epochs
+        .keys()
+        .next_back()
+        .map_or(1, |epoch| epoch + 1)
+}
+
+fn encrypted_device_labels_from_map(
+    profile_id: NostrIdentityId,
+    secret_epoch: u64,
+    labels: BTreeMap<String, String>,
+    dck: &[u8; 32],
+    updated_at: i64,
+) -> Result<Option<String>, ProfileError> {
+    let labels = normalize_drive_device_labels(labels);
+    if labels.is_empty() {
+        return Ok(None);
+    }
+    let payload = drive_device_label_payload(profile_id, secret_epoch, labels, updated_at);
+    encrypt_drive_device_labels_with_dck(&payload, dck)
+        .map(Some)
+        .map_err(|error| ProfileError::Wrap(error.to_string()))
 }
 
 fn current_unix_seconds() -> i64 {

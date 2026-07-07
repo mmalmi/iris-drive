@@ -160,7 +160,7 @@ pub(crate) fn finish_profile_init(
     );
     output.insert(
         "app_key_link_request".to_string(),
-        app_key_link_request_json(&profile.state),
+        app_key_link_request_json_with_keys(&profile.state, profile.app_key.keys()),
     );
     output.insert(
         "app_key_link_invite".to_string(),
@@ -425,7 +425,7 @@ pub(crate) fn cmd_repair_key_wraps(config_dir: &std::path::Path) -> Result<()> {
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     let mut profile = Profile::load(state, config_dir).context("loading profile")?;
     let repair = profile
-        .repair_current_key_epoch_wraps()
+        .repair_current_secret_epoch_wraps()
         .context("repairing current key epoch wraps")?;
     let remaining_missing_key_wraps = profile
         .state
@@ -459,11 +459,13 @@ pub(crate) fn cmd_whoami(config_dir: &std::path::Path) -> Result<()> {
     let state = config
         .profile
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
+    let request_json = iris_drive_core::AppKey::load(key_path_in(config_dir))
+        .ok()
+        .map_or(Value::Null, |app_key| {
+            app_key_link_request_json_with_keys(&state, app_key.keys())
+        });
     let mut output = profile_identity_json_map(&state);
-    output.insert(
-        "app_key_link_request".to_string(),
-        app_key_link_request_json(&state),
-    );
+    output.insert("app_key_link_request".to_string(), request_json);
     output.insert(
         "app_key_link_invite".to_string(),
         app_key_link_invite_json(&state),
@@ -500,9 +502,9 @@ fn unix_now_seconds() -> u64 {
 }
 
 pub(crate) fn profile_identity_json_map(state: &ProfileState) -> serde_json::Map<String, Value> {
-    let summary = iris_drive_core::app_key_summary::iris_profile_summary(state);
+    let summary = iris_drive_core::app_key_summary::nostr_identity_summary(state);
     let mut output = serde_json::Map::new();
-    output.insert("profile".to_string(), iris_profile_summary_json(&summary));
+    output.insert("profile".to_string(), nostr_identity_summary_json(&summary));
     output.insert("profile_id".to_string(), json!(summary.profile_id));
     output.insert(
         "current_app_key_pubkey".to_string(),
@@ -531,8 +533,8 @@ pub(crate) fn profile_identity_json_map(state: &ProfileState) -> serde_json::Map
     output
 }
 
-fn iris_profile_summary_json(
-    summary: &iris_drive_core::app_key_summary::IrisProfileSummary,
+fn nostr_identity_summary_json(
+    summary: &iris_drive_core::app_key_summary::NostrIdentitySummary,
 ) -> Value {
     json!({
         "profile_id": &summary.profile_id,
@@ -662,6 +664,9 @@ pub(crate) async fn send_pending_app_key_link_request(
     let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
         return Ok(None);
     };
+    if pending.admin_app_key_pubkey.trim().is_empty() {
+        return Ok(None);
+    }
 
     let admin_npub = pubkey_npub(&pending.admin_app_key_pubkey);
     let fingerprint = format!(
@@ -673,14 +678,16 @@ pub(crate) async fn send_pending_app_key_link_request(
         return Ok(None);
     }
 
-    let Some(frame) =
-        iris_drive_core::app_key_link_transport::pending_app_key_link_request_frame(state)
+    let device =
+        iris_drive_core::AppKey::load(key_path_in(config_dir)).context("loading app key")?;
+    let Some(frame) = iris_drive_core::app_key_link_transport::pending_app_key_link_request_frame(
+        state,
+        device.keys(),
+    )?
     else {
         return Ok(None);
     };
     let bytes = serde_json::to_vec(&frame)?;
-    let device =
-        iris_drive_core::AppKey::load(key_path_in(config_dir)).context("loading app key")?;
     let relay_event_id = tokio::time::timeout(
         std::time::Duration::from_secs(APP_KEY_LINK_RELAY_PUBLISH_TIMEOUT_SECS),
         iris_drive_core::relay_sync::publish_app_key_link_request(client, device.keys(), &frame),
@@ -940,6 +947,7 @@ async fn handle_app_key_link_request_app_message(
             &app_key_hex,
             frame.label,
             &invite_pubkey,
+            Some(frame.url),
             frame.requested_at,
         )
         .context("recording inbound app-key link request")?;

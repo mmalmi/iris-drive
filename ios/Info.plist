@@ -36,7 +36,7 @@
   <key>LSApplicationCategoryType</key>
   <string>public.app-category.productivity</string>
   <key>NSCameraUsageDescription</key>
-  <string>Scan Iris Drive invite QR codes.</string>
+  <string>Scan Iris Drive invite and device request QR codes.</string>
   <key>NSCalendarsFullAccessUsageDescription</key>
   <string>Sync your Iris calendar with Apple Calendar.</string>
   <key>NSCalendarsUsageDescription</key>

@@ -7,5 +7,5 @@ let awaitingApprovalScreenRefreshIntervalNanoseconds: UInt64 = 3_000_000_000
 enum IrisDriveBackgroundSyncTask {
     static let identifier = Bundle.main.object(
         forInfoDictionaryKey: "IrisDriveBackgroundSyncTaskIdentifier"
-    ) as? String ?? "to.iris.drive.ios.background-sync"
+    ) as? String ?? "fi.siriusbusiness.drive.background-sync"
 }

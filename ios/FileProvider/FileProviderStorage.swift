@@ -6,7 +6,7 @@ import UniformTypeIdentifiers
 enum FileProviderStorage {
     private static let appGroupIdentifier = Bundle.main.object(
         forInfoDictionaryKey: "IrisDriveAppGroupIdentifier"
-    ) as? String ?? "group.to.iris.drive"
+    ) as? String ?? "group.fi.siriusbusiness.drive"
     private static let domainIdentifier = NSFileProviderDomainIdentifier("primary-v1")
     private static let domainDisplayName = "Iris Drive"
     private static let storageDirectoryName = "IrisDrive"

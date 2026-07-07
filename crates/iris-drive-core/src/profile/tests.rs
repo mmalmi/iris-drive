@@ -1,6 +1,6 @@
 use super::*;
-use crate::iris_profile::{IrisProfileKeyPurpose, KeyWrapStatus};
-use crate::{IrisProfileRosterOp, parse_iris_profile_roster_op_event};
+use crate::nostr_identity::{NostrIdentityKeyPurpose, SecretWrapStatus};
+use crate::{NostrIdentityRosterOp, parse_nostr_identity_roster_op_event};
 use nostr_sdk::{Event, JsonUtil};
 use tempfile::tempdir;
 
@@ -46,11 +46,40 @@ fn create_yields_admin_authorized_account() {
         projection
             .active_facets
             .values()
-            .filter(|facet| facet.has_purpose(IrisProfileKeyPurpose::RecoveryPhrase))
+            .filter(|facet| facet.has_purpose(NostrIdentityKeyPurpose::RecoveryPhrase))
             .count(),
         0
     );
-    assert_eq!(projection.key_epochs.len(), 1);
+    assert_eq!(projection.secret_epochs.len(), 1);
+}
+
+#[test]
+fn profile_roster_ops_encrypt_app_key_labels() {
+    let dir = tempdir().unwrap();
+    let acct = Profile::create(dir.path(), Some("my-laptop".into())).unwrap();
+    let add_event = Event::from_json(&acct.state.profile_roster_ops[0].event_json).unwrap();
+
+    assert!(!add_event.as_json().contains("my-laptop"));
+    let encrypted_labels =
+        crate::nostr_identity::encrypted_device_label_payloads_from_nostr_identity_roster_op_event(
+            &add_event,
+        );
+    assert_eq!(encrypted_labels.len(), 1);
+
+    let dck = acct.current_dck().unwrap();
+    let labels = decrypt_drive_device_labels_with_dck(&encrypted_labels[0], &dck)
+        .unwrap()
+        .labels;
+    assert_eq!(
+        labels.get(&acct.state.app_key_pubkey).map(String::as_str),
+        Some("my-laptop")
+    );
+
+    let signed = parse_nostr_identity_roster_op_event(&add_event).unwrap();
+    let NostrIdentityRosterOp::AddFacet { facet } = signed.content.op else {
+        panic!("expected app-key add facet");
+    };
+    assert_eq!(facet.label, None);
 }
 
 #[test]
@@ -176,7 +205,10 @@ fn restore_with_profile_roster_ops_recovers_existing_profile_without_uuid_deriva
     let projection = restored.state.profile_projection();
     assert!(projection.can_write_roots(&restored.state.app_key_pubkey));
     assert!(projection.can_admin_profile(&restored.state.app_key_pubkey));
-    assert_eq!(projection.key_epochs.keys().next_back().copied(), Some(2));
+    assert_eq!(
+        projection.secret_epochs.keys().next_back().copied(),
+        Some(2)
+    );
 }
 
 #[test]
@@ -204,7 +236,7 @@ fn fallback_recovery_phrase_restore_can_reconcile_when_roster_evidence_appears()
     assert!(app_keys.is_admin(&fallback_app_key));
     assert!(fallback.state.can_write_roots());
     assert!(fallback.state.can_admin_profile());
-    assert_eq!(fallback.state.app_key_label.as_deref(), Some("fallback"));
+    assert_eq!(fallback.state.app_key_label.as_deref(), Some("reconciled"));
     let reconciled_actor = app_keys.app_actor(&fallback_app_key).unwrap();
     assert_eq!(reconciled_actor.label.as_deref(), Some("reconciled"));
 }
@@ -322,7 +354,10 @@ fn recovery_phrase_admits_fresh_app_key_into_existing_profile_log() {
     assert!(projection.can_admin_profile(&recovered_pubkey));
     assert!(!projection.can_write_roots(&recovery_key.pubkey_hex()));
     assert!(!projection.can_admin_profile(&recovery_key.pubkey_hex()));
-    assert_eq!(projection.key_epochs.keys().next_back().copied(), Some(2));
+    assert_eq!(
+        projection.secret_epochs.keys().next_back().copied(),
+        Some(2)
+    );
 
     let recovered_dck = recovered.current_dck().unwrap();
     assert_eq!(recovered_dck, old_owner_dck);
@@ -344,13 +379,18 @@ fn admin_can_configure_nip46_recovery_with_epoch_decrypt_wrap() {
 
     let projection = acct.state.profile_projection();
     let facet = projection.active_facets.get(&nip46_pubkey).unwrap();
-    assert!(facet.has_purpose(IrisProfileKeyPurpose::Nip46Signer));
+    assert!(facet.has_purpose(NostrIdentityKeyPurpose::Nip46Signer));
     assert!(!projection.can_write_roots(&nip46_pubkey));
     assert!(!projection.can_admin_profile(&nip46_pubkey));
-    let latest_epoch = projection.key_epochs.keys().next_back().copied().unwrap();
+    let latest_epoch = projection
+        .secret_epochs
+        .keys()
+        .next_back()
+        .copied()
+        .unwrap();
     assert_eq!(
-        projection.key_wrap_status(&nip46_pubkey, latest_epoch),
-        KeyWrapStatus::Available
+        projection.secret_wrap_status(&nip46_pubkey, latest_epoch),
+        SecretWrapStatus::Available
     );
     assert_eq!(
         acct.current_dck_from_nip46_keys(&nip46).unwrap(),
@@ -374,13 +414,18 @@ fn admin_can_add_generated_recovery_pubkey_after_create() {
 
     let projection = acct.state.profile_projection();
     let facet = projection.active_facets.get(&recovery_pubkey).unwrap();
-    assert!(facet.has_purpose(IrisProfileKeyPurpose::RecoveryPhrase));
+    assert!(facet.has_purpose(NostrIdentityKeyPurpose::RecoveryPhrase));
     assert!(!projection.can_write_roots(&recovery_pubkey));
     assert!(!projection.can_admin_profile(&recovery_pubkey));
-    let latest_epoch = projection.key_epochs.keys().next_back().copied().unwrap();
+    let latest_epoch = projection
+        .secret_epochs
+        .keys()
+        .next_back()
+        .copied()
+        .unwrap();
     assert_eq!(
-        projection.key_wrap_status(&recovery_pubkey, latest_epoch),
-        KeyWrapStatus::Available
+        projection.secret_wrap_status(&recovery_pubkey, latest_epoch),
+        SecretWrapStatus::Available
     );
     assert_eq!(
         acct.current_dck_from_recovery_phrase(&phrase).unwrap(),
@@ -440,7 +485,10 @@ fn nip46_authority_admits_fresh_app_key_with_decrypt_wrap() {
     assert!(projection.can_write_roots(&recovered_pubkey));
     assert!(projection.can_admin_profile(&recovered_pubkey));
     assert!(!projection.can_write_roots(&nip46_pubkey));
-    assert_eq!(projection.key_epochs.keys().next_back().copied(), Some(3));
+    assert_eq!(
+        projection.secret_epochs.keys().next_back().copied(),
+        Some(3)
+    );
 
     let recovered_dck = recovered.current_dck().unwrap();
     assert_eq!(recovered_dck, old_owner_dck);
@@ -491,10 +539,13 @@ fn nip46_without_decrypt_admits_app_key_but_leaves_wrap_repair_needed() {
     );
     let projection = recovered.state.profile_projection();
     assert!(projection.can_write_roots(&recovered_pubkey));
-    assert_eq!(projection.key_epochs.keys().next_back().copied(), Some(1));
     assert_eq!(
-        projection.key_wrap_status(&recovered_pubkey, 1),
-        KeyWrapStatus::RepairNeeded
+        projection.secret_epochs.keys().next_back().copied(),
+        Some(1)
+    );
+    assert_eq!(
+        projection.secret_wrap_status(&recovered_pubkey, 1),
+        SecretWrapStatus::RepairNeeded
     );
     assert!(matches!(
         recovered.current_dck(),
@@ -550,7 +601,7 @@ fn epoch_signing_admin_can_repair_missing_app_key_wraps() {
         vec![recovered_pubkey.clone()]
     );
 
-    let repair = owner.repair_current_key_epoch_wraps().unwrap();
+    let repair = owner.repair_current_secret_epoch_wraps().unwrap();
 
     assert_eq!(repair.epoch, 1);
     assert_eq!(repair.repaired_pubkeys, vec![recovered_pubkey.clone()]);
@@ -571,7 +622,7 @@ fn epoch_signing_admin_can_repair_missing_app_key_wraps() {
 #[test]
 fn link_starts_awaiting_approval_without_recovery_phrase() {
     let dir = tempdir().unwrap();
-    let profile_id = IrisProfileId::new_v4();
+    let profile_id = NostrIdentityId::new_v4();
     let admin_app_key = fresh_app_key_pubkey();
     let acct = Profile::link_to_profile(
         dir.path(),
@@ -606,6 +657,7 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
                 &device,
                 Some(" phone ".to_string()),
                 &invite_pubkey,
+                None,
                 10,
             )
             .unwrap()
@@ -624,6 +676,7 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
                 &device,
                 Some("phone".to_string()),
                 &invite_pubkey,
+                None,
                 9,
             )
             .unwrap()
@@ -635,6 +688,7 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
                 &device,
                 Some("tablet".to_string()),
                 &invite_pubkey,
+                None,
                 11,
             )
             .unwrap()
@@ -661,6 +715,7 @@ fn inbound_app_key_link_request_requires_current_invite_pubkey() {
                 &device,
                 Some("phone".to_string()),
                 &fresh_app_key_pubkey(),
+                None,
                 10,
             )
             .unwrap()
@@ -683,6 +738,7 @@ fn reset_app_key_link_secret_rotates_invite_and_clears_pending_requests() {
             &device,
             Some("phone".to_string()),
             &old_invite_pubkey,
+            None,
             10,
         )
         .unwrap();
@@ -699,6 +755,7 @@ fn reset_app_key_link_secret_rotates_invite_and_clears_pending_requests() {
                 &fresh_app_key_pubkey(),
                 Some("old".to_string()),
                 &old_invite_pubkey,
+                None,
                 11,
             )
             .unwrap()
@@ -720,6 +777,7 @@ fn rejected_inbound_app_key_link_request_does_not_replay() {
                 &device,
                 Some("phone".to_string()),
                 &invite_pubkey,
+                None,
                 10,
             )
             .unwrap()
@@ -739,6 +797,7 @@ fn rejected_inbound_app_key_link_request_does_not_replay() {
                 &device,
                 Some("phone".to_string()),
                 &invite_pubkey,
+                None,
                 10,
             )
             .unwrap()
@@ -752,6 +811,7 @@ fn rejected_inbound_app_key_link_request_does_not_replay() {
                 &device,
                 Some("phone".to_string()),
                 &invite_pubkey,
+                None,
                 11,
             )
             .unwrap()
@@ -764,7 +824,7 @@ fn link_with_invalid_pubkey_errors() {
     let dir = tempdir().unwrap();
     let result = Profile::link_to_profile(
         dir.path(),
-        IrisProfileId::new_v4(),
+        NostrIdentityId::new_v4(),
         "not-a-real-pubkey".into(),
         None,
     );
@@ -796,8 +856,8 @@ fn approve_adds_device_to_roster() {
     assert!(projection.can_write_roots(&new_device));
     assert!(!projection.can_admin_profile(&new_device));
     assert!(projection.active_facets.contains_key(&new_device));
-    let latest_epoch = projection.key_epochs.values().next_back().unwrap();
-    assert!(latest_epoch.wrapped_dck.contains_key(&new_device));
+    let latest_epoch = projection.secret_epochs.values().next_back().unwrap();
+    assert!(latest_epoch.wrapped_secrets.contains_key(&new_device));
 }
 
 #[test]
@@ -807,7 +867,8 @@ fn approve_without_admin_authority_errors() {
     // check before reaching crypto, so this is fine.
     let admin_app_key = fresh_app_key_pubkey();
     let mut acct =
-        Profile::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
+        Profile::link_to_profile(dir.path(), NostrIdentityId::new_v4(), admin_app_key, None)
+            .unwrap();
     match acct.approve_app_key(&fresh_app_key_pubkey(), None) {
         Err(ProfileError::NoAdminAuthority) => {}
         _ => panic!("expected NoAdminAuthority"),
@@ -837,6 +898,7 @@ fn approving_authorized_inbound_request_consumes_request_without_new_ops() {
             app_key_pubkey: target.clone(),
             label: Some("phone".into()),
             invite_pubkey: invite_pubkey(&acct.state),
+            request_url: String::new(),
             requested_at: 42,
         });
     let before_op_count = acct.state.profile_roster_ops.len();
@@ -863,6 +925,7 @@ fn approving_tombstoned_device_readds_and_consumes_request() {
             app_key_pubkey: target.clone(),
             label: Some("phone".into()),
             invite_pubkey: invite_pubkey(&acct.state),
+            request_url: String::new(),
             requested_at: 42,
         });
     let before_op_count = acct.state.profile_roster_ops.len();
@@ -901,6 +964,7 @@ fn sync_prunes_inbound_request_for_authorized_device() {
             app_key_pubkey: target.clone(),
             label: Some("phone".into()),
             invite_pubkey: invite_pubkey(&acct.state),
+            request_url: String::new(),
             requested_at: 42,
         });
     assert_eq!(acct.state.inbound_app_key_link_requests.len(), 1);
@@ -922,6 +986,7 @@ fn recording_authorized_request_reports_cleanup_change() {
             app_key_pubkey: target.clone(),
             label: Some("phone".into()),
             invite_pubkey: invite_pubkey(&acct.state),
+            request_url: String::new(),
             requested_at: 41,
         });
 
@@ -932,6 +997,7 @@ fn recording_authorized_request_reports_cleanup_change() {
             &target,
             Some("phone".into()),
             &invite_pubkey(&acct.state),
+            None,
             42,
         )
         .unwrap();
@@ -955,6 +1021,7 @@ fn recording_authorized_request_without_app_keys_cache_stays_hidden() {
             &target,
             Some("phone".into()),
             &invite_pubkey(&acct.state),
+            None,
             42,
         )
         .unwrap();
@@ -988,6 +1055,7 @@ fn recording_removed_request_ignores_stale_replay_but_allows_newer_rejoin() {
                 &target,
                 Some("phone".into()),
                 &invite_pubkey,
+                None,
                 u64::try_from(removed_at).unwrap().saturating_sub(1),
             )
             .unwrap()
@@ -1001,6 +1069,7 @@ fn recording_removed_request_ignores_stale_replay_but_allows_newer_rejoin() {
                 &target,
                 Some("phone".into()),
                 &invite_pubkey,
+                None,
                 u64::try_from(removed_at).unwrap() + 1,
             )
             .unwrap()
@@ -1137,11 +1206,11 @@ fn authorization_waits_for_profile_key_epoch() {
         .iter()
         .filter(|op| {
             let event = Event::from_json(&op.event_json).unwrap();
-            let parsed = parse_iris_profile_roster_op_event(&event).unwrap();
+            let parsed = parse_nostr_identity_roster_op_event(&event).unwrap();
             !matches!(
                 parsed.content.op,
-                IrisProfileRosterOp::RotateKeyEpoch { .. }
-                    | IrisProfileRosterOp::RepairKeyWraps { .. }
+                NostrIdentityRosterOp::RotateSecretEpoch { .. }
+                    | NostrIdentityRosterOp::RepairSecretWraps { .. }
             )
         })
         .cloned()
@@ -1197,10 +1266,10 @@ fn authorization_waits_for_admin_roster_facet() {
         .iter()
         .filter(|op| {
             let event = Event::from_json(&op.event_json).unwrap();
-            let parsed = parse_iris_profile_roster_op_event(&event).unwrap();
+            let parsed = parse_nostr_identity_roster_op_event(&event).unwrap();
             !matches!(
                 parsed.content.op,
-                IrisProfileRosterOp::AddFacet { ref facet }
+                NostrIdentityRosterOp::AddFacet { ref facet }
                     if facet.pubkey == owner.state.app_key_pubkey
             )
         })
@@ -1423,7 +1492,7 @@ fn rotate_dck_preserves_roster() {
     let latest_epoch = acct
         .state
         .profile_projection()
-        .key_epochs
+        .secret_epochs
         .keys()
         .next_back()
         .copied()
@@ -1457,7 +1526,8 @@ fn rotate_dck_without_admin_authority_errors() {
     let dir = tempdir().unwrap();
     let admin_app_key = fresh_app_key_pubkey();
     let mut acct =
-        Profile::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
+        Profile::link_to_profile(dir.path(), NostrIdentityId::new_v4(), admin_app_key, None)
+            .unwrap();
     match acct.rotate_dck() {
         Err(ProfileError::NoAdminAuthority) => {}
         other => panic!("expected NoAdminAuthority, got {:?}", other.is_ok()),
@@ -1468,8 +1538,8 @@ fn rotate_dck_without_admin_authority_errors() {
 fn current_dck_without_key_epoch_errors() {
     let dir = tempdir().unwrap();
     let admin_app_key = fresh_app_key_pubkey();
-    let acct =
-        Profile::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
+    let acct = Profile::link_to_profile(dir.path(), NostrIdentityId::new_v4(), admin_app_key, None)
+        .unwrap();
     match acct.current_dck() {
         Err(ProfileError::NoCurrentAppKeysProjection) => {}
         other => panic!(
@@ -1574,8 +1644,8 @@ fn external_revocation_marks_state_revoked() {
     let tombstone = signed_profile_roster_op_with_parents(
         acct.app_key.keys(),
         acct.state.profile_id,
-        iris_profile_roster_parent_ids(&acct.state.profile_roster_ops),
-        IrisProfileRosterOp::TombstoneFacet {
+        nostr_identity_roster_parent_ids(&acct.state.profile_roster_ops),
+        NostrIdentityRosterOp::TombstoneFacet {
             pubkey: acct.state.app_key_pubkey.clone(),
             reason: Some("external revocation".to_owned()),
         },
@@ -1607,7 +1677,8 @@ fn load_for_linked_device_uses_only_app_key() {
     let dir = tempdir().unwrap();
     let admin_app_key = fresh_app_key_pubkey();
     let linked =
-        Profile::link_to_profile(dir.path(), IrisProfileId::new_v4(), admin_app_key, None).unwrap();
+        Profile::link_to_profile(dir.path(), NostrIdentityId::new_v4(), admin_app_key, None)
+            .unwrap();
     let state = linked.state.clone();
     let loaded = Profile::load(state, dir.path()).unwrap();
     assert_eq!(loaded.app_key.pubkey_hex(), linked.app_key.pubkey_hex());

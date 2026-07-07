@@ -379,7 +379,7 @@ async fn downloads_tree_blocks_over_indirect_fips_mesh_peer() {
 fn discovery_scope_uses_iris_drive_overlay() {
     let config = AppConfig {
         profile: Some(crate::ProfileState {
-            profile_id: crate::IrisProfileId::new_v4(),
+            profile_id: crate::NostrIdentityId::new_v4(),
             app_key_pubkey: "bb".repeat(32),
             profile_roster_ops: Vec::new(),
             app_key_link_secret: "link-secret".into(),
@@ -452,7 +452,7 @@ fn default_transport_settings_seed_fips_bootstrap_transit() {
 #[test]
 fn single_device_profile_does_not_route_to_bootstrap_fips_peers() {
     let current_pubkey = "dd".repeat(32);
-    let profile_id = crate::IrisProfileId::new_v4();
+    let profile_id = crate::NostrIdentityId::new_v4();
     let config = AppConfig {
         profile: Some(crate::ProfileState {
             profile_id,
@@ -489,7 +489,7 @@ fn single_device_profile_does_not_route_to_bootstrap_fips_peers() {
 fn remote_authorized_device_keeps_bootstrap_fips_routing_peers() {
     let current_pubkey = "dd".repeat(32);
     let remote_pubkey = "ee".repeat(32);
-    let profile_id = crate::IrisProfileId::new_v4();
+    let profile_id = crate::NostrIdentityId::new_v4();
     let config = AppConfig {
         profile: Some(crate::ProfileState {
             profile_id,
@@ -529,7 +529,7 @@ fn legacy_drive_roots_keep_bootstrap_fips_routing_peers() {
     let remote_keys = nostr_sdk::Keys::generate();
     let current_pubkey = current_keys.public_key().to_hex();
     let remote_pubkey = remote_keys.public_key().to_hex();
-    let profile_id = crate::IrisProfileId::new_v4();
+    let profile_id = crate::NostrIdentityId::new_v4();
     let mut drive = crate::Drive::primary(profile_id.to_string());
     drive.app_key_roots.insert(
         current_pubkey.clone(),
@@ -574,7 +574,7 @@ fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
     let first_pubkey = first_keys.public_key().to_hex();
     let second_pubkey = second_keys.public_key().to_hex();
     let first_npub = first_keys.public_key().to_bech32().unwrap();
-    let profile_id = crate::IrisProfileId::new_v4();
+    let profile_id = crate::NostrIdentityId::new_v4();
     let settings = FipsTransportSettings {
         static_peer_hints: parse_static_peer_hints(&format!(
             "linux-peer=10.44.214.2:22121,{first_npub}=10.44.34.102:22121"
@@ -640,7 +640,7 @@ fn pending_app_key_link_admin_is_allowed_for_roster_app_messages() {
     };
     let config = AppConfig {
         profile: Some(crate::ProfileState {
-            profile_id: crate::IrisProfileId::new_v4(),
+            profile_id: crate::NostrIdentityId::new_v4(),
             app_key_pubkey: "dd".repeat(32),
             profile_roster_ops: Vec::new(),
             app_key_link_secret: "link-secret".into(),
@@ -651,6 +651,7 @@ fn pending_app_key_link_admin_is_allowed_for_roster_app_messages() {
             outbound_app_key_link_request: Some(crate::profile::PendingAppKeyLinkRequest {
                 admin_app_key_pubkey: admin_pubkey,
                 invite_pubkey: "ee".repeat(32),
+                request_url: String::new(),
                 requested_at: 42,
             }),
             inbound_app_key_link_requests: Vec::new(),

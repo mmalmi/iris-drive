@@ -5,25 +5,14 @@ struct RevokedDeviceSetupView: View {
     let controller: AppDelegate
 
     var body: some View {
-        let target = status.currentAppKeyNpub ?? ""
         VStack(alignment: .leading, spacing: 12) {
             Text("Device removed")
                 .font(.title2.weight(.semibold))
             Text("This device no longer has access to Iris Drive.")
                 .foregroundStyle(.secondary)
-            if !target.isEmpty {
-                keyedValue("Device", target)
-            }
             if let device = status.deviceNpub, !device.isEmpty {
                 keyedValue("Current Device Key", device)
             }
-            Button {
-                controller.linkDevice(target: target)
-            } label: {
-                buttonLabel("Link this device again", systemImage: "link")
-            }
-            .buttonStyle(.borderedProminent)
-            .disabled(target.isEmpty)
             if status.deviceNpub?.isEmpty == false {
                 IrisDriveCopyButton(
                     title: "Copy Device Key",
@@ -74,6 +63,19 @@ struct AwaitingApprovalSetupView: View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Waiting for approval")
                 .font(.title2.weight(.semibold))
+            if let request = status.appKeyLinkRequestURL, !request.isEmpty {
+                IrisDriveQRCodeView(value: request)
+                    .frame(width: 220, height: 220)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                IrisDriveCopyButton(
+                    title: "Copy Request Link",
+                    systemImage: "link",
+                    fillsWidth: true
+                ) {
+                    controller.copyAppKeyLinkRequest()
+                }
+                .buttonStyle(.borderedProminent)
+            }
             if let device = status.deviceNpub, !device.isEmpty {
                 keyedValue("Current Device Key", device)
                 IrisDriveCopyButton(

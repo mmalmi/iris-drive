@@ -13,11 +13,12 @@ Common GUI-parity flows:
 idrive stats
 idrive status
 idrive app-keys invite
-idrive app-keys request <profile-invite-url-or-profile-id> --label "Laptop"
+idrive app-keys request <device-invite-url> --label "Laptop"
+idrive app-keys request <nostr-identity-uuid> --admin-app-key <admin-device-npub> --label "Laptop"
 idrive app-keys requests
-idrive app-keys approve <app-key-request-url-or-npub>
-idrive app-keys reject <app-key-request-url-or-npub>
-idrive app-keys revoke <app-key-npub>
+idrive app-keys approve <device-request-url-or-device-npub>
+idrive app-keys reject <device-request-url-or-device-npub>
+idrive app-keys revoke <device-npub>
 idrive backups add fs:/path/to/encrypted-backup --label "External disk"
 idrive backups sync
 idrive backups check
@@ -27,11 +28,11 @@ idrive daemon
 
 The older top-level linking commands (`link`, `approve`, `revoke`, `roster`)
 remain available for scripts; `app-keys ...` is the discoverable operator group
-for linked app installs and their scoped AppKey authority.
+for linked app installs and their scoped device authority.
 
-Backup targets accept Blossom URLs, FIPS AppKey npubs, `fs:/path`, and
+Backup targets accept Blossom URLs, FIPS device npubs, `fs:/path`, and
 `lmdb:/path`. Filesystem and LMDB targets receive only encrypted hashtree blobs;
-root keys and IrisProfile recovery/AppKey material stay in the local Iris Drive config.
+root keys and NostrIdentity recovery/device material stay in the local Iris Drive config.
 
 ## Repository
 

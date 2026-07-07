@@ -57,16 +57,6 @@ pub(crate) fn render_peers(model: &AppRef, state: &NativeAppState) {
 
 pub(crate) fn render_add_device_section(model: &AppRef, state: &NativeAppState) {
     let account = profile(state);
-    let invite = account
-        .map(|account| account.app_key_link_invite.as_str())
-        .unwrap_or_default();
-    model.ui.add_device_invite.set_text(if invite.is_empty() {
-        "Invite link unavailable"
-    } else {
-        invite
-    });
-    model.ui.copy_invite_button.set_sensitive(!invite.is_empty());
-
     let requests = account
         .map(|account| account.inbound_app_key_link_requests.as_slice())
         .unwrap_or_default();
@@ -120,7 +110,7 @@ fn app_key_link_request_row(
 
     let reject = pill_button("Reject");
     reject.add_css_class("destructive-action");
-    let add_request = primary_button("Add");
+    let add_request = primary_button("Review");
     {
         let model = Rc::clone(model);
         let request_url = request_url.clone();
@@ -135,9 +125,8 @@ fn app_key_link_request_row(
     {
         let model = Rc::clone(model);
         let request_url = request_url.clone();
-        let request_label = request_label.clone();
         add_request.connect_clicked(move |_| {
-            approve_device_values(&model, request_url.clone(), request_label.clone());
+            confirm_approve_device(&model, request_url.clone());
         });
     }
     row.append(&reject);
@@ -163,9 +152,6 @@ fn append_peer_actor_row(
     let mut metadata = Vec::new();
     if actor.is_current_app_key {
         metadata.push("this device".to_string());
-        if !app_key_pubkey.is_empty() {
-            metadata.push(format!("Device key: {app_key_pubkey}"));
-        }
     }
     metadata.push(if actor.role_label.is_empty() {
         "Member".to_string()
@@ -175,7 +161,7 @@ fn append_peer_actor_row(
     if !actor.state_label.is_empty() {
         metadata.push(actor.state_label.clone());
     }
-    if !actor.detail.is_empty() {
+    if !actor.detail.is_empty() && !(actor.is_current_app_key && actor.detail == app_key_pubkey) {
         metadata.push(actor.detail.clone());
     }
     let connection = if actor.connection_label.is_empty() {
@@ -191,6 +177,7 @@ fn append_peer_actor_row(
         actor.is_online,
         show_status_dot,
         app_key_pubkey,
+        actor.is_current_app_key,
         actor.can_appoint_admin,
         actor.can_demote_admin,
         actor.can_revoke,
@@ -420,7 +407,7 @@ fn share_member_row(
     let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
     labels.set_hexpand(true);
     let title = gtk::Label::new(Some(if member.display_name.is_empty() {
-        "IrisProfile"
+        "NostrIdentity"
     } else {
         &member.display_name
     }));
@@ -687,6 +674,7 @@ pub(crate) fn peer_row(
     is_online: bool,
     show_status_dot: bool,
     app_key_pubkey: &str,
+    is_current_device: bool,
     can_appoint_admin: bool,
     can_demote_admin: bool,
     can_revoke: bool,
@@ -729,6 +717,16 @@ pub(crate) fn peer_row(
         labels.append(&subtitle_label);
     }
     body.append(&labels);
+
+    if is_current_device && !app_key_pubkey.is_empty() {
+        let copy = icon_button("edit-copy-symbolic", "Copy device key");
+        let model = Rc::clone(model);
+        let app_key_pubkey = app_key_pubkey.to_string();
+        copy.connect_clicked(move |_| {
+            copy_text(&model, &app_key_pubkey, "Device key copied");
+        });
+        body.append(&copy);
+    }
 
     if can_appoint_admin {
         let appoint = icon_button("contact-new-symbolic", "Make admin");

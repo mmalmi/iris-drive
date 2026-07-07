@@ -71,6 +71,7 @@ pub(crate) fn cmd_daemon(
     if filters.is_empty() {
         return Err(anyhow::anyhow!("no filters to subscribe to"));
     }
+    let subscription_policy = relay_sync::event_retention_policy(filters.clone());
     let embedded_hashtree_requested = enable_gateway && config.local_nhash_resolver_enabled;
     let (embedded_hashtree, embedded_hashtree_status) = if embedded_hashtree_requested {
         match EmbeddedHashtreeHost::start(config_dir, &config) {
@@ -396,6 +397,10 @@ pub(crate) fn cmd_daemon(
                 } => {
                     match recv {
                         Some(Ok(RelayPoolNotification::Event { event, .. })) => {
+                            if !relay_sync::relay_event_matches_policy(&subscription_policy, &event)
+                            {
+                                continue;
+                            }
                             match apply_one_event(
                                 &client,
                                 config_dir,
@@ -571,7 +576,12 @@ pub(crate) fn cmd_daemon(
                     let mut latest_wake_payload = wake_payload;
                     if let Some(rx) = provider_root_wake_rx.as_mut() {
                         latest_wake_payload =
-                            drain_latest_provider_root_wake_payload(rx, latest_wake_payload);
+                            drain_latest_provider_root_wake_payload_after_debounce(
+                                rx,
+                                root_update_debounce,
+                                latest_wake_payload,
+                            )
+                            .await;
                     }
                     if let Some(wake_payload) = latest_wake_payload.as_ref()
                         && let Some(status_payload) = provider_root_wake_status_payload(wake_payload)
@@ -722,6 +732,19 @@ pub(crate) fn cmd_daemon(
                         println!(
                             "{}",
                             json!({"event": "direct_root_mesh_error", "trigger": "peer_refresh", "error": format!("{error:#}")})
+                        );
+                    }
+                    if let Err(error) = direct_roots
+                        .request_current_state_from_peers(
+                            config_dir,
+                            fips_blocks.as_deref(),
+                            "periodic_peer_refresh",
+                        )
+                        .await
+                    {
+                        println!(
+                            "{}",
+                            json!({"event": "direct_root_state_request_error", "trigger": "periodic_peer_refresh", "error": format!("{error:#}")})
                         );
                     }
                     enqueue_pending_root_sync_followups(
@@ -1029,57 +1052,4 @@ pub(crate) fn cmd_daemon(
         relay_sync::shutdown_client_for_process_exit(client).await;
         Ok::<_, anyhow::Error>(())
     })
-}
-
-async fn backfill_pending_app_key_link_roster_ops(
-    client: &nostr_sdk::Client,
-    config_dir: &Path,
-    fips_blocks: Option<Arc<FsFipsBlockSync>>,
-    mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
-    daemon_tasks: &DaemonTaskSet,
-) -> Result<Option<EventApplyOutcome>> {
-    let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
-    let Some(state) = config.profile.as_ref() else {
-        return Ok(None);
-    };
-    if state.authorization_state != iris_drive_core::AppKeyAuthorizationState::AwaitingApproval
-        || state.outbound_app_key_link_request.is_none()
-    {
-        return Ok(None);
-    }
-
-    let events = iris_drive_core::relay_sync::fetch_iris_profile_roster_ops(
-        client,
-        state.profile_id,
-        std::time::Duration::from_secs(2),
-    )
-    .await
-    .context("fetching pending AppKey-link roster ops")?;
-
-    let mut changed = false;
-    let mut retryable = false;
-    for event in events {
-        match apply_one_event(
-            client,
-            config_dir,
-            &event,
-            fips_blocks.clone(),
-            mount_refresh.clone(),
-            daemon_tasks,
-        )
-        .await?
-        {
-            EventApplyOutcome::Changed => changed = true,
-            EventApplyOutcome::RetryablePrerequisiteMissing => retryable = true,
-            EventApplyOutcome::Unchanged => {}
-        }
-    }
-
-    if changed {
-        Ok(Some(EventApplyOutcome::Changed))
-    } else if retryable {
-        Ok(Some(EventApplyOutcome::RetryablePrerequisiteMissing))
-    } else {
-        Ok(Some(EventApplyOutcome::Unchanged))
-    }
 }

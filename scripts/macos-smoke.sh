@@ -176,14 +176,20 @@ if report.get("state") not in {"verified", "pending"}:
 }
 
 terminate_app_process() {
-  pkill -TERM -x "$APP_PROCESS_NAME" >/dev/null 2>&1 || true
+  local pid
+
+  for pid in $(app_process_pids); do
+    kill -TERM "$pid" >/dev/null 2>&1 || true
+  done
   for _ in {1..40}; do
-    if ! pgrep -x "$APP_PROCESS_NAME" >/dev/null 2>&1; then
+    if [[ -z "$(app_process_pids)" ]]; then
       return 0
     fi
     sleep 0.1
   done
-  pkill -x "$APP_PROCESS_NAME" >/dev/null 2>&1 || true
+  for pid in $(app_process_pids); do
+    kill "$pid" >/dev/null 2>&1 || true
+  done
 }
 
 remove_smoke_path_best_effort() {
@@ -195,6 +201,13 @@ remove_smoke_path_best_effort() {
     sleep 0.2
   done
   echo "warning: smoke cleanup left $path" >&2
+}
+
+uninstall_smoke_daemon_service() {
+  [[ -n "${IDRIVE_CLI:-}" && -x "$IDRIVE_CLI" ]] || return 0
+  [[ -n "${SMOKE_CONFIG_DIR:-}" ]] || return 0
+  "$IDRIVE_CLI" --config-dir "$SMOKE_CONFIG_DIR" service uninstall --json \
+    >/dev/null 2>&1 || true
 }
 
 cleanup() {
@@ -221,6 +234,7 @@ on run argv
 end run
 APPLESCRIPT
   fi
+  uninstall_smoke_daemon_service
   remove_smoke_path_best_effort "$SMOKE_APP_DATA"
   remove_smoke_path_best_effort "$SMOKE_DIR"
 }
@@ -253,17 +267,61 @@ show_recent_logs() {
     2>/dev/null || true
 }
 
-wait_for_process() {
-  local name="$1"
-  local seconds="$2"
+process_command_matches() {
+  local pid="$1"
+  local path_fragment="$2"
+  local command
+
+  command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  [[ "$command" == *"$path_fragment"* ]]
+}
+
+app_process_pids() {
+  local pid
+  local path_fragment="$APP_PATH/Contents/MacOS/$APP_PROCESS_NAME"
+
+  [[ -n "${APP_PATH:-}" ]] || return 0
+  pgrep -x "$APP_PROCESS_NAME" 2>/dev/null | while IFS= read -r pid; do
+    if process_command_matches "$pid" "$path_fragment"; then
+      printf '%s\n' "$pid"
+    fi
+  done
+}
+
+app_is_running() {
+  [[ -n "$(app_process_pids)" ]]
+}
+
+wait_for_app_process() {
+  local seconds="$1"
 
   for _ in $(seq 1 "$((seconds * 10))"); do
-    if pgrep -x "$name" >/dev/null 2>&1; then
+    if app_is_running; then
       return 0
     fi
     sleep 0.1
   done
   return 1
+}
+
+assert_app_running() {
+  local context="$1"
+
+  if ! app_is_running; then
+    echo "FAIL: Iris Drive exited $context." >&2
+    show_recent_logs >&2
+    exit 1
+  fi
+}
+
+assert_daemon_running() {
+  local context="$1"
+
+  if ! pgrep -f "$APP_PATH/Contents/MacOS/idrive.*daemon" >/dev/null 2>&1; then
+    echo "FAIL: bundled idrive daemon exited $context." >&2
+    show_recent_logs >&2
+    exit 1
+  fi
 }
 
 wait_for_daemon() {
@@ -494,11 +552,9 @@ on run argv
 
   if mode is "link" then
     my clickSetupButton(appName, "Sign in", 2)
-    my waitForSetupText(appName, "Sign in", 5)
-    my clickSetupButton(appName, "Link this device", 3)
-    my waitForSetupText(appName, "Link this device", 5)
-    my fillFirstTextField(appName, fieldValue, "Owner")
-    my clickSetupButton(appName, "Link device", 2)
+    my waitForSetupText(appName, "Restore", 5)
+    my clickSetupButton(appName, "Link device", 3)
+    my waitForSetupText(appName, "Waiting for approval", 10)
     return
   end if
 
@@ -1012,6 +1068,7 @@ if [[ -z "$IDRIVE_CLI" || ! -x "$IDRIVE_CLI" ]]; then
 fi
 
 terminate_app_process
+uninstall_smoke_daemon_service
 rm -rf "$SMOKE_APP_DATA"
 if run_create_profile_smoke || run_user_journey_smoke; then
   mkdir_p_or_fail "$SMOKE_HOME"
@@ -1046,17 +1103,19 @@ else
 fi
 open "${open_args[@]}" "$APP_PATH"
 
-if ! wait_for_process "$APP_PROCESS_NAME" 10; then
+if ! wait_for_app_process 10; then
   echo "FAIL: Iris Drive did not launch." >&2
   show_recent_logs >&2
   exit 1
 fi
+assert_app_running "immediately after launch"
 
 if ! wait_for_log "Iris Drive menu bar item installed" 10; then
   echo "FAIL: Iris Drive menu bar item was not installed." >&2
   show_recent_logs >&2
   exit 1
 fi
+assert_app_running "after installing the menu bar item"
 
 if run_create_profile_smoke || run_user_journey_smoke; then
   if ! wait_for_log "Iris Drive local profile not found" 10; then
@@ -1064,24 +1123,28 @@ if run_create_profile_smoke || run_user_journey_smoke; then
     show_recent_logs >&2
     exit 1
   fi
+  assert_app_running "after entering first-run setup"
 
   if run_user_journey_smoke; then
     if ! run_user_journey; then
       show_recent_logs >&2
       exit 1
     fi
+    assert_app_running "after the link-device journey"
   elif run_create_profile_gui_smoke; then
     if ! request_show_control_panel || ! drive_create_profile_gui "$CREATE_PROFILE_USERNAME"; then
       echo "FAIL: could not complete the Create profile GUI journey." >&2
       show_recent_logs >&2
       exit 1
     fi
+    assert_app_running "after the Create profile GUI journey"
   else
     if ! request_create_profile; then
       echo "FAIL: could not request Create profile." >&2
       show_recent_logs >&2
       exit 1
     fi
+    assert_app_running "after the direct Create profile request"
   fi
 
   if run_create_profile_smoke && ! wait_for_file "$SMOKE_CONFIG_DIR/key" 20; then
@@ -1112,6 +1175,8 @@ if run_create_profile_smoke || run_user_journey_smoke; then
       show_recent_logs >&2
       exit 1
     fi
+    assert_app_running "after Create profile daemon startup"
+    assert_daemon_running "after Create profile daemon startup"
   fi
 else
   if ! wait_for_log "Iris Drive control panel updated" 10; then
@@ -1119,12 +1184,15 @@ else
     show_recent_logs >&2
     exit 1
   fi
+  assert_app_running "after loading control panel status"
 
   if ! wait_for_daemon 10; then
     echo "FAIL: bundled idrive daemon did not start." >&2
     show_recent_logs >&2
     exit 1
   fi
+  assert_app_running "after bundled daemon startup"
+  assert_daemon_running "after bundled daemon startup"
 fi
 
 if run_ui_smoke && ! run_user_journey_smoke; then
@@ -1134,6 +1202,8 @@ if run_ui_smoke && ! run_user_journey_smoke; then
     show_recent_logs >&2
     exit 1
   fi
+  assert_app_running "after desktop UI actions"
+  assert_daemon_running "after desktop UI actions"
 
   if ! wait_for_log "Iris Drive mounted drive folder opened" 10 &&
     ! wait_for_log "Iris Drive mounted drive folder revealed" 1; then
@@ -1141,6 +1211,14 @@ if run_ui_smoke && ! run_user_journey_smoke; then
     show_recent_logs >&2
     exit 1
   fi
+  assert_app_running "after Show Drive Folder"
+  assert_daemon_running "after Show Drive Folder"
+fi
+
+sleep "${IRIS_DRIVE_MACOS_SMOKE_SURVIVAL_SECONDS:-5}"
+assert_app_running "during post-smoke survival check"
+if ! run_create_profile_smoke || [[ -f "$SMOKE_CONFIG_DIR/key" ]]; then
+  assert_daemon_running "during post-smoke survival check"
 fi
 
 echo "MACOS_SMOKE_OK"

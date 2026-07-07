@@ -32,7 +32,7 @@ fn native_apply_owner_snapshot_for_test(
     for op in &owner_account_state.profile_roster_ops {
         let event =
             nostr_sdk::Event::from_json(&op.event_json).context("parsing profile roster op")?;
-        iris_drive_core::relay_sync::apply_remote_iris_profile_roster_op_event(
+        iris_drive_core::relay_sync::apply_remote_nostr_identity_roster_op_event(
             &mut linked_config,
             &event,
         )

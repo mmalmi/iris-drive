@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::app_keys::{AppActorEntry, AppActorRole};
-use crate::iris_profile::{IrisProfileKeyPurpose, KeyWrapStatus};
+use crate::nostr_identity::{NostrIdentityKeyPurpose, SecretWrapStatus};
 use crate::profile::{AppKeyAuthorizationState, ProfileState};
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
@@ -69,9 +69,10 @@ pub fn sync_status_label(sync_status: &str) -> String {
         "root synced" => "Root synced".to_owned(),
         "profile synced" => "Profile synced".to_owned(),
         "up to date" => "Up to date".to_owned(),
+        "ready" => "Ready".to_owned(),
         "sync error" => "Sync failed".to_owned(),
         "paused" => "Sync paused".to_owned(),
-        value if value.trim().is_empty() => "Sync paused".to_owned(),
+        value if value.trim().is_empty() => "Ready".to_owned(),
         value => value.to_owned(),
     }
 }
@@ -210,7 +211,7 @@ pub struct AppKeyRosterRow {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IrisProfileSummary {
+pub struct NostrIdentitySummary {
     pub profile_id: String,
     pub current_app_key_pubkey_hex: String,
     pub current_app_key_npub: String,
@@ -236,12 +237,12 @@ pub fn pubkey_npub(hex: &str) -> String {
 }
 
 #[must_use]
-pub fn iris_profile_summary(state: &ProfileState) -> IrisProfileSummary {
+pub fn nostr_identity_summary(state: &ProfileState) -> NostrIdentitySummary {
     let projection = state.profile_projection();
     let has_profile_roster = state.has_profile_roster_evidence();
     let current_facet = projection.active_facets.get(&state.app_key_pubkey);
     let current_key_epoch = projection
-        .key_epochs
+        .secret_epochs
         .keys()
         .next_back()
         .copied()
@@ -257,15 +258,15 @@ pub fn iris_profile_summary(state: &ProfileState) -> IrisProfileSummary {
             .values()
             .filter(|facet| {
                 matches!(
-                    projection.key_wrap_status(&facet.pubkey, epoch),
-                    KeyWrapStatus::RepairNeeded
+                    projection.secret_wrap_status(&facet.pubkey, epoch),
+                    SecretWrapStatus::RepairNeeded
                 )
             })
             .map(|facet| pubkey_npub(&facet.pubkey))
             .collect()
     });
 
-    IrisProfileSummary {
+    NostrIdentitySummary {
         profile_id: state.profile_id.to_string(),
         current_app_key_pubkey_hex: state.app_key_pubkey.clone(),
         current_app_key_npub: pubkey_npub(&state.app_key_pubkey),
@@ -295,20 +296,23 @@ pub fn iris_profile_summary(state: &ProfileState) -> IrisProfileSummary {
         current_key_epoch,
         recovery_phrase_facet_count: facet_count_for_purpose(
             &projection,
-            IrisProfileKeyPurpose::RecoveryPhrase,
+            NostrIdentityKeyPurpose::RecoveryPhrase,
         ),
-        nip46_facet_count: facet_count_for_purpose(&projection, IrisProfileKeyPurpose::Nip46Signer),
+        nip46_facet_count: facet_count_for_purpose(
+            &projection,
+            NostrIdentityKeyPurpose::Nip46Signer,
+        ),
         social_profile_facet_count: facet_count_for_purpose(
             &projection,
-            IrisProfileKeyPurpose::SocialProfile,
+            NostrIdentityKeyPurpose::SocialProfile,
         ),
         missing_key_wrap_npubs,
     }
 }
 
 fn facet_count_for_purpose(
-    projection: &crate::IrisProfileRosterProjection,
-    purpose: IrisProfileKeyPurpose,
+    projection: &crate::NostrIdentityRosterProjection,
+    purpose: NostrIdentityKeyPurpose,
 ) -> usize {
     projection
         .active_facets
@@ -463,6 +467,8 @@ mod tests {
         assert_eq!(sync_status_label("running"), "Sync on");
         assert_eq!(sync_status_label("profile synced"), "Profile synced");
         assert_eq!(sync_status_label("up to date"), "Up to date");
+        assert_eq!(sync_status_label("ready"), "Ready");
+        assert_eq!(sync_status_label(""), "Ready");
         assert_eq!(sync_status_label("paused"), "Sync paused");
 
         assert_eq!(app_actor_role_key(AppActorRole::Admin), "admin");
@@ -557,7 +563,7 @@ mod tests {
     }
 
     #[test]
-    fn iris_profile_summary_uses_profile_roster_projection() {
+    fn nostr_identity_summary_uses_profile_roster_projection() {
         let dir = tempdir().unwrap();
         let mut account = Profile::create(dir.path(), Some("Native".to_owned())).unwrap();
         let profile_id = account.state.profile_id.to_string();
@@ -573,14 +579,14 @@ mod tests {
             .map(|op| op.content.created_at)
             .max()
             .unwrap_or(0);
-        let incomplete_epoch_event = crate::build_iris_profile_roster_op_event(
+        let incomplete_epoch_event = crate::build_nostr_identity_roster_op_event(
             account.app_key.keys(),
             account.state.profile_id,
-            crate::iris_profile_roster_parent_ids(&account.state.profile_roster_ops),
+            crate::nostr_identity_roster_parent_ids(&account.state.profile_roster_ops),
             None,
-            crate::IrisProfileRosterOp::RotateKeyEpoch {
+            crate::NostrIdentityRosterOp::RotateSecretEpoch {
                 epoch: 3,
-                wrapped_dck: [(current_app_key.clone(), "wrap-current".to_owned())]
+                wrapped_secrets: [(current_app_key.clone(), "wrap-current".to_owned())]
                     .into_iter()
                     .collect(),
             },
@@ -590,11 +596,11 @@ mod tests {
         account
             .state
             .profile_roster_ops
-            .push(crate::parse_iris_profile_roster_op_event(&incomplete_epoch_event).unwrap());
+            .push(crate::parse_nostr_identity_roster_op_event(&incomplete_epoch_event).unwrap());
         account.state.sync_app_keys_from_profile();
         account.state.recompute_authorization();
 
-        let summary = iris_profile_summary(&account.state);
+        let summary = nostr_identity_summary(&account.state);
 
         assert_eq!(summary.profile_id, profile_id);
         assert_eq!(summary.current_app_key_pubkey_hex, current_app_key);

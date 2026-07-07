@@ -601,7 +601,7 @@ test('local-release dry-run stages Linux CLI binary for cargo-deb', () => {
   assert.match(result.stdout, /\$ mkdir -p .*target\/release/)
   assert.match(
     result.stdout,
-    /\$ cp .*target\/x86_64-unknown-linux-gnu\/release\/idrive .*target\/release\/idrive[\s\S]*\$ cargo deb --no-build/,
+    /\$ cp .*target\/x86_64-unknown-linux-gnu\/release\/idrive .*linux\/target\/release\/idrive[\s\S]*\$ cargo deb --no-build/,
   )
 })
 
@@ -872,13 +872,19 @@ test('TestFlight helper documents iris-drive App Store Connect inputs', () => {
   assert.match(result.stdout, /IRIS_DRIVE_TESTFLIGHT_GROUPS/)
 })
 
-test('iOS build keeps App Store Connect auth out of Xcode signing', () => {
+test('iOS manual build keeps App Store Connect auth out of Xcode signing', () => {
   const script = readFileSync(
     fileURLToPath(new URL('./ios-build', import.meta.url)),
     'utf8',
   )
+  const manualArchive = script.match(
+    /return\n  fi\n\n([\s\S]*?xcodebuild[\s\S]*?CODE_SIGN_STYLE=Manual[\s\S]*?archive)/,
+  )?.[1] ?? ''
 
-  assert.doesNotMatch(script, /-authenticationKeyPath/)
+  assert.match(manualArchive, /CODE_SIGN_STYLE=Manual/)
+  assert.doesNotMatch(manualArchive, /-authenticationKeyPath/)
+  assert.doesNotMatch(manualArchive, /\$\{auth_args\[@\]\}/)
+  assert.match(script, /xcode_auth_args\(\)/)
   assert.match(script, /scripts\/ios-profiles/)
   assert.match(script, /CODE_SIGN_STYLE=Manual/)
 })
@@ -893,6 +899,19 @@ test('iOS build uses the shared App Store Connect auth defaults', () => {
   assert.match(script, /private_keys/)
   assert.match(script, /AuthKey_\*\.p8/)
   assert.match(script, /issuer\.txt/)
+})
+
+test('iOS build defaults to the Sirius Business release bundle', () => {
+  const script = readFileSync(
+    fileURLToPath(new URL('./ios-build', import.meta.url)),
+    'utf8',
+  )
+
+  assert.match(script, /DEFAULT_TEAM_ID="8G9P8AN75D"/)
+  assert.match(script, /DEFAULT_BUNDLE_ID="fi\.siriusbusiness\.drive"/)
+  assert.match(script, /BUNDLE_ID="\$\{IRIS_DRIVE_IOS_BUNDLE_ID:-\$DEFAULT_BUNDLE_ID\}"/)
+  assert.match(script, /"\$BUNDLE_ID" == "to\.iris\.drive\.ios"/)
+  assert.match(script, /DEFAULT_APP_GROUP_IDENTIFIER="group\.to\.iris\.drive"/)
 })
 
 test('iOS build provisions manual App Store profiles before TestFlight export', () => {
@@ -930,9 +949,11 @@ test('iOS provisioning helper covers the app and extension bundle IDs', () => {
     'utf8',
   )
 
-  assert.match(script, /to\.iris\.drive\.ios/)
-  assert.match(script, /to\.iris\.drive\.ios\.FileProvider/)
-  assert.match(script, /to\.iris\.drive\.ios\.ShareExtension/)
+  assert.match(script, /defaultIosBundleId = 'fi\.siriusbusiness\.drive'/)
+  assert.match(script, /\$\{iosBundleId\}\.FileProvider/)
+  assert.match(script, /\$\{iosBundleId\}\.ShareExtension/)
+  assert.match(script, /IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID/)
+  assert.match(script, /IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID/)
   assert.match(script, /IRIS_DRIVE_ASC_AUTH_KEY_PATH/)
   assert.match(script, /IRIS_DRIVE_IOS_PROFILES_ENV_PATH/)
   assert.match(script, /IRIS_DRIVE_IOS_PROFILE_RECREATE/)
@@ -984,7 +1005,7 @@ test('TestFlight helper creates a missing App Store Connect app record', async (
           {
             type: 'bundleIds',
             id: 'BUNDLE123',
-            attributes: { identifier: 'to.iris.drive.ios' },
+            attributes: { identifier: 'fi.siriusbusiness.drive' },
           },
         ],
       })
@@ -995,7 +1016,7 @@ test('TestFlight helper creates a missing App Store Connect app record', async (
         data: {
           type: 'apps',
           id: 'APP123',
-          attributes: { name: body.data.attributes.name, bundleId: 'to.iris.drive.ios' },
+          attributes: { name: body.data.attributes.name, bundleId: 'fi.siriusbusiness.drive' },
         },
       })
       return
@@ -1013,7 +1034,7 @@ test('TestFlight helper creates a missing App Store Connect app record', async (
       IRIS_DRIVE_ASC_AUTH_KEY_PATH: keyPath,
       IRIS_DRIVE_ASC_AUTH_KEY_ID: 'TESTKEY123',
       IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID: '00000000-0000-0000-0000-000000000000',
-      IRIS_DRIVE_IOS_BUNDLE_ID: 'to.iris.drive.ios',
+      IRIS_DRIVE_IOS_BUNDLE_ID: 'fi.siriusbusiness.drive',
       IRIS_DRIVE_ASC_APP_NAME: 'Iris Drive',
     },
   })
@@ -1028,7 +1049,7 @@ test('TestFlight helper creates a missing App Store Connect app record', async (
       attributes: {
         name: 'Iris Drive',
         primaryLocale: 'en-US',
-        sku: 'to.iris.drive.ios',
+        sku: 'fi.siriusbusiness.drive',
         platform: 'IOS',
       },
       relationships: {
@@ -1061,7 +1082,7 @@ test('TestFlight helper explains App Store Connect app creation permission failu
           {
             type: 'bundleIds',
             id: 'BUNDLE123',
-            attributes: { identifier: 'to.iris.drive.ios' },
+            attributes: { identifier: 'fi.siriusbusiness.drive' },
           },
         ],
       })
@@ -1092,7 +1113,7 @@ test('TestFlight helper explains App Store Connect app creation permission failu
       IRIS_DRIVE_ASC_AUTH_KEY_PATH: keyPath,
       IRIS_DRIVE_ASC_AUTH_KEY_ID: 'TESTKEY123',
       IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID: '00000000-0000-0000-0000-000000000000',
-      IRIS_DRIVE_IOS_BUNDLE_ID: 'to.iris.drive.ios',
+      IRIS_DRIVE_IOS_BUNDLE_ID: 'fi.siriusbusiness.drive',
       IRIS_DRIVE_ASC_APP_NAME: 'Iris Drive',
     },
   })
@@ -1100,8 +1121,73 @@ test('TestFlight helper explains App Store Connect app creation permission failu
   assert.equal(result.status, 1)
   assert.match(result.stderr, /cannot create App Store Connect app records/)
   assert.match(result.stderr, /Name: Iris Drive/)
-  assert.match(result.stderr, /Bundle ID: to\.iris\.drive\.ios/)
-  assert.match(result.stderr, /SKU: to\.iris\.drive\.ios/)
+  assert.match(result.stderr, /Bundle ID: fi\.siriusbusiness\.drive/)
+  assert.match(result.stderr, /SKU: fi\.siriusbusiness\.drive/)
+})
+
+test('TestFlight helper matches builds by marketing version and build number', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-asc-test-'))
+  const keyPath = join(root, 'AuthKey_TESTKEY123.p8')
+  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+  writeFileSync(keyPath, privateKey.export({ type: 'pkcs8', format: 'pem' }))
+
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, `http://${request.headers.host}`)
+    if (request.method === 'GET' && url.pathname === '/v1/apps') {
+      writeJson(response, 200, {
+        data: [
+          {
+            type: 'apps',
+            id: 'APP123',
+            attributes: { name: 'Iris Drive', bundleId: 'fi.siriusbusiness.drive' },
+          },
+        ],
+      })
+      return
+    }
+    if (request.method === 'GET' && url.pathname === '/v1/builds') {
+      writeJson(response, 200, {
+        data: [
+          {
+            type: 'builds',
+            id: 'OLD1017',
+            attributes: { version: '1017', processingState: 'VALID' },
+            relationships: {
+              preReleaseVersion: { data: { type: 'preReleaseVersions', id: 'PR016' } },
+            },
+          },
+        ],
+        included: [
+          {
+            type: 'preReleaseVersions',
+            id: 'PR016',
+            attributes: { version: '0.1.16', platform: 'IOS' },
+          },
+        ],
+      })
+      return
+    }
+    writeJson(response, 404, { errors: [{ title: 'unexpected request' }] })
+  })
+  t.after(() => server.close())
+  await listen(server)
+
+  const result = await spawnForTest('bash', ['scripts/testflight-internal', 'status'], {
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
+    env: {
+      ...process.env,
+      IRIS_DRIVE_ASC_BASE_URL: `http://127.0.0.1:${server.address().port}/v1/`,
+      IRIS_DRIVE_ASC_AUTH_KEY_PATH: keyPath,
+      IRIS_DRIVE_ASC_AUTH_KEY_ID: 'TESTKEY123',
+      IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID: '00000000-0000-0000-0000-000000000000',
+      IRIS_DRIVE_IOS_BUNDLE_ID: 'fi.siriusbusiness.drive',
+      IRIS_DRIVE_IOS_MARKETING_VERSION: '0.1.17',
+      IRIS_DRIVE_IOS_BUILD_NUMBER: '1017',
+    },
+  })
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /No TestFlight build 0\.1\.17 \(1017\) found/)
 })
 
 test('iOS FileProvider declares the required App Store document group', () => {
@@ -1109,11 +1195,16 @@ test('iOS FileProvider declares the required App Store document group', () => {
     fileURLToPath(new URL('../ios/FileProvider/Info.plist', import.meta.url)),
     'utf8',
   )
+  const project = readFileSync(
+    fileURLToPath(new URL('../ios/project.yml', import.meta.url)),
+    'utf8',
+  )
 
   assert.match(
     plist,
-    /<key>NSExtensionFileProviderDocumentGroup<\/key>\s*<string>group\.to\.iris\.drive<\/string>/,
+    /<key>NSExtensionFileProviderDocumentGroup<\/key>\s*<string>\$\(IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER\)<\/string>/,
   )
+  assert.match(project, /IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER: group\.fi\.siriusbusiness\.drive/)
 })
 
 test('iOS app icons have no alpha channel', () => {

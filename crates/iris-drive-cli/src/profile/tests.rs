@@ -98,26 +98,29 @@ async fn app_key_link_app_message_records_inbound_request_for_owner_admin() {
     config.upsert_drive(Drive::primary(account.state.root_scope_id()));
     config.save(config_path_in(config_dir.path())).unwrap();
 
-    let linked_device = nostr_sdk::Keys::generate().public_key().to_hex();
+    let linked_device = nostr_sdk::Keys::generate();
+    let linked_device_hex = linked_device.public_key().to_hex();
     let invite_pubkey =
         iris_drive_core::app_key_link_invite_pubkey(&account.state.app_key_link_secret).unwrap();
     let frame = AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: account.state.profile_id,
         admin_app_key_pubkey: account.state.app_key_pubkey.clone(),
-        app_key_pubkey: linked_device.clone(),
+        app_key_pubkey: linked_device_hex.clone(),
         invite_pubkey: invite_pubkey.clone(),
         label: Some(" phone ".into()),
         requested_at: 123,
         url: encode_app_key_approval_request(
-            account.state.profile_id,
             &linked_device,
-            &invite_pubkey,
+            Some(account.state.profile_id),
+            Some(&account.state.app_key_pubkey),
             Some(" phone "),
-        ),
+            123,
+        )
+        .unwrap(),
     };
     let message = iris_drive_core::FipsAppMessage {
-        peer_id: pubkey_npub(&linked_device),
+        peer_id: pubkey_npub(&linked_device_hex),
         topic: APP_KEY_LINK_REQUEST_APP_TOPIC.to_string(),
         data: serde_json::to_vec(&frame).unwrap(),
     };
@@ -131,7 +134,7 @@ async fn app_key_link_app_message_records_inbound_request_for_owner_admin() {
     let saved = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
     let inbound = &saved.profile.unwrap().inbound_app_key_link_requests;
     assert_eq!(inbound.len(), 1);
-    assert_eq!(inbound[0].app_key_pubkey, linked_device);
+    assert_eq!(inbound[0].app_key_pubkey, linked_device_hex);
     assert_eq!(inbound[0].label.as_deref(), Some("phone"));
     assert_eq!(inbound[0].requested_at, 123);
 }
@@ -147,24 +150,28 @@ async fn app_key_link_app_message_ignores_wrong_link_secret() {
     config.upsert_drive(Drive::primary(account.state.root_scope_id()));
     config.save(config_path_in(config_dir.path())).unwrap();
 
-    let linked_device = nostr_sdk::Keys::generate().public_key().to_hex();
+    let linked_device = nostr_sdk::Keys::generate();
+    let linked_device_hex = linked_device.public_key().to_hex();
+    let wrong_invite_pubkey = nostr_sdk::Keys::generate().public_key().to_hex();
     let frame = AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: account.state.profile_id,
         admin_app_key_pubkey: account.state.app_key_pubkey.clone(),
-        app_key_pubkey: linked_device.clone(),
-        invite_pubkey: nostr_sdk::Keys::generate().public_key().to_hex(),
+        app_key_pubkey: linked_device_hex.clone(),
+        invite_pubkey: wrong_invite_pubkey,
         label: Some("phone".into()),
         requested_at: 123,
         url: encode_app_key_approval_request(
-            account.state.profile_id,
             &linked_device,
-            &nostr_sdk::Keys::generate().public_key().to_hex(),
+            Some(account.state.profile_id),
+            Some(&account.state.app_key_pubkey),
             Some("phone"),
-        ),
+            123,
+        )
+        .unwrap(),
     };
     let message = iris_drive_core::FipsAppMessage {
-        peer_id: pubkey_npub(&linked_device),
+        peer_id: pubkey_npub(&linked_device_hex),
         topic: APP_KEY_LINK_REQUEST_APP_TOPIC.to_string(),
         data: serde_json::to_vec(&frame).unwrap(),
     };

@@ -237,7 +237,7 @@ pub(crate) fn show_invite_share_member_dialog(
     body.append(&evidence_label);
     body.append(&evidence);
 
-    let profile_id = setup_entry("IrisProfile UUID");
+    let profile_id = setup_entry("NostrIdentity UUID");
     let app_key = setup_entry("Recipient device key");
     let npub_hint = setup_entry("User ID");
     let display_name = setup_entry("Name");
@@ -287,7 +287,7 @@ pub(crate) fn show_invite_share_member_dialog(
                 if profile_id.is_empty() && app_key.is_empty() {
                     if representative_npub_hint.is_empty() {
                         model.ui.notice.set_text(
-                            "Recipient evidence, IrisProfile/device key, or User ID is required",
+                            "Recipient evidence, NostrIdentity/device key, or User ID is required",
                         );
                         return;
                     }
@@ -309,7 +309,7 @@ pub(crate) fn show_invite_share_member_dialog(
                         model
                             .ui
                             .notice
-                            .set_text("Both IrisProfile UUID and device key are required");
+                            .set_text("Both NostrIdentity UUID and device key are required");
                         return;
                     }
                     dispatch_desktop_action(NativeAppAction::InviteShareMember {
@@ -483,7 +483,7 @@ pub(crate) fn show_revoke_share_member_dialog(
     body.append(&title);
 
     let message = gtk::Label::new(Some(&format!(
-        "Revoke {display_name} from this share? Future key epochs will not be wrapped for this IrisProfile."
+        "Revoke {display_name} from this share? Future key epochs will not be wrapped for this identity."
     )));
     message.add_css_class("iris-muted");
     message.set_xalign(0.0);
@@ -563,32 +563,6 @@ pub(crate) fn set_launch_on_startup(model: &AppRef, enabled: bool) {
 pub(crate) fn reset_relays(model: &AppRef) {
     match dispatch_desktop_action(NativeAppAction::ResetRelays) {
         Ok(_) => refresh(model),
-        Err(error) => model.ui.notice.set_text(&error),
-    }
-}
-
-pub(crate) fn reset_invite(model: &AppRef) {
-    match dispatch_desktop_action(NativeAppAction::ResetInvite) {
-        Ok(_) => {
-            model.ui.notice.set_text("Invite reset");
-            refresh(model);
-        }
-        Err(error) => model.ui.notice.set_text(&error),
-    }
-}
-
-pub(crate) fn copy_app_key_link_invite(model: &AppRef) {
-    match desktop_state() {
-        Ok(state) => {
-            let invite = profile(&state)
-                .map(|account| account.app_key_link_invite.as_str())
-                .unwrap_or_default();
-            if invite.is_empty() {
-                model.ui.notice.set_text("Invite link unavailable");
-            } else {
-                copy_text(model, invite, "Invite link copied");
-            }
-        }
         Err(error) => model.ui.notice.set_text(&error),
     }
 }
@@ -1006,7 +980,7 @@ fn add_recovery_device_pubkey(model: &AppRef, recovery_pubkey: &str) -> Result<(
 
 pub(crate) fn approve_device_values(model: &AppRef, device: String, label: String) -> bool {
     if device.trim().is_empty() {
-        model.ui.notice.set_text("Device key is required");
+        model.ui.notice.set_text("Device Key is required");
         return false;
     }
 
@@ -1027,6 +1001,39 @@ pub(crate) fn approve_device_values(model: &AppRef, device: String, label: Strin
             false
         }
     }
+}
+
+pub(crate) fn confirm_approve_device(model: &AppRef, request: String) {
+    let request = request.trim().to_string();
+    if request.is_empty() {
+        model.ui.notice.set_text("Device request is required");
+        return;
+    }
+    if !iris_drive_app_core::validate_device_approval_input(request.clone()).is_complete {
+        model
+            .ui
+            .notice
+            .set_text("Enter a complete request link or device key.");
+        return;
+    }
+    let Some(window) = model.application.active_window() else {
+        approve_device_values(model, request, String::new());
+        return;
+    };
+    let dialog = adw::AlertDialog::builder()
+        .heading("Approve this device?")
+        .body("This will add the joining device to Iris Drive.")
+        .close_response("cancel")
+        .default_response("approve")
+        .build();
+    dialog.add_responses(&[("cancel", "Cancel"), ("approve", "Approve")]);
+    let model = Rc::clone(model);
+    dialog.choose(&window, None::<&gio::Cancellable>, move |response| {
+        if response == "approve" {
+            approve_device_values(&model, request.clone(), String::new());
+            model.ui.add_device_entry.set_text("");
+        }
+    });
 }
 
 pub(crate) fn show_delete_device_dialog(model: &AppRef, device_npub: String, label: String) {

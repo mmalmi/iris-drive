@@ -381,34 +381,211 @@ fn provider_delete_tombstones_foreign_visible_files() {
 }
 
 #[test]
+fn provider_write_does_not_tombstone_unrelated_missing_peer_file() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let (_account, remote, remote_meta) = init_config_with_remote_device(config_dir.path());
+    mark_daemon_live(config_dir.path());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let (remote_root, empty_root) = runtime.block_on(async {
+        let daemon = Daemon::open(config_dir.path()).unwrap();
+        let remote_dir = tempfile::tempdir().unwrap();
+        std::fs::write(remote_dir.path().join("foreign.txt"), b"from remote").unwrap();
+        let remote_root = iris_drive_core::indexer::index_dir_with_history_and_meta(
+            daemon.tree(),
+            remote_dir.path(),
+            None,
+            remote_meta.created_at,
+            Some(&remote_meta),
+        )
+        .await
+        .unwrap();
+        let empty_root = daemon.tree().put_directory(Vec::new()).await.unwrap();
+        (remote_root, empty_root)
+    });
+
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
+    let mut drive = config.drive(PRIMARY_DRIVE_ID).unwrap().clone();
+    drive.app_key_roots.insert(
+        remote.clone(),
+        AppKeyRootRef::from_meta(
+            remote_root.to_string(),
+            remote_meta.created_at,
+            &remote_meta,
+        ),
+    );
+    config.upsert_drive(drive);
+    config.save(config_path_in(config_dir.path())).unwrap();
+
+    runtime.block_on(async {
+        let mut daemon = Daemon::open(config_dir.path()).unwrap();
+        daemon
+            .materialize_primary_merged_root()
+            .await
+            .unwrap()
+            .expect("local cache root should include the remote file");
+    });
+
+    let source_dir = tempfile::tempdir().unwrap();
+    let source = source_dir.path().join("local.txt");
+    std::fs::write(&source, b"from local").unwrap();
+
+    cmd_provider(
+        config_dir.path(),
+        ProviderCmd::Write {
+            base_root_cid: Some(empty_root.to_string()),
+            path: "local.txt".into(),
+            source,
+        },
+    )
+    .unwrap();
+
+    runtime.block_on(async {
+        let daemon = Daemon::open(config_dir.path()).unwrap();
+        let merged = iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
+            .await
+            .unwrap();
+        let paths = merged
+            .view
+            .files
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+        assert!(
+            paths.contains(&"foreign.txt"),
+            "unrelated peer file should not be tombstoned by provider write: {merged:#?}"
+        );
+        assert!(paths.contains(&"local.txt"));
+        assert!(
+            !merged
+                .view
+                .suppressed_by_tombstone
+                .iter()
+                .any(|path| path == "foreign.txt"),
+            "foreign file was suppressed by an unrelated provider write: {merged:#?}"
+        );
+    });
+}
+
+#[test]
+fn provider_import_tombstone_scope_preserves_unrelated_base_file() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let (_account, remote, remote_meta) = init_config_with_remote_device(config_dir.path());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let remote_root = runtime.block_on(async {
+        let daemon = Daemon::open(config_dir.path()).unwrap();
+        let remote_dir = tempfile::tempdir().unwrap();
+        std::fs::write(remote_dir.path().join("foreign.txt"), b"from remote").unwrap();
+        iris_drive_core::indexer::index_dir_with_history_and_meta(
+            daemon.tree(),
+            remote_dir.path(),
+            None,
+            remote_meta.created_at,
+            Some(&remote_meta),
+        )
+        .await
+        .unwrap()
+    });
+
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
+    let mut drive = config.drive(PRIMARY_DRIVE_ID).unwrap().clone();
+    drive.app_key_roots.insert(
+        remote.clone(),
+        AppKeyRootRef::from_meta(
+            remote_root.to_string(),
+            remote_meta.created_at,
+            &remote_meta,
+        ),
+    );
+    config.upsert_drive(drive);
+    config.save(config_path_in(config_dir.path())).unwrap();
+
+    runtime.block_on(async {
+        let mut daemon = Daemon::open(config_dir.path()).unwrap();
+        let base = iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
+            .await
+            .unwrap()
+            .root_cid;
+        let (local_hash, local_size) = daemon.tree().put(b"from local").await.unwrap();
+        let edited = daemon
+            .tree()
+            .set_entry(
+                &daemon.tree().put_directory(Vec::new()).await.unwrap(),
+                &[],
+                "local.txt",
+                &local_hash,
+                local_size,
+                hashtree_core::LinkType::Blob,
+            )
+            .await
+            .unwrap();
+        let tombstone_paths = BTreeSet::from(["local.txt".to_string()]);
+        provider_retry::import_provider_root_with_retry(
+            &mut daemon,
+            edited,
+            Some(base),
+            Some(&tombstone_paths),
+        )
+        .await
+        .unwrap();
+
+        let merged = iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
+            .await
+            .unwrap();
+        let paths = merged
+            .view
+            .files
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(paths, vec!["foreign.txt", "local.txt"]);
+        assert!(
+            !merged
+                .view
+                .suppressed_by_tombstone
+                .iter()
+                .any(|path| path == "foreign.txt"),
+            "unrelated base file should not be tombstoned: {merged:#?}"
+        );
+    });
+}
+
+#[test]
 fn provider_import_retries_windows_transient_missing_store_reads() {
-    assert!(provider_import_error_message_is_retryable(
+    assert!(provider_retry::provider_import_error_message_is_retryable(
         "index: tree: Store error: IO error: The system cannot find the file specified. (os error 2)"
     ));
-    assert!(provider_import_error_message_is_retryable(
+    assert!(provider_retry::provider_import_error_message_is_retryable(
         "index: tree: Store error: IO error: No such file or directory (os error 2)"
     ));
-    assert!(provider_import_error_message_is_retryable(
+    assert!(provider_retry::provider_import_error_message_is_retryable(
         "index: tree: Missing chunk: abc123"
     ));
-    assert!(provider_import_error_message_is_retryable(
+    assert!(provider_retry::provider_import_error_message_is_retryable(
         "local store is missing provider root block abc123"
     ));
-    assert!(!provider_import_error_message_is_retryable(
+    assert!(!provider_retry::provider_import_error_message_is_retryable(
         "config: invalid json"
     ));
 }
 
 #[test]
 fn provider_import_retries_long_enough_for_peer_root_warmup() {
-    let retry_budget_ms: u64 = PROVIDER_IMPORT_RETRY_DELAYS_MS.iter().sum();
+    let retry_budget_ms: u64 = provider_retry::PROVIDER_IMPORT_RETRY_DELAYS_MS.iter().sum();
 
     assert!(
         retry_budget_ms >= 60_000,
         "provider root warmup retry budget was only {retry_budget_ms}ms"
     );
     assert!(
-        PROVIDER_IMPORT_RETRY_DELAYS_MS
+        provider_retry::PROVIDER_IMPORT_RETRY_DELAYS_MS
             .iter()
             .all(|delay| *delay <= 16_000),
         "individual provider retry sleeps should stay bounded"

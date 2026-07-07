@@ -12,12 +12,13 @@ use thiserror::Error;
 
 use crate::app_key_summary::pubkey_npub;
 use crate::config::AppKeyRootRef;
-use crate::iris_profile::{
-    IrisProfileCapabilities, IrisProfileError, IrisProfileFacet, IrisProfileId,
-    IrisProfileKeyEpoch, IrisProfileKeyPurpose, IrisProfileRosterOp, IrisProfileRosterProjection,
-    IrisProfileTombstone, SignedIrisProfileFacetAcceptance, SignedIrisProfileRosterOp,
-    build_iris_profile_facet_acceptance_event, iris_profile_tag_kind,
-    parse_iris_profile_facet_acceptance_event, project_iris_profile_roster,
+use crate::nostr_identity::{
+    NostrIdentityCapabilities, NostrIdentityError, NostrIdentityFacet, NostrIdentityId,
+    NostrIdentityKeyPurpose, NostrIdentityRosterOp, NostrIdentityRosterProjection,
+    NostrIdentitySecretEpoch, NostrIdentityTombstone, SignedNostrIdentityFacetAcceptance,
+    SignedNostrIdentityRosterOp, build_nostr_identity_facet_acceptance_event,
+    nostr_identity_tag_kind, parse_nostr_identity_facet_acceptance_event,
+    project_nostr_identity_roster,
 };
 use crate::provider::{normalize_provider_path, sanitized_provider_file_name};
 
@@ -35,7 +36,7 @@ pub enum SharingError {
     #[error("invalid recipient pubkey: {0}")]
     InvalidPubkey(String),
     #[error("iris profile: {0}")]
-    IrisProfile(#[from] IrisProfileError),
+    NostrIdentity(#[from] NostrIdentityError),
     #[error("no share key epoch")]
     NoKeyEpoch,
     #[error("no share key wrap for the current AppKey")]
@@ -47,11 +48,11 @@ pub enum SharingError {
     #[error("current AppKey cannot administer this share")]
     CurrentAppKeyCannotAdminShare,
     #[error("share member not found: {0}")]
-    ShareMemberNotFound(IrisProfileId),
+    ShareMemberNotFound(NostrIdentityId),
     #[error("share member is revoked: {0}")]
-    ShareMemberRevoked(IrisProfileId),
-    #[error("share invite is not for IrisProfile {local_profile_id}")]
-    ShareInviteNotForLocalProfile { local_profile_id: IrisProfileId },
+    ShareMemberRevoked(NostrIdentityId),
+    #[error("share invite is not for NostrIdentity {local_profile_id}")]
+    ShareInviteNotForLocalProfile { local_profile_id: NostrIdentityId },
     #[error("current AppKey cannot revoke its own share member")]
     CannotRevokeCurrentShareMember,
     #[error("current AppKey cannot change its own share member role")]
@@ -108,11 +109,11 @@ impl ShareRole {
     }
 
     #[must_use]
-    pub fn capabilities(self) -> IrisProfileCapabilities {
+    pub fn capabilities(self) -> NostrIdentityCapabilities {
         match self {
-            Self::Admin => IrisProfileCapabilities::app_admin(),
-            Self::Editor => IrisProfileCapabilities::app_writer(),
-            Self::Reader => IrisProfileCapabilities::app_reader(),
+            Self::Admin => NostrIdentityCapabilities::app_admin(),
+            Self::Editor => NostrIdentityCapabilities::app_writer(),
+            Self::Reader => NostrIdentityCapabilities::app_reader(),
         }
     }
 
@@ -138,7 +139,7 @@ impl ShareRole {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShareRecipient {
-    pub profile_id: IrisProfileId,
+    pub profile_id: NostrIdentityId,
     pub app_pubkey: String,
     pub role: ShareRole,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -152,7 +153,7 @@ pub struct ShareRecipient {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResolvedShareRecipient {
-    pub profile_id: IrisProfileId,
+    pub profile_id: NostrIdentityId,
     pub representative_pubkey: String,
     pub representative_npub: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -166,7 +167,7 @@ pub struct ResolvedShareRecipient {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShareRecipientProfileEvidence {
-    pub profile_id: IrisProfileId,
+    pub profile_id: NostrIdentityId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub representative_pubkey: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -174,13 +175,13 @@ pub struct ShareRecipientProfileEvidence {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub roster_ops: Vec<SignedIrisProfileRosterOp>,
+    pub roster_ops: Vec<SignedNostrIdentityRosterOp>,
     #[serde(
         default,
         alias = "facet_acceptances",
         skip_serializing_if = "Vec::is_empty"
     )]
-    pub acceptances: Vec<SignedIrisProfileFacetAcceptance>,
+    pub acceptances: Vec<SignedNostrIdentityFacetAcceptance>,
 }
 
 impl ResolvedShareRecipient {
@@ -231,7 +232,7 @@ impl ShareMemberStatus {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShareMember {
-    pub profile_id: IrisProfileId,
+    pub profile_id: NostrIdentityId,
     pub role: ShareRole,
     pub status: ShareMemberStatus,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -272,7 +273,7 @@ impl PendingShareInvite {
 impl ShareMember {
     #[must_use]
     pub fn active(
-        profile_id: IrisProfileId,
+        profile_id: NostrIdentityId,
         role: ShareRole,
         representative_npub_hint: Option<String>,
         display_name: Option<String>,
@@ -295,13 +296,13 @@ impl ShareMember {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum ShareAccessTarget {
-    Id { id: IrisProfileId },
+    Id { id: NostrIdentityId },
     Pubkey { pubkey: String },
 }
 
 impl ShareAccessTarget {
     #[must_use]
-    pub const fn id(id: IrisProfileId) -> Self {
+    pub const fn id(id: NostrIdentityId) -> Self {
         Self::Id { id }
     }
 
@@ -336,7 +337,7 @@ pub struct ShareAccessGrant {
 impl ShareAccessGrant {
     #[must_use]
     pub fn active_id(
-        profile_id: IrisProfileId,
+        profile_id: NostrIdentityId,
         role: ShareRole,
         representative_npub_hint: Option<String>,
         display_name: Option<String>,
@@ -370,7 +371,7 @@ impl ShareAccessGrant {
 pub struct ShareAccessDevice {
     pub pubkey: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub profile_id: Option<IrisProfileId>,
+    pub profile_id: Option<NostrIdentityId>,
     pub added_at: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
@@ -380,21 +381,21 @@ pub struct ShareAccessDevice {
 #[serde(deny_unknown_fields)]
 pub struct ShareAccessSnapshot {
     pub schema: u32,
-    pub resource_id: IrisProfileId,
+    pub resource_id: NostrIdentityId,
     pub updated_at: i64,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub grants: Vec<ShareAccessGrant>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub devices: BTreeMap<String, ShareAccessDevice>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub tombstones: BTreeMap<String, IrisProfileTombstone>,
+    pub tombstones: BTreeMap<String, NostrIdentityTombstone>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub key_epochs: BTreeMap<u64, IrisProfileKeyEpoch>,
+    pub key_epochs: BTreeMap<u64, NostrIdentitySecretEpoch>,
 }
 
 impl ShareAccessSnapshot {
     #[must_use]
-    pub fn new(resource_id: IrisProfileId, updated_at: i64) -> Self {
+    pub fn new(resource_id: NostrIdentityId, updated_at: i64) -> Self {
         Self {
             schema: SHARE_ACCESS_SNAPSHOT_SCHEMA,
             resource_id,
@@ -419,15 +420,15 @@ pub struct SignedShareAccessSnapshot {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShareAccessProjection {
-    pub share_id: IrisProfileId,
+    pub share_id: NostrIdentityId,
     pub members: BTreeMap<String, ShareMember>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SharedFolder {
-    pub share_id: IrisProfileId,
-    pub owner_profile_id: IrisProfileId,
+    pub share_id: NostrIdentityId,
+    pub owner_profile_id: NostrIdentityId,
     pub source_path: String,
     pub display_name: String,
     pub local_role: ShareRole,
@@ -440,7 +441,7 @@ pub struct SharedFolder {
 
 impl SharedFolder {
     #[must_use]
-    pub fn projection(&self) -> IrisProfileRosterProjection {
+    pub fn projection(&self) -> NostrIdentityRosterProjection {
         project_share_access_snapshot(&self.access)
     }
 
@@ -468,9 +469,9 @@ impl SharedFolder {
 }
 
 fn shared_folder_profile_id_for_app_key_with_projection(
-    projection: &IrisProfileRosterProjection,
+    projection: &NostrIdentityRosterProjection,
     app_pubkey: &str,
-) -> Option<IrisProfileId> {
+) -> Option<NostrIdentityId> {
     projection
         .active_facets
         .get(app_pubkey)
@@ -484,8 +485,8 @@ fn shared_folder_profile_id_for_app_key_with_projection(
 }
 
 fn shared_folder_participant_profiles_with_projection(
-    projection: &IrisProfileRosterProjection,
-) -> BTreeMap<String, IrisProfileId> {
+    projection: &NostrIdentityRosterProjection,
+) -> BTreeMap<String, NostrIdentityId> {
     let mut participant_profiles = BTreeMap::new();
     for (app_pubkey, facet) in &projection.active_facets {
         if let Some(profile_id) = facet.profile_id {
@@ -539,7 +540,7 @@ pub fn project_share_access(snapshot: &ShareAccessSnapshot) -> ShareAccessProjec
 #[must_use]
 pub fn project_share_access_snapshot(
     snapshot: &ShareAccessSnapshot,
-) -> IrisProfileRosterProjection {
+) -> NostrIdentityRosterProjection {
     let members = project_share_access(snapshot).members;
     let mut active_facets = BTreeMap::new();
     for (pubkey, device) in &snapshot.devices {
@@ -550,7 +551,7 @@ pub fn project_share_access_snapshot(
         let Some(role) = role else {
             continue;
         };
-        let mut facet = IrisProfileFacet::app_key(
+        let mut facet = NostrIdentityFacet::app_key(
             pubkey.clone(),
             device.added_at,
             device.label.clone(),
@@ -559,11 +560,11 @@ pub fn project_share_access_snapshot(
         facet.profile_id = device.profile_id;
         active_facets.insert(pubkey.clone(), facet);
     }
-    IrisProfileRosterProjection {
+    NostrIdentityRosterProjection {
         profile_id: snapshot.resource_id,
         active_facets,
         tombstones: snapshot.tombstones.clone(),
-        key_epochs: snapshot.key_epochs.clone(),
+        secret_epochs: snapshot.key_epochs.clone(),
         accepted_op_ids: Vec::new(),
         rejected_op_ids: Vec::new(),
     }
@@ -598,7 +599,7 @@ fn effective_role_for_device(
 
 fn shared_folder_members_with_projection(
     folder: &SharedFolder,
-    _projection: &IrisProfileRosterProjection,
+    _projection: &NostrIdentityRosterProjection,
 ) -> BTreeMap<String, ShareMember> {
     project_share_access(&folder.access).members
 }
@@ -609,7 +610,7 @@ fn next_share_access_update_time(folder: &SharedFolder, requested_at: i64) -> i6
 
 fn member_for_app_key_with_projection(
     folder: &SharedFolder,
-    projection: &IrisProfileRosterProjection,
+    projection: &NostrIdentityRosterProjection,
     app_pubkey: &str,
 ) -> Option<ShareMember> {
     let profile_id = shared_folder_profile_id_for_app_key_with_projection(projection, app_pubkey)?;
@@ -620,7 +621,7 @@ fn member_for_app_key_with_projection(
 
 fn active_member_for_app_key_with_projection(
     folder: &SharedFolder,
-    projection: &IrisProfileRosterProjection,
+    projection: &NostrIdentityRosterProjection,
     app_pubkey: &str,
 ) -> Option<ShareMember> {
     member_for_app_key_with_projection(folder, projection, app_pubkey)
@@ -630,14 +631,14 @@ fn active_member_for_app_key_with_projection(
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ShareShortcut {
-    pub share_id: IrisProfileId,
+    pub share_id: NostrIdentityId,
     pub path: String,
     pub target_path: String,
 }
 
 impl ShareShortcut {
     pub fn new(
-        share_id: IrisProfileId,
+        share_id: NostrIdentityId,
         path: &str,
         target_path: &str,
     ) -> Result<Self, SharingError> {
@@ -661,7 +662,7 @@ impl ShareShortcut {
 #[allow(clippy::struct_excessive_bools)]
 #[serde(deny_unknown_fields)]
 pub struct SharedFolderView {
-    pub share_id: IrisProfileId,
+    pub share_id: NostrIdentityId,
     pub display_name: String,
     pub source_path: String,
     pub shared_with_me_path: String,
@@ -698,7 +699,7 @@ pub struct PendingShareInviteView {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SharedFolderMemberView {
-    pub profile_id: IrisProfileId,
+    pub profile_id: NostrIdentityId,
     pub role: ShareRole,
     pub status: ShareMemberStatus,
     pub display_name: String,
@@ -712,30 +713,30 @@ pub struct SharedFolderMemberView {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShareKeyRepairOutcome {
-    pub share_id: IrisProfileId,
+    pub share_id: NostrIdentityId,
     pub epoch: u64,
     pub repaired_pubkeys: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShareMemberRevokeOutcome {
-    pub share_id: IrisProfileId,
-    pub profile_id: IrisProfileId,
+    pub share_id: NostrIdentityId,
+    pub profile_id: NostrIdentityId,
     pub epoch: u64,
     pub revoked_app_pubkeys: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShareMemberRoleOutcome {
-    pub share_id: IrisProfileId,
-    pub profile_id: IrisProfileId,
+    pub share_id: NostrIdentityId,
+    pub profile_id: NostrIdentityId,
     pub role: ShareRole,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShareInviteOutcome {
-    pub share_id: IrisProfileId,
-    pub profile_id: IrisProfileId,
+    pub share_id: NostrIdentityId,
+    pub profile_id: NostrIdentityId,
     pub epoch: u64,
     pub invite_url: String,
 }
@@ -745,7 +746,7 @@ pub struct ShareInviteOutcome {
 pub struct ShareInviteBundle {
     pub schema: u32,
     pub shared_folder: SharedFolder,
-    pub recipient_profile_id: IrisProfileId,
+    pub recipient_profile_id: NostrIdentityId,
     pub role: ShareRole,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub representative_npub_hint: Option<String>,
@@ -867,7 +868,7 @@ pub fn shared_folder_view(
     current_app_pubkey: &str,
 ) -> SharedFolderView {
     let projection = folder.projection();
-    let current_key_epoch = projection.key_epochs.keys().next_back().copied();
+    let current_key_epoch = projection.secret_epochs.keys().next_back().copied();
     let missing_key_wrap_pubkeys = current_key_epoch.map_or_else(Vec::new, |epoch| {
         active_share_key_recipients_missing_wraps(folder, &projection, epoch)
     });
@@ -987,7 +988,7 @@ fn share_role_for_authorization(
 
 fn share_key_status(
     folder: &SharedFolder,
-    projection: &IrisProfileRosterProjection,
+    projection: &NostrIdentityRosterProjection,
     current_app_pubkey: &str,
     current_key_epoch: Option<u64>,
     missing_key_wrap_pubkeys: &[String],
@@ -1003,17 +1004,17 @@ fn share_key_status(
     let Some(epoch) = current_key_epoch else {
         return SharedFolderKeyStatus::NoKeyEpoch;
     };
-    match projection.key_wrap_status(current_app_pubkey, epoch) {
-        crate::KeyWrapStatus::Available if missing_key_wrap_pubkeys.is_empty() => {
+    match projection.secret_wrap_status(current_app_pubkey, epoch) {
+        crate::SecretWrapStatus::Available if missing_key_wrap_pubkeys.is_empty() => {
             SharedFolderKeyStatus::Available
         }
-        crate::KeyWrapStatus::Available => SharedFolderKeyStatus::RepairNeeded,
-        crate::KeyWrapStatus::RepairNeeded => SharedFolderKeyStatus::KeyUnavailable,
-        crate::KeyWrapStatus::NotAKeyRecipient | crate::KeyWrapStatus::NoSuchFacet => {
+        crate::SecretWrapStatus::Available => SharedFolderKeyStatus::RepairNeeded,
+        crate::SecretWrapStatus::RepairNeeded => SharedFolderKeyStatus::KeyUnavailable,
+        crate::SecretWrapStatus::NotAKeyRecipient | crate::SecretWrapStatus::NoSuchFacet => {
             SharedFolderKeyStatus::NotARecipient
         }
-        crate::KeyWrapStatus::Tombstoned => SharedFolderKeyStatus::Revoked,
-        crate::KeyWrapStatus::NoSuchEpoch => SharedFolderKeyStatus::NoKeyEpoch,
+        crate::SecretWrapStatus::Tombstoned => SharedFolderKeyStatus::Revoked,
+        crate::SecretWrapStatus::NoSuchEpoch => SharedFolderKeyStatus::NoKeyEpoch,
     }
 }
 
@@ -1062,21 +1063,21 @@ pub fn shared_folder_missing_key_wrap_pubkeys(folder: &SharedFolder, epoch: u64)
 }
 
 pub fn resolve_share_recipient_from_profile_evidence(
-    profile_id: IrisProfileId,
+    profile_id: NostrIdentityId,
     representative_pubkey: &str,
-    roster_ops: &[SignedIrisProfileRosterOp],
-    acceptances: &[SignedIrisProfileFacetAcceptance],
+    roster_ops: &[SignedNostrIdentityRosterOp],
+    acceptances: &[SignedNostrIdentityFacetAcceptance],
     display_name: Option<String>,
 ) -> Result<ResolvedShareRecipient, SharingError> {
     PublicKey::from_hex(representative_pubkey)
         .map_err(|error| SharingError::InvalidPubkey(error.to_string()))?;
-    let projection = project_iris_profile_roster(profile_id, roster_ops.to_vec());
+    let projection = project_nostr_identity_roster(profile_id, roster_ops.to_vec());
     let representative_facet = projection
         .active_facets
         .get(representative_pubkey)
         .ok_or_else(|| {
             SharingError::RecipientResolution(format!(
-                "representative pubkey is not active in IrisProfile {profile_id}"
+                "representative pubkey is not active in NostrIdentity {profile_id}"
             ))
         })?;
     if !representative_has_active_self_link(
@@ -1093,7 +1094,7 @@ pub fn resolve_share_recipient_from_profile_evidence(
     let app_pubkeys = accepted_share_app_pubkeys(&projection, acceptances);
     if app_pubkeys.is_empty() {
         return Err(SharingError::RecipientResolution(
-            "resolved IrisProfile has no accepted AppKeys for sharing".to_string(),
+            "resolved NostrIdentity has no accepted AppKeys for sharing".to_string(),
         ));
     }
     Ok(ResolvedShareRecipient {
@@ -1121,39 +1122,39 @@ pub fn resolve_share_recipient_from_evidence(
 }
 
 pub fn share_recipient_profile_evidence_for_app_key(
-    profile_id: IrisProfileId,
-    roster_ops: &[SignedIrisProfileRosterOp],
+    profile_id: NostrIdentityId,
+    roster_ops: &[SignedNostrIdentityRosterOp],
     app_key_keys: &Keys,
     display_name: Option<String>,
     accepted_at: i64,
 ) -> Result<ShareRecipientProfileEvidence, SharingError> {
     let app_pubkey = app_key_keys.public_key().to_hex();
-    let projection = project_iris_profile_roster(profile_id, roster_ops.to_vec());
+    let projection = project_nostr_identity_roster(profile_id, roster_ops.to_vec());
     let facet = projection.active_facets.get(&app_pubkey).ok_or_else(|| {
         SharingError::RecipientResolution(format!(
-            "current AppKey is not active in IrisProfile {profile_id}"
+            "current AppKey is not active in NostrIdentity {profile_id}"
         ))
     })?;
-    if !facet.has_purpose(IrisProfileKeyPurpose::AppKey) {
+    if !facet.has_purpose(NostrIdentityKeyPurpose::AppKey) {
         return Err(SharingError::RecipientResolution(
             "current key is not an AppKey facet".to_string(),
         ));
     }
-    if !facet.capabilities.can_receive_key_wraps {
+    if !facet.capabilities.can_receive_secret_wraps {
         return Err(SharingError::RecipientResolution(
             "current AppKey cannot receive share key wraps".to_string(),
         ));
     }
 
     let roster_op_id = active_app_key_add_facet_op_id(roster_ops, profile_id, &app_pubkey);
-    let acceptance_event = build_iris_profile_facet_acceptance_event(
+    let acceptance_event = build_nostr_identity_facet_acceptance_event(
         app_key_keys,
         profile_id,
-        [IrisProfileKeyPurpose::AppKey],
+        [NostrIdentityKeyPurpose::AppKey],
         roster_op_id,
         accepted_at,
     )?;
-    let acceptance = parse_iris_profile_facet_acceptance_event(&acceptance_event)?;
+    let acceptance = parse_nostr_identity_facet_acceptance_event(&acceptance_event)?;
 
     Ok(ShareRecipientProfileEvidence {
         profile_id,
@@ -1184,7 +1185,7 @@ pub fn sign_share_access_snapshot(
         .tags(vec![
             Tag::identifier(share_access_snapshot_d_tag(folder.share_id)),
             Tag::custom(share_access_label_tag_kind(), [SHARE_ACCESS_LABEL]),
-            Tag::custom(iris_profile_tag_kind(), [folder.share_id.to_string()]),
+            Tag::custom(nostr_identity_tag_kind(), [folder.share_id.to_string()]),
             Tag::public_key(signer_keys.public_key()),
         ])
         .custom_created_at(nostr_sdk::Timestamp::from(ts))
@@ -1280,7 +1281,7 @@ fn validate_shared_folder_access_snapshot(folder: &SharedFolder) -> Result<(), S
 }
 
 fn validate_share_access_snapshot_content(
-    share_id: IrisProfileId,
+    share_id: NostrIdentityId,
     snapshot: &ShareAccessSnapshot,
 ) -> Result<(), SharingError> {
     if snapshot.schema != SHARE_ACCESS_SNAPSHOT_SCHEMA {
@@ -1320,7 +1321,7 @@ fn validate_share_access_snapshot_content(
     for epoch in snapshot.key_epochs.values() {
         PublicKey::from_hex(&epoch.signed_by_pubkey)
             .map_err(|error| SharingError::InvalidPubkey(error.to_string()))?;
-        for pubkey in epoch.wrapped_dck.keys() {
+        for pubkey in epoch.wrapped_secrets.keys() {
             PublicKey::from_hex(pubkey)
                 .map_err(|error| SharingError::InvalidPubkey(error.to_string()))?;
         }
@@ -1357,15 +1358,15 @@ fn evidence_representative_pubkey(
 }
 
 fn active_app_key_add_facet_op_id(
-    roster_ops: &[SignedIrisProfileRosterOp],
-    profile_id: IrisProfileId,
+    roster_ops: &[SignedNostrIdentityRosterOp],
+    profile_id: NostrIdentityId,
     app_pubkey: &str,
 ) -> Option<String> {
     roster_ops
         .iter()
         .filter(|signed| signed.content.profile_id == profile_id)
         .filter(|signed| match &signed.content.op {
-            IrisProfileRosterOp::AddFacet { facet } => facet.pubkey == app_pubkey,
+            NostrIdentityRosterOp::AddFacet { facet } => facet.pubkey == app_pubkey,
             _ => false,
         })
         .max_by(|left, right| {
@@ -1379,7 +1380,7 @@ fn active_app_key_add_facet_op_id(
 
 fn shared_folder_app_key_write_authorization_with_projection(
     folder: &SharedFolder,
-    projection: &IrisProfileRosterProjection,
+    projection: &NostrIdentityRosterProjection,
     app_pubkey: &str,
 ) -> ShareRootWriteAuthorization {
     let direct_grant = active_direct_pubkey_grant(&folder.access, app_pubkey);
@@ -1424,7 +1425,7 @@ fn shared_folder_app_key_write_authorization_with_projection(
 
 fn shared_folder_app_key_can_admin_with_projection(
     folder: &SharedFolder,
-    projection: &IrisProfileRosterProjection,
+    projection: &NostrIdentityRosterProjection,
     app_pubkey: &str,
 ) -> bool {
     (active_member_for_app_key_with_projection(folder, projection, app_pubkey)
@@ -1446,26 +1447,26 @@ fn active_direct_pubkey_grant<'a>(
 
 fn active_share_key_recipients_missing_wraps(
     folder: &SharedFolder,
-    projection: &IrisProfileRosterProjection,
+    projection: &NostrIdentityRosterProjection,
     epoch: u64,
 ) -> Vec<String> {
-    let Some(key_epoch) = projection.key_epochs.get(&epoch) else {
+    let Some(key_epoch) = projection.secret_epochs.get(&epoch) else {
         return Vec::new();
     };
     active_share_key_recipients(folder, projection)
         .into_iter()
-        .filter(|pubkey| !key_epoch.wrapped_dck.contains_key(pubkey))
+        .filter(|pubkey| !key_epoch.wrapped_secrets.contains_key(pubkey))
         .collect()
 }
 
 fn active_share_key_recipients(
     folder: &SharedFolder,
-    projection: &IrisProfileRosterProjection,
+    projection: &NostrIdentityRosterProjection,
 ) -> Vec<String> {
     projection
         .active_facets
         .values()
-        .filter(|facet| facet.capabilities.can_receive_key_wraps)
+        .filter(|facet| facet.capabilities.can_receive_secret_wraps)
         .filter(|facet| {
             active_member_for_app_key_with_projection(folder, projection, &facet.pubkey).is_some()
         })
@@ -1474,41 +1475,41 @@ fn active_share_key_recipients(
 }
 
 fn representative_has_active_self_link(
-    projection: &IrisProfileRosterProjection,
+    projection: &NostrIdentityRosterProjection,
     representative_pubkey: &str,
-    facet: &IrisProfileFacet,
-    acceptances: &[SignedIrisProfileFacetAcceptance],
+    facet: &NostrIdentityFacet,
+    acceptances: &[SignedNostrIdentityFacetAcceptance],
 ) -> bool {
-    (facet.has_purpose(IrisProfileKeyPurpose::SocialProfile)
+    (facet.has_purpose(NostrIdentityKeyPurpose::SocialProfile)
         && has_active_facet_acceptance(
             projection,
             representative_pubkey,
-            IrisProfileKeyPurpose::SocialProfile,
+            NostrIdentityKeyPurpose::SocialProfile,
             acceptances,
         ))
-        || (facet.has_purpose(IrisProfileKeyPurpose::AppKey)
+        || (facet.has_purpose(NostrIdentityKeyPurpose::AppKey)
             && has_active_facet_acceptance(
                 projection,
                 representative_pubkey,
-                IrisProfileKeyPurpose::AppKey,
+                NostrIdentityKeyPurpose::AppKey,
                 acceptances,
             ))
 }
 
 fn accepted_share_app_pubkeys(
-    projection: &IrisProfileRosterProjection,
-    acceptances: &[SignedIrisProfileFacetAcceptance],
+    projection: &NostrIdentityRosterProjection,
+    acceptances: &[SignedNostrIdentityFacetAcceptance],
 ) -> Vec<String> {
     projection
         .active_facets
         .values()
         .filter(|facet| {
             facet.is_app_key()
-                && facet.capabilities.can_receive_key_wraps
+                && facet.capabilities.can_receive_secret_wraps
                 && has_active_facet_acceptance(
                     projection,
                     &facet.pubkey,
-                    IrisProfileKeyPurpose::AppKey,
+                    NostrIdentityKeyPurpose::AppKey,
                     acceptances,
                 )
         })
@@ -1517,18 +1518,18 @@ fn accepted_share_app_pubkeys(
 }
 
 fn accepted_social_pubkeys(
-    projection: &IrisProfileRosterProjection,
-    acceptances: &[SignedIrisProfileFacetAcceptance],
+    projection: &NostrIdentityRosterProjection,
+    acceptances: &[SignedNostrIdentityFacetAcceptance],
 ) -> Vec<String> {
     projection
         .active_facets
         .values()
         .filter(|facet| {
-            facet.has_purpose(IrisProfileKeyPurpose::SocialProfile)
+            facet.has_purpose(NostrIdentityKeyPurpose::SocialProfile)
                 && has_active_facet_acceptance(
                     projection,
                     &facet.pubkey,
-                    IrisProfileKeyPurpose::SocialProfile,
+                    NostrIdentityKeyPurpose::SocialProfile,
                     acceptances,
                 )
         })
@@ -1537,10 +1538,10 @@ fn accepted_social_pubkeys(
 }
 
 fn has_active_facet_acceptance(
-    projection: &IrisProfileRosterProjection,
+    projection: &NostrIdentityRosterProjection,
     facet_pubkey: &str,
-    purpose: IrisProfileKeyPurpose,
-    acceptances: &[SignedIrisProfileFacetAcceptance],
+    purpose: NostrIdentityKeyPurpose,
+    acceptances: &[SignedNostrIdentityFacetAcceptance],
 ) -> bool {
     acceptances.iter().any(|acceptance| {
         acceptance.content.facet_pubkey == facet_pubkey
@@ -1551,7 +1552,7 @@ fn has_active_facet_acceptance(
 }
 
 #[must_use]
-pub fn share_access_snapshot_d_tag(share_id: IrisProfileId) -> String {
+pub fn share_access_snapshot_d_tag(share_id: NostrIdentityId) -> String {
     share_id.to_string()
 }
 
@@ -1578,9 +1579,9 @@ fn has_share_access_label(event: &Event) -> bool {
     })
 }
 
-fn parse_share_access_snapshot_d_tag(d_tag: &str) -> Result<IrisProfileId, SharingError> {
+fn parse_share_access_snapshot_d_tag(d_tag: &str) -> Result<NostrIdentityId, SharingError> {
     d_tag
-        .parse::<IrisProfileId>()
+        .parse::<NostrIdentityId>()
         .map_err(|error| SharingError::AccessSnapshot(format!("invalid share UUID: {error}")))
 }
 
@@ -1594,11 +1595,11 @@ fn active_share_member_count(folder: &SharedFolder) -> usize {
 
 fn shared_folder_member_views(
     folder: &SharedFolder,
-    projection: &IrisProfileRosterProjection,
+    projection: &NostrIdentityRosterProjection,
     current_app_pubkey: &str,
     current_app_key_can_admin: bool,
 ) -> Vec<SharedFolderMemberView> {
-    let mut app_key_counts = BTreeMap::<IrisProfileId, usize>::new();
+    let mut app_key_counts = BTreeMap::<NostrIdentityId, usize>::new();
     for profile_id in shared_folder_participant_profiles_with_projection(projection).values() {
         *app_key_counts.entry(*profile_id).or_default() += 1;
     }
@@ -1688,7 +1689,7 @@ fn unique_share_shortcut_path(
 
 pub fn create_shared_folder(
     owner_keys: &nostr_sdk::Keys,
-    owner_profile_id: IrisProfileId,
+    owner_profile_id: NostrIdentityId,
     source_path: &str,
     display_name: &str,
     local_label: Option<String>,
@@ -1698,7 +1699,7 @@ pub fn create_shared_folder(
     let source_path = normalize_provider_path(source_path)
         .map_err(|error| SharingError::Path(error.to_string()))?;
     let display_name = sanitized_provider_file_name(display_name);
-    let share_id = IrisProfileId::new_v4();
+    let share_id = NostrIdentityId::new_v4();
     let owner_pubkey = owner_keys.public_key().to_hex();
     let participants = collect_share_participants(recipients)?;
     let mut access = ShareAccessSnapshot::new(share_id, created_at);
@@ -1762,12 +1763,12 @@ struct ShareParticipants {
 }
 
 fn active_key_recipient_refs(
-    projection: &IrisProfileRosterProjection,
+    projection: &NostrIdentityRosterProjection,
 ) -> impl Iterator<Item = &str> {
     projection
         .active_facets
         .values()
-        .filter(|facet| facet.capabilities.can_receive_key_wraps)
+        .filter(|facet| facet.capabilities.can_receive_secret_wraps)
         .map(|facet| facet.pubkey.as_str())
 }
 
@@ -1825,7 +1826,7 @@ fn upsert_access_id_grant(snapshot: &mut ShareAccessSnapshot, member: ShareMembe
 
 fn set_access_id_grant_role(
     snapshot: &mut ShareAccessSnapshot,
-    profile_id: IrisProfileId,
+    profile_id: NostrIdentityId,
     role: ShareRole,
 ) -> bool {
     if let Some(grant) = snapshot
@@ -1839,7 +1840,7 @@ fn set_access_id_grant_role(
     false
 }
 
-fn revoke_access_id_grant(snapshot: &mut ShareAccessSnapshot, profile_id: IrisProfileId) -> bool {
+fn revoke_access_id_grant(snapshot: &mut ShareAccessSnapshot, profile_id: NostrIdentityId) -> bool {
     if let Some(grant) = snapshot
         .grants
         .iter_mut()
@@ -1854,7 +1855,7 @@ fn revoke_access_id_grant(snapshot: &mut ShareAccessSnapshot, profile_id: IrisPr
 fn upsert_access_device(
     snapshot: &mut ShareAccessSnapshot,
     pubkey: String,
-    profile_id: Option<IrisProfileId>,
+    profile_id: Option<NostrIdentityId>,
     label: Option<String>,
     added_at: i64,
 ) {
@@ -1886,11 +1887,11 @@ fn upsert_share_key_epoch(
 ) {
     snapshot.key_epochs.insert(
         epoch,
-        IrisProfileKeyEpoch {
+        NostrIdentitySecretEpoch {
             epoch,
             created_at,
             signed_by_pubkey: signer_keys.public_key().to_hex(),
-            wrapped_dck,
+            wrapped_secrets: wrapped_dck,
         },
     );
     snapshot.updated_at = snapshot.updated_at.max(created_at);
@@ -1940,18 +1941,18 @@ pub fn current_shared_folder_key(
         return Err(SharingError::NoWrapForCurrentAppKey);
     };
     if !facet.is_app_key()
-        || !facet.capabilities.can_receive_key_wraps
-        || !facet.capabilities.can_decrypt_key_epochs
+        || !facet.capabilities.can_receive_secret_wraps
+        || !facet.capabilities.can_decrypt_secret_epochs
     {
         return Err(SharingError::NoWrapForCurrentAppKey);
     }
     let key_epoch = projection
-        .key_epochs
+        .secret_epochs
         .values()
         .next_back()
         .ok_or(SharingError::NoKeyEpoch)?;
     let wrap = key_epoch
-        .wrapped_dck
+        .wrapped_secrets
         .get(&current_pubkey)
         .ok_or(SharingError::NoWrapForCurrentAppKey)?;
     let signer_pubkey = PublicKey::from_hex(&key_epoch.signed_by_pubkey)
@@ -2049,7 +2050,7 @@ fn invite_shared_folder_recipients(
     };
     let projection = folder.projection();
     let next_epoch = projection
-        .key_epochs
+        .secret_epochs
         .keys()
         .next_back()
         .map_or(1, |epoch| epoch.saturating_add(1));
@@ -2091,7 +2092,7 @@ fn invite_shared_folder_recipients(
 }
 
 struct InvitedShareMember {
-    profile_id: IrisProfileId,
+    profile_id: NostrIdentityId,
     role: ShareRole,
     representative_npub_hint: Option<String>,
 }
@@ -2193,7 +2194,7 @@ pub fn parse_share_invite(input: &str) -> Result<ShareInviteBundle, SharingError
 
 pub fn shared_folder_from_invite_for_profile(
     invite: &str,
-    local_profile_id: IrisProfileId,
+    local_profile_id: NostrIdentityId,
 ) -> Result<SharedFolder, SharingError> {
     let bundle = parse_share_invite(invite)?;
     let projection = bundle.shared_folder.projection();
@@ -2215,7 +2216,7 @@ pub fn repair_shared_folder_key_epoch_wraps(
     created_at: i64,
 ) -> Result<ShareKeyRepairOutcome, SharingError> {
     let projection = folder.projection();
-    let Some((epoch, key_epoch)) = projection.key_epochs.iter().next_back() else {
+    let Some((epoch, key_epoch)) = projection.secret_epochs.iter().next_back() else {
         return Err(SharingError::NoKeyEpoch);
     };
     let epoch = *epoch;
@@ -2232,7 +2233,7 @@ pub fn repair_shared_folder_key_epoch_wraps(
     let Some(signer_facet) = projection.active_facets.get(&signer_pubkey) else {
         return Err(SharingError::CurrentAppKeyCannotRepairKeyEpochs);
     };
-    if !signer_facet.capabilities.can_change_key_epochs() {
+    if !signer_facet.capabilities.can_change_secret_epochs() {
         return Err(SharingError::CurrentAppKeyCannotRepairKeyEpochs);
     }
     let missing_pubkeys = active_share_key_recipients_missing_wraps(folder, &projection, epoch);
@@ -2251,7 +2252,7 @@ pub fn repair_shared_folder_key_epoch_wraps(
         &share_key,
     )?;
     if let Some(key_epoch) = folder.access.key_epochs.get_mut(&epoch) {
-        key_epoch.wrapped_dck.extend(wrapped_dck);
+        key_epoch.wrapped_secrets.extend(wrapped_dck);
         folder.access.updated_at = folder.access.updated_at.max(created_at);
     }
     Ok(ShareKeyRepairOutcome {
@@ -2264,7 +2265,7 @@ pub fn repair_shared_folder_key_epoch_wraps(
 pub fn set_shared_folder_member_role(
     folder: &mut SharedFolder,
     signer_keys: &Keys,
-    profile_id: IrisProfileId,
+    profile_id: NostrIdentityId,
     role: ShareRole,
     created_at: i64,
 ) -> Result<ShareMemberRoleOutcome, SharingError> {
@@ -2303,7 +2304,7 @@ pub fn set_shared_folder_member_role(
 pub fn revoke_shared_folder_member(
     folder: &mut SharedFolder,
     signer_keys: &Keys,
-    profile_id: IrisProfileId,
+    profile_id: NostrIdentityId,
     reason: Option<&str>,
     created_at: i64,
 ) -> Result<ShareMemberRevokeOutcome, SharingError> {
@@ -2326,7 +2327,7 @@ pub fn revoke_shared_folder_member(
     if member.status == ShareMemberStatus::Revoked {
         let epoch = folder
             .projection()
-            .key_epochs
+            .secret_epochs
             .keys()
             .next_back()
             .copied()
@@ -2351,7 +2352,7 @@ pub fn revoke_shared_folder_member(
     for app_pubkey in &revoked_app_pubkeys {
         folder.access.tombstones.insert(
             app_pubkey.clone(),
-            IrisProfileTombstone {
+            NostrIdentityTombstone {
                 pubkey: app_pubkey.clone(),
                 profile_id: Some(profile_id),
                 removed_by_pubkey: signer_pubkey.clone(),
@@ -2365,7 +2366,7 @@ pub fn revoke_shared_folder_member(
 
     let current_projection = folder.projection();
     let next_epoch = current_projection
-        .key_epochs
+        .secret_epochs
         .keys()
         .next_back()
         .map_or(1, |epoch| epoch.saturating_add(1));
@@ -2428,7 +2429,11 @@ where
 mod tests {
     use super::*;
 
-    fn share_recipient(keys: &Keys, profile_id: IrisProfileId, role: ShareRole) -> ShareRecipient {
+    fn share_recipient(
+        keys: &Keys,
+        profile_id: NostrIdentityId,
+        role: ShareRole,
+    ) -> ShareRecipient {
         ShareRecipient {
             profile_id,
             app_pubkey: keys.public_key().to_hex(),
@@ -2442,11 +2447,11 @@ mod tests {
     #[test]
     fn access_snapshot_authorizes_admin_writer_and_reader() {
         let owner_keys = Keys::generate();
-        let owner_id = IrisProfileId::new_v4();
+        let owner_id = NostrIdentityId::new_v4();
         let writer_keys = Keys::generate();
-        let writer_id = IrisProfileId::new_v4();
+        let writer_id = NostrIdentityId::new_v4();
         let reader_keys = Keys::generate();
-        let reader_id = IrisProfileId::new_v4();
+        let reader_id = NostrIdentityId::new_v4();
         let mut folder = create_shared_folder(
             &owner_keys,
             owner_id,
@@ -2512,7 +2517,7 @@ mod tests {
     #[test]
     fn signed_access_snapshot_roundtrips_and_validates_against_folder() {
         let owner_keys = Keys::generate();
-        let owner_id = IrisProfileId::new_v4();
+        let owner_id = NostrIdentityId::new_v4();
         let folder = create_shared_folder(
             &owner_keys,
             owner_id,
@@ -2544,9 +2549,9 @@ mod tests {
     #[test]
     fn invite_carries_signed_access_snapshot_for_recipient() {
         let owner_keys = Keys::generate();
-        let owner_id = IrisProfileId::new_v4();
+        let owner_id = NostrIdentityId::new_v4();
         let recipient_keys = Keys::generate();
-        let recipient_id = IrisProfileId::new_v4();
+        let recipient_id = NostrIdentityId::new_v4();
         let mut folder = create_shared_folder(
             &owner_keys,
             owner_id,
@@ -2579,7 +2584,7 @@ mod tests {
     #[test]
     fn direct_pubkey_grant_authorizes_mvp_device_target() {
         let owner_keys = Keys::generate();
-        let owner_id = IrisProfileId::new_v4();
+        let owner_id = NostrIdentityId::new_v4();
         let device_keys = Keys::generate();
         let device_pubkey = device_keys.public_key().to_hex();
         let mut folder = create_shared_folder(

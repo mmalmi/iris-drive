@@ -34,6 +34,7 @@ PY
 iris_drive_ios_assert_simulator_entitlements() {
   local derived_data="$1"
   local configuration="${2:-Debug}"
+  local expected_app_group="${IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER:-group.fi.siriusbusiness.drive}"
   local base="$derived_data/Build/Intermediates.noindex/IrisDriveIOS.build/${configuration}-iphonesimulator"
   local app="$base/IrisDriveIOS.build/Iris Drive.app-Simulated.xcent"
   local fileprovider="$base/IrisDriveFileProvider.build/IrisDriveFileProvider.appex-Simulated.xcent"
@@ -42,15 +43,15 @@ iris_drive_ios_assert_simulator_entitlements() {
   iris_drive_ios_assert_plist_entitlement \
     "$app" \
     "com.apple.security.application-groups" \
-    "group.to.iris.drive"
+    "$expected_app_group"
   iris_drive_ios_assert_plist_entitlement \
     "$fileprovider" \
     "com.apple.security.application-groups" \
-    "group.to.iris.drive"
+    "$expected_app_group"
   iris_drive_ios_assert_plist_entitlement \
     "$share" \
     "com.apple.security.application-groups" \
-    "group.to.iris.drive"
+    "$expected_app_group"
 
   if [[ "$configuration" == "Debug" ]]; then
     iris_drive_ios_assert_plist_entitlement \

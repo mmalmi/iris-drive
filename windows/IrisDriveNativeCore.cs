@@ -34,15 +34,26 @@ public sealed class IrisDriveNativeCore : IDisposable
         return IrisDriveStatusData.FromNativeJson(DispatchJson(actionJson));
     }
 
-    public static bool IsCompleteLinkInput(string input)
+    public static bool IsCompleteDeviceInviteInput(string input)
+    {
+        return IsCompleteValidatedInput(input, iris_drive_validate_device_invite_input_json);
+    }
+
+    public static bool IsCompleteDeviceApprovalInput(string input)
+    {
+        return IsCompleteValidatedInput(input, iris_drive_validate_device_approval_input_json);
+    }
+
+    private static bool IsCompleteValidatedInput(
+        string input,
+        Func<string, IntPtr> validator)
     {
         if (string.IsNullOrWhiteSpace(input))
         {
             return false;
         }
 
-        using var document = JsonDocument.Parse(
-            TakeString(iris_drive_validate_link_input_json(input.Trim())));
+        using var document = JsonDocument.Parse(TakeString(validator(input.Trim())));
         return document.RootElement.TryGetProperty("is_complete", out var isComplete) &&
             isComplete.ValueKind == JsonValueKind.True;
     }
@@ -164,7 +175,11 @@ public sealed class IrisDriveNativeCore : IDisposable
         [MarshalAs(UnmanagedType.LPUTF8Str)] string actionJson);
 
     [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]
-    private static extern IntPtr iris_drive_validate_link_input_json(
+    private static extern IntPtr iris_drive_validate_device_invite_input_json(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string text);
+
+    [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr iris_drive_validate_device_approval_input_json(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string text);
 
     [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]

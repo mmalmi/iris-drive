@@ -71,18 +71,18 @@ pub(crate) async fn apply_one_event(
         } else {
             EventApplyOutcome::Unchanged
         });
-    } else if iris_drive_core::is_iris_profile_roster_op_event_coordinate(event) {
-        let outcome = relay_sync::apply_remote_iris_profile_roster_op_event(&mut config, event)?;
+    } else if iris_drive_core::is_nostr_identity_roster_op_event_coordinate(event) {
+        let outcome = relay_sync::apply_remote_nostr_identity_roster_op_event(&mut config, event)?;
         emit_daemon_status_event(
             config_dir,
             json!({
-                "event": "iris_profile_roster_op",
+                "event": "nostr_identity_roster_op",
                 "event_id": event.id.to_hex(),
                 "author": pubkey_npub(&event.pubkey.to_hex()),
                 "outcome": format!("{outcome:?}"),
             }),
         );
-        if matches!(outcome, relay_sync::IrisProfileRosterOpApply::Applied) {
+        if matches!(outcome, relay_sync::NostrIdentityRosterOpApply::Applied) {
             config.save(config_path_in(config_dir))?;
             drop(config_lock);
             if let Some(sync) = fips_blocks.as_deref() {
@@ -447,6 +447,12 @@ pub(crate) fn spawn_root_apply_followup(
                 }
             }
             if let Some(error) = last_error {
+                request_latest_direct_root_state(
+                    &config,
+                    fips_blocks.as_deref(),
+                    projection_event,
+                )
+                .await;
                 record_block_sync_error(&config_dir, &root_cid, &error);
                 println!(
                     "{}",
@@ -779,7 +785,7 @@ async fn request_latest_direct_root_state(
     };
     let selected_peers = sync.authorized_peer_ids().await.len();
     match sync
-        .broadcast_app_message(iris_drive_core::DIRECT_ROOT_APP_TOPIC, bytes)
+        .broadcast_app_message(iris_drive_core::DIRECT_ROOT_APP_TOPIC, bytes.clone())
         .await
     {
         Ok(sent_peers) => println!(
@@ -787,7 +793,7 @@ async fn request_latest_direct_root_state(
             json!({
                 "event": "direct_root_state_request_publish",
                 "trigger": projection_event,
-                "root_scope_id": root_scope_id,
+                "root_scope_id": root_scope_id.clone(),
                 "selected_peers": selected_peers,
                 "sent_peers": sent_peers,
             })
@@ -797,12 +803,36 @@ async fn request_latest_direct_root_state(
             json!({
                 "event": "direct_root_state_request_error",
                 "trigger": projection_event,
-                "root_scope_id": root_scope_id,
+                "root_scope_id": root_scope_id.clone(),
                 "selected_peers": selected_peers,
                 "error": format!("{error:#}"),
             })
         ),
     }
+    let stream = iris_drive_core::direct_root_mesh_stream(&root_scope_id);
+    let seq = direct_root_followup_mesh_seq();
+    let publish_stats = sync.publish_mesh_pubsub(stream.clone(), seq, bytes).await;
+    println!(
+        "{}",
+        json!({
+            "event": "direct_root_state_request_mesh_publish",
+            "trigger": projection_event,
+            "stream": stream,
+            "seq": seq,
+            "root_scope_id": root_scope_id,
+            "selected_peers": publish_stats.selected_peers,
+            "sent_peers": publish_stats.sent_peers,
+            "sent_bytes": publish_stats.sent_bytes,
+        })
+    );
+}
+
+fn direct_root_followup_mesh_seq() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| {
+            duration.as_millis().try_into().unwrap_or(u64::MAX)
+        })
 }
 
 fn should_publish_direct_root_state_request(root_scope_id: &str) -> bool {

@@ -1,27 +1,27 @@
 name: IrisDriveIOS
 options:
-  bundleIdPrefix: to.iris.drive
+  bundleIdPrefix: fi.siriusbusiness.drive
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
 
 settings:
   base:
-    MARKETING_VERSION: "0.1.16"
-    CURRENT_PROJECT_VERSION: "1016"
+    MARKETING_VERSION: "0.1.18"
+    CURRENT_PROJECT_VERSION: "1018"
     VERSIONING_SYSTEM: apple-generic
-    DEVELOPMENT_TEAM: J8PPJKD7TA
+    DEVELOPMENT_TEAM: 8G9P8AN75D
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: 5.0
     TARGETED_DEVICE_FAMILY: "1,2"
-    IRIS_DRIVE_IOS_BUNDLE_ID: to.iris.drive.ios
-    IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID: to.iris.drive.ios.FileProvider
-    IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID: to.iris.drive.ios.ShareExtension
-    IRIS_DRIVE_IOS_SHARE_SOURCE_BUNDLE_ID: to.iris.drive.ios.ShareSource
-    IRIS_DRIVE_IOS_SHARE_EXTENSION_TESTS_BUNDLE_ID: to.iris.drive.ios.ShareExtensionTests
-    IRIS_DRIVE_IOS_UI_TESTS_BUNDLE_ID: to.iris.drive.ios.UITests
-    IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER: group.to.iris.drive
-    IRIS_DRIVE_IOS_BACKGROUND_SYNC_TASK_IDENTIFIER: to.iris.drive.ios.background-sync
+    IRIS_DRIVE_IOS_BUNDLE_ID: fi.siriusbusiness.drive
+    IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID: fi.siriusbusiness.drive.FileProvider
+    IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID: fi.siriusbusiness.drive.ShareExtension
+    IRIS_DRIVE_IOS_SHARE_SOURCE_BUNDLE_ID: fi.siriusbusiness.drive.ShareSource
+    IRIS_DRIVE_IOS_SHARE_EXTENSION_TESTS_BUNDLE_ID: fi.siriusbusiness.drive.ShareExtensionTests
+    IRIS_DRIVE_IOS_UI_TESTS_BUNDLE_ID: fi.siriusbusiness.drive.UITests
+    IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER: group.fi.siriusbusiness.drive
+    IRIS_DRIVE_IOS_BACKGROUND_SYNC_TASK_IDENTIFIER: fi.siriusbusiness.drive.background-sync
 
 targets:
   IrisDriveIOS:

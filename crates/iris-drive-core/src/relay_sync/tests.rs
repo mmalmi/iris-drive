@@ -1,12 +1,13 @@
 use super::*;
 use crate::app_key_link_transport::AppKeyLinkRosterFrame;
 use crate::config::Drive;
-use crate::iris_profile::{
-    IrisProfileCapabilities, IrisProfileFacet, IrisProfileId, IrisProfileRosterOp,
-    build_iris_profile_facet_acceptance_event, build_iris_profile_roster_op_event,
-};
 use crate::nostr_events::{
-    build_app_key_link_request_event, build_drive_root_event, build_private_hashtree_root_event,
+    KIND_DRIVE_ROOT, build_app_key_link_request_event, build_drive_root_event,
+    build_private_hashtree_root_event, drive_root_d_tag,
+};
+use crate::nostr_identity::{
+    NostrIdentityCapabilities, NostrIdentityFacet, NostrIdentityId, NostrIdentityRosterOp,
+    build_nostr_identity_roster_op_event,
 };
 use crate::profile::{AppKeyAuthorizationState, Profile};
 use crate::sharing::{
@@ -15,6 +16,7 @@ use crate::sharing::{
 };
 use hashtree_core::Cid;
 use nostr_sdk::filter::MatchEventOptions;
+use nostr_sdk::{EventBuilder, Kind, Tag};
 use tempfile::tempdir;
 
 fn config_with_owner_account(dir: &std::path::Path) -> (AppConfig, Profile) {
@@ -27,23 +29,52 @@ fn config_with_owner_account(dir: &std::path::Path) -> (AppConfig, Profile) {
     (cfg, acct)
 }
 
-fn config_with_recovery_owner_account(dir: &std::path::Path) -> (AppConfig, Profile, String) {
-    let phrase = crate::recovery_phrase::generate_recovery_phrase().unwrap();
-    let acct = Profile::restore(dir, &phrase, None).unwrap();
-    let mut cfg = AppConfig {
-        profile: Some(acct.state.clone()),
-        ..AppConfig::default()
-    };
-    cfg.upsert_drive(Drive::primary(acct.state.root_scope_id()));
-    (cfg, acct, phrase)
-}
-
-fn profile_event(op: &crate::SignedIrisProfileRosterOp) -> Event {
+fn profile_event(op: &crate::SignedNostrIdentityRosterOp) -> Event {
     Event::from_json(&op.event_json).unwrap()
 }
 
 fn filter_matches(filter: &Filter, event: &Event) -> bool {
     filter.match_event(event, MatchEventOptions::default())
+}
+
+#[test]
+fn relay_config_feeds_pubsub_relay_sources() {
+    let relays = vec![
+        "wss://relay-a.example".to_string(),
+        "wss://relay-b.example".to_string(),
+    ];
+
+    let routes = relay_source_routes(&relays);
+    let route_urls = relay_urls_from_source_routes(&routes);
+
+    assert_eq!(route_urls, relays);
+    assert_eq!(routes.len(), 2);
+    assert_eq!(routes[0].source.kind, nostr_pubsub::EventSourceKind::Relay);
+    assert_eq!(routes[0].priority, nostr_pubsub::SOURCE_PRIORITY_RELAY);
+    assert_eq!(
+        routes[0].source.url.as_deref(),
+        Some("wss://relay-a.example")
+    );
+}
+
+#[test]
+fn relay_event_retention_policy_accepts_subscription_events() {
+    let dir = tempdir().unwrap();
+    let (_cfg, acct) = config_with_owner_account(dir.path());
+    let profile_op = profile_event(&acct.state.profile_roster_ops[0]);
+    let filters = subscription_filters(
+        &acct.state.app_key_pubkey,
+        &acct.state.root_scope_id(),
+        crate::PRIMARY_DRIVE_ID,
+    );
+    let policy = event_retention_policy(filters);
+    let unrelated = EventBuilder::new(Kind::TextNote, "")
+        .sign_with_keys(acct.app_key.keys())
+        .unwrap();
+
+    assert_eq!(policy.max_events, RELAY_SYNC_EVENT_CACHE_LIMIT);
+    assert!(relay_event_matches_policy(&policy, &profile_op));
+    assert!(!relay_event_matches_policy(&policy, &unrelated));
 }
 
 fn encrypted_root(seed: u8, published_at: i64, dck_generation: u64) -> AppKeyRootRef {
@@ -73,7 +104,7 @@ fn causal_encrypted_root(
 
 fn roster_frame(
     admin: &Profile,
-    profile_roster_ops: Vec<crate::SignedIrisProfileRosterOp>,
+    profile_roster_ops: Vec<crate::SignedNostrIdentityRosterOp>,
     sent_at: u64,
 ) -> AppKeyLinkRosterFrame {
     AppKeyLinkRosterFrame {
@@ -209,6 +240,79 @@ fn apply_app_key_link_roster_is_profile_scoped_and_ownerless() {
 }
 
 #[test]
+fn apply_app_key_link_roster_accepts_unbound_manual_join_request() {
+    let admin_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+    let mut admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
+    let mut linked = Profile::start_join_request(linked_dir.path(), Some("phone".into())).unwrap();
+    let placeholder_profile_id = linked.state.profile_id;
+    let linked_pubkey = linked.state.app_key_pubkey.clone();
+    linked.state.queue_unbound_app_key_join_request(
+        123,
+        "https://drive.iris.to/approve-device/test".into(),
+    );
+
+    admin
+        .approve_app_key(&linked_pubkey, Some("phone".into()))
+        .unwrap();
+    let mut cfg = AppConfig {
+        profile: Some(linked.state.clone()),
+        ..AppConfig::default()
+    };
+    cfg.upsert_drive(Drive::primary(placeholder_profile_id.to_string()));
+
+    let frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 456);
+    let outcome =
+        apply_app_key_link_roster_frame(&mut cfg, &frame, &admin.state.app_key_pubkey).unwrap();
+
+    assert!(matches!(
+        outcome,
+        AppKeyLinkRosterApply::Applied(ApplyDecision::Adopted)
+    ));
+    let linked_state = cfg.profile.as_ref().unwrap();
+    assert_eq!(linked_state.profile_id, admin.state.profile_id);
+    assert_eq!(
+        linked_state.authorization_state,
+        AppKeyAuthorizationState::Authorized
+    );
+    assert!(linked_state.outbound_app_key_link_request.is_none());
+    assert_eq!(
+        cfg.drive(crate::PRIMARY_DRIVE_ID).unwrap().root_scope_id,
+        admin.state.profile_id.to_string()
+    );
+}
+
+#[test]
+fn apply_app_key_link_roster_rejects_unbound_roster_without_joining_app_key() {
+    let admin_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+    let admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
+    let mut linked = Profile::start_join_request(linked_dir.path(), Some("phone".into())).unwrap();
+    let placeholder_profile_id = linked.state.profile_id;
+    linked.state.queue_unbound_app_key_join_request(
+        123,
+        "https://drive.iris.to/approve-device/test".into(),
+    );
+    let mut cfg = AppConfig {
+        profile: Some(linked.state.clone()),
+        ..AppConfig::default()
+    };
+    cfg.upsert_drive(Drive::primary(placeholder_profile_id.to_string()));
+
+    let frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 456);
+    let outcome =
+        apply_app_key_link_roster_frame(&mut cfg, &frame, &admin.state.app_key_pubkey).unwrap();
+
+    assert_eq!(outcome, AppKeyLinkRosterApply::Ignored);
+    let linked_state = cfg.profile.as_ref().unwrap();
+    assert_eq!(linked_state.profile_id, placeholder_profile_id);
+    assert_eq!(
+        linked_state.authorization_state,
+        AppKeyAuthorizationState::AwaitingApproval
+    );
+}
+
+#[test]
 fn apply_app_key_link_roster_merges_older_branch_without_downgrading_epoch() {
     let (mut admin, mut cfg) = linked_config_after_initial_roster();
     let branch_base_ops = admin.state.profile_roster_ops.clone();
@@ -219,23 +323,23 @@ fn apply_app_key_link_roster_merges_older_branch_without_downgrading_epoch() {
         .unwrap()
         + 1;
     let branch_app = Keys::generate().public_key().to_hex();
-    let branch_op_event = build_iris_profile_roster_op_event(
+    let branch_op_event = build_nostr_identity_roster_op_event(
         admin.app_key.keys(),
         admin.state.profile_id,
         branch_base_ops.iter().map(|op| op.op_id.clone()).collect(),
         None,
-        IrisProfileRosterOp::AddFacet {
-            facet: IrisProfileFacet::app_key(
+        NostrIdentityRosterOp::AddFacet {
+            facet: NostrIdentityFacet::app_key(
                 branch_app.clone(),
                 branch_at,
                 Some("branch app".into()),
-                IrisProfileCapabilities::app_writer(),
+                NostrIdentityCapabilities::app_writer(),
             ),
         },
         branch_at,
     )
     .unwrap();
-    let branch_op = parse_iris_profile_roster_op_event(&branch_op_event).unwrap();
+    let branch_op = parse_nostr_identity_roster_op_event(&branch_op_event).unwrap();
     let mut branch_ops = branch_base_ops;
     branch_ops.push(branch_op.clone());
 
@@ -282,7 +386,7 @@ fn subscription_filters_match_app_key_link_requests_for_profile() {
     let admin = Keys::generate();
     let device = Keys::generate();
     let invite = Keys::generate();
-    let profile_id = IrisProfileId::new_v4();
+    let profile_id = NostrIdentityId::new_v4();
     let frame = crate::app_key_link_transport::AppKeyLinkRequestFrame {
         schema: 1,
         profile_id,
@@ -308,7 +412,7 @@ fn subscription_filters_match_app_key_link_requests_for_profile() {
 }
 
 #[test]
-fn subscription_filters_match_iris_profile_roster_ops_for_profile() {
+fn subscription_filters_match_nostr_identity_roster_ops_for_profile() {
     let dir = tempdir().unwrap();
     let (cfg, acct) = config_with_owner_account(dir.path());
     let profile_op = profile_event(&acct.state.profile_roster_ops[0]);
@@ -333,119 +437,6 @@ fn subscription_filters_match_iris_profile_roster_ops_for_profile() {
 }
 
 #[test]
-fn restore_candidate_filters_match_roster_mentions_and_acceptance_events() {
-    let dir = tempdir().unwrap();
-    let (_, acct, phrase) = config_with_recovery_owner_account(dir.path());
-    let recovery_key =
-        crate::identity::RecoveryKey::from_recovery_phrase(&phrase, dir.path().join("recovery"))
-            .unwrap();
-    let recovery_pubkey = recovery_key.pubkey_hex();
-    let filters = iris_profile_restore_candidate_filters(&recovery_pubkey).unwrap();
-    let recovery_add_event = profile_event(
-        acct.state
-            .profile_roster_ops
-            .iter()
-            .find(|op| op.content.op.target_pubkey() == Some(recovery_pubkey.as_str()))
-            .unwrap(),
-    );
-    let acceptance = build_iris_profile_facet_acceptance_event(
-        recovery_key.keys(),
-        acct.state.profile_id,
-        [crate::IrisProfileKeyPurpose::RecoveryPhrase],
-        None,
-        20,
-    )
-    .unwrap();
-
-    assert!(
-        filters
-            .iter()
-            .any(|filter| filter_matches(filter, &recovery_add_event))
-    );
-    assert!(
-        filters
-            .iter()
-            .any(|filter| filter_matches(filter, &acceptance))
-    );
-}
-
-#[test]
-fn restore_candidates_require_active_recovery_facet_projection() {
-    let dir = tempdir().unwrap();
-    let (_, mut acct, phrase) = config_with_recovery_owner_account(dir.path());
-    let recovery_key =
-        crate::identity::RecoveryKey::from_recovery_phrase(&phrase, dir.path().join("recovery"))
-            .unwrap();
-    let recovery_pubkey = recovery_key.pubkey_hex();
-    let events = acct
-        .state
-        .profile_roster_ops
-        .iter()
-        .map(profile_event)
-        .collect::<Vec<_>>();
-
-    let candidates = iris_profile_restore_candidates_from_events(&recovery_pubkey, &events)
-        .expect("candidates project");
-
-    assert_eq!(candidates.len(), 1);
-    assert_eq!(candidates[0].profile_id, acct.state.profile_id);
-    assert_eq!(candidates[0].recovery_pubkey, recovery_pubkey);
-    assert!(candidates[0].can_decrypt_key_epochs);
-    assert_eq!(candidates[0].accepted_roster_op_count, 3);
-    assert_eq!(candidates[0].active_app_key_count, 1);
-    assert!(candidates[0].latest_roster_op_created_at.is_some());
-    assert_eq!(
-        candidates[0].profile_roster_ops.len(),
-        acct.state.profile_roster_ops.len()
-    );
-
-    let restored_dir = tempdir().unwrap();
-    let restored = Profile::restore_with_profile_roster_ops(
-        restored_dir.path(),
-        &phrase,
-        candidates[0].profile_id,
-        candidates[0].profile_roster_ops.clone(),
-        Some("restored".into()),
-    )
-    .unwrap();
-    assert_eq!(restored.state.profile_id, acct.state.profile_id);
-
-    let remove_recovery = build_iris_profile_roster_op_event(
-        acct.app_key.keys(),
-        acct.state.profile_id,
-        crate::iris_profile_roster_parent_ids(&acct.state.profile_roster_ops),
-        None,
-        IrisProfileRosterOp::TombstoneFacet {
-            pubkey: recovery_pubkey.clone(),
-            reason: Some("lost phrase".into()),
-        },
-        acct.state
-            .profile_roster_ops
-            .iter()
-            .map(|op| op.content.created_at)
-            .max()
-            .unwrap()
-            + 1,
-    )
-    .unwrap();
-    acct.state
-        .profile_roster_ops
-        .push(crate::parse_iris_profile_roster_op_event(&remove_recovery).unwrap());
-    let events = acct
-        .state
-        .profile_roster_ops
-        .iter()
-        .map(profile_event)
-        .collect::<Vec<_>>();
-
-    assert!(
-        iris_profile_restore_candidates_from_events(&recovery_pubkey, &events)
-            .unwrap()
-            .is_empty()
-    );
-}
-
-#[test]
 fn subscription_filters_match_share_access_snapshots_and_roots() {
     let dir = tempdir().unwrap();
     let (_, owner) = config_with_owner_account(dir.path());
@@ -457,7 +448,7 @@ fn subscription_filters_match_share_access_snapshots_and_roots() {
         "Alpha",
         Some("Owner".into()),
         vec![ShareRecipient {
-            profile_id: IrisProfileId::new_v4(),
+            profile_id: NostrIdentityId::new_v4(),
             app_pubkey: reader.public_key().to_hex(),
             role: ShareRole::Reader,
             label: Some("Reader".into()),
@@ -518,7 +509,7 @@ fn apply_share_access_snapshot_event_replaces_known_shared_folder() {
         10,
     )
     .unwrap();
-    let editor_id = IrisProfileId::new_v4();
+    let editor_id = NostrIdentityId::new_v4();
     let mut remote_folder = folder.clone();
     remote_folder.access.grants.push(ShareAccessGrant {
         target: ShareAccessTarget::id(editor_id),
@@ -558,7 +549,7 @@ fn apply_share_access_snapshot_event_replaces_known_shared_folder() {
 }
 
 #[test]
-fn apply_iris_profile_roster_op_event_merges_profile_log_and_projection() {
+fn apply_nostr_identity_roster_op_event_merges_profile_log_and_projection() {
     let dir = tempdir().unwrap();
     let (mut cfg, mut acct) = config_with_owner_account(dir.path());
     let initial_op_ids = cfg
@@ -579,9 +570,9 @@ fn apply_iris_profile_roster_op_event_merges_profile_log_and_projection() {
         .iter()
         .filter(|op| !initial_op_ids.contains(&op.op_id))
     {
-        let outcome = apply_remote_iris_profile_roster_op_event(&mut cfg, &profile_event(op))
+        let outcome = apply_remote_nostr_identity_roster_op_event(&mut cfg, &profile_event(op))
             .expect("profile op applies");
-        assert_ne!(outcome, IrisProfileRosterOpApply::NotOurProfile);
+        assert_ne!(outcome, NostrIdentityRosterOpApply::NotOurProfile);
     }
 
     let state = cfg.profile.as_ref().unwrap();
@@ -597,7 +588,7 @@ fn apply_iris_profile_roster_op_event_merges_profile_log_and_projection() {
 }
 
 #[test]
-fn apply_iris_profile_roster_op_event_keeps_out_of_order_valid_ops() {
+fn apply_nostr_identity_roster_op_event_keeps_out_of_order_valid_ops() {
     let dir = tempdir().unwrap();
     let (mut cfg, acct) = config_with_owner_account(dir.path());
     let profile_id = acct.state.profile_id;
@@ -609,41 +600,41 @@ fn apply_iris_profile_roster_op_event_keeps_out_of_order_valid_ops() {
         .map(|op| op.content.created_at)
         .max()
         .unwrap();
-    let add_event = build_iris_profile_roster_op_event(
+    let add_event = build_nostr_identity_roster_op_event(
         acct.app_key.keys(),
         profile_id,
-        crate::iris_profile_roster_parent_ids(&acct.state.profile_roster_ops),
+        crate::nostr_identity_roster_parent_ids(&acct.state.profile_roster_ops),
         None,
-        IrisProfileRosterOp::AddFacet {
-            facet: IrisProfileFacet::app_key(
+        NostrIdentityRosterOp::AddFacet {
+            facet: NostrIdentityFacet::app_key(
                 new_app.clone(),
                 latest + 1,
                 Some("tablet".to_string()),
-                IrisProfileCapabilities::app_admin(),
+                NostrIdentityCapabilities::app_admin(),
             ),
         },
         latest + 1,
     )
     .unwrap();
-    let add_op = crate::parse_iris_profile_roster_op_event(&add_event).unwrap();
-    let mut set_parents = crate::iris_profile_roster_parent_ids(&acct.state.profile_roster_ops);
+    let add_op = crate::parse_nostr_identity_roster_op_event(&add_event).unwrap();
+    let mut set_parents = crate::nostr_identity_roster_parent_ids(&acct.state.profile_roster_ops);
     set_parents.push(add_op.op_id.clone());
-    let set_event = build_iris_profile_roster_op_event(
+    let set_event = build_nostr_identity_roster_op_event(
         acct.app_key.keys(),
         profile_id,
         set_parents,
         None,
-        IrisProfileRosterOp::SetCapabilities {
+        NostrIdentityRosterOp::SetCapabilities {
             pubkey: new_app.clone(),
-            capabilities: IrisProfileCapabilities::app_writer(),
+            capabilities: NostrIdentityCapabilities::app_writer(),
         },
         latest + 2,
     )
     .unwrap();
 
     assert_eq!(
-        apply_remote_iris_profile_roster_op_event(&mut cfg, &set_event).unwrap(),
-        IrisProfileRosterOpApply::Applied
+        apply_remote_nostr_identity_roster_op_event(&mut cfg, &set_event).unwrap(),
+        NostrIdentityRosterOpApply::Applied
     );
     assert!(
         !cfg.profile
@@ -655,8 +646,8 @@ fn apply_iris_profile_roster_op_event_keeps_out_of_order_valid_ops() {
     );
 
     assert_eq!(
-        apply_remote_iris_profile_roster_op_event(&mut cfg, &add_event).unwrap(),
-        IrisProfileRosterOpApply::Applied
+        apply_remote_nostr_identity_roster_op_event(&mut cfg, &add_event).unwrap(),
+        NostrIdentityRosterOpApply::Applied
     );
     let projection = cfg.profile.as_ref().unwrap().profile_projection();
     let facet = projection.active_facets.get(&new_app).unwrap();
@@ -984,7 +975,7 @@ fn apply_drive_root_event_from_unauthorized_app_key_ignored() {
 fn apply_drive_root_event_for_foreign_scope_ignored() {
     let dir = tempdir().unwrap();
     let (mut cfg, _) = config_with_owner_account(dir.path());
-    let other_scope = IrisProfileId::new_v4().to_string();
+    let other_scope = NostrIdentityId::new_v4().to_string();
     let device_key = Keys::generate();
     let root = encrypted_root(0xf0, 0, 1);
     let event = build_drive_root_event(
@@ -1027,7 +1018,7 @@ fn apply_share_root_event_from_authorized_publisher_applies_to_shared_folder() {
         .projection()
         .active_facets
         .values()
-        .filter(|facet| facet.capabilities.can_receive_key_wraps)
+        .filter(|facet| facet.capabilities.can_receive_secret_wraps)
         .map(|facet| facet.pubkey.clone())
         .collect::<Vec<_>>();
     let event = build_drive_root_event(
@@ -1086,7 +1077,7 @@ fn apply_share_root_event_rejects_reader_publisher() {
         .projection()
         .active_facets
         .values()
-        .filter(|facet| facet.capabilities.can_receive_key_wraps)
+        .filter(|facet| facet.capabilities.can_receive_secret_wraps)
         .map(|facet| facet.pubkey.clone())
         .collect::<Vec<_>>();
     let event = build_drive_root_event(
@@ -1160,7 +1151,7 @@ fn apply_share_root_event_rejects_revoked_profile_member() {
         .projection()
         .active_facets
         .values()
-        .filter(|facet| facet.capabilities.can_receive_key_wraps)
+        .filter(|facet| facet.capabilities.can_receive_secret_wraps)
         .map(|facet| facet.pubkey.clone())
         .collect::<Vec<_>>();
     let event = build_drive_root_event(
@@ -1365,7 +1356,7 @@ fn apply_drive_root_event_prefers_higher_app_key_seq_over_newer_timestamp() {
 #[test]
 fn same_second_drive_root_selection_prefers_higher_app_key_seq() {
     let device = Keys::generate();
-    let root_scope_id = IrisProfileId::new_v4().to_string();
+    let root_scope_id = NostrIdentityId::new_v4().to_string();
     let older = causal_encrypted_root(0x31, 1_700_000_000, 1, 1);
     let newer = causal_encrypted_root(0x32, 1_700_000_000, 1, 2);
     let authorized = vec![device.public_key().to_hex()];
@@ -1373,6 +1364,56 @@ fn same_second_drive_root_selection_prefers_higher_app_key_seq() {
         build_drive_root_event(&device, &root_scope_id, "main", &older, &authorized).unwrap();
     let newer_event =
         build_drive_root_event(&device, &root_scope_id, "main", &newer, &authorized).unwrap();
+
+    assert!(drive_root_event_is_newer(&newer_event, &older_event));
+    assert!(!drive_root_event_is_newer(&older_event, &newer_event));
+}
+
+#[test]
+fn same_author_same_second_drive_root_selection_uses_ms_after_app_key_seq() {
+    let device = Keys::generate();
+    let root_scope_id = NostrIdentityId::new_v4().to_string();
+    let build = |root_hash: &str, ms: &str| {
+        EventBuilder::new(
+            Kind::from(KIND_DRIVE_ROOT),
+            serde_json::json!({
+                "root_hash": root_hash,
+                "dck_generation": 1,
+                "app_key_seq": 2,
+            })
+            .to_string(),
+        )
+        .tag(Tag::identifier(drive_root_d_tag(&root_scope_id, "main")))
+        .tag(Tag::custom(
+            nostr_sdk::TagKind::Custom("ms".into()),
+            vec![ms.to_string()],
+        ))
+        .custom_created_at(nostr_sdk::Timestamp::from(1_700_000_000))
+        .sign_with_keys(&device)
+        .unwrap()
+    };
+    let older_event = build(&"41".repeat(32), "1700000000100");
+    let newer_event = build(&"42".repeat(32), "1700000000900");
+
+    assert!(drive_root_event_is_newer(&newer_event, &older_event));
+    assert!(!drive_root_event_is_newer(&older_event, &newer_event));
+}
+
+#[test]
+fn drive_root_selection_ignores_app_key_seq_across_authors() {
+    let older_device = Keys::generate();
+    let newer_device = Keys::generate();
+    let root_scope_id = NostrIdentityId::new_v4().to_string();
+    let older = causal_encrypted_root(0x43, 1_700_000_000, 1, 500);
+    let newer = causal_encrypted_root(0x44, 1_700_000_001, 1, 1);
+    let authorized = vec![
+        older_device.public_key().to_hex(),
+        newer_device.public_key().to_hex(),
+    ];
+    let older_event =
+        build_drive_root_event(&older_device, &root_scope_id, "main", &older, &authorized).unwrap();
+    let newer_event =
+        build_drive_root_event(&newer_device, &root_scope_id, "main", &newer, &authorized).unwrap();
 
     assert!(drive_root_event_is_newer(&newer_event, &older_event));
     assert!(!drive_root_event_is_newer(&older_event, &newer_event));

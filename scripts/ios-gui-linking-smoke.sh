@@ -17,8 +17,9 @@ SCHEME="IrisDriveIOS"
 CONFIGURATION="${IRIS_DRIVE_IOS_XCODE_CONFIGURATION:-Debug}"
 DERIVED_DATA="$ROOT/ios/.build/DerivedData"
 BUILD_LOG="${IRIS_DRIVE_IOS_UI_BUILD_LOG:-/tmp/iris-drive-ios-ui-tests.log}"
-BUNDLE_ID="to.iris.drive.ios"
-SHARE_SOURCE_BUNDLE_ID="to.iris.drive.ios.ShareSource"
+BUNDLE_ID="${IRIS_DRIVE_IOS_BUNDLE_ID:-fi.siriusbusiness.drive}"
+SHARE_SOURCE_BUNDLE_ID="${IRIS_DRIVE_IOS_SHARE_SOURCE_BUNDLE_ID:-fi.siriusbusiness.drive.ShareSource}"
+APP_GROUP_ID="${IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER:-group.fi.siriusbusiness.drive}"
 SHARE_SHEET_SMOKE_FILE="Iris Drive Share Sheet Smoke.txt"
 SHARE_SHEET_SMOKE_CONTENT="shared from iOS share sheet"
 DEVICE_NAME="${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-}"
@@ -99,7 +100,7 @@ reset_sim_app_state() {
   xcrun simctl uninstall "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
   xcrun simctl install "$DEVICE_UDID" "$APP_PATH" >/dev/null
   data_container="$(xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" data 2>/dev/null || true)"
-  group_container="$(xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" group.to.iris.drive 2>/dev/null || true)"
+  group_container="$(xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" "$APP_GROUP_ID" 2>/dev/null || true)"
   if [[ -z "$data_container" ]]; then
     echo "FAIL: simulator app data container was not created." >&2
     exit 1
@@ -141,6 +142,7 @@ set_sim_env() {
 
 launch_sim_app() {
   xcrun simctl terminate "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+  clear_sim_env IRIS_DRIVE_DEBUG_ACTION IRIS_DRIVE_DEBUG_OWNER
   set_sim_env "$@"
   xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null
 }
@@ -338,7 +340,7 @@ reset_sim_app_group_state() {
   xcrun simctl install "$DEVICE_UDID" "$APP_PATH" >/dev/null
   xcrun simctl install "$DEVICE_UDID" "$SHARE_SOURCE_APP_PATH" >/dev/null
   data_container="$(xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" data 2>/dev/null || true)"
-  group_container="$(xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" group.to.iris.drive 2>/dev/null || true)"
+  group_container="$(xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" "$APP_GROUP_ID" 2>/dev/null || true)"
   if [[ -z "$data_container" ]]; then
     echo "FAIL: simulator app data container was not created for share-sheet smoke." >&2
     exit 1
@@ -461,6 +463,9 @@ run_ui_test "IrisDriveIOSShareExtensionTests"
 reset_sim_app_state
 run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testWelcomeRoutesWithoutSetupTitle"
 
+reset_sim_app_state
+run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testLinkThisDeviceFromWelcome"
+
 reset_sim_app_group_state
 run_ui_test \
   --app-group \
@@ -471,7 +476,6 @@ verify_share_sheet_import
 
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
 owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["app_key_link_invite"]["url"])' <<<"$owner_json")"
-owner_invite_b64="$(python3 -c 'import base64,sys; print(base64.b64encode(sys.argv[1].encode()).decode())' "$owner_invite")"
 owner_app_key_npub="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["current_app_key_npub"])' <<<"$owner_json")"
 OWNER_FIPS_PORT="$(unused_loopback_port)"
 owner_fips_peer="$owner_app_key_npub=127.0.0.1:$OWNER_FIPS_PORT"
@@ -490,32 +494,33 @@ if ! wait_for_owner_fips 20; then
 fi
 
 reset_sim_app_state
-run_ui_test \
-  "IrisDriveIOSUITests/IrisDriveIOSUITests/testLinkThisDeviceFromWelcome" \
-  "IRIS_DRIVE_UI_TEST_OWNER_INVITE_B64=$owner_invite_b64" \
-  "IRIS_DRIVE_FIPS_STATIC_PEERS=$owner_fips_peer" \
-  "IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=false" \
-  "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=false" \
-  "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=127.0.0.1:0" \
-  "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR="
-
 launch_sim_app \
   "IRIS_DRIVE_FIPS_STATIC_PEERS=$owner_fips_peer" \
   "IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=false" \
   "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=false" \
   "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=127.0.0.1:0" \
-  "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR="
+  "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=" \
+  "IRIS_DRIVE_DEBUG_ACTION=link-device" \
+  "IRIS_DRIVE_DEBUG_OWNER=$owner_invite"
 
 STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
-if ! wait_for_debug_state \
-  "$STATE_FILE" \
-  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("profile") or {}; raise SystemExit(0 if a.get("authorization_state") == "awaiting_approval" and a.get("app_key_link_request") else 1)' \
+if ! wait_for_config_status \
+  "$SIM_APP_BASE_DIR" \
+  'import json,sys; s=json.load(sys.stdin); a=s.get("profile") or {}; raise SystemExit(0 if a.get("authorization_state") == "awaiting_approval" and a.get("app_key_link_request") else 1)' \
   15; then
-  echo "FAIL: iOS Link this device UI did not create an awaiting linked-device profile." >&2
+  echo "FAIL: iOS owner invite did not create an awaiting linked-device profile." >&2
   [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2
   exit 1
 fi
-linked_device="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["profile"]["current_app_key_npub"])' <"$STATE_FILE")"
+run_ui_test \
+  "IrisDriveIOSUITests/IrisDriveIOSUITests/testAwaitingApprovalViewVisible" \
+  "IRIS_DRIVE_FIPS_STATIC_PEERS=$owner_fips_peer" \
+  "IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=false" \
+  "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=false" \
+  "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=127.0.0.1:0" \
+  "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR="
+linked_device="$("$IDRIVE" --config-dir "$SIM_APP_BASE_DIR" status \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["current_app_key_npub"])')"
 if ! wait_for_owner_inbound_request "$linked_device" 30; then
   echo "FAIL: owner did not receive the iOS GUI app-key-link request over FIPS." >&2
   "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
@@ -572,6 +577,8 @@ fi
 
 reset_sim_app_state
 run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testCreateProfileFromWelcome"
+reset_sim_app_state
+run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testCreateProfileWithUsernameCanSkipProfilePhoto"
 run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testOpenIrisAppsLoadsBrowserWithoutConnectionError"
 run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testOpenIrisAppsLoadsBrowserWhenSyncPaused"
 run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testOpenDriveFolderInFilesApp"
@@ -597,7 +604,7 @@ run_ui_test \
 STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
 if ! wait_for_debug_state \
   "$STATE_FILE" \
-  'import json,sys; s=json.load(sys.stdin); ui=s.get("ui",{}); devices=ui.get("app_actors") or ui.get("devices") or []; raise SystemExit(0 if any((d.get("display_label") or d.get("label")) == "iOS UI linked" for d in devices) and len(devices) >= 2 else 1)' \
+  'import json,sys; s=json.load(sys.stdin); ui=s.get("ui",{}); devices=ui.get("app_actors") or ui.get("devices") or []; raise SystemExit(0 if any(d.get("role") == "member" and d.get("state") == "Linked" for d in devices) and len(devices) >= 2 else 1)' \
   15; then
   echo "FAIL: iOS Add Device UI did not add the linked device." >&2
   [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2

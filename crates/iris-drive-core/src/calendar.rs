@@ -386,8 +386,25 @@ pub fn calendar_multiget_multistatus(data: &CalendarData, hrefs: &[String]) -> S
 }
 
 #[must_use]
+pub fn calendar_sync_collection_multistatus(data: &CalendarData, collection_href: &str) -> String {
+    let mut responses = String::new();
+    for event in &data.events {
+        let event_href = format!(
+            "{}/{}.ics",
+            collection_href.trim_end_matches('/'),
+            percent_encode(&event_href_id(&event.id))
+        );
+        responses.push_str(&event_prop_response(&event_href, event));
+    }
+    format!(
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?><D:multistatus xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\"><D:sync-token>{}</D:sync-token>{responses}</D:multistatus>",
+        xml_escape(&calendar_sync_token(data)),
+    )
+}
+
+#[must_use]
 pub fn collection_propfind_multistatus(data: &CalendarData, href: &str, depth: &str) -> String {
-    let mut responses = collection_prop_response(href, &data.title);
+    let mut responses = collection_prop_response(href, data);
     if depth != "0" {
         for event in &data.events {
             let event_href = format!(
@@ -424,7 +441,7 @@ pub fn home_propfind_multistatus(
         xml_escape(href)
     );
     if depth != "0" {
-        responses.push_str(&collection_prop_response(calendar_href, &data.title));
+        responses.push_str(&collection_prop_response(calendar_href, data));
     }
     multistatus(&responses)
 }
@@ -440,13 +457,17 @@ pub fn root_propfind_multistatus(href: &str, principal_href: &str, home_href: &s
     multistatus(&props)
 }
 
-fn collection_prop_response(href: &str, title: &str) -> String {
+fn collection_prop_response(href: &str, data: &CalendarData) -> String {
+    let collection_tag = calendar_collection_ctag(data);
+    let sync_token = calendar_sync_token(data);
     format!(
-        "<D:response><D:href>{}</D:href><D:propstat><D:prop><D:displayname>{}</D:displayname><D:resourcetype><D:collection/><C:calendar/></D:resourcetype><C:supported-calendar-component-set><C:comp name=\"VEVENT\"/></C:supported-calendar-component-set><D:current-user-privilege-set><D:privilege><D:read/></D:privilege><D:privilege><D:write/></D:privilege></D:current-user-privilege-set><D:getctag>{}</D:getctag><D:sync-token>{}</D:sync-token></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
+        "<D:response><D:href>{}</D:href><D:propstat><D:prop><D:displayname>{}</D:displayname><D:resourcetype><D:collection/><C:calendar/></D:resourcetype><D:getcontenttype>text/calendar; charset=utf-8</D:getcontenttype><D:getetag>{}</D:getetag><C:calendar-description>{}</C:calendar-description><C:supported-calendar-component-set><C:comp name=\"VEVENT\"/></C:supported-calendar-component-set><D:supported-report-set><D:supported-report><D:report><C:calendar-query/></D:report></D:supported-report><D:supported-report><D:report><C:calendar-multiget/></D:report></D:supported-report><D:supported-report><D:report><D:sync-collection/></D:report></D:supported-report></D:supported-report-set><D:current-user-privilege-set><D:privilege><D:read/></D:privilege><D:privilege><D:write/></D:privilege></D:current-user-privilege-set><CS:getctag>{}</CS:getctag><D:sync-token>{}</D:sync-token><IC:calendar-color symbolic-color=\"custom\">#AC7F5E</IC:calendar-color><IC:calendar-order>0</IC:calendar-order></D:prop><D:status>HTTP/1.1 200 OK</D:status></D:propstat></D:response>",
         xml_escape(href),
-        xml_escape(title),
-        xml_escape(&calendar_collection_tag(title)),
-        xml_escape(&calendar_collection_tag(title)),
+        xml_escape(&data.title),
+        xml_escape(&collection_tag),
+        xml_escape(&data.title),
+        xml_escape(&collection_tag),
+        xml_escape(&sync_token),
     )
 }
 
@@ -460,7 +481,7 @@ fn event_prop_response(href: &str, event: &CalendarEvent) -> String {
 
 fn multistatus(responses: &str) -> String {
     format!(
-        "<?xml version=\"1.0\" encoding=\"utf-8\"?><D:multistatus xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\">{responses}</D:multistatus>"
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?><D:multistatus xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\" xmlns:CS=\"http://calendarserver.org/ns/\" xmlns:IC=\"http://apple.com/ns/ical/\">{responses}</D:multistatus>"
     )
 }
 
@@ -468,7 +489,7 @@ fn multistatus(responses: &str) -> String {
 pub fn extract_hrefs(xml: &str) -> Vec<String> {
     let mut hrefs = Vec::new();
     let mut rest = xml;
-    while let Some(start) = rest.find("<D:href>").or_else(|| rest.find("<href>")) {
+    while let Some(start) = find_href_start_tag(rest) {
         let after = &rest[start..];
         let Some(close_start) = after.find('>') else {
             break;
@@ -481,6 +502,38 @@ pub fn extract_hrefs(xml: &str) -> Vec<String> {
         rest = &after[value_start + end..];
     }
     hrefs
+}
+
+fn find_href_start_tag(xml: &str) -> Option<usize> {
+    let mut offset = 0;
+    while let Some(relative_start) = xml[offset..].find('<') {
+        let start = offset + relative_start;
+        let after_open = &xml[start + 1..];
+        if after_open.starts_with('/') || after_open.starts_with('!') || after_open.starts_with('?')
+        {
+            offset = start + 1;
+            continue;
+        }
+        let Some(close) = after_open.find('>') else {
+            return None;
+        };
+        let tag = after_open[..close].trim();
+        if !tag.ends_with('/') && xml_tag_local_name(tag).eq_ignore_ascii_case("href") {
+            return Some(start);
+        }
+        offset = start + close + 2;
+    }
+    None
+}
+
+fn xml_tag_local_name(tag: &str) -> &str {
+    let name = tag
+        .split_whitespace()
+        .next()
+        .unwrap_or_default()
+        .trim_end_matches('/');
+    name.rsplit_once(':')
+        .map_or(name, |(_, local_name)| local_name)
 }
 
 #[must_use]
@@ -907,98 +960,36 @@ fn hex_value(byte: u8) -> Option<u8> {
     }
 }
 
-fn calendar_collection_tag(title: &str) -> String {
-    let digest = Sha256::digest(title.as_bytes());
-    format!("\"{}\"", hex::encode(&digest[..12]))
+fn calendar_collection_ctag(data: &CalendarData) -> String {
+    format!("\"{}\"", calendar_collection_digest(data))
+}
+
+fn calendar_sync_token(data: &CalendarData) -> String {
+    format!(
+        "urn:iris-drive:caldav-sync:{}",
+        calendar_collection_digest(data)
+    )
+}
+
+fn calendar_collection_digest(data: &CalendarData) -> String {
+    let mut digest = Sha256::new();
+    digest.update(data.title.as_bytes());
+    let mut event_tags = data
+        .events
+        .iter()
+        .map(|event| (event_href_id(&event.id), event_etag(event)))
+        .collect::<Vec<_>>();
+    event_tags.sort();
+    for (event_id, event_tag) in event_tags {
+        digest.update([0]);
+        digest.update(event_id.as_bytes());
+        digest.update([0]);
+        digest.update(event_tag.as_bytes());
+    }
+    let digest = digest.finalize();
+    hex::encode(&digest[..12])
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::Daemon;
-    use crate::config::{AppConfig, Drive};
-    use crate::paths::{config_path_in, key_path_in};
-    use crate::profile::Profile;
-    use tempfile::tempdir;
-
-    fn init_calendar_config(dir: &std::path::Path) {
-        let account = Profile::create(dir, Some("calendar-test".into())).unwrap();
-        let mut config = AppConfig {
-            profile: Some(account.state.clone()),
-            ..AppConfig::default()
-        };
-        config.upsert_drive(Drive::primary(account.state.root_scope_id()));
-        std::fs::write(
-            key_path_in(dir),
-            account.app_key.keys().secret_key().to_secret_hex(),
-        )
-        .unwrap();
-        config.save(config_path_in(dir)).unwrap();
-    }
-
-    #[tokio::test]
-    async fn calendar_put_ics_upserts_event_in_calendar_tree() {
-        let dir = tempdir().unwrap();
-        init_calendar_config(dir.path());
-        let mut daemon = Daemon::open(dir.path()).unwrap();
-        let ics = b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:event-123@calendar.iris.to\r\nSUMMARY:Bridge test\r\nDTSTART:20260622T100000Z\r\nDTEND:20260622T103000Z\r\nLOCATION:Helsinki\r\nDESCRIPTION:from CalDAV\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
-
-        put_calendar_event_ics(&mut daemon, "event-123", ics)
-            .await
-            .unwrap();
-        let data = load_calendar_data(daemon.tree(), daemon.config(), "npub-test")
-            .await
-            .unwrap();
-
-        assert_eq!(data.events.len(), 1);
-        assert_eq!(data.events[0].id, "event-123");
-        assert_eq!(data.events[0].title, "Bridge test");
-        assert_eq!(data.events[0].location.as_deref(), Some("Helsinki"));
-        assert_eq!(data.events[0].notes.as_deref(), Some("from CalDAV"));
-    }
-
-    #[tokio::test]
-    async fn calendar_delete_event_removes_it_from_calendar_tree() {
-        let dir = tempdir().unwrap();
-        init_calendar_config(dir.path());
-        let mut daemon = Daemon::open(dir.path()).unwrap();
-        let ics = b"BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:delete-me@calendar.iris.to\r\nSUMMARY:Delete me\r\nDTSTART:20260622T100000Z\r\nDTEND:20260622T103000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
-
-        put_calendar_event_ics(&mut daemon, "delete-me", ics)
-            .await
-            .unwrap();
-        delete_calendar_event(&mut daemon, "delete-me")
-            .await
-            .unwrap();
-        let data = load_calendar_data(daemon.tree(), daemon.config(), "npub-test")
-            .await
-            .unwrap();
-
-        assert!(data.events.is_empty());
-    }
-
-    #[test]
-    fn caldav_report_lists_event_href_and_calendar_data() {
-        let mut data = CalendarData::new("npub-test", 1_782_070_400_000);
-        data.events.push(CalendarEvent {
-            id: "event-123".into(),
-            title: "Report me".into(),
-            start: "2026-06-22T10:00:00.000Z".into(),
-            end: "2026-06-22T10:30:00.000Z".into(),
-            all_day: false,
-            color: "violet".into(),
-            location: None,
-            notes: None,
-            recurrence: None,
-            recurrence_source_id: None,
-            created_at: 1_782_070_400_000,
-            updated_at: 1_782_070_400_000,
-        });
-
-        let xml = calendar_query_multistatus(&data, "/caldav/calendars/iris/calendar/");
-
-        assert!(xml.contains("<D:href>/caldav/calendars/iris/calendar/event-123.ics</D:href>"));
-        assert!(xml.contains("BEGIN:VCALENDAR"));
-        assert!(xml.contains("SUMMARY:Report me"));
-    }
-}
+#[path = "calendar_tests.rs"]
+mod tests;

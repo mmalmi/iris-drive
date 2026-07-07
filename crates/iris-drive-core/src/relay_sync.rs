@@ -2,17 +2,19 @@
 //!
 //! Two layers:
 //!
-//! - **Apply (offline)** — `apply_remote_iris_profile_roster_op_event`,
+//! - **Apply (offline)** — `apply_remote_nostr_identity_roster_op_event`,
 //!   `apply_remote_share_access_snapshot_event`, `apply_remote_drive_root_event`,
 //!   and app-key-link helpers take a parsed Nostr event or direct roster frame and apply the
 //!   event's effect onto the config. These are pure functions over data, fully
 //!   covered by unit tests.
 //!
-//! - **Network (live)** — `publish_iris_profile_roster_ops`,
-//!   `publish_drive_root`, `fetch_iris_profile_roster_ops`,
-//!   `fetch_iris_profile_restore_candidates`, and `fetch_drive_roots` wrap
-//!   nostr-sdk's `Client` for actual relay I/O. Tested manually against real
-//!   relays; the wire/apply layers below them are what we cover automatically.
+//! - **Network (live)** — `publish_nostr_identity_roster_ops`,
+//!   `publish_drive_root`, `fetch_nostr_identity_roster_ops`,
+//!   `fetch_nostr_identity_restore_candidates`,
+//!   `fetch_nostr_identity_app_key_approval_candidates`, and `fetch_drive_roots`
+//!   wrap nostr-sdk's `Client` for actual relay I/O. Tested manually against
+//!   real relays; the wire/apply layers below them are what we cover
+//!   automatically.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
@@ -31,14 +33,15 @@ use crate::nostr_events::{
     parse_drive_root_event_preview,
 };
 use crate::profile::{app_key_link_invite_keys, app_keys_from_profile_projection};
-use crate::relay_filters::{iris_profile_roster_op_filter, share_access_snapshot_filter};
+use crate::relay_filters::{nostr_identity_roster_op_filter, share_access_snapshot_filter};
 pub use crate::relay_filters::{subscription_filters, subscription_filters_for_shared_roots};
 use crate::{
-    IrisProfileId, KIND_IRIS_PROFILE_ROSTER_OP, SignedIrisProfileRosterOp,
-    SignedShareAccessSnapshot, iris_profile_candidate_ids_for_pubkey_from_events,
-    parse_iris_profile_roster_op_event, parse_share_access_snapshot_event,
-    project_iris_profile_roster,
+    NostrIdentityId, SignedNostrIdentityRosterOp, SignedShareAccessSnapshot,
+    parse_nostr_identity_roster_op_event, parse_share_access_snapshot_event,
+    project_nostr_identity_roster,
 };
+
+pub const RELAY_SYNC_EVENT_CACHE_LIMIT: usize = 4096;
 
 #[derive(Debug, Error)]
 pub enum RelayError {
@@ -55,11 +58,47 @@ pub enum RelayError {
     #[error("account: {0}")]
     Profile(#[from] crate::profile::ProfileError),
     #[error("iris profile: {0}")]
-    IrisProfile(#[from] crate::iris_profile::IrisProfileError),
+    NostrIdentity(#[from] crate::nostr_identity::NostrIdentityError),
     #[error("share access: {0}")]
     ShareAccess(#[from] crate::sharing::SharingError),
     #[error("app-key-link roster: {0}")]
     AppKeyLinkRoster(String),
+}
+
+#[must_use]
+pub fn relay_source_routes(relay_urls: &[String]) -> Vec<nostr_pubsub::SourceRoute> {
+    relay_urls
+        .iter()
+        .map(|url| {
+            nostr_pubsub::SourceRoute::relay(url.clone()).with_reason("iris-drive app relay config")
+        })
+        .collect()
+}
+
+#[must_use]
+pub fn relay_urls_from_source_routes(routes: &[nostr_pubsub::SourceRoute]) -> Vec<String> {
+    routes
+        .iter()
+        .filter(|route| route.source.kind == nostr_pubsub::EventSourceKind::Relay)
+        .filter_map(|route| route.source.url.clone())
+        .collect()
+}
+
+#[must_use]
+pub fn event_retention_policy(filters: Vec<Filter>) -> nostr_pubsub::EventRetentionPolicy {
+    nostr_pubsub::EventRetentionPolicy::new(RELAY_SYNC_EVENT_CACHE_LIMIT, filters)
+}
+
+#[must_use]
+pub fn relay_event_matches_policy(
+    policy: &nostr_pubsub::EventRetentionPolicy,
+    event: &Event,
+) -> bool {
+    if event.verify().is_err() {
+        return false;
+    }
+    nostr_pubsub::VerifiedEvent::try_from(event.clone())
+        .is_ok_and(|verified| policy.accepts(&verified))
 }
 
 /// Result of applying signed profile roster ops over the direct app-key-link channel.
@@ -73,9 +112,9 @@ pub enum AppKeyLinkRosterApply {
     Applied(ApplyDecision),
 }
 
-/// Result of merging a signed `IrisProfile` roster op from relay/direct sync.
+/// Result of merging a signed `NostrIdentity` roster op from relay/direct sync.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum IrisProfileRosterOpApply {
+pub enum NostrIdentityRosterOpApply {
     /// The op belongs to another profile.
     NotOurProfile,
     /// This op id is already present locally.
@@ -97,18 +136,20 @@ pub enum ShareAccessSnapshotApply {
     Applied,
 }
 
-/// Verified roster evidence for an `IrisProfile` that a recovery/NIP-46
-/// pubkey can use to admit a fresh local `AppKey`.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct IrisProfileRestoreCandidate {
-    pub profile_id: IrisProfileId,
-    pub recovery_pubkey: String,
-    pub can_decrypt_key_epochs: bool,
-    pub accepted_roster_op_count: usize,
-    pub active_app_key_count: usize,
-    pub latest_roster_op_created_at: Option<i64>,
-    pub profile_roster_ops: Vec<SignedIrisProfileRosterOp>,
-}
+#[path = "relay_sync/app_key_approval_candidates.rs"]
+mod app_key_approval_candidates;
+pub use app_key_approval_candidates::{
+    NostrIdentityAppKeyApprovalCandidate, fetch_nostr_identity_app_key_approval_candidates,
+    nostr_identity_app_key_approval_candidate_filters,
+    nostr_identity_app_key_approval_candidates_from_events,
+};
+
+#[path = "relay_sync/restore_candidates.rs"]
+mod restore_candidates;
+pub use restore_candidates::{
+    NostrIdentityRestoreCandidate, fetch_nostr_identity_restore_candidates,
+    nostr_identity_restore_candidate_filters, nostr_identity_restore_candidates_from_events,
+};
 
 /// Result of applying an app-key-link request sent over relay metadata.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -158,6 +199,7 @@ pub fn apply_remote_app_key_link_request_event(
         &frame.app_key_pubkey,
         frame.label,
         &frame.invite_pubkey,
+        Some(frame.url),
         frame.requested_at,
     )?;
     if changed {
@@ -192,7 +234,7 @@ pub fn apply_app_key_link_roster_frame(
     }
 
     let incoming_ops = verified_profile_roster_ops(frame.profile_id, &frame.profile_roster_ops)?;
-    let incoming_projection = project_iris_profile_roster(frame.profile_id, incoming_ops.clone());
+    let incoming_projection = project_nostr_identity_roster(frame.profile_id, incoming_ops.clone());
     let incoming_app_keys = app_keys_from_profile_projection(&incoming_projection)
         .ok_or_else(|| RelayError::AppKeyLinkRoster("profile roster has no AppKey epoch".into()))?;
     if !incoming_app_keys.is_admin(admin_app_key_pubkey) {
@@ -200,14 +242,19 @@ pub fn apply_app_key_link_roster_frame(
     }
 
     let has_current_roster = account.app_keys.is_some() || !account.profile_roster_ops.is_empty();
-    let pending_from_admin = account
-        .outbound_app_key_link_request
-        .as_ref()
-        .is_some_and(|pending| pending.admin_app_key_pubkey == admin_app_key_pubkey);
-    if !has_current_roster && !pending_from_admin {
+    let pending_request = account.outbound_app_key_link_request.as_ref();
+    let pending_from_admin = pending_request.is_some_and(|pending| {
+        !pending.admin_app_key_pubkey.trim().is_empty()
+            && pending.admin_app_key_pubkey == admin_app_key_pubkey
+    });
+    let pending_unbound_manual_join =
+        pending_request.is_some_and(|pending| pending.admin_app_key_pubkey.trim().is_empty());
+    let pending_allows_first_roster = pending_from_admin || pending_unbound_manual_join;
+    if !has_current_roster && !pending_allows_first_roster {
         return Ok(AppKeyLinkRosterApply::Ignored);
     }
-    if pending_from_admin && !incoming_projection.can_write_roots(&account.app_key_pubkey) {
+    if pending_allows_first_roster && !incoming_projection.can_write_roots(&account.app_key_pubkey)
+    {
         return Ok(AppKeyLinkRosterApply::Ignored);
     }
 
@@ -218,11 +265,15 @@ pub fn apply_app_key_link_roster_frame(
     };
     let ops_changed = account.profile_id != frame.profile_id
         || !same_profile_ops(&account.profile_roster_ops, &merged_ops);
-    let merged_projection = project_iris_profile_roster(frame.profile_id, merged_ops.clone());
+    let merged_projection = project_nostr_identity_roster(frame.profile_id, merged_ops.clone());
     let merged_app_keys = app_keys_from_profile_projection(&merged_projection)
         .ok_or_else(|| RelayError::AppKeyLinkRoster("profile roster has no AppKey epoch".into()))?;
 
-    if !ops_changed && account.app_keys.as_ref() == Some(&merged_app_keys) {
+    if !ops_changed
+        && account.app_keys.as_ref().is_some_and(|current| {
+            app_keys_projection_eq_ignoring_labels(current, &merged_app_keys)
+        })
+    {
         return Ok(AppKeyLinkRosterApply::Current);
     }
 
@@ -243,11 +294,28 @@ pub fn apply_app_key_link_roster_frame(
         account.profile_roster_ops = merged_ops;
         account.profile_id = frame.profile_id;
         account.sync_app_keys_from_profile();
-        debug_assert_eq!(account.app_keys.as_ref(), Some(&merged_app_keys));
+        debug_assert!(account.app_keys.as_ref().is_some_and(|current| {
+            app_keys_projection_eq_ignoring_labels(current, &merged_app_keys)
+        }));
         account.root_scope_id()
     };
     config.sync_primary_drive_scope(root_scope_id);
     Ok(AppKeyLinkRosterApply::Applied(decision))
+}
+
+fn app_keys_projection_eq_ignoring_labels(
+    left: &AppKeysProjection,
+    right: &AppKeysProjection,
+) -> bool {
+    let mut left = left.clone();
+    let mut right = right.clone();
+    for actor in &mut left.app_actors {
+        actor.label = None;
+    }
+    for actor in &mut right.app_actors {
+        actor.label = None;
+    }
+    left == right
 }
 
 fn app_key_link_roster_apply_decision(
@@ -270,17 +338,17 @@ fn app_key_link_roster_apply_decision(
     }
 }
 
-/// Apply a signed `IrisProfile` roster-op event to the local profile log.
+/// Apply a signed `NostrIdentity` roster-op event to the local profile log.
 ///
 /// The op log stores same-profile, signature-valid ops even when the current
 /// projection rejects them. That keeps out-of-order delivery mergeable: once a
 /// missing parent/add op arrives, deterministic projection can accept the
 /// previously rejected op without needing the network to resend it.
-pub fn apply_remote_iris_profile_roster_op_event(
+pub fn apply_remote_nostr_identity_roster_op_event(
     config: &mut AppConfig,
     event: &Event,
-) -> Result<IrisProfileRosterOpApply, RelayError> {
-    let op = parse_iris_profile_roster_op_event(event)?;
+) -> Result<NostrIdentityRosterOpApply, RelayError> {
+    let op = parse_nostr_identity_roster_op_event(event)?;
     let Some(account) = config.profile.as_ref() else {
         return Err(RelayError::NoAccount);
     };
@@ -290,7 +358,7 @@ pub fn apply_remote_iris_profile_roster_op_event(
             .iter()
             .any(|current| current.op_id == op.op_id)
         {
-            return Ok(IrisProfileRosterOpApply::Current);
+            return Ok(NostrIdentityRosterOpApply::Current);
         }
 
         let root_scope_id = {
@@ -304,10 +372,10 @@ pub fn apply_remote_iris_profile_roster_op_event(
             account.root_scope_id()
         };
         config.sync_primary_drive_scope(root_scope_id);
-        return Ok(IrisProfileRosterOpApply::Applied);
+        return Ok(NostrIdentityRosterOpApply::Applied);
     }
 
-    Ok(IrisProfileRosterOpApply::NotOurProfile)
+    Ok(NostrIdentityRosterOpApply::NotOurProfile)
 }
 
 pub fn apply_remote_share_access_snapshot_event(
@@ -335,15 +403,15 @@ pub fn apply_remote_share_access_snapshot_event(
 }
 
 fn verified_profile_roster_ops(
-    profile_id: crate::IrisProfileId,
-    ops: &[SignedIrisProfileRosterOp],
-) -> Result<Vec<SignedIrisProfileRosterOp>, RelayError> {
+    profile_id: crate::NostrIdentityId,
+    ops: &[SignedNostrIdentityRosterOp],
+) -> Result<Vec<SignedNostrIdentityRosterOp>, RelayError> {
     let mut by_id = BTreeMap::new();
     for op in ops {
         let event = Event::from_json(&op.event_json).map_err(|error| {
             RelayError::AppKeyLinkRoster(format!("parsing profile roster op event: {error}"))
         })?;
-        let parsed = crate::parse_iris_profile_roster_op_event(&event)?;
+        let parsed = crate::parse_nostr_identity_roster_op_event(&event)?;
         if parsed.content.profile_id != profile_id {
             return Err(RelayError::AppKeyLinkRoster(format!(
                 "profile roster op {} belongs to {}, expected {profile_id}",
@@ -356,8 +424,8 @@ fn verified_profile_roster_ops(
 }
 
 fn same_profile_ops(
-    left: &[SignedIrisProfileRosterOp],
-    right: &[SignedIrisProfileRosterOp],
+    left: &[SignedNostrIdentityRosterOp],
+    right: &[SignedNostrIdentityRosterOp],
 ) -> bool {
     let left_ids = left
         .iter()
@@ -371,9 +439,9 @@ fn same_profile_ops(
 }
 
 fn merge_profile_roster_ops(
-    current: &[SignedIrisProfileRosterOp],
-    incoming: &[SignedIrisProfileRosterOp],
-) -> Vec<SignedIrisProfileRosterOp> {
+    current: &[SignedNostrIdentityRosterOp],
+    incoming: &[SignedNostrIdentityRosterOp],
+) -> Vec<SignedNostrIdentityRosterOp> {
     let mut by_id = BTreeMap::new();
     for op in current.iter().chain(incoming.iter()) {
         by_id.insert(op.op_id.clone(), op.clone());
@@ -447,7 +515,7 @@ pub fn apply_remote_drive_root_event(
         return apply_root_to_app_key_roots(&mut drive.app_key_roots, event, device_keys, &preview);
     }
 
-    let Ok(share_id) = preview.root_scope_id.parse::<IrisProfileId>() else {
+    let Ok(share_id) = preview.root_scope_id.parse::<NostrIdentityId>() else {
         return Ok(DriveRootApply::NotOurScope);
     };
     if preview.drive_id != crate::PRIMARY_DRIVE_ID {
@@ -606,8 +674,10 @@ fn incoming_root_is_stale(
 /// Connect a fresh client to the given relays. Caller manages the
 /// client's lifecycle (disconnect when done).
 pub async fn connect(relay_urls: &[String]) -> Result<Client, RelayError> {
+    let source_routes = relay_source_routes(relay_urls);
+    let relay_urls = relay_urls_from_source_routes(&source_routes);
     let client = Client::builder().opts(ClientOptions::new()).build();
-    for url in relay_urls {
+    for url in &relay_urls {
         client
             .add_relay(url)
             .await
@@ -647,16 +717,16 @@ pub async fn publish_app_key_link_request(
     Ok(*output.id())
 }
 
-/// Publish the signed `IrisProfile` roster op log.
-pub async fn publish_iris_profile_roster_ops(
+/// Publish the signed `NostrIdentity` roster op log.
+pub async fn publish_nostr_identity_roster_ops(
     client: &Client,
-    ops: &[SignedIrisProfileRosterOp],
+    ops: &[SignedNostrIdentityRosterOp],
 ) -> Result<Vec<nostr_sdk::EventId>, RelayError> {
     let mut event_ids = Vec::with_capacity(ops.len());
     for op in ops {
         let event = Event::from_json(&op.event_json)
             .map_err(|e| RelayError::Client(format!("profile roster op JSON: {e}")))?;
-        let parsed = parse_iris_profile_roster_op_event(&event)?;
+        let parsed = parse_nostr_identity_roster_op_event(&event)?;
         if parsed.op_id != op.op_id {
             return Err(RelayError::Client(format!(
                 "profile roster op id mismatch: stored {}, parsed {}",
@@ -736,14 +806,22 @@ async fn fetch_events(
     filters: Vec<Filter>,
     timeout: Duration,
 ) -> Result<Vec<Event>, RelayError> {
+    let policy = event_retention_policy(filters);
     let mut events = Vec::new();
-    for filter in filters {
-        events.extend(
-            client
-                .fetch_events(filter, timeout)
-                .await
-                .map_err(|e| RelayError::Client(e.to_string()))?,
-        );
+    for filter in policy.filters.clone() {
+        for event in client
+            .fetch_events(filter, timeout)
+            .await
+            .map_err(|e| RelayError::Client(e.to_string()))?
+        {
+            if !relay_event_matches_policy(&policy, &event) {
+                continue;
+            }
+            events.push(event);
+            if events.len() >= policy.max_events {
+                return Ok(events);
+            }
+        }
     }
     Ok(events)
 }
@@ -770,22 +848,22 @@ pub async fn fetch_latest_files_root(
     Ok(latest)
 }
 
-/// Fetch all visible `IrisProfile` roster ops for a profile.
-pub async fn fetch_iris_profile_roster_ops(
+/// Fetch all visible `NostrIdentity` roster ops for a profile.
+pub async fn fetch_nostr_identity_roster_ops(
     client: &Client,
-    profile_id: IrisProfileId,
+    profile_id: NostrIdentityId,
     timeout: Duration,
 ) -> Result<Vec<Event>, RelayError> {
     let events = fetch_events(
         client,
-        vec![iris_profile_roster_op_filter(profile_id)],
+        vec![nostr_identity_roster_op_filter(profile_id)],
         timeout,
     )
     .await?;
     Ok(events
         .into_iter()
         .filter(|event| {
-            parse_iris_profile_roster_op_event(event)
+            parse_nostr_identity_roster_op_event(event)
                 .is_ok_and(|op| op.content.profile_id == profile_id)
         })
         .collect())
@@ -794,7 +872,7 @@ pub async fn fetch_iris_profile_roster_ops(
 /// Fetch signed canonical share access snapshots for one share.
 pub async fn fetch_share_access_snapshots(
     client: &Client,
-    share_id: IrisProfileId,
+    share_id: NostrIdentityId,
     timeout: Duration,
 ) -> Result<Vec<Event>, RelayError> {
     let events = fetch_events(
@@ -810,137 +888,6 @@ pub async fn fetch_share_access_snapshots(
                 .is_ok_and(|snapshot| snapshot.content.resource_id == share_id)
         })
         .collect())
-}
-
-/// Relay filters for finding `IrisProfile` evidence involving a recovery key.
-///
-/// The `#p` filter catches roster ops that mention the key and self-signed
-/// acceptance breadcrumbs. The author filter catches events signed by the key.
-/// Matching events are discovery hints; callers must still fetch/project the
-/// profile roster log before trusting them.
-pub fn iris_profile_restore_candidate_filters(
-    recovery_pubkey_hex: &str,
-) -> Result<Vec<Filter>, RelayError> {
-    let recovery_pubkey = PublicKey::from_hex(recovery_pubkey_hex)
-        .map_err(|e| RelayError::InvalidPubkey(e.to_string()))?;
-    Ok(vec![
-        Filter::new()
-            .kind(nostr_sdk::Kind::from(KIND_IRIS_PROFILE_ROSTER_OP))
-            .pubkey(recovery_pubkey),
-        Filter::new()
-            .kind(nostr_sdk::Kind::from(KIND_IRIS_PROFILE_ROSTER_OP))
-            .author(recovery_pubkey),
-    ])
-}
-
-/// Project fetched relay events into verified restore candidates for a
-/// recovery/NIP-46 pubkey. Acceptance events and `p` tags only discover
-/// candidate UUIDs; a candidate is returned only when the authoritative roster
-/// projection has the pubkey as an active facet that can recover `AppKeys`.
-pub fn iris_profile_restore_candidates_from_events(
-    recovery_pubkey_hex: &str,
-    events: &[Event],
-) -> Result<Vec<IrisProfileRestoreCandidate>, RelayError> {
-    let candidate_ids: BTreeSet<_> =
-        iris_profile_candidate_ids_for_pubkey_from_events(recovery_pubkey_hex, events)?
-            .into_iter()
-            .collect();
-    let mut roster_ops_by_profile =
-        BTreeMap::<IrisProfileId, BTreeMap<String, SignedIrisProfileRosterOp>>::new();
-    for event in events {
-        let Ok(op) = parse_iris_profile_roster_op_event(event) else {
-            continue;
-        };
-        if candidate_ids.contains(&op.content.profile_id) {
-            roster_ops_by_profile
-                .entry(op.content.profile_id)
-                .or_default()
-                .insert(op.op_id.clone(), op);
-        }
-    }
-
-    let mut candidates = Vec::new();
-    for profile_id in candidate_ids {
-        let profile_roster_ops = roster_ops_by_profile
-            .remove(&profile_id)
-            .unwrap_or_default()
-            .into_values()
-            .collect::<Vec<_>>();
-        let projection = project_iris_profile_roster(profile_id, profile_roster_ops.clone());
-        let Some(facet) = projection.active_facets.get(recovery_pubkey_hex) else {
-            continue;
-        };
-        if !facet.capabilities.can_recover_app_keys {
-            continue;
-        }
-        let accepted_op_ids = projection
-            .accepted_op_ids
-            .iter()
-            .map(String::as_str)
-            .collect::<BTreeSet<_>>();
-        let latest_roster_op_created_at = profile_roster_ops
-            .iter()
-            .filter(|op| accepted_op_ids.contains(op.op_id.as_str()))
-            .map(|op| op.content.created_at)
-            .max();
-        candidates.push(IrisProfileRestoreCandidate {
-            profile_id,
-            recovery_pubkey: recovery_pubkey_hex.to_string(),
-            can_decrypt_key_epochs: facet.capabilities.can_decrypt_key_epochs,
-            accepted_roster_op_count: projection.accepted_op_ids.len(),
-            active_app_key_count: projection.active_app_key_pubkeys().len(),
-            latest_roster_op_created_at,
-            profile_roster_ops,
-        });
-    }
-    candidates.sort_by(|left, right| {
-        right
-            .latest_roster_op_created_at
-            .cmp(&left.latest_roster_op_created_at)
-            .then_with(|| {
-                right
-                    .accepted_roster_op_count
-                    .cmp(&left.accepted_roster_op_count)
-            })
-            .then_with(|| right.active_app_key_count.cmp(&left.active_app_key_count))
-            .then_with(|| left.profile_id.cmp(&right.profile_id))
-    });
-    Ok(candidates)
-}
-
-/// Fetch restore candidates for a recovery/NIP-46 pubkey from relays.
-///
-/// This is a two-step query: first find profile IDs through events that mention
-/// or are authored by the key, then fetch the full roster op log for each
-/// discovered profile ID and project the logs locally.
-pub async fn fetch_iris_profile_restore_candidates(
-    client: &Client,
-    recovery_pubkey_hex: &str,
-    timeout: Duration,
-) -> Result<Vec<IrisProfileRestoreCandidate>, RelayError> {
-    let discovery_events = fetch_events(
-        client,
-        iris_profile_restore_candidate_filters(recovery_pubkey_hex)?,
-        timeout,
-    )
-    .await?;
-    let candidate_ids =
-        iris_profile_candidate_ids_for_pubkey_from_events(recovery_pubkey_hex, &discovery_events)?;
-    if candidate_ids.is_empty() {
-        return Ok(Vec::new());
-    }
-    let roster_events = fetch_events(
-        client,
-        candidate_ids
-            .into_iter()
-            .map(iris_profile_roster_op_filter)
-            .collect::<Vec<_>>(),
-        timeout,
-    )
-    .await?;
-    let mut events = discovery_events;
-    events.extend(roster_events);
-    iris_profile_restore_candidates_from_events(recovery_pubkey_hex, &events)
 }
 
 /// Fetch drive-root events from any of `authorized_app_keys` for
@@ -990,17 +937,44 @@ fn drive_root_event_is_newer(candidate: &Event, current: &Event) -> bool {
         parse_drive_root_event_preview(candidate),
         parse_drive_root_event_preview(current),
     ) {
-        (Ok(candidate), Ok(current)) => candidate
-            .app_key_seq
-            .cmp(&current.app_key_seq)
-            .then_with(|| candidate.published_at.cmp(&current.published_at))
-            .then_with(|| candidate.dck_generation.cmp(&current.dck_generation))
-            .is_gt(),
+        (Ok(candidate), Ok(current)) => {
+            let same_app_key = candidate.app_key_pubkey_hex == current.app_key_pubkey_hex;
+            let seq_order = if same_app_key {
+                candidate.app_key_seq.cmp(&current.app_key_seq)
+            } else {
+                std::cmp::Ordering::Equal
+            };
+            seq_order
+                .then_with(|| candidate.published_at.cmp(&current.published_at))
+                .then_with(|| {
+                    drive_root_preview_ms(&candidate).cmp(&drive_root_preview_ms(&current))
+                })
+                .then_with(|| candidate.dck_generation.cmp(&current.dck_generation))
+                .then_with(|| {
+                    candidate
+                        .app_key_pubkey_hex
+                        .cmp(&current.app_key_pubkey_hex)
+                })
+                .is_gt()
+        }
         _ => candidate.created_at.as_secs() > current.created_at.as_secs(),
     }
 }
 
+fn drive_root_preview_ms(preview: &crate::nostr_events::DriveRootEventPreview) -> u64 {
+    preview.published_at_ms.unwrap_or_else(|| {
+        u64::try_from(preview.published_at)
+            .unwrap_or(0)
+            .saturating_mul(1000)
+    })
+}
+
+#[cfg(test)]
+#[path = "relay_sync/app_key_approval_candidate_tests.rs"]
+mod app_key_approval_candidate_tests;
 #[cfg(test)]
 mod calendar_tests;
+#[cfg(test)]
+mod restore_candidate_tests;
 #[cfg(test)]
 mod tests;

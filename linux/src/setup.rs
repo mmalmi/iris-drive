@@ -28,19 +28,38 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
     container.append(&header);
 
     let account = profile(state);
-    let device_key = account
-        .map(|account| account.current_app_key_npub.as_str())
-        .unwrap_or("-");
-    let device = readonly_entry(device_key);
-    container.append(&field_title("Current Device Key"));
-    container.append(&device);
-
     let notice = setup_notice();
     notice.set_text(if sync_running {
         "Waiting for approval"
     } else {
         "Daemon offline"
     });
+    let request_link = account
+        .map(|account| account.app_key_link_request.as_str())
+        .unwrap_or_default();
+    if !request_link.is_empty() {
+        let copy_request = primary_button("Copy Request Link");
+        {
+            let request = request_link.to_string();
+            let notice_for_button = notice.clone();
+            copy_request.connect_clicked(move |_| {
+                if let Some(display) = gtk::gdk::Display::default() {
+                    display.clipboard().set_text(&request);
+                    notice_for_button.set_text("Request link copied");
+                } else {
+                    notice_for_button.set_text("Clipboard unavailable");
+                }
+            });
+            container.append(&copy_request);
+        }
+    }
+
+    let device_key = account
+        .map(|account| account.current_app_key_npub.as_str())
+        .unwrap_or("-");
+    let device = readonly_entry(device_key);
+    container.append(&field_title("Current Device Key"));
+    container.append(&device);
 
     let copy = primary_button("Copy Device Key");
     {
@@ -93,12 +112,6 @@ pub(crate) fn render_revoked_device(model: &AppRef, state: &NativeAppState) {
     container.append(&detail);
 
     let account = profile(state);
-    let app_key_npub = account
-        .map(|account| account.current_app_key_npub.as_str())
-        .unwrap_or("-");
-    container.append(&field_title("Device"));
-    container.append(&readonly_entry(app_key_npub));
-
     let device_npub = account
         .map(|account| account.current_app_key_npub.as_str())
         .unwrap_or("-");
@@ -107,28 +120,6 @@ pub(crate) fn render_revoked_device(model: &AppRef, state: &NativeAppState) {
 
     let notice = setup_notice();
     notice.set_text("Device removed");
-
-    let relink = primary_button("Link this device again");
-    {
-        let model = Rc::clone(model);
-        let link_target = app_key_npub.to_string();
-        let notice = notice.clone();
-        relink.connect_clicked(move |button| {
-            if link_target.trim().is_empty() || link_target == "-" {
-                notice.set_text("Device key unavailable");
-                return;
-            }
-            button.set_sensitive(false);
-            match relink_device(&link_target) {
-                Ok(()) => refresh(&model),
-                Err(error) => {
-                    notice.set_text(&error);
-                    button.set_sensitive(true);
-                }
-            }
-        });
-    }
-    container.append(&relink);
 
     let copy = pill_button("Copy Device Key");
     {
@@ -516,60 +507,44 @@ pub(crate) fn render_restore_secret_key_profile(model: &AppRef) {
 
 pub(crate) fn render_link_device(model: &AppRef) {
     let container = setup_container(model, "Link device");
-    let link_target = setup_entry("IrisProfile invite link or admin device key");
-    container.append(&link_target);
-
     let notice = setup_notice();
-    let submit = primary_button("Link device");
-    let submitted_link_target = Rc::new(RefCell::new(String::new()));
+    notice.set_text("Preparing join request");
+    container.append(&notice);
+
+    let submit = primary_button("Show join QR");
+    let started = Rc::new(Cell::new(false));
     {
         let model = Rc::clone(model);
         let notice = notice.clone();
-        let submit = submit.clone();
-        let submitted_link_target = Rc::clone(&submitted_link_target);
-        link_target.connect_changed(move |entry| {
-            let link_target_value = entry.text().trim().to_string();
-            if !link_target_input_is_complete(&link_target_value)
-                || *submitted_link_target.borrow() == link_target_value
-            {
-                return;
-            }
-            submitted_link_target.replace(link_target_value);
-            submit_link_device(&model, entry, &notice, &submit);
-        });
-    }
-    {
-        let model = Rc::clone(model);
-        let link_target = link_target.clone();
-        let notice = notice.clone();
+        let started = Rc::clone(&started);
         submit.connect_clicked(move |button| {
-            submit_link_device(&model, &link_target, &notice, button);
+            start_join_request_from_setup(&model, &notice, button, &started);
         });
     }
     {
+        let model = Rc::clone(model);
+        let notice = notice.clone();
         let submit = submit.clone();
-        link_target.connect_activate(move |_| submit.emit_clicked());
+        let started = Rc::clone(&started);
+        glib::idle_add_local_once(move || {
+            start_join_request_from_setup(&model, &notice, &submit, &started);
+        });
     }
     container.append(&submit);
-    container.append(&notice);
     append_centered_setup(model, &container);
-
-    link_target.grab_focus();
 }
 
-fn submit_link_device(
+fn start_join_request_from_setup(
     model: &AppRef,
-    link_target: &gtk::Entry,
     notice: &gtk::Label,
     button: &gtk::Button,
+    started: &Rc<Cell<bool>>,
 ) {
-    let link_target_value = link_target.text().trim().to_string();
-    if link_target_value.is_empty() {
-        notice.set_text("IrisProfile invite link or admin device key is required.");
+    if started.replace(true) {
         return;
     }
     button.set_sensitive(false);
-    match link_device(&link_target_value) {
+    match start_join_request() {
         Ok(()) => {
             *model.setup_screen.borrow_mut() = SetupScreen::Welcome;
             refresh(model);
@@ -577,12 +552,9 @@ fn submit_link_device(
         Err(error) => {
             notice.set_text(&error);
             button.set_sensitive(true);
+            started.set(false);
         }
     }
-}
-
-fn link_target_input_is_complete(value: &str) -> bool {
-    iris_drive_app_core::validate_link_input(value.to_string()).is_complete
 }
 
 fn clamp_recovery_word_index(model: &AppRef) {
@@ -765,8 +737,11 @@ pub(crate) fn restore_profile(recovery_secret: &str) -> Result<(), String> {
     run_idrive_owned(&["restore".to_string(), recovery_secret.to_string()])
 }
 
-pub(crate) fn link_device(link_target: &str) -> Result<(), String> {
-    run_idrive_owned(&["link".to_string(), link_target.to_string()])
+pub(crate) fn start_join_request() -> Result<(), String> {
+    dispatch_desktop_action(NativeAppAction::StartJoinRequest {
+        app_key_label: String::new(),
+    })
+    .map(|_| ())
 }
 
 pub(crate) fn relink_device(link_target: &str) -> Result<(), String> {

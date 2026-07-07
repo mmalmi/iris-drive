@@ -114,14 +114,14 @@ struct IrisDriveControlPanel: View {
     @State private var setupSecret = ""
     @State private var setupRecoveryWords = Array(repeating: "", count: recoveryPhraseWordCount)
     @State private var setupRecoveryWordIndex = 0
-    @State private var setupLinkTarget = ""
-    @State var submittedSetupLinkTarget = ""
-    @State private var setupLinkTargetInputIsComplete = false
+    @State private var setupJoinRequestStarted = false
     @State private var approveDeviceKey = ""
     @State private var approveDeviceKeyIsComplete = false
-    @State private var approveDeviceLabel = ""
     @State private var approveDeviceError = ""
     @State private var approveDevicePending = false
+    @State private var approveDeviceConfirmationPresented = false
+    @State private var pendingApprovalRequest = ""
+    @State private var lastPromptedApprovalRequest = ""
     @State private var generatedRecoveryWords: [String] = []
     @State private var generatedRecoveryPubkey = ""
     @State private var generatedRecoveryWordIndex = 0
@@ -289,26 +289,6 @@ struct IrisDriveControlPanel: View {
         }
     }
 
-    private func refreshSetupLinkTargetInput(_ value: String) {
-        let query = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        setupLinkTargetInputIsComplete = false
-        guard !query.isEmpty else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
-            guard setupLinkTarget.trimmingCharacters(in: .whitespacesAndNewlines) == query else {
-                return
-            }
-            controller.classifyLinkInput(query) { input, isComplete in
-                guard setupLinkTarget.trimmingCharacters(in: .whitespacesAndNewlines) == input else {
-                    return
-                }
-                setupLinkTargetInputIsComplete = isComplete
-                if isComplete {
-                    submitSetupLinkTarget(input, force: false, inputIsComplete: true)
-                }
-            }
-        }
-    }
-
     private func refreshApproveAppKeyLinkInput(_ value: String) {
         let query = value.trimmingCharacters(in: .whitespacesAndNewlines)
         approveDeviceKeyIsComplete = false
@@ -317,11 +297,48 @@ struct IrisDriveControlPanel: View {
             guard approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines) == query else {
                 return
             }
-            controller.classifyLinkInput(query) { input, isComplete in
+            controller.classifyDeviceApprovalInput(query) { input, isComplete in
                 guard approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines) == input else {
                     return
                 }
                 approveDeviceKeyIsComplete = isComplete
+                if isComplete {
+                    confirmApproveDevice(input)
+                }
+            }
+        }
+    }
+
+    private func startSetupJoinRequestIfNeeded() {
+        guard !setupJoinRequestStarted else { return }
+        setupJoinRequestStarted = true
+        controller.startJoinRequest()
+    }
+
+    private func confirmApproveDevice(_ value: String, force: Bool = false) {
+        let request = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard IrisDriveDesktopCore.validateDeviceApprovalInput(request) else { return }
+        guard force || lastPromptedApprovalRequest != request else { return }
+        pendingApprovalRequest = request
+        lastPromptedApprovalRequest = request
+        approveDeviceConfirmationPresented = true
+    }
+
+    private func approvePendingDevice() {
+        let request = pendingApprovalRequest
+        guard IrisDriveDesktopCore.validateDeviceApprovalInput(request) else { return }
+        approveDevicePending = true
+        approveDeviceError = ""
+        controller.approveDevice(request, label: "") { result in
+            approveDevicePending = false
+            switch result {
+            case .success:
+                approveDeviceKey = ""
+                approveDeviceKeyIsComplete = false
+                pendingApprovalRequest = ""
+                lastPromptedApprovalRequest = ""
+            case let .failure(error):
+                approveDeviceError = error.localizedDescription
             }
         }
     }
@@ -432,7 +449,7 @@ struct IrisDriveControlPanel: View {
                 Button {
                     setupMode = .link
                 } label: {
-                    setupButtonLabel("Link device", systemImage: "desktopcomputer")
+                    setupButtonLabel("Link device", systemImage: "qrcode")
                 }
                 .accessibilityLabel("Link device")
                 .buttonStyle(.bordered)
@@ -490,29 +507,18 @@ struct IrisDriveControlPanel: View {
             }
         case .link:
             setupForm(title: "Link device", backTarget: .restoreOptions) {
-                TextField("Invite link or device key", text: $setupLinkTarget)
-                    .accessibilityLabel("Invite link or device key")
-                    .onSubmit {
-                        submitSetupLinkTarget(
-                            setupLinkTarget,
-                            force: true,
-                            inputIsComplete: setupLinkTargetInputIsComplete
-                        )
-                    }
-                    .onChange(of: setupLinkTarget) { _, newValue in
-                        refreshSetupLinkTargetInput(newValue)
-                    }
-                    .onAppear {
-                        refreshSetupLinkTargetInput(setupLinkTarget)
-                    }
-                setupSubmit("Link device") {
-                    submitSetupLinkTarget(
-                        setupLinkTarget,
-                        force: true,
-                        inputIsComplete: setupLinkTargetInputIsComplete
-                    )
+                HStack(spacing: 10) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("Preparing join request")
+                        .foregroundStyle(.secondary)
                 }
-                .disabled(!setupLinkTargetInputIsComplete)
+                setupSubmit("Show join QR") {
+                    startSetupJoinRequestIfNeeded()
+                }
+            }
+            .onAppear {
+                startSetupJoinRequestIfNeeded()
             }
         }
         }
@@ -679,10 +685,7 @@ struct IrisDriveControlPanel: View {
         VStack(alignment: .leading, spacing: 20) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 16) {
-                    Image(systemName: heroIcon)
-                        .font(.system(size: 40, weight: .semibold))
-                        .foregroundStyle(heroColor)
-                        .frame(width: 48)
+                    heroStatusIcon
                     VStack(alignment: .leading, spacing: 3) {
                         Text(status.driveName)
                             .font(.title2.weight(.semibold))
@@ -729,11 +732,37 @@ struct IrisDriveControlPanel: View {
         }
     }
 
+    @ViewBuilder
+    private var heroStatusIcon: some View {
+        switch syncState {
+        case .paused:
+            Button(action: controller.startSync) {
+                heroIconImage
+            }
+            .buttonStyle(.plain)
+            .help("Resume sync")
+            .accessibilityLabel("Resume sync")
+        case .upToDate, .syncing, .attention:
+            heroIconImage
+                .accessibilityHidden(true)
+        }
+    }
+
+    private var heroIconImage: some View {
+        Image(systemName: heroIcon)
+            .font(.system(size: 40, weight: .semibold))
+            .foregroundStyle(heroColor)
+            .frame(width: 48, height: 48)
+    }
+
     private var syncState: IrisDriveSyncState {
-        if !status.daemonRunning || status.syncStatus == "paused" {
+        if status.syncStatus == "paused" {
             return .paused
         }
         if status.syncStatus == "sync error" {
+            return .attention
+        }
+        if !status.daemonRunning {
             return .attention
         }
         if let upload = status.lastUpload,
@@ -853,7 +882,9 @@ struct IrisDriveControlPanel: View {
                         .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.secondary)
                     ForEach(status.inboundAppKeyLinkRequests) { request in
-                        AppKeyLinkRequestRow(request: request, controller: controller)
+                        AppKeyLinkRequestRow(request: request, controller: controller) { requestURL in
+                            confirmApproveDevice(requestURL, force: true)
+                        }
                     }
                 }
             }
@@ -899,36 +930,30 @@ struct IrisDriveControlPanel: View {
         .padding(12)
         .background(Color(nsColor: .textBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 10))
+        .alert("Approve this device?", isPresented: $approveDeviceConfirmationPresented) {
+            Button("Cancel", role: .cancel) {
+                pendingApprovalRequest = ""
+            }
+            Button("Approve") {
+                approvePendingDevice()
+            }
+        } message: {
+            Text("This will add the joining device to Iris Drive.")
+        }
     }
 
     private var addDevicePanel: some View {
         VStack(alignment: .leading, spacing: 14) {
-            if let invite = status.appKeyLinkInviteURL, !invite.isEmpty {
-                IrisDriveQRCodeView(value: invite)
-                    .frame(width: 220, height: 220)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                HStack(spacing: 8) {
-                    IrisDriveCopyButton(title: "Copy invite link", systemImage: "link") {
-                        irisDriveCopyToPasteboard(invite, feedback: "Invite link copied")
-                    }
-                    Button {
-                        controller.resetInvite()
-                    } label: {
-                        Label("Reset invite", systemImage: "arrow.clockwise")
-                    }
-                }
-            }
             if !status.inboundAppKeyLinkRequests.isEmpty {
                 Text("Device requests")
                     .font(.headline)
                 ForEach(status.inboundAppKeyLinkRequests) { request in
-                    AppKeyLinkRequestRow(request: request, controller: controller)
+                    AppKeyLinkRequestRow(request: request, controller: controller) { requestURL in
+                        confirmApproveDevice(requestURL, force: true)
+                    }
                 }
             }
-            Text("Paste the device key.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-            TextField("Device key", text: $approveDeviceKey)
+            TextField("Request link or device key", text: $approveDeviceKey)
                 .textFieldStyle(.roundedBorder)
                 .disableAutocorrection(true)
                 .onChange(of: approveDeviceKey) { _, newValue in
@@ -940,7 +965,7 @@ struct IrisDriveControlPanel: View {
                 }
             if !approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                !approveDeviceKeyIsComplete {
-                Text("That is not a complete device key.")
+                Text("That is not a complete request link or device key.")
                     .font(.caption)
                     .foregroundStyle(.red)
             }
@@ -949,27 +974,19 @@ struct IrisDriveControlPanel: View {
                     .font(.caption)
                     .foregroundStyle(.red)
             }
-            TextField("Name (optional)", text: $approveDeviceLabel)
-                .textFieldStyle(.roundedBorder)
             HStack {
-                Spacer()
-                Button("Add") {
-                    approveDevicePending = true
-                    approveDeviceError = ""
-                    controller.approveDevice(approveDeviceKey, label: approveDeviceLabel) { result in
-                        approveDevicePending = false
-                        switch result {
-                        case .success:
-                            approveDeviceKey = ""
-                            approveDeviceKeyIsComplete = false
-                            approveDeviceLabel = ""
-                        case let .failure(error):
-                            approveDeviceError = error.localizedDescription
-                        }
+                Button {
+                    scanQRCodeFromImage { code in
+                        approveDeviceKey = code
+                        approveDeviceError = ""
+                        refreshApproveAppKeyLinkInput(code)
+                        confirmApproveDevice(code, force: true)
                     }
+                } label: {
+                    Label("Scan QR", systemImage: "qrcode.viewfinder")
                 }
-                .buttonStyle(.borderedProminent)
-                .disabled(!approveDeviceKeyIsComplete || approveDevicePending)
+                .accessibilityIdentifier("scanApprovalRequestQr")
+                Spacer()
             }
         }
         .frame(maxWidth: 520, alignment: .leading)
@@ -1599,9 +1616,6 @@ struct IrisDriveControlPanel: View {
             }
 
             Section("Account") {
-                AccountKeyRow(title: "Device", value: status.currentAppKeyNpub) {
-                    controller.copyAppKey()
-                }
                 AccountKeyRow(title: "Current Device Key", value: status.deviceNpub) {
                     controller.copyDeviceKey()
                 }
@@ -1969,7 +1983,7 @@ private func irisDriveQRCodePayload(from url: URL) -> String? {
         .first { !$0.isEmpty }
 }
 
-private struct IrisDriveQRCodeView: View {
+struct IrisDriveQRCodeView: View {
     let value: String
 
     var body: some View {
@@ -2254,7 +2268,7 @@ private struct InviteShareMemberSheet: View {
                         Label("Scan QR", systemImage: "qrcode.viewfinder")
                     }
                 }
-                TextField("Name (optional)", text: $displayName)
+                TextField("Display name (optional)", text: $displayName)
                     .textFieldStyle(.roundedBorder)
                 Picker("Access", selection: $role) {
                     Text("View").tag("reader")
@@ -2571,7 +2585,19 @@ private struct PeerRow: View {
 
             if expanded {
                 VStack(alignment: .leading, spacing: 8) {
-                    DetailRow(label: "Public key", value: peer.npub, copyable: true)
+                    HStack(alignment: .firstTextBaseline, spacing: 10) {
+                        Text(peer.npub)
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        IrisDriveCopyButton(title: "Copy Device Key", systemImage: "doc.on.doc") {
+                            irisDriveCopyToPasteboard(peer.npub)
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.caption)
+                    }
                     DetailRow(label: "Role", value: peer.roleLabel)
                     if let root = peer.rootCID {
                         DetailRow(label: "Root", value: root, copyable: true)
@@ -2661,8 +2687,7 @@ private struct PeerRow: View {
 private struct AppKeyLinkRequestRow: View {
     let request: IrisDriveAppKeyLinkRequestStatus
     let controller: AppDelegate
-    @State private var approvalError = ""
-    @State private var approvalPending = false
+    let onReview: (String) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -2681,35 +2706,16 @@ private struct AppKeyLinkRequestRow: View {
                         .truncationMode(.middle)
                 }
                 Spacer()
-                if approvalPending {
-                    ProgressView()
-                        .controlSize(.small)
-                        .frame(width: 18, height: 18)
-                }
                 Button(role: .destructive) {
                     controller.rejectDevice(request.requestURL)
                 } label: {
                     Label("Reject", systemImage: "xmark")
                 }
-                .disabled(approvalPending)
                 Button {
-                    approvalPending = true
-                    approvalError = ""
-                    controller.approveDevice(request.requestURL, label: request.label ?? "") { result in
-                        approvalPending = false
-                        if case let .failure(error) = result {
-                            approvalError = error.localizedDescription
-                        }
-                    }
+                    onReview(request.requestURL)
                 } label: {
-                    Label(approvalPending ? "Adding" : "Add", systemImage: "checkmark")
+                    Label("Review", systemImage: "checkmark.circle")
                 }
-                .disabled(approvalPending)
-            }
-            if !approvalError.isEmpty {
-                Text(approvalError)
-                    .font(.caption)
-                    .foregroundStyle(.red)
             }
         }
         .padding(12)

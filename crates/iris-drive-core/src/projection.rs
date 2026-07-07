@@ -21,6 +21,7 @@ use crate::provider::{
 };
 
 type DirectoryMeta = HashMap<String, serde_json::Value>;
+const LOCAL_ONLY_PARENT_WALK_LIMIT: usize = 1024;
 
 #[derive(Debug, Error)]
 pub enum ProjectionError {
@@ -709,7 +710,7 @@ async fn merge_root_for_device<S: Store>(
     active_app_keys: &[String],
 ) -> Result<Option<AppKeyRootRef>, ProjectionError> {
     let mut current = root.clone();
-    for _ in 0..32 {
+    for _ in 0..LOCAL_ONLY_PARENT_WALK_LIMIT {
         if !current.local_only {
             return Ok(Some(current));
         }

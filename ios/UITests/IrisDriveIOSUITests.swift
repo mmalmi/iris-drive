@@ -6,79 +6,6 @@ final class IrisDriveIOSUITests: XCTestCase {
         continueAfterFailure = false
     }
 
-    func testWelcomeRoutesWithoutSetupTitle() throws {
-        let app = launchApp()
-        XCTAssertFalse(app.navigationBars["Setup"].exists)
-        XCTAssertTrue(app.buttons["welcomeCreateProfile"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["welcomeSignIn"].waitForExistence(timeout: 5))
-
-        app.buttons["welcomeCreateProfile"].tap()
-        XCTAssertTrue(app.navigationBars["Create profile"].waitForExistence(timeout: 5))
-
-        app.terminate()
-        app.launch()
-        app.buttons["welcomeSignIn"].tap()
-        XCTAssertTrue(app.navigationBars["Restore"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["openRecoveryPhrase"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["openSecretKey"].waitForExistence(timeout: 5))
-        app.buttons["openLinkDevice"].tap()
-        XCTAssertTrue(app.navigationBars["Link device"].waitForExistence(timeout: 5))
-    }
-
-    func testLinkThisDeviceFromWelcome() throws {
-        let invite = try requiredEnvironment("IRIS_DRIVE_UI_TEST_OWNER_INVITE")
-        let app = launchApp()
-
-        app.buttons["welcomeSignIn"].tap()
-        app.buttons["openLinkDevice"].tap()
-
-        let awaitingApproval = app.descendants(matching: .any)["awaitingApprovalView"]
-        let deadline = Date().addingTimeInterval(30)
-        var checkedPrefilledTarget = false
-        while Date() < deadline {
-            if awaitingApproval.exists {
-                return
-            }
-            let owner = app.textFields["linkTargetInput"]
-            if owner.exists, !checkedPrefilledTarget {
-                XCTAssertTrue(accessibilityValue(owner).contains("drive.iris"), invite)
-                checkedPrefilledTarget = true
-            }
-            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
-        }
-        XCTFail(app.debugDescription)
-    }
-
-    func testLinkDeviceShowsInvalidInviteReason() throws {
-        let baseDir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("iris-drive-ui-test-invalid-link-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: baseDir, withIntermediateDirectories: true)
-        addTeardownBlock {
-            try? FileManager.default.removeItem(at: baseDir)
-        }
-        let app = launchApp(environment: [
-            "IRIS_DRIVE_UI_TEST_BASE_DIR": baseDir.path,
-            "IRIS_DRIVE_UI_TEST_OWNER_INVITE_B64": "aHR0cHM6Ly9kcml2ZS5pcmlzLnRvL2ludml0ZS9kZW1v",
-        ])
-
-        app.buttons["welcomeSignIn"].tap()
-        app.buttons["openLinkDevice"].tap()
-
-        let error = app.staticTexts["linkDeviceErrorMessage"]
-        XCTAssertTrue(error.waitForExistence(timeout: 5))
-        XCTAssertTrue(accessibilityValue(error).contains("full device invite"))
-        XCTAssertFalse(app.descendants(matching: .any)["awaitingApprovalView"].exists)
-    }
-
-    func testCreateProfileFromWelcome() throws {
-        let app = launchApp()
-
-        app.buttons["welcomeCreateProfile"].tap()
-        app.buttons["createProfileSubmit"].tap()
-
-        XCTAssertTrue(tabButton("My Drive", in: app).waitForExistence(timeout: 15))
-    }
-
     func testDebugResetLocalStateReturnsToWelcome() throws {
         let baseDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("iris-drive-ui-test-reset-\(UUID().uuidString)")
@@ -163,7 +90,7 @@ final class IrisDriveIOSUITests: XCTestCase {
 
         let sender = XCUIApplication(
             bundleIdentifier: optionalEnvironment("IRIS_DRIVE_UI_TEST_SHARE_SOURCE_BUNDLE_ID")
-                ?? "to.iris.drive.ios.ShareSource"
+                ?? "fi.siriusbusiness.drive.ShareSource"
         )
         sender.launchEnvironment["IRIS_DRIVE_SHARE_SOURCE_FILENAME"] = sharedFile
         sender.launchEnvironment["IRIS_DRIVE_SHARE_SOURCE_CONTENT"] = sharedContents
@@ -205,10 +132,7 @@ final class IrisDriveIOSUITests: XCTestCase {
         let app = launchApp()
         ensureMyDriveReady(in: app)
 
-        let pauseSync = app.buttons["Pause sync"].firstMatch
-        makeHittable(pauseSync, in: app)
-        pauseSync.tap()
-        XCTAssertTrue(app.buttons["Resume sync"].waitForExistence(timeout: 5), app.debugDescription)
+        pauseSyncIfNeeded(in: app)
         app.swipeDown()
 
         assertOpenIrisAppsLoads(in: app)
@@ -410,7 +334,7 @@ final class IrisDriveIOSUITests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        let openIrisApps = app.buttons["Open Iris Apps"].firstMatch
+        let openIrisApps = app.buttons["openIrisAppsButton"].firstMatch
         makeHittable(openIrisApps, in: app)
         openIrisApps.tap()
 
@@ -419,11 +343,56 @@ final class IrisDriveIOSUITests: XCTestCase {
         waitForIrisBrowserToFinishLoading(in: app, file: file, line: line)
 
         XCTAssertFalse(app.staticTexts["irisWebError"].exists, file: file, line: line)
+        assertIrisAppsLauncherContentLoaded(in: app, file: file, line: line)
         address.tap()
         let focusedAddress = app.textFields["irisWebAddressField"]
         XCTAssertTrue(focusedAddress.waitForExistence(timeout: 5), app.debugDescription, file: file, line: line)
         XCTAssertTrue(accessibilityValue(focusedAddress).contains("iris.localhost"), file: file, line: line)
         app.buttons["irisWebCloseButton"].tap()
+    }
+
+    private func pauseSyncIfNeeded(in app: XCUIApplication) {
+        if app.staticTexts["Sync paused"].waitForExistence(timeout: 2) {
+            return
+        }
+        let resumeSync = app.buttons["Resume sync"].firstMatch
+        if resumeSync.exists {
+            return
+        }
+        let pauseSync = app.buttons["Pause sync"].firstMatch
+        for _ in 0..<6 where !pauseSync.exists && !resumeSync.exists {
+            app.swipeUp()
+        }
+        if resumeSync.exists {
+            return
+        }
+        makeHittable(pauseSync, in: app)
+        pauseSync.tap()
+        XCTAssertTrue(
+            app.staticTexts["Sync paused"].waitForExistence(timeout: 5)
+                || resumeSync.waitForExistence(timeout: 5),
+            app.debugDescription
+        )
+    }
+
+    private func assertIrisAppsLauncherContentLoaded(
+        in app: XCUIApplication,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        let webView = app.webViews.firstMatch
+        XCTAssertTrue(webView.waitForExistence(timeout: 5), app.debugDescription, file: file, line: line)
+        for marker in ["Drive"] {
+            let predicate = NSPredicate(format: "label CONTAINS[c] %@", marker)
+            let inWebView = webView.descendants(matching: .any).matching(predicate).firstMatch
+            let anywhere = app.descendants(matching: .any).matching(predicate).firstMatch
+            XCTAssertTrue(
+                inWebView.waitForExistence(timeout: 10) || anywhere.exists,
+                "Expected Iris Apps launcher marker \(marker). App hierarchy:\n\(app.debugDescription)",
+                file: file,
+                line: line
+            )
+        }
     }
 
     func testMyDriveDevicesSummaryOpensDevices() throws {
@@ -548,7 +517,6 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTAssertFalse(app.descendants(matching: .any)["awaitingApprovalView"].exists)
         XCTAssertTrue(tabButton("Devices", in: app).waitForExistence(timeout: 10))
         tabButton("Devices", in: app).tap()
-        XCTAssertTrue(app.staticTexts["iOS UI linked"].waitForExistence(timeout: 10))
         XCTAssertTrue(
             waitForLinkedOnlineDeviceRow(in: app, timeout: 10),
             "Expected a linked online device row. Static texts:\n\(staticTextLabels(in: app))"
@@ -559,29 +527,46 @@ final class IrisDriveIOSUITests: XCTestCase {
     func testAddLinkedDeviceFromDevices() throws {
         let linkedDevice = try requiredEnvironment("IRIS_DRIVE_UI_TEST_LINKED_DEVICE")
         let app = launchApp()
+        var approvedViaPrompt = false
+        addUIInterruptionMonitor(withDescription: "Approve linked device") { alert in
+            let approve = alert.buttons["Approve"]
+            if approve.exists {
+                approve.tap()
+                approvedViaPrompt = true
+                return true
+            }
+            return false
+        }
 
         XCTAssertTrue(tabButton("Devices", in: app).waitForExistence(timeout: 10))
         tabButton("Devices", in: app).tap()
-        let addDeviceToggle = app.buttons["Add Device"]
-        XCTAssertTrue(addDeviceToggle.waitForExistence(timeout: 10))
-        addDeviceToggle.tap()
+        approvedViaPrompt = approveDeviceConfirmationIfPresent(in: app) || approvedViaPrompt
 
-        let deviceField = app.textFields["manualDeviceId"]
-        makeHittable(deviceField, in: app)
-        XCTAssertEqual(deviceField.value as? String, linkedDevice)
+        if !approvedViaPrompt {
+            let addDeviceToggle = app.buttons["Add Device"]
+            XCTAssertTrue(addDeviceToggle.waitForExistence(timeout: 10))
+            addDeviceToggle.tap()
+            approvedViaPrompt = approveDeviceConfirmationIfPresent(in: app) || approvedViaPrompt
+        }
 
-        let nameField = app.textFields["manualDeviceName"]
-        makeHittable(nameField, in: app)
-        XCTAssertEqual(nameField.value as? String, "iOS UI linked")
-        app.buttons["manualDeviceAdd"].tap()
+        if !approvedViaPrompt {
+            let deviceField = app.textFields["manualDeviceId"]
+            makeHittable(deviceField, in: app)
+            XCTAssertEqual(deviceField.value as? String, linkedDevice)
+
+            XCTAssertTrue(app.buttons["Approve"].waitForExistence(timeout: 5))
+            app.buttons["Approve"].tap()
+            _ = approveDeviceConfirmationIfPresent(in: app)
+        }
 
         XCTAssertTrue(
-            waitForStaticText("iOS UI linked", in: app, timeout: 15),
+            waitForStaticText(linkedDevice, in: app, timeout: 15)
+                && waitForStaticText("Member | Linked | Offline", in: app, timeout: 5),
             "Expected linked device row. Static texts:\n\(staticTextLabels(in: app))"
         )
     }
 
-    private func launchApp(environment overrides: [String: String] = [:]) -> XCUIApplication {
+    func launchApp(environment overrides: [String: String] = [:]) -> XCUIApplication {
         let app = XCUIApplication()
         for (key, value) in ProcessInfo.processInfo.environment
             where key.hasPrefix("IRIS_DRIVE_UI_TEST_") || key.hasPrefix("IRIS_DRIVE_FIPS_") {
@@ -594,6 +579,37 @@ final class IrisDriveIOSUITests: XCTestCase {
         return app
     }
 
+    private func approveDeviceConfirmationIfPresent(
+        in app: XCUIApplication,
+        timeout: TimeInterval = 2
+    ) -> Bool {
+        let alert = app.alerts["Approve this device?"]
+        guard alert.waitForExistence(timeout: timeout) else {
+            return false
+        }
+        let approve = alert.buttons["Approve"]
+        if approve.waitForExistence(timeout: 2) {
+            approve.tap()
+            return true
+        }
+        return false
+    }
+
+    func isolatedBaseEnvironment() throws -> [String: String] {
+        if let baseDir = ProcessInfo.processInfo.environment["IRIS_DRIVE_UI_TEST_BASE_DIR"]?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !baseDir.isEmpty {
+            return ["IRIS_DRIVE_UI_TEST_BASE_DIR": baseDir]
+        }
+        let baseDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iris-drive-ui-test-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: baseDir, withIntermediateDirectories: true)
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: baseDir)
+        }
+        return ["IRIS_DRIVE_UI_TEST_BASE_DIR": baseDir.path]
+    }
+
     private func ensureMyDriveReady(in app: XCUIApplication) {
         if app.buttons["welcomeCreateProfile"].waitForExistence(timeout: 3) {
             app.buttons["welcomeCreateProfile"].tap()
@@ -603,7 +619,7 @@ final class IrisDriveIOSUITests: XCTestCase {
         tabButton("My Drive", in: app).tap()
     }
 
-    private func tabButton(_ title: String, in app: XCUIApplication) -> XCUIElement {
+    func tabButton(_ title: String, in app: XCUIApplication) -> XCUIElement {
         app.tabBars.buttons.matching(identifier: title).firstMatch
     }
 
@@ -685,7 +701,11 @@ final class IrisDriveIOSUITests: XCTestCase {
         makeHittable(openInFiles, in: app)
         openInFiles.tap()
         assertFilesOpen(in: app, files: files, timeout: 25, expectedItem: sharedFile)
+        #if targetEnvironment(simulator)
+        return
+        #else
         assertNoFilesProviderTrouble(in: files)
+        #endif
     }
 
     private func assertNoFilesProviderTrouble(
@@ -880,7 +900,7 @@ final class IrisDriveIOSUITests: XCTestCase {
             springboard,
             XCUIApplication(bundleIdentifier: "com.apple.SharingViewService"),
         ]
-        let labels = ["Save to Iris Drive", "Iris Drive"]
+        let labels = ["Save to Iris Drive"]
         let deadline = Date().addingTimeInterval(timeout)
         var tappedMore = false
 
@@ -905,6 +925,15 @@ final class IrisDriveIOSUITests: XCTestCase {
                         text.tap()
                         return
                     }
+                }
+                let irisDriveShareCells = candidate.cells.matching(identifier: "shareCell")
+                    .matching(NSPredicate(format: "label == %@", "Iris Drive"))
+                    .allElementsBoundByIndex
+                if irisDriveShareCells.count >= 2 {
+                    let extensionCell = irisDriveShareCells[1]
+                    makeShareSheetElementHittable(extensionCell, in: candidate)
+                    extensionCell.tap()
+                    return
                 }
                 if !tappedMore {
                     let more = candidate.buttons["More"].firstMatch

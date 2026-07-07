@@ -10,18 +10,20 @@ use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::FromBech32;
 use serde::{Deserialize, Serialize};
 
-use crate::IrisProfileId;
+use crate::NostrIdentityId;
 use crate::app_key_link_invite::{
     APP_KEY_LINK_INVITE_PREFIX, APP_KEY_LINK_INVITE_WEB_PREFIX, parse_app_key_link_invite,
 };
-use crate::app_key_link_transport::{app_key_approval_query, parse_app_key_approval_request};
+use crate::app_key_link_transport::{
+    app_key_approval_input_has_prefix, parse_app_key_approval_request,
+};
 use crate::app_key_summary::pubkey_npub;
 use crate::gateway::{
     DEFAULT_GATEWAY_PORT, IRIS_SITES_PORTAL_NPUB, is_dns_site_label, local_mutable_site_url,
     local_nhash_url, local_portal_npub_path_url,
 };
 
-const MANUAL_LINK_REQUIRES_PROFILE_AND_ADMIN: &str = "manual device linking requires an IrisProfile UUID and --admin-app-key; otherwise paste an admin invite URL";
+const MANUAL_LINK_REQUIRES_PROFILE_AND_ADMIN: &str = "manual device linking requires an NostrIdentity UUID and --admin-app-key; otherwise paste an admin invite URL";
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LinkInputClassification {
@@ -46,7 +48,7 @@ pub struct LinkInputClassification {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppKeyLinkTarget {
-    pub profile_id: IrisProfileId,
+    pub profile_id: NostrIdentityId,
     pub admin_app_key_hex: String,
     pub invite_pubkey: String,
 }
@@ -107,7 +109,7 @@ pub fn classify_link_input(input: &str) -> LinkInputClassification {
     }
 
     "unknown".clone_into(&mut classification.kind);
-    "expected device key or IrisProfile invite link".clone_into(&mut classification.error);
+    "expected device key or NostrIdentity invite link".clone_into(&mut classification.error);
     classification
 }
 
@@ -118,12 +120,12 @@ pub fn resolve_app_key_link_target(
     if let Some(invite) = parse_app_key_link_invite(input)? {
         if manual_admin_app_key.is_some() {
             return Err(anyhow!(
-                "--admin-app-key is only valid with a manual IrisProfile UUID, not an invite URL"
+                "--admin-app-key is only valid with a manual NostrIdentity UUID, not an invite URL"
             ));
         }
         let profile_id = invite
             .profile_id
-            .ok_or_else(|| anyhow!("device invite is missing IrisProfile id"))?;
+            .ok_or_else(|| anyhow!("device invite is missing NostrIdentity id"))?;
         return Ok(AppKeyLinkTarget {
             profile_id,
             admin_app_key_hex: invite.admin_app_key_hex,
@@ -140,8 +142,8 @@ pub fn resolve_app_key_link_target(
     }
     Ok(AppKeyLinkTarget {
         profile_id: trimmed
-            .parse::<IrisProfileId>()
-            .context("parsing IrisProfile UUID")?,
+            .parse::<NostrIdentityId>()
+            .context("parsing NostrIdentity UUID")?,
         admin_app_key_hex: normalize_app_key_pubkey(manual_admin_app_key)
             .context("parsing admin device key")?,
         invite_pubkey: String::new(),
@@ -166,43 +168,25 @@ pub fn normalize_app_key_pubkey(input: &str) -> Result<String> {
 }
 
 fn classify_app_key_approval_link_input(input: &str) -> Option<LinkInputClassification> {
-    let query = app_key_approval_query(input)?;
-    let profile =
-        raw_query_value(query, "profile").or_else(|| raw_query_value(query, "profile_id"));
-    let app_key = raw_query_value(query, "app_key").or_else(|| raw_query_value(query, "appKey"));
-    let is_complete = profile
-        .as_deref()
-        .is_some_and(|value| !value.trim().is_empty())
-        && app_key
-            .as_deref()
-            .is_some_and(app_key_pubkey_input_is_complete)
-        && raw_query_value(query, "invite")
-            .or_else(|| raw_query_value(query, "invite_pubkey"))
-            .or_else(|| raw_query_value(query, "invitePubkey"))
-            .as_deref()
-            .is_some_and(app_key_pubkey_input_is_complete);
+    if !app_key_approval_input_has_prefix(input) {
+        return None;
+    }
     let mut classification = LinkInputClassification {
         kind: "app_key_approval".to_owned(),
         normalized_input: input.to_owned(),
-        is_complete,
+        is_complete: true,
         ..LinkInputClassification::default()
     };
-    if is_complete {
-        match parse_app_key_approval_request(input) {
-            Ok(Some(request)) => {
-                classification.is_valid = true;
-                classification.app_key_pubkey = pubkey_npub(&request.app_key_hex);
-            }
-            Ok(None) => {
-                "device request was not recognized".clone_into(&mut classification.error);
-            }
-            Err(error) => classification.error = error.to_string(),
+    match parse_app_key_approval_request(input) {
+        Ok(Some(request)) => {
+            classification.is_valid = true;
+            classification.app_key_pubkey = pubkey_npub(&request.app_key_hex);
         }
+        Ok(None) => {
+            "device request was not recognized".clone_into(&mut classification.error);
+        }
+        Err(error) => classification.error = error.to_string(),
     }
-    classification.has_invite_pubkey = parse_app_key_approval_request(input)
-        .ok()
-        .flatten()
-        .is_some_and(|request| !request.invite_pubkey.trim().is_empty());
     Some(classification)
 }
 
@@ -728,7 +712,7 @@ mod tests {
 
     #[test]
     fn classify_link_input_is_shared_for_invites_app_keys_and_approval_links() {
-        let profile_id = IrisProfileId::new_v4();
+        let profile_id = NostrIdentityId::new_v4();
         let admin = Keys::generate().public_key();
         let invite_key = Keys::generate().public_key();
         let invite = encode_app_key_link_invite(profile_id, &admin.to_hex(), &invite_key.to_hex())
@@ -757,18 +741,22 @@ mod tests {
         assert!(!short_app_key.is_complete);
         assert!(!short_app_key.is_valid);
 
+        let request_device = Keys::generate();
+        let request_device_npub = request_device.public_key().to_bech32().expect("npub");
         let request = encode_app_key_approval_request(
-            profile_id,
-            &admin.to_hex(),
-            &invite_key.to_hex(),
+            &request_device,
+            Some(profile_id),
+            Some(&admin.to_hex()),
             None,
-        );
+            123,
+        )
+        .expect("approval request");
         let approval = classify_link_input(&request);
         assert_eq!(approval.kind, "app_key_approval");
         assert!(approval.is_complete);
         assert!(approval.is_valid);
-        assert_eq!(approval.app_key_pubkey, app_key_npub);
-        assert!(approval.has_invite_pubkey);
+        assert_eq!(approval.app_key_pubkey, request_device_npub);
+        assert!(!approval.has_invite_pubkey);
     }
 
     #[test]
@@ -931,7 +919,7 @@ mod tests {
 
     #[test]
     fn resolve_app_key_link_target_accepts_invite_or_manual_profile_with_admin() {
-        let profile_id = IrisProfileId::new_v4();
+        let profile_id = NostrIdentityId::new_v4();
         let admin = Keys::generate().public_key();
         let invite_key = Keys::generate().public_key();
         let invite = encode_app_key_link_invite(profile_id, &admin.to_hex(), &invite_key.to_hex())
@@ -957,6 +945,6 @@ mod tests {
             resolve_app_key_link_target(&admin.to_bech32().expect("npub"), Some(&admin.to_hex()))
                 .expect_err("bare app key is not an identity target");
 
-        assert!(error.to_string().contains("IrisProfile UUID"));
+        assert!(error.to_string().contains("NostrIdentity UUID"));
     }
 }

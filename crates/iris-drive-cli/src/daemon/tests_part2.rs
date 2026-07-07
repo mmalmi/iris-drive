@@ -1,4 +1,131 @@
 #[tokio::test]
+async fn unbound_manual_join_backfill_adopts_approval_roster_candidate() {
+    use nostr_sdk::JsonUtil;
+
+    let owner_dir = tempfile::tempdir().unwrap();
+    let mut owner = Profile::create(owner_dir.path(), Some("iOS owner".to_string())).unwrap();
+    let linked_dir = tempfile::tempdir().unwrap();
+    let mut linked =
+        Profile::start_join_request(linked_dir.path(), Some("Mac waiting".to_string())).unwrap();
+    let linked_pubkey = linked.state.app_key_pubkey.clone();
+    linked.state.queue_unbound_app_key_join_request(
+        123,
+        format!("iris-drive://app-key-link?app_key={linked_pubkey}"),
+    );
+    let placeholder_profile_id = linked.state.profile_id;
+    let mut linked_config = AppConfig {
+        profile: Some(linked.state.clone()),
+        ..AppConfig::default()
+    };
+    linked_config.upsert_drive(Drive::primary(placeholder_profile_id.to_string()));
+    linked_config
+        .save(config_path_in(linked_dir.path()))
+        .unwrap();
+
+    owner
+        .approve_app_key(&linked_pubkey, Some("Mac waiting".to_string()))
+        .unwrap();
+    let relay_events = owner
+        .state
+        .profile_roster_ops
+        .iter()
+        .map(|op| nostr_sdk::Event::from_json(&op.event_json).unwrap())
+        .collect::<Vec<_>>();
+    let candidates =
+        iris_drive_core::relay_sync::nostr_identity_app_key_approval_candidates_from_events(
+            &linked_pubkey,
+            &relay_events,
+        )
+        .unwrap();
+
+    let tasks = DaemonTaskSet::default();
+    let outcome = apply_pending_app_key_link_roster_candidates(
+        linked_dir.path(),
+        candidates,
+        None,
+        None,
+        &tasks,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome, Some(EventApplyOutcome::Changed));
+    let saved = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
+    let state = saved.profile.as_ref().unwrap();
+    assert_eq!(state.profile_id, owner.state.profile_id);
+    assert_eq!(
+        state.authorization_state,
+        iris_drive_core::AppKeyAuthorizationState::Authorized
+    );
+    assert!(state.outbound_app_key_link_request.is_none());
+    assert_eq!(
+        saved.drive(iris_drive_core::PRIMARY_DRIVE_ID).unwrap().root_scope_id,
+        owner.state.profile_id.to_string()
+    );
+    tasks.abort_all().await;
+}
+
+#[tokio::test]
+async fn waiting_join_backfill_adopts_approval_candidate_without_cached_request() {
+    use nostr_sdk::JsonUtil;
+
+    let owner_dir = tempfile::tempdir().unwrap();
+    let mut owner = Profile::create(owner_dir.path(), Some("iOS owner".to_string())).unwrap();
+    let linked_dir = tempfile::tempdir().unwrap();
+    let linked =
+        Profile::start_join_request(linked_dir.path(), Some("Mac waiting".to_string())).unwrap();
+    let linked_pubkey = linked.state.app_key_pubkey.clone();
+    assert!(linked.state.outbound_app_key_link_request.is_none());
+    let placeholder_profile_id = linked.state.profile_id;
+    let mut linked_config = AppConfig {
+        profile: Some(linked.state.clone()),
+        ..AppConfig::default()
+    };
+    linked_config.upsert_drive(Drive::primary(placeholder_profile_id.to_string()));
+    linked_config
+        .save(config_path_in(linked_dir.path()))
+        .unwrap();
+
+    owner
+        .approve_app_key(&linked_pubkey, Some("Mac waiting".to_string()))
+        .unwrap();
+    let relay_events = owner
+        .state
+        .profile_roster_ops
+        .iter()
+        .map(|op| nostr_sdk::Event::from_json(&op.event_json).unwrap())
+        .collect::<Vec<_>>();
+    let candidates =
+        iris_drive_core::relay_sync::nostr_identity_app_key_approval_candidates_from_events(
+            &linked_pubkey,
+            &relay_events,
+        )
+        .unwrap();
+
+    let tasks = DaemonTaskSet::default();
+    let outcome = apply_pending_app_key_link_roster_candidates(
+        linked_dir.path(),
+        candidates,
+        None,
+        None,
+        &tasks,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(outcome, Some(EventApplyOutcome::Changed));
+    let saved = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
+    let state = saved.profile.as_ref().unwrap();
+    assert_eq!(state.profile_id, owner.state.profile_id);
+    assert_eq!(
+        state.authorization_state,
+        iris_drive_core::AppKeyAuthorizationState::Authorized
+    );
+    assert!(state.outbound_app_key_link_request.is_none());
+    tasks.abort_all().await;
+}
+
+#[tokio::test]
 async fn windows_cloud_rescan_upserts_nested_local_file() {
     let (_blocks, provider) = fresh_test_provider().await;
     let sync_root = tempfile::tempdir().unwrap();
@@ -583,7 +710,7 @@ fn startup_root_sync_collects_unsynced_remote_roots() {
     let mut projected = AppKeyRootRef::legacy("local-only", 30, 1);
     projected.local_only = true;
     let mut drive = Drive {
-        root_scope_id: iris_drive_core::IrisProfileId::new_v4().to_string(),
+        root_scope_id: iris_drive_core::NostrIdentityId::new_v4().to_string(),
         drive_id: PRIMARY_DRIVE_ID.to_string(),
         display_name: "My Drive".to_string(),
         role: DriveRole::Owner,
@@ -617,7 +744,7 @@ fn startup_root_sync_collects_unsynced_remote_roots() {
 fn startup_root_sync_retries_failed_remote_roots() {
     let config_dir = tempfile::tempdir().unwrap();
     let mut drive = Drive {
-        root_scope_id: iris_drive_core::IrisProfileId::new_v4().to_string(),
+        root_scope_id: iris_drive_core::NostrIdentityId::new_v4().to_string(),
         drive_id: PRIMARY_DRIVE_ID.to_string(),
         display_name: "My Drive".to_string(),
         role: DriveRole::Owner,

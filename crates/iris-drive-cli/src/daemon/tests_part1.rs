@@ -246,11 +246,34 @@ fn provider_root_wake_payload_carries_file_count_status() {
     assert_eq!(status["hashtree"]["top_level_entries"], 4);
 }
 
+#[tokio::test]
+async fn provider_root_wake_drain_keeps_latest_after_debounce() {
+    let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
+    let first = json!({"root_cid": "root-a", "file_count": 1});
+    let second = json!({"root_cid": "root-b", "file_count": 2});
+    let third = json!({"root_cid": "root-c", "file_count": 3});
+    tx.send(Some(second)).unwrap();
+    let delayed = tx.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        delayed.send(Some(third)).unwrap();
+    });
+
+    let drained = drain_latest_provider_root_wake_payload_after_debounce(
+        &mut rx,
+        std::time::Duration::from_millis(25),
+        Some(first),
+    )
+    .await;
+
+    assert_eq!(drained, Some(json!({"root_cid": "root-c", "file_count": 3})));
+}
+
 #[test]
 fn stale_root_apply_followup_detects_superseded_app_key_root() {
     let config_dir = tempfile::tempdir().unwrap();
     let mut drive = Drive {
-        root_scope_id: iris_drive_core::IrisProfileId::new_v4().to_string(),
+        root_scope_id: iris_drive_core::NostrIdentityId::new_v4().to_string(),
         drive_id: PRIMARY_DRIVE_ID.to_string(),
         display_name: "My Drive".to_string(),
         role: DriveRole::Owner,
@@ -268,7 +291,7 @@ fn stale_root_apply_followup_detects_superseded_app_key_root() {
     );
     let mut config = AppConfig {
         profile: Some(ProfileState {
-            profile_id: iris_drive_core::IrisProfileId::new_v4(),
+            profile_id: iris_drive_core::NostrIdentityId::new_v4(),
             app_key_pubkey: "device-a".to_string(),
             profile_roster_ops: Vec::new(),
             app_key_link_secret: "link-secret".to_string(),
@@ -333,7 +356,7 @@ fn stale_root_apply_followup_detects_superseded_app_key_root() {
 #[test]
 fn root_apply_followup_queue_key_groups_superseded_app_key_roots() {
     let mut drive = Drive {
-        root_scope_id: iris_drive_core::IrisProfileId::new_v4().to_string(),
+        root_scope_id: iris_drive_core::NostrIdentityId::new_v4().to_string(),
         drive_id: PRIMARY_DRIVE_ID.to_string(),
         display_name: "My Drive".to_string(),
         role: DriveRole::Owner,
@@ -351,7 +374,7 @@ fn root_apply_followup_queue_key_groups_superseded_app_key_roots() {
     );
     let mut config = AppConfig {
         profile: Some(ProfileState {
-            profile_id: iris_drive_core::IrisProfileId::new_v4(),
+            profile_id: iris_drive_core::NostrIdentityId::new_v4(),
             app_key_pubkey: "device-a".to_string(),
             profile_roster_ops: Vec::new(),
             app_key_link_secret: "link-secret".to_string(),
@@ -433,7 +456,7 @@ async fn config_mutation_lock_serializes_same_config_dir() {
 }
 
 #[test]
-fn config_mutation_lock_treats_existing_permission_denied_as_contention() {
+fn config_mutation_lock_treats_permission_denied_as_contention() {
     let dir = tempfile::tempdir().unwrap();
     let lock_path = dir.path().join("config-mutation.lock");
     std::fs::write(&lock_path, "12345\n").unwrap();
@@ -445,7 +468,7 @@ fn config_mutation_lock_treats_existing_permission_denied_as_contention() {
         &lock_path,
         &permission_denied,
     ));
-    assert!(!ConfigMutationLock::lock_create_error_is_contention(
+    assert!(ConfigMutationLock::lock_create_error_is_contention(
         &missing_path,
         &permission_denied,
     ));
@@ -652,6 +675,30 @@ fn windows_cloud_periodic_validation_rescans_recent_local_changes() {
             full: false,
             recover_cached_deletes: false,
         }
+    );
+}
+
+#[test]
+fn windows_cloud_root_setting_supports_default_disable_and_override() {
+    assert_eq!(
+        windows_cloud_root_setting_from_env_value(None).unwrap(),
+        WindowsCloudRootSetting::Default
+    );
+    assert_eq!(
+        windows_cloud_root_setting_from_env_value(Some("  ")).unwrap(),
+        WindowsCloudRootSetting::Default
+    );
+    assert_eq!(
+        windows_cloud_root_setting_from_env_value(Some("off")).unwrap(),
+        WindowsCloudRootSetting::Disabled
+    );
+    assert_eq!(
+        windows_cloud_root_setting_from_env_value(Some("DISABLED")).unwrap(),
+        WindowsCloudRootSetting::Disabled
+    );
+    assert_eq!(
+        windows_cloud_root_setting_from_env_value(Some("C:\\\\IrisDriveE2E")).unwrap(),
+        WindowsCloudRootSetting::Path(PathBuf::from("C:\\\\IrisDriveE2E"))
     );
 }
 

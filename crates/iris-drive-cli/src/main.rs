@@ -17,6 +17,7 @@ use iris_drive_core::{
     DriveRole, FsFipsBlockSync, PRIMARY_DRIVE_ID, Profile, ProfileState, UserProfile,
     blossom_sync::{DownloadReport, UploadReport},
     config::AppConfig,
+    config_lock::ConfigMutationLock,
     daemon::{Daemon, EmbeddedHashtreeHost},
     gateway::{GatewayBind, GatewayServer},
     index_dir,

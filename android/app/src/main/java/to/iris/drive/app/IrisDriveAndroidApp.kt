@@ -56,7 +56,6 @@ import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.StateFlow
 import to.iris.drive.app.core.AppState
-import to.iris.drive.app.core.NativeCore
 import to.iris.drive.app.core.RecoverySecretExport
 import to.iris.drive.app.update.AndroidSelfUpdateState
 import to.iris.drive.app.update.SelfUpdateActions
@@ -185,7 +184,7 @@ internal fun IrisDriveAndroidApp(
     selfUpdateActions: SelfUpdateActions,
     onCreateProfile: (String) -> Unit,
     onRestoreProfile: (String, String) -> Unit,
-    onLinkDevice: (String, String) -> Unit,
+    onStartJoinRequest: (String) -> Unit,
     onCopyText: (String, String) -> Unit,
     onExportRecoverySecret: () -> RecoverySecretExport,
     onSetAndroidCalendarSync: (Boolean) -> Unit,
@@ -194,7 +193,6 @@ internal fun IrisDriveAndroidApp(
     onOpenDriveFolder: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRejectDevice: (String) -> Unit,
-    onResetInvite: () -> Unit,
     onAddRecoveryKey: (String) -> Unit,
     onDeleteDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
@@ -274,10 +272,6 @@ internal fun IrisDriveAndroidApp(
                         padding = padding,
                         state = state,
                         onCopyText = onCopyText,
-                        onRelink = {
-                            val label = profile.appKeyLabel.ifBlank { "Android" }
-                            onLinkDevice(profile.currentAppKeyNpub, label)
-                        },
                         onLogout = onLogout,
                     )
                 } else if (state.isAwaitingApproval && profile != null) {
@@ -299,8 +293,8 @@ internal fun IrisDriveAndroidApp(
                             onRestoreProfile(secret, "")
                             onAddRoot("My Drive", ProviderRoot)
                         },
-                        onLinkDevice = { owner ->
-                            onLinkDevice(owner, "")
+                        onStartJoinRequest = {
+                            onStartJoinRequest("")
                         },
                 )
                 }
@@ -318,20 +312,17 @@ internal fun IrisDriveAndroidApp(
                     isOpeningIrisApps = isOpeningIrisApps,
                     onStartSync = onStartSync,
                     onStopSync = onStopSync,
-                    onCopyAppKey = { onCopyText("Device", activeProfile.currentAppKeyNpub) },
-                    onCopyDeviceKey = { onCopyText("Device key", activeProfile.devicePubkey) },
+                    onCopyDeviceKey = { onCopyText("Device Key", activeProfile.devicePubkey) },
                     onCopyText = onCopyText,
                     onExportRecoverySecret = onExportRecoverySecret,
                     androidCalendarSyncEnabled = androidCalendarSyncEnabled,
                     onSetAndroidCalendarSync = onSetAndroidCalendarSync,
-                    onCopyLinkInvite = { onCopyText("Invite link", activeProfile.appKeyLinkInvite) },
                     onCopySnapshotLink = { onCopyText("drive.iris.to link", state.snapshotLink) },
                     onOpenSnapshotLink = { onOpenUrl(state.snapshotLink) },
                     onOpenIrisApps = { onOpenIrisApps(state.sitesPortalUrl) },
                     onOpenDriveFolder = onOpenDriveFolder,
                     onApproveDevice = onApproveDevice,
                     onRejectDevice = onRejectDevice,
-                    onResetInvite = onResetInvite,
                     onAddRecoveryKey = onAddRecoveryKey,
                     onDeleteDevice = onDeleteDevice,
                     onAppointAdmin = onAppointAdmin,
@@ -368,7 +359,6 @@ private fun RevokedDeviceContent(
     padding: PaddingValues,
     state: AppState,
     onCopyText: (String, String) -> Unit,
-    onRelink: () -> Unit,
     onLogout: () -> Unit,
 ) {
     val profile = state.profile ?: return
@@ -384,16 +374,10 @@ private fun RevokedDeviceContent(
             SetupBrand()
             Text("Device removed", color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
             Text("This device no longer has access to Iris Drive.", color = Muted)
-            Text(profile.currentAppKeyNpub, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             Text(profile.devicePubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            SetupPrimaryButton(
-                text = "Link this device again",
-                onClick = onRelink,
-                testTag = "relinkRevokedDevice",
-            )
             SetupSecondaryButton(
                 text = "Copy Device Key",
-                onClick = { onCopyText("Device key", profile.devicePubkey) },
+                onClick = { onCopyText("Device Key", profile.devicePubkey) },
             )
             OutlinedButton(
                 onClick = onLogout,
@@ -454,10 +438,21 @@ private fun AwaitingApprovalContent(
         ) {
             SetupBrand()
             Text("Waiting for approval", color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
+            if (profile.appKeyLinkRequest.isNotBlank()) {
+                QrCode(
+                    value = profile.appKeyLinkRequest,
+                    side = 220.dp,
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                )
+                SetupPrimaryButton(
+                    text = "Copy Request Link",
+                    onClick = { onCopyText("Request link", profile.appKeyLinkRequest) },
+                )
+            }
             AwaitingApprovalKey("Current Device Key", profile.devicePubkey)
             SetupSecondaryButton(
                 text = "Copy Device Key",
-                onClick = { onCopyText("Device key", profile.devicePubkey) },
+                onClick = { onCopyText("Device Key", profile.devicePubkey) },
             )
             OutlinedButton(
                 onClick = onLogout,
@@ -576,43 +571,23 @@ private fun SetupContent(
     error: String,
     onCreateProfile: () -> Unit,
     onRestoreProfile: (String) -> Unit,
-    onLinkDevice: (String) -> Unit,
+    onStartJoinRequest: () -> Unit,
 ) {
     var createUsername by remember { mutableStateOf("") }
     var selectedPhoto by remember { mutableStateOf("") }
     var restoreSecret by remember { mutableStateOf("") }
     var recoveryWords by remember { mutableStateOf(List(RecoveryPhraseWordCount) { "" }) }
     var recoveryWordIndex by remember { mutableStateOf(0) }
-    var linkOwner by remember { mutableStateOf("") }
-    var submittedLinkOwner by remember { mutableStateOf("") }
+    var joinRequestStarted by remember { mutableStateOf(false) }
     var route by remember { mutableStateOf(SetupRoute.Welcome) }
-    var showLinkScanner by remember { mutableStateOf(false) }
     val context = LocalContext.current
-    val linkOwnerIsComplete = remember(linkOwner) {
-        NativeCore.isCompleteLinkInput(linkOwner)
-    }
     val photoPicker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         selectedPhoto = uri?.lastPathSegment.orEmpty()
     }
-    fun submitLinkOwner(value: String, force: Boolean) {
-        val trimmed = value.trim()
-        if (trimmed.isBlank()) return
-        if (!NativeCore.isCompleteLinkInput(trimmed)) return
-        if (submittedLinkOwner == trimmed) return
-        submittedLinkOwner = trimmed
-        onLinkDevice(trimmed)
-    }
-
-    if (showLinkScanner) {
-        QrScannerDialog(
-            onDismiss = { showLinkScanner = false },
-            onScanned = { code ->
-                linkOwner = code
-                submitLinkOwner(code, force = false)
-                showLinkScanner = false
-                null
-            },
-        )
+    fun startJoinRequestIfNeeded() {
+        if (joinRequestStarted) return
+        joinRequestStarted = true
+        onStartJoinRequest()
     }
 
     Box(
@@ -698,6 +673,7 @@ private fun SetupContent(
                         text = if (selectedPhoto.isBlank()) "Later" else "Create profile",
                         onClick = { onCreateProfile() },
                         icon = true,
+                        testTag = "createPhotoSubmit",
                     )
                 }
                 SetupRoute.RestoreOptions -> {
@@ -833,30 +809,22 @@ private fun SetupContent(
                     )
                 }
                 SetupRoute.LinkDevice -> {
+                    LaunchedEffect(Unit) {
+                        startJoinRequestIfNeeded()
+                    }
                     SetupFormHeader(title = "Link device", onBack = { route = SetupRoute.RestoreOptions })
-                    OutlinedTextField(
-                        value = linkOwner,
-                        onValueChange = {
-                            linkOwner = it
-                            submitLinkOwner(it, force = false)
-                        },
-                        modifier = Modifier.fillMaxWidth().testTag("linkOwnerInput"),
-                        singleLine = true,
-                        label = { Text("IrisProfile invite link or admin device key") },
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(
-                            onDone = { submitLinkOwner(linkOwner, force = true) },
-                        ),
-                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
+                        Text("Preparing join request", color = Muted)
+                    }
                     SetupPrimaryButton(
-                        text = "Link device",
-                        onClick = { submitLinkOwner(linkOwner, force = true) },
-                        enabled = linkOwnerIsComplete,
-                        testTag = "linkDeviceSubmit",
-                    )
-                    SetupSecondaryButton(
-                        text = "Scan invite QR",
-                        onClick = { showLinkScanner = true },
+                        text = "Show join QR",
+                        onClick = { startJoinRequestIfNeeded() },
+                        testTag = "startJoinRequest",
                     )
                 }
             }

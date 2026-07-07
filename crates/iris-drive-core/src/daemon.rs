@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
-use hashtree_core::{Cid, HashTree, HashTreeConfig, nhash_decode};
+use hashtree_core::{Cid, HashTree, HashTreeConfig};
 use hashtree_fs::FsBlobStore;
 use serde_json::json;
 use thiserror::Error;
@@ -31,6 +31,7 @@ use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
 use crate::sync_cache::{SyncCache, SyncCacheError};
 
 pub const PRIMARY_DRIVE_ID: &str = "main";
+const LOCAL_ONLY_PARENT_WALK_LIMIT: usize = 1024;
 
 pub struct EmbeddedHashtreeHost {
     runtime: hashtree_embedded::HostDaemonRuntime,
@@ -60,8 +61,7 @@ impl EmbeddedHashtreeHost {
         }
 
         let runtime = hashtree_embedded::HostDaemonRuntime::start(
-            hashtree_embedded::HostDaemonOptions::new(state_root)
-                .with_initial_tree_roots(embedded_browser_initial_tree_roots()),
+            hashtree_embedded::HostDaemonOptions::new(state_root),
         )?;
         let status = runtime.status();
         Ok(Self { runtime, status })
@@ -115,23 +115,6 @@ fn embedded_browser_nostr_relays(config: &AppConfig) -> Vec<String> {
         }
     }
     relays
-}
-
-fn embedded_browser_initial_tree_roots() -> Vec<(String, Cid)> {
-    let Ok(root) = nhash_decode(crate::gateway::IRIS_SITES_PORTAL_BOOTSTRAP_NHASH) else {
-        return Vec::new();
-    };
-    vec![(
-        format!(
-            "{}/{}",
-            crate::gateway::IRIS_SITES_PORTAL_NPUB,
-            crate::gateway::IRIS_SITES_PORTAL_TREE
-        ),
-        Cid {
-            hash: root.hash,
-            key: root.decrypt_key,
-        },
-    )]
 }
 
 fn same_relay(left: &str, right: &str) -> bool {
@@ -456,35 +439,86 @@ impl Daemon {
         local_only: bool,
     ) -> Result<ImportReport, DaemonError> {
         self.ensure_drive_for_import(drive_id)?;
-        let previous_root_cid = self
-            .config
-            .profile
-            .as_ref()
-            .and_then(|account| {
-                self.config
-                    .drive(drive_id)
-                    .and_then(|d| d.app_key_roots.get(&account.app_key_pubkey))
-            })
-            .map(|entry| entry.root_cid.clone());
+        let previous_root_ref = self.config.profile.as_ref().and_then(|account| {
+            self.config
+                .drive(drive_id)
+                .and_then(|d| d.app_key_roots.get(&account.app_key_pubkey))
+        });
+        let previous_root_cid = previous_root_ref.map(|entry| entry.root_cid.clone());
         let previous_root = match previous_root_cid.as_ref() {
             Some(s) => Some(Cid::parse(s).map_err(|e| DaemonError::Store(e.to_string()))?),
             None => None,
+        };
+        let previous_publishable_root_ref = if drive_id == PRIMARY_DRIVE_ID {
+            match (self.config.profile.as_ref(), previous_root_ref) {
+                (Some(account), Some(previous_root_ref)) => {
+                    self.previous_publishable_root_ref_for_import(
+                        &account.app_key_pubkey,
+                        previous_root_ref,
+                    )
+                    .await?
+                }
+                _ => None,
+            }
+        } else {
+            previous_root_ref.cloned()
+        };
+        let previous_publishable_root = previous_publishable_root_ref
+            .as_ref()
+            .map(|root| Cid::parse(&root.root_cid))
+            .transpose()
+            .map_err(|e| DaemonError::Store(e.to_string()))?;
+        let previous_delta_root = if local_only {
+            None
+        } else if tombstone_base_root.is_some() && drive_id == PRIMARY_DRIVE_ID {
+            previous_publishable_root.clone()
+        } else {
+            previous_root.clone()
+        };
+        let previous_history_root = if local_only {
+            None
+        } else if drive_id == PRIMARY_DRIVE_ID {
+            previous_publishable_root
+        } else {
+            previous_root.clone()
         };
 
         let now = self.next_import_timestamp_for_drive(drive_id);
         let mut root_meta = self.root_meta_for_import_for_drive(drive_id, now);
         if let Some(meta) = root_meta.as_mut() {
             meta.local_only = local_only;
+            if local_only
+                && drive_id == PRIMARY_DRIVE_ID
+                && let (Some(account), Some(previous_publishable_root_ref)) = (
+                    self.config.profile.as_ref(),
+                    previous_publishable_root_ref.as_ref(),
+                )
+            {
+                meta.parents = vec![RootParent {
+                    app_key_pubkey: account.app_key_pubkey.clone(),
+                    app_key_seq: previous_publishable_root_ref.app_key_seq,
+                    root_cid: previous_publishable_root_ref.root_cid.clone(),
+                }];
+            }
         }
         let mut scoped_tombstone_paths = None;
+        let projection_root = if tombstone_base_root.is_some() && drive_id == PRIMARY_DRIVE_ID {
+            Some(
+                crate::primary_merged_root(&self.tree, &self.config)
+                    .await?
+                    .root_cid,
+            )
+        } else {
+            tombstone_base_root.clone()
+        };
         let import_root = if let Some(tombstone_base_root) = tombstone_base_root.as_ref() {
             let phase = std::time::Instant::now();
             let delta = local_visible_root_for_mount_import(
                 &self.tree,
                 &root,
-                previous_root.as_ref(),
+                previous_delta_root.as_ref(),
                 tombstone_base_root,
-                Some(tombstone_base_root),
+                projection_root.as_ref(),
                 tombstone_paths,
             )
             .await?;
@@ -505,7 +539,7 @@ impl Daemon {
             let root_cid = layer_history_and_meta_on_root_with_tombstone_base_and_paths(
                 &self.tree,
                 import_root,
-                previous_root.as_ref(),
+                previous_history_root.as_ref(),
                 Some(tombstone_base_root),
                 now,
                 root_meta.as_ref(),
@@ -522,7 +556,7 @@ impl Daemon {
             let root_cid = layer_history_and_meta_on_root(
                 &self.tree,
                 import_root,
-                previous_root.as_ref(),
+                previous_history_root.as_ref(),
                 now,
                 root_meta.as_ref(),
             )
@@ -536,6 +570,40 @@ impl Daemon {
 
         self.report_and_record_root_for_drive(drive_id, root_cid, None, root_meta.as_ref(), now)
             .await
+    }
+
+    async fn previous_publishable_root_ref_for_import(
+        &self,
+        app_key_pubkey: &str,
+        previous_root: &AppKeyRootRef,
+    ) -> Result<Option<AppKeyRootRef>, DaemonError> {
+        let mut current = previous_root.clone();
+        for _ in 0..LOCAL_ONLY_PARENT_WALK_LIMIT {
+            if !current.local_only {
+                return Ok(Some(current));
+            }
+            let Some(parent) = current
+                .parents
+                .iter()
+                .rev()
+                .find(|parent| parent.app_key_pubkey == app_key_pubkey)
+            else {
+                return Ok(None);
+            };
+            let parent_cid =
+                Cid::parse(&parent.root_cid).map_err(|e| DaemonError::Store(e.to_string()))?;
+            let Some(meta) = read_root_meta(&self.tree, &parent_cid).await? else {
+                let mut legacy = AppKeyRootRef::legacy(
+                    parent.root_cid.clone(),
+                    current.published_at,
+                    current.dck_generation,
+                );
+                legacy.app_key_seq = parent.app_key_seq;
+                return Ok(Some(legacy));
+            };
+            current = AppKeyRootRef::from_meta(parent.root_cid.clone(), meta.created_at, &meta);
+        }
+        Ok(None)
     }
 
     async fn report_and_record_root(

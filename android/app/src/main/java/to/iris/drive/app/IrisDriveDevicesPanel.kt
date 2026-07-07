@@ -55,27 +55,77 @@ import to.iris.drive.app.core.NativeCore
 @Composable
 internal fun DevicesPanel(
     devices: List<DeviceState>,
-    linkInvite: String,
     inboundRequests: List<AppKeyLinkRequestState>,
     canApprove: Boolean,
-    onCopyLinkInvite: () -> Unit,
-    onResetInvite: () -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRejectDevice: (String) -> Unit,
     onAddRecoveryKey: (String) -> Unit,
     onDeleteDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
     onDemoteAdmin: (String) -> Unit,
+    onCopyDeviceKey: (String) -> Unit,
 ) {
     var request by remember { mutableStateOf("") }
-    var label by remember { mutableStateOf("") }
     var showAddDevice by remember { mutableStateOf(false) }
+    var showApprovalScanner by remember { mutableStateOf(false) }
     var showAddRecoveryKey by remember { mutableStateOf(false) }
     var devicePendingDelete by remember { mutableStateOf<DeviceState?>(null) }
+    var pendingApprovalRequest by remember { mutableStateOf<String?>(null) }
+    var lastPromptedApprovalRequest by remember { mutableStateOf("") }
     val deviceActors = remember(devices) { devices.filter { it.isDeviceActor } }
     val recoveryKeyActors = remember(devices) { devices.filterNot { it.isDeviceActor } }
     val manualRequestIsComplete = remember(request) {
-        NativeCore.isCompleteLinkInput(request)
+        NativeCore.isCompleteDeviceApprovalInput(request)
+    }
+    fun confirmApproval(value: String, force: Boolean = false): Boolean {
+        val trimmed = value.trim()
+        if (!NativeCore.isCompleteDeviceApprovalInput(trimmed)) return false
+        if (!force && lastPromptedApprovalRequest == trimmed) return true
+        pendingApprovalRequest = trimmed
+        lastPromptedApprovalRequest = trimmed
+        return true
+    }
+
+    if (showApprovalScanner) {
+        QrScannerDialog(
+            onDismiss = { showApprovalScanner = false },
+            onScanned = { code ->
+                val trimmed = code.trim()
+                if (!NativeCore.isCompleteDeviceApprovalInput(trimmed)) {
+                    "Invalid device request."
+                } else {
+                    request = trimmed
+                    showApprovalScanner = false
+                    confirmApproval(trimmed, force = true)
+                    null
+                }
+            },
+        )
+    }
+
+    pendingApprovalRequest?.let { pendingRequest ->
+        AlertDialog(
+            onDismissRequest = { pendingApprovalRequest = null },
+            title = { Text("Approve this device?") },
+            text = { Text("This will add the joining device to Iris Drive.") },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        onApproveDevice(pendingRequest, "")
+                        request = ""
+                        pendingApprovalRequest = null
+                        lastPromptedApprovalRequest = ""
+                    },
+                ) {
+                    Text("Approve")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingApprovalRequest = null }) {
+                    Text("Cancel")
+                }
+            },
+        )
     }
 
     if (canApprove) {
@@ -85,22 +135,17 @@ internal fun DevicesPanel(
             onToggle = { showAddDevice = !showAddDevice },
         ) {
             AddDevicePanel(
-                linkInvite = linkInvite,
                 inboundRequests = inboundRequests,
                 canApprove = canApprove,
                 request = request,
                 manualRequestIsComplete = manualRequestIsComplete,
-                label = label,
-                onRequestChange = { request = it },
-                onLabelChange = { label = it },
-                onCopyLinkInvite = onCopyLinkInvite,
-                onResetInvite = onResetInvite,
-                onApproveDevice = onApproveDevice,
-                onRejectDevice = onRejectDevice,
-                onAdded = {
-                    request = ""
-                    label = ""
+                onRequestChange = {
+                    request = it
+                    confirmApproval(it)
                 },
+                onRejectDevice = onRejectDevice,
+                onScanQr = { showApprovalScanner = true },
+                onConfirmApproval = { confirmApproval(it, force = true) },
             )
         }
     }
@@ -124,6 +169,7 @@ internal fun DevicesPanel(
                 onAppointAdmin = onAppointAdmin,
                 onDemoteAdmin = onDemoteAdmin,
                 onDelete = { devicePendingDelete = it },
+                onCopyDeviceKey = onCopyDeviceKey,
             )
         }
     }
@@ -137,6 +183,7 @@ internal fun DevicesPanel(
                     onAppointAdmin = onAppointAdmin,
                     onDemoteAdmin = onDemoteAdmin,
                     onDelete = { devicePendingDelete = it },
+                    onCopyDeviceKey = onCopyDeviceKey,
                 )
             }
         }
@@ -171,6 +218,7 @@ private fun DeviceActorRow(
     onAppointAdmin: (String) -> Unit,
     onDemoteAdmin: (String) -> Unit,
     onDelete: (DeviceState) -> Unit,
+    onCopyDeviceKey: (String) -> Unit,
 ) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         if (showStatusDot) {
@@ -190,13 +238,25 @@ private fun DeviceActorRow(
                 style = MaterialTheme.typography.bodySmall,
             )
             if (device.isCurrentDevice) {
-                Text(
-                    "Device key: ${device.pubkey}",
-                    color = Muted,
-                    style = MaterialTheme.typography.bodySmall,
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        device.pubkey,
+                        color = Muted,
+                        style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    TextButton(
+                        onClick = { onCopyDeviceKey(device.pubkey) },
+                        modifier = Modifier.testTag("copyCurrentDeviceKey"),
+                    ) {
+                        Text("Copy Device Key")
+                    }
+                }
+            } else if (device.detail.isNotBlank()) {
+                Text(device.detail, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
-            Text(device.detail, color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         if (device.canAppointAdmin) {
             TextButton(onClick = { onAppointAdmin(device.pubkey) }) {
@@ -337,26 +397,15 @@ private fun AddDeviceDisclosureSection(
 
 @Composable
 private fun AddDevicePanel(
-    linkInvite: String,
     inboundRequests: List<AppKeyLinkRequestState>,
     canApprove: Boolean,
     request: String,
     manualRequestIsComplete: Boolean,
-    label: String,
     onRequestChange: (String) -> Unit,
-    onLabelChange: (String) -> Unit,
-    onCopyLinkInvite: () -> Unit,
-    onResetInvite: () -> Unit,
-    onApproveDevice: (String, String) -> Unit,
     onRejectDevice: (String) -> Unit,
-    onAdded: () -> Unit,
+    onScanQr: () -> Unit,
+    onConfirmApproval: (String) -> Unit,
 ) {
-    fun submitManualDevice() {
-        if (!canApprove || !manualRequestIsComplete) return
-        onApproveDevice(request, label)
-        onAdded()
-    }
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -366,21 +415,6 @@ private fun AddDevicePanel(
             .testTag("addDevicePanel"),
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        if (linkInvite.isNotBlank()) {
-            QrCode(linkInvite, side = 220.dp, modifier = Modifier.align(Alignment.CenterHorizontally))
-            Text(linkInvite, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                OutlinedButton(onClick = onCopyLinkInvite, modifier = Modifier.weight(1f)) {
-                    Text("Copy invite link", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-                OutlinedButton(onClick = onResetInvite, modifier = Modifier.weight(1f)) {
-                    Text("Reset invite", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                }
-            }
-        }
         if (inboundRequests.isNotEmpty()) {
             Text("Device requests", fontWeight = FontWeight.SemiBold)
             inboundRequests.forEach { inbound ->
@@ -402,43 +436,35 @@ private fun AddDevicePanel(
                             Text("Reject", color = Danger)
                         }
                         Button(
-                            onClick = { onApproveDevice(inbound.requestLink, inbound.label) },
+                            onClick = { onConfirmApproval(inbound.requestLink) },
                             enabled = canApprove,
-                            modifier = Modifier.testTag("requestDeviceAdd"),
+                            modifier = Modifier.testTag("requestDeviceReview"),
                         ) {
-                            Text("Add")
+                            Text("Review")
                         }
                     }
                 }
             }
         }
-        Text(
-            "Paste the device key.",
-            color = Muted,
-        )
         OutlinedTextField(
             value = request,
             onValueChange = onRequestChange,
             modifier = Modifier.fillMaxWidth().testTag("manualDeviceId"),
             singleLine = true,
-            label = { Text("Device key") },
-            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Next),
-        )
-        OutlinedTextField(
-            value = label,
-            onValueChange = onLabelChange,
-            modifier = Modifier.fillMaxWidth().testTag("manualDeviceName"),
-            singleLine = true,
-            label = { Text("Name (optional)") },
+            label = { Text("Request link or device key") },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-            keyboardActions = KeyboardActions(onDone = { submitManualDevice() }),
+            keyboardActions = KeyboardActions(onDone = {
+                if (canApprove && manualRequestIsComplete) {
+                    onConfirmApproval(request)
+                }
+            }),
         )
-        Button(
-            onClick = { submitManualDevice() },
-            enabled = canApprove && manualRequestIsComplete,
-            modifier = Modifier.testTag("manualDeviceAdd"),
+        OutlinedButton(
+            onClick = onScanQr,
+            enabled = canApprove,
+            modifier = Modifier.testTag("scanApprovalRequestQr"),
         ) {
-            Text("Add")
+            Text("Scan QR")
         }
     }
 }
@@ -595,7 +621,7 @@ private fun org.json.JSONArray?.toStringList(): List<String> {
 }
 
 @Composable
-private fun QrCode(
+internal fun QrCode(
     value: String,
     modifier: Modifier = Modifier,
     side: Dp = 180.dp,

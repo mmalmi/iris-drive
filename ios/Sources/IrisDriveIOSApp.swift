@@ -13,16 +13,11 @@ struct IrisDriveIOSApp: App {
                     model.ensureFileProviderDomainIfProfileExists()
                     model.handleDebugLaunchEnvironment()
                     model.refreshAfterStartup()
-                    model.startForegroundSyncLoop()
+                    model.reconcileForegroundWork(isActive: scenePhase == .active)
                     model.scheduleBackgroundSyncIfNeeded()
                 }
                 .onChange(of: scenePhase) { _, phase in
-                    if phase == .active {
-                        model.startForegroundSyncLoop()
-                    } else {
-                        model.stopForegroundSyncLoop()
-                        model.scheduleBackgroundSyncIfNeeded()
-                    }
+                    model.reconcileForegroundWork(isActive: phase == .active)
                 }
                 .onOpenURL { url in
                     model.handle(url: url)

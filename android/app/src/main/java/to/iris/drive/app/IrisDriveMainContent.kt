@@ -68,12 +68,10 @@ internal fun AuthenticatedContent(
     androidCalendarSyncEnabled: Boolean,
     onStartSync: () -> Unit,
     onStopSync: () -> Unit,
-    onCopyAppKey: () -> Unit,
     onCopyDeviceKey: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onExportRecoverySecret: () -> RecoverySecretExport,
     onSetAndroidCalendarSync: (Boolean) -> Unit,
-    onCopyLinkInvite: () -> Unit,
     onCopySnapshotLink: () -> Unit,
     onOpenSnapshotLink: () -> Unit,
     onOpenIrisApps: () -> Unit,
@@ -81,7 +79,6 @@ internal fun AuthenticatedContent(
     onAddRecoveryKey: (String) -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRejectDevice: (String) -> Unit,
-    onResetInvite: () -> Unit,
     onDeleteDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
     onDemoteAdmin: (String) -> Unit,
@@ -125,11 +122,10 @@ internal fun AuthenticatedContent(
         MainTab.Devices -> DevicesContent(
             padding = padding,
             state = state,
-            onCopyLinkInvite = onCopyLinkInvite,
+            onCopyText = onCopyText,
             onAddRecoveryKey = onAddRecoveryKey,
             onApproveDevice = onApproveDevice,
             onRejectDevice = onRejectDevice,
-            onResetInvite = onResetInvite,
             onDeleteDevice = onDeleteDevice,
             onAppointAdmin = onAppointAdmin,
             onDemoteAdmin = onDemoteAdmin,
@@ -165,7 +161,6 @@ internal fun AuthenticatedContent(
             state = state,
             selfUpdateState = selfUpdateState,
             selfUpdateActions = selfUpdateActions,
-            onCopyAppKey = onCopyAppKey,
             onCopyDeviceKey = onCopyDeviceKey,
             onCopyText = onCopyText,
             onExportRecoverySecret = onExportRecoverySecret,
@@ -239,11 +234,10 @@ private fun DriveContent(
 private fun DevicesContent(
     padding: PaddingValues,
     state: AppState,
-    onCopyLinkInvite: () -> Unit,
+    onCopyText: (String, String) -> Unit,
     onAddRecoveryKey: (String) -> Unit,
     onApproveDevice: (String, String) -> Unit,
     onRejectDevice: (String) -> Unit,
-    onResetInvite: () -> Unit,
     onDeleteDevice: (String) -> Unit,
     onAppointAdmin: (String) -> Unit,
     onDemoteAdmin: (String) -> Unit,
@@ -262,17 +256,15 @@ private fun DevicesContent(
         item {
             DevicesPanel(
                 devices = state.devices,
-                linkInvite = state.profile?.appKeyLinkInvite.orEmpty(),
                 inboundRequests = state.profile?.inboundAppKeyLinkRequests.orEmpty(),
                 canApprove = state.profile?.canAdminProfile == true,
-                onCopyLinkInvite = onCopyLinkInvite,
                 onAddRecoveryKey = onAddRecoveryKey,
                 onApproveDevice = onApproveDevice,
                 onRejectDevice = onRejectDevice,
-                onResetInvite = onResetInvite,
                 onDeleteDevice = onDeleteDevice,
                 onAppointAdmin = onAppointAdmin,
                 onDemoteAdmin = onDemoteAdmin,
+                onCopyDeviceKey = { onCopyText("Device Key", it) },
             )
         }
     }
@@ -368,7 +360,6 @@ private fun SettingsContent(
     state: AppState,
     selfUpdateState: AndroidSelfUpdateState,
     selfUpdateActions: SelfUpdateActions,
-    onCopyAppKey: () -> Unit,
     onCopyDeviceKey: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onExportRecoverySecret: () -> RecoverySecretExport,
@@ -395,7 +386,6 @@ private fun SettingsContent(
                 state = state,
                 selfUpdateState = selfUpdateState,
                 selfUpdateActions = selfUpdateActions,
-                onCopyAppKey = onCopyAppKey,
                 onCopyDeviceKey = onCopyDeviceKey,
                 onCopyText = onCopyText,
                 onExportRecoverySecret = onExportRecoverySecret,
@@ -1018,7 +1008,6 @@ private fun SettingsPanel(
     state: AppState,
     selfUpdateState: AndroidSelfUpdateState,
     selfUpdateActions: SelfUpdateActions,
-    onCopyAppKey: () -> Unit,
     onCopyDeviceKey: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onExportRecoverySecret: () -> RecoverySecretExport,
@@ -1108,14 +1097,9 @@ private fun SettingsPanel(
                 Text("Reset relay")
             }
         }
-        Text("Device", fontWeight = FontWeight.SemiBold)
-        Text(profile?.currentAppKeyNpub.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Text("Current Device Key", fontWeight = FontWeight.SemiBold)
         Text(profile?.devicePubkey.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(onClick = onCopyAppKey) {
-                Text("Copy Device")
-            }
             OutlinedButton(onClick = onCopyDeviceKey) {
                 Text("Copy Device Key")
             }
@@ -1392,7 +1376,7 @@ private fun displayShareName(share: ShareState): String =
     share.displayName.ifBlank { "Shared folder" }
 
 private fun displayMemberName(member: ShareMemberState): String =
-    member.displayName.ifBlank { "IrisProfile" }
+    member.displayName.ifBlank { "NostrIdentity" }
 
 private fun displayPendingInviteName(invite: PendingShareInviteState): String =
     invite.displayName.ifBlank { "Pending contact" }

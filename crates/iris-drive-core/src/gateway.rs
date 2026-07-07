@@ -57,7 +57,6 @@ pub const DEFAULT_GATEWAY_PORT: u16 = 17_321;
 pub const IRIS_SITES_PORTAL_NPUB: &str =
     "npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm";
 pub const IRIS_SITES_PORTAL_TREE: &str = "sites";
-pub const IRIS_SITES_PORTAL_BOOTSTRAP_NHASH: &str = "nhash1qqsgjkehkfml3ak2xld3svmy7862ndqv7ay76jeuq9h28ymyex8q3xg9yz5qqcrc4fq3kfwt3maz4nss7d4qeshcmlkgelvhckszvk76lrzxxfu88jz";
 const IMMUTABLE_HOST_SUFFIX: &str = ".sites.iris.localhost";
 const HASH_HOST_SUFFIX: &str = ".hash.localhost";
 const DRIVE_HOST_SUFFIX: &str = ".drive.iris.localhost";

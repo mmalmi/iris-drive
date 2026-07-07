@@ -69,7 +69,7 @@ if (mode === 'public' && !publicActions.has(action)) {
 }
 
 const appName = envValue(['IRIS_DRIVE_ASC_APP_NAME'], 'Iris Drive')
-const bundleId = envValue(['IRIS_DRIVE_IOS_BUNDLE_ID'], 'to.iris.drive.ios')
+const bundleId = envValue(['IRIS_DRIVE_IOS_BUNDLE_ID'], 'fi.siriusbusiness.drive')
 const appSku = envValue(['IRIS_DRIVE_ASC_APP_SKU'], bundleId)
 const appPrimaryLocale = envValue(['IRIS_DRIVE_ASC_APP_PRIMARY_LOCALE'], 'en-US')
 const versionName = envValue(['IRIS_DRIVE_IOS_MARKETING_VERSION'], workspaceVersion())
@@ -416,18 +416,34 @@ function isAppCreatePermissionFailure(status, body) {
 }
 
 async function findBuild(appId) {
-  const builds = await getAll('builds', {
+  const [status, body] = await request('GET', 'builds', {
     'filter[app]': appId,
     'filter[version]': buildNumber,
-    limit: '10',
+    'fields[builds]': 'version,uploadedDate,processingState,buildAudienceType,preReleaseVersion',
+    'fields[preReleaseVersions]': 'version,platform',
+    include: 'preReleaseVersion',
+    limit: '200',
   })
-  return builds.find((build) => String(build.attributes?.version) === buildNumber) ?? builds[0] ?? null
+  const response = requireOk(status, body, 'GET builds')
+  const preReleaseVersions = new Map(
+    (response.included ?? [])
+      .filter((item) => item.type === 'preReleaseVersions')
+      .map((item) => [item.id, item]),
+  )
+  return (response.data ?? []).find((build) => {
+    if (String(build.attributes?.version) !== buildNumber) {
+      return false
+    }
+    const preReleaseRef = build.relationships?.preReleaseVersion?.data
+    const preReleaseVersion = preReleaseRef ? preReleaseVersions.get(preReleaseRef.id) : null
+    return preReleaseVersion?.attributes?.version === versionName
+  }) ?? null
 }
 
 async function requireVisibleBuild(appId) {
   const build = await findBuild(appId)
   if (!build) {
-    fail(`No TestFlight build ${buildNumber} found for ${bundleId}`)
+    fail(`No TestFlight build ${versionName} (${buildNumber}) found for ${bundleId}`)
   }
   return build
 }

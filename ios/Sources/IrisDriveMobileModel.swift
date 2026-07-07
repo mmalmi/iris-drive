@@ -92,7 +92,6 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var syncRunning = false
     @Published var fileProviderStatus = "Files provider not registered"
     @Published var approveDeviceKey = ""
-    @Published var approveDeviceLabel = ""
     @Published var devices: [IrisDriveDevice] = []
     @Published var inboundAppKeyLinkRequests: [IrisDriveAppKeyLinkRequest] = []
     @Published var backups: [IrisDriveBackup] = []
@@ -120,7 +119,7 @@ final class IrisDriveMobileModel: ObservableObject {
     private let defaults = UserDefaults.standard
     private let nativeCore: IrisDriveNativeCore
     private let appleCalendarSync = IrisDriveAppleCalendarSync.shared
-    private let nativeCoreQueue = DispatchQueue(label: "to.iris.drive.ios.native-core", qos: .utility)
+    private let nativeCoreQueue = DispatchQueue(label: "fi.siriusbusiness.drive.native-core", qos: .utility)
     private var lastState: NativeAppState?
     private var fileProviderOpenAttempt = 0
     private var currentProviderSignalKey = ""
@@ -188,7 +187,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     var syncStateTitle: String {
-        lastState?.ui.sync.statusLabel ?? "Sync paused"
+        lastState?.ui.sync.statusLabel ?? "Ready"
     }
 
     var snapshotLink: String {
@@ -252,6 +251,10 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private var shouldScheduleBackgroundSync: Bool {
+        shouldRunDriveBackgroundSync || shouldRunAppleCalendarSync
+    }
+
+    private var shouldRunForegroundWork: Bool {
         shouldRunDriveBackgroundSync || shouldRunAppleCalendarSync
     }
 
@@ -745,7 +748,24 @@ final class IrisDriveMobileModel: ObservableObject {
         scheduleBackgroundSyncIfNeeded()
     }
 
+    func reconcileForegroundWork(isActive: Bool) {
+        if isActive {
+            startForegroundSyncLoop()
+        } else {
+            stopForegroundSyncLoop()
+            scheduleBackgroundSyncIfNeeded()
+        }
+    }
+
     func startForegroundSyncLoop() {
+        guard UIApplication.shared.applicationState == .active else {
+            stopForegroundSyncLoop()
+            return
+        }
+        guard shouldRunForegroundWork else {
+            stopForegroundSyncLoop()
+            return
+        }
         startNativeFipsStatusWatcher()
         startProviderRootSignalWatcher()
         guard foregroundSyncTask == nil else { return }
@@ -1042,8 +1062,25 @@ final class IrisDriveMobileModel: ObservableObject {
         linkDevice()
     }
 
+    func startJoinRequest() {
+        let before = configIdentitySnapshot()
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.dispatchInBackground(
+                [
+                    "type": "start_join_request",
+                    "app_key_label": self.deviceLabel,
+                ],
+                invalidatePendingState: true
+            )
+            self.ensureFileProviderDomainIfProfileExists()
+            self.scheduleBackgroundSyncIfNeeded()
+            self.recordConfigMutation(action: "start_join_request", before: before)
+        }
+    }
+
     func approveDevice() {
-        approveDevice(request: approveDeviceKey, label: approveDeviceLabel)
+        approveDevice(request: approveDeviceKey, label: "")
     }
 
     func approveDevice(request: String, label: String) {
@@ -1053,7 +1090,6 @@ final class IrisDriveMobileModel: ObservableObject {
             "label": label,
         ])
         approveDeviceKey = ""
-        approveDeviceLabel = ""
     }
 
     func rejectDevice(request: String) {
@@ -1128,13 +1164,13 @@ final class IrisDriveMobileModel: ObservableObject {
         stateLoaded = true
         restoreSecret = ""
         approveDeviceKey = ""
-        approveDeviceLabel = ""
         profileUsername = ""
         profilePhotoName = ""
         fileProviderError = ""
         fileProviderStatus = "Files provider not registered"
         rebuildDerivedState()
         removeFileProviderDomain()
+        stopForegroundSyncLoop()
         persistLocalSettings()
     }
 
@@ -1148,17 +1184,20 @@ final class IrisDriveMobileModel: ObservableObject {
         guard isSetupComplete else { return }
         dispatch(["type": "start_sync"])
         scheduleBackgroundSyncIfNeeded()
+        reconcileForegroundWorkIfAppActive()
     }
 
     func stopSync() {
         dispatch(["type": "stop_sync"])
         scheduleBackgroundSyncIfNeeded()
+        reconcileForegroundWorkIfAppActive()
     }
 
     func restartSync() {
         guard isSetupComplete else { return }
         dispatch(["type": "restart_sync"])
         scheduleBackgroundSyncIfNeeded()
+        reconcileForegroundWorkIfAppActive()
     }
 
     func setAppleCalendarSyncEnabled(_ enabled: Bool) {
@@ -1168,6 +1207,7 @@ final class IrisDriveMobileModel: ObservableObject {
                 self.appleCalendarSync.setEnabled(false)
                 self.refreshAppleCalendarSyncState()
                 self.scheduleBackgroundSyncIfNeeded()
+                self.reconcileForegroundWorkIfAppActive()
                 return
             }
 
@@ -1178,11 +1218,13 @@ final class IrisDriveMobileModel: ObservableObject {
                     self.refreshAppleCalendarSyncState()
                     self.appleCalendarSyncStatus = "Calendar access denied"
                     self.scheduleBackgroundSyncIfNeeded()
+                    self.reconcileForegroundWorkIfAppActive()
                     return
                 }
                 self.appleCalendarSync.setEnabled(true)
                 self.refreshAppleCalendarSyncState()
                 self.scheduleBackgroundSyncIfNeeded()
+                self.reconcileForegroundWorkIfAppActive()
                 await self.runAppleCalendarSyncIfEnabled(force: true)
             } catch {
                 self.appleCalendarSync.setEnabled(false)
@@ -1191,6 +1233,7 @@ final class IrisDriveMobileModel: ObservableObject {
                     ? "Apple Calendar access failed"
                     : error.localizedDescription
                 self.scheduleBackgroundSyncIfNeeded()
+                self.reconcileForegroundWorkIfAppActive()
             }
         }
     }
@@ -1252,10 +1295,6 @@ final class IrisDriveMobileModel: ObservableObject {
 
     func copyLinkRequest() {
         copyToClipboard(appKeyLinkRequest, feedback: "Request link copied")
-    }
-
-    func copyLinkInvite() {
-        copyToClipboard(appKeyLinkInvite, feedback: "Invite link copied")
     }
 
     func qrMatrix(for value: String) -> QrMatrix {
@@ -1814,7 +1853,7 @@ final class IrisDriveMobileModel: ObservableObject {
         }
 
         if canAdminProfile, linkInput.isComplete {
-            approveDevice(request: url.absoluteString, label: "Linked device")
+            approveDevice(request: url.absoluteString, label: "")
             return
         }
 
@@ -2165,16 +2204,25 @@ final class IrisDriveMobileModel: ObservableObject {
         guard let data = json.data(using: .utf8),
               let state = try? JSONDecoder().decode(NativeAppState.self, from: data)
         else {
+            lastState = nil
+            syncRunning = false
             stateLoaded = true
             statusTitle = "Native state failed"
             statusDetail = json
             writeDebugState(json)
+            reconcileForegroundWorkIfAppActive()
             return
         }
         stateLoaded = true
         lastState = state
         rebuildDerivedState()
         writeDebugState(json)
+        reconcileForegroundWorkIfAppActive()
+    }
+
+    private func reconcileForegroundWorkIfAppActive() {
+        guard UIApplication.shared.applicationState == .active else { return }
+        startForegroundSyncLoop()
     }
 
     private func writeDebugState(_ json: String) {

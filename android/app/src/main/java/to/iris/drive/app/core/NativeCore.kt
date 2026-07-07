@@ -16,7 +16,8 @@ internal object NativeCore {
     external fun dispatchJson(handle: Long, actionJson: String): String
     external fun qrMatrixJson(text: String): String
     external fun classifyLinkInputJson(text: String): String
-    external fun validateLinkInputJson(text: String): String
+    external fun validateDeviceInviteInputJson(text: String): String
+    external fun validateDeviceApprovalInputJson(text: String): String
     external fun exportRecoverySecretJson(dataDir: String): String
     external fun exportCalendarJson(dataDir: String): String
     external fun generateRecoveryKeyJson(): String
@@ -54,9 +55,14 @@ internal object NativeCore {
             JSONObject(classifyLinkInputJson(text))
         }.getOrDefault(JSONObject().put("kind", "unknown"))
 
-    fun isCompleteLinkInput(text: String): Boolean =
+    fun isCompleteDeviceInviteInput(text: String): Boolean =
         runCatching {
-            JSONObject(validateLinkInputJson(text.trim())).optBoolean("is_complete")
+            JSONObject(validateDeviceInviteInputJson(text.trim())).optBoolean("is_complete")
+        }.getOrDefault(false)
+
+    fun isCompleteDeviceApprovalInput(text: String): Boolean =
+        runCatching {
+            JSONObject(validateDeviceApprovalInputJson(text.trim())).optBoolean("is_complete")
         }.getOrDefault(false)
 
     fun normalizedProviderPath(path: String): String? {

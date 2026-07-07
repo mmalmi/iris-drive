@@ -61,6 +61,7 @@ pub(crate) async fn handle_caldav_request(
         "GET" | "HEAD" => handle_caldav_get(&state, method, uri).await,
         "PUT" => handle_caldav_put(&state, uri, body).await,
         "DELETE" => handle_caldav_delete(&state, uri).await,
+        "PROPPATCH" => handle_caldav_proppatch(&state, uri).await,
         _ => Err((StatusCode::METHOD_NOT_ALLOWED, "method not allowed".into())),
     }
 }
@@ -143,6 +144,8 @@ async fn handle_caldav_report(
     let xml = if body_text.contains("calendar-multiget") {
         let hrefs = crate::calendar::extract_hrefs(&body_text);
         crate::calendar::calendar_multiget_multistatus(&data, &hrefs)
+    } else if body_text.contains("sync-collection") {
+        crate::calendar::calendar_sync_collection_multistatus(&data, calendar_href)
     } else {
         crate::calendar::calendar_query_multistatus(&data, calendar_href)
     };
@@ -225,6 +228,27 @@ async fn handle_caldav_put(
         },
         &crate::calendar::event_etag(&event),
     )
+}
+
+async fn handle_caldav_proppatch(
+    state: &GatewayState,
+    uri: &Uri,
+) -> Result<Response, (StatusCode, String)> {
+    let path = normalized_caldav_path(uri.path());
+    let config = load_caldav_config(state)?;
+    let paths = current_caldav_paths(&config);
+    let legacy_paths = legacy_caldav_paths();
+    if path == paths.calendar
+        || path == legacy_paths.calendar
+        || path == paths.home
+        || path == legacy_paths.home
+        || path == paths.principal
+        || path == legacy_paths.principal
+        || path == CALDAV_ROOT
+    {
+        return caldav_empty_response(StatusCode::NO_CONTENT);
+    }
+    Err((StatusCode::NOT_FOUND, "CalDAV path not found".into()))
 }
 
 async fn handle_caldav_delete(
@@ -405,7 +429,10 @@ fn caldav_response_builder(status: StatusCode) -> http::response::Builder {
     response_builder(status, false)
         .header("DAV", "1, 3, calendar-access")
         .header("MS-Author-Via", "DAV")
-        .header("Allow", "OPTIONS, PROPFIND, REPORT, GET, HEAD, PUT, DELETE")
+        .header(
+            "Allow",
+            "OPTIONS, PROPFIND, REPORT, GET, HEAD, PUT, DELETE, PROPPATCH",
+        )
 }
 
 fn caldav_xml_escape(value: &str) -> String {

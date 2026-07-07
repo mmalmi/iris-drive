@@ -1,5 +1,4 @@
 use super::*;
-use hashtree_core::to_hex;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::config::Drive;
@@ -9,12 +8,13 @@ use crate::root_meta::DriveRootMeta;
 use tempfile::tempdir;
 
 mod convergence;
+mod local_only_projection;
 
 fn init_config(dir: &Path) -> Identity {
     let identity = Identity::generate(key_path_in(dir));
     identity.save().unwrap();
     let mut cfg = AppConfig::default();
-    cfg.upsert_drive(Drive::primary(crate::IrisProfileId::new_v4().to_string()));
+    cfg.upsert_drive(Drive::primary(crate::NostrIdentityId::new_v4().to_string()));
     cfg.save(config_path_in(dir)).unwrap();
     identity
 }
@@ -947,24 +947,9 @@ fn embedded_browser_settings_allow_iris_sites_portal_plaintext_reads() {
 }
 
 #[test]
-fn embedded_browser_initial_roots_seed_iris_sites_portal_with_key() {
-    let roots = embedded_browser_initial_tree_roots();
+fn embedded_browser_does_not_pin_iris_sites_bootstrap_root() {
+    let source = include_str!("../../daemon.rs");
 
-    assert_eq!(roots.len(), 1);
-    assert_eq!(
-        roots[0].0,
-        format!(
-            "{}/{}",
-            crate::gateway::IRIS_SITES_PORTAL_NPUB,
-            crate::gateway::IRIS_SITES_PORTAL_TREE
-        )
-    );
-    assert_eq!(
-        to_hex(&roots[0].1.hash),
-        "895b37b277f8f6ca37db183364f1f4a9b40cf749ed4b3c016ea39364c98e0899"
-    );
-    assert_eq!(
-        roots[0].1.key.map(|key| to_hex(&key)).as_deref(),
-        Some("a8006078aa411b25cb8efa2ace10f36a0cc2f8dfec8cfd97c5a0265bdaf8c463")
-    );
+    assert!(!source.contains("IRIS_SITES_PORTAL_BOOTSTRAP_NHASH"));
+    assert!(!source.contains("with_initial_tree_roots"));
 }

@@ -389,6 +389,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             linkDevice(target: url.absoluteString)
             return true
         }
+        if classification["kind"] as? String == "app_key_approval" {
+            showControlPanel()
+            guard classification["is_valid"] as? Bool ?? false else {
+                let error = (classification["error"] as? String ?? "")
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                updateStatus(error.isEmpty ? "Invalid device request" : error)
+                return true
+            }
+            approveDevice(url.absoluteString, label: "")
+            return true
+        }
         guard isIrisWebURL(url) else {
             return false
         }
@@ -514,6 +525,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     @objc func copyDeviceKey() {
         copyText(IrisDriveStatus.shared.deviceNpub, statusMessage: "Device key copied")
+    }
+
+    @objc func copyAppKeyLinkRequest() {
+        copyText(IrisDriveStatus.shared.appKeyLinkRequestURL, statusMessage: "Request link copied")
     }
 
     private func copyText(_ value: String?, statusMessage: String) {
@@ -740,14 +755,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func linkDevice(target: String) {
         let target = target.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !target.isEmpty else {
-            updateStatus("Invite link or device key required")
+            updateStatus("Device link target required")
             return
         }
         let args = setupArguments(command: "link", label: "", extra: [target, "--force"])
         finishSetup(arguments: args)
     }
 
-    func classifyLinkInput(_ input: String, completion: @escaping (String, Bool) -> Void) {
+    func startJoinRequest() {
+        dispatchNativeAction(
+            ["type": "start_join_request", "app_key_label": ""],
+            progress: "Preparing join request",
+            success: "Join request ready",
+            restartSyncAfterSuccess: true
+        )
+    }
+
+    func classifyDeviceInviteInput(_ input: String, completion: @escaping (String, Bool) -> Void) {
+        validateInput(input, completion: completion) { text in
+            IrisDriveDesktopCore.validateDeviceInviteInput(text)
+        }
+    }
+
+    func classifyDeviceApprovalInput(_ input: String, completion: @escaping (String, Bool) -> Void) {
+        validateInput(input, completion: completion) { text in
+            IrisDriveDesktopCore.validateDeviceApprovalInput(text)
+        }
+    }
+
+    private func validateInput(
+        _ input: String,
+        completion: @escaping (String, Bool) -> Void,
+        validator: @escaping (String) -> Bool
+    ) {
         let trimmed = input.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             DispatchQueue.main.async {
@@ -757,7 +797,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         DispatchQueue.global(qos: .utility).async {
-            let isComplete = IrisDriveDesktopCore.validateLinkInput(trimmed)
+            let isComplete = validator(trimmed)
             DispatchQueue.main.async {
                 completion(trimmed, isComplete)
             }
@@ -782,11 +822,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     ) {
         let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !device.isEmpty else {
-            updateStatus("Device key required")
+            updateStatus("Device request required")
             completion?(.failure(NSError(
                 domain: "IrisDriveMac",
                 code: 40,
-                userInfo: [NSLocalizedDescriptionKey: "Device key required"]
+                userInfo: [NSLocalizedDescriptionKey: "Device request required"]
             )))
             return
         }
@@ -843,7 +883,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func deleteDevice(_ device: String) {
         let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !device.isEmpty else {
-            updateStatus("Device key required")
+            updateStatus("Device Key required")
             return
         }
 
@@ -858,7 +898,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func setDeviceAdminRole(_ device: String, makeAdmin: Bool) {
         let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !device.isEmpty else {
-            updateStatus("Device key required")
+            updateStatus("Device Key required")
             return
         }
 
@@ -1410,10 +1450,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func openFileProviderItem(path targetPath: String?) {
+    private func openFileProviderItem(path targetPath: String?, repairedAfterFailure: Bool = false) {
         let domain = irisDriveFileProviderDomain(runtime: currentFileProviderRuntimeConfig())
         guard let manager = NSFileProviderManager(for: domain) else {
             NSLog("Iris Drive FileProvider manager unavailable")
+            if repairFileProviderDomainForOpenIfNeeded(
+                reason: "manager unavailable",
+                targetPath: targetPath,
+                alreadyRepaired: repairedAfterFailure
+            ) {
+                return
+            }
             handleFileProviderOpenFailure("manager unavailable")
             return
         }
@@ -1430,6 +1477,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
                     if let error {
                         NSLog("Iris Drive mounted folder unavailable for \(targetPath ?? "root"): \(error)")
+                        if self.repairFileProviderDomainForOpenIfNeeded(
+                            error: error,
+                            reason: "user-visible URL unavailable",
+                            targetPath: targetPath,
+                            alreadyRepaired: repairedAfterFailure
+                        ) {
+                            return
+                        }
                     } else {
                         NSLog("Iris Drive mounted folder unavailable for \(targetPath ?? "root")")
                     }
@@ -1437,6 +1492,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 }
             }
         }
+    }
+
+    private func repairFileProviderDomainForOpenIfNeeded(
+        error: Error,
+        reason: String,
+        targetPath: String?,
+        alreadyRepaired: Bool
+    ) -> Bool {
+        guard shouldRepairFileProviderDomain(after: error) else {
+            return false
+        }
+        return repairFileProviderDomainForOpenIfNeeded(
+            reason: "\(reason): \((error as NSError).domain) \((error as NSError).code)",
+            targetPath: targetPath,
+            alreadyRepaired: alreadyRepaired
+        )
+    }
+
+    private func repairFileProviderDomainForOpenIfNeeded(
+        reason: String,
+        targetPath: String?,
+        alreadyRepaired: Bool
+    ) -> Bool {
+        guard !alreadyRepaired else {
+            return false
+        }
+        updateStatus("Repairing FileProvider")
+        let runtime = currentFileProviderRuntimeConfig()
+        NSLog("Iris Drive FileProvider open repair requested: \(reason)")
+        resetFileProviderDomain(reason: "open failed: \(reason)", runtime: runtime) { [weak self] state in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                self.fileProviderDomainState = state
+                guard state == .registered else {
+                    self.handleFileProviderOpenFailure("repair failed: \(reason)")
+                    return
+                }
+                self.openFileProviderItem(path: targetPath, repairedAfterFailure: true)
+            }
+        }
+        return true
     }
 
     private func refreshFileProviderDomainForOpen(manager: NSFileProviderManager, completion: @escaping () -> Void) {
@@ -1974,6 +2070,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     account["can_admin_profile"] as? Bool ?? false
                 status.canExportRecoveryPhrase =
                     account["can_export_recovery_phrase"] as? Bool ?? false
+                let request = account["app_key_link_request"] as? String ?? ""
+                status.appKeyLinkRequestURL = request.isEmpty ? nil : request
                 let invite = account["app_key_link_invite"] as? String ?? ""
                 status.appKeyLinkInviteURL = invite.isEmpty ? nil : invite
                 status.inboundAppKeyLinkRequests =
@@ -1983,6 +2081,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.profileId = nil
                 status.currentAppKeyNpub = nil
                 status.deviceNpub = nil
+                status.appKeyLinkRequestURL = nil
                 status.appKeyLinkInviteURL = nil
                 status.inboundAppKeyLinkRequests = []
                 status.canAdminProfile = false
@@ -2129,6 +2228,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.canExportRecoveryPhrase =
                     account["can_export_recovery_phrase"] as? Bool
                     ?? (status.currentAppKeyNpub == status.deviceNpub && status.currentAppKeyNpub != nil)
+                status.appKeyLinkRequestURL =
+                    account["app_key_link_request"] as? String
+                    ?? (account["app_key_link_request"] as? [String: Any])?["url"] as? String
                 status.appKeyLinkInviteURL =
                     account["app_key_link_invite"] as? String
                     ?? (account["app_key_link_invite"] as? [String: Any])?["url"] as? String
@@ -2138,6 +2240,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             } else {
                 status.currentAppKeyNpub = nil
                 status.deviceNpub = nil
+                status.appKeyLinkRequestURL = nil
                 status.appKeyLinkInviteURL = nil
                 status.inboundAppKeyLinkRequests = []
                 status.canAdminProfile = false

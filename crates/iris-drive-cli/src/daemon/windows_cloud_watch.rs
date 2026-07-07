@@ -31,8 +31,25 @@ fn start_windows_cloud_root_watch() -> Result<(
 )> {
     use notify::{RecursiveMode, Watcher};
 
-    let home = dirs::home_dir().context("finding Windows profile directory")?;
-    let root = home.join("Iris Drive");
+    let root = match windows_cloud_root_setting()? {
+        WindowsCloudRootSetting::Disabled => {
+            return Ok((
+                None,
+                None,
+                None,
+                Some(json!({
+                    "root": null,
+                    "watching": false,
+                    "disabled_by": "IRIS_DRIVE_WINDOWS_CLOUD_ROOT",
+                })),
+            ));
+        }
+        WindowsCloudRootSetting::Path(root) => root,
+        WindowsCloudRootSetting::Default => {
+            let home = dirs::home_dir().context("finding Windows profile directory")?;
+            home.join("Iris Drive")
+        }
+    };
     std::fs::create_dir_all(&root)
         .with_context(|| format!("creating Windows Cloud Files root {}", root.display()))?;
 
@@ -83,6 +100,40 @@ fn start_windows_cloud_root_watch() -> Result<(
             "watching": true,
         })),
     ))
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+#[cfg_attr(not(windows), allow(dead_code))]
+enum WindowsCloudRootSetting {
+    Default,
+    Disabled,
+    Path(PathBuf),
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn windows_cloud_root_setting() -> Result<WindowsCloudRootSetting> {
+    match std::env::var("IRIS_DRIVE_WINDOWS_CLOUD_ROOT") {
+        Ok(value) => windows_cloud_root_setting_from_env_value(Some(&value)),
+        Err(std::env::VarError::NotPresent) => windows_cloud_root_setting_from_env_value(None),
+        Err(error) => Err(error).context("reading IRIS_DRIVE_WINDOWS_CLOUD_ROOT"),
+    }
+}
+
+#[cfg_attr(not(windows), allow(dead_code))]
+fn windows_cloud_root_setting_from_env_value(
+    value: Option<&str>,
+) -> Result<WindowsCloudRootSetting> {
+    let Some(value) = value else {
+        return Ok(WindowsCloudRootSetting::Default);
+    };
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return Ok(WindowsCloudRootSetting::Default);
+    }
+    match trimmed.to_ascii_lowercase().as_str() {
+        "0" | "false" | "off" | "disabled" | "none" => Ok(WindowsCloudRootSetting::Disabled),
+        _ => Ok(WindowsCloudRootSetting::Path(PathBuf::from(trimmed))),
+    }
 }
 
 #[cfg_attr(not(windows), allow(dead_code))]

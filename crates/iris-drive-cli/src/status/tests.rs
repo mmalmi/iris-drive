@@ -725,6 +725,43 @@ fn daemon_status_profile_block_projects_roster_when_app_key_cache_is_missing() {
 }
 
 #[test]
+fn status_self_heals_missing_waiting_app_key_link_request() {
+    let dir = tempfile::tempdir().unwrap();
+    let linked = Profile::start_join_request(dir.path(), Some("Mac waiting".into())).unwrap();
+    let linked_pubkey = linked.state.app_key_pubkey.clone();
+    assert!(linked.state.outbound_app_key_link_request.is_none());
+    let config = AppConfig {
+        profile: Some(linked.state.clone()),
+        ..AppConfig::default()
+    };
+    config.save(config_path_in(dir.path())).unwrap();
+
+    let mut loaded = AppConfig::load_or_default_cached_profile(config_path_in(dir.path())).unwrap();
+    assert!(ensure_cached_app_key_link_request(&mut loaded, dir.path()).expect("ensure request"));
+
+    let saved = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+    let state = saved.profile.as_ref().unwrap();
+    let pending = state.outbound_app_key_link_request.as_ref().unwrap();
+    assert!(
+        pending
+            .request_url
+            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_COMPACT_PREFIX)
+    );
+    let request = iris_drive_core::app_key_link_transport::parse_app_key_approval_request(
+        &pending.request_url,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(request.app_key_hex, linked_pubkey);
+
+    let profile = status_profile_block(&saved).expect("profile block");
+    assert_eq!(
+        profile["app_key_link_request"]["url"],
+        json!(pending.request_url)
+    );
+}
+
+#[test]
 fn daemon_status_writer_prefers_runtime_relays_for_top_level_status() {
     let dir = tempfile::tempdir().unwrap();
     AppConfig::default()

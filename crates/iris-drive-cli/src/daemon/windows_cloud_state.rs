@@ -74,9 +74,13 @@ struct WindowsCloudProjectionRefresh {
 
 #[cfg(windows)]
 fn windows_cloud_projection_root() -> Option<PathBuf> {
-    dirs::home_dir()
-        .map(|home| home.join("Iris Drive"))
-        .filter(|root| root.is_dir())
+    match windows_cloud_root_setting() {
+        Ok(WindowsCloudRootSetting::Disabled) => None,
+        Ok(WindowsCloudRootSetting::Path(root)) => root.is_dir().then_some(root),
+        Ok(WindowsCloudRootSetting::Default) | Err(_) => dirs::home_dir()
+            .map(|home| home.join("Iris Drive"))
+            .filter(|root| root.is_dir()),
+    }
 }
 
 #[cfg(not(windows))]

@@ -136,6 +136,22 @@ pub fn normalize_fips_status_value(
         ),
     );
     object.insert(
+        "static_peer_hint_count".to_owned(),
+        json!(
+            fips_status
+                .and_then(|status| status.get("static_peer_hint_count"))
+                .and_then(Value::as_u64)
+        ),
+    );
+    object.insert(
+        "bootstrap_peer_hint_count".to_owned(),
+        json!(
+            fips_status
+                .and_then(|status| status.get("bootstrap_peer_hint_count"))
+                .and_then(Value::as_u64)
+        ),
+    );
+    object.insert(
         "mesh_peer_count".to_owned(),
         json!(
             fips_status

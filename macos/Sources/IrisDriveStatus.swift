@@ -34,6 +34,7 @@ final class IrisDriveStatus: ObservableObject {
     @Published var currentAppKeyNpub: String?
     @Published var deviceNpub: String?
     @Published var profileId: String?
+    @Published var appKeyLinkRequestURL: String?
     @Published var appKeyLinkInviteURL: String?
     @Published var inboundAppKeyLinkRequests: [IrisDriveAppKeyLinkRequestStatus] = []
     @Published var canAdminProfile = false
@@ -45,8 +46,8 @@ final class IrisDriveStatus: ObservableObject {
     @Published var setupLabel = "Not linked"
     @Published var primaryStatus = "not_setup"
     @Published var primaryStatusLabel = "Ready"
-    @Published var syncStatus = "paused"
-    @Published var syncStatusLabel = "Sync paused"
+    @Published var syncStatus = "ready"
+    @Published var syncStatusLabel = "Ready"
     @Published var authorizedDeviceCount = 0
     @Published var onlineDeviceCount = 0
     @Published var workingDirectory: String?

@@ -4,12 +4,12 @@ use crate::calendar::CALENDAR_TREE_NAME;
 use crate::nostr_events::{KIND_DRIVE_ROOT, KIND_HASHTREE_ROOT, drive_root_d_tag};
 use crate::sharing::share_access_snapshot_d_tag;
 use crate::{
-    IrisProfileId, KIND_IRIS_PROFILE_ROSTER_OP, KIND_SHARE_ACCESS_SNAPSHOT, SHARE_ACCESS_LABEL,
+    KIND_NOSTR_IDENTITY_ROSTER_OP, KIND_SHARE_ACCESS_SNAPSHOT, NostrIdentityId, SHARE_ACCESS_LABEL,
 };
 
 /// Build the relay filter set covering profile roster ops and drive-root
 /// events for a single profile's primary drive. Full `AppKeys` roster snapshots
-/// are intentionally excluded from relays; `IrisProfile` roster ops are the
+/// are intentionally excluded from relays; `NostrIdentity` roster ops are the
 /// relay roster format.
 ///
 /// The drive-root filter intentionally does **not** narrow by author:
@@ -32,11 +32,11 @@ pub fn subscription_filters_for_shared_roots(
     current_app_key_pubkey_hex: &str,
     root_scope_id: &str,
     drive_id: &str,
-    share_ids: &[IrisProfileId],
+    share_ids: &[NostrIdentityId],
 ) -> Vec<Filter> {
     let mut filters = Vec::new();
-    if let Ok(profile_id) = root_scope_id.parse::<IrisProfileId>() {
-        filters.push(iris_profile_roster_op_filter(profile_id));
+    if let Ok(profile_id) = root_scope_id.parse::<NostrIdentityId>() {
+        filters.push(nostr_identity_roster_op_filter(profile_id));
     }
     push_drive_root_filters(&mut filters, root_scope_id, drive_id);
     for share_id in share_ids {
@@ -76,16 +76,16 @@ fn push_drive_root_filters(filters: &mut Vec<Filter>, root_scope_id: &str, drive
     );
 }
 
-pub(crate) fn iris_profile_roster_op_filter(profile_id: IrisProfileId) -> Filter {
+pub(crate) fn nostr_identity_roster_op_filter(profile_id: NostrIdentityId) -> Filter {
     Filter::new()
-        .kind(nostr_sdk::Kind::from(KIND_IRIS_PROFILE_ROSTER_OP))
+        .kind(nostr_sdk::Kind::from(KIND_NOSTR_IDENTITY_ROSTER_OP))
         .custom_tag(
             SingleLetterTag::lowercase(nostr_sdk::Alphabet::I),
             profile_id.to_string(),
         )
 }
 
-pub(crate) fn share_access_snapshot_filter(share_id: IrisProfileId) -> Filter {
+pub(crate) fn share_access_snapshot_filter(share_id: NostrIdentityId) -> Filter {
     Filter::new()
         .kind(nostr_sdk::Kind::from(KIND_SHARE_ACCESS_SNAPSHOT))
         .custom_tag(

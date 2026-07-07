@@ -34,6 +34,10 @@ Environment:
                                   Defaults to every POSIX host in this run.
   IRIS_DRIVE_E2E_PROVIDER_MUTATIONS
                                   Use provider commands instead of projection surfaces when set to 1.
+  IRIS_DRIVE_E2E_WINDOWS_CLOUD_ROOT
+                                  Windows Cloud Files root for the daemon; defaults to "off" so
+                                  provider-bridge e2e runs do not import the VM user's real
+                                  ~/Iris Drive contents. Set to empty to use the production default.
   IRIS_DRIVE_E2E_SIDELOAD_APPKEYS
                                   Copy the owner profile roster snapshot into temp peer configs after approval
                                   so VM file-sync tests do not depend on public relay timing (default: 1).
@@ -280,6 +284,15 @@ setup_host() {
 \$run = $(ps_quote "$RUN_ID")
 \$base = Join-Path \$env:TEMP (\"iris-drive-e2e-\$run-\$label\")
 if (Test-Path -LiteralPath \$base) { Remove-Item -LiteralPath \$base -Recurse -Force }
+\$stale = Get-CimInstance Win32_Process | Where-Object {
+  \$_.CommandLine -like '*idrive*' -and
+  \$_.CommandLine -like '*--config-dir*' -and
+  \$_.CommandLine -like '*iris-drive-e2e-run-*' -and
+  \$_.CommandLine -like '* daemon*'
+}
+foreach (\$proc in \$stale) {
+  Stop-Process -Id \$proc.ProcessId -Force -ErrorAction SilentlyContinue
+}
 \$projectionE2e = Join-Path (Join-Path \$HOME 'Iris Drive') 'e2e'
 if (Test-Path -LiteralPath \$projectionE2e) { Remove-Item -LiteralPath \$projectionE2e -Recurse -Force }
 \$config = Join-Path \$base 'config'; \$work = Join-Path \$base 'work'
@@ -340,6 +353,13 @@ set -Eeuo pipefail
 label=$(sh_quote "$label")
 run=$(sh_quote "$RUN_ID")
 base=\"\${TMPDIR:-/tmp}/iris-drive-e2e-\${run}-\${label}\"
+while IFS= read -r stale_pid; do
+  [[ -n \"\$stale_pid\" && \"\$stale_pid\" != \"\$\$\" ]] || continue
+  kill \"\$stale_pid\" >/dev/null 2>&1 || true
+done < <(
+  ps -eo pid=,comm=,args= |
+    awk '\$2 == \"idrive\" && \$0 ~ /--config-dir .*iris-drive-e2e-run-.* daemon/ { print \$1 }'
+)
 rm -rf \"\$base\"
 mkdir -p \"\$base/config\" \"\$base/work\"
 supports_app_keys() {
@@ -547,6 +567,7 @@ start_daemon() {
   local script
   local ssh_host
   local daemon_ssh_pid
+  local windows_cloud_root
   kind="$(host_value "$label" kind)"
   idrive="$(host_value "$label" idrive)"
   config="$(host_value "$label" config)"
@@ -555,6 +576,10 @@ start_daemon() {
   work="$(host_value "$label" work)"
   pidfile="$(host_value "$label" pid)"
   if [[ "$kind" == "windows" ]]; then
+    windows_cloud_root="${IRIS_DRIVE_E2E_WINDOWS_CLOUD_ROOT:-off}"
+    if [[ "${IRIS_DRIVE_E2E_WINDOWS_PROJECTION_MUTATIONS:-0}" == "1" && -z "${IRIS_DRIVE_E2E_WINDOWS_CLOUD_ROOT+x}" ]]; then
+      windows_cloud_root=""
+    fi
     ssh_host="$(host_value "$label" ssh)"
     daemon_ssh_pid="$(host_value "$label" daemon_ssh_pid)"
     if [[ -n "$daemon_ssh_pid" ]]; then
@@ -569,6 +594,7 @@ start_daemon() {
 \$log = $(ps_quote "$log")
 \$err = $(ps_quote "$err")
 \$pidFile = $(ps_quote "$pidfile")
+\$env:IRIS_DRIVE_WINDOWS_CLOUD_ROOT = $(ps_quote "$windows_cloud_root")
 if (Test-Path -LiteralPath \$pidFile) {
   \$old = Get-Content -LiteralPath \$pidFile -ErrorAction SilentlyContinue
   if (\$old) { Stop-Process -Id ([int]\$old) -Force -ErrorAction SilentlyContinue }
@@ -1570,8 +1596,8 @@ for label in "${LABELS[@]}"; do
     echo "$label request metadata does not match invite profile/admin AppKey" >&2
     exit 1
   fi
-  if [[ "$request_url" != *"profile=$owner_profile_id"* || "$request_url" != *"app_key=$linked_app_key_npub"* || "$request_url" != *"secret="* ]]; then
-    echo "$label request URL is missing profile/app_key/secret: $request_url" >&2
+  if [[ "$request_url" != *"app_key="* || -z "$linked_app_key_npub" || "$linked_app_key_npub" == "null" ]]; then
+    echo "$label request did not include an app-key URL and structured AppKey metadata: $request_url" >&2
     exit 1
   fi
   if [[ "$request_url" == *"local-owner"* || "$request_url" == *"app_key=device-"* ]]; then
