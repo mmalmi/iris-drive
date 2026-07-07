@@ -776,7 +776,7 @@ dependencies = [
 
 [[package]]
 name = "cashu-service"
-version = "0.2.56"
+version = "0.2.57"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1641,7 +1641,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.3.77"
+version = "0.3.78"
 dependencies = [
  "bluer",
  "bytes",
@@ -1654,6 +1654,7 @@ dependencies = [
  "libc",
  "mdns-sd",
  "nostr",
+ "nostr-pubsub",
  "nostr-sdk",
  "portable-atomic",
  "procfs",
@@ -1673,6 +1674,7 @@ dependencies = [
  "tokio-socks",
  "tracing",
  "tun",
+ "uuid",
  "webrtc",
  "wintun",
 ]
@@ -2519,7 +2521,7 @@ dependencies = [
 
 [[package]]
 name = "hashtree-provider"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "async-trait",
  "futures",
@@ -2954,7 +2956,7 @@ checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
 
 [[package]]
 name = "iris-drive-app-core"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "anyhow",
  "hashtree-core",
@@ -2975,7 +2977,7 @@ dependencies = [
 
 [[package]]
 name = "iris-drive-core"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2998,6 +3000,7 @@ dependencies = [
  "http",
  "mime_guess",
  "nostr-identity",
+ "nostr-pubsub",
  "nostr-sdk",
  "reqwest",
  "rustls 0.23.40",
@@ -3014,7 +3017,7 @@ dependencies = [
 
 [[package]]
 name = "iris-drive-linux"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "gio",
  "glib",
@@ -3563,9 +3566,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-identity"
-version = "0.1.2"
+version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13737b7b87f32a95096b7a1a59a48f3b7139948a1be9cf74831eb9c8b2deec15"
+checksum = "3bbab8a01749b3974cdce452b2fd6a435da55fca62fb6ee24bb6e817a95ed849"
 dependencies = [
  "anyhow",
  "nostr-sdk",
@@ -3573,6 +3576,17 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.18",
  "uuid",
+]
+
+[[package]]
+name = "nostr-pubsub"
+version = "0.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "756f09ce6a9963cc0654f6feaea8b640ba693d260ff965f8d7b78b1b293bb4d0"
+dependencies = [
+ "async-trait",
+ "nostr",
+ "thiserror 2.0.18",
 ]
 
 [[package]]

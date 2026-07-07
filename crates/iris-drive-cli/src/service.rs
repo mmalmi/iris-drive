@@ -534,6 +534,7 @@ fn xml_escape(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
+#[cfg(any(target_os = "macos", test))]
 fn xml_unescape(value: &str) -> String {
     value
         .replace("&apos;", "'")
