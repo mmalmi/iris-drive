@@ -280,6 +280,12 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
 
     let mut root = tree.put_directory(Vec::new()).await?;
     for (path, previous) in &previous_dirs {
+        if tombstone_paths.is_some()
+            && !base_dirs.contains_key(path)
+            && !edited_dirs.contains_key(path)
+        {
+            continue;
+        }
         if !base_dirs.contains_key(path)
             && (edited_dirs.contains_key(path) || tombstone_path_selected(tombstone_paths, path))
         {
