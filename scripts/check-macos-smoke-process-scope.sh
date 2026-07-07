@@ -27,6 +27,8 @@ require_contains 'path_fragment="$APP_PATH/Contents/MacOS/$APP_PROCESS_NAME"'
 require_contains "assert_app_running()"
 require_contains "assert_daemon_running()"
 require_contains "IRIS_DRIVE_MACOS_SMOKE_SURVIVAL_SECONDS"
+require_contains "uninstall_smoke_daemon_service()"
+require_contains '"$IDRIVE_CLI" --config-dir "$SMOKE_CONFIG_DIR" service uninstall --json'
 require_absent 'pkill -TERM -x "$APP_PROCESS_NAME"'
 require_absent 'pkill -x "$APP_PROCESS_NAME"'
 

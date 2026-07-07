@@ -203,6 +203,13 @@ remove_smoke_path_best_effort() {
   echo "warning: smoke cleanup left $path" >&2
 }
 
+uninstall_smoke_daemon_service() {
+  [[ -n "${IDRIVE_CLI:-}" && -x "$IDRIVE_CLI" ]] || return 0
+  [[ -n "${SMOKE_CONFIG_DIR:-}" ]] || return 0
+  "$IDRIVE_CLI" --config-dir "$SMOKE_CONFIG_DIR" service uninstall --json \
+    >/dev/null 2>&1 || true
+}
+
 cleanup() {
   if [[ -n "$OWNER_DAEMON_PID" ]]; then
     kill "$OWNER_DAEMON_PID" >/dev/null 2>&1 || true
@@ -227,6 +234,7 @@ on run argv
 end run
 APPLESCRIPT
   fi
+  uninstall_smoke_daemon_service
   remove_smoke_path_best_effort "$SMOKE_APP_DATA"
   remove_smoke_path_best_effort "$SMOKE_DIR"
 }
@@ -1060,6 +1068,7 @@ if [[ -z "$IDRIVE_CLI" || ! -x "$IDRIVE_CLI" ]]; then
 fi
 
 terminate_app_process
+uninstall_smoke_daemon_service
 rm -rf "$SMOKE_APP_DATA"
 if run_create_profile_smoke || run_user_journey_smoke; then
   mkdir_p_or_fail "$SMOKE_HOME"
