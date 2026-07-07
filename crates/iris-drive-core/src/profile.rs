@@ -144,7 +144,7 @@ pub struct ProfileState {
     pub profile_id: NostrIdentityId,
     #[serde(alias = "device_pubkey")]
     pub app_key_pubkey: String,
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing)]
     pub profile_roster_ops: Vec<SignedNostrIdentityRosterOp>,
     #[serde(default = "default_app_key_link_secret", alias = "device_link_secret")]
     pub app_key_link_secret: String,
