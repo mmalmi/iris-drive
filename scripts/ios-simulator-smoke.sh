@@ -66,10 +66,11 @@ while [[ $# -gt 0 ]]; do
 done
 
 select_simulator() {
-  local devices_json
+  local devices_json candidates_file
   devices_json="$(mktemp -t iris-drive-ios-simulators.XXXXXX.json)"
+  candidates_file="$(mktemp -t iris-drive-ios-simulator-candidates.XXXXXX.tsv)"
   xcrun simctl list devices available --json >"$devices_json"
-  python3 - "$DEVICE_NAME" "$devices_json" <<'PY'
+  python3 - "$DEVICE_NAME" "$devices_json" >"$candidates_file" <<'PY'
 import json
 import sys
 
@@ -100,15 +101,50 @@ for runtime_index, (runtime, devices) in enumerate(runtime_items):
             continue
         if "iPhone" not in device.get("name", ""):
             continue
-        state_rank = {"Shutdown": 0, "Booted": 1}.get(device.get("state"), 2)
-        candidates.append((runtime_index, state_rank, len(candidates), device))
+        state_rank = {"Booted": 0, "Shutdown": 1}.get(device.get("state"), 2)
+        name_rank = 0 if device.get("name", "").startswith("iPhone ") else 1
+        candidates.append((state_rank, runtime_index, name_rank, len(candidates), runtime, device))
 
 if not candidates:
     raise SystemExit("no available iPhone simulator found")
-choices = sorted(candidates, key=lambda item: (item[0], item[1], item[2]))
-print(choices[0][3]["udid"])
+choices = sorted(candidates, key=lambda item: (item[0], item[1], item[2], item[3]))
+for _state_rank, _runtime_index, _name_rank, _order, runtime, device in choices:
+    print("\t".join([
+        device.get("udid", ""),
+        device.get("name", ""),
+        device.get("state", ""),
+        runtime,
+    ]))
 PY
-  rm -f "$devices_json"
+
+  while IFS=$'\t' read -r udid name state runtime; do
+    if [[ -z "$udid" ]]; then
+      continue
+    fi
+    if [[ "$state" == "Booted" ]]; then
+      echo "$udid"
+      rm -f "$devices_json" "$candidates_file"
+      return 0
+    fi
+
+    local boot_output boot_status
+    boot_status=0
+    boot_output="$(xcrun simctl boot "$udid" 2>&1)" || boot_status="$?"
+    if [[ "$boot_status" == "0" ]] || grep -F "current state: Booted" <<<"$boot_output" >/dev/null; then
+      echo "$udid"
+      rm -f "$devices_json" "$candidates_file"
+      return 0
+    fi
+    if [[ -n "$DEVICE_NAME" ]]; then
+      echo "FAIL: requested iOS simulator '$DEVICE_NAME' is unavailable or unbootable: $boot_output" >&2
+      rm -f "$devices_json" "$candidates_file"
+      exit 1
+    fi
+    echo "Skipping unbootable iOS simulator $name ($udid, $runtime): $boot_output" >&2
+  done <"$candidates_file"
+  rm -f "$devices_json" "$candidates_file"
+  echo "FAIL: no bootable iPhone simulator found" >&2
+  exit 1
 }
 
 resolve_app_path() {
