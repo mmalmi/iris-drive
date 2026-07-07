@@ -681,6 +681,14 @@ fn direct_root_publish_bursts_root_frames_only() {
         2,
         "relayed drive roots should not be single-shot"
     );
+    assert_eq!(
+        direct_root_publish_attempts_for_source(
+            drive_root,
+            DirectRootPublishSource::CachedStateRequestReply
+        ),
+        4,
+        "state-request recovery for relayed roots needs full-frame redundancy"
+    );
     assert!(should_publish_direct_root_hint(
         drive_root,
         DirectRootPublishSource::LocalCurrent
@@ -769,7 +777,7 @@ fn direct_root_state_request_reply_includes_cached_remote_roots() {
             &remote.key,
             DirectRootPublishSource::CachedStateRequestReply,
         ),
-        1
+        4
     );
     assert!(!should_publish_direct_root_hint(
         &remote.key,
