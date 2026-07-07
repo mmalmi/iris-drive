@@ -31,6 +31,7 @@ use crate::root_meta::{DriveRootMeta, RootObservation, RootParent};
 use crate::sync_cache::{SyncCache, SyncCacheError};
 
 pub const PRIMARY_DRIVE_ID: &str = "main";
+const LOCAL_ONLY_PARENT_WALK_LIMIT: usize = 1024;
 
 pub struct EmbeddedHashtreeHost {
     runtime: hashtree_embedded::HostDaemonRuntime,
@@ -448,10 +449,10 @@ impl Daemon {
             Some(s) => Some(Cid::parse(s).map_err(|e| DaemonError::Store(e.to_string()))?),
             None => None,
         };
-        let previous_publishable_root = if drive_id == PRIMARY_DRIVE_ID {
+        let previous_publishable_root_ref = if drive_id == PRIMARY_DRIVE_ID {
             match (self.config.profile.as_ref(), previous_root_ref) {
                 (Some(account), Some(previous_root_ref)) => {
-                    self.previous_publishable_root_for_import(
+                    self.previous_publishable_root_ref_for_import(
                         &account.app_key_pubkey,
                         previous_root_ref,
                     )
@@ -460,8 +461,13 @@ impl Daemon {
                 _ => None,
             }
         } else {
-            previous_root.clone()
+            previous_root_ref.cloned()
         };
+        let previous_publishable_root = previous_publishable_root_ref
+            .as_ref()
+            .map(|root| Cid::parse(&root.root_cid))
+            .transpose()
+            .map_err(|e| DaemonError::Store(e.to_string()))?;
         let previous_delta_root = if local_only {
             None
         } else if tombstone_base_root.is_some() && drive_id == PRIMARY_DRIVE_ID {
@@ -481,6 +487,19 @@ impl Daemon {
         let mut root_meta = self.root_meta_for_import_for_drive(drive_id, now);
         if let Some(meta) = root_meta.as_mut() {
             meta.local_only = local_only;
+            if local_only
+                && drive_id == PRIMARY_DRIVE_ID
+                && let (Some(account), Some(previous_publishable_root_ref)) = (
+                    self.config.profile.as_ref(),
+                    previous_publishable_root_ref.as_ref(),
+                )
+            {
+                meta.parents = vec![RootParent {
+                    app_key_pubkey: account.app_key_pubkey.clone(),
+                    app_key_seq: previous_publishable_root_ref.app_key_seq,
+                    root_cid: previous_publishable_root_ref.root_cid.clone(),
+                }];
+            }
         }
         let mut scoped_tombstone_paths = None;
         let projection_root = if tombstone_base_root.is_some() && drive_id == PRIMARY_DRIVE_ID {
@@ -553,17 +572,15 @@ impl Daemon {
             .await
     }
 
-    async fn previous_publishable_root_for_import(
+    async fn previous_publishable_root_ref_for_import(
         &self,
         app_key_pubkey: &str,
         previous_root: &AppKeyRootRef,
-    ) -> Result<Option<Cid>, DaemonError> {
+    ) -> Result<Option<AppKeyRootRef>, DaemonError> {
         let mut current = previous_root.clone();
-        for _ in 0..32 {
-            let current_cid =
-                Cid::parse(&current.root_cid).map_err(|e| DaemonError::Store(e.to_string()))?;
+        for _ in 0..LOCAL_ONLY_PARENT_WALK_LIMIT {
             if !current.local_only {
-                return Ok(Some(current_cid));
+                return Ok(Some(current));
             }
             let Some(parent) = current
                 .parents
@@ -576,7 +593,13 @@ impl Daemon {
             let parent_cid =
                 Cid::parse(&parent.root_cid).map_err(|e| DaemonError::Store(e.to_string()))?;
             let Some(meta) = read_root_meta(&self.tree, &parent_cid).await? else {
-                return Ok(Some(parent_cid));
+                let mut legacy = AppKeyRootRef::legacy(
+                    parent.root_cid.clone(),
+                    current.published_at,
+                    current.dck_generation,
+                );
+                legacy.app_key_seq = parent.app_key_seq;
+                return Ok(Some(legacy));
             };
             current = AppKeyRootRef::from_meta(parent.root_cid.clone(), meta.created_at, &meta);
         }

@@ -770,6 +770,118 @@ async fn publish_after_local_only_projection_uses_publishable_history_root() {
 }
 
 #[tokio::test]
+async fn local_only_projection_chain_keeps_publishable_parent_reachable() {
+    let cfg_dir = tempdir().unwrap();
+    let account = init_config_with_account(cfg_dir.path());
+    let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+
+    let first = tempdir().unwrap();
+    std::fs::create_dir_all(first.path().join("seed")).unwrap();
+    std::fs::write(first.path().join("seed/android.txt"), b"from android").unwrap();
+    daemon.import_source_dir(first.path()).await.unwrap();
+
+    let publishable_root = daemon
+        .config()
+        .drive(PRIMARY_DRIVE_ID)
+        .unwrap()
+        .app_key_roots
+        .get(&account.state.app_key_pubkey)
+        .unwrap()
+        .clone();
+
+    for _ in 0..40 {
+        let projection_root = daemon.tree().put_directory(Vec::new()).await.unwrap();
+        daemon
+            .import_visible_root_local_only(projection_root)
+            .await
+            .unwrap();
+    }
+
+    let current = daemon
+        .config()
+        .drive(PRIMARY_DRIVE_ID)
+        .unwrap()
+        .app_key_roots
+        .get(&account.state.app_key_pubkey)
+        .unwrap();
+    assert!(current.local_only);
+    let current_cid = Cid::parse(&current.root_cid).unwrap();
+    let current_meta = crate::indexer::read_root_meta(daemon.tree(), &current_cid)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(current_meta.parents.len(), 1);
+    assert_eq!(current_meta.parents[0].root_cid, publishable_root.root_cid);
+
+    let merged = crate::primary_merged_view(daemon.tree(), daemon.config())
+        .await
+        .unwrap();
+    assert_eq!(
+        merged
+            .view
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["seed/android.txt"]
+    );
+}
+
+#[tokio::test]
+async fn legacy_local_only_projection_chain_keeps_publishable_parent_reachable() {
+    let cfg_dir = tempdir().unwrap();
+    let account = init_config_with_account(cfg_dir.path());
+    let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+
+    let first = tempdir().unwrap();
+    std::fs::create_dir_all(first.path().join("seed")).unwrap();
+    std::fs::write(first.path().join("seed/android.txt"), b"from android").unwrap();
+    daemon.import_source_dir(first.path()).await.unwrap();
+
+    for _ in 0..40 {
+        let projection_root = daemon.tree().put_directory(Vec::new()).await.unwrap();
+        let projection_at = daemon.next_import_timestamp();
+        let mut projection_meta = daemon.root_meta_for_import(projection_at).unwrap();
+        projection_meta.local_only = true;
+        let projection_cid = crate::indexer::layer_history_and_meta_on_root(
+            daemon.tree(),
+            projection_root,
+            None,
+            projection_at,
+            Some(&projection_meta),
+        )
+        .await
+        .unwrap();
+        daemon
+            .report_and_record_root(projection_cid, None, Some(&projection_meta), projection_at)
+            .await
+            .unwrap();
+    }
+
+    let current = daemon
+        .config()
+        .drive(PRIMARY_DRIVE_ID)
+        .unwrap()
+        .app_key_roots
+        .get(&account.state.app_key_pubkey)
+        .unwrap();
+    assert!(current.local_only);
+
+    let merged = crate::primary_merged_view(daemon.tree(), daemon.config())
+        .await
+        .unwrap();
+    assert_eq!(
+        merged
+            .view
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["seed/android.txt"]
+    );
+}
+
+#[tokio::test]
 async fn import_persists_rebuildable_sync_cache_with_base_state() {
     let cfg_dir = tempdir().unwrap();
     let account = init_config_with_account(cfg_dir.path());
