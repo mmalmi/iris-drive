@@ -134,9 +134,17 @@ pub struct IrisProfileCapabilities {
     pub can_admin_profile: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub can_recover_app_keys: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(
+        default,
+        alias = "can_receive_secret_wraps",
+        skip_serializing_if = "is_false"
+    )]
     pub can_receive_key_wraps: bool,
-    #[serde(default, skip_serializing_if = "is_false")]
+    #[serde(
+        default,
+        alias = "can_decrypt_secret_epochs",
+        skip_serializing_if = "is_false"
+    )]
     pub can_decrypt_key_epochs: bool,
 }
 
@@ -352,14 +360,24 @@ pub enum IrisProfileRosterOp {
         pubkey: String,
         capabilities: IrisProfileCapabilities,
     },
+    #[serde(alias = "rotate_secret_epoch")]
     RotateKeyEpoch {
         epoch: u64,
-        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        #[serde(
+            default,
+            alias = "wrapped_secrets",
+            skip_serializing_if = "BTreeMap::is_empty"
+        )]
         wrapped_dck: BTreeMap<String, String>,
     },
+    #[serde(alias = "repair_secret_wraps")]
     RepairKeyWraps {
         epoch: u64,
-        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        #[serde(
+            default,
+            alias = "wrapped_secrets",
+            skip_serializing_if = "BTreeMap::is_empty"
+        )]
         wrapped_dck: BTreeMap<String, String>,
     },
 }
@@ -1868,6 +1886,61 @@ mod tests {
         );
         assert_eq!(projection.accepted_op_ids.len(), 3);
         assert_eq!(projection.rejected_op_ids.len(), 1);
+    }
+
+    #[test]
+    fn roster_ops_accept_identity_secret_epoch_aliases_from_config() {
+        let rotate: IrisProfileRosterOp = toml::from_str(
+            r#"
+op = "rotate_secret_epoch"
+epoch = 4
+
+[wrapped_secrets]
+aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa = "wrap-admin"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            rotate,
+            IrisProfileRosterOp::RotateKeyEpoch {
+                epoch: 4,
+                wrapped_dck: BTreeMap::from([(
+                    "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+                    "wrap-admin".to_string(),
+                )]),
+            }
+        );
+
+        let repair: IrisProfileRosterOp = toml::from_str(
+            r#"
+op = "repair_secret_wraps"
+epoch = 4
+
+[wrapped_secrets]
+bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb = "wrap-phone"
+"#,
+        )
+        .unwrap();
+        assert_eq!(
+            repair,
+            IrisProfileRosterOp::RepairKeyWraps {
+                epoch: 4,
+                wrapped_dck: BTreeMap::from([(
+                    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb".to_string(),
+                    "wrap-phone".to_string(),
+                )]),
+            }
+        );
+
+        let capabilities: IrisProfileCapabilities = toml::from_str(
+            r#"
+can_receive_secret_wraps = true
+can_decrypt_secret_epochs = true
+"#,
+        )
+        .unwrap();
+        assert!(capabilities.can_receive_key_wraps);
+        assert!(capabilities.can_decrypt_key_epochs);
     }
 
     #[test]
