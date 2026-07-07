@@ -438,19 +438,29 @@ impl Daemon {
         local_only: bool,
     ) -> Result<ImportReport, DaemonError> {
         self.ensure_drive_for_import(drive_id)?;
-        let previous_root_cid = self
-            .config
-            .profile
-            .as_ref()
-            .and_then(|account| {
-                self.config
-                    .drive(drive_id)
-                    .and_then(|d| d.app_key_roots.get(&account.app_key_pubkey))
-            })
-            .map(|entry| entry.root_cid.clone());
+        let previous_root_ref = self.config.profile.as_ref().and_then(|account| {
+            self.config
+                .drive(drive_id)
+                .and_then(|d| d.app_key_roots.get(&account.app_key_pubkey))
+        });
+        let previous_root_cid = previous_root_ref.map(|entry| entry.root_cid.clone());
         let previous_root = match previous_root_cid.as_ref() {
             Some(s) => Some(Cid::parse(s).map_err(|e| DaemonError::Store(e.to_string()))?),
             None => None,
+        };
+        let previous_delta_root = if tombstone_base_root.is_some() && drive_id == PRIMARY_DRIVE_ID {
+            match (self.config.profile.as_ref(), previous_root_ref) {
+                (Some(account), Some(previous_root_ref)) => {
+                    self.previous_publishable_root_for_mount_import(
+                        &account.app_key_pubkey,
+                        previous_root_ref,
+                    )
+                    .await?
+                }
+                _ => None,
+            }
+        } else {
+            previous_root.clone()
         };
 
         let now = self.next_import_timestamp_for_drive(drive_id);
@@ -473,7 +483,7 @@ impl Daemon {
             let delta = local_visible_root_for_mount_import(
                 &self.tree,
                 &root,
-                previous_root.as_ref(),
+                previous_delta_root.as_ref(),
                 tombstone_base_root,
                 projection_root.as_ref(),
                 tombstone_paths,
@@ -527,6 +537,36 @@ impl Daemon {
 
         self.report_and_record_root_for_drive(drive_id, root_cid, None, root_meta.as_ref(), now)
             .await
+    }
+
+    async fn previous_publishable_root_for_mount_import(
+        &self,
+        app_key_pubkey: &str,
+        previous_root: &AppKeyRootRef,
+    ) -> Result<Option<Cid>, DaemonError> {
+        let mut current = previous_root.clone();
+        for _ in 0..32 {
+            let current_cid =
+                Cid::parse(&current.root_cid).map_err(|e| DaemonError::Store(e.to_string()))?;
+            if !current.local_only {
+                return Ok(Some(current_cid));
+            }
+            let Some(parent) = current
+                .parents
+                .iter()
+                .rev()
+                .find(|parent| parent.app_key_pubkey == app_key_pubkey)
+            else {
+                return Ok(None);
+            };
+            let parent_cid =
+                Cid::parse(&parent.root_cid).map_err(|e| DaemonError::Store(e.to_string()))?;
+            let Some(meta) = read_root_meta(&self.tree, &parent_cid).await? else {
+                return Ok(Some(parent_cid));
+            };
+            current = AppKeyRootRef::from_meta(parent.root_cid.clone(), meta.created_at, &meta);
+        }
+        Ok(None)
     }
 
     async fn report_and_record_root(

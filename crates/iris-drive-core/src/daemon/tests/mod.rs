@@ -498,6 +498,140 @@ async fn mounted_visible_import_does_not_claim_foreign_files_projected_after_bas
     assert!(tombstones.is_empty());
 }
 
+#[allow(clippy::too_many_lines)]
+#[tokio::test]
+async fn mounted_visible_import_ignores_previous_local_only_projection_files() {
+    let cfg_dir = tempdir().unwrap();
+    let mut account = init_config_with_account(cfg_dir.path());
+    let remote = Identity::generate(cfg_dir.path().join("remote.key")).pubkey_hex();
+    approve_remote_app_key(cfg_dir.path(), &mut account, &remote, "remote");
+
+    let daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let remote_dir = tempdir().unwrap();
+    std::fs::write(remote_dir.path().join("foreign.txt"), b"from remote").unwrap();
+    let remote_meta = DriveRootMeta {
+        schema: DriveRootMeta::SCHEMA,
+        drive_id: PRIMARY_DRIVE_ID.into(),
+        app_key_pubkey: remote.clone(),
+        app_key_seq: 1,
+        dck_generation: 1,
+        local_only: false,
+        parents: Vec::new(),
+        observed: BTreeMap::new(),
+        created_at: 100,
+    };
+    let remote_root = crate::indexer::index_dir_with_history_and_meta(
+        daemon.tree(),
+        remote_dir.path(),
+        None,
+        100,
+        Some(&remote_meta),
+    )
+    .await
+    .unwrap();
+    drop(daemon);
+
+    let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+    let mut drive = config.drive(PRIMARY_DRIVE_ID).unwrap().clone();
+    drive.app_key_roots.insert(
+        remote.clone(),
+        AppKeyRootRef::from_meta(
+            remote_root.to_string(),
+            remote_meta.created_at,
+            &remote_meta,
+        ),
+    );
+    config.upsert_drive(drive);
+    config.save(config_path_in(cfg_dir.path())).unwrap();
+
+    let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+    daemon
+        .materialize_primary_merged_root()
+        .await
+        .unwrap()
+        .expect("materialized local-only projection root");
+    let local_only = daemon
+        .config()
+        .drive(PRIMARY_DRIVE_ID)
+        .unwrap()
+        .app_key_roots
+        .get(&account.state.app_key_pubkey)
+        .unwrap()
+        .clone();
+    assert!(local_only.local_only);
+    let local_only_cid = Cid::parse(&local_only.root_cid).unwrap();
+    let (local_only_files, _) = crate::merge::walk_app_key_tree(daemon.tree(), &local_only_cid)
+        .await
+        .unwrap();
+    assert_eq!(
+        local_only_files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["foreign.txt"]
+    );
+
+    let visible = crate::primary_merged_root(daemon.tree(), daemon.config())
+        .await
+        .unwrap();
+    let (local_file, local_size) = daemon.tree().put(b"from local").await.unwrap();
+    let edited_visible_root = daemon
+        .tree()
+        .set_entry(
+            &visible.root_cid,
+            &[],
+            "local.txt",
+            &local_file,
+            local_size,
+            hashtree_core::LinkType::Blob,
+        )
+        .await
+        .unwrap();
+    let changed_paths = BTreeSet::from(["local.txt".to_string()]);
+    daemon
+        .import_visible_root_with_tombstone_base_and_paths(
+            edited_visible_root,
+            Some(visible.root_cid.clone()),
+            Some(&changed_paths),
+        )
+        .await
+        .unwrap();
+
+    let root = daemon
+        .config()
+        .drive(PRIMARY_DRIVE_ID)
+        .unwrap()
+        .app_key_roots
+        .get(&account.state.app_key_pubkey)
+        .unwrap();
+    assert!(!root.local_only);
+    let root_cid = Cid::parse(&root.root_cid).unwrap();
+    let (files, tombstones) = crate::merge::walk_app_key_tree(daemon.tree(), &root_cid)
+        .await
+        .unwrap();
+    assert_eq!(
+        files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["local.txt"]
+    );
+    assert!(tombstones.is_empty());
+
+    let merged = crate::primary_merged_view(daemon.tree(), daemon.config())
+        .await
+        .unwrap();
+    assert_eq!(
+        merged
+            .view
+            .files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["foreign.txt", "local.txt"]
+    );
+}
+
 #[tokio::test]
 async fn import_persists_rebuildable_sync_cache_with_base_state() {
     let cfg_dir = tempdir().unwrap();
