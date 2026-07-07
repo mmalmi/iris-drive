@@ -633,6 +633,143 @@ async fn mounted_visible_import_ignores_previous_local_only_projection_files() {
 }
 
 #[tokio::test]
+async fn local_only_projection_import_does_not_tombstone_previous_local_files() {
+    let cfg_dir = tempdir().unwrap();
+    let account = init_config_with_account(cfg_dir.path());
+    let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+
+    let first = tempdir().unwrap();
+    std::fs::create_dir_all(first.path().join("seed")).unwrap();
+    std::fs::write(first.path().join("seed/android.txt"), b"from android").unwrap();
+    daemon.import_source_dir(first.path()).await.unwrap();
+
+    let visible_root_without_seed = daemon.tree().put_directory(Vec::new()).await.unwrap();
+    daemon
+        .import_visible_root_local_only(visible_root_without_seed)
+        .await
+        .unwrap();
+
+    let root = daemon
+        .config()
+        .drive(PRIMARY_DRIVE_ID)
+        .unwrap()
+        .app_key_roots
+        .get(&account.state.app_key_pubkey)
+        .unwrap();
+    assert!(root.local_only);
+    let root_cid = Cid::parse(&root.root_cid).unwrap();
+    let (_, tombstones) = crate::merge::walk_app_key_tree(daemon.tree(), &root_cid)
+        .await
+        .unwrap();
+    assert!(
+        tombstones.is_empty(),
+        "local-only projection roots must not invent user deletes: {tombstones:?}"
+    );
+}
+
+#[tokio::test]
+async fn publish_after_local_only_projection_uses_publishable_history_root() {
+    let cfg_dir = tempdir().unwrap();
+    let account = init_config_with_account(cfg_dir.path());
+    let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+
+    let first = tempdir().unwrap();
+    std::fs::create_dir_all(first.path().join("seed")).unwrap();
+    std::fs::write(first.path().join("seed/android.txt"), b"from android").unwrap();
+    daemon.import_source_dir(first.path()).await.unwrap();
+
+    let initial_root = daemon
+        .config()
+        .drive(PRIMARY_DRIVE_ID)
+        .unwrap()
+        .app_key_roots
+        .get(&account.state.app_key_pubkey)
+        .unwrap()
+        .clone();
+    let initial_cid = Cid::parse(&initial_root.root_cid).unwrap();
+    let old_projection_root = daemon.tree().put_directory(Vec::new()).await.unwrap();
+    let old_projection_at = daemon.next_import_timestamp();
+    let mut old_projection_meta = daemon.root_meta_for_import(old_projection_at).unwrap();
+    old_projection_meta.local_only = true;
+    let old_projection_cid = crate::indexer::layer_history_and_meta_on_root(
+        daemon.tree(),
+        old_projection_root,
+        Some(&initial_cid),
+        old_projection_at,
+        Some(&old_projection_meta),
+    )
+    .await
+    .unwrap();
+    let (_, old_tombstones) = crate::merge::walk_app_key_tree(daemon.tree(), &old_projection_cid)
+        .await
+        .unwrap();
+    assert_eq!(
+        old_tombstones
+            .iter()
+            .map(|tombstone| tombstone.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["seed/android.txt"]
+    );
+    daemon
+        .report_and_record_root(
+            old_projection_cid,
+            None,
+            Some(&old_projection_meta),
+            old_projection_at,
+        )
+        .await
+        .unwrap();
+
+    let base_root = daemon.tree().put_directory(Vec::new()).await.unwrap();
+    let (file, size) = daemon.tree().put(b"local edit").await.unwrap();
+    let edited_root = daemon
+        .tree()
+        .set_entry(
+            &base_root,
+            &[],
+            "local.txt",
+            &file,
+            size,
+            hashtree_core::LinkType::Blob,
+        )
+        .await
+        .unwrap();
+    let changed_paths = BTreeSet::from(["local.txt".to_string()]);
+    daemon
+        .import_visible_root_with_tombstone_base_and_paths(
+            edited_root,
+            Some(base_root),
+            Some(&changed_paths),
+        )
+        .await
+        .unwrap();
+
+    let root = daemon
+        .config()
+        .drive(PRIMARY_DRIVE_ID)
+        .unwrap()
+        .app_key_roots
+        .get(&account.state.app_key_pubkey)
+        .unwrap();
+    assert!(!root.local_only);
+    let root_cid = Cid::parse(&root.root_cid).unwrap();
+    let (files, tombstones) = crate::merge::walk_app_key_tree(daemon.tree(), &root_cid)
+        .await
+        .unwrap();
+    assert_eq!(
+        files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["local.txt"]
+    );
+    assert!(
+        tombstones.is_empty(),
+        "publishable roots must not carry tombstones from local-only projections: {tombstones:?}"
+    );
+}
+
+#[tokio::test]
 async fn import_persists_rebuildable_sync_cache_with_base_state() {
     let cfg_dir = tempdir().unwrap();
     let account = init_config_with_account(cfg_dir.path());

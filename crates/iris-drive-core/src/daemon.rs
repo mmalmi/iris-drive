@@ -448,10 +448,10 @@ impl Daemon {
             Some(s) => Some(Cid::parse(s).map_err(|e| DaemonError::Store(e.to_string()))?),
             None => None,
         };
-        let previous_delta_root = if tombstone_base_root.is_some() && drive_id == PRIMARY_DRIVE_ID {
+        let previous_publishable_root = if drive_id == PRIMARY_DRIVE_ID {
             match (self.config.profile.as_ref(), previous_root_ref) {
                 (Some(account), Some(previous_root_ref)) => {
-                    self.previous_publishable_root_for_mount_import(
+                    self.previous_publishable_root_for_import(
                         &account.app_key_pubkey,
                         previous_root_ref,
                     )
@@ -459,6 +459,20 @@ impl Daemon {
                 }
                 _ => None,
             }
+        } else {
+            previous_root.clone()
+        };
+        let previous_delta_root = if local_only {
+            None
+        } else if tombstone_base_root.is_some() && drive_id == PRIMARY_DRIVE_ID {
+            previous_publishable_root.clone()
+        } else {
+            previous_root.clone()
+        };
+        let previous_history_root = if local_only {
+            None
+        } else if drive_id == PRIMARY_DRIVE_ID {
+            previous_publishable_root
         } else {
             previous_root.clone()
         };
@@ -506,7 +520,7 @@ impl Daemon {
             let root_cid = layer_history_and_meta_on_root_with_tombstone_base_and_paths(
                 &self.tree,
                 import_root,
-                previous_root.as_ref(),
+                previous_history_root.as_ref(),
                 Some(tombstone_base_root),
                 now,
                 root_meta.as_ref(),
@@ -523,7 +537,7 @@ impl Daemon {
             let root_cid = layer_history_and_meta_on_root(
                 &self.tree,
                 import_root,
-                previous_root.as_ref(),
+                previous_history_root.as_ref(),
                 now,
                 root_meta.as_ref(),
             )
@@ -539,7 +553,7 @@ impl Daemon {
             .await
     }
 
-    async fn previous_publishable_root_for_mount_import(
+    async fn previous_publishable_root_for_import(
         &self,
         app_key_pubkey: &str,
         previous_root: &AppKeyRootRef,
