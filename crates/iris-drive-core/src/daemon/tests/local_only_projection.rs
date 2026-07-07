@@ -266,6 +266,15 @@ async fn publish_after_local_only_projection_uses_publishable_history_root() {
         vec!["local.txt"]
     );
     assert!(
+        daemon
+            .tree()
+            .resolve(&root_cid, "seed")
+            .await
+            .unwrap()
+            .is_none(),
+        "legacy local-only tombstone masks must not leave empty parent directories"
+    );
+    assert!(
         tombstones.is_empty(),
         "publishable roots must not carry tombstones from local-only projections: {tombstones:?}"
     );

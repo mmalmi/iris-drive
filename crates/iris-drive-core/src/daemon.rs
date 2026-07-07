@@ -33,6 +33,8 @@ use crate::sync_cache::{SyncCache, SyncCacheError};
 pub const PRIMARY_DRIVE_ID: &str = "main";
 const LOCAL_ONLY_PARENT_WALK_LIMIT: usize = 1024;
 
+mod local_only;
+
 pub struct EmbeddedHashtreeHost {
     runtime: hashtree_embedded::HostDaemonRuntime,
     status: hashtree_embedded::HostDaemonStatus,
@@ -449,6 +451,16 @@ impl Daemon {
             Some(s) => Some(Cid::parse(s).map_err(|e| DaemonError::Store(e.to_string()))?),
             None => None,
         };
+        let local_only_tombstone_mask = if !local_only
+            && drive_id == PRIMARY_DRIVE_ID
+            && tombstone_base_root.is_some()
+            && previous_root_ref.is_some_and(|root| root.local_only)
+        {
+            self.local_only_tombstone_mask(previous_root.as_ref())
+                .await?
+        } else {
+            None
+        };
         let previous_publishable_root_ref = if drive_id == PRIMARY_DRIVE_ID {
             match (self.config.profile.as_ref(), previous_root_ref) {
                 (Some(account), Some(previous_root_ref)) => {
@@ -522,12 +534,18 @@ impl Daemon {
                 tombstone_paths,
             )
             .await?;
+            let mut import_root = delta.root;
+            if let Some(mask) = local_only_tombstone_mask.as_ref() {
+                import_root = self
+                    .remove_legacy_local_only_tombstoned_paths(import_root, &root, mask)
+                    .await?;
+            }
             tracing::debug!(
                 elapsed_ms = phase.elapsed().as_millis(),
                 "visible root import built local delta"
             );
             scoped_tombstone_paths = Some(delta.tombstone_paths);
-            delta.root
+            import_root
         } else {
             root
         };
