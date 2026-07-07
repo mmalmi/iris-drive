@@ -19,7 +19,7 @@ DERIVED_DATA="$ROOT/ios/.build/DerivedData"
 BUILD_LOG="${IRIS_DRIVE_IOS_BUILD_LOG:-/tmp/iris-drive-ios-build.log}"
 BUNDLE_ID="${IRIS_DRIVE_IOS_BUNDLE_ID:-fi.siriusbusiness.drive}"
 DEVICE_NAME="${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-}"
-SIMULATOR_BOOT_TIMEOUT_SECONDS="${IRIS_DRIVE_IOS_SIMULATOR_BOOT_TIMEOUT_SECONDS:-60}"
+SIMULATOR_BOOT_TIMEOUT_SECONDS="${IRIS_DRIVE_IOS_SIMULATOR_BOOT_TIMEOUT_SECONDS:-180}"
 APP_GROUP_ID="${IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER:-group.fi.siriusbusiness.drive}"
 TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
 IDRIVE="${IRIS_DRIVE_IDRIVE_BIN:-$TARGET_DIR/debug/idrive}"
@@ -76,10 +76,21 @@ import sys
 preferred = sys.argv[1]
 with open(sys.argv[2], "r", encoding="utf-8") as handle:
     data = json.load(handle)
-booted = []
-shutdown = []
-available = []
-for runtime, devices in data.get("devices", {}).items():
+candidates = []
+
+def runtime_key(runtime):
+    parts = []
+    for piece in runtime.replace("-", ".").split("."):
+        if piece.isdigit():
+            parts.append(int(piece))
+    return parts
+
+runtime_items = sorted(
+    data.get("devices", {}).items(),
+    key=lambda item: runtime_key(item[0]),
+    reverse=True,
+)
+for runtime_index, (runtime, devices) in enumerate(runtime_items):
     if "iOS" not in runtime:
         continue
     for device in devices:
@@ -89,16 +100,13 @@ for runtime, devices in data.get("devices", {}).items():
             continue
         if "iPhone" not in device.get("name", ""):
             continue
-        if device.get("state") == "Booted":
-            booted.append(device)
-        if device.get("state") == "Shutdown":
-            shutdown.append(device)
-        available.append(device)
+        state_rank = {"Shutdown": 0, "Booted": 1}.get(device.get("state"), 2)
+        candidates.append((runtime_index, state_rank, len(candidates), device))
 
-choices = shutdown or booted or available
-if not choices:
+if not candidates:
     raise SystemExit("no available iPhone simulator found")
-print(choices[0]["udid"])
+choices = sorted(candidates, key=lambda item: (item[0], item[1], item[2]))
+print(choices[0][3]["udid"])
 PY
   rm -f "$devices_json"
 }
