@@ -1,6 +1,6 @@
 [package]
 name = "iris-drive-linux"
-version = "0.1.17"
+version = "0.1.18"
 description = "Linux desktop shell for Iris Drive."
 edition = "2024"
 publish = false
