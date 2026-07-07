@@ -435,6 +435,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     &provider,
                     &path,
                     Some(visible.root_cid.clone()),
+                    Some(&BTreeSet::from([path.clone()])),
                 )
                 .await?;
             }
@@ -454,6 +455,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     &provider,
                     &path,
                     Some(visible.root_cid.clone()),
+                    Some(&BTreeSet::from([path.clone()])),
                 )
                 .await?;
             }
@@ -473,6 +475,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     &provider,
                     &path,
                     Some(visible.root_cid.clone()),
+                    Some(&BTreeSet::from([path.clone()])),
                 )
                 .await?;
             }
@@ -494,6 +497,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     &provider,
                     &new_path,
                     Some(visible.root_cid.clone()),
+                    Some(&BTreeSet::from([old_path.clone(), new_path.clone()])),
                 )
                 .await?;
             }
@@ -824,6 +828,7 @@ async fn print_provider_mutation(
     provider: &HashTreeProviderFs<FsBlobStore>,
     changed_path: &str,
     tombstone_base_root: Option<Cid>,
+    tombstone_paths: Option<&BTreeSet<String>>,
 ) -> Result<()> {
     let phase = std::time::Instant::now();
     let root = provider.current_root().await;
@@ -832,7 +837,8 @@ async fn print_provider_mutation(
         "provider command read current root"
     );
     let phase = std::time::Instant::now();
-    let report = import_provider_root_with_retry(daemon, root, tombstone_base_root).await?;
+    let report =
+        import_provider_root_with_retry(daemon, root, tombstone_base_root, tombstone_paths).await?;
     wake_provider_root_publisher(daemon.config_dir(), Some(&report))
         .await
         .context("waking provider root publisher")?;

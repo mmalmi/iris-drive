@@ -137,11 +137,16 @@ pub(super) async fn import_provider_root_with_retry(
     daemon: &mut Daemon,
     root: Cid,
     tombstone_base_root: Option<Cid>,
+    tombstone_paths: Option<&BTreeSet<String>>,
 ) -> Result<iris_drive_core::daemon::ImportReport> {
     let mut attempt = 0;
     loop {
         match daemon
-            .import_visible_root_with_tombstone_base(root.clone(), tombstone_base_root.clone())
+            .import_visible_root_with_tombstone_base_and_paths(
+                root.clone(),
+                tombstone_base_root.clone(),
+                tombstone_paths,
+            )
             .await
         {
             Ok(report) => return Ok(report),
