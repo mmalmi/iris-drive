@@ -267,41 +267,9 @@ impl DirectRootExchange {
             .transpose()
             .map_err(|error| format!("encoding direct-root hint: {error}"))?;
         let attempts = direct_root_publish_attempts_for_source(&event.key, source);
-        for _attempt in 0..attempts {
-            if let Some(target_peer) = target_peer {
-                match sync
-                    .send_app_message(target_peer, DIRECT_ROOT_APP_TOPIC, bytes.clone())
-                    .await
-                {
-                    Ok(()) => tracing::debug!(
-                        root_key = event.key.as_str(),
-                        target_peer,
-                        "sent targeted direct-root event over FIPS"
-                    ),
-                    Err(error) => tracing::warn!(
-                        root_key = event.key.as_str(),
-                        target_peer,
-                        error = %error,
-                        "sending targeted direct-root event over FIPS failed"
-                    ),
-                }
-            } else {
-                match sync
-                    .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, bytes.clone())
-                    .await
-                {
-                    Ok(sent_peers) => tracing::debug!(
-                        root_key = event.key.as_str(),
-                        sent_peers,
-                        "sent direct-root event over FIPS"
-                    ),
-                    Err(error) => tracing::warn!(
-                        root_key = event.key.as_str(),
-                        error = %error,
-                        "sending direct-root event over FIPS failed"
-                    ),
-                }
-            }
+        for attempt in 0..attempts {
+            let publish_full_frame =
+                should_publish_direct_root_full_frame(&event.key, source, attempt);
             if let Some(hint_bytes) = hint_bytes.as_ref() {
                 if let Some(target_peer) = target_peer {
                     match sync
@@ -338,19 +306,57 @@ impl DirectRootExchange {
                     }
                 }
             }
+            if publish_full_frame {
+                if let Some(target_peer) = target_peer {
+                    match sync
+                        .send_app_message(target_peer, DIRECT_ROOT_APP_TOPIC, bytes.clone())
+                        .await
+                    {
+                        Ok(()) => tracing::debug!(
+                            root_key = event.key.as_str(),
+                            target_peer,
+                            "sent targeted direct-root event over FIPS"
+                        ),
+                        Err(error) => tracing::warn!(
+                            root_key = event.key.as_str(),
+                            target_peer,
+                            error = %error,
+                            "sending targeted direct-root event over FIPS failed"
+                        ),
+                    }
+                } else {
+                    match sync
+                        .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, bytes.clone())
+                        .await
+                    {
+                        Ok(sent_peers) => tracing::debug!(
+                            root_key = event.key.as_str(),
+                            sent_peers,
+                            "sent direct-root event over FIPS"
+                        ),
+                        Err(error) => tracing::warn!(
+                            root_key = event.key.as_str(),
+                            error = %error,
+                            "sending direct-root event over FIPS failed"
+                        ),
+                    }
+                }
+            }
             if target_peer.is_some() {
                 continue;
             }
-            let seq = self.next_mesh_publish_seq();
-            let publish = sync
-                .publish_mesh_pubsub(stream.to_string(), seq, bytes.clone())
-                .await;
-            tracing::debug!(
-                root_key = event.key.as_str(),
-                sent_peers = publish.sent_peers,
-                seq,
-                "published direct-root mesh event over FIPS"
-            );
+            if publish_full_frame {
+                let seq = self.next_mesh_publish_seq();
+                let publish = sync
+                    .publish_mesh_pubsub(stream.to_string(), seq, bytes.clone())
+                    .await;
+                tracing::debug!(
+                    root_key = event.key.as_str(),
+                    sent_peers = publish.sent_peers,
+                    seq,
+                    "published direct-root mesh event over FIPS"
+                );
+            }
             if let Some(hint_bytes) = hint_bytes.as_ref() {
                 let seq = self.next_mesh_publish_seq();
                 let publish = sync
@@ -1117,6 +1123,24 @@ fn should_publish_direct_root_hint(key: &str, source: DirectRootPublishSource) -
             | DirectRootPublishSource::LocalHeartbeat
             | DirectRootPublishSource::StateRequestReply
     ) && direct_root_cache_slot(key).is_some()
+}
+
+fn should_publish_direct_root_full_frame(
+    key: &str,
+    source: DirectRootPublishSource,
+    attempt: usize,
+) -> bool {
+    if should_publish_direct_root_hint(key, source) {
+        return match source {
+            DirectRootPublishSource::LocalHeartbeat => false,
+            DirectRootPublishSource::LocalCurrent | DirectRootPublishSource::StateRequestReply => {
+                attempt == 0
+            }
+            DirectRootPublishSource::CachedRelay
+            | DirectRootPublishSource::CachedStateRequestReply => true,
+        };
+    }
+    true
 }
 
 pub fn encode_direct_root_hint_frame(
@@ -2159,6 +2183,20 @@ mod tests {
         assert_eq!(events[0].source, DirectRootPublishSource::LocalHeartbeat);
         assert_eq!(events[1].event.event_id, share.event_id);
         assert_eq!(events[1].source, DirectRootPublishSource::LocalHeartbeat);
+        assert!(should_publish_direct_root_hint(
+            &drive.key,
+            DirectRootPublishSource::LocalHeartbeat
+        ));
+        assert!(!should_publish_direct_root_full_frame(
+            &drive.key,
+            DirectRootPublishSource::LocalHeartbeat,
+            0
+        ));
+        assert!(!should_publish_direct_root_full_frame(
+            &share.key,
+            DirectRootPublishSource::LocalHeartbeat,
+            3
+        ));
     }
 
     #[test]
@@ -2194,6 +2232,16 @@ mod tests {
             ),
             4
         );
+        assert!(should_publish_direct_root_full_frame(
+            &local.key,
+            DirectRootPublishSource::StateRequestReply,
+            0
+        ));
+        assert!(!should_publish_direct_root_full_frame(
+            &local.key,
+            DirectRootPublishSource::StateRequestReply,
+            1
+        ));
         let cached_reply = events
             .iter()
             .find(|event| event.event.event_id == remote.event_id)
@@ -2212,6 +2260,11 @@ mod tests {
         assert!(!should_publish_direct_root_hint(
             &remote.key,
             DirectRootPublishSource::CachedStateRequestReply,
+        ));
+        assert!(should_publish_direct_root_full_frame(
+            &remote.key,
+            DirectRootPublishSource::CachedStateRequestReply,
+            3
         ));
     }
 
@@ -2348,6 +2401,16 @@ mod tests {
         assert!(should_publish_direct_root_hint(
             key,
             DirectRootPublishSource::LocalHeartbeat
+        ));
+        assert!(!should_publish_direct_root_full_frame(
+            key,
+            DirectRootPublishSource::LocalHeartbeat,
+            0
+        ));
+        assert!(!should_publish_direct_root_full_frame(
+            key,
+            DirectRootPublishSource::LocalHeartbeat,
+            3
         ));
         assert!(exchange.should_publish_candidate_key(
             key,

@@ -697,6 +697,41 @@ fn direct_root_publish_bursts_root_frames_only() {
         share_root,
         DirectRootPublishSource::LocalCurrent
     ));
+    assert!(should_publish_direct_root_full_frame(
+        drive_root,
+        DirectRootPublishSource::LocalCurrent,
+        0
+    ));
+    assert!(!should_publish_direct_root_full_frame(
+        drive_root,
+        DirectRootPublishSource::LocalCurrent,
+        1
+    ));
+    assert!(!should_publish_direct_root_full_frame(
+        drive_root,
+        DirectRootPublishSource::LocalHeartbeat,
+        0
+    ));
+    assert!(should_publish_direct_root_full_frame(
+        drive_root,
+        DirectRootPublishSource::StateRequestReply,
+        0
+    ));
+    assert!(!should_publish_direct_root_full_frame(
+        drive_root,
+        DirectRootPublishSource::StateRequestReply,
+        1
+    ));
+    assert!(should_publish_direct_root_full_frame(
+        drive_root,
+        DirectRootPublishSource::CachedRelay,
+        1
+    ));
+    assert!(should_publish_direct_root_full_frame(
+        "profile-op:profile:op",
+        DirectRootPublishSource::LocalCurrent,
+        1
+    ));
     assert!(!should_publish_direct_root_hint(
         drive_root,
         DirectRootPublishSource::CachedRelay
@@ -722,6 +757,16 @@ fn direct_root_heartbeat_retries_hinted_roots_with_local_throttle() {
     assert!(should_publish_direct_root_hint(
         key,
         DirectRootPublishSource::LocalHeartbeat
+    ));
+    assert!(!should_publish_direct_root_full_frame(
+        key,
+        DirectRootPublishSource::LocalHeartbeat,
+        0
+    ));
+    assert!(!should_publish_direct_root_full_frame(
+        key,
+        DirectRootPublishSource::LocalHeartbeat,
+        3
     ));
     assert!(exchange.should_publish_candidate_key(key, DirectRootPublishSource::LocalCurrent, now));
     assert!(!exchange.should_publish_candidate_key(
@@ -779,6 +824,16 @@ fn direct_root_state_request_reply_includes_cached_remote_roots() {
         ),
         4
     );
+    assert!(should_publish_direct_root_full_frame(
+        &local.key,
+        DirectRootPublishSource::StateRequestReply,
+        0
+    ));
+    assert!(!should_publish_direct_root_full_frame(
+        &local.key,
+        DirectRootPublishSource::StateRequestReply,
+        1
+    ));
     assert_eq!(
         direct_root_publish_attempts_for_source(
             &remote.key,
@@ -786,6 +841,11 @@ fn direct_root_state_request_reply_includes_cached_remote_roots() {
         ),
         4
     );
+    assert!(should_publish_direct_root_full_frame(
+        &remote.key,
+        DirectRootPublishSource::CachedStateRequestReply,
+        3
+    ));
     assert!(!should_publish_direct_root_hint(
         &remote.key,
         DirectRootPublishSource::CachedStateRequestReply,

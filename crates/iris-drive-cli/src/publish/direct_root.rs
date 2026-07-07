@@ -225,6 +225,8 @@ impl DirectRootExchange {
             .context("encoding direct-root hint frame")?;
         let attempts = direct_root_publish_attempts_for_source(&event.key, source);
         for attempt in 0..attempts {
+            let publish_full_frame =
+                should_publish_direct_root_full_frame(&event.key, source, attempt);
             if let Some(hint_bytes) = hint_bytes.as_ref() {
                 let (selected_app_peers, sent_app_peers) = if let Some(target_peer) = target_peer {
                     sync.send_app_message(target_peer, DIRECT_ROOT_APP_TOPIC, hint_bytes.clone())
@@ -255,58 +257,62 @@ impl DirectRootExchange {
                     })
                 );
             }
-            let (selected_app_peers, sent_app_peers) = if let Some(target_peer) = target_peer {
-                sync.send_app_message(target_peer, DIRECT_ROOT_APP_TOPIC, bytes.clone())
-                    .await?;
-                (1, 1)
-            } else {
-                let selected_app_peers = sync.authorized_peer_ids().await.len();
-                let sent_app_peers = sync
-                    .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, bytes.clone())
-                    .await?;
-                (selected_app_peers, sent_app_peers)
-            };
-            println!(
-                "{}",
-                json!({
-                    "event": "direct_root_app_publish",
-                    "topic": DIRECT_ROOT_APP_TOPIC,
-                    "root_key": event.key.clone(),
-                    "root_event_id": event.event_id.clone(),
-                    "kind": event.kind,
-                    "source": source.as_str(),
-                    "attempt": attempt + 1,
-                    "attempts": attempts,
-                    "target_peer": target_peer,
-                    "selected_peers": selected_app_peers,
-                    "sent_peers": sent_app_peers,
-                    "sent_bytes": bytes.len(),
-                })
-            );
+            if publish_full_frame {
+                let (selected_app_peers, sent_app_peers) = if let Some(target_peer) = target_peer {
+                    sync.send_app_message(target_peer, DIRECT_ROOT_APP_TOPIC, bytes.clone())
+                        .await?;
+                    (1, 1)
+                } else {
+                    let selected_app_peers = sync.authorized_peer_ids().await.len();
+                    let sent_app_peers = sync
+                        .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, bytes.clone())
+                        .await?;
+                    (selected_app_peers, sent_app_peers)
+                };
+                println!(
+                    "{}",
+                    json!({
+                        "event": "direct_root_app_publish",
+                        "topic": DIRECT_ROOT_APP_TOPIC,
+                        "root_key": event.key.clone(),
+                        "root_event_id": event.event_id.clone(),
+                        "kind": event.kind,
+                        "source": source.as_str(),
+                        "attempt": attempt + 1,
+                        "attempts": attempts,
+                        "target_peer": target_peer,
+                        "selected_peers": selected_app_peers,
+                        "sent_peers": sent_app_peers,
+                        "sent_bytes": bytes.len(),
+                    })
+                );
+            }
             if target_peer.is_some() {
                 continue;
             }
-            let seq = self.next_mesh_publish_seq();
-            let publish_stats = sync
-                .publish_mesh_pubsub(stream.to_string(), seq, bytes.clone())
-                .await;
-            println!(
-                "{}",
-                json!({
-                    "event": "direct_root_mesh_publish",
-                    "stream": stream,
-                    "seq": seq,
-                    "root_key": event.key.clone(),
-                    "root_event_id": event.event_id.clone(),
-                    "kind": event.kind,
-                    "source": source.as_str(),
-                    "attempt": attempt + 1,
-                    "attempts": attempts,
-                    "selected_peers": publish_stats.selected_peers,
-                    "sent_peers": publish_stats.sent_peers,
-                    "sent_bytes": publish_stats.sent_bytes,
-                })
-            );
+            if publish_full_frame {
+                let seq = self.next_mesh_publish_seq();
+                let publish_stats = sync
+                    .publish_mesh_pubsub(stream.to_string(), seq, bytes.clone())
+                    .await;
+                println!(
+                    "{}",
+                    json!({
+                        "event": "direct_root_mesh_publish",
+                        "stream": stream,
+                        "seq": seq,
+                        "root_key": event.key.clone(),
+                        "root_event_id": event.event_id.clone(),
+                        "kind": event.kind,
+                        "source": source.as_str(),
+                        "attempt": attempt + 1,
+                        "attempts": attempts,
+                        "selected_peers": publish_stats.selected_peers,
+                        "sent_peers": publish_stats.sent_peers,
+                        "sent_bytes": publish_stats.sent_bytes,
+                    })
+                );
+            }
             if let Some(hint_bytes) = hint_bytes.as_ref() {
                 let seq = self.next_mesh_publish_seq();
                 let publish_stats = sync
@@ -1098,6 +1104,24 @@ fn should_publish_direct_root_hint(key: &str, source: DirectRootPublishSource) -
             | DirectRootPublishSource::LocalHeartbeat
             | DirectRootPublishSource::StateRequestReply
     ) && direct_root_cache_slot(key).is_some()
+}
+
+fn should_publish_direct_root_full_frame(
+    key: &str,
+    source: DirectRootPublishSource,
+    attempt: usize,
+) -> bool {
+    if should_publish_direct_root_hint(key, source) {
+        return match source {
+            DirectRootPublishSource::LocalHeartbeat => false,
+            DirectRootPublishSource::LocalCurrent | DirectRootPublishSource::StateRequestReply => {
+                attempt == 0
+            }
+            DirectRootPublishSource::CachedRelay
+            | DirectRootPublishSource::CachedStateRequestReply => true,
+        };
+    }
+    true
 }
 
 fn direct_root_wire_frame_log_fields(frame: &DirectRootWireFrame) -> (String, String, &'static str) {
