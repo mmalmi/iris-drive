@@ -197,6 +197,59 @@ fn native_provider_write_preserves_identical_collision_copy() {
 }
 
 #[test]
+fn native_provider_concurrent_writes_preserve_batch_copy_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let _ = app.dispatch(NativeAppAction::CreateProfile {
+        app_key_label: "Mac".to_owned(),
+    });
+    mark_daemon_live(dir.path());
+
+    let data_dir = dir.path().display().to_string();
+    let _delay =
+        crate::native_provider::provider_open_delay_for_test(std::time::Duration::from_millis(150));
+    let start = std::sync::Arc::new(std::sync::Barrier::new(4));
+    let handles = (0..3)
+        .map(|index| {
+            let data_dir = data_dir.clone();
+            let source = dir.path().join(format!("batch-source-{index}.txt"));
+            std::fs::write(&source, format!("batch bytes {index}")).unwrap();
+            let start = start.clone();
+            std::thread::spawn(move || {
+                start.wait();
+                let result = super::native_provider_write_json(
+                    &data_dir,
+                    &format!("Batch/file-{index}.txt"),
+                    &source.display().to_string(),
+                );
+                assert!(
+                    result["error"].as_str().unwrap_or_default().is_empty(),
+                    "unexpected provider write result: {result:#}"
+                );
+            })
+        })
+        .collect::<Vec<_>>();
+    start.wait();
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    let provider = super::native_provider_list_json(&data_dir);
+    assert_eq!(provider["file_count"], 3);
+    let paths = provider["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|entry| entry["kind"] == "file")
+        .map(|entry| entry["path"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(
+        paths,
+        vec!["Batch/file-0.txt", "Batch/file-1.txt", "Batch/file-2.txt"]
+    );
+}
+
+#[test]
 fn native_provider_write_rejects_probable_os_placeholder_collision() {
     let dir = tempfile::tempdir().unwrap();
     let app = FfiApp::new(dir.path().display().to_string(), "test".to_owned());

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
-use std::sync::Mutex;
+use std::sync::{Mutex, atomic::AtomicU64, atomic::Ordering};
 
 use anyhow::Context;
 use hashtree_provider::{HashTreeProviderFs, ItemKind, ProviderFs};
@@ -219,6 +219,8 @@ async fn import_provider_bytes(
     display_name: &str,
     bytes: &[u8],
 ) -> anyhow::Result<serde_json::Value> {
+    let _config_lock =
+        iris_drive_core::config_lock::ConfigMutationLock::acquire(Path::new(data_dir)).await?;
     let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
     let modified_at_by_path = BTreeMap::new();
     let entries = provider_entries(&provider, &modified_at_by_path).await?;
@@ -409,7 +411,10 @@ fn run_native_provider_write(
         let path = normalize_provider_path(path)?;
         let bytes = std::fs::read(source_path)
             .with_context(|| format!("reading {}", Path::new(source_path).display()))?;
+        let _config_lock =
+            iris_drive_core::config_lock::ConfigMutationLock::acquire(Path::new(data_dir)).await?;
         let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
+        apply_provider_open_delay_for_test();
         if provider_file_probable_os_placeholder_family(&path, bytes.len() as u64).is_some() {
             let entries = provider_entries(&provider, &BTreeMap::new()).await?;
             if provider_write_is_probable_os_placeholder(&entries, &path, &bytes) {
@@ -426,6 +431,8 @@ fn run_native_provider_mkdir(data_dir: &str, path: &str) -> anyhow::Result<serde
     let runtime = native_provider_runtime()?;
     runtime.block_on(async {
         let path = normalize_provider_path(path)?;
+        let _config_lock =
+            iris_drive_core::config_lock::ConfigMutationLock::acquire(Path::new(data_dir)).await?;
         let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
         create_provider_dir(&provider, &path).await?;
         import_provider_mutation(&mut daemon, &provider, &path, Some(visible_root)).await
@@ -437,6 +444,8 @@ fn run_native_provider_delete(data_dir: &str, path: &str) -> anyhow::Result<serd
     let runtime = native_provider_runtime()?;
     runtime.block_on(async {
         let path = normalize_provider_path(path)?;
+        let _config_lock =
+            iris_drive_core::config_lock::ConfigMutationLock::acquire(Path::new(data_dir)).await?;
         let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
         delete_provider_path(&provider, &path).await?;
         import_provider_mutation(&mut daemon, &provider, &path, Some(visible_root)).await
@@ -453,6 +462,8 @@ fn run_native_provider_rename(
     runtime.block_on(async {
         let old_path = normalize_provider_path(old_path)?;
         let new_path = normalize_provider_path(new_path)?;
+        let _config_lock =
+            iris_drive_core::config_lock::ConfigMutationLock::acquire(Path::new(data_dir)).await?;
         let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
         rename_provider_path(&provider, &old_path, &new_path).await?;
         import_provider_mutation(&mut daemon, &provider, &new_path, Some(visible_root)).await
@@ -813,3 +824,33 @@ fn default_relays() -> Vec<String> {
         .map(|relay| (*relay).to_owned())
         .collect()
 }
+
+#[cfg(test)]
+static PROVIDER_OPEN_DELAY_MS_FOR_TEST: AtomicU64 = AtomicU64::new(0);
+
+#[cfg(test)]
+pub(crate) struct ProviderOpenDelayGuard;
+
+#[cfg(test)]
+impl Drop for ProviderOpenDelayGuard {
+    fn drop(&mut self) {
+        PROVIDER_OPEN_DELAY_MS_FOR_TEST.store(0, Ordering::SeqCst);
+    }
+}
+
+#[cfg(test)]
+pub(crate) fn provider_open_delay_for_test(delay: std::time::Duration) -> ProviderOpenDelayGuard {
+    PROVIDER_OPEN_DELAY_MS_FOR_TEST.store(delay.as_millis() as u64, Ordering::SeqCst);
+    ProviderOpenDelayGuard
+}
+
+#[cfg(test)]
+fn apply_provider_open_delay_for_test() {
+    let delay_ms = PROVIDER_OPEN_DELAY_MS_FOR_TEST.load(Ordering::SeqCst);
+    if delay_ms > 0 {
+        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
+    }
+}
+
+#[cfg(not(test))]
+fn apply_provider_open_delay_for_test() {}
