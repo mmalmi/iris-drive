@@ -11,7 +11,7 @@ crates/iris-drive-cli/src/drive.rs 1050 CLI drive command surface is legacy mono
 crates/iris-drive-cli/src/shares.rs 1350 CLI share command surface needs a later command/test split.
 crates/iris-drive-cli/src/profile.rs 1150 CLI profile command surface already exceeds default; pending command/test split.
 crates/iris-drive-cli/src/publish/direct_root.rs 1600 Direct-root publish path includes targeted state-reply hardening for v0.1.16; pending protocol/helper split.
-crates/iris-drive-cli/src/publish/tests.rs 1100 Direct-root release-hardening coverage shares CLI publish fixtures; pending focused test-module split.
+crates/iris-drive-cli/src/publish/tests.rs 1150 Direct-root release-hardening coverage shares CLI publish fixtures; pending focused test-module split.
 crates/iris-drive-cli/src/status.rs 1150 CLI status normalization already exceeds default; pending status module split.
 crates/iris-drive-cli/tests/cli_e2e.rs 1050 CLI e2e scenarios are legacy monolith pending scenario split.
 crates/iris-drive-cli/tests/daemon_sync_matrix/harness.rs 1150 Live daemon matrix harness includes bounded CLI/refresh diagnostics; pending helper-module split.
@@ -19,7 +19,7 @@ crates/iris-drive-cli/tests/daemon_sync_matrix/scenario_tests.rs 1150 Scenario m
 crates/iris-drive-core/src/calendar.rs 1050 Calendar import/export and CalDAV helpers are legacy monolith pending module split.
 crates/iris-drive-core/src/config.rs 1350 Config loading, migration, and env plumbing are legacy monolith pending section split.
 crates/iris-drive-core/src/daemon/tests/mod.rs 1020 Daemon integration coverage currently shares setup helpers in one module; pending scenario/helper split.
-crates/iris-drive-core/src/direct_root_transport.rs 2600 Direct-root sync transport includes targeted state-reply hardening for v0.1.16; pending protocol/state split.
+crates/iris-drive-core/src/direct_root_transport.rs 2700 Direct-root sync transport includes targeted state-reply hardening for v0.1.16; pending protocol/state split.
 crates/iris-drive-core/src/gateway.rs 1360 Local gateway routing and response hardening now include the CalDAV dispatcher; pending route-module split.
 crates/iris-drive-core/src/gateway/tests.rs 1100 Local gateway route coverage includes mixed browser/API/WebDAV scenarios; pending route test-module split.
 crates/iris-drive-core/src/nostr_identity.rs 2100 NostrIdentity authority shim needs a later roster-event-projection module split.
