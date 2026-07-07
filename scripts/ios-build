@@ -43,13 +43,14 @@ PROVISIONING_ENV="$DIST_DIR/provisioning.env"
 PROJECT="$IOS_DIR/IrisDriveIOS.xcodeproj"
 SCHEME="${IRIS_DRIVE_IOS_SCHEME:-IrisDriveIOS}"
 CONFIGURATION="${IRIS_DRIVE_IOS_CONFIGURATION:-Release}"
-TEAM_ID="${IRIS_DRIVE_IOS_TEAM_ID:-${IRIS_DRIVE_IOS_DEVELOPMENT_TEAM:-J8PPJKD7TA}}"
-DEFAULT_BUNDLE_ID="to.iris.drive.ios"
+DEFAULT_TEAM_ID="8G9P8AN75D"
+TEAM_ID="${IRIS_DRIVE_IOS_TEAM_ID:-${IRIS_DRIVE_IOS_DEVELOPMENT_TEAM:-$DEFAULT_TEAM_ID}}"
+DEFAULT_BUNDLE_ID="fi.siriusbusiness.drive"
 BUNDLE_ID="${IRIS_DRIVE_IOS_BUNDLE_ID:-$DEFAULT_BUNDLE_ID}"
 FILE_PROVIDER_BUNDLE_ID="${IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID:-$BUNDLE_ID.FileProvider}"
 SHARE_EXTENSION_BUNDLE_ID="${IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID:-$BUNDLE_ID.ShareExtension}"
 SHARE_SOURCE_BUNDLE_ID="${IRIS_DRIVE_IOS_SHARE_SOURCE_BUNDLE_ID:-$BUNDLE_ID.ShareSource}"
-if [[ "$BUNDLE_ID" == "$DEFAULT_BUNDLE_ID" ]]; then
+if [[ "$BUNDLE_ID" == "to.iris.drive.ios" ]]; then
   DEFAULT_APP_GROUP_IDENTIFIER="group.to.iris.drive"
 else
   DEFAULT_APP_GROUP_IDENTIFIER="group.$BUNDLE_ID"
@@ -83,12 +84,12 @@ env:
   IRIS_DRIVE_ASC_AUTH_KEY_PATH or IRIS_DRIVE_ASC_KEY_PATH
   IRIS_DRIVE_ASC_AUTH_KEY_ID   or IRIS_DRIVE_ASC_KEY_ID
   IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID or IRIS_DRIVE_ASC_ISSUER_ID
-  IRIS_DRIVE_IOS_TEAM_ID
-  IRIS_DRIVE_IOS_BUNDLE_ID defaults to to.iris.drive.ios
+  IRIS_DRIVE_IOS_TEAM_ID defaults to 8G9P8AN75D
+  IRIS_DRIVE_IOS_BUNDLE_ID defaults to fi.siriusbusiness.drive
   IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID defaults to <bundle>.FileProvider
   IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID defaults to <bundle>.ShareExtension
-  IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER defaults to group.to.iris.drive for
-    the legacy bundle, otherwise group.<bundle>
+  IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER defaults to group.<bundle>; the legacy
+    to.iris.drive.ios bundle keeps group.to.iris.drive
   IRIS_DRIVE_IOS_PROFILES_ENV_PATH optional provisioning env output
   IRIS_DRIVE_IOS_PROFILE_RECREATE=true to force new provisioning profiles
   IRIS_DRIVE_IOS_SIGNING_STYLE=automatic to let xcodebuild create/update

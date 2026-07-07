@@ -901,6 +901,19 @@ test('iOS build uses the shared App Store Connect auth defaults', () => {
   assert.match(script, /issuer\.txt/)
 })
 
+test('iOS build defaults to the Sirius Business release bundle', () => {
+  const script = readFileSync(
+    fileURLToPath(new URL('./ios-build', import.meta.url)),
+    'utf8',
+  )
+
+  assert.match(script, /DEFAULT_TEAM_ID="8G9P8AN75D"/)
+  assert.match(script, /DEFAULT_BUNDLE_ID="fi\.siriusbusiness\.drive"/)
+  assert.match(script, /BUNDLE_ID="\$\{IRIS_DRIVE_IOS_BUNDLE_ID:-\$DEFAULT_BUNDLE_ID\}"/)
+  assert.match(script, /"\$BUNDLE_ID" == "to\.iris\.drive\.ios"/)
+  assert.match(script, /DEFAULT_APP_GROUP_IDENTIFIER="group\.to\.iris\.drive"/)
+})
+
 test('iOS build provisions manual App Store profiles before TestFlight export', () => {
   const script = readFileSync(
     fileURLToPath(new URL('./ios-build', import.meta.url)),
