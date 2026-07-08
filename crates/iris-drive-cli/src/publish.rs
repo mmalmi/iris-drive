@@ -93,16 +93,6 @@ pub(crate) async fn announce_current_state_direct(
         .await
 }
 
-pub(crate) async fn announce_local_root_heartbeat_direct(
-    direct_roots: &mut DirectRootExchange,
-    config_dir: &Path,
-    fips_blocks: Option<&FsFipsBlockSync>,
-) -> Result<()> {
-    direct_roots
-        .announce_local_root_heartbeat_cached(config_dir, fips_blocks)
-        .await
-}
-
 pub(crate) async fn upload_tree_to_blossom_with_hashtree(
     config_dir: &std::path::Path,
     config: &AppConfig,

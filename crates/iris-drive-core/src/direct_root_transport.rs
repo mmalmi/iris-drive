@@ -19,7 +19,6 @@ pub const DIRECT_ROOT_MESH_STREAM_PREFIX: &str = "iris-drive/root-events/v1";
 const DIRECT_ROOT_EVENT_CACHE_CAP: usize = 128;
 const DIRECT_ROOT_REPUBLISH_INTERVAL_SECS: u64 = 5;
 const DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS: u64 = 10;
-const DIRECT_ROOT_HEARTBEAT_REPUBLISH_INTERVAL_SECS: u64 = 60;
 const DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS: u64 = 300;
 const DIRECT_ROOT_DOWNLOAD_TIMEOUT_SECS: u64 = 8;
 
@@ -66,7 +65,6 @@ struct DirectRootPublishEvent {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum DirectRootPublishSource {
     LocalCurrent,
-    LocalHeartbeat,
     CachedRelay,
     StateRequestReply,
     CachedStateRequestReply,
@@ -139,33 +137,6 @@ impl DirectRootExchange {
         );
         let now = Instant::now();
         for publish_event in events {
-            self.publish_event(sync, &stream, publish_event, None, now)
-                .await?;
-        }
-        self.prune_published_keys();
-        Ok(())
-    }
-
-    pub async fn announce_local_root_heartbeat(
-        &mut self,
-        config_dir: &Path,
-        sync: &FsFipsBlockSync,
-    ) -> Result<(), String> {
-        let config = AppConfig::load_or_default(config_path_in(config_dir))
-            .map_err(|error| format!("loading config: {error}"))?;
-        sync.refresh_authorized_peers(&config).await;
-        let Some(state) = config.profile.as_ref() else {
-            return Ok(());
-        };
-        let root_scope_id = state.root_scope_id();
-        self.subscribe_profile_stream(&root_scope_id, sync).await;
-        let stream = direct_root_mesh_stream(&root_scope_id);
-        let local_events = build_current_direct_root_events(config_dir, &config, state)
-            .map_err(|error| format!("{error:#}"))?;
-        let now = Instant::now();
-        for publish_event in self
-            .local_root_events_for_publish(local_events, DirectRootPublishSource::LocalHeartbeat)
-        {
             self.publish_event(sync, &stream, publish_event, None, now)
                 .await?;
         }
@@ -701,21 +672,6 @@ impl DirectRootExchange {
         events
     }
 
-    fn local_root_events_for_publish(
-        &self,
-        local_events: Vec<DirectRootEvent>,
-        source: DirectRootPublishSource,
-    ) -> Vec<DirectRootPublishEvent> {
-        local_events
-            .into_iter()
-            .filter(|event| direct_root_cache_slot(&event.key).is_some())
-            .map(|event| DirectRootPublishEvent {
-                event: self.event_for_publish(event),
-                source,
-            })
-            .collect()
-    }
-
     fn state_request_events_for_publish(
         &self,
         local_events: Vec<DirectRootEvent>,
@@ -1055,9 +1011,6 @@ fn direct_root_republish_interval_secs_for_source(
     if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
         return DIRECT_ROOT_REPUBLISH_INTERVAL_SECS;
     }
-    if source == DirectRootPublishSource::LocalHeartbeat && direct_root_cache_slot(key).is_some() {
-        return DIRECT_ROOT_HEARTBEAT_REPUBLISH_INTERVAL_SECS;
-    }
     if direct_root_cache_slot(key).is_some() {
         DIRECT_ROOT_REPUBLISH_INTERVAL_SECS
     } else {
@@ -1070,10 +1023,7 @@ fn direct_root_publish_attempts_for_source(key: &str, source: DirectRootPublishS
     {
         return 4;
     }
-    if matches!(
-        source,
-        DirectRootPublishSource::LocalHeartbeat | DirectRootPublishSource::StateRequestReply
-    ) {
+    if source == DirectRootPublishSource::StateRequestReply {
         return 1;
     }
     if source == DirectRootPublishSource::CachedStateRequestReply
@@ -1122,9 +1072,7 @@ fn direct_root_publish_throttle_key(
 fn should_publish_direct_root_hint(key: &str, source: DirectRootPublishSource) -> bool {
     matches!(
         source,
-        DirectRootPublishSource::LocalCurrent
-            | DirectRootPublishSource::LocalHeartbeat
-            | DirectRootPublishSource::StateRequestReply
+        DirectRootPublishSource::LocalCurrent | DirectRootPublishSource::StateRequestReply
     ) && direct_root_cache_slot(key).is_some()
 }
 
@@ -1135,7 +1083,6 @@ fn should_publish_direct_root_full_frame(
 ) -> bool {
     if should_publish_direct_root_hint(key, source) {
         return match source {
-            DirectRootPublishSource::LocalHeartbeat => false,
             DirectRootPublishSource::LocalCurrent | DirectRootPublishSource::StateRequestReply => {
                 attempt == 0
             }
@@ -2156,61 +2103,6 @@ mod tests {
     }
 
     #[test]
-    fn direct_root_heartbeat_publishes_local_root_events_only() {
-        let mut exchange = DirectRootExchange::default();
-        exchange.cache_event(DirectRootEvent {
-            key: "drive-root:remote:main:7:remote-hash:remote-key:local,remote".to_string(),
-            event_id: "remote-event".to_string(),
-            event_json: "{\"id\":\"remote\"}".to_string(),
-        });
-        let drive = DirectRootEvent {
-            key: "drive-root:local:main:8:drive-hash:drive-key:local,remote".to_string(),
-            event_id: "drive-event".to_string(),
-            event_json: "{\"id\":\"drive\"}".to_string(),
-        };
-        let share = DirectRootEvent {
-            key: "share-root:share:local:4:share-hash:share-key:local,remote".to_string(),
-            event_id: "share-event".to_string(),
-            event_json: "{\"id\":\"share\"}".to_string(),
-        };
-        let files = DirectRootEvent {
-            key: "files-root:local:main:drive-hash:drive-key".to_string(),
-            event_id: "files-event".to_string(),
-            event_json: "{\"id\":\"files\"}".to_string(),
-        };
-        let profile = DirectRootEvent {
-            key: "profile-op:profile:op".to_string(),
-            event_id: "profile-event".to_string(),
-            event_json: "{\"id\":\"profile\"}".to_string(),
-        };
-
-        let events = exchange.local_root_events_for_publish(
-            vec![drive.clone(), share.clone(), files, profile],
-            DirectRootPublishSource::LocalHeartbeat,
-        );
-
-        assert_eq!(events.len(), 2);
-        assert_eq!(events[0].event.event_id, drive.event_id);
-        assert_eq!(events[0].source, DirectRootPublishSource::LocalHeartbeat);
-        assert_eq!(events[1].event.event_id, share.event_id);
-        assert_eq!(events[1].source, DirectRootPublishSource::LocalHeartbeat);
-        assert!(should_publish_direct_root_hint(
-            &drive.key,
-            DirectRootPublishSource::LocalHeartbeat
-        ));
-        assert!(!should_publish_direct_root_full_frame(
-            &drive.key,
-            DirectRootPublishSource::LocalHeartbeat,
-            0
-        ));
-        assert!(!should_publish_direct_root_full_frame(
-            &share.key,
-            DirectRootPublishSource::LocalHeartbeat,
-            3
-        ));
-    }
-
-    #[test]
     fn direct_root_state_request_reply_includes_cached_remote_roots() {
         let mut exchange = DirectRootExchange::default();
         let local = DirectRootEvent {
@@ -2395,9 +2287,6 @@ mod tests {
             DirectRootPublishSource::LocalCurrent
         ));
         assert!(!should_publish_targeted_direct_root_reply_over_mesh(
-            DirectRootPublishSource::LocalHeartbeat
-        ));
-        assert!(!should_publish_targeted_direct_root_reply_over_mesh(
             DirectRootPublishSource::CachedRelay
         ));
     }
@@ -2415,47 +2304,6 @@ mod tests {
         assert!(exchange.should_publish_state_request(
             "scope",
             now + Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS),
-        ));
-    }
-
-    #[test]
-    fn direct_root_heartbeat_uses_low_rate_hints() {
-        let mut exchange = DirectRootExchange::default();
-        let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
-        let now = Instant::now();
-
-        assert_eq!(
-            direct_root_publish_attempts_for_source(key, DirectRootPublishSource::LocalHeartbeat),
-            1
-        );
-        assert!(should_publish_direct_root_hint(
-            key,
-            DirectRootPublishSource::LocalHeartbeat
-        ));
-        assert!(!should_publish_direct_root_full_frame(
-            key,
-            DirectRootPublishSource::LocalHeartbeat,
-            0
-        ));
-        assert!(!should_publish_direct_root_full_frame(
-            key,
-            DirectRootPublishSource::LocalHeartbeat,
-            3
-        ));
-        assert!(exchange.should_publish_candidate_key(
-            key,
-            DirectRootPublishSource::LocalCurrent,
-            now
-        ));
-        assert!(!exchange.should_publish_candidate_key(
-            key,
-            DirectRootPublishSource::LocalHeartbeat,
-            now + Duration::from_millis(500)
-        ));
-        assert!(exchange.should_publish_candidate_key(
-            key,
-            DirectRootPublishSource::LocalHeartbeat,
-            now + Duration::from_secs(DIRECT_ROOT_HEARTBEAT_REPUBLISH_INTERVAL_SECS)
         ));
     }
 

@@ -372,13 +372,6 @@ pub(crate) fn cmd_daemon(
             relay_status_period,
         );
         relay_status_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        let direct_root_announce_period =
-            std::time::Duration::from_secs(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS);
-        let mut direct_root_announce_timer = tokio::time::interval_at(
-            tokio::time::Instant::now() + direct_root_announce_period,
-            direct_root_announce_period,
-        );
-        direct_root_announce_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut direct_root_change_announce_pending = false;
         let mut direct_root_change_announce_timer =
             Box::pin(tokio::time::sleep(std::time::Duration::from_secs(86_400)));
@@ -787,20 +780,6 @@ pub(crate) fn cmd_daemon(
                         &daemon_tasks,
                         "periodic_root_sync",
                     );
-                }
-                _ = direct_root_announce_timer.tick() => {
-                    if let Err(error) = announce_local_root_heartbeat_direct(
-                        &mut direct_roots,
-                        config_dir,
-                        fips_blocks.as_deref(),
-                    )
-                    .await
-                    {
-                        println!(
-                            "{}",
-                            json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
-                        );
-                    }
                 }
                 _ = &mut direct_root_change_announce_timer, if direct_root_change_announce_pending => {
                     direct_root_change_announce_pending = false;

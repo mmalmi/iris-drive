@@ -5,7 +5,6 @@ use iris_drive_core::{
 
 const DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS: u64 = 30;
 const DIRECT_ROOT_STATE_REQUEST_REPLY_REPUBLISH_INTERVAL_SECS: u64 = 30;
-const DIRECT_ROOT_HEARTBEAT_REPUBLISH_INTERVAL_SECS: u64 = 60;
 const DIRECT_ROOT_HINT_REPEAT_INTERVAL_SECS: u64 = 30;
 const DIRECT_ROOT_HINT_CACHE_MAX_ENTRIES: usize = 2048;
 const DIRECT_ROOT_SEEN_FRAME_RETRY_INTERVAL_SECS: u64 = 30;
@@ -27,7 +26,6 @@ struct DirectRootPublishEvent {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum DirectRootPublishSource {
     LocalCurrent,
-    LocalHeartbeat,
     CachedRelay,
     StateRequestReply,
     CachedStateRequestReply,
@@ -54,7 +52,6 @@ impl DirectRootPublishSource {
     fn as_str(self) -> &'static str {
         match self {
             Self::LocalCurrent => "local_current",
-            Self::LocalHeartbeat => "local_heartbeat",
             Self::CachedRelay => "cached_relay",
             Self::StateRequestReply => "state_request",
             Self::CachedStateRequestReply => "state_request_cached",
@@ -186,98 +183,6 @@ impl DirectRootExchange {
         let now = std::time::Instant::now();
         for publish_event in self.state_request_events_for_publish(local_events) {
             self.publish_event(sync, &stream, publish_event, Some(reply_peer), now)
-                .await?;
-        }
-        Ok(())
-    }
-
-    async fn announce_local_root_heartbeat(
-        &mut self,
-        config_dir: &Path,
-        config: &AppConfig,
-        state: &ProfileState,
-        fips_blocks: Option<&FsFipsBlockSync>,
-    ) -> Result<()> {
-        let Some(sync) = fips_blocks else {
-            return Ok(());
-        };
-        let root_scope_id = state.root_scope_id();
-        self.subscribe_profile_stream(&root_scope_id, Some(sync))
-            .await;
-        let stream = direct_root_mesh_stream(&root_scope_id);
-        let config_fingerprint = config_file_fingerprint(&config_path_in(config_dir))?;
-        let local_events = self
-            .cached_current_sync_events_from_config(config_fingerprint, || {
-                build_current_sync_events(config_dir, config, state)
-            })
-            .await?;
-        let now = std::time::Instant::now();
-        for publish_event in self
-            .local_root_events_for_publish(local_events, DirectRootPublishSource::LocalHeartbeat)
-        {
-            self.publish_event(sync, &stream, publish_event, None, now)
-                .await?;
-        }
-        Ok(())
-    }
-
-    async fn announce_local_root_heartbeat_cached(
-        &mut self,
-        config_dir: &Path,
-        fips_blocks: Option<&FsFipsBlockSync>,
-    ) -> Result<()> {
-        let Some(sync) = fips_blocks else {
-            return Ok(());
-        };
-        let config_path = config_path_in(config_dir);
-        let config_fingerprint = config_file_fingerprint(&config_path)?;
-        if let Some(local_events) = self
-            .current_sync_events_cache
-            .as_ref()
-            .filter(|cached| cached.config_fingerprint == config_fingerprint)
-            .map(|cached| cached.events.clone())
-        {
-            let Some(root_scope_id) =
-                self.cached_profile_stream_root_scope_id_from_config(config_fingerprint, || {
-                    Ok(AppConfig::load_or_default_cached_profile(&config_path)?)
-                })?
-            else {
-                return Ok(());
-            };
-            self.publish_local_root_heartbeat_events(&root_scope_id, sync, local_events)
-                .await?;
-            return Ok(());
-        }
-
-        let config = AppConfig::load_or_default_cached_profile(&config_path)?;
-        let Some(state) = config.profile.as_ref() else {
-            self.profile_stream_cache = Some(CachedDirectRootProfileStream {
-                config_fingerprint,
-                root_scope_id: None,
-            });
-            return Ok(());
-        };
-        self.profile_stream_cache = Some(CachedDirectRootProfileStream {
-            config_fingerprint,
-            root_scope_id: Some(state.root_scope_id()),
-        });
-        self.announce_local_root_heartbeat(config_dir, &config, state, Some(sync))
-            .await
-    }
-
-    async fn publish_local_root_heartbeat_events(
-        &mut self,
-        root_scope_id: &str,
-        sync: &FsFipsBlockSync,
-        local_events: Vec<DirectRootEvent>,
-    ) -> Result<()> {
-        self.subscribe_profile_stream(root_scope_id, Some(sync)).await;
-        let stream = direct_root_mesh_stream(root_scope_id);
-        let now = std::time::Instant::now();
-        for publish_event in self
-            .local_root_events_for_publish(local_events, DirectRootPublishSource::LocalHeartbeat)
-        {
-            self.publish_event(sync, &stream, publish_event, None, now)
                 .await?;
         }
         Ok(())
@@ -1083,21 +988,6 @@ impl DirectRootExchange {
         events
     }
 
-    fn local_root_events_for_publish(
-        &self,
-        local_events: Vec<DirectRootEvent>,
-        source: DirectRootPublishSource,
-    ) -> Vec<DirectRootPublishEvent> {
-        local_events
-            .into_iter()
-            .filter(|event| direct_root_cache_slot(&event.key).is_some())
-            .map(|event| DirectRootPublishEvent {
-                event: self.event_for_publish(event),
-                source,
-            })
-            .collect()
-    }
-
     fn state_request_events_for_publish(
         &self,
         local_events: Vec<DirectRootEvent>,
@@ -1310,9 +1200,6 @@ fn direct_root_republish_interval_secs_for_source(
     if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
         return DIRECT_ROOT_REPUBLISH_INTERVAL_SECS;
     }
-    if source == DirectRootPublishSource::LocalHeartbeat && direct_root_cache_slot(key).is_some() {
-        return DIRECT_ROOT_HEARTBEAT_REPUBLISH_INTERVAL_SECS;
-    }
     if direct_root_cache_slot(key).is_some() || key.starts_with("files-root:") {
         DIRECT_ROOT_REPUBLISH_INTERVAL_SECS
     } else {
@@ -1326,17 +1213,11 @@ fn direct_root_publish_attempts(key: &str) -> usize {
 }
 
 fn direct_root_publish_attempts_for_source(key: &str, source: DirectRootPublishSource) -> usize {
-    if source == DirectRootPublishSource::LocalHeartbeat && direct_root_cache_slot(key).is_some() {
-        return 1;
-    }
     if source == DirectRootPublishSource::StateRequestReply && direct_root_cache_slot(key).is_some()
     {
         return 4;
     }
-    if matches!(
-        source,
-        DirectRootPublishSource::LocalHeartbeat | DirectRootPublishSource::StateRequestReply
-    ) {
+    if source == DirectRootPublishSource::StateRequestReply {
         return 1;
     }
     if source == DirectRootPublishSource::CachedStateRequestReply
@@ -1360,7 +1241,6 @@ fn should_publish_direct_root_hint(key: &str, source: DirectRootPublishSource) -
     matches!(
         source,
         DirectRootPublishSource::LocalCurrent
-            | DirectRootPublishSource::LocalHeartbeat
             | DirectRootPublishSource::StateRequestReply
     ) && direct_root_cache_slot(key).is_some()
 }
@@ -1372,7 +1252,6 @@ fn should_publish_direct_root_full_frame(
 ) -> bool {
     if should_publish_direct_root_hint(key, source) {
         return match source {
-            DirectRootPublishSource::LocalHeartbeat => false,
             DirectRootPublishSource::LocalCurrent | DirectRootPublishSource::StateRequestReply => {
                 attempt == 0
             }
