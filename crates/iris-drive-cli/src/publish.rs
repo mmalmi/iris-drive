@@ -621,7 +621,7 @@ pub(crate) fn spawn_daemon_heartbeat(config_dir: PathBuf) {
         .spawn(move || {
             loop {
                 write_daemon_status(&config_dir, json!({"event": "heartbeat"}));
-                std::thread::sleep(std::time::Duration::from_secs(2));
+                std::thread::sleep(std::time::Duration::from_secs(DAEMON_STATUS_HEARTBEAT_SECS));
             }
         });
 }
