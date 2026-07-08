@@ -34,6 +34,11 @@ Environment:
                                   Defaults to every POSIX host in this run.
   IRIS_DRIVE_E2E_PROVIDER_MUTATIONS
                                   Use provider commands instead of projection surfaces when set to 1.
+  IRIS_DRIVE_E2E_STATIC_FIPS_HINTS
+                                  Add deterministic UDP FIPS peer hints between harness daemons
+                                  while keeping LAN discovery enabled (default: 1).
+  IRIS_DRIVE_E2E_FIPS_PORT_BASE    First UDP port for deterministic FIPS hints. Each label gets
+                                  base + index (default: 32000 + pid modulo 10000).
   IRIS_DRIVE_E2E_WINDOWS_CLOUD_ROOT
                                   Windows Cloud Files root for the daemon; defaults to "off" so
                                   provider-bridge e2e runs do not import the VM user's real
@@ -66,6 +71,8 @@ MOUNT_LABELS="${IRIS_DRIVE_E2E_MOUNT_LABELS:-}"
 SIDELOAD_APPKEYS="${IRIS_DRIVE_E2E_SIDELOAD_APPKEYS:-1}"
 PROVIDER_MUTATIONS="${IRIS_DRIVE_E2E_PROVIDER_MUTATIONS:-0}"
 IDLE_CPU_GATE="${IRIS_DRIVE_E2E_IDLE_CPU_GATE:-1}"
+STATIC_FIPS_HINTS="${IRIS_DRIVE_E2E_STATIC_FIPS_HINTS:-1}"
+FIPS_PORT_BASE="${IRIS_DRIVE_E2E_FIPS_PORT_BASE:-$((32000 + ($$ % 10000)))}"
 E2E_PROFILE="${IRIS_DRIVE_E2E_PROFILE:-debug}"
 case "$E2E_PROFILE" in
   debug | release) ;;
@@ -83,6 +90,12 @@ declare -a LOGS=()
 declare -a ERRS=()
 declare -a PIDS=()
 declare -a DAEMON_SSH_PIDS=()
+declare -a FIPS_PORTS=()
+declare -a FIPS_ADDRS=()
+declare -a FIPS_STATIC_PEERS=()
+declare -a FIPS_BOOTSTRAP=()
+declare -a FIPS_OPEN_DISCOVERY=()
+declare -a APP_KEY_NPUBS=()
 
 find_label_index() {
   local needle="$1"
@@ -123,6 +136,12 @@ host_value() {
     err) printf "%s" "${ERRS[$idx]:-}" ;;
     pid) printf "%s" "${PIDS[$idx]:-}" ;;
     daemon_ssh_pid) printf "%s" "${DAEMON_SSH_PIDS[$idx]:-}" ;;
+    fips_port) printf "%s" "${FIPS_PORTS[$idx]:-}" ;;
+    fips_addr) printf "%s" "${FIPS_ADDRS[$idx]:-}" ;;
+    fips_static_peers) printf "%s" "${FIPS_STATIC_PEERS[$idx]:-}" ;;
+    fips_bootstrap) printf "%s" "${FIPS_BOOTSTRAP[$idx]:-true}" ;;
+    fips_open_discovery) printf "%s" "${FIPS_OPEN_DISCOVERY[$idx]:-16}" ;;
+    app_key_npub) printf "%s" "${APP_KEY_NPUBS[$idx]:-}" ;;
     *) echo "unknown host field: $field" >&2; exit 1 ;;
   esac
 }
@@ -142,6 +161,12 @@ set_host_value() {
     err) ERRS[$idx]="$value" ;;
     pid) PIDS[$idx]="$value" ;;
     daemon_ssh_pid) DAEMON_SSH_PIDS[$idx]="$value" ;;
+    fips_port) FIPS_PORTS[$idx]="$value" ;;
+    fips_addr) FIPS_ADDRS[$idx]="$value" ;;
+    fips_static_peers) FIPS_STATIC_PEERS[$idx]="$value" ;;
+    fips_bootstrap) FIPS_BOOTSTRAP[$idx]="$value" ;;
+    fips_open_discovery) FIPS_OPEN_DISCOVERY[$idx]="$value" ;;
+    app_key_npub) APP_KEY_NPUBS[$idx]="$value" ;;
     *) echo "unknown mutable host field: $field" >&2; exit 1 ;;
   esac
 }
@@ -204,6 +229,12 @@ while [[ $# -gt 0 ]]; do
       ERRS+=("")
       PIDS+=("")
       DAEMON_SSH_PIDS+=("")
+      FIPS_PORTS+=("")
+      FIPS_ADDRS+=("")
+      FIPS_STATIC_PEERS+=("")
+      FIPS_BOOTSTRAP+=("")
+      FIPS_OPEN_DISCOVERY+=("")
+      APP_KEY_NPUBS+=("")
       ;;
     -h|--help)
       usage
@@ -313,6 +344,142 @@ remote_exec_with_timeout() {
   kill "$watchdog" 2>/dev/null || true
   wait "$watchdog" 2>/dev/null || true
   return "$status"
+}
+
+detect_local_fips_addr() {
+  local ip=""
+  if command -v nvpn >/dev/null 2>&1; then
+    ip="$(nvpn status --json 2>/dev/null | python3 -c 'import json,sys; print((json.load(sys.stdin).get("tunnel_ip") or "").split("/")[0])' 2>/dev/null || true)"
+  elif [[ -x "$HOME/src/nostr-vpn/target/debug/nvpn" ]]; then
+    ip="$("$HOME/src/nostr-vpn/target/debug/nvpn" status --json 2>/dev/null | python3 -c 'import json,sys; print((json.load(sys.stdin).get("tunnel_ip") or "").split("/")[0])' 2>/dev/null || true)"
+  fi
+  if [[ -z "$ip" && "$(uname -s)" == "Darwin" ]]; then
+    ip="$(ipconfig getifaddr en0 2>/dev/null || true)"
+  fi
+  if [[ -z "$ip" && "$(uname -s)" != "Darwin" ]]; then
+    ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  fi
+  printf "%s" "${ip:-127.0.0.1}"
+}
+
+detect_host_fips_addr() {
+  local label="$1"
+  local kind
+  local ssh_host
+  local key
+  local override
+  local ip=""
+  kind="$(host_value "$label" kind)"
+  ssh_host="$(host_value "$label" ssh)"
+  key="IRIS_DRIVE_E2E_FIPS_ADDR_$(env_key_suffix "$label")"
+  override="${!key:-}"
+  if [[ -n "$override" ]]; then
+    printf "%s" "${override%%/*}"
+    return 0
+  fi
+  if [[ "$ssh_host" == "local" ]]; then
+    detect_local_fips_addr
+    return 0
+  fi
+  if [[ "$kind" == "windows" ]]; then
+    ip="$(ssh "$ssh_host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -' <<'REMOTE_PS' 2>/dev/null || true
+$TunnelIp = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -eq 'nvpn' -and $_.IPAddress -like '10.44.*' } | Select-Object -First 1 -ExpandProperty IPAddress)
+if (-not $TunnelIp) {
+  $Nvpn = (Get-Command nvpn -ErrorAction SilentlyContinue).Source
+  if (-not $Nvpn) {
+    $Candidate = Join-Path $HOME "src\nostr-vpn\target\debug\nvpn.exe"
+    if (Test-Path $Candidate) { $Nvpn = $Candidate }
+  }
+  if ($Nvpn) {
+    try {
+      $Status = & $Nvpn status --json | ConvertFrom-Json
+      if ($Status.tunnel_ip) { $TunnelIp = (($Status.tunnel_ip -as [string]) -replace "/.*$", "") }
+    } catch {}
+  }
+}
+if (-not $TunnelIp) {
+  $TunnelIp = (Get-NetIPAddress -AddressFamily IPv4 |
+    Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
+    Select-Object -First 1 -ExpandProperty IPAddress)
+}
+if ($TunnelIp) { Write-Output $TunnelIp }
+REMOTE_PS
+)"
+  else
+    ip="$(ssh "$ssh_host" 'bash -se' <<'REMOTE_SH' 2>/dev/null || true
+set -Eeuo pipefail
+ip=""
+for candidate in \
+  "$(command -v nvpn 2>/dev/null || true)" \
+  "$HOME/src/nostr-vpn/target/debug/nvpn" \
+  "$HOME/src/nostr-vpn/target/aarch64-apple-darwin/debug/nvpn" \
+  "/Library/PrivilegedHelperTools/to.nostrvpn.nvpn"
+do
+  [[ -n "$candidate" && -x "$candidate" ]] || continue
+  ip="$("$candidate" status --json 2>/dev/null | python3 -c 'import json,sys; print((json.load(sys.stdin).get("tunnel_ip") or "").split("/")[0])' 2>/dev/null || true)"
+  [[ -n "$ip" ]] && break
+done
+if [[ -z "$ip" ]]; then
+  ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+fi
+printf '%s\n' "$ip"
+REMOTE_SH
+)"
+  fi
+  ip="${ip//$'\r'/}"
+  ip="$(printf "%s\n" "$ip" | awk 'NF { print $1; exit }')"
+  printf "%s" "${ip:-$ssh_host}"
+}
+
+configure_fips_static_hints() {
+  local mode
+  mode="$(printf "%s" "$STATIC_FIPS_HINTS" | tr '[:upper:]' '[:lower:]')"
+  case "$mode" in
+    ""|1|true|yes|on|auto) ;;
+    0|false|no|off|disabled)
+      return 0
+      ;;
+    *) echo "IRIS_DRIVE_E2E_STATIC_FIPS_HINTS must be true/false/auto" >&2; exit 2 ;;
+  esac
+
+  local i j label addr port pieces complete peer_key
+  for i in "${!LABELS[@]}"; do
+    label="${LABELS[$i]}"
+    port=$((FIPS_PORT_BASE + i))
+    set_host_value "$label" fips_port "$port"
+    addr="$(detect_host_fips_addr "$label")"
+    set_host_value "$label" fips_addr "$addr"
+  done
+
+  for i in "${!LABELS[@]}"; do
+    label="${LABELS[$i]}"
+    pieces=()
+    complete=1
+    for j in "${!LABELS[@]}"; do
+      [[ "$i" == "$j" ]] && continue
+      addr="$(host_value "${LABELS[$j]}" fips_addr)"
+      port="$(host_value "${LABELS[$j]}" fips_port)"
+      if [[ -z "$addr" || -z "$port" ]]; then
+        complete=0
+        continue
+      fi
+      peer_key="$(host_value "${LABELS[$j]}" app_key_npub)"
+      peer_key="${peer_key:-${LABELS[$j]}}"
+      pieces+=("$peer_key=$addr:$port")
+    done
+    if [[ ${#pieces[@]} -gt 0 ]]; then
+      local IFS=,
+      set_host_value "$label" fips_static_peers "${pieces[*]}"
+      if [[ "$complete" == "1" && ${#pieces[@]} -ge $((${#LABELS[@]} - 1)) ]]; then
+        set_host_value "$label" fips_bootstrap "false"
+        set_host_value "$label" fips_open_discovery "0"
+      else
+        set_host_value "$label" fips_bootstrap "true"
+        set_host_value "$label" fips_open_discovery "16"
+      fi
+      echo "static FIPS hints for $label: $(host_value "$label" fips_static_peers)"
+    fi
+  done
 }
 
 setup_host() {
@@ -537,16 +704,26 @@ owner_profile_roster_ops_b64() {
   if [[ "$kind" == "windows" ]]; then
     script="
 \$config = $(ps_quote "$config")
-\$text = Get-Content -LiteralPath (Join-Path \$config 'config.toml') -Raw
-\$match = [regex]::Match(\$text, '(?s)\\[\\[profile\\.profile_roster_ops\\]\\].*?(?=\\r?\\n\\[\\[drives\\]\\])')
-if (-not \$match.Success) { throw 'owner profile roster ops block not found' }
-[Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(\$match.Value))
+\$sidecar = Join-Path \$config 'profile-roster-events.json'
+if (Test-Path -LiteralPath \$sidecar) {
+  [Convert]::ToBase64String([IO.File]::ReadAllBytes(\$sidecar))
+} else {
+  \$text = Get-Content -LiteralPath (Join-Path \$config 'config.toml') -Raw
+  \$match = [regex]::Match(\$text, '(?s)\\[\\[profile\\.profile_roster_ops\\]\\].*?(?=\\r?\\n\\[\\[drives\\]\\])')
+  if (-not \$match.Success) { throw 'owner profile roster ops block not found' }
+  [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes(\$match.Value))
+}
 "
   else
     script="
 set -Eeuo pipefail
 config=$(sh_quote "$config")
-awk 'BEGIN{copy=0} /^\\[\\[profile\\.profile_roster_ops\\]\\]/{copy=1} /^\\[\\[drives\\]\\]/{copy=0} copy{print}' \"\$config/config.toml\" | base64 | tr -d '\\n'
+sidecar=\"\$config/profile-roster-events.json\"
+if [[ -f \"\$sidecar\" ]]; then
+  base64 <\"\$sidecar\" | tr -d '\\n'
+else
+  awk 'BEGIN{copy=0} /^\\[\\[profile\\.profile_roster_ops\\]\\]/{copy=1} /^\\[\\[drives\\]\\]/{copy=0} copy{print}' \"\$config/config.toml\" | base64 | tr -d '\\n'
+fi
 "
   fi
   remote_exec "$label" "$script" | tr -d '\r\n'
@@ -555,6 +732,7 @@ awk 'BEGIN{copy=0} /^\\[\\[profile\\.profile_roster_ops\\]\\]/{copy=1} /^\\[\\[d
 sideload_profile_roster_ops() {
   local label="$1"
   local roster_ops_b64="$2"
+  local owner_profile_id="$3"
   local kind
   local config
   local script
@@ -564,32 +742,62 @@ sideload_profile_roster_ops() {
     script="
 \$config = $(ps_quote "$config")
 \$path = Join-Path \$config 'config.toml'
+\$ownerProfileId = $(ps_quote "$owner_profile_id")
 \$rosterOps = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($(ps_quote "$roster_ops_b64")))
 \$text = Get-Content -LiteralPath \$path -Raw
 \$text = \$text.Replace('authorization_state = \"awaiting_approval\"', 'authorization_state = \"authorized\"')
+\$text = [regex]::Replace(\$text, '(?m)^(profile_id\\s*=\\s*)\"[^\"]+\"', { param(\$m) \$m.Groups[1].Value + [char]34 + \$ownerProfileId + [char]34 }, 1)
+\$text = [regex]::Replace(\$text, '(?m)^(root_scope_id\\s*=\\s*)\"[^\"]+\"', { param(\$m) \$m.Groups[1].Value + [char]34 + \$ownerProfileId + [char]34 })
+\$text = [regex]::Replace(\$text, '(?ms)^\\[profile\\.outbound_app_key_link_request\\]\\r?\\n.*?(?=^\\[)', '', 1)
 \$lf = [string][char]10
-\$pattern = '(?s)\\r?\\n\\[\\[profile\\.profile_roster_ops\\]\\].*?(?=\\r?\\n\\[\\[drives\\]\\])'
-if ([regex]::IsMatch(\$text, \$pattern)) {
-  \$text = [regex]::Replace(\$text, \$pattern, (\$lf + \$rosterOps + \$lf), 1)
+\$trimmed = \$rosterOps.TrimStart()
+\$utf8 = [Text.UTF8Encoding]::new(\$false)
+if (\$trimmed.StartsWith('{') -and \$trimmed.Contains('\"events\"')) {
+  [IO.File]::WriteAllText((Join-Path \$config 'profile-roster-events.json'), \$rosterOps, \$utf8)
 } else {
-  \$text = \$text.Replace(\$lf + '[[drives]]', \$lf + \$rosterOps + \$lf + '[[drives]]')
+  \$pattern = '(?s)\\r?\\n\\[\\[profile\\.profile_roster_ops\\]\\].*?(?=\\r?\\n\\[\\[drives\\]\\])'
+  if ([regex]::IsMatch(\$text, \$pattern)) {
+    \$text = [regex]::Replace(\$text, \$pattern, (\$lf + \$rosterOps + \$lf), 1)
+  } else {
+    \$text = \$text.Replace(\$lf + '[[drives]]', \$lf + \$rosterOps + \$lf + '[[drives]]')
+  }
 }
-Set-Content -LiteralPath \$path -Value \$text -NoNewline
+[IO.File]::WriteAllText(\$path, \$text, \$utf8)
 "
   else
     script="
 set -Eeuo pipefail
-CONFIG_PATH=$(sh_quote "$config") ROSTER_OPS_B64=$(sh_quote "$roster_ops_b64") python3 - <<'PY'
-import base64, os, re
+CONFIG_PATH=$(sh_quote "$config") ROSTER_OPS_B64=$(sh_quote "$roster_ops_b64") OWNER_PROFILE_ID=$(sh_quote "$owner_profile_id") python3 - <<'PY'
+import base64, json, os, re
 from pathlib import Path
 
 path = Path(os.environ['CONFIG_PATH']) / 'config.toml'
 roster_ops = base64.b64decode(os.environ['ROSTER_OPS_B64']).decode()
+owner_profile_id = os.environ['OWNER_PROFILE_ID']
 text = path.read_text()
 text = text.replace('authorization_state = \"awaiting_approval\"', 'authorization_state = \"authorized\"')
-text = re.sub(r'\\n\\[\\[profile\\.profile_roster_ops\\]\\].*?(?=\\n\\[\\[drives\\]\\])', '\\n' + roster_ops + '\\n', text, count=1, flags=re.S)
-if '[[profile.profile_roster_ops]]' not in text:
-    text = text.replace('\\n[[drives]]', '\\n' + roster_ops + '\\n[[drives]]', 1)
+text = re.sub(
+    r'(?m)^(profile_id\\s*=\\s*)\"[^\"]+\"',
+    lambda match: f'{match.group(1)}\"{owner_profile_id}\"',
+    text,
+    count=1,
+)
+text = re.sub(
+    r'(?m)^(root_scope_id\\s*=\\s*)\"[^\"]+\"',
+    lambda match: f'{match.group(1)}\"{owner_profile_id}\"',
+    text,
+)
+text = re.sub(r'(?ms)^\\[profile\\.outbound_app_key_link_request\\]\\n.*?(?=^\\[)', '', text, count=1)
+try:
+    parsed = json.loads(roster_ops)
+except json.JSONDecodeError:
+    parsed = None
+if isinstance(parsed, dict) and isinstance(parsed.get('events'), list):
+    (path.parent / 'profile-roster-events.json').write_text(roster_ops)
+else:
+    text = re.sub(r'\\n\\[\\[profile\\.profile_roster_ops\\]\\].*?(?=\\n\\[\\[drives\\]\\])', '\\n' + roster_ops + '\\n', text, count=1, flags=re.S)
+    if '[[profile.profile_roster_ops]]' not in text:
+        text = text.replace('\\n[[drives]]', '\\n' + roster_ops + '\\n[[drives]]', 1)
 path.write_text(text)
 PY
 "
@@ -628,6 +836,11 @@ start_daemon() {
   local ssh_host
   local daemon_ssh_pid
   local windows_cloud_root
+  local fips_port
+  local fips_addr
+  local fips_static_peers
+  local fips_bootstrap
+  local fips_open_discovery
   kind="$(host_value "$label" kind)"
   idrive="$(host_value "$label" idrive)"
   config="$(host_value "$label" config)"
@@ -635,6 +848,11 @@ start_daemon() {
   err="$(host_value "$label" err)"
   work="$(host_value "$label" work)"
   pidfile="$(host_value "$label" pid)"
+  fips_port="$(host_value "$label" fips_port)"
+  fips_addr="$(host_value "$label" fips_addr)"
+  fips_static_peers="$(host_value "$label" fips_static_peers)"
+  fips_bootstrap="$(host_value "$label" fips_bootstrap)"
+  fips_open_discovery="$(host_value "$label" fips_open_discovery)"
   if [[ "$kind" == "windows" ]]; then
     windows_cloud_root="${IRIS_DRIVE_E2E_WINDOWS_CLOUD_ROOT:-off}"
     if [[ "${IRIS_DRIVE_E2E_WINDOWS_PROJECTION_MUTATIONS:-0}" == "1" && -z "${IRIS_DRIVE_E2E_WINDOWS_CLOUD_ROOT+x}" ]]; then
@@ -655,6 +873,14 @@ start_daemon() {
 \$err = $(ps_quote "$err")
 \$pidFile = $(ps_quote "$pidfile")
 \$env:IRIS_DRIVE_WINDOWS_CLOUD_ROOT = $(ps_quote "$windows_cloud_root")
+\$env:IRIS_DRIVE_FIPS_UDP_BIND_ADDR = $(ps_quote "${fips_port:+0.0.0.0:$fips_port}")
+\$env:IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR = $(ps_quote "${fips_addr:+$fips_addr:$fips_port}")
+\$env:IRIS_DRIVE_FIPS_UDP_PUBLIC = 'false'
+\$env:IRIS_DRIVE_FIPS_ENABLE_LAN_DISCOVERY = 'true'
+\$env:IRIS_DRIVE_FIPS_ENABLE_WEBRTC = 'true'
+\$env:IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP = $(ps_quote "$fips_bootstrap")
+\$env:IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING = $(ps_quote "$fips_open_discovery")
+\$env:IRIS_DRIVE_FIPS_STATIC_PEERS = $(ps_quote "$fips_static_peers")
 if (Test-Path -LiteralPath \$pidFile) {
   \$old = Get-Content -LiteralPath \$pidFile -ErrorAction SilentlyContinue
   if (\$old) { Stop-Process -Id ([int]\$old) -Force -ErrorAction SilentlyContinue }
@@ -711,9 +937,27 @@ case \" \$mount_labels \" in
     ;;
 esac
 if (( mount_enabled )); then
-  nohup \"\$idrive\" --config-dir \"\$config\" daemon --watch-debounce-ms 100 --gateway-port 0 --mount --mountpoint \"\$work\"$(daemon_relay_args_posix) >\"\$log\" 2>\"\$err\" < /dev/null &
+  nohup env \\
+    IRIS_DRIVE_FIPS_UDP_BIND_ADDR=$(sh_quote "${fips_port:+0.0.0.0:$fips_port}") \\
+    IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=$(sh_quote "${fips_addr:+$fips_addr:$fips_port}") \\
+    IRIS_DRIVE_FIPS_UDP_PUBLIC=false \\
+    IRIS_DRIVE_FIPS_ENABLE_LAN_DISCOVERY=true \\
+    IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true \\
+    IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=$(sh_quote "$fips_bootstrap") \\
+    IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING=$(sh_quote "$fips_open_discovery") \\
+    IRIS_DRIVE_FIPS_STATIC_PEERS=$(sh_quote "$fips_static_peers") \\
+    \"\$idrive\" --config-dir \"\$config\" daemon --watch-debounce-ms 100 --gateway-port 0 --mount --mountpoint \"\$work\"$(daemon_relay_args_posix) >\"\$log\" 2>\"\$err\" < /dev/null &
 else
-  nohup \"\$idrive\" --config-dir \"\$config\" daemon --watch-debounce-ms 100 --gateway-port 0$(daemon_relay_args_posix) >\"\$log\" 2>\"\$err\" < /dev/null &
+  nohup env \\
+    IRIS_DRIVE_FIPS_UDP_BIND_ADDR=$(sh_quote "${fips_port:+0.0.0.0:$fips_port}") \\
+    IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=$(sh_quote "${fips_addr:+$fips_addr:$fips_port}") \\
+    IRIS_DRIVE_FIPS_UDP_PUBLIC=false \\
+    IRIS_DRIVE_FIPS_ENABLE_LAN_DISCOVERY=true \\
+    IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true \\
+    IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=$(sh_quote "$fips_bootstrap") \\
+    IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING=$(sh_quote "$fips_open_discovery") \\
+    IRIS_DRIVE_FIPS_STATIC_PEERS=$(sh_quote "$fips_static_peers") \\
+    \"\$idrive\" --config-dir \"\$config\" daemon --watch-debounce-ms 100 --gateway-port 0$(daemon_relay_args_posix) >\"\$log\" 2>\"\$err\" < /dev/null &
 fi
 echo \$! >\"\$pidfile\"
 "
@@ -1301,6 +1545,20 @@ all_have_direct_peer() {
   done
 }
 
+all_have_roster_peers() {
+  local label status
+  local expected_peers
+  expected_peers=$((${#LABELS[@]} - 1))
+  for label in "${LABELS[@]}"; do
+    status="$(idrive_cmd "$label" status 2>/dev/null || true)"
+    jq -e --argjson expected "$expected_peers" '
+      .network.fips.running == true and
+      .network.fips.fresh == true and
+      (.network.fips.roster_peer_count // 0) >= $expected
+    ' >/dev/null 2>&1 <<<"$status" || return 1
+  done
+}
+
 wait_for_snapshot() {
   local expected="$1"
   local label="$2"
@@ -1766,6 +2024,7 @@ echo "initializing owner on $owner_label"
 owner_json="$(idrive_cmd "$owner_label" init --label "$owner_label")"
 owner_profile_id="$(jq -r '.profile_id' <<<"$owner_json")"
 admin_app_key_npub="$(jq -r '.current_app_key_npub' <<<"$owner_json")"
+set_host_value "$owner_label" app_key_npub "$admin_app_key_npub"
 invite_json="$(idrive_cmd "$owner_label" app-keys invite)"
 invite_url="$(jq -r '.url' <<<"$invite_json")"
 invite_admin_app_key_npub="$(jq -r '.admin_app_key_npub' <<<"$invite_json")"
@@ -1785,6 +2044,7 @@ for label in "${LABELS[@]}"; do
   echo "requesting invite-based link for $label"
   link_json="$(idrive_cmd "$label" app-keys request "$invite_url" --label "$label")"
   linked_app_key_npub="$(jq -r '.current_app_key_npub' <<<"$link_json")"
+  set_host_value "$label" app_key_npub "$linked_app_key_npub"
   request_url="$(jq -r '.app_key_link_request.url' <<<"$link_json")"
   request_profile_id="$(jq -r '.app_key_link_request.profile_id' <<<"$link_json")"
   request_admin_app_key_npub="$(jq -r '.app_key_link_request.admin_app_key_npub' <<<"$link_json")"
@@ -1814,9 +2074,11 @@ if [[ "$SIDELOAD_APPKEYS" == "1" ]]; then
     if [[ "$label" == "$owner_label" ]]; then
       continue
     fi
-    sideload_profile_roster_ops "$label" "$roster_ops_b64"
+    sideload_profile_roster_ops "$label" "$roster_ops_b64" "$owner_profile_id"
   done
 fi
+
+configure_fips_static_hints
 
 for label in "${LABELS[@]}"; do
   start_daemon "$label"
@@ -1824,7 +2086,7 @@ done
 
 run_step "authorization" wait_until "all devices authorized" all_authorized
 run_step "fresh daemons" wait_until "all daemon statuses fresh" all_fresh
-run_step "direct FIPS peer discovery" wait_until "every device has a direct peer" all_have_direct_peer
+run_step "FIPS roster readiness" wait_until "every device has the full roster" all_have_roster_peers
 
 run_step "initial seed writes" run_for_all_labels_parallel write_initial_seed_files
 
