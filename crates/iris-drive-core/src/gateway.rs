@@ -1356,4 +1356,6 @@ pub fn local_nhash_url(port: u16, nhash: &str, filename_hint: Option<&str>) -> S
 #[cfg(test)]
 mod caldav_tests;
 #[cfg(test)]
+mod public_blossom_tests;
+#[cfg(test)]
 mod tests;

@@ -20,7 +20,7 @@ crates/iris-drive-core/src/calendar.rs 1050 Calendar import/export and CalDAV he
 crates/iris-drive-core/src/config.rs 1370 Config loading, migration, and env plumbing are legacy monolith pending section split.
 crates/iris-drive-core/src/daemon/tests/mod.rs 1020 Daemon integration coverage currently shares setup helpers in one module; pending scenario/helper split.
 crates/iris-drive-core/src/direct_root_transport.rs 2708 Direct-root sync transport includes targeted state-reply hardening for v0.1.16; pending protocol/state split.
-crates/iris-drive-core/src/gateway.rs 1360 Local gateway routing and response hardening now include the CalDAV dispatcher; pending route-module split.
+crates/iris-drive-core/src/gateway.rs 1361 Local gateway routing and response hardening now include CalDAV and public Blossom test module registration; pending route-module split.
 crates/iris-drive-core/src/gateway/tests.rs 1100 Local gateway route coverage includes mixed browser/API/WebDAV scenarios; pending route test-module split.
 crates/iris-drive-core/src/nostr_identity.rs 2100 NostrIdentity authority shim needs a later roster-event-projection module split.
 crates/iris-drive-core/src/profile.rs 2490 Profile create, recovery, admission, projection guards, DCK flows, device labels, device rename, and manual join requests need a later lifecycle/helper split.
