@@ -494,6 +494,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                 path,
             } => {
                 let path = normalize_provider_path(&path)?;
+                let deleted_paths = provider_delete_tombstone_paths(&provider, &path).await?;
                 let phase = std::time::Instant::now();
                 delete_provider_path(&provider, &path).await?;
                 tracing::debug!(
@@ -505,10 +506,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     &provider,
                     &path,
                     tombstone_base_root.clone(),
-                    provider_mutation_tombstone_paths(
-                        staged_root.as_ref(),
-                        BTreeSet::from([path.clone()]),
-                    ),
+                    provider_mutation_tombstone_paths(staged_root.as_ref(), deleted_paths),
                 )
                 .await?;
             }
@@ -855,6 +853,29 @@ pub(crate) async fn delete_provider_path(
         }
     }
     Ok(())
+}
+
+async fn provider_delete_tombstone_paths(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    path: &str,
+) -> Result<BTreeSet<String>> {
+    let mut tombstone_paths = BTreeSet::from([path.to_string()]);
+    let mut stack = vec![path.to_string()];
+    while let Some(current) = stack.pop() {
+        let item = match provider.item(&current).await {
+            Ok(item) => item,
+            Err(hashtree_provider::ProviderError::NotFound) => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if item.kind != ItemKind::Directory {
+            continue;
+        }
+        for child in provider.read_dir(&current).await? {
+            tombstone_paths.insert(child.id.clone());
+            stack.push(child.id);
+        }
+    }
+    Ok(tombstone_paths)
 }
 
 pub(crate) async fn rename_provider_path(

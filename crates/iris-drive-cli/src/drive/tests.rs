@@ -205,6 +205,81 @@ fn provider_delete_directory_removes_tree() {
 }
 
 #[test]
+fn provider_delete_directory_tombstones_foreign_children() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let (_account, remote, remote_meta) = init_config_with_remote_device(config_dir.path());
+    mark_daemon_live(config_dir.path());
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+
+    let remote_root = runtime.block_on(async {
+        let daemon = Daemon::open(config_dir.path()).unwrap();
+        let remote_dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(remote_dir.path().join("folder")).unwrap();
+        std::fs::write(
+            remote_dir.path().join("folder").join("child.txt"),
+            b"from remote",
+        )
+        .unwrap();
+        iris_drive_core::indexer::index_dir_with_history_and_meta(
+            daemon.tree(),
+            remote_dir.path(),
+            None,
+            remote_meta.created_at,
+            Some(&remote_meta),
+        )
+        .await
+        .unwrap()
+    });
+
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
+    let mut drive = config.drive(PRIMARY_DRIVE_ID).unwrap().clone();
+    drive.app_key_roots.insert(
+        remote.clone(),
+        AppKeyRootRef::from_meta(
+            remote_root.to_string(),
+            remote_meta.created_at,
+            &remote_meta,
+        ),
+    );
+    config.upsert_drive(drive);
+    config.save(config_path_in(config_dir.path())).unwrap();
+
+    cmd_provider(
+        config_dir.path(),
+        ProviderCmd::Delete {
+            base_root_cid: None,
+            path: "folder".into(),
+        },
+    )
+    .unwrap();
+
+    runtime.block_on(async {
+        let daemon = Daemon::open(config_dir.path()).unwrap();
+        let merged = iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
+            .await
+            .unwrap();
+        assert!(
+            merged
+                .view
+                .files
+                .iter()
+                .all(|entry| entry.path != "folder/child.txt")
+        );
+        assert!(
+            merged
+                .view
+                .suppressed_by_tombstone
+                .iter()
+                .any(|path| path == "folder/child.txt"),
+            "directory delete should tombstone remote-visible children: {merged:#?}"
+        );
+    });
+}
+
+#[test]
 fn provider_write_rejects_probable_os_placeholder_collision() {
     let config_dir = tempfile::tempdir().unwrap();
     init_config(config_dir.path());
