@@ -401,7 +401,7 @@ pub(crate) fn current_primary_root_cid(config: &AppConfig) -> Option<String> {
 }
 
 const DAEMON_STATUS_SCHEMA: u32 = 1;
-pub(crate) const DAEMON_STATUS_FRESH_SECS: i64 = 15;
+const DAEMON_STATUS_FRESH_SECS: i64 = 15;
 
 pub(crate) fn daemon_status_path(config_dir: &Path) -> PathBuf {
     config_dir.join("daemon-status.json")

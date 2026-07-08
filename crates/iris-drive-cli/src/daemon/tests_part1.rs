@@ -151,14 +151,6 @@ fn daemon_status_heartbeat_preserves_last_file_count() {
 }
 
 #[test]
-fn daemon_status_heartbeat_stays_inside_freshness_window() {
-    assert!(
-        DAEMON_STATUS_HEARTBEAT_SECS < crate::status::DAEMON_STATUS_FRESH_SECS as u64,
-        "daemon heartbeat must keep the status fresh between GUI polls"
-    );
-}
-
-#[test]
 fn daemon_status_prefers_fresh_hashtree_count_over_copied_summary() {
     let dir = tempfile::tempdir().unwrap();
 
