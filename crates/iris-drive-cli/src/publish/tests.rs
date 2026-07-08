@@ -664,7 +664,7 @@ fn direct_root_publish_cache_can_be_invalidated_for_provider_updates() {
 }
 
 const _: () = {
-    assert!(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS >= DIRECT_ROOT_HINT_REPEAT_INTERVAL_SECS);
+    assert!(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS <= DIRECT_ROOT_REPUBLISH_INTERVAL_SECS);
 };
 
 #[test]
