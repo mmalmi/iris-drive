@@ -426,12 +426,12 @@ impl Default for FipsTransportSettings {
         Self {
             enable_udp: true,
             enable_webrtc: target_allows_default_fips_webrtc(std::env::consts::OS),
-            enable_lan_discovery: mobile_target_allows_ambient_fips_discovery(std::env::consts::OS),
+            enable_lan_discovery: true,
             enable_mesh_pubsub: true,
             udp_bind_addr: None,
             udp_public: false,
             udp_external_addr: None,
-            share_local_candidates: mobile_target_allows_ambient_fips_discovery(
+            share_local_candidates: target_allows_default_local_candidate_sharing(
                 std::env::consts::OS,
             ),
             static_peer_hints: Vec::new(),
@@ -484,7 +484,7 @@ impl FipsTransportSettings {
     }
 }
 
-fn mobile_target_allows_ambient_fips_discovery(target_os: &str) -> bool {
+fn target_allows_default_local_candidate_sharing(target_os: &str) -> bool {
     !matches!(target_os, "android" | "ios")
 }
 
