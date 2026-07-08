@@ -917,6 +917,26 @@ fn direct_root_incoming_state_request_replies_are_throttled_per_peer() {
 }
 
 #[test]
+fn direct_root_current_state_invalidation_allows_fresh_request_reply() {
+    let mut exchange = DirectRootExchange::default();
+    let now = std::time::Instant::now();
+
+    assert!(exchange.should_reply_state_request("scope", "peer-a", now));
+    assert!(!exchange.should_reply_state_request(
+        "scope",
+        "peer-a",
+        now + std::time::Duration::from_secs(1),
+    ));
+
+    exchange.invalidate_current_sync_events_cache();
+    assert!(exchange.should_reply_state_request(
+        "scope",
+        "peer-a",
+        now + std::time::Duration::from_secs(2),
+    ));
+}
+
+#[test]
 fn direct_root_publish_includes_profile_roster_ops() {
     let config_dir = tempfile::tempdir().unwrap();
     let account = Profile::create(config_dir.path(), Some("native".to_string())).unwrap();

@@ -100,6 +100,7 @@ struct CachedCurrentSyncEvents {
 impl DirectRootExchange {
     pub(crate) fn invalidate_current_sync_events_cache(&mut self) {
         self.current_sync_events_cache = None;
+        self.state_request_reply_times.clear();
     }
 
     async fn subscribe_profile_stream(
