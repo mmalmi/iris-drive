@@ -119,7 +119,10 @@ case "$(uname -s)" in
     if ! bool_true "${IRIS_DRIVE_RELEASE_GATE_MACOS_SKIP:-0}" \
       && [[ "${IRIS_DRIVE_RELEASE_GATE_MACOS:-1}" != "0" ]]; then
       run just macos-build
-      run env IRIS_DRIVE_MACOS_SIGNING="${IRIS_DRIVE_MACOS_SIGNING:-none}" just smoke-macos
+      run env \
+        IRIS_DRIVE_MACOS_SIGNING="${IRIS_DRIVE_MACOS_SIGNING:-none}" \
+        IRIS_DRIVE_DISABLE_DAEMON_SERVICE="${IRIS_DRIVE_RELEASE_GATE_MACOS_DAEMON_SERVICE:-true}" \
+        just smoke-macos
       if idle_cpu_gate_enabled; then
         run ./scripts/macos-dev-app.sh run
         run env \
