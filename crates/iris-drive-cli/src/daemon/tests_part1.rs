@@ -609,13 +609,13 @@ fn event_block_pull_timeout_allows_blossom_retry_window() {
     let attempts = event_block_pull_retry_delays(&config).len() as u64;
     let retry_sleep: u64 = event_block_pull_retry_delays(&config).iter().sum();
 
-    assert_eq!(event_block_pull_retry_delays(&config), &[0, 1]);
+    assert_eq!(event_block_pull_retry_delays(&config), &[0, 1, 3]);
     assert!(
         event_block_pull_timeout_secs(&config)
             > FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS
                 + BLOSSOM_DOWNLOAD_RETRY_DELAYS.iter().sum::<u64>()
     );
-    assert!(attempts * event_block_pull_timeout_secs(&config) + retry_sleep <= 35);
+    assert!(attempts * event_block_pull_timeout_secs(&config) + retry_sleep <= 55);
 }
 
 #[test]

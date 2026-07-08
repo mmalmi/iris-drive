@@ -6,6 +6,7 @@ pub(crate) enum EventApplyOutcome {
 }
 
 const ROOT_APPLY_FOLLOWUP_COALESCE_MS: u64 = 750;
+const ROOT_APPLY_STATE_REPLY_SETTLE_MS: u64 = 500;
 const DIRECT_ROOT_STATE_REQUEST_MIN_INTERVAL_SECS: u64 = 5;
 
 static DIRECT_ROOT_STATE_REQUEST_THROTTLE: std::sync::OnceLock<
@@ -392,6 +393,15 @@ pub(crate) fn spawn_root_apply_followup(
                 true,
             )
             .await;
+            if settle_after_direct_root_state_request(
+                &config_dir,
+                expected_projection_root_key.as_ref(),
+                &root_cid,
+            )
+            .await
+            {
+                return;
+            }
             let mut last_error = None;
             for delay_secs in event_block_pull_retry_delays(&config) {
                 if root_apply_followup_is_stale(&config_dir, expected_projection_root_key.as_ref())
@@ -444,6 +454,22 @@ pub(crate) fn spawn_root_apply_followup(
                             })
                         );
                         last_error = Some(error);
+                        request_latest_direct_root_state(
+                            &config,
+                            fips_blocks.as_deref(),
+                            projection_event,
+                            true,
+                        )
+                        .await;
+                        if settle_after_direct_root_state_request(
+                            &config_dir,
+                            expected_projection_root_key.as_ref(),
+                            &root_cid,
+                        )
+                        .await
+                        {
+                            return;
+                        }
                     }
                 }
             }
@@ -547,6 +573,29 @@ pub(crate) fn spawn_root_apply_followup(
             );
         }
     }))
+}
+
+async fn settle_after_direct_root_state_request(
+    config_dir: &Path,
+    expected_projection_root_key: Option<&RootApplyFollowupKey>,
+    root_cid: &str,
+) -> bool {
+    tokio::time::sleep(std::time::Duration::from_millis(
+        ROOT_APPLY_STATE_REPLY_SETTLE_MS,
+    ))
+    .await;
+    if root_apply_followup_is_stale(config_dir, expected_projection_root_key) {
+        println!(
+            "{}",
+            json!({
+                "event": "root_apply_followup_skipped_stale",
+                "root_cid": root_cid,
+            })
+        );
+        true
+    } else {
+        false
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
