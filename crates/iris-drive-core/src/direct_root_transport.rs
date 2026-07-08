@@ -267,6 +267,8 @@ impl DirectRootExchange {
             .transpose()
             .map_err(|error| format!("encoding direct-root hint: {error}"))?;
         let attempts = direct_root_publish_attempts_for_source(&event.key, source);
+        let publish_targeted_reply_over_mesh =
+            should_publish_targeted_direct_root_reply_over_mesh(source);
         for attempt in 0..attempts {
             let publish_full_frame =
                 should_publish_direct_root_full_frame(&event.key, source, attempt);
@@ -342,7 +344,7 @@ impl DirectRootExchange {
                     }
                 }
             }
-            if target_peer.is_some() {
+            if target_peer.is_some() && !publish_targeted_reply_over_mesh {
                 continue;
             }
             if publish_full_frame {
@@ -1141,6 +1143,14 @@ fn should_publish_direct_root_full_frame(
         };
     }
     true
+}
+
+fn should_publish_targeted_direct_root_reply_over_mesh(source: DirectRootPublishSource) -> bool {
+    matches!(
+        source,
+        DirectRootPublishSource::StateRequestReply
+            | DirectRootPublishSource::CachedStateRequestReply
+    )
 }
 
 pub fn encode_direct_root_hint_frame(
@@ -2369,6 +2379,25 @@ mod tests {
             DirectRootPublishSource::StateRequestReply,
             Some("peer-a"),
             now + Duration::from_millis(500)
+        ));
+    }
+
+    #[test]
+    fn direct_root_state_request_replies_also_use_mesh_for_targeted_recovery() {
+        assert!(should_publish_targeted_direct_root_reply_over_mesh(
+            DirectRootPublishSource::StateRequestReply
+        ));
+        assert!(should_publish_targeted_direct_root_reply_over_mesh(
+            DirectRootPublishSource::CachedStateRequestReply
+        ));
+        assert!(!should_publish_targeted_direct_root_reply_over_mesh(
+            DirectRootPublishSource::LocalCurrent
+        ));
+        assert!(!should_publish_targeted_direct_root_reply_over_mesh(
+            DirectRootPublishSource::LocalHeartbeat
+        ));
+        assert!(!should_publish_targeted_direct_root_reply_over_mesh(
+            DirectRootPublishSource::CachedRelay
         ));
     }
 

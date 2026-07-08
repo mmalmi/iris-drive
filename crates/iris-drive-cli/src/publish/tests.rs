@@ -891,10 +891,33 @@ fn direct_root_state_request_reply_throttle_is_per_target_peer() {
 }
 
 #[test]
+fn direct_root_state_request_replies_also_use_mesh_for_targeted_recovery() {
+    assert!(should_publish_targeted_direct_root_reply_over_mesh(
+        DirectRootPublishSource::StateRequestReply
+    ));
+    assert!(should_publish_targeted_direct_root_reply_over_mesh(
+        DirectRootPublishSource::CachedStateRequestReply
+    ));
+    assert!(!should_publish_targeted_direct_root_reply_over_mesh(
+        DirectRootPublishSource::LocalCurrent
+    ));
+    assert!(!should_publish_targeted_direct_root_reply_over_mesh(
+        DirectRootPublishSource::LocalHeartbeat
+    ));
+    assert!(!should_publish_targeted_direct_root_reply_over_mesh(
+        DirectRootPublishSource::CachedRelay
+    ));
+}
+
+#[test]
 fn direct_root_periodic_state_requests_are_throttled() {
     let mut exchange = DirectRootExchange::default();
     let now = std::time::Instant::now();
 
+    assert_eq!(
+        DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS, 10,
+        "state repair requests should keep pace with the 10s peer refresh loop"
+    );
     assert!(exchange.should_publish_state_request("scope", now));
     assert!(!exchange.should_publish_state_request(
         "scope",

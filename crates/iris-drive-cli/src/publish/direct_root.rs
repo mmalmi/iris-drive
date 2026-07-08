@@ -3,7 +3,7 @@ use iris_drive_core::{
     DirectRootHintFrame, DirectRootStateRequestFrame, DirectRootWireFrame, FipsMeshPubsubEvent,
 };
 
-const DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS: u64 = 60;
+const DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS: u64 = 10;
 const DIRECT_ROOT_HINT_REPEAT_INTERVAL_SECS: u64 = 30;
 const DIRECT_ROOT_HINT_CACHE_MAX_ENTRIES: usize = 2048;
 const DIRECT_ROOT_SEEN_FRAME_RETRY_INTERVAL_SECS: u64 = 30;
@@ -308,14 +308,38 @@ impl DirectRootExchange {
             .transpose()
             .context("encoding direct-root hint frame")?;
         let attempts = direct_root_publish_attempts_for_source(&event.key, source);
+        let publish_targeted_reply_over_mesh =
+            should_publish_targeted_direct_root_reply_over_mesh(source);
         for attempt in 0..attempts {
             let publish_full_frame =
                 should_publish_direct_root_full_frame(&event.key, source, attempt);
             if let Some(hint_bytes) = hint_bytes.as_ref() {
                 let (selected_app_peers, sent_app_peers) = if let Some(target_peer) = target_peer {
-                    sync.send_app_message(target_peer, DIRECT_ROOT_APP_TOPIC, hint_bytes.clone())
-                        .await?;
-                    (1, 1)
+                    match sync
+                        .send_app_message(target_peer, DIRECT_ROOT_APP_TOPIC, hint_bytes.clone())
+                        .await
+                    {
+                        Ok(()) => (1, 1),
+                        Err(error) if publish_targeted_reply_over_mesh => {
+                            println!(
+                                "{}",
+                                json!({
+                                    "event": "direct_root_app_hint_publish_error",
+                                    "topic": DIRECT_ROOT_APP_TOPIC,
+                                    "root_key": event.key.clone(),
+                                    "root_event_id": event.event_id.clone(),
+                                    "kind": event.kind,
+                                    "source": source.as_str(),
+                                    "attempt": attempt + 1,
+                                    "attempts": attempts,
+                                    "target_peer": target_peer,
+                                    "error": format!("{error:#}"),
+                                })
+                            );
+                            (1, 0)
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
                 } else {
                     let selected_app_peers = sync.authorized_peer_ids().await.len();
                     let sent_app_peers = sync
@@ -343,9 +367,31 @@ impl DirectRootExchange {
             }
             if publish_full_frame {
                 let (selected_app_peers, sent_app_peers) = if let Some(target_peer) = target_peer {
-                    sync.send_app_message(target_peer, DIRECT_ROOT_APP_TOPIC, bytes.clone())
-                        .await?;
-                    (1, 1)
+                    match sync
+                        .send_app_message(target_peer, DIRECT_ROOT_APP_TOPIC, bytes.clone())
+                        .await
+                    {
+                        Ok(()) => (1, 1),
+                        Err(error) if publish_targeted_reply_over_mesh => {
+                            println!(
+                                "{}",
+                                json!({
+                                    "event": "direct_root_app_publish_error",
+                                    "topic": DIRECT_ROOT_APP_TOPIC,
+                                    "root_key": event.key.clone(),
+                                    "root_event_id": event.event_id.clone(),
+                                    "kind": event.kind,
+                                    "source": source.as_str(),
+                                    "attempt": attempt + 1,
+                                    "attempts": attempts,
+                                    "target_peer": target_peer,
+                                    "error": format!("{error:#}"),
+                                })
+                            );
+                            (1, 0)
+                        }
+                        Err(error) => return Err(error.into()),
+                    }
                 } else {
                     let selected_app_peers = sync.authorized_peer_ids().await.len();
                     let sent_app_peers = sync
@@ -371,7 +417,7 @@ impl DirectRootExchange {
                     })
                 );
             }
-            if target_peer.is_some() {
+            if target_peer.is_some() && !publish_targeted_reply_over_mesh {
                 continue;
             }
             if publish_full_frame {
@@ -1329,6 +1375,14 @@ fn should_publish_direct_root_full_frame(
         };
     }
     true
+}
+
+fn should_publish_targeted_direct_root_reply_over_mesh(source: DirectRootPublishSource) -> bool {
+    matches!(
+        source,
+        DirectRootPublishSource::StateRequestReply
+            | DirectRootPublishSource::CachedStateRequestReply
+    )
 }
 
 fn direct_root_wire_frame_log_fields(
