@@ -1325,6 +1325,9 @@ fn direct_root_publish_attempts_for_source(key: &str, source: DirectRootPublishS
     {
         return 4;
     }
+    if source == DirectRootPublishSource::LocalHeartbeat && direct_root_cache_slot(key).is_some() {
+        return 2;
+    }
     if matches!(
         source,
         DirectRootPublishSource::LocalHeartbeat | DirectRootPublishSource::StateRequestReply

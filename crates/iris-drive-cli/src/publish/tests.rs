@@ -750,14 +750,14 @@ fn direct_root_publish_bursts_root_frames_only() {
 }
 
 #[test]
-fn direct_root_heartbeat_publishes_single_hints_with_local_throttle() {
+fn direct_root_heartbeat_publishes_bounded_hints_with_local_throttle() {
     let mut exchange = DirectRootExchange::default();
     let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
     let now = std::time::Instant::now();
 
     assert_eq!(
         direct_root_publish_attempts_for_source(key, DirectRootPublishSource::LocalHeartbeat),
-        1
+        2
     );
     assert!(should_publish_direct_root_hint(
         key,
