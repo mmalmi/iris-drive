@@ -42,6 +42,7 @@ Environment:
                                   Copy the owner profile roster snapshot into temp peer configs after approval
                                   so VM file-sync tests do not depend on public relay timing (default: 1).
   IRIS_DRIVE_E2E_IDLE_CPU_GATE    Sample every host daemon's idle CPU after convergence (default: 1).
+  IRIS_DRIVE_IDLE_CPU_WARMUP_SECS Override the post-workload idle CPU settle warmup (default: 90).
   IRIS_DRIVE_E2E_KEEP            Keep remote temp dirs/daemons when set to 1.
 USAGE
 }
@@ -1421,7 +1422,7 @@ idle_cpu_remote_timeout_secs() {
     printf "%s" "$IRIS_DRIVE_E2E_IDLE_CPU_TIMEOUT_SECS"
     return
   fi
-  local warmup="${IRIS_DRIVE_IDLE_CPU_WARMUP_SECS:-30}"
+  local warmup="${IRIS_DRIVE_IDLE_CPU_WARMUP_SECS:-90}"
   local duration="${IRIS_DRIVE_IDLE_CPU_DURATION_SECS:-60}"
   printf "%s" $((warmup + duration + 90))
 }
@@ -1438,7 +1439,7 @@ idle_cpu_gate_label() {
 \$repo = Join-Path \$HOME 'src\iris-drive'
 \$env:IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES = 'daemon'
 \$env:IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH = $(ps_quote "$config")
-\$env:IRIS_DRIVE_IDLE_CPU_WARMUP_SECS = $(ps_quote "${IRIS_DRIVE_IDLE_CPU_WARMUP_SECS:-30}")
+\$env:IRIS_DRIVE_IDLE_CPU_WARMUP_SECS = $(ps_quote "${IRIS_DRIVE_IDLE_CPU_WARMUP_SECS:-90}")
 \$env:IRIS_DRIVE_IDLE_CPU_DURATION_SECS = $(ps_quote "${IRIS_DRIVE_IDLE_CPU_DURATION_SECS:-60}")
 \$env:IRIS_DRIVE_IDLE_CPU_INTERVAL_SECS = $(ps_quote "${IRIS_DRIVE_IDLE_CPU_INTERVAL_SECS:-5}")
 \$env:IRIS_DRIVE_IDLE_CPU_DAEMON_MAX = $(ps_quote "${IRIS_DRIVE_IDLE_CPU_DAEMON_MAX:-10}")
@@ -1456,7 +1457,7 @@ set -Eeuo pipefail
 ${repo_line}
 export IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES=daemon
 export IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH=$(sh_quote "$config")
-export IRIS_DRIVE_IDLE_CPU_WARMUP_SECS=$(sh_quote "${IRIS_DRIVE_IDLE_CPU_WARMUP_SECS:-30}")
+export IRIS_DRIVE_IDLE_CPU_WARMUP_SECS=$(sh_quote "${IRIS_DRIVE_IDLE_CPU_WARMUP_SECS:-90}")
 export IRIS_DRIVE_IDLE_CPU_DURATION_SECS=$(sh_quote "${IRIS_DRIVE_IDLE_CPU_DURATION_SECS:-60}")
 export IRIS_DRIVE_IDLE_CPU_INTERVAL_SECS=$(sh_quote "${IRIS_DRIVE_IDLE_CPU_INTERVAL_SECS:-5}")
 export IRIS_DRIVE_IDLE_CPU_DAEMON_MAX=$(sh_quote "${IRIS_DRIVE_IDLE_CPU_DAEMON_MAX:-10}")
