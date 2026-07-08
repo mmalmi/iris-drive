@@ -44,6 +44,19 @@ import to.iris.drive.app.sync.IrisDriveSyncService
 import to.iris.drive.app.update.AndroidSelfUpdateManager
 import to.iris.drive.app.update.SelfUpdateActions
 
+internal const val ForegroundRefreshFastMs = 2_000L
+internal const val ForegroundRefreshIdleMs = 10_000L
+
+internal fun foregroundRefreshDelayMs(state: AppState): Long {
+    if (!state.isLoaded || !state.isSetupComplete || state.isAwaitingApproval || state.isRevoked) {
+        return ForegroundRefreshFastMs
+    }
+    if (state.profile?.inboundAppKeyLinkRequests?.isNotEmpty() == true) {
+        return ForegroundRefreshFastMs
+    }
+    return ForegroundRefreshIdleMs
+}
+
 class MainActivity : ComponentActivity() {
     private val stateFlow = MutableStateFlow(AppState(isLoaded = false))
     private val backupCheckProgressFlow = MutableStateFlow(BackupCheckProgress())
@@ -346,7 +359,7 @@ class MainActivity : ComponentActivity() {
                     refresh(::autoStartSyncIfNeeded)
                     refreshJob = lifecycleScope.launch {
                         while (true) {
-                            delay(2_000)
+                            delay(foregroundRefreshDelayMs(stateFlow.value))
                             refresh()
                         }
                     }
