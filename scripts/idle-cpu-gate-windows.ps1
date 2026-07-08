@@ -106,7 +106,8 @@ while ($true) {
 
 $summaryRoles = @{}
 $failures = New-Object System.Collections.Generic.List[string]
-$allRoles = @(($required + @($samples.Keys)) | Sort-Object -Unique)
+$sampleRoles = @($samples.Keys | ForEach-Object { [string]$_ })
+$allRoles = @((@($required) + $sampleRoles) | Sort-Object -Unique)
 foreach ($role in $allRoles) {
   $values = @($samples[$role])
   if ($values.Count -eq 0) {

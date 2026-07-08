@@ -390,7 +390,7 @@ pub(crate) fn spawn_root_apply_followup(
                 &config,
                 fips_blocks.as_deref(),
                 projection_event,
-                true,
+                false,
             )
             .await;
             if settle_after_direct_root_state_request(
