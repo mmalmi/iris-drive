@@ -1321,10 +1321,7 @@ fn direct_root_publish_attempts(key: &str) -> usize {
 }
 
 fn direct_root_publish_attempts_for_source(key: &str, source: DirectRootPublishSource) -> usize {
-    if matches!(
-        source,
-        DirectRootPublishSource::LocalHeartbeat | DirectRootPublishSource::StateRequestReply
-    ) && direct_root_cache_slot(key).is_some()
+    if source == DirectRootPublishSource::StateRequestReply && direct_root_cache_slot(key).is_some()
     {
         return 4;
     }

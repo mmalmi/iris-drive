@@ -664,8 +664,7 @@ fn direct_root_publish_cache_can_be_invalidated_for_provider_updates() {
 }
 
 const _: () = {
-    assert!(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS <= DIRECT_ROOT_REPUBLISH_INTERVAL_SECS);
-    assert!(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS <= 10);
+    assert!(DIRECT_ROOT_PERIODIC_ANNOUNCE_SECS >= DIRECT_ROOT_HINT_REPEAT_INTERVAL_SECS);
 };
 
 #[test]
@@ -751,14 +750,14 @@ fn direct_root_publish_bursts_root_frames_only() {
 }
 
 #[test]
-fn direct_root_heartbeat_retries_hinted_roots_with_local_throttle() {
+fn direct_root_heartbeat_publishes_single_hints_with_local_throttle() {
     let mut exchange = DirectRootExchange::default();
     let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
     let now = std::time::Instant::now();
 
     assert_eq!(
         direct_root_publish_attempts_for_source(key, DirectRootPublishSource::LocalHeartbeat),
-        4
+        1
     );
     assert!(should_publish_direct_root_hint(
         key,
@@ -768,11 +767,6 @@ fn direct_root_heartbeat_retries_hinted_roots_with_local_throttle() {
         key,
         DirectRootPublishSource::LocalHeartbeat,
         0
-    ));
-    assert!(!should_publish_direct_root_full_frame(
-        key,
-        DirectRootPublishSource::LocalHeartbeat,
-        3
     ));
     assert!(exchange.should_publish_candidate_key(key, DirectRootPublishSource::LocalCurrent, now));
     assert!(!exchange.should_publish_candidate_key(
