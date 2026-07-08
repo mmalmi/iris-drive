@@ -386,6 +386,22 @@ pub(crate) fn spawn_root_apply_followup(
                 );
                 return;
             }
+            request_latest_direct_root_state(
+                &config,
+                fips_blocks.as_deref(),
+                projection_event,
+                true,
+            )
+            .await;
+            if settle_after_direct_root_state_request(
+                &config_dir,
+                expected_projection_root_key.as_ref(),
+                &root_cid,
+            )
+            .await
+            {
+                return;
+            }
             let mut last_error = None;
             for delay_secs in event_block_pull_retry_delays(&config) {
                 if root_apply_followup_is_stale(&config_dir, expected_projection_root_key.as_ref())
