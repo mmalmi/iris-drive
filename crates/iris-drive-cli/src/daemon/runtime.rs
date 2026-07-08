@@ -11,6 +11,7 @@ fn write_runtime_daemon_status(config_dir: &Path, payload: Value) -> Value {
 
 const DIRECT_APP_MESSAGE_DRAIN_LIMIT: usize = 4096;
 const DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS: u64 = 750;
+const STATUS_PROBE_TASK_KEY: &str = "status_probe";
 
 #[allow(
     clippy::needless_pass_by_value,
@@ -740,11 +741,14 @@ pub(crate) fn cmd_daemon(
                     }
                 }
                 _ = relay_status_timer.tick() => {
-                    daemon_tasks.push(spawn_status_probe(
-                        client.clone(),
-                        config_dir.to_path_buf(),
-                        fips_blocks.clone(),
-                    ));
+                    let _ = daemon_tasks.push_keyed(
+                        STATUS_PROBE_TASK_KEY.to_string(),
+                        spawn_status_probe(
+                            client.clone(),
+                            config_dir.to_path_buf(),
+                            fips_blocks.clone(),
+                        ),
+                    );
                     let direct_root_peers_changed = match direct_roots
                         .request_roots_from_new_peers(config_dir, fips_blocks.as_deref())
                         .await
