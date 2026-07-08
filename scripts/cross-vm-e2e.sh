@@ -42,6 +42,11 @@ Environment:
                                   Copy the owner profile roster snapshot into temp peer configs after approval
                                   so VM file-sync tests do not depend on public relay timing (default: 1).
   IRIS_DRIVE_E2E_PROFILE          Build/use idrive from target/debug or target/release (default: debug).
+  IRIS_DRIVE_E2E_IDRIVE           Override idrive path on every host.
+  IRIS_DRIVE_E2E_IDRIVE_LABEL     Override one host's idrive path, where LABEL is uppercased and
+                                  non-alphanumeric characters become underscores.
+  IRIS_DRIVE_E2E_WINDOWS_IDRIVE   Override idrive path for every Windows host.
+  IRIS_DRIVE_E2E_POSIX_IDRIVE     Override idrive path for every POSIX host.
   IRIS_DRIVE_E2E_IDLE_CPU_GATE    Sample every host daemon's idle CPU after convergence (default: 1).
   IRIS_DRIVE_IDLE_CPU_WARMUP_SECS Override the post-workload idle CPU settle warmup (default: 90).
   IRIS_DRIVE_E2E_KEEP            Keep remote temp dirs/daemons when set to 1.
@@ -231,6 +236,27 @@ ps_quote() {
   printf "'%s'" "$(printf "%s" "$1" | sed "s/'/''/g")"
 }
 
+env_key_suffix() {
+  printf "%s" "$1" | tr '[:lower:]' '[:upper:]' | sed 's/[^A-Z0-9_]/_/g'
+}
+
+host_idrive_override() {
+  local label="$1"
+  local kind
+  local label_key
+  local kind_key
+  kind="$(host_value "$label" kind)"
+  label_key="IRIS_DRIVE_E2E_IDRIVE_$(env_key_suffix "$label")"
+  kind_key="IRIS_DRIVE_E2E_$(env_key_suffix "$kind")_IDRIVE"
+  if [[ -n "${!label_key:-}" ]]; then
+    printf "%s" "${!label_key}"
+  elif [[ -n "${!kind_key:-}" ]]; then
+    printf "%s" "${!kind_key}"
+  else
+    printf "%s" "${IRIS_DRIVE_E2E_IDRIVE:-}"
+  fi
+}
+
 run_remote_exec() {
   local label="$1"
   local script="$2"
@@ -293,6 +319,8 @@ setup_host() {
   local label="$1" kind
   local script meta key value
   kind="$(host_value "$label" kind)"
+  local idrive_override
+  idrive_override="$(host_idrive_override "$label")"
   if [[ "$kind" == "windows" ]]; then
     script="
 \$ErrorActionPreference = 'Stop'
@@ -316,7 +344,7 @@ New-Item -ItemType Directory -Force -Path \$config,\$work | Out-Null
 \$repo = Join-Path \$HOME 'src\iris-drive'
 \$profile = $(ps_quote "$E2E_PROFILE")
 \$repoIdrive = Join-Path \$repo (Join-Path (Join-Path 'target' \$profile) 'idrive.exe')
-\$overrideIdrive = $(ps_quote "${IRIS_DRIVE_E2E_IDRIVE:-}")
+\$overrideIdrive = $(ps_quote "$idrive_override")
 \$cargoProfileArgs = @()
 if (\$profile -eq 'release') { \$cargoProfileArgs += '--release' }
 function Test-IrisDriveCli([string]\$candidate) {
@@ -390,7 +418,7 @@ cargo_profile_arg=()
 if [[ \"\$profile\" == \"release\" ]]; then
   cargo_profile_arg=(--release)
 fi
-idrive=$(sh_quote "${IRIS_DRIVE_E2E_IDRIVE:-}")
+idrive=$(sh_quote "$idrive_override")
 if [[ -z \"\$idrive\" ]]; then
   for candidate in \\
     \"\$repo/target/\$profile/idrive\" \\
