@@ -74,7 +74,7 @@ pub(super) fn save_profile_roster_events(
     }
     let raw = serde_json::to_string_pretty(&store)
         .map_err(|error| ConfigError::Serialize(error.to_string()))?;
-    fs::write(path, raw)?;
+    crate::atomic_file::atomic_write(&path, raw.as_bytes())?;
     Ok(())
 }
 

@@ -7,10 +7,11 @@ crates/iris-drive-app-core/src/ffi.rs 3703 Legacy app-core FFI runtime now inclu
 crates/iris-drive-app-core/src/ffi/tests.rs 2256 App-core parity and native action fixtures include startup defaults, provider batch-copy, and mobile roster cache regressions; split pending scenario modules.
 crates/iris-drive-cli/src/daemon.rs 1150 CLI daemon orchestration is legacy monolith pending runtime helper split.
 crates/iris-drive-cli/src/daemon/runtime.rs 1106 CLI daemon runtime is legacy monolith pending lifecycle/helper split.
-crates/iris-drive-cli/src/drive.rs 1050 CLI drive command surface is legacy monolith pending command split.
+crates/iris-drive-cli/src/drive.rs 1060 CLI drive command surface includes provider directory delete tombstone hardening; pending command/provider helper split.
+crates/iris-drive-cli/src/drive/tests.rs 1010 CLI drive provider tests include directory descendant tombstone release coverage; pending provider scenario-module split.
 crates/iris-drive-cli/src/shares.rs 1350 CLI share command surface needs a later command/test split.
 crates/iris-drive-cli/src/profile.rs 1220 CLI profile command surface includes config + profile-roster sidecar fingerprint caching plus AppKey device rename; pending command/test split.
-crates/iris-drive-cli/src/publish/direct_root.rs 1867 Direct-root publish path includes idle heartbeat cache and hint/reply throttling hardening; pending protocol/helper split.
+crates/iris-drive-cli/src/publish/direct_root.rs 1891 Direct-root publish path includes visible-peer root lookup and fresh-state reply throttling hardening; pending protocol/helper split.
 crates/iris-drive-cli/src/publish/tests.rs 1230 Direct-root release-hardening coverage shares CLI publish fixtures and v0.1.18 hint throttling checks; pending focused test-module split.
 crates/iris-drive-cli/src/status.rs 1150 CLI status normalization already exceeds default; pending status module split.
 crates/iris-drive-cli/tests/cli_e2e.rs 1050 CLI e2e scenarios are legacy monolith pending scenario split.
@@ -40,7 +41,7 @@ macos/FileProvider/FileProviderItem.swift 1100 macOS FileProvider item model is 
 macos/Sources/IrisDriveMacApp.swift 3120 Legacy macOS shell pending view/runtime split; daemon service-mode branches, default device labels, and device rename dispatch remain here while helpers live in IrisDriveDaemonService.swift.
 scripts/dev-vm-smoke.sh 2450 Multi-platform dev VM smoke harness keeps thin desktop GUI smoke dispatch until the harness split.
 scripts/dev-vm-update-run.sh 2950 Cross-platform VM orchestration needs a later split; includes sibling repo sync for hashtree path deps and VM Cargo build env for small disks.
-scripts/cross-vm-e2e.sh 1852 Multi-device e2e harness includes release-profile/per-host daemon selection, stale daemon cleanup, and final idle daemon CPU gate; pending harness helper split.
+scripts/cross-vm-e2e.sh 2109 Multi-device e2e harness includes release-profile/per-host daemon selection, provider mutation coverage, stale daemon cleanup, and final idle daemon CPU gate; pending harness helper split.
 scripts/macos-smoke.sh 1250 macOS smoke harness now includes path-scoped cleanup and survival assertions; needs a later helper split.
 macos/Sources/IrisDriveControlPanel.swift 2850 Legacy macOS control panel includes backup target and device approval controls; pending view split.
 scripts/local-release.mjs 1500 Local release orchestration needs a later module split.

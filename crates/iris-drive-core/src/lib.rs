@@ -2,6 +2,7 @@ pub mod app_key_link_invite;
 pub mod app_key_link_transport;
 pub mod app_key_summary;
 pub mod app_keys;
+mod atomic_file;
 pub mod backup_ops;
 pub mod backup_summary;
 pub mod block_sync;

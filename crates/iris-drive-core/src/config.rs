@@ -347,7 +347,7 @@ impl AppConfig {
         }
         let raw =
             toml::to_string_pretty(&config).map_err(|e| ConfigError::Serialize(e.to_string()))?;
-        fs::write(path, raw)?;
+        crate::atomic_file::atomic_write(path, raw.as_bytes())?;
         Ok(())
     }
 
