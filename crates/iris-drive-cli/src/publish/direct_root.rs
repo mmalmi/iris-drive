@@ -5,6 +5,7 @@ use iris_drive_core::{
 
 const DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS: u64 = 30;
 const DIRECT_ROOT_STATE_REQUEST_REPLY_REPUBLISH_INTERVAL_SECS: u64 = 30;
+const DIRECT_ROOT_HEARTBEAT_REPUBLISH_INTERVAL_SECS: u64 = 60;
 const DIRECT_ROOT_HINT_REPEAT_INTERVAL_SECS: u64 = 30;
 const DIRECT_ROOT_HINT_CACHE_MAX_ENTRIES: usize = 2048;
 const DIRECT_ROOT_SEEN_FRAME_RETRY_INTERVAL_SECS: u64 = 30;
@@ -1309,6 +1310,9 @@ fn direct_root_republish_interval_secs_for_source(
     if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
         return DIRECT_ROOT_REPUBLISH_INTERVAL_SECS;
     }
+    if source == DirectRootPublishSource::LocalHeartbeat && direct_root_cache_slot(key).is_some() {
+        return DIRECT_ROOT_HEARTBEAT_REPUBLISH_INTERVAL_SECS;
+    }
     if direct_root_cache_slot(key).is_some() || key.starts_with("files-root:") {
         DIRECT_ROOT_REPUBLISH_INTERVAL_SECS
     } else {
@@ -1323,7 +1327,7 @@ fn direct_root_publish_attempts(key: &str) -> usize {
 
 fn direct_root_publish_attempts_for_source(key: &str, source: DirectRootPublishSource) -> usize {
     if source == DirectRootPublishSource::LocalHeartbeat && direct_root_cache_slot(key).is_some() {
-        return 4;
+        return 1;
     }
     if source == DirectRootPublishSource::StateRequestReply && direct_root_cache_slot(key).is_some()
     {

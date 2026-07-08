@@ -19,6 +19,7 @@ pub const DIRECT_ROOT_MESH_STREAM_PREFIX: &str = "iris-drive/root-events/v1";
 const DIRECT_ROOT_EVENT_CACHE_CAP: usize = 128;
 const DIRECT_ROOT_REPUBLISH_INTERVAL_SECS: u64 = 5;
 const DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS: u64 = 10;
+const DIRECT_ROOT_HEARTBEAT_REPUBLISH_INTERVAL_SECS: u64 = 60;
 const DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS: u64 = 300;
 const DIRECT_ROOT_DOWNLOAD_TIMEOUT_SECS: u64 = 8;
 
@@ -1054,6 +1055,9 @@ fn direct_root_republish_interval_secs_for_source(
     if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
         return DIRECT_ROOT_REPUBLISH_INTERVAL_SECS;
     }
+    if source == DirectRootPublishSource::LocalHeartbeat && direct_root_cache_slot(key).is_some() {
+        return DIRECT_ROOT_HEARTBEAT_REPUBLISH_INTERVAL_SECS;
+    }
     if direct_root_cache_slot(key).is_some() {
         DIRECT_ROOT_REPUBLISH_INTERVAL_SECS
     } else {
@@ -1062,10 +1066,7 @@ fn direct_root_republish_interval_secs_for_source(
 }
 
 fn direct_root_publish_attempts_for_source(key: &str, source: DirectRootPublishSource) -> usize {
-    if matches!(
-        source,
-        DirectRootPublishSource::LocalHeartbeat | DirectRootPublishSource::StateRequestReply
-    ) && direct_root_cache_slot(key).is_some()
+    if source == DirectRootPublishSource::StateRequestReply && direct_root_cache_slot(key).is_some()
     {
         return 4;
     }
@@ -2418,14 +2419,14 @@ mod tests {
     }
 
     #[test]
-    fn direct_root_heartbeat_shares_local_root_throttle() {
+    fn direct_root_heartbeat_uses_low_rate_hints() {
         let mut exchange = DirectRootExchange::default();
         let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
         let now = Instant::now();
 
         assert_eq!(
             direct_root_publish_attempts_for_source(key, DirectRootPublishSource::LocalHeartbeat),
-            4
+            1
         );
         assert!(should_publish_direct_root_hint(
             key,
@@ -2454,7 +2455,7 @@ mod tests {
         assert!(exchange.should_publish_candidate_key(
             key,
             DirectRootPublishSource::LocalHeartbeat,
-            now + Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
+            now + Duration::from_secs(DIRECT_ROOT_HEARTBEAT_REPUBLISH_INTERVAL_SECS)
         ));
     }
 

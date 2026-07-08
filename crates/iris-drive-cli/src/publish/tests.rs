@@ -750,14 +750,14 @@ fn direct_root_publish_bursts_root_frames_only() {
 }
 
 #[test]
-fn direct_root_heartbeat_retries_hinted_roots_with_local_throttle() {
+fn direct_root_heartbeat_uses_low_rate_hints() {
     let mut exchange = DirectRootExchange::default();
     let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
     let now = std::time::Instant::now();
 
     assert_eq!(
         direct_root_publish_attempts_for_source(key, DirectRootPublishSource::LocalHeartbeat),
-        4
+        1
     );
     assert!(should_publish_direct_root_hint(
         key,
@@ -777,7 +777,7 @@ fn direct_root_heartbeat_retries_hinted_roots_with_local_throttle() {
     assert!(exchange.should_publish_candidate_key(
         key,
         DirectRootPublishSource::LocalHeartbeat,
-        now + std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
+        now + std::time::Duration::from_secs(DIRECT_ROOT_HEARTBEAT_REPUBLISH_INTERVAL_SECS)
     ));
 }
 
