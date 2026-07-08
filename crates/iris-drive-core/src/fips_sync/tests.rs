@@ -524,6 +524,63 @@ fn remote_authorized_device_keeps_bootstrap_fips_routing_peers() {
 }
 
 #[test]
+fn fips_peer_config_snapshot_matches_endpoint_peer_sanitizing() {
+    let snapshot = fips_peer_config_snapshot(
+        Some("local"),
+        &[
+            FipsPeerConfig {
+                npub: " remote ".to_string(),
+                udp_addresses: vec![
+                    " 10.44.1.2:22121 ".to_string(),
+                    " ".to_string(),
+                    "udp:10.44.1.3:22121".to_string(),
+                ],
+            },
+            FipsPeerConfig {
+                npub: "local".to_string(),
+                udp_addresses: vec!["10.44.1.1:22121".to_string()],
+            },
+            FipsPeerConfig {
+                npub: "remote".to_string(),
+                udp_addresses: vec!["10.44.1.4:22121".to_string()],
+            },
+            FipsPeerConfig {
+                npub: " ".to_string(),
+                udp_addresses: vec!["10.44.1.5:22121".to_string()],
+            },
+        ],
+        &[
+            FipsPeerConfig {
+                npub: "remote".to_string(),
+                udp_addresses: vec!["10.44.1.6:22121".to_string()],
+            },
+            FipsPeerConfig {
+                npub: " bootstrap ".to_string(),
+                udp_addresses: vec![" udp:203.0.113.7:2121 ".to_string()],
+            },
+        ],
+    );
+
+    assert_eq!(
+        snapshot.application_peers,
+        vec![FipsPeerConfig {
+            npub: "remote".to_string(),
+            udp_addresses: vec![
+                "10.44.1.2:22121".to_string(),
+                "udp:10.44.1.3:22121".to_string()
+            ],
+        }]
+    );
+    assert_eq!(
+        snapshot.routing_peers,
+        vec![FipsPeerConfig {
+            npub: "bootstrap".to_string(),
+            udp_addresses: vec!["udp:203.0.113.7:2121".to_string()],
+        }]
+    );
+}
+
+#[test]
 fn legacy_drive_roots_keep_bootstrap_fips_routing_peers() {
     let current_keys = nostr_sdk::Keys::generate();
     let remote_keys = nostr_sdk::Keys::generate();

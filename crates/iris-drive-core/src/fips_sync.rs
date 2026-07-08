@@ -96,6 +96,7 @@ pub struct FipsBlockSync<L: Store + Send + Sync + 'static> {
     endpoint_npub: String,
     discovery_scope: String,
     transport_settings: FipsTransportSettings,
+    last_peer_config: Mutex<Option<FipsPeerConfigSnapshot>>,
 }
 
 pub type FsFipsBlockSync = FipsBlockSync<hashtree_fs::FsBlobStore>;
@@ -162,6 +163,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             endpoint_npub: endpoint.local_peer_id,
             discovery_scope,
             transport_settings,
+            last_peer_config: Mutex::new(None),
         })
     }
 
@@ -186,11 +188,18 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     }
 
     pub async fn refresh_authorized_peers(&self, config: &AppConfig) {
+        let application_peers = authorized_device_fips_peers(config, &self.transport_settings);
+        let routing_peers = routing_fips_peers(config, &self.transport_settings);
+        let snapshot = fips_peer_config_snapshot(
+            Some(self.endpoint_npub.as_str()),
+            &application_peers,
+            &routing_peers,
+        );
+        if !self.update_peer_config_snapshot(snapshot) {
+            return;
+        }
         self.transport
-            .set_peer_configs_with_routing_peers(
-                authorized_device_fips_peers(config, &self.transport_settings),
-                routing_fips_peers(config, &self.transport_settings),
-            )
+            .set_peer_configs_with_routing_peers(application_peers, routing_peers)
             .await;
     }
 
@@ -298,6 +307,18 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             .await
             .map_err(|error| FipsSyncError::Endpoint(error.to_string()))
     }
+
+    fn update_peer_config_snapshot(&self, snapshot: FipsPeerConfigSnapshot) -> bool {
+        let mut last = self
+            .last_peer_config
+            .lock()
+            .expect("FIPS peer config snapshot lock poisoned");
+        if last.as_ref() == Some(&snapshot) {
+            return false;
+        }
+        *last = Some(snapshot);
+        true
+    }
 }
 
 fn unconfigured_app_message_topics() -> [&'static str; 3] {
@@ -306,6 +327,49 @@ fn unconfigured_app_message_topics() -> [&'static str; 3] {
         APP_KEY_LINK_ROSTER_APP_TOPIC,
         DIRECT_ROOT_APP_TOPIC,
     ]
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+struct FipsPeerConfigSnapshot {
+    application_peers: Vec<FipsPeerConfig>,
+    routing_peers: Vec<FipsPeerConfig>,
+}
+
+fn fips_peer_config_snapshot(
+    local: Option<&str>,
+    application_peers: &[FipsPeerConfig],
+    routing_peers: &[FipsPeerConfig],
+) -> FipsPeerConfigSnapshot {
+    let mut seen = std::collections::HashSet::new();
+    FipsPeerConfigSnapshot {
+        application_peers: normalize_fips_peer_configs(local, application_peers, &mut seen),
+        routing_peers: normalize_fips_peer_configs(local, routing_peers, &mut seen),
+    }
+}
+
+fn normalize_fips_peer_configs(
+    local: Option<&str>,
+    peers: &[FipsPeerConfig],
+    seen: &mut std::collections::HashSet<String>,
+) -> Vec<FipsPeerConfig> {
+    let mut out = Vec::new();
+    for peer in peers {
+        let npub = peer.npub.trim().to_string();
+        if npub.is_empty() || Some(npub.as_str()) == local || !seen.insert(npub.clone()) {
+            continue;
+        }
+        let udp_addresses = peer
+            .udp_addresses
+            .iter()
+            .map(|addr| addr.trim().to_string())
+            .filter(|addr| !addr.is_empty())
+            .collect();
+        out.push(FipsPeerConfig {
+            npub,
+            udp_addresses,
+        });
+    }
+    out
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
