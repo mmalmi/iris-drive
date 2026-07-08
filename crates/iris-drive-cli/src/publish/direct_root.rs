@@ -387,9 +387,29 @@ impl DirectRootExchange {
         frame: DirectRootFrame,
     ) -> Result<DirectRootFrameOutcome> {
         if !self.should_cache_event_as_latest(&frame.key) {
+            println!(
+                "{}",
+                json!({
+                    "event": "direct_root_frame_ignored",
+                    "reason": "not_latest",
+                    "root_key": frame.key,
+                    "root_event_id": frame.event_id,
+                    "frame": "full",
+                })
+            );
             return Ok(DirectRootFrameOutcome::Ignored);
         }
         if self.should_skip_seen_direct_root_frame(&frame.key, std::time::Instant::now()) {
+            println!(
+                "{}",
+                json!({
+                    "event": "direct_root_frame_ignored",
+                    "reason": "seen_recently",
+                    "root_key": frame.key,
+                    "root_event_id": frame.event_id,
+                    "frame": "full",
+                })
+            );
             return Ok(DirectRootFrameOutcome::Ignored);
         }
         let event: Event =
@@ -412,6 +432,17 @@ impl DirectRootExchange {
             Err(error) => return Err(error),
         };
         if !outcome.should_cache_direct_root_frame() {
+            println!(
+                "{}",
+                json!({
+                    "event": "direct_root_frame_ignored",
+                    "reason": "retryable_prerequisite_missing",
+                    "root_key": frame.key,
+                    "root_event_id": frame.event_id,
+                    "frame": "full",
+                    "outcome": format!("{outcome:?}"),
+                })
+            );
             return Ok(DirectRootFrameOutcome::Ignored);
         }
         self.cache_event(direct_event);
@@ -431,7 +462,30 @@ impl DirectRootExchange {
         frame: DirectRootHintFrame,
         source_peer: &str,
     ) -> Result<DirectRootFrameOutcome> {
-        if !frame.hint || !self.should_cache_event_as_latest(&frame.key) {
+        if !frame.hint {
+            println!(
+                "{}",
+                json!({
+                    "event": "direct_root_frame_ignored",
+                    "reason": "not_hint",
+                    "root_key": frame.key,
+                    "root_event_id": frame.event_id,
+                    "frame": "hint",
+                })
+            );
+            return Ok(DirectRootFrameOutcome::Ignored);
+        }
+        if !self.should_cache_event_as_latest(&frame.key) {
+            println!(
+                "{}",
+                json!({
+                    "event": "direct_root_frame_ignored",
+                    "reason": "not_latest",
+                    "root_key": frame.key,
+                    "root_event_id": frame.event_id,
+                    "frame": "hint",
+                })
+            );
             return Ok(DirectRootFrameOutcome::Ignored);
         }
         if self.should_skip_recent_direct_root_hint(
@@ -439,6 +493,17 @@ impl DirectRootExchange {
             &frame.key,
             std::time::Instant::now(),
         ) {
+            println!(
+                "{}",
+                json!({
+                    "event": "direct_root_frame_ignored",
+                    "reason": "hint_seen_recently",
+                    "root_key": frame.key,
+                    "root_event_id": frame.event_id,
+                    "frame": "hint",
+                    "source_peer": source_peer,
+                })
+            );
             return Ok(DirectRootFrameOutcome::Ignored);
         }
         let config_lock = ConfigMutationLock::acquire(config_dir).await?;
