@@ -40,6 +40,19 @@ private func irisWebShouldOpenExternally(_ url: URL) -> Bool {
         || host.hasSuffix(".protonmail.com")
 }
 
+func irisWebIsLocalGatewayHost(_ host: String?) -> Bool {
+    guard let host = host?.lowercased() else { return false }
+    return host == "iris.localhost"
+        || host.hasSuffix(".iris.localhost")
+        || host == "hash.localhost"
+        || host.hasSuffix(".hash.localhost")
+}
+
+func irisWebIsTransientGatewayNotFound(_ bodyText: String, url: URL?) -> Bool {
+    guard irisWebIsLocalGatewayHost(url?.host) else { return false }
+    return bodyText.trimmingCharacters(in: .whitespacesAndNewlines) == "Not found"
+}
+
 extension IrisDriveMobileModel {
     func openIrisBrowserWhenReady(_ value: String) {
         guard !isOpeningIrisApps else { return }
@@ -226,6 +239,8 @@ private struct IrisDebugWebViewProbeResult {
     var bodyText: String
     var readyState: String
     var htmlLength: Int
+    var htmlPrefix: String
+    var diagnosticsJson: String
     var screenshotPath: String
     var screenshotError: String
     var error: String
@@ -274,6 +289,7 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
     private var continuation: CheckedContinuation<IrisDebugWebViewProbeResult, Never>?
     private var started = Date()
     private var finished = false
+    private var transientNotFoundReloads = 0
     private var timeoutTask: Task<Void, Never>?
 
     init(model: IrisDriveMobileModel) {
@@ -283,6 +299,7 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
     func load(_ url: URL, timeoutMs: UInt64) async -> IrisDebugWebViewProbeResult {
         started = Date()
         finished = false
+        transientNotFoundReloads = 0
         let frame = UIScreen.main.bounds.isEmpty
             ? CGRect(x: 0, y: 0, width: 390, height: 844)
             : UIScreen.main.bounds
@@ -297,10 +314,15 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
         viewController.view.frame = frame
         webView.autoresizingMask = [.flexibleWidth, .flexibleHeight]
         viewController.view.addSubview(webView)
-        let window = UIWindow(frame: frame)
+        let windowScene = UIApplication.shared.connectedScenes
+            .compactMap { $0 as? UIWindowScene }
+            .first { $0.activationState == .foregroundActive }
+            ?? UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.first
+        let window = windowScene.map { UIWindow(windowScene: $0) } ?? UIWindow(frame: frame)
+        window.frame = frame
         window.rootViewController = viewController
         window.windowLevel = .alert + 1
-        window.isHidden = false
+        window.makeKeyAndVisible()
         self.window = window
         self.webView = webView
         return await withCheckedContinuation { continuation in
@@ -329,10 +351,38 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
                 webView,
                 "document.body ? document.body.innerText : ''"
             )
+            if irisWebIsTransientGatewayNotFound(bodyText, url: webView.url),
+               self.transientNotFoundReloads < 8 {
+                self.transientNotFoundReloads += 1
+                webView.reload()
+                return
+            }
             let readyState = await self.evaluateString(webView, "document.readyState")
             let htmlLength = await self.evaluateInt(
                 webView,
                 "document.documentElement ? document.documentElement.outerHTML.length : 0"
+            )
+            let htmlPrefix = await self.evaluateString(
+                webView,
+                "document.documentElement ? document.documentElement.outerHTML.slice(0, 8000) : ''"
+            )
+            let diagnosticsJson = await self.evaluateString(
+                webView,
+                """
+                JSON.stringify({
+                  bodyChildCount: document.body ? document.body.children.length : -1,
+                  rootChildCount: document.getElementById('root') ? document.getElementById('root').children.length : -1,
+                  appChildCount: document.getElementById('app') ? document.getElementById('app').children.length : -1,
+                  scripts: Array.from(document.scripts || []).map(s => s.src || s.textContent.slice(0, 80)).slice(0, 40),
+                  stylesheets: Array.from(document.querySelectorAll('link[rel="stylesheet"]')).map(l => l.href).slice(0, 40),
+                  resources: performance.getEntriesByType('resource').map(r => ({
+                    name: r.name,
+                    transferSize: r.transferSize || 0,
+                    encodedBodySize: r.encodedBodySize || 0,
+                    decodedBodySize: r.decodedBodySize || 0
+                  })).slice(0, 80)
+                })
+                """
             )
             let screenshot = await self.writeSnapshot(webView)
             self.finish(
@@ -341,6 +391,8 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
                 bodyText: bodyText,
                 readyState: readyState,
                 htmlLength: htmlLength,
+                htmlPrefix: htmlPrefix,
+                diagnosticsJson: diagnosticsJson,
                 screenshotPath: screenshot.path,
                 screenshotError: screenshot.error,
                 finalURL: webView.url?.absoluteString ?? "",
@@ -476,6 +528,8 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
         bodyText: String = "",
         readyState: String = "",
         htmlLength: Int = 0,
+        htmlPrefix: String = "",
+        diagnosticsJson: String = "",
         screenshotPath: String = "",
         screenshotError: String = "",
         finalURL: String? = nil,
@@ -493,6 +547,8 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
             bodyText: bodyText,
             readyState: readyState,
             htmlLength: htmlLength,
+            htmlPrefix: htmlPrefix,
+            diagnosticsJson: diagnosticsJson,
             screenshotPath: screenshotPath,
             screenshotError: screenshotError,
             error: error,
@@ -596,6 +652,8 @@ extension IrisDriveMobileModel {
                     bodyText: "",
                     readyState: "",
                     htmlLength: 0,
+                    htmlPrefix: "",
+                    diagnosticsJson: "",
                     screenshotPath: "",
                     screenshotError: "",
                     error: "Iris Apps did not produce a browser route",
@@ -646,6 +704,8 @@ extension IrisDriveMobileModel {
                 "webview_body_text": String(webViewResult.bodyText.prefix(8_000)),
                 "webview_ready_state": webViewResult.readyState,
                 "webview_html_length": webViewResult.htmlLength,
+                "webview_html_prefix": String(webViewResult.htmlPrefix.prefix(8_000)),
+                "webview_diagnostics_json": String(webViewResult.diagnosticsJson.prefix(8_000)),
                 "webview_screenshot_path": webViewResult.screenshotPath,
                 "webview_screenshot_error": webViewResult.screenshotError,
                 "webview_error": webViewResult.error,

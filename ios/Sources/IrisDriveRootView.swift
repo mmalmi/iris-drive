@@ -2446,6 +2446,7 @@ private struct IrisWebView: UIViewRepresentable {
         private weak var browser: IrisWebBrowserController?
         private var isLoading: Binding<Bool>
         private var loadError: Binding<String>
+        private var transientNotFoundReloads: [String: Int] = [:]
 
         init(
             model: IrisDriveMobileModel,
@@ -2466,9 +2467,8 @@ private struct IrisWebView: UIViewRepresentable {
         }
 
         func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            isLoading.wrappedValue = false
-            loadError.wrappedValue = ""
             browser?.update(from: webView)
+            finishOrRetryTransientGatewayNotFound(webView)
         }
 
         func webView(
@@ -2503,6 +2503,41 @@ private struct IrisWebView: UIViewRepresentable {
             }
             isLoading.wrappedValue = false
             loadError.wrappedValue = nsError.localizedDescription
+        }
+
+        private func finishOrRetryTransientGatewayNotFound(_ webView: WKWebView) {
+            guard irisWebIsLocalGatewayHost(webView.url?.host) else {
+                isLoading.wrappedValue = false
+                loadError.wrappedValue = ""
+                return
+            }
+            webView.evaluateJavaScript("document.body ? document.body.innerText : ''") {
+                [weak self, weak webView] value, _ in
+                DispatchQueue.main.async {
+                    guard let self else { return }
+                    guard let webView else {
+                        self.isLoading.wrappedValue = false
+                        self.loadError.wrappedValue = ""
+                        return
+                    }
+                    let bodyText = value as? String ?? ""
+                    let key = webView.url?.absoluteString ?? ""
+                    let count = self.transientNotFoundReloads[key] ?? 0
+                    if irisWebIsTransientGatewayNotFound(bodyText, url: webView.url),
+                       count < 8 {
+                        self.transientNotFoundReloads[key] = count + 1
+                        self.isLoading.wrappedValue = true
+                        self.loadError.wrappedValue = ""
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.75) {
+                            webView.reload()
+                        }
+                        return
+                    }
+                    self.transientNotFoundReloads[key] = nil
+                    self.isLoading.wrappedValue = false
+                    self.loadError.wrappedValue = ""
+                }
+            }
         }
 
         func scrollViewDidScroll(_ scrollView: UIScrollView) {
