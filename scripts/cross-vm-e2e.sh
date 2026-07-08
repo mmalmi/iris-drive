@@ -376,8 +376,8 @@ while IFS= read -r stale_pid; do
   [[ -n \"\$stale_pid\" && \"\$stale_pid\" != \"\$\$\" ]] || continue
   kill \"\$stale_pid\" >/dev/null 2>&1 || true
 done < <(
-  ps -eo pid=,comm=,args= |
-    awk '\$2 == \"idrive\" && \$0 ~ /--config-dir .*iris-drive-e2e-run-.* daemon/ { print \$1 }'
+  ps -eo pid=,args= |
+    awk -v self=\"\$\$\" '\$1 != self && \$0 ~ /\\/idrive[[:space:]]+--config-dir/ && \$0 ~ /iris-drive-e2e-run-/ && \$0 ~ /[[:space:]]daemon([[:space:]]|\$)/ { print \$1 }'
 )
 rm -rf \"\$base\"
 mkdir -p \"\$base/config\" \"\$base/work\"
