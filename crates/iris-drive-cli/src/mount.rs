@@ -30,8 +30,6 @@ use tokio::sync::mpsc;
 const MOUNT_READY_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(target_os = "linux")]
 const MOUNT_READY_POLL_INTERVAL: Duration = Duration::from_millis(50);
-#[cfg(target_os = "linux")]
-const MAX_DIRECTORY_MONITOR_WAKE_DIRS: usize = 2048;
 
 #[cfg(target_os = "linux")]
 pub(crate) struct IrisDriveMount {
@@ -105,9 +103,6 @@ impl IrisDriveMountHandle {
         let visible = primary_merged_root(daemon.tree(), daemon.config())
             .await
             .context("building visible mount root")?;
-        let removed_paths = self
-            .fs
-            .removed_known_entry_paths_for_root(&visible.root_cid);
         let replaced = self
             .fs
             .replace_root_if_current(expected_current, visible.root_cid.clone())
@@ -115,8 +110,6 @@ impl IrisDriveMountHandle {
         if !replaced {
             return Ok(MountRefreshOutcome::Dirty(self.current_visible_root()));
         }
-        wake_removed_directory_entries(&self.mountpoint, &self.fs, &removed_paths);
-        wake_directory_monitors(&self.mountpoint);
         Ok(MountRefreshOutcome::Refreshed(visible))
     }
 }
@@ -244,56 +237,6 @@ fn wait_for_mountpoint_ready(mountpoint: &Path) -> Result<()> {
             }
         }
         std::thread::sleep(MOUNT_READY_POLL_INTERVAL);
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn wake_removed_directory_entries(
-    root: &Path,
-    fs: &HashtreeFuse<FsBlobStore>,
-    removed_paths: &[Vec<String>],
-) {
-    if removed_paths.is_empty() {
-        return;
-    }
-
-    fs.begin_refresh_unlinks(removed_paths.iter().cloned());
-    for relative in removed_paths {
-        let mut path = root.to_path_buf();
-        for component in relative {
-            path.push(component);
-        }
-        if std::fs::remove_file(&path).is_err() {
-            let _ = std::fs::remove_dir(&path);
-        }
-    }
-    fs.clear_refresh_unlinks();
-}
-
-#[cfg(target_os = "linux")]
-fn wake_directory_monitors(root: &Path) {
-    let mut stack = vec![root.to_path_buf()];
-    let mut visited = 0usize;
-
-    while let Some(dir) = stack.pop() {
-        if visited >= MAX_DIRECTORY_MONITOR_WAKE_DIRS {
-            break;
-        }
-        visited += 1;
-
-        let _ = std::fs::remove_file(dir.join(hashtree_fuse::DIRECTORY_REFRESH_SENTINEL_NAME));
-
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let Ok(file_type) = entry.file_type() else {
-                continue;
-            };
-            if file_type.is_dir() {
-                stack.push(entry.path());
-            }
-        }
     }
 }
 
