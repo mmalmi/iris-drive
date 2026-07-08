@@ -752,27 +752,33 @@ pub(crate) fn cmd_daemon(
                         config_dir.to_path_buf(),
                         fips_blocks.clone(),
                     ));
-                    if let Err(error) = direct_roots
+                    let direct_root_peers_changed = match direct_roots
                         .request_roots_from_new_peers(config_dir, fips_blocks.as_deref())
                         .await
                     {
-                        println!(
-                            "{}",
-                            json!({"event": "direct_root_mesh_error", "trigger": "peer_refresh", "error": format!("{error:#}")})
-                        );
-                    }
-                    if let Err(error) = direct_roots
-                        .request_current_state_from_peers(
-                            config_dir,
-                            fips_blocks.as_deref(),
-                            "periodic_peer_refresh",
-                        )
-                        .await
-                    {
-                        println!(
-                            "{}",
-                            json!({"event": "direct_root_state_request_error", "trigger": "periodic_peer_refresh", "error": format!("{error:#}")})
-                        );
+                        Ok(peers_changed) => peers_changed,
+                        Err(error) => {
+                            println!(
+                                "{}",
+                                json!({"event": "direct_root_mesh_error", "trigger": "peer_refresh", "error": format!("{error:#}")})
+                            );
+                            false
+                        }
+                    };
+                    if direct_root_peers_changed {
+                        if let Err(error) = direct_roots
+                            .request_current_state_from_peers(
+                                config_dir,
+                                fips_blocks.as_deref(),
+                                "peer_refresh",
+                            )
+                            .await
+                        {
+                            println!(
+                                "{}",
+                                json!({"event": "direct_root_state_request_error", "trigger": "peer_refresh", "error": format!("{error:#}")})
+                            );
+                        }
                     }
                     enqueue_pending_root_sync_followups(
                         config_dir,

@@ -87,11 +87,11 @@ while ($true) {
   $totals = @{}
   foreach ($role in $thresholds.Keys) { $totals[$role] = 0.0 }
   Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | ForEach-Object {
-    $pid = [int]$_.IDProcess
-    if ($processes.ContainsKey($pid)) {
-      $role = $processes[$pid].role
+    $processId = [int]$_.IDProcess
+    if ($processes.ContainsKey($processId)) {
+      $role = $processes[$processId].role
       $totals[$role] = [double]$totals[$role] + [double]$_.PercentProcessorTime
-      [void]$seen[$role].Add($pid)
+      [void]$seen[$role].Add($processId)
     }
   }
   foreach ($role in $totals.Keys) {

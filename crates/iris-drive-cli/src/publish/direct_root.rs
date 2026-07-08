@@ -696,13 +696,13 @@ impl DirectRootExchange {
         &mut self,
         config_dir: &Path,
         sync: Option<&FsFipsBlockSync>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let Some(sync) = sync else {
             self.subscribed_streams.clear();
-            return Ok(());
+            return Ok(false);
         };
         let Ok(root_scope_id) = self.cached_profile_stream_root_scope_id(config_dir) else {
-            return Ok(());
+            return Ok(false);
         };
         if let Some(root_scope_id) = root_scope_id
             && self
@@ -713,9 +713,10 @@ impl DirectRootExchange {
             if let Some(state) = config.profile.as_ref() {
                 self.announce_current_state(config_dir, &config, state, Some(sync))
                     .await?;
+                return Ok(true);
             }
         }
-        Ok(())
+        Ok(false)
     }
 
     pub(crate) async fn request_current_state_from_peers(
