@@ -3,7 +3,8 @@ use iris_drive_core::{
     DirectRootHintFrame, DirectRootStateRequestFrame, DirectRootWireFrame, FipsMeshPubsubEvent,
 };
 
-const DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS: u64 = 10;
+const DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS: u64 = 30;
+const DIRECT_ROOT_STATE_REQUEST_REPLY_REPUBLISH_INTERVAL_SECS: u64 = 30;
 const DIRECT_ROOT_HINT_REPEAT_INTERVAL_SECS: u64 = 30;
 const DIRECT_ROOT_HINT_CACHE_MAX_ENTRIES: usize = 2048;
 const DIRECT_ROOT_SEEN_FRAME_RETRY_INTERVAL_SECS: u64 = 30;
@@ -1303,7 +1304,7 @@ fn direct_root_republish_interval_secs_for_source(
             | DirectRootPublishSource::CachedStateRequestReply
     ) && direct_root_cache_slot(key).is_some()
     {
-        return 2;
+        return DIRECT_ROOT_STATE_REQUEST_REPLY_REPUBLISH_INTERVAL_SECS;
     }
     if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
         return DIRECT_ROOT_REPUBLISH_INTERVAL_SECS;

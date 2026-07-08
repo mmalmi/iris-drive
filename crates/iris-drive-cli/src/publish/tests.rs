@@ -876,11 +876,30 @@ fn direct_root_state_request_reply_throttle_is_per_target_peer() {
         Some("peer-b"),
         now + std::time::Duration::from_millis(500)
     ));
+    let state_reply_now = now + std::time::Duration::from_millis(500);
     assert!(exchange.should_publish_candidate_key_for_target(
         key,
         DirectRootPublishSource::StateRequestReply,
         Some("peer-a"),
-        now + std::time::Duration::from_millis(500)
+        state_reply_now
+    ));
+    assert!(!exchange.should_publish_candidate_key_for_target(
+        key,
+        DirectRootPublishSource::StateRequestReply,
+        Some("peer-a"),
+        state_reply_now
+            + std::time::Duration::from_secs(
+                DIRECT_ROOT_STATE_REQUEST_REPLY_REPUBLISH_INTERVAL_SECS - 1
+            )
+    ));
+    assert!(exchange.should_publish_candidate_key_for_target(
+        key,
+        DirectRootPublishSource::StateRequestReply,
+        Some("peer-a"),
+        state_reply_now
+            + std::time::Duration::from_secs(
+                DIRECT_ROOT_STATE_REQUEST_REPLY_REPUBLISH_INTERVAL_SECS
+            )
     ));
 }
 
@@ -909,8 +928,8 @@ fn direct_root_periodic_state_requests_are_throttled() {
     let now = std::time::Instant::now();
 
     assert_eq!(
-        DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS, 10,
-        "state repair requests should keep pace with the 10s peer refresh loop"
+        DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS, 30,
+        "state repair requests should recover newly visible peers without replaying cached roots every peer-refresh tick"
     );
     assert!(exchange.should_publish_state_request("scope", now));
     assert!(!exchange.should_publish_state_request(
