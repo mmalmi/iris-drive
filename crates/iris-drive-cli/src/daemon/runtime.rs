@@ -42,7 +42,7 @@ pub(crate) fn cmd_daemon(
         .build()
         .context("building tokio runtime")?;
 
-    let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
         .profile
         .clone()

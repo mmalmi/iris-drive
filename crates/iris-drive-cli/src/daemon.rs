@@ -274,6 +274,9 @@ async fn publish_provider_root_if_changed(
         return Ok(None);
     }
     let updated_config = AppConfig::load_or_default(&config_path)?;
+    if let Some(sync) = fips_blocks {
+        sync.refresh_authorized_peers(&updated_config).await;
+    }
     let current_key = current_app_key_root_key(&updated_config);
     let publish_key = ProviderRootPublishKey::from_config(&updated_config, current_key.clone());
     if cache.is_current(&config_fingerprint, &publish_key) {
