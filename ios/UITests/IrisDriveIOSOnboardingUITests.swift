@@ -4,8 +4,12 @@ extension IrisDriveIOSUITests {
     func testWelcomeRoutesWithoutSetupTitle() throws {
         let app = launchApp(environment: try isolatedBaseEnvironment())
         XCTAssertFalse(app.navigationBars["Setup"].exists)
+        XCTAssertTrue(app.images["brandLogo"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Iris Drive"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["welcomeCreateProfile"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["welcomeCreateProfile"].label.contains("Create profile"))
         XCTAssertTrue(app.buttons["welcomeSignIn"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["welcomeSignIn"].label.contains("Sign in"))
 
         app.buttons["welcomeCreateProfile"].tap()
         XCTAssertTrue(app.navigationBars["Create profile"].waitForExistence(timeout: 5))
@@ -15,7 +19,10 @@ extension IrisDriveIOSUITests {
         app.buttons["welcomeSignIn"].tap()
         XCTAssertTrue(app.navigationBars["Restore"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["openRecoveryPhrase"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["openRecoveryPhrase"].label.contains("Restore from recovery phrase"))
         XCTAssertTrue(app.buttons["openSecretKey"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["openSecretKey"].label.contains("Restore from secret key"))
+        XCTAssertTrue(app.buttons["openLinkDevice"].label.contains("Link device"))
         app.buttons["openLinkDevice"].tap()
         let startJoinRequest = app.buttons["startJoinRequest"]
         let awaitingApproval = app.descendants(matching: .any)["awaitingApprovalView"]

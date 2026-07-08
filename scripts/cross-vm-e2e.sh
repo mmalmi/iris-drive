@@ -1554,6 +1554,27 @@ all_have_roster_peers() {
   done
 }
 
+all_devices_list_roster_online() {
+  local label status expected_npubs
+  expected_npubs="$(
+    for label in "${LABELS[@]}"; do
+      host_value "$label" app_key_npub
+    done | jq -Rcs 'split("\n")[:-1]'
+  )"
+  for label in "${LABELS[@]}"; do
+    local current_npub
+    current_npub="$(host_value "$label" app_key_npub)"
+    status="$(idrive_cmd "$label" status 2>/dev/null || true)"
+    jq -e --arg current "$current_npub" --argjson expected "$expected_npubs" '
+      [ $expected[] | select(. != $current) ] as $wanted |
+      (.peers // []) as $peers |
+      all($wanted[]; . as $npub |
+        any($peers[]; .app_key_npub == $npub and .fips_online == true)
+      )
+    ' >/dev/null 2>&1 <<<"$status" || return 1
+  done
+}
+
 wait_for_snapshot() {
   local expected="$1"
   local label="$2"
@@ -2101,6 +2122,7 @@ run_step "large file" step_large_file
 
 run_step "final fresh daemons" wait_until "all daemon statuses fresh" all_fresh
 run_step "final direct FIPS peer discovery" wait_until "every device has a direct peer" all_have_direct_peer
+run_step "final Devices list online roster" wait_until "every Devices list shows roster peers online" all_devices_list_roster_online
 if idle_cpu_gate_enabled; then
   run_step "idle daemon CPU gate" run_for_all_labels_parallel idle_cpu_gate_label
 fi

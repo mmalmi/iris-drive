@@ -1,6 +1,6 @@
 # path line_limit reason
 windows/WindowsCloudFiles.cs 2600 Windows Cloud Files interop is still monolithic.
-android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndroidGuiFlowTest.kt 1100 Android GUI linking/share/browser smoke coverage needs a later scenario split.
+android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndroidGuiFlowTest.kt 1107 Android GUI linking/share/browser smoke coverage plus login parity assertions need a later scenario split.
 android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.kt 1450 Legacy Android Compose shell pending panel-module split.
 crates/iris-drive-app-core/src/c_abi.rs 1100 C ABI/JNI bridge includes platform validators and test fixtures; split pending FFI module cleanup.
 crates/iris-drive-app-core/src/ffi.rs 3703 Legacy app-core FFI runtime now includes native browser, CalDAV status, manual app-key join request paths, and mobile roster cache invalidation; split pending action/provider/app-key-link modules.
@@ -41,7 +41,7 @@ macos/FileProvider/FileProviderItem.swift 1100 macOS FileProvider item model is 
 macos/Sources/IrisDriveMacApp.swift 3120 Legacy macOS shell pending view/runtime split; daemon service-mode branches, default device labels, and device rename dispatch remain here while helpers live in IrisDriveDaemonService.swift.
 scripts/dev-vm-smoke.sh 2450 Multi-platform dev VM smoke harness keeps thin desktop GUI smoke dispatch until the harness split.
 scripts/dev-vm-update-run.sh 2950 Cross-platform VM orchestration needs a later split; includes sibling repo sync for hashtree path deps and VM Cargo build env for small disks.
-scripts/cross-vm-e2e.sh 2109 Multi-device e2e harness includes release-profile/per-host daemon selection, provider mutation coverage, stale daemon cleanup, and final idle daemon CPU gate; pending harness helper split.
+scripts/cross-vm-e2e.sh 2131 Multi-device e2e harness includes release-profile/per-host daemon selection, provider mutation coverage, Devices-list online roster coverage, stale daemon cleanup, and final idle daemon CPU gate; pending harness helper split.
 scripts/macos-smoke.sh 1250 macOS smoke harness now includes path-scoped cleanup and survival assertions; needs a later helper split.
 macos/Sources/IrisDriveControlPanel.swift 2850 Legacy macOS control panel includes backup target and device approval controls; pending view split.
 scripts/local-release.mjs 1500 Local release orchestration needs a later module split.

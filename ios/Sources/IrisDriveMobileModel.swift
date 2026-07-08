@@ -1157,12 +1157,31 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func approveDevice(request: String, label: String) {
-        dispatch([
+        let before = configIdentitySnapshot()
+        let state = dispatch([
             "type": "approve_device",
             "request": request,
             "label": label,
         ])
         approveDeviceKey = ""
+        guard state?.error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? false else {
+            return
+        }
+        ensureFileProviderDomainIfProfileExists()
+        scheduleBackgroundSyncIfNeeded()
+        lastForegroundDriveSyncStartedAt = Date.distantPast
+        if isSetupComplete {
+            foregroundSyncTask?.cancel()
+            foregroundSyncTask = nil
+            if syncRunning {
+                Task { @MainActor [weak self] in
+                    await self?.syncOnceIfRunning()
+                }
+            } else {
+                startSync()
+            }
+        }
+        recordConfigMutation(action: "approve_device", before: before)
     }
 
     func rejectDevice(request: String) {

@@ -1,5 +1,6 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
+use std::hash::{Hash, Hasher};
 
 mod app_key_link_urls;
 pub(crate) use app_key_link_urls::*;
@@ -617,8 +618,10 @@ struct SentAppKeyLinkRoster {
 pub(crate) struct ConfigFileFingerprint {
     pub(crate) len: u64,
     pub(crate) modified: Option<std::time::SystemTime>,
+    pub(crate) content_hash: Option<u64>,
     pub(crate) profile_roster_events_len: u64,
     pub(crate) profile_roster_events_modified: Option<std::time::SystemTime>,
+    pub(crate) profile_roster_events_hash: Option<u64>,
 }
 
 #[cfg(test)]
@@ -627,8 +630,10 @@ impl ConfigFileFingerprint {
         Self {
             len,
             modified: None,
+            content_hash: Some(len),
             profile_roster_events_len: 0,
             profile_roster_events_modified: None,
+            profile_roster_events_hash: None,
         }
     }
 }
@@ -900,29 +905,44 @@ pub(crate) fn load_app_config_cached(
 }
 
 pub(crate) fn config_file_fingerprint(path: &Path) -> Result<ConfigFileFingerprint> {
-    let (len, modified) = match std::fs::metadata(path) {
-        Ok(metadata) => (metadata.len(), metadata.modified().ok()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (0, None),
+    let (len, modified, content_hash) = match std::fs::metadata(path) {
+        Ok(metadata) => (
+            metadata.len(),
+            metadata.modified().ok(),
+            Some(config_file_content_hash(path)?),
+        ),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => (0, None, None),
         Err(error) => return Err(error.into()),
     };
     let profile_roster_events_path = path
         .parent()
         .unwrap_or_else(|| Path::new("."))
         .join("profile-roster-events.json");
-    let (profile_roster_events_len, profile_roster_events_modified) =
-        match std::fs::metadata(profile_roster_events_path) {
-            Ok(metadata) => (metadata.len(), metadata.modified().ok()),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (0, None),
+    let (profile_roster_events_len, profile_roster_events_modified, profile_roster_events_hash) =
+        match std::fs::metadata(&profile_roster_events_path) {
+            Ok(metadata) => (
+                metadata.len(),
+                metadata.modified().ok(),
+                Some(config_file_content_hash(&profile_roster_events_path)?),
+            ),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => (0, None, None),
             Err(error) => return Err(error.into()),
         };
     Ok(ConfigFileFingerprint {
         len,
         modified,
+        content_hash,
         profile_roster_events_len,
         profile_roster_events_modified,
+        profile_roster_events_hash,
     })
 }
 
+fn config_file_content_hash(path: &Path) -> Result<u64> {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    std::fs::read(path)?.hash(&mut hasher);
+    Ok(hasher.finish())
+}
 fn authorized_app_key_link_roster_snapshot(
     config: AppConfig,
 ) -> Result<Option<AuthorizedAppKeyLinkRosterSnapshot>> {

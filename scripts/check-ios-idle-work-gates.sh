@@ -95,6 +95,26 @@ else:
     if "if syncRunning, foregroundDriveSyncIsDue()" not in sync_once_body:
         failures.append("foreground drive sync throttle must only gate native sync, not visible refresh.")
 
+approve_match = re.search(
+    r"func approveDevice\(request: String, label: String\) \{(?P<body>.*?)\n    func rejectDevice",
+    model,
+    flags=re.S,
+)
+if not approve_match:
+    failures.append("approveDevice(request:label:) was not found.")
+else:
+    approve_body = approve_match.group("body")
+    for token in (
+        'dispatch([',
+        'scheduleBackgroundSyncIfNeeded()',
+        'lastForegroundDriveSyncStartedAt = Date.distantPast',
+        'syncOnceIfRunning()',
+        'startSync()',
+        'recordConfigMutation(action: "approve_device"',
+    ):
+        if token not in approve_body:
+            failures.append(f"iOS approveDevice must wake approval publishing; missing: {token}")
+
 setup_match = re.search(
     r"private struct SetupWelcomeView: View \{(?P<body>.*?)\nprivate struct ",
     root_view,

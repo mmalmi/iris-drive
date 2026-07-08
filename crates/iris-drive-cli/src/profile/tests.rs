@@ -20,6 +20,63 @@ fn config_fingerprint_changes_when_profile_roster_sidecar_changes() {
 }
 
 #[test]
+fn config_fingerprint_hashes_same_length_config_and_roster_changes() {
+    let dir = tempdir().unwrap();
+    let config_path = config_path_in(dir.path());
+    let roster_path = dir.path().join("profile-roster-events.json");
+    std::fs::write(
+        &config_path,
+        "schema_version = 1\nrelays = [\"wss://one.example\"]\n",
+    )
+    .unwrap();
+    std::fs::write(&roster_path, r#"{"schema_version":1,"events":["event-a"]}"#).unwrap();
+    let initial = config_file_fingerprint(&config_path).unwrap();
+
+    std::fs::write(
+        &config_path,
+        "schema_version = 1\nrelays = [\"wss://two.example\"]\n",
+    )
+    .unwrap();
+    std::fs::write(&roster_path, r#"{"schema_version":1,"events":["event-b"]}"#).unwrap();
+    let changed = config_file_fingerprint(&config_path).unwrap();
+
+    assert_eq!(initial.len, changed.len);
+    assert_eq!(
+        initial.profile_roster_events_len,
+        changed.profile_roster_events_len
+    );
+    assert_ne!(initial.content_hash, changed.content_hash);
+    assert_ne!(
+        initial.profile_roster_events_hash,
+        changed.profile_roster_events_hash
+    );
+}
+
+#[test]
+fn load_app_config_cached_invalidates_same_length_config_change() {
+    let dir = tempdir().unwrap();
+    let config_path = config_path_in(dir.path());
+    std::fs::write(
+        &config_path,
+        "schema_version = 1\nrelays = [\"wss://one.example\"]\n",
+    )
+    .unwrap();
+    let mut cache = AppConfigLoadCache::default();
+
+    let first = load_app_config_cached(&config_path, &mut cache).unwrap();
+    assert_eq!(first.relays, vec!["wss://one.example"]);
+
+    std::fs::write(
+        &config_path,
+        "schema_version = 1\nrelays = [\"wss://two.example\"]\n",
+    )
+    .unwrap();
+    let changed = load_app_config_cached(&config_path, &mut cache).unwrap();
+
+    assert_eq!(changed.relays, vec!["wss://two.example"]);
+}
+
+#[test]
 fn recover_app_key_command_uses_saved_phrase_after_profile_log_sync() {
     let owner_dir = tempdir().unwrap();
     let phrase = iris_drive_core::recovery_phrase::generate_recovery_phrase().unwrap();

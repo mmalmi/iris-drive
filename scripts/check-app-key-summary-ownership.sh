@@ -41,11 +41,14 @@ require_contains crates/iris-drive-cli/src/status/peers.rs '"can_revoke": app_ke
 require_contains crates/iris-drive-cli/src/status/peers.rs '"can_appoint_admin": app_key.can_appoint_admin'
 require_contains crates/iris-drive-cli/src/status/peers.rs '"can_demote_admin": app_key.can_demote_admin'
 require_contains crates/iris-drive-cli/src/status/peers.rs '"detail": detail'
+require_contains crates/iris-drive-app-core/src/ffi/tests.rs "revoked_current_device_refresh_logs_out_and_allows_fresh_relink"
 require_contains macos/Sources/IrisDriveStatus.swift 'json["display_label"]'
 require_contains macos/Sources/IrisDriveStatus.swift '@Published var setupComplete = false'
 require_contains macos/Sources/IrisDriveStatus.swift '@Published var awaitingApproval = false'
 require_contains macos/Sources/IrisDriveStatus.swift '@Published var revoked = false'
 require_contains macos/Sources/IrisDriveMacApp.swift 'summary["setup_complete"] as? Bool'
+require_contains macos/Sources/IrisDriveMacApp.swift 'status.revoked = ui["revoked"] as? Bool ?? false'
+require_contains macos/Sources/IrisDriveControlPanel.swift 'RevokedDeviceSetupView(status: status, controller: controller)'
 require_contains macos/Sources/IrisDriveStatus.swift 'json["role_label"]'
 require_contains macos/Sources/IrisDriveStatus.swift 'json["connection_state"]'
 require_contains macos/Sources/IrisDriveStatus.swift 'json["connection_label"]'
@@ -58,13 +61,19 @@ require_contains windows/IrisDriveModels.cs 'Revoked = Bool(ui, "revoked")'
 require_contains windows/IrisDriveModels.cs 'ui.ValueKind == JsonValueKind.Object && Bool(ui, "setup_complete")'
 require_contains windows/IrisDriveModels.cs 'String(device, "display_label") ?? ""'
 require_contains windows/IrisDriveModels.cs 'String(device, "detail")'
+require_contains windows/MainWindow.xaml.cs 'RenderRevokedDevice(status'
 require_contains ios/Sources/IrisDriveNativeCore.swift "var setupComplete: Bool"
 require_contains ios/Sources/IrisDriveNativeCore.swift 'case setupComplete = "setup_complete"'
 require_contains ios/Sources/IrisDriveMobileModel.swift "lastState?.ui.setupComplete"
+require_contains ios/Sources/IrisDriveMobileModel.swift "lastState?.ui.revoked"
+require_contains ios/Sources/IrisDriveRootView.swift "RevokedDeviceSetupView(model: model)"
 require_contains android/app/src/main/java/to/iris/drive/app/core/AppState.kt 'val isSetupComplete: Boolean = false'
 require_contains android/app/src/main/java/to/iris/drive/app/core/AppState.kt 'isSetupComplete = ui.optBoolean("setup_complete")'
+require_contains android/app/src/main/java/to/iris/drive/app/core/AppState.kt 'isRevoked = ui.optBoolean("revoked")'
+require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt 'RevokedDeviceContent('
 require_contains linux/src/data.rs 'state.ui.awaiting_approval'
 require_contains linux/src/data.rs 'state.ui.revoked'
+require_contains linux/src/setup.rs 'render_revoked_device'
 
 require_absent crates/iris-drive-app-core/src/ffi.rs "fn app_key_connection_label("
 require_absent crates/iris-drive-app-core/src/ffi.rs "fn app_key_connection_state("

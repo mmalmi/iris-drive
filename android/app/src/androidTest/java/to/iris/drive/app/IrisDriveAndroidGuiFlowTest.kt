@@ -157,7 +157,14 @@ class IrisDriveAndroidGuiFlowTest {
             },
         )
 
+        compose.onNodeWithContentDescription("Iris Drive").assertIsDisplayed()
+        compose.onNodeWithText("Iris Drive").assertIsDisplayed()
+        compose.onNodeWithText("Create profile").assertIsDisplayed()
+        compose.onNodeWithText("Sign in").assertIsDisplayed()
         compose.onNodeWithTag("welcomeSignIn").assertIsDisplayed().activate()
+        compose.onNodeWithText("Restore from recovery phrase").assertIsDisplayed()
+        compose.onNodeWithText("Restore from secret key").assertIsDisplayed()
+        compose.onNodeWithText("Link device").assertIsDisplayed()
         compose.onNodeWithTag("openLinkDevice").assertIsDisplayed().activate()
         compose.onNodeWithTag("startJoinRequest").assertIsDisplayed()
         compose.waitUntil(timeoutMillis = 5_000) {

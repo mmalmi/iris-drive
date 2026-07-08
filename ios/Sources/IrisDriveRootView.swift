@@ -149,6 +149,7 @@ private struct RevokedDeviceSetupView: View {
                             .resizable()
                             .interpolation(.high)
                             .frame(width: 96, height: 96)
+                            .accessibilityIdentifier("brandLogo")
                         Text("Iris Drive")
                             .font(.title.bold())
                     }
@@ -894,13 +895,14 @@ private struct DevicesView: View {
                     .textSelection(.enabled)
             }
             if canRename || device.canAppointAdmin || device.canDemoteAdmin || device.canRevoke {
-                HStack {
+                VStack(alignment: .leading, spacing: 8) {
                     if canRename {
                         Button {
                             beginRenaming(device)
                         } label: {
                             Label("Rename", systemImage: "pencil")
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     if device.canAppointAdmin {
                         Button {
@@ -908,6 +910,7 @@ private struct DevicesView: View {
                         } label: {
                             Label("Make Admin", systemImage: "person.badge.key")
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     if device.canDemoteAdmin {
                         Button {
@@ -915,6 +918,7 @@ private struct DevicesView: View {
                         } label: {
                             Label("Remove Admin", systemImage: "person.badge.minus")
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                     if device.canRevoke {
                         Button(role: .destructive) {
@@ -922,6 +926,7 @@ private struct DevicesView: View {
                         } label: {
                             Label("Remove", systemImage: "trash")
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
                 .buttonStyle(.bordered)
