@@ -402,9 +402,12 @@ fn endpoint_options_can_advertise_native_udp_without_disabling_webrtc() {
     let settings = FipsTransportSettings {
         enable_udp: true,
         enable_webrtc: true,
+        enable_lan_discovery: true,
+        enable_mesh_pubsub: true,
         udp_bind_addr: Some("0.0.0.0:2121".to_string()),
         udp_public: true,
         udp_external_addr: Some("10.44.94.98:2121".to_string()),
+        share_local_candidates: true,
         static_peer_hints: Vec::new(),
         bootstrap_peer_hints: Vec::new(),
         webrtc_max_connections: 12,
@@ -744,6 +747,40 @@ fn endpoint_options_keep_native_udp_private_by_default() {
     assert!(!options.udp_public);
     assert!(options.udp_bind_addr.is_none());
     assert!(options.udp_external_addr.is_none());
+}
+
+#[test]
+fn mobile_fips_defaults_disable_ambient_discovery() {
+    assert!(!mobile_target_allows_ambient_fips_discovery("android"));
+    assert!(!mobile_target_allows_ambient_fips_discovery("ios"));
+    assert!(mobile_target_allows_ambient_fips_discovery("macos"));
+    assert!(mobile_target_allows_ambient_fips_discovery("linux"));
+    assert!(!target_allows_default_fips_webrtc("android"));
+    assert!(!target_allows_default_fips_webrtc("ios"));
+    assert!(target_allows_default_fips_webrtc("macos"));
+    assert!(target_allows_default_fips_webrtc("linux"));
+}
+
+#[test]
+fn endpoint_options_carry_ambient_discovery_settings() {
+    let settings = FipsTransportSettings {
+        enable_lan_discovery: false,
+        enable_mesh_pubsub: false,
+        share_local_candidates: false,
+        ..Default::default()
+    };
+
+    let options = fips_endpoint_options(
+        "nsec1example".to_string(),
+        IRIS_DRIVE_FIPS_DISCOVERY_SCOPE.to_string(),
+        Vec::new(),
+        &AppConfig::default(),
+        &settings,
+    );
+
+    assert!(!options.enable_lan_discovery);
+    assert!(!options.share_local_candidates);
+    assert!(!settings.enable_mesh_pubsub);
 }
 
 #[test]

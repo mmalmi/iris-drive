@@ -70,4 +70,60 @@ class IrisDriveBackgroundSyncPolicyTest {
 
         assertFalse(BackgroundSyncPolicy.shouldSchedule(state, androidCalendarSyncActive = true))
     }
+
+    @Test
+    fun scheduleGuardSkipsDuplicateScheduleAttemptsInsideGuardWindow() {
+        val lastScheduledAtMs = 10_000L
+
+        assertFalse(
+            BackgroundSyncScheduleGuard.shouldAttemptSchedule(
+                pending = false,
+                desired = true,
+                nowMs = lastScheduledAtMs + BackgroundSyncScheduleGuard.RESCHEDULE_GUARD_MS - 1,
+                lastScheduledAtMs = lastScheduledAtMs,
+            ),
+        )
+    }
+
+    @Test
+    fun scheduleGuardAllowsRecoveryAfterGuardWindowOrClockReset() {
+        val lastScheduledAtMs = 10_000L
+
+        assertTrue(
+            BackgroundSyncScheduleGuard.shouldAttemptSchedule(
+                pending = false,
+                desired = true,
+                nowMs = lastScheduledAtMs + BackgroundSyncScheduleGuard.RESCHEDULE_GUARD_MS,
+                lastScheduledAtMs = lastScheduledAtMs,
+            ),
+        )
+        assertTrue(
+            BackgroundSyncScheduleGuard.shouldAttemptSchedule(
+                pending = false,
+                desired = true,
+                nowMs = 1L,
+                lastScheduledAtMs = lastScheduledAtMs,
+            ),
+        )
+    }
+
+    @Test
+    fun scheduleGuardTrustsPendingJobsAndAllowsFirstSchedule() {
+        assertFalse(
+            BackgroundSyncScheduleGuard.shouldAttemptSchedule(
+                pending = true,
+                desired = true,
+                nowMs = 20_000L,
+                lastScheduledAtMs = 0L,
+            ),
+        )
+        assertTrue(
+            BackgroundSyncScheduleGuard.shouldAttemptSchedule(
+                pending = false,
+                desired = false,
+                nowMs = 20_000L,
+                lastScheduledAtMs = 0L,
+            ),
+        )
+    }
 }

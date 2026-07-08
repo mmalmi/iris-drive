@@ -265,40 +265,88 @@ PY
       adb_cmd shell monkey -p "$package" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
     fi
     sleep "$warmup"
-    tmp="$(mktemp -t iris-drive-android-idle-cpu.XXXXXX)"
-    trap 'rm -f "$tmp"' EXIT
-    end=$((SECONDS + duration))
-    while (( SECONDS <= end )); do
-      sample="$(adb_cmd shell dumpsys cpuinfo 2>/dev/null |
-        tr -d '\r' |
-        awk -v package="$package" '
-          $0 ~ package {
-            gsub("[+%]", "", $1)
-            if ($1 ~ /^[0-9.]+$/) { total += $1; seen = 1 }
-          }
-          END { if (seen) print total }
-        ' || true)"
-      if [[ -n "$sample" ]]; then
-        printf '%s\n' "$sample" >>"$tmp"
-      elif adb_cmd shell pidof "$package" >/dev/null 2>&1; then
-        printf '0\n' >>"$tmp"
-      fi
-      sleep "$interval"
-    done
-    python3 - "$tmp" <<'PY'
+    clk_tck="$(adb_cmd shell getconf CLK_TCK 2>/dev/null | tr -d '\r' | awk 'NR == 1 { print }')"
+    if [[ -z "$clk_tck" || ! "$clk_tck" =~ ^[0-9]+$ ]]; then
+      clk_tck=100
+    fi
+    python3 - "$adb_bin" "$serial" "$package" "$duration" "$interval" "$clk_tck" <<'PY'
 import json
 import os
+import shlex
+import subprocess
 import sys
+import time
+
+adb_bin, serial, package = sys.argv[1], sys.argv[2], sys.argv[3]
+duration, interval, clk_tck = int(sys.argv[4]), int(sys.argv[5]), int(sys.argv[6])
+limit = float(os.environ.get("IRIS_DRIVE_IDLE_CPU_APP_MAX", "5"))
+
+def adb_shell(script: str) -> str:
+    cmd = [adb_bin]
+    if serial:
+        cmd.extend(["-s", serial])
+    cmd.extend(["shell", script])
+    return subprocess.check_output(cmd, text=True, stderr=subprocess.DEVNULL).replace("\r", "")
+
+def snapshot():
+    quoted_package = shlex.quote(package)
+    script = (
+        f"for p in $(pidof {quoted_package} 2>/dev/null); do "
+        'if [ -r "/proc/$p/stat" ]; then '
+        "awk -v p=\"$p\" '{print p, $14 + $15}' \"/proc/$p/stat\"; "
+        "fi; "
+        "done; "
+        "awk '{print \"uptime\", $1}' /proc/uptime"
+    )
+    ticks_by_pid = {}
+    uptime = None
+    try:
+        output = adb_shell(script)
+    except subprocess.SubprocessError:
+        return ticks_by_pid, uptime
+    for raw in output.splitlines():
+        parts = raw.split()
+        if len(parts) != 2:
+            continue
+        if parts[0] == "uptime":
+            try:
+                uptime = float(parts[1])
+            except ValueError:
+                uptime = None
+            continue
+        try:
+            ticks_by_pid[int(parts[0])] = float(parts[1])
+        except ValueError:
+            continue
+    return ticks_by_pid, uptime
 
 values = []
-for line in open(sys.argv[1], encoding="utf-8"):
-    try:
-        values.append(float(line.strip()))
-    except ValueError:
-        pass
-limit = float(os.environ.get("IRIS_DRIVE_IDLE_CPU_APP_MAX", "5"))
+seen_process = False
+previous_ticks, previous_uptime = snapshot()
+if previous_ticks:
+    seen_process = True
+deadline = time.monotonic() + duration
+while time.monotonic() < deadline:
+    time.sleep(interval)
+    current_ticks, current_uptime = snapshot()
+    if current_ticks:
+        seen_process = True
+    if previous_uptime is not None and current_uptime is not None:
+        elapsed = max(current_uptime - previous_uptime, 0.001)
+    else:
+        elapsed = float(interval)
+    delta_ticks = 0.0
+    for pid, current in current_ticks.items():
+        previous = previous_ticks.get(pid)
+        if previous is not None:
+            delta_ticks += max(current - previous, 0.0)
+    if current_ticks or previous_ticks:
+        values.append(delta_ticks / clk_tck / elapsed * 100.0)
+    previous_ticks, previous_uptime = current_ticks, current_uptime
+
 if not values:
-    print("[idle-cpu] FAIL: android app process was not observed", file=sys.stderr)
+    message = "android app process was not observed" if not seen_process else "android app CPU samples were unavailable"
+    print(f"[idle-cpu] FAIL: {message}", file=sys.stderr)
     sys.exit(1)
 avg = sum(values) / len(values)
 summary = {"platform": "android", "required_roles": ["app"], "roles": {"app": {"avg_cpu": round(avg, 2), "peak_cpu": round(max(values), 2), "samples": len(values), "limit": limit}}}

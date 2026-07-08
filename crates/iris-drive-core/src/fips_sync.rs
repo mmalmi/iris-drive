@@ -92,7 +92,7 @@ pub struct FipsBlockSync<L: Store + Send + Sync + 'static> {
     transport: Arc<HashtreeFipsTransport<L>>,
     local_store: Arc<L>,
     receiver_task: Option<JoinHandle<()>>,
-    mesh_pubsub: Arc<FipsMeshPubsub<L>>,
+    mesh_pubsub: Option<Arc<FipsMeshPubsub<L>>>,
     endpoint_npub: String,
     discovery_scope: String,
     transport_settings: FipsTransportSettings,
@@ -144,16 +144,20 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             )
             .await;
         let receiver_task = transport.start();
-        let mesh_pubsub = Arc::new(
-            transport
-                .start_mesh_pubsub(
-                    local_store.clone(),
-                    endpoint.local_peer_id.clone(),
-                    FIPS_REQUEST_TIMEOUT,
-                )
-                .await
-                .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?,
-        );
+        let mesh_pubsub = if transport_settings.enable_mesh_pubsub {
+            Some(Arc::new(
+                transport
+                    .start_mesh_pubsub(
+                        local_store.clone(),
+                        endpoint.local_peer_id.clone(),
+                        FIPS_REQUEST_TIMEOUT,
+                    )
+                    .await
+                    .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?,
+            ))
+        } else {
+            None
+        };
 
         Ok(Self {
             transport,
@@ -228,6 +232,11 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         self.transport.subscribe_app_messages()
     }
 
+    #[must_use]
+    pub fn mesh_pubsub_enabled(&self) -> bool {
+        self.mesh_pubsub.is_some()
+    }
+
     pub async fn send_app_message(
         &self,
         peer_id: &str,
@@ -252,7 +261,11 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     }
 
     pub async fn subscribe_mesh_pubsub(&self, stream_id: String) -> PubsubPublishStats {
-        self.mesh_pubsub.subscribe_pubsub(stream_id).await
+        let Some(mesh_pubsub) = self.mesh_pubsub.as_ref() else {
+            let _ = stream_id;
+            return PubsubPublishStats::default();
+        };
+        mesh_pubsub.subscribe_pubsub(stream_id).await
     }
 
     pub async fn publish_mesh_pubsub(
@@ -261,35 +274,55 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         seq: u64,
         payload: Vec<u8>,
     ) -> PubsubPublishStats {
-        self.mesh_pubsub
-            .publish_pubsub(stream_id, seq, payload)
-            .await
+        let Some(mesh_pubsub) = self.mesh_pubsub.as_ref() else {
+            let _ = (stream_id, seq, payload);
+            return PubsubPublishStats::default();
+        };
+        mesh_pubsub.publish_pubsub(stream_id, seq, payload).await
     }
 
     pub async fn drain_mesh_pubsub_events(&self) -> Vec<FipsMeshPubsubEvent> {
-        self.mesh_pubsub.drain_pubsub_events().await
+        let Some(mesh_pubsub) = self.mesh_pubsub.as_ref() else {
+            return Vec::new();
+        };
+        mesh_pubsub.drain_pubsub_events().await
     }
 
     pub async fn recv_mesh_pubsub_event(&self) -> FipsMeshPubsubEvent {
-        self.mesh_pubsub.recv_pubsub_event().await
+        self.mesh_pubsub
+            .as_ref()
+            .expect("mesh pubsub is disabled")
+            .recv_pubsub_event()
+            .await
     }
 
     pub async fn mesh_peer_count(&self) -> usize {
-        self.mesh_pubsub.peer_count().await
+        let Some(mesh_pubsub) = self.mesh_pubsub.as_ref() else {
+            return 0;
+        };
+        mesh_pubsub.peer_count().await
     }
 
     pub async fn mesh_peer_ids(&self) -> Vec<String> {
-        self.mesh_pubsub.peer_ids().await
+        let Some(mesh_pubsub) = self.mesh_pubsub.as_ref() else {
+            return Vec::new();
+        };
+        mesh_pubsub.peer_ids().await
     }
 
     pub async fn download_tree(&self, root: &Cid) -> Result<DownloadReport, FipsSyncError> {
-        download_tree_with_overlay(
-            self.local_store.clone(),
-            root,
-            self.transport.clone(),
-            self.mesh_pubsub.clone(),
-        )
-        .await
+        if let Some(mesh_pubsub) = self.mesh_pubsub.as_ref() {
+            download_tree_with_overlay(
+                self.local_store.clone(),
+                root,
+                self.transport.clone(),
+                mesh_pubsub.clone(),
+            )
+            .await
+        } else {
+            download_tree_with_transport(self.local_store.clone(), root, self.transport.clone())
+                .await
+        }
     }
 
     pub async fn shutdown(mut self) -> Result<(), FipsSyncError> {
@@ -376,9 +409,12 @@ fn normalize_fips_peer_configs(
 pub struct FipsTransportSettings {
     pub enable_udp: bool,
     pub enable_webrtc: bool,
+    pub enable_lan_discovery: bool,
+    pub enable_mesh_pubsub: bool,
     pub udp_bind_addr: Option<String>,
     pub udp_public: bool,
     pub udp_external_addr: Option<String>,
+    pub share_local_candidates: bool,
     pub static_peer_hints: Vec<(String, Vec<String>)>,
     pub bootstrap_peer_hints: Vec<(String, Vec<String>)>,
     pub webrtc_max_connections: usize,
@@ -389,10 +425,15 @@ impl Default for FipsTransportSettings {
     fn default() -> Self {
         Self {
             enable_udp: true,
-            enable_webrtc: true,
+            enable_webrtc: target_allows_default_fips_webrtc(std::env::consts::OS),
+            enable_lan_discovery: mobile_target_allows_ambient_fips_discovery(std::env::consts::OS),
+            enable_mesh_pubsub: true,
             udp_bind_addr: None,
             udp_public: false,
             udp_external_addr: None,
+            share_local_candidates: mobile_target_allows_ambient_fips_discovery(
+                std::env::consts::OS,
+            ),
             static_peer_hints: Vec::new(),
             bootstrap_peer_hints: default_fips_bootstrap_peer_hints(),
             webrtc_max_connections: FIPS_WEBRTC_MAX_CONNECTIONS,
@@ -404,6 +445,7 @@ impl Default for FipsTransportSettings {
 impl FipsTransportSettings {
     #[must_use]
     pub fn from_env() -> Self {
+        let defaults = Self::default();
         let udp_bind_addr = non_empty_env("IRIS_DRIVE_FIPS_UDP_BIND_ADDR");
         let udp_external_addr = non_empty_env("IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR");
         let udp_public =
@@ -417,11 +459,18 @@ impl FipsTransportSettings {
             default_fips_bootstrap_peer_hints()
         };
         Self {
-            enable_udp: bool_env("IRIS_DRIVE_FIPS_ENABLE_UDP").unwrap_or(true),
-            enable_webrtc: bool_env("IRIS_DRIVE_FIPS_ENABLE_WEBRTC").unwrap_or(true),
+            enable_udp: bool_env("IRIS_DRIVE_FIPS_ENABLE_UDP").unwrap_or(defaults.enable_udp),
+            enable_webrtc: bool_env("IRIS_DRIVE_FIPS_ENABLE_WEBRTC")
+                .unwrap_or(defaults.enable_webrtc),
+            enable_lan_discovery: bool_env("IRIS_DRIVE_FIPS_ENABLE_LAN_DISCOVERY")
+                .unwrap_or(defaults.enable_lan_discovery),
+            enable_mesh_pubsub: bool_env("IRIS_DRIVE_FIPS_ENABLE_MESH_PUBSUB")
+                .unwrap_or(defaults.enable_mesh_pubsub),
             udp_bind_addr,
             udp_public,
             udp_external_addr,
+            share_local_candidates: bool_env("IRIS_DRIVE_FIPS_SHARE_LOCAL_CANDIDATES")
+                .unwrap_or(defaults.share_local_candidates),
             static_peer_hints: parse_static_peer_hints(
                 &std::env::var("IRIS_DRIVE_FIPS_STATIC_PEERS").unwrap_or_default(),
             ),
@@ -433,6 +482,14 @@ impl FipsTransportSettings {
                 .unwrap_or(FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING),
         }
     }
+}
+
+fn mobile_target_allows_ambient_fips_discovery(target_os: &str) -> bool {
+    !matches!(target_os, "android" | "ios")
+}
+
+fn target_allows_default_fips_webrtc(target_os: &str) -> bool {
+    !matches!(target_os, "android" | "ios")
 }
 
 fn fips_endpoint_options(
@@ -453,9 +510,11 @@ fn fips_endpoint_options(
         relays,
         enable_udp: settings.enable_udp,
         enable_webrtc: settings.enable_webrtc,
+        enable_lan_discovery: settings.enable_lan_discovery,
         udp_bind_addr: settings.udp_bind_addr.clone(),
         udp_public: settings.udp_public,
         udp_external_addr: settings.udp_external_addr.clone(),
+        share_local_candidates: settings.share_local_candidates,
         webrtc_auto_connect: true,
         webrtc_max_connections: settings.webrtc_max_connections,
         open_discovery_max_pending,

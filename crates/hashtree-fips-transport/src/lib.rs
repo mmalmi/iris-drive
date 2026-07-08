@@ -40,8 +40,8 @@ const MSG_TYPE_APP: u8 = 0x7f;
 const MAX_RESPONSE_FRAGMENTS: u32 = 16_384;
 const FIPS_MESH_SIGNALING_TOPIC: &str = "hashtree/fips/mesh/signaling/v1";
 const FIPS_MESH_DATA_TOPIC: &str = "hashtree/fips/mesh/data/v1";
-const FIPS_MESH_PUMP_INTERVAL: Duration = Duration::from_millis(20);
-const FIPS_MESH_HELLO_INTERVAL: Duration = Duration::from_secs(2);
+const FIPS_MESH_PUMP_INTERVAL: Duration = Duration::from_millis(250);
+const FIPS_MESH_HELLO_INTERVAL: Duration = Duration::from_secs(60);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FipsEndpointPacket {
@@ -139,9 +139,11 @@ pub struct FipsEndpointOptions {
     pub relays: Vec<String>,
     pub enable_udp: bool,
     pub enable_webrtc: bool,
+    pub enable_lan_discovery: bool,
     pub udp_bind_addr: Option<String>,
     pub udp_public: bool,
     pub udp_external_addr: Option<String>,
+    pub share_local_candidates: bool,
     pub webrtc_auto_connect: bool,
     pub webrtc_max_connections: usize,
     pub open_discovery_max_pending: usize,
@@ -156,9 +158,11 @@ impl FipsEndpointOptions {
             relays: Vec::new(),
             enable_udp: true,
             enable_webrtc: true,
+            enable_lan_discovery: true,
             udp_bind_addr: None,
             udp_public: false,
             udp_external_addr: None,
+            share_local_candidates: true,
             webrtc_auto_connect: false,
             webrtc_max_connections: DEFAULT_FIPS_WEBRTC_MAX_CONNECTIONS,
             open_discovery_max_pending: 0,
@@ -223,7 +227,10 @@ fn fips_endpoint_config(options: FipsEndpointOptions, discovery_scope: &str) -> 
     config.tun.enabled = false;
     config.dns.enabled = false;
     config.node.system_files_enabled = false;
-    config.node.discovery.lan.scope = Some(discovery_scope.to_string());
+    config.node.discovery.lan.enabled = options.enable_lan_discovery;
+    config.node.discovery.lan.scope = options
+        .enable_lan_discovery
+        .then(|| discovery_scope.to_string());
     config.node.discovery.nostr.enabled = true;
     config.node.discovery.nostr.advertise = true;
     config.node.discovery.nostr.policy = if options.open_discovery_max_pending == 0 {
@@ -232,7 +239,7 @@ fn fips_endpoint_config(options: FipsEndpointOptions, discovery_scope: &str) -> 
         NostrDiscoveryPolicy::Open
     };
     config.node.discovery.nostr.open_discovery_max_pending = options.open_discovery_max_pending;
-    config.node.discovery.nostr.share_local_candidates = true;
+    config.node.discovery.nostr.share_local_candidates = options.share_local_candidates;
     config.node.discovery.nostr.app = discovery_scope.to_string();
     if !options.relays.is_empty() {
         config.node.discovery.nostr.advert_relays = options.relays.clone();
@@ -1848,6 +1855,25 @@ mod tests {
             config.node.discovery.nostr.app,
             "iris-drive-v1:private-owner"
         );
+    }
+
+    #[test]
+    fn endpoint_config_can_disable_ambient_lan_discovery() {
+        let mut options = FipsEndpointOptions::new("nsec1example");
+        options.enable_lan_discovery = false;
+        let config = fips_endpoint_config(options, "test-scope");
+
+        assert!(!config.node.discovery.lan.enabled);
+        assert_eq!(config.node.discovery.lan.scope, None);
+    }
+
+    #[test]
+    fn endpoint_config_can_disable_local_candidate_adverts() {
+        let mut options = FipsEndpointOptions::new("nsec1example");
+        options.share_local_candidates = false;
+        let config = fips_endpoint_config(options, "test-scope");
+
+        assert!(!config.node.discovery.nostr.share_local_candidates);
     }
 
     #[test]

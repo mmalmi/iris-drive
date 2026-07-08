@@ -384,12 +384,8 @@ owner_app_key_npub="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["c
 printf 'hello from android gui sync smoke\n' >"$OWNER_SOURCE_DIR/android-smoke.txt"
 "$IDRIVE" --config-dir "$OWNER_CONFIG" import "$OWNER_SOURCE_DIR" >/dev/null
 owner_fips_addr="default-graph"
-owner_daemon_env=(
-  IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true
-)
-android_fips_args=(
-  --es IRIS_DRIVE_FIPS_ENABLE_WEBRTC true
-)
+owner_daemon_env=()
+android_fips_args=()
 if bool_true "$USE_DIRECT_STATIC_PEER"; then
   OWNER_FIPS_PORT="$(unused_loopback_port)"
   owner_host_addr="$(android_host_addr)"
@@ -397,18 +393,26 @@ if bool_true "$USE_DIRECT_STATIC_PEER"; then
   owner_fips_addr="$owner_host_addr:$OWNER_FIPS_PORT"
   owner_daemon_env+=(
     IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=false
+    IRIS_DRIVE_FIPS_ENABLE_WEBRTC=false
     "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=0.0.0.0:$OWNER_FIPS_PORT"
     "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR=$owner_host_addr:$OWNER_FIPS_PORT"
     IRIS_DRIVE_FIPS_UDP_PUBLIC=false
   )
   android_fips_args+=(
     --es IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP false
+    --es IRIS_DRIVE_FIPS_ENABLE_WEBRTC false
     --es IRIS_DRIVE_FIPS_STATIC_PEERS "$owner_fips_peer"
     --es IRIS_DRIVE_FIPS_UDP_BIND_ADDR "0.0.0.0:0"
   )
 else
-  owner_daemon_env+=(IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=true)
-  android_fips_args+=(--es IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP true)
+  owner_daemon_env+=(
+    IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=true
+    IRIS_DRIVE_FIPS_ENABLE_WEBRTC=true
+  )
+  android_fips_args+=(
+    --es IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP true
+    --es IRIS_DRIVE_FIPS_ENABLE_WEBRTC true
+  )
 fi
 env "${owner_daemon_env[@]}" \
   "$IDRIVE" --config-dir "$OWNER_CONFIG" daemon --watch-interval 0 --no-gateway \

@@ -384,7 +384,12 @@ class MainActivity : ComponentActivity() {
                 val pendingCallbacks = nativeRefreshCallbacks.toList()
                 nativeRefreshCallbacks.clear()
                 nativeRefreshInFlight = false
-                applyNativeState(state, onState, json)
+                applyNativeState(
+                    state,
+                    onState,
+                    json,
+                    updateBackgroundSchedule = false,
+                )
                 pendingCallbacks.forEach { it(state) }
                 if (nativeRefreshPending) {
                     nativeRefreshPending = false
@@ -398,10 +403,13 @@ class MainActivity : ComponentActivity() {
         state: AppState,
         onState: ((AppState) -> Unit)? = null,
         debugJson: String? = null,
+        updateBackgroundSchedule: Boolean = true,
     ) {
         stateFlow.value = state
         AndroidDebugSupport.writeState(this, debugJson)
-        IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, state)
+        if (updateBackgroundSchedule) {
+            IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, state)
+        }
         maybeRunAndroidCalendarAutoSync(state)
         onState?.invoke(state)
     }
