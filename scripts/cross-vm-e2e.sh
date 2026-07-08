@@ -1224,6 +1224,18 @@ all_fresh() {
   done
 }
 
+all_snapshots_ready() {
+  local label status
+  for label in "${LABELS[@]}"; do
+    status="$(idrive_cmd "$label" status 2>/dev/null || true)"
+    jq -e '
+      .daemon.running == true and
+      .daemon.fresh == true and
+      .summary.sync_status == "up to date"
+    ' >/dev/null 2>&1 <<<"$status" || return 1
+  done
+}
+
 all_have_direct_peer() {
   local label status
   local expected_peers
@@ -1262,6 +1274,7 @@ wait_for_converged_union() {
 
 snapshots_match_expected() {
   local host_label current tmp
+  all_snapshots_ready || return 1
   tmp="$(mktemp -d)"
   if ! snapshot_all_once "$tmp"; then
     rm -rf "$tmp"
@@ -1280,6 +1293,7 @@ snapshots_match_expected() {
 
 snapshots_match_current_union() {
   local expected host_label current tmp
+  all_snapshots_ready || return 1
   tmp="$(mktemp -d)"
   if ! snapshot_all_once "$tmp"; then
     rm -rf "$tmp"
