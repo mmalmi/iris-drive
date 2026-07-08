@@ -21,8 +21,8 @@ use axum::http::{HeaderMap, HeaderValue, Method, StatusCode, Uri};
 use axum::response::Response;
 use axum::routing::any;
 use hashtree_core::{
-    Cid, Hash, HashTree, LinkType, NHashData, Store, TreeEntry, from_hex, nhash_decode,
-    nhash_encode_full, to_hex,
+    Cid, Hash, HashTree, HashTreeConfig, HashTreeError, LinkType, MemoryStore, NHashData, Store,
+    TreeEntry, from_hex, nhash_decode, nhash_encode_full, sha256, to_hex,
 };
 use hashtree_fs::FsBlobStore;
 use thiserror::Error;

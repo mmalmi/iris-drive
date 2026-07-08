@@ -1917,12 +1917,14 @@ fn run_native_browser_gateway(data_dir: &str, stop: Arc<AtomicBool>) -> Result<(
     let embedded_hashtree = EmbeddedHashtreeHost::start(&data_dir, &config)
         .map_err(|error| format!("starting embedded hashtree: {error:#}"))?;
     let hashtree_base_url = embedded_hashtree.status().base_url.clone();
+    let embedded_hashtree_status = embedded_hashtree.status_payload();
     write_native_browser_gateway_status(
         &data_dir,
         json!({
             "running": false,
             "state": "starting_gateway",
             "hashtree_base_url": hashtree_base_url,
+            "embedded_hashtree": embedded_hashtree_status.clone(),
         }),
     );
     let daemon =
@@ -1956,6 +1958,7 @@ fn run_native_browser_gateway(data_dir: &str, stop: Arc<AtomicBool>) -> Result<(
                 "state": "running",
                 "bind": gateway.local_addr().to_string(),
                 "hashtree_base_url": gateway_hashtree_base_url,
+                "embedded_hashtree": embedded_hashtree_status,
                 "portal_url": iris_drive_core::gateway::local_portal_url(gateway_port),
                 "caldav_url": native_caldav_url_for_config_dir(&gateway_data_dir, gateway_port),
                 "proxy_bind": proxy.local_addr().to_string(),

@@ -138,6 +138,86 @@ async fn fake_echo_path_htree_daemon() -> FakeHtreeDaemon {
     }
 }
 
+async fn fake_resolving_htree_daemon(root: &Cid) -> FakeHtreeDaemon {
+    let root_hash = to_hex(&root.hash);
+
+    async fn handler(State(root_hash): State<Arc<String>>, method: Method, uri: Uri) -> Response {
+        if method != Method::GET || !uri.path().starts_with("/api/resolve/") {
+            return text_response(StatusCode::NOT_FOUND, "unexpected path");
+        }
+        response_builder(StatusCode::OK, false)
+            .header(CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                serde_json::json!({
+                    "hash": root_hash.as_str(),
+                    "cid": root_hash.as_str(),
+                    "source": "test"
+                })
+                .to_string(),
+            ))
+            .expect("response")
+    }
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = Router::new()
+        .fallback(any(handler))
+        .with_state(Arc::new(root_hash));
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let handle = tokio::spawn(async move {
+        let _ = axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                let _ = shutdown_rx.await;
+            })
+            .await;
+    });
+    FakeHtreeDaemon {
+        addr: addr.to_string(),
+        shutdown_tx,
+        handle,
+    }
+}
+
+async fn fake_blossom_server(store: MemoryStore) -> FakeHtreeDaemon {
+    async fn handler(State(store): State<MemoryStore>, method: Method, uri: Uri) -> Response {
+        if method != Method::GET {
+            return text_response(StatusCode::METHOD_NOT_ALLOWED, "method not allowed");
+        }
+        let Some(hash) = uri
+            .path()
+            .trim_start_matches('/')
+            .strip_suffix(".bin")
+            .and_then(|value| from_hex(value).ok())
+        else {
+            return text_response(StatusCode::NOT_FOUND, "not found");
+        };
+        let Some(bytes) = store.get(&hash).await.unwrap() else {
+            return text_response(StatusCode::NOT_FOUND, "not found");
+        };
+        response_builder(StatusCode::OK, false)
+            .header(CONTENT_TYPE, "application/octet-stream")
+            .body(Body::from(bytes))
+            .expect("response")
+    }
+
+    let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let app = Router::new().fallback(any(handler)).with_state(store);
+    let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
+    let handle = tokio::spawn(async move {
+        let _ = axum::serve(listener, app)
+            .with_graceful_shutdown(async move {
+                let _ = shutdown_rx.await;
+            })
+            .await;
+    });
+    FakeHtreeDaemon {
+        addr: addr.to_string(),
+        shutdown_tx,
+        handle,
+    }
+}
+
 async fn fake_runtime_htree_daemon() -> FakeHtreeDaemon {
     async fn ws_echo(mut socket: WebSocket) {
         while let Some(Ok(message)) = socket.next().await {
@@ -632,6 +712,49 @@ async fn gateway_proxies_mutable_site_host_to_hashtree_daemon() {
     assert!(response.contains("mutable app"), "{response}");
     server.shutdown().await.unwrap();
     htree.shutdown().await;
+}
+
+#[tokio::test]
+async fn gateway_serves_public_mutable_site_paths_from_resolved_blossom_root() {
+    let cfg_dir = tempdir().unwrap();
+    init_account_config(cfg_dir.path());
+
+    let source_store = MemoryStore::new();
+    let source_tree = HashTree::new(HashTreeConfig::new(Arc::new(source_store.clone())).public());
+    let (index_cid, _) = source_tree.put(b"hello public site").await.unwrap();
+    let root = source_tree
+        .put_directory(vec![
+            hashtree_core::DirEntry::from_cid("index.html", &index_cid)
+                .with_link_type(LinkType::File),
+        ])
+        .await
+        .unwrap();
+    let blossom = fake_blossom_server(source_store.clone()).await;
+
+    let mut cfg = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+    cfg.blossom_servers = vec![format!("http://{}", blossom.addr)];
+    cfg.save(config_path_in(cfg_dir.path())).unwrap();
+
+    let daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let htree = fake_resolving_htree_daemon(&root).await;
+    let server = GatewayServer::bind_with_tree_and_htree_daemon(
+        cfg_dir.path(),
+        daemon.tree_handle(),
+        htree.addr.clone(),
+        GatewayBind::loopback_v4(0),
+    )
+    .await
+    .unwrap();
+
+    let host = format!("sites.{IRIS_SITES_PORTAL_NPUB}.iris.localhost");
+    let response = http_get(server.local_addr(), &host, "/").await;
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert!(response.contains("content-type: text/html"), "{response}");
+    assert!(response.contains("hello public site"), "{response}");
+
+    server.shutdown().await.unwrap();
+    htree.shutdown().await;
+    blossom.shutdown().await;
 }
 
 #[tokio::test]

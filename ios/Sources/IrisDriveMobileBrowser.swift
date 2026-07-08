@@ -12,6 +12,7 @@ private struct IrisNativeBrowserGatewayStatus: Decodable {
     var proxyPort: UInt16?
     var proxyUrl: String?
     var error: String?
+    var embeddedHashtree: [String: String]?
 
     private enum CodingKeys: String, CodingKey {
         case running
@@ -21,6 +22,7 @@ private struct IrisNativeBrowserGatewayStatus: Decodable {
         case proxyPort = "proxy_port"
         case proxyUrl = "proxy_url"
         case error
+        case embeddedHashtree = "embedded_hashtree"
     }
 }
 
@@ -329,7 +331,7 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
             self.continuation = continuation
             self.timeoutTask = Task { @MainActor [weak self] in
                 try? await Task.sleep(nanoseconds: timeoutMs * 1_000_000)
-                self?.finish(
+                await self?.finishFromCurrentPage(
                     loaded: false,
                     error: "Timed out waiting for WKWebView to finish loading",
                     nsError: nil
@@ -346,7 +348,6 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
             ) ?? 6_000
             try? await Task.sleep(nanoseconds: settleMs * 1_000_000)
             guard let self, let webView else { return }
-            let title = await self.evaluateString(webView, "document.title")
             let bodyText = await self.evaluateString(
                 webView,
                 "document.body ? document.body.innerText : ''"
@@ -357,49 +358,59 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
                 webView.reload()
                 return
             }
-            let readyState = await self.evaluateString(webView, "document.readyState")
-            let htmlLength = await self.evaluateInt(
-                webView,
-                "document.documentElement ? document.documentElement.outerHTML.length : 0"
-            )
-            let htmlPrefix = await self.evaluateString(
-                webView,
-                "document.documentElement ? document.documentElement.outerHTML.slice(0, 8000) : ''"
-            )
-            let diagnosticsJson = await self.evaluateString(
-                webView,
-                """
-                JSON.stringify({
-                  bodyChildCount: document.body ? document.body.children.length : -1,
-                  rootChildCount: document.getElementById('root') ? document.getElementById('root').children.length : -1,
-                  appChildCount: document.getElementById('app') ? document.getElementById('app').children.length : -1,
-                  scripts: Array.from(document.scripts || []).map(s => s.src || s.textContent.slice(0, 80)).slice(0, 40),
-                  stylesheets: Array.from(document.querySelectorAll('link[rel="stylesheet"]')).map(l => l.href).slice(0, 40),
-                  resources: performance.getEntriesByType('resource').map(r => ({
-                    name: r.name,
-                    transferSize: r.transferSize || 0,
-                    encodedBodySize: r.encodedBodySize || 0,
-                    decodedBodySize: r.decodedBodySize || 0
-                  })).slice(0, 80)
-                })
-                """
-            )
-            let screenshot = await self.writeSnapshot(webView)
-            self.finish(
-                loaded: true,
-                title: title,
-                bodyText: bodyText,
-                readyState: readyState,
-                htmlLength: htmlLength,
-                htmlPrefix: htmlPrefix,
-                diagnosticsJson: diagnosticsJson,
-                screenshotPath: screenshot.path,
-                screenshotError: screenshot.error,
-                finalURL: webView.url?.absoluteString ?? "",
-                error: "",
-                nsError: nil
-            )
+            await self.finishFromCurrentPage(loaded: true, error: "", nsError: nil)
         }
+    }
+
+    private func finishFromCurrentPage(loaded: Bool, error: String, nsError: NSError?) async {
+        guard !finished, let webView else { return }
+        let title = await evaluateString(webView, "document.title")
+        let bodyText = await evaluateString(
+            webView,
+            "document.body ? document.body.innerText : ''"
+        )
+        let readyState = await evaluateString(webView, "document.readyState")
+        let htmlLength = await evaluateInt(
+            webView,
+            "document.documentElement ? document.documentElement.outerHTML.length : 0"
+        )
+        let htmlPrefix = await evaluateString(
+            webView,
+            "document.documentElement ? document.documentElement.outerHTML.slice(0, 8000) : ''"
+        )
+        let diagnosticsJson = await evaluateString(
+            webView,
+            """
+            JSON.stringify({
+              bodyChildCount: document.body ? document.body.children.length : -1,
+              rootChildCount: document.getElementById('root') ? document.getElementById('root').children.length : -1,
+              appChildCount: document.getElementById('app') ? document.getElementById('app').children.length : -1,
+              scripts: Array.from(document.scripts || []).map(s => s.src || s.textContent.slice(0, 80)).slice(0, 40),
+              stylesheets: Array.from(document.querySelectorAll('link[rel="stylesheet"]')).map(l => l.href).slice(0, 40),
+              resources: performance.getEntriesByType('resource').map(r => ({
+                name: r.name,
+                transferSize: r.transferSize || 0,
+                encodedBodySize: r.encodedBodySize || 0,
+                decodedBodySize: r.decodedBodySize || 0
+              })).slice(0, 80)
+            })
+            """
+        )
+        let screenshot = await writeSnapshot(webView)
+        finish(
+            loaded: loaded,
+            title: title,
+            bodyText: bodyText,
+            readyState: readyState,
+            htmlLength: htmlLength,
+            htmlPrefix: htmlPrefix,
+            diagnosticsJson: diagnosticsJson,
+            screenshotPath: screenshot.path,
+            screenshotError: screenshot.error,
+            finalURL: webView.url?.absoluteString ?? "",
+            error: error,
+            nsError: nsError
+        )
     }
 
     private func evaluateString(_ webView: WKWebView, _ script: String) async -> String {
@@ -667,6 +678,24 @@ extension IrisDriveMobileModel {
             let hashtreeStatusResult = await debugProbeTextHTTP(
                 gatewayStatus?.hashtreeBaseUrl.map { "\($0.trimmingCharacters(in: .whitespacesAndNewlines))/api/status" } ?? ""
             )
+            let embeddedRouteResult = await debugProbeTextHTTP(
+                debugEmbeddedHashtreeRouteURL(gatewayStatus: gatewayStatus, routeURL: routeURL)
+            )
+            let embeddedResolveResult = await debugProbeTextHTTP(
+                debugEmbeddedHashtreeResolveURL(
+                    gatewayStatus: gatewayStatus,
+                    routeURL: routeURL,
+                    refresh: true
+                )
+            )
+            let embeddedCachedResolveResult = await debugProbeTextHTTP(
+                debugEmbeddedHashtreeResolveURL(
+                    gatewayStatus: gatewayStatus,
+                    routeURL: routeURL,
+                    refresh: false
+                )
+            )
+            let embeddedSettingsText = debugReadEmbeddedBrowserSettings(gatewayStatus)
             var uploadRootHTTPResult = IrisDebugHTTPProbeResult(
                 ok: false,
                 statusCode: 0,
@@ -722,12 +751,32 @@ extension IrisDriveMobileModel {
                 "gateway_status_hashtree_base_url": gatewayStatus?.hashtreeBaseUrl ?? "",
                 "gateway_status_portal_url": gatewayStatus?.portalUrl ?? "",
                 "gateway_status_error": gatewayStatus?.error ?? "",
+                "gateway_status_embedded_hashtree": gatewayStatus?.embeddedHashtree ?? [:],
+                "gateway_status_embedded_browser_settings": String(embeddedSettingsText.prefix(8_000)),
                 "hashtree_status_ok": hashtreeStatusResult.ok,
                 "hashtree_status_code": hashtreeStatusResult.statusCode,
                 "hashtree_status_body": String(hashtreeStatusResult.bodyText.prefix(8_000)),
                 "hashtree_status_error": hashtreeStatusResult.error,
                 "hashtree_status_error_domain": hashtreeStatusResult.errorDomain,
                 "hashtree_status_error_code": hashtreeStatusResult.errorCode,
+                "embedded_route_http_ok": embeddedRouteResult.ok,
+                "embedded_route_http_status_code": embeddedRouteResult.statusCode,
+                "embedded_route_http_body": String(embeddedRouteResult.bodyText.prefix(8_000)),
+                "embedded_route_http_error": embeddedRouteResult.error,
+                "embedded_route_http_error_domain": embeddedRouteResult.errorDomain,
+                "embedded_route_http_error_code": embeddedRouteResult.errorCode,
+                "embedded_resolve_http_ok": embeddedResolveResult.ok,
+                "embedded_resolve_http_status_code": embeddedResolveResult.statusCode,
+                "embedded_resolve_http_body": String(embeddedResolveResult.bodyText.prefix(8_000)),
+                "embedded_resolve_http_error": embeddedResolveResult.error,
+                "embedded_resolve_http_error_domain": embeddedResolveResult.errorDomain,
+                "embedded_resolve_http_error_code": embeddedResolveResult.errorCode,
+                "embedded_cached_resolve_http_ok": embeddedCachedResolveResult.ok,
+                "embedded_cached_resolve_http_status_code": embeddedCachedResolveResult.statusCode,
+                "embedded_cached_resolve_http_body": String(embeddedCachedResolveResult.bodyText.prefix(8_000)),
+                "embedded_cached_resolve_http_error": embeddedCachedResolveResult.error,
+                "embedded_cached_resolve_http_error_domain": embeddedCachedResolveResult.errorDomain,
+                "embedded_cached_resolve_http_error_code": embeddedCachedResolveResult.errorCode,
                 "upload_root_http_ok": uploadRootHTTPResult.ok,
                 "upload_root_http_status_code": uploadRootHTTPResult.statusCode,
                 "upload_root_http_error": uploadRootHTTPResult.error,
@@ -748,6 +797,67 @@ extension IrisDriveMobileModel {
                 "network_path_supports_ipv6": networkPathResult.supportsIPv6,
             ])
         }
+    }
+
+    private func debugEmbeddedHashtreeRouteURL(
+        gatewayStatus: IrisNativeBrowserGatewayStatus?,
+        routeURL: URL?
+    ) -> String {
+        guard let baseURL = gatewayStatus?.hashtreeBaseUrl?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !baseURL.isEmpty,
+              let host = routeURL?.host?.lowercased()
+        else {
+            return ""
+        }
+        let suffix = ".iris.localhost"
+        guard host.hasSuffix(suffix) else {
+            return ""
+        }
+        let labels = String(host.dropLast(suffix.count)).split(separator: ".")
+        guard labels.count >= 2 else {
+            return ""
+        }
+        let tree = labels[0]
+        let npub = labels[1]
+        return "\(baseURL)/htree/\(npub)/\(tree)/index.html"
+    }
+
+    private func debugEmbeddedHashtreeResolveURL(
+        gatewayStatus: IrisNativeBrowserGatewayStatus?,
+        routeURL: URL?,
+        refresh: Bool
+    ) -> String {
+        guard let baseURL = gatewayStatus?.hashtreeBaseUrl?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+              !baseURL.isEmpty,
+              let host = routeURL?.host?.lowercased()
+        else {
+            return ""
+        }
+        let suffix = ".iris.localhost"
+        guard host.hasSuffix(suffix) else {
+            return ""
+        }
+        let labels = String(host.dropLast(suffix.count)).split(separator: ".")
+        guard labels.count >= 2 else {
+            return ""
+        }
+        let tree = labels[0]
+        let npub = labels[1]
+        let querySuffix = refresh ? "?refresh=1" : ""
+        return "\(baseURL)/api/resolve/\(npub)/\(tree)\(querySuffix)"
+    }
+
+    private func debugReadEmbeddedBrowserSettings(_ status: IrisNativeBrowserGatewayStatus?) -> String {
+        guard let configDir = status?.embeddedHashtree?["config_dir"],
+              !configDir.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        else {
+            return ""
+        }
+        let settingsURL = URL(fileURLWithPath: configDir, isDirectory: true)
+            .appendingPathComponent("browser_settings.json", isDirectory: false)
+        return (try? String(contentsOf: settingsURL, encoding: .utf8)) ?? ""
     }
 
     nonisolated private func debugNetworkPathSnapshot() async -> IrisDebugNetworkPathResult {
