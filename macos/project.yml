@@ -8,8 +8,8 @@ options:
 settings:
   base:
     PRODUCT_BUNDLE_IDENTIFIER: to.iris.drive.macos
-    MARKETING_VERSION: "0.1.19"
-    CURRENT_PROJECT_VERSION: "1019"
+    MARKETING_VERSION: "0.1.20"
+    CURRENT_PROJECT_VERSION: "1020"
     VERSIONING_SYSTEM: apple-generic
     CODE_SIGN_STYLE: Automatic
     SWIFT_VERSION: 5.0
