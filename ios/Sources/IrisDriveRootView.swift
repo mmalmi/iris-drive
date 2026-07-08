@@ -149,6 +149,7 @@ private struct RevokedDeviceSetupView: View {
                             .resizable()
                             .interpolation(.high)
                             .frame(width: 96, height: 96)
+                            .accessibilityElement(children: .ignore).accessibilityLabel("Iris Drive logo")
                             .accessibilityIdentifier("brandLogo")
                         Text("Iris Drive")
                             .font(.title.bold())
@@ -203,6 +204,8 @@ private struct AwaitingApprovalSetupView: View {
                             .resizable()
                             .interpolation(.high)
                             .frame(width: 96, height: 96)
+                            .accessibilityElement(children: .ignore).accessibilityLabel("Iris Drive logo")
+                            .accessibilityIdentifier("brandLogo")
                         Text("Iris Drive")
                             .font(.title.bold())
                     }
@@ -324,6 +327,8 @@ private struct SetupWelcomeView: View {
                             .resizable()
                             .interpolation(.high)
                             .frame(width: 96, height: 96)
+                            .accessibilityElement(children: .ignore).accessibilityLabel("Iris Drive logo")
+                            .accessibilityIdentifier("brandLogo")
                         Text("Iris Drive")
                             .font(.title.bold())
                     }

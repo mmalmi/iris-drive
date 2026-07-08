@@ -4,7 +4,7 @@ extension IrisDriveIOSUITests {
     func testWelcomeRoutesWithoutSetupTitle() throws {
         let app = launchApp(environment: try isolatedBaseEnvironment())
         XCTAssertFalse(app.navigationBars["Setup"].exists)
-        XCTAssertTrue(app.images["brandLogo"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.descendants(matching: .any)["brandLogo"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["Iris Drive"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["welcomeCreateProfile"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["welcomeCreateProfile"].label.contains("Create profile"))
