@@ -385,6 +385,8 @@ impl DirectRootExchange {
         mount_refresh: Option<tokio::sync::mpsc::Sender<&'static str>>,
         daemon_tasks: &DaemonTaskSet,
         frame: DirectRootFrame,
+        source: &'static str,
+        source_peer: &str,
     ) -> Result<DirectRootFrameOutcome> {
         if !self.should_cache_event_as_latest(&frame.key) {
             println!(
@@ -395,6 +397,8 @@ impl DirectRootExchange {
                     "root_key": frame.key,
                     "root_event_id": frame.event_id,
                     "frame": "full",
+                    "source": source,
+                    "source_peer": source_peer,
                 })
             );
             return Ok(DirectRootFrameOutcome::Ignored);
@@ -408,6 +412,8 @@ impl DirectRootExchange {
                     "root_key": frame.key,
                     "root_event_id": frame.event_id,
                     "frame": "full",
+                    "source": source,
+                    "source_peer": source_peer,
                 })
             );
             return Ok(DirectRootFrameOutcome::Ignored);
@@ -441,6 +447,8 @@ impl DirectRootExchange {
                     "root_event_id": frame.event_id,
                     "frame": "full",
                     "outcome": format!("{outcome:?}"),
+                    "source": source,
+                    "source_peer": source_peer,
                 })
             );
             return Ok(DirectRootFrameOutcome::Ignored);
@@ -892,6 +900,8 @@ impl DirectRootExchange {
                     mount_refresh,
                     daemon_tasks,
                     frame,
+                    "mesh",
+                    &message.origin_peer_id,
                 )
                 .await?
             }
@@ -955,6 +965,8 @@ impl DirectRootExchange {
                     mount_refresh,
                     daemon_tasks,
                     frame,
+                    "app",
+                    &message.peer_id,
                 )
                 .await?
             }
