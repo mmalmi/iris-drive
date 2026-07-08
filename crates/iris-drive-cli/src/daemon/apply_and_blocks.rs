@@ -846,34 +846,20 @@ async fn request_latest_direct_root_state(
             return;
         }
     };
-    let selected_peers = sync.authorized_peer_ids().await.len();
-    match sync
-        .broadcast_app_message(iris_drive_core::DIRECT_ROOT_APP_TOPIC, bytes.clone())
-        .await
-    {
-        Ok(sent_peers) => println!(
-            "{}",
-            json!({
-                "event": "direct_root_state_request_publish",
-                "trigger": projection_event,
-                "root_scope_id": root_scope_id.clone(),
-                "selected_peers": selected_peers,
-                "visible_peers": visible_peers.len(),
-                "sent_peers": sent_peers,
-            })
-        ),
-        Err(error) => println!(
-            "{}",
-            json!({
-                "event": "direct_root_state_request_error",
-                "trigger": projection_event,
-                "root_scope_id": root_scope_id.clone(),
-                "selected_peers": selected_peers,
-                "visible_peers": visible_peers.len(),
-                "error": format!("{error:#}"),
-            })
-        ),
-    }
+    let send_stats =
+        crate::publish::send_direct_root_app_message_to_authorized_peers(sync, bytes.clone()).await;
+    println!(
+        "{}",
+        json!({
+            "event": "direct_root_state_request_publish",
+            "trigger": projection_event,
+            "root_scope_id": root_scope_id.clone(),
+            "selected_peers": send_stats.selected_peers,
+            "visible_peers": visible_peers.len(),
+            "sent_peers": send_stats.sent_peers,
+            "failed_peers": send_stats.failed_peers,
+        })
+    );
     let stream = iris_drive_core::direct_root_mesh_stream(&root_scope_id);
     let seq = direct_root_followup_mesh_seq();
     let publish_stats = sync.publish_mesh_pubsub(stream.clone(), seq, bytes).await;

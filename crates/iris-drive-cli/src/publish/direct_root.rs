@@ -9,6 +9,13 @@ const DIRECT_ROOT_HINT_REPEAT_INTERVAL_SECS: u64 = 30;
 const DIRECT_ROOT_HINT_CACHE_MAX_ENTRIES: usize = 2048;
 const DIRECT_ROOT_SEEN_FRAME_RETRY_INTERVAL_SECS: u64 = 30;
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) struct DirectRootAppSendStats {
+    pub(crate) selected_peers: usize,
+    pub(crate) sent_peers: usize,
+    pub(crate) failed_peers: usize,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct DirectRootEvent {
     pub(crate) key: String,
@@ -248,11 +255,10 @@ impl DirectRootExchange {
                         Err(error) => return Err(error.into()),
                     }
                 } else {
-                    let selected_app_peers = sync.authorized_peer_ids().await.len();
-                    let sent_app_peers = sync
-                        .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, hint_bytes.clone())
-                        .await?;
-                    (selected_app_peers, sent_app_peers)
+                    let stats =
+                        send_direct_root_app_message_to_authorized_peers(sync, hint_bytes.clone())
+                            .await;
+                    (stats.selected_peers, stats.sent_peers)
                 };
                 println!(
                     "{}",
@@ -300,11 +306,9 @@ impl DirectRootExchange {
                         Err(error) => return Err(error.into()),
                     }
                 } else {
-                    let selected_app_peers = sync.authorized_peer_ids().await.len();
-                    let sent_app_peers = sync
-                        .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, bytes.clone())
-                        .await?;
-                    (selected_app_peers, sent_app_peers)
+                    let stats =
+                        send_direct_root_app_message_to_authorized_peers(sync, bytes.clone()).await;
+                    (stats.selected_peers, stats.sent_peers)
                 };
                 println!(
                     "{}",
@@ -580,6 +584,18 @@ impl DirectRootExchange {
         if !frame.request {
             return Ok(());
         }
+        if reply_peer == sync.endpoint_npub() {
+            println!(
+                "{}",
+                json!({
+                    "event": "direct_root_state_request_ignored",
+                    "reason": "self",
+                    "root_scope_id": frame.root_scope_id,
+                    "reply_peer": reply_peer,
+                })
+            );
+            return Ok(());
+        }
         let config_path = config_path_in(config_dir);
         let config_fingerprint = config_file_fingerprint(&config_path)?;
         let Some(root_scope_id) = self.cached_profile_stream_root_scope_id_from_config(
@@ -735,34 +751,19 @@ impl DirectRootExchange {
             .await;
         let bytes = iris_drive_core::encode_direct_root_state_request_frame(&root_scope_id)
             .context("encoding direct-root state request")?;
-        let selected_app_peers = sync.authorized_peer_ids().await.len();
-        match sync
-            .broadcast_app_message(DIRECT_ROOT_APP_TOPIC, bytes.clone())
-            .await
-        {
-            Ok(sent_peers) => println!(
-                "{}",
-                json!({
-                    "event": "direct_root_state_request_publish",
-                    "trigger": trigger,
-                    "root_scope_id": root_scope_id.clone(),
-                    "selected_peers": selected_app_peers,
-                    "visible_peers": visible_peers.len(),
-                    "sent_peers": sent_peers,
-                })
-            ),
-            Err(error) => println!(
-                "{}",
-                json!({
-                    "event": "direct_root_state_request_error",
-                    "trigger": trigger,
-                    "root_scope_id": root_scope_id.clone(),
-                    "selected_peers": selected_app_peers,
-                    "visible_peers": visible_peers.len(),
-                    "error": format!("{error:#}"),
-                })
-            ),
-        }
+        let send_stats = send_direct_root_app_message_to_authorized_peers(sync, bytes.clone()).await;
+        println!(
+            "{}",
+            json!({
+                "event": "direct_root_state_request_publish",
+                "trigger": trigger,
+                "root_scope_id": root_scope_id.clone(),
+                "selected_peers": send_stats.selected_peers,
+                "visible_peers": visible_peers.len(),
+                "sent_peers": send_stats.sent_peers,
+                "failed_peers": send_stats.failed_peers,
+            })
+        );
         let stream = direct_root_mesh_stream(&root_scope_id);
         let seq = self.next_mesh_publish_seq();
         let publish_stats = sync.publish_mesh_pubsub(stream.clone(), seq, bytes).await;
@@ -1276,6 +1277,36 @@ impl DirectRootExchange {
             self.next_mesh_publish_seq = self.next_mesh_publish_seq.saturating_add(1);
         }
         self.next_mesh_publish_seq
+    }
+}
+
+pub(crate) async fn send_direct_root_app_message_to_authorized_peers(
+    sync: &FsFipsBlockSync,
+    bytes: Vec<u8>,
+) -> DirectRootAppSendStats {
+    let local_peer = sync.endpoint_npub().to_string();
+    let peers = sync
+        .authorized_peer_ids()
+        .await
+        .into_iter()
+        .filter(|peer| !peer.is_empty() && peer != &local_peer)
+        .collect::<Vec<_>>();
+    let selected_peers = peers.len();
+    let mut sent_peers = 0usize;
+    let mut failed_peers = 0usize;
+    for peer in peers {
+        match sync
+            .send_app_message(&peer, DIRECT_ROOT_APP_TOPIC, bytes.clone())
+            .await
+        {
+            Ok(()) => sent_peers += 1,
+            Err(_) => failed_peers += 1,
+        }
+    }
+    DirectRootAppSendStats {
+        selected_peers,
+        sent_peers,
+        failed_peers,
     }
 }
 
