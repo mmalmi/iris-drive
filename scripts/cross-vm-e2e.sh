@@ -41,6 +41,7 @@ Environment:
   IRIS_DRIVE_E2E_SIDELOAD_APPKEYS
                                   Copy the owner profile roster snapshot into temp peer configs after approval
                                   so VM file-sync tests do not depend on public relay timing (default: 1).
+  IRIS_DRIVE_E2E_PROFILE          Build/use idrive from target/debug or target/release (default: debug).
   IRIS_DRIVE_E2E_IDLE_CPU_GATE    Sample every host daemon's idle CPU after convergence (default: 1).
   IRIS_DRIVE_IDLE_CPU_WARMUP_SECS Override the post-workload idle CPU settle warmup (default: 90).
   IRIS_DRIVE_E2E_KEEP            Keep remote temp dirs/daemons when set to 1.
@@ -60,6 +61,11 @@ MOUNT_LABELS="${IRIS_DRIVE_E2E_MOUNT_LABELS:-}"
 SIDELOAD_APPKEYS="${IRIS_DRIVE_E2E_SIDELOAD_APPKEYS:-1}"
 PROVIDER_MUTATIONS="${IRIS_DRIVE_E2E_PROVIDER_MUTATIONS:-0}"
 IDLE_CPU_GATE="${IRIS_DRIVE_E2E_IDLE_CPU_GATE:-1}"
+E2E_PROFILE="${IRIS_DRIVE_E2E_PROFILE:-debug}"
+case "$E2E_PROFILE" in
+  debug | release) ;;
+  *) echo "IRIS_DRIVE_E2E_PROFILE must be 'debug' or 'release'." >&2; exit 2 ;;
+esac
 
 declare -a LABELS=()
 declare -a KINDS=()
@@ -308,8 +314,11 @@ if (Test-Path -LiteralPath \$projectionE2e) { Remove-Item -LiteralPath \$project
 \$config = Join-Path \$base 'config'; \$work = Join-Path \$base 'work'
 New-Item -ItemType Directory -Force -Path \$config,\$work | Out-Null
 \$repo = Join-Path \$HOME 'src\iris-drive'
-\$repoIdrive = Join-Path \$repo 'target\debug\idrive.exe'
+\$profile = $(ps_quote "$E2E_PROFILE")
+\$repoIdrive = Join-Path \$repo (Join-Path (Join-Path 'target' \$profile) 'idrive.exe')
 \$overrideIdrive = $(ps_quote "${IRIS_DRIVE_E2E_IDRIVE:-}")
+\$cargoProfileArgs = @()
+if (\$profile -eq 'release') { \$cargoProfileArgs += '--release' }
 function Test-IrisDriveCli([string]\$candidate) {
   if ([string]::IsNullOrWhiteSpace(\$candidate) -or -not (Test-Path -LiteralPath \$candidate)) { return \$false }
   & \$candidate app-keys --help *> \$null
@@ -324,7 +333,7 @@ if ([string]::IsNullOrWhiteSpace(\$idrive)) {
     \$cargo = Get-Command cargo -ErrorAction SilentlyContinue
     if (\$cargo) {
       Push-Location \$repo
-      cargo build -q -p idrive --bin idrive
+      cargo build -q @cargoProfileArgs -p idrive --bin idrive
       Pop-Location
       \$idrive = \$repoIdrive
     }
@@ -333,7 +342,7 @@ if ([string]::IsNullOrWhiteSpace(\$idrive)) {
 if ([string]::IsNullOrWhiteSpace(\$idrive) -or -not (Test-IrisDriveCli \$idrive)) {
   \$idrive = \$repoIdrive
 }
-if (-not (Test-IrisDriveCli \$idrive)) {
+if (\$profile -eq 'debug' -and -not (Test-IrisDriveCli \$idrive)) {
   \$idrive = Join-Path \$HOME '.cargo\bin\idrive.exe'
   if (-not (Test-Path -LiteralPath \$idrive)) {
     \$cmd = Get-Command idrive.exe -ErrorAction SilentlyContinue
@@ -343,7 +352,7 @@ if (-not (Test-IrisDriveCli \$idrive)) {
 if (-not (Test-IrisDriveCli \$idrive)) {
   if (Test-Path -LiteralPath (Join-Path \$repo 'Cargo.toml')) {
     Push-Location \$repo
-    cargo build -q -p idrive --bin idrive
+    cargo build -q @cargoProfileArgs -p idrive --bin idrive
     Pop-Location
     \$idrive = \$repoIdrive
   }
@@ -376,14 +385,17 @@ supports_app_keys() {
   [[ -x \"\$1\" ]] && \"\$1\" app-keys --help >/dev/null 2>&1
 }
 repo=\"\$HOME/src/iris-drive\"
+profile=$(sh_quote "$E2E_PROFILE")
+cargo_profile_arg=()
+if [[ \"\$profile\" == \"release\" ]]; then
+  cargo_profile_arg=(--release)
+fi
 idrive=$(sh_quote "${IRIS_DRIVE_E2E_IDRIVE:-}")
 if [[ -z \"\$idrive\" ]]; then
   for candidate in \\
-    \"\$repo/target/debug/idrive\" \\
-    \"\$HOME/.cache/cargo-target/debug/idrive\" \\
-    \"\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/debug/idrive}\" \\
-    \"\$HOME/.cargo/bin/idrive\" \\
-    \"\$(command -v idrive || true)\"
+    \"\$repo/target/\$profile/idrive\" \\
+    \"\$HOME/.cache/cargo-target/\$profile/idrive\" \\
+    \"\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/\$profile/idrive}\"
   do
     if supports_app_keys \"\$candidate\"; then
       idrive=\"\$candidate\"
@@ -391,23 +403,33 @@ if [[ -z \"\$idrive\" ]]; then
     fi
   done
 fi
+if [[ -z \"\$idrive\" && \"\$profile\" == \"debug\" ]]; then
+  for candidate in \"\$HOME/.cargo/bin/idrive\" \"\$(command -v idrive || true)\"; do
+    if supports_app_keys \"\$candidate\"; then
+      idrive=\"\$candidate\"
+      break
+    fi
+  done
+fi
 if ! supports_app_keys \"\$idrive\" && [[ -f \"\$repo/Cargo.toml\" ]] && command -v cargo >/dev/null 2>&1; then
-  (cd \"\$repo\" && cargo build -q -p idrive --bin idrive)
-  idrive=\"\$repo/target/debug/idrive\"
-  [[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cache/cargo-target/debug/idrive\"
-  [[ -x \"\$idrive\" ]] || idrive=\"\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/debug/idrive}\"
+  (cd \"\$repo\" && cargo build -q \"\${cargo_profile_arg[@]}\" -p idrive --bin idrive)
+  idrive=\"\$repo/target/\$profile/idrive\"
+  [[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cache/cargo-target/\$profile/idrive\"
+  [[ -x \"\$idrive\" ]] || idrive=\"\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/\$profile/idrive}\"
 fi
 if ! supports_app_keys \"\$idrive\"; then
-  idrive=\"\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/debug/idrive}\"; idrive=\"\${idrive:-\$repo/target/debug/idrive}\"
+  idrive=\"\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/\$profile/idrive}\"; idrive=\"\${idrive:-\$repo/target/\$profile/idrive}\"
 fi
-supports_app_keys \"\$idrive\" || idrive=\"\$HOME/.cache/cargo-target/debug/idrive\"
-supports_app_keys \"\$idrive\" || idrive=\"\$HOME/.cargo/bin/idrive\"
-supports_app_keys \"\$idrive\" || idrive=\"\$(command -v idrive || true)\"
+supports_app_keys \"\$idrive\" || idrive=\"\$HOME/.cache/cargo-target/\$profile/idrive\"
+if [[ \"\$profile\" == \"debug\" ]]; then
+  supports_app_keys \"\$idrive\" || idrive=\"\$HOME/.cargo/bin/idrive\"
+  supports_app_keys \"\$idrive\" || idrive=\"\$(command -v idrive || true)\"
+fi
 if ! supports_app_keys \"\$idrive\"; then
   if [[ -f \"\$repo/Cargo.toml\" ]] && command -v cargo >/dev/null 2>&1; then
-    (cd \"\$repo\" && cargo build -q -p idrive --bin idrive)
-    idrive=\"\$repo/target/debug/idrive\"
-    [[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cache/cargo-target/debug/idrive\"
+    (cd \"\$repo\" && cargo build -q \"\${cargo_profile_arg[@]}\" -p idrive --bin idrive)
+    idrive=\"\$repo/target/\$profile/idrive\"
+    [[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cache/cargo-target/\$profile/idrive\"
   fi
 fi
 if ! supports_app_keys \"\$idrive\"; then
@@ -1700,6 +1722,7 @@ fi
 
 echo "run id: $RUN_ID"
 echo "hosts: ${LABELS[*]}"
+echo "idrive profile: $E2E_PROFILE"
 if [[ "$PROVIDER_MUTATIONS" == "1" ]]; then
   echo "mutation surface: provider commands"
 else
