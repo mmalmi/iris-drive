@@ -692,8 +692,8 @@ fn direct_root_publish_bursts_root_frames_only() {
             drive_root,
             DirectRootPublishSource::CachedStateRequestReply
         ),
-        4,
-        "state-request recovery for relayed roots needs full-frame redundancy"
+        1,
+        "cached state-request replies should not flood idle peers"
     );
     assert!(should_publish_direct_root_hint(
         drive_root,
@@ -845,12 +845,12 @@ fn direct_root_state_request_reply_includes_cached_remote_roots() {
             &remote.key,
             DirectRootPublishSource::CachedStateRequestReply,
         ),
-        4
+        1
     );
     assert!(should_publish_direct_root_full_frame(
         &remote.key,
         DirectRootPublishSource::CachedStateRequestReply,
-        3
+        0
     ));
     assert!(!should_publish_direct_root_hint(
         &remote.key,

@@ -1337,7 +1337,7 @@ fn direct_root_publish_attempts_for_source(key: &str, source: DirectRootPublishS
     if source == DirectRootPublishSource::CachedStateRequestReply
         && direct_root_cache_slot(key).is_some()
     {
-        return 4;
+        return 1;
     }
     if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
         return 2;
