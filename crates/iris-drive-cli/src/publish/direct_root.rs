@@ -639,14 +639,21 @@ impl DirectRootExchange {
         let Some(root_scope_id) = self.cached_profile_stream_root_scope_id(config_dir)? else {
             return Ok(());
         };
+        let mut visible_peers = sync.connected_peer_ids().await.into_iter().collect::<BTreeSet<_>>();
+        visible_peers.extend(sync.mesh_peer_ids().await);
         let now = std::time::Instant::now();
-        if !self.should_publish_state_request(&root_scope_id, now) {
+        if !self.should_publish_state_request(
+            &root_scope_id,
+            visible_peers.iter().map(String::as_str),
+            now,
+        ) {
             println!(
                 "{}",
                 json!({
                     "event": "direct_root_state_request_throttled",
                     "trigger": trigger,
                     "root_scope_id": root_scope_id.clone(),
+                    "visible_peers": visible_peers.len(),
                 })
             );
             return Ok(());
@@ -667,6 +674,7 @@ impl DirectRootExchange {
                     "trigger": trigger,
                     "root_scope_id": root_scope_id.clone(),
                     "selected_peers": selected_app_peers,
+                    "visible_peers": visible_peers.len(),
                     "sent_peers": sent_peers,
                 })
             ),
@@ -677,6 +685,7 @@ impl DirectRootExchange {
                     "trigger": trigger,
                     "root_scope_id": root_scope_id.clone(),
                     "selected_peers": selected_app_peers,
+                    "visible_peers": visible_peers.len(),
                     "error": format!("{error:#}"),
                 })
             ),
@@ -1093,23 +1102,31 @@ impl DirectRootExchange {
         true
     }
 
-    fn should_publish_state_request(
+    fn should_publish_state_request<'a>(
         &mut self,
         root_scope_id: &str,
+        visible_peers: impl IntoIterator<Item = &'a str>,
         now: std::time::Instant,
     ) -> bool {
-        if self
-            .state_request_times
-            .get(root_scope_id)
-            .is_some_and(|last| {
-                now.duration_since(*last)
-                    < std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS)
-            })
-        {
+        let mut throttle_keys = visible_peers
+            .into_iter()
+            .filter(|peer| !peer.is_empty())
+            .map(|peer| format!("request:{peer}:{root_scope_id}"))
+            .collect::<Vec<_>>();
+        if throttle_keys.is_empty() {
+            throttle_keys.push(format!("request:*:{root_scope_id}"));
+        }
+        let interval = std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS);
+        if throttle_keys.iter().all(|key| {
+            self.state_request_times
+                .get(key)
+                .is_some_and(|last| now.duration_since(*last) < interval)
+        }) {
             return false;
         }
-        self.state_request_times
-            .insert(root_scope_id.to_string(), now);
+        for key in throttle_keys {
+            self.state_request_times.insert(key, now);
+        }
         while self.state_request_times.len() > DIRECT_ROOT_EVENT_CACHE_CAP {
             let Some(key) = self.state_request_times.keys().next().cloned() else {
                 break;

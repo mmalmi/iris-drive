@@ -841,13 +841,20 @@ fn direct_root_periodic_state_requests_are_throttled() {
         DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS, 30,
         "state repair requests should recover newly visible peers without replaying cached roots every peer-refresh tick"
     );
-    assert!(exchange.should_publish_state_request("scope", now));
+    assert!(exchange.should_publish_state_request("scope", ["peer-a"], now));
     assert!(!exchange.should_publish_state_request(
         "scope",
+        ["peer-a"],
         now + std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS - 1),
     ));
     assert!(exchange.should_publish_state_request(
         "scope",
+        ["peer-b"],
+        now + std::time::Duration::from_secs(1),
+    ));
+    assert!(exchange.should_publish_state_request(
+        "scope",
+        ["peer-a"],
         now + std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS),
     ));
 }

@@ -66,6 +66,10 @@ MACOS_HOST="$(required_env IRIS_DRIVE_E2E_MACOS_HOST)"
 IOS_HOST="$(required_env IRIS_DRIVE_E2E_IOS_HOST)"
 ANDROID_HOST="$(required_env IRIS_DRIVE_E2E_ANDROID_HOST)"
 
+if [[ -z "${IRIS_DRIVE_E2E_TIMEOUT_SECS+x}" ]]; then
+  export IRIS_DRIVE_E2E_TIMEOUT_SECS=300
+fi
+
 echo "[e2e-5devices] running Linux GTK GUI smoke on $UBUNTU_HOST" >&2
 "$ROOT/scripts/desktop-gui-smoke.sh" linux "$UBUNTU_HOST"
 

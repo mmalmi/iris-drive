@@ -470,13 +470,8 @@ configure_fips_static_hints() {
     if [[ ${#pieces[@]} -gt 0 ]]; then
       local IFS=,
       set_host_value "$label" fips_static_peers "${pieces[*]}"
-      if [[ "$complete" == "1" && ${#pieces[@]} -ge $((${#LABELS[@]} - 1)) ]]; then
-        set_host_value "$label" fips_bootstrap "false"
-        set_host_value "$label" fips_open_discovery "0"
-      else
-        set_host_value "$label" fips_bootstrap "true"
-        set_host_value "$label" fips_open_discovery "16"
-      fi
+      set_host_value "$label" fips_bootstrap "true"
+      set_host_value "$label" fips_open_discovery "16"
       echo "static FIPS hints for $label: $(host_value "$label" fips_static_peers)"
     fi
   done
