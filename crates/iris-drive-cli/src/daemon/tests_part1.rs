@@ -619,6 +619,31 @@ fn event_block_pull_timeout_allows_blossom_retry_window() {
 }
 
 #[test]
+fn direct_root_recovery_state_request_bypasses_short_throttle() {
+    let root_scope_id = format!(
+        "test-{}",
+        iris_drive_core::NostrIdentityId::new_v4()
+    );
+
+    assert!(should_publish_direct_root_state_request(
+        &root_scope_id,
+        false,
+    ));
+    assert!(!should_publish_direct_root_state_request(
+        &root_scope_id,
+        false,
+    ));
+    assert!(should_publish_direct_root_state_request(
+        &root_scope_id,
+        true,
+    ));
+    assert!(!should_publish_direct_root_state_request(
+        &root_scope_id,
+        false,
+    ));
+}
+
+#[test]
 fn windows_cloud_file_read_skip_only_ignores_transient_placeholder_errors() {
     assert!(windows_cloud_file_read_should_skip(&std::io::Error::new(
         std::io::ErrorKind::PermissionDenied,

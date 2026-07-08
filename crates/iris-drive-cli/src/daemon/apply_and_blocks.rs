@@ -389,6 +389,7 @@ pub(crate) fn spawn_root_apply_followup(
                 &config,
                 fips_blocks.as_deref(),
                 projection_event,
+                true,
             )
             .await;
             let mut last_error = None;
@@ -451,6 +452,7 @@ pub(crate) fn spawn_root_apply_followup(
                     &config,
                     fips_blocks.as_deref(),
                     projection_event,
+                    true,
                 )
                 .await;
                 record_block_sync_error(&config_dir, &root_cid, &error);
@@ -751,6 +753,7 @@ async fn request_latest_direct_root_state(
     config: &AppConfig,
     fips_blocks: Option<&FsFipsBlockSync>,
     projection_event: &'static str,
+    bypass_throttle: bool,
 ) {
     let Some(sync) = fips_blocks else {
         return;
@@ -758,7 +761,7 @@ async fn request_latest_direct_root_state(
     let Some(root_scope_id) = config.profile.as_ref().map(ProfileState::root_scope_id) else {
         return;
     };
-    if !should_publish_direct_root_state_request(&root_scope_id) {
+    if !should_publish_direct_root_state_request(&root_scope_id, bypass_throttle) {
         println!(
             "{}",
             json!({
@@ -835,7 +838,13 @@ fn direct_root_followup_mesh_seq() -> u64 {
         })
 }
 
-fn should_publish_direct_root_state_request(root_scope_id: &str) -> bool {
+fn should_publish_direct_root_state_request(
+    root_scope_id: &str,
+    bypass_throttle: bool,
+) -> bool {
+    if bypass_throttle {
+        return true;
+    }
     let throttle = DIRECT_ROOT_STATE_REQUEST_THROTTLE
         .get_or_init(|| std::sync::Mutex::new(std::collections::BTreeMap::new()));
     let Ok(mut throttle) = throttle.lock() else {
