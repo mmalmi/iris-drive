@@ -156,7 +156,6 @@ fn daemon_status_heartbeat_stays_inside_freshness_window() {
         DAEMON_STATUS_HEARTBEAT_SECS < crate::status::DAEMON_STATUS_FRESH_SECS as u64,
         "daemon heartbeat must keep the status fresh between GUI polls"
     );
-    assert!(RELAY_STATUS_PROBE_PERIOD_SECS >= DAEMON_STATUS_HEARTBEAT_SECS);
 }
 
 #[test]

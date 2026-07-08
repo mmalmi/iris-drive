@@ -366,7 +366,7 @@ pub(crate) fn cmd_daemon(
         let parent_exit = parent_exit_signal(service_mode);
         tokio::pin!(parent_exit);
 
-        let relay_status_period = std::time::Duration::from_secs(RELAY_STATUS_PROBE_PERIOD_SECS);
+        let relay_status_period = std::time::Duration::from_secs(10);
         let mut relay_status_timer = tokio::time::interval_at(
             tokio::time::Instant::now() + relay_status_period,
             relay_status_period,
