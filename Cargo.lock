@@ -1789,9 +1789,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.3.78"
+version = "0.3.79"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "cf92fffad072fed917b3327d82502b5fb587ffc6616bcae689791dd4c54bdedf"
+checksum = "f708efd6cc1971bb7fdc5007118ecbdaec9979050835f674f226ce99b55fb543"
 dependencies = [
  "bluer",
  "bytes",
@@ -1804,6 +1804,7 @@ dependencies = [
  "libc",
  "mdns-sd",
  "nostr",
+ "nostr-pubsub",
  "nostr-sdk",
  "portable-atomic",
  "procfs",
@@ -1823,6 +1824,7 @@ dependencies = [
  "tokio-socks",
  "tracing",
  "tun",
+ "uuid",
  "webrtc",
  "wintun",
 ]
