@@ -74,6 +74,7 @@ pub(crate) struct DirectRootExchange {
     subscribed_streams: BTreeSet<String>,
     known_mesh_peers: BTreeSet<String>,
     known_publish_peers: BTreeSet<String>,
+    known_visible_publish_peers: BTreeSet<String>,
     next_mesh_publish_seq: u64,
     profile_stream_cache: Option<CachedDirectRootProfileStream>,
     current_sync_events_cache: Option<CachedCurrentSyncEvents>,
@@ -1244,17 +1245,31 @@ impl DirectRootExchange {
     async fn refresh_known_mesh_peers(&mut self, sync: &FsFipsBlockSync) -> bool {
         let authorized_peers = sync.authorized_peer_ids().await;
         let mesh_peers = sync.mesh_peer_ids().await;
-        self.refresh_known_root_peers(authorized_peers, mesh_peers)
+        let connected_peers = sync.connected_peer_ids().await;
+        self.refresh_known_root_peers(authorized_peers, mesh_peers, connected_peers)
     }
 
     fn refresh_known_root_peers(
         &mut self,
         authorized_peers: impl IntoIterator<Item = String>,
         mesh_peers: impl IntoIterator<Item = String>,
+        connected_peers: impl IntoIterator<Item = String>,
     ) -> bool {
         let publish_peers = authorized_peers.into_iter().collect::<BTreeSet<_>>();
+        let connected_peers = connected_peers.into_iter().collect::<BTreeSet<_>>();
+        let mesh_peers = mesh_peers.into_iter().collect::<BTreeSet<_>>();
+        let visible_publish_peers = publish_peers
+            .iter()
+            .filter(|peer| connected_peers.contains(*peer) || mesh_peers.contains(*peer))
+            .cloned()
+            .collect::<BTreeSet<_>>();
         let mut root_peers = publish_peers.clone();
-        root_peers.extend(mesh_peers);
+        root_peers.extend(mesh_peers.iter().map(|peer| format!("mesh:{peer}")));
+        root_peers.extend(
+            visible_publish_peers
+                .iter()
+                .map(|peer| format!("visible:{peer}")),
+        );
 
         let peers_changed = root_peers != self.known_mesh_peers;
         if peers_changed {
@@ -1263,10 +1278,14 @@ impl DirectRootExchange {
         let has_new_publish_peer = publish_peers
             .iter()
             .any(|peer| !self.known_publish_peers.contains(peer));
-        if has_new_publish_peer {
+        let has_new_visible_publish_peer = visible_publish_peers
+            .iter()
+            .any(|peer| !self.known_visible_publish_peers.contains(peer));
+        if has_new_publish_peer || has_new_visible_publish_peer {
             self.published_keys.clear();
         }
         self.known_publish_peers = publish_peers;
+        self.known_visible_publish_peers = visible_publish_peers;
         peers_changed
     }
 

@@ -127,12 +127,14 @@ fn direct_root_peer_churn_does_not_clear_republish_throttle() {
     assert!(exchange.refresh_known_root_peers(
         ["authorized-a".to_string(), "authorized-b".to_string()],
         ["mesh-a".to_string()],
+        [] as [String; 0],
     ));
     assert!(exchange.should_publish_key(key, now));
 
     assert!(!exchange.refresh_known_root_peers(
         ["authorized-a".to_string(), "authorized-b".to_string()],
         ["mesh-a".to_string()],
+        [] as [String; 0],
     ));
     assert!(!exchange.should_publish_key(key, now + std::time::Duration::from_millis(500)));
 }
@@ -146,12 +148,14 @@ fn direct_root_mesh_route_churn_does_not_clear_republish_throttle() {
     assert!(exchange.refresh_known_root_peers(
         ["authorized-a".to_string(), "authorized-b".to_string()],
         ["mesh-a".to_string()],
+        [] as [String; 0],
     ));
     assert!(exchange.should_publish_key(key, now));
 
     assert!(exchange.refresh_known_root_peers(
         ["authorized-a".to_string(), "authorized-b".to_string()],
         ["mesh-b".to_string()],
+        [] as [String; 0],
     ));
     assert!(!exchange.should_publish_key(key, now + std::time::Duration::from_millis(500)));
 }
@@ -165,12 +169,14 @@ fn direct_root_mesh_route_churn_does_not_clear_cached_relay_throttle() {
     assert!(exchange.refresh_known_root_peers(
         ["authorized-a".to_string(), "authorized-b".to_string()],
         ["mesh-a".to_string()],
+        [] as [String; 0],
     ));
     assert!(exchange.should_publish_candidate_key(key, DirectRootPublishSource::CachedRelay, now));
 
     assert!(exchange.refresh_known_root_peers(
         ["authorized-a".to_string(), "authorized-b".to_string()],
         ["mesh-b".to_string()],
+        [] as [String; 0],
     ));
     assert!(!exchange.should_publish_candidate_key(
         key,
@@ -188,12 +194,15 @@ fn direct_root_authorized_peer_loss_does_not_clear_republish_throttle() {
     assert!(exchange.refresh_known_root_peers(
         ["authorized-a".to_string(), "authorized-b".to_string()],
         ["mesh-a".to_string()],
+        [] as [String; 0],
     ));
     assert!(exchange.should_publish_key(key, now));
 
-    assert!(
-        exchange.refresh_known_root_peers(["authorized-a".to_string()], ["mesh-a".to_string()],)
-    );
+    assert!(exchange.refresh_known_root_peers(
+        ["authorized-a".to_string()],
+        ["mesh-a".to_string()],
+        [] as [String; 0],
+    ));
     assert!(!exchange.should_publish_key(key, now + std::time::Duration::from_millis(500)));
 }
 
@@ -206,6 +215,7 @@ fn direct_root_new_authorized_peer_clears_republish_throttle() {
     assert!(exchange.refresh_known_root_peers(
         ["authorized-a".to_string(), "authorized-b".to_string()],
         ["mesh-a".to_string()],
+        [] as [String; 0],
     ));
     assert!(exchange.should_publish_key(key, now));
 
@@ -216,6 +226,28 @@ fn direct_root_new_authorized_peer_clears_republish_throttle() {
             "authorized-c".to_string(),
         ],
         ["mesh-a".to_string()],
+        [] as [String; 0],
+    ));
+    assert!(exchange.should_publish_key(key, now + std::time::Duration::from_secs(1)));
+}
+
+#[test]
+fn direct_root_new_visible_authorized_peer_clears_republish_throttle() {
+    let mut exchange = DirectRootExchange::default();
+    let key = "drive-root:device:main:7:root-hash:root-key:device,remote";
+    let now = std::time::Instant::now();
+
+    assert!(exchange.refresh_known_root_peers(
+        ["authorized-a".to_string()],
+        [] as [String; 0],
+        [] as [String; 0],
+    ));
+    assert!(exchange.should_publish_key(key, now));
+
+    assert!(exchange.refresh_known_root_peers(
+        ["authorized-a".to_string()],
+        [] as [String; 0],
+        ["authorized-a".to_string()],
     ));
     assert!(exchange.should_publish_key(key, now + std::time::Duration::from_secs(1)));
 }
@@ -289,6 +321,7 @@ fn direct_root_peer_change_allows_cached_relay_once() {
     assert!(exchange.refresh_known_root_peers(
         ["authorized-a".to_string(), "authorized-b".to_string()],
         ["mesh-a".to_string()],
+        [] as [String; 0],
     ));
     assert!(exchange.should_publish_candidate_key(key, DirectRootPublishSource::CachedRelay, now));
     assert!(!exchange.should_publish_candidate_key(
@@ -304,6 +337,7 @@ fn direct_root_peer_change_allows_cached_relay_once() {
             "authorized-c".to_string(),
         ],
         ["mesh-a".to_string()],
+        [] as [String; 0],
     ));
     assert!(exchange.should_publish_candidate_key(
         key,
