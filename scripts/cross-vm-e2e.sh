@@ -1314,16 +1314,58 @@ projection_snapshots_match_expected() {
 wait_for_source_snapshot() {
   local label="$1"
   local step="$2"
+  EXPECTED_SOURCE_LABEL="$label"
+  SOURCE_MATCH_CANDIDATE=""
+  SOURCE_MATCH_STABLE_COUNT=0
+  wait_until "$step" source_and_snapshots_match_current_source
+}
+
+source_visible_snapshot() {
+  local label="$1"
   local expected
   if projection_enabled "$label"; then
-    expected="$(projection_snapshot "$label")"
+    projection_snapshot "$label"
   else
-    expected="$(snapshot "$label")"
+    snapshot "$label"
+  fi
+}
+
+wait_for_source_snapshot_changed() {
+  local label="$1"
+  local previous="$2"
+  local step="$3"
+  EXPECTED_SOURCE_LABEL="$label"
+  EXPECTED_SOURCE_PREVIOUS_SNAPSHOT="$previous"
+  SOURCE_MATCH_CANDIDATE=""
+  SOURCE_MATCH_STABLE_COUNT=0
+  wait_until "$step" source_and_snapshots_match_current_source_after_change
+}
+
+source_and_snapshots_match_current_source() {
+  local expected
+  expected="$(source_visible_snapshot "$EXPECTED_SOURCE_LABEL")"
+  EXPECTED_SNAPSHOT="$expected"
+  EXPECTED_SOURCE_FILE_COUNT="$(snapshot_file_count "$expected")"
+  source_and_snapshots_match_expected
+}
+
+source_and_snapshots_match_current_source_after_change() {
+  local expected stable_polls
+  expected="$(source_visible_snapshot "$EXPECTED_SOURCE_LABEL")"
+  if [[ "$expected" == "$EXPECTED_SOURCE_PREVIOUS_SNAPSHOT" ]]; then
+    return 1
   fi
   EXPECTED_SNAPSHOT="$expected"
-  EXPECTED_SOURCE_LABEL="$label"
   EXPECTED_SOURCE_FILE_COUNT="$(snapshot_file_count "$expected")"
-  wait_until "$step" source_and_snapshots_match_expected
+  source_and_snapshots_match_expected || return 1
+  if [[ "$SOURCE_MATCH_CANDIDATE" == "$expected" ]]; then
+    SOURCE_MATCH_STABLE_COUNT=$((SOURCE_MATCH_STABLE_COUNT + 1))
+  else
+    SOURCE_MATCH_CANDIDATE="$expected"
+    SOURCE_MATCH_STABLE_COUNT=1
+  fi
+  stable_polls="${IRIS_DRIVE_E2E_SOURCE_STABLE_POLLS:-2}"
+  [[ "$SOURCE_MATCH_STABLE_COUNT" -ge "$stable_polls" ]]
 }
 
 source_root_matches_expected_count() {
@@ -1433,23 +1475,31 @@ write_initial_seed_files() {
 }
 
 step_create_edit_rename_delete() {
+  local before
+  before="$(source_visible_snapshot "$source_label")"
   write_file "$source_label" "ops/create-edit.txt" "version 1 from $source_label"
-  wait_for_source_snapshot "$source_label" "create from source"
+  wait_for_source_snapshot_changed "$source_label" "$before" "create from source"
+  before="$(source_visible_snapshot "$source_label")"
   write_file "$source_label" "ops/create-edit.txt" "version 2 from $source_label"
-  wait_for_source_snapshot "$source_label" "edit from source"
+  wait_for_source_snapshot_changed "$source_label" "$before" "edit from source"
+  before="$(source_visible_snapshot "$source_label")"
   rename_remote "$source_label" "ops/create-edit.txt" "ops/renamed.txt"
-  wait_for_source_snapshot "$source_label" "rename from source"
+  wait_for_source_snapshot_changed "$source_label" "$before" "rename from source"
+  before="$(source_visible_snapshot "$source_label")"
   remove_remote "$source_label" "ops/renamed.txt"
-  wait_for_source_snapshot "$source_label" "delete from source"
+  wait_for_source_snapshot_changed "$source_label" "$before" "delete from source"
 }
 
 step_nested_create_delete() {
+  local before
+  before="$(source_visible_snapshot "$target_label")"
   write_file "$target_label" "download/dir1/one.txt" "nested from $target_label"
   rename_remote "$target_label" "download/dir1" "download/dir2"
-  wait_for_source_snapshot "$target_label" "nested rename"
+  wait_for_source_snapshot_changed "$target_label" "$before" "nested rename"
+  before="$(source_visible_snapshot "$target_label")"
   remove_remote "$target_label" "download/dir2/one.txt"
   remove_remote "$target_label" "download/dir2"
-  wait_for_source_snapshot "$target_label" "nested delete"
+  wait_for_source_snapshot_changed "$target_label" "$before" "nested delete"
 }
 
 windows_projection_not_stale() {
@@ -1486,25 +1536,33 @@ step_windows_projection_replaces_stale_remote_edit() {
     return 0
   fi
 
+  local before
+  before="$(source_visible_snapshot "$windows_label")"
   write_file "$windows_label" "projection/projected-edit.txt" "old bytes"
-  wait_for_source_snapshot "$windows_label" "windows projected edit baseline"
+  wait_for_source_snapshot_changed "$windows_label" "$before" "windows projected edit baseline"
+  before="$(source_visible_snapshot "$ubuntu_label")"
   write_file "$ubuntu_label" "projection/projected-edit.txt" "new bytes"
-  wait_for_source_snapshot "$ubuntu_label" "ubuntu remote edit over windows projected file"
+  wait_for_source_snapshot_changed "$ubuntu_label" "$before" "ubuntu remote edit over windows projected file"
   windows_projection_not_stale "projection/projected-edit.txt" "old bytes"
 }
 
 step_file_type_replacements() {
+  local before
+  before="$(source_visible_snapshot "$source_label")"
   write_file "$source_label" "types/file-to-dir" "old file"
   write_file "$source_label" "types/dir-to-file/old.txt" "old child"
-  wait_for_source_snapshot "$source_label" "initial file type setup"
+  wait_for_source_snapshot_changed "$source_label" "$before" "initial file type setup"
+  before="$(source_visible_snapshot "$source_label")"
   remove_remote "$source_label" "types/file-to-dir"
   write_file "$source_label" "types/file-to-dir/new.txt" "new child"
   remove_remote "$source_label" "types/dir-to-file"
   write_file "$source_label" "types/dir-to-file" "new file"
-  wait_for_source_snapshot "$source_label" "file type replacements"
+  wait_for_source_snapshot_changed "$source_label" "$before" "file type replacements"
 }
 
 step_rename_chain() {
+  local before
+  before="$(source_visible_snapshot "$source_label")"
   write_file "$source_label" "release/rename/1.txt" "111"
   rename_remote "$source_label" "release/rename/1.txt" "release/rename/2.txt"
   write_file "$source_label" "release/rename/3.txt" "222"
@@ -1521,10 +1579,12 @@ step_rename_chain() {
   write_file "$source_label" "release/rename/test/4.txt" "444555"
   rename_remote "$source_label" "release/rename/test" "release/rename/test2/test"
   rename_remote "$source_label" "release/rename/test2" "release/rename/test3"
-  wait_for_source_snapshot "$source_label" "rename chain"
+  wait_for_source_snapshot_changed "$source_label" "$before" "rename chain"
 }
 
 step_ignored_noise() {
+  local before
+  before="$(source_visible_snapshot "$source_label")"
   write_file "$source_label" "noise/keep.txt" "keep"
   write_file "$source_label" "noise/.DS_Store" "finder"
   write_file "$source_label" "noise/._keep.txt" "resource fork"
@@ -1534,25 +1594,30 @@ step_ignored_noise() {
   write_file "$source_label" "noise/#draft#" "emacs"
   write_file "$source_label" "noise/backup.sbak" "seafile backup"
   write_file "$source_label" ".hashtree/prev" "internal"
-  wait_for_source_snapshot "$source_label" "ignored noise"
+  wait_for_source_snapshot_changed "$source_label" "$before" "ignored noise"
 }
 
 step_receiver_restart() {
   local i
+  local before
+  before="$(source_visible_snapshot "$source_label")"
   stop_daemon "$target_label"
   for i in $(seq 1 12); do
     write_file "$source_label" "reconnect/file-$i.txt" "file $i while $target_label stopped"
   done
   start_daemon "$target_label"
   wait_until "target daemon fresh after restart" all_fresh
-  wait_for_source_snapshot "$source_label" "receiver restart"
+  wait_for_source_snapshot_changed "$source_label" "$before" "receiver restart"
 }
 
 step_source_restart_delete() {
+  local before
+  before="$(source_visible_snapshot "$source_label")"
   write_file "$source_label" "stopped-source-delete/from-source.txt" "delete while $source_label is stopped"
-  wait_for_source_snapshot "$source_label" "source restart delete baseline"
+  wait_for_source_snapshot_changed "$source_label" "$before" "source restart delete baseline"
+  before="$(source_visible_snapshot "$source_label")"
   remove_remote "$source_label" "stopped-source-delete/from-source.txt"
-  wait_for_source_snapshot "$source_label" "source restart delete"
+  wait_for_source_snapshot_changed "$source_label" "$before" "source restart delete"
   stop_daemon "$source_label"
   start_daemon "$source_label"
   wait_until "source daemon fresh after restart" all_fresh
@@ -1563,8 +1628,10 @@ step_concurrent_same_path_edits() {
   CONCURRENT_SOURCE_CONTENT="concurrent edit from $source_label in $RUN_ID"
   CONCURRENT_TARGET_CONTENT="concurrent edit from $target_label in $RUN_ID"
 
+  local before
+  before="$(source_visible_snapshot "$source_label")"
   write_file "$source_label" "conflicts/concurrent.txt" "concurrent baseline in $RUN_ID"
-  wait_for_source_snapshot "$source_label" "concurrent edit baseline"
+  wait_for_source_snapshot_changed "$source_label" "$before" "concurrent edit baseline"
 
   write_file "$source_label" "conflicts/concurrent.txt" "$CONCURRENT_SOURCE_CONTENT" &
   local source_pid="$!"
@@ -1578,15 +1645,19 @@ step_concurrent_same_path_edits() {
 
 step_many_small_files() {
   local i
+  local before
+  before="$(source_visible_snapshot "$source_label")"
   for i in $(seq 1 "$MANY_FILES"); do
     write_file "$source_label" "many/$(printf "%03d" "$i").txt" "many file $i from $source_label"
   done
-  wait_for_source_snapshot "$source_label" "many small files"
+  wait_for_source_snapshot_changed "$source_label" "$before" "many small files"
 }
 
 step_large_file() {
+  local before
+  before="$(source_visible_snapshot "$target_label")"
   write_zero_file "$target_label" "large/zero.bin" "$LARGE_BYTES"
-  wait_for_source_snapshot "$target_label" "large file"
+  wait_for_source_snapshot_changed "$target_label" "$before" "large file"
 }
 
 owner_label="${LABELS[0]}"
