@@ -386,22 +386,6 @@ pub(crate) fn spawn_root_apply_followup(
                 );
                 return;
             }
-            if request_latest_direct_root_state(
-                &config,
-                fips_blocks.as_deref(),
-                projection_event,
-                false,
-            )
-            .await
-                && settle_after_direct_root_state_request(
-                    &config_dir,
-                    expected_projection_root_key.as_ref(),
-                    &root_cid,
-                )
-                .await
-            {
-                return;
-            }
             let mut last_error = None;
             for delay_secs in event_block_pull_retry_delays(&config) {
                 if root_apply_followup_is_stale(&config_dir, expected_projection_root_key.as_ref())
@@ -454,19 +438,19 @@ pub(crate) fn spawn_root_apply_followup(
                             })
                         );
                         last_error = Some(error);
-                        if request_latest_direct_root_state(
+                        request_latest_direct_root_state(
                             &config,
                             fips_blocks.as_deref(),
                             projection_event,
                             true,
                         )
+                        .await;
+                        if settle_after_direct_root_state_request(
+                            &config_dir,
+                            expected_projection_root_key.as_ref(),
+                            &root_cid,
+                        )
                         .await
-                            && settle_after_direct_root_state_request(
-                                &config_dir,
-                                expected_projection_root_key.as_ref(),
-                                &root_cid,
-                            )
-                            .await
                         {
                             return;
                         }
@@ -494,6 +478,7 @@ pub(crate) fn spawn_root_apply_followup(
                 return;
             }
         }
+
         if root_cid_for_materialize.is_some() {
             match materialize_primary_merged_root_for_followup(&config_dir).await
             {
@@ -802,12 +787,12 @@ async fn request_latest_direct_root_state(
     fips_blocks: Option<&FsFipsBlockSync>,
     projection_event: &'static str,
     bypass_throttle: bool,
-) -> bool {
+) {
     let Some(sync) = fips_blocks else {
-        return false;
+        return;
     };
     let Some(root_scope_id) = config.profile.as_ref().map(ProfileState::root_scope_id) else {
-        return false;
+        return;
     };
     if !should_publish_direct_root_state_request(&root_scope_id, bypass_throttle) {
         println!(
@@ -818,7 +803,7 @@ async fn request_latest_direct_root_state(
                 "root_scope_id": root_scope_id,
             })
         );
-        return false;
+        return;
     }
     let bytes = match iris_drive_core::encode_direct_root_state_request_frame(&root_scope_id) {
         Ok(bytes) => bytes,
@@ -831,7 +816,7 @@ async fn request_latest_direct_root_state(
                     "error": format!("{error:#}"),
                 })
             );
-            return false;
+            return;
         }
     };
     let selected_peers = sync.authorized_peer_ids().await.len();
@@ -876,7 +861,6 @@ async fn request_latest_direct_root_state(
             "sent_bytes": publish_stats.sent_bytes,
         })
     );
-    true
 }
 
 fn direct_root_followup_mesh_seq() -> u64 {
