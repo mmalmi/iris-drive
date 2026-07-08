@@ -810,13 +810,24 @@ async fn request_latest_direct_root_state(
     let Some(root_scope_id) = config.profile.as_ref().map(ProfileState::root_scope_id) else {
         return;
     };
-    if !should_publish_direct_root_state_request(&root_scope_id, bypass_throttle) {
+    let mut visible_peers = sync
+        .connected_peer_ids()
+        .await
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    visible_peers.extend(sync.mesh_peer_ids().await);
+    if !should_publish_direct_root_state_request(
+        &root_scope_id,
+        visible_peers.iter().map(String::as_str),
+        bypass_throttle,
+    ) {
         println!(
             "{}",
             json!({
                 "event": "direct_root_state_request_throttled",
                 "trigger": projection_event,
                 "root_scope_id": root_scope_id,
+                "visible_peers": visible_peers.len(),
             })
         );
         return;
@@ -847,6 +858,7 @@ async fn request_latest_direct_root_state(
                 "trigger": projection_event,
                 "root_scope_id": root_scope_id.clone(),
                 "selected_peers": selected_peers,
+                "visible_peers": visible_peers.len(),
                 "sent_peers": sent_peers,
             })
         ),
@@ -857,6 +869,7 @@ async fn request_latest_direct_root_state(
                 "trigger": projection_event,
                 "root_scope_id": root_scope_id.clone(),
                 "selected_peers": selected_peers,
+                "visible_peers": visible_peers.len(),
                 "error": format!("{error:#}"),
             })
         ),
@@ -887,8 +900,9 @@ fn direct_root_followup_mesh_seq() -> u64 {
         })
 }
 
-fn should_publish_direct_root_state_request(
+fn should_publish_direct_root_state_request<'a>(
     root_scope_id: &str,
+    visible_peers: impl IntoIterator<Item = &'a str>,
     bypass_throttle: bool,
 ) -> bool {
     if bypass_throttle {
@@ -900,13 +914,25 @@ fn should_publish_direct_root_state_request(
         return true;
     };
     let now = std::time::Instant::now();
-    if throttle.get(root_scope_id).is_some_and(|last| {
-        now.duration_since(*last)
-            < std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_MIN_INTERVAL_SECS)
+    let mut throttle_keys = visible_peers
+        .into_iter()
+        .filter(|peer| !peer.is_empty())
+        .map(|peer| format!("request:{peer}:{root_scope_id}"))
+        .collect::<Vec<_>>();
+    if throttle_keys.is_empty() {
+        throttle_keys.push(format!("request:*:{root_scope_id}"));
+    }
+    let interval = std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_MIN_INTERVAL_SECS);
+    if throttle_keys.iter().all(|key| {
+        throttle
+            .get(key)
+            .is_some_and(|last| now.duration_since(*last) < interval)
     }) {
         return false;
     }
-    throttle.insert(root_scope_id.to_string(), now);
+    for key in throttle_keys {
+        throttle.insert(key, now);
+    }
     true
 }
 

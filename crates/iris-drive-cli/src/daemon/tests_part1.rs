@@ -628,18 +628,27 @@ fn direct_root_recovery_state_request_bypasses_short_throttle() {
 
     assert!(should_publish_direct_root_state_request(
         &root_scope_id,
+        ["peer-a"],
         false,
     ));
     assert!(!should_publish_direct_root_state_request(
         &root_scope_id,
+        ["peer-a"],
         false,
     ));
     assert!(should_publish_direct_root_state_request(
         &root_scope_id,
+        ["peer-b"],
+        false,
+    ));
+    assert!(should_publish_direct_root_state_request(
+        &root_scope_id,
+        ["peer-a"],
         true,
     ));
     assert!(!should_publish_direct_root_state_request(
         &root_scope_id,
+        ["peer-a"],
         false,
     ));
 }
