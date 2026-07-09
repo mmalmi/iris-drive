@@ -793,7 +793,7 @@ fn direct_root_state_request_reply_includes_cached_remote_roots() {
         DirectRootPublishSource::CachedStateRequestReply,
         0
     ));
-    assert!(!should_publish_direct_root_hint(
+    assert!(should_publish_direct_root_hint(
         &remote.key,
         DirectRootPublishSource::CachedStateRequestReply,
     ));

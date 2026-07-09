@@ -1374,6 +1374,7 @@ fn should_publish_direct_root_hint(key: &str, source: DirectRootPublishSource) -
         source,
         DirectRootPublishSource::LocalCurrent
             | DirectRootPublishSource::StateRequestReply
+            | DirectRootPublishSource::CachedStateRequestReply
     ) && direct_root_cache_slot(key).is_some()
 }
 
