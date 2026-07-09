@@ -174,7 +174,7 @@ pub(crate) fn cmd_daemon(
                 }
             };
         let gateway_enabled = embedded_hashtree_requested && embedded_hashtree.is_some();
-        let gateway_disabled_by = if !enable_gateway {
+        let mut gateway_disabled_by = if !enable_gateway {
             Some("cli")
         } else if !config.local_nhash_resolver_enabled {
             Some("settings")
@@ -183,21 +183,28 @@ pub(crate) fn cmd_daemon(
         } else {
             None
         };
+        let mut gateway_error = None::<String>;
         let gateway = if gateway_enabled {
             let embedded_hashtree = embedded_hashtree.as_ref().ok_or_else(|| {
                 anyhow::anyhow!("gateway was enabled without an embedded hashtree")
             })?;
-            let daemon = Daemon::open(config_dir).context("opening daemon for browser gateway")?;
-            Some(
-                GatewayServer::bind_with_tree_and_htree_daemon(
-                    config_dir,
-                    daemon.tree_handle(),
-                    embedded_hashtree.status().base_url.clone(),
-                    GatewayBind::loopback_v4(gateway_port),
-                )
-                    .await
-                    .context("starting browser gateway")?,
-            )
+            match start_daemon_browser_gateway(config_dir, embedded_hashtree, gateway_port).await {
+                Ok(gateway) => Some(gateway),
+                Err(error) => {
+                    let error = format!("{error:#}");
+                    println!(
+                        "{}",
+                        json!({
+                            "event": "browser_gateway_unavailable",
+                            "port": gateway_port,
+                            "error": error,
+                        })
+                    );
+                    gateway_disabled_by = Some("bind_error");
+                    gateway_error = Some(error);
+                    None
+                }
+            }
         } else {
             None
         };
@@ -225,14 +232,12 @@ pub(crate) fn cmd_daemon(
                     .map(|host| host.status().base_url.clone()),
             })
         } else {
-            json!({
-                "enabled": false,
-                "requested": embedded_hashtree_requested,
-                "running": false,
-                "disabled_by": gateway_disabled_by,
-                "host": iris_drive_core::gateway::LOCAL_NHASH_RESOLVER_HOST,
-                "port": gateway_port,
-            })
+            stopped_browser_gateway_status(
+                embedded_hashtree_requested,
+                gateway_disabled_by,
+                gateway_error,
+                gateway_port,
+            )
         };
         let client = relay_sync::connect(&relays)
             .await
