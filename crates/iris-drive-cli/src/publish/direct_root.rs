@@ -2,20 +2,17 @@ use iris_drive_core::{
     DIRECT_ROOT_APP_TOPIC, DIRECT_ROOT_MESH_STREAM_PREFIX, DirectRootFrame, DirectRootHintApply,
     DirectRootHintFrame, DirectRootStateRequestFrame, DirectRootWireFrame, FipsMeshPubsubEvent,
 };
-
 const DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS: u64 = 10;
 const DIRECT_ROOT_STATE_REQUEST_REPLY_REPUBLISH_INTERVAL_SECS: u64 = 10;
 const DIRECT_ROOT_HINT_REPEAT_INTERVAL_SECS: u64 = 30;
 const DIRECT_ROOT_HINT_CACHE_MAX_ENTRIES: usize = 2048;
 const DIRECT_ROOT_SEEN_FRAME_RETRY_INTERVAL_SECS: u64 = 30;
-
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) struct DirectRootAppSendStats {
     pub(crate) selected_peers: usize,
     pub(crate) sent_peers: usize,
     pub(crate) failed_peers: usize,
 }
-
 #[derive(Debug, Clone)]
 pub(crate) struct DirectRootEvent {
     pub(crate) key: String,
@@ -23,7 +20,6 @@ pub(crate) struct DirectRootEvent {
     kind: u16,
     json: String,
 }
-
 #[derive(Debug, Clone)]
 struct DirectRootPublishEvent {
     event: DirectRootEvent,
@@ -727,9 +723,13 @@ impl DirectRootExchange {
             self.subscribed_streams.clear();
             return Ok(());
         };
-        let Some(root_scope_id) = self.cached_profile_stream_root_scope_id(config_dir)? else {
+        let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
+        let Some(state) = config.profile.as_ref() else {
             return Ok(());
         };
+        let root_scope_id = state.root_scope_id();
+        self.announce_current_state(config_dir, &config, state, Some(sync))
+            .await?;
         let mut visible_peers = sync.connected_peer_ids().await.into_iter().collect::<BTreeSet<_>>();
         visible_peers.extend(sync.mesh_peer_ids().await);
         let now = std::time::Instant::now();
