@@ -177,7 +177,7 @@ case "$(uname -s)" in
     fi
     if ! bool_true "${IRIS_DRIVE_RELEASE_GATE_IOS_SKIP:-0}" \
       && [[ "${IRIS_DRIVE_RELEASE_GATE_IOS:-1}" != "0" ]]; then
-      run just ios-build
+      # ios-smoke builds the simulator app before exercising it.
       run just ios-smoke
       run just ios-gui-smoke
       if idle_cpu_gate_enabled; then

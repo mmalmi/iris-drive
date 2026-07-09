@@ -356,7 +356,7 @@ class AppStateTest {
                 appKeyLabel = "Pixel",
                 authorizationState = "awaiting_approval",
                 canAdminProfile = false,
-                appKeyLinkRequest = "iris-drive://app-key-link?app_key=device-a",
+                appKeyLinkRequest = "https://drive.iris.to/approve-device/demo-request",
                 appKeyLinkInvite = "",
                 inboundAppKeyLinkRequests = emptyList(),
             ),

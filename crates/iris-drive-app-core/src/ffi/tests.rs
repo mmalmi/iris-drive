@@ -1057,16 +1057,16 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
     let request_device = nostr_sdk::Keys::generate();
     let request_device_npub =
         iris_drive_core::app_key_summary::pubkey_npub(&request_device.public_key().to_hex());
-    let approval = super::classify_link_input(
-        iris_drive_core::app_key_link_transport::encode_app_key_approval_request(
+    let approval_request =
+        iris_drive_core::app_key_link_transport::create_app_key_approval_request(
             &request_device,
             Some(profile_id.parse().unwrap()),
             Some(&iris_drive_core::normalize_app_key_pubkey(&admin_app_key_npub).unwrap()),
             None,
             123,
         )
-        .unwrap(),
-    );
+        .unwrap();
+    let approval = super::classify_link_input(approval_request.url);
     assert_eq!(approval.kind, "app_key_approval");
     assert!(approval.is_complete);
     assert!(approval.is_valid);
@@ -1298,7 +1298,7 @@ fn link_action_tracks_pending_approval() {
     assert!(!request.request_secret.is_empty());
     assert!(!request.device_app_key_proof.is_empty());
     assert_eq!(
-        iris_drive_core::app_key_summary::pubkey_npub(&request.app_key_hex),
+        iris_drive_core::app_key_summary::pubkey_npub(&request.device_app_key_pubkey),
         account.current_app_key_npub
     );
     assert!(!account.app_key_link_request.contains("local-owner"));
@@ -1453,8 +1453,9 @@ fn approving_tombstoned_inbound_request_readds_device() {
     let linked_account = linked.ui.profile.unwrap();
     let linked_device = linked_account.current_app_key_npub.clone();
     let linked_app_key_hex = normalize_pubkey(&linked_device).unwrap();
+    let linked_request_url = linked_account.app_key_link_request.clone();
     let approved = app.dispatch(NativeAppAction::ApproveDevice {
-        request: linked_account.app_key_link_request,
+        request: linked_request_url.clone(),
         label: "Phone".to_owned(),
     });
     assert!(approved.error.is_empty(), "{}", approved.error);
@@ -1481,7 +1482,7 @@ fn approving_tombstoned_inbound_request_readds_device() {
             &linked_app_key_hex,
             Some("Phone".to_owned()),
             &invite_pubkey,
-            None,
+            Some(linked_request_url),
             u64::try_from(removed_at).unwrap() + 1,
         )
         .unwrap();
@@ -1829,7 +1830,8 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
         link_target: invite,
         app_key_label: "Phone".to_owned(),
     });
-    let linked_device = linked.ui.profile.unwrap().current_app_key_npub;
+    let linked_account = linked.ui.profile.unwrap();
+    let linked_device = linked_account.current_app_key_npub;
     let linked_app_key_hex = normalize_pubkey(&linked_device).unwrap();
 
     let config_path = config_path_in(owner_dir.path());
@@ -1844,7 +1846,7 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
             &linked_app_key_hex,
             Some("Phone".to_owned()),
             &invite_pubkey,
-            None,
+            Some(linked_account.app_key_link_request.clone()),
             42,
         )
         .unwrap();
@@ -1857,7 +1859,7 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
     assert_eq!(request.app_key_pubkey, linked_device);
     assert_eq!(request.label, "Phone");
     assert_eq!(request.requested_at, 42);
-    assert_eq!(request.request_link, linked_device);
+    assert_eq!(request.request_link, linked_account.app_key_link_request);
 
     let approved = app.dispatch(NativeAppAction::ApproveDevice {
         request: request.request_link.clone(),
@@ -1884,7 +1886,8 @@ fn owner_can_reject_inbound_app_key_link_request() {
         link_target: invite,
         app_key_label: "Phone".to_owned(),
     });
-    let linked_device = linked.ui.profile.unwrap().current_app_key_npub;
+    let linked_account = linked.ui.profile.unwrap();
+    let linked_device = linked_account.current_app_key_npub;
     let linked_app_key_hex = normalize_pubkey(&linked_device).unwrap();
 
     let config_path = config_path_in(owner_dir.path());
@@ -1899,7 +1902,7 @@ fn owner_can_reject_inbound_app_key_link_request() {
             &linked_app_key_hex,
             Some("Phone".to_owned()),
             &invite_pubkey,
-            None,
+            Some(linked_account.app_key_link_request),
             42,
         )
         .unwrap();
@@ -2099,12 +2102,23 @@ fn native_profile_roster_ops_refresh_authorized_member_roster() {
     )
     .unwrap();
     let linked_pubkey = linked.state.app_key_pubkey.clone();
+    let approval_request =
+        iris_drive_core::app_key_link_transport::create_app_key_approval_request(
+            linked.app_key.keys(),
+            Some(owner.state.profile_id),
+            Some(&owner.state.app_key_pubkey),
+            linked.state.app_key_label.as_deref(),
+            123,
+        )
+        .unwrap();
     linked
         .state
         .queue_outbound_app_key_link_request(
             owner.state.app_key_pubkey.clone(),
             &iris_drive_core::app_key_link_invite_pubkey(&owner.state.app_key_link_secret).unwrap(),
             123,
+            approval_request.url,
+            approval_request.request_keys.secret_key().to_secret_hex(),
         )
         .unwrap();
     owner

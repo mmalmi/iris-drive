@@ -209,6 +209,15 @@ async fn app_key_link_app_message_records_inbound_request_for_owner_admin() {
     let linked_device_hex = linked_device.public_key().to_hex();
     let invite_pubkey =
         iris_drive_core::app_key_link_invite_pubkey(&account.state.app_key_link_secret).unwrap();
+    let approval_request =
+        iris_drive_core::app_key_link_transport::create_app_key_approval_request(
+            &linked_device,
+            Some(account.state.profile_id),
+            Some(&account.state.app_key_pubkey),
+            Some(" phone "),
+            123,
+        )
+        .unwrap();
     let frame = AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: account.state.profile_id,
@@ -217,14 +226,7 @@ async fn app_key_link_app_message_records_inbound_request_for_owner_admin() {
         invite_pubkey: invite_pubkey.clone(),
         label: Some(" phone ".into()),
         requested_at: 123,
-        url: encode_app_key_approval_request(
-            &linked_device,
-            Some(account.state.profile_id),
-            Some(&account.state.app_key_pubkey),
-            Some(" phone "),
-            123,
-        )
-        .unwrap(),
+        url: approval_request.url,
     };
     let message = iris_drive_core::FipsAppMessage {
         peer_id: pubkey_npub(&linked_device_hex),
@@ -260,6 +262,15 @@ async fn app_key_link_app_message_ignores_wrong_link_secret() {
     let linked_device = nostr_sdk::Keys::generate();
     let linked_device_hex = linked_device.public_key().to_hex();
     let wrong_invite_pubkey = nostr_sdk::Keys::generate().public_key().to_hex();
+    let approval_request =
+        iris_drive_core::app_key_link_transport::create_app_key_approval_request(
+            &linked_device,
+            Some(account.state.profile_id),
+            Some(&account.state.app_key_pubkey),
+            Some("phone"),
+            123,
+        )
+        .unwrap();
     let frame = AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: account.state.profile_id,
@@ -268,14 +279,7 @@ async fn app_key_link_app_message_ignores_wrong_link_secret() {
         invite_pubkey: wrong_invite_pubkey,
         label: Some("phone".into()),
         requested_at: 123,
-        url: encode_app_key_approval_request(
-            &linked_device,
-            Some(account.state.profile_id),
-            Some(&account.state.app_key_pubkey),
-            Some("phone"),
-            123,
-        )
-        .unwrap(),
+        url: approval_request.url,
     };
     let message = iris_drive_core::FipsAppMessage {
         peer_id: pubkey_npub(&linked_device_hex),
@@ -351,11 +355,22 @@ async fn app_key_link_roster_message_authorizes_only_after_local_request() {
     assert!(state.app_keys.is_none());
 
     let mut requested = joiner.state.clone();
+    let approval_request =
+        iris_drive_core::app_key_link_transport::create_app_key_approval_request(
+            joiner.app_key.keys(),
+            Some(admin.state.profile_id),
+            Some(&admin.state.app_key_pubkey),
+            requested.app_key_label.as_deref(),
+            123,
+        )
+        .unwrap();
     requested
         .queue_outbound_app_key_link_request(
             admin.state.app_key_pubkey.clone(),
-            &admin.state.app_key_link_secret,
+            &iris_drive_core::app_key_link_invite_pubkey(&admin.state.app_key_link_secret).unwrap(),
             123,
+            approval_request.url,
+            approval_request.request_keys.secret_key().to_secret_hex(),
         )
         .unwrap();
     let mut config = AppConfig {

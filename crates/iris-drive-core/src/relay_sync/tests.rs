@@ -37,6 +37,67 @@ fn filter_matches(filter: &Filter, event: &Event) -> bool {
     filter.match_event(event, MatchEventOptions::default())
 }
 
+fn queue_link_request(linked: &mut Profile, admin: &Profile, requested_at: u64) {
+    let approval_request = crate::app_key_link_transport::create_app_key_approval_request(
+        linked.app_key.keys(),
+        Some(admin.state.profile_id),
+        Some(&admin.state.app_key_pubkey),
+        linked.state.app_key_label.as_deref(),
+        requested_at,
+    )
+    .unwrap();
+    linked
+        .state
+        .queue_outbound_app_key_link_request(
+            admin.state.app_key_pubkey.clone(),
+            &crate::profile::app_key_link_invite_pubkey(&admin.state.app_key_link_secret).unwrap(),
+            requested_at,
+            approval_request.url,
+            approval_request.request_keys.secret_key().to_secret_hex(),
+        )
+        .unwrap();
+}
+
+fn queue_unbound_join_request(linked: &mut Profile, requested_at: u64) {
+    let approval_request = crate::app_key_link_transport::create_app_key_approval_request(
+        linked.app_key.keys(),
+        None,
+        None,
+        linked.state.app_key_label.as_deref(),
+        requested_at,
+    )
+    .unwrap();
+    linked.state.queue_unbound_app_key_join_request(
+        requested_at,
+        approval_request.url,
+        approval_request.request_keys.secret_key().to_secret_hex(),
+    );
+}
+
+fn approve_pending_request(admin: &mut Profile, linked: &Profile) -> Event {
+    let pending = linked
+        .state
+        .outbound_app_key_link_request
+        .as_ref()
+        .expect("linked device has pending request");
+    let request =
+        crate::app_key_link_transport::parse_app_key_approval_request(&pending.request_url)
+            .unwrap()
+            .expect("full approval request");
+    admin
+        .approve_device_request(&request, linked.state.app_key_label.clone())
+        .unwrap();
+    Event::from_json(
+        &admin
+            .state
+            .pending_device_approval_receipts
+            .last()
+            .expect("approval receipt")
+            .event_json,
+    )
+    .unwrap()
+}
+
 #[test]
 fn relay_config_feeds_pubsub_relay_sources() {
     let relays = vec![
@@ -127,24 +188,14 @@ fn linked_config_after_initial_roster() -> (Profile, AppConfig) {
         Some("phone".into()),
     )
     .unwrap();
-    let linked_pubkey = linked.state.app_key_pubkey.clone();
-    linked
-        .state
-        .queue_outbound_app_key_link_request(
-            admin.state.app_key_pubkey.clone(),
-            &crate::profile::app_key_link_invite_pubkey(&admin.state.app_key_link_secret).unwrap(),
-            123,
-        )
-        .unwrap();
-
-    admin
-        .approve_app_key(&linked_pubkey, Some("phone".into()))
-        .unwrap();
+    queue_link_request(&mut linked, &admin, 123);
+    let receipt_event = approve_pending_request(&mut admin, &linked);
     let mut cfg = AppConfig {
         profile: Some(linked.state.clone()),
         ..AppConfig::default()
     };
     cfg.upsert_drive(Drive::primary(admin.state.root_scope_id()));
+    apply_remote_device_approval_receipt_event(&mut cfg, &receipt_event).unwrap();
 
     let first_frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 456);
     let initial =
@@ -205,23 +256,14 @@ fn apply_app_key_link_roster_is_profile_scoped_and_ownerless() {
         Some("phone".into()),
     )
     .unwrap();
-    let linked_pubkey = linked.state.app_key_pubkey.clone();
-    linked
-        .state
-        .queue_outbound_app_key_link_request(
-            admin.state.app_key_pubkey.clone(),
-            &crate::profile::app_key_link_invite_pubkey(&admin.state.app_key_link_secret).unwrap(),
-            123,
-        )
-        .unwrap();
-    admin
-        .approve_app_key(&linked_pubkey, Some("phone".into()))
-        .unwrap();
+    queue_link_request(&mut linked, &admin, 123);
+    let receipt_event = approve_pending_request(&mut admin, &linked);
     let mut cfg = AppConfig {
         profile: Some(linked.state.clone()),
         ..AppConfig::default()
     };
     cfg.upsert_drive(Drive::primary(admin.state.root_scope_id()));
+    apply_remote_device_approval_receipt_event(&mut cfg, &receipt_event).unwrap();
     let frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 456);
 
     let outcome =
@@ -246,20 +288,14 @@ fn apply_app_key_link_roster_accepts_unbound_manual_join_request() {
     let mut admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
     let mut linked = Profile::start_join_request(linked_dir.path(), Some("phone".into())).unwrap();
     let placeholder_profile_id = linked.state.profile_id;
-    let linked_pubkey = linked.state.app_key_pubkey.clone();
-    linked.state.queue_unbound_app_key_join_request(
-        123,
-        "https://drive.iris.to/approve-device/test".into(),
-    );
-
-    admin
-        .approve_app_key(&linked_pubkey, Some("phone".into()))
-        .unwrap();
+    queue_unbound_join_request(&mut linked, 123);
+    let receipt_event = approve_pending_request(&mut admin, &linked);
     let mut cfg = AppConfig {
         profile: Some(linked.state.clone()),
         ..AppConfig::default()
     };
     cfg.upsert_drive(Drive::primary(placeholder_profile_id.to_string()));
+    apply_remote_device_approval_receipt_event(&mut cfg, &receipt_event).unwrap();
 
     let frame = roster_frame(&admin, admin.state.profile_roster_ops.clone(), 456);
     let outcome =
@@ -289,10 +325,7 @@ fn apply_app_key_link_roster_rejects_unbound_roster_without_joining_app_key() {
     let admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
     let mut linked = Profile::start_join_request(linked_dir.path(), Some("phone".into())).unwrap();
     let placeholder_profile_id = linked.state.profile_id;
-    linked.state.queue_unbound_app_key_join_request(
-        123,
-        "https://drive.iris.to/approve-device/test".into(),
-    );
+    queue_unbound_join_request(&mut linked, 123);
     let mut cfg = AppConfig {
         profile: Some(linked.state.clone()),
         ..AppConfig::default()

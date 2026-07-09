@@ -23,8 +23,8 @@ require_absent() {
 }
 
 require_contains crates/iris-drive-app-core/src/lib.rs "classify_link_input"
-require_contains crates/iris-drive-core/src/app_key_link_transport.rs "APP_KEY_APPROVAL_COMPACT_PREFIX"
-require_contains crates/iris-drive-core/src/app_key_link_transport.rs "iris-drive://app-key-link"
+require_absent crates/iris-drive-core/src/app_key_link_transport.rs "APP_KEY_APPROVAL_COMPACT_PREFIX"
+require_absent crates/iris-drive-core/src/app_key_link_transport.rs "parse_compact_nostr_identity_device_approval_request"
 require_contains crates/iris-drive-app-core/src/c_abi.rs "iris_drive_validate_link_input_json"
 require_contains crates/iris-drive-app-core/src/c_abi.rs "iris_drive_validate_device_invite_input_json"
 require_contains crates/iris-drive-app-core/src/c_abi.rs "iris_drive_validate_device_approval_input_json"

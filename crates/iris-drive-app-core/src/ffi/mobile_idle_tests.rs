@@ -2,6 +2,7 @@ use std::path::Path;
 
 use iris_drive_core::paths::config_path_in;
 use iris_drive_core::{AppConfig, AppKeyAuthorizationState};
+use nostr_sdk::{Event, JsonUtil};
 
 use super::FfiApp;
 use super::mobile_fips_status::{
@@ -135,6 +136,14 @@ fn apply_owner_profile_roster_to_linked_config(owner_dir: &Path, linked_dir: &Pa
         sent_at: 123,
     };
     let mut linked_config = AppConfig::load_or_default(config_path_in(linked_dir)).unwrap();
+    for receipt in &owner_state.pending_device_approval_receipts {
+        let event = Event::from_json(&receipt.event_json).unwrap();
+        iris_drive_core::relay_sync::apply_remote_device_approval_receipt_event(
+            &mut linked_config,
+            &event,
+        )
+        .unwrap();
+    }
     iris_drive_core::relay_sync::apply_app_key_link_roster_frame(
         &mut linked_config,
         &roster_frame,

@@ -1486,8 +1486,6 @@ is_app_key_request_url() {
   local url="$1"
   case "$url" in
     https://drive.iris.to/approve-device/*) return 0 ;;
-    iris-drive://app-key-link\?*) return 0 ;;
-    iris-drive:/app-key-link\?*) return 0 ;;
     *) return 1 ;;
   esac
 }

@@ -66,12 +66,15 @@ pub(crate) fn cmd_daemon(
         .iter()
         .map(|folder| folder.share_id)
         .collect::<Vec<_>>();
-    let filters = relay_sync::subscription_filters_for_shared_roots(
+    let mut filters = relay_sync::subscription_filters_for_shared_roots(
         &state.app_key_pubkey,
         &root_scope_id,
         iris_drive_core::PRIMARY_DRIVE_ID,
         &share_ids,
     );
+    if let Some(filter) = relay_sync::device_approval_receipt_filter(&state) {
+        filters.push(filter);
+    }
     if filters.is_empty() {
         return Err(anyhow::anyhow!("no filters to subscribe to"));
     }
@@ -392,7 +395,6 @@ pub(crate) fn cmd_daemon(
         app_key_link_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut sent_app_key_link_requests = BTreeMap::new();
         let mut app_key_link_request_config_cache = AppConfigLoadCache::default();
-        let mut app_key_link_backfill_config_cache = AppConfigLoadCache::default();
         let mut sent_app_key_link_rosters = AuthorizedAppKeyLinkRosterSendCache::default();
         let mut acked_app_key_link_rosters = BTreeSet::new();
         let mut last_provider_root_key = current_app_key_root_key(&config);
@@ -839,32 +841,6 @@ pub(crate) fn cmd_daemon(
                     }
                 }
                 _ = app_key_link_timer.tick() => {
-                    match backfill_pending_app_key_link_roster_ops(
-                        &client,
-                        config_dir,
-                        fips_blocks.clone(),
-                        mount_refresh_tx.clone(),
-                        &daemon_tasks,
-                        &mut app_key_link_backfill_config_cache,
-                    )
-                    .await
-                    {
-                        Ok(Some(outcome)) if outcome.should_announce_current_state() => {
-                            direct_roots.invalidate_current_sync_events_cache();
-                            direct_root_change_announce_pending = true;
-                            direct_root_change_announce_timer.as_mut().reset(
-                                tokio::time::Instant::now()
-                                    + std::time::Duration::from_millis(
-                                        DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS,
-                                    ),
-                            );
-                        }
-                        Ok(_) => {}
-                        Err(error) => println!(
-                            "{}",
-                            json!({"event": "app_key_link_roster_backfill_error", "error": format!("{error:#}")})
-                        ),
-                    }
                     match send_pending_app_key_link_request(
                         config_dir,
                         &client,
@@ -883,6 +859,7 @@ pub(crate) fn cmd_daemon(
                     }
                     match send_authorized_app_key_link_rosters(
                         config_dir,
+                        &client,
                         fips_blocks.as_deref(),
                         &mut sent_app_key_link_rosters,
                         &acked_app_key_link_rosters,

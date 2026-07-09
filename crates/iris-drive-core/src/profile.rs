@@ -33,9 +33,12 @@ use crate::device_labels::{
 };
 use crate::identity::{AppKey, IdentityError, RecoveryKey};
 use crate::nostr_identity::{
-    NostrIdentityCapabilities, NostrIdentityError, NostrIdentityFacet, NostrIdentityId,
-    NostrIdentityKeyPurpose, NostrIdentityRosterOp, NostrIdentityRosterProjection,
-    SignedNostrIdentityRosterOp, build_nostr_identity_roster_op_event_with_encrypted_device_labels,
+    NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA, NostrIdentityCapabilities,
+    NostrIdentityDeviceApprovalReceipt, NostrIdentityDeviceApprovalRequest, NostrIdentityError,
+    NostrIdentityFacet, NostrIdentityId, NostrIdentityKeyPurpose, NostrIdentityRosterOp,
+    NostrIdentityRosterProjection, SignedNostrIdentityRosterOp,
+    build_nostr_identity_device_approval_receipt_event,
+    build_nostr_identity_roster_op_event_with_encrypted_device_labels,
     encrypted_device_label_payloads_from_nostr_identity_roster_op_event,
     nostr_identity_roster_parent_ids, parse_nostr_identity_roster_op_event,
     project_nostr_identity_roster,
@@ -103,6 +106,7 @@ pub enum AppKeyAuthorizationState {
 
 pub const MAX_INBOUND_APP_KEY_LINK_REQUESTS: usize = 32;
 pub const MAX_HANDLED_APP_KEY_LINK_REQUESTS: usize = 128;
+pub const MAX_PENDING_DEVICE_APPROVAL_RECEIPTS: usize = 32;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PendingAppKeyLinkRequest {
@@ -112,6 +116,10 @@ pub struct PendingAppKeyLinkRequest {
     pub invite_pubkey: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub request_url: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub request_key_secret: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub approval_receipt_event: Option<String>,
     pub requested_at: u64,
 }
 
@@ -134,6 +142,14 @@ pub struct HandledAppKeyLinkRequest {
     #[serde(alias = "device_pubkey")]
     pub app_key_pubkey: String,
     pub requested_at: u64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct PendingDeviceApprovalReceipt {
+    pub request_pubkey: String,
+    pub device_app_key_pubkey: String,
+    pub event_json: String,
 }
 
 /// Persisted local profile state. Lives inside `AppConfig`.
@@ -168,6 +184,8 @@ pub struct ProfileState {
     pub inbound_app_key_link_requests: Vec<InboundAppKeyLinkRequest>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub handled_app_key_link_requests: Vec<HandledAppKeyLinkRequest>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_device_approval_receipts: Vec<PendingDeviceApprovalReceipt>,
 }
 
 fn deserialize_profile_id_or_legacy_owner<'de, D>(
@@ -431,6 +449,8 @@ impl ProfileState {
         admin_app_key_pubkey: String,
         invite_pubkey: &str,
         requested_at: u64,
+        request_url: String,
+        request_key_secret: String,
     ) -> Result<bool, ProfileError> {
         if !is_pubkey_hex(&admin_app_key_pubkey) {
             return Err(ProfileError::InvalidAppKeyPubkey(admin_app_key_pubkey));
@@ -442,7 +462,9 @@ impl ProfileState {
         let next = PendingAppKeyLinkRequest {
             admin_app_key_pubkey,
             invite_pubkey,
-            request_url: String::new(),
+            request_url,
+            request_key_secret,
+            approval_receipt_event: None,
             requested_at,
         };
         let changed = self.outbound_app_key_link_request.as_ref() != Some(&next);
@@ -454,11 +476,14 @@ impl ProfileState {
         &mut self,
         requested_at: u64,
         request_url: String,
+        request_key_secret: String,
     ) -> bool {
         let next = PendingAppKeyLinkRequest {
             admin_app_key_pubkey: String::new(),
             invite_pubkey: String::new(),
             request_url,
+            request_key_secret,
+            approval_receipt_event: None,
             requested_at,
         };
         let changed = self.outbound_app_key_link_request.as_ref() != Some(&next);
@@ -927,6 +952,7 @@ impl Profile {
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
             handled_app_key_link_requests: Vec::new(),
+            pending_device_approval_receipts: Vec::new(),
         };
 
         let now = current_unix_seconds();
@@ -976,6 +1002,7 @@ impl Profile {
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
             handled_app_key_link_requests: Vec::new(),
+            pending_device_approval_receipts: Vec::new(),
         };
 
         let now = current_unix_seconds();
@@ -1043,6 +1070,7 @@ impl Profile {
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
             handled_app_key_link_requests: Vec::new(),
+            pending_device_approval_receipts: Vec::new(),
         };
         state.sync_app_keys_from_profile();
 
@@ -1188,6 +1216,7 @@ impl Profile {
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
             handled_app_key_link_requests: Vec::new(),
+            pending_device_approval_receipts: Vec::new(),
         };
 
         Ok(Self {
@@ -1220,6 +1249,7 @@ impl Profile {
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
             handled_app_key_link_requests: Vec::new(),
+            pending_device_approval_receipts: Vec::new(),
         };
 
         Ok(Self {
@@ -1305,6 +1335,63 @@ impl Profile {
         self.state
             .inbound_app_key_link_requests
             .retain(|request| request.app_key_pubkey != app_key_pubkey_hex);
+        self.current_app_keys_projection()
+    }
+
+    pub fn approve_device_request(
+        &mut self,
+        request: &NostrIdentityDeviceApprovalRequest,
+        label: Option<String>,
+    ) -> Result<&AppKeysProjection, ProfileError> {
+        self.approve_app_key(&request.device_app_key_pubkey, label)?;
+        let approval_op = self
+            .state
+            .profile_roster_ops
+            .iter()
+            .rev()
+            .find(|signed| {
+                matches!(
+                    &signed.content.op,
+                    NostrIdentityRosterOp::AddFacet { facet }
+                        if facet.pubkey == request.device_app_key_pubkey
+                )
+            })
+            .cloned()
+            .ok_or(ProfileError::AppKeyNotInRoster)?;
+        let receipt = NostrIdentityDeviceApprovalReceipt {
+            schema: NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
+            profile_id: self.state.profile_id,
+            request_pubkey: request.request_pubkey.clone(),
+            device_app_key_pubkey: request.device_app_key_pubkey.clone(),
+            approved_by_pubkey: self.state.app_key_pubkey.clone(),
+            approved_at: approval_op.content.created_at,
+            request_secret: request.request_secret.clone(),
+            subject_pubkey: Some(self.state.app_key_pubkey.clone()),
+            roster_op_id: Some(approval_op.op_id.clone()),
+            signed_roster_event: Some(approval_op.event_json.clone()),
+        };
+        let event =
+            build_nostr_identity_device_approval_receipt_event(self.app_key.keys(), receipt)?;
+        self.state
+            .pending_device_approval_receipts
+            .retain(|pending| pending.request_pubkey != request.request_pubkey);
+        self.state
+            .pending_device_approval_receipts
+            .push(PendingDeviceApprovalReceipt {
+                request_pubkey: request.request_pubkey.clone(),
+                device_app_key_pubkey: request.device_app_key_pubkey.clone(),
+                event_json: event.as_json(),
+            });
+        let overflow = self
+            .state
+            .pending_device_approval_receipts
+            .len()
+            .saturating_sub(MAX_PENDING_DEVICE_APPROVAL_RECEIPTS);
+        if overflow > 0 {
+            self.state
+                .pending_device_approval_receipts
+                .drain(..overflow);
+        }
         self.current_app_keys_projection()
     }
 

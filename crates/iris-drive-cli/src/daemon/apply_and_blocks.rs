@@ -72,6 +72,26 @@ pub(crate) async fn apply_one_event(
         } else {
             EventApplyOutcome::Unchanged
         });
+    } else if relay_sync::is_device_approval_receipt_event(event) {
+        let outcome = relay_sync::apply_remote_device_approval_receipt_event(&mut config, event)?;
+        emit_daemon_status_event(
+            config_dir,
+            json!({
+                "event": "nostr_identity_device_approval_receipt",
+                "event_id": event.id.to_hex(),
+                "author": pubkey_npub(&event.pubkey.to_hex()),
+                "outcome": format!("{outcome:?}"),
+            }),
+        );
+        if matches!(outcome, relay_sync::NostrIdentityRosterOpApply::Applied) {
+            config.save(config_path_in(config_dir))?;
+            drop(config_lock);
+            if let Some(sync) = fips_blocks.as_deref() {
+                sync.refresh_authorized_peers(&config).await;
+            }
+            return Ok(EventApplyOutcome::Changed);
+        }
+        return Ok(EventApplyOutcome::Unchanged);
     } else if iris_drive_core::is_nostr_identity_roster_op_event_coordinate(event) {
         let outcome = relay_sync::apply_remote_nostr_identity_roster_op_event(&mut config, event)?;
         emit_daemon_status_event(

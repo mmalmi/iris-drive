@@ -392,6 +392,8 @@ fn discovery_scope_uses_iris_drive_overlay() {
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
             handled_app_key_link_requests: Vec::new(),
+
+            pending_device_approval_receipts: Vec::new(),
         }),
         ..Default::default()
     };
@@ -482,6 +484,8 @@ fn single_device_profile_does_not_route_to_bootstrap_fips_peers() {
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
             handled_app_key_link_requests: Vec::new(),
+
+            pending_device_approval_receipts: Vec::new(),
         }),
         ..Default::default()
     };
@@ -518,6 +522,8 @@ fn remote_authorized_device_keeps_bootstrap_fips_routing_peers() {
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
             handled_app_key_link_requests: Vec::new(),
+
+            pending_device_approval_receipts: Vec::new(),
         }),
         ..Default::default()
     };
@@ -614,6 +620,8 @@ fn legacy_drive_roots_keep_bootstrap_fips_routing_peers() {
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
             handled_app_key_link_requests: Vec::new(),
+
+            pending_device_approval_receipts: Vec::new(),
         }),
         drives: vec![drive],
         ..Default::default()
@@ -674,6 +682,8 @@ fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
             handled_app_key_link_requests: Vec::new(),
+
+            pending_device_approval_receipts: Vec::new(),
         }),
         ..Default::default()
     };
@@ -714,10 +724,14 @@ fn pending_app_key_link_admin_is_allowed_for_roster_app_messages() {
                 admin_app_key_pubkey: admin_pubkey,
                 invite_pubkey: "ee".repeat(32),
                 request_url: String::new(),
+                request_key_secret: "ff".repeat(32),
+                approval_receipt_event: None,
                 requested_at: 42,
             }),
             inbound_app_key_link_requests: Vec::new(),
             handled_app_key_link_requests: Vec::new(),
+
+            pending_device_approval_receipts: Vec::new(),
         }),
         ..Default::default()
     };

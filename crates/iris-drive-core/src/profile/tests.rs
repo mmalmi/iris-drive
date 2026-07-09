@@ -334,6 +334,8 @@ fn recovery_phrase_admits_fresh_app_key_into_existing_profile_log() {
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
             handled_app_key_link_requests: Vec::new(),
+
+            pending_device_approval_receipts: Vec::new(),
         },
         app_key: recovered_device,
     };
@@ -469,6 +471,8 @@ fn nip46_authority_admits_fresh_app_key_with_decrypt_wrap() {
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
             handled_app_key_link_requests: Vec::new(),
+
+            pending_device_approval_receipts: Vec::new(),
         },
         app_key: recovered_device,
     };
@@ -524,6 +528,8 @@ fn nip46_without_decrypt_admits_app_key_but_leaves_wrap_repair_needed() {
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
             handled_app_key_link_requests: Vec::new(),
+
+            pending_device_approval_receipts: Vec::new(),
         },
         app_key: recovered_device,
     };
@@ -584,6 +590,8 @@ fn epoch_signing_admin_can_repair_missing_app_key_wraps() {
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
             handled_app_key_link_requests: Vec::new(),
+
+            pending_device_approval_receipts: Vec::new(),
         },
         app_key: recovered_device,
     };
@@ -1471,6 +1479,8 @@ fn recovery_secret_revokes_app_key_and_rotates_fresh_dck() {
         outbound_app_key_link_request: None,
         inbound_app_key_link_requests: Vec::new(),
         handled_app_key_link_requests: Vec::new(),
+
+        pending_device_approval_receipts: Vec::new(),
     };
     let linked_acct = Profile {
         state: linked_state,
@@ -1669,6 +1679,8 @@ fn linked_device_with_approved_wrap_decrypts_same_dck_as_owner() {
         outbound_app_key_link_request: None,
         inbound_app_key_link_requests: Vec::new(),
         handled_app_key_link_requests: Vec::new(),
+
+        pending_device_approval_receipts: Vec::new(),
     };
     let linked_acct = Profile {
         state: linked_state,
@@ -1709,6 +1721,8 @@ fn revoked_device_cannot_decrypt_new_dck() {
         outbound_app_key_link_request: None,
         inbound_app_key_link_requests: Vec::new(),
         handled_app_key_link_requests: Vec::new(),
+
+        pending_device_approval_receipts: Vec::new(),
     };
     let linked_acct = Profile {
         state: linked_state,

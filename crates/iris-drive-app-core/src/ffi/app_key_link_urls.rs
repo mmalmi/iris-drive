@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) fn app_key_link_request_url(
     state: &iris_drive_core::ProfileState,
-    config_dir: &Path,
+    _config_dir: &Path,
 ) -> String {
     if state.can_admin_profile()
         || state.authorization_state != AppKeyAuthorizationState::AwaitingApproval
@@ -12,36 +12,12 @@ pub(super) fn app_key_link_request_url(
     let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
         return String::new();
     };
-    if iris_drive_core::app_key_link_transport::app_key_approval_request_url_is_full(
-        &pending.request_url,
-    ) {
-        return pending.request_url.clone();
-    }
-    let Ok(app_key) = iris_drive_core::AppKey::load(key_path_in(config_dir)) else {
+    if iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(pending)
+        .is_err()
+    {
         return String::new();
-    };
-    encode_app_key_approval_request(
-        app_key.keys(),
-        pending_request_profile_id(state, pending),
-        pending_admin_app_key_pubkey(pending),
-        state.app_key_label.as_deref(),
-        pending.requested_at,
-    )
-    .unwrap_or_default()
-}
-
-fn pending_request_profile_id(
-    state: &iris_drive_core::ProfileState,
-    pending: &iris_drive_core::profile::PendingAppKeyLinkRequest,
-) -> Option<iris_drive_core::NostrIdentityId> {
-    (!pending.admin_app_key_pubkey.trim().is_empty()).then_some(state.profile_id)
-}
-
-fn pending_admin_app_key_pubkey(
-    pending: &iris_drive_core::profile::PendingAppKeyLinkRequest,
-) -> Option<&str> {
-    let admin = pending.admin_app_key_pubkey.trim();
-    (!admin.is_empty()).then_some(admin)
+    }
+    pending.request_url.clone()
 }
 
 fn request_profile_id(
@@ -69,22 +45,27 @@ pub(super) fn ensure_cached_app_key_link_request_url(
         return Ok(());
     }
     let pending = state.outbound_app_key_link_request.as_ref();
-    if pending.is_some_and(|pending| {
-        iris_drive_core::app_key_link_transport::app_key_approval_request_url_is_full(
+    if let Some(pending) = pending
+        && iris_drive_core::app_key_link_transport::app_key_approval_request_url_is_full(
             &pending.request_url,
         )
-    }) {
+    {
+        iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(pending)
+            .map_err(|error| format!("validating persisted app-key approval request: {error}"))?;
         return Ok(());
     }
     let profile_id = state.profile_id;
     let admin_app_key_pubkey = pending
         .map(|pending| pending.admin_app_key_pubkey.clone())
         .unwrap_or_default();
+    let invite_pubkey = pending
+        .map(|pending| pending.invite_pubkey.clone())
+        .unwrap_or_default();
     let app_key_label = state.app_key_label.clone();
     let requested_at = pending.map_or_else(unix_now_seconds, |pending| pending.requested_at);
     let app_key = iris_drive_core::AppKey::load(key_path_in(config_dir))
         .map_err(|error| error.to_string())?;
-    let request_url = encode_app_key_approval_request(
+    let approval_request = create_app_key_approval_request(
         app_key.keys(),
         request_profile_id(profile_id, &admin_app_key_pubkey),
         request_admin_app_key_pubkey(&admin_app_key_pubkey),
@@ -92,19 +73,25 @@ pub(super) fn ensure_cached_app_key_link_request_url(
         requested_at,
     )
     .map_err(|error| error.to_string())?;
-    let changed = if let Some(pending) = config
-        .profile
-        .as_mut()
-        .and_then(|state| state.outbound_app_key_link_request.as_mut())
-    {
-        if pending.request_url == request_url {
-            false
+    let request_key_secret = approval_request.request_keys.secret_key().to_secret_hex();
+    let changed = if let Some(state) = config.profile.as_mut() {
+        if admin_app_key_pubkey.trim().is_empty() {
+            state.queue_unbound_app_key_join_request(
+                requested_at,
+                approval_request.url,
+                request_key_secret,
+            )
         } else {
-            pending.request_url = request_url;
-            true
+            state
+                .queue_outbound_app_key_link_request(
+                    admin_app_key_pubkey,
+                    &invite_pubkey,
+                    requested_at,
+                    approval_request.url,
+                    request_key_secret,
+                )
+                .map_err(|error| error.to_string())?
         }
-    } else if let Some(state) = config.profile.as_mut() {
-        state.queue_unbound_app_key_join_request(requested_at, request_url)
     } else {
         false
     };

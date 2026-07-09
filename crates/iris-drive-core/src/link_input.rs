@@ -180,7 +180,7 @@ fn classify_app_key_approval_link_input(input: &str) -> Option<LinkInputClassifi
     match parse_app_key_approval_request(input) {
         Ok(Some(request)) => {
             classification.is_valid = true;
-            classification.app_key_pubkey = pubkey_npub(&request.app_key_hex);
+            classification.app_key_pubkey = pubkey_npub(&request.device_app_key_pubkey);
         }
         Ok(None) => {
             "device request was not recognized".clone_into(&mut classification.error);
@@ -706,7 +706,7 @@ fn percent_decode_component(value: &str, plus_is_space: bool) -> Result<String> 
 mod tests {
     use super::*;
     use crate::app_key_link_invite::encode_app_key_link_invite;
-    use crate::app_key_link_transport::encode_app_key_approval_request;
+    use crate::app_key_link_transport::create_app_key_approval_request;
     use nostr_sdk::Keys;
     use nostr_sdk::nips::nip19::ToBech32;
 
@@ -743,7 +743,7 @@ mod tests {
 
         let request_device = Keys::generate();
         let request_device_npub = request_device.public_key().to_bech32().expect("npub");
-        let request = encode_app_key_approval_request(
+        let request = create_app_key_approval_request(
             &request_device,
             Some(profile_id),
             Some(&admin.to_hex()),
@@ -751,7 +751,7 @@ mod tests {
             123,
         )
         .expect("approval request");
-        let approval = classify_link_input(&request);
+        let approval = classify_link_input(&request.url);
         assert_eq!(approval.kind, "app_key_approval");
         assert!(approval.is_complete);
         assert!(approval.is_valid);

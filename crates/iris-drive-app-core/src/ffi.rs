@@ -12,13 +12,14 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 use iris_drive_core::app_key_link_transport::{
-    APP_KEY_LINK_REQUEST_APP_TOPIC, APP_KEY_LINK_ROSTER_ACK_APP_TOPIC,
-    APP_KEY_LINK_ROSTER_APP_TOPIC, AppKeyLinkRequestFrame, AppKeyLinkRosterAckFrame,
-    AppKeyLinkRosterFrame, app_key_link_roster_ack_frame, app_key_link_roster_ack_matches_state,
-    app_key_link_roster_frame, app_key_link_roster_recipients, pending_app_key_link_request_frame,
+    APP_KEY_APPROVAL_RECEIPT_APP_TOPIC, APP_KEY_LINK_REQUEST_APP_TOPIC,
+    APP_KEY_LINK_ROSTER_ACK_APP_TOPIC, APP_KEY_LINK_ROSTER_APP_TOPIC, AppKeyLinkRequestFrame,
+    AppKeyLinkRosterAckFrame, AppKeyLinkRosterFrame, app_key_link_roster_ack_frame,
+    app_key_link_roster_ack_matches_state, app_key_link_roster_frame,
+    app_key_link_roster_recipients, pending_app_key_link_request_frame,
 };
 use iris_drive_core::app_key_link_transport::{
-    AppKeyApprovalRequest, encode_app_key_approval_request, parse_app_key_approval_request,
+    AppKeyApprovalRequest, create_app_key_approval_request, parse_app_key_approval_request,
 };
 use iris_drive_core::app_key_summary::{
     AppKeyConnectionDetails, AppKeyConnectivity, app_key_roster_rows, nostr_identity_summary,
@@ -48,6 +49,8 @@ use iris_drive_core::{AppConfig, AppKeyAuthorizationState, BackupTarget, Drive, 
 use iris_drive_core::{Daemon, GatewayBind, GatewayProxyServer, GatewayServer};
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 use nostr_sdk::Event;
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+use nostr_sdk::JsonUtil;
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
 use serde::{Deserialize, Serialize};
@@ -198,13 +201,6 @@ enum NativeAppKeyLinkRelayEventApply {
     AppliedRoster,
 }
 
-#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
-#[path = "ffi/app_key_approval_backfill.rs"]
-mod app_key_approval_backfill;
-#[cfg(test)]
-use app_key_approval_backfill::apply_native_app_key_link_roster_candidate_to_config;
-#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
-use app_key_approval_backfill::backfill_native_unbound_app_key_approval_candidates;
 #[path = "ffi/app_key_link_urls.rs"]
 mod app_key_link_urls;
 use app_key_link_urls::{
@@ -237,9 +233,13 @@ fn apply_native_app_key_link_relay_event_to_config(
     }
 
     if event.kind.as_u16() == iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP {
-        let outcome =
+        let outcome = if iris_drive_core::relay_sync::is_device_approval_receipt_event(event) {
+            iris_drive_core::relay_sync::apply_remote_device_approval_receipt_event(config, event)
+                .map_err(|error| format!("applying device approval receipt: {error}"))?
+        } else {
             iris_drive_core::relay_sync::apply_remote_nostr_identity_roster_op_event(config, event)
-                .map_err(|error| format!("applying NostrIdentity roster relay event: {error}"))?;
+                .map_err(|error| format!("applying NostrIdentity roster relay event: {error}"))?
+        };
         return Ok(match outcome {
             iris_drive_core::relay_sync::NostrIdentityRosterOpApply::Applied => {
                 NativeAppKeyLinkRelayEventApply::AppliedRoster
@@ -247,7 +247,8 @@ fn apply_native_app_key_link_relay_event_to_config(
             iris_drive_core::relay_sync::NostrIdentityRosterOpApply::Current => {
                 NativeAppKeyLinkRelayEventApply::Current
             }
-            iris_drive_core::relay_sync::NostrIdentityRosterOpApply::NotOurProfile => {
+            iris_drive_core::relay_sync::NostrIdentityRosterOpApply::NotOurProfile
+            | iris_drive_core::relay_sync::NostrIdentityRosterOpApply::ApprovalReceiptRequired => {
                 NativeAppKeyLinkRelayEventApply::Ignored
             }
         });
@@ -935,14 +936,14 @@ impl NativeAppRuntime {
             return;
         }
         let requested_at = unix_now_seconds();
-        let request_url = match encode_app_key_approval_request(
+        let approval_request = match create_app_key_approval_request(
             account.app_key.keys(),
             Some(account.state.profile_id),
             Some(&target.admin_app_key_hex),
             account.state.app_key_label.as_deref(),
             requested_at,
         ) {
-            Ok(url) => url,
+            Ok(request) => request,
             Err(error) => {
                 self.state.error = format!("building app-key link request: {error}");
                 return;
@@ -952,12 +953,11 @@ impl NativeAppRuntime {
             target.admin_app_key_hex,
             &target.invite_pubkey,
             requested_at,
+            approval_request.url,
+            approval_request.request_keys.secret_key().to_secret_hex(),
         ) {
             self.state.error = format!("queueing app-key link request: {error}");
             return;
-        }
-        if let Some(pending) = account.state.outbound_app_key_link_request.as_mut() {
-            pending.request_url = request_url;
         }
         if let Err(error) = self.finish_profile_init(&account) {
             self.state.error = error;
@@ -982,22 +982,24 @@ impl NativeAppRuntime {
             }
         };
         let requested_at = unix_now_seconds();
-        let request_url = match encode_app_key_approval_request(
+        let approval_request = match create_app_key_approval_request(
             account.app_key.keys(),
             None,
             None,
             account.state.app_key_label.as_deref(),
             requested_at,
         ) {
-            Ok(url) => url,
+            Ok(request) => request,
             Err(error) => {
                 self.state.error = format!("building app-key join request: {error}");
                 return;
             }
         };
-        account
-            .state
-            .queue_unbound_app_key_join_request(requested_at, request_url);
+        account.state.queue_unbound_app_key_join_request(
+            requested_at,
+            approval_request.url,
+            approval_request.request_keys.secret_key().to_secret_hex(),
+        );
         if let Err(error) = self.finish_profile_init(&account) {
             self.state.error = error;
         } else {
@@ -1048,20 +1050,26 @@ impl NativeAppRuntime {
             "profile admin is required to approve devices".clone_into(&mut self.state.error);
             return;
         }
-        if request
-            .profile_id
-            .is_some_and(|profile_id| profile_id != state.profile_id)
+        if let Err(error) =
+            iris_drive_core::app_key_link_transport::validate_app_key_approval_request_policy(
+                &request,
+                state.profile_id,
+                &state.app_key_pubkey,
+                unix_now_seconds(),
+            )
         {
-            "device request is for a different profile".clone_into(&mut self.state.error);
+            self.state.error = error.to_string();
             return;
         }
-        let label = label_option(label).or(request.label).or_else(|| {
-            state
-                .inbound_app_key_link_requests
-                .iter()
-                .find(|pending| pending.app_key_pubkey == request.app_key_hex)
-                .and_then(|pending| pending.label.clone())
-        });
+        let label = label_option(label)
+            .or_else(|| request.label.clone())
+            .or_else(|| {
+                state
+                    .inbound_app_key_link_requests
+                    .iter()
+                    .find(|pending| pending.app_key_pubkey == request.device_app_key_pubkey)
+                    .and_then(|pending| pending.label.clone())
+            });
         let mut account = match Profile::load(state, Path::new(&self.data_dir)) {
             Ok(account) => account,
             Err(error) => {
@@ -1069,7 +1077,7 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        if let Err(error) = account.approve_app_key(&request.app_key_hex, label) {
+        if let Err(error) = account.approve_device_request(&request, label) {
             self.state.error = format!("approving device: {error}");
             return;
         }
@@ -1129,14 +1137,20 @@ impl NativeAppRuntime {
             "profile admin is required to reject devices".clone_into(&mut self.state.error);
             return;
         }
-        if request
-            .profile_id
-            .is_some_and(|profile_id| profile_id != state.profile_id)
+        if let Err(error) =
+            iris_drive_core::app_key_link_transport::validate_app_key_approval_request_policy(
+                &request,
+                state.profile_id,
+                &state.app_key_pubkey,
+                unix_now_seconds(),
+            )
         {
-            "device request is for a different profile".clone_into(&mut self.state.error);
+            self.state.error = error.to_string();
             return;
         }
-        if let Err(error) = state.reject_inbound_app_key_link_request(&request.app_key_hex) {
+        if let Err(error) =
+            state.reject_inbound_app_key_link_request(&request.device_app_key_pubkey)
+        {
             self.state.error = format!("rejecting device: {error}");
             return;
         }
@@ -2103,11 +2117,15 @@ async fn run_app_key_link_exchange_async(
             .map_err(|error| format!("normalizing relays: {error}"))?
     };
     let root_scope_id = account_state.root_scope_id();
-    let relay_filters = iris_drive_core::relay_sync::subscription_filters(
+    let mut relay_filters = iris_drive_core::relay_sync::subscription_filters(
         &account_state.app_key_pubkey,
         &root_scope_id,
         iris_drive_core::PRIMARY_DRIVE_ID,
     );
+    if let Some(filter) = iris_drive_core::relay_sync::device_approval_receipt_filter(account_state)
+    {
+        relay_filters.push(filter);
+    }
     let relay_client = iris_drive_core::relay_sync::connect(&relays)
         .await
         .map_err(|error| format!("connecting app-key-link relays: {error}"))?;
@@ -2318,14 +2336,6 @@ async fn drive_app_key_link_exchange_tick(
     };
 
     sync.refresh_authorized_peers(&config).await;
-    if backfill_native_unbound_app_key_approval_candidates(config_dir, relay_client, sync, state)
-        .await?
-    {
-        if let Err(error) = write_native_fips_status(config_dir, sync, None).await {
-            tracing::warn!(error = %error, "writing native FIPS status failed");
-        }
-        return Ok(true);
-    }
     send_native_pending_app_key_link_request(relay_client, device_keys, sync, state, sent_requests)
         .await?;
     publish_native_profile_roster_ops(relay_client, state, published_roster_op_ids).await?;
@@ -2366,20 +2376,41 @@ async fn publish_native_profile_roster_ops(
     published_roster_op_ids: &mut BTreeSet<String>,
 ) -> Result<(), String> {
     let pending_ops = native_profile_roster_ops_pending_publish(state, published_roster_op_ids);
-    if pending_ops.is_empty() {
+    let pending_receipts = state
+        .pending_device_approval_receipts
+        .iter()
+        .filter_map(|pending| Event::from_json(&pending.event_json).ok())
+        .filter(|event| !published_roster_op_ids.contains(&event.id.to_hex()))
+        .collect::<Vec<_>>();
+    if pending_ops.is_empty() && pending_receipts.is_empty() {
         return Ok(());
     }
 
-    tokio::time::timeout(
-        std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS),
-        iris_drive_core::relay_sync::publish_nostr_identity_roster_ops(relay_client, &pending_ops),
-    )
-    .await
-    .map_err(|_| "publishing native profile roster ops timed out".to_string())?
-    .map_err(|error| format!("publishing native profile roster ops: {error}"))?;
+    if !pending_ops.is_empty() {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS),
+            iris_drive_core::relay_sync::publish_nostr_identity_roster_ops(
+                relay_client,
+                &pending_ops,
+            ),
+        )
+        .await
+        .map_err(|_| "publishing native profile roster ops timed out".to_string())?
+        .map_err(|error| format!("publishing native profile roster ops: {error}"))?;
+    }
 
     for op in pending_ops {
         published_roster_op_ids.insert(op.op_id);
+    }
+    for event in pending_receipts {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS),
+            relay_client.send_event(&event),
+        )
+        .await
+        .map_err(|_| "publishing native device approval receipt timed out".to_string())?
+        .map_err(|error| format!("publishing native device approval receipt: {error}"))?;
+        published_roster_op_ids.insert(event.id.to_hex());
     }
     Ok(())
 }
@@ -2398,7 +2429,7 @@ async fn send_native_pending_app_key_link_request(
     if pending.admin_app_key_pubkey.trim().is_empty() {
         return Ok(());
     }
-    let Some(frame) = pending_app_key_link_request_frame(state, device_keys)
+    let Some(frame) = pending_app_key_link_request_frame(state)
         .map_err(|error| format!("building app-key link request frame: {error}"))?
     else {
         return Ok(());
@@ -2531,6 +2562,19 @@ async fn send_native_authorized_app_key_link_rosters(
         .map_err(|error| format!("encoding app-key link roster: {error}"))?;
     for recipient in due_devices {
         let recipient_npub = pubkey_npub(&recipient.app_key_pubkey);
+        for receipt in state
+            .pending_device_approval_receipts
+            .iter()
+            .filter(|receipt| receipt.device_app_key_pubkey == recipient.app_key_pubkey)
+        {
+            sync.send_app_message(
+                &recipient_npub,
+                APP_KEY_APPROVAL_RECEIPT_APP_TOPIC,
+                receipt.event_json.as_bytes().to_vec(),
+            )
+            .await
+            .map_err(|error| format!("sending device approval receipt over FIPS: {error}"))?;
+        }
         match sync
             .send_app_message(
                 &recipient_npub,
@@ -2566,6 +2610,9 @@ async fn handle_native_app_key_link_app_message(
 ) -> Result<bool, String> {
     match message.topic.as_str() {
         APP_KEY_LINK_REQUEST_APP_TOPIC => handle_native_app_key_link_request(config_dir, message),
+        APP_KEY_APPROVAL_RECEIPT_APP_TOPIC => {
+            handle_native_device_approval_receipt(config_dir, message)
+        }
         APP_KEY_LINK_ROSTER_APP_TOPIC => {
             handle_native_app_key_link_roster(config_dir, sync, message).await
         }
@@ -2574,6 +2621,38 @@ async fn handle_native_app_key_link_app_message(
         }
         _ => Ok(false),
     }
+}
+
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+fn handle_native_device_approval_receipt(
+    config_dir: &Path,
+    message: &iris_drive_core::FipsAppMessage,
+) -> Result<bool, String> {
+    let event_json = std::str::from_utf8(&message.data)
+        .map_err(|error| format!("device approval receipt is not UTF-8: {error}"))?;
+    let event = Event::from_json(event_json)
+        .map_err(|error| format!("parsing device approval receipt event: {error}"))?;
+    if !iris_drive_core::relay_sync::is_device_approval_receipt_event(&event) {
+        return Err("FIPS device approval receipt has the wrong event type".to_string());
+    }
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))
+        .map_err(|error| format!("loading config: {error}"))?;
+    let outcome = iris_drive_core::relay_sync::apply_remote_device_approval_receipt_event(
+        &mut config,
+        &event,
+    )
+    .map_err(|error| format!("applying FIPS device approval receipt: {error}"))?;
+    if matches!(
+        outcome,
+        iris_drive_core::relay_sync::NostrIdentityRosterOpApply::NotOurProfile
+            | iris_drive_core::relay_sync::NostrIdentityRosterOpApply::ApprovalReceiptRequired
+    ) {
+        return Ok(true);
+    }
+    config
+        .save(config_path_in(config_dir))
+        .map_err(|error| format!("saving device approval receipt: {error}"))?;
+    Ok(true)
 }
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
@@ -2590,11 +2669,10 @@ fn handle_native_app_key_link_request(
         ));
     }
     let app_key_hex = normalize_pubkey(&frame.app_key_pubkey)?;
-    let invite_pubkey = if frame.invite_pubkey.trim().is_empty() {
-        app_key_approval_invite_pubkey(&frame.url)
-    } else {
-        frame.invite_pubkey
-    };
+    if frame.invite_pubkey.trim().is_empty() {
+        return Err("app-key link request frame is missing invite pubkey".to_string());
+    }
+    let invite_pubkey = frame.invite_pubkey;
 
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))
         .map_err(|error| format!("loading config: {error}"))?;
@@ -3559,35 +3637,9 @@ fn resolve_app_key_link_target(input: &str) -> Result<iris_drive_core::AppKeyLin
 }
 
 fn decode_app_key_approval_request(request: &str) -> Result<AppKeyApprovalRequest, String> {
-    if let Some(request) =
-        parse_app_key_approval_request(request).map_err(|error| error.to_string())?
-    {
-        return Ok(request);
-    }
-    let device = normalize_pubkey(request)?;
-    Ok(AppKeyApprovalRequest {
-        profile_id: None,
-        request_pubkey: String::new(),
-        request_secret: String::new(),
-        app_key_hex: device,
-        device_app_key_proof: String::new(),
-        requested_at: 0,
-        resources: Vec::new(),
-        admin_app_key_pubkey: None,
-        invite_pubkey: String::new(),
-        label: None,
-    })
-}
-
-#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
-fn app_key_approval_invite_pubkey(request: &str) -> String {
     parse_app_key_approval_request(request)
-        .ok()
-        .flatten()
-        .map(|request| request.invite_pubkey)
-        .unwrap_or_default()
-        .trim()
-        .to_owned()
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "expected a full NostrIdentity device approval request".to_string())
 }
 
 fn optional_trimmed(value: &str) -> Option<String> {

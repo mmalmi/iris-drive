@@ -976,17 +976,12 @@ private struct AddDeviceSection: View {
     }
 
     private func normalizedDeviceApprovalRequest(_ value: String) -> String {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        let mangledDrivePrefix = "https:/drive.iris.to/approve-device/"
-        if trimmed.lowercased().hasPrefix(mangledDrivePrefix) {
-            return "https://drive.iris.to/approve-device/" + trimmed.dropFirst(mangledDrivePrefix.count)
-        }
-        return trimmed
+        value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
     private func looksLikeDeviceApprovalRequest(_ value: String) -> Bool {
         let lowercased = value.lowercased()
-        let prefixes = ["https://drive.iris.to/approve-device/", "https:/drive.iris.to/approve-device/", "nostr-identity://device-approval/", "iris-drive://app-key-link", "iris-drive:/app-key-link?"]
+        let prefixes = ["https://drive.iris.to/approve-device/", "nostr-identity://device-approval/"]
         return prefixes.contains { prefix in
             lowercased.hasPrefix(prefix)
         }

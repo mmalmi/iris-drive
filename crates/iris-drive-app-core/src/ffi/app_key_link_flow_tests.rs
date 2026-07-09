@@ -1,6 +1,5 @@
 use super::{
     FfiApp, NativeAppKeyLinkRelayEventApply, apply_native_app_key_link_relay_event_to_config,
-    apply_native_app_key_link_roster_candidate_to_config,
     native_profile_roster_ops_pending_publish, normalize_pubkey,
 };
 use crate::NativeAppAction;
@@ -10,7 +9,13 @@ use nostr_sdk::{Event, JsonUtil};
 use std::collections::BTreeSet;
 use std::path::Path;
 
-fn record_inbound_request(config_dir: &Path, device: &str, label: &str, requested_at: u64) {
+fn record_inbound_request(
+    config_dir: &Path,
+    device: &str,
+    label: &str,
+    request_url: &str,
+    requested_at: u64,
+) {
     let config_path = config_path_in(config_dir);
     let device_hex = normalize_pubkey(device).unwrap();
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
@@ -24,7 +29,7 @@ fn record_inbound_request(config_dir: &Path, device: &str, label: &str, requeste
             &device_hex,
             Some(label.to_owned()),
             &invite_pubkey,
-            None,
+            Some(request_url.to_owned()),
             requested_at,
         )
         .unwrap();
@@ -47,8 +52,15 @@ fn owner_can_reject_then_approve_join_requests_e2e() {
         link_target: invite.clone(),
         app_key_label: "Old iPhone".to_owned(),
     });
-    let rejected_device = rejected.ui.profile.unwrap().current_app_key_npub;
-    record_inbound_request(owner_dir.path(), &rejected_device, "Old iPhone", 41);
+    let rejected_account = rejected.ui.profile.unwrap();
+    let rejected_device = rejected_account.current_app_key_npub;
+    record_inbound_request(
+        owner_dir.path(),
+        &rejected_device,
+        "Old iPhone",
+        &rejected_account.app_key_link_request,
+        41,
+    );
 
     let refreshed = app.refresh();
     let rejected_request = refreshed.ui.profile.unwrap().inbound_app_key_link_requests[0]
@@ -100,8 +112,15 @@ fn owner_can_reject_then_approve_join_requests_e2e() {
         link_target: invite,
         app_key_label: "iPhone".to_owned(),
     });
-    let approved_device = approved.ui.profile.unwrap().current_app_key_npub;
-    record_inbound_request(owner_dir.path(), &approved_device, "iPhone", 42);
+    let approved_account = approved.ui.profile.unwrap();
+    let approved_device = approved_account.current_app_key_npub;
+    record_inbound_request(
+        owner_dir.path(),
+        &approved_device,
+        "iPhone",
+        &approved_account.app_key_link_request,
+        42,
+    );
 
     let refreshed = app.refresh();
     let account = refreshed.ui.profile.unwrap();
@@ -158,7 +177,7 @@ fn owner_can_reject_then_approve_join_requests_e2e() {
 }
 
 #[test]
-fn web_published_roster_ops_authorize_waiting_native_device() {
+fn roster_ops_cannot_authorize_waiting_native_device_before_bound_receipt() {
     let owner_dir = tempfile::tempdir().unwrap();
     let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
     let owner = owner_app.dispatch(NativeAppAction::CreateProfile {
@@ -185,10 +204,18 @@ fn web_published_roster_ops_authorize_waiting_native_device() {
     });
     assert!(approved.error.is_empty(), "{}", approved.error);
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
-    let owner_roster_ops = owner_config.profile.unwrap().profile_roster_ops;
+    let owner_state = owner_config.profile.unwrap();
+    let receipt_event = Event::from_json(
+        &owner_state
+            .pending_device_approval_receipts
+            .first()
+            .expect("owner queued approval receipt")
+            .event_json,
+    )
+    .unwrap();
 
     let mut applied = 0;
-    for op in owner_roster_ops {
+    for op in &owner_state.profile_roster_ops {
         let event = Event::from_json(&op.event_json).unwrap();
         if apply_native_app_key_link_relay_event_to_config(&mut linked_config, &event).unwrap()
             == NativeAppKeyLinkRelayEventApply::AppliedRoster
@@ -198,6 +225,21 @@ fn web_published_roster_ops_authorize_waiting_native_device() {
     }
 
     assert!(applied >= 1);
+    assert_eq!(
+        linked_config.profile.as_ref().unwrap().authorization_state,
+        AppKeyAuthorizationState::AwaitingApproval
+    );
+    let receipt_outcome =
+        apply_native_app_key_link_relay_event_to_config(&mut linked_config, &receipt_event)
+            .unwrap();
+    assert!(matches!(
+        receipt_outcome,
+        NativeAppKeyLinkRelayEventApply::AppliedRoster | NativeAppKeyLinkRelayEventApply::Current
+    ));
+    for op in &owner_state.profile_roster_ops {
+        let event = Event::from_json(&op.event_json).unwrap();
+        apply_native_app_key_link_relay_event_to_config(&mut linked_config, &event).unwrap();
+    }
     assert_eq!(
         linked_config.profile.as_ref().unwrap().authorization_state,
         AppKeyAuthorizationState::Authorized
@@ -237,7 +279,7 @@ fn start_join_request_tracks_pending_manual_approval() {
         iris_drive_core::app_key_link_transport::drive_device_approval_resources()
     );
     assert_eq!(
-        iris_drive_core::app_key_summary::pubkey_npub(&request.app_key_hex),
+        iris_drive_core::app_key_summary::pubkey_npub(&request.device_app_key_pubkey),
         account.current_app_key_npub
     );
     let config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
@@ -256,7 +298,7 @@ fn start_join_request_tracks_pending_manual_approval() {
 }
 
 #[test]
-fn pending_request_refresh_rewrites_stale_compact_approval_url() {
+fn pending_request_refresh_repairs_stale_compact_approval_url() {
     let owner_dir = tempfile::tempdir().unwrap();
     let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
     let owner = owner_app.dispatch(NativeAppAction::CreateProfile {
@@ -289,21 +331,15 @@ fn pending_request_refresh_rewrites_stale_compact_approval_url() {
 
     let refreshed = linked_app.refresh();
     assert!(refreshed.error.is_empty(), "{}", refreshed.error);
-    let request = refreshed.ui.profile.unwrap().app_key_link_request;
-    assert!(
-        request
-            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_REQUEST_PREFIX)
-    );
-    assert!(!request.contains("app_key="));
     let saved = AppConfig::load_or_default(&config_path).unwrap();
-    assert_eq!(
+    assert!(
         saved
             .profile
             .unwrap()
             .outbound_app_key_link_request
             .unwrap()
-            .request_url,
-        request
+            .request_url
+            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_REQUEST_PREFIX)
     );
 }
 
@@ -344,7 +380,7 @@ fn refresh_recreates_missing_manual_join_request_url() {
     .unwrap()
     .unwrap();
     assert_eq!(
-        iris_drive_core::app_key_summary::pubkey_npub(&request.app_key_hex),
+        iris_drive_core::app_key_summary::pubkey_npub(&request.device_app_key_pubkey),
         linked_account.current_app_key_npub
     );
     assert!(!request.request_pubkey.is_empty());
@@ -407,6 +443,14 @@ fn manual_join_request_approval_roster_authorizes_waiting_native_device_e2e() {
         iris_drive_core::app_key_link_transport::app_key_link_roster_frame(owner_state, 456)
             .expect("owner roster frame");
     let mut linked_config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
+    for receipt in &owner_state.pending_device_approval_receipts {
+        let event = Event::from_json(&receipt.event_json).unwrap();
+        iris_drive_core::relay_sync::apply_remote_device_approval_receipt_event(
+            &mut linked_config,
+            &event,
+        )
+        .unwrap();
+    }
     let outcome = iris_drive_core::relay_sync::apply_app_key_link_roster_frame(
         &mut linked_config,
         &frame,
@@ -444,7 +488,7 @@ fn manual_join_request_approval_roster_authorizes_waiting_native_device_e2e() {
 }
 
 #[test]
-fn relay_approval_candidate_authorizes_unbound_waiting_native_device_e2e() {
+fn bound_receipt_then_roster_authorizes_unbound_waiting_native_device_e2e() {
     let owner_dir = tempfile::tempdir().unwrap();
     let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
     let owner = owner_app.dispatch(NativeAppAction::CreateProfile {
@@ -467,29 +511,30 @@ fn relay_approval_candidate_authorizes_unbound_waiting_native_device_e2e() {
     assert!(approved.error.is_empty(), "{}", approved.error);
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
     let owner_state = owner_config.profile.as_ref().unwrap();
+    let receipt_event = Event::from_json(
+        &owner_state
+            .pending_device_approval_receipts
+            .first()
+            .expect("owner queued device approval receipt")
+            .event_json,
+    )
+    .unwrap();
     let relay_events = owner_state
         .profile_roster_ops
         .iter()
         .map(|op| Event::from_json(&op.event_json).unwrap())
         .collect::<Vec<_>>();
-    let candidates =
-        iris_drive_core::relay_sync::nostr_identity_app_key_approval_candidates_from_events(
-            &normalize_pubkey(&linked_account.current_app_key_npub).unwrap(),
-            &relay_events,
-        )
-        .unwrap();
-    assert_eq!(candidates.len(), 1);
-
     let mut linked_config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
-    linked_config
-        .profile
-        .as_mut()
-        .unwrap()
-        .outbound_app_key_link_request = None;
-    let outcome =
-        apply_native_app_key_link_roster_candidate_to_config(&mut linked_config, &candidates[0])
+    let receipt_outcome =
+        apply_native_app_key_link_relay_event_to_config(&mut linked_config, &receipt_event)
             .unwrap();
-    assert_eq!(outcome, NativeAppKeyLinkRelayEventApply::AppliedRoster);
+    assert_eq!(
+        receipt_outcome,
+        NativeAppKeyLinkRelayEventApply::AppliedRoster
+    );
+    for event in relay_events {
+        apply_native_app_key_link_relay_event_to_config(&mut linked_config, &event).unwrap();
+    }
     linked_config
         .save(config_path_in(linked_dir.path()))
         .expect("save linked config");
@@ -647,6 +692,14 @@ fn apply_latest_profile_roster_frame(from: &Path, to: &Path) {
         sent_at: 123,
     };
     let mut linked_config = AppConfig::load_or_default(config_path_in(to)).unwrap();
+    for receipt in &owner_state.pending_device_approval_receipts {
+        let event = Event::from_json(&receipt.event_json).unwrap();
+        iris_drive_core::relay_sync::apply_remote_device_approval_receipt_event(
+            &mut linked_config,
+            &event,
+        )
+        .unwrap();
+    }
     iris_drive_core::relay_sync::apply_app_key_link_roster_frame(
         &mut linked_config,
         &frame,

@@ -791,7 +791,7 @@ fn status_self_heals_missing_waiting_app_key_link_request() {
     )
     .unwrap()
     .unwrap();
-    assert_eq!(request.app_key_hex, linked_pubkey);
+    assert_eq!(request.device_app_key_pubkey, linked_pubkey);
 
     let profile = status_profile_block(&saved).expect("profile block");
     assert_eq!(

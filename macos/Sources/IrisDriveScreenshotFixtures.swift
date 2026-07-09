@@ -35,7 +35,7 @@ enum IrisDriveScreenshotFixtures {
                 "app_key_npub": fakeNpub("ipad"),
                 "label": "iPad Pro",
                 "requested_at": 1_779_900_000,
-                "url": "iris-drive://app-key-link?profile=demo-profile&app_key=npub1demo",
+                "url": "https://drive.iris.to/approve-device/demo-request",
             ])
         ]
         status.canAdminProfile = true

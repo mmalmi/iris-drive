@@ -1,7 +1,7 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 pub(crate) use iris_drive_core::app_key_link_transport::{
-    app_key_approval_request_url_is_full, encode_app_key_approval_request,
+    create_app_key_approval_request,
     parse_app_key_approval_request as decode_app_key_approval_request,
 };
 use nostr_sdk::Keys;
@@ -13,24 +13,22 @@ pub(crate) fn normalize_pubkey(input: &str) -> Result<String> {
 pub(crate) fn resolve_app_key_approval_input(
     input: &str,
     expected_profile_id: iris_drive_core::NostrIdentityId,
+    expected_admin_app_key_pubkey: &str,
     explicit_label: Option<String>,
 ) -> Result<(String, Option<String>)> {
     if let Some(request) = decode_app_key_approval_request(input)? {
-        if request
-            .profile_id
-            .is_some_and(|profile_id| profile_id != expected_profile_id)
-        {
-            return Err(anyhow::anyhow!(
-                "AppKey-link request belongs to a different profile"
-            ));
-        }
+        iris_drive_core::app_key_link_transport::validate_app_key_approval_request_policy(
+            &request,
+            expected_profile_id,
+            expected_admin_app_key_pubkey,
+            unix_now_seconds(),
+        )?;
         let label = explicit_label.or(request.label);
-        return Ok((request.app_key_hex, label));
+        return Ok((request.device_app_key_pubkey, label));
     }
 
-    Ok((
-        normalize_pubkey(input).context("parsing AppKey pubkey")?,
-        explicit_label,
+    Err(anyhow::anyhow!(
+        "expected a full NostrIdentity device approval request"
     ))
 }
 
@@ -48,25 +46,8 @@ fn cached_can_admin_profile(state: &ProfileState) -> bool {
         .is_some_and(|snapshot| snapshot.is_admin(&state.app_key_pubkey))
 }
 
-pub(crate) fn app_key_link_request_json_with_keys(state: &ProfileState, keys: &Keys) -> Value {
-    app_key_link_request_json_for_admin_state(state, state.can_admin_profile(), Some(keys))
-}
-
-pub(crate) fn cache_app_key_link_request_url(state: &mut ProfileState, keys: &Keys) -> Result<()> {
-    let Some(pending) = state.outbound_app_key_link_request.as_mut() else {
-        return Ok(());
-    };
-    if app_key_approval_request_url_is_full(&pending.request_url) {
-        return Ok(());
-    }
-    pending.request_url = encode_app_key_approval_request(
-        keys,
-        Some(state.profile_id),
-        Some(&pending.admin_app_key_pubkey),
-        state.app_key_label.as_deref(),
-        pending.requested_at,
-    )?;
-    Ok(())
+pub(crate) fn app_key_link_request_json_with_keys(state: &ProfileState, _keys: &Keys) -> Value {
+    app_key_link_request_json_for_admin_state(state, state.can_admin_profile())
 }
 
 pub(crate) fn queue_cached_app_key_link_request(
@@ -76,20 +57,32 @@ pub(crate) fn queue_cached_app_key_link_request(
     invite_pubkey: &str,
     requested_at: u64,
 ) -> Result<()> {
+    let approval_request = create_app_key_approval_request(
+        keys,
+        Some(state.profile_id),
+        Some(&admin_app_key_pubkey),
+        state.app_key_label.as_deref(),
+        requested_at,
+    )?;
     state
-        .queue_outbound_app_key_link_request(admin_app_key_pubkey, invite_pubkey, requested_at)
+        .queue_outbound_app_key_link_request(
+            admin_app_key_pubkey,
+            invite_pubkey,
+            requested_at,
+            approval_request.url,
+            approval_request.request_keys.secret_key().to_secret_hex(),
+        )
         .context("queueing app-key link request")?;
-    cache_app_key_link_request_url(state, keys).context("building app-key approval request")
+    Ok(())
 }
 
 pub(crate) fn cached_app_key_link_request_json(state: &ProfileState) -> Value {
-    app_key_link_request_json_for_admin_state(state, cached_can_admin_profile(state), None)
+    app_key_link_request_json_for_admin_state(state, cached_can_admin_profile(state))
 }
 
 fn app_key_link_request_json_for_admin_state(
     state: &ProfileState,
     can_admin_profile: bool,
-    keys: Option<&Keys>,
 ) -> Value {
     if can_admin_profile
         || state.authorization_state != iris_drive_core::AppKeyAuthorizationState::AwaitingApproval
@@ -100,22 +93,12 @@ fn app_key_link_request_json_for_admin_state(
     let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
         return Value::Null;
     };
-    let url = if app_key_approval_request_url_is_full(&pending.request_url) {
-        pending.request_url.clone()
-    } else if let Some(keys) = keys {
-        let Ok(url) = encode_app_key_approval_request(
-            keys,
-            request_profile_id(state, pending),
-            request_admin_app_key_pubkey(pending),
-            state.app_key_label.as_deref(),
-            pending.requested_at,
-        ) else {
-            return Value::Null;
-        };
-        url
-    } else {
+    if iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(pending)
+        .is_err()
+    {
         return Value::Null;
-    };
+    }
+    let url = pending.request_url.clone();
 
     let has_network_target = !pending.admin_app_key_pubkey.trim().is_empty();
     json!({
@@ -128,20 +111,6 @@ fn app_key_link_request_json_for_admin_state(
         "sent_over_relay": has_network_target,
         "sent_over_fips": has_network_target,
     })
-}
-
-fn request_profile_id(
-    state: &ProfileState,
-    pending: &iris_drive_core::profile::PendingAppKeyLinkRequest,
-) -> Option<iris_drive_core::NostrIdentityId> {
-    (!pending.admin_app_key_pubkey.trim().is_empty()).then_some(state.profile_id)
-}
-
-fn request_admin_app_key_pubkey(
-    pending: &iris_drive_core::profile::PendingAppKeyLinkRequest,
-) -> Option<&str> {
-    let admin = pending.admin_app_key_pubkey.trim();
-    (!admin.is_empty()).then_some(admin)
 }
 
 pub(crate) fn ensure_cached_app_key_link_request(
@@ -158,7 +127,9 @@ pub(crate) fn ensure_cached_app_key_link_request(
     }
 
     let pending = state.outbound_app_key_link_request.as_ref();
-    if pending.is_some_and(|pending| app_key_approval_request_url_is_full(&pending.request_url)) {
+    if let Some(pending) = pending {
+        iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(pending)
+            .context("validating persisted app-key approval request")?;
         return Ok(false);
     }
     let profile_id = state.profile_id;
@@ -169,7 +140,7 @@ pub(crate) fn ensure_cached_app_key_link_request(
     let app_key_label = state.app_key_label.clone();
     let app_key =
         iris_drive_core::AppKey::load(key_path_in(config_dir)).context("loading app key")?;
-    let request_url = encode_app_key_approval_request(
+    let approval_request = create_app_key_approval_request(
         app_key.keys(),
         request_profile_id_for_admin(profile_id, &admin_app_key_pubkey),
         request_admin_app_key_pubkey_for_admin(&admin_app_key_pubkey),
@@ -180,16 +151,11 @@ pub(crate) fn ensure_cached_app_key_link_request(
     let Some(state) = config.profile.as_mut() else {
         return Ok(false);
     };
-    let changed = if let Some(pending) = state.outbound_app_key_link_request.as_mut() {
-        if pending.request_url == request_url {
-            false
-        } else {
-            pending.request_url = request_url;
-            true
-        }
-    } else {
-        state.queue_unbound_app_key_join_request(requested_at, request_url)
-    };
+    let changed = state.queue_unbound_app_key_join_request(
+        requested_at,
+        approval_request.url,
+        approval_request.request_keys.secret_key().to_secret_hex(),
+    );
     if changed {
         config.save(config_path_in(config_dir))?;
     }

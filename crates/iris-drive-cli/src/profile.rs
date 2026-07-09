@@ -7,10 +7,11 @@ pub(crate) use app_key_link_urls::*;
 #[cfg(test)]
 pub(crate) use iris_drive_core::app_key_link_transport::app_key_link_roster_fingerprint;
 pub(crate) use iris_drive_core::app_key_link_transport::{
-    APP_KEY_LINK_REQUEST_APP_TOPIC, APP_KEY_LINK_ROSTER_ACK_APP_TOPIC,
-    APP_KEY_LINK_ROSTER_APP_TOPIC, AppKeyLinkRequestFrame, AppKeyLinkRosterAckFrame,
-    AppKeyLinkRosterFrame, app_key_link_roster_ack_frame, app_key_link_roster_ack_matches_state,
-    app_key_link_roster_frame, app_key_link_roster_recipients,
+    APP_KEY_APPROVAL_RECEIPT_APP_TOPIC, APP_KEY_LINK_REQUEST_APP_TOPIC,
+    APP_KEY_LINK_ROSTER_ACK_APP_TOPIC, APP_KEY_LINK_ROSTER_APP_TOPIC, AppKeyLinkRequestFrame,
+    AppKeyLinkRosterAckFrame, AppKeyLinkRosterFrame, app_key_link_roster_ack_frame,
+    app_key_link_roster_ack_matches_state, app_key_link_roster_frame,
+    app_key_link_roster_recipients,
 };
 
 pub(crate) fn cmd_init(
@@ -210,12 +211,20 @@ pub(crate) fn cmd_approve(
         .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    let (app_key_hex, label) = resolve_app_key_approval_input(device, state.profile_id, label)
-        .context("parsing AppKey approval request")?;
+    let request = decode_app_key_approval_request(device)?
+        .ok_or_else(|| anyhow::anyhow!("expected a full NostrIdentity device approval request"))?;
+    iris_drive_core::app_key_link_transport::validate_app_key_approval_request_policy(
+        &request,
+        state.profile_id,
+        &state.app_key_pubkey,
+        unix_now_seconds(),
+    )?;
+    let app_key_hex = request.device_app_key_pubkey.clone();
+    let label = label.or_else(|| request.label.clone());
     let approved_app_key_npub = pubkey_npub(&app_key_hex);
     let mut profile = Profile::load(state, config_dir).context("loading profile")?;
     let snap = profile
-        .approve_app_key(&app_key_hex, label)
+        .approve_device_request(&request, label)
         .context("approving AppKey")?;
     let device_count = snap.app_actors.len();
     config.profile = Some(profile.state.clone());
@@ -241,8 +250,9 @@ pub(crate) fn cmd_reject(config_dir: &std::path::Path, device: &str) -> Result<(
             "this AppKey is not an admin - only admin AppKeys can reject AppKey-link requests"
         ));
     }
-    let (app_key_hex, _) = resolve_app_key_approval_input(device, state.profile_id, None)
-        .context("parsing AppKey rejection request")?;
+    let (app_key_hex, _) =
+        resolve_app_key_approval_input(device, state.profile_id, &state.app_key_pubkey, None)
+            .context("parsing AppKey rejection request")?;
     let rejected = state
         .reject_inbound_app_key_link_request(&app_key_hex)
         .context("rejecting AppKey request")?;
@@ -605,6 +615,7 @@ pub(crate) struct SentAppKeyLinkRequest {
 pub(crate) struct AuthorizedAppKeyLinkRosterSendCache {
     sent: BTreeMap<String, SentAppKeyLinkRoster>,
     snapshot: Option<CachedAuthorizedAppKeyLinkRosterSnapshot>,
+    published_relay_event_ids: BTreeSet<String>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -736,10 +747,8 @@ pub(crate) async fn send_pending_app_key_link_request(
 
     let device =
         iris_drive_core::AppKey::load(key_path_in(config_dir)).context("loading app key")?;
-    let Some(frame) = iris_drive_core::app_key_link_transport::pending_app_key_link_request_frame(
-        state,
-        device.keys(),
-    )?
+    let Some(frame) =
+        iris_drive_core::app_key_link_transport::pending_app_key_link_request_frame(state)?
     else {
         return Ok(None);
     };
@@ -800,14 +809,54 @@ pub(crate) async fn send_pending_app_key_link_request(
 
 pub(crate) async fn send_authorized_app_key_link_rosters(
     config_dir: &Path,
+    relay_client: &nostr_sdk::Client,
     fips_blocks: Option<&FsFipsBlockSync>,
     cache: &mut AuthorizedAppKeyLinkRosterSendCache,
     acked_rosters: &BTreeSet<String>,
 ) -> Result<Option<Value>> {
-    let Some(sync) = fips_blocks else {
+    let Some(snapshot) = load_authorized_app_key_link_roster_snapshot(config_dir, cache)? else {
         return Ok(None);
     };
-    let Some(snapshot) = load_authorized_app_key_link_roster_snapshot(config_dir, cache)? else {
+    let state = snapshot
+        .config
+        .profile
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("profile disappeared while publishing approval"))?;
+    let pending_ops = state
+        .profile_roster_ops
+        .iter()
+        .filter(|op| !cache.published_relay_event_ids.contains(&op.op_id))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !pending_ops.is_empty() {
+        tokio::time::timeout(
+            std::time::Duration::from_secs(APP_KEY_LINK_RELAY_PUBLISH_TIMEOUT_SECS),
+            iris_drive_core::relay_sync::publish_nostr_identity_roster_ops(
+                relay_client,
+                &pending_ops,
+            ),
+        )
+        .await
+        .context("publishing app-key approval roster ops timed out")??;
+        cache
+            .published_relay_event_ids
+            .extend(pending_ops.into_iter().map(|op| op.op_id));
+    }
+    for pending in &state.pending_device_approval_receipts {
+        let event = nostr_sdk::Event::from_json(&pending.event_json)
+            .context("parsing pending device approval receipt")?;
+        if cache.published_relay_event_ids.contains(&event.id.to_hex()) {
+            continue;
+        }
+        tokio::time::timeout(
+            std::time::Duration::from_secs(APP_KEY_LINK_RELAY_PUBLISH_TIMEOUT_SECS),
+            relay_client.send_event(&event),
+        )
+        .await
+        .context("publishing device approval receipt timed out")??;
+        cache.published_relay_event_ids.insert(event.id.to_hex());
+    }
+    let Some(sync) = fips_blocks else {
         return Ok(None);
     };
     let now = std::time::Instant::now();
@@ -833,6 +882,18 @@ pub(crate) async fn send_authorized_app_key_link_rosters(
     let mut recipients = Vec::new();
     for recipient in due_devices {
         let recipient_npub = pubkey_npub(&recipient.app_key_pubkey);
+        for receipt in state
+            .pending_device_approval_receipts
+            .iter()
+            .filter(|receipt| receipt.device_app_key_pubkey == recipient.app_key_pubkey)
+        {
+            sync.send_app_message(
+                &recipient_npub,
+                APP_KEY_APPROVAL_RECEIPT_APP_TOPIC,
+                receipt.event_json.as_bytes().to_vec(),
+            )
+            .await?;
+        }
         sync.send_app_message(
             &recipient_npub,
             APP_KEY_LINK_ROSTER_APP_TOPIC,
@@ -985,6 +1046,9 @@ pub(crate) async fn handle_app_key_link_app_message(
         APP_KEY_LINK_REQUEST_APP_TOPIC => {
             handle_app_key_link_request_app_message(config_dir, message).await
         }
+        APP_KEY_APPROVAL_RECEIPT_APP_TOPIC => {
+            handle_device_approval_receipt_app_message(config_dir, message).await
+        }
         APP_KEY_LINK_ROSTER_APP_TOPIC => {
             handle_app_key_link_roster_app_message(config_dir, message, fips_blocks).await
         }
@@ -993,6 +1057,36 @@ pub(crate) async fn handle_app_key_link_app_message(
         }
         _ => Ok(false),
     }
+}
+
+async fn handle_device_approval_receipt_app_message(
+    config_dir: &Path,
+    message: &iris_drive_core::FipsAppMessage,
+) -> Result<bool> {
+    let event_json =
+        std::str::from_utf8(&message.data).context("device approval receipt is not UTF-8")?;
+    let event =
+        nostr_sdk::Event::from_json(event_json).context("parsing device approval receipt event")?;
+    if !iris_drive_core::relay_sync::is_device_approval_receipt_event(&event) {
+        return Err(anyhow::anyhow!(
+            "FIPS device approval receipt has the wrong event type"
+        ));
+    }
+    let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let outcome = iris_drive_core::relay_sync::apply_remote_device_approval_receipt_event(
+        &mut config,
+        &event,
+    )?;
+    if matches!(
+        outcome,
+        iris_drive_core::relay_sync::NostrIdentityRosterOpApply::NotOurProfile
+            | iris_drive_core::relay_sync::NostrIdentityRosterOpApply::ApprovalReceiptRequired
+    ) {
+        return Ok(true);
+    }
+    config.save(config_path_in(config_dir))?;
+    Ok(true)
 }
 
 async fn handle_app_key_link_request_app_message(
@@ -1009,13 +1103,12 @@ async fn handle_app_key_link_request_app_message(
     }
     let app_key_hex =
         normalize_pubkey(&frame.app_key_pubkey).context("parsing link request device")?;
-    let invite_pubkey = if frame.invite_pubkey.trim().is_empty() {
-        decode_app_key_approval_request(&frame.url)?
-            .map(|request| request.invite_pubkey)
-            .unwrap_or_default()
-    } else {
-        frame.invite_pubkey
-    };
+    if frame.invite_pubkey.trim().is_empty() {
+        return Err(anyhow::anyhow!(
+            "app-key link request frame is missing invite pubkey"
+        ));
+    }
+    let invite_pubkey = frame.invite_pubkey;
 
     let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;

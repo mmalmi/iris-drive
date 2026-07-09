@@ -220,7 +220,7 @@ fn link_creates_awaiting_device_with_no_owner_key() {
         .unwrap()
         .unwrap();
     assert_eq!(
-        iris_drive_core::app_key_summary::pubkey_npub(&request.app_key_hex),
+        iris_drive_core::app_key_summary::pubkey_npub(&request.device_app_key_pubkey),
         v["current_app_key_npub"].as_str().unwrap()
     );
     assert_eq!(
@@ -231,7 +231,6 @@ fn link_creates_awaiting_device_with_no_owner_key() {
     assert!(!request.request_secret.is_empty());
     assert!(!request.device_app_key_proof.is_empty());
     assert_eq!(request.resources, drive_device_approval_resources());
-    assert!(request.invite_pubkey.is_empty());
     assert!(
         !v["app_key_link_request"]["url"]
             .as_str()
@@ -360,11 +359,11 @@ fn link_then_approve_authorizes_the_linked_app_key() {
         .unwrap(),
     )
     .unwrap();
-    let linked_app_key_npub = current_app_key_npub(&linked_v).to_string();
+    let linked_request_url = linked_v["app_key_link_request"]["url"].as_str().unwrap();
 
     // Owner approves the linked device.
     let approve = idrive(owner_dir.path())
-        .args(["approve", &linked_app_key_npub])
+        .args(["approve", linked_request_url])
         .output()
         .unwrap();
     assert!(approve.status.success(), "{approve:?}");
@@ -402,7 +401,8 @@ fn app_keys_can_appoint_and_demote_admin() {
         &["link", owner_invite, "--label", "laptop"],
     );
     let linked_app_key = current_app_key_npub(&linked);
-    run_json(owner_dir.path(), &["approve", linked_app_key]);
+    let linked_request_url = linked["app_key_link_request"]["url"].as_str().unwrap();
+    run_json(owner_dir.path(), &["approve", linked_request_url]);
 
     let promoted = run_json(
         owner_dir.path(),
@@ -454,7 +454,7 @@ fn owner_approves_device_request_link() {
         .assert()
         .failure()
         .stderr(contains(
-            "AppKey-link request belongs to a different profile",
+            "device approval request belongs to a different profile",
         ));
 
     let approved = run_json(owner_dir.path(), &["approve", request_url]);
@@ -555,7 +555,7 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
         .unwrap()
         .unwrap();
     assert_eq!(
-        iris_drive_core::app_key_summary::pubkey_npub(&request.app_key_hex),
+        iris_drive_core::app_key_summary::pubkey_npub(&request.device_app_key_pubkey),
         linked["current_app_key_npub"].as_str().unwrap()
     );
     assert_eq!(
@@ -567,7 +567,6 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
     assert!(!request.device_app_key_proof.is_empty());
     assert_eq!(request.resources, drive_device_approval_resources());
     assert!(!request_url.contains("owner="));
-    assert!(request.invite_pubkey.is_empty());
     assert!(!request_url.contains("secret="));
     assert!(!request_url.contains("local-owner"));
     assert!(!request_url.contains("app_key=device-"));
@@ -768,9 +767,10 @@ fn owner_can_revoke_a_linked_app_key() {
     )
     .unwrap();
     let linked_app_key_npub = current_app_key_npub(&linked_v).to_string();
+    let linked_request_url = linked_v["app_key_link_request"]["url"].as_str().unwrap();
 
     idrive(owner_dir.path())
-        .args(["approve", &linked_app_key_npub])
+        .args(["approve", linked_request_url])
         .assert()
         .success();
     let revoked = run_json(owner_dir.path(), &["revoke", &linked_app_key_npub]);
@@ -929,10 +929,10 @@ fn approve_advances_dck_generation() {
         .unwrap(),
     )
     .unwrap();
-    let linked_app_key_npub = current_app_key_npub(&linked_v).to_string();
+    let linked_request_url = linked_v["app_key_link_request"]["url"].as_str().unwrap();
 
     idrive(owner_dir.path())
-        .args(["approve", &linked_app_key_npub])
+        .args(["approve", linked_request_url])
         .assert()
         .success();
 
