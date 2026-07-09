@@ -10,7 +10,7 @@ crates/iris-drive-cli/src/daemon/runtime.rs 1106 CLI daemon runtime is legacy mo
 crates/iris-drive-cli/src/drive.rs 1060 CLI drive command surface includes provider directory delete tombstone hardening; pending command/provider helper split.
 crates/iris-drive-cli/src/drive/tests.rs 1010 CLI drive provider tests include directory descendant tombstone release coverage; pending provider scenario-module split.
 crates/iris-drive-cli/src/shares.rs 1350 CLI share command surface needs a later command/test split.
-crates/iris-drive-cli/src/profile.rs 1220 CLI profile command surface includes config + profile-roster sidecar fingerprint caching plus AppKey device rename; pending command/test split.
+crates/iris-drive-cli/src/profile.rs 1330 CLI profile command surface includes config + profile-roster sidecar fingerprint caching, AppKey device rename, and strict device approval request handling; pending command/test split.
 crates/iris-drive-cli/src/publish/direct_root.rs 1891 Direct-root publish path includes visible-peer root lookup and fresh-state reply throttling hardening; pending protocol/helper split.
 crates/iris-drive-cli/src/publish/tests.rs 1230 Direct-root release-hardening coverage shares CLI publish fixtures and v0.1.18 hint throttling checks; pending focused test-module split.
 crates/iris-drive-cli/src/status.rs 1150 CLI status normalization already exceeds default; pending status module split.
@@ -24,10 +24,10 @@ crates/iris-drive-core/src/direct_root_transport.rs 2708 Direct-root sync transp
 crates/iris-drive-core/src/gateway.rs 1361 Local gateway routing and response hardening now include CalDAV and public Blossom test module registration; pending route-module split.
 crates/iris-drive-core/src/gateway/tests.rs 1100 Local gateway route coverage includes mixed browser/API/WebDAV scenarios; pending route test-module split.
 crates/iris-drive-core/src/nostr_identity.rs 2100 NostrIdentity authority shim needs a later roster-event-projection module split.
-crates/iris-drive-core/src/profile.rs 2490 Profile create, recovery, admission, projection guards, DCK flows, device labels, device rename, and manual join requests need a later lifecycle/helper split.
+crates/iris-drive-core/src/profile.rs 2580 Profile create, recovery, admission, projection guards, DCK flows, device labels, device rename, and strict manual join approval receipts need a later lifecycle/helper split.
 crates/iris-drive-core/src/profile/tests.rs 1790 Profile recovery, AppKey authority, and device-label rename scenarios need a later test-module split.
 crates/iris-drive-core/src/projection/tests.rs 1150 Projection conflict and merged-root coverage needs a later scenario split.
-crates/iris-drive-core/src/relay_sync.rs 1100 Relay sync root/app-key/share dispatcher needs a later event-handler split.
+crates/iris-drive-core/src/relay_sync.rs 1130 Relay sync root/app-key/share dispatcher includes strict approval-receipt gating; needs a later event-handler split.
 crates/iris-drive-core/src/relay_sync/tests.rs 1510 Relay/app-key/share sync coverage now includes unbound join roster adoption; needs a later test-module split.
 crates/iris-drive-core/src/share_actions.rs 1100 Share action dispatcher needs a later action-module split.
 crates/iris-drive-core/src/sharing.rs 5200 Share roster, key epoch, and shortcut model needs a later module/test split.
