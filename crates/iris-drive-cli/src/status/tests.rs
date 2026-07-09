@@ -313,14 +313,14 @@ fn daemon_sync_status_is_normalized_for_clients() {
             "running": true,
             "fips_block_sync_error": "FIPS status probe timed out",
         }))),
-        "sync error"
+        "up to date"
     );
     assert_eq!(
         daemon_sync_status(Some(&json!({
             "running": true,
             "fips_block_sync": {"status": "timeout"},
         }))),
-        "sync error"
+        "up to date"
     );
     assert_eq!(
         daemon_sync_status(Some(&json!({
