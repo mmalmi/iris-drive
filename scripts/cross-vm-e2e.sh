@@ -47,6 +47,7 @@ Environment:
                                   Copy the owner profile roster snapshot into temp peer configs after approval
                                   so VM file-sync tests do not depend on public relay timing (default: 1).
   IRIS_DRIVE_E2E_PROFILE          Build/use idrive from target/debug or target/release (default: debug).
+  CARGO_TARGET_DIR                Optional Cargo target directory forwarded to POSIX idrive builds.
   IRIS_DRIVE_E2E_REBUILD_IDRIVE   Rebuild repo idrive before each host run unless an explicit
                                   idrive override is set (default: 1).
   IRIS_DRIVE_E2E_IDRIVE           Override idrive path on every host.
@@ -538,7 +539,7 @@ repo=\"\$HOME/src/iris-drive\"
 profile=$(sh_quote "$E2E_PROFILE")
 idrive=$(sh_quote "$idrive_override")
 rebuild_idrive=$(sh_quote "$REBUILD_IDRIVE")
-idrive=\"\$(\"\$repo/scripts/build-idrive-for-e2e.sh\" \"\$profile\" \"\$idrive\" \"\$rebuild_idrive\")\"
+idrive=\"\$(IRIS_DRIVE_E2E_REPO=\"\$repo\" CARGO_TARGET_DIR=\"\${CARGO_TARGET_DIR:-}\" \"\$repo/scripts/build-idrive-for-e2e.sh\" \"\$profile\" \"\$idrive\" \"\$rebuild_idrive\")\"
 printf 'base=%s\n' \"\$base\"
 printf 'config=%s\n' \"\$base/config\"
 printf 'work=%s\n' \"\$base/work\"
