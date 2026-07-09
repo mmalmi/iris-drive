@@ -1149,7 +1149,7 @@ pub fn build_current_direct_root_events(
         let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
         let authorized_app_keys = drive_root_recipient_app_key_pubkeys(state, drive);
         if !authorized_app_keys.is_empty() {
-            let event = crate::nostr_events::build_drive_root_event(
+            let event = crate::nostr_events::build_drive_root_publish_event(
                 device.keys(),
                 &state.root_scope_id(),
                 &drive.drive_id,
@@ -1602,6 +1602,39 @@ mod tests {
                 .key
                 .ends_with(&format!(":{}", expected.join(",")))
         );
+    }
+
+    #[test]
+    fn current_direct_root_events_advance_publish_timestamp_for_same_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let owner = Profile::create(dir.path(), Some("Windows".to_string())).unwrap();
+        let state = owner.state.clone();
+        let mut drive = Drive::primary(state.root_scope_id());
+        let root = AppKeyRootRef::legacy(
+            "63c49f803c85645412e6fd431633b21f8ede15dd39150e709a087bc1b7cd960c:3e9a2656d97761cc705a80c405827bbd204e34fb83cb80ef59bcbad30bfec5e4",
+            1_700_000_000,
+            2,
+        );
+        drive
+            .app_key_roots
+            .insert(state.app_key_pubkey.clone(), root.clone());
+        let config = AppConfig {
+            profile: Some(state.clone()),
+            drives: vec![drive],
+            ..AppConfig::default()
+        };
+
+        let events = build_current_direct_root_events(dir.path(), &config, &state).unwrap();
+        let drive_root = events
+            .iter()
+            .find(|event| event.key.starts_with("drive-root:"))
+            .expect("drive root event");
+        let event = Event::from_json(&drive_root.event_json).unwrap();
+        let (_, _, _, parsed_root) =
+            crate::nostr_events::parse_drive_root_event_for_device(&event, owner.app_key.keys())
+                .unwrap();
+
+        assert!(parsed_root.published_at > root.published_at);
     }
 
     #[test]

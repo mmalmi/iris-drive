@@ -548,7 +548,13 @@ fn apply_root_to_app_key_roots(
     preview: &crate::nostr_events::DriveRootEventPreview,
 ) -> Result<DriveRootApply, RelayError> {
     let app_key_hex = preview.app_key_pubkey_hex.clone();
-    if let Some(existing) = app_key_roots.get(&app_key_hex)
+    let existing = app_key_roots.get(&app_key_hex).cloned();
+    let may_refresh_hint_placeholder = device_keys.is_some()
+        && existing
+            .as_ref()
+            .is_some_and(app_key_root_ref_may_need_full_event_refresh);
+    if !may_refresh_hint_placeholder
+        && let Some(existing) = existing.as_ref()
         && incoming_root_is_stale(existing, preview.app_key_seq, preview.published_at)
     {
         return Ok(DriveRootApply::StaleTimestamp);
@@ -564,14 +570,39 @@ fn apply_root_to_app_key_roots(
     } else {
         parse_drive_root_event(event)?
     };
-    if app_key_roots
-        .get(&app_key_hex)
-        .is_some_and(|existing| existing.root_cid == incoming_root.root_cid)
-    {
-        return Ok(DriveRootApply::StaleTimestamp);
+    if let Some(existing) = existing.as_ref() {
+        if incoming_root_is_stale(existing, preview.app_key_seq, preview.published_at) {
+            if incoming_full_root_refreshes_existing(existing, &incoming_root) {
+                app_key_roots.insert(app_key_hex, incoming_root);
+                return Ok(DriveRootApply::Applied);
+            }
+            return Ok(DriveRootApply::StaleTimestamp);
+        }
+        if existing.root_cid == incoming_root.root_cid {
+            if incoming_full_root_refreshes_existing(existing, &incoming_root) {
+                app_key_roots.insert(app_key_hex, incoming_root);
+                return Ok(DriveRootApply::Applied);
+            }
+            return Ok(DriveRootApply::StaleTimestamp);
+        }
     }
     app_key_roots.insert(app_key_hex, incoming_root);
     Ok(DriveRootApply::Applied)
+}
+
+fn app_key_root_ref_may_need_full_event_refresh(existing: &AppKeyRootRef) -> bool {
+    existing.dck_generation == 0 || existing.parents.is_empty() || existing.observed.is_empty()
+}
+
+fn incoming_full_root_refreshes_existing(
+    existing: &AppKeyRootRef,
+    incoming: &AppKeyRootRef,
+) -> bool {
+    existing.root_cid == incoming.root_cid
+        && (incoming.app_key_seq > existing.app_key_seq
+            || incoming.dck_generation > existing.dck_generation
+            || (existing.parents.is_empty() && !incoming.parents.is_empty())
+            || (existing.observed.is_empty() && !incoming.observed.is_empty()))
 }
 
 /// Apply a standard web hashtree root event to the local primary `AppKey` root.

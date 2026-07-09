@@ -3,7 +3,7 @@ use crate::app_key_link_transport::AppKeyLinkRosterFrame;
 use crate::config::Drive;
 use crate::nostr_events::{
     KIND_DRIVE_ROOT, build_app_key_link_request_event, build_drive_root_event,
-    build_private_hashtree_root_event, drive_root_d_tag,
+    build_drive_root_publish_event, build_private_hashtree_root_event, drive_root_d_tag,
 };
 use crate::nostr_identity::{
     NostrIdentityCapabilities, NostrIdentityFacet, NostrIdentityId, NostrIdentityRosterOp,
@@ -1303,6 +1303,57 @@ fn apply_drive_root_event_ignores_republished_root_without_causal_fields() {
         .unwrap();
     assert_eq!(entry.root_cid, root.root_cid);
     assert_eq!(entry.published_at, 100);
+}
+
+#[test]
+fn apply_drive_root_event_replaces_hint_placeholder_for_same_root() {
+    let dir = tempdir().unwrap();
+    let (mut cfg, mut acct) = config_with_owner_account(dir.path());
+    let device_b = Keys::generate();
+    let device_b_hex = device_b.public_key().to_hex();
+    acct.approve_app_key(&device_b_hex, None).unwrap();
+    cfg.profile = Some(acct.state.clone());
+
+    let root = causal_encrypted_root(0x14, 100, 2, 7);
+    cfg.drives
+        .iter_mut()
+        .find(|drive| drive.drive_id == "main")
+        .unwrap()
+        .app_key_roots
+        .insert(
+            device_b_hex.clone(),
+            AppKeyRootRef {
+                root_cid: root.root_cid.clone(),
+                published_at: 200,
+                dck_generation: 0,
+                app_key_seq: root.app_key_seq,
+                parents: Vec::new(),
+                observed: std::collections::BTreeMap::new(),
+                local_only: false,
+            },
+        );
+
+    let event = build_drive_root_publish_event(
+        &device_b,
+        &acct.state.root_scope_id(),
+        "main",
+        &root,
+        &[acct.state.app_key_pubkey.clone(), device_b_hex.clone()],
+    )
+    .unwrap();
+
+    assert_eq!(
+        apply_remote_drive_root_event(&mut cfg, &event, Some(acct.app_key.keys())).unwrap(),
+        DriveRootApply::Applied
+    );
+    let entry = cfg
+        .drive("main")
+        .unwrap()
+        .app_key_roots
+        .get(&device_b_hex)
+        .unwrap();
+    assert_eq!(entry.root_cid, root.root_cid);
+    assert_eq!(entry.dck_generation, root.dck_generation);
 }
 
 #[test]
