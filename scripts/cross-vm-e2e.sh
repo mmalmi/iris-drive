@@ -539,7 +539,10 @@ repo=\"\$HOME/src/iris-drive\"
 profile=$(sh_quote "$E2E_PROFILE")
 idrive=$(sh_quote "$idrive_override")
 rebuild_idrive=$(sh_quote "$REBUILD_IDRIVE")
-idrive=\"\$(IRIS_DRIVE_E2E_REPO=\"\$repo\" CARGO_TARGET_DIR=\"\${CARGO_TARGET_DIR:-}\" \"\$repo/scripts/build-idrive-for-e2e.sh\" \"\$profile\" \"\$idrive\" \"\$rebuild_idrive\")\"
+if [[ -z \"\${CARGO_TARGET_DIR:-}\" ]]; then
+  unset CARGO_TARGET_DIR
+fi
+idrive=\"\$(IRIS_DRIVE_E2E_REPO=\"\$repo\" \"\$repo/scripts/build-idrive-for-e2e.sh\" \"\$profile\" \"\$idrive\" \"\$rebuild_idrive\")\"
 printf 'base=%s\n' \"\$base\"
 printf 'config=%s\n' \"\$base/config\"
 printf 'work=%s\n' \"\$base/work\"
