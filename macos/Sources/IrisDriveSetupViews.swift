@@ -58,6 +58,8 @@ struct RevokedDeviceSetupView: View {
 struct AwaitingApprovalSetupView: View {
     @ObservedObject var status: IrisDriveStatus
     let controller: AppDelegate
+    let openRecoveryPhrase: () -> Void
+    let openSecretKey: () -> Void
 
     var body: some View {
         VStack(alignment: .center, spacing: 12) {
@@ -76,6 +78,22 @@ struct AwaitingApprovalSetupView: View {
                 }
                 .buttonStyle(.borderedProminent)
             }
+            IrisDriveCopyButton(
+                title: "Restore from recovery phrase",
+                systemImage: "text.badge.checkmark",
+                fillsWidth: true
+            ) {
+                openRecoveryPhrase()
+            }
+            .buttonStyle(.bordered)
+            IrisDriveCopyButton(
+                title: "Restore from secret key",
+                systemImage: "key",
+                fillsWidth: true
+            ) {
+                openSecretKey()
+            }
+            .buttonStyle(.bordered)
             Button(role: .destructive) {
                 controller.logout()
             } label: {

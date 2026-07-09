@@ -69,7 +69,6 @@ private enum IrisDriveSetupMode {
     case restoreOptions
     case restorePhrase
     case restoreSecretKey
-    case link
 }
 
 private enum RecoveryKeyFlowMode {
@@ -375,9 +374,25 @@ struct IrisDriveControlPanel: View {
         if status.revoked {
             RevokedDeviceSetupView(status: status, controller: controller)
         } else if status.awaitingApproval {
-            AwaitingApprovalSetupView(status: status, controller: controller)
-        } else {
             switch setupMode {
+            case .restorePhrase, .restoreSecretKey:
+                setupModeContent
+            default:
+                AwaitingApprovalSetupView(
+                    status: status,
+                    controller: controller,
+                    openRecoveryPhrase: { setupMode = .restorePhrase },
+                    openSecretKey: { setupMode = .restoreSecretKey }
+                )
+            }
+        } else {
+            setupModeContent
+        }
+    }
+
+    @ViewBuilder
+    private var setupModeContent: some View {
+        switch setupMode {
         case .welcome:
             VStack(spacing: 12) {
                 Button {
@@ -445,14 +460,7 @@ struct IrisDriveControlPanel: View {
                 }
             }
         case .restoreOptions:
-            setupForm(title: "Restore") {
-                Button {
-                    setupMode = .link
-                } label: {
-                    setupButtonLabel("Link device", systemImage: "qrcode")
-                }
-                .accessibilityLabel("Link device")
-                .buttonStyle(.bordered)
+            setupForm(title: nil) {
                 Button {
                     setupMode = .restorePhrase
                 } label: {
@@ -467,6 +475,9 @@ struct IrisDriveControlPanel: View {
                 }
                 .accessibilityLabel("Restore from secret key")
                 .buttonStyle(.bordered)
+            }
+            .onAppear {
+                startSetupJoinRequestIfNeeded()
             }
         case .restorePhrase:
             setupForm(title: "Recovery phrase", backTarget: .restoreOptions) {
@@ -505,27 +516,11 @@ struct IrisDriveControlPanel: View {
                 }
                 .disabled(setupSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             }
-        case .link:
-            setupForm(title: "Link device", backTarget: .restoreOptions) {
-                HStack(spacing: 10) {
-                    ProgressView()
-                        .controlSize(.small)
-                    Text("Preparing join request")
-                        .foregroundStyle(.secondary)
-                }
-                setupSubmit("Show join QR") {
-                    startSetupJoinRequestIfNeeded()
-                }
-            }
-            .onAppear {
-                startSetupJoinRequestIfNeeded()
-            }
-        }
         }
     }
 
     private func setupForm<Content: View>(
-        title: String,
+        title: String?,
         backTarget: IrisDriveSetupMode = .welcome,
         @ViewBuilder content: () -> Content
     ) -> some View {
@@ -536,8 +531,10 @@ struct IrisDriveControlPanel: View {
                 Label("Back", systemImage: "chevron.left")
             }
             .buttonStyle(.borderless)
-            Text(title)
-                .font(.title2.weight(.semibold))
+            if let title {
+                Text(title)
+                    .font(.title2.weight(.semibold))
+            }
             content()
         }
         .textFieldStyle(.roundedBorder)

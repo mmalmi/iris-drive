@@ -17,20 +17,17 @@ extension IrisDriveIOSUITests {
         app.terminate()
         app.launch()
         app.buttons["welcomeSignIn"].tap()
-        XCTAssertTrue(app.navigationBars["Restore"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["openRecoveryPhrase"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["openRecoveryPhrase"].label.contains("Restore from recovery phrase"))
         XCTAssertTrue(app.buttons["openSecretKey"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["openSecretKey"].label.contains("Restore from secret key"))
-        XCTAssertTrue(app.buttons["openLinkDevice"].label.contains("Link device"))
-        app.buttons["openLinkDevice"].tap()
-        let startJoinRequest = app.buttons["startJoinRequest"]
+        let copyRequestLink = app.buttons["copyRequestLink"]
         let awaitingApproval = app.descendants(matching: .any)["awaitingApprovalView"]
         let deadline = Date().addingTimeInterval(5)
-        while Date() < deadline, !startJoinRequest.exists, !awaitingApproval.exists {
+        while Date() < deadline, !copyRequestLink.exists, !awaitingApproval.exists {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
-        XCTAssertTrue(startJoinRequest.exists || awaitingApproval.exists)
+        XCTAssertTrue(copyRequestLink.exists || awaitingApproval.exists)
         XCTAssertFalse(app.textFields["linkTargetInput"].exists)
         XCTAssertFalse(app.staticTexts["Device invite link"].exists)
     }
@@ -39,12 +36,12 @@ extension IrisDriveIOSUITests {
         let app = launchApp(environment: try isolatedBaseEnvironment())
 
         app.buttons["welcomeSignIn"].tap()
-        app.buttons["openLinkDevice"].tap()
 
+        let copyRequestLink = app.buttons["copyRequestLink"]
         let awaitingApproval = app.descendants(matching: .any)["awaitingApprovalView"]
         let deadline = Date().addingTimeInterval(30)
         while Date() < deadline {
-            if awaitingApproval.exists {
+            if awaitingApproval.exists || copyRequestLink.exists {
                 XCTAssertFalse(app.textFields["linkTargetInput"].exists)
                 return
             }
@@ -65,15 +62,14 @@ extension IrisDriveIOSUITests {
         let app = launchApp(environment: try isolatedBaseEnvironment())
 
         app.buttons["welcomeSignIn"].tap()
-        app.buttons["openLinkDevice"].tap()
 
-        let startJoinRequest = app.buttons["startJoinRequest"]
+        let copyRequestLink = app.buttons["copyRequestLink"]
         let awaitingApproval = app.descendants(matching: .any)["awaitingApprovalView"]
         let deadline = Date().addingTimeInterval(5)
-        while Date() < deadline, !startJoinRequest.exists, !awaitingApproval.exists {
+        while Date() < deadline, !copyRequestLink.exists, !awaitingApproval.exists {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
-        XCTAssertTrue(startJoinRequest.exists || awaitingApproval.exists)
+        XCTAssertTrue(copyRequestLink.exists || awaitingApproval.exists)
         XCTAssertFalse(app.textFields["linkTargetInput"].exists)
         XCTAssertFalse(app.staticTexts["Device invite link"].exists)
     }

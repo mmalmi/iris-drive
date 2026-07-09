@@ -164,9 +164,6 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithTag("welcomeSignIn").assertIsDisplayed().activate()
         compose.onNodeWithText("Restore from recovery phrase").assertIsDisplayed()
         compose.onNodeWithText("Restore from secret key").assertIsDisplayed()
-        compose.onNodeWithText("Link device").assertIsDisplayed()
-        compose.onNodeWithTag("openLinkDevice").assertIsDisplayed().activate()
-        compose.onNodeWithTag("startJoinRequest").assertIsDisplayed()
         compose.waitUntil(timeoutMillis = 5_000) {
             appState(linkedHandle).profile?.appKeyLinkRequest?.isNotBlank() == true
         }
@@ -188,8 +185,6 @@ class IrisDriveAndroidGuiFlowTest {
         )
 
         compose.onNodeWithTag("welcomeSignIn").assertIsDisplayed().activate()
-        compose.onNodeWithTag("openLinkDevice").assertIsDisplayed().activate()
-        compose.onNodeWithTag("startJoinRequest").assertIsDisplayed()
         compose.onAllNodesWithTag("linkOwnerInput").assertCountEquals(0)
         compose.onAllNodesWithText("Device invite link").assertCountEquals(0)
         compose.waitUntil(timeoutMillis = 5_000) { joinRequests == 1 }

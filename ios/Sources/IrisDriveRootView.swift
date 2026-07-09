@@ -220,27 +220,35 @@ private struct AwaitingApprovalSetupView: View {
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: .infinity)
                     if !model.appKeyLinkRequest.isEmpty {
-                        DisclosureGroup {
-                            if requestQrMatrix.width > 0, requestQrValue == model.appKeyLinkRequest {
-                                QrCodeView(matrix: requestQrMatrix)
-                                    .frame(width: 260, height: 260)
-                                    .frame(maxWidth: .infinity, alignment: .center)
-                            } else {
-                                ProgressView()
-                                    .frame(width: 260, height: 260)
-                                    .frame(maxWidth: .infinity, alignment: .center)
-                                    .accessibilityIdentifier("requestQrLoading")
-                            }
-                            Button {
-                                model.copyLinkRequest()
-                            } label: {
-                                Label("Copy Request Link", systemImage: "link")
-                            }
-                        } label: {
-                            Label("Request Link", systemImage: "qrcode")
+                        if requestQrMatrix.width > 0, requestQrValue == model.appKeyLinkRequest {
+                            QrCodeView(matrix: requestQrMatrix)
+                                .frame(width: 260, height: 260)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                        } else {
+                            ProgressView()
+                                .frame(width: 260, height: 260)
+                                .frame(maxWidth: .infinity, alignment: .center)
+                                .accessibilityIdentifier("requestQrLoading")
                         }
-                        .accessibilityIdentifier("manualApprovalRequestDisclosure")
+                        Button {
+                            model.copyLinkRequest()
+                        } label: {
+                            Label("Copy Request Link", systemImage: "link")
+                        }
+                        .accessibilityIdentifier("copyRequestLink")
                     }
+                    NavigationLink {
+                        RestoreRecoveryPhraseSetupView(model: model)
+                    } label: {
+                        Label("Restore from recovery phrase", systemImage: "text.badge.checkmark")
+                    }
+                    .accessibilityIdentifier("openRecoveryPhrase")
+                    NavigationLink {
+                        RestoreSecretKeySetupView(model: model)
+                    } label: {
+                        Label("Restore from secret key", systemImage: "key")
+                    }
+                    .accessibilityIdentifier("openSecretKey")
                 }
                 Section {
                     Button(role: .destructive) {
@@ -306,7 +314,6 @@ private enum SetupRoute: Hashable {
     case restoreOptions
     case restorePhrase
     case restoreSecretKey
-    case link
 }
 
 private struct SetupWelcomeView: View {
@@ -360,7 +367,7 @@ private struct SetupWelcomeView: View {
                     ProfilePhotoSetupView(model: model, username: username)
                 case .restoreOptions:
                     RestoreOptionsSetupView(
-                        openLinkDevice: { path.append(.link) },
+                        model: model,
                         openRecoveryPhrase: { path.append(.restorePhrase) },
                         openSecretKey: { path.append(.restoreSecretKey) }
                     )
@@ -368,8 +375,6 @@ private struct SetupWelcomeView: View {
                     RestoreRecoveryPhraseSetupView(model: model)
                 case .restoreSecretKey:
                     RestoreSecretKeySetupView(model: model)
-                case .link:
-                    LinkDeviceSetupView(model: model)
                 }
             }
         }
@@ -466,17 +471,14 @@ private struct SetupErrorSection: View {
 }
 
 private struct RestoreOptionsSetupView: View {
-    let openLinkDevice: () -> Void
+    @ObservedObject var model: IrisDriveMobileModel
+    @State private var requested = false
     let openRecoveryPhrase: () -> Void
     let openSecretKey: () -> Void
 
     var body: some View {
         Form {
             Section {
-                Button(action: openLinkDevice) {
-                    Label("Link device", systemImage: "qrcode")
-                }
-                .accessibilityIdentifier("openLinkDevice")
                 Button(action: openRecoveryPhrase) {
                     Label("Restore from recovery phrase", systemImage: "text.badge.checkmark")
                 }
@@ -487,8 +489,13 @@ private struct RestoreOptionsSetupView: View {
                 .accessibilityIdentifier("openSecretKey")
             }
         }
-        .navigationTitle("Restore")
+        .navigationTitle("")
         .toolbar(.visible, for: .navigationBar)
+        .onAppear {
+            guard !requested else { return }
+            requested = true
+            model.startJoinRequest()
+        }
     }
 }
 
@@ -616,43 +623,6 @@ private struct RestoreSecretKeySetupView: View {
         }
         .navigationTitle("Secret key")
         .toolbar(.visible, for: .navigationBar)
-    }
-}
-
-private struct LinkDeviceSetupView: View {
-    @ObservedObject var model: IrisDriveMobileModel
-    @State private var requested = false
-
-    var body: some View {
-        Form {
-            Section {
-                HStack(spacing: 12) {
-                    ProgressView()
-                    Text("Preparing join request")
-                        .foregroundStyle(.secondary)
-                }
-                .frame(maxWidth: .infinity, alignment: .center)
-                .padding(.vertical, 12)
-                Button {
-                    startJoinRequestIfNeeded()
-                } label: {
-                    Label("Show join QR", systemImage: "qrcode")
-                }
-                .accessibilityIdentifier("startJoinRequest")
-            }
-            SetupErrorSection(message: model.setupErrorMessage)
-        }
-        .navigationTitle("Link device")
-        .toolbar(.visible, for: .navigationBar)
-        .onAppear {
-            startJoinRequestIfNeeded()
-        }
-    }
-
-    private func startJoinRequestIfNeeded() {
-        guard !requested else { return }
-        requested = true
-        model.startJoinRequest()
     }
 }
 

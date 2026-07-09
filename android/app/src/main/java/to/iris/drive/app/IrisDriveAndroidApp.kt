@@ -107,7 +107,6 @@ private enum class SetupRoute {
     RestoreOptions,
     RestoreRecoveryPhrase,
     RestoreSecretKey,
-    LinkDevice,
 }
 
 internal data class RecoveryWordsInputResult(
@@ -280,6 +279,10 @@ internal fun IrisDriveAndroidApp(
                         padding = padding,
                         state = state,
                         onCopyText = onCopyText,
+                        onRestoreProfile = { secret ->
+                            onRestoreProfile(secret, "")
+                            onAddRoot("My Drive", ProviderRoot)
+                        },
                         onLogout = onLogout,
                     )
                 } else {
@@ -426,9 +429,15 @@ private fun AwaitingApprovalContent(
     padding: PaddingValues,
     state: AppState,
     onCopyText: (String, String) -> Unit,
+    onRestoreProfile: (String) -> Unit,
     onLogout: () -> Unit,
 ) {
     val profile = state.profile ?: return
+    var route by remember { mutableStateOf(SetupRoute.RestoreOptions) }
+    var restoreSecret by remember { mutableStateOf("") }
+    var recoveryWords by remember { mutableStateOf(List(RecoveryPhraseWordCount) { "" }) }
+    var recoveryWordIndex by remember { mutableStateOf(0) }
+    val context = LocalContext.current
     Box(
         modifier = Modifier.fillMaxSize().padding(padding).padding(32.dp),
         contentAlignment = Alignment.Center,
@@ -438,25 +447,150 @@ private fun AwaitingApprovalContent(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            SetupBrand()
-            Text("Waiting for approval", color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
-            if (profile.appKeyLinkRequest.isNotBlank()) {
-                QrCode(
-                    value = profile.appKeyLinkRequest,
-                    side = 220.dp,
-                    modifier = Modifier.align(Alignment.CenterHorizontally),
-                )
-                SetupPrimaryButton(
-                    text = "Copy Request Link",
-                    onClick = { onCopyText("Request Link", profile.appKeyLinkRequest) },
-                )
-            }
-            OutlinedButton(
-                onClick = onLogout,
-                modifier = Modifier.fillMaxWidth().height(48.dp),
-                shape = RoundedCornerShape(6.dp),
-            ) {
-                Text("Log out")
+            when (route) {
+                SetupRoute.RestoreOptions -> {
+                    SetupBrand()
+                    Text("Waiting for approval", color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
+                    if (profile.appKeyLinkRequest.isNotBlank()) {
+                        QrCode(
+                            value = profile.appKeyLinkRequest,
+                            side = 220.dp,
+                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                        )
+                        SetupPrimaryButton(
+                            text = "Copy Request Link",
+                            onClick = { onCopyText("Request Link", profile.appKeyLinkRequest) },
+                        )
+                    }
+                    SetupSecondaryButton(
+                        text = "Restore from recovery phrase",
+                        onClick = { route = SetupRoute.RestoreRecoveryPhrase },
+                        testTag = "openRecoveryPhrase",
+                    )
+                    SetupSecondaryButton(
+                        text = "Restore from secret key",
+                        onClick = { route = SetupRoute.RestoreSecretKey },
+                        testTag = "openSecretKey",
+                    )
+                    OutlinedButton(
+                        onClick = onLogout,
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                        shape = RoundedCornerShape(6.dp),
+                    ) {
+                        Text("Log out")
+                    }
+                }
+                SetupRoute.RestoreRecoveryPhrase -> {
+                    SetupFormHeader(title = "Recovery phrase", onBack = { route = SetupRoute.RestoreOptions })
+                    val currentWord = recoveryWords.getOrElse(recoveryWordIndex) { "" }
+                    val allWordsFilled = recoveryWords.all { it.isNotBlank() }
+                    OutlinedTextField(
+                        value = currentWord,
+                        onValueChange = { input ->
+                            val result = fillRecoveryWords(recoveryWords, recoveryWordIndex, input)
+                            recoveryWords = result.words
+                            recoveryWordIndex = result.index
+                        },
+                        modifier = Modifier.fillMaxWidth().testTag("recoveryWordInput"),
+                        singleLine = true,
+                        label = { Text("Word ${recoveryWordIndex + 1}") },
+                        keyboardOptions = KeyboardOptions(
+                            imeAction = if (recoveryWordIndex == RecoveryPhraseWordCount - 1) {
+                                ImeAction.Done
+                            } else {
+                                ImeAction.Next
+                            },
+                        ),
+                        keyboardActions = KeyboardActions(
+                            onNext = {
+                                if (currentWord.isNotBlank()) {
+                                    recoveryWordIndex =
+                                        (recoveryWordIndex + 1).coerceAtMost(RecoveryPhraseWordCount - 1)
+                                }
+                            },
+                            onDone = {
+                                if (allWordsFilled) {
+                                    onRestoreProfile(recoveryPhraseFromWords(recoveryWords))
+                                }
+                            },
+                        ),
+                    )
+                    SetupSecondaryButton(
+                        text = "Paste from clipboard",
+                        onClick = {
+                            val clipboard = context.getSystemService(ClipboardManager::class.java)
+                            val clipboardText = clipboard?.primaryClip
+                                ?.takeIf { it.itemCount > 0 }
+                                ?.getItemAt(0)
+                                ?.coerceToText(context)
+                                ?.toString()
+                                .orEmpty()
+                            val result = fillRecoveryWords(recoveryWords, recoveryWordIndex, clipboardText)
+                            recoveryWords = result.words
+                            recoveryWordIndex = result.index
+                        },
+                        testTag = "pasteRecoveryPhrase",
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(
+                            onClick = { recoveryWordIndex = (recoveryWordIndex - 1).coerceAtLeast(0) },
+                            enabled = recoveryWordIndex > 0,
+                            modifier = Modifier.weight(1f),
+                        ) {
+                            Text("Back")
+                        }
+                        Button(
+                            onClick = {
+                                if (recoveryWordIndex == RecoveryPhraseWordCount - 1) {
+                                    onRestoreProfile(recoveryPhraseFromWords(recoveryWords))
+                                } else {
+                                    recoveryWordIndex =
+                                        (recoveryWordIndex + 1).coerceAtMost(RecoveryPhraseWordCount - 1)
+                                }
+                            },
+                            enabled = if (recoveryWordIndex == RecoveryPhraseWordCount - 1) {
+                                allWordsFilled
+                            } else {
+                                currentWord.isNotBlank()
+                            },
+                            modifier = Modifier.weight(1f).testTag(
+                                if (recoveryWordIndex == RecoveryPhraseWordCount - 1) {
+                                    "restoreRecoveryPhraseSubmit"
+                                } else {
+                                    "restoreRecoveryPhraseNext"
+                                },
+                            ),
+                            shape = RoundedCornerShape(6.dp),
+                        ) {
+                            Text(if (recoveryWordIndex == RecoveryPhraseWordCount - 1) "Restore" else "Next")
+                        }
+                    }
+                }
+                SetupRoute.RestoreSecretKey -> {
+                    SetupFormHeader(title = "Secret key", onBack = { route = SetupRoute.RestoreOptions })
+                    OutlinedTextField(
+                        value = restoreSecret,
+                        onValueChange = { restoreSecret = it },
+                        modifier = Modifier.fillMaxWidth().testTag("restoreSecretKeyInput"),
+                        singleLine = true,
+                        label = { Text("Secret key") },
+                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                        keyboardActions = KeyboardActions(
+                            onDone = {
+                                if (restoreSecret.isNotBlank()) {
+                                    onRestoreProfile(restoreSecret)
+                                }
+                            },
+                        ),
+                    )
+                    SetupPrimaryButton(
+                        text = "Restore",
+                        onClick = { onRestoreProfile(restoreSecret) },
+                        enabled = restoreSecret.isNotBlank(),
+                        testTag = "restoreSecretKeySubmit",
+                    )
+                }
+                else -> Unit
             }
         }
     }
@@ -663,12 +797,10 @@ private fun SetupContent(
                     )
                 }
                 SetupRoute.RestoreOptions -> {
-                    SetupFormHeader(title = "Restore", onBack = { route = SetupRoute.Welcome })
-                    SetupSecondaryButton(
-                        text = "Link device",
-                        onClick = { route = SetupRoute.LinkDevice },
-                        testTag = "openLinkDevice",
-                    )
+                    LaunchedEffect(Unit) {
+                        startJoinRequestIfNeeded()
+                    }
+                    SetupFormHeader(title = null, onBack = { route = SetupRoute.Welcome })
                     SetupSecondaryButton(
                         text = "Restore from recovery phrase",
                         onClick = { route = SetupRoute.RestoreRecoveryPhrase },
@@ -794,25 +926,6 @@ private fun SetupContent(
                         testTag = "restoreSecretKeySubmit",
                     )
                 }
-                SetupRoute.LinkDevice -> {
-                    LaunchedEffect(Unit) {
-                        startJoinRequestIfNeeded()
-                    }
-                    SetupFormHeader(title = "Link device", onBack = { route = SetupRoute.RestoreOptions })
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        CircularProgressIndicator(modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
-                        Text("Preparing join request", color = Muted)
-                    }
-                    SetupPrimaryButton(
-                        text = "Show join QR",
-                        onClick = { startJoinRequestIfNeeded() },
-                        testTag = "startJoinRequest",
-                    )
-                }
             }
         }
     }
@@ -830,12 +943,14 @@ private fun SetupBrand() {
 }
 
 @Composable
-private fun SetupFormHeader(title: String, onBack: () -> Unit) {
+private fun SetupFormHeader(title: String?, onBack: () -> Unit) {
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
         TextButton(onClick = onBack) {
             Text("Back")
         }
-        Text(title, color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
+        if (title != null) {
+            Text(title, color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
+        }
     }
 }
 
