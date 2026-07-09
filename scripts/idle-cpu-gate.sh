@@ -117,7 +117,7 @@ def executable_basename(command: str) -> str:
 def classify(command: str):
     executable = executable_basename(command)
     if platform == "macos":
-        if "IrisDriveFileProvider" in command:
+        if "/Iris Drive.app/Contents/PlugIns/IrisDriveFileProvider.appex/Contents/MacOS/IrisDriveFileProvider" in command:
             return "provider"
         if "/Iris Drive.app/Contents/MacOS/idrive" in command and " daemon" in command:
             return "daemon"

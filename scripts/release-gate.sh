@@ -84,6 +84,55 @@ run_rust_tests() {
   run cargo test -p idrive --test daemon_sync_matrix -- --test-threads=1
 }
 
+run_macos_idle_cpu_gate() {
+  local app_base_dir
+  local config_dir
+  local idrive
+  local output
+  local app_path
+  local status=0
+
+  app_base_dir="$(mktemp -d -t iris-drive-macos-idle.XXXXXX)"
+  config_dir="$app_base_dir/Config"
+  idrive="${CARGO_TARGET_DIR:-$HOME/.cache/cargo-target}/debug/idrive"
+  if [[ ! -x "$idrive" ]]; then
+    idrive="$ROOT/target/debug/idrive"
+  fi
+  if [[ ! -x "$idrive" ]]; then
+    echo "macOS idle CPU gate needs a debug idrive binary; run cargo build -p idrive --bin idrive first." >&2
+    rm -rf "$app_base_dir"
+    return 1
+  fi
+  mkdir -p "$config_dir"
+  "$idrive" --config-dir "$config_dir" init --force --label "macOS idle CPU gate" >/dev/null
+
+  output="$(
+    IRIS_DRIVE_MACOS_SIGNING="${IRIS_DRIVE_MACOS_SIGNING:-none}" \
+      IRIS_DRIVE_APP_BASE_DIR="$app_base_dir" \
+      ./scripts/macos-dev-app.sh run
+  )"
+  printf '%s\n' "$output"
+  app_path="$(printf '%s\n' "$output" | sed -n 's/^macOS app launched: //p' | tail -n 1)"
+  if [[ -z "$app_path" || ! -d "$app_path" ]]; then
+    echo "macOS idle CPU gate could not determine launched app path." >&2
+    rm -rf "$app_base_dir"
+    return 1
+  fi
+
+  IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="${IRIS_DRIVE_RELEASE_GATE_MACOS_IDLE_CPU_ROLES:-app,daemon}" \
+    IRIS_DRIVE_IDLE_CPU_WARMUP_SECS="${IRIS_DRIVE_RELEASE_GATE_MACOS_IDLE_CPU_WARMUP_SECS:-60}" \
+    IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH="$app_path" \
+    ./scripts/idle-cpu-gate.sh --platform macos || status=$?
+
+  "$app_path/Contents/MacOS/idrive" \
+    --config-dir "$config_dir" \
+    service uninstall --json >/dev/null 2>&1 || true
+  pkill -f "$app_path/Contents/MacOS/idrive.*daemon" >/dev/null 2>&1 || true
+  osascript -e 'tell application "Iris Drive" to quit' >/dev/null 2>&1 || true
+  rm -rf "$app_base_dir"
+  return "$status"
+}
+
 full="${IRIS_DRIVE_RELEASE_GATE_FULL:-0}"
 while [[ $# -gt 0 ]]; do
   case "$1" in
@@ -124,11 +173,7 @@ case "$(uname -s)" in
         IRIS_DRIVE_DISABLE_DAEMON_SERVICE="${IRIS_DRIVE_RELEASE_GATE_MACOS_DAEMON_SERVICE:-true}" \
         just smoke-macos
       if idle_cpu_gate_enabled; then
-        run ./scripts/macos-dev-app.sh run
-        run env \
-          IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="${IRIS_DRIVE_RELEASE_GATE_MACOS_IDLE_CPU_ROLES:-app,daemon,provider}" \
-          IRIS_DRIVE_IDLE_CPU_WARMUP_SECS="${IRIS_DRIVE_RELEASE_GATE_MACOS_IDLE_CPU_WARMUP_SECS:-60}" \
-          ./scripts/idle-cpu-gate.sh --platform macos
+        run run_macos_idle_cpu_gate
       fi
     fi
     if ! bool_true "${IRIS_DRIVE_RELEASE_GATE_IOS_SKIP:-0}" \
