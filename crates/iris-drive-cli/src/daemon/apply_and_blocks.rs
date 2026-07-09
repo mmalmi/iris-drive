@@ -924,10 +924,10 @@ fn should_publish_direct_root_state_request<'a>(
 
 fn should_try_blossom_download(
     config: &AppConfig,
-    _fips_attempted: bool,
-    _fips_had_peers: bool,
+    fips_attempted: bool,
+    fips_had_peers: bool,
 ) -> bool {
-    !config.blossom_servers.is_empty()
+    !config.blossom_servers.is_empty() && (!fips_attempted || !fips_had_peers)
 }
 
 pub(crate) async fn pull_blocks_for_root_bounded(
