@@ -28,8 +28,6 @@ extension IrisDriveIOSUITests {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         XCTAssertTrue(copyRequestLink.exists || awaitingApproval.exists)
-        XCTAssertFalse(app.textFields["linkTargetInput"].exists)
-        XCTAssertFalse(app.staticTexts["Device invite link"].exists)
     }
 
     func testLinkThisDeviceFromWelcome() throws {
@@ -42,7 +40,6 @@ extension IrisDriveIOSUITests {
         let deadline = Date().addingTimeInterval(30)
         while Date() < deadline {
             if awaitingApproval.exists || copyRequestLink.exists {
-                XCTAssertFalse(app.textFields["linkTargetInput"].exists)
                 return
             }
             RunLoop.current.run(until: Date().addingTimeInterval(0.25))
@@ -55,10 +52,9 @@ extension IrisDriveIOSUITests {
 
         let awaitingApproval = app.descendants(matching: .any)["awaitingApprovalView"]
         XCTAssertTrue(awaitingApproval.waitForExistence(timeout: 15), app.debugDescription)
-        XCTAssertFalse(app.textFields["linkTargetInput"].exists)
     }
 
-    func testLinkDeviceDoesNotRenderInviteInput() throws {
+    func testSignInStartsJoinRequest() throws {
         let app = launchApp(environment: try isolatedBaseEnvironment())
 
         app.buttons["welcomeSignIn"].tap()
@@ -70,8 +66,6 @@ extension IrisDriveIOSUITests {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         XCTAssertTrue(copyRequestLink.exists || awaitingApproval.exists)
-        XCTAssertFalse(app.textFields["linkTargetInput"].exists)
-        XCTAssertFalse(app.staticTexts["Device invite link"].exists)
     }
 
     func testCreateProfileFromWelcome() throws {

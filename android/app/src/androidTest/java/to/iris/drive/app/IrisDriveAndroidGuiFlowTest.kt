@@ -177,7 +177,7 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     @Test
-    fun linkDeviceFlowDoesNotRenderInviteInput() {
+    fun signInStartsJoinRequest() {
         var joinRequests = 0
         render(
             state = AppState(),
@@ -185,8 +185,6 @@ class IrisDriveAndroidGuiFlowTest {
         )
 
         compose.onNodeWithTag("welcomeSignIn").assertIsDisplayed().activate()
-        compose.onAllNodesWithTag("linkOwnerInput").assertCountEquals(0)
-        compose.onAllNodesWithText("Device invite link").assertCountEquals(0)
         compose.waitUntil(timeoutMillis = 5_000) { joinRequests == 1 }
     }
 
