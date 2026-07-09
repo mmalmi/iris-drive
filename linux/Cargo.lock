@@ -1641,7 +1641,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.3.78"
+version = "0.3.81"
 dependencies = [
  "bluer",
  "bytes",
@@ -2010,7 +2010,9 @@ dependencies = [
 
 [[package]]
 name = "git-remote-htree"
-version = "0.2.76"
+version = "0.2.72"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d67de97fda6ce4dbb26831086920db398cf4e2856c260008067808ad65852c69"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2314,7 +2316,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-cli"
-version = "0.2.76"
+version = "0.2.72"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9e2f64013419cf846c5b2b9e4302188d6a523872fe6401affff3f229283c9020"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2414,7 +2418,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-embedded"
-version = "0.2.76"
+version = "0.2.72"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "38930b4e6149b15b34ceb0c4093b5684a058ea7488520995e41b0db852fa4647"
 dependencies = [
  "anyhow",
  "hashtree-cli",
@@ -2521,7 +2527,7 @@ dependencies = [
 
 [[package]]
 name = "hashtree-provider"
-version = "0.1.18"
+version = "0.1.20"
 dependencies = [
  "async-trait",
  "futures",
@@ -2956,7 +2962,7 @@ checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
 
 [[package]]
 name = "iris-drive-app-core"
-version = "0.1.18"
+version = "0.1.20"
 dependencies = [
  "anyhow",
  "hashtree-core",
@@ -2977,7 +2983,7 @@ dependencies = [
 
 [[package]]
 name = "iris-drive-core"
-version = "0.1.18"
+version = "0.1.20"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -3018,7 +3024,7 @@ dependencies = [
 
 [[package]]
 name = "iris-drive-linux"
-version = "0.1.18"
+version = "0.1.20"
 dependencies = [
  "gio",
  "glib",

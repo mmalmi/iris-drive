@@ -153,6 +153,17 @@ pub(crate) fn install_css() {
         .iris-row-title {
           font-weight: 700;
         }
+        .iris-qr-frame {
+          background: white;
+          border-radius: 8px;
+          padding: 10px;
+        }
+        .iris-qr-cell-dark {
+          background: black;
+        }
+        .iris-qr-cell-light {
+          background: white;
+        }
         "#,
     );
     if let Some(display) = gtk::gdk::Display::default() {

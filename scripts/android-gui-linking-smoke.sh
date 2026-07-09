@@ -303,7 +303,7 @@ run_android_gui_tests() {
     createProfileFlowDoesNotRequireUsernameOrProfilePhoto
     createProfileFlowWithUsernameCanSkipProfilePhoto
     linkThisDeviceFlowClicksThroughSignInUi
-    linkDeviceFlowDoesNotRenderInviteInput
+    signInStartsJoinRequest
     addDeviceSectionRequiresCompleteNativeLinkInput
     addDeviceSectionDispatchesManualDeviceApproval
     acceptedLinkedDeviceShowsSyncedFileCountInGui

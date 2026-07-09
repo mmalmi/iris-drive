@@ -43,8 +43,8 @@ require_contains macos/Sources/IrisDriveMacApp.swift 'IrisDriveDesktopCore.valid
 require_contains macos/Sources/IrisDriveMacApp.swift 'IrisDriveDesktopCore.validateDeviceApprovalInput(text)'
 require_contains macos/Sources/AppKeyLinkInput.swift "inputIsComplete"
 require_contains macos/Sources/IrisDriveControlPanel.swift "controller.startJoinRequest()"
+require_contains macos/Sources/IrisDriveControlPanel.swift "startSetupJoinRequestIfNeeded"
 require_contains macos/Sources/IrisDriveControlPanel.swift "approveDeviceKeyIsComplete"
-require_contains macos/Sources/IrisDriveControlPanel.swift 'setupSubmit("Show join QR")'
 require_contains macos/Sources/IrisDriveControlPanel.swift "IrisDriveDesktopCore.validateDeviceApprovalInput(request)"
 require_contains windows/IrisDriveNativeCore.cs "iris_drive_validate_device_invite_input_json"
 require_contains windows/IrisDriveNativeCore.cs "iris_drive_validate_device_approval_input_json"

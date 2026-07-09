@@ -216,6 +216,14 @@ public partial class MainWindow : Window
             var syncRunning = EnsureDaemonRunning(status);
             if (status.IsAwaitingLinkedApproval)
             {
+                if (RecoveryPhrasePanel.Visibility == Visibility.Visible ||
+                    RestorePanel.Visibility == Visibility.Visible)
+                {
+                    SetupRoot.Visibility = Visibility.Visible;
+                    MainRoot.Visibility = Visibility.Collapsed;
+                    SetupNotice.Text = syncRunning ? status.PrimaryStatusLabel : "Daemon offline";
+                    return;
+                }
                 RenderAwaitingApproval(status, syncRunning ? null : "Daemon offline");
                 return;
             }
@@ -266,8 +274,30 @@ public partial class MainWindow : Window
         SetupRoot.Visibility = Visibility.Visible;
         MainRoot.Visibility = Visibility.Collapsed;
         ShowSetupPanel(AwaitingPanel);
-        AwaitingDeviceBox.Text = status.DeviceNpub ?? status.CurrentAppKeyNpub ?? "";
+        RenderAwaitingQr(status.AppKeyLinkRequestUrl);
         SetupNotice.Text = notice ?? status.PrimaryStatusLabel;
+    }
+
+    private void RenderAwaitingQr(string? requestLink)
+    {
+        AwaitingQrGrid.Children.Clear();
+        var matrix = IrisDriveNativeCore.QrMatrixForText(requestLink ?? "");
+        if (matrix.Width <= 0 || matrix.Cells.Count != matrix.Width * matrix.Width)
+        {
+            AwaitingQrGrid.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        AwaitingQrGrid.Visibility = Visibility.Visible;
+        AwaitingQrGrid.Rows = matrix.Width;
+        AwaitingQrGrid.Columns = matrix.Width;
+        foreach (var dark in matrix.Cells)
+        {
+            AwaitingQrGrid.Children.Add(new Border
+            {
+                Background = dark ? WpfBrushes.Black : WpfBrushes.White,
+            });
+        }
     }
 
     private void RenderRevokedDevice(IrisDriveStatusData status, string? notice)
@@ -966,11 +996,6 @@ public partial class MainWindow : Window
         dialog.ShowDialog();
     }
 
-    private void CopyAwaitingDevice_Click(object sender, RoutedEventArgs e)
-    {
-        CopySetupText(currentStatus?.DeviceNpub ?? currentStatus?.CurrentAppKeyNpub, "Device key copied");
-    }
-
     private void CopyAwaitingRequest_Click(object sender, RoutedEventArgs e)
     {
         CopySetupText(currentStatus?.AppKeyLinkRequestUrl, "Request link copied");
@@ -1251,7 +1276,6 @@ public partial class MainWindow : Window
         CreatePhotoSubmitButton.IsEnabled = enabled;
         RestoreSubmitButton.IsEnabled = enabled;
         RecoveryNextButton.IsEnabled = enabled && CanAdvanceRecoveryWord();
-        LinkSubmitButton.IsEnabled = enabled;
     }
 
     private void ShowCreate_Click(object sender, RoutedEventArgs e)
@@ -1266,11 +1290,6 @@ public partial class MainWindow : Window
     private void ShowRestore_Click(object sender, RoutedEventArgs e)
     {
         ShowSetupPanel(RestoreOptionsPanel);
-    }
-
-    private void ShowLink_Click(object sender, RoutedEventArgs e)
-    {
-        ShowSetupPanel(LinkPanel);
         _ = StartJoinRequestAsync();
     }
 
@@ -1308,7 +1327,6 @@ public partial class MainWindow : Window
         RestoreOptionsPanel.Visibility = Visibility.Collapsed;
         RecoveryPhrasePanel.Visibility = Visibility.Collapsed;
         RestorePanel.Visibility = Visibility.Collapsed;
-        LinkPanel.Visibility = Visibility.Collapsed;
         AwaitingPanel.Visibility = Visibility.Collapsed;
         RevokedPanel.Visibility = Visibility.Collapsed;
         visible.Visibility = Visibility.Visible;

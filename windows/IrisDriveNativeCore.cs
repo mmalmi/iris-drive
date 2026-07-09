@@ -96,6 +96,17 @@ public sealed class IrisDriveNativeCore : IDisposable
             TakeString(iris_drive_recovery_pubkey_for_phrase_json(recoveryPhrase.Trim())));
     }
 
+    public static QrMatrixResult QrMatrixForText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return QrMatrixResult.Empty;
+        }
+
+        return QrMatrixResult.FromJson(
+            TakeString(iris_drive_qr_matrix_json(text.Trim())));
+    }
+
     public static IrisDriveUpdateResult CheckUpdate(
         string dataDirectory,
         string currentVersion,
@@ -198,6 +209,10 @@ public sealed class IrisDriveNativeCore : IDisposable
         [MarshalAs(UnmanagedType.LPUTF8Str)] string recoveryPhrase);
 
     [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr iris_drive_qr_matrix_json(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string text);
+
+    [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]
     private static extern IntPtr iris_drive_update_check_json(
         [MarshalAs(UnmanagedType.LPUTF8Str)] string dataDir,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string currentVersion,
@@ -212,6 +227,42 @@ public sealed class IrisDriveNativeCore : IDisposable
 
     [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]
     private static extern void iris_drive_string_free(IntPtr value);
+}
+
+public sealed record QrMatrixResult(int Width, IReadOnlyList<bool> Cells, string Error)
+{
+    public static QrMatrixResult Empty { get; } = new(0, Array.Empty<bool>(), "");
+
+    public static QrMatrixResult FromJson(string json)
+    {
+        using var document = JsonDocument.Parse(string.IsNullOrWhiteSpace(json) ? "{}" : json);
+        var root = document.RootElement;
+        var cells = new List<bool>();
+        if (root.TryGetProperty("cells", out var cellArray) &&
+            cellArray.ValueKind == JsonValueKind.Array)
+        {
+            cells.AddRange(cellArray.EnumerateArray().Select(cell => cell.ValueKind == JsonValueKind.True));
+        }
+
+        return new QrMatrixResult(
+            Int(root, "width") ?? 0,
+            cells,
+            String(root, "error") ?? "");
+    }
+
+    private static int? Int(JsonElement root, string name)
+    {
+        return root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.Number
+            ? value.GetInt32()
+            : null;
+    }
+
+    private static string? String(JsonElement root, string name)
+    {
+        return root.TryGetProperty(name, out var value) && value.ValueKind == JsonValueKind.String
+            ? value.GetString()
+            : null;
+    }
 }
 
 public sealed record IrisDriveLinkInputClassification(

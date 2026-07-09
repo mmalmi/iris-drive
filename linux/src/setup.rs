@@ -10,7 +10,6 @@ pub(crate) fn render_setup(model: &AppRef) {
         SetupScreen::RestoreOptions => render_restore_options(model),
         SetupScreen::RestorePhrase => render_restore_phrase_profile(model),
         SetupScreen::RestoreSecretKey => render_restore_secret_key_profile(model),
-        SetupScreen::Link => render_link_device(model),
     }
 }
 
@@ -38,6 +37,9 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
         .map(|account| account.app_key_link_request.as_str())
         .unwrap_or_default();
     if !request_link.is_empty() {
+        if let Some(qr) = request_qr_widget(request_link) {
+            container.append(&qr);
+        }
         let copy_request = primary_button("Copy Request Link");
         {
             let request = request_link.to_string();
@@ -54,31 +56,23 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
         }
     }
 
-    let device_key = account
-        .map(|account| account.current_app_key_npub.as_str())
-        .unwrap_or("-");
-    let device = readonly_entry(device_key);
-    container.append(&field_title("Current Device Key"));
-    container.append(&device);
-
-    let copy = primary_button("Copy Device Key");
+    let phrase = welcome_button(
+        "Restore from recovery phrase",
+        "dialog-password-symbolic",
+        false,
+    );
     {
-        let device = account
-            .map(|account| account.current_app_key_npub.clone())
-            .unwrap_or_default();
-        let notice = notice.clone();
-        copy.connect_clicked(move |_| {
-            if device.is_empty() {
-                notice.set_text("Nothing to copy");
-            } else if let Some(display) = gtk::gdk::Display::default() {
-                display.clipboard().set_text(&device);
-                notice.set_text("Device key copied");
-            } else {
-                notice.set_text("Clipboard unavailable");
-            }
-        });
+        let model = Rc::clone(model);
+        phrase.connect_clicked(move |_| open_recovery_phrase_setup(&model));
     }
-    container.append(&copy);
+    container.append(&phrase);
+
+    let secret = welcome_button("Restore from secret key", "dialog-password-symbolic", false);
+    {
+        let model = Rc::clone(model);
+        secret.connect_clicked(move |_| open_secret_key_setup(&model));
+    }
+    container.append(&secret);
 
     let logout_button = pill_button("Log out");
     logout_button.add_css_class("destructive-action");
@@ -90,6 +84,54 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
     container.append(&notice);
 
     append_centered_setup(model, &container);
+}
+
+fn request_qr_widget(request: &str) -> Option<gtk::Box> {
+    let input = std::ffi::CString::new(request).ok()?;
+    let pointer = iris_drive_app_core::c_abi::iris_drive_qr_matrix_json(input.as_ptr());
+    if pointer.is_null() {
+        return None;
+    }
+    let json = unsafe { std::ffi::CStr::from_ptr(pointer) }
+        .to_string_lossy()
+        .into_owned();
+    unsafe {
+        iris_drive_app_core::c_abi::iris_drive_string_free(pointer);
+    }
+    let value: serde_json::Value = serde_json::from_str(&json).ok()?;
+    let width = value.get("width")?.as_u64()? as i32;
+    if width <= 0 {
+        return None;
+    }
+    let cells = value.get("cells")?.as_array()?;
+    if cells.len() != (width * width) as usize {
+        return None;
+    }
+
+    let frame = gtk::Box::new(gtk::Orientation::Vertical, 0);
+    frame.add_css_class("iris-qr-frame");
+    frame.set_halign(gtk::Align::Center);
+    frame.set_size_request(220, 220);
+
+    let grid = gtk::Grid::new();
+    grid.set_row_homogeneous(true);
+    grid.set_column_homogeneous(true);
+    grid.set_hexpand(true);
+    grid.set_vexpand(true);
+    for row in 0..width {
+        for column in 0..width {
+            let index = (row * width + column) as usize;
+            let cell = gtk::Box::new(gtk::Orientation::Vertical, 0);
+            cell.add_css_class(if cells[index].as_bool().unwrap_or(false) {
+                "iris-qr-cell-dark"
+            } else {
+                "iris-qr-cell-light"
+            });
+            grid.attach(&cell, column, row, 1, 1);
+        }
+    }
+    frame.append(&grid);
+    Some(frame)
 }
 
 pub(crate) fn render_revoked_device(model: &AppRef, state: &NativeAppState) {
@@ -170,9 +212,7 @@ pub(crate) fn setup_container(model: &AppRef, title: &str) -> gtk::Box {
         back.connect_clicked(move |_| {
             let target = match *model.setup_screen.borrow() {
                 SetupScreen::CreatePhoto => SetupScreen::Create,
-                SetupScreen::RestorePhrase | SetupScreen::RestoreSecretKey | SetupScreen::Link => {
-                    SetupScreen::RestoreOptions
-                }
+                SetupScreen::RestorePhrase | SetupScreen::RestoreSecretKey => SetupScreen::RestoreOptions,
                 _ => SetupScreen::Welcome,
             };
             *model.setup_screen.borrow_mut() = target;
@@ -181,10 +221,12 @@ pub(crate) fn setup_container(model: &AppRef, title: &str) -> gtk::Box {
     }
     container.append(&back);
 
-    let header = gtk::Label::new(Some(title));
-    header.add_css_class("title-2");
-    header.set_halign(gtk::Align::Start);
-    container.append(&header);
+    if !title.is_empty() {
+        let header = gtk::Label::new(Some(title));
+        header.add_css_class("title-2");
+        header.set_halign(gtk::Align::Start);
+        container.append(&header);
+    }
 
     container
 }
@@ -349,17 +391,9 @@ pub(crate) fn render_create_profile_photo(model: &AppRef) {
 }
 
 pub(crate) fn render_restore_options(model: &AppRef) {
-    let container = setup_container(model, "Restore");
-
-    let link = welcome_button("Link device", "computer-symbolic", false);
-    {
-        let model = Rc::clone(model);
-        link.connect_clicked(move |_| {
-            *model.setup_screen.borrow_mut() = SetupScreen::Link;
-            render_setup(&model);
-        });
-    }
-    container.append(&link);
+    let container = setup_container(model, "");
+    let notice = setup_notice();
+    notice.set_text("Preparing request link");
 
     let phrase = welcome_button(
         "Restore from recovery phrase",
@@ -368,27 +402,40 @@ pub(crate) fn render_restore_options(model: &AppRef) {
     );
     {
         let model = Rc::clone(model);
-        phrase.connect_clicked(move |_| {
-            model.setup_recovery_word_index.set(0);
-            *model.setup_recovery_words.borrow_mut() =
-                vec![String::new(); RECOVERY_PHRASE_WORD_COUNT];
-            *model.setup_screen.borrow_mut() = SetupScreen::RestorePhrase;
-            render_setup(&model);
-        });
+        phrase.connect_clicked(move |_| open_recovery_phrase_setup(&model));
     }
     container.append(&phrase);
 
     let secret = welcome_button("Restore from secret key", "dialog-password-symbolic", false);
     {
         let model = Rc::clone(model);
-        secret.connect_clicked(move |_| {
-            *model.setup_screen.borrow_mut() = SetupScreen::RestoreSecretKey;
-            render_setup(&model);
-        });
+        secret.connect_clicked(move |_| open_secret_key_setup(&model));
     }
     container.append(&secret);
+    container.append(&notice);
+
+    {
+        let model = Rc::clone(model);
+        let notice = notice.clone();
+        glib::idle_add_local_once(move || match start_join_request() {
+            Ok(()) => refresh(&model),
+            Err(error) => notice.set_text(&error),
+        });
+    }
 
     append_centered_setup(model, &container);
+}
+
+fn open_recovery_phrase_setup(model: &AppRef) {
+    model.setup_recovery_word_index.set(0);
+    *model.setup_recovery_words.borrow_mut() = vec![String::new(); RECOVERY_PHRASE_WORD_COUNT];
+    *model.setup_screen.borrow_mut() = SetupScreen::RestorePhrase;
+    render_setup(model);
+}
+
+fn open_secret_key_setup(model: &AppRef) {
+    *model.setup_screen.borrow_mut() = SetupScreen::RestoreSecretKey;
+    render_setup(model);
 }
 
 pub(crate) fn render_restore_phrase_profile(model: &AppRef) {
@@ -503,58 +550,6 @@ pub(crate) fn render_restore_secret_key_profile(model: &AppRef) {
     append_centered_setup(model, &container);
 
     secret.grab_focus();
-}
-
-pub(crate) fn render_link_device(model: &AppRef) {
-    let container = setup_container(model, "Link device");
-    let notice = setup_notice();
-    notice.set_text("Preparing join request");
-    container.append(&notice);
-
-    let submit = primary_button("Show join QR");
-    let started = Rc::new(Cell::new(false));
-    {
-        let model = Rc::clone(model);
-        let notice = notice.clone();
-        let started = Rc::clone(&started);
-        submit.connect_clicked(move |button| {
-            start_join_request_from_setup(&model, &notice, button, &started);
-        });
-    }
-    {
-        let model = Rc::clone(model);
-        let notice = notice.clone();
-        let submit = submit.clone();
-        let started = Rc::clone(&started);
-        glib::idle_add_local_once(move || {
-            start_join_request_from_setup(&model, &notice, &submit, &started);
-        });
-    }
-    container.append(&submit);
-    append_centered_setup(model, &container);
-}
-
-fn start_join_request_from_setup(
-    model: &AppRef,
-    notice: &gtk::Label,
-    button: &gtk::Button,
-    started: &Rc<Cell<bool>>,
-) {
-    if started.replace(true) {
-        return;
-    }
-    button.set_sensitive(false);
-    match start_join_request() {
-        Ok(()) => {
-            *model.setup_screen.borrow_mut() = SetupScreen::Welcome;
-            refresh(model);
-        }
-        Err(error) => {
-            notice.set_text(&error);
-            button.set_sensitive(true);
-            started.set(false);
-        }
-    }
 }
 
 fn clamp_recovery_word_index(model: &AppRef) {

@@ -21,6 +21,23 @@ serde_json = "1"
 [target.'cfg(target_os = "linux")'.dependencies]
 ksni = { version = "0.3.4", features = ["blocking"] }
 
+[patch.crates-io]
+cashu-service = { path = "../../cashu-service/crates/cashu-service" }
+fips-core = { path = "../../fips/crates/fips-core" }
+fips-identity = { path = "../../fips/crates/fips-identity" }
+hashtree-blossom = { path = "../../hashtree/rust/crates/hashtree-blossom" }
+hashtree-collection = { path = "../../hashtree/rust/crates/hashtree-collection" }
+hashtree-config = { path = "../../hashtree/rust/crates/hashtree-config" }
+hashtree-core = { path = "../../hashtree/rust/crates/hashtree-core" }
+hashtree-fips-transport = { path = "../crates/hashtree-fips-transport" }
+hashtree-fs = { path = "../../hashtree/rust/crates/hashtree-fs" }
+hashtree-index = { path = "../../hashtree/rust/crates/hashtree-index" }
+hashtree-lmdb = { path = "../../hashtree/rust/crates/hashtree-lmdb" }
+hashtree-network = { path = "../../hashtree/rust/crates/hashtree-network" }
+hashtree-nostr = { path = "../../hashtree/rust/crates/hashtree-nostr" }
+hashtree-resolver = { path = "../../hashtree/rust/crates/hashtree-resolver" }
+hashtree-updater = { path = "../../hashtree/rust/crates/hashtree-updater" }
+
 [package.metadata.deb]
 name = "iris-drive"
 maintainer = "Iris Drive"

@@ -25,6 +25,13 @@ pub(crate) fn refresh(model: &AppRef) {
                 return;
             }
             if awaiting_link_approval {
+                if matches!(
+                    *model.setup_screen.borrow(),
+                    SetupScreen::RestorePhrase | SetupScreen::RestoreSecretKey
+                ) {
+                    render_setup(model);
+                    return;
+                }
                 render_awaiting_approval(model, &state, sync_running);
                 return;
             }
