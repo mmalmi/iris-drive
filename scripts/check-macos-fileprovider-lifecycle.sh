@@ -14,6 +14,7 @@ HELPER_ENTITLEMENTS="$ROOT/macos/idrive-helper.entitlements"
 MACOS_PROJECT="$ROOT/macos/project.yml"
 DEV_APP="$ROOT/scripts/macos-dev-app.sh"
 DAEMON_RUNTIME="$ROOT/crates/iris-drive-cli/src/daemon/runtime.rs"
+DAEMON_GATEWAY_RUNTIME="$ROOT/crates/iris-drive-cli/src/daemon/gateway_runtime.rs"
 PROVIDER_COMMANDS="$ROOT/crates/iris-drive-cli/src/commands.rs"
 
 require_contains() {
@@ -148,6 +149,6 @@ require_contains "$ROOT/macos/Sources/IrisDriveDaemonService.swift" "macos/Sourc
 require_contains "$ROOT/macos/Sources/IrisDriveControlPanel.swift" "macos/Sources/IrisDriveControlPanel.swift" "Open on drive.iris.to"
 require_not_contains "$ROOT/macos/Sources/IrisDriveControlPanel.swift" "macos/Sources/IrisDriveControlPanel.swift" "return shareLocalGatewayLink(share, status: status)"
 require_contains "$DAEMON_RUNTIME" "crates/iris-drive-cli/src/daemon/runtime.rs" "embedded_hashtree_requested"
-require_contains "$DAEMON_RUNTIME" "crates/iris-drive-cli/src/daemon/runtime.rs" '"requested": embedded_hashtree_requested'
+require_contains "$DAEMON_GATEWAY_RUNTIME" "crates/iris-drive-cli/src/daemon/gateway_runtime.rs" '"requested": embedded_hashtree_requested'
 
 echo "MACOS_FILEPROVIDER_LIFECYCLE_OK"
