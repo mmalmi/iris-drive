@@ -60,7 +60,7 @@ struct AwaitingApprovalSetupView: View {
     let controller: AppDelegate
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .center, spacing: 12) {
             Text("Waiting for approval")
                 .font(.title2.weight(.semibold))
             if let request = status.appKeyLinkRequestURL, !request.isEmpty {
@@ -94,10 +94,11 @@ struct AwaitingApprovalSetupView: View {
             }
             .buttonStyle(.bordered)
         }
+        .multilineTextAlignment(.center)
     }
 
     private func keyedValue(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .center, spacing: 4) {
             Text(title)
                 .font(.caption)
                 .foregroundStyle(.secondary)

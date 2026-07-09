@@ -194,7 +194,6 @@ private struct AwaitingApprovalSetupView: View {
     @State private var requestQrMatrix = QrMatrix()
     @State private var requestQrValue = ""
     @State private var requestQrTask: Task<Void, Never>?
-
     var body: some View {
         NavigationStack {
             Form {
@@ -212,11 +211,14 @@ private struct AwaitingApprovalSetupView: View {
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 24)
                 }
-
-                Section("Waiting for approval") {
-                    Text("This device is waiting for an admin to approve it.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
+                Section {
+                    VStack(spacing: 8) {
+                        Text("Waiting for approval").font(.headline)
+                        Text("This device is waiting for an admin to approve it.")
+                            .font(.callout).foregroundStyle(.secondary)
+                    }
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: .infinity)
                     if !model.appKeyLinkRequest.isEmpty {
                         DisclosureGroup {
                             if requestQrMatrix.width > 0, requestQrValue == model.appKeyLinkRequest {
@@ -246,7 +248,6 @@ private struct AwaitingApprovalSetupView: View {
                         Label("Copy Device Key", systemImage: "doc.on.doc")
                     }
                 }
-
                 Section {
                     Button(role: .destructive) {
                         model.logout()
