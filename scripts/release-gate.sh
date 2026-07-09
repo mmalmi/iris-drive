@@ -80,8 +80,7 @@ run_parallel_checks() {
 
 run_rust_tests() {
   run cargo build -p idrive --bin idrive
-  run cargo test -p idrive --bin idrive --test cli_e2e --test link_input_e2e -- --test-threads=1
-  run cargo test -p idrive --test daemon_sync_matrix -- --test-threads=1
+  run cargo test -p idrive --bin idrive --test cli_e2e --test link_input_e2e --test daemon_sync_matrix -- --test-threads=1
 }
 
 run_macos_idle_cpu_gate() {

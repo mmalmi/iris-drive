@@ -449,9 +449,13 @@ struct NativeAppRuntime {
     #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
     app_key_link_exchange_stop: Arc<AtomicBool>,
     #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+    app_key_link_exchange_thread: Option<std::thread::JoinHandle<()>>,
+    #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
     browser_gateway_running: Arc<AtomicBool>,
     #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
     browser_gateway_stop: Arc<AtomicBool>,
+    #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+    browser_gateway_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -488,9 +492,13 @@ impl NativeAppRuntime {
             #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
             app_key_link_exchange_stop: Arc::new(AtomicBool::new(false)),
             #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+            app_key_link_exchange_thread: None,
+            #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
             browser_gateway_running: Arc::new(AtomicBool::new(false)),
             #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
             browser_gateway_stop: Arc::new(AtomicBool::new(false)),
+            #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+            browser_gateway_thread: None,
         };
         runtime.reset_native_browser_gateway_status_for_new_process();
         runtime.reload_from_disk(ProviderSummaryMode::Skip);
@@ -1458,7 +1466,15 @@ impl NativeAppRuntime {
             let data_dir = self.data_dir.clone();
             let running = self.browser_gateway_running.clone();
             let stop = self.browser_gateway_stop.clone();
-            std::thread::spawn(move || {
+            if self
+                .browser_gateway_thread
+                .as_ref()
+                .is_some_and(std::thread::JoinHandle::is_finished)
+                && let Some(handle) = self.browser_gateway_thread.take()
+            {
+                let _ = handle.join();
+            }
+            self.browser_gateway_thread = Some(std::thread::spawn(move || {
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                     run_native_browser_gateway(&data_dir, stop)
                 }));
@@ -1487,7 +1503,7 @@ impl NativeAppRuntime {
                     }
                 }
                 running.store(false, Ordering::Release);
-            });
+            }));
         }
     }
 
@@ -1840,10 +1856,20 @@ impl NativeAppRuntime {
 impl Drop for NativeAppRuntime {
     fn drop(&mut self) {
         #[cfg(any(target_os = "ios", target_os = "android"))]
-        self.app_key_link_exchange_stop
-            .store(true, Ordering::Release);
+        {
+            self.app_key_link_exchange_stop
+                .store(true, Ordering::Release);
+            if let Some(handle) = self.app_key_link_exchange_thread.take() {
+                let _ = handle.join();
+            }
+        }
         #[cfg(any(target_os = "ios", target_os = "android"))]
-        self.browser_gateway_stop.store(true, Ordering::Release);
+        {
+            self.browser_gateway_stop.store(true, Ordering::Release);
+            if let Some(handle) = self.browser_gateway_thread.take() {
+                let _ = handle.join();
+            }
+        }
     }
 }
 

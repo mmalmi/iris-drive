@@ -37,16 +37,24 @@ impl NativeAppRuntime {
             {
                 return;
             }
+            if self
+                .app_key_link_exchange_thread
+                .as_ref()
+                .is_some_and(std::thread::JoinHandle::is_finished)
+                && let Some(handle) = self.app_key_link_exchange_thread.take()
+            {
+                let _ = handle.join();
+            }
 
             let data_dir = self.data_dir.clone();
             let running = self.app_key_link_exchange_running.clone();
             let stop = self.app_key_link_exchange_stop.clone();
-            std::thread::spawn(move || {
+            self.app_key_link_exchange_thread = Some(std::thread::spawn(move || {
                 if let Err(error) = super::run_app_key_link_exchange(&data_dir, stop) {
                     tracing::warn!(error = %error, "native app-key-link FIPS exchange stopped");
                 }
                 running.store(false, std::sync::atomic::Ordering::Release);
-            });
+            }));
         }
     }
 

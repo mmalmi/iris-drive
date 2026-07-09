@@ -616,6 +616,12 @@ class IrisDriveAndroidGuiFlowTest {
             ),
         )
         assertTrue(applied.optString("error"), applied.optString("error").isBlank())
+
+        val beforeRestart = refreshedAppState(linkedHandle)
+        assertEquals("authorized", beforeRestart.profile?.authorizationState)
+        assertEquals("Pixel", beforeRestart.profile?.appKeyLabel)
+        assertEquals(1, beforeRestart.fileCount)
+
         NativeCore.appFree(linkedHandle)
         nativeHandles.remove(linkedHandle)
 
