@@ -355,7 +355,7 @@ pub(crate) fn load_native_runtime_config_cached(config_path: &Path) -> Result<Ap
     Ok(config)
 }
 
-#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+#[cfg(all(not(test), target_os = "android"))]
 pub(crate) fn invalidate_native_runtime_config_cache(config_path: &Path) {
     if let Ok(mut cache) = NATIVE_RUNTIME_CONFIG_CACHE.lock() {
         cache.remove(config_path);
