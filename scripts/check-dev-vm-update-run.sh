@@ -29,7 +29,6 @@ chmod +x "$TMPDIR/bin/ssh"
 git init -q "$TMPDIR/hashtree"
 git init -q "$TMPDIR/fips"
 git init -q "$TMPDIR/nostr-social-graph"
-git init -q "$TMPDIR/cashu-service"
 
 git -C "$ROOT" remote add "$MACOS_REMOTE" check-macos:~/git/iris-drive.git
 git -C "$ROOT" remote add "$UBUNTU_REMOTE" check-ubuntu:~/git/iris-drive.git
@@ -46,7 +45,6 @@ export IRIS_DRIVE_DEV_LAB_ENV="$TMPDIR/missing-dev-lab.env"
 export IRIS_DRIVE_HASHTREE_ROOT="$TMPDIR/hashtree"
 export IRIS_DRIVE_FIPS_ROOT="$TMPDIR/fips"
 export IRIS_DRIVE_SOCIAL_GRAPH_ROOT="$TMPDIR/nostr-social-graph"
-export IRIS_DRIVE_CASHU_SERVICE_ROOT="$TMPDIR/cashu-service"
 export IRIS_DRIVE_DEV_VM_MACOS_REMOTE="$MACOS_REMOTE"
 export IRIS_DRIVE_DEV_VM_UBUNTU_REMOTE="$UBUNTU_REMOTE"
 export IRIS_DRIVE_DEV_VM_WINDOWS_REMOTE="$WINDOWS_REMOTE"
@@ -162,11 +160,14 @@ fi
 
 if ! grep -F 'IRIS_DRIVE_SOCIAL_GRAPH_ROOT' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
   ! grep -F 'nostr-social-graph' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
-  ! grep -F 'SOCIAL_GRAPH_BARE' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
-  ! grep -F 'IRIS_DRIVE_CASHU_SERVICE_ROOT' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
-  ! grep -F 'cashu-service' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
-  ! grep -F 'CASHU_SERVICE_BARE' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
-  echo "dev VM sync must deploy hashtree sibling path dependencies" >&2
+  ! grep -F 'SOCIAL_GRAPH_BARE' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "dev VM sync must deploy the unpublished social graph path dependency" >&2
+  exit 1
+fi
+
+if grep -F 'cashu-service' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null ||
+  grep -F 'CASHU_SERVICE' "$ROOT/scripts/dev-vm-update-run.sh" >/dev/null; then
+  echo "published cashu-service must not require a sibling VM checkout" >&2
   exit 1
 fi
 

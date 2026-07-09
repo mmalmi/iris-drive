@@ -810,17 +810,6 @@ dependencies = [
 [[package]]
 name = "cashu-service"
 version = "0.2.57"
-dependencies = [
- "anyhow",
- "async-trait",
- "serde",
- "serde_json",
- "tokio",
-]
-
-[[package]]
-name = "cashu-service"
-version = "0.2.57"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "02cd7cc2b5cf7ce343c8f4d91945d6051f0b18c60c3d34aa6915736ada4dec3a"
 dependencies = [
@@ -2513,7 +2502,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
- "cashu-service 0.2.57 (registry+https://github.com/rust-lang/crates.io-index)",
+ "cashu-service",
  "clap",
  "dirs 5.0.1",
  "futures",
@@ -2688,7 +2677,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "bytes",
- "cashu-service 0.2.57",
+ "cashu-service",
  "futures",
  "hashtree-blossom",
  "hashtree-core",

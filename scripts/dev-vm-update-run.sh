@@ -16,8 +16,6 @@ FIPS_ROOT="${IRIS_DRIVE_FIPS_ROOT:-$(cd "$ROOT/../fips" && pwd)}"
 FIPS_ROOT="$(git -C "$FIPS_ROOT" rev-parse --show-toplevel)"
 SOCIAL_GRAPH_ROOT="${IRIS_DRIVE_SOCIAL_GRAPH_ROOT:-$(cd "$ROOT/../nostr-social-graph" && pwd)}"
 SOCIAL_GRAPH_ROOT="$(git -C "$SOCIAL_GRAPH_ROOT" rev-parse --show-toplevel)"
-CASHU_SERVICE_ROOT="${IRIS_DRIVE_CASHU_SERVICE_ROOT:-$(cd "$ROOT/../cashu-service" && pwd)}"
-CASHU_SERVICE_ROOT="$(git -C "$CASHU_SERVICE_ROOT" rev-parse --show-toplevel)"
 SYNC_BRANCH="${IRIS_DRIVE_DEV_VM_SYNC_BRANCH:-codex/dev-vm-sync}"
 FIPS_SYNC_BRANCH="${IRIS_DRIVE_DEV_VM_FIPS_SYNC_BRANCH:-$SYNC_BRANCH}"
 SOCIAL_GRAPH_SYNC_BRANCH="${IRIS_DRIVE_DEV_VM_SOCIAL_GRAPH_SYNC_BRANCH:-$SYNC_BRANCH}"
@@ -139,14 +137,12 @@ Environment:
   IRIS_DRIVE_HASHTREE_ROOT            Local hashtree/rust checkout.
   IRIS_DRIVE_FIPS_ROOT                Local fips checkout.
   IRIS_DRIVE_SOCIAL_GRAPH_ROOT        Local nostr-social-graph checkout.
-  IRIS_DRIVE_CASHU_SERVICE_ROOT       Local cashu-service checkout.
 
 Remote worktree paths are expected to be:
   ~/src/iris-drive
   ~/src/hashtree
   ~/src/fips
   ~/src/nostr-social-graph
-  ~/src/cashu-service
 
 The script never git-cleans untracked files.
 USAGE
@@ -343,7 +339,6 @@ declare -a IRIS_BARES=()
 declare -a HASHTREE_BARES=()
 declare -a FIPS_BARES=()
 declare -a SOCIAL_GRAPH_BARES=()
-declare -a CASHU_SERVICE_BARES=()
 declare -a ALL_OVERLAY_IPS=()
 declare -a STATIC_PEERS_BY_INDEX=()
 declare -a STATIC_PEERS_COMPLETE_BY_INDEX=()
@@ -368,7 +363,6 @@ add_target_from_remotes() {
   local hashtree_bare
   local fips_bare
   local social_graph_bare
-  local cashu_service_bare
 
   iris_parts="$(remote_url_parts "$ROOT" "$iris_remote" || true)"
   hashtree_parts="$(remote_url_parts "$HASHTREE_ROOT" "$hashtree_remote" || true)"
@@ -410,7 +404,6 @@ add_target_from_remotes() {
   else
     social_graph_bare="${IRIS_DRIVE_DEV_VM_SOCIAL_GRAPH_BARE:-~/git/nostr-social-graph.git}"
   fi
-  cashu_service_bare="${IRIS_DRIVE_DEV_VM_CASHU_SERVICE_BARE:-~/git/cashu-service.git}"
   ssh_host="$(ssh_host_for_label "$label" "$host")"
 
   ALL_LABELS+=("$label")
@@ -432,7 +425,6 @@ add_target_from_remotes() {
   HASHTREE_BARES+=("$hashtree_bare")
   FIPS_BARES+=("$fips_bare")
   SOCIAL_GRAPH_BARES+=("$social_graph_bare")
-  CASHU_SERVICE_BARES+=("$cashu_service_bare")
 }
 
 ssh_host_for_label() {
@@ -455,7 +447,6 @@ warn_or_fail_local_dirty "$ROOT" "iris-drive"
 warn_or_fail_local_dirty "$HASHTREE_ROOT" "hashtree"
 warn_or_fail_local_dirty "$FIPS_ROOT" "fips"
 warn_or_fail_local_dirty "$SOCIAL_GRAPH_ROOT" "nostr-social-graph"
-warn_or_fail_local_dirty "$CASHU_SERVICE_ROOT" "cashu-service"
 
 configured_remote_name() {
   local env_var="$1"
@@ -522,8 +513,7 @@ if [[ "$LIST_TARGETS" == "1" ]]; then
       "${IRIS_BARES[$i]}" \
       "${HASHTREE_BARES[$i]}" \
       "${FIPS_BARES[$i]}" \
-      "social-graph=${SOCIAL_GRAPH_BARES[$i]}" \
-      "cashu-service=${CASHU_SERVICE_BARES[$i]}"
+      "social-graph=${SOCIAL_GRAPH_BARES[$i]}"
   done
   exit 0
 fi
@@ -721,7 +711,6 @@ if [[ "$SKIP_PUSH" != "1" ]]; then
     ensure_remote_bare_repo "${KINDS[$i]}" "${SSH_HOSTS[$i]}" "${HASHTREE_BARES[$i]}"
     ensure_remote_bare_repo "${KINDS[$i]}" "${SSH_HOSTS[$i]}" "${FIPS_BARES[$i]}"
     ensure_remote_bare_repo "${KINDS[$i]}" "${SSH_HOSTS[$i]}" "${SOCIAL_GRAPH_BARES[$i]}"
-    ensure_remote_bare_repo "${KINDS[$i]}" "${SSH_HOSTS[$i]}" "${CASHU_SERVICE_BARES[$i]}"
 
     log "pushing iris-drive HEAD to ${LABELS[$i]} (${SSH_HOSTS[$i]}:${IRIS_BARES[$i]} $SYNC_BRANCH)"
     git -C "$ROOT" push "$(ssh_git_url "${SSH_HOSTS[$i]}" "${IRIS_BARES[$i]}")" "+HEAD:refs/heads/$SYNC_BRANCH"
@@ -731,8 +720,6 @@ if [[ "$SKIP_PUSH" != "1" ]]; then
     git -C "$FIPS_ROOT" push "$(ssh_git_url "${SSH_HOSTS[$i]}" "${FIPS_BARES[$i]}")" "+HEAD:refs/heads/$FIPS_SYNC_BRANCH"
     log "pushing nostr-social-graph HEAD to ${LABELS[$i]} (${SSH_HOSTS[$i]}:${SOCIAL_GRAPH_BARES[$i]} $SOCIAL_GRAPH_SYNC_BRANCH)"
     git -C "$SOCIAL_GRAPH_ROOT" push "$(ssh_git_url "${SSH_HOSTS[$i]}" "${SOCIAL_GRAPH_BARES[$i]}")" "+HEAD:refs/heads/$SOCIAL_GRAPH_SYNC_BRANCH"
-    log "pushing cashu-service HEAD to ${LABELS[$i]} (${SSH_HOSTS[$i]}:${CASHU_SERVICE_BARES[$i]} $SYNC_BRANCH)"
-    git -C "$CASHU_SERVICE_ROOT" push "$(ssh_git_url "${SSH_HOSTS[$i]}" "${CASHU_SERVICE_BARES[$i]}")" "+HEAD:refs/heads/$SYNC_BRANCH"
   done
 fi
 
@@ -744,9 +731,8 @@ run_posix_target() {
   local hashtree_bare="$5"
   local fips_bare="$6"
   local social_graph_bare="$7"
-  local cashu_service_bare="$8"
-  local static_peers="$9"
-  local static_peers_complete="${10}"
+  local static_peers="$8"
+  local static_peers_complete="$9"
 
   {
     printf 'LABEL=%s\n' "$(sh_quote "$label")"
@@ -755,7 +741,6 @@ run_posix_target() {
     printf 'HASHTREE_BARE=%s\n' "$(sh_quote "$hashtree_bare")"
     printf 'FIPS_BARE=%s\n' "$(sh_quote "$fips_bare")"
     printf 'SOCIAL_GRAPH_BARE=%s\n' "$(sh_quote "$social_graph_bare")"
-    printf 'CASHU_SERVICE_BARE=%s\n' "$(sh_quote "$cashu_service_bare")"
     printf 'SYNC_BRANCH=%s\n' "$(sh_quote "$SYNC_BRANCH")"
     printf 'FIPS_SYNC_BRANCH=%s\n' "$(sh_quote "$FIPS_SYNC_BRANCH")"
     printf 'SOCIAL_GRAPH_SYNC_BRANCH=%s\n' "$(sh_quote "$SOCIAL_GRAPH_SYNC_BRANCH")"
@@ -2045,7 +2030,6 @@ check_macos_fileprovider_signing() {
 
 ensure_build_space "$HOME/src/iris-drive" "repository sync"
 sync_repo "$HOME/src/nostr-social-graph" nostr-social-graph "$SOCIAL_GRAPH_BARE" "$SOCIAL_GRAPH_SYNC_BRANCH" "$SOCIAL_GRAPH_TARGET_BRANCH"
-sync_repo "$HOME/src/cashu-service" cashu-service "$CASHU_SERVICE_BARE"
 sync_repo "$HOME/src/hashtree" hashtree "$HASHTREE_BARE"
 sync_repo "$HOME/src/fips" fips "$FIPS_BARE" "$FIPS_SYNC_BRANCH" "$FIPS_TARGET_BRANCH"
 sync_repo "$HOME/src/iris-drive" iris-drive "$IRIS_BARE"
@@ -2065,9 +2049,8 @@ run_windows_target() {
   local hashtree_bare="$4"
   local fips_bare="$5"
   local social_graph_bare="$6"
-  local cashu_service_bare="$7"
-  local static_peers="$8"
-  local static_peers_complete="$9"
+  local static_peers="$7"
+  local static_peers_complete="$8"
 
   {
     printf '$Label = %s\n' "$(ps_quote "$label")"
@@ -2075,7 +2058,6 @@ run_windows_target() {
     printf '$HashtreeBare = %s\n' "$(ps_quote "$hashtree_bare")"
     printf '$FipsBare = %s\n' "$(ps_quote "$fips_bare")"
     printf '$SocialGraphBare = %s\n' "$(ps_quote "$social_graph_bare")"
-    printf '$CashuServiceBare = %s\n' "$(ps_quote "$cashu_service_bare")"
     printf '$SyncBranch = %s\n' "$(ps_quote "$SYNC_BRANCH")"
     printf '$FipsSyncBranch = %s\n' "$(ps_quote "$FIPS_SYNC_BRANCH")"
     printf '$SocialGraphSyncBranch = %s\n' "$(ps_quote "$SOCIAL_GRAPH_SYNC_BRANCH")"
@@ -2378,14 +2360,12 @@ $IrisRepo = Join-Path $HOME "src\iris-drive"
 $HashtreeRepo = Join-Path $HOME "src\hashtree"
 $FipsRepo = Join-Path $HOME "src\fips"
 $SocialGraphRepo = Join-Path $HOME "src\nostr-social-graph"
-$CashuServiceRepo = Join-Path $HOME "src\cashu-service"
 if ([string]::IsNullOrWhiteSpace($WindowsConfigDirOverride)) {
   $ConfigDir = Join-Path $env:APPDATA "iris-drive"
 } else {
   $ConfigDir = Expand-RemotePath $WindowsConfigDirOverride
 }
 Sync-Repo $SocialGraphRepo "nostr-social-graph" $SocialGraphBare $SocialGraphSyncBranch $SocialGraphTargetBranch
-Sync-Repo $CashuServiceRepo "cashu-service" $CashuServiceBare
 Sync-Repo $HashtreeRepo "hashtree" $HashtreeBare
 Sync-Repo $FipsRepo "fips" $FipsBare $FipsSyncBranch $FipsTargetBranch
 Sync-Repo $IrisRepo "iris-drive" $IrisBare
@@ -2892,10 +2872,10 @@ for i in "${!LABELS[@]}"; do
   log "updating/building/running ${LABELS[$i]} on ${HOSTS[$i]} via ${SSH_HOSTS[$i]}"
   case "${KINDS[$i]}" in
     macos|linux)
-      run_posix_target "${LABELS[$i]}" "${KINDS[$i]}" "${SSH_HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}" "${SOCIAL_GRAPH_BARES[$i]}" "${CASHU_SERVICE_BARES[$i]}" "${STATIC_PEERS_BY_INDEX[$i]:-}" "${STATIC_PEERS_COMPLETE_BY_INDEX[$i]:-0}"
+      run_posix_target "${LABELS[$i]}" "${KINDS[$i]}" "${SSH_HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}" "${SOCIAL_GRAPH_BARES[$i]}" "${STATIC_PEERS_BY_INDEX[$i]:-}" "${STATIC_PEERS_COMPLETE_BY_INDEX[$i]:-0}"
       ;;
     windows)
-      run_windows_target "${LABELS[$i]}" "${SSH_HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}" "${SOCIAL_GRAPH_BARES[$i]}" "${CASHU_SERVICE_BARES[$i]}" "${STATIC_PEERS_BY_INDEX[$i]:-}" "${STATIC_PEERS_COMPLETE_BY_INDEX[$i]:-0}"
+      run_windows_target "${LABELS[$i]}" "${SSH_HOSTS[$i]}" "${IRIS_BARES[$i]}" "${HASHTREE_BARES[$i]}" "${FIPS_BARES[$i]}" "${SOCIAL_GRAPH_BARES[$i]}" "${STATIC_PEERS_BY_INDEX[$i]:-}" "${STATIC_PEERS_COMPLETE_BY_INDEX[$i]:-0}"
       ;;
     *)
       die "unknown target kind: ${KINDS[$i]}"

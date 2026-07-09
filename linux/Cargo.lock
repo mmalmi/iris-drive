@@ -777,6 +777,8 @@ dependencies = [
 [[package]]
 name = "cashu-service"
 version = "0.2.57"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "02cd7cc2b5cf7ce343c8f4d91945d6051f0b18c60c3d34aa6915736ada4dec3a"
 dependencies = [
  "anyhow",
  "async-trait",
