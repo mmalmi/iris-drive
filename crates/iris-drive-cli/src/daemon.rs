@@ -1050,6 +1050,51 @@ pub(crate) fn authorized_app_key_pubkeys(state: &ProfileState) -> Vec<String> {
     state.active_root_writer_app_key_pubkeys()
 }
 
+pub(crate) fn online_authorized_app_keys_missing_primary_roots(
+    config: &AppConfig,
+    online_app_key_npubs: &std::collections::BTreeSet<String>,
+) -> Vec<String> {
+    let Some(state) = config.profile.as_ref() else {
+        return Vec::new();
+    };
+    let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID) else {
+        return Vec::new();
+    };
+    state
+        .active_root_writer_app_key_pubkeys()
+        .into_iter()
+        .filter(|app_key_pubkey| app_key_pubkey != &state.app_key_pubkey)
+        .filter(|app_key_pubkey| !drive.app_key_roots.contains_key(app_key_pubkey))
+        .filter(|app_key_pubkey| {
+            online_app_key_npubs.contains(&iris_drive_core::app_key_summary::pubkey_npub(
+                app_key_pubkey,
+            ))
+        })
+        .collect()
+}
+
+pub(crate) async fn online_authorized_app_key_missing_primary_root_count(
+    config_dir: &Path,
+    fallback_config: &AppConfig,
+    sync: &FsFipsBlockSync,
+) -> usize {
+    let mut online_app_key_npubs = sync
+        .connected_peer_ids()
+        .await
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+    online_app_key_npubs.extend(sync.mesh_peer_ids().await);
+    let current_config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))
+        .unwrap_or_else(|_| fallback_config.clone());
+    online_app_key_npubs.remove(
+        &current_config
+            .profile
+            .as_ref()
+            .map_or_else(String::new, |state| pubkey_npub(&state.app_key_pubkey)),
+    );
+    online_authorized_app_keys_missing_primary_roots(&current_config, &online_app_key_npubs).len()
+}
+
 pub(crate) fn files_root_apply_label(
     outcome: &iris_drive_core::relay_sync::FilesRootApply,
 ) -> &'static str {

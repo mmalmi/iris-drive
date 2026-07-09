@@ -762,12 +762,26 @@ pub(crate) fn cmd_daemon(
                             false
                         }
                     };
-                    if direct_root_peers_changed {
+                    let missing_online_root_count = if direct_root_peers_changed {
+                        0
+                    } else if let Some(sync) = fips_blocks.as_deref() {
+                        online_authorized_app_key_missing_primary_root_count(
+                            config_dir, &config, sync,
+                        )
+                        .await
+                    } else {
+                        0
+                    };
+                    if direct_root_peers_changed || missing_online_root_count > 0 {
                         if let Err(error) = direct_roots
                             .request_current_state_from_peers(
                                 config_dir,
                                 fips_blocks.as_deref(),
-                                "peer_refresh",
+                                if direct_root_peers_changed {
+                                    "peer_refresh"
+                                } else {
+                                    "missing_online_root"
+                                },
                             )
                             .await
                         {

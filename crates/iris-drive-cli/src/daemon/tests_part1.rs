@@ -376,6 +376,53 @@ fn stale_root_apply_followup_detects_superseded_app_key_root() {
 }
 
 #[test]
+fn online_authorized_app_key_without_primary_root_needs_state_lookup() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut profile =
+        iris_drive_core::Profile::create(dir.path(), Some("Owner".to_string())).unwrap();
+    let remote_app_key = nostr_sdk::Keys::generate().public_key().to_hex();
+    profile
+        .approve_app_key(&remote_app_key, Some("Phone".to_string()))
+        .unwrap();
+    let state = profile.state.clone();
+    let mut drive = Drive::primary(state.root_scope_id());
+    drive.app_key_roots.insert(
+        state.app_key_pubkey.clone(),
+        AppKeyRootRef::legacy("local-root", 10, 1),
+    );
+    let config = AppConfig {
+        profile: Some(state),
+        drives: vec![drive],
+        ..AppConfig::default()
+    };
+    let online = [iris_drive_core::app_key_summary::pubkey_npub(&remote_app_key)]
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>();
+
+    assert_eq!(
+        online_authorized_app_keys_missing_primary_roots(&config, &online),
+        vec![remote_app_key.clone()]
+    );
+
+    let mut with_remote_root = config.clone();
+    with_remote_root
+        .drives
+        .get_mut(0)
+        .unwrap()
+        .app_key_roots
+        .insert(
+            remote_app_key.clone(),
+            AppKeyRootRef::legacy("remote-root", 11, 1),
+        );
+    assert!(online_authorized_app_keys_missing_primary_roots(&with_remote_root, &online).is_empty());
+    assert!(online_authorized_app_keys_missing_primary_roots(
+        &config,
+        &std::collections::BTreeSet::new()
+    )
+    .is_empty());
+}
+
+#[test]
 fn root_apply_followup_queue_key_groups_superseded_app_key_roots() {
     let mut drive = Drive {
         root_scope_id: iris_drive_core::NostrIdentityId::new_v4().to_string(),
