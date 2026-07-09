@@ -1163,10 +1163,10 @@ final class IrisDriveMobileModel: ObservableObject {
             "request": request,
             "label": label,
         ])
-        approveDeviceKey = ""
         guard state?.error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ?? false else {
             return
         }
+        approveDeviceKey = ""
         ensureFileProviderDomainIfProfileExists()
         scheduleBackgroundSyncIfNeeded()
         lastForegroundDriveSyncStartedAt = Date.distantPast

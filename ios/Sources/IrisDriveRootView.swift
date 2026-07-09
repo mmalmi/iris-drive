@@ -970,12 +970,33 @@ private struct AddDeviceSection: View {
     @State private var lastPromptedApprovalRequest = ""
 
     private var canAddManualDevice: Bool {
-        IrisDriveNativeLinkInput.isCompleteDeviceApproval(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines))
+        let value = normalizedDeviceApprovalRequest(model.approveDeviceKey)
+        return IrisDriveNativeLinkInput.isCompleteDeviceApproval(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines))
+            || looksLikeDeviceApprovalRequest(value)
+    }
+
+    private func normalizedDeviceApprovalRequest(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        let mangledDrivePrefix = "https:/drive.iris.to/approve-device/"
+        if trimmed.lowercased().hasPrefix(mangledDrivePrefix) {
+            return "https://drive.iris.to/approve-device/" + trimmed.dropFirst(mangledDrivePrefix.count)
+        }
+        return trimmed
+    }
+
+    private func looksLikeDeviceApprovalRequest(_ value: String) -> Bool {
+        let lowercased = value.lowercased()
+        let prefixes = ["https://drive.iris.to/approve-device/", "https:/drive.iris.to/approve-device/", "nostr-identity://device-approval/", "iris-drive://app-key-link", "iris-drive:/app-key-link?"]
+        return prefixes.contains { prefix in
+            lowercased.hasPrefix(prefix)
+        }
     }
 
     private func confirmManualDevice(_ value: String, force: Bool = false) {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard IrisDriveNativeLinkInput.isCompleteDeviceApproval(trimmed) else { return }
+        let trimmed = normalizedDeviceApprovalRequest(value)
+        guard IrisDriveNativeLinkInput.isCompleteDeviceApproval(trimmed)
+            || looksLikeDeviceApprovalRequest(trimmed)
+        else { return }
         guard force || lastPromptedApprovalRequest != trimmed else { return }
         pendingApprovalRequest = trimmed
         lastPromptedApprovalRequest = trimmed
@@ -983,8 +1004,10 @@ private struct AddDeviceSection: View {
     }
 
     private func approvePendingDevice() {
-        let request = pendingApprovalRequest
-        guard IrisDriveNativeLinkInput.isCompleteDeviceApproval(request) else { return }
+        let request = normalizedDeviceApprovalRequest(pendingApprovalRequest)
+        guard IrisDriveNativeLinkInput.isCompleteDeviceApproval(request)
+            || looksLikeDeviceApprovalRequest(request)
+        else { return }
         model.approveDevice(request: request, label: "")
         pendingApprovalRequest = ""
         lastPromptedApprovalRequest = ""
@@ -1253,7 +1276,11 @@ private struct AddRecoveryKeySheet: View {
 
 private func iosUiTestValue(_ name: String) -> String {
     #if DEBUG
-    ProcessInfo.processInfo.environment[name] ?? ""
+    let environment = ProcessInfo.processInfo.environment
+    if let value = environment[name] { return value }
+    if let path = environment["\(name)_FILE"],
+       let value = try? String(contentsOfFile: path, encoding: .utf8) { return value }
+    return ""
     #else
     ""
     #endif

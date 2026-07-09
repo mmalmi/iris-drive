@@ -596,11 +596,13 @@ app_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["pro
 linked_json="$("$IDRIVE" --config-dir "$LINKED_CONFIG" link "$app_invite" --label "iOS UI linked")"
 linked_device="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["current_app_key_npub"])' <<<"$linked_json")"
 linked_request="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["app_key_link_request"]["url"])' <<<"$linked_json")"
+linked_request_file="$SIM_APP_BASE_DIR/linked-device-request.txt"
+printf '%s' "$linked_request" >"$linked_request_file"
 
 run_ui_test \
   "IrisDriveIOSUITests/IrisDriveIOSUITests/testAddLinkedDeviceFromDevices" \
   "IRIS_DRIVE_UI_TEST_LINKED_DEVICE=$linked_device" \
-  "IRIS_DRIVE_UI_TEST_LINKED_DEVICE_REQUEST=$linked_request" \
+  "IRIS_DRIVE_UI_TEST_LINKED_DEVICE_REQUEST_FILE=$linked_request_file" \
   "IRIS_DRIVE_UI_TEST_LINKED_DEVICE_LABEL=iOS UI linked"
 
 STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"

@@ -558,15 +558,20 @@ final class IrisDriveIOSUITests: XCTestCase {
             makeHittable(deviceField, in: app)
             XCTAssertEqual(deviceField.value as? String, linkedDeviceApproval)
 
-            XCTAssertTrue(app.buttons["Approve"].waitForExistence(timeout: 5))
+            let approveButton = app.buttons["Approve"]
+            XCTAssertTrue(approveButton.waitForExistence(timeout: 5))
             app.buttons["Approve"].tap()
             _ = approveDeviceConfirmationIfPresent(in: app)
         }
 
+        let finalDeviceField = app.textFields["manualDeviceId"]
+        let deviceFieldValue = finalDeviceField.exists ? (finalDeviceField.value as? String ?? "") : ""
+        let approveButton = app.buttons["Approve"]
+        let approveButtonEnabled = approveButton.exists && approveButton.isEnabled
         XCTAssertTrue(
             waitForStaticText(linkedDeviceLabel, in: app, timeout: 15)
                 && waitForStaticText("Member | Linked | Offline", in: app, timeout: 5),
-            "Expected linked device row. Static texts:\n\(staticTextLabels(in: app))"
+            "Expected linked device row. Field length: \(deviceFieldValue.count). Field prefix: \(String(deviceFieldValue.prefix(96))). Expected length: \(linkedDeviceApproval.count). Expected prefix: \(String(linkedDeviceApproval.prefix(96))). Approve exists: \(approveButton.exists). Approve enabled: \(approveButtonEnabled). Static texts:\n\(staticTextLabels(in: app))"
         )
         XCTAssertFalse(
             staticTextLabels(in: app).components(separatedBy: "\n").contains(linkedDevice),
@@ -826,9 +831,12 @@ final class IrisDriveIOSUITests: XCTestCase {
 
     private func optionalEnvironment(_ name: String) -> String? {
         let environment = ProcessInfo.processInfo.environment
-        let value = environment[name] ?? decodedEnvironmentValue("\(name)_B64", environment: environment)
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        return trimmed.isEmpty ? nil : trimmed
+        let fromFile = environment["\(name)_FILE"].flatMap { try? String(contentsOfFile: $0, encoding: .utf8) }
+        for value in [environment[name], decodedEnvironmentValue("\(name)_B64", environment: environment), fromFile] {
+            let trimmed = (value ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+            if !trimmed.isEmpty { return trimmed }
+        }
+        return nil
     }
 
     private func localBackHitFixtureURL() throws -> String {
