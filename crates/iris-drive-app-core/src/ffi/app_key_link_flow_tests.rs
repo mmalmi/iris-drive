@@ -233,6 +233,10 @@ fn start_join_request_tracks_pending_manual_approval() {
     assert!(!request.request_secret.is_empty());
     assert!(!request.device_app_key_proof.is_empty());
     assert_eq!(
+        request.resources,
+        iris_drive_core::app_key_link_transport::drive_device_approval_resources()
+    );
+    assert_eq!(
         iris_drive_core::app_key_summary::pubkey_npub(&request.app_key_hex),
         account.current_app_key_npub
     );
@@ -346,6 +350,10 @@ fn refresh_recreates_missing_manual_join_request_url() {
     assert!(!request.request_pubkey.is_empty());
     assert!(!request.request_secret.is_empty());
     assert!(!request.device_app_key_proof.is_empty());
+    assert_eq!(
+        request.resources,
+        iris_drive_core::app_key_link_transport::drive_device_approval_resources()
+    );
     let saved = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
     assert!(
         saved

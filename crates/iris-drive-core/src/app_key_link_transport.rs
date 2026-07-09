@@ -1,6 +1,7 @@
 use anyhow::{Context, Result};
 use nostr_identity::{
     CreateNostrIdentityDeviceApprovalRequestOptions, NOSTR_IDENTITY_DEVICE_APPROVAL_REQUEST_PREFIX,
+    NostrIdentityDeviceApprovalRequestedResource,
     compact_nostr_identity_device_approval_request_has_prefix,
     create_nostr_identity_device_approval_request, encode_nostr_identity_device_approval_request,
     parse_compact_nostr_identity_device_approval_request,
@@ -18,6 +19,15 @@ pub const APP_KEY_LINK_ROSTER_ACK_APP_TOPIC: &str = "iris-drive/app-key-link/v1/
 pub const APP_KEY_APPROVAL_COMPACT_PREFIX: &str = "iris-drive://app-key-link";
 const APP_KEY_APPROVAL_COMPACT_ONE_SLASH_PREFIX: &str = "iris-drive:/app-key-link?";
 pub const APP_KEY_APPROVAL_REQUEST_PREFIX: &str = "https://drive.iris.to/approve-device/";
+pub const APP_KEY_APPROVAL_REQUEST_TYPE: &str = "device_link";
+pub const APP_KEY_APPROVAL_RESOURCE_TYPE: &str = "iris_drive";
+pub const APP_KEY_APPROVAL_RESOURCE_ID: &str = "drive.iris.to";
+pub const APP_KEY_APPROVAL_RESOURCE_SCOPES: &[&str] = &[
+    "app_key",
+    "write_roots",
+    "receive_secret_wraps",
+    "decrypt_secret_epochs",
+];
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct AppKeyLinkRequestFrame {
@@ -42,6 +52,7 @@ pub struct AppKeyApprovalRequest {
     pub app_key_hex: String,
     pub device_app_key_proof: String,
     pub requested_at: u64,
+    pub resources: Vec<NostrIdentityDeviceApprovalRequestedResource>,
     pub admin_app_key_pubkey: Option<String>,
     pub invite_pubkey: String,
     pub label: Option<String>,
@@ -244,8 +255,8 @@ pub fn encode_app_key_approval_request(
             request_keys: None,
             request_secret: None,
             requested_at,
-            request_type: Some("device_link".to_owned()),
-            resources: Vec::new(),
+            request_type: Some(APP_KEY_APPROVAL_REQUEST_TYPE.to_owned()),
+            resources: drive_device_approval_resources(),
             expires_at: None,
             profile_id,
             admin_app_key_pubkey: admin_app_key_pubkey.map(str::to_owned),
@@ -281,6 +292,7 @@ pub fn parse_app_key_approval_request(input: &str) -> Result<Option<AppKeyApprov
         device_app_key_proof: request.device_app_key_proof,
         requested_at: u64::try_from(request.requested_at)
             .context("app-key approval request timestamp is negative")?,
+        resources: request.resources,
         admin_app_key_pubkey: request.admin_app_key_pubkey,
         invite_pubkey: String::new(),
         label: request.label,
@@ -327,10 +339,23 @@ fn parse_compact_app_key_approval_request(input: &str) -> Result<Option<AppKeyAp
         app_key_hex: request.device_app_key_pubkey,
         device_app_key_proof: String::new(),
         requested_at: 0,
+        resources: Vec::new(),
         admin_app_key_pubkey: None,
         invite_pubkey: String::new(),
         label,
     }))
+}
+
+#[must_use]
+pub fn drive_device_approval_resources() -> Vec<NostrIdentityDeviceApprovalRequestedResource> {
+    vec![NostrIdentityDeviceApprovalRequestedResource {
+        resource_type: APP_KEY_APPROVAL_RESOURCE_TYPE.to_owned(),
+        id: APP_KEY_APPROVAL_RESOURCE_ID.to_owned(),
+        scopes: APP_KEY_APPROVAL_RESOURCE_SCOPES
+            .iter()
+            .map(|scope| (*scope).to_owned())
+            .collect(),
+    }]
 }
 
 fn compact_app_key_approval_query(input: &str) -> Option<&str> {
@@ -451,6 +476,10 @@ mod tests {
         );
     }
 
+    fn assert_drive_device_approval_resources(request: &AppKeyApprovalRequest) {
+        assert_eq!(request.resources, drive_device_approval_resources());
+    }
+
     #[test]
     fn roster_fingerprint_changes_with_profile_roster_ops() {
         let dir = tempdir().unwrap();
@@ -541,6 +570,7 @@ mod tests {
         assert_eq!(parsed.requested_at, 123);
         assert_eq!(parsed.label.as_deref(), Some("Phone"));
         assert_full_device_approval_request(&parsed);
+        assert_drive_device_approval_resources(&parsed);
         assert!(frame.url.starts_with(APP_KEY_APPROVAL_REQUEST_PREFIX));
         assert!(!frame.url.starts_with(APP_KEY_APPROVAL_COMPACT_PREFIX));
         assert!(!frame.url.contains("app_key="));
@@ -580,6 +610,7 @@ mod tests {
         assert!(parsed.invite_pubkey.is_empty());
         assert_eq!(parsed.label.as_deref(), Some("Web + Native"));
         assert_full_device_approval_request(&parsed);
+        assert_drive_device_approval_resources(&parsed);
         assert!(url.starts_with(APP_KEY_APPROVAL_REQUEST_PREFIX));
         assert!(!url.starts_with(APP_KEY_APPROVAL_COMPACT_PREFIX));
         assert!(!url.contains("app_key="));
@@ -601,6 +632,7 @@ mod tests {
         assert_eq!(parsed.requested_at, 123);
         assert_eq!(parsed.label.as_deref(), Some("iPhone"));
         assert_full_device_approval_request(&parsed);
+        assert_drive_device_approval_resources(&parsed);
         assert!(url.starts_with(APP_KEY_APPROVAL_REQUEST_PREFIX));
         assert!(!url.starts_with(APP_KEY_APPROVAL_COMPACT_PREFIX));
     }

@@ -230,6 +230,10 @@ fn link_creates_awaiting_device_with_no_owner_key() {
     assert!(!request.request_pubkey.is_empty());
     assert!(!request.request_secret.is_empty());
     assert!(!request.device_app_key_proof.is_empty());
+    assert_eq!(
+        request.resources,
+        iris_drive_core::app_key_link_transport::drive_device_approval_resources()
+    );
     assert!(request.invite_pubkey.is_empty());
     assert!(
         !v["app_key_link_request"]["url"]
@@ -568,6 +572,10 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
     assert!(!request.request_pubkey.is_empty());
     assert!(!request.request_secret.is_empty());
     assert!(!request.device_app_key_proof.is_empty());
+    assert_eq!(
+        request.resources,
+        iris_drive_core::app_key_link_transport::drive_device_approval_resources()
+    );
     assert!(!request_url.contains("owner="));
     assert!(request.invite_pubkey.is_empty());
     assert!(!request_url.contains("secret="));
