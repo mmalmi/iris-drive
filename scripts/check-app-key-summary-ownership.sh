@@ -41,7 +41,7 @@ require_contains crates/iris-drive-cli/src/status/peers.rs '"can_revoke": app_ke
 require_contains crates/iris-drive-cli/src/status/peers.rs '"can_appoint_admin": app_key.can_appoint_admin'
 require_contains crates/iris-drive-cli/src/status/peers.rs '"can_demote_admin": app_key.can_demote_admin'
 require_contains crates/iris-drive-cli/src/status/peers.rs '"detail": detail'
-require_contains crates/iris-drive-app-core/src/ffi/tests.rs "revoked_current_device_refresh_logs_out_and_allows_fresh_relink"
+require_contains crates/iris-drive-app-core/src/ffi/app_key_link_flow_tests.rs "revoked_current_device_refresh_logs_out_and_allows_fresh_relink"
 require_contains macos/Sources/IrisDriveStatus.swift 'json["display_label"]'
 require_contains macos/Sources/IrisDriveStatus.swift '@Published var setupComplete = false'
 require_contains macos/Sources/IrisDriveStatus.swift '@Published var awaitingApproval = false'
