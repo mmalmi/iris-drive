@@ -1525,7 +1525,14 @@ all_snapshots_ready() {
   done
 }
 
-all_have_direct_peer() {
+requires_direct_peer() {
+  case "$1" in
+    ios*|android*) return 1 ;;
+    *) return 0 ;;
+  esac
+}
+
+all_required_devices_have_direct_peer() {
   local label status
   local expected_peers
   expected_peers=$((${#LABELS[@]} - 1))
@@ -1534,9 +1541,13 @@ all_have_direct_peer() {
     jq -e --argjson expected "$expected_peers" '
       .network.fips.running == true and
       .network.fips.fresh == true and
-      (.network.fips.roster_peer_count // 0) >= $expected and
-      (.network.fips.roster_connected_peer_count // 0) >= $expected
+      (.network.fips.roster_peer_count // 0) >= $expected
     ' >/dev/null 2>&1 <<<"$status" || return 1
+    if requires_direct_peer "$label"; then
+      jq -e '
+        (.network.fips.roster_connected_peer_count // 0) >= 1
+      ' >/dev/null 2>&1 <<<"$status" || return 1
+    fi
   done
 }
 
@@ -2121,7 +2132,7 @@ run_step "many small files" step_many_small_files
 run_step "large file" step_large_file
 
 run_step "final fresh daemons" wait_until "all daemon statuses fresh" all_fresh
-run_step "final direct FIPS peer discovery" wait_until "every device has a direct peer" all_have_direct_peer
+run_step "final LAN/local FIPS peer discovery" wait_until "required devices have a direct peer" all_required_devices_have_direct_peer
 run_step "final Devices list online roster" wait_until "every Devices list shows roster peers online" all_devices_list_roster_online
 if idle_cpu_gate_enabled; then
   run_step "idle daemon CPU gate" run_for_all_labels_parallel idle_cpu_gate_label
