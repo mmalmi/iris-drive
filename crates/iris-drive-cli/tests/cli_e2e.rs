@@ -44,6 +44,10 @@ fn app_key_link_invite_url(value: &serde_json::Value) -> &str {
     value["app_key_link_invite"]["url"].as_str().unwrap()
 }
 
+fn app_key_link_request_url(value: &serde_json::Value) -> &str {
+    value["app_key_link_request"]["url"].as_str().unwrap()
+}
+
 fn run_json(dir: &std::path::Path, args: &[&str]) -> serde_json::Value {
     let output = idrive(dir).args(args).output().unwrap();
     assert_success(&output);
@@ -690,7 +694,10 @@ fn status_reports_fips_latency_for_direct_peer() {
         &["link", &owner_invite, "--label", "linux-peer"],
     );
     let linked_app_key_npub = current_app_key_npub(&linked).to_string();
-    run_json(owner_dir.path(), &["approve", &linked_app_key_npub]);
+    run_json(
+        owner_dir.path(),
+        &["approve", app_key_link_request_url(&linked)],
+    );
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -756,11 +763,16 @@ fn status_hydrates_encrypted_device_labels_after_approval() {
         &["link", &owner_invite, "--label", "Phone"],
     );
     let linked_device = current_app_key_npub(&linked).to_string();
-    let request = linked["app_key_link_request"]["url"]
-        .as_str()
-        .expect("linked request URL");
 
-    run_json(owner_dir.path(), &["approve", request, "--label", "Phone"]);
+    run_json(
+        owner_dir.path(),
+        &[
+            "approve",
+            app_key_link_request_url(&linked),
+            "--label",
+            "Phone",
+        ],
+    );
 
     let status = run_json(owner_dir.path(), &["status"]);
     let linked_peer = status["peers"]
@@ -784,7 +796,10 @@ fn status_marks_mesh_fips_peer_online_without_direct_endpoint_link() {
         &["link", &owner_invite, "--label", "linux-peer"],
     );
     let linked_app_key_npub = current_app_key_npub(&linked).to_string();
-    run_json(owner_dir.path(), &["approve", &linked_app_key_npub]);
+    run_json(
+        owner_dir.path(),
+        &["approve", app_key_link_request_url(&linked)],
+    );
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -834,7 +849,10 @@ fn status_drops_stale_fips_mesh_peers() {
         &["link", &owner_invite, "--label", "linux-peer"],
     );
     let linked_app_key_npub = current_app_key_npub(&linked).to_string();
-    run_json(owner_dir.path(), &["approve", &linked_app_key_npub]);
+    run_json(
+        owner_dir.path(),
+        &["approve", app_key_link_request_url(&linked)],
+    );
 
     std::fs::write(
         owner_dir.path().join("daemon-status.json"),

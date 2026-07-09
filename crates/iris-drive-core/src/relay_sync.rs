@@ -1006,6 +1006,21 @@ pub async fn fetch_nostr_identity_roster_ops(
         .collect())
 }
 
+pub async fn fetch_device_approval_receipts(
+    client: &Client,
+    state: &crate::ProfileState,
+    timeout: Duration,
+) -> Result<Vec<Event>, RelayError> {
+    let Some(filter) = device_approval_receipt_filter(state) else {
+        return Ok(Vec::new());
+    };
+    Ok(fetch_events(client, vec![filter], timeout)
+        .await?
+        .into_iter()
+        .filter(is_device_approval_receipt_event)
+        .collect())
+}
+
 /// Fetch signed canonical share access snapshots for one share.
 pub async fn fetch_share_access_snapshots(
     client: &Client,

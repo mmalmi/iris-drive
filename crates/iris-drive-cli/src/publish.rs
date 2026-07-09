@@ -41,6 +41,8 @@ pub(crate) fn cmd_publish(
                 "blossom_servers": config.blossom_servers,
                 "published_profile_roster_ops": report.published_profile_roster_ops,
                 "profile_roster_publish_error": report.profile_roster_publish_error,
+                "published_device_approval_receipts": report.published_device_approval_receipts,
+                "device_approval_receipt_publish_error": report.device_approval_receipt_publish_error,
                 "published_drive_root": report.published_drive_root,
                 "drive_root_publish_error": report.drive_root_publish_error,
                 "published_files_root": report.published_files_root,
@@ -66,6 +68,8 @@ pub(crate) fn cmd_publish(
 pub(crate) struct PublishStateReport {
     published_profile_roster_ops: usize,
     profile_roster_publish_error: Option<String>,
+    published_device_approval_receipts: usize,
+    device_approval_receipt_publish_error: Option<String>,
     published_share_access_snapshots: usize,
     share_access_snapshot_publish_error: Option<String>,
     published_drive_root: bool,
@@ -258,6 +262,8 @@ pub(crate) fn publish_state_report_json(report: &PublishStateReport) -> serde_js
     json!({
         "published_profile_roster_ops": report.published_profile_roster_ops,
         "profile_roster_publish_error": report.profile_roster_publish_error,
+        "published_device_approval_receipts": report.published_device_approval_receipts,
+        "device_approval_receipt_publish_error": report.device_approval_receipt_publish_error,
         "published_share_access_snapshots": report.published_share_access_snapshots,
         "share_access_snapshot_publish_error": report.share_access_snapshot_publish_error,
         "published_drive_root": report.published_drive_root,
@@ -409,6 +415,27 @@ pub(crate) async fn publish_current_state(
         {
             Ok(event_ids) => report.published_profile_roster_ops = event_ids.len(),
             Err(error) => report.profile_roster_publish_error = Some(error),
+        }
+    }
+    for pending in &state.pending_device_approval_receipts {
+        let event = match nostr_sdk::Event::from_json(&pending.event_json) {
+            Ok(event) => event,
+            Err(error) => {
+                report.device_approval_receipt_publish_error =
+                    Some(format!("parsing pending device approval receipt: {error}"));
+                continue;
+            }
+        };
+        match relay_publish_with_timeout(async {
+            client
+                .send_event(&event)
+                .await
+                .map_err(|error| relay_sync::RelayError::Client(error.to_string()))
+        })
+        .await
+        {
+            Ok(_) => report.published_device_approval_receipts += 1,
+            Err(error) => report.device_approval_receipt_publish_error = Some(error),
         }
     }
 
@@ -566,6 +593,8 @@ pub(crate) fn spawn_initial_publish(
                         "event": "initial_publish",
                         "published_profile_roster_ops": report.published_profile_roster_ops,
                         "profile_roster_publish_error": report.profile_roster_publish_error,
+                        "published_device_approval_receipts": report.published_device_approval_receipts,
+                        "device_approval_receipt_publish_error": report.device_approval_receipt_publish_error,
                         "published_share_access_snapshots": report.published_share_access_snapshots,
                         "share_access_snapshot_publish_error": report.share_access_snapshot_publish_error,
                         "published_drive_root": report.published_drive_root,

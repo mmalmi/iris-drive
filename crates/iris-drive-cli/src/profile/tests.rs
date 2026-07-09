@@ -317,8 +317,17 @@ async fn app_key_link_roster_message_authorizes_only_after_local_request() {
     )
     .unwrap();
     let joiner_pubkey = joiner.state.app_key_pubkey.clone();
+    let approval_request =
+        iris_drive_core::app_key_link_transport::create_app_key_approval_request(
+            joiner.app_key.keys(),
+            Some(admin.state.profile_id),
+            Some(&admin.state.app_key_pubkey),
+            joiner.state.app_key_label.as_deref(),
+            123,
+        )
+        .unwrap();
     admin
-        .approve_app_key(&joiner_pubkey, Some("laptop".into()))
+        .approve_device_request(&approval_request.request, Some("laptop".into()))
         .unwrap();
 
     let frame = AppKeyLinkRosterFrame {
@@ -332,6 +341,18 @@ async fn app_key_link_roster_message_authorizes_only_after_local_request() {
         peer_id: pubkey_npub(&admin.state.app_key_pubkey),
         topic: APP_KEY_LINK_ROSTER_APP_TOPIC.to_string(),
         data: serde_json::to_vec(&frame).unwrap(),
+    };
+    let receipt_message = iris_drive_core::FipsAppMessage {
+        peer_id: pubkey_npub(&admin.state.app_key_pubkey),
+        topic: APP_KEY_APPROVAL_RECEIPT_APP_TOPIC.to_string(),
+        data: admin
+            .state
+            .pending_device_approval_receipts
+            .last()
+            .expect("approval receipt")
+            .event_json
+            .as_bytes()
+            .to_vec(),
     };
 
     let mut config = AppConfig {
@@ -355,15 +376,6 @@ async fn app_key_link_roster_message_authorizes_only_after_local_request() {
     assert!(state.app_keys.is_none());
 
     let mut requested = joiner.state.clone();
-    let approval_request =
-        iris_drive_core::app_key_link_transport::create_app_key_approval_request(
-            joiner.app_key.keys(),
-            Some(admin.state.profile_id),
-            Some(&admin.state.app_key_pubkey),
-            requested.app_key_label.as_deref(),
-            123,
-        )
-        .unwrap();
     requested
         .queue_outbound_app_key_link_request(
             admin.state.app_key_pubkey.clone(),
@@ -380,6 +392,16 @@ async fn app_key_link_roster_message_authorizes_only_after_local_request() {
     config.upsert_drive(Drive::primary(admin.state.root_scope_id()));
     config.save(config_path_in(joiner_dir.path())).unwrap();
 
+    assert!(
+        handle_app_key_link_app_message(
+            joiner_dir.path(),
+            &receipt_message,
+            None,
+            &mut BTreeSet::new(),
+        )
+        .await
+        .unwrap()
+    );
     assert!(
         handle_app_key_link_app_message(joiner_dir.path(), &message, None, &mut BTreeSet::new())
             .await

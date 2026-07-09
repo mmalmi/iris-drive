@@ -30,6 +30,8 @@ const BLOSSOM_DOWNLOAD_RETRY_DELAYS: &[u64] = &[1, 2, 4];
 pub struct NetworkSyncReport {
     pub relays: Vec<String>,
     pub blossom_servers: Vec<String>,
+    pub device_approval_receipts_seen: usize,
+    pub device_approval_receipts_applied: usize,
     pub profile_roster_ops_seen: usize,
     pub profile_roster_ops_applied: usize,
     pub share_access_snapshots_seen: usize,
@@ -125,7 +127,7 @@ async fn sync_once_inner(
     options: NetworkSyncOptions,
 ) -> Result<NetworkSyncReport> {
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let state = config
+    let initial_state = config
         .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; create or link a profile first"))?;
@@ -140,10 +142,29 @@ async fn sync_once_inner(
         ..NetworkSyncReport::default()
     };
 
-    let profile_events =
-        relay_sync::fetch_nostr_identity_roster_ops(&client, state.profile_id, timeout)
+    let receipt_events =
+        relay_sync::fetch_device_approval_receipts(&client, &initial_state, timeout)
             .await
-            .context("fetching NostrIdentity roster ops")?;
+            .context("fetching device approval receipts")?;
+    report.device_approval_receipts_seen = receipt_events.len();
+    for event in &receipt_events {
+        if matches!(
+            relay_sync::apply_remote_device_approval_receipt_event(&mut config, event)
+                .context("applying device approval receipt")?,
+            relay_sync::NostrIdentityRosterOpApply::Applied
+        ) {
+            report.device_approval_receipts_applied += 1;
+        }
+    }
+
+    let profile_id = config
+        .profile
+        .as_ref()
+        .map(|state| state.profile_id)
+        .ok_or_else(|| anyhow::anyhow!("profile disappeared during sync"))?;
+    let profile_events = relay_sync::fetch_nostr_identity_roster_ops(&client, profile_id, timeout)
+        .await
+        .context("fetching NostrIdentity roster ops")?;
     report.profile_roster_ops_seen = profile_events.len();
     for event in &profile_events {
         if matches!(
@@ -175,6 +196,10 @@ async fn sync_once_inner(
         }
     }
 
+    let state = config
+        .profile
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("profile disappeared during sync"))?;
     let authorized_app_keys = config
         .profile
         .as_ref()
