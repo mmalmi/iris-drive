@@ -19,13 +19,13 @@ async fn fresh_test_provider() -> (tempfile::TempDir, HashTreeProviderFs<FsBlobS
 }
 
 #[test]
-fn live_block_pull_tries_blossom_when_fips_has_no_peer_path() {
+fn live_block_pull_keeps_blossom_as_bounded_fallback_after_fips() {
     let mut config = AppConfig {
         blossom_servers: vec!["https://upload.example".to_string()],
         ..AppConfig::default()
     };
 
-    assert!(!should_try_blossom_download(&config, true, true));
+    assert!(should_try_blossom_download(&config, true, true));
     assert!(should_try_blossom_download(&config, true, false));
     assert!(should_try_blossom_download(&config, false, false));
 
