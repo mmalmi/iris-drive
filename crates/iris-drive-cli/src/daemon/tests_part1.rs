@@ -395,12 +395,8 @@ fn online_authorized_app_key_without_primary_root_needs_state_lookup() {
         drives: vec![drive],
         ..AppConfig::default()
     };
-    let online = [iris_drive_core::app_key_summary::pubkey_npub(&remote_app_key)]
-        .into_iter()
-        .collect::<std::collections::BTreeSet<_>>();
-
     assert_eq!(
-        online_authorized_app_keys_missing_primary_roots(&config, &online),
+        authorized_app_keys_missing_primary_roots(&config),
         vec![remote_app_key.clone()]
     );
 
@@ -414,12 +410,7 @@ fn online_authorized_app_key_without_primary_root_needs_state_lookup() {
             remote_app_key.clone(),
             AppKeyRootRef::legacy("remote-root", 11, 1),
         );
-    assert!(online_authorized_app_keys_missing_primary_roots(&with_remote_root, &online).is_empty());
-    assert!(online_authorized_app_keys_missing_primary_roots(
-        &config,
-        &std::collections::BTreeSet::new()
-    )
-    .is_empty());
+    assert!(authorized_app_keys_missing_primary_roots(&with_remote_root).is_empty());
 }
 
 #[test]

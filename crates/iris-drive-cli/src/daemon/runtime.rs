@@ -762,9 +762,7 @@ pub(crate) fn cmd_daemon(
                             false
                         }
                     };
-                    let missing_online_root_count = if direct_root_peers_changed {
-                        0
-                    } else if let Some(sync) = fips_blocks.as_deref() {
+                    let missing_online_root_count = if let Some(sync) = fips_blocks.as_deref() {
                         online_authorized_app_key_missing_primary_root_count(
                             config_dir, &config, sync,
                         )
