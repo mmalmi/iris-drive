@@ -76,17 +76,6 @@ struct AwaitingApprovalSetupView: View {
                 }
                 .buttonStyle(.borderedProminent)
             }
-            if let device = status.deviceNpub, !device.isEmpty {
-                keyedValue("Current Device Key", device)
-                IrisDriveCopyButton(
-                    title: "Copy Device Key",
-                    systemImage: "doc.on.doc",
-                    fillsWidth: true
-                ) {
-                    controller.copyDeviceKey()
-                }
-                .buttonStyle(.bordered)
-            }
             Button(role: .destructive) {
                 controller.logout()
             } label: {

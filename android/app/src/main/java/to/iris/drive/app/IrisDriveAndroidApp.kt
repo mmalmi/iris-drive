@@ -448,14 +448,9 @@ private fun AwaitingApprovalContent(
                 )
                 SetupPrimaryButton(
                     text = "Copy Request Link",
-                    onClick = { onCopyText("Request link", profile.appKeyLinkRequest) },
+                    onClick = { onCopyText("Request Link", profile.appKeyLinkRequest) },
                 )
             }
-            AwaitingApprovalKey("Current Device Key", profile.devicePubkey)
-            SetupSecondaryButton(
-                text = "Copy Device Key",
-                onClick = { onCopyText("Device Key", profile.devicePubkey) },
-            )
             OutlinedButton(
                 onClick = onLogout,
                 modifier = Modifier.fillMaxWidth().height(48.dp),
@@ -464,17 +459,6 @@ private fun AwaitingApprovalContent(
                 Text("Log out")
             }
         }
-    }
-}
-
-@Composable
-private fun AwaitingApprovalKey(label: String, value: String) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(4.dp),
-    ) {
-        Text(label, color = Ink, fontWeight = FontWeight.SemiBold)
-        Text(value, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
     }
 }
 

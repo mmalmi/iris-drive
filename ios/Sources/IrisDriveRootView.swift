@@ -237,15 +237,9 @@ private struct AwaitingApprovalSetupView: View {
                                 Label("Copy Request Link", systemImage: "link")
                             }
                         } label: {
-                            Label("Manual approval request", systemImage: "qrcode")
+                            Label("Request Link", systemImage: "qrcode")
                         }
                         .accessibilityIdentifier("manualApprovalRequestDisclosure")
-                    }
-                    LabeledContent("Current Device", value: compactIdentifier(model.devicePublicKey))
-                    Button {
-                        model.copyDeviceKey()
-                    } label: {
-                        Label("Copy Device Key", systemImage: "doc.on.doc")
                     }
                 }
                 Section {
