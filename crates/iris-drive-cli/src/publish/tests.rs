@@ -964,6 +964,58 @@ fn direct_root_publish_includes_profile_roster_ops() {
 }
 
 #[test]
+fn direct_root_current_state_from_disk_hydrates_roster_sidecar_recipients() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let mut account = Profile::create(config_dir.path(), Some("native".to_string())).unwrap();
+    let remote_app_key = nostr_sdk::Keys::generate().public_key().to_hex();
+    account
+        .approve_app_key(&remote_app_key, Some("phone".to_string()))
+        .unwrap();
+    let mut initial_config = AppConfig {
+        profile: Some(account.state.clone()),
+        ..AppConfig::default()
+    };
+    initial_config.upsert_drive(Drive::primary(account.state.root_scope_id()));
+    initial_config
+        .save(config_path_in(config_dir.path()))
+        .unwrap();
+    std::fs::write(work.path().join("local.txt"), b"local root").unwrap();
+    let mut daemon = Daemon::open(config_dir.path()).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime
+        .block_on(daemon.import_source_dir(work.path()))
+        .unwrap();
+    let config = AppConfig {
+        profile: Some(account.state.clone()),
+        drives: daemon.config().drives.clone(),
+        ..AppConfig::default()
+    };
+    config.save(config_path_in(config_dir.path())).unwrap();
+
+    let events = runtime
+        .block_on(build_current_sync_events_from_disk(
+            config_dir.path(),
+            &account.state.root_scope_id(),
+        ))
+        .unwrap();
+    let drive_root = events
+        .iter()
+        .find(|event| event.key.starts_with("drive-root:"))
+        .expect("drive root event");
+    let recipients = drive_root.key.rsplit(':').next().unwrap();
+
+    assert!(
+        recipients
+            .split(',')
+            .any(|recipient| recipient == remote_app_key)
+    );
+}
+
+#[test]
 fn direct_root_publish_prioritizes_roots_before_profile_metadata() {
     let config_dir = tempfile::tempdir().unwrap();
     let work = tempfile::tempdir().unwrap();

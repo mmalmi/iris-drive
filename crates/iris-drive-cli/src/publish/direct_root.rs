@@ -25,7 +25,6 @@ struct DirectRootPublishEvent {
     event: DirectRootEvent,
     source: DirectRootPublishSource,
 }
-
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum DirectRootPublishSource {
     LocalCurrent,
@@ -33,24 +32,20 @@ enum DirectRootPublishSource {
     StateRequestReply,
     CachedStateRequestReply,
 }
-
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum DirectRootFrameOutcome {
     Ignored,
     Cached,
     Changed,
 }
-
 impl DirectRootFrameOutcome {
     pub(crate) const fn should_log_event(self) -> bool {
         !matches!(self, Self::Ignored)
     }
-
     pub(crate) const fn should_schedule_announce(self) -> bool {
         matches!(self, Self::Changed)
     }
 }
-
 impl DirectRootPublishSource {
     fn as_str(self) -> &'static str {
         match self {
@@ -80,13 +75,11 @@ pub(crate) struct DirectRootExchange {
     recent_hint_times: BTreeMap<String, std::time::Instant>,
     seen_frame_retry_times: BTreeMap<String, std::time::Instant>,
 }
-
 #[derive(Debug, Clone)]
 struct CachedDirectRootProfileStream {
     config_fingerprint: ConfigFileFingerprint,
     root_scope_id: Option<String>,
 }
-
 #[derive(Debug, Clone)]
 struct CachedCurrentSyncEvents {
     config_fingerprint: ConfigFileFingerprint,
@@ -129,7 +122,7 @@ impl DirectRootExchange {
     async fn announce_current_state(
         &mut self,
         config_dir: &Path,
-        config: &AppConfig,
+        _config: &AppConfig,
         state: &ProfileState,
         fips_blocks: Option<&FsFipsBlockSync>,
     ) -> Result<()> {
@@ -141,9 +134,10 @@ impl DirectRootExchange {
             .await;
         let stream = direct_root_mesh_stream(&root_scope_id);
         let config_fingerprint = config_file_fingerprint(&config_path_in(config_dir))?;
+        let expected_root_scope_id = root_scope_id.clone();
         let local_events = self
             .cached_current_sync_events_from_config(config_fingerprint, || {
-                build_current_sync_events(config_dir, config, state)
+                build_current_sync_events_from_disk(config_dir, &expected_root_scope_id)
             })
             .await?;
         let events = self.events_for_publish(local_events);
@@ -172,16 +166,9 @@ impl DirectRootExchange {
         {
             cached.events.clone()
         } else {
-            let config_path = config_path_in(config_dir);
-            let config = AppConfig::load_or_default_cached_profile(&config_path)?;
-            let Some(state) = config.profile.as_ref() else {
-                return Ok(());
-            };
-            if state.root_scope_id() != root_scope_id {
-                return Ok(());
-            }
+            let expected_root_scope_id = root_scope_id.to_string();
             self.cached_current_sync_events_from_config(config_fingerprint, || {
-                build_current_sync_events(config_dir, &config, state)
+                build_current_sync_events_from_disk(config_dir, &expected_root_scope_id)
             })
             .await?
         };
@@ -1479,6 +1466,19 @@ pub(crate) async fn build_current_sync_events(
     append_share_access_snapshot_events(&mut events, config_dir, config, state)?;
 
     Ok(events)
+}
+
+async fn build_current_sync_events_from_disk(
+    config_dir: &Path,
+    expected_root_scope_id: &str,
+) -> Result<Vec<DirectRootEvent>> {
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    match config.profile.as_ref() {
+        Some(state) if state.root_scope_id() == expected_root_scope_id => {
+            build_current_sync_events(config_dir, &config, state).await
+        }
+        _ => Ok(Vec::new()),
+    }
 }
 
 fn append_profile_roster_events(
