@@ -47,6 +47,8 @@ Environment:
                                   Copy the owner profile roster snapshot into temp peer configs after approval
                                   so VM file-sync tests do not depend on public relay timing (default: 1).
   IRIS_DRIVE_E2E_PROFILE          Build/use idrive from target/debug or target/release (default: debug).
+  IRIS_DRIVE_E2E_REBUILD_IDRIVE   Rebuild repo idrive before each host run unless an explicit
+                                  idrive override is set (default: 1).
   IRIS_DRIVE_E2E_IDRIVE           Override idrive path on every host.
   IRIS_DRIVE_E2E_IDRIVE_LABEL     Override one host's idrive path, where LABEL is uppercased and
                                   non-alphanumeric characters become underscores.
@@ -74,6 +76,7 @@ IDLE_CPU_GATE="${IRIS_DRIVE_E2E_IDLE_CPU_GATE:-1}"
 STATIC_FIPS_HINTS="${IRIS_DRIVE_E2E_STATIC_FIPS_HINTS:-1}"
 FIPS_PORT_BASE="${IRIS_DRIVE_E2E_FIPS_PORT_BASE:-$((32000 + ($$ % 10000)))}"
 E2E_PROFILE="${IRIS_DRIVE_E2E_PROFILE:-debug}"
+REBUILD_IDRIVE="${IRIS_DRIVE_E2E_REBUILD_IDRIVE:-1}"
 case "$E2E_PROFILE" in
   debug | release) ;;
   *) echo "IRIS_DRIVE_E2E_PROFILE must be 'debug' or 'release'." >&2; exit 2 ;;
@@ -507,6 +510,7 @@ New-Item -ItemType Directory -Force -Path \$config,\$work | Out-Null
 \$profile = $(ps_quote "$E2E_PROFILE")
 \$repoIdrive = Join-Path \$repo (Join-Path (Join-Path 'target' \$profile) 'idrive.exe')
 \$overrideIdrive = $(ps_quote "$idrive_override")
+\$rebuildIdrive = $(ps_quote "$REBUILD_IDRIVE")
 \$cargoProfileArgs = @()
 if (\$profile -eq 'release') { \$cargoProfileArgs += '--release' }
 function Test-IrisDriveCli([string]\$candidate) {
@@ -515,6 +519,15 @@ function Test-IrisDriveCli([string]\$candidate) {
   return \$LASTEXITCODE -eq 0
 }
 \$idrive = \$overrideIdrive
+if ([string]::IsNullOrWhiteSpace(\$idrive) -and \$rebuildIdrive -ne '0' -and (Test-Path -LiteralPath (Join-Path \$repo 'Cargo.toml'))) {
+  \$cargo = Get-Command cargo -ErrorAction SilentlyContinue
+  if (\$cargo) {
+    Push-Location \$repo
+    cargo build -q @cargoProfileArgs -p idrive --bin idrive
+    Pop-Location
+    \$idrive = \$repoIdrive
+  }
+}
 if ([string]::IsNullOrWhiteSpace(\$idrive) -and (Test-IrisDriveCli \$repoIdrive)) {
   \$idrive = \$repoIdrive
 }
@@ -581,6 +594,13 @@ if [[ \"\$profile\" == \"release\" ]]; then
   cargo_profile_arg="--release"
 fi
 idrive=$(sh_quote "$idrive_override")
+rebuild_idrive=$(sh_quote "$REBUILD_IDRIVE")
+if [[ -z \"\$idrive\" && \"\$rebuild_idrive\" != \"0\" && -f \"\$repo/Cargo.toml\" ]] && command -v cargo >/dev/null 2>&1; then
+  (cd \"\$repo\" && cargo build -q \$cargo_profile_arg -p idrive --bin idrive)
+  idrive=\"\$repo/target/\$profile/idrive\"
+  [[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cache/cargo-target/\$profile/idrive\"
+  [[ -x \"\$idrive\" ]] || idrive=\"\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/\$profile/idrive}\"
+fi
 if [[ -z \"\$idrive\" ]]; then
   for candidate in \\
     \"\$repo/target/\$profile/idrive\" \\
