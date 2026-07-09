@@ -508,59 +508,9 @@ if (Test-Path -LiteralPath \$projectionE2e) { Remove-Item -LiteralPath \$project
 New-Item -ItemType Directory -Force -Path \$config,\$work | Out-Null
 \$repo = Join-Path \$HOME 'src\iris-drive'
 \$profile = $(ps_quote "$E2E_PROFILE")
-\$repoIdrive = Join-Path \$repo (Join-Path (Join-Path 'target' \$profile) 'idrive.exe')
 \$overrideIdrive = $(ps_quote "$idrive_override")
 \$rebuildIdrive = $(ps_quote "$REBUILD_IDRIVE")
-\$cargoProfileArgs = @()
-if (\$profile -eq 'release') { \$cargoProfileArgs += '--release' }
-function Test-IrisDriveCli([string]\$candidate) {
-  if ([string]::IsNullOrWhiteSpace(\$candidate) -or -not (Test-Path -LiteralPath \$candidate)) { return \$false }
-  & \$candidate app-keys --help *> \$null
-  return \$LASTEXITCODE -eq 0
-}
-\$idrive = \$overrideIdrive
-if ([string]::IsNullOrWhiteSpace(\$idrive) -and \$rebuildIdrive -ne '0' -and (Test-Path -LiteralPath (Join-Path \$repo 'Cargo.toml'))) {
-  \$cargo = Get-Command cargo -ErrorAction SilentlyContinue
-  if (\$cargo) {
-    Push-Location \$repo
-    cargo build -q @cargoProfileArgs -p idrive --bin idrive
-    Pop-Location
-    \$idrive = \$repoIdrive
-  }
-}
-if ([string]::IsNullOrWhiteSpace(\$idrive) -and (Test-IrisDriveCli \$repoIdrive)) {
-  \$idrive = \$repoIdrive
-}
-if ([string]::IsNullOrWhiteSpace(\$idrive)) {
-  if (Test-Path -LiteralPath (Join-Path \$repo 'Cargo.toml')) {
-    \$cargo = Get-Command cargo -ErrorAction SilentlyContinue
-    if (\$cargo) {
-      Push-Location \$repo
-      cargo build -q @cargoProfileArgs -p idrive --bin idrive
-      Pop-Location
-      \$idrive = \$repoIdrive
-    }
-  }
-}
-if ([string]::IsNullOrWhiteSpace(\$idrive) -or -not (Test-IrisDriveCli \$idrive)) {
-  \$idrive = \$repoIdrive
-}
-if (\$profile -eq 'debug' -and -not (Test-IrisDriveCli \$idrive)) {
-  \$idrive = Join-Path \$HOME '.cargo\bin\idrive.exe'
-  if (-not (Test-Path -LiteralPath \$idrive)) {
-    \$cmd = Get-Command idrive.exe -ErrorAction SilentlyContinue
-    if (\$cmd) { \$idrive = \$cmd.Source }
-  }
-}
-if (-not (Test-IrisDriveCli \$idrive)) {
-  if (Test-Path -LiteralPath (Join-Path \$repo 'Cargo.toml')) {
-    Push-Location \$repo
-    cargo build -q @cargoProfileArgs -p idrive --bin idrive
-    Pop-Location
-    \$idrive = \$repoIdrive
-  }
-}
-if (-not (Test-IrisDriveCli \$idrive)) { throw \"current idrive.exe with app-keys support not found for \$label\" }
+\$idrive = & (Join-Path \$repo 'scripts\build-idrive-for-e2e.ps1') -Profile \$profile -OverrideIdrive \$overrideIdrive -RebuildIdrive \$rebuildIdrive
 Write-Output \"base=\$base\"
 Write-Output \"config=\$config\"
 Write-Output \"work=\$work\"
@@ -584,68 +534,11 @@ done < <(
 )
 rm -rf \"\$base\"
 mkdir -p \"\$base/config\" \"\$base/work\"
-supports_app_keys() {
-  [[ -x \"\$1\" ]] && \"\$1\" app-keys --help >/dev/null 2>&1
-}
 repo=\"\$HOME/src/iris-drive\"
 profile=$(sh_quote "$E2E_PROFILE")
-cargo_profile_arg=""
-if [[ \"\$profile\" == \"release\" ]]; then
-  cargo_profile_arg="--release"
-fi
 idrive=$(sh_quote "$idrive_override")
 rebuild_idrive=$(sh_quote "$REBUILD_IDRIVE")
-if [[ -z \"\$idrive\" && \"\$rebuild_idrive\" != \"0\" && -f \"\$repo/Cargo.toml\" ]] && command -v cargo >/dev/null 2>&1; then
-  (cd \"\$repo\" && cargo build -q \$cargo_profile_arg -p idrive --bin idrive)
-  idrive=\"\$repo/target/\$profile/idrive\"
-  [[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cache/cargo-target/\$profile/idrive\"
-  [[ -x \"\$idrive\" ]] || idrive=\"\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/\$profile/idrive}\"
-fi
-if [[ -z \"\$idrive\" ]]; then
-  for candidate in \\
-    \"\$repo/target/\$profile/idrive\" \\
-    \"\$HOME/.cache/cargo-target/\$profile/idrive\" \\
-    \"\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/\$profile/idrive}\"
-  do
-    if supports_app_keys \"\$candidate\"; then
-      idrive=\"\$candidate\"
-      break
-    fi
-  done
-fi
-if [[ -z \"\$idrive\" && \"\$profile\" == \"debug\" ]]; then
-  for candidate in \"\$HOME/.cargo/bin/idrive\" \"\$(command -v idrive || true)\"; do
-    if supports_app_keys \"\$candidate\"; then
-      idrive=\"\$candidate\"
-      break
-    fi
-  done
-fi
-if ! supports_app_keys \"\$idrive\" && [[ -f \"\$repo/Cargo.toml\" ]] && command -v cargo >/dev/null 2>&1; then
-  (cd \"\$repo\" && cargo build -q \$cargo_profile_arg -p idrive --bin idrive)
-  idrive=\"\$repo/target/\$profile/idrive\"
-  [[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cache/cargo-target/\$profile/idrive\"
-  [[ -x \"\$idrive\" ]] || idrive=\"\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/\$profile/idrive}\"
-fi
-if ! supports_app_keys \"\$idrive\"; then
-  idrive=\"\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/\$profile/idrive}\"; idrive=\"\${idrive:-\$repo/target/\$profile/idrive}\"
-fi
-supports_app_keys \"\$idrive\" || idrive=\"\$HOME/.cache/cargo-target/\$profile/idrive\"
-if [[ \"\$profile\" == \"debug\" ]]; then
-  supports_app_keys \"\$idrive\" || idrive=\"\$HOME/.cargo/bin/idrive\"
-  supports_app_keys \"\$idrive\" || idrive=\"\$(command -v idrive || true)\"
-fi
-if ! supports_app_keys \"\$idrive\"; then
-  if [[ -f \"\$repo/Cargo.toml\" ]] && command -v cargo >/dev/null 2>&1; then
-    (cd \"\$repo\" && cargo build -q \$cargo_profile_arg -p idrive --bin idrive)
-    idrive=\"\$repo/target/\$profile/idrive\"
-    [[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cache/cargo-target/\$profile/idrive\"
-  fi
-fi
-if ! supports_app_keys \"\$idrive\"; then
-  echo \"current idrive with app-keys support not found for \$label\" >&2
-  exit 1
-fi
+idrive=\"\$(\"\$repo/scripts/build-idrive-for-e2e.sh\" \"\$profile\" \"\$idrive\" \"\$rebuild_idrive\")\"
 printf 'base=%s\n' \"\$base\"
 printf 'config=%s\n' \"\$base/config\"
 printf 'work=%s\n' \"\$base/work\"

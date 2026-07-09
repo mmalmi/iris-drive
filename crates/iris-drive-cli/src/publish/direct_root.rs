@@ -1388,8 +1388,7 @@ fn should_publish_direct_root_full_frame(
             DirectRootPublishSource::LocalCurrent | DirectRootPublishSource::StateRequestReply => {
                 attempt == 0
             }
-            DirectRootPublishSource::CachedRelay
-            | DirectRootPublishSource::CachedStateRequestReply => true,
+            DirectRootPublishSource::CachedRelay | DirectRootPublishSource::CachedStateRequestReply => true,
         };
     }
     true
