@@ -3,8 +3,9 @@ use std::path::Path;
 use anyhow::Context;
 use iris_drive_core::AppConfig;
 use iris_drive_core::paths::config_path_in;
-use nostr_sdk::JsonUtil;
 use serde_json::{Value, json};
+
+use super::invalidate_native_runtime_config_cache;
 
 pub(crate) fn native_apply_owner_snapshot_for_test_json(
     owner_data_dir: &str,
@@ -29,18 +30,21 @@ fn native_apply_owner_snapshot_for_test(
         .as_ref()
         .context("owner account missing")?;
     let mut linked_config = AppConfig::load_or_default(config_path_in(linked_dir))?;
-    for op in &owner_account_state.profile_roster_ops {
-        let event =
-            nostr_sdk::Event::from_json(&op.event_json).context("parsing profile roster op")?;
-        iris_drive_core::relay_sync::apply_remote_nostr_identity_roster_op_event(
-            &mut linked_config,
-            &event,
-        )
-        .context("applying owner profile roster op")?;
-    }
+    let roster_frame = iris_drive_core::app_key_link_transport::app_key_link_roster_frame(
+        owner_account_state,
+        123,
+    )
+    .context("building owner app-key-link roster frame")?;
+    iris_drive_core::relay_sync::apply_app_key_link_roster_frame(
+        &mut linked_config,
+        &roster_frame,
+        &owner_account_state.app_key_pubkey,
+    )
+    .context("applying owner app-key-link roster frame")?;
     linked_config
         .save(config_path_in(linked_dir))
-        .context("saving linked config after profile roster ops")?;
+        .context("saving linked config after app-key-link roster frame")?;
+    invalidate_native_runtime_config_cache(&config_path_in(linked_dir));
 
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir))?;
     let owner_account_state = owner_config
@@ -91,6 +95,7 @@ fn apply_drive_root_events_for_test(
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let report = iris_drive_core::apply_drive_root_events(config_dir, &mut config, events)?;
     config.save(config_path_in(config_dir))?;
+    invalidate_native_runtime_config_cache(&config_path_in(config_dir));
     Ok(report)
 }
 
