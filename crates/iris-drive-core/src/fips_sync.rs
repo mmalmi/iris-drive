@@ -309,19 +309,19 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         };
         mesh_pubsub.peer_ids().await
     }
-
     pub async fn download_tree(&self, root: &Cid) -> Result<DownloadReport, FipsSyncError> {
-        if let Some(mesh_pubsub) = self.mesh_pubsub.as_ref() {
-            download_tree_with_overlay(
-                self.local_store.clone(),
-                root,
-                self.transport.clone(),
-                mesh_pubsub.clone(),
-            )
-            .await
-        } else {
+        let direct =
             download_tree_with_transport(self.local_store.clone(), root, self.transport.clone())
-                .await
+                .await;
+        let Some(mesh_pubsub) = self.mesh_pubsub.as_ref() else {
+            return direct;
+        };
+        match direct {
+            Ok(report) => Ok(report),
+            Err(FipsSyncError::MissingOnFips(_)) => {
+                download_tree_with_mesh(self.local_store.clone(), root, mesh_pubsub.clone()).await
+            }
+            Err(error) => Err(error),
         }
     }
 

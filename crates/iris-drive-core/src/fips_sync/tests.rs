@@ -3,6 +3,8 @@ use hashtree_core::{DirEntry, LinkType, MemoryStore};
 use hashtree_fips_transport::{FipsEndpointIo, FipsEndpointPacket, FipsTransportError};
 use tokio::sync::{Mutex as TokioMutex, mpsc};
 
+mod mesh_fallback;
+
 type PacketSenderMap =
     Arc<TokioMutex<std::collections::HashMap<String, mpsc::UnboundedSender<FipsEndpointPacket>>>>;
 type PeerLinkMap = Arc<TokioMutex<std::collections::BTreeMap<String, Vec<String>>>>;

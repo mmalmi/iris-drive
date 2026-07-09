@@ -129,6 +129,7 @@ require_contains scripts/cross-vm-e2e.sh "IRIS_DRIVE_E2E_IDLE_CPU_GATE"
 require_contains scripts/cross-vm-e2e.sh "idle daemon CPU gate"
 require_contains scripts/cross-vm-e2e.sh "idle-cpu-gate-windows.ps1"
 require_contains scripts/cross-vm-e2e.sh 'idle-cpu-gate.sh\" --platform auto'
+require_contains scripts/cross-vm-e2e.sh "https://drive.iris.to/approve-device/"
 require_contains scripts/dev-vm-update-run.sh "IRIS_DRIVE_SOCIAL_GRAPH_ROOT"
 require_contains scripts/dev-vm-update-run.sh "SOCIAL_GRAPH_BARE"
 require_contains scripts/dev-vm-update-run.sh "nostr-social-graph"

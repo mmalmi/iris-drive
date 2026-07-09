@@ -1482,6 +1482,16 @@ all_have_roster_peers() {
   done
 }
 
+is_app_key_request_url() {
+  local url="$1"
+  case "$url" in
+    https://drive.iris.to/approve-device/*) return 0 ;;
+    iris-drive://app-key-link\?*) return 0 ;;
+    iris-drive:/app-key-link\?*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 all_devices_list_roster_online() {
   local label status expected_npubs
   expected_npubs="$(
@@ -1992,16 +2002,20 @@ for label in "${LABELS[@]}"; do
   request_url="$(jq -r '.app_key_link_request.url' <<<"$link_json")"
   request_profile_id="$(jq -r '.app_key_link_request.profile_id' <<<"$link_json")"
   request_admin_app_key_npub="$(jq -r '.app_key_link_request.admin_app_key_npub' <<<"$link_json")"
-  if [[ "$request_url" != iris-drive://app-key-link\?* ]]; then
-    echo "$label did not create an app-key-link request URL: $request_url" >&2
+  if ! is_app_key_request_url "$request_url"; then
+    echo "$label did not create an app-key request URL: $request_url" >&2
     exit 1
   fi
   if [[ "$request_admin_app_key_npub" != "$admin_app_key_npub" || "$request_profile_id" != "$owner_profile_id" ]]; then
     echo "$label request metadata does not match invite profile/admin AppKey" >&2
     exit 1
   fi
-  if [[ "$request_url" != *"app_key="* || -z "$linked_app_key_npub" || "$linked_app_key_npub" == "null" ]]; then
-    echo "$label request did not include an app-key URL and structured AppKey metadata: $request_url" >&2
+  if [[ -z "$linked_app_key_npub" || "$linked_app_key_npub" == "null" ]]; then
+    echo "$label request did not include structured AppKey metadata: $request_url" >&2
+    exit 1
+  fi
+  if [[ "$request_url" != https://drive.iris.to/approve-device/* && "$request_url" != *"app_key="* ]]; then
+    echo "$label compact request URL did not include an app_key parameter: $request_url" >&2
     exit 1
   fi
   if [[ "$request_url" == *"local-owner"* || "$request_url" == *"app_key=device-"* ]]; then
