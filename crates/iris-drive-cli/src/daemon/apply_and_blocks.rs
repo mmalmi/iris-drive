@@ -7,7 +7,7 @@ pub(crate) enum EventApplyOutcome {
 
 const ROOT_APPLY_FOLLOWUP_COALESCE_MS: u64 = 750;
 const ROOT_APPLY_STATE_REPLY_SETTLE_MS: u64 = 500;
-const DIRECT_ROOT_STATE_REQUEST_MIN_INTERVAL_SECS: u64 = 30;
+const DIRECT_ROOT_STATE_REQUEST_MIN_INTERVAL_SECS: u64 = 10;
 
 static DIRECT_ROOT_STATE_REQUEST_THROTTLE: std::sync::OnceLock<
     std::sync::Mutex<std::collections::BTreeMap<String, std::time::Instant>>,

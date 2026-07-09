@@ -872,8 +872,8 @@ fn direct_root_periodic_state_requests_are_throttled() {
     let now = std::time::Instant::now();
 
     assert_eq!(
-        DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS, 30,
-        "state repair requests should recover newly visible peers without replaying cached roots every peer-refresh tick"
+        DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS, 10,
+        "state repair requests should recover missing roots without replaying cached roots after convergence"
     );
     assert!(exchange.should_publish_state_request("scope", ["peer-a"], now));
     assert!(!exchange.should_publish_state_request(
