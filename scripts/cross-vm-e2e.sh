@@ -576,9 +576,9 @@ supports_app_keys() {
 }
 repo=\"\$HOME/src/iris-drive\"
 profile=$(sh_quote "$E2E_PROFILE")
-cargo_profile_arg=()
+cargo_profile_arg=""
 if [[ \"\$profile\" == \"release\" ]]; then
-  cargo_profile_arg=(--release)
+  cargo_profile_arg="--release"
 fi
 idrive=$(sh_quote "$idrive_override")
 if [[ -z \"\$idrive\" ]]; then
@@ -602,7 +602,7 @@ if [[ -z \"\$idrive\" && \"\$profile\" == \"debug\" ]]; then
   done
 fi
 if ! supports_app_keys \"\$idrive\" && [[ -f \"\$repo/Cargo.toml\" ]] && command -v cargo >/dev/null 2>&1; then
-  (cd \"\$repo\" && cargo build -q \"\${cargo_profile_arg[@]}\" -p idrive --bin idrive)
+  (cd \"\$repo\" && cargo build -q \$cargo_profile_arg -p idrive --bin idrive)
   idrive=\"\$repo/target/\$profile/idrive\"
   [[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cache/cargo-target/\$profile/idrive\"
   [[ -x \"\$idrive\" ]] || idrive=\"\${CARGO_TARGET_DIR:+\$CARGO_TARGET_DIR/\$profile/idrive}\"
@@ -617,7 +617,7 @@ if [[ \"\$profile\" == \"debug\" ]]; then
 fi
 if ! supports_app_keys \"\$idrive\"; then
   if [[ -f \"\$repo/Cargo.toml\" ]] && command -v cargo >/dev/null 2>&1; then
-    (cd \"\$repo\" && cargo build -q \"\${cargo_profile_arg[@]}\" -p idrive --bin idrive)
+    (cd \"\$repo\" && cargo build -q \$cargo_profile_arg -p idrive --bin idrive)
     idrive=\"\$repo/target/\$profile/idrive\"
     [[ -x \"\$idrive\" ]] || idrive=\"\$HOME/.cache/cargo-target/\$profile/idrive\"
   fi
