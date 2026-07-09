@@ -7,6 +7,7 @@ use crate::NativeAppAction;
 use crate::state::{UiShare, UiShareMember};
 use iris_drive_core::paths::config_path_in;
 use iris_drive_core::{AppConfig, AppKeyRootRef, Drive};
+use nostr_sdk::{Event, JsonUtil};
 use std::path::Path;
 
 fn share_recipient_evidence_json(config_dir: &Path, display_name: &str) -> String {
@@ -2101,7 +2102,6 @@ fn native_profile_roster_ops_refresh_authorized_member_roster() {
         Some("Phone".into()),
     )
     .unwrap();
-    let linked_pubkey = linked.state.app_key_pubkey.clone();
     let approval_request =
         iris_drive_core::app_key_link_transport::create_app_key_approval_request(
             linked.app_key.keys(),
@@ -2122,7 +2122,7 @@ fn native_profile_roster_ops_refresh_authorized_member_roster() {
         )
         .unwrap();
     owner
-        .approve_app_key(&linked_pubkey, Some("Phone".into()))
+        .approve_device_request(&approval_request.request, Some("Phone".into()))
         .unwrap();
 
     let mut linked_config = AppConfig {
@@ -2137,6 +2137,14 @@ fn native_profile_roster_ops_refresh_authorized_member_roster() {
         profile_roster_ops: owner.state.profile_roster_ops.clone(),
         sent_at: 456,
     };
+    for receipt in &owner.state.pending_device_approval_receipts {
+        let event = Event::from_json(&receipt.event_json).unwrap();
+        iris_drive_core::relay_sync::apply_remote_device_approval_receipt_event(
+            &mut linked_config,
+            &event,
+        )
+        .unwrap();
+    }
     iris_drive_core::relay_sync::apply_app_key_link_roster_frame(
         &mut linked_config,
         &first_frame,
