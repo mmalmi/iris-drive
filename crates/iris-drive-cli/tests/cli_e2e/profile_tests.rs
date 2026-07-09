@@ -1,5 +1,9 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
+use iris_drive_core::app_key_link_transport::{
+    APP_KEY_APPROVAL_REQUEST_PREFIX, drive_device_approval_resources,
+    parse_app_key_approval_request,
+};
 
 fn current_app_key_npub(value: &serde_json::Value) -> &str {
     value["current_app_key_npub"].as_str().unwrap()
@@ -211,14 +215,10 @@ fn link_creates_awaiting_device_with_no_owner_key() {
         v["current_app_key_npub"]
     );
     let request_url = v["app_key_link_request"]["url"].as_str().unwrap();
-    assert!(
-        request_url
-            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_REQUEST_PREFIX)
-    );
-    let request =
-        iris_drive_core::app_key_link_transport::parse_app_key_approval_request(request_url)
-            .unwrap()
-            .unwrap();
+    assert!(request_url.starts_with(APP_KEY_APPROVAL_REQUEST_PREFIX));
+    let request = parse_app_key_approval_request(request_url)
+        .unwrap()
+        .unwrap();
     assert_eq!(
         iris_drive_core::app_key_summary::pubkey_npub(&request.app_key_hex),
         v["current_app_key_npub"].as_str().unwrap()
@@ -230,10 +230,7 @@ fn link_creates_awaiting_device_with_no_owner_key() {
     assert!(!request.request_pubkey.is_empty());
     assert!(!request.request_secret.is_empty());
     assert!(!request.device_app_key_proof.is_empty());
-    assert_eq!(
-        request.resources,
-        iris_drive_core::app_key_link_transport::drive_device_approval_resources()
-    );
+    assert_eq!(request.resources, drive_device_approval_resources());
     assert!(request.invite_pubkey.is_empty());
     assert!(
         !v["app_key_link_request"]["url"]
@@ -553,14 +550,10 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
     );
     assert_eq!(linked["authorization_state"], "awaiting_approval");
     let request_url = linked["app_key_link_request"]["url"].as_str().unwrap();
-    assert!(
-        request_url
-            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_REQUEST_PREFIX)
-    );
-    let request =
-        iris_drive_core::app_key_link_transport::parse_app_key_approval_request(request_url)
-            .unwrap()
-            .unwrap();
+    assert!(request_url.starts_with(APP_KEY_APPROVAL_REQUEST_PREFIX));
+    let request = parse_app_key_approval_request(request_url)
+        .unwrap()
+        .unwrap();
     assert_eq!(
         iris_drive_core::app_key_summary::pubkey_npub(&request.app_key_hex),
         linked["current_app_key_npub"].as_str().unwrap()
@@ -572,10 +565,7 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
     assert!(!request.request_pubkey.is_empty());
     assert!(!request.request_secret.is_empty());
     assert!(!request.device_app_key_proof.is_empty());
-    assert_eq!(
-        request.resources,
-        iris_drive_core::app_key_link_transport::drive_device_approval_resources()
-    );
+    assert_eq!(request.resources, drive_device_approval_resources());
     assert!(!request_url.contains("owner="));
     assert!(request.invite_pubkey.is_empty());
     assert!(!request_url.contains("secret="));

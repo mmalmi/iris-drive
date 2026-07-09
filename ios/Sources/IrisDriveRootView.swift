@@ -1014,6 +1014,12 @@ private struct AddDeviceSection: View {
                     Label("Scan QR", systemImage: "qrcode.viewfinder")
                 }
                 .accessibilityIdentifier("scanApprovalRequestQr")
+                Button {
+                    submitManualDevice()
+                } label: {
+                    Label("Approve", systemImage: "checkmark.circle")
+                }
+                .disabled(!canAddManualDevice)
                 if !model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                    !canAddManualDevice {
                     Text("That is not a complete request link or device key.")
