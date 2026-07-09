@@ -414,6 +414,40 @@ fn online_authorized_app_key_without_primary_root_needs_state_lookup() {
 }
 
 #[test]
+fn partial_roster_evidence_still_requests_cached_projection_roots() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut profile =
+        iris_drive_core::Profile::create(dir.path(), Some("Owner".to_string())).unwrap();
+    let phone = nostr_sdk::Keys::generate().public_key().to_hex();
+    let tablet = nostr_sdk::Keys::generate().public_key().to_hex();
+    profile
+        .approve_app_key(&phone, Some("Phone".to_string()))
+        .unwrap();
+    profile
+        .approve_app_key(&tablet, Some("Tablet".to_string()))
+        .unwrap();
+
+    let mut state = profile.state.clone();
+    state.profile_roster_ops.truncate(1);
+    state.profile_roster_projection = None;
+
+    let mut drive = Drive::primary(state.root_scope_id());
+    drive.app_key_roots.insert(
+        state.app_key_pubkey.clone(),
+        AppKeyRootRef::legacy("local-root", 10, 1),
+    );
+    let config = AppConfig {
+        profile: Some(state),
+        drives: vec![drive],
+        ..AppConfig::default()
+    };
+
+    let mut expected = vec![phone, tablet];
+    expected.sort();
+    assert_eq!(authorized_app_keys_missing_primary_roots(&config), expected);
+}
+
+#[test]
 fn root_apply_followup_queue_key_groups_superseded_app_key_roots() {
     let mut drive = Drive {
         root_scope_id: iris_drive_core::NostrIdentityId::new_v4().to_string(),

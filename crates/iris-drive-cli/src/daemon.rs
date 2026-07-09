@@ -1057,8 +1057,7 @@ pub(crate) fn authorized_app_keys_missing_primary_roots(config: &AppConfig) -> V
     let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID) else {
         return Vec::new();
     };
-    state
-        .active_root_writer_app_key_pubkeys()
+    iris_drive_core::drive_root_recipient_app_key_pubkeys(state, drive)
         .into_iter()
         .filter(|app_key_pubkey| app_key_pubkey != &state.app_key_pubkey)
         .filter(|app_key_pubkey| !drive.app_key_roots.contains_key(app_key_pubkey))

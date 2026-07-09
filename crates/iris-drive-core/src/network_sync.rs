@@ -311,7 +311,22 @@ pub fn authorized_app_key_pubkeys(state: &ProfileState) -> Vec<String> {
 
 #[must_use]
 pub fn drive_root_recipient_app_key_pubkeys(state: &ProfileState, drive: &Drive) -> Vec<String> {
+    if let Some(app_keys) = current_app_key_actor_pubkeys(state) {
+        return app_keys;
+    }
     drive_root_writer_app_key_pubkeys(state, drive)
+}
+
+fn current_app_key_actor_pubkeys(state: &ProfileState) -> Option<Vec<String>> {
+    let mut app_keys = state
+        .current_app_keys_projection()?
+        .app_actors
+        .into_iter()
+        .map(|actor| actor.pubkey)
+        .collect::<Vec<_>>();
+    app_keys.sort();
+    app_keys.dedup();
+    (!app_keys.is_empty()).then_some(app_keys)
 }
 
 #[must_use]
@@ -566,9 +581,12 @@ fn push_unique(values: &mut Vec<String>, value: String) {
 mod tests {
     use super::{
         DirectFipsDownloadDecision, NetworkSyncOptions, direct_fips_download_decision,
-        should_materialize_after_sync,
+        drive_root_recipient_app_key_pubkeys, should_materialize_after_sync,
     };
-    use crate::config::AppConfig;
+    use crate::config::{AppConfig, Drive};
+    use crate::profile::Profile;
+    use nostr_sdk::Keys;
+    use tempfile::tempdir;
 
     #[test]
     fn default_sync_options_preserve_existing_temporary_fips_download() {
@@ -599,5 +617,44 @@ mod tests {
 
         assert!(should_materialize_after_sync(&config, &[], true));
         assert!(!should_materialize_after_sync(&config, &[], false));
+    }
+
+    #[test]
+    fn drive_root_recipients_use_full_cached_app_key_projection() {
+        let dir = tempdir().unwrap();
+        let mut profile = Profile::create(dir.path(), Some("Owner".into())).unwrap();
+        let phone = Keys::generate().public_key().to_hex();
+        let tablet = Keys::generate().public_key().to_hex();
+        profile
+            .approve_app_key(&phone, Some("Phone".into()))
+            .unwrap();
+        profile
+            .approve_app_key(&tablet, Some("Tablet".into()))
+            .unwrap();
+        let expected = profile
+            .state
+            .current_app_keys_projection()
+            .unwrap()
+            .app_actors
+            .iter()
+            .map(|actor| actor.pubkey.clone())
+            .collect::<Vec<_>>();
+
+        let mut partial_state = profile.state.clone();
+        partial_state.profile_roster_ops.truncate(1);
+        partial_state.profile_roster_projection = None;
+        assert_eq!(
+            partial_state
+                .current_app_keys_projection()
+                .unwrap()
+                .app_actors
+                .len(),
+            expected.len()
+        );
+
+        let drive = Drive::primary(partial_state.root_scope_id());
+        let recipients = drive_root_recipient_app_key_pubkeys(&partial_state, &drive);
+
+        assert_eq!(recipients, expected);
     }
 }
