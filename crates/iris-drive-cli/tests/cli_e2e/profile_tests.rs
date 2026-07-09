@@ -213,7 +213,7 @@ fn link_creates_awaiting_device_with_no_owner_key() {
     let request_url = v["app_key_link_request"]["url"].as_str().unwrap();
     assert!(
         request_url
-            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_COMPACT_PREFIX)
+            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_REQUEST_PREFIX)
     );
     let request =
         iris_drive_core::app_key_link_transport::parse_app_key_approval_request(request_url)
@@ -223,6 +223,13 @@ fn link_creates_awaiting_device_with_no_owner_key() {
         iris_drive_core::app_key_summary::pubkey_npub(&request.app_key_hex),
         v["current_app_key_npub"].as_str().unwrap()
     );
+    assert_eq!(
+        request.profile_id.map(|id| id.to_string()).as_deref(),
+        init_v["profile_id"].as_str()
+    );
+    assert!(!request.request_pubkey.is_empty());
+    assert!(!request.request_secret.is_empty());
+    assert!(!request.device_app_key_proof.is_empty());
     assert!(request.invite_pubkey.is_empty());
     assert!(
         !v["app_key_link_request"]["url"]
@@ -441,8 +448,13 @@ fn owner_approves_device_request_link() {
     let request_url = linked["app_key_link_request"]["url"].as_str().unwrap();
     let linked_app_key = current_app_key_npub(&linked);
 
-    let other_approved = run_json(other_owner_dir.path(), &["approve", request_url]);
-    assert_eq!(other_approved["roster_size"], 2);
+    idrive(other_owner_dir.path())
+        .args(["approve", request_url])
+        .assert()
+        .failure()
+        .stderr(contains(
+            "AppKey-link request belongs to a different profile",
+        ));
 
     let approved = run_json(owner_dir.path(), &["approve", request_url]);
     assert_eq!(approved["roster_size"], 2);
@@ -539,7 +551,7 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
     let request_url = linked["app_key_link_request"]["url"].as_str().unwrap();
     assert!(
         request_url
-            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_COMPACT_PREFIX)
+            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_REQUEST_PREFIX)
     );
     let request =
         iris_drive_core::app_key_link_transport::parse_app_key_approval_request(request_url)
@@ -549,6 +561,13 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
         iris_drive_core::app_key_summary::pubkey_npub(&request.app_key_hex),
         linked["current_app_key_npub"].as_str().unwrap()
     );
+    assert_eq!(
+        request.profile_id.map(|id| id.to_string()).as_deref(),
+        owner["profile_id"].as_str()
+    );
+    assert!(!request.request_pubkey.is_empty());
+    assert!(!request.request_secret.is_empty());
+    assert!(!request.device_app_key_proof.is_empty());
     assert!(!request_url.contains("owner="));
     assert!(request.invite_pubkey.is_empty());
     assert!(!request_url.contains("secret="));

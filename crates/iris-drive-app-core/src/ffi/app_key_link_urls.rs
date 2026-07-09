@@ -12,8 +12,13 @@ pub(super) fn app_key_link_request_url(
     let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
         return String::new();
     };
-    let Ok(app_key) = iris_drive_core::AppKey::load(key_path_in(config_dir)) else {
+    if iris_drive_core::app_key_link_transport::app_key_approval_request_url_is_full(
+        &pending.request_url,
+    ) {
         return pending.request_url.clone();
+    }
+    let Ok(app_key) = iris_drive_core::AppKey::load(key_path_in(config_dir)) else {
+        return String::new();
     };
     encode_app_key_approval_request(
         app_key.keys(),
@@ -64,6 +69,13 @@ pub(super) fn ensure_cached_app_key_link_request_url(
         return Ok(());
     }
     let pending = state.outbound_app_key_link_request.as_ref();
+    if pending.is_some_and(|pending| {
+        iris_drive_core::app_key_link_transport::app_key_approval_request_url_is_full(
+            &pending.request_url,
+        )
+    }) {
+        return Ok(());
+    }
     let profile_id = state.profile_id;
     let admin_app_key_pubkey = pending
         .map(|pending| pending.admin_app_key_pubkey.clone())

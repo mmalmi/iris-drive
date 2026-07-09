@@ -784,7 +784,7 @@ fn status_self_heals_missing_waiting_app_key_link_request() {
     assert!(
         pending
             .request_url
-            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_COMPACT_PREFIX)
+            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_REQUEST_PREFIX)
     );
     let request = iris_drive_core::app_key_link_transport::parse_app_key_approval_request(
         &pending.request_url,

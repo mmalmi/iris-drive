@@ -132,14 +132,7 @@ async fn apply_pending_app_key_link_roster_candidate(
     if state.outbound_app_key_link_request.is_none() {
         let requested_at = u64::try_from(unix_now()).unwrap_or(0);
         if let Some(state) = config.profile.as_mut() {
-            state.queue_unbound_app_key_join_request(
-                requested_at,
-                format!(
-                    "{}?app_key={}",
-                    iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_COMPACT_PREFIX,
-                    candidate.app_key_pubkey
-                ),
-            );
+            state.queue_unbound_app_key_join_request(requested_at, String::new());
         }
     }
 

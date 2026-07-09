@@ -1283,14 +1283,20 @@ fn link_action_tracks_pending_approval() {
     assert!(
         account
             .app_key_link_request
-            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_COMPACT_PREFIX)
+            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_REQUEST_PREFIX)
     );
     let request = iris_drive_core::app_key_link_transport::parse_app_key_approval_request(
         &account.app_key_link_request,
     )
     .unwrap()
     .unwrap();
-    assert_eq!(request.profile_id, None);
+    assert_eq!(
+        request.profile_id.map(|id| id.to_string()).as_deref(),
+        Some(owner_profile_id.as_str())
+    );
+    assert!(!request.request_pubkey.is_empty());
+    assert!(!request.request_secret.is_empty());
+    assert!(!request.device_app_key_proof.is_empty());
     assert_eq!(
         iris_drive_core::app_key_summary::pubkey_npub(&request.app_key_hex),
         account.current_app_key_npub
@@ -1333,7 +1339,7 @@ fn app_key_link_request_url_is_stable_across_profile_refreshes() {
         .app_key_link_request
         .clone();
     assert!(
-        first.starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_COMPACT_PREFIX)
+        first.starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_REQUEST_PREFIX)
     );
 
     let second = linked_app
@@ -1558,81 +1564,6 @@ fn delete_device_json_action_revokes_linked_device() {
             .all(|device| device.label != "Phone")
     );
     assert!(state.error.is_empty());
-}
-
-#[test]
-fn revoked_current_device_refresh_logs_out_and_allows_fresh_relink() {
-    let owner_dir = tempfile::tempdir().unwrap();
-    let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
-
-    let owner = owner_app.dispatch(NativeAppAction::CreateProfile {
-        app_key_label: "Mac".to_owned(),
-    });
-    let owner_account = owner.ui.profile.unwrap();
-    let owner_invite = owner_account.app_key_link_invite.clone();
-    let linked_dir = tempfile::tempdir().unwrap();
-    let linked_app = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
-    let linked = linked_app.dispatch(NativeAppAction::LinkDevice {
-        link_target: owner_invite.clone(),
-        app_key_label: "Phone".to_owned(),
-    });
-    let linked_account = linked.ui.profile.unwrap();
-    let linked_device = linked_account.current_app_key_npub.clone();
-    let approved = owner_app.dispatch(NativeAppAction::ApproveDevice {
-        request: linked_account.app_key_link_request,
-        label: "Phone".to_owned(),
-    });
-    assert!(approved.error.is_empty(), "{}", approved.error);
-    apply_latest_profile_roster_frame(owner_dir.path(), linked_dir.path());
-
-    let authorized = linked_app.refresh();
-    let account = authorized.ui.profile.as_ref().expect("account exists");
-    assert_eq!(account.authorization_state, "authorized");
-    assert!(authorized.ui.app_actors.iter().any(|device| {
-        device.pubkey == linked_device && device.label == "Phone" && device.is_current_app_key
-    }));
-    assert!(authorized.ui.app_actors.iter().any(|device| {
-        device.pubkey == owner_account.current_app_key_npub
-            && device.label == "Mac"
-            && !device.is_current_app_key
-    }));
-
-    let running = linked_app.dispatch(NativeAppAction::StartSync);
-    assert!(running.ui.sync.running);
-
-    let revoked = owner_app.dispatch(NativeAppAction::RevokeDevice {
-        app_key_pubkey: linked_device.clone(),
-    });
-    assert!(revoked.error.is_empty(), "{}", revoked.error);
-    apply_latest_profile_roster_frame(owner_dir.path(), linked_dir.path());
-
-    let refreshed = linked_app.refresh();
-    assert!(refreshed.error.is_empty(), "{}", refreshed.error);
-    assert!(refreshed.ui.profile.is_none());
-    assert!(refreshed.ui.app_actors.is_empty());
-    assert!(refreshed.ui.roots.is_empty());
-    assert!(refreshed.ui.snapshot_link.is_empty());
-    assert!(!refreshed.ui.sync.running);
-    assert_eq!(refreshed.ui.sync.status, "ready");
-    assert_eq!(refreshed.ui.sync.status_label, "Ready");
-    assert!(!linked_dir.path().join("key").exists());
-    let linked_config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
-    assert!(linked_config.profile.is_none());
-
-    let relinked = linked_app.dispatch(NativeAppAction::LinkDevice {
-        link_target: owner_invite,
-        app_key_label: "Phone".to_owned(),
-    });
-    let account = relinked.ui.profile.as_ref().expect("account exists");
-    assert!(relinked.error.is_empty(), "{}", relinked.error);
-    assert_eq!(account.authorization_state, "awaiting_approval");
-    assert_ne!(account.current_app_key_npub, linked_device);
-    assert_eq!(account.app_key_label, "Phone");
-    assert!(
-        account
-            .app_key_link_request
-            .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_COMPACT_PREFIX)
-    );
 }
 
 #[test]
@@ -2233,24 +2164,4 @@ fn native_profile_roster_ops_refresh_authorized_member_roster() {
         .as_ref()
         .unwrap();
     assert!(linked_roster.contains(&third_device));
-}
-
-fn apply_latest_profile_roster_frame(from: &Path, to: &Path) {
-    let owner_config = AppConfig::load_or_default(config_path_in(from)).unwrap();
-    let owner_state = owner_config.profile.as_ref().unwrap();
-    let frame = iris_drive_core::app_key_link_transport::AppKeyLinkRosterFrame {
-        schema: 1,
-        profile_id: owner_state.profile_id,
-        admin_app_key_pubkey: owner_state.app_key_pubkey.clone(),
-        profile_roster_ops: owner_state.profile_roster_ops.clone(),
-        sent_at: 123,
-    };
-    let mut linked_config = AppConfig::load_or_default(config_path_in(to)).unwrap();
-    iris_drive_core::relay_sync::apply_app_key_link_roster_frame(
-        &mut linked_config,
-        &frame,
-        &owner_state.app_key_pubkey,
-    )
-    .unwrap();
-    linked_config.save(config_path_in(to)).unwrap();
 }

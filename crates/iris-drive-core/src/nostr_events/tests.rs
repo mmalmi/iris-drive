@@ -191,7 +191,7 @@ fn app_key_link_request_event_round_trips_and_is_its_own_coordinate() {
         invite_pubkey: invite.public_key().to_hex(),
         label: Some("phone".to_string()),
         requested_at: 123,
-        url: "iris-drive://app-key-link?app_key=example".to_string(),
+        url: "https://drive.iris.to/approve-device/test".to_string(),
     };
 
     let event = build_app_key_link_request_event(&device, &frame).unwrap();
@@ -253,7 +253,7 @@ fn app_key_link_request_event_must_be_signed_by_requesting_device() {
         invite_pubkey: invite.public_key().to_hex(),
         label: None,
         requested_at: 123,
-        url: "iris-drive://app-key-link?app_key=example".to_string(),
+        url: "https://drive.iris.to/approve-device/test".to_string(),
     };
 
     assert!(matches!(

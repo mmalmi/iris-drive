@@ -8,10 +8,9 @@ async fn unbound_manual_join_backfill_adopts_approval_roster_candidate() {
     let mut linked =
         Profile::start_join_request(linked_dir.path(), Some("Mac waiting".to_string())).unwrap();
     let linked_pubkey = linked.state.app_key_pubkey.clone();
-    linked.state.queue_unbound_app_key_join_request(
-        123,
-        format!("iris-drive://app-key-link?app_key={linked_pubkey}"),
-    );
+    linked
+        .state
+        .queue_unbound_app_key_join_request(123, String::new());
     let placeholder_profile_id = linked.state.profile_id;
     let mut linked_config = AppConfig {
         profile: Some(linked.state.clone()),

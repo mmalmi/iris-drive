@@ -129,14 +129,13 @@ pub(crate) fn cmd_link_with_admin_app_key(
     if target.invite_pubkey.trim().is_empty() {
         return Err(anyhow::anyhow!("device invite is missing invite pubkey"));
     }
-    profile
-        .state
-        .queue_outbound_app_key_link_request(
-            target.admin_app_key_hex,
-            &target.invite_pubkey,
-            unix_now_seconds(),
-        )
-        .context("queueing app-key link request")?;
+    app_key_link_urls::queue_cached_app_key_link_request(
+        &mut profile.state,
+        profile.app_key.keys(),
+        target.admin_app_key_hex,
+        &target.invite_pubkey,
+        unix_now_seconds(),
+    )?;
     finish_profile_init(config_dir, &profile, None)
 }
 

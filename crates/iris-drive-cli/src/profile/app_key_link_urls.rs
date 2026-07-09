@@ -1,7 +1,7 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 pub(crate) use iris_drive_core::app_key_link_transport::{
-    encode_app_key_approval_request,
+    app_key_approval_request_url_is_full, encode_app_key_approval_request,
     parse_app_key_approval_request as decode_app_key_approval_request,
 };
 use nostr_sdk::Keys;
@@ -52,6 +52,36 @@ pub(crate) fn app_key_link_request_json_with_keys(state: &ProfileState, keys: &K
     app_key_link_request_json_for_admin_state(state, state.can_admin_profile(), Some(keys))
 }
 
+pub(crate) fn cache_app_key_link_request_url(state: &mut ProfileState, keys: &Keys) -> Result<()> {
+    let Some(pending) = state.outbound_app_key_link_request.as_mut() else {
+        return Ok(());
+    };
+    if app_key_approval_request_url_is_full(&pending.request_url) {
+        return Ok(());
+    }
+    pending.request_url = encode_app_key_approval_request(
+        keys,
+        Some(state.profile_id),
+        Some(&pending.admin_app_key_pubkey),
+        state.app_key_label.as_deref(),
+        pending.requested_at,
+    )?;
+    Ok(())
+}
+
+pub(crate) fn queue_cached_app_key_link_request(
+    state: &mut ProfileState,
+    keys: &Keys,
+    admin_app_key_pubkey: String,
+    invite_pubkey: &str,
+    requested_at: u64,
+) -> Result<()> {
+    state
+        .queue_outbound_app_key_link_request(admin_app_key_pubkey, invite_pubkey, requested_at)
+        .context("queueing app-key link request")?;
+    cache_app_key_link_request_url(state, keys).context("building app-key approval request")
+}
+
 pub(crate) fn cached_app_key_link_request_json(state: &ProfileState) -> Value {
     app_key_link_request_json_for_admin_state(state, cached_can_admin_profile(state), None)
 }
@@ -70,7 +100,9 @@ fn app_key_link_request_json_for_admin_state(
     let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
         return Value::Null;
     };
-    let url = if let Some(keys) = keys {
+    let url = if app_key_approval_request_url_is_full(&pending.request_url) {
+        pending.request_url.clone()
+    } else if let Some(keys) = keys {
         let Ok(url) = encode_app_key_approval_request(
             keys,
             request_profile_id(state, pending),
@@ -81,10 +113,8 @@ fn app_key_link_request_json_for_admin_state(
             return Value::Null;
         };
         url
-    } else if pending.request_url.trim().is_empty() {
-        return Value::Null;
     } else {
-        pending.request_url.clone()
+        return Value::Null;
     };
 
     let has_network_target = !pending.admin_app_key_pubkey.trim().is_empty();
@@ -128,6 +158,9 @@ pub(crate) fn ensure_cached_app_key_link_request(
     }
 
     let pending = state.outbound_app_key_link_request.as_ref();
+    if pending.is_some_and(|pending| app_key_approval_request_url_is_full(&pending.request_url)) {
+        return Ok(false);
+    }
     let profile_id = state.profile_id;
     let admin_app_key_pubkey = pending
         .map(|pending| pending.admin_app_key_pubkey.clone())

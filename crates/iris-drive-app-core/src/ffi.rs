@@ -3534,7 +3534,12 @@ fn decode_app_key_approval_request(request: &str) -> Result<AppKeyApprovalReques
     let device = normalize_pubkey(request)?;
     Ok(AppKeyApprovalRequest {
         profile_id: None,
+        request_pubkey: String::new(),
+        request_secret: String::new(),
         app_key_hex: device,
+        device_app_key_proof: String::new(),
+        requested_at: 0,
+        admin_app_key_pubkey: None,
         invite_pubkey: String::new(),
         label: None,
     })

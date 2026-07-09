@@ -1,8 +1,8 @@
 use anyhow::{Context, Result};
 use nostr_identity::{
-    NOSTR_IDENTITY_DEVICE_APPROVAL_REQUEST_PREFIX,
+    CreateNostrIdentityDeviceApprovalRequestOptions, NOSTR_IDENTITY_DEVICE_APPROVAL_REQUEST_PREFIX,
     compact_nostr_identity_device_approval_request_has_prefix,
-    encode_compact_nostr_identity_device_approval_request,
+    create_nostr_identity_device_approval_request, encode_nostr_identity_device_approval_request,
     parse_compact_nostr_identity_device_approval_request,
     parse_nostr_identity_device_approval_request,
 };
@@ -37,7 +37,12 @@ pub struct AppKeyLinkRequestFrame {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppKeyApprovalRequest {
     pub profile_id: Option<NostrIdentityId>,
+    pub request_pubkey: String,
+    pub request_secret: String,
     pub app_key_hex: String,
+    pub device_app_key_proof: String,
+    pub requested_at: u64,
+    pub admin_app_key_pubkey: Option<String>,
     pub invite_pubkey: String,
     pub label: Option<String>,
 }
@@ -78,13 +83,17 @@ pub fn pending_app_key_link_request_frame(
     let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
         return Ok(None);
     };
-    let url = encode_app_key_approval_request(
-        app_key_keys,
-        pending_request_profile_id(state, pending),
-        pending_admin_app_key_pubkey(pending),
-        state.app_key_label.as_deref(),
-        pending.requested_at,
-    )?;
+    let url = if app_key_approval_request_url_is_full(&pending.request_url) {
+        pending.request_url.clone()
+    } else {
+        encode_app_key_approval_request(
+            app_key_keys,
+            pending_request_profile_id(state, pending),
+            pending_admin_app_key_pubkey(pending),
+            state.app_key_label.as_deref(),
+            pending.requested_at,
+        )?
+    };
     Ok(Some(AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: state.profile_id,
@@ -222,21 +231,33 @@ fn current_app_key_is_authorized(state: &ProfileState) -> bool {
 
 pub fn encode_app_key_approval_request(
     device_app_key_keys: &Keys,
-    _profile_id: Option<NostrIdentityId>,
-    _admin_app_key_pubkey: Option<&str>,
+    profile_id: Option<NostrIdentityId>,
+    admin_app_key_pubkey: Option<&str>,
     label: Option<&str>,
-    _requested_at: u64,
+    requested_at: u64,
 ) -> Result<String> {
-    let mut url = encode_compact_nostr_identity_device_approval_request(
-        &device_app_key_keys.public_key().to_hex(),
-        Some(APP_KEY_APPROVAL_COMPACT_PREFIX),
+    let requested_at =
+        i64::try_from(requested_at).context("app-key approval request timestamp overflows i64")?;
+    let local = create_nostr_identity_device_approval_request(
+        device_app_key_keys,
+        CreateNostrIdentityDeviceApprovalRequestOptions {
+            request_keys: None,
+            request_secret: None,
+            requested_at,
+            request_type: Some("device_link".to_owned()),
+            resources: Vec::new(),
+            expires_at: None,
+            profile_id,
+            admin_app_key_pubkey: admin_app_key_pubkey.map(str::to_owned),
+            label: normalize_compact_label(label),
+        },
     )
-    .context("encoding compact app-key approval request")?;
-    if let Some(label) = normalize_compact_label(label) {
-        url.push_str("&label=");
-        url.push_str(&percent_encode_query_value(&label));
-    }
-    Ok(url)
+    .context("creating full app-key approval request")?;
+    encode_nostr_identity_device_approval_request(
+        &local.request,
+        Some(APP_KEY_APPROVAL_REQUEST_PREFIX),
+    )
+    .context("encoding full app-key approval request")
 }
 
 pub fn parse_app_key_approval_request(input: &str) -> Result<Option<AppKeyApprovalRequest>> {
@@ -254,7 +275,13 @@ pub fn parse_app_key_approval_request(input: &str) -> Result<Option<AppKeyApprov
 
     Ok(Some(AppKeyApprovalRequest {
         profile_id: request.profile_id,
+        request_pubkey: request.request_pubkey,
+        request_secret: request.request_secret,
         app_key_hex: request.device_app_key_pubkey,
+        device_app_key_proof: request.device_app_key_proof,
+        requested_at: u64::try_from(request.requested_at)
+            .context("app-key approval request timestamp is negative")?,
+        admin_app_key_pubkey: request.admin_app_key_pubkey,
         invite_pubkey: String::new(),
         label: request.label,
     }))
@@ -271,6 +298,11 @@ pub fn app_key_approval_input_has_prefix(input: &str) -> bool {
         ],
     ) || starts_with_ignore_ascii_case(value, APP_KEY_APPROVAL_REQUEST_PREFIX)
         || starts_with_ignore_ascii_case(value, NOSTR_IDENTITY_DEVICE_APPROVAL_REQUEST_PREFIX)
+}
+
+#[must_use]
+pub fn app_key_approval_request_url_is_full(input: &str) -> bool {
+    starts_with_ignore_ascii_case(input.trim(), APP_KEY_APPROVAL_REQUEST_PREFIX)
 }
 
 fn parse_compact_app_key_approval_request(input: &str) -> Result<Option<AppKeyApprovalRequest>> {
@@ -290,7 +322,12 @@ fn parse_compact_app_key_approval_request(input: &str) -> Result<Option<AppKeyAp
         .and_then(|value| normalize_compact_label(Some(value.as_str())));
     Ok(Some(AppKeyApprovalRequest {
         profile_id: None,
+        request_pubkey: String::new(),
+        request_secret: String::new(),
         app_key_hex: request.device_app_key_pubkey,
+        device_app_key_proof: String::new(),
+        requested_at: 0,
+        admin_app_key_pubkey: None,
         invite_pubkey: String::new(),
         label,
     }))
@@ -345,20 +382,6 @@ fn normalize_compact_label(label: Option<&str>) -> Option<String> {
     Some(normalized.chars().take(64).collect())
 }
 
-fn percent_encode_query_value(value: &str) -> String {
-    let mut encoded = String::with_capacity(value.len());
-    for byte in value.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
-            encoded.push(char::from(byte));
-        } else {
-            encoded.push('%');
-            encoded.push(hex_char(byte >> 4));
-            encoded.push(hex_char(byte & 0x0f));
-        }
-    }
-    encoded
-}
-
 fn percent_decode_query_value(value: &str) -> String {
     let mut out = Vec::with_capacity(value.len());
     let mut bytes = value.as_bytes().iter().copied();
@@ -397,14 +420,6 @@ fn hex_digit(byte: u8) -> Option<u8> {
     }
 }
 
-fn hex_char(nibble: u8) -> char {
-    match nibble {
-        0..=9 => char::from(b'0' + nibble),
-        10..=15 => char::from(b'A' + (nibble - 10)),
-        _ => unreachable!("nibble is masked to four bits"),
-    }
-}
-
 fn starts_with_ignore_ascii_case(value: &str, prefix: &str) -> bool {
     value.len() >= prefix.len() && value[..prefix.len()].eq_ignore_ascii_case(prefix)
 }
@@ -413,7 +428,28 @@ fn starts_with_ignore_ascii_case(value: &str, prefix: &str) -> bool {
 mod tests {
     use super::*;
     use crate::Profile;
+    use nostr_sdk::JsonUtil;
     use tempfile::tempdir;
+
+    fn assert_full_device_approval_request(request: &AppKeyApprovalRequest) {
+        assert_eq!(request.request_secret.len(), 43);
+        assert!(!request.request_pubkey.is_empty());
+        assert!(!request.device_app_key_proof.is_empty());
+        let proof =
+            nostr_sdk::Event::from_json(&request.device_app_key_proof).expect("proof event JSON");
+        proof.verify().expect("proof event verifies");
+        assert_eq!(proof.pubkey.to_hex(), request.app_key_hex);
+        assert!(proof.content.is_empty());
+        assert!(
+            proof.tags.iter().any(|tag| tag.as_slice()
+                == ["request_pubkey".to_string(), request.request_pubkey.clone()])
+        );
+        assert!(
+            !request
+                .device_app_key_proof
+                .contains(&request.request_secret)
+        );
+    }
 
     #[test]
     fn roster_fingerprint_changes_with_profile_roster_ops() {
@@ -467,7 +503,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_request_frame_carries_profile_id_in_frame_and_compact_url() {
+    fn pending_request_frame_carries_full_device_approval_request_url() {
         let owner_dir = tempdir().unwrap();
         let owner = Profile::create(owner_dir.path(), Some("Mac".into())).unwrap();
         let linked_dir = tempdir().unwrap();
@@ -496,21 +532,27 @@ mod tests {
         let parsed = parse_app_key_approval_request(&frame.url)
             .expect("parse request")
             .expect("request");
-        assert_eq!(parsed.profile_id, None);
+        assert_eq!(parsed.profile_id, Some(owner.state.profile_id));
+        assert_eq!(
+            parsed.admin_app_key_pubkey.as_deref(),
+            Some(owner.state.app_key_pubkey.as_str())
+        );
         assert_eq!(parsed.app_key_hex, linked.state.app_key_pubkey);
+        assert_eq!(parsed.requested_at, 123);
         assert_eq!(parsed.label.as_deref(), Some("Phone"));
-        assert!(frame.url.starts_with(APP_KEY_APPROVAL_COMPACT_PREFIX));
+        assert_full_device_approval_request(&parsed);
+        assert!(frame.url.starts_with(APP_KEY_APPROVAL_REQUEST_PREFIX));
+        assert!(!frame.url.starts_with(APP_KEY_APPROVAL_COMPACT_PREFIX));
+        assert!(!frame.url.contains("app_key="));
         assert!(
-            frame.url.len() < 120,
+            frame.url.len() > 500,
             "approval URL was {}",
             frame.url.len()
         );
-        assert!(!frame.url.contains(&owner.state.profile_id.to_string()));
-        assert!(!frame.url.contains(&owner.state.app_key_pubkey));
     }
 
     #[test]
-    fn approval_request_encodes_compact_app_key_link() {
+    fn approval_request_encodes_full_nostr_identity_device_approval_flow() {
         let profile_id = NostrIdentityId::new_v4();
         let app_key = nostr_sdk::Keys::generate();
         let admin = nostr_sdk::Keys::generate().public_key();
@@ -527,14 +569,20 @@ mod tests {
             .expect("parse request")
             .expect("request");
 
-        assert_eq!(parsed.profile_id, None);
+        assert_eq!(parsed.profile_id, Some(profile_id));
+        let admin_hex = admin.to_hex();
+        assert_eq!(
+            parsed.admin_app_key_pubkey.as_deref(),
+            Some(admin_hex.as_str())
+        );
         assert_eq!(parsed.app_key_hex, app_key.public_key().to_hex());
+        assert_eq!(parsed.requested_at, 123);
         assert!(parsed.invite_pubkey.is_empty());
         assert_eq!(parsed.label.as_deref(), Some("Web + Native"));
-        assert!(url.starts_with(APP_KEY_APPROVAL_COMPACT_PREFIX));
-        assert!(url.len() < 160, "approval URL was {}", url.len());
-        assert!(!url.contains(&profile_id.to_string()));
-        assert!(!url.contains(&admin.to_hex()));
+        assert_full_device_approval_request(&parsed);
+        assert!(url.starts_with(APP_KEY_APPROVAL_REQUEST_PREFIX));
+        assert!(!url.starts_with(APP_KEY_APPROVAL_COMPACT_PREFIX));
+        assert!(!url.contains("app_key="));
         assert!(!url.contains("owner="));
     }
 
@@ -550,9 +598,11 @@ mod tests {
 
         assert_eq!(parsed.profile_id, None);
         assert_eq!(parsed.app_key_hex, app_key.public_key().to_hex());
+        assert_eq!(parsed.requested_at, 123);
         assert_eq!(parsed.label.as_deref(), Some("iPhone"));
-        assert!(url.starts_with(APP_KEY_APPROVAL_COMPACT_PREFIX));
-        assert!(url.len() < 120, "approval URL was {}", url.len());
+        assert_full_device_approval_request(&parsed);
+        assert!(url.starts_with(APP_KEY_APPROVAL_REQUEST_PREFIX));
+        assert!(!url.starts_with(APP_KEY_APPROVAL_COMPACT_PREFIX));
     }
 
     #[test]

@@ -395,7 +395,7 @@ fn subscription_filters_match_app_key_link_requests_for_profile() {
         invite_pubkey: invite.public_key().to_hex(),
         label: Some("phone".to_string()),
         requested_at: 123,
-        url: "iris-drive://app-key-link?app_key=example".to_string(),
+        url: "https://drive.iris.to/approve-device/test".to_string(),
     };
     let event = build_app_key_link_request_event(&device, &frame).unwrap();
 
@@ -678,7 +678,7 @@ fn apply_app_key_link_request_event_records_admin_inbound_request() {
         invite_pubkey: invite_pubkey.clone(),
         label: Some("phone".to_string()),
         requested_at: 123,
-        url: "iris-drive://app-key-link?app_key=example".to_string(),
+        url: "https://drive.iris.to/approve-device/test".to_string(),
     };
     let event = build_app_key_link_request_event(linked.app_key.keys(), &frame).unwrap();
     let mut cfg = AppConfig {
