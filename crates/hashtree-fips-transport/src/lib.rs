@@ -29,7 +29,7 @@ pub const DEFAULT_FIPS_REQUEST_TIMEOUT: Duration = Duration::from_millis(5_500);
 pub const DEFAULT_FIPS_REQUEST_RETRY_INTERVAL: Duration = Duration::from_millis(750);
 pub const DEFAULT_FIPS_REQUEST_MAX_ATTEMPTS: usize = 4;
 pub const FIPS_RESPONSE_FRAGMENT_SIZE: usize = 1024;
-pub const FIPS_APP_FRAGMENT_SIZE: usize = 768;
+pub const FIPS_APP_FRAGMENT_SIZE: usize = 512;
 pub const MAX_HTL: u8 = 10;
 pub const DEFAULT_FIPS_WEBRTC_MAX_CONNECTIONS: usize = 512;
 const APP_MESSAGE_BROADCAST_CAPACITY: usize = 4096;
@@ -2219,6 +2219,44 @@ mod tests {
                 .unwrap(),
             None
         );
+    }
+
+    #[tokio::test]
+    async fn can_deliver_fragmented_unconfigured_app_messages() {
+        let network = Arc::new(Mutex::new(HashMap::new()));
+        let endpoint_a = FakeEndpoint::new("a", network.clone()).await;
+        let endpoint_b = FakeEndpoint::new("b", network).await;
+        let topic = "iris-drive/app-key-link/v1/request";
+        let data = (0..(FIPS_APP_FRAGMENT_SIZE + 225))
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        let transport_a = Arc::new(HashtreeFipsTransport::new(
+            endpoint_a,
+            Arc::new(MemoryStore::new()),
+        ));
+        let transport_b = Arc::new(
+            HashtreeFipsTransport::new(endpoint_b, Arc::new(MemoryStore::new()))
+                .with_unconfigured_app_message_topics([topic]),
+        );
+        let mut app_messages = transport_b.subscribe_app_messages();
+        transport_a.start();
+        transport_b.start();
+        transport_b
+            .set_peers(vec!["configured-peer".to_string()])
+            .await;
+
+        transport_a
+            .send_app_message("b", topic, data.clone())
+            .await
+            .unwrap();
+
+        let message = timeout(Duration::from_millis(100), app_messages.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(message.peer_id, "a");
+        assert_eq!(message.topic, topic);
+        assert_eq!(message.data, data);
     }
 
     #[tokio::test]
