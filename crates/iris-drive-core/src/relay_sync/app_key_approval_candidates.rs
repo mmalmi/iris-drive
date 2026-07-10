@@ -7,7 +7,7 @@ use crate::nostr_identity_candidate_ids_for_pubkey_from_events;
 use crate::relay_filters::nostr_identity_roster_op_filter;
 pub use nostr_identity::NostrIdentityAppKeyApprovalCandidate;
 
-/// Relay filters for finding roster evidence that mentions a joining AppKey.
+/// Relay filters for finding roster evidence that mentions a joining `AppKey`.
 pub fn nostr_identity_app_key_approval_candidate_filters(
     app_key_pubkey_hex: &str,
 ) -> Result<Vec<Filter>, RelayError> {
@@ -27,7 +27,7 @@ pub fn nostr_identity_app_key_approval_candidates_from_events(
     .map_err(RelayError::from)
 }
 
-/// Fetch profile rosters that approve a waiting AppKey from relays.
+/// Fetch profile rosters that approve a waiting `AppKey` from relays.
 pub async fn fetch_nostr_identity_app_key_approval_candidates(
     client: &Client,
     app_key_pubkey_hex: &str,

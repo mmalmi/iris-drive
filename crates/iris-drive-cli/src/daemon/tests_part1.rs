@@ -832,23 +832,23 @@ fn windows_cloud_local_event_batch_rescans_recent_tail_changes() {
 #[test]
 fn windows_cloud_root_setting_supports_default_disable_and_override() {
     assert_eq!(
-        windows_cloud_root_setting_from_env_value(None).unwrap(),
+        windows_cloud_root_setting_from_env_value(None),
         WindowsCloudRootSetting::Default
     );
     assert_eq!(
-        windows_cloud_root_setting_from_env_value(Some("  ")).unwrap(),
+        windows_cloud_root_setting_from_env_value(Some("  ")),
         WindowsCloudRootSetting::Default
     );
     assert_eq!(
-        windows_cloud_root_setting_from_env_value(Some("off")).unwrap(),
+        windows_cloud_root_setting_from_env_value(Some("off")),
         WindowsCloudRootSetting::Disabled
     );
     assert_eq!(
-        windows_cloud_root_setting_from_env_value(Some("DISABLED")).unwrap(),
+        windows_cloud_root_setting_from_env_value(Some("DISABLED")),
         WindowsCloudRootSetting::Disabled
     );
     assert_eq!(
-        windows_cloud_root_setting_from_env_value(Some("C:\\\\IrisDriveE2E")).unwrap(),
+        windows_cloud_root_setting_from_env_value(Some("C:\\\\IrisDriveE2E")),
         WindowsCloudRootSetting::Path(PathBuf::from("C:\\\\IrisDriveE2E"))
     );
 }

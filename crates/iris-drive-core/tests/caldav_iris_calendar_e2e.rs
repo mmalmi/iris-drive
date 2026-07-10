@@ -24,8 +24,7 @@ async fn real_caldav_client_round_trips_with_iris_calendar_source_json() {
     let client_script = env_path("IRIS_DRIVE_CALDAV_E2E_CLIENT_SCRIPT")
         .expect("IRIS_DRIVE_CALDAV_E2E_CLIENT_SCRIPT must be set");
     let python = env::var_os("IRIS_DRIVE_CALDAV_E2E_PYTHON")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("python3"));
+        .map_or_else(|| PathBuf::from("python3"), PathBuf::from);
     let app_title = env::var("IRIS_DRIVE_CALDAV_E2E_APP_TITLE")
         .unwrap_or_else(|_| "Iris Calendar source event".to_string());
     let caldav_title = env::var("IRIS_DRIVE_CALDAV_E2E_CLIENT_TITLE")

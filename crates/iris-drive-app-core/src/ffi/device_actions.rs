@@ -32,7 +32,7 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        if let Err(error) = account.rename_app_key(&app_key_pubkey, label.to_owned()) {
+        if let Err(error) = account.rename_app_key(&app_key_pubkey, label) {
             self.state.error = format!("renaming device: {error}");
             return;
         }

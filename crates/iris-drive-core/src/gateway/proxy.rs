@@ -163,7 +163,7 @@ async fn proxy_public_mutable_tree_request(
     if servers.is_empty() {
         return Ok(None);
     }
-    let response = match serve_public_blossom_tree_path(
+    let Ok(response) = serve_public_blossom_tree_path(
         &client,
         &servers,
         method,
@@ -173,9 +173,8 @@ async fn proxy_public_mutable_tree_request(
         *allow_html,
     )
     .await
-    {
-        Ok(response) => response,
-        Err(_) => return Ok(None),
+    else {
+        return Ok(None);
     };
     Ok(Some(response))
 }

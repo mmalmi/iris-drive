@@ -1,7 +1,7 @@
-//! Canonical NostrIdentity protocol surface.
+//! Canonical `NostrIdentity` protocol surface.
 //!
 //! Iris Drive keeps its local Drive content key (DCK) model in app-level
-//! projections, but the shared NostrIdentity wire protocol lives in
+//! projections, but the shared `NostrIdentity` wire protocol lives in
 //! `nostr_identity`.
 
 pub use nostr_identity::{

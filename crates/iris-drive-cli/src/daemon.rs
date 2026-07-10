@@ -56,6 +56,9 @@ impl DaemonTaskSet {
         self.push_keyed_inner(key, Some(group), task)
     }
 
+    // The key is retained by both the completion task and the synchronous
+    // task-registration failure path, so an owned value avoids caller lifetimes.
+    #[allow(clippy::needless_pass_by_value)]
     fn push_keyed_inner(
         &self,
         key: String,
@@ -97,14 +100,6 @@ impl DaemonTaskSet {
         }
         keyed_tasks.next_id = keyed_tasks.next_id.wrapping_add(1);
         let task_id = keyed_tasks.next_id;
-        keyed_tasks.active.insert(
-            key.clone(),
-            ActiveKeyedTask {
-                id: task_id,
-                abort: abort_inner.clone(),
-                group: group.clone(),
-            },
-        );
         if let Some(group) = group.as_ref() {
             keyed_tasks
                 .groups
@@ -112,6 +107,14 @@ impl DaemonTaskSet {
                 .or_default()
                 .insert(key.clone());
         }
+        keyed_tasks.active.insert(
+            key.clone(),
+            ActiveKeyedTask {
+                id: task_id,
+                abort: abort_inner.clone(),
+                group,
+            },
+        );
         drop(keyed_tasks);
 
         let keyed_tasks = self.keyed_tasks.clone();
@@ -140,39 +143,36 @@ impl DaemonTaskSet {
                 }
             }
         });
-        match self.tasks.lock() {
-            Ok(mut tasks) => {
-                tasks.push(ManagedDaemonTask {
-                    join,
-                    abort_inner: Some(abort_inner),
-                });
-                true
-            }
-            Err(_) => {
-                if let Ok(mut keyed_tasks) = self.keyed_tasks.lock()
-                    && keyed_tasks
-                        .active
-                        .get(&key)
-                        .is_some_and(|active| active.id == task_id)
+        if let Ok(mut tasks) = self.tasks.lock() {
+            tasks.push(ManagedDaemonTask {
+                join,
+                abort_inner: Some(abort_inner),
+            });
+            true
+        } else {
+            if let Ok(mut keyed_tasks) = self.keyed_tasks.lock()
+                && keyed_tasks
+                    .active
+                    .get(&key)
+                    .is_some_and(|active| active.id == task_id)
+            {
+                let group = keyed_tasks
+                    .active
+                    .get(&key)
+                    .and_then(|active| active.group.clone());
+                keyed_tasks.active.remove(&key);
+                if let Some(group) = group
+                    && let Some(keys) = keyed_tasks.groups.get_mut(&group)
                 {
-                    let group = keyed_tasks
-                        .active
-                        .get(&key)
-                        .and_then(|active| active.group.clone());
-                    keyed_tasks.active.remove(&key);
-                    if let Some(group) = group
-                        && let Some(keys) = keyed_tasks.groups.get_mut(&group)
-                    {
-                        keys.remove(&key);
-                        if keys.is_empty() {
-                            keyed_tasks.groups.remove(&group);
-                        }
+                    keys.remove(&key);
+                    if keys.is_empty() {
+                        keyed_tasks.groups.remove(&group);
                     }
                 }
-                abort_inner_on_error.abort();
-                join.abort();
-                false
             }
+            abort_inner_on_error.abort();
+            join.abort();
+            false
         }
     }
 
@@ -1064,7 +1064,7 @@ pub(crate) fn authorized_app_keys_missing_primary_roots(config: &AppConfig) -> V
         .collect()
 }
 
-pub(crate) async fn online_authorized_app_key_missing_primary_root_count(
+pub(crate) fn online_authorized_app_key_missing_primary_root_count(
     config_dir: &Path,
     fallback_config: &AppConfig,
     _sync: &FsFipsBlockSync,

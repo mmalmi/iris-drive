@@ -28,30 +28,34 @@ fn init_account_config(dir: &std::path::Path) {
     cfg.save(config_path_in(dir)).unwrap();
 }
 
+async fn fake_resolver_handler(
+    State(root_hash): State<Arc<String>>,
+    method: Method,
+    uri: Uri,
+) -> Response {
+    if method != Method::GET || !uri.path().starts_with("/api/resolve/") {
+        return text_response(StatusCode::NOT_FOUND, "unexpected path");
+    }
+    response_builder(StatusCode::OK, false)
+        .header(CONTENT_TYPE, "application/json")
+        .body(Body::from(
+            serde_json::json!({
+                "hash": root_hash.as_str(),
+                "cid": root_hash.as_str(),
+                "source": "test"
+            })
+            .to_string(),
+        ))
+        .expect("response")
+}
+
 async fn fake_resolving_htree_daemon(root: &Cid) -> FakeServer {
     let root_hash = to_hex(&root.hash);
-
-    async fn handler(State(root_hash): State<Arc<String>>, method: Method, uri: Uri) -> Response {
-        if method != Method::GET || !uri.path().starts_with("/api/resolve/") {
-            return text_response(StatusCode::NOT_FOUND, "unexpected path");
-        }
-        response_builder(StatusCode::OK, false)
-            .header(CONTENT_TYPE, "application/json")
-            .body(Body::from(
-                serde_json::json!({
-                    "hash": root_hash.as_str(),
-                    "cid": root_hash.as_str(),
-                    "source": "test"
-                })
-                .to_string(),
-            ))
-            .expect("response")
-    }
 
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
     let addr = listener.local_addr().unwrap();
     let app = Router::new()
-        .fallback(any(handler))
+        .fallback(any(fake_resolver_handler))
         .with_state(Arc::new(root_hash));
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let handle = tokio::spawn(async move {

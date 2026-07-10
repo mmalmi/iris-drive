@@ -17,7 +17,7 @@ async fn start_daemon_browser_gateway(
 fn stopped_browser_gateway_status(
     embedded_hashtree_requested: bool,
     gateway_disabled_by: Option<&'static str>,
-    gateway_error: Option<String>,
+    gateway_error: Option<&str>,
     gateway_port: u16,
 ) -> Value {
     json!({

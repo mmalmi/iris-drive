@@ -326,7 +326,8 @@ pub fn apply_remote_nostr_identity_roster_op_event(
             return Ok(NostrIdentityRosterOpApply::Current);
         }
 
-        let merged_ops = merge_profile_roster_ops(&account.profile_roster_ops, &[op.clone()]);
+        let merged_ops =
+            merge_profile_roster_ops(&account.profile_roster_ops, std::slice::from_ref(&op));
         let merged_projection =
             project_nostr_identity_roster(account.profile_id, merged_ops.clone());
         if account.authorization_state == crate::AppKeyAuthorizationState::AwaitingApproval

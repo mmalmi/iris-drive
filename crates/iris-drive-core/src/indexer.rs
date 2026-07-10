@@ -342,10 +342,7 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
         .collect::<BTreeSet<_>>();
     for path in changed_dirs {
         match (base_dirs.contains_key(&path), edited_dirs.get(&path)) {
-            (false, Some(edited)) => {
-                root = set_visible_dir_entry(tree, root, &path, edited).await?;
-            }
-            (true, Some(edited)) => {
+            (_, Some(edited)) => {
                 root = set_visible_dir_entry(tree, root, &path, edited).await?;
             }
             (true, None) => {

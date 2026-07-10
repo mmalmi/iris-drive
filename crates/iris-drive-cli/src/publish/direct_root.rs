@@ -8,6 +8,7 @@ const DIRECT_ROOT_HINT_REPEAT_INTERVAL_SECS: u64 = 30;
 const DIRECT_ROOT_HINT_CACHE_MAX_ENTRIES: usize = 2048;
 const DIRECT_ROOT_SEEN_FRAME_RETRY_INTERVAL_SECS: u64 = 30;
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
+#[allow(clippy::struct_field_names)]
 pub(crate) struct DirectRootAppSendStats {
     pub(crate) selected_peers: usize,
     pub(crate) sent_peers: usize,
@@ -1449,19 +1450,10 @@ fn direct_root_cache_slot(key: &str) -> Option<DirectRootCacheSlot> {
 fn direct_root_retry_root_cid(key: &str) -> Option<String> {
     let (prefix, rest) = key.split_once(':')?;
     match prefix {
-        "drive-root" => {
+        "drive-root" | "share-root" => {
             let mut parts = rest.splitn(4, ':');
-            let _app_key = parts.next()?;
-            let _drive_id = parts.next()?;
-            let _seq = parts.next()?;
-            let root_and_recipients = parts.next()?;
-            let (root_cid, _recipients) = root_and_recipients.rsplit_once(':')?;
-            Some(root_cid.to_string())
-        }
-        "share-root" => {
-            let mut parts = rest.splitn(4, ':');
-            let _share_id = parts.next()?;
-            let _app_key = parts.next()?;
+            let _scope_a = parts.next()?;
+            let _scope_b = parts.next()?;
             let _seq = parts.next()?;
             let root_and_recipients = parts.next()?;
             let (root_cid, _recipients) = root_and_recipients.rsplit_once(':')?;

@@ -112,9 +112,10 @@ fn known_profile_roster_ops_from_events(
 fn dedupe_event_json(events: Vec<String>) -> Vec<String> {
     let mut by_key = BTreeMap::new();
     for event_json in events {
-        let key = Event::from_json(&event_json)
-            .map(|event| event.id.to_string())
-            .unwrap_or_else(|_| format!("raw:{event_json}"));
+        let key = Event::from_json(&event_json).map_or_else(
+            |_| format!("raw:{event_json}"),
+            |event| event.id.to_string(),
+        );
         by_key.insert(key, event_json);
     }
     by_key.into_values().collect()
