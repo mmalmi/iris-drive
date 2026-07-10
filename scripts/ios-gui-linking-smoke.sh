@@ -65,7 +65,7 @@ for runtime, devices in data.get("devices", {}).items():
     for device in devices:
         if not device.get("isAvailable"):
             continue
-        if preferred and device.get("name") != preferred:
+        if preferred and preferred not in (device.get("name"), device.get("udid")):
             continue
         if "iPhone" not in device.get("name", ""):
             continue

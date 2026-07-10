@@ -56,7 +56,13 @@ run_host_repo_command() {
   for arg in "$@"; do
     quoted+=("$(printf "%q" "$arg")")
   done
-  ssh "$host" "cd \"\$HOME/src/iris-drive\" && ${quoted[*]}"
+  local status=0
+  ssh "$host" "cd \"\$HOME/src/iris-drive\" && ${quoted[*]}" || status=$?
+  if [[ "$status" -eq 255 ]]; then
+    echo "infrastructure unavailable: SSH host $host became unreachable" >&2
+    return 75
+  fi
+  return "$status"
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -77,21 +83,31 @@ echo "[e2e-5devices] running Windows WPF GUI smoke on $WINDOWS_HOST" >&2
 "$ROOT/scripts/desktop-gui-smoke.sh" windows "$WINDOWS_HOST"
 
 echo "[e2e-5devices] running iOS simulator smoke on $IOS_HOST" >&2
-run_host_repo_command "$IOS_HOST" scripts/ios-simulator-smoke.sh
+run_host_repo_command "$IOS_HOST" \
+  env "IRIS_DRIVE_IOS_SIMULATOR_DEVICE=${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-}" \
+  scripts/ios-simulator-smoke.sh
 
 echo "[e2e-5devices] running iOS GUI linking smoke on $IOS_HOST" >&2
-run_host_repo_command "$IOS_HOST" scripts/ios-gui-linking-smoke.sh
+run_host_repo_command "$IOS_HOST" \
+  env "IRIS_DRIVE_IOS_SIMULATOR_DEVICE=${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-}" \
+  scripts/ios-gui-linking-smoke.sh
 
 echo "[e2e-5devices] running iOS physical Iris Apps WebView smoke on $IOS_HOST" >&2
-run_host_repo_command "$IOS_HOST" scripts/ios-device-iris-apps-smoke.sh
+run_host_repo_command "$IOS_HOST" \
+  env "IRIS_DRIVE_IOS_DEVICE=${IRIS_DRIVE_IOS_DEVICE:-}" \
+  scripts/ios-device-iris-apps-smoke.sh
 
 echo "[e2e-5devices] running Android GUI linking smoke on $ANDROID_HOST" >&2
 run_host_repo_command "$ANDROID_HOST" \
-  env "IRIS_DRIVE_ANDROID_USE_DIRECT_STATIC_PEER=${IRIS_DRIVE_ANDROID_USE_DIRECT_STATIC_PEER:-true}" \
+  env \
+  "IRIS_DRIVE_ANDROID_SERIAL=${IRIS_DRIVE_ANDROID_SERIAL:-}" \
+  "IRIS_DRIVE_ANDROID_USE_DIRECT_STATIC_PEER=${IRIS_DRIVE_ANDROID_USE_DIRECT_STATIC_PEER:-true}" \
   scripts/android-gui-linking-smoke.sh
 
 echo "[e2e-5devices] running Android adb provider smoke on $ANDROID_HOST" >&2
-run_host_repo_command "$ANDROID_HOST" scripts/mobile-android-smoke.sh --no-build
+run_host_repo_command "$ANDROID_HOST" \
+  env "IRIS_DRIVE_ANDROID_SERIAL=${IRIS_DRIVE_ANDROID_SERIAL:-}" \
+  scripts/mobile-android-smoke.sh --no-build
 
 if [[ -z "${IRIS_DRIVE_E2E_MOUNT_LABELS+x}" ]]; then
   export IRIS_DRIVE_E2E_MOUNT_LABELS="ubuntu"

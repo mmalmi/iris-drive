@@ -514,9 +514,7 @@ fn find_href_start_tag(xml: &str) -> Option<usize> {
             offset = start + 1;
             continue;
         }
-        let Some(close) = after_open.find('>') else {
-            return None;
-        };
+        let close = after_open.find('>')?;
         let tag = after_open[..close].trim();
         if !tag.ends_with('/') && xml_tag_local_name(tag).eq_ignore_ascii_case("href") {
             return Some(start);

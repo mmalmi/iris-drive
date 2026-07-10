@@ -31,6 +31,12 @@ require_contains() {
 }
 
 require_executable scripts/release-gate.sh
+require_executable scripts/verify.sh
+require_executable scripts/verify_full_native.sh
+require_executable scripts/native_lab.py
+require_executable scripts/native_state_reset.sh
+require_file scripts/reset_windows_cloudfiles.ps1
+require_file scripts/remove_fileprovider_domain.swift
 require_executable scripts/idle-cpu-gate.sh
 require_file scripts/idle-cpu-gate-windows.ps1
 require_executable scripts/macos-release-smoke.sh
@@ -45,6 +51,11 @@ require_file .env.zapstore.example
 require_file zapstore.yaml
 
 require_contains Justfile "release-gate *args:"
+require_contains Justfile "verify-fast:"
+require_contains Justfile "verify-full:"
+require_contains Justfile "verify-health:"
+require_contains scripts/verify.sh 'cargo clippy --workspace --all-targets -- -D warnings'
+require_contains scripts/native_lab.py 'infrastructure_unavailable'
 require_contains Justfile "node scripts/local-release.mjs --build"
 require_contains Justfile "release-publish:"
 require_contains Justfile "release-final:"

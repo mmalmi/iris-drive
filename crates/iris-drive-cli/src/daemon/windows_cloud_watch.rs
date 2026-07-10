@@ -115,8 +115,8 @@ enum WindowsCloudRootSetting {
 #[cfg_attr(not(windows), allow(dead_code))]
 fn windows_cloud_root_setting() -> Result<WindowsCloudRootSetting> {
     match std::env::var("IRIS_DRIVE_WINDOWS_CLOUD_ROOT") {
-        Ok(value) => windows_cloud_root_setting_from_env_value(Some(&value)),
-        Err(std::env::VarError::NotPresent) => windows_cloud_root_setting_from_env_value(None),
+        Ok(value) => Ok(windows_cloud_root_setting_from_env_value(Some(&value))),
+        Err(std::env::VarError::NotPresent) => Ok(windows_cloud_root_setting_from_env_value(None)),
         Err(error) => Err(error).context("reading IRIS_DRIVE_WINDOWS_CLOUD_ROOT"),
     }
 }
@@ -124,17 +124,17 @@ fn windows_cloud_root_setting() -> Result<WindowsCloudRootSetting> {
 #[cfg_attr(not(windows), allow(dead_code))]
 fn windows_cloud_root_setting_from_env_value(
     value: Option<&str>,
-) -> Result<WindowsCloudRootSetting> {
+) -> WindowsCloudRootSetting {
     let Some(value) = value else {
-        return Ok(WindowsCloudRootSetting::Default);
+        return WindowsCloudRootSetting::Default;
     };
     let trimmed = value.trim();
     if trimmed.is_empty() {
-        return Ok(WindowsCloudRootSetting::Default);
+        return WindowsCloudRootSetting::Default;
     }
     match trimmed.to_ascii_lowercase().as_str() {
-        "0" | "false" | "off" | "disabled" | "none" => Ok(WindowsCloudRootSetting::Disabled),
-        _ => Ok(WindowsCloudRootSetting::Path(PathBuf::from(trimmed))),
+        "0" | "false" | "off" | "disabled" | "none" => WindowsCloudRootSetting::Disabled,
+        _ => WindowsCloudRootSetting::Path(PathBuf::from(trimmed)),
     }
 }
 

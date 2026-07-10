@@ -249,7 +249,14 @@ pass an explicit config directory to `idrive`/`iris-drive-app-core`.
 
 ### Validation
 
-Normal Rust gate:
+Run the deterministic per-change tier without simulators, phones, VMs, or GUI:
+
+```bash
+just verify-fast
+```
+
+It includes the normal Rust gate, structure/contracts, release-script tests,
+and local core/app-core/CLI contract tests:
 
 ```bash
 cargo fmt --check
@@ -277,10 +284,16 @@ just ios-gui-smoke
 Full configured lab checks:
 
 ```bash
-just e2e-3vms
-just e2e-4devices
-just e2e-5devices
+just verify-health
+just verify-full
 ```
+
+`verify-full` reserves the five-platform lab, records a machine-readable result
+under `artifacts/verification/`, and classifies unavailable hosts/devices as
+`infrastructure_unavailable` (exit 75) rather than a product failure. It runs
+the full GUI/physical-device matrix and is intended for nightly or release
+boundaries, not every edit. Dedicated simulator/device reset is opt-in through
+`IRIS_NATIVE_LAB_RESET=1`; see `docs/verification-tiers.md`.
 
 ### Release
 
@@ -288,8 +301,8 @@ just e2e-5devices
 2. Run the release gate:
 
 ```bash
-just release-gate
-IRIS_DRIVE_RELEASE_GATE_FULL=1 just release-gate --full
+just verify-fast
+just verify-full
 ```
 
 The full gate runs the five-platform lab (`just e2e-5devices`) and requires

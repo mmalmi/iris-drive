@@ -1837,12 +1837,12 @@ impl Profile {
     pub fn rename_app_key(
         &mut self,
         app_key_pubkey_hex: &str,
-        label: String,
+        label: &str,
     ) -> Result<&AppKeysProjection, ProfileError> {
         if !self.state.can_admin_profile() {
             return Err(ProfileError::NoAdminAuthority);
         }
-        let label = normalize_app_key_label(&label).ok_or(ProfileError::InvalidAppKeyLabel)?;
+        let label = normalize_app_key_label(label).ok_or(ProfileError::InvalidAppKeyLabel)?;
         let (already_has_label, role) = {
             let snap = self
                 .state

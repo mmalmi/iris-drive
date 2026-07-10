@@ -382,7 +382,7 @@ pub(crate) fn cmd_rename_app_key(
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     let mut profile = Profile::load(state, config_dir).context("loading profile")?;
     let snap = profile
-        .rename_app_key(&app_key_hex, label.to_owned())
+        .rename_app_key(&app_key_hex, label)
         .context("renaming AppKey")?;
     let label = snap
         .app_actor(&app_key_hex)

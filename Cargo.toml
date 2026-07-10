@@ -75,6 +75,12 @@ pedantic = { level = "warn", priority = -1 }
 module_name_repetitions = "allow"
 missing_errors_doc = "allow"
 missing_panics_doc = "allow"
+# Function/file complexity is enforced by scripts/check-source-file-size.sh.
+# These signature/line-count lints otherwise turn stable protocol and provider
+# boundaries into permanent noise while actionable pedantic lints stay strict.
+too_many_lines = "allow"
+too_many_arguments = "allow"
+struct_excessive_bools = "allow"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

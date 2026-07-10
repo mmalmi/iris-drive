@@ -752,6 +752,7 @@ impl DirectRootExchange {
     }
 }
 
+#[must_use]
 pub fn coalesce_direct_root_app_messages(
     messages: Vec<crate::FipsAppMessage>,
 ) -> (Vec<crate::FipsAppMessage>, usize) {
@@ -809,6 +810,7 @@ pub fn coalesce_direct_root_app_messages(
     (coalesced, skipped)
 }
 
+#[must_use]
 pub fn coalesce_direct_root_mesh_events(
     messages: Vec<crate::FipsMeshPubsubEvent>,
 ) -> (Vec<crate::FipsMeshPubsubEvent>, usize) {
@@ -1077,19 +1079,10 @@ fn should_publish_direct_root_hint(key: &str, source: DirectRootPublishSource) -
 }
 
 fn should_publish_direct_root_full_frame(
-    key: &str,
-    source: DirectRootPublishSource,
+    _key: &str,
+    _source: DirectRootPublishSource,
     _attempt: usize,
 ) -> bool {
-    if should_publish_direct_root_hint(key, source) {
-        return match source {
-            DirectRootPublishSource::LocalCurrent | DirectRootPublishSource::StateRequestReply => {
-                true
-            }
-            DirectRootPublishSource::CachedRelay
-            | DirectRootPublishSource::CachedStateRequestReply => true,
-        };
-    }
     true
 }
 
@@ -1408,6 +1401,7 @@ pub fn apply_direct_root_key_hint_to_config(
     }
 }
 
+#[must_use]
 pub fn parse_direct_root_key_hint(key: &str) -> Option<DirectRootKeyHint> {
     let (prefix, rest) = key.split_once(':')?;
     match prefix {

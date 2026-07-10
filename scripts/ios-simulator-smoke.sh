@@ -97,7 +97,7 @@ for runtime_index, (runtime, devices) in enumerate(runtime_items):
     for device in devices:
         if not device.get("isAvailable"):
             continue
-        if preferred and device.get("name") != preferred:
+        if preferred and preferred not in (device.get("name"), device.get("udid")):
             continue
         if "iPhone" not in device.get("name", ""):
             continue

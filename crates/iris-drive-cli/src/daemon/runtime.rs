@@ -238,7 +238,7 @@ pub(crate) fn cmd_daemon(
             stopped_browser_gateway_status(
                 embedded_hashtree_requested,
                 gateway_disabled_by,
-                gateway_error,
+                gateway_error.as_deref(),
                 gateway_port,
             )
         };
@@ -400,7 +400,7 @@ pub(crate) fn cmd_daemon(
         direct_root_repair_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut direct_root_change_announce_pending = false;
         let mut direct_root_change_announce_timer =
-            Box::pin(tokio::time::sleep(std::time::Duration::from_secs(86_400)));
+            Box::pin(tokio::time::sleep(std::time::Duration::from_hours(24)));
         let config_root_watch_active = config_root_change_rx.is_some();
         let mut provider_root_poll_timer =
             tokio::time::interval(provider_root_poll_period(watch_interval));
@@ -802,8 +802,8 @@ pub(crate) fn cmd_daemon(
                             false
                         }
                     };
-                    if direct_root_peers_changed {
-                        if let Err(error) = direct_roots
+                    if direct_root_peers_changed
+                        && let Err(error) = direct_roots
                             .request_current_state_from_peers(
                                 config_dir,
                                 fips_blocks.as_deref(),
@@ -816,7 +816,6 @@ pub(crate) fn cmd_daemon(
                                 json!({"event": "direct_root_state_request_error", "trigger": "peer_refresh", "error": format!("{error:#}")})
                             );
                         }
-                    }
                 }
                 _ = direct_root_repair_timer.tick() => {
                     let latest_config =
@@ -828,14 +827,13 @@ pub(crate) fn cmd_daemon(
                             &latest_config,
                             sync,
                         )
-                        .await
                     } else {
                         0
                     };
                     let pending_remote_root_count =
                         remote_root_blocks_pending_count(config_dir, &latest_config);
-                    if missing_online_root_count > 0 || pending_remote_root_count > 0 {
-                        if let Err(error) = direct_roots
+                    if (missing_online_root_count > 0 || pending_remote_root_count > 0)
+                        && let Err(error) = direct_roots
                             .request_current_state_from_peers(
                                 config_dir,
                                 fips_blocks.as_deref(),
@@ -852,7 +850,6 @@ pub(crate) fn cmd_daemon(
                                 json!({"event": "direct_root_state_request_error", "trigger": "root_repair", "error": format!("{error:#}")})
                             );
                         }
-                    }
                     if pending_remote_root_count > 0 {
                         enqueue_pending_root_sync_followups(
                             config_dir,
@@ -863,7 +860,7 @@ pub(crate) fn cmd_daemon(
                         );
                     }
                 }
-                _ = &mut direct_root_change_announce_timer, if direct_root_change_announce_pending => {
+                () = &mut direct_root_change_announce_timer, if direct_root_change_announce_pending => {
                     direct_root_change_announce_pending = false;
                     if let Err(error) =
                         announce_current_state_direct(

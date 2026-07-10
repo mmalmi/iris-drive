@@ -311,6 +311,8 @@ pub(crate) fn remote_root_blocks_pending_count(config_dir: &Path, config: &AppCo
     startup_root_cids_needing_sync(config_dir, config).len()
 }
 
+// These owned handles are cloned into independently scheduled follow-up tasks.
+#[allow(clippy::needless_pass_by_value)]
 pub(crate) fn enqueue_pending_root_sync_followups(
     config_dir: &Path,
     fips_blocks: Option<Arc<FsFipsBlockSync>>,
@@ -602,7 +604,8 @@ async fn settle_after_direct_root_state_request(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+// Owned config/root values feed both task construction and keyed scheduling.
+#[allow(clippy::needless_pass_by_value, clippy::too_many_arguments)]
 pub(crate) fn enqueue_root_apply_followup(
     config_dir: PathBuf,
     config: AppConfig,

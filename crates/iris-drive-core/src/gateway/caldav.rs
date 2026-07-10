@@ -61,7 +61,7 @@ pub(crate) async fn handle_caldav_request(
         "GET" | "HEAD" => handle_caldav_get(&state, method, uri).await,
         "PUT" => handle_caldav_put(&state, uri, body).await,
         "DELETE" => handle_caldav_delete(&state, uri).await,
-        "PROPPATCH" => handle_caldav_proppatch(&state, uri).await,
+        "PROPPATCH" => handle_caldav_proppatch(&state, uri),
         _ => Err((StatusCode::METHOD_NOT_ALLOWED, "method not allowed".into())),
     }
 }
@@ -230,7 +230,7 @@ async fn handle_caldav_put(
     )
 }
 
-async fn handle_caldav_proppatch(
+fn handle_caldav_proppatch(
     state: &GatewayState,
     uri: &Uri,
 ) -> Result<Response, (StatusCode, String)> {

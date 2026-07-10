@@ -47,6 +47,9 @@ info:
     @echo
     @echo "Checks"
     @echo "  just test"
+    @echo "  just verify-fast"
+    @echo "  just verify-full"
+    @echo "  just verify-health"
     @echo "  just structure"
     @echo "  just fmt"
     @echo "  just clippy"
@@ -181,6 +184,15 @@ release-final:
 
 test:
     cargo test --workspace
+
+verify-fast:
+    ./scripts/verify.sh fast
+
+verify-full:
+    ./scripts/verify.sh full
+
+verify-health:
+    ./scripts/verify.sh health
 
 structure:
     ./scripts/check-platform-parity-matrix.sh

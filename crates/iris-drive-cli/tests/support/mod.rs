@@ -90,6 +90,8 @@ impl LocalNostrRelay {
         self.events.lock().await.clone()
     }
 
+    // Relay fixtures expose a uniform async API even when this accessor is local-only.
+    #[allow(clippy::unused_async)]
     pub(crate) async fn publish_pending_approval_request(
         &self,
         config_dir: &std::path::Path,

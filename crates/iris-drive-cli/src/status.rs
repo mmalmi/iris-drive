@@ -1029,9 +1029,8 @@ pub(crate) fn app_key_sync_state(
     }
     match (has_root, root_available, root_block_synced) {
         (false, _, _) => "waiting for root",
-        (true, _, false) => "blocks pending",
+        (true, _, false) | (true, Some(false), true) => "blocks pending",
         (true, Some(true), true) => "synced",
-        (true, Some(false), true) => "blocks pending",
         (true, None, true) => "metadata only",
     }
 }

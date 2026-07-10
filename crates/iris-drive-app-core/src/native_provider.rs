@@ -840,7 +840,8 @@ impl Drop for ProviderOpenDelayGuard {
 
 #[cfg(test)]
 pub(crate) fn provider_open_delay_for_test(delay: std::time::Duration) -> ProviderOpenDelayGuard {
-    PROVIDER_OPEN_DELAY_MS_FOR_TEST.store(delay.as_millis() as u64, Ordering::SeqCst);
+    let delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX);
+    PROVIDER_OPEN_DELAY_MS_FOR_TEST.store(delay_ms, Ordering::SeqCst);
     ProviderOpenDelayGuard
 }
 

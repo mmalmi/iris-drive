@@ -882,9 +882,7 @@ fn admin_can_rename_authorized_device_labels() {
     acct.approve_app_key(&new_device, Some("phone".into()))
         .unwrap();
 
-    let snap = acct
-        .rename_app_key(&new_device, "  iPhone   16  ".into())
-        .unwrap();
+    let snap = acct.rename_app_key(&new_device, "  iPhone   16  ").unwrap();
     let renamed = snap.app_actor(&new_device).unwrap();
     assert_eq!(renamed.label.as_deref(), Some("iPhone 16"));
     assert_eq!(renamed.role, AppActorRole::Member);
@@ -932,7 +930,7 @@ fn admin_rename_updates_current_app_key_label() {
     let mut acct = Profile::create(dir.path(), Some("Mac".into())).unwrap();
     let current = acct.state.app_key_pubkey.clone();
 
-    acct.rename_app_key(&current, "Studio Mac".into()).unwrap();
+    acct.rename_app_key(&current, "Studio Mac").unwrap();
 
     assert_eq!(acct.state.app_key_label.as_deref(), Some("Studio Mac"));
     assert_eq!(
@@ -952,7 +950,7 @@ fn admin_rename_rejects_empty_label() {
     let mut acct = Profile::create(dir.path(), Some("Mac".into())).unwrap();
     let current = acct.state.app_key_pubkey.clone();
 
-    match acct.rename_app_key(&current, "   ".into()) {
+    match acct.rename_app_key(&current, "   ") {
         Err(ProfileError::InvalidAppKeyLabel) => {}
         other => panic!("expected InvalidAppKeyLabel, got {other:?}"),
     }

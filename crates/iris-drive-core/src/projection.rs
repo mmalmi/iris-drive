@@ -814,7 +814,7 @@ fn merge_directory_meta(existing: &mut DirectoryMeta, candidate: &DirectoryMeta)
     if existing.is_empty()
         || directory_meta_modified_at(candidate) > directory_meta_modified_at(existing)
     {
-        *existing = candidate.clone();
+        existing.clone_from(candidate);
     }
 }
 
