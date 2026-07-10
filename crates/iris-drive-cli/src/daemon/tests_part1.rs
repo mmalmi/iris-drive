@@ -810,6 +810,37 @@ fn windows_cloud_periodic_validation_rescans_recent_local_changes() {
 }
 
 #[test]
+fn windows_cloud_local_event_batch_rescans_recent_tail_changes() {
+    let changes = windows_cloud_changes_with_event_rescan(vec![WindowsCloudRootChange::Upsert(
+        "reconnect/file-1.txt".to_string(),
+    )]);
+
+    assert_eq!(
+        changes,
+        vec![
+            WindowsCloudRootChange::Upsert("reconnect/file-1.txt".to_string()),
+            WindowsCloudRootChange::Rescan {
+                full: false,
+                recover_cached_deletes: false,
+            },
+        ]
+    );
+}
+
+#[test]
+fn windows_cloud_rescan_batch_is_not_rescanned_again() {
+    let changes = vec![WindowsCloudRootChange::Rescan {
+        full: false,
+        recover_cached_deletes: false,
+    }];
+
+    assert_eq!(
+        windows_cloud_changes_with_event_rescan(changes.clone()),
+        changes
+    );
+}
+
+#[test]
 fn windows_cloud_root_setting_supports_default_disable_and_override() {
     assert_eq!(
         windows_cloud_root_setting_from_env_value(None).unwrap(),

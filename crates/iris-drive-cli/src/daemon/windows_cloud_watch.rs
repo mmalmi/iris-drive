@@ -144,6 +144,26 @@ fn windows_cloud_periodic_validate_change() -> WindowsCloudRootChange {
     }
 }
 
+fn windows_cloud_changes_with_event_rescan(
+    mut changes: Vec<WindowsCloudRootChange>,
+) -> Vec<WindowsCloudRootChange> {
+    let has_local_event = changes.iter().any(|change| {
+        matches!(
+            change,
+            WindowsCloudRootChange::Upsert(_)
+                | WindowsCloudRootChange::Delete(_)
+                | WindowsCloudRootChange::Rename { .. }
+        )
+    });
+    let has_rescan = changes
+        .iter()
+        .any(|change| matches!(change, WindowsCloudRootChange::Rescan { .. }));
+    if has_local_event && !has_rescan {
+        changes.push(windows_cloud_periodic_validate_change());
+    }
+    changes
+}
+
 #[cfg(windows)]
 fn windows_cloud_changes_from_event(
     root: &Path,
@@ -199,6 +219,7 @@ async fn import_windows_cloud_root_changes_and_publish(
     fips_blocks: Option<&FsFipsBlockSync>,
     daemon_tasks: &DaemonTaskSet,
 ) -> Result<WindowsCloudImportOutcome> {
+    let changes = windows_cloud_changes_with_event_rescan(changes);
     let config_lock = ConfigMutationLock::acquire(config_dir).await?;
     let daemon = Daemon::open(config_dir).context("opening daemon for Windows Cloud Files root")?;
     let visible = iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
