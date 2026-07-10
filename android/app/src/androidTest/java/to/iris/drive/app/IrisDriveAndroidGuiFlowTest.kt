@@ -191,7 +191,7 @@ class IrisDriveAndroidGuiFlowTest {
     @Test
     fun addDeviceSectionDispatchesManualDeviceApproval() {
         val approvedRequests = mutableListOf<Pair<String, String>>()
-        val devicePubkey = "npub1260n42s06vzc7796w0fh3ny7zcpw6tlk4gq3940gmfrzl5c9pv2s3657q8"
+        val approvalBootstrap = "https://drive.iris.to/approve-device/eyJkZXZpY2VBcHBLZXlOcHViIjoibnB1YjFjY3o4bDl6cGE0N2s2dno5Z3BoZnRzcnVtcHc4MHJqdDNuaG5lZmF0NHN5bWpocnNubWpzMzhtbnlkIiwicmVxdWVzdE5wdWIiOiJucHViMWx5Y2c1cXZqdHJwM3FqZjVmN3psMzgyajl4Nm5yano5c2RoZW52eXhxOGMzODA4cXhtdXM2Z3EyNjYiLCJyZXF1ZXN0U2VjcmV0IjoiQUFFQ0F3UUZCZ2NJQ1FvTERBME9EeEFSRWhNVUZSWVhHQmthR3h3ZEhoOCIsImxhYmVsIjoiRml4dHVyZSBkZXZpY2UifQ"
 
         render(
             state = AppState(
@@ -208,15 +208,15 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceToggle"))
         compose.onNodeWithTag("addDeviceToggle").activate()
         compose.onNodeWithTag("manualDeviceId").performScrollTo().assertIsDisplayed()
-            .performTextInput(devicePubkey)
+            .performTextInput(approvalBootstrap)
         dismissSoftKeyboard()
         compose.onNodeWithText("Approve").assertIsDisplayed().activate()
 
-        assertEquals(listOf(devicePubkey to ""), approvedRequests)
+        assertEquals(listOf(approvalBootstrap to ""), approvedRequests)
     }
 
     @Test
-    fun addDeviceSectionRequiresCompleteNativeLinkInput() {
+    fun addDeviceSectionRejectsBareDeviceNpub() {
         val state = AppState(
             profile = profileState(),
             setupState = "authorized",
@@ -229,7 +229,7 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceToggle"))
         compose.onNodeWithTag("addDeviceToggle").activate()
         compose.onNodeWithTag("manualDeviceId").performScrollTo().assertIsDisplayed()
-            .performTextInput("npub1short")
+            .performTextInput("npub1ccz8l9zpa47k6vz9gphftsrumpw80rjt3nhnefat4symjhrsnmjs38mnyd")
 
         compose.onAllNodesWithText("Approve").assertCountEquals(0)
         dismissSoftKeyboard()

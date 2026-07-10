@@ -971,27 +971,16 @@ private struct AddDeviceSection: View {
 
     private var canAddManualDevice: Bool {
         let value = normalizedDeviceApprovalRequest(model.approveDeviceKey)
-        return IrisDriveNativeLinkInput.isCompleteDeviceApproval(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines))
-            || looksLikeDeviceApprovalRequest(value)
+        return IrisDriveNativeLinkInput.isCompleteDeviceApproval(value)
     }
 
     private func normalizedDeviceApprovalRequest(_ value: String) -> String {
         value.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 
-    private func looksLikeDeviceApprovalRequest(_ value: String) -> Bool {
-        let lowercased = value.lowercased()
-        let prefixes = ["https://drive.iris.to/approve-device/", "nostr-identity://device-approval/"]
-        return prefixes.contains { prefix in
-            lowercased.hasPrefix(prefix)
-        }
-    }
-
     private func confirmManualDevice(_ value: String, force: Bool = false) {
         let trimmed = normalizedDeviceApprovalRequest(value)
-        guard IrisDriveNativeLinkInput.isCompleteDeviceApproval(trimmed)
-            || looksLikeDeviceApprovalRequest(trimmed)
-        else { return }
+        guard IrisDriveNativeLinkInput.isCompleteDeviceApproval(trimmed) else { return }
         guard force || lastPromptedApprovalRequest != trimmed else { return }
         pendingApprovalRequest = trimmed
         lastPromptedApprovalRequest = trimmed
@@ -1000,9 +989,7 @@ private struct AddDeviceSection: View {
 
     private func approvePendingDevice() {
         let request = normalizedDeviceApprovalRequest(pendingApprovalRequest)
-        guard IrisDriveNativeLinkInput.isCompleteDeviceApproval(request)
-            || looksLikeDeviceApprovalRequest(request)
-        else { return }
+        guard IrisDriveNativeLinkInput.isCompleteDeviceApproval(request) else { return }
         model.approveDevice(request: request, label: "")
         pendingApprovalRequest = ""
         lastPromptedApprovalRequest = ""
@@ -1016,7 +1003,7 @@ private struct AddDeviceSection: View {
     var body: some View {
         Section {
             DisclosureGroup(isExpanded: $isExpanded) {
-                TextField("Request link or device key", text: $model.approveDeviceKey)
+                TextField("Request link", text: $model.approveDeviceKey)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .accessibilityIdentifier("manualDeviceId")
@@ -1040,7 +1027,7 @@ private struct AddDeviceSection: View {
                 .disabled(!canAddManualDevice)
                 if !model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                    !canAddManualDevice {
-                    Text("That is not a complete request link or device key.")
+                    Text("That is not a complete request link.")
                         .font(.caption)
                         .foregroundStyle(.red)
                 }
@@ -1105,12 +1092,10 @@ private struct AddDeviceSection: View {
 
     private func prefillUiTestDeviceFields() {
         let requestLink = iosUiTestValue("IRIS_DRIVE_UI_TEST_LINKED_DEVICE_REQUEST")
-        let deviceKey = iosUiTestValue("IRIS_DRIVE_UI_TEST_LINKED_DEVICE")
-        let request = requestLink.isEmpty ? deviceKey : requestLink
-        if !request.isEmpty,
+        if !requestLink.isEmpty,
            model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            model.approveDeviceKey = request
-            confirmManualDevice(request)
+            model.approveDeviceKey = requestLink
+            confirmManualDevice(requestLink)
         }
     }
 }

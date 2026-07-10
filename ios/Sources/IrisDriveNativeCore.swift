@@ -256,15 +256,7 @@ enum IrisDriveNativeLinkInput {
 
     static func isCompleteDeviceApproval(_ text: String) -> Bool {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        if validateDeviceApproval(trimmed).isComplete {
-            return true
-        }
-        return [
-            "https://drive.iris.to/approve-device/",
-            "nostr-identity://device-approval/",
-        ].contains { prefix in
-            trimmed.range(of: prefix, options: [.anchored, .caseInsensitive]) != nil
-        }
+        return validateDeviceApproval(trimmed).isComplete
     }
 
     private static func validateWith(

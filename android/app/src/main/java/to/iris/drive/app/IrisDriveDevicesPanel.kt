@@ -510,7 +510,7 @@ private fun AddDevicePanel(
             onValueChange = onRequestChange,
             modifier = Modifier.fillMaxWidth().testTag("manualDeviceId"),
             singleLine = true,
-            label = { Text("Request link or device key") },
+            label = { Text("Request link") },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = {
                 if (canApprove && manualRequestIsComplete) {

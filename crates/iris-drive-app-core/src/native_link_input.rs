@@ -58,10 +58,7 @@ pub fn classify_link_input(input: String) -> LinkInputClassification {
 pub fn validate_link_input(input: String) -> LinkInputClassification {
     let mut classification: LinkInputClassification =
         iris_drive_core::classify_link_input(&input).into();
-    if !matches!(
-        classification.kind.as_str(),
-        "invite" | "app_key_pubkey" | "app_key_approval"
-    ) {
+    if !matches!(classification.kind.as_str(), "invite" | "app_key_approval") {
         classification.is_complete = false;
         classification.is_valid = false;
     }
@@ -91,10 +88,7 @@ pub fn validate_device_invite_input(input: String) -> LinkInputClassification {
 pub fn validate_device_approval_input(input: String) -> LinkInputClassification {
     let mut classification: LinkInputClassification =
         iris_drive_core::classify_link_input(&input).into();
-    if !matches!(
-        classification.kind.as_str(),
-        "app_key_pubkey" | "app_key_approval"
-    ) {
+    if classification.kind != "app_key_approval" {
         classification.is_complete = false;
         classification.is_valid = false;
     }
@@ -107,6 +101,12 @@ mod tests {
         classify_link_input, validate_device_approval_input, validate_device_invite_input,
         validate_link_input,
     };
+
+    const DEVICE_APP_KEY_HEX: &str =
+        "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+    const DEVICE_APP_KEY_NPUB: &str =
+        "npub1ccz8l9zpa47k6vz9gphftsrumpw80rjt3nhnefat4symjhrsnmjs38mnyd";
+    const DEVICE_APPROVAL_BOOTSTRAP: &str = "https://drive.iris.to/approve-device/eyJkZXZpY2VBcHBLZXlOcHViIjoibnB1YjFjY3o4bDl6cGE0N2s2dno5Z3BoZnRzcnVtcHc4MHJqdDNuaG5lZmF0NHN5bWpocnNubWpzMzhtbnlkIiwicmVxdWVzdE5wdWIiOiJucHViMWx5Y2c1cXZqdHJwM3FqZjVmN3psMzgyajl4Nm5yano5c2RoZW52eXhxOGMzODA4cXhtdXM2Z3EyNjYiLCJyZXF1ZXN0U2VjcmV0IjoiQUFFQ0F3UUZCZ2NJQ1FvTERBME9EeEFSRWhNVUZSWVhHQmthR3h3ZEhoOCIsImxhYmVsIjoiRml4dHVyZSBkZXZpY2UifQ";
 
     #[test]
     fn classify_nhash_file_exposes_native_open_target() {
@@ -169,5 +169,43 @@ mod tests {
         assert_eq!(invite.kind, "invite");
         assert!(!invite.is_complete);
         assert!(!invite.is_valid);
+    }
+
+    #[test]
+    fn validate_device_approval_input_only_accepts_shared_bootstrap() {
+        let approval = validate_device_approval_input(DEVICE_APPROVAL_BOOTSTRAP.to_owned());
+        assert_eq!(approval.kind, "app_key_approval");
+        assert!(approval.is_complete);
+        assert!(approval.is_valid);
+        assert_eq!(approval.app_key_pubkey, DEVICE_APP_KEY_NPUB);
+
+        for legacy_key in [DEVICE_APP_KEY_NPUB, DEVICE_APP_KEY_HEX] {
+            let legacy = validate_device_approval_input(legacy_key.to_owned());
+            assert_eq!(legacy.kind, "app_key_pubkey");
+            assert!(
+                !legacy.is_complete,
+                "accepted bare approval key {legacy_key}"
+            );
+            assert!(!legacy.is_valid, "accepted bare approval key {legacy_key}");
+
+            let generic = validate_link_input(legacy_key.to_owned());
+            assert!(
+                !generic.is_complete,
+                "accepted bare generic key {legacy_key}"
+            );
+            assert!(!generic.is_valid, "accepted bare generic key {legacy_key}");
+        }
+    }
+
+    #[test]
+    fn validate_device_approval_input_rejects_prefix_only_values() {
+        for input in [
+            "https://drive.iris.to/approve-device/",
+            "nostr-identity://device-approval/",
+        ] {
+            let approval = validate_device_approval_input(input.to_owned());
+            assert!(!approval.is_complete, "accepted approval prefix {input}");
+            assert!(!approval.is_valid, "accepted approval prefix {input}");
+        }
     }
 }

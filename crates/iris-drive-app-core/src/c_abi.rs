@@ -956,6 +956,12 @@ mod tests {
         iris_drive_validate_device_invite_input_json, iris_drive_validate_link_input_json,
     };
 
+    const DEVICE_APP_KEY_HEX: &str =
+        "c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5";
+    const DEVICE_APP_KEY_NPUB: &str =
+        "npub1ccz8l9zpa47k6vz9gphftsrumpw80rjt3nhnefat4symjhrsnmjs38mnyd";
+    const DEVICE_APPROVAL_BOOTSTRAP: &str = "https://drive.iris.to/approve-device/eyJkZXZpY2VBcHBLZXlOcHViIjoibnB1YjFjY3o4bDl6cGE0N2s2dno5Z3BoZnRzcnVtcHc4MHJqdDNuaG5lZmF0NHN5bWpocnNubWpzMzhtbnlkIiwicmVxdWVzdE5wdWIiOiJucHViMWx5Y2c1cXZqdHJwM3FqZjVmN3psMzgyajl4Nm5yano5c2RoZW52eXhxOGMzODA4cXhtdXM2Z3EyNjYiLCJyZXF1ZXN0U2VjcmV0IjoiQUFFQ0F3UUZCZ2NJQ1FvTERBME9EeEFSRWhNVUZSWVhHQmthR3h3ZEhoOCIsImxhYmVsIjoiRml4dHVyZSBkZXZpY2UifQ";
+
     #[test]
     fn c_abi_installs_rustls_crypto_provider() {
         iris_drive_install_rustls_crypto_provider();
@@ -1013,9 +1019,7 @@ mod tests {
 
     #[test]
     fn c_abi_splits_device_invite_and_approval_validation() {
-        let device_key =
-            CString::new("0000000000000000000000000000000000000000000000000000000000000001")
-                .expect("device key CString");
+        let device_key = CString::new(DEVICE_APP_KEY_HEX).expect("device key CString");
         let invite_json = take_string(iris_drive_validate_device_invite_input_json(
             device_key.as_ptr(),
         ));
@@ -1027,7 +1031,26 @@ mod tests {
         ));
         let approval: Value = serde_json::from_str(&approval_json).expect("approval JSON");
         assert_eq!(approval["kind"], "app_key_pubkey");
+        assert_eq!(approval["is_complete"], false);
+
+        let npub = CString::new(DEVICE_APP_KEY_NPUB).expect("device npub CString");
+        let approval_json = take_string(iris_drive_validate_device_approval_input_json(
+            npub.as_ptr(),
+        ));
+        let approval: Value = serde_json::from_str(&approval_json).expect("approval JSON");
+        assert_eq!(approval["kind"], "app_key_pubkey");
+        assert_eq!(approval["is_complete"], false);
+
+        let bootstrap =
+            CString::new(DEVICE_APPROVAL_BOOTSTRAP).expect("approval bootstrap CString");
+        let approval_json = take_string(iris_drive_validate_device_approval_input_json(
+            bootstrap.as_ptr(),
+        ));
+        let approval: Value = serde_json::from_str(&approval_json).expect("approval JSON");
+        assert_eq!(approval["kind"], "app_key_approval");
+        assert_eq!(approval["app_key_pubkey"], DEVICE_APP_KEY_NPUB);
         assert_eq!(approval["is_complete"], true);
+        assert_eq!(approval["is_valid"], true);
     }
 
     fn take_string(ptr: *mut std::ffi::c_char) -> String {

@@ -526,8 +526,7 @@ final class IrisDriveIOSUITests: XCTestCase {
 
     func testAddLinkedDeviceFromDevices() throws {
         let linkedDevice = try requiredEnvironment("IRIS_DRIVE_UI_TEST_LINKED_DEVICE")
-        let linkedDeviceApproval = optionalEnvironment("IRIS_DRIVE_UI_TEST_LINKED_DEVICE_REQUEST")
-            ?? linkedDevice
+        let linkedDeviceApproval = try requiredEnvironment("IRIS_DRIVE_UI_TEST_LINKED_DEVICE_REQUEST")
         let linkedDeviceLabel = optionalEnvironment("IRIS_DRIVE_UI_TEST_LINKED_DEVICE_LABEL")
             ?? "Linked device"
         let app = launchApp()
