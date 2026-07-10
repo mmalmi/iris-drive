@@ -1975,6 +1975,15 @@ fn app_key_link_request_retry_uses_startup_burst_before_steady_interval() {
     ));
 }
 
+#[test]
+fn app_key_link_request_startup_burst_covers_approval_window() {
+    assert!(
+        u64::from(super::APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS)
+            * super::APP_KEY_LINK_EXCHANGE_TICK_MILLIS
+            >= 30_000
+    );
+}
+
 fn write_native_fips_status_fixture(
     dir: &Path,
     endpoint_npub: &str,

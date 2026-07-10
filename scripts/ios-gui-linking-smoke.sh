@@ -525,6 +525,12 @@ run_ui_test \
   "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=false" \
   "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=127.0.0.1:0" \
   "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR="
+launch_sim_app \
+  "IRIS_DRIVE_FIPS_STATIC_PEERS=$owner_fips_peer" \
+  "IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=false" \
+  "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=false" \
+  "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=127.0.0.1:0" \
+  "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR="
 linked_device="$("$IDRIVE" --config-dir "$SIM_APP_BASE_DIR" status \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["profile"]["current_app_key_npub"])')"
 if ! wait_for_owner_inbound_request "$linked_device" 30; then

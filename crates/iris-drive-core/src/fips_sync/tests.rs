@@ -495,6 +495,58 @@ fn single_device_profile_does_not_route_to_bootstrap_fips_peers() {
 }
 
 #[test]
+fn admin_inbound_app_key_link_request_configures_pending_fips_peer() {
+    let current_pubkey = "dd".repeat(32);
+    let pending_pubkey = "ee".repeat(32);
+    let invite_pubkey = "ff".repeat(32);
+    let profile_id = crate::NostrIdentityId::new_v4();
+    let config = AppConfig {
+        profile: Some(crate::ProfileState {
+            profile_id,
+            app_key_pubkey: current_pubkey.clone(),
+            profile_roster_ops: Vec::new(),
+            app_key_link_secret: "link-secret".into(),
+            authorization_state: crate::AppKeyAuthorizationState::Authorized,
+            app_key_label: None,
+            app_keys: Some(crate::app_keys::AppKeysProjection {
+                profile_id: profile_id.to_string(),
+                signed_by_pubkey: Some(current_pubkey.clone()),
+                created_at: 1,
+                app_actors: vec![crate::app_keys::AppActorEntry::admin(
+                    current_pubkey,
+                    1,
+                    Some("Mac".into()),
+                )],
+                dck_generation: 0,
+                wrapped_dck: std::collections::BTreeMap::default(),
+            }),
+            profile_roster_projection: None,
+            outbound_app_key_link_request: None,
+            inbound_app_key_link_requests: vec![crate::profile::InboundAppKeyLinkRequest {
+                app_key_pubkey: pending_pubkey.clone(),
+                label: Some("iPhone".into()),
+                invite_pubkey,
+                request_url: String::new(),
+                requested_at: 1,
+            }],
+            handled_app_key_link_requests: Vec::new(),
+
+            pending_device_approval_receipts: Vec::new(),
+        }),
+        ..Default::default()
+    };
+    let pending_npub = PublicKey::from_hex(&pending_pubkey)
+        .unwrap()
+        .to_bech32()
+        .unwrap();
+
+    let peers = authorized_device_fips_peers(&config, &FipsTransportSettings::default());
+
+    assert_eq!(peers.len(), 1);
+    assert_eq!(peers[0].npub, pending_npub);
+}
+
+#[test]
 fn remote_authorized_device_keeps_bootstrap_fips_routing_peers() {
     let current_pubkey = "dd".repeat(32);
     let remote_pubkey = "ee".repeat(32);

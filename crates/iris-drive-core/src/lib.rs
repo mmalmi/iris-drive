@@ -13,6 +13,7 @@ pub mod config_lock;
 pub mod daemon_liveness;
 pub mod device_labels;
 pub mod direct_root_transport;
+mod fips_bootstrap;
 pub mod fips_status;
 pub mod fips_sync;
 pub mod profile;
