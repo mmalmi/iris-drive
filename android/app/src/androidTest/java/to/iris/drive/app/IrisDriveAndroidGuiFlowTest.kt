@@ -803,7 +803,7 @@ class IrisDriveAndroidGuiFlowTest {
     @Test
     fun inboundDeviceRequestApprovalKeepsInlineAddDevicePanelOpen() {
         val approvedRequests = mutableListOf<Pair<String, String>>()
-        val requestLink = "npub1260n42s06vzc7796w0fh3ny7zcpw6tlk4gq3940gmfrzl5c9pv2s3657q8"
+        val requestLink = "https://drive.iris.to/approve-device/eyJkZXZpY2VBcHBLZXlOcHViIjoibnB1YjFjY3o4bDl6cGE0N2s2dno5Z3BoZnRzcnVtcHc4MHJqdDNuaG5lZmF0NHN5bWpocnNubWpzMzhtbnlkIiwicmVxdWVzdE5wdWIiOiJucHViMWx5Y2c1cXZqdHJwM3FqZjVmN3psMzgyajl4Nm5yano5c2RoZW52eXhxOGMzODA4cXhtdXM2Z3EyNjYiLCJyZXF1ZXN0U2VjcmV0IjoiQUFFQ0F3UUZCZ2NJQ1FvTERBME9EeEFSRWhNVUZSWVhHQmthR3h3ZEhoOCIsImxhYmVsIjoiVGFibGV0In0"
         val state = AppState(
             profile = profileState().copy(
                 inboundAppKeyLinkRequests = listOf(

@@ -37,7 +37,7 @@ const FIPS_REQUEST_MAX_ATTEMPTS: usize = 4;
 const FIPS_PACKET_CHANNEL_CAPACITY: usize = 8192;
 const FIPS_WEBRTC_MAX_CONNECTIONS: usize = 16;
 const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 0;
-const APP_KEY_LINK_OPEN_DISCOVERY_MAX_PENDING: usize = 16;
+const APP_KEY_LINK_OPEN_DISCOVERY_MAX_PENDING: usize = 64;
 pub const IRIS_DRIVE_FIPS_DISCOVERY_SCOPE: &str = "fips-overlay-v1";
 
 #[derive(Debug, Error)]

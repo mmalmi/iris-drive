@@ -913,10 +913,7 @@ fn admin_endpoint_options_allow_open_app_key_link_requests() {
         &settings,
     );
 
-    assert_eq!(
-        options.open_discovery_max_pending,
-        APP_KEY_LINK_OPEN_DISCOVERY_MAX_PENDING
-    );
+    assert_eq!(options.open_discovery_max_pending, 64);
 }
 
 #[test]
