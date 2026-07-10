@@ -37,7 +37,7 @@ fn direct_root_mesh_reuses_cached_event_for_same_logical_root() {
 }
 
 #[test]
-fn direct_root_republish_includes_cached_remote_events() {
+fn direct_root_republish_only_includes_local_current_events() {
     let mut exchange = DirectRootExchange::default();
     let local = DirectRootEvent {
         key: "drive-root:local:main:1:local-hash:local-key:local,remote".to_string(),
@@ -55,21 +55,17 @@ fn direct_root_republish_includes_cached_remote_events() {
     exchange.cache_event(remote.clone());
     let events = exchange.events_for_publish(vec![local.clone()]);
 
-    assert_eq!(events.len(), 2);
+    assert_eq!(events.len(), 1);
     let local_publish = events
         .iter()
         .find(|publish| publish.event.event_id == local.event_id)
         .unwrap();
-    let remote_publish = events
-        .iter()
-        .find(|publish| publish.event.event_id == remote.event_id)
-        .unwrap();
+    assert_eq!(local_publish.event.event_id, local.event_id);
     assert_eq!(local_publish.source, DirectRootPublishSource::LocalCurrent);
-    assert_eq!(remote_publish.source, DirectRootPublishSource::CachedRelay);
 }
 
 #[test]
-fn direct_root_republish_keeps_latest_sequence_per_root_family() {
+fn direct_root_cache_keeps_latest_sequence_per_root_family() {
     let mut exchange = DirectRootExchange::default();
     let older = DirectRootEvent {
         key: "drive-root:remote:main:7:old-hash:old-key:local,remote".to_string(),
@@ -87,11 +83,16 @@ fn direct_root_republish_keeps_latest_sequence_per_root_family() {
     exchange.cache_event(older.clone());
     exchange.cache_event(newer.clone());
     exchange.cache_event(older);
-    let events = exchange.events_for_publish(Vec::new());
 
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].event.event_id, newer.event_id);
-    assert_eq!(events[0].source, DirectRootPublishSource::CachedRelay);
+    assert_eq!(exchange.cached_events.len(), 1);
+    assert_eq!(
+        exchange
+            .cached_events
+            .values()
+            .next()
+            .map(|event| event.event_id.as_str()),
+        Some(newer.event_id.as_str())
+    );
 }
 
 #[test]
@@ -158,31 +159,6 @@ fn direct_root_mesh_route_churn_does_not_clear_republish_throttle() {
         [] as [String; 0],
     ));
     assert!(!exchange.should_publish_key(key, now + std::time::Duration::from_millis(500)));
-}
-
-#[test]
-fn direct_root_mesh_route_churn_does_not_clear_cached_relay_throttle() {
-    let mut exchange = DirectRootExchange::default();
-    let key = "drive-root:device:main:7:root-hash:root-key:device,remote";
-    let now = std::time::Instant::now();
-
-    assert!(exchange.refresh_known_root_peers(
-        ["authorized-a".to_string(), "authorized-b".to_string()],
-        ["mesh-a".to_string()],
-        [] as [String; 0],
-    ));
-    assert!(exchange.should_publish_candidate_key(key, DirectRootPublishSource::CachedRelay, now));
-
-    assert!(exchange.refresh_known_root_peers(
-        ["authorized-a".to_string(), "authorized-b".to_string()],
-        ["mesh-b".to_string()],
-        [] as [String; 0],
-    ));
-    assert!(!exchange.should_publish_candidate_key(
-        key,
-        DirectRootPublishSource::CachedRelay,
-        now + std::time::Duration::from_millis(500)
-    ));
 }
 
 #[test]
@@ -253,11 +229,12 @@ fn direct_root_new_visible_authorized_peer_clears_republish_throttle() {
 }
 
 #[test]
-fn direct_root_republishes_after_short_native_cadence() {
+fn direct_root_steady_republish_uses_idle_safe_cadence() {
     let mut exchange = DirectRootExchange::default();
     let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
     let now = std::time::Instant::now();
 
+    assert_eq!(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS, 300);
     assert!(exchange.should_publish_key(key, now));
     assert!(!exchange.should_publish_key(
         key,
@@ -266,26 +243,6 @@ fn direct_root_republishes_after_short_native_cadence() {
     assert!(exchange.should_publish_key(
         key,
         now + std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
-    ));
-}
-
-#[test]
-fn direct_root_cached_relay_roots_publish_newer_sequence_immediately() {
-    let mut exchange = DirectRootExchange::default();
-    let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
-    let newer_key = "drive-root:device:main:9:new-root-hash:new-root-key:device,remote";
-    let now = std::time::Instant::now();
-
-    assert!(exchange.should_publish_candidate_key(key, DirectRootPublishSource::CachedRelay, now));
-    assert!(!exchange.should_publish_candidate_key(
-        key,
-        DirectRootPublishSource::CachedRelay,
-        now + std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS - 1)
-    ));
-    assert!(exchange.should_publish_candidate_key(
-        newer_key,
-        DirectRootPublishSource::CachedRelay,
-        now + std::time::Duration::from_millis(1)
     ));
 }
 
@@ -313,40 +270,6 @@ fn direct_root_cache_event_preserves_same_key_republish_throttle() {
 }
 
 #[test]
-fn direct_root_peer_change_allows_cached_relay_once() {
-    let mut exchange = DirectRootExchange::default();
-    let key = "drive-root:device:main:8:root-hash:root-key:device,remote";
-    let now = std::time::Instant::now();
-
-    assert!(exchange.refresh_known_root_peers(
-        ["authorized-a".to_string(), "authorized-b".to_string()],
-        ["mesh-a".to_string()],
-        [] as [String; 0],
-    ));
-    assert!(exchange.should_publish_candidate_key(key, DirectRootPublishSource::CachedRelay, now));
-    assert!(!exchange.should_publish_candidate_key(
-        key,
-        DirectRootPublishSource::CachedRelay,
-        now + std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS - 1)
-    ));
-
-    assert!(exchange.refresh_known_root_peers(
-        [
-            "authorized-a".to_string(),
-            "authorized-b".to_string(),
-            "authorized-c".to_string(),
-        ],
-        ["mesh-a".to_string()],
-        [] as [String; 0],
-    ));
-    assert!(exchange.should_publish_candidate_key(
-        key,
-        DirectRootPublishSource::CachedRelay,
-        now + std::time::Duration::from_secs(1)
-    ));
-}
-
-#[test]
 fn direct_root_metadata_republishes_on_longer_cadence() {
     let mut exchange = DirectRootExchange::default();
     let key = "profile-op:profile:op";
@@ -355,7 +278,7 @@ fn direct_root_metadata_republishes_on_longer_cadence() {
     assert!(exchange.should_publish_key(key, now));
     assert!(!exchange.should_publish_key(
         key,
-        now + std::time::Duration::from_secs(DIRECT_ROOT_REPUBLISH_INTERVAL_SECS)
+        now + std::time::Duration::from_secs(DIRECT_ROOT_METADATA_REPUBLISH_INTERVAL_SECS - 1)
     ));
     assert!(exchange.should_publish_key(
         key,
@@ -400,7 +323,7 @@ fn direct_root_exchange_rejects_older_root_when_newer_is_cached() {
 }
 
 #[test]
-fn direct_root_republish_collapses_recipient_list_variants() {
+fn direct_root_cache_collapses_recipient_list_variants() {
     let mut exchange = DirectRootExchange::default();
     let narrow = DirectRootEvent {
         key: "drive-root:remote:main:8:same-hash:same-key:local".to_string(),
@@ -417,10 +340,16 @@ fn direct_root_republish_collapses_recipient_list_variants() {
 
     exchange.cache_event(narrow);
     exchange.cache_event(wide.clone());
-    let events = exchange.events_for_publish(Vec::new());
 
-    assert_eq!(events.len(), 1);
-    assert_eq!(events[0].event.event_id, wide.event_id);
+    assert_eq!(exchange.cached_events.len(), 1);
+    assert_eq!(
+        exchange
+            .cached_events
+            .values()
+            .next()
+            .map(|event| event.event_id.as_str()),
+        Some(wide.event_id.as_str())
+    );
 }
 
 #[test]
@@ -665,19 +594,6 @@ fn direct_root_publish_bursts_root_frames_only() {
         4,
         "local share roots need the same delivery burst"
     );
-    assert_eq!(
-        direct_root_publish_attempts_for_source(drive_root, DirectRootPublishSource::CachedRelay),
-        2,
-        "relayed drive roots should not be single-shot"
-    );
-    assert_eq!(
-        direct_root_publish_attempts_for_source(
-            drive_root,
-            DirectRootPublishSource::CachedStateRequestReply
-        ),
-        1,
-        "cached state-request replies should not flood idle peers"
-    );
     assert!(should_publish_direct_root_hint(
         drive_root,
         DirectRootPublishSource::LocalCurrent
@@ -707,18 +623,9 @@ fn direct_root_publish_bursts_root_frames_only() {
         1
     ));
     assert!(should_publish_direct_root_full_frame(
-        drive_root,
-        DirectRootPublishSource::CachedRelay,
-        1
-    ));
-    assert!(should_publish_direct_root_full_frame(
         "profile-op:profile:op",
         DirectRootPublishSource::LocalCurrent,
         1
-    ));
-    assert!(!should_publish_direct_root_hint(
-        drive_root,
-        DirectRootPublishSource::CachedRelay
     ));
     assert!(!should_publish_direct_root_hint(
         "profile-op:profile:op",
@@ -729,7 +636,7 @@ fn direct_root_publish_bursts_root_frames_only() {
 }
 
 #[test]
-fn direct_root_state_request_reply_includes_cached_remote_roots() {
+fn direct_root_state_request_reply_only_includes_local_current_roots() {
     let mut exchange = DirectRootExchange::default();
     let local = DirectRootEvent {
         key: "drive-root:local:main:8:local-hash:local-key:local,remote".to_string(),
@@ -747,7 +654,7 @@ fn direct_root_state_request_reply_includes_cached_remote_roots() {
     exchange.cache_event(remote.clone());
     let events = exchange.state_request_events_for_publish(vec![local.clone()]);
 
-    assert_eq!(events.len(), 2);
+    assert_eq!(events.len(), 1);
     let local_reply = events
         .iter()
         .find(|event| event.event.event_id == local.event_id)
@@ -756,14 +663,7 @@ fn direct_root_state_request_reply_includes_cached_remote_roots() {
         local_reply.source,
         DirectRootPublishSource::StateRequestReply
     );
-    let cached_reply = events
-        .iter()
-        .find(|event| event.event.event_id == remote.event_id)
-        .unwrap();
-    assert_eq!(
-        cached_reply.source,
-        DirectRootPublishSource::CachedStateRequestReply
-    );
+    assert_eq!(local_reply.event.event_id, local.event_id);
     assert_eq!(
         direct_root_publish_attempts_for_source(
             &local.key,
@@ -781,22 +681,6 @@ fn direct_root_state_request_reply_includes_cached_remote_roots() {
         DirectRootPublishSource::StateRequestReply,
         1
     ));
-    assert_eq!(
-        direct_root_publish_attempts_for_source(
-            &remote.key,
-            DirectRootPublishSource::CachedStateRequestReply,
-        ),
-        1
-    );
-    assert!(should_publish_direct_root_full_frame(
-        &remote.key,
-        DirectRootPublishSource::CachedStateRequestReply,
-        0
-    ));
-    assert!(should_publish_direct_root_hint(
-        &remote.key,
-        DirectRootPublishSource::CachedStateRequestReply,
-    ));
 }
 
 #[test]
@@ -807,46 +691,31 @@ fn direct_root_state_request_reply_throttle_is_per_target_peer() {
 
     assert!(exchange.should_publish_candidate_key_for_target(
         key,
-        DirectRootPublishSource::CachedStateRequestReply,
+        DirectRootPublishSource::StateRequestReply,
         Some("peer-a"),
         now
     ));
     assert!(!exchange.should_publish_candidate_key_for_target(
         key,
-        DirectRootPublishSource::CachedStateRequestReply,
+        DirectRootPublishSource::StateRequestReply,
         Some("peer-a"),
-        now + std::time::Duration::from_millis(500)
+        now + std::time::Duration::from_secs(
+            DIRECT_ROOT_STATE_REQUEST_REPLY_REPUBLISH_INTERVAL_SECS - 1
+        )
     ));
     assert!(exchange.should_publish_candidate_key_for_target(
         key,
-        DirectRootPublishSource::CachedStateRequestReply,
+        DirectRootPublishSource::StateRequestReply,
         Some("peer-b"),
         now + std::time::Duration::from_millis(500)
     ));
-    let state_reply_now = now + std::time::Duration::from_millis(500);
     assert!(exchange.should_publish_candidate_key_for_target(
         key,
         DirectRootPublishSource::StateRequestReply,
         Some("peer-a"),
-        state_reply_now
-    ));
-    assert!(!exchange.should_publish_candidate_key_for_target(
-        key,
-        DirectRootPublishSource::StateRequestReply,
-        Some("peer-a"),
-        state_reply_now
-            + std::time::Duration::from_secs(
-                DIRECT_ROOT_STATE_REQUEST_REPLY_REPUBLISH_INTERVAL_SECS - 1
-            )
-    ));
-    assert!(exchange.should_publish_candidate_key_for_target(
-        key,
-        DirectRootPublishSource::StateRequestReply,
-        Some("peer-a"),
-        state_reply_now
-            + std::time::Duration::from_secs(
-                DIRECT_ROOT_STATE_REQUEST_REPLY_REPUBLISH_INTERVAL_SECS
-            )
+        now + std::time::Duration::from_secs(
+            DIRECT_ROOT_STATE_REQUEST_REPLY_REPUBLISH_INTERVAL_SECS
+        )
     ));
 }
 
@@ -855,14 +724,8 @@ fn direct_root_state_request_replies_also_use_mesh_for_targeted_recovery() {
     assert!(should_publish_targeted_direct_root_reply_over_mesh(
         DirectRootPublishSource::StateRequestReply
     ));
-    assert!(should_publish_targeted_direct_root_reply_over_mesh(
-        DirectRootPublishSource::CachedStateRequestReply
-    ));
     assert!(!should_publish_targeted_direct_root_reply_over_mesh(
         DirectRootPublishSource::LocalCurrent
-    ));
-    assert!(!should_publish_targeted_direct_root_reply_over_mesh(
-        DirectRootPublishSource::CachedRelay
     ));
 }
 
@@ -1013,6 +876,71 @@ fn direct_root_current_state_from_disk_hydrates_roster_sidecar_recipients() {
             .split(',')
             .any(|recipient| recipient == remote_app_key)
     );
+}
+
+#[test]
+fn direct_root_state_request_rebuilds_current_events_from_disk() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let work = tempfile::tempdir().unwrap();
+    let account = Profile::create(config_dir.path(), Some("native".to_string())).unwrap();
+    let mut initial_config = AppConfig {
+        profile: Some(account.state.clone()),
+        ..AppConfig::default()
+    };
+    initial_config.upsert_drive(Drive::primary(account.state.root_scope_id()));
+    initial_config
+        .save(config_path_in(config_dir.path()))
+        .unwrap();
+    std::fs::write(work.path().join("fresh.txt"), b"fresh root").unwrap();
+    let mut daemon = Daemon::open(config_dir.path()).unwrap();
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime
+        .block_on(daemon.import_source_dir(work.path()))
+        .unwrap();
+    let config = AppConfig {
+        profile: Some(account.state.clone()),
+        drives: daemon.config().drives.clone(),
+        ..AppConfig::default()
+    };
+    let expected_root_cid = config
+        .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+        .and_then(|drive| drive.app_key_roots.get(&account.state.app_key_pubkey))
+        .map(|root| root.root_cid.clone())
+        .unwrap();
+    config.save(config_path_in(config_dir.path())).unwrap();
+
+    let mut exchange = DirectRootExchange::default();
+    let fingerprint = config_file_fingerprint(&config_path_in(config_dir.path())).unwrap();
+    exchange.current_sync_events_cache = Some(CachedCurrentSyncEvents {
+        config_fingerprint: fingerprint,
+        events: vec![DirectRootEvent {
+            key: format!(
+                "drive-root:{}:main:1:stale-hash:stale-key:{}",
+                account.state.app_key_pubkey, account.state.app_key_pubkey
+            ),
+            event_id: "stale-event".to_string(),
+            kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
+            json: "{\"id\":\"stale\"}".to_string(),
+        }],
+    });
+
+    let events =
+        runtime
+            .block_on(exchange.state_request_current_sync_events(
+                config_dir.path(),
+                &account.state.root_scope_id(),
+            ))
+            .unwrap();
+    let drive_root = events
+        .iter()
+        .find(|event| event.key.starts_with("drive-root:"))
+        .expect("fresh drive root event");
+
+    assert_ne!(drive_root.event_id, "stale-event");
+    assert!(drive_root.key.contains(&expected_root_cid));
 }
 
 #[test]

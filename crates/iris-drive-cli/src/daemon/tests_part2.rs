@@ -1,3 +1,9 @@
+#[test]
+fn daemon_status_probe_uses_idle_safe_cadence() {
+    assert_eq!(super::DIRECT_ROOT_MAINTENANCE_INTERVAL_SECS, 10);
+    assert_eq!(super::RELAY_STATUS_PROBE_INTERVAL_SECS, 30);
+}
+
 #[tokio::test]
 async fn windows_cloud_rescan_upserts_nested_local_file() {
     let (_blocks, provider) = fresh_test_provider().await;
@@ -636,6 +642,45 @@ fn startup_root_sync_retries_failed_remote_roots() {
     let roots = startup_root_cids_needing_sync(config_dir.path(), &config);
 
     assert_eq!(roots, vec!["failed-root".to_string()]);
+}
+
+#[test]
+fn known_remote_root_without_blocks_counts_as_pending() {
+    let config_dir = tempfile::tempdir().unwrap();
+    let mut drive = Drive {
+        root_scope_id: iris_drive_core::NostrIdentityId::new_v4().to_string(),
+        drive_id: PRIMARY_DRIVE_ID.to_string(),
+        display_name: "My Drive".to_string(),
+        role: DriveRole::Owner,
+        app_key_roots: BTreeMap::new(),
+        last_root_cid: None,
+        key_hex: None,
+    };
+    drive.app_key_roots.insert(
+        "device-a".to_string(),
+        AppKeyRootRef::legacy("pending-root", 10, 1),
+    );
+    let config = AppConfig {
+        drives: vec![drive],
+        ..AppConfig::default()
+    };
+
+    assert_eq!(
+        remote_root_blocks_pending_count(config_dir.path(), &config),
+        1
+    );
+
+    record_block_sync(
+        config_dir.path(),
+        "pending-root",
+        "fips",
+        &DownloadReport::default(),
+    );
+
+    assert_eq!(
+        remote_root_blocks_pending_count(config_dir.path(), &config),
+        0
+    );
 }
 
 #[tokio::test]

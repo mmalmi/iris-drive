@@ -327,6 +327,10 @@ fn startup_root_cids_needing_sync(config_dir: &Path, config: &AppConfig) -> Vec<
         .collect()
 }
 
+pub(crate) fn remote_root_blocks_pending_count(config_dir: &Path, config: &AppConfig) -> usize {
+    startup_root_cids_needing_sync(config_dir, config).len()
+}
+
 pub(crate) fn enqueue_pending_root_sync_followups(
     config_dir: &Path,
     fips_blocks: Option<Arc<FsFipsBlockSync>>,

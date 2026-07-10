@@ -11,6 +11,8 @@ fn write_runtime_daemon_status(config_dir: &Path, payload: Value) -> Value {
 
 const DIRECT_APP_MESSAGE_DRAIN_LIMIT: usize = 4096;
 const DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS: u64 = 750;
+const DIRECT_ROOT_MAINTENANCE_INTERVAL_SECS: u64 = 10;
+const RELAY_STATUS_PROBE_INTERVAL_SECS: u64 = 30;
 const STATUS_PROBE_TASK_KEY: &str = "status_probe";
 
 #[allow(
@@ -251,16 +253,6 @@ pub(crate) fn cmd_daemon(
         }
         let mut notifications = client.notifications();
         let mut relay_notifications_open = true;
-        let mut approval_roster_subscription_pending = state
-            .outbound_app_key_link_request
-            .as_ref()
-            .and_then(|pending| {
-                iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(
-                    pending,
-                )
-                .ok()
-            })
-            .is_some_and(|(request, _)| request.profile_id.is_none());
         let approval_client = relay_sync::subscribe_device_approval_events(&state)
             .await
             .context("subscribing to request-scoped device approval events")?;
@@ -387,12 +379,19 @@ pub(crate) fn cmd_daemon(
         let parent_exit = parent_exit_signal(service_mode);
         tokio::pin!(parent_exit);
 
-        let relay_status_period = std::time::Duration::from_secs(10);
+        let relay_status_period = std::time::Duration::from_secs(RELAY_STATUS_PROBE_INTERVAL_SECS);
         let mut relay_status_timer = tokio::time::interval_at(
             tokio::time::Instant::now() + relay_status_period,
             relay_status_period,
         );
         relay_status_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let direct_root_maintenance_period =
+            std::time::Duration::from_secs(DIRECT_ROOT_MAINTENANCE_INTERVAL_SECS);
+        let mut direct_root_maintenance_timer = tokio::time::interval_at(
+            tokio::time::Instant::now() + direct_root_maintenance_period,
+            direct_root_maintenance_period,
+        );
+        direct_root_maintenance_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut direct_root_change_announce_pending = false;
         let mut direct_root_change_announce_timer =
             Box::pin(tokio::time::sleep(std::time::Duration::from_secs(86_400)));
@@ -432,6 +431,17 @@ pub(crate) fn cmd_daemon(
                     match recv {
                         Some(Ok(RelayPoolNotification::Event { event, .. })) => {
                             if relay_sync::is_device_approval_receipt_event(&event) {
+                                continue;
+                            }
+                            if event.kind.as_u16() == iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP
+                                && AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?
+                                    .profile
+                                    .as_ref()
+                                    .is_some_and(|profile| {
+                                        profile.authorization_state
+                                            == iris_drive_core::AppKeyAuthorizationState::AwaitingApproval
+                                    })
+                            {
                                 continue;
                             }
                             if !relay_sync::relay_event_matches_policy(&subscription_policy, &event)
@@ -507,7 +517,7 @@ pub(crate) fn cmd_daemon(
                             .await
                             {
                                 Ok(_) => {
-                                    if is_receipt && approval_roster_subscription_pending {
+                                    if is_receipt {
                                         let config = AppConfig::load_or_default_cached_profile(
                                             config_path_in(config_dir),
                                         )?;
@@ -519,8 +529,7 @@ pub(crate) fn cmd_daemon(
                                                 profile.profile_id,
                                             )
                                             .await
-                                            .context("subscribing to unbound approval roster ops")?;
-                                            approval_roster_subscription_pending = false;
+                                            .context("subscribing to request-scoped approval roster ops")?;
                                         }
                                     }
                                 }
@@ -834,6 +843,8 @@ pub(crate) fn cmd_daemon(
                             fips_blocks.clone(),
                         ),
                     );
+                }
+                _ = direct_root_maintenance_timer.tick() => {
                     let direct_root_peers_changed = match direct_roots
                         .request_roots_from_new_peers(config_dir, fips_blocks.as_deref())
                         .await
@@ -847,21 +858,33 @@ pub(crate) fn cmd_daemon(
                             false
                         }
                     };
+                    let latest_config =
+                        AppConfig::load_or_default_cached_profile(config_path_in(config_dir))
+                            .unwrap_or_else(|_| config.clone());
                     let missing_online_root_count = if let Some(sync) = fips_blocks.as_deref() {
                         online_authorized_app_key_missing_primary_root_count(
-                            config_dir, &config, sync,
+                            config_dir,
+                            &latest_config,
+                            sync,
                         )
                         .await
                     } else {
                         0
                     };
-                    if direct_root_peers_changed || missing_online_root_count > 0 {
+                    let pending_remote_root_count =
+                        remote_root_blocks_pending_count(config_dir, &latest_config);
+                    if direct_root_peers_changed
+                        || missing_online_root_count > 0
+                        || pending_remote_root_count > 0
+                    {
                         if let Err(error) = direct_roots
                             .request_current_state_from_peers(
                                 config_dir,
                                 fips_blocks.as_deref(),
                                 if direct_root_peers_changed {
                                     "peer_refresh"
+                                } else if pending_remote_root_count > 0 {
+                                    "pending_remote_root"
                                 } else {
                                     "missing_online_root"
                                 },

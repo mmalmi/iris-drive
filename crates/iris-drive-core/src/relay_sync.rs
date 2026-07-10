@@ -902,15 +902,6 @@ async fn publish_device_approval_with_client(
     pending: &PendingDeviceApprovalReceipt,
 ) -> Result<Vec<nostr_sdk::EventId>, RelayError> {
     let mut event_ids = Vec::with_capacity(state.profile_roster_ops.len() + 1);
-    let receipt = Event::from_json(&pending.event_json)
-        .map_err(|error| RelayError::Client(format!("device approval receipt JSON: {error}")))?;
-    if !is_device_approval_receipt_event(&receipt) {
-        return Err(RelayError::Client(
-            "pending device approval receipt has the wrong event coordinate".to_string(),
-        ));
-    }
-    event_ids.push(send_event_to_accepted_relay(client, relay, &receipt).await?);
-
     for op in &state.profile_roster_ops {
         let event = Event::from_json(&op.event_json)
             .map_err(|error| RelayError::Client(format!("profile roster op JSON: {error}")))?;
@@ -923,6 +914,15 @@ async fn publish_device_approval_with_client(
         }
         event_ids.push(send_event_to_accepted_relay(client, relay, &event).await?);
     }
+
+    let receipt = Event::from_json(&pending.event_json)
+        .map_err(|error| RelayError::Client(format!("device approval receipt JSON: {error}")))?;
+    if !is_device_approval_receipt_event(&receipt) {
+        return Err(RelayError::Client(
+            "pending device approval receipt has the wrong event coordinate".to_string(),
+        ));
+    }
+    event_ids.push(send_event_to_accepted_relay(client, relay, &receipt).await?);
     Ok(event_ids)
 }
 
@@ -1169,15 +1169,6 @@ pub async fn subscribe_device_approval_events(
     if let Err(error) = subscribe_result {
         shutdown_client(&client).await;
         return Err(error);
-    }
-    let (request, _) =
-        crate::app_key_link_transport::parse_pending_app_key_approval_request(pending)
-            .map_err(|error| RelayError::Client(error.to_string()))?;
-    if let Some(profile_id) = request.profile_id {
-        if let Err(error) = subscribe_nostr_identity_roster_ops(&client, profile_id).await {
-            shutdown_client(&client).await;
-            return Err(error);
-        }
     }
     Ok(Some(client))
 }

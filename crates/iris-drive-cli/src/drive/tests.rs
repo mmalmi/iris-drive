@@ -45,6 +45,25 @@ fn mark_daemon_live(config_dir: &Path) {
     .unwrap();
 }
 
+fn start_provider_wake_sink(config_dir: &Path, expected_connections: usize) {
+    let listener = std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    std::fs::write(
+        iris_drive_core::paths::provider_root_wake_path_in(config_dir),
+        serde_json::json!({ "port": port }).to_string(),
+    )
+    .unwrap();
+    std::thread::spawn(move || {
+        for _ in 0..expected_connections {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            let mut body = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut stream, &mut body);
+        }
+    });
+}
+
 #[test]
 fn provider_mutation_requires_live_daemon() {
     let config_dir = tempfile::tempdir().unwrap();
@@ -386,6 +405,71 @@ fn provider_writes_with_same_stale_base_accumulate_all_files() {
             paths,
             vec!["file-1.txt", "file-2.txt", "file-3.txt", "file-4.txt"]
         );
+    });
+}
+
+#[test]
+fn staged_provider_ignored_writes_preserve_visible_file() {
+    let config_dir = tempfile::tempdir().unwrap();
+    init_config(config_dir.path());
+    mark_daemon_live(config_dir.path());
+    let source_dir = tempfile::tempdir().unwrap();
+    let writes = [
+        ("noise/keep.txt", "keep"),
+        ("noise/.DS_Store", "finder"),
+        ("noise/._keep.txt", "resource fork"),
+        ("noise/Thumbs.db", "thumbs"),
+        ("noise/desktop.ini", "desktop"),
+        ("noise/draft~", "backup"),
+        ("noise/#draft#", "emacs"),
+        ("noise/backup.sbak", "seafile backup"),
+        (".hashtree/prev", "internal"),
+    ];
+    start_provider_wake_sink(config_dir.path(), writes.len());
+
+    for (path, content) in writes {
+        let source = source_dir
+            .path()
+            .join(path.replace(['/', '#'], "_").replace('~', "-"));
+        std::fs::write(&source, content).unwrap();
+        cmd_provider(
+            config_dir.path(),
+            ProviderCmd::Write {
+                base_root_cid: None,
+                path: path.into(),
+                source,
+            },
+        )
+        .unwrap();
+    }
+
+    let staged = read_provider_staging(config_dir.path())
+        .unwrap()
+        .expect("provider writes should stage a root when the wake listener is present");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .unwrap();
+    runtime.block_on(async {
+        let mut daemon = Daemon::open(config_dir.path()).unwrap();
+        daemon
+            .import_visible_root_with_tombstone_base_and_paths(
+                staged.root().unwrap(),
+                staged.tombstone_base_root().unwrap(),
+                Some(&staged.tombstone_paths),
+            )
+            .await
+            .unwrap();
+        let merged = iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
+            .await
+            .unwrap();
+        let paths = merged
+            .view
+            .files
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(paths, vec!["noise/keep.txt"]);
     });
 }
 

@@ -28,9 +28,7 @@ struct DirectRootPublishEvent {
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 enum DirectRootPublishSource {
     LocalCurrent,
-    CachedRelay,
     StateRequestReply,
-    CachedStateRequestReply,
 }
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum DirectRootFrameOutcome {
@@ -50,9 +48,7 @@ impl DirectRootPublishSource {
     fn as_str(self) -> &'static str {
         match self {
             Self::LocalCurrent => "local_current",
-            Self::CachedRelay => "cached_relay",
             Self::StateRequestReply => "state_request",
-            Self::CachedStateRequestReply => "state_request_cached",
         }
     }
 }
@@ -149,35 +145,33 @@ impl DirectRootExchange {
         Ok(())
     }
 
-    async fn announce_state_request_reply_cached(
+    async fn announce_state_request_reply(
         &mut self,
         config_dir: &Path,
-        config_fingerprint: ConfigFileFingerprint,
         root_scope_id: &str,
         sync: &FsFipsBlockSync,
         reply_peer: &str,
     ) -> Result<()> {
         self.subscribe_profile_stream(root_scope_id, Some(sync)).await;
         let stream = direct_root_mesh_stream(root_scope_id);
-        let local_events = if let Some(cached) = self
-            .current_sync_events_cache
-            .as_ref()
-            .filter(|cached| cached.config_fingerprint == config_fingerprint)
-        {
-            cached.events.clone()
-        } else {
-            let expected_root_scope_id = root_scope_id.to_string();
-            self.cached_current_sync_events_from_config(config_fingerprint, || {
-                build_current_sync_events_from_disk(config_dir, &expected_root_scope_id)
-            })
-            .await?
-        };
+        let local_events = self
+            .state_request_current_sync_events(config_dir, root_scope_id)
+            .await?;
         let now = std::time::Instant::now();
         for publish_event in self.state_request_events_for_publish(local_events) {
             self.publish_event(sync, &stream, publish_event, Some(reply_peer), now)
                 .await?;
         }
         Ok(())
+    }
+
+    async fn state_request_current_sync_events(
+        &mut self,
+        config_dir: &Path,
+        root_scope_id: &str,
+    ) -> Result<Vec<DirectRootEvent>> {
+        let expected_root_scope_id = root_scope_id.to_string();
+        build_current_sync_events_from_disk(config_dir, &expected_root_scope_id).await
     }
 
     async fn publish_event(
@@ -608,9 +602,8 @@ impl DirectRootExchange {
                 "reply_peer": reply_peer,
             })
         );
-        self.announce_state_request_reply_cached(
+        self.announce_state_request_reply(
             config_dir,
-            config_fingerprint,
             &root_scope_id,
             sync.as_ref(),
             reply_peer,
@@ -1027,81 +1020,29 @@ impl DirectRootExchange {
         &self,
         local_events: Vec<DirectRootEvent>,
     ) -> Vec<DirectRootPublishEvent> {
-        let mut events = Vec::with_capacity(local_events.len() + self.cached_events.len());
-        let mut keys = BTreeSet::new();
-        let mut local_slots = BTreeMap::new();
-        for event in local_events {
-            let event = self.event_for_publish(event);
-            keys.insert(event.key.clone());
-            if let Some(slot) = direct_root_cache_slot(&event.key) {
-                local_slots.insert(slot.family.clone(), slot);
-            }
-            events.push(DirectRootPublishEvent {
-                event,
+        local_events
+            .into_iter()
+            .map(|event| DirectRootPublishEvent {
+                event: self.event_for_publish(event),
                 source: DirectRootPublishSource::LocalCurrent,
-            });
-        }
-        events.extend(
-            self.cached_events
-                .values()
-                .filter(|event| {
-                    if keys.contains(&event.key) {
-                        return false;
-                    }
-                    let Some(slot) = direct_root_cache_slot(&event.key) else {
-                        return true;
-                    };
-                    local_slots
-                        .get(&slot.family)
-                        .is_none_or(|local_slot| direct_root_slot_is_newer(&slot, local_slot))
-                })
-                .cloned()
-                .map(|event| DirectRootPublishEvent {
-                    event,
-                    source: DirectRootPublishSource::CachedRelay,
-                }),
-        );
-        events
+            })
+            .collect()
     }
 
     fn state_request_events_for_publish(
         &self,
         local_events: Vec<DirectRootEvent>,
     ) -> Vec<DirectRootPublishEvent> {
-        let mut events = Vec::with_capacity(local_events.len() + self.cached_events.len());
-        let mut keys = BTreeSet::new();
-        let mut local_slots = BTreeMap::new();
+        let mut events = Vec::with_capacity(local_events.len());
         for event in local_events {
             let event = self.event_for_publish(event);
-            keys.insert(event.key.clone());
-            if let Some(slot) = direct_root_cache_slot(&event.key) {
-                local_slots.insert(slot.family.clone(), slot);
+            if direct_root_cache_slot(&event.key).is_some() {
                 events.push(DirectRootPublishEvent {
                     event,
                     source: DirectRootPublishSource::StateRequestReply,
                 });
             }
         }
-        events.extend(
-            self.cached_events
-                .values()
-                .filter(|event| {
-                    if keys.contains(&event.key) {
-                        return false;
-                    }
-                    let Some(slot) = direct_root_cache_slot(&event.key) else {
-                        return false;
-                    };
-                    local_slots
-                        .get(&slot.family)
-                        .is_none_or(|local_slot| direct_root_slot_is_newer(&slot, local_slot))
-                })
-                .cloned()
-                .map(|event| DirectRootPublishEvent {
-                    event,
-                    source: DirectRootPublishSource::CachedStateRequestReply,
-                }),
-        );
         events
     }
 
@@ -1324,13 +1265,9 @@ fn direct_root_republish_interval_secs_for_source(
     if matches!(
         source,
         DirectRootPublishSource::StateRequestReply
-            | DirectRootPublishSource::CachedStateRequestReply
     ) && direct_root_cache_slot(key).is_some()
     {
         return DIRECT_ROOT_STATE_REQUEST_REPLY_REPUBLISH_INTERVAL_SECS;
-    }
-    if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
-        return DIRECT_ROOT_REPUBLISH_INTERVAL_SECS;
     }
     if direct_root_cache_slot(key).is_some() || key.starts_with("files-root:") {
         DIRECT_ROOT_REPUBLISH_INTERVAL_SECS
@@ -1352,14 +1289,6 @@ fn direct_root_publish_attempts_for_source(key: &str, source: DirectRootPublishS
     if source == DirectRootPublishSource::StateRequestReply {
         return 1;
     }
-    if source == DirectRootPublishSource::CachedStateRequestReply
-        && direct_root_cache_slot(key).is_some()
-    {
-        return 1;
-    }
-    if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
-        return 2;
-    }
     if direct_root_cache_slot(key).is_some() {
         4
     } else if key.starts_with("files-root:") {
@@ -1372,9 +1301,7 @@ fn direct_root_publish_attempts_for_source(key: &str, source: DirectRootPublishS
 fn should_publish_direct_root_hint(key: &str, source: DirectRootPublishSource) -> bool {
     matches!(
         source,
-        DirectRootPublishSource::LocalCurrent
-            | DirectRootPublishSource::StateRequestReply
-            | DirectRootPublishSource::CachedStateRequestReply
+        DirectRootPublishSource::LocalCurrent | DirectRootPublishSource::StateRequestReply
     ) && direct_root_cache_slot(key).is_some()
 }
 
@@ -1388,18 +1315,13 @@ fn should_publish_direct_root_full_frame(
             DirectRootPublishSource::LocalCurrent | DirectRootPublishSource::StateRequestReply => {
                 attempt == 0
             }
-            DirectRootPublishSource::CachedRelay | DirectRootPublishSource::CachedStateRequestReply => true,
         };
     }
     true
 }
 
 fn should_publish_targeted_direct_root_reply_over_mesh(source: DirectRootPublishSource) -> bool {
-    matches!(
-        source,
-        DirectRootPublishSource::StateRequestReply
-            | DirectRootPublishSource::CachedStateRequestReply
-    )
+    matches!(source, DirectRootPublishSource::StateRequestReply)
 }
 
 fn direct_root_wire_frame_log_fields(
@@ -1438,17 +1360,6 @@ fn direct_root_publish_throttle_key(
             || format!("state-request:{key}"),
             |peer| format!("state-request:{peer}:{key}"),
         );
-    }
-    if source == DirectRootPublishSource::CachedStateRequestReply
-        && direct_root_cache_slot(key).is_some()
-    {
-        return target_peer.map_or_else(
-            || format!("state-request-cached:{key}"),
-            |peer| format!("state-request-cached:{peer}:{key}"),
-        );
-    }
-    if source == DirectRootPublishSource::CachedRelay && direct_root_cache_slot(key).is_some() {
-        return format!("cached-relay:{key}");
     }
     key.to_string()
 }

@@ -2132,14 +2132,6 @@ async fn run_app_key_link_exchange_async(
             .map_err(|error| format!("subscribing app-key-link relays: {error}"))?;
     }
     let mut relay_notifications = relay_client.notifications();
-    let mut approval_roster_subscription_pending = account_state
-        .outbound_app_key_link_request
-        .as_ref()
-        .and_then(|pending| {
-            iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(pending)
-                .ok()
-        })
-        .is_some_and(|(request, _)| request.profile_id.is_none());
     let approval_client =
         iris_drive_core::relay_sync::subscribe_device_approval_events(account_state)
             .await
@@ -2314,6 +2306,20 @@ async fn run_app_key_link_exchange_async(
                         if iris_drive_core::relay_sync::is_device_approval_receipt_event(&event) {
                             continue;
                         }
+                        if event.kind.as_u16() == iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP
+                            && AppConfig::load_or_default(config_path_in(config_dir))
+                                .map_err(|error| {
+                                    format!("loading approval state before ordinary roster: {error}")
+                                })?
+                                .profile
+                                .as_ref()
+                                .is_some_and(|profile| {
+                                    profile.authorization_state
+                                        == AppKeyAuthorizationState::AwaitingApproval
+                                })
+                        {
+                            continue;
+                        }
                         if let Err(error) = handle_native_app_key_link_relay_event(config_dir, &event) {
                             tracing::warn!(error = %error, event_id = %event.id.to_hex(), "handling native app-key-link relay event failed");
                         }
@@ -2341,7 +2347,7 @@ async fn run_app_key_link_exchange_async(
                             iris_drive_core::relay_sync::is_device_approval_receipt_event(&event);
                         if let Err(error) = handle_native_app_key_link_relay_event(config_dir, &event) {
                             tracing::warn!(error = %error, event_id = %event.id.to_hex(), "handling request-scoped device approval receipt failed");
-                        } else if is_receipt && approval_roster_subscription_pending {
+                        } else if is_receipt {
                             let config = AppConfig::load_or_default(config_path_in(config_dir))
                                 .map_err(|error| format!("loading approved profile: {error}"))?;
                             if let (Some(approval_client), Some(profile)) =
@@ -2353,9 +2359,10 @@ async fn run_app_key_link_exchange_async(
                                 )
                                 .await
                                 .map_err(|error| {
-                                    format!("subscribing to unbound approval roster ops: {error}")
+                                    format!(
+                                        "subscribing to request-scoped approval roster ops: {error}"
+                                    )
                                 })?;
-                                approval_roster_subscription_pending = false;
                             }
                         }
                     }
