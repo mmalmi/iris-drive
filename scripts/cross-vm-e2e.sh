@@ -1529,6 +1529,8 @@ snapshot_file_count() {
 
 wait_for_converged_union() {
   local label="$1"
+  UNION_MATCH_CANDIDATE=""
+  UNION_MATCH_STABLE_COUNT=0
   wait_until "$label" snapshots_match_current_union
 }
 
@@ -1552,7 +1554,7 @@ snapshots_match_expected() {
 }
 
 snapshots_match_current_union() {
-  local expected host_label current tmp
+  local expected host_label current stable_polls tmp
   all_snapshots_ready || return 1
   tmp="$(mktemp -d)"
   if ! snapshot_all_once "$tmp"; then
@@ -1568,7 +1570,15 @@ snapshots_match_current_union() {
     fi
   done
   rm -rf "$tmp"
-  return 0
+  EXPECTED_SNAPSHOT="$expected"
+  if [[ "$UNION_MATCH_CANDIDATE" == "$expected" ]]; then
+    UNION_MATCH_STABLE_COUNT=$((UNION_MATCH_STABLE_COUNT + 1))
+  else
+    UNION_MATCH_CANDIDATE="$expected"
+    UNION_MATCH_STABLE_COUNT=1
+  fi
+  stable_polls="${IRIS_DRIVE_E2E_UNION_STABLE_POLLS:-2}"
+  [[ "$UNION_MATCH_STABLE_COUNT" -ge "$stable_polls" ]]
 }
 
 projection_snapshots_match_expected() {
