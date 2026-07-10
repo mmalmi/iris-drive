@@ -1541,6 +1541,12 @@ impl NativeAppRuntime {
         let paths = paths_for(&self.data_dir);
         let sync = self.state.ui.sync.clone();
         let previous_roots = self.state.ui.roots.clone();
+        let previous_provider_summary = (
+            self.state.ui.file_count,
+            self.state.ui.visible_file_bytes,
+            self.state.ui.provider_change_key.clone(),
+            self.state.ui.provider_directory_paths.clone(),
+        );
         self.reset_ui_for_reload(paths, sync);
 
         let Ok(mut config) = self.load_config() else {
@@ -1651,6 +1657,11 @@ impl NativeAppRuntime {
         update_snapshot_link(&mut self.state, &config);
         if provider_summary == ProviderSummaryMode::Refresh {
             self.refresh_provider_summary();
+        } else {
+            self.state.ui.file_count = previous_provider_summary.0;
+            self.state.ui.visible_file_bytes = previous_provider_summary.1;
+            self.state.ui.provider_change_key = previous_provider_summary.2;
+            self.state.ui.provider_directory_paths = previous_provider_summary.3;
         }
         self.refresh_ui_summary(Some(ui_fips_status));
     }

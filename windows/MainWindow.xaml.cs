@@ -26,17 +26,18 @@ namespace IrisDrive.WindowsShell;
 
 public partial class MainWindow : Window
 {
-    private static readonly TimeSpan DriveFolderReconciliationInterval = TimeSpan.FromSeconds(2);
     private readonly IrisDriveService service = new();
     private readonly DispatcherTimer refreshTimer;
     private readonly DispatcherTimer updateTimer;
+    private FileSystemWatcher? statusWatcher;
     private Process? daemon;
     private IrisDriveStatusData? currentStatus;
     private IrisDriveUpdateResult? latestUpdate;
     private bool preparingDriveFolder;
     private string? preparedDriveRefreshKey;
-    private DateTimeOffset lastDriveFolderReconciliationAt = DateTimeOffset.MinValue;
     private bool refreshing;
+    private bool refreshPending;
+    private bool providerRefreshPending;
     private bool checkingBackups;
     private bool updateChecking;
     private bool updateInstalling;
@@ -74,8 +75,12 @@ public partial class MainWindow : Window
         AutoInstallUpdatesCheckBox.IsChecked = ReadAutoInstallUpdates();
         UpdateBannerAutoInstallCheckBox.IsChecked = AutoInstallUpdatesCheckBox.IsChecked;
         settingsUpdating = false;
-        refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
-        refreshTimer.Tick += async (_, _) => await RefreshAsync();
+        refreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+        refreshTimer.Tick += async (_, _) =>
+        {
+            refreshTimer.Stop();
+            await RunPendingRefreshAsync();
+        };
         updateTimer = new DispatcherTimer { Interval = LoadUpdatePollInterval() };
         updateTimer.Tick += async (_, _) =>
         {
@@ -96,7 +101,7 @@ public partial class MainWindow : Window
         InstallTraySafely();
         WindowsShellTrace.Write($"tray installed={trayIcon is not null}");
         _ = Task.Run(WindowsIcon.RefreshShortcutIcons);
-        refreshTimer.Start();
+        StartStatusWatcher();
         WindowsShellTrace.Write("initial RefreshAsync starting");
         await RefreshAsync();
         WindowsShellTrace.Write("initial RefreshAsync completed");
@@ -180,13 +185,15 @@ public partial class MainWindow : Window
         }
 
         refreshTimer.Stop();
+        statusWatcher?.Dispose();
+        statusWatcher = null;
         updateTimer.Stop();
         trayIcon?.Dispose();
         StopDaemon();
         WpfApplication.Current.Shutdown();
     }
 
-    private async Task RefreshAsync()
+    private async Task RefreshAsync(bool refreshProvider = true)
     {
         if (refreshing)
         {
@@ -196,7 +203,7 @@ public partial class MainWindow : Window
         refreshing = true;
         try
         {
-            var status = await service.StatusAsync();
+            var status = await service.StatusAsync(refreshProvider);
             currentStatus = status;
             if (!status.Initialized)
             {
@@ -249,6 +256,57 @@ public partial class MainWindow : Window
         finally
         {
             refreshing = false;
+        }
+    }
+
+    private void StartStatusWatcher()
+    {
+        Directory.CreateDirectory(service.DefaultConfigDirectory);
+        statusWatcher = new FileSystemWatcher(service.DefaultConfigDirectory)
+        {
+            NotifyFilter = NotifyFilters.FileName | NotifyFilters.LastWrite | NotifyFilters.Size,
+        };
+        statusWatcher.Changed += (_, eventArgs) => StatusFileChanged(eventArgs.Name);
+        statusWatcher.Created += (_, eventArgs) => StatusFileChanged(eventArgs.Name);
+        statusWatcher.Deleted += (_, eventArgs) => StatusFileChanged(eventArgs.Name);
+        statusWatcher.Renamed += (_, eventArgs) => StatusFileChanged(eventArgs.Name);
+        statusWatcher.EnableRaisingEvents = true;
+    }
+
+    private void StatusFileChanged(string? name)
+    {
+        var refreshProvider = name is "config.toml" or "provider-root.changed";
+        if (!refreshProvider && name is not ("daemon-status.json" or "daemon.lock"))
+        {
+            return;
+        }
+
+        _ = Dispatcher.InvokeAsync(() => ScheduleStatusRefresh(refreshProvider));
+    }
+
+    private void ScheduleStatusRefresh(bool refreshProvider)
+    {
+        refreshPending = true;
+        providerRefreshPending |= refreshProvider;
+        refreshTimer.Stop();
+        refreshTimer.Start();
+    }
+
+    private async Task RunPendingRefreshAsync()
+    {
+        if (refreshing)
+        {
+            refreshTimer.Start();
+            return;
+        }
+
+        var refreshProvider = providerRefreshPending;
+        refreshPending = false;
+        providerRefreshPending = false;
+        await RefreshAsync(refreshProvider);
+        if (refreshPending)
+        {
+            refreshTimer.Start();
         }
     }
 
@@ -790,7 +848,6 @@ public partial class MainWindow : Window
                 preparedDriveRefreshKey = DriveFolderFullyPrepared(driveFolder)
                     ? currentStatus?.ProviderRefreshKey
                     : null;
-                lastDriveFolderReconciliationAt = DateTimeOffset.UtcNow;
                 if (driveFolder.NativeSyncRootReady)
                 {
                     service.OpenPath(driveFolder.Path);
@@ -823,13 +880,10 @@ public partial class MainWindow : Window
             return;
         }
 
-        var reconciliationDue =
-            DateTimeOffset.UtcNow - lastDriveFolderReconciliationAt >= DriveFolderReconciliationInterval;
         WindowsCloudFiles.DebugLog(
             $"schedule prepared={preparedDriveRefreshKey == status.ProviderRefreshKey} " +
-            $"due={reconciliationDue} preparing={preparingDriveFolder}");
-        if (preparingDriveFolder ||
-            (preparedDriveRefreshKey == status.ProviderRefreshKey && !reconciliationDue))
+            $"preparing={preparingDriveFolder}");
+        if (preparingDriveFolder || preparedDriveRefreshKey == status.ProviderRefreshKey)
         {
             return;
         }
@@ -845,7 +899,6 @@ public partial class MainWindow : Window
                     preparedDriveRefreshKey = DriveFolderFullyPrepared(driveFolder)
                         ? status.ProviderRefreshKey
                         : null;
-                    lastDriveFolderReconciliationAt = DateTimeOffset.UtcNow;
                 });
             }
             catch

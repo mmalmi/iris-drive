@@ -629,6 +629,14 @@ fn refresh_profile_skips_provider_summary_until_full_refresh() {
             .provider_change_key
             .contains("approval-fast-path.txt")
     );
+
+    let cached_profile_refresh = app.dispatch(NativeAppAction::RefreshProfile);
+    assert_eq!(cached_profile_refresh.ui.file_count, 1);
+    assert_eq!(cached_profile_refresh.ui.visible_file_bytes, 20);
+    assert_eq!(
+        cached_profile_refresh.ui.provider_change_key,
+        full_refresh.ui.provider_change_key
+    );
 }
 
 #[test]
