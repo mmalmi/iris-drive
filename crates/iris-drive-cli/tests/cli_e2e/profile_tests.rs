@@ -633,22 +633,32 @@ async fn approval_uses_signed_request_relay_not_ordinary_relays() {
     assert!(request_events.iter().all(|event| {
         event["kind"].as_u64() == Some(u64::from(iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP))
     }));
+    let is_approval_receipt = |event: &serde_json::Value| {
+        event["tags"].as_array().is_some_and(|tags| {
+            tags.iter().any(|tag| {
+                tag.as_array().is_some_and(|values| {
+                    values.first().and_then(serde_json::Value::as_str) == Some("type")
+                        && values.get(1).and_then(serde_json::Value::as_str)
+                            == Some("nostr_identity_device_approval_receipt")
+                })
+            })
+        })
+    };
     assert_eq!(
         request_events
             .iter()
-            .filter(|event| {
-                event["tags"].as_array().is_some_and(|tags| {
-                    tags.iter().any(|tag| {
-                        tag.as_array().is_some_and(|values| {
-                            values.first().and_then(serde_json::Value::as_str) == Some("type")
-                                && values.get(1).and_then(serde_json::Value::as_str)
-                                    == Some("nostr_identity_device_approval_receipt")
-                        })
-                    })
-                })
-            })
+            .filter(|event| is_approval_receipt(event))
             .count(),
         1
+    );
+    assert!(
+        request_events.last().is_some_and(is_approval_receipt),
+        "the encrypted receipt must be accepted after the complete roster"
+    );
+    assert!(
+        request_events[..request_events.len() - 1]
+            .iter()
+            .all(|event| !is_approval_receipt(event))
     );
     assert!(ordinary_relay.events().await.is_empty());
 

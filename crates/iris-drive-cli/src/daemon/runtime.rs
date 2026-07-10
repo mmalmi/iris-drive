@@ -12,7 +12,7 @@ fn write_runtime_daemon_status(config_dir: &Path, payload: Value) -> Value {
 const DIRECT_APP_MESSAGE_DRAIN_LIMIT: usize = 4096;
 const DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS: u64 = 750;
 const DIRECT_ROOT_PEER_REFRESH_INTERVAL_SECS: u64 = 30;
-const DIRECT_ROOT_REPAIR_INTERVAL_SECS: u64 = 60;
+const DIRECT_ROOT_REPAIR_INTERVAL_SECS: u64 = 30;
 const RELAY_STATUS_PROBE_INTERVAL_SECS: u64 = 30;
 const STATUS_PROBE_TASK_KEY: &str = "status_probe";
 

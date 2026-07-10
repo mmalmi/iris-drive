@@ -6,7 +6,7 @@ crates/iris-drive-app-core/src/c_abi.rs 1100 C ABI/JNI bridge includes platform 
 crates/iris-drive-app-core/src/ffi.rs 3759 Legacy app-core FFI runtime now includes native browser, CalDAV status, manual app-key join request paths, mobile roster cache invalidation, and request-scoped approval receipt subscription; split pending action/provider/app-key-link modules.
 crates/iris-drive-app-core/src/ffi/tests.rs 2256 App-core parity and native action fixtures include startup defaults, provider batch-copy, and mobile roster cache regressions; split pending scenario modules.
 crates/iris-drive-cli/src/daemon.rs 1150 CLI daemon orchestration is legacy monolith pending runtime helper split.
-crates/iris-drive-cli/src/daemon/runtime.rs 1210 CLI daemon runtime is legacy monolith pending lifecycle/helper split; request-scoped approval receipt subscription, fresh-config pending-root current-state lookup, and split peer-refresh/root-repair/status idle-safe timers should move into app-key-link/direct-root runtime helpers.
+crates/iris-drive-cli/src/daemon/runtime.rs 1210 CLI daemon runtime is legacy monolith pending lifecycle/helper split; request-scoped approval receipt subscription, fresh-config pending-root current-state lookup, and split 30s peer-refresh/root-repair/status idle-safe timers should move into app-key-link/direct-root runtime helpers.
 crates/iris-drive-cli/src/drive.rs 1060 CLI drive command surface includes provider directory delete tombstone hardening; pending command/provider helper split.
 crates/iris-drive-cli/src/drive/tests.rs 1094 CLI drive provider tests include directory descendant tombstone release coverage and staged ignored-provider-write regression coverage; pending provider scenario-module split.
 crates/iris-drive-cli/src/shares.rs 1350 CLI share command surface needs a later command/test split.
@@ -15,7 +15,7 @@ crates/iris-drive-cli/src/publish/direct_root.rs 1891 Direct-root publish path i
 crates/iris-drive-cli/src/publish/tests.rs 1305 Direct-root release-hardening coverage shares CLI publish fixtures, v0.1.18 hint throttling checks, and stale state-request cache regression coverage; pending focused test-module split.
 crates/iris-drive-cli/src/status.rs 1150 CLI status normalization already exceeds default; pending status module split.
 crates/iris-drive-cli/tests/cli_e2e.rs 1075 CLI e2e scenarios are legacy monolith pending scenario split; strict approval request fixtures keep status and relay-sync coverage in this binary.
-crates/iris-drive-cli/tests/cli_e2e/profile_tests.rs 1091 CLI profile e2e coverage includes strict request-scoped approval relay fixtures; pending profile scenario split.
+crates/iris-drive-cli/tests/cli_e2e/profile_tests.rs 1101 CLI profile e2e coverage includes strict request-scoped approval relay fixtures and current-device removal/logout coverage; pending profile scenario split.
 crates/iris-drive-cli/tests/daemon_sync_matrix/harness.rs 1150 Live daemon matrix harness includes bounded CLI/refresh diagnostics; pending helper-module split.
 crates/iris-drive-cli/tests/daemon_sync_matrix/scenario_tests.rs 1150 Scenario matrix includes focused Seafile release split; pending scenario-module split.
 crates/iris-drive-core/src/calendar.rs 1050 Calendar import/export and CalDAV helpers are legacy monolith pending module split.
