@@ -10,6 +10,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.FileObserver
 import android.provider.DocumentsContract
 import android.widget.Toast
 import androidx.activity.ComponentActivity
@@ -17,9 +18,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -44,19 +48,6 @@ import to.iris.drive.app.sync.IrisDriveSyncService
 import to.iris.drive.app.update.AndroidSelfUpdateManager
 import to.iris.drive.app.update.SelfUpdateActions
 
-internal const val ForegroundRefreshFastMs = 2_000L
-internal const val ForegroundRefreshIdleMs = 10_000L
-
-internal fun foregroundRefreshDelayMs(state: AppState): Long {
-    if (!state.isLoaded || !state.isSetupComplete || state.isAwaitingApproval || state.isRevoked) {
-        return ForegroundRefreshFastMs
-    }
-    if (state.profile?.inboundAppKeyLinkRequests?.isNotEmpty() == true) {
-        return ForegroundRefreshFastMs
-    }
-    return ForegroundRefreshIdleMs
-}
-
 class MainActivity : ComponentActivity() {
     private val stateFlow = MutableStateFlow(AppState(isLoaded = false))
     private val backupCheckProgressFlow = MutableStateFlow(BackupCheckProgress())
@@ -69,8 +60,10 @@ class MainActivity : ComponentActivity() {
     private val nativeCoreDispatcher = nativeCoreExecutor.asCoroutineDispatcher()
     private var nativeHandle: Long = 0
     private var refreshJob: Job? = null
+    private var nativeStateObserver: FileObserver? = null
     private var nativeRefreshInFlight = false
     private var nativeRefreshPending = false
+    private var nativeProviderRefreshPending = false
     private var androidCalendarAutoSyncJob: Job? = null
     private var lastAndroidCalendarAutoSyncCheckMs = 0L
     private val nativeRefreshCallbacks = mutableListOf<(AppState) -> Unit>()
@@ -325,6 +318,7 @@ class MainActivity : ComponentActivity() {
     override fun onDestroy() {
         refreshJob?.cancel()
         refreshJob = null
+        stopNativeStateObserver()
         androidCalendarAutoSyncJob?.cancel()
         androidCalendarAutoSyncJob = null
         if (::selfUpdateManager.isInitialized) {
@@ -356,11 +350,21 @@ class MainActivity : ComponentActivity() {
                     stateFlow.value = initialState
                     AndroidDebugSupport.writeState(this@MainActivity, initialJson)
                     IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, initialState)
-                    refresh(::autoStartSyncIfNeeded)
                     refreshJob = lifecycleScope.launch {
-                        while (true) {
-                            delay(foregroundRefreshDelayMs(stateFlow.value))
-                            refresh()
+                        var shouldAutoStartSync = true
+                        repeatOnLifecycle(Lifecycle.State.STARTED) {
+                            startNativeStateObserver()
+                            try {
+                                if (shouldAutoStartSync) {
+                                    shouldAutoStartSync = false
+                                    refresh(onState = ::autoStartSyncIfNeeded)
+                                } else {
+                                    refresh()
+                                }
+                                awaitCancellation()
+                            } finally {
+                                stopNativeStateObserver()
+                            }
                         }
                     }
                     handleLaunchIntent(launchIntent)
@@ -374,11 +378,15 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun refresh(onState: ((AppState) -> Unit)? = null) {
+    private fun refresh(
+        includeProvider: Boolean = true,
+        onState: ((AppState) -> Unit)? = null,
+    ) {
         val handle = nativeHandle
         if (handle == 0L) return
         if (nativeRefreshInFlight) {
             nativeRefreshPending = true
+            nativeProviderRefreshPending = nativeProviderRefreshPending || includeProvider
             if (onState != null) {
                 nativeRefreshCallbacks.add(onState)
             }
@@ -386,7 +394,10 @@ class MainActivity : ComponentActivity() {
         }
         nativeRefreshInFlight = true
         lifecycleScope.launch(nativeCoreDispatcher) {
-            val action = if (stateFlow.value.isAwaitingApproval || stateFlow.value.isRevoked) {
+            val action = if (!includeProvider ||
+                stateFlow.value.isAwaitingApproval ||
+                stateFlow.value.isRevoked
+            ) {
                 NativeActions.refreshProfile()
             } else {
                 NativeActions.refresh()
@@ -406,10 +417,38 @@ class MainActivity : ComponentActivity() {
                 pendingCallbacks.forEach { it(state) }
                 if (nativeRefreshPending) {
                     nativeRefreshPending = false
-                    refresh()
+                    val refreshProvider = nativeProviderRefreshPending
+                    nativeProviderRefreshPending = false
+                    refresh(includeProvider = refreshProvider)
                 }
             }
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun startNativeStateObserver() {
+        stopNativeStateObserver()
+        nativeStateObserver =
+            object : FileObserver(
+                filesDir.absolutePath,
+                FileObserver.CLOSE_WRITE or FileObserver.CREATE or FileObserver.MOVED_TO,
+            ) {
+                override fun onEvent(event: Int, path: String?) {
+                    val name = path?.substringAfterLast('/') ?: return
+                    val includeProvider = name == "config.toml" || name == "provider-root.changed"
+                    if (!includeProvider && name != "native-fips-status.json") return
+                    lifecycleScope.launch {
+                        if (lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)) {
+                            refresh(includeProvider = includeProvider)
+                        }
+                    }
+                }
+            }.also { it.startWatching() }
+    }
+
+    private fun stopNativeStateObserver() {
+        nativeStateObserver?.stopWatching()
+        nativeStateObserver = null
     }
 
     private fun applyNativeState(
