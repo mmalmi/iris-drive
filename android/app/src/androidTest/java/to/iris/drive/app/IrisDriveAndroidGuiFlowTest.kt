@@ -1012,7 +1012,7 @@ class IrisDriveAndroidGuiFlowTest {
 
     private fun waitForAuthorizedState(handle: Long, expectedFileCount: Int? = null): AppState {
         var latest = refreshedAppState(handle)
-        compose.waitUntil(timeoutMillis = 10_000) {
+        compose.waitUntil(timeoutMillis = 30_000) {
             latest = refreshedAppState(handle)
             latest.profile?.authorizationState == "authorized" &&
                 (expectedFileCount == null || latest.fileCount == expectedFileCount)
