@@ -39,7 +39,6 @@ const FIPS_WEBRTC_MAX_CONNECTIONS: usize = 16;
 const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 0;
 const APP_KEY_LINK_OPEN_DISCOVERY_MAX_PENDING: usize = 64;
 pub const IRIS_DRIVE_FIPS_DISCOVERY_SCOPE: &str = "fips-overlay-v1";
-
 #[derive(Debug, Error)]
 pub enum FipsSyncError {
     #[error("fips endpoint: {0}")]
@@ -329,9 +328,10 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     }
 }
 
-fn unconfigured_app_message_topics() -> [&'static str; 3] {
+fn unconfigured_app_message_topics() -> [&'static str; 4] {
     [
         APP_KEY_LINK_REQUEST_APP_TOPIC,
+        crate::app_key_link_transport::APP_KEY_APPROVAL_RECEIPT_APP_TOPIC,
         APP_KEY_LINK_ROSTER_APP_TOPIC,
         DIRECT_ROOT_APP_TOPIC,
     ]
