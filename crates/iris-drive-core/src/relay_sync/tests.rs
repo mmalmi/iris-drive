@@ -727,6 +727,10 @@ fn apply_app_key_link_request_event_records_admin_inbound_request() {
     assert_eq!(inbound[0].app_key_pubkey, linked.state.app_key_pubkey);
     assert_eq!(inbound[0].label.as_deref(), Some("phone"));
     assert_eq!(inbound[0].invite_pubkey, invite_pubkey);
+    assert!(
+        inbound[0].request_url.is_empty(),
+        "relay identity-link events do not include the full approval URL"
+    );
 }
 
 #[test]

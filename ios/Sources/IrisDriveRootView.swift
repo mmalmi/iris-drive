@@ -1273,6 +1273,9 @@ private func iosUiTestValue(_ name: String) -> String {
     #if DEBUG
     let environment = ProcessInfo.processInfo.environment
     if let value = environment[name] { return value }
+    if let encoded = environment["\(name)_B64"],
+       let data = Data(base64Encoded: encoded),
+       let value = String(data: data, encoding: .utf8) { return value }
     if let path = environment["\(name)_FILE"],
        let value = try? String(contentsOfFile: path, encoding: .utf8) { return value }
     return ""

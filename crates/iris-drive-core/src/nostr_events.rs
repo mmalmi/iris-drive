@@ -186,7 +186,7 @@ fn parse_identity_app_key_link_request_event(
         invite_pubkey: signed.content.invite_pubkey.clone(),
         label: signed.content.label.clone(),
         requested_at: signed.content.requested_at,
-        url: signed.content.joining_pubkey.clone(),
+        url: String::new(),
     })
 }
 

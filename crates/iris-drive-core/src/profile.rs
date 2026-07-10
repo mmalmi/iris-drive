@@ -557,10 +557,12 @@ impl ProfileState {
             if existing.requested_at != next_requested_at
                 || existing.label != request.label
                 || existing.invite_pubkey != request.invite_pubkey
+                || existing.request_url != request.request_url
             {
                 existing.requested_at = next_requested_at;
                 existing.label.clone_from(&request.label);
                 existing.invite_pubkey.clone_from(&request.invite_pubkey);
+                existing.request_url.clone_from(&request.request_url);
                 changed = true;
             }
         } else {

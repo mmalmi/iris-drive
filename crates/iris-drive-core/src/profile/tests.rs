@@ -657,6 +657,8 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
     let profile_id = acct.state.profile_id;
     let invite_pubkey = invite_pubkey(&acct.state);
     let device = fresh_app_key_pubkey();
+    let stale_url = "iris-drive://app-key-link?app_key=legacy-device";
+    let full_url = "https://drive.iris.to/approve-device/full-request";
 
     assert!(
         acct.state
@@ -665,7 +667,7 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
                 &device,
                 Some(" phone ".to_string()),
                 &invite_pubkey,
-                None,
+                Some(stale_url.to_string()),
                 10,
             )
             .unwrap()
@@ -684,7 +686,7 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
                 &device,
                 Some("phone".to_string()),
                 &invite_pubkey,
-                None,
+                Some(stale_url.to_string()),
                 9,
             )
             .unwrap()
@@ -696,7 +698,7 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
                 &device,
                 Some("tablet".to_string()),
                 &invite_pubkey,
-                None,
+                Some(full_url.to_string()),
                 11,
             )
             .unwrap()
@@ -705,6 +707,10 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
     assert_eq!(
         acct.state.inbound_app_key_link_requests[0].label.as_deref(),
         Some("tablet")
+    );
+    assert_eq!(
+        acct.state.inbound_app_key_link_requests[0].request_url,
+        full_url
     );
 }
 

@@ -115,6 +115,8 @@ reset_sim_app_state() {
   safe_remove_sim_container "$SIM_APP_BASE_DIR"
   mkdir -p "$SIM_APP_BASE_DIR"
   clear_sim_env \
+    IRIS_DRIVE_DEBUG_ACTION \
+    IRIS_DRIVE_DEBUG_OWNER \
     IRIS_DRIVE_FIPS_STATIC_PEERS \
     IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP \
     IRIS_DRIVE_FIPS_ENABLE_WEBRTC \
@@ -184,6 +186,10 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
 PY
 }
 
+base64_value() {
+  python3 -c 'import base64,sys; print(base64.b64encode(sys.stdin.buffer.read()).decode("ascii"))'
+}
+
 wait_for_owner_fips() {
   local seconds="$1"
   for _ in $(seq 1 "$((seconds * 5))"); do
@@ -201,7 +207,7 @@ wait_for_owner_inbound_request() {
   local seconds="$2"
   for _ in $(seq 1 "$((seconds * 5))"); do
     if "$IDRIVE" --config-dir "$OWNER_CONFIG" status 2>/dev/null \
-      | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; reqs=((s.get("profile") or {}).get("inbound_app_key_link_requests") or []); raise SystemExit(0 if any(r.get("app_key_npub") == expected and r.get("url") for r in reqs) else 1)' "$expected_device" >/dev/null 2>&1; then
+      | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; prefix="https://drive.iris.to/approve-device/"; reqs=((s.get("profile") or {}).get("inbound_app_key_link_requests") or []); raise SystemExit(0 if any(r.get("app_key_npub") == expected and str(r.get("url") or "").startswith(prefix) for r in reqs) else 1)' "$expected_device" >/dev/null 2>&1; then
       return 0
     fi
     sleep 0.2
@@ -212,7 +218,7 @@ wait_for_owner_inbound_request() {
 owner_inbound_request_url() {
   local expected_device="$1"
   "$IDRIVE" --config-dir "$OWNER_CONFIG" status \
-    | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; reqs=((s.get("profile") or {}).get("inbound_app_key_link_requests") or []); print(next(r["url"] for r in reqs if r.get("app_key_npub") == expected and r.get("url"))) ' "$expected_device"
+    | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; prefix="https://drive.iris.to/approve-device/"; reqs=((s.get("profile") or {}).get("inbound_app_key_link_requests") or []); print(next(r["url"] for r in reqs if r.get("app_key_npub") == expected and str(r.get("url") or "").startswith(prefix)))' "$expected_device"
 }
 
 resolve_xctestrun() {
@@ -355,7 +361,7 @@ reset_sim_app_group_state() {
   safe_remove_sim_container "$group_container/IrisDrive"
   SIM_APP_BASE_DIR="$group_container/IrisDrive"
   mkdir -p "$SIM_APP_BASE_DIR"
-  clear_sim_env IRIS_DRIVE_UI_TEST_BASE_DIR
+  clear_sim_env IRIS_DRIVE_DEBUG_ACTION IRIS_DRIVE_DEBUG_OWNER IRIS_DRIVE_UI_TEST_BASE_DIR
 }
 
 verify_share_sheet_import() {
@@ -528,7 +534,16 @@ if ! wait_for_owner_inbound_request "$linked_device" 30; then
   exit 1
 fi
 request_url="$(owner_inbound_request_url "$linked_device")"
-approved_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" approve "$request_url" --label "iOS UI linked")"
+approve_status=0
+approved_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" approve "$request_url" --label "iOS UI linked")" || approve_status="$?"
+if [[ "$approve_status" != "0" ]]; then
+  echo "FAIL: CLI owner could not approve the inbound iOS UI request." >&2
+  echo "request_url_length=${#request_url}" >&2
+  echo "request_url_prefix=${request_url:0:96}" >&2
+  "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
+  cat "$OWNER_DAEMON_LOG" >&2 || true
+  exit "$approve_status"
+fi
 roster_size="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["roster_size"])' <<<"$approved_json")"
 if [[ "$roster_size" != "2" ]]; then
   echo "FAIL: CLI owner did not approve the inbound iOS UI link request." >&2
@@ -598,10 +613,12 @@ linked_device="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["curren
 linked_request="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["app_key_link_request"]["url"])' <<<"$linked_json")"
 linked_request_file="$SIM_APP_BASE_DIR/linked-device-request.txt"
 printf '%s' "$linked_request" >"$linked_request_file"
+linked_request_b64="$(printf '%s' "$linked_request" | base64_value)"
 
 run_ui_test \
   "IrisDriveIOSUITests/IrisDriveIOSUITests/testAddLinkedDeviceFromDevices" \
   "IRIS_DRIVE_UI_TEST_LINKED_DEVICE=$linked_device" \
+  "IRIS_DRIVE_UI_TEST_LINKED_DEVICE_REQUEST_B64=$linked_request_b64" \
   "IRIS_DRIVE_UI_TEST_LINKED_DEVICE_REQUEST_FILE=$linked_request_file" \
   "IRIS_DRIVE_UI_TEST_LINKED_DEVICE_LABEL=iOS UI linked"
 
