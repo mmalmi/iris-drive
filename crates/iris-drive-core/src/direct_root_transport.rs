@@ -1079,12 +1079,12 @@ fn should_publish_direct_root_hint(key: &str, source: DirectRootPublishSource) -
 fn should_publish_direct_root_full_frame(
     key: &str,
     source: DirectRootPublishSource,
-    attempt: usize,
+    _attempt: usize,
 ) -> bool {
     if should_publish_direct_root_hint(key, source) {
         return match source {
             DirectRootPublishSource::LocalCurrent | DirectRootPublishSource::StateRequestReply => {
-                attempt == 0
+                true
             }
             DirectRootPublishSource::CachedRelay
             | DirectRootPublishSource::CachedStateRequestReply => true,
@@ -2173,7 +2173,7 @@ mod tests {
             DirectRootPublishSource::StateRequestReply,
             0
         ));
-        assert!(!should_publish_direct_root_full_frame(
+        assert!(should_publish_direct_root_full_frame(
             &local.key,
             DirectRootPublishSource::StateRequestReply,
             1

@@ -1308,14 +1308,13 @@ fn should_publish_direct_root_hint(key: &str, source: DirectRootPublishSource) -
 fn should_publish_direct_root_full_frame(
     key: &str,
     source: DirectRootPublishSource,
-    attempt: usize,
+    _attempt: usize,
 ) -> bool {
     if should_publish_direct_root_hint(key, source) {
-        return match source {
-            DirectRootPublishSource::LocalCurrent | DirectRootPublishSource::StateRequestReply => {
-                attempt == 0
-            }
-        };
+        return matches!(
+            source,
+            DirectRootPublishSource::LocalCurrent | DirectRootPublishSource::StateRequestReply
+        );
     }
     true
 }

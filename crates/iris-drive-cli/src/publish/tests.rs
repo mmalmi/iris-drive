@@ -607,7 +607,7 @@ fn direct_root_publish_bursts_root_frames_only() {
         DirectRootPublishSource::LocalCurrent,
         0
     ));
-    assert!(!should_publish_direct_root_full_frame(
+    assert!(should_publish_direct_root_full_frame(
         drive_root,
         DirectRootPublishSource::LocalCurrent,
         1
@@ -617,7 +617,7 @@ fn direct_root_publish_bursts_root_frames_only() {
         DirectRootPublishSource::StateRequestReply,
         0
     ));
-    assert!(!should_publish_direct_root_full_frame(
+    assert!(should_publish_direct_root_full_frame(
         drive_root,
         DirectRootPublishSource::StateRequestReply,
         1
@@ -676,7 +676,7 @@ fn direct_root_state_request_reply_only_includes_local_current_roots() {
         DirectRootPublishSource::StateRequestReply,
         0
     ));
-    assert!(!should_publish_direct_root_full_frame(
+    assert!(should_publish_direct_root_full_frame(
         &local.key,
         DirectRootPublishSource::StateRequestReply,
         1
