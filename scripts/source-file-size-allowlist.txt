@@ -33,7 +33,7 @@ crates/iris-drive-core/src/relay_sync/tests.rs 1510 Relay/app-key/share sync cov
 crates/iris-drive-core/src/share_actions.rs 1100 Share action dispatcher needs a later action-module split.
 crates/iris-drive-core/src/sharing.rs 5200 Share roster, key epoch, and shortcut model needs a later module/test split.
 crates/iris-drive-core/src/fips_sync.rs 1204 FIPS sync runtime includes peer-config idle deduplication, mobile ambient-discovery defaults, and optional mesh pubsub; needs a later transport/state split.
-crates/hashtree-fips-transport/src/lib.rs 2355 Vendored hashtree FIPS transport shim includes embedded endpoint option tests; replace with published compatible crate when available.
+crates/hashtree-fips-transport/src/lib.rs 2405 Vendored hashtree FIPS transport shim includes embedded endpoint option tests and fragmented pre-authorization app-message regression coverage; replace with published compatible crate when available.
 ios/Sources/IrisDriveMobileModel.swift 2520 Legacy iOS model includes FileProvider, browser gateway, approval refresh plumbing, and v0.1.18 foreground sync gating; pending FileProvider/model split.
 ios/Sources/IrisDriveRootView.swift 2800 Legacy iOS SwiftUI shell includes setup, drive, sharing, and browser views; pending view split.
 ios/UITests/IrisDriveIOSUITests.swift 1200 iOS UI smoke scenarios are legacy monolith pending scenario split; onboarding and foreground-sync coverage exceed the old cap.

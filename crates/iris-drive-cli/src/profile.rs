@@ -1135,8 +1135,12 @@ async fn handle_app_key_link_request_app_message(
             frame.schema
         ));
     }
-    let app_key_hex =
-        normalize_pubkey(&frame.app_key_pubkey).context("parsing link request device")?;
+    let app_key_source = if frame.app_key_pubkey.trim().is_empty() {
+        message.peer_id.as_str()
+    } else {
+        frame.app_key_pubkey.as_str()
+    };
+    let app_key_hex = normalize_pubkey(app_key_source).context("parsing link request device")?;
     if frame.invite_pubkey.trim().is_empty() {
         return Err(anyhow::anyhow!(
             "app-key link request frame is missing invite pubkey"

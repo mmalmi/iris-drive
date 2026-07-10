@@ -36,6 +36,7 @@ pub struct AppKeyLinkRequestFrame {
     pub profile_id: NostrIdentityId,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub admin_app_key_pubkey: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub app_key_pubkey: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub invite_pubkey: String,
@@ -110,8 +111,8 @@ pub fn pending_app_key_link_request_frame(
     Ok(Some(AppKeyLinkRequestFrame {
         schema: 1,
         profile_id: state.profile_id,
-        admin_app_key_pubkey: pending.admin_app_key_pubkey.clone(),
-        app_key_pubkey: state.app_key_pubkey.clone(),
+        admin_app_key_pubkey: String::new(),
+        app_key_pubkey: String::new(),
         invite_pubkey: pending.invite_pubkey.clone(),
         label: state.app_key_label.clone(),
         requested_at: pending.requested_at,
