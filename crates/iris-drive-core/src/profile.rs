@@ -508,7 +508,7 @@ impl ProfileState {
         app_key_pubkey: &str,
         label: Option<String>,
         invite_pubkey: &str,
-        request_url: String,
+        request_url: impl Into<String>,
         requested_at: u64,
     ) -> Result<bool, ProfileError> {
         if profile_id != self.profile_id || !self.can_admin_profile() {
@@ -524,6 +524,7 @@ impl ProfileState {
                 app_key_pubkey.to_string(),
             ));
         }
+        let request_url = request_url.into();
         let bootstrap =
             crate::app_key_link_transport::parse_app_key_approval_bootstrap(&request_url)
                 .map_err(|error| ProfileError::InvalidAppKeyApprovalBootstrap(error.to_string()))?

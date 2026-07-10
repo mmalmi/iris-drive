@@ -11,6 +11,7 @@
 //! - **`KIND_SHARE_ACCESS_SNAPSHOT = 30078`** — AppKey-signed canonical share
 //!   access snapshot. d-tag: bare share UUID; l-tag:
 //!   `"iris-drive/share-access"`. Pubkey = authorized share admin `AppKey`.
+//!
 //! All events are signed by the appropriate key and verify under the
 //! event's own pubkey. Build functions return a signed `Event`; parse
 //! functions take an `Event`, verify its signature, and extract the

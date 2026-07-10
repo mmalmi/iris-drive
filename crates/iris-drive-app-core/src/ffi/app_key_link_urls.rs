@@ -1,5 +1,5 @@
 use super::{
-    AppConfig, AppKeyAuthorizationState, Path, config_path_in, create_app_key_approval_request,
+    AppConfig, AppKeyAuthorizationState, Path, config_path_in, create_app_key_approval_bootstrap,
     key_path_in, unix_now_seconds,
 };
 

@@ -25,7 +25,7 @@ crates/iris-drive-core/src/direct_root_transport.rs 2708 Direct-root sync transp
 crates/iris-drive-core/src/gateway.rs 1361 Local gateway routing and response hardening now include CalDAV and public Blossom test module registration; pending route-module split.
 crates/iris-drive-core/src/gateway/tests.rs 1100 Local gateway route coverage includes mixed browser/API/WebDAV scenarios; pending route test-module split.
 crates/iris-drive-core/src/nostr_identity.rs 2100 NostrIdentity authority shim needs a later roster-event-projection module split.
-crates/iris-drive-core/src/profile.rs 2636 Profile create, recovery, admission, projection guards, DCK flows, device labels, device rename, and request-event-free compact bootstrap approval receipts need a later lifecycle/helper split.
+crates/iris-drive-core/src/profile.rs 2637 Profile create, recovery, admission, projection guards, DCK flows, device labels, device rename, and request-event-free compact bootstrap approval receipts need a later lifecycle/helper split.
 crates/iris-drive-core/src/profile/tests.rs 1807 Profile recovery, AppKey authority, request-event-free compact bootstrap fixtures, and device-label rename scenarios need a later test-module split.
 crates/iris-drive-core/src/projection/tests.rs 1150 Projection conflict and merged-root coverage needs a later scenario split.
 crates/iris-drive-core/src/relay_sync.rs 1304 Relay sync root/app-key/share dispatcher includes strict approval-receipt gating plus request-scoped receipt publish/fetch/subscribe; needs a later event-handler split.
