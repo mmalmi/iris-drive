@@ -205,7 +205,7 @@ async fn prune_ignored_provider_paths(
 }
 
 fn windows_cloud_local_projected_paths(root: &Path) -> Result<Vec<String>> {
-    windows_cloud_local_projected_paths_since(root, None)
+    windows_cloud_local_projected_paths_since(root, None, false)
 }
 
 const WINDOWS_CLOUD_RECENT_RESCAN_SECS: u64 = 300;
@@ -223,19 +223,33 @@ fn windows_cloud_recent_local_projected_paths(root: &Path) -> Result<Vec<String>
             WINDOWS_CLOUD_RECENT_RESCAN_SECS,
         ))
         .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-    windows_cloud_local_projected_paths_since(root, Some(cutoff))
+    windows_cloud_local_projected_paths_since(root, Some(cutoff), false)
+}
+
+fn windows_cloud_recent_local_projected_paths_recursive(root: &Path) -> Result<Vec<String>> {
+    let cutoff = std::time::SystemTime::now()
+        .checked_sub(std::time::Duration::from_secs(
+            WINDOWS_CLOUD_RECENT_RESCAN_SECS,
+        ))
+        .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+    windows_cloud_local_projected_paths_since(root, Some(cutoff), true)
 }
 
 fn windows_cloud_local_projected_paths_since(
     root: &Path,
     modified_since: Option<std::time::SystemTime>,
+    recursive: bool,
 ) -> Result<Vec<String>> {
     let mut paths = Vec::new();
     if !root.is_dir() {
         return Ok(paths);
     }
-    for entry in std::fs::read_dir(root).with_context(|| format!("reading {}", root.display()))? {
-        let entry = entry?;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        let entries =
+            std::fs::read_dir(&dir).with_context(|| format!("reading {}", dir.display()))?;
+        for entry in entries {
+            let entry = entry?;
         let path = entry.path();
         let metadata = match std::fs::symlink_metadata(&path) {
             Ok(metadata) => metadata,
@@ -248,6 +262,9 @@ fn windows_cloud_local_projected_paths_since(
         if windows_cloud_metadata_is_reparse_point(&metadata) && !metadata.is_dir() {
             continue;
         }
+        if recursive && metadata.is_dir() {
+            stack.push(path.clone());
+        }
         if let Some(cutoff) = modified_since
             && metadata.modified().is_ok_and(|modified| modified < cutoff)
         {
@@ -257,6 +274,7 @@ fn windows_cloud_local_projected_paths_since(
             continue;
         };
         paths.push(relative);
+    }
     }
     paths.sort();
     Ok(paths)

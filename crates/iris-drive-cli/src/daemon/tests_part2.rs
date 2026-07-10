@@ -31,6 +31,41 @@ async fn windows_cloud_rescan_upserts_nested_local_file() {
 }
 
 #[test]
+fn windows_cloud_recursive_recent_rescan_finds_nested_file_edit_under_old_parent() {
+    let sync_root = tempfile::tempdir().unwrap();
+    let nested_dir = sync_root.path().join("e2e").join("run").join("ops");
+    std::fs::create_dir_all(&nested_dir).unwrap();
+    let file = nested_dir.join("create-edit.txt");
+    std::fs::write(&file, b"version 1").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let cutoff = std::time::SystemTime::now();
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    std::fs::write(&file, b"version 2").unwrap();
+
+    let shallow =
+        windows_cloud_local_projected_paths_since(sync_root.path(), Some(cutoff), false).unwrap();
+    let recursive =
+        windows_cloud_local_projected_paths_since(sync_root.path(), Some(cutoff), true).unwrap();
+
+    assert!(!shallow.contains(&"e2e/run/ops/create-edit.txt".to_string()));
+    assert!(recursive.contains(&"e2e/run/ops/create-edit.txt".to_string()));
+}
+
+#[test]
+fn windows_cloud_rescan_batch_is_not_rescanned_again() {
+    let changes = vec![WindowsCloudRootChange::Rescan {
+        full: false,
+        recover_cached_deletes: false,
+        recursive_recent: false,
+    }];
+
+    assert_eq!(
+        windows_cloud_changes_with_event_rescan(changes.clone()),
+        changes
+    );
+}
+
+#[test]
 fn windows_cloud_local_state_loads_pascal_case_cache() {
     let config_dir = tempfile::tempdir().unwrap();
     std::fs::write(

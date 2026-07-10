@@ -10,6 +10,7 @@ enum WindowsCloudRootChange {
     Rescan {
         full: bool,
         recover_cached_deletes: bool,
+        recursive_recent: bool,
     },
 }
 
@@ -73,6 +74,7 @@ fn start_windows_cloud_root_watch() -> Result<(
     let _ = tx.send(WindowsCloudRootChange::Rescan {
         full: true,
         recover_cached_deletes: windows_cloud_cached_delete_recovery_enabled(),
+        recursive_recent: false,
     });
     let periodic_tx = tx.clone();
     let _ = std::thread::Builder::new()
@@ -141,6 +143,7 @@ fn windows_cloud_periodic_validate_change() -> WindowsCloudRootChange {
     WindowsCloudRootChange::Rescan {
         full: false,
         recover_cached_deletes: false,
+        recursive_recent: false,
     }
 }
 
@@ -159,7 +162,11 @@ fn windows_cloud_changes_with_event_rescan(
         .iter()
         .any(|change| matches!(change, WindowsCloudRootChange::Rescan { .. }));
     if has_local_event && !has_rescan {
-        changes.push(windows_cloud_periodic_validate_change());
+        changes.push(WindowsCloudRootChange::Rescan {
+            full: false,
+            recover_cached_deletes: false,
+            recursive_recent: true,
+        });
     }
     changes
 }
@@ -287,6 +294,7 @@ async fn import_windows_cloud_root_changes_and_publish(
             WindowsCloudRootChange::Rescan {
                 full,
                 recover_cached_deletes,
+                recursive_recent,
             } => {
                 for path in windows_cloud_rescan_missing_cached_provider_paths(
                     sync_root,
@@ -303,6 +311,8 @@ async fn import_windows_cloud_root_changes_and_publish(
                 }
                 let local_paths = if full {
                     windows_cloud_local_projected_paths(sync_root)?
+                } else if recursive_recent {
+                    windows_cloud_recent_local_projected_paths_recursive(sync_root)?
                 } else {
                     windows_cloud_recent_local_projected_paths(sync_root)?
                 };

@@ -805,6 +805,7 @@ fn windows_cloud_periodic_validation_rescans_recent_local_changes() {
         WindowsCloudRootChange::Rescan {
             full: false,
             recover_cached_deletes: false,
+            recursive_recent: false,
         }
     );
 }
@@ -822,21 +823,9 @@ fn windows_cloud_local_event_batch_rescans_recent_tail_changes() {
             WindowsCloudRootChange::Rescan {
                 full: false,
                 recover_cached_deletes: false,
+                recursive_recent: true,
             },
         ]
-    );
-}
-
-#[test]
-fn windows_cloud_rescan_batch_is_not_rescanned_again() {
-    let changes = vec![WindowsCloudRootChange::Rescan {
-        full: false,
-        recover_cached_deletes: false,
-    }];
-
-    assert_eq!(
-        windows_cloud_changes_with_event_rescan(changes.clone()),
-        changes
     );
 }
 
