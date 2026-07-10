@@ -11,7 +11,8 @@ fn write_runtime_daemon_status(config_dir: &Path, payload: Value) -> Value {
 
 const DIRECT_APP_MESSAGE_DRAIN_LIMIT: usize = 4096;
 const DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS: u64 = 750;
-const DIRECT_ROOT_MAINTENANCE_INTERVAL_SECS: u64 = 10;
+const DIRECT_ROOT_PEER_REFRESH_INTERVAL_SECS: u64 = 30;
+const DIRECT_ROOT_REPAIR_INTERVAL_SECS: u64 = 60;
 const RELAY_STATUS_PROBE_INTERVAL_SECS: u64 = 30;
 const STATUS_PROBE_TASK_KEY: &str = "status_probe";
 
@@ -385,13 +386,20 @@ pub(crate) fn cmd_daemon(
             relay_status_period,
         );
         relay_status_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        let direct_root_maintenance_period =
-            std::time::Duration::from_secs(DIRECT_ROOT_MAINTENANCE_INTERVAL_SECS);
-        let mut direct_root_maintenance_timer = tokio::time::interval_at(
-            tokio::time::Instant::now() + direct_root_maintenance_period,
-            direct_root_maintenance_period,
+        let direct_root_peer_refresh_period =
+            std::time::Duration::from_secs(DIRECT_ROOT_PEER_REFRESH_INTERVAL_SECS);
+        let mut direct_root_peer_refresh_timer = tokio::time::interval_at(
+            tokio::time::Instant::now() + direct_root_peer_refresh_period,
+            direct_root_peer_refresh_period,
         );
-        direct_root_maintenance_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        direct_root_peer_refresh_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let direct_root_repair_period =
+            std::time::Duration::from_secs(DIRECT_ROOT_REPAIR_INTERVAL_SECS);
+        let mut direct_root_repair_timer = tokio::time::interval_at(
+            tokio::time::Instant::now() + direct_root_repair_period,
+            direct_root_repair_period,
+        );
+        direct_root_repair_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut direct_root_change_announce_pending = false;
         let mut direct_root_change_announce_timer =
             Box::pin(tokio::time::sleep(std::time::Duration::from_secs(86_400)));
@@ -844,7 +852,7 @@ pub(crate) fn cmd_daemon(
                         ),
                     );
                 }
-                _ = direct_root_maintenance_timer.tick() => {
+                _ = direct_root_peer_refresh_timer.tick() => {
                     let direct_root_peers_changed = match direct_roots
                         .request_roots_from_new_peers(config_dir, fips_blocks.as_deref())
                         .await
@@ -858,6 +866,23 @@ pub(crate) fn cmd_daemon(
                             false
                         }
                     };
+                    if direct_root_peers_changed {
+                        if let Err(error) = direct_roots
+                            .request_current_state_from_peers(
+                                config_dir,
+                                fips_blocks.as_deref(),
+                                "peer_refresh",
+                            )
+                            .await
+                        {
+                            println!(
+                                "{}",
+                                json!({"event": "direct_root_state_request_error", "trigger": "peer_refresh", "error": format!("{error:#}")})
+                            );
+                        }
+                    }
+                }
+                _ = direct_root_repair_timer.tick() => {
                     let latest_config =
                         AppConfig::load_or_default_cached_profile(config_path_in(config_dir))
                             .unwrap_or_else(|_| config.clone());
@@ -873,17 +898,12 @@ pub(crate) fn cmd_daemon(
                     };
                     let pending_remote_root_count =
                         remote_root_blocks_pending_count(config_dir, &latest_config);
-                    if direct_root_peers_changed
-                        || missing_online_root_count > 0
-                        || pending_remote_root_count > 0
-                    {
+                    if missing_online_root_count > 0 || pending_remote_root_count > 0 {
                         if let Err(error) = direct_roots
                             .request_current_state_from_peers(
                                 config_dir,
                                 fips_blocks.as_deref(),
-                                if direct_root_peers_changed {
-                                    "peer_refresh"
-                                } else if pending_remote_root_count > 0 {
+                                if pending_remote_root_count > 0 {
                                     "pending_remote_root"
                                 } else {
                                     "missing_online_root"
@@ -893,17 +913,19 @@ pub(crate) fn cmd_daemon(
                         {
                             println!(
                                 "{}",
-                                json!({"event": "direct_root_state_request_error", "trigger": "peer_refresh", "error": format!("{error:#}")})
+                                json!({"event": "direct_root_state_request_error", "trigger": "root_repair", "error": format!("{error:#}")})
                             );
                         }
                     }
-                    enqueue_pending_root_sync_followups(
-                        config_dir,
-                        fips_blocks.clone(),
-                        mount_refresh_tx.clone(),
-                        &daemon_tasks,
-                        "periodic_root_sync",
-                    );
+                    if pending_remote_root_count > 0 {
+                        enqueue_pending_root_sync_followups(
+                            config_dir,
+                            fips_blocks.clone(),
+                            mount_refresh_tx.clone(),
+                            &daemon_tasks,
+                            "periodic_root_sync",
+                        );
+                    }
                 }
                 _ = &mut direct_root_change_announce_timer, if direct_root_change_announce_pending => {
                     direct_root_change_announce_pending = false;
