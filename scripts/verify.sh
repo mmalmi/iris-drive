@@ -5,6 +5,15 @@ set -Eeuo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
 
+# Avoid the retired machine-wide target even when a long-lived shell still
+# exports it. An explicit non-legacy target remains supported.
+if [[ "${CARGO_TARGET_DIR:-}" == "$HOME/.cache/cargo-target" ]]; then
+  unset CARGO_TARGET_DIR
+fi
+if command -v sccache >/dev/null 2>&1; then
+  export SCCACHE_BASEDIRS="${SCCACHE_BASEDIRS:-$ROOT}"
+fi
+
 usage() {
   cat <<'EOF'
 usage: scripts/verify.sh fast|full|health

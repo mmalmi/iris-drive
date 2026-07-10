@@ -1,7 +1,5 @@
 set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
 
-export CARGO_TARGET_DIR := env_var_or_default("CARGO_TARGET_DIR", env_var("HOME") + "/.cache/cargo-target")
-
 default:
     @just --list
 
