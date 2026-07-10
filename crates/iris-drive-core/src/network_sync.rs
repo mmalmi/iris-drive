@@ -172,7 +172,7 @@ async fn sync_once_inner(
             state.authorization_state == crate::AppKeyAuthorizationState::AwaitingApproval
         });
     if !approval_events.receipt_events.is_empty() && approval_still_pending {
-        anyhow::bail!("request relay returned an incomplete device approval roster");
+        anyhow::bail!("configured relay returned an incomplete device approval roster");
     }
 
     let profile_id = config

@@ -13,25 +13,25 @@ use crate::NativeAppAction;
 
 fn pending_request(
     config_dir: &Path,
-) -> iris_drive_core::app_key_link_transport::AppKeyApprovalRequest {
+) -> iris_drive_core::app_key_link_transport::AppKeyApprovalBootstrap {
     let config = AppConfig::load_or_default(config_path_in(config_dir)).unwrap();
     let pending = config
         .profile
         .as_ref()
         .and_then(|profile| profile.outbound_app_key_link_request.as_ref())
         .expect("pending request");
-    iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(pending)
+    iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_bootstrap(pending)
         .unwrap()
         .0
 }
 
 fn approve_owner_from_pending_request(owner_dir: &Path, linked_dir: &Path, label: Option<String>) {
-    let request = pending_request(linked_dir);
+    let bootstrap = pending_request(linked_dir);
     let config_path = config_path_in(owner_dir);
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     let state = config.profile.clone().expect("owner profile");
     let mut account = iris_drive_core::Profile::load(state, owner_dir).unwrap();
-    account.approve_device_request(&request, label).unwrap();
+    account.approve_device_bootstrap(&bootstrap, label).unwrap();
     config.profile = Some(account.state);
     config.save(&config_path).unwrap();
 }

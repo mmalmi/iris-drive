@@ -210,23 +210,17 @@ async fn app_key_link_app_message_records_inbound_request_for_owner_admin() {
     let invite_pubkey =
         iris_drive_core::app_key_link_invite_pubkey(&account.state.app_key_link_secret).unwrap();
     let approval_request =
-        iris_drive_core::app_key_link_transport::create_app_key_approval_request(
+        iris_drive_core::app_key_link_transport::create_app_key_approval_bootstrap(
             &linked_device,
-            Some(account.state.profile_id),
-            Some(&account.state.app_key_pubkey),
             Some(" phone "),
-            123,
         )
         .unwrap();
     let frame = AppKeyLinkRequestFrame {
         schema: 1,
-        profile_id: account.state.profile_id,
-        admin_app_key_pubkey: account.state.app_key_pubkey.clone(),
-        app_key_pubkey: linked_device_hex.clone(),
         invite_pubkey: invite_pubkey.clone(),
         label: Some(" phone ".into()),
-        requested_at: 123,
-        url: approval_request.url,
+        request_npub: approval_request.bootstrap.request_npub,
+        request_secret: approval_request.bootstrap.request_secret,
     };
     let message = iris_drive_core::FipsAppMessage {
         peer_id: pubkey_npub(&linked_device_hex),
@@ -245,7 +239,7 @@ async fn app_key_link_app_message_records_inbound_request_for_owner_admin() {
     assert_eq!(inbound.len(), 1);
     assert_eq!(inbound[0].app_key_pubkey, linked_device_hex);
     assert_eq!(inbound[0].label.as_deref(), Some("phone"));
-    assert_eq!(inbound[0].requested_at, 123);
+    assert!(inbound[0].requested_at > 0);
 }
 
 #[tokio::test]
@@ -263,23 +257,17 @@ async fn app_key_link_app_message_ignores_wrong_link_secret() {
     let linked_device_hex = linked_device.public_key().to_hex();
     let wrong_invite_pubkey = nostr_sdk::Keys::generate().public_key().to_hex();
     let approval_request =
-        iris_drive_core::app_key_link_transport::create_app_key_approval_request(
+        iris_drive_core::app_key_link_transport::create_app_key_approval_bootstrap(
             &linked_device,
-            Some(account.state.profile_id),
-            Some(&account.state.app_key_pubkey),
             Some("phone"),
-            123,
         )
         .unwrap();
     let frame = AppKeyLinkRequestFrame {
         schema: 1,
-        profile_id: account.state.profile_id,
-        admin_app_key_pubkey: account.state.app_key_pubkey.clone(),
-        app_key_pubkey: linked_device_hex.clone(),
         invite_pubkey: wrong_invite_pubkey,
         label: Some("phone".into()),
-        requested_at: 123,
-        url: approval_request.url,
+        request_npub: approval_request.bootstrap.request_npub,
+        request_secret: approval_request.bootstrap.request_secret,
     };
     let message = iris_drive_core::FipsAppMessage {
         peer_id: pubkey_npub(&linked_device_hex),
@@ -318,16 +306,13 @@ async fn app_key_link_roster_message_authorizes_only_after_local_request() {
     .unwrap();
     let joiner_pubkey = joiner.state.app_key_pubkey.clone();
     let approval_request =
-        iris_drive_core::app_key_link_transport::create_app_key_approval_request(
+        iris_drive_core::app_key_link_transport::create_app_key_approval_bootstrap(
             joiner.app_key.keys(),
-            Some(admin.state.profile_id),
-            Some(&admin.state.app_key_pubkey),
             joiner.state.app_key_label.as_deref(),
-            123,
         )
         .unwrap();
     admin
-        .approve_device_request(&approval_request.request, Some("laptop".into()))
+        .approve_device_bootstrap(&approval_request.bootstrap, Some("laptop".into()))
         .unwrap();
 
     let frame = AppKeyLinkRosterFrame {

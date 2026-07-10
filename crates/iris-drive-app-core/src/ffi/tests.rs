@@ -1054,17 +1054,13 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
     assert!(!short_npub.is_complete);
     assert!(!short_npub.is_valid);
 
-    let profile_id = owner_account.profile_id.clone();
     let request_device = nostr_sdk::Keys::generate();
     let request_device_npub =
         iris_drive_core::app_key_summary::pubkey_npub(&request_device.public_key().to_hex());
     let approval_request =
-        iris_drive_core::app_key_link_transport::create_app_key_approval_request(
+        iris_drive_core::app_key_link_transport::create_app_key_approval_bootstrap(
             &request_device,
-            Some(profile_id.parse().unwrap()),
-            Some(&iris_drive_core::normalize_app_key_pubkey(&admin_app_key_npub).unwrap()),
             None,
-            123,
         )
         .unwrap();
     let approval = super::classify_link_input(approval_request.url);
@@ -1292,26 +1288,19 @@ fn link_action_tracks_pending_approval() {
         .as_ref()
         .and_then(|profile| profile.outbound_app_key_link_request.as_ref())
         .expect("pending request");
-    let request =
-        iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(pending)
-            .unwrap()
-            .0;
-    assert!(
-        request.profile_id.is_none(),
-        "compact request links do not carry the approver profile id"
-    );
-    assert!(!request.request_pubkey.is_empty());
-    assert!(!request.request_secret.is_empty());
-    assert!(request.device_app_key_proof.is_empty());
-    assert_eq!(
-        iris_drive_core::app_key_summary::pubkey_npub(&request.device_app_key_pubkey),
-        account.current_app_key_npub
-    );
+    let (pending_bootstrap, pending_request_keys) =
+        iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_bootstrap(pending)
+            .unwrap();
     let bootstrap = iris_drive_core::app_key_link_transport::parse_app_key_approval_bootstrap(
         &account.app_key_link_request,
     )
     .unwrap()
     .unwrap();
+    assert_eq!(pending_bootstrap, bootstrap);
+    assert_eq!(
+        bootstrap.request_npub,
+        iris_drive_core::app_key_summary::pubkey_npub(&pending_request_keys.public_key().to_hex())
+    );
     assert_eq!(bootstrap.device_app_key_npub, account.current_app_key_npub);
     assert_eq!(bootstrap.label.as_deref(), Some("iPhone"));
     assert!(
@@ -1494,13 +1483,12 @@ fn approving_tombstoned_inbound_request_readds_device() {
         .unwrap()
         .removed_at;
     state
-        .record_inbound_app_key_link_request_with_event(
+        .record_inbound_app_key_link_request(
             profile_id,
             &linked_app_key_hex,
             Some("Phone".to_owned()),
             &invite_pubkey,
-            Some(linked_request_url),
-            None,
+            linked_request_url,
             u64::try_from(removed_at).unwrap() + 1,
         )
         .unwrap();
@@ -1859,13 +1847,12 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
     let invite_pubkey =
         iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret).unwrap();
     state
-        .record_inbound_app_key_link_request_with_event(
+        .record_inbound_app_key_link_request(
             profile_id,
             &linked_app_key_hex,
             Some("Phone".to_owned()),
             &invite_pubkey,
-            Some(linked_account.app_key_link_request.clone()),
-            None,
+            linked_account.app_key_link_request.clone(),
             42,
         )
         .unwrap();
@@ -1916,13 +1903,12 @@ fn owner_can_reject_inbound_app_key_link_request() {
     let invite_pubkey =
         iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret).unwrap();
     state
-        .record_inbound_app_key_link_request_with_event(
+        .record_inbound_app_key_link_request(
             profile_id,
             &linked_app_key_hex,
             Some("Phone".to_owned()),
             &invite_pubkey,
-            Some(linked_account.app_key_link_request),
-            None,
+            linked_account.app_key_link_request,
             42,
         )
         .unwrap();
@@ -2097,15 +2083,21 @@ fn reset_invite_action_rotates_invite_and_clears_requests() {
     let profile_id = state.profile_id;
     let invite_pubkey =
         iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret).unwrap();
-    let linked_device =
-        iris_drive_core::AppKey::generate(owner_dir.path().join("tmp-key")).pubkey_hex();
+    let linked_app_key = iris_drive_core::AppKey::generate(owner_dir.path().join("tmp-key"));
+    let linked_device = linked_app_key.pubkey_hex();
+    let approval_url = iris_drive_core::app_key_link_transport::create_app_key_approval_bootstrap(
+        linked_app_key.keys(),
+        Some("Phone"),
+    )
+    .unwrap()
+    .url;
     state
         .record_inbound_app_key_link_request(
             profile_id,
             &linked_device,
             Some("Phone".to_owned()),
             &invite_pubkey,
-            None,
+            approval_url,
             42,
         )
         .unwrap();
@@ -2131,12 +2123,9 @@ fn native_profile_roster_ops_refresh_authorized_member_roster() {
     )
     .unwrap();
     let approval_request =
-        iris_drive_core::app_key_link_transport::create_app_key_approval_request(
+        iris_drive_core::app_key_link_transport::create_app_key_approval_bootstrap(
             linked.app_key.keys(),
-            Some(owner.state.profile_id),
-            Some(&owner.state.app_key_pubkey),
             linked.state.app_key_label.as_deref(),
-            123,
         )
         .unwrap();
     linked
@@ -2150,7 +2139,7 @@ fn native_profile_roster_ops_refresh_authorized_member_roster() {
         )
         .unwrap();
     owner
-        .approve_device_request(&approval_request.request, Some("Phone".into()))
+        .approve_device_bootstrap(&approval_request.bootstrap, Some("Phone".into()))
         .unwrap();
 
     let mut linked_config = AppConfig {

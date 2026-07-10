@@ -574,7 +574,7 @@ final class IrisDriveIOSUITests: XCTestCase {
         )
         XCTAssertFalse(
             staticTextLabels(in: app).components(separatedBy: "\n").contains(linkedDevice),
-            "Linked device key should not be rendered as the row label. Static texts:\n\(staticTextLabels(in: app))"
+            "Linked device ID should not be rendered as the row label. Static texts:\n\(staticTextLabels(in: app))"
         )
     }
 

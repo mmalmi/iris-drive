@@ -89,7 +89,7 @@ impl SyncCluster {
             &["link", owner_invite, "--label", "linux-peer"],
         );
         let request = relay
-            .publish_pending_approval_request(ubuntu_cfg.path())
+            .pending_approval_request_url(ubuntu_cfg.path())
             .await;
         let mut linked_requests = vec![(Client::Ubuntu, request)];
         if let Some(config) = macos_cfg.as_ref() {
@@ -97,7 +97,7 @@ impl SyncCluster {
                 config.path(),
                 &["link", owner_invite, "--label", "macos-peer"],
             );
-            let request = relay.publish_pending_approval_request(config.path()).await;
+            let request = relay.pending_approval_request_url(config.path()).await;
             linked_requests.push((Client::MacOS, request));
         }
         add_config_relay(windows_cfg.path(), &relay.url);

@@ -71,7 +71,7 @@ async fn live_daemons_newly_approved_pair_exchange_post_approval_edits() {
 async fn live_daemons_running_app_key_link_approval_clears_waiting_quickly() {
     let _guard = live_daemon_test_guard().await;
     let relay = LocalNostrRelay::spawn().await;
-    let request_relay = LocalNostrRelay::spawn().await;
+    let approval_relay = LocalNostrRelay::spawn().await;
     let blossom = LocalBlossomServer::spawn_with_upload_delay(Duration::ZERO).await;
     let owner_cfg = tempdir().unwrap();
     let linked_cfg = tempdir().unwrap();
@@ -84,10 +84,10 @@ async fn live_daemons_running_app_key_link_approval_clears_waiting_quickly() {
         linked_cfg.path(),
         &["link", owner_invite, "--label", "iphone"],
     );
-    let request = request_relay
-        .publish_pending_approval_request(linked_cfg.path())
+    let request = approval_relay
+        .pending_approval_request_url(linked_cfg.path())
         .await;
-    add_config_relay(owner_cfg.path(), &request_relay.url);
+    add_config_relay(owner_cfg.path(), &approval_relay.url);
     let owner_log = owner_cfg.path().join("owner.log");
     let linked_log = linked_cfg.path().join("linked.log");
     let owner_daemon = DaemonChild::spawn(

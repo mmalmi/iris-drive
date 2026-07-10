@@ -2,8 +2,8 @@ use super::*;
 use crate::app_key_link_transport::AppKeyLinkRosterFrame;
 use crate::config::Drive;
 use crate::nostr_events::{
-    KIND_DRIVE_ROOT, build_app_key_link_request_event, build_drive_root_event,
-    build_drive_root_publish_event, build_private_hashtree_root_event, drive_root_d_tag,
+    KIND_DRIVE_ROOT, build_drive_root_event, build_drive_root_publish_event,
+    build_private_hashtree_root_event, drive_root_d_tag,
 };
 use crate::nostr_identity::{
     NostrIdentityCapabilities, NostrIdentityFacet, NostrIdentityId, NostrIdentityRosterOp,
@@ -38,12 +38,9 @@ fn filter_matches(filter: &Filter, event: &Event) -> bool {
 }
 
 fn queue_link_request(linked: &mut Profile, admin: &Profile, requested_at: u64) {
-    let approval_request = crate::app_key_link_transport::create_app_key_approval_request(
+    let approval_request = crate::app_key_link_transport::create_app_key_approval_bootstrap(
         linked.app_key.keys(),
-        Some(admin.state.profile_id),
-        Some(&admin.state.app_key_pubkey),
         linked.state.app_key_label.as_deref(),
-        requested_at,
     )
     .unwrap();
     linked
@@ -59,12 +56,9 @@ fn queue_link_request(linked: &mut Profile, admin: &Profile, requested_at: u64) 
 }
 
 fn queue_unbound_join_request(linked: &mut Profile, requested_at: u64) {
-    let approval_request = crate::app_key_link_transport::create_app_key_approval_request(
+    let approval_request = crate::app_key_link_transport::create_app_key_approval_bootstrap(
         linked.app_key.keys(),
-        None,
-        None,
         linked.state.app_key_label.as_deref(),
-        requested_at,
     )
     .unwrap();
     linked.state.queue_unbound_app_key_join_request(
@@ -80,11 +74,11 @@ fn approve_pending_request(admin: &mut Profile, linked: &Profile) -> Event {
         .outbound_app_key_link_request
         .as_ref()
         .expect("linked device has pending request");
-    let (request, _) =
-        crate::app_key_link_transport::parse_pending_app_key_approval_request(pending)
-            .expect("pending approval request");
+    let (bootstrap, _) =
+        crate::app_key_link_transport::parse_pending_app_key_approval_bootstrap(pending)
+            .expect("pending approval bootstrap");
     admin
-        .approve_device_request(&request, linked.state.app_key_label.clone())
+        .approve_device_bootstrap(&bootstrap, linked.state.app_key_label.clone())
         .unwrap();
     Event::from_json(
         &admin
@@ -411,36 +405,6 @@ fn apply_app_key_link_roster_merges_older_branch_without_downgrading_epoch() {
     assert_eq!(linked_roster.dck_generation, current_epoch);
     assert!(linked_roster.contains(&branch_app));
     assert!(!linked_roster.wrapped_dck.contains_key(&branch_app));
-}
-
-#[test]
-fn subscription_filters_match_app_key_link_requests_for_profile() {
-    let admin = Keys::generate();
-    let device = Keys::generate();
-    let invite = Keys::generate();
-    let profile_id = NostrIdentityId::new_v4();
-    let frame = crate::app_key_link_transport::AppKeyLinkRequestFrame {
-        schema: 1,
-        profile_id,
-        admin_app_key_pubkey: admin.public_key().to_hex(),
-        app_key_pubkey: device.public_key().to_hex(),
-        invite_pubkey: invite.public_key().to_hex(),
-        label: Some("phone".to_string()),
-        requested_at: 123,
-        url: "https://drive.iris.to/approve-device/test".to_string(),
-    };
-    let event = build_app_key_link_request_event(&device, &frame).unwrap();
-
-    assert_eq!(event.kind.as_u16(), nostr_identity::FACT_OP_KIND);
-    assert!(
-        subscription_filters(
-            &admin.public_key().to_hex(),
-            &profile_id.to_string(),
-            "main"
-        )
-        .iter()
-        .any(|filter| filter_matches(filter, &event))
-    );
 }
 
 #[test]

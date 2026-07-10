@@ -211,26 +211,31 @@ pub(crate) fn cmd_approve(
         .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    let request = decode_app_key_approval_request(&config, device)?;
-    iris_drive_core::app_key_link_transport::validate_app_key_approval_request_policy(
-        &request,
-        state.profile_id,
-        &state.app_key_pubkey,
-        unix_now_seconds(),
-    )?;
-    let app_key_hex = request.device_app_key_pubkey.clone();
-    let label = label.or_else(|| request.label.clone());
+    let bootstrap = decode_app_key_approval_bootstrap(&config, device)?;
+    let app_key_hex = PublicKey::parse(&bootstrap.device_app_key_npub)
+        .context("parsing approval device AppKey")?
+        .to_hex();
+    let request_pubkey = PublicKey::parse(&bootstrap.request_npub)
+        .context("parsing approval request key")?
+        .to_hex();
+    let label = label.or_else(|| bootstrap.label.clone()).or_else(|| {
+        state
+            .inbound_app_key_link_requests
+            .iter()
+            .find(|pending| pending.app_key_pubkey == app_key_hex)
+            .and_then(|pending| pending.label.clone())
+    });
     let approved_app_key_npub = pubkey_npub(&app_key_hex);
     let mut profile = Profile::load(state, config_dir).context("loading profile")?;
     let snap = profile
-        .approve_device_request(&request, label)
+        .approve_device_bootstrap(&bootstrap, label)
         .context("approving AppKey")?;
     let device_count = snap.app_actors.len();
     let pending = profile
         .state
         .pending_device_approval_receipts
         .iter()
-        .find(|pending| pending.request_pubkey == request.request_pubkey)
+        .find(|pending| pending.request_pubkey == request_pubkey)
         .ok_or_else(|| anyhow::anyhow!("approval did not retain its encrypted receipt"))?;
     let published_events = publish_device_approval(&config, &profile.state, pending)?;
     config.profile = Some(profile.state.clone());
@@ -893,6 +898,7 @@ pub(crate) async fn send_authorized_app_key_link_rosters(
     let Some(sync) = fips_blocks else {
         return Ok(None);
     };
+    sync.refresh_authorized_peers(&snapshot.config).await;
     let now = std::time::Instant::now();
     let due_devices = snapshot
         .recipients
@@ -912,7 +918,6 @@ pub(crate) async fn send_authorized_app_key_link_rosters(
         return Ok(None);
     }
 
-    sync.refresh_authorized_peers(&snapshot.config).await;
     let mut recipients = Vec::new();
     for recipient in due_devices {
         let recipient_npub = pubkey_npub(&recipient.app_key_pubkey);
@@ -1135,33 +1140,33 @@ async fn handle_app_key_link_request_app_message(
             frame.schema
         ));
     }
-    let app_key_source = if frame.app_key_pubkey.trim().is_empty() {
-        message.peer_id.as_str()
-    } else {
-        frame.app_key_pubkey.as_str()
-    };
-    let app_key_hex = normalize_pubkey(app_key_source).context("parsing link request device")?;
+    let app_key_hex = normalize_pubkey(&message.peer_id).context("parsing link request device")?;
     if frame.invite_pubkey.trim().is_empty() {
         return Err(anyhow::anyhow!(
             "app-key link request frame is missing invite pubkey"
         ));
     }
-    let invite_pubkey = frame.invite_pubkey;
+    let invite_pubkey = frame.invite_pubkey.clone();
 
     let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let Some(state) = config.profile.as_mut() else {
         return Ok(true);
     };
+    let profile_id = state.profile_id;
+    let requested_at = unix_now_seconds();
+    let request_url = iris_drive_core::app_key_link_transport::app_key_link_request_frame_url(
+        &frame,
+        &app_key_hex,
+    )?;
     let changed = state
-        .record_inbound_app_key_link_request_with_event(
-            frame.profile_id,
+        .record_inbound_app_key_link_request(
+            profile_id,
             &app_key_hex,
             frame.label,
             &invite_pubkey,
-            Some(frame.url),
-            None,
-            frame.requested_at,
+            request_url,
+            requested_at,
         )
         .context("recording inbound app-key link request")?;
     if changed {
@@ -1173,7 +1178,7 @@ async fn handle_app_key_link_request_app_message(
                 "topic": APP_KEY_LINK_REQUEST_APP_TOPIC,
                 "peer": message.peer_id,
                 "app_key_npub": pubkey_npub(&app_key_hex),
-                "requested_at": frame.requested_at,
+                "requested_at": requested_at,
             })
         );
     }

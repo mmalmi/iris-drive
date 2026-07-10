@@ -163,7 +163,7 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     peers_page.append(&section_title("Devices"));
     let account_device = value_label();
     let account_authorization = value_label();
-    let copy_device_button = icon_button("edit-copy-symbolic", "Copy device key");
+    let copy_device_button = icon_button("edit-copy-symbolic", "Copy device ID");
     let account_grid = gtk::Grid::new();
     account_grid.add_css_class("iris-summary");
     account_grid.set_column_spacing(10);
@@ -172,7 +172,7 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     add_copy_field(
         &account_grid,
         0,
-        "Current Device Key",
+        "Current Device ID",
         &account_device,
         &copy_device_button,
     );
@@ -193,7 +193,7 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     add_device_requests.set_visible(false);
     add_device_body.append(&add_device_requests);
     let manual_controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let add_device_entry = setup_entry("Request link or device key");
+    let add_device_entry = setup_entry("Request link or device ID");
     add_device_entry.set_hexpand(true);
     manual_controls.append(&add_device_entry);
     add_device_body.append(&manual_controls);

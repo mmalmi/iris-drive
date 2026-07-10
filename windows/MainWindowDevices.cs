@@ -21,7 +21,7 @@ public partial class MainWindow
     {
         var deviceBox = new WpfTextBox
         {
-            Tag = "Request link or device key",
+            Tag = "Request link or device ID",
             MinHeight = 34,
             MinWidth = 360,
             Margin = new Thickness(0, 4, 0, 10),
@@ -67,7 +67,7 @@ public partial class MainWindow
         }
 
         body.Children.Add(notice);
-        body.Children.Add(new TextBlock { Text = "Request link or device key", Style = (Style)FindResource("FieldName") });
+        body.Children.Add(new TextBlock { Text = "Request link or device ID", Style = (Style)FindResource("FieldName") });
         body.Children.Add(deviceBox);
         body.Children.Add(buttons);
 
@@ -204,7 +204,7 @@ public partial class MainWindow
         if (string.IsNullOrWhiteSpace(trimmed) ||
             !await service.IsCompleteDeviceApprovalInputAsync(trimmed))
         {
-            notice.Text = "Enter a complete request link or device key.";
+            notice.Text = "Enter a complete request link or device ID.";
             return;
         }
 

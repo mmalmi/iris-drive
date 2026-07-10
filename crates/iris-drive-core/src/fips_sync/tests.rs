@@ -547,6 +547,32 @@ fn admin_inbound_app_key_link_request_configures_pending_fips_peer() {
 }
 
 #[test]
+fn admin_accepting_link_requests_promotes_connected_joiners_to_application_peers() {
+    let mut application_peers = vec![FipsPeerConfig::new("already-app".to_string())];
+    let routing_peers = vec![FipsPeerConfig::new("already-routing".to_string())];
+
+    add_connected_app_key_link_application_peers(
+        &mut application_peers,
+        &routing_peers,
+        "local",
+        [
+            "local".to_string(),
+            "already-app".to_string(),
+            "already-routing".to_string(),
+            "pending-joiner".to_string(),
+        ],
+    );
+
+    assert_eq!(
+        application_peers
+            .iter()
+            .map(|peer| peer.npub.as_str())
+            .collect::<Vec<_>>(),
+        vec!["already-app", "pending-joiner"]
+    );
+}
+
+#[test]
 fn remote_authorized_device_keeps_bootstrap_fips_routing_peers() {
     let current_pubkey = "dd".repeat(32);
     let remote_pubkey = "ee".repeat(32);

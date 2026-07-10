@@ -35,14 +35,22 @@ OWNER_DAEMON_PID=""
 OWNER_DAEMON_LOG="$(mktemp -t iris-drive-ios-ui-owner-daemon.XXXXXX.log)"
 OWNER_FIPS_PORT=""
 SIM_APP_BASE_DIR=""
+LOCAL_RELAY_READY="$(mktemp -t iris-drive-ios-ui-relay.XXXXXX)"
+LOCAL_RELAY_LOG="$(mktemp -t iris-drive-ios-ui-relay.XXXXXX.log)"
+LOCAL_RELAY_PID=""
+LOCAL_RELAY_URL=""
 
 cleanup() {
   if [[ -n "$OWNER_DAEMON_PID" ]]; then
     kill "$OWNER_DAEMON_PID" >/dev/null 2>&1 || true
     wait "$OWNER_DAEMON_PID" >/dev/null 2>&1 || true
   fi
+  if [[ -n "$LOCAL_RELAY_PID" ]]; then
+    kill "$LOCAL_RELAY_PID" >/dev/null 2>&1 || true
+    wait "$LOCAL_RELAY_PID" >/dev/null 2>&1 || true
+  fi
   rm -rf "$OWNER_CONFIG" "$LINKED_CONFIG"
-  rm -f "$OWNER_DAEMON_LOG"
+  rm -f "$OWNER_DAEMON_LOG" "$LOCAL_RELAY_READY" "$LOCAL_RELAY_LOG"
 }
 trap cleanup EXIT
 
@@ -200,6 +208,35 @@ wait_for_owner_fips() {
     sleep 0.2
   done
   return 1
+}
+
+start_local_relay() {
+  if [[ -n "$LOCAL_RELAY_URL" ]]; then
+    return 0
+  fi
+  python3 "$ROOT/scripts/local-nostr-relay.py" --ready-file "$LOCAL_RELAY_READY" \
+    >"$LOCAL_RELAY_LOG" 2>&1 &
+  LOCAL_RELAY_PID="$!"
+  for _ in $(seq 1 100); do
+    if [[ -s "$LOCAL_RELAY_READY" ]]; then
+      LOCAL_RELAY_URL="$(cat "$LOCAL_RELAY_READY")"
+      return 0
+    fi
+    if ! kill -0 "$LOCAL_RELAY_PID" >/dev/null 2>&1; then
+      echo "FAIL: local Nostr relay exited before becoming ready" >&2
+      cat "$LOCAL_RELAY_LOG" >&2 || true
+      exit 1
+    fi
+    sleep 0.1
+  done
+  echo "FAIL: local Nostr relay did not become ready" >&2
+  cat "$LOCAL_RELAY_LOG" >&2 || true
+  exit 1
+}
+
+configure_owner_local_relay() {
+  start_local_relay
+  "$IDRIVE" --config-dir "$OWNER_CONFIG" relays add "$LOCAL_RELAY_URL" >/dev/null
 }
 
 wait_for_owner_inbound_request() {
@@ -481,6 +518,7 @@ run_ui_test \
 verify_share_sheet_import
 
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
+configure_owner_local_relay
 owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["app_key_link_invite"]["url"])' <<<"$owner_json")"
 owner_app_key_npub="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["current_app_key_npub"])' <<<"$owner_json")"
 OWNER_FIPS_PORT="$(unused_loopback_port)"

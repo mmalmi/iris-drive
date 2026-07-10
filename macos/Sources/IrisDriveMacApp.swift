@@ -523,11 +523,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc func copyAppKey() {
-        copyText(IrisDriveStatus.shared.currentAppKeyNpub, statusMessage: "Device key copied")
+        copyText(IrisDriveStatus.shared.currentAppKeyNpub, statusMessage: "Device ID copied")
     }
 
     @objc func copyDeviceKey() {
-        copyText(IrisDriveStatus.shared.deviceNpub, statusMessage: "Device key copied")
+        copyText(IrisDriveStatus.shared.deviceNpub, statusMessage: "Device ID copied")
     }
 
     @objc func copyAppKeyLinkRequest() {
@@ -891,7 +891,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
         let label = label.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !device.isEmpty else {
-            updateStatus("Device Key required")
+            updateStatus("Device ID required")
             return
         }
         guard !label.isEmpty else {
@@ -909,7 +909,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func deleteDevice(_ device: String) {
         let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !device.isEmpty else {
-            updateStatus("Device Key required")
+            updateStatus("Device ID required")
             return
         }
 
@@ -924,7 +924,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func setDeviceAdminRole(_ device: String, makeAdmin: Bool) {
         let device = device.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !device.isEmpty else {
-            updateStatus("Device Key required")
+            updateStatus("Device ID required")
             return
         }
 

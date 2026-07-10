@@ -182,12 +182,12 @@
                      Foreground="{StaticResource IrisMutedBrush}"
                      TextWrapping="Wrap"
                      Margin="0,0,0,12" />
-          <TextBlock Text="Current Device Key" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
+          <TextBlock Text="Current Device ID" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
           <TextBox x:Name="RevokedDeviceBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
           <Button Style="{StaticResource SetupButton}" Click="CopyRevokedDevice_Click" Margin="0,0,0,10">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
               <TextBlock Text="&#xE8C8;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
-              <TextBlock Text="Copy Device Key" />
+              <TextBlock Text="Copy Device ID" />
             </StackPanel>
           </Button>
           <Button Style="{StaticResource SetupButton}" Click="Logout_Click">
@@ -403,7 +403,7 @@
                     <RowDefinition Height="Auto" />
                     <RowDefinition Height="Auto" />
                   </Grid.RowDefinitions>
-                  <TextBlock Text="Current Device Key" Style="{StaticResource FieldName}" />
+                  <TextBlock Text="Current Device ID" Style="{StaticResource FieldName}" />
                   <TextBlock x:Name="DeviceValue" Grid.Column="1" Style="{StaticResource ValueText}" />
                   <Button Grid.Column="2" Style="{StaticResource IconButton}" Click="CopyDevice_Click">
                     <TextBlock Text="&#xE8C8;" Style="{StaticResource IconGlyph}" />

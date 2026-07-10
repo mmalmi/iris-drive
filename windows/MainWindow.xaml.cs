@@ -454,7 +454,7 @@ public partial class MainWindow : Window
                 TextTrimming = TextTrimming.CharacterEllipsis,
                 FontSize = 12,
             });
-            var copyCurrent = PeerActionButton("\uE8C8", "Copy device key", peer.DeviceNpub);
+            var copyCurrent = PeerActionButton("\uE8C8", "Copy device ID", peer.DeviceNpub);
             copyCurrent.Click += CopyPeerDevice_Click;
             keyRow.Children.Add(copyCurrent);
             stack.Children.Add(keyRow);
@@ -543,7 +543,7 @@ public partial class MainWindow : Window
     {
         if (sender is WpfButton { Tag: string deviceNpub })
         {
-            CopyText(deviceNpub, "Device key copied");
+            CopyText(deviceNpub, "Device ID copied");
         }
     }
 
@@ -889,7 +889,7 @@ public partial class MainWindow : Window
 
     private void CopyDevice_Click(object sender, RoutedEventArgs e)
     {
-        CopyText(currentStatus?.DeviceNpub, "Device key copied");
+        CopyText(currentStatus?.DeviceNpub, "Device ID copied");
     }
 
     private void RecoveryPhrase_Click(object sender, RoutedEventArgs e)
@@ -1003,7 +1003,7 @@ public partial class MainWindow : Window
 
     private void CopyRevokedDevice_Click(object sender, RoutedEventArgs e)
     {
-        CopySetupText(currentStatus?.DeviceNpub, "Device key copied");
+        CopySetupText(currentStatus?.DeviceNpub, "Device ID copied");
     }
 
     private async void AddRelay_Click(object sender, RoutedEventArgs e)

@@ -151,7 +151,7 @@ public sealed partial class IrisDriveService
     {
         if (string.IsNullOrWhiteSpace(device))
         {
-            throw new InvalidOperationException("Device Key is required.");
+            throw new InvalidOperationException("Device ID is required.");
         }
 
         return DispatchNativeActionAsync(
@@ -166,7 +166,7 @@ public sealed partial class IrisDriveService
     {
         if (string.IsNullOrWhiteSpace(device))
         {
-            throw new InvalidOperationException("Device Key is required.");
+            throw new InvalidOperationException("Device ID is required.");
         }
 
         return DispatchNativeActionAsync(
@@ -181,7 +181,7 @@ public sealed partial class IrisDriveService
     {
         if (string.IsNullOrWhiteSpace(device))
         {
-            throw new InvalidOperationException("Device Key is required.");
+            throw new InvalidOperationException("Device ID is required.");
         }
 
         return DispatchNativeActionAsync(
@@ -196,7 +196,7 @@ public sealed partial class IrisDriveService
     {
         if (string.IsNullOrWhiteSpace(device))
         {
-            throw new InvalidOperationException("Device Key is required.");
+            throw new InvalidOperationException("Device ID is required.");
         }
 
         if (string.IsNullOrWhiteSpace(label))

@@ -56,7 +56,7 @@ require_file_contains macos/Sources/IrisDriveSetupViews.swift "Copy Request Link
 require_file_contains macos/Sources/IrisDriveSetupViews.swift "openRecoveryPhrase"
 require_file_contains macos/Sources/IrisDriveSetupViews.swift "openSecretKey"
 require_file_contains macos/Sources/IrisDriveMacApp.swift '"type": "start_join_request"'
-require_file_contains macos/Sources/IrisDriveControlPanel.swift "Request link or device key"
+require_file_contains macos/Sources/IrisDriveControlPanel.swift "Request link or device ID"
 require_file_contains macos/Sources/IrisDriveControlPanel.swift "scanApprovalRequestQr"
 require_file_contains macos/Sources/IrisDriveControlPanel.swift "Approve this device?"
 require_file_contains macos/Sources/IrisDriveMacApp.swift '"app_key_approval"'
@@ -68,10 +68,10 @@ require_file_contains linux/src/setup.rs "Copy Request Link"
 require_file_contains linux/src/setup.rs "open_recovery_phrase_setup"
 require_file_contains linux/src/setup.rs "open_secret_key_setup"
 require_file_contains linux/src/setup.rs "start_join_request()"
-require_file_contains linux/src/ui.rs "Request link or device key"
+require_file_contains linux/src/ui.rs "Request link or device ID"
 require_file_contains linux/src/actions.rs "Approve this device?"
 require_file_contains linux/src/main.rs "apply_app_key_approval_link"
-require_file_contains linux/src/render.rs "Copy device key"
+require_file_contains linux/src/render.rs "Copy device ID"
 require_file_absent linux/src/setup.rs 'field_title("Device"'
 require_file_absent linux/src/ui.rs "Name (optional)"
 require_file_absent linux/src/ui.rs "Copy invite link"
@@ -82,7 +82,7 @@ require_file_contains windows/MainWindow.xaml "Restore from recovery phrase"
 require_file_contains windows/MainWindow.xaml "Restore from secret key"
 require_file_contains windows/IrisDriveService.cs '"start_join_request"'
 require_file_contains windows/IrisDriveNativeCore.cs "QrMatrixForText"
-require_file_contains windows/MainWindowDevices.cs "Request link or device key"
+require_file_contains windows/MainWindowDevices.cs "Request link or device ID"
 require_file_contains windows/MainWindowDevices.cs "Approve this device?"
 require_file_contains windows/MainWindow.xaml.cs '"app_key_approval"'
 require_file_contains windows/MainWindow.xaml.cs "CopyPeerDevice_Click"

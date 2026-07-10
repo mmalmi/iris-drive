@@ -887,7 +887,7 @@ run_user_journey() {
   fi
 
   if ! wait_for_file "$SMOKE_CONFIG_DIR/key" 20; then
-    echo "FAIL: Link this device did not initialize local device key material." >&2
+    echo "FAIL: Link this device did not initialize local device ID material." >&2
     return 1
   fi
 

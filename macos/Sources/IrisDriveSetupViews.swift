@@ -11,11 +11,11 @@ struct RevokedDeviceSetupView: View {
             Text("This device no longer has access to Iris Drive.")
                 .foregroundStyle(.secondary)
             if let device = status.deviceNpub, !device.isEmpty {
-                keyedValue("Current Device Key", device)
+                keyedValue("Current Device ID", device)
             }
             if status.deviceNpub?.isEmpty == false {
                 IrisDriveCopyButton(
-                    title: "Copy Device Key",
+                    title: "Copy Device ID",
                     systemImage: "doc.on.doc",
                     fillsWidth: true
                 ) {

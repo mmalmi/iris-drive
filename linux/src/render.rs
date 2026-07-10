@@ -733,11 +733,11 @@ pub(crate) fn peer_row(
     body.append(&labels);
 
     if is_current_device && !app_key_pubkey.is_empty() {
-        let copy = icon_button("edit-copy-symbolic", "Copy device key");
+        let copy = icon_button("edit-copy-symbolic", "Copy device ID");
         let model = Rc::clone(model);
         let app_key_pubkey = app_key_pubkey.to_string();
         copy.connect_clicked(move |_| {
-            copy_text(&model, &app_key_pubkey, "Device key copied");
+            copy_text(&model, &app_key_pubkey, "Device ID copied");
         });
         body.append(&copy);
     }

@@ -238,7 +238,7 @@ pub(crate) fn show_invite_share_member_dialog(
     body.append(&evidence);
 
     let profile_id = setup_entry("NostrIdentity UUID");
-    let app_key = setup_entry("Recipient device key");
+    let app_key = setup_entry("Recipient device ID");
     let npub_hint = setup_entry("User ID");
     let display_name = setup_entry("Name");
     let label = setup_entry("Device label");
@@ -287,7 +287,7 @@ pub(crate) fn show_invite_share_member_dialog(
                 if profile_id.is_empty() && app_key.is_empty() {
                     if representative_npub_hint.is_empty() {
                         model.ui.notice.set_text(
-                            "Recipient evidence, NostrIdentity/device key, or User ID is required",
+                            "Recipient evidence, NostrIdentity/device ID, or User ID is required",
                         );
                         return;
                     }
@@ -295,7 +295,7 @@ pub(crate) fn show_invite_share_member_dialog(
                         model
                             .ui
                             .notice
-                            .set_text("Device label requires a concrete device key");
+                            .set_text("Device label requires a concrete device ID");
                         return;
                     }
                     dispatch_desktop_action(NativeAppAction::RecordPendingShareInvite {
@@ -309,7 +309,7 @@ pub(crate) fn show_invite_share_member_dialog(
                         model
                             .ui
                             .notice
-                            .set_text("Both NostrIdentity UUID and device key are required");
+                            .set_text("Both NostrIdentity UUID and device ID are required");
                         return;
                     }
                     dispatch_desktop_action(NativeAppAction::InviteShareMember {
@@ -980,7 +980,7 @@ fn add_recovery_device_pubkey(model: &AppRef, recovery_pubkey: &str) -> Result<(
 
 pub(crate) fn approve_device_values(model: &AppRef, device: String, label: String) -> bool {
     if device.trim().is_empty() {
-        model.ui.notice.set_text("Device Key is required");
+        model.ui.notice.set_text("Device ID is required");
         return false;
     }
 
@@ -1013,7 +1013,7 @@ pub(crate) fn confirm_approve_device(model: &AppRef, request: String) {
         model
             .ui
             .notice
-            .set_text("Enter a complete request link or device key.");
+            .set_text("Enter a complete request link or device ID.");
         return;
     }
     let Some(window) = model.application.active_window() else {
@@ -1225,9 +1225,9 @@ pub(crate) fn copy_account_key(model: &AppRef, key: &str) {
     match current_account_value(key) {
         Ok(value) => {
             let message = if key == "app_key_npub" || key == "current_app_key_npub" {
-                "Device key copied"
+                "Device ID copied"
             } else {
-                "Device key copied"
+                "Device ID copied"
             };
             copy_text(model, &value, message);
         }

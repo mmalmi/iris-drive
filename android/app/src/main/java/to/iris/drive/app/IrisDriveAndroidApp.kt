@@ -316,7 +316,7 @@ internal fun IrisDriveAndroidApp(
                     isOpeningIrisApps = isOpeningIrisApps,
                     onStartSync = onStartSync,
                     onStopSync = onStopSync,
-                    onCopyDeviceKey = { onCopyText("Device Key", activeProfile.devicePubkey) },
+                    onCopyDeviceKey = { onCopyText("Device ID", activeProfile.devicePubkey) },
                     onCopyText = onCopyText,
                     onExportRecoverySecret = onExportRecoverySecret,
                     androidCalendarSyncEnabled = androidCalendarSyncEnabled,
@@ -381,8 +381,8 @@ private fun RevokedDeviceContent(
             Text("This device no longer has access to Iris Drive.", color = Muted)
             Text(profile.devicePubkey, color = Muted, maxLines = 2, overflow = TextOverflow.Ellipsis)
             SetupSecondaryButton(
-                text = "Copy Device Key",
-                onClick = { onCopyText("Device Key", profile.devicePubkey) },
+                text = "Copy Device ID",
+                onClick = { onCopyText("Device ID", profile.devicePubkey) },
             )
             OutlinedButton(
                 onClick = onLogout,

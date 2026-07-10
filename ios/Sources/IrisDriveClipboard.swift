@@ -6,7 +6,7 @@ extension IrisDriveMobileModel {
     }
 
     func copyDeviceKey() {
-        copyToClipboard(devicePublicKey, feedback: "Device key copied")
+        copyToClipboard(devicePublicKey, feedback: "Device ID copied")
     }
 
     func copyLinkRequest() {

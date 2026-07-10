@@ -19,7 +19,7 @@ use iris_drive_core::app_key_link_transport::{
     app_key_link_roster_recipients, pending_app_key_link_request_frame,
 };
 use iris_drive_core::app_key_link_transport::{
-    AppKeyApprovalRequest, create_app_key_approval_request,
+    AppKeyApprovalBootstrap, create_app_key_approval_bootstrap,
 };
 use iris_drive_core::app_key_summary::{
     AppKeyConnectionDetails, AppKeyConnectivity, app_key_roster_rows, nostr_identity_summary,
@@ -49,6 +49,8 @@ use iris_drive_core::{AppConfig, AppKeyAuthorizationState, BackupTarget, Drive, 
 use iris_drive_core::{Daemon, GatewayBind, GatewayProxyServer, GatewayServer};
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 use nostr_sdk::Event;
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+use nostr_sdk::JsonUtil;
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
 use serde::{Deserialize, Serialize};
@@ -833,7 +835,7 @@ impl NativeAppRuntime {
         if let Err(error) =
             account.admit_current_app_key_with_recovery_phrase(&phrase, label_option(label))
         {
-            self.state.error = format!("recovering device key: {error}");
+            self.state.error = format!("recovering device ID: {error}");
             return;
         }
         config.profile = Some(account.state);
@@ -905,7 +907,7 @@ impl NativeAppRuntime {
         let mut account = match link_result {
             Ok(account) => account,
             Err(error) => {
-                self.state.error = format!("linking device key: {error}");
+                self.state.error = format!("linking device ID: {error}");
                 return;
             }
         };
@@ -914,12 +916,9 @@ impl NativeAppRuntime {
             return;
         }
         let requested_at = unix_now_seconds();
-        let approval_request = match create_app_key_approval_request(
+        let approval_request = match create_app_key_approval_bootstrap(
             account.app_key.keys(),
-            Some(account.state.profile_id),
-            Some(&target.admin_app_key_hex),
             account.state.app_key_label.as_deref(),
-            requested_at,
         ) {
             Ok(request) => request,
             Err(error) => {
@@ -960,12 +959,9 @@ impl NativeAppRuntime {
             }
         };
         let requested_at = unix_now_seconds();
-        let approval_request = match create_app_key_approval_request(
+        let approval_request = match create_app_key_approval_bootstrap(
             account.app_key.keys(),
-            None,
-            None,
             account.state.app_key_label.as_deref(),
-            requested_at,
         ) {
             Ok(request) => request,
             Err(error) => {
@@ -1021,31 +1017,24 @@ impl NativeAppRuntime {
             "profile admin is required to approve devices".clone_into(&mut self.state.error);
             return;
         }
-        let request = match decode_app_key_approval_request(&config, request) {
+        let bootstrap = match decode_app_key_approval_bootstrap(&config, request) {
             Ok(value) => value,
             Err(error) => {
                 self.state.error = error;
                 return;
             }
         };
-        if let Err(error) =
-            iris_drive_core::app_key_link_transport::validate_app_key_approval_request_policy(
-                &request,
-                state.profile_id,
-                &state.app_key_pubkey,
-                unix_now_seconds(),
-            )
-        {
-            self.state.error = error.to_string();
-            return;
-        }
         let label = label_option(label)
-            .or_else(|| request.label.clone())
+            .or_else(|| bootstrap.label.clone())
             .or_else(|| {
+                let device_app_key_pubkey =
+                    nostr_sdk::PublicKey::parse(&bootstrap.device_app_key_npub)
+                        .ok()?
+                        .to_hex();
                 state
                     .inbound_app_key_link_requests
                     .iter()
-                    .find(|pending| pending.app_key_pubkey == request.device_app_key_pubkey)
+                    .find(|pending| pending.app_key_pubkey == device_app_key_pubkey)
                     .and_then(|pending| pending.label.clone())
             });
         let mut account = match Profile::load(state, Path::new(&self.data_dir)) {
@@ -1055,7 +1044,7 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        if let Err(error) = account.approve_device_request(&request, label) {
+        if let Err(error) = account.approve_device_bootstrap(&bootstrap, label) {
             self.state.error = format!("approving device: {error}");
             return;
         }
@@ -1108,33 +1097,25 @@ impl NativeAppRuntime {
             "profile admin is required to reject devices".clone_into(&mut self.state.error);
             return;
         }
-        let profile_id = state.profile_id;
-        let admin_app_key_pubkey = state.app_key_pubkey.clone();
-        let request = match decode_app_key_approval_request(&config, request) {
+        let bootstrap = match decode_app_key_approval_bootstrap(&config, request) {
             Ok(value) => value,
             Err(error) => {
                 self.state.error = error;
                 return;
             }
         };
-        if let Err(error) =
-            iris_drive_core::app_key_link_transport::validate_app_key_approval_request_policy(
-                &request,
-                profile_id,
-                &admin_app_key_pubkey,
-                unix_now_seconds(),
-            )
-        {
-            self.state.error = error.to_string();
-            return;
-        }
+        let app_key_pubkey = match nostr_sdk::PublicKey::parse(&bootstrap.device_app_key_npub) {
+            Ok(pubkey) => pubkey.to_hex(),
+            Err(error) => {
+                self.state.error = format!("invalid approval bootstrap device AppKey: {error}");
+                return;
+            }
+        };
         let Some(state) = config.profile.as_mut() else {
             "profile disappeared while rejecting device".clone_into(&mut self.state.error);
             return;
         };
-        if let Err(error) =
-            state.reject_inbound_app_key_link_request(&request.device_app_key_pubkey)
-        {
+        if let Err(error) = state.reject_inbound_app_key_link_request(&app_key_pubkey) {
             self.state.error = format!("rejecting device: {error}");
             return;
         }
@@ -2473,17 +2454,17 @@ async fn send_native_pending_app_key_link_request(
     match (fips_sent, fips_error.as_deref()) {
         (true, _) => tracing::debug!(
             admin_npub = admin_npub.as_deref().unwrap_or_default(),
-            requested_at = frame.requested_at,
+            requested_at = pending.requested_at,
             "sent native app-key-link request over FIPS"
         ),
         (false, Some(error)) => tracing::warn!(
             admin_npub = admin_npub.as_deref().unwrap_or_default(),
-            requested_at = frame.requested_at,
+            requested_at = pending.requested_at,
             error,
             "native app-key-link request is available as a request link; FIPS notification failed"
         ),
         (false, None) => tracing::debug!(
-            requested_at = frame.requested_at,
+            requested_at = pending.requested_at,
             "native app-key-link request is available as a request link"
         ),
     }
@@ -2640,26 +2621,32 @@ fn handle_native_app_key_link_request(
             frame.schema
         ));
     }
-    let app_key_hex = normalize_pubkey(&frame.app_key_pubkey)?;
+    let app_key_hex = normalize_pubkey(&message.peer_id)?;
     if frame.invite_pubkey.trim().is_empty() {
         return Err("app-key link request frame is missing invite pubkey".to_string());
     }
-    let invite_pubkey = frame.invite_pubkey;
+    let invite_pubkey = frame.invite_pubkey.clone();
 
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))
         .map_err(|error| format!("loading config: {error}"))?;
     let Some(state) = config.profile.as_mut() else {
         return Ok(true);
     };
+    let profile_id = state.profile_id;
+    let requested_at = unix_now_seconds();
+    let request_url = iris_drive_core::app_key_link_transport::app_key_link_request_frame_url(
+        &frame,
+        &app_key_hex,
+    )
+    .map_err(|error| format!("building app-key link request URL: {error}"))?;
     let changed = state
-        .record_inbound_app_key_link_request_with_event(
-            frame.profile_id,
+        .record_inbound_app_key_link_request(
+            profile_id,
             &app_key_hex,
             frame.label,
             &invite_pubkey,
-            Some(frame.url),
-            None,
-            frame.requested_at,
+            request_url,
+            requested_at,
         )
         .map_err(|error| format!("recording inbound app-key link request: {error}"))?;
     if changed {
@@ -2669,7 +2656,7 @@ fn handle_native_app_key_link_request(
         tracing::debug!(
             peer = message.peer_id,
             app_key_npub = pubkey_npub(&app_key_hex),
-            requested_at = frame.requested_at,
+            requested_at,
             "received native app-key-link request over FIPS"
         );
     }
@@ -3572,18 +3559,11 @@ fn inbound_app_key_link_requests(
     state
         .inbound_app_key_link_requests
         .iter()
-        .map(|request| {
-            let request_link = request.request_url.trim();
-            UiAppKeyLinkRequest {
-                app_key_pubkey: pubkey_npub(&request.app_key_pubkey),
-                label: request.label.clone().unwrap_or_default(),
-                requested_at: request.requested_at,
-                request_link: if request_link.is_empty() {
-                    pubkey_npub(&request.app_key_pubkey)
-                } else {
-                    request.request_url.clone()
-                },
-            }
+        .map(|request| UiAppKeyLinkRequest {
+            app_key_pubkey: pubkey_npub(&request.app_key_pubkey),
+            label: request.label.clone().unwrap_or_default(),
+            requested_at: request.requested_at,
+            request_link: request.request_url.clone(),
         })
         .collect()
 }
@@ -3598,21 +3578,17 @@ fn resolve_app_key_link_target(input: &str) -> Result<iris_drive_core::AppKeyLin
     })
 }
 
-fn decode_app_key_approval_request(
+fn decode_app_key_approval_bootstrap(
     config: &AppConfig,
     request: &str,
-) -> Result<AppKeyApprovalRequest, String> {
-    let state = config
+) -> Result<AppKeyApprovalBootstrap, String> {
+    config
         .profile
         .as_ref()
         .ok_or_else(|| "profile admin is required to approve devices".to_string())?;
-    iris_drive_core::app_key_link_transport::parse_app_key_approval_request(
-        request,
-        state.profile_id,
-        &state.app_key_pubkey,
-        unix_now_seconds(),
-    )
-    .map_err(|error| error.to_string())
+    iris_drive_core::app_key_link_transport::parse_app_key_approval_bootstrap(request)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| "app-key approval bootstrap is missing or invalid".to_string())
 }
 
 fn optional_trimmed(value: &str) -> Option<String> {

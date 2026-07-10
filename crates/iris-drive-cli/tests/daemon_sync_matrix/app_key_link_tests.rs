@@ -32,6 +32,7 @@ async fn live_daemons_app_key_link_request_reaches_admin_quickly() {
         unused_loopback_port(),
     );
 
+    wait_until_open_fips_connected(owner_cfg.path(), linked_cfg.path()).await;
     let started_at = Instant::now();
     let fast_window = Duration::from_secs(6);
     while started_at.elapsed() < fast_window {
@@ -53,4 +54,30 @@ async fn live_daemons_app_key_link_request_reaches_admin_quickly() {
         owner_daemon.log(),
         linked_daemon.log(),
     );
+}
+
+async fn wait_until_open_fips_connected(owner_cfg: &Path, linked_cfg: &Path) {
+    let started_at = Instant::now();
+    let window = Duration::from_secs(10);
+    while started_at.elapsed() < window {
+        let owner = run_json(owner_cfg, &["status"]);
+        let linked = run_json(linked_cfg, &["status"]);
+        if open_fips_connected(&owner) && open_fips_connected(&linked) {
+            return;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    panic!(
+        "open FIPS discovery did not connect within {:?}\nowner status: {}\nlinked status: {}",
+        started_at.elapsed(),
+        serde_json::to_string_pretty(&run_json(owner_cfg, &["status"])).unwrap(),
+        serde_json::to_string_pretty(&run_json(linked_cfg, &["status"])).unwrap(),
+    );
+}
+
+fn open_fips_connected(status: &Value) -> bool {
+    let fips = &status["network"]["fips"];
+    fips["running"].as_bool().unwrap_or(false)
+        && fips["fresh"].as_bool().unwrap_or(false)
+        && fips["connected_peer_count"].as_u64().unwrap_or(0) >= 1
 }

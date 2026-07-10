@@ -160,11 +160,11 @@ private struct RevokedDeviceSetupView: View {
 
                 Section("Device removed") {
                     Text("This device no longer has access to Iris Drive.")
-                    LabeledContent("Current Device Key", value: model.devicePublicKey)
+                    LabeledContent("Current Device ID", value: model.devicePublicKey)
                     Button {
                         model.copyDeviceKey()
                     } label: {
-                        Label("Copy Device Key", systemImage: "doc.on.doc")
+                        Label("Copy Device ID", systemImage: "doc.on.doc")
                     }
                 }
 
@@ -854,7 +854,7 @@ private struct DevicesView: View {
                         Button {
                             model.copyDeviceKey()
                         } label: {
-                            Label("Copy Device Key", systemImage: "doc.on.doc")
+                            Label("Copy Device ID", systemImage: "doc.on.doc")
                         }
                     }
                 }
@@ -970,8 +970,7 @@ private struct AddDeviceSection: View {
     @State private var lastPromptedApprovalRequest = ""
 
     private var canAddManualDevice: Bool {
-        let value = normalizedDeviceApprovalRequest(model.approveDeviceKey)
-        return IrisDriveNativeLinkInput.isCompleteDeviceApproval(value)
+        IrisDriveNativeLinkInput.isCompleteDeviceApproval(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
     private func normalizedDeviceApprovalRequest(_ value: String) -> String {
@@ -1003,7 +1002,7 @@ private struct AddDeviceSection: View {
     var body: some View {
         Section {
             DisclosureGroup(isExpanded: $isExpanded) {
-                TextField("Request link", text: $model.approveDeviceKey)
+                TextField("Request link or device ID", text: $model.approveDeviceKey)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .accessibilityIdentifier("manualDeviceId")
@@ -1027,7 +1026,7 @@ private struct AddDeviceSection: View {
                 .disabled(!canAddManualDevice)
                 if !model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                    !canAddManualDevice {
-                    Text("That is not a complete request link.")
+                    Text("That is not a complete request link or device ID.")
                         .font(.caption)
                         .foregroundStyle(.red)
                 }
@@ -1509,7 +1508,7 @@ private struct InviteShareMemberSheet: View {
                     TextField("Member profile UUID", text: $profileId)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                    TextField("Recipient device key", text: $appKey)
+                    TextField("Recipient device ID", text: $appKey)
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     Picker("Role", selection: $role) {
@@ -2574,11 +2573,11 @@ private struct SettingsView: View {
             Section("Device") {
                 TextField("Device label", text: $model.deviceLabel)
                     .onSubmit { model.persist() }
-                LabeledContent("Current Device Key", value: model.devicePublicKey)
+                LabeledContent("Current Device ID", value: model.devicePublicKey)
                 Button {
                     model.copyDeviceKey()
                 } label: {
-                    Label("Copy Device Key", systemImage: "doc.on.doc")
+                    Label("Copy Device ID", systemImage: "doc.on.doc")
                 }
                 if model.canExportRecoveryPhrase {
                     NavigationLink {

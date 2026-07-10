@@ -1,11 +1,28 @@
 use super::*;
 use crate::nostr_identity::{NostrIdentityKeyPurpose, SecretWrapStatus};
 use crate::{NostrIdentityRosterOp, parse_nostr_identity_roster_op_event};
-use nostr_sdk::{Event, JsonUtil};
+use nostr_sdk::{Event, JsonUtil, ToBech32};
 use tempfile::tempdir;
 
 fn invite_pubkey(state: &ProfileState) -> String {
     app_key_link_invite_pubkey(&state.app_key_link_secret).unwrap()
+}
+
+fn approval_url(app_key_pubkey: &str) -> String {
+    let request = Keys::generate();
+    nostr_identity::encode_nostr_identity_device_approval_bootstrap(
+        &nostr_identity::NostrIdentityDeviceApprovalBootstrap {
+            device_app_key_npub: PublicKey::from_hex(app_key_pubkey)
+                .unwrap()
+                .to_bech32()
+                .unwrap(),
+            request_npub: request.public_key().to_bech32().unwrap(),
+            request_secret: "AQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQEBAQE".to_string(),
+            label: None,
+        },
+        Some(crate::app_key_link_transport::APP_KEY_APPROVAL_REQUEST_PREFIX),
+    )
+    .unwrap()
 }
 
 #[test]
@@ -657,8 +674,8 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
     let profile_id = acct.state.profile_id;
     let invite_pubkey = invite_pubkey(&acct.state);
     let device = fresh_app_key_pubkey();
-    let stale_url = "iris-drive://app-key-link?app_key=legacy-device";
-    let full_url = "https://drive.iris.to/approve-device/full-request";
+    let stale_url = approval_url(&device);
+    let replacement_url = approval_url(&device);
 
     assert!(
         acct.state
@@ -667,7 +684,7 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
                 &device,
                 Some(" phone ".to_string()),
                 &invite_pubkey,
-                Some(stale_url.to_string()),
+                stale_url.clone(),
                 10,
             )
             .unwrap()
@@ -686,7 +703,7 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
                 &device,
                 Some("phone".to_string()),
                 &invite_pubkey,
-                Some(stale_url.to_string()),
+                stale_url.clone(),
                 9,
             )
             .unwrap()
@@ -698,7 +715,7 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
                 &device,
                 Some("tablet".to_string()),
                 &invite_pubkey,
-                Some(full_url.to_string()),
+                replacement_url.clone(),
                 11,
             )
             .unwrap()
@@ -710,7 +727,7 @@ fn inbound_app_key_link_requests_are_deduped_and_bounded() {
     );
     assert_eq!(
         acct.state.inbound_app_key_link_requests[0].request_url,
-        full_url
+        replacement_url
     );
 }
 
@@ -729,7 +746,7 @@ fn inbound_app_key_link_request_requires_current_invite_pubkey() {
                 &device,
                 Some("phone".to_string()),
                 &fresh_app_key_pubkey(),
-                None,
+                approval_url(&device),
                 10,
             )
             .unwrap()
@@ -752,7 +769,7 @@ fn reset_app_key_link_secret_rotates_invite_and_clears_pending_requests() {
             &device,
             Some("phone".to_string()),
             &old_invite_pubkey,
-            None,
+            approval_url(&device),
             10,
         )
         .unwrap();
@@ -761,15 +778,16 @@ fn reset_app_key_link_secret_rotates_invite_and_clears_pending_requests() {
     assert_ne!(acct.state.app_key_link_secret, old_secret);
     assert!(acct.state.inbound_app_key_link_requests.is_empty());
 
+    let old_device = fresh_app_key_pubkey();
     assert!(
         !acct
             .state
             .record_inbound_app_key_link_request(
                 profile_id,
-                &fresh_app_key_pubkey(),
+                &old_device,
                 Some("old".to_string()),
                 &old_invite_pubkey,
-                None,
+                approval_url(&old_device),
                 11,
             )
             .unwrap()
@@ -791,7 +809,7 @@ fn rejected_inbound_app_key_link_request_does_not_replay() {
                 &device,
                 Some("phone".to_string()),
                 &invite_pubkey,
-                None,
+                approval_url(&device),
                 10,
             )
             .unwrap()
@@ -811,7 +829,7 @@ fn rejected_inbound_app_key_link_request_does_not_replay() {
                 &device,
                 Some("phone".to_string()),
                 &invite_pubkey,
-                None,
+                approval_url(&device),
                 10,
             )
             .unwrap()
@@ -825,7 +843,7 @@ fn rejected_inbound_app_key_link_request_does_not_replay() {
                 &device,
                 Some("phone".to_string()),
                 &invite_pubkey,
-                None,
+                approval_url(&device),
                 11,
             )
             .unwrap()
@@ -1095,7 +1113,7 @@ fn recording_authorized_request_reports_cleanup_change() {
             &target,
             Some("phone".into()),
             &invite_pubkey(&acct.state),
-            None,
+            approval_url(&target),
             42,
         )
         .unwrap();
@@ -1119,7 +1137,7 @@ fn recording_authorized_request_without_app_keys_cache_stays_hidden() {
             &target,
             Some("phone".into()),
             &invite_pubkey(&acct.state),
-            None,
+            approval_url(&target),
             42,
         )
         .unwrap();
@@ -1153,7 +1171,7 @@ fn recording_removed_request_ignores_stale_replay_but_allows_newer_rejoin() {
                 &target,
                 Some("phone".into()),
                 &invite_pubkey,
-                None,
+                approval_url(&target),
                 u64::try_from(removed_at).unwrap().saturating_sub(1),
             )
             .unwrap()
@@ -1167,7 +1185,7 @@ fn recording_removed_request_ignores_stale_replay_but_allows_newer_rejoin() {
                 &target,
                 Some("phone".into()),
                 &invite_pubkey,
-                None,
+                approval_url(&target),
                 u64::try_from(removed_at).unwrap() + 1,
             )
             .unwrap()

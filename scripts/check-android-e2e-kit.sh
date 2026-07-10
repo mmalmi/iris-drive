@@ -100,7 +100,7 @@ require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "openRecoveryPhrase"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "openSecretKey"
 require_contains android/app/src/main/java/to/iris/drive/app/core/AppState.kt '"start_join_request"'
-require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt "Request link or device key"
+require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt "Request link or device ID"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt "QrScannerDialog"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt "scanApprovalRequestQr"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt "Approve this device?"

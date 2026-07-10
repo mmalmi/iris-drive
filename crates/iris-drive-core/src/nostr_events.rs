@@ -11,27 +11,17 @@
 //! - **`KIND_SHARE_ACCESS_SNAPSHOT = 30078`** — AppKey-signed canonical share
 //!   access snapshot. d-tag: bare share UUID; l-tag:
 //!   `"iris-drive/share-access"`. Pubkey = authorized share admin `AppKey`.
-//! - **AppKey-link requests** — AppKey-signed identity fact events
-//!   (`kind=7368`, `type=nostr_identity_link_request`) encrypted to the
-//!   random invite key carried by the invite URL.
-//!
 //! All events are signed by the appropriate key and verify under the
 //! event's own pubkey. Build functions return a signed `Event`; parse
 //! functions take an `Event`, verify its signature, and extract the
 //! application-level type.
 
 use hashtree_core::{Cid, from_hex, to_hex};
-use nostr_identity::{
-    FACT_OP_KIND, IDENTITY_GRAPH_LINK_REQUEST_TYPE, build_identity_link_request_event,
-    parse_identity_link_request_event_for_invite_pubkey,
-};
 use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
 use nostr_sdk::{Event, EventBuilder, Keys, Kind, PublicKey, Tag, TagKind};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::NostrIdentityId;
-use crate::app_key_link_transport::AppKeyLinkRequestFrame;
 use crate::config::AppKeyRootRef;
 use crate::root_meta::{RootObservation, RootParent};
 
@@ -55,11 +45,6 @@ pub fn is_drive_root_event_coordinate(event: &Event) -> bool {
             .tags
             .identifier()
             .is_some_and(|d_tag| parse_drive_root_d_tag(d_tag).is_ok())
-}
-
-#[must_use]
-pub fn is_app_key_link_request_event_coordinate(event: &Event) -> bool {
-    is_identity_app_key_link_request_event(event)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,8 +80,6 @@ pub enum WireError {
     MissingRootHash,
     #[error("drive-root key is not available for this device")]
     RootKeyUnavailable,
-    #[error("app-key-link event signer {signer} does not match request device {device}")]
-    AppKeyLinkSignerMismatch { signer: String, device: String },
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -119,86 +102,6 @@ struct DriveRootWireContent {
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn is_zero(value: &u64) -> bool {
     *value == 0
-}
-
-pub fn build_app_key_link_request_event(
-    device_keys: &Keys,
-    frame: &AppKeyLinkRequestFrame,
-) -> Result<Event, WireError> {
-    PublicKey::from_hex(&frame.app_key_pubkey)
-        .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
-    let signer = device_keys.public_key().to_hex();
-    if signer != frame.app_key_pubkey {
-        return Err(WireError::AppKeyLinkSignerMismatch {
-            signer,
-            device: frame.app_key_pubkey.clone(),
-        });
-    }
-    PublicKey::from_hex(&frame.admin_app_key_pubkey)
-        .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
-    PublicKey::from_hex(&frame.invite_pubkey)
-        .map_err(|e| WireError::InvalidPubkey(e.to_string()))?;
-    build_identity_link_request_event(
-        device_keys,
-        frame.profile_id.as_uuid(),
-        frame.admin_app_key_pubkey.clone(),
-        frame.invite_pubkey.clone(),
-        format!("app-key-link-{}", frame.requested_at),
-        frame.label.clone(),
-        frame.requested_at,
-    )
-    .map_err(|e| WireError::Event(e.to_string()))
-}
-
-/// Parse + verify a signed app-key-link request event.
-pub fn parse_app_key_link_request_event(
-    event: &Event,
-    invite_keys: &Keys,
-) -> Result<AppKeyLinkRequestFrame, WireError> {
-    if !is_identity_app_key_link_request_event(event) {
-        return Err(WireError::WrongKind {
-            expected: FACT_OP_KIND,
-            got: event.kind.as_u16(),
-        });
-    }
-    parse_identity_app_key_link_request_event(event, invite_keys)
-}
-
-fn parse_identity_app_key_link_request_event(
-    event: &Event,
-    invite_keys: &Keys,
-) -> Result<AppKeyLinkRequestFrame, WireError> {
-    event
-        .verify()
-        .map_err(|e| WireError::SignatureFailed(e.to_string()))?;
-    let signed = parse_identity_link_request_event_for_invite_pubkey(
-        event,
-        invite_keys,
-        invite_keys.public_key().to_hex(),
-    )
-    .map_err(|e| WireError::BadContent(format!("Nostr identity link request: {e}")))?;
-    let profile_id = NostrIdentityId::from_uuid(signed.content.identity);
-    Ok(AppKeyLinkRequestFrame {
-        schema: 1,
-        profile_id,
-        admin_app_key_pubkey: signed.content.admin_pubkey.clone(),
-        app_key_pubkey: signed.content.joining_pubkey.clone(),
-        invite_pubkey: signed.content.invite_pubkey.clone(),
-        label: signed.content.label.clone(),
-        requested_at: signed.content.requested_at,
-        url: String::new(),
-    })
-}
-
-fn is_identity_app_key_link_request_event(event: &Event) -> bool {
-    event.kind.as_u16() == FACT_OP_KIND
-        && event.tags.iter().any(|tag| {
-            let fields = tag.as_slice();
-            fields.first().is_some_and(|name| name == "type")
-                && fields
-                    .get(1)
-                    .is_some_and(|value| value == IDENTITY_GRAPH_LINK_REQUEST_TYPE)
-        })
 }
 
 /// Compute the d-tag for a drive-root event.

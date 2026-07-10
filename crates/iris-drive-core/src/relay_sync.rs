@@ -1026,15 +1026,10 @@ pub async fn fetch_device_approval_events(
         .into_iter()
         .filter(is_device_approval_receipt_event)
         .collect::<Vec<_>>();
-    let (request, _) =
-        crate::app_key_link_transport::parse_pending_app_key_approval_request(pending)
-            .map_err(|error| RelayError::Client(error.to_string()))?;
-    let profile_id = request.profile_id.or_else(|| {
-        receipt_events.iter().find_map(|event| {
-            parse_pending_app_key_approval_receipt_event(pending, event)
-                .ok()
-                .map(|receipt| receipt.profile_id)
-        })
+    let profile_id = receipt_events.iter().find_map(|event| {
+        parse_pending_app_key_approval_receipt_event(pending, event)
+            .ok()
+            .map(|receipt| receipt.profile_id)
     });
     let roster_events = if let Some(profile_id) = profile_id {
         fetch_events(

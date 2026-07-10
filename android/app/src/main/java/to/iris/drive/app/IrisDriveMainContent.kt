@@ -268,7 +268,7 @@ private fun DevicesContent(
                 onAppointAdmin = onAppointAdmin,
                 onDemoteAdmin = onDemoteAdmin,
                 onRenameDevice = onRenameDevice,
-                onCopyDeviceKey = { onCopyText("Device Key", it) },
+                onCopyDeviceKey = { onCopyText("Device ID", it) },
             )
         }
     }
@@ -837,7 +837,7 @@ private fun InviteShareMemberDialog(
                 OutlinedTextField(
                     value = appKey,
                     onValueChange = { appKey = it },
-                    label = { Text("Recipient device key") },
+                    label = { Text("Recipient device ID") },
                     singleLine = true,
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -1101,11 +1101,11 @@ private fun SettingsPanel(
                 Text("Reset relay")
             }
         }
-        Text("Current Device Key", fontWeight = FontWeight.SemiBold)
+        Text("Current Device ID", fontWeight = FontWeight.SemiBold)
         Text(profile?.devicePubkey.orEmpty(), color = Muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             OutlinedButton(onClick = onCopyDeviceKey) {
-                Text("Copy Device Key")
+                Text("Copy Device ID")
             }
         }
         if (profile?.canExportRecoveryPhrase == true) {

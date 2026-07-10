@@ -27,6 +27,10 @@ RUST_IOS_TARGET="${IRIS_DRIVE_IOS_RUST_TARGET:-aarch64-apple-ios-sim}"
 RUST_LIB_DIR="$TARGET_DIR/$RUST_IOS_TARGET/debug"
 RUST_STATIC_LIB="$RUST_LIB_DIR/libiris_drive_app_core.a"
 OWNER_CONFIG="$(mktemp -d -t iris-drive-ios-gui-owner)"
+LOCAL_RELAY_READY="$(mktemp -t iris-drive-ios-smoke-relay.XXXXXX)"
+LOCAL_RELAY_LOG="$(mktemp -t iris-drive-ios-smoke-relay.XXXXXX.log)"
+LOCAL_RELAY_PID=""
+LOCAL_RELAY_URL=""
 
 usage() {
   cat <<'USAGE'
@@ -42,7 +46,12 @@ USAGE
 }
 
 cleanup() {
+  if [[ -n "$LOCAL_RELAY_PID" ]]; then
+    kill "$LOCAL_RELAY_PID" >/dev/null 2>&1 || true
+    wait "$LOCAL_RELAY_PID" 2>/dev/null || true
+  fi
   rm -rf "$OWNER_CONFIG"
+  rm -f "$LOCAL_RELAY_READY" "$LOCAL_RELAY_LOG"
 }
 trap cleanup EXIT
 
@@ -263,6 +272,35 @@ wait_for_debug_state() {
   return 1
 }
 
+start_local_relay() {
+  if [[ -n "$LOCAL_RELAY_URL" ]]; then
+    return 0
+  fi
+  python3 "$ROOT/scripts/local-nostr-relay.py" --ready-file "$LOCAL_RELAY_READY" \
+    >"$LOCAL_RELAY_LOG" 2>&1 &
+  LOCAL_RELAY_PID="$!"
+  for _ in $(seq 1 100); do
+    if [[ -s "$LOCAL_RELAY_READY" ]]; then
+      LOCAL_RELAY_URL="$(cat "$LOCAL_RELAY_READY")"
+      return 0
+    fi
+    if ! kill -0 "$LOCAL_RELAY_PID" >/dev/null 2>&1; then
+      echo "FAIL: local Nostr relay exited before becoming ready" >&2
+      cat "$LOCAL_RELAY_LOG" >&2 || true
+      exit 1
+    fi
+    sleep 0.1
+  done
+  echo "FAIL: local Nostr relay did not become ready" >&2
+  cat "$LOCAL_RELAY_LOG" >&2 || true
+  exit 1
+}
+
+configure_owner_local_relay() {
+  start_local_relay
+  "$IDRIVE" --config-dir "$OWNER_CONFIG" relays add "$LOCAL_RELAY_URL" >/dev/null
+}
+
 if [[ ! -x "$IDRIVE" ]]; then
   cargo build -p idrive
 fi
@@ -315,6 +353,7 @@ wait_for_simulator_boot "$DEVICE_UDID" "$SIMULATOR_BOOT_TIMEOUT_SECONDS"
 
 xcrun simctl uninstall "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
+configure_owner_local_relay
 owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["app_key_link_invite"]["url"])' <<<"$owner_json")"
 
 xcrun simctl install "$DEVICE_UDID" "$APP_PATH"

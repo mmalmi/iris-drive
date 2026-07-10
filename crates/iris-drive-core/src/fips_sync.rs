@@ -159,8 +159,16 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     }
 
     pub async fn refresh_authorized_peers(&self, config: &AppConfig) {
-        let application_peers = authorized_device_fips_peers(config, &self.transport_settings);
+        let mut application_peers = authorized_device_fips_peers(config, &self.transport_settings);
         let routing_peers = routing_fips_peers(config, &self.transport_settings);
+        if accepts_app_key_link_requests(config) {
+            add_connected_app_key_link_application_peers(
+                &mut application_peers,
+                &routing_peers,
+                self.endpoint_npub.as_str(),
+                self.transport.connected_peer_ids().await,
+            );
+        }
         let snapshot = fips_peer_config_snapshot(
             Some(self.endpoint_npub.as_str()),
             &application_peers,
@@ -344,6 +352,22 @@ fn fips_peer_config_snapshot(
     FipsPeerConfigSnapshot {
         application_peers: normalize_fips_peer_configs(local, application_peers, &mut seen),
         routing_peers: normalize_fips_peer_configs(local, routing_peers, &mut seen),
+    }
+}
+
+fn add_connected_app_key_link_application_peers(
+    application_peers: &mut Vec<FipsPeerConfig>,
+    routing_peers: &[FipsPeerConfig],
+    local_npub: &str,
+    connected_peer_ids: impl IntoIterator<Item = String>,
+) {
+    for npub in connected_peer_ids {
+        if npub != local_npub
+            && !application_peers.iter().any(|peer| peer.npub == npub)
+            && !routing_peers.iter().any(|peer| peer.npub == npub)
+        {
+            application_peers.push(FipsPeerConfig::new(npub));
+        }
     }
 }
 

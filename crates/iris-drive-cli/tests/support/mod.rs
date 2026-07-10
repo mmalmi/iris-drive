@@ -90,7 +90,7 @@ impl LocalNostrRelay {
         self.events.lock().await.clone()
     }
 
-    pub(crate) async fn publish_pending_approval_request(
+    pub(crate) async fn pending_approval_request_url(
         &self,
         config_dir: &std::path::Path,
     ) -> String {

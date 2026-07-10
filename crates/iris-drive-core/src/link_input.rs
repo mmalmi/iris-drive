@@ -706,7 +706,7 @@ fn percent_decode_component(value: &str, plus_is_space: bool) -> Result<String> 
 mod tests {
     use super::*;
     use crate::app_key_link_invite::encode_app_key_link_invite;
-    use crate::app_key_link_transport::create_app_key_approval_request;
+    use crate::app_key_link_transport::create_app_key_approval_bootstrap;
     use nostr_sdk::Keys;
     use nostr_sdk::nips::nip19::ToBech32;
 
@@ -743,14 +743,8 @@ mod tests {
 
         let request_device = Keys::generate();
         let request_device_npub = request_device.public_key().to_bech32().expect("npub");
-        let request = create_app_key_approval_request(
-            &request_device,
-            Some(profile_id),
-            Some(&admin.to_hex()),
-            None,
-            123,
-        )
-        .expect("approval request");
+        let request =
+            create_app_key_approval_bootstrap(&request_device, None).expect("approval bootstrap");
         let approval = classify_link_input(&request.url);
         assert_eq!(approval.kind, "app_key_approval");
         assert!(approval.is_complete);

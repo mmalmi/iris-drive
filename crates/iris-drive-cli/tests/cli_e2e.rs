@@ -67,7 +67,7 @@ fn approve_with_local_relay(
         .build()
         .unwrap();
     let relay = runtime.block_on(LocalNostrRelay::spawn());
-    let request = runtime.block_on(relay.publish_pending_approval_request(linked_dir));
+    let request = runtime.block_on(relay.pending_approval_request_url(linked_dir));
     add_config_relay(owner_dir, &relay.url);
     let mut args = vec!["approve", request.as_str()];
     if let Some(label) = label {
@@ -86,7 +86,7 @@ fn app_keys_approve_with_local_relay(
         .build()
         .unwrap();
     let relay = runtime.block_on(LocalNostrRelay::spawn());
-    let request = runtime.block_on(relay.publish_pending_approval_request(linked_dir));
+    let request = runtime.block_on(relay.pending_approval_request_url(linked_dir));
     add_config_relay(owner_dir, &relay.url);
     run_json(owner_dir, &["app-keys", "approve", &request])
 }

@@ -157,13 +157,13 @@ pub(crate) fn render_revoked_device(model: &AppRef, state: &NativeAppState) {
     let device_npub = account
         .map(|account| account.current_app_key_npub.as_str())
         .unwrap_or("-");
-    container.append(&field_title("Current Device Key"));
+    container.append(&field_title("Current Device ID"));
     container.append(&readonly_entry(device_npub));
 
     let notice = setup_notice();
     notice.set_text("Device removed");
 
-    let copy = pill_button("Copy Device Key");
+    let copy = pill_button("Copy Device ID");
     {
         let device = device_npub.to_string();
         let notice = notice.clone();
@@ -172,7 +172,7 @@ pub(crate) fn render_revoked_device(model: &AppRef, state: &NativeAppState) {
                 notice.set_text("Nothing to copy");
             } else if let Some(display) = gtk::gdk::Display::default() {
                 display.clipboard().set_text(&device);
-                notice.set_text("Device key copied");
+                notice.set_text("Device ID copied");
             } else {
                 notice.set_text("Clipboard unavailable");
             }

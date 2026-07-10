@@ -70,17 +70,17 @@ pub fn subscription_filters_for_shared_roots(
 #[must_use]
 pub fn device_approval_receipt_filter(state: &crate::ProfileState) -> Option<Filter> {
     let pending = state.outbound_app_key_link_request.as_ref()?;
-    let (request, _) =
-        crate::app_key_link_transport::parse_pending_app_key_approval_request(pending).ok()?;
-    let since = u64::try_from(request.requested_at).ok()?;
+    let (bootstrap, _) =
+        crate::app_key_link_transport::parse_pending_app_key_approval_bootstrap(pending).ok()?;
+    let request_pubkey = PublicKey::parse(&bootstrap.request_npub).ok()?;
     Some(
         Filter::new()
             .kind(nostr_sdk::Kind::from(KIND_NOSTR_IDENTITY_ROSTER_OP))
             .custom_tag(
                 SingleLetterTag::lowercase(nostr_sdk::Alphabet::P),
-                request.request_pubkey,
+                request_pubkey.to_hex(),
             )
-            .since(Timestamp::from(since))
+            .since(Timestamp::from(pending.requested_at))
             .limit(8),
     )
 }

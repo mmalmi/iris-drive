@@ -305,7 +305,7 @@ private fun DeviceActorRow(
                         onClick = { onCopyDeviceKey(device.pubkey) },
                         modifier = Modifier.testTag("copyCurrentDeviceKey"),
                     ) {
-                        Text("Copy Device Key")
+                        Text("Copy Device ID")
                     }
                 }
             } else if (device.detail.isNotBlank()) {
@@ -510,7 +510,7 @@ private fun AddDevicePanel(
             onValueChange = onRequestChange,
             modifier = Modifier.fillMaxWidth().testTag("manualDeviceId"),
             singleLine = true,
-            label = { Text("Request link") },
+            label = { Text("Request link or device ID") },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
             keyboardActions = KeyboardActions(onDone = {
                 if (canApprove && manualRequestIsComplete) {

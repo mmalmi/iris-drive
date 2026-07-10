@@ -33,11 +33,14 @@ use crate::device_labels::{
 };
 use crate::identity::{AppKey, IdentityError, RecoveryKey};
 use crate::nostr_identity::{
+    ApproveNostrIdentityDeviceApprovalBootstrapOptions,
     NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA, NostrIdentityCapabilities,
-    NostrIdentityDeviceApprovalReceipt, NostrIdentityDeviceApprovalRequest, NostrIdentityError,
+    NostrIdentityDeviceApprovalBootstrap, NostrIdentityDeviceApprovalReceipt, NostrIdentityError,
     NostrIdentityFacet, NostrIdentityId, NostrIdentityKeyPurpose, NostrIdentityRosterOp,
     NostrIdentityRosterProjection, SignedNostrIdentityRosterOp,
+    approve_nostr_identity_device_approval_bootstrap,
     build_nostr_identity_device_approval_receipt_event,
+    build_nostr_identity_roster_op_event_with_client_nonce,
     build_nostr_identity_roster_op_event_with_encrypted_device_labels,
     encrypted_device_label_payloads_from_nostr_identity_roster_op_event,
     nostr_identity_roster_parent_ids, parse_nostr_identity_roster_op_event,
@@ -64,6 +67,8 @@ pub enum ProfileError {
     InvalidAppKeyPubkey(String),
     #[error("invalid AppKey-link invite secret key: {0}")]
     InvalidAppKeyLinkInviteSecret(String),
+    #[error("invalid app-key approval bootstrap: {0}")]
+    InvalidAppKeyApprovalBootstrap(String),
     #[error("this AppKey is not an admin")]
     NoAdminAuthority,
     #[error("AppKey already authorized")]
@@ -149,8 +154,12 @@ pub struct HandledAppKeyLinkRequest {
 pub struct PendingDeviceApprovalReceipt {
     pub request_pubkey: String,
     pub device_app_key_pubkey: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub request_relay: String,
+    #[serde(
+        default,
+        alias = "request_relay",
+        skip_serializing_if = "String::is_empty"
+    )]
+    pub relay_url: String,
     pub event_json: String,
 }
 
@@ -499,28 +508,7 @@ impl ProfileState {
         app_key_pubkey: &str,
         label: Option<String>,
         invite_pubkey: &str,
-        request_url: Option<String>,
-        requested_at: u64,
-    ) -> Result<bool, ProfileError> {
-        self.record_inbound_app_key_link_request_with_event(
-            profile_id,
-            app_key_pubkey,
-            label,
-            invite_pubkey,
-            request_url,
-            None,
-            requested_at,
-        )
-    }
-
-    pub fn record_inbound_app_key_link_request_with_event(
-        &mut self,
-        profile_id: NostrIdentityId,
-        app_key_pubkey: &str,
-        label: Option<String>,
-        invite_pubkey: &str,
-        request_url: Option<String>,
-        _request_event: Option<String>,
+        request_url: String,
         requested_at: u64,
     ) -> Result<bool, ProfileError> {
         if profile_id != self.profile_id || !self.can_admin_profile() {
@@ -536,6 +524,22 @@ impl ProfileState {
                 app_key_pubkey.to_string(),
             ));
         }
+        let bootstrap =
+            crate::app_key_link_transport::parse_app_key_approval_bootstrap(&request_url)
+                .map_err(|error| ProfileError::InvalidAppKeyApprovalBootstrap(error.to_string()))?
+                .ok_or_else(|| {
+                    ProfileError::InvalidAppKeyApprovalBootstrap(
+                        "approval URL does not contain a compact bootstrap".to_string(),
+                    )
+                })?;
+        let bootstrap_app_key = PublicKey::parse(&bootstrap.device_app_key_npub)
+            .map_err(|error| ProfileError::InvalidAppKeyApprovalBootstrap(error.to_string()))?
+            .to_hex();
+        if bootstrap_app_key != app_key_pubkey {
+            return Err(ProfileError::InvalidAppKeyApprovalBootstrap(
+                "bootstrap device AppKey does not match the requesting peer".to_string(),
+            ));
+        }
         let request = InboundAppKeyLinkRequest {
             app_key_pubkey: app_key_pubkey.to_string(),
             label: label.and_then(|label| {
@@ -543,10 +547,7 @@ impl ProfileState {
                 (!trimmed.is_empty()).then(|| trimmed.to_string())
             }),
             invite_pubkey,
-            request_url: request_url
-                .map(|url| url.trim().to_string())
-                .filter(|url| !url.is_empty())
-                .unwrap_or_default(),
+            request_url: request_url.trim().to_string(),
             requested_at,
         };
         let profile_projection = self.profile_projection();
@@ -1306,6 +1307,15 @@ impl Profile {
         app_key_pubkey_hex: &str,
         label: Option<String>,
     ) -> Result<&AppKeysProjection, ProfileError> {
+        self.approve_app_key_with_client_nonce(app_key_pubkey_hex, label, None)
+    }
+
+    fn approve_app_key_with_client_nonce(
+        &mut self,
+        app_key_pubkey_hex: &str,
+        label: Option<String>,
+        client_nonce: Option<String>,
+    ) -> Result<&AppKeysProjection, ProfileError> {
         if !self.state.can_admin_profile() {
             return Err(ProfileError::NoAdminAuthority);
         }
@@ -1338,21 +1348,36 @@ impl Profile {
             &[],
         )?;
         let parents = nostr_identity_roster_parent_ids(&self.state.profile_roster_ops);
-        let signed = signed_profile_roster_op_with_parents_and_device_labels(
-            self.app_key.keys(),
-            self.state.profile_id,
-            parents,
-            NostrIdentityRosterOp::AddFacet {
-                facet: NostrIdentityFacet::app_key(
-                    app_key_pubkey_hex.to_string(),
-                    now,
-                    None,
-                    NostrIdentityCapabilities::app_writer(),
-                ),
-            },
-            now,
-            encrypted_device_labels,
-        )?;
+        let op = NostrIdentityRosterOp::AddFacet {
+            facet: NostrIdentityFacet::app_key(
+                app_key_pubkey_hex.to_string(),
+                now,
+                None,
+                NostrIdentityCapabilities::app_writer(),
+            ),
+        };
+        let signed = if let Some(client_nonce) = client_nonce {
+            let event = build_nostr_identity_roster_op_event_with_client_nonce(
+                self.app_key.keys(),
+                self.state.profile_id,
+                parents,
+                None,
+                op,
+                now,
+                client_nonce,
+                encrypted_device_labels,
+            )?;
+            parse_nostr_identity_roster_op_event(&event)?
+        } else {
+            signed_profile_roster_op_with_parents_and_device_labels(
+                self.app_key.keys(),
+                self.state.profile_id,
+                parents,
+                op,
+                now,
+                encrypted_device_labels,
+            )?
+        };
         self.state.profile_roster_ops.push(signed);
         self.state.profile_roster_projection = None;
         self.rotate_profile_dck_epoch(&dck, now + 1)?;
@@ -1363,12 +1388,37 @@ impl Profile {
         self.current_app_keys_projection()
     }
 
-    pub fn approve_device_request(
+    pub fn approve_device_bootstrap(
         &mut self,
-        request: &NostrIdentityDeviceApprovalRequest,
+        bootstrap: &NostrIdentityDeviceApprovalBootstrap,
         label: Option<String>,
     ) -> Result<&AppKeysProjection, ProfileError> {
-        self.approve_app_key(&request.device_app_key_pubkey, label)?;
+        if !self.state.can_admin_profile() {
+            return Err(ProfileError::NoAdminAuthority);
+        }
+        let approval = approve_nostr_identity_device_approval_bootstrap(
+            ApproveNostrIdentityDeviceApprovalBootstrapOptions {
+                bootstrap: bootstrap.clone(),
+                profile_id: self.state.profile_id,
+                roster_ops: self.state.profile_roster_ops.clone(),
+                approved_by_pubkey: self.state.app_key_pubkey.clone(),
+                approved_at: next_profile_timestamp(&self.state),
+                client_nonce: None,
+                capabilities: Some(NostrIdentityCapabilities::app_writer()),
+            },
+        )?;
+        let NostrIdentityRosterOp::AddFacet { facet } = &approval.op else {
+            return Err(ProfileError::InvalidAppKeyApprovalBootstrap(
+                "canonical approval did not add an AppKey facet".to_string(),
+            ));
+        };
+        let device_app_key_pubkey = facet.pubkey.clone();
+        let label = label.or_else(|| bootstrap.label.clone());
+        self.approve_app_key_with_client_nonce(
+            &device_app_key_pubkey,
+            label,
+            Some(approval.client_nonce),
+        )?;
         let approval_op = self
             .state
             .profile_roster_ops
@@ -1378,19 +1428,22 @@ impl Profile {
                 matches!(
                     &signed.content.op,
                     NostrIdentityRosterOp::AddFacet { facet }
-                        if facet.pubkey == request.device_app_key_pubkey
+                        if facet.pubkey == device_app_key_pubkey
                 )
             })
             .cloned()
             .ok_or(ProfileError::AppKeyNotInRoster)?;
+        let request_pubkey = PublicKey::parse(&bootstrap.request_npub)
+            .map_err(|error| ProfileError::InvalidAppKeyApprovalBootstrap(error.to_string()))?
+            .to_hex();
         let receipt = NostrIdentityDeviceApprovalReceipt {
             schema: NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_SCHEMA,
             profile_id: self.state.profile_id,
-            request_pubkey: request.request_pubkey.clone(),
-            device_app_key_pubkey: request.device_app_key_pubkey.clone(),
+            request_pubkey: request_pubkey.clone(),
+            device_app_key_pubkey: device_app_key_pubkey.clone(),
             approved_by_pubkey: self.state.app_key_pubkey.clone(),
             approved_at: approval_op.content.created_at,
-            request_secret: request.request_secret.clone(),
+            request_secret: bootstrap.request_secret.clone(),
             subject_pubkey: Some(self.state.app_key_pubkey.clone()),
             roster_op_id: Some(approval_op.op_id.clone()),
             signed_roster_event: Some(approval_op.event_json.clone()),
@@ -1399,13 +1452,13 @@ impl Profile {
             build_nostr_identity_device_approval_receipt_event(self.app_key.keys(), receipt)?;
         self.state
             .pending_device_approval_receipts
-            .retain(|pending| pending.request_pubkey != request.request_pubkey);
+            .retain(|pending| pending.request_pubkey != request_pubkey);
         self.state
             .pending_device_approval_receipts
             .push(PendingDeviceApprovalReceipt {
-                request_pubkey: request.request_pubkey.clone(),
-                device_app_key_pubkey: request.device_app_key_pubkey.clone(),
-                request_relay: String::new(),
+                request_pubkey,
+                device_app_key_pubkey,
+                relay_url: String::new(),
                 event_json: event.as_json(),
             });
         let overflow = self

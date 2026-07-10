@@ -950,7 +950,7 @@ struct IrisDriveControlPanel: View {
                     }
                 }
             }
-            TextField("Request link or device key", text: $approveDeviceKey)
+            TextField("Request link or device ID", text: $approveDeviceKey)
                 .textFieldStyle(.roundedBorder)
                 .disableAutocorrection(true)
                 .onChange(of: approveDeviceKey) { _, newValue in
@@ -962,7 +962,7 @@ struct IrisDriveControlPanel: View {
                 }
             if !approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                !approveDeviceKeyIsComplete {
-                Text("That is not a complete request link or device key.")
+                Text("That is not a complete request link or device ID.")
                     .font(.caption)
                     .foregroundStyle(.red)
             }
@@ -1613,7 +1613,7 @@ struct IrisDriveControlPanel: View {
             }
 
             Section("Account") {
-                AccountKeyRow(title: "Current Device Key", value: status.deviceNpub) {
+                AccountKeyRow(title: "Current Device ID", value: status.deviceNpub) {
                     controller.copyDeviceKey()
                 }
                 if status.canExportRecoveryPhrase {
@@ -2591,7 +2591,7 @@ private struct PeerRow: View {
                             .lineLimit(1)
                             .truncationMode(.middle)
                             .frame(maxWidth: .infinity, alignment: .leading)
-                        IrisDriveCopyButton(title: "Copy Device Key", systemImage: "doc.on.doc") {
+                        IrisDriveCopyButton(title: "Copy Device ID", systemImage: "doc.on.doc") {
                             irisDriveCopyToPasteboard(peer.npub)
                         }
                         .buttonStyle(.borderless)

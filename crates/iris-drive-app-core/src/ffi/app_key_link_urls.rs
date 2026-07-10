@@ -12,24 +12,12 @@ pub(super) fn app_key_link_request_url(
     let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
         return String::new();
     };
-    if iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(pending)
+    if iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_bootstrap(pending)
         .is_err()
     {
         return String::new();
     }
     pending.request_url.clone()
-}
-
-fn request_profile_id(
-    profile_id: iris_drive_core::NostrIdentityId,
-    admin_app_key_pubkey: &str,
-) -> Option<iris_drive_core::NostrIdentityId> {
-    (!admin_app_key_pubkey.trim().is_empty()).then_some(profile_id)
-}
-
-fn request_admin_app_key_pubkey(admin_app_key_pubkey: &str) -> Option<&str> {
-    let admin = admin_app_key_pubkey.trim();
-    (!admin.is_empty()).then_some(admin)
 }
 
 pub(super) fn ensure_cached_app_key_link_request_url(
@@ -46,12 +34,13 @@ pub(super) fn ensure_cached_app_key_link_request_url(
     }
     let pending = state.outbound_app_key_link_request.as_ref();
     if let Some(pending) = pending
-        && iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(pending)
-            .is_ok()
+        && iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_bootstrap(
+            pending,
+        )
+        .is_ok()
     {
         return Ok(());
     }
-    let profile_id = state.profile_id;
     let admin_app_key_pubkey = pending
         .map(|pending| pending.admin_app_key_pubkey.clone())
         .unwrap_or_default();
@@ -62,14 +51,9 @@ pub(super) fn ensure_cached_app_key_link_request_url(
     let requested_at = pending.map_or_else(unix_now_seconds, |pending| pending.requested_at);
     let app_key = iris_drive_core::AppKey::load(key_path_in(config_dir))
         .map_err(|error| error.to_string())?;
-    let approval_request = create_app_key_approval_request(
-        app_key.keys(),
-        request_profile_id(profile_id, &admin_app_key_pubkey),
-        request_admin_app_key_pubkey(&admin_app_key_pubkey),
-        app_key_label.as_deref(),
-        requested_at,
-    )
-    .map_err(|error| error.to_string())?;
+    let approval_request =
+        create_app_key_approval_bootstrap(app_key.keys(), app_key_label.as_deref())
+            .map_err(|error| error.to_string())?;
     let request_key_secret = approval_request.request_keys.secret_key().to_secret_hex();
     let changed = if let Some(state) = config.profile.as_mut() {
         if admin_app_key_pubkey.trim().is_empty() {
