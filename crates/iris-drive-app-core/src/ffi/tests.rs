@@ -1296,13 +1296,13 @@ fn link_action_tracks_pending_approval() {
         iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(pending)
             .unwrap()
             .0;
-    assert_eq!(
-        request.profile_id.map(|id| id.to_string()).as_deref(),
-        Some(owner_profile_id.as_str())
+    assert!(
+        request.profile_id.is_none(),
+        "compact request links do not carry the approver profile id"
     );
     assert!(!request.request_pubkey.is_empty());
     assert!(!request.request_secret.is_empty());
-    assert!(!request.device_app_key_proof.is_empty());
+    assert!(request.device_app_key_proof.is_empty());
     assert_eq!(
         iris_drive_core::app_key_summary::pubkey_npub(&request.device_app_key_pubkey),
         account.current_app_key_npub
@@ -1313,8 +1313,10 @@ fn link_action_tracks_pending_approval() {
     .unwrap()
     .unwrap();
     assert_eq!(bootstrap.device_app_key_npub, account.current_app_key_npub);
+    assert_eq!(bootstrap.label.as_deref(), Some("iPhone"));
     assert!(
-        account.app_key_link_request.len() < 360,
+        account.app_key_link_request.len()
+            <= iris_drive_core::nostr_identity::NOSTR_IDENTITY_DEVICE_APPROVAL_BOOTSTRAP_MAX_URI_LENGTH,
         "bootstrap URL was {}",
         account.app_key_link_request
     );
