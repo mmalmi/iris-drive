@@ -12,7 +12,7 @@ fn write_runtime_daemon_status(config_dir: &Path, payload: Value) -> Value {
 const DIRECT_APP_MESSAGE_DRAIN_LIMIT: usize = 4096;
 const DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS: u64 = 750;
 const DIRECT_ROOT_PEER_REFRESH_INTERVAL_SECS: u64 = 30;
-const DIRECT_ROOT_REPAIR_INTERVAL_SECS: u64 = 30;
+const DIRECT_ROOT_REPAIR_INTERVAL_SECS: u64 = 300;
 const RELAY_STATUS_PROBE_INTERVAL_SECS: u64 = 30;
 const STATUS_PROBE_TASK_KEY: &str = "status_probe";
 
@@ -1112,6 +1112,15 @@ pub(crate) fn cmd_daemon(
                                     }
                                 }
                             }
+                            if should_coalesce_direct_roots {
+                                enqueue_pending_root_sync_followups(
+                                    config_dir,
+                                    fips_blocks.clone(),
+                                    mount_refresh_tx.clone(),
+                                    &daemon_tasks,
+                                    "direct_root_app_message",
+                                );
+                            }
                             if receiver_closed {
                                 direct_app_message_rx = None;
                                 println!("{}", json!({"event": "direct_root_app_closed"}));
@@ -1168,6 +1177,13 @@ pub(crate) fn cmd_daemon(
                                 );
                             }
                         }
+                        enqueue_pending_root_sync_followups(
+                            config_dir,
+                            fips_blocks.clone(),
+                            mount_refresh_tx.clone(),
+                            &daemon_tasks,
+                            "direct_root_mesh_event",
+                        );
                     }
                 }
             }
