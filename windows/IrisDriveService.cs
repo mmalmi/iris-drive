@@ -34,9 +34,12 @@ public sealed partial class IrisDriveService
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "iris-drive");
 
-    public Task<IrisDriveStatusData> StatusAsync()
+    public Task<IrisDriveStatusData> StatusAsync(bool refreshProvider = true)
     {
-        return RunNativeCoreAsync(core => IrisDriveStatusData.FromNativeJson(core.RefreshJson()));
+        return refreshProvider
+            ? RunNativeCoreAsync(core => IrisDriveStatusData.FromNativeJson(core.RefreshJson()))
+            : DispatchNativeActionAsync(
+                new Dictionary<string, object> { ["type"] = "refresh_profile" });
     }
 
     public Task<IrisDriveUpdateResult> CheckUpdateAsync()
