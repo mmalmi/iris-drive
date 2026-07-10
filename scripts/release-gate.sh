@@ -183,6 +183,7 @@ case "$(uname -s)" in
       if idle_cpu_gate_enabled; then
         run env \
           IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="${IRIS_DRIVE_RELEASE_GATE_IOS_IDLE_CPU_ROLES:-app}" \
+          IRIS_DRIVE_IDLE_CPU_IOS_DEVICE="${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-${IRIS_DRIVE_IOS_DEVICE:-}}" \
           ./scripts/idle-cpu-gate.sh --platform ios
       fi
     fi
