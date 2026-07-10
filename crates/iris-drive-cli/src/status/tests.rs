@@ -786,11 +786,10 @@ fn status_self_heals_missing_waiting_app_key_link_request() {
             .request_url
             .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_REQUEST_PREFIX)
     );
-    let request = iris_drive_core::app_key_link_transport::parse_app_key_approval_request(
-        &pending.request_url,
-    )
-    .unwrap()
-    .unwrap();
+    let request =
+        iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(pending)
+            .unwrap()
+            .0;
     assert_eq!(request.device_app_key_pubkey, linked_pubkey);
 
     let profile = status_profile_block(&saved).expect("profile block");

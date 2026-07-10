@@ -222,10 +222,6 @@ fn app_key_link_request_event_round_trips_and_is_its_own_coordinate() {
     assert_eq!(parsed.invite_pubkey, frame.invite_pubkey);
     assert_eq!(parsed.label, frame.label);
     assert_eq!(parsed.requested_at, frame.requested_at);
-    assert!(
-        parsed.url.is_empty(),
-        "signed relay request events do not carry the full approval URL"
-    );
 }
 
 #[test]

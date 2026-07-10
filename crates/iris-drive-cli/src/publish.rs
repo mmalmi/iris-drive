@@ -418,8 +418,8 @@ pub(crate) async fn publish_current_state(
         }
     }
     for pending in &state.pending_device_approval_receipts {
-        match relay_publish_with_timeout(relay_sync::publish_device_approval_to_request_relay(
-            state, pending,
+        match relay_publish_with_timeout(relay_sync::publish_device_approval_receipt(
+            client, state, pending,
         ))
         .await
         {

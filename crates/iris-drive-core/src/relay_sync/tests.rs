@@ -80,10 +80,9 @@ fn approve_pending_request(admin: &mut Profile, linked: &Profile) -> Event {
         .outbound_app_key_link_request
         .as_ref()
         .expect("linked device has pending request");
-    let request =
-        crate::app_key_link_transport::parse_app_key_approval_request(&pending.request_url)
-            .unwrap()
-            .expect("full approval request");
+    let (request, _) =
+        crate::app_key_link_transport::parse_pending_app_key_approval_request(pending)
+            .expect("pending approval request");
     admin
         .approve_device_request(&request, linked.state.app_key_label.clone())
         .unwrap();
@@ -687,50 +686,6 @@ fn apply_nostr_identity_roster_op_event_keeps_out_of_order_valid_ops() {
     assert!(facet.capabilities.can_write_roots);
     assert!(!facet.capabilities.can_admin_profile);
     assert!(projection.rejected_op_ids.is_empty());
-}
-
-#[test]
-fn apply_app_key_link_request_event_records_admin_inbound_request() {
-    let admin_dir = tempdir().unwrap();
-    let linked_dir = tempdir().unwrap();
-    let admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
-    let linked = Profile::link_to_profile(
-        linked_dir.path(),
-        admin.state.profile_id,
-        admin.state.app_key_pubkey.clone(),
-        Some("phone".into()),
-    )
-    .unwrap();
-    let invite_pubkey =
-        crate::profile::app_key_link_invite_pubkey(&admin.state.app_key_link_secret).unwrap();
-    let frame = crate::app_key_link_transport::AppKeyLinkRequestFrame {
-        schema: 1,
-        profile_id: admin.state.profile_id,
-        admin_app_key_pubkey: admin.state.app_key_pubkey.clone(),
-        app_key_pubkey: linked.state.app_key_pubkey.clone(),
-        invite_pubkey: invite_pubkey.clone(),
-        label: Some("phone".to_string()),
-        requested_at: 123,
-        url: "https://drive.iris.to/approve-device/test".to_string(),
-    };
-    let event = build_app_key_link_request_event(linked.app_key.keys(), &frame).unwrap();
-    let mut cfg = AppConfig {
-        profile: Some(admin.state.clone()),
-        ..AppConfig::default()
-    };
-
-    let outcome = apply_remote_app_key_link_request_event(&mut cfg, &event).unwrap();
-
-    assert_eq!(outcome, AppKeyLinkRequestApply::Recorded);
-    let inbound = &cfg.profile.as_ref().unwrap().inbound_app_key_link_requests;
-    assert_eq!(inbound.len(), 1);
-    assert_eq!(inbound[0].app_key_pubkey, linked.state.app_key_pubkey);
-    assert_eq!(inbound[0].label.as_deref(), Some("phone"));
-    assert_eq!(inbound[0].invite_pubkey, invite_pubkey);
-    assert!(
-        inbound[0].request_url.is_empty(),
-        "relay identity-link events do not include the full approval URL"
-    );
 }
 
 #[test]

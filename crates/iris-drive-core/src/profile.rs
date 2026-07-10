@@ -502,6 +502,27 @@ impl ProfileState {
         request_url: Option<String>,
         requested_at: u64,
     ) -> Result<bool, ProfileError> {
+        self.record_inbound_app_key_link_request_with_event(
+            profile_id,
+            app_key_pubkey,
+            label,
+            invite_pubkey,
+            request_url,
+            None,
+            requested_at,
+        )
+    }
+
+    pub fn record_inbound_app_key_link_request_with_event(
+        &mut self,
+        profile_id: NostrIdentityId,
+        app_key_pubkey: &str,
+        label: Option<String>,
+        invite_pubkey: &str,
+        request_url: Option<String>,
+        _request_event: Option<String>,
+        requested_at: u64,
+    ) -> Result<bool, ProfileError> {
         if profile_id != self.profile_id || !self.can_admin_profile() {
             return Ok(false);
         }
@@ -1347,7 +1368,6 @@ impl Profile {
         request: &NostrIdentityDeviceApprovalRequest,
         label: Option<String>,
     ) -> Result<&AppKeysProjection, ProfileError> {
-        let request_relay = crate::app_key_link_transport::app_key_approval_request_relay(request)?;
         self.approve_app_key(&request.device_app_key_pubkey, label)?;
         let approval_op = self
             .state
@@ -1385,7 +1405,7 @@ impl Profile {
             .push(PendingDeviceApprovalReceipt {
                 request_pubkey: request.request_pubkey.clone(),
                 device_app_key_pubkey: request.device_app_key_pubkey.clone(),
-                request_relay,
+                request_relay: String::new(),
                 event_json: event.as_json(),
             });
         let overflow = self

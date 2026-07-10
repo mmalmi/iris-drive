@@ -46,12 +46,9 @@ pub(super) fn ensure_cached_app_key_link_request_url(
     }
     let pending = state.outbound_app_key_link_request.as_ref();
     if let Some(pending) = pending
-        && iris_drive_core::app_key_link_transport::app_key_approval_request_url_is_full(
-            &pending.request_url,
-        )
+        && iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(pending)
+            .is_ok()
     {
-        iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(pending)
-            .map_err(|error| format!("validating persisted app-key approval request: {error}"))?;
         return Ok(());
     }
     let profile_id = state.profile_id;

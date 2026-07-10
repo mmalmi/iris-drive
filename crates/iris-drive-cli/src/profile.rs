@@ -211,8 +211,7 @@ pub(crate) fn cmd_approve(
         .profile
         .clone()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    let request = decode_app_key_approval_request(device)?
-        .ok_or_else(|| anyhow::anyhow!("expected a full NostrIdentity device approval request"))?;
+    let request = decode_app_key_approval_request(&config, device)?;
     iris_drive_core::app_key_link_transport::validate_app_key_approval_request_policy(
         &request,
         state.profile_id,
@@ -233,7 +232,7 @@ pub(crate) fn cmd_approve(
         .iter()
         .find(|pending| pending.request_pubkey == request.request_pubkey)
         .ok_or_else(|| anyhow::anyhow!("approval did not retain its encrypted receipt"))?;
-    let published_events = publish_device_approval(&profile.state, pending)?;
+    let published_events = publish_device_approval(&config, &profile.state, pending)?;
     config.profile = Some(profile.state.clone());
     config.save(config_path_in(config_dir))?;
     println!(
@@ -241,7 +240,6 @@ pub(crate) fn cmd_approve(
         json!({
             "approved_app_key_npub": approved_app_key_npub,
             "roster_size": device_count,
-            "request_relay": pending.request_relay,
             "published_approval_events": published_events,
         })
     );
@@ -249,6 +247,7 @@ pub(crate) fn cmd_approve(
 }
 
 fn publish_device_approval(
+    config: &AppConfig,
     state: &ProfileState,
     pending: &iris_drive_core::profile::PendingDeviceApprovalReceipt,
 ) -> Result<usize> {
@@ -256,17 +255,23 @@ fn publish_device_approval(
         .enable_all()
         .build()
         .context("building device approval relay runtime")?;
-    let event_ids = runtime
-        .block_on(async {
-            tokio::time::timeout(
-                std::time::Duration::from_secs(APP_KEY_LINK_RELAY_PUBLISH_TIMEOUT_SECS),
-                iris_drive_core::relay_sync::publish_device_approval_to_request_relay(
-                    state, pending,
-                ),
+    let relays = iris_drive_core::relay_config::normalize_relay_urls(&config.relays)
+        .context("normalizing relay config")?;
+    let event_ids = runtime.block_on(async {
+        let client = iris_drive_core::relay_sync::connect(&relays).await?;
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(APP_KEY_LINK_RELAY_PUBLISH_TIMEOUT_SECS),
+            iris_drive_core::relay_sync::publish_device_approval_receipt(&client, state, pending),
+        )
+        .await
+        .map_err(|_| {
+            iris_drive_core::relay_sync::RelayError::Client(
+                "publishing device approval receipt timed out".to_string(),
             )
-            .await
-        })
-        .context("publishing device approval to request relay timed out")??;
+        })?;
+        iris_drive_core::relay_sync::shutdown_client(&client).await;
+        result
+    })?;
     Ok(event_ids.len())
 }
 
@@ -274,16 +279,22 @@ pub(crate) fn cmd_reject(config_dir: &std::path::Path, device: &str) -> Result<(
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config
         .profile
-        .as_mut()
+        .as_ref()
         .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
     if !state.can_admin_profile() {
         return Err(anyhow::anyhow!(
             "this AppKey is not an admin - only admin AppKeys can reject AppKey-link requests"
         ));
     }
+    let profile_id = state.profile_id;
+    let admin_app_key_pubkey = state.app_key_pubkey.clone();
     let (app_key_hex, _) =
-        resolve_app_key_approval_input(device, state.profile_id, &state.app_key_pubkey, None)
+        resolve_app_key_approval_input(&config, device, profile_id, &admin_app_key_pubkey, None)
             .context("parsing AppKey rejection request")?;
+    let state = config
+        .profile
+        .as_mut()
+        .ok_or_else(|| anyhow::anyhow!("profile disappeared while rejecting AppKey request"))?;
     let rejected = state
         .reject_inbound_app_key_link_request(&app_key_hex)
         .context("rejecting AppKey request")?;
@@ -745,7 +756,6 @@ fn app_key_link_roster_retry_interval(attempts: u8) -> std::time::Duration {
 
 pub(crate) async fn send_pending_app_key_link_request(
     config_dir: &Path,
-    client: &nostr_sdk::Client,
     fips_blocks: Option<&FsFipsBlockSync>,
     sent_cache: &mut BTreeMap<String, SentAppKeyLinkRequest>,
     config_cache: &mut AppConfigLoadCache,
@@ -762,11 +772,9 @@ pub(crate) async fn send_pending_app_key_link_request(
     let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
         return Ok(None);
     };
-    if pending.admin_app_key_pubkey.trim().is_empty() {
-        return Ok(None);
-    }
 
-    let admin_npub = pubkey_npub(&pending.admin_app_key_pubkey);
+    let has_admin_target = !pending.admin_app_key_pubkey.trim().is_empty();
+    let admin_npub = has_admin_target.then(|| pubkey_npub(&pending.admin_app_key_pubkey));
     let fingerprint = format!(
         "{}:{}:{}",
         pending.admin_app_key_pubkey, state.app_key_pubkey, pending.requested_at
@@ -776,27 +784,19 @@ pub(crate) async fn send_pending_app_key_link_request(
         return Ok(None);
     }
 
-    let device =
-        iris_drive_core::AppKey::load(key_path_in(config_dir)).context("loading app key")?;
     let Some(frame) =
         iris_drive_core::app_key_link_transport::pending_app_key_link_request_frame(state)?
     else {
         return Ok(None);
     };
     let bytes = serde_json::to_vec(&frame)?;
-    let relay_event_id = tokio::time::timeout(
-        std::time::Duration::from_secs(APP_KEY_LINK_RELAY_PUBLISH_TIMEOUT_SECS),
-        iris_drive_core::relay_sync::publish_app_key_link_request(client, device.keys(), &frame),
-    )
-    .await
-    .context("publishing AppKey-link request timed out")??;
     let mut fips_sent = false;
     let mut fips_error = None;
-    if let Some(sync) = fips_blocks {
+    if let (Some(sync), Some(admin_npub)) = (fips_blocks, admin_npub.as_deref()) {
         sync.refresh_authorized_peers(&config).await;
         match tokio::time::timeout(
             std::time::Duration::from_secs(APP_KEY_LINK_FIPS_SEND_TIMEOUT_SECS),
-            sync.send_app_message(&admin_npub, APP_KEY_LINK_REQUEST_APP_TOPIC, bytes.clone()),
+            sync.send_app_message(admin_npub, APP_KEY_LINK_REQUEST_APP_TOPIC, bytes.clone()),
         )
         .await
         {
@@ -831,8 +831,7 @@ pub(crate) async fn send_pending_app_key_link_request(
         "app_key_npub": pubkey_npub(&state.app_key_pubkey),
         "requested_at": pending.requested_at,
         "sent_bytes": bytes.len(),
-        "relay_event_id": relay_event_id.to_hex(),
-        "sent_over_relay": true,
+        "sent_over_relay": false,
         "sent_over_fips": fips_sent,
         "fips_error": fips_error,
     })))
@@ -881,7 +880,11 @@ pub(crate) async fn send_authorized_app_key_link_rosters(
         }
         tokio::time::timeout(
             std::time::Duration::from_secs(APP_KEY_LINK_RELAY_PUBLISH_TIMEOUT_SECS),
-            iris_drive_core::relay_sync::publish_device_approval_to_request_relay(state, pending),
+            iris_drive_core::relay_sync::publish_device_approval_receipt(
+                relay_client,
+                state,
+                pending,
+            ),
         )
         .await
         .context("publishing device approval receipt timed out")??;
@@ -1147,12 +1150,13 @@ async fn handle_app_key_link_request_app_message(
         return Ok(true);
     };
     let changed = state
-        .record_inbound_app_key_link_request(
+        .record_inbound_app_key_link_request_with_event(
             frame.profile_id,
             &app_key_hex,
             frame.label,
             &invite_pubkey,
             Some(frame.url),
+            None,
             frame.requested_at,
         )
         .context("recording inbound app-key link request")?;

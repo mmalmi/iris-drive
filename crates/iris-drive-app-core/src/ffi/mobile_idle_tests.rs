@@ -11,6 +11,31 @@ use super::mobile_fips_status::{
 };
 use crate::NativeAppAction;
 
+fn pending_request(
+    config_dir: &Path,
+) -> iris_drive_core::app_key_link_transport::AppKeyApprovalRequest {
+    let config = AppConfig::load_or_default(config_path_in(config_dir)).unwrap();
+    let pending = config
+        .profile
+        .as_ref()
+        .and_then(|profile| profile.outbound_app_key_link_request.as_ref())
+        .expect("pending request");
+    iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(pending)
+        .unwrap()
+        .0
+}
+
+fn approve_owner_from_pending_request(owner_dir: &Path, linked_dir: &Path, label: Option<String>) {
+    let request = pending_request(linked_dir);
+    let config_path = config_path_in(owner_dir);
+    let mut config = AppConfig::load_or_default(&config_path).unwrap();
+    let state = config.profile.clone().expect("owner profile");
+    let mut account = iris_drive_core::Profile::load(state, owner_dir).unwrap();
+    account.approve_device_request(&request, label).unwrap();
+    config.profile = Some(account.state);
+    config.save(&config_path).unwrap();
+}
+
 #[test]
 fn mobile_app_key_link_exchange_runs_only_for_rostered_idle_state_or_approval() {
     let owner_dir = tempfile::tempdir().unwrap();
@@ -26,12 +51,12 @@ fn mobile_app_key_link_exchange_runs_only_for_rostered_idle_state_or_approval() 
         link_target: owner_profile.app_key_link_invite.clone(),
         app_key_label: "Phone".to_owned(),
     });
-    let linked_profile = linked.ui.profile.expect("linked phone profile");
-    let approved = owner_app.dispatch(NativeAppAction::ApproveDevice {
-        request: linked_profile.app_key_link_request,
-        label: "Phone".to_owned(),
-    });
-    assert!(approved.error.is_empty(), "{}", approved.error);
+    assert!(linked.error.is_empty(), "{}", linked.error);
+    approve_owner_from_pending_request(
+        owner_dir.path(),
+        phone_dir.path(),
+        Some("Phone".to_owned()),
+    );
     apply_owner_profile_roster_to_linked_config(owner_dir.path(), phone_dir.path());
     mark_daemon_live(phone_dir.path());
 

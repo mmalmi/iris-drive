@@ -142,9 +142,10 @@ async fn sync_once_inner(
         ..NetworkSyncReport::default()
     };
 
-    let approval_events = relay_sync::fetch_device_approval_events(&initial_state, timeout)
-        .await
-        .context("fetching request-scoped device approval events")?;
+    let approval_events =
+        relay_sync::fetch_device_approval_events(&client, &initial_state, timeout)
+            .await
+            .context("fetching device approval events")?;
     report.device_approval_receipts_seen = approval_events.receipt_events.len();
     for event in &approval_events.receipt_events {
         if matches!(

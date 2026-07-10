@@ -1286,11 +1286,16 @@ fn link_action_tracks_pending_approval() {
             .app_key_link_request
             .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_REQUEST_PREFIX)
     );
-    let request = iris_drive_core::app_key_link_transport::parse_app_key_approval_request(
-        &account.app_key_link_request,
-    )
-    .unwrap()
-    .unwrap();
+    let config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+    let pending = config
+        .profile
+        .as_ref()
+        .and_then(|profile| profile.outbound_app_key_link_request.as_ref())
+        .expect("pending request");
+    let request =
+        iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(pending)
+            .unwrap()
+            .0;
     assert_eq!(
         request.profile_id.map(|id| id.to_string()).as_deref(),
         Some(owner_profile_id.as_str())
@@ -1302,8 +1307,17 @@ fn link_action_tracks_pending_approval() {
         iris_drive_core::app_key_summary::pubkey_npub(&request.device_app_key_pubkey),
         account.current_app_key_npub
     );
-    assert!(!account.app_key_link_request.contains("local-owner"));
-    assert!(!account.app_key_link_request.contains("app_key=device-"));
+    let bootstrap = iris_drive_core::app_key_link_transport::parse_app_key_approval_bootstrap(
+        &account.app_key_link_request,
+    )
+    .unwrap()
+    .unwrap();
+    assert_eq!(bootstrap.device_app_key_npub, account.current_app_key_npub);
+    assert!(
+        account.app_key_link_request.len() < 360,
+        "bootstrap URL was {}",
+        account.app_key_link_request
+    );
     assert!(
         state.ui.app_actors.is_empty(),
         "pending devices should not appear in the authorized device roster"
@@ -1478,12 +1492,13 @@ fn approving_tombstoned_inbound_request_readds_device() {
         .unwrap()
         .removed_at;
     state
-        .record_inbound_app_key_link_request(
+        .record_inbound_app_key_link_request_with_event(
             profile_id,
             &linked_app_key_hex,
             Some("Phone".to_owned()),
             &invite_pubkey,
             Some(linked_request_url),
+            None,
             u64::try_from(removed_at).unwrap() + 1,
         )
         .unwrap();
@@ -1842,12 +1857,13 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
     let invite_pubkey =
         iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret).unwrap();
     state
-        .record_inbound_app_key_link_request(
+        .record_inbound_app_key_link_request_with_event(
             profile_id,
             &linked_app_key_hex,
             Some("Phone".to_owned()),
             &invite_pubkey,
             Some(linked_account.app_key_link_request.clone()),
+            None,
             42,
         )
         .unwrap();
@@ -1898,12 +1914,13 @@ fn owner_can_reject_inbound_app_key_link_request() {
     let invite_pubkey =
         iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret).unwrap();
     state
-        .record_inbound_app_key_link_request(
+        .record_inbound_app_key_link_request_with_event(
             profile_id,
             &linked_app_key_hex,
             Some("Phone".to_owned()),
             &invite_pubkey,
             Some(linked_account.app_key_link_request),
+            None,
             42,
         )
         .unwrap();

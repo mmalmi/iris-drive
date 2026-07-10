@@ -16,13 +16,7 @@ use axum::{
 };
 use futures::{SinkExt, StreamExt};
 use hashtree_core::{sha256, to_hex};
-use iris_drive_core::{
-    AppConfig, AppKey,
-    app_key_link_transport::{
-        create_app_key_approval_request_for_relay, parse_pending_app_key_approval_request,
-    },
-    paths::{config_path_in, key_path_in},
-};
+use iris_drive_core::{AppConfig, paths::config_path_in};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, broadcast};
@@ -94,6 +88,20 @@ impl LocalNostrRelay {
     #[allow(dead_code)]
     pub(crate) async fn events(&self) -> Vec<Value> {
         self.events.lock().await.clone()
+    }
+
+    pub(crate) async fn publish_pending_approval_request(
+        &self,
+        config_dir: &std::path::Path,
+    ) -> String {
+        let config = AppConfig::load_or_default(config_path_in(config_dir)).unwrap();
+        config
+            .profile
+            .as_ref()
+            .and_then(|profile| profile.outbound_app_key_link_request.as_ref())
+            .expect("pending app-key approval request")
+            .request_url
+            .clone()
     }
 }
 
@@ -223,37 +231,11 @@ async fn relay_socket(socket: WebSocket, state: LocalRelayState) {
     }
 }
 
-pub(crate) fn replace_pending_approval_relay(
-    config_dir: &std::path::Path,
-    relay_url: &str,
-) -> String {
+pub(crate) fn add_config_relay(config_dir: &std::path::Path, relay_url: &str) {
     let config_path = config_path_in(config_dir);
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
-    let pending = config
-        .profile
-        .as_ref()
-        .and_then(|state| state.outbound_app_key_link_request.as_ref())
-        .expect("pending app-key approval request")
-        .clone();
-    let (request, _) = parse_pending_app_key_approval_request(&pending).unwrap();
-    let app_key = AppKey::load(key_path_in(config_dir)).unwrap();
-    let requested_at = u64::try_from(request.requested_at).unwrap();
-    let local = create_app_key_approval_request_for_relay(
-        app_key.keys(),
-        request.profile_id,
-        request.admin_app_key_pubkey.as_deref(),
-        request.label.as_deref(),
-        requested_at,
-        relay_url,
-    )
-    .unwrap();
-    let request_key_secret = local.request_keys.secret_key().to_secret_hex();
-    let state = config.profile.as_mut().unwrap();
-    let pending = state.outbound_app_key_link_request.as_mut().unwrap();
-    pending.request_url.clone_from(&local.url);
-    pending.request_key_secret = request_key_secret;
+    config.relays = vec![relay_url.to_owned()];
     config.save(config_path).unwrap();
-    local.url
 }
 
 fn event_matches_filter(event: &Value, filter: &Value) -> bool {

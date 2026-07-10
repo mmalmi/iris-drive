@@ -18,7 +18,7 @@ use tempfile::tempdir;
 
 mod support;
 
-use support::{LocalBlossomServer, LocalNostrRelay, replace_pending_approval_relay};
+use support::{LocalBlossomServer, LocalNostrRelay, add_config_relay};
 
 fn idrive(dir: &std::path::Path) -> Command {
     let mut cmd = Command::cargo_bin("idrive").unwrap();
@@ -67,7 +67,8 @@ fn approve_with_local_relay(
         .build()
         .unwrap();
     let relay = runtime.block_on(LocalNostrRelay::spawn());
-    let request = replace_pending_approval_relay(linked_dir, &relay.url);
+    let request = runtime.block_on(relay.publish_pending_approval_request(linked_dir));
+    add_config_relay(owner_dir, &relay.url);
     let mut args = vec!["approve", request.as_str()];
     if let Some(label) = label {
         args.extend(["--label", label]);
@@ -85,7 +86,8 @@ fn app_keys_approve_with_local_relay(
         .build()
         .unwrap();
     let relay = runtime.block_on(LocalNostrRelay::spawn());
-    let request = replace_pending_approval_relay(linked_dir, &relay.url);
+    let request = runtime.block_on(relay.publish_pending_approval_request(linked_dir));
+    add_config_relay(owner_dir, &relay.url);
     run_json(owner_dir, &["app-keys", "approve", &request])
 }
 

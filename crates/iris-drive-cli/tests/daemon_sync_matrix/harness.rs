@@ -88,16 +88,19 @@ impl SyncCluster {
             ubuntu_cfg.path(),
             &["link", owner_invite, "--label", "linux-peer"],
         );
-        let request = replace_pending_approval_relay(ubuntu_cfg.path(), &relay.url);
+        let request = relay
+            .publish_pending_approval_request(ubuntu_cfg.path())
+            .await;
         let mut linked_requests = vec![(Client::Ubuntu, request)];
         if let Some(config) = macos_cfg.as_ref() {
             run_json(
                 config.path(),
                 &["link", owner_invite, "--label", "macos-peer"],
             );
-            let request = replace_pending_approval_relay(config.path(), &relay.url);
+            let request = relay.publish_pending_approval_request(config.path()).await;
             linked_requests.push((Client::MacOS, request));
         }
+        add_config_relay(windows_cfg.path(), &relay.url);
 
         for seed in &options.seed_files {
             let root = match seed.client {

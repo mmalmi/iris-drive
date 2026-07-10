@@ -19,7 +19,7 @@ use iris_drive_core::app_key_link_transport::{
     app_key_link_roster_recipients, pending_app_key_link_request_frame,
 };
 use iris_drive_core::app_key_link_transport::{
-    AppKeyApprovalRequest, create_app_key_approval_request, parse_app_key_approval_request,
+    AppKeyApprovalRequest, create_app_key_approval_request,
 };
 use iris_drive_core::app_key_summary::{
     AppKeyConnectionDetails, AppKeyConnectivity, app_key_roster_rows, nostr_identity_summary,
@@ -49,8 +49,6 @@ use iris_drive_core::{AppConfig, AppKeyAuthorizationState, BackupTarget, Drive, 
 use iris_drive_core::{Daemon, GatewayBind, GatewayProxyServer, GatewayServer};
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 use nostr_sdk::Event;
-#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
-use nostr_sdk::JsonUtil;
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
 use serde::{Deserialize, Serialize};
@@ -197,7 +195,6 @@ struct NativeAppConfigCache {
 enum NativeAppKeyLinkRelayEventApply {
     Ignored,
     Current,
-    RecordedRequest,
     AppliedRoster,
 }
 
@@ -213,25 +210,6 @@ fn apply_native_app_key_link_relay_event_to_config(
     config: &mut AppConfig,
     event: &Event,
 ) -> Result<NativeAppKeyLinkRelayEventApply, String> {
-    if iris_drive_core::nostr_events::is_app_key_link_request_event_coordinate(event) {
-        let outcome =
-            iris_drive_core::relay_sync::apply_remote_app_key_link_request_event(config, event)
-                .map_err(|error| format!("applying app-key link request relay event: {error}"))?;
-        return Ok(match outcome {
-            iris_drive_core::relay_sync::AppKeyLinkRequestApply::Recorded => {
-                NativeAppKeyLinkRelayEventApply::RecordedRequest
-            }
-            iris_drive_core::relay_sync::AppKeyLinkRequestApply::Current => {
-                NativeAppKeyLinkRelayEventApply::Current
-            }
-            iris_drive_core::relay_sync::AppKeyLinkRequestApply::NotOurProfile
-            | iris_drive_core::relay_sync::AppKeyLinkRequestApply::NotAdmin
-            | iris_drive_core::relay_sync::AppKeyLinkRequestApply::InvalidInvite => {
-                NativeAppKeyLinkRelayEventApply::Ignored
-            }
-        });
-    }
-
     if event.kind.as_u16() == iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP {
         let outcome = if iris_drive_core::relay_sync::is_device_approval_receipt_event(event) {
             iris_drive_core::relay_sync::apply_remote_device_approval_receipt_event(config, event)
@@ -1028,13 +1006,6 @@ impl NativeAppRuntime {
             "device request is required".clone_into(&mut self.state.error);
             return;
         }
-        let request = match decode_app_key_approval_request(request) {
-            Ok(value) => value,
-            Err(error) => {
-                self.state.error = error;
-                return;
-            }
-        };
         let mut config = match self.load_config() {
             Ok(config) => config,
             Err(error) => {
@@ -1050,6 +1021,13 @@ impl NativeAppRuntime {
             "profile admin is required to approve devices".clone_into(&mut self.state.error);
             return;
         }
+        let request = match decode_app_key_approval_request(&config, request) {
+            Ok(value) => value,
+            Err(error) => {
+                self.state.error = error;
+                return;
+            }
+        };
         if let Err(error) =
             iris_drive_core::app_key_link_transport::validate_app_key_approval_request_policy(
                 &request,
@@ -1115,13 +1093,6 @@ impl NativeAppRuntime {
             "device request is required".clone_into(&mut self.state.error);
             return;
         }
-        let request = match decode_app_key_approval_request(request) {
-            Ok(value) => value,
-            Err(error) => {
-                self.state.error = error;
-                return;
-            }
-        };
         let mut config = match self.load_config() {
             Ok(config) => config,
             Err(error) => {
@@ -1129,7 +1100,7 @@ impl NativeAppRuntime {
                 return;
             }
         };
-        let Some(state) = config.profile.as_mut() else {
+        let Some(state) = config.profile.as_ref() else {
             "profile admin is required to reject devices".clone_into(&mut self.state.error);
             return;
         };
@@ -1137,17 +1108,30 @@ impl NativeAppRuntime {
             "profile admin is required to reject devices".clone_into(&mut self.state.error);
             return;
         }
+        let profile_id = state.profile_id;
+        let admin_app_key_pubkey = state.app_key_pubkey.clone();
+        let request = match decode_app_key_approval_request(&config, request) {
+            Ok(value) => value,
+            Err(error) => {
+                self.state.error = error;
+                return;
+            }
+        };
         if let Err(error) =
             iris_drive_core::app_key_link_transport::validate_app_key_approval_request_policy(
                 &request,
-                state.profile_id,
-                &state.app_key_pubkey,
+                profile_id,
+                &admin_app_key_pubkey,
                 unix_now_seconds(),
             )
         {
             self.state.error = error.to_string();
             return;
         }
+        let Some(state) = config.profile.as_mut() else {
+            "profile disappeared while rejecting device".clone_into(&mut self.state.error);
+            return;
+        };
         if let Err(error) =
             state.reject_inbound_app_key_link_request(&request.device_app_key_pubkey)
         {
@@ -2132,15 +2116,9 @@ async fn run_app_key_link_exchange_async(
             .map_err(|error| format!("subscribing app-key-link relays: {error}"))?;
     }
     let mut relay_notifications = relay_client.notifications();
-    let approval_client =
-        iris_drive_core::relay_sync::subscribe_device_approval_events(account_state)
-            .await
-            .map_err(|error| {
-                format!("subscribing to request-scoped device approval events: {error}")
-            })?;
-    let mut approval_notifications = approval_client
-        .as_ref()
-        .map(nostr_sdk::Client::notifications);
+    iris_drive_core::relay_sync::subscribe_device_approval_events(&relay_client, account_state)
+        .await
+        .map_err(|error| format!("subscribing to device approval events: {error}"))?;
     let daemon = iris_drive_core::Daemon::open(config_dir)
         .map_err(|error| format!("opening block store: {error}"))?;
     let local = daemon.tree().get_store().clone();
@@ -2170,7 +2148,6 @@ async fn run_app_key_link_exchange_async(
     if let Err(error) = drive_app_key_link_exchange_tick(
         config_dir,
         &relay_client,
-        device.keys(),
         &sync,
         &mut sent_requests,
         &mut sent_rosters,
@@ -2204,7 +2181,6 @@ async fn run_app_key_link_exchange_async(
                 if let Err(error) = drive_app_key_link_exchange_tick(
                     config_dir,
                     &relay_client,
-                    device.keys(),
                     &sync,
                     &mut sent_requests,
                     &mut sent_rosters,
@@ -2303,9 +2279,8 @@ async fn run_app_key_link_exchange_async(
             notification = relay_notifications.recv() => {
                 match notification {
                     Ok(nostr_sdk::RelayPoolNotification::Event { event, .. }) => {
-                        if iris_drive_core::relay_sync::is_device_approval_receipt_event(&event) {
-                            continue;
-                        }
+                        let is_device_approval_receipt =
+                            iris_drive_core::relay_sync::is_device_approval_receipt_event(&event);
                         if event.kind.as_u16() == iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP
                             && AppConfig::load_or_default(config_path_in(config_dir))
                                 .map_err(|error| {
@@ -2319,6 +2294,10 @@ async fn run_app_key_link_exchange_async(
                                 })
                         {
                             continue;
+                        }
+                        if is_device_approval_receipt {
+                            // Approval receipts are subscribed on the same relay client as normal
+                            // app-key-link traffic.
                         }
                         if let Err(error) = handle_native_app_key_link_relay_event(config_dir, &event) {
                             tracing::warn!(error = %error, event_id = %event.id.to_hex(), "handling native app-key-link relay event failed");
@@ -2334,54 +2313,7 @@ async fn run_app_key_link_exchange_async(
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
-            notification = async {
-                if let Some(notifications) = approval_notifications.as_mut() {
-                    Some(notifications.recv().await)
-                } else {
-                    std::future::pending().await
-                }
-            } => {
-                match notification {
-                    Some(Ok(nostr_sdk::RelayPoolNotification::Event { event, .. })) => {
-                        let is_receipt =
-                            iris_drive_core::relay_sync::is_device_approval_receipt_event(&event);
-                        if let Err(error) = handle_native_app_key_link_relay_event(config_dir, &event) {
-                            tracing::warn!(error = %error, event_id = %event.id.to_hex(), "handling request-scoped device approval receipt failed");
-                        } else if is_receipt {
-                            let config = AppConfig::load_or_default(config_path_in(config_dir))
-                                .map_err(|error| format!("loading approved profile: {error}"))?;
-                            if let (Some(approval_client), Some(profile)) =
-                                (approval_client.as_ref(), config.profile.as_ref())
-                            {
-                                iris_drive_core::relay_sync::subscribe_nostr_identity_roster_ops(
-                                    approval_client,
-                                    profile.profile_id,
-                                )
-                                .await
-                                .map_err(|error| {
-                                    format!(
-                                        "subscribing to request-scoped approval roster ops: {error}"
-                                    )
-                                })?;
-                            }
-                        }
-                    }
-                    Some(Ok(nostr_sdk::RelayPoolNotification::Shutdown)) => {
-                        tracing::warn!("request-scoped device approval notifications shut down");
-                    }
-                    Some(Ok(_)) | None => {}
-                    Some(Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped))) => {
-                        tracing::warn!(skipped, "request-scoped device approval receiver lagged");
-                    }
-                    Some(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
-                        approval_notifications = None;
-                    }
-                }
-            }
         }
-    }
-    if let Some(approval_client) = approval_client {
-        iris_drive_core::relay_sync::shutdown_client(&approval_client).await;
     }
     iris_drive_core::relay_sync::shutdown_client(&relay_client).await;
     Ok(())
@@ -2391,7 +2323,6 @@ async fn run_app_key_link_exchange_async(
 async fn drive_app_key_link_exchange_tick(
     config_dir: &Path,
     relay_client: &nostr_sdk::Client,
-    device_keys: &nostr_sdk::Keys,
     sync: &iris_drive_core::FsFipsBlockSync,
     sent_requests: &mut BTreeMap<String, SentAppKeyLinkRequest>,
     sent_rosters: &mut BTreeMap<String, std::time::Instant>,
@@ -2405,8 +2336,7 @@ async fn drive_app_key_link_exchange_tick(
     };
 
     sync.refresh_authorized_peers(&config).await;
-    send_native_pending_app_key_link_request(relay_client, device_keys, sync, state, sent_requests)
-        .await?;
+    send_native_pending_app_key_link_request(sync, state, sent_requests).await?;
     publish_native_profile_roster_ops(relay_client, state, published_roster_op_ids).await?;
     send_native_authorized_app_key_link_rosters(
         config_dir,
@@ -2479,7 +2409,11 @@ async fn publish_native_profile_roster_ops(
             .ok_or_else(|| "pending native device approval receipt disappeared".to_string())?;
         tokio::time::timeout(
             std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS),
-            iris_drive_core::relay_sync::publish_device_approval_to_request_relay(state, pending),
+            iris_drive_core::relay_sync::publish_device_approval_receipt(
+                relay_client,
+                state,
+                pending,
+            ),
         )
         .await
         .map_err(|_| "publishing native device approval receipt timed out".to_string())?
@@ -2491,8 +2425,6 @@ async fn publish_native_profile_roster_ops(
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 async fn send_native_pending_app_key_link_request(
-    relay_client: &nostr_sdk::Client,
-    device_keys: &nostr_sdk::Keys,
     sync: &iris_drive_core::FsFipsBlockSync,
     state: &iris_drive_core::ProfileState,
     sent_requests: &mut BTreeMap<String, SentAppKeyLinkRequest>,
@@ -2500,9 +2432,6 @@ async fn send_native_pending_app_key_link_request(
     let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
         return Ok(());
     };
-    if pending.admin_app_key_pubkey.trim().is_empty() {
-        return Ok(());
-    }
     let Some(frame) = pending_app_key_link_request_frame(state)
         .map_err(|error| format!("building app-key link request frame: {error}"))?
     else {
@@ -2516,48 +2445,21 @@ async fn send_native_pending_app_key_link_request(
     if !app_key_link_request_send_due(sent_requests.get(&fingerprint).copied(), now) {
         return Ok(());
     }
-    let admin_npub = pubkey_npub(&pending.admin_app_key_pubkey);
-    let bytes = serde_json::to_vec(&frame)
-        .map_err(|error| format!("encoding app-key link request: {error}"))?;
-
-    let fips_error = match sync
-        .send_app_message(&admin_npub, APP_KEY_LINK_REQUEST_APP_TOPIC, bytes)
-        .await
-    {
-        Ok(()) => None,
-        Err(error) => Some(error.to_string()),
-    };
-    let relay_result = tokio::time::timeout(
-        std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS),
-        iris_drive_core::relay_sync::publish_app_key_link_request(
-            relay_client,
-            device_keys,
-            &frame,
-        ),
-    )
-    .await;
-    let (relay_event_id, relay_error) = match relay_result {
-        Ok(Ok(event_id)) => (Some(event_id.to_hex()), None),
-        Ok(Err(error)) => (
-            None,
-            Some(format!(
-                "publishing app-key link request relay event: {error}"
-            )),
-        ),
-        Err(_) => (
-            None,
-            Some("publishing app-key link request relay event timed out".to_string()),
-        ),
-    };
-
-    if fips_error.is_some() && relay_error.is_some() {
-        return Err(format!(
-            "sending app-key link request failed over relay ({}) and FIPS ({})",
-            relay_error.as_deref().unwrap_or("unknown relay error"),
-            fips_error.as_deref().unwrap_or("unknown FIPS error")
-        ));
+    let admin_npub = (!pending.admin_app_key_pubkey.trim().is_empty())
+        .then(|| pubkey_npub(&pending.admin_app_key_pubkey));
+    let mut fips_sent = false;
+    let mut fips_error = None;
+    if let Some(admin_npub) = admin_npub.as_deref() {
+        let bytes = serde_json::to_vec(&frame)
+            .map_err(|error| format!("encoding app-key link request: {error}"))?;
+        match sync
+            .send_app_message(admin_npub, APP_KEY_LINK_REQUEST_APP_TOPIC, bytes)
+            .await
+        {
+            Ok(()) => fips_sent = true,
+            Err(error) => fips_error = Some(error.to_string()),
+        }
     }
-
     let attempts = sent_requests
         .get(&fingerprint)
         .map_or(1, |sent| sent.attempts.saturating_add(1));
@@ -2568,26 +2470,22 @@ async fn send_native_pending_app_key_link_request(
             attempts,
         },
     );
-    match (relay_event_id.as_deref(), fips_error.as_deref()) {
-        (Some(relay_event_id), None) => tracing::debug!(
-            admin_npub,
-            relay_event_id,
+    match (fips_sent, fips_error.as_deref()) {
+        (true, _) => tracing::debug!(
+            admin_npub = admin_npub.as_deref().unwrap_or_default(),
             requested_at = frame.requested_at,
-            "sent native app-key-link request over relay and FIPS"
+            "sent native app-key-link request over FIPS"
         ),
-        (Some(relay_event_id), Some(error)) => tracing::warn!(
-            admin_npub,
-            relay_event_id,
+        (false, Some(error)) => tracing::warn!(
+            admin_npub = admin_npub.as_deref().unwrap_or_default(),
+            requested_at = frame.requested_at,
             error,
-            "sent native app-key-link request over relay, FIPS send failed"
+            "native app-key-link request is available as a request link; FIPS notification failed"
         ),
-        (None, None) => tracing::warn!(
-            admin_npub,
-            relay_error = relay_error.as_deref().unwrap_or("unknown relay error"),
+        (false, None) => tracing::debug!(
             requested_at = frame.requested_at,
-            "sent native app-key-link request over FIPS, relay publish failed"
+            "native app-key-link request is available as a request link"
         ),
-        (None, Some(_)) => unreachable!("both app-key-link transports failed"),
     }
     Ok(())
 }
@@ -2754,12 +2652,13 @@ fn handle_native_app_key_link_request(
         return Ok(true);
     };
     let changed = state
-        .record_inbound_app_key_link_request(
+        .record_inbound_app_key_link_request_with_event(
             frame.profile_id,
             &app_key_hex,
             frame.label,
             &invite_pubkey,
             Some(frame.url),
+            None,
             frame.requested_at,
         )
         .map_err(|error| format!("recording inbound app-key link request: {error}"))?;
@@ -2786,17 +2685,6 @@ fn handle_native_app_key_link_relay_event(
         .map_err(|error| format!("loading config: {error}"))?;
     let outcome = apply_native_app_key_link_relay_event_to_config(&mut config, event)?;
     match outcome {
-        NativeAppKeyLinkRelayEventApply::RecordedRequest => {
-            config
-                .save(config_path_in(config_dir))
-                .map_err(|error| format!("saving config: {error}"))?;
-            tracing::debug!(
-                event_id = %event.id.to_hex(),
-                app_key_npub = pubkey_npub(&event.pubkey.to_hex()),
-                "received native app-key-link request over relay"
-            );
-            Ok(true)
-        }
         NativeAppKeyLinkRelayEventApply::AppliedRoster => {
             config
                 .save(config_path_in(config_dir))
@@ -3710,10 +3598,21 @@ fn resolve_app_key_link_target(input: &str) -> Result<iris_drive_core::AppKeyLin
     })
 }
 
-fn decode_app_key_approval_request(request: &str) -> Result<AppKeyApprovalRequest, String> {
-    parse_app_key_approval_request(request)
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "expected a full NostrIdentity device approval request".to_string())
+fn decode_app_key_approval_request(
+    config: &AppConfig,
+    request: &str,
+) -> Result<AppKeyApprovalRequest, String> {
+    let state = config
+        .profile
+        .as_ref()
+        .ok_or_else(|| "profile admin is required to approve devices".to_string())?;
+    iris_drive_core::app_key_link_transport::parse_app_key_approval_request(
+        request,
+        state.profile_id,
+        &state.app_key_pubkey,
+        unix_now_seconds(),
+    )
+    .map_err(|error| error.to_string())
 }
 
 fn optional_trimmed(value: &str) -> Option<String> {

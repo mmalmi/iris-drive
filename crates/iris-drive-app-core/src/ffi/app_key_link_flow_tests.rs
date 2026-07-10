@@ -3,6 +3,7 @@ use super::{
     native_profile_roster_ops_pending_publish, normalize_pubkey,
 };
 use crate::NativeAppAction;
+use crate::state::NativeAppState;
 use iris_drive_core::paths::config_path_in;
 use iris_drive_core::{AppConfig, AppKeyAuthorizationState};
 use nostr_sdk::{Event, JsonUtil};
@@ -24,16 +25,48 @@ fn record_inbound_request(
     let invite_pubkey =
         iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret).unwrap();
     state
-        .record_inbound_app_key_link_request(
+        .record_inbound_app_key_link_request_with_event(
             profile_id,
             &device_hex,
             Some(label.to_owned()),
             &invite_pubkey,
             Some(request_url.to_owned()),
+            None,
             requested_at,
         )
         .unwrap();
     config.save(&config_path).unwrap();
+}
+
+fn pending_request(
+    config_dir: &Path,
+) -> iris_drive_core::app_key_link_transport::AppKeyApprovalRequest {
+    let config = AppConfig::load_or_default(config_path_in(config_dir)).unwrap();
+    let pending = config
+        .profile
+        .as_ref()
+        .and_then(|profile| profile.outbound_app_key_link_request.as_ref())
+        .expect("pending request");
+    iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(pending)
+        .expect("parse pending request")
+        .0
+}
+
+fn approve_owner_from_pending_request(
+    owner_app: &FfiApp,
+    owner_dir: &Path,
+    linked_dir: &Path,
+    label: Option<String>,
+) -> NativeAppState {
+    let request = pending_request(linked_dir);
+    let config_path = config_path_in(owner_dir);
+    let mut config = AppConfig::load_or_default(&config_path).unwrap();
+    let state = config.profile.clone().expect("owner profile");
+    let mut account = iris_drive_core::Profile::load(state, owner_dir).unwrap();
+    account.approve_device_request(&request, label).unwrap();
+    config.profile = Some(account.state);
+    config.save(&config_path).unwrap();
+    owner_app.refresh()
 }
 
 #[test]
@@ -191,23 +224,25 @@ fn roster_ops_cannot_authorize_waiting_native_device_before_bound_receipt() {
         link_target: invite,
         app_key_label: "iPhone".to_owned(),
     });
-    let request = linked.ui.profile.unwrap().app_key_link_request;
+    assert!(linked.error.is_empty(), "{}", linked.error);
     let mut linked_config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
     assert_eq!(
         linked_config.profile.as_ref().unwrap().authorization_state,
         AppKeyAuthorizationState::AwaitingApproval
     );
 
-    let approved = owner_app.dispatch(NativeAppAction::ApproveDevice {
-        request,
-        label: "iPhone".to_owned(),
-    });
+    let approved = approve_owner_from_pending_request(
+        &owner_app,
+        owner_dir.path(),
+        linked_dir.path(),
+        Some("iPhone".to_owned()),
+    );
     assert!(approved.error.is_empty(), "{}", approved.error);
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
     let owner_state = owner_config.profile.unwrap();
     assert_eq!(
         owner_state.pending_device_approval_receipts[0].request_relay,
-        iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_RELAY_URL
+        ""
     );
     let receipt_event = Event::from_json(
         &owner_state
@@ -269,15 +304,11 @@ fn start_join_request_tracks_pending_manual_approval() {
             .app_key_link_request
             .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_REQUEST_PREFIX)
     );
-    let request = iris_drive_core::app_key_link_transport::parse_app_key_approval_request(
-        &account.app_key_link_request,
-    )
-    .unwrap()
-    .unwrap();
+    let request = pending_request(dir.path());
     assert_eq!(request.profile_id, None);
     assert!(!request.request_pubkey.is_empty());
     assert!(!request.request_secret.is_empty());
-    assert!(!request.device_app_key_proof.is_empty());
+    assert!(request.device_app_key_proof.is_empty());
     assert_eq!(
         request.resources,
         iris_drive_core::app_key_link_transport::drive_device_approval_resources()
@@ -378,18 +409,14 @@ fn refresh_recreates_missing_manual_join_request_url() {
             .app_key_link_request
             .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_REQUEST_PREFIX)
     );
-    let request = iris_drive_core::app_key_link_transport::parse_app_key_approval_request(
-        &refreshed_account.app_key_link_request,
-    )
-    .unwrap()
-    .unwrap();
+    let request = pending_request(linked_dir.path());
     assert_eq!(
         iris_drive_core::app_key_summary::pubkey_npub(&request.device_app_key_pubkey),
         linked_account.current_app_key_npub
     );
     assert!(!request.request_pubkey.is_empty());
     assert!(!request.request_secret.is_empty());
-    assert!(!request.device_app_key_proof.is_empty());
+    assert!(request.device_app_key_proof.is_empty());
     assert_eq!(
         request.resources,
         iris_drive_core::app_key_link_transport::drive_device_approval_resources()
@@ -422,20 +449,14 @@ fn manual_join_request_approval_roster_authorizes_waiting_native_device_e2e() {
     });
     assert!(linked.error.is_empty(), "{}", linked.error);
     let linked_account = linked.ui.profile.unwrap();
-    let parsed_request = iris_drive_core::app_key_link_transport::parse_app_key_approval_request(
-        &linked_account.app_key_link_request,
-    )
-    .unwrap()
-    .unwrap();
+    let parsed_request = pending_request(linked_dir.path());
     assert_eq!(parsed_request.profile_id, None);
     assert!(!parsed_request.request_pubkey.is_empty());
     assert!(!parsed_request.request_secret.is_empty());
-    assert!(!parsed_request.device_app_key_proof.is_empty());
+    assert!(parsed_request.device_app_key_proof.is_empty());
 
-    let approved = owner_app.dispatch(NativeAppAction::ApproveDevice {
-        request: linked_account.app_key_link_request,
-        label: String::new(),
-    });
+    let approved =
+        approve_owner_from_pending_request(&owner_app, owner_dir.path(), linked_dir.path(), None);
     assert!(approved.error.is_empty(), "{}", approved.error);
     assert!(approved.ui.app_actors.iter().any(|device| {
         device.pubkey == linked_account.current_app_key_npub && device.role == "member"
@@ -506,12 +527,9 @@ fn bound_receipt_then_roster_authorizes_unbound_waiting_native_device_e2e() {
         app_key_label: "Waiting phone".to_owned(),
     });
     assert!(linked.error.is_empty(), "{}", linked.error);
-    let linked_account = linked.ui.profile.unwrap();
 
-    let approved = owner_app.dispatch(NativeAppAction::ApproveDevice {
-        request: linked_account.app_key_link_request,
-        label: String::new(),
-    });
+    let approved =
+        approve_owner_from_pending_request(&owner_app, owner_dir.path(), linked_dir.path(), None);
     assert!(approved.error.is_empty(), "{}", approved.error);
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
     let owner_state = owner_config.profile.as_ref().unwrap();
@@ -579,10 +597,8 @@ fn native_owner_approval_selects_roster_ops_for_relay_publish() {
         .map(|op| op.op_id.clone())
         .collect::<BTreeSet<_>>();
 
-    let approved = owner_app.dispatch(NativeAppAction::ApproveDevice {
-        request: linked_account.app_key_link_request,
-        label: String::new(),
-    });
+    let approved =
+        approve_owner_from_pending_request(&owner_app, owner_dir.path(), linked_dir.path(), None);
     assert!(approved.error.is_empty(), "{}", approved.error);
 
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
@@ -628,10 +644,12 @@ fn revoked_current_device_refresh_logs_out_and_allows_fresh_relink() {
     });
     let linked_account = linked.ui.profile.unwrap();
     let linked_device = linked_account.current_app_key_npub.clone();
-    let approved = owner_app.dispatch(NativeAppAction::ApproveDevice {
-        request: linked_account.app_key_link_request,
-        label: "Phone".to_owned(),
-    });
+    let approved = approve_owner_from_pending_request(
+        &owner_app,
+        owner_dir.path(),
+        linked_dir.path(),
+        Some("Phone".to_owned()),
+    );
     assert!(approved.error.is_empty(), "{}", approved.error);
     apply_latest_profile_roster_frame(owner_dir.path(), linked_dir.path());
 

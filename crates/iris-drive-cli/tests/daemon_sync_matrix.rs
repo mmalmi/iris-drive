@@ -28,7 +28,7 @@ mod support;
 include!("daemon_sync_matrix/harness.rs");
 #[path = "daemon_sync_matrix/provider_harness.rs"]
 mod provider_harness;
-use support::{LocalBlossomServer, LocalNostrRelay, replace_pending_approval_relay};
+use support::{LocalBlossomServer, LocalNostrRelay, add_config_relay};
 
 const WAIT_TIMEOUT: Duration = Duration::from_mins(3);
 const POLL_INTERVAL: Duration = Duration::from_millis(250);

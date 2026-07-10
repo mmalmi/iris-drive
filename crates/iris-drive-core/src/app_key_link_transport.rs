@@ -1,14 +1,14 @@
 use anyhow::{Context, Result};
 use nostr_identity::{
-    CreateNostrIdentityDeviceApprovalRequestOptions, NOSTR_IDENTITY_DEVICE_APPROVAL_REQUEST_PREFIX,
-    NostrIdentityDeviceApprovalReceipt, NostrIdentityDeviceApprovalRequest,
-    NostrIdentityDeviceApprovalRequestedResource, NostrIdentityError,
-    create_nostr_identity_device_approval_request, encode_nostr_identity_device_approval_request,
-    nostr_identity_device_approval_relay_resource, nostr_identity_device_approval_request_relays,
-    parse_nostr_identity_device_approval_receipt_event,
-    parse_nostr_identity_device_approval_request,
+    CreateNostrIdentityDeviceApprovalRequestOptions, NostrIdentityDeviceApprovalReceipt,
+    NostrIdentityDeviceApprovalRequest, NostrIdentityDeviceApprovalRequestedResource,
+    ParseNostrIdentityDeviceApprovalReceiptForBootstrapOptions,
+    create_nostr_identity_device_approval_request, encode_nostr_identity_device_approval_bootstrap,
+    nostr_identity_device_approval_bootstrap, nostr_identity_device_approval_bootstrap_has_prefix,
+    parse_nostr_identity_device_approval_bootstrap,
+    parse_nostr_identity_device_approval_receipt_event_for_bootstrap_with_options,
 };
-use nostr_sdk::{Event, Keys, SecretKey};
+use nostr_sdk::{Event, Keys, PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -46,6 +46,7 @@ pub struct AppKeyLinkRequestFrame {
 }
 
 pub type AppKeyApprovalRequest = NostrIdentityDeviceApprovalRequest;
+pub type AppKeyApprovalBootstrap = nostr_identity::NostrIdentityDeviceApprovalBootstrap;
 
 #[derive(Debug, Clone)]
 pub struct LocalAppKeyApprovalRequest {
@@ -93,7 +94,10 @@ pub fn pending_app_key_link_request_frame(
     if request.device_app_key_pubkey != state.app_key_pubkey {
         anyhow::bail!("pending app-key approval request AppKey mismatch");
     }
-    if request.profile_id != pending_request_profile_id(state, pending) {
+    if request
+        .profile_id
+        .is_some_and(|profile_id| Some(profile_id) != pending_request_profile_id(state, pending))
+    {
         anyhow::bail!("pending app-key approval request profile mismatch");
     }
     if request.admin_app_key_pubkey.as_deref() != pending_admin_app_key_pubkey(pending) {
@@ -265,11 +269,8 @@ pub fn create_app_key_approval_request_for_relay(
 ) -> Result<LocalAppKeyApprovalRequest> {
     let requested_at =
         i64::try_from(requested_at).context("app-key approval request timestamp overflows i64")?;
-    let mut resources = drive_device_approval_resources_without_relay();
-    resources.push(
-        nostr_identity_device_approval_relay_resource(request_relay)
-            .context("normalizing app-key approval request relay")?,
-    );
+    let resources = drive_device_approval_resources_without_relay();
+    let _ = request_relay;
     let local = create_nostr_identity_device_approval_request(
         device_app_key_keys,
         CreateNostrIdentityDeviceApprovalRequestOptions {
@@ -285,11 +286,13 @@ pub fn create_app_key_approval_request_for_relay(
         },
     )
     .context("creating full app-key approval request")?;
-    let url = encode_nostr_identity_device_approval_request(
-        &local.request,
+    let bootstrap = nostr_identity_device_approval_bootstrap(&local.request)
+        .context("building app-key approval bootstrap")?;
+    let url = encode_nostr_identity_device_approval_bootstrap(
+        &bootstrap,
         Some(APP_KEY_APPROVAL_REQUEST_PREFIX),
     )
-    .context("encoding full app-key approval request")?;
+    .context("encoding app-key approval bootstrap")?;
     Ok(LocalAppKeyApprovalRequest {
         request: local.request,
         request_keys: local.request_keys,
@@ -297,66 +300,95 @@ pub fn create_app_key_approval_request_for_relay(
     })
 }
 
-pub fn parse_app_key_approval_request(input: &str) -> Result<Option<AppKeyApprovalRequest>> {
-    let input = input.trim();
-    parse_nostr_identity_device_approval_request(input, &[APP_KEY_APPROVAL_REQUEST_PREFIX])
-        .context("parsing app-key approval request")
-}
-
 pub fn parse_pending_app_key_approval_request(
     pending: &crate::profile::PendingAppKeyLinkRequest,
 ) -> Result<(AppKeyApprovalRequest, Keys)> {
-    let request = parse_app_key_approval_request(&pending.request_url)?
-        .context("pending app-key approval request is missing or invalid")?;
+    let bootstrap = parse_app_key_approval_bootstrap(&pending.request_url)?
+        .context("pending app-key approval bootstrap is missing or invalid")?;
     let request_secret = SecretKey::from_hex(pending.request_key_secret.trim())
         .context("pending app-key approval request key is missing or invalid")?;
     let request_keys = Keys::new(request_secret);
+    let request = approval_request_from_bootstrap(
+        &bootstrap,
+        None,
+        pending_admin_app_key_pubkey(pending),
+        pending.requested_at,
+    )?;
     if request.request_pubkey != request_keys.public_key().to_hex() {
         anyhow::bail!("pending app-key approval request key mismatch");
     }
     Ok((request, request_keys))
 }
 
-pub fn app_key_approval_request_relay(
-    request: &AppKeyApprovalRequest,
-) -> std::result::Result<String, NostrIdentityError> {
-    let relays = nostr_identity_device_approval_request_relays(request)?;
-    let [relay] = relays.as_slice() else {
-        return Err(NostrIdentityError::BadContent(
-            "device approval request must contain exactly one request relay".to_string(),
-        ));
-    };
-    Ok(relay.clone())
+pub fn parse_app_key_approval_bootstrap(input: &str) -> Result<Option<AppKeyApprovalBootstrap>> {
+    parse_nostr_identity_device_approval_bootstrap(input.trim(), &[APP_KEY_APPROVAL_REQUEST_PREFIX])
+        .context("parsing app-key approval bootstrap")
 }
 
-pub fn pending_app_key_approval_request_relay(
-    pending: &crate::profile::PendingAppKeyLinkRequest,
-) -> Result<String> {
-    let (request, _) = parse_pending_app_key_approval_request(pending)?;
-    app_key_approval_request_relay(&request)
-        .context("extracting pending app-key approval request relay")
+pub fn parse_app_key_approval_request(
+    input: &str,
+    profile_id: NostrIdentityId,
+    admin_app_key_pubkey: &str,
+    requested_at: u64,
+) -> Result<AppKeyApprovalRequest> {
+    let bootstrap = parse_app_key_approval_bootstrap(input)?
+        .context("app-key approval bootstrap is missing or invalid")?;
+    approval_request_from_bootstrap(
+        &bootstrap,
+        Some(profile_id),
+        Some(admin_app_key_pubkey),
+        requested_at,
+    )
+}
+
+fn approval_request_from_bootstrap(
+    bootstrap: &AppKeyApprovalBootstrap,
+    profile_id: Option<NostrIdentityId>,
+    admin_app_key_pubkey: Option<&str>,
+    requested_at: u64,
+) -> Result<AppKeyApprovalRequest> {
+    let request_pubkey = PublicKey::parse(&bootstrap.request_npub)
+        .context("invalid device approval request npub")?
+        .to_hex();
+    let device_app_key_pubkey = PublicKey::parse(&bootstrap.device_app_key_npub)
+        .context("invalid device approval app-key npub")?
+        .to_hex();
+    let requested_at =
+        i64::try_from(requested_at).context("app-key approval request timestamp overflows i64")?;
+    Ok(NostrIdentityDeviceApprovalRequest {
+        request_pubkey,
+        device_app_key_pubkey,
+        request_secret: bootstrap.request_secret.clone(),
+        device_app_key_proof: String::new(),
+        requested_at,
+        request_type: Some(APP_KEY_APPROVAL_REQUEST_TYPE.to_string()),
+        resources: drive_device_approval_resources_without_relay(),
+        expires_at: None,
+        profile_id,
+        admin_app_key_pubkey: admin_app_key_pubkey.map(str::to_string),
+        label: bootstrap.label.clone(),
+    })
 }
 
 pub fn parse_pending_app_key_approval_receipt_event(
     pending: &crate::profile::PendingAppKeyLinkRequest,
     event: &Event,
 ) -> Result<NostrIdentityDeviceApprovalReceipt> {
-    let (request, request_keys) = parse_pending_app_key_approval_request(pending)?;
-    let receipt = parse_nostr_identity_device_approval_receipt_event(event, &request_keys)
-        .context("validating device approval receipt against pending request key")?;
-    if receipt.device_app_key_pubkey != request.device_app_key_pubkey {
-        anyhow::bail!("device approval receipt app-key mismatch");
-    }
-    if receipt.request_secret != request.request_secret {
-        anyhow::bail!("device approval receipt request secret mismatch");
-    }
-    if request
-        .profile_id
-        .is_some_and(|profile_id| profile_id != receipt.profile_id)
-    {
-        anyhow::bail!("device approval receipt profile mismatch");
-    }
-    Ok(receipt)
+    let bootstrap = parse_app_key_approval_bootstrap(&pending.request_url)?
+        .context("pending app-key approval bootstrap is missing or invalid")?;
+    let request_secret = SecretKey::from_hex(pending.request_key_secret.trim())
+        .context("pending app-key approval request key is missing or invalid")?;
+    let request_keys = Keys::new(request_secret);
+    parse_nostr_identity_device_approval_receipt_event_for_bootstrap_with_options(
+        event,
+        &request_keys,
+        &bootstrap,
+        ParseNostrIdentityDeviceApprovalReceiptForBootstrapOptions {
+            expected_profile_id: None,
+            expected_admin_app_key_pubkey: pending_admin_app_key_pubkey(pending).map(str::to_owned),
+        },
+    )
+    .context("validating device approval receipt")
 }
 
 pub fn validate_app_key_approval_request_policy(
@@ -401,30 +433,20 @@ pub fn validate_app_key_approval_request_policy(
     if !has_drive_resource {
         anyhow::bail!("device approval request is missing Drive access scopes");
     }
-    app_key_approval_request_relay(request).context("validating device approval request relay")?;
     Ok(())
 }
 
 #[must_use]
 pub fn app_key_approval_input_has_prefix(input: &str) -> bool {
-    let value = input.trim();
-    starts_with_ignore_ascii_case(value, APP_KEY_APPROVAL_REQUEST_PREFIX)
-        || starts_with_ignore_ascii_case(value, NOSTR_IDENTITY_DEVICE_APPROVAL_REQUEST_PREFIX)
-}
-
-#[must_use]
-pub fn app_key_approval_request_url_is_full(input: &str) -> bool {
-    starts_with_ignore_ascii_case(input.trim(), APP_KEY_APPROVAL_REQUEST_PREFIX)
+    nostr_identity_device_approval_bootstrap_has_prefix(
+        input.trim(),
+        &[APP_KEY_APPROVAL_REQUEST_PREFIX],
+    )
 }
 
 #[must_use]
 pub fn drive_device_approval_resources() -> Vec<NostrIdentityDeviceApprovalRequestedResource> {
-    let mut resources = drive_device_approval_resources_without_relay();
-    resources.push(
-        nostr_identity_device_approval_relay_resource(APP_KEY_APPROVAL_RELAY_URL)
-            .expect("canonical device approval relay URL must be valid"),
-    );
-    resources
+    drive_device_approval_resources_without_relay()
 }
 
 fn drive_device_approval_resources_without_relay()
@@ -453,15 +475,12 @@ fn normalize_approval_label(label: Option<&str>) -> Option<String> {
     Some(normalized.chars().take(64).collect())
 }
 
-fn starts_with_ignore_ascii_case(value: &str, prefix: &str) -> bool {
-    value.len() >= prefix.len() && value[..prefix.len()].eq_ignore_ascii_case(prefix)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::Profile;
     use nostr_sdk::JsonUtil;
+    use nostr_sdk::ToBech32;
     use tempfile::tempdir;
 
     fn assert_full_device_approval_request(request: &AppKeyApprovalRequest) {
@@ -540,7 +559,7 @@ mod tests {
     }
 
     #[test]
-    fn pending_request_frame_carries_full_device_approval_request_url() {
+    fn pending_request_frame_carries_compact_bootstrap() {
         let owner_dir = tempdir().unwrap();
         let owner = Profile::create(owner_dir.path(), Some("Mac".into())).unwrap();
         let linked_dir = tempdir().unwrap();
@@ -571,7 +590,7 @@ mod tests {
                 &crate::profile::app_key_link_invite_pubkey(&owner.state.app_key_link_secret)
                     .unwrap(),
                 123,
-                approval_request.url,
+                approval_request.url.clone(),
                 approval_request.request_keys.secret_key().to_secret_hex(),
             )
             .unwrap();
@@ -586,9 +605,12 @@ mod tests {
             .expect("persisted pending request");
         let (persisted_request, persisted_request_keys) =
             parse_pending_app_key_approval_request(pending).expect("persisted request material");
+        let bootstrap = parse_app_key_approval_bootstrap(&frame.url)
+            .expect("parse bootstrap")
+            .expect("bootstrap");
         assert_eq!(
-            persisted_request.request_pubkey,
-            parsed_request_pubkey(&frame.url)
+            bootstrap.request_npub,
+            persisted_request_keys.public_key().to_bech32().unwrap()
         );
         assert_eq!(
             persisted_request_keys.public_key().to_hex(),
@@ -596,9 +618,7 @@ mod tests {
         );
 
         assert_eq!(frame.profile_id, owner.state.profile_id);
-        let parsed = parse_app_key_approval_request(&frame.url)
-            .expect("parse request")
-            .expect("request");
+        let parsed = approval_request.request.clone();
         assert_eq!(parsed.profile_id, Some(owner.state.profile_id));
         assert_eq!(
             parsed.admin_app_key_pubkey.as_deref(),
@@ -610,23 +630,16 @@ mod tests {
         assert_full_device_approval_request(&parsed);
         assert_drive_device_approval_resources(&parsed);
         assert!(frame.url.starts_with(APP_KEY_APPROVAL_REQUEST_PREFIX));
-        assert!(!frame.url.contains("app_key="));
         assert!(
-            frame.url.len() > 500,
-            "approval URL was {}",
+            frame.url.len()
+                <= nostr_identity::NOSTR_IDENTITY_DEVICE_APPROVAL_BOOTSTRAP_MAX_URI_LENGTH,
+            "bootstrap URL was {}",
             frame.url.len()
         );
     }
 
-    fn parsed_request_pubkey(url: &str) -> String {
-        parse_app_key_approval_request(url)
-            .expect("parse request")
-            .expect("request")
-            .request_pubkey
-    }
-
     #[test]
-    fn approval_request_encodes_full_nostr_identity_device_approval_flow() {
+    fn approval_request_encodes_compact_bootstrap_flow() {
         let profile_id = NostrIdentityId::new_v4();
         let app_key = nostr_sdk::Keys::generate();
         let admin = nostr_sdk::Keys::generate().public_key();
@@ -639,9 +652,7 @@ mod tests {
             123,
         )
         .expect("encode request");
-        let parsed = parse_app_key_approval_request(&request.url)
-            .expect("parse request")
-            .expect("request");
+        let parsed = request.request.clone();
 
         assert_eq!(parsed.profile_id, Some(profile_id));
         let admin_hex = admin.to_hex();
@@ -654,13 +665,25 @@ mod tests {
         assert_eq!(parsed.label.as_deref(), Some("Web + Native"));
         assert_full_device_approval_request(&parsed);
         assert_drive_device_approval_resources(&parsed);
-        assert_eq!(
-            app_key_approval_request_relay(&parsed).unwrap(),
-            APP_KEY_APPROVAL_RELAY_URL
-        );
         assert!(request.url.starts_with(APP_KEY_APPROVAL_REQUEST_PREFIX));
-        assert!(!request.url.contains("app_key="));
-        assert!(!request.url.contains("owner="));
+        let bootstrap = parse_app_key_approval_bootstrap(&request.url)
+            .unwrap()
+            .expect("bootstrap");
+        assert_eq!(bootstrap.label.as_deref(), Some("Web + Native"));
+        assert_eq!(
+            bootstrap.device_app_key_npub,
+            app_key.public_key().to_bech32().unwrap()
+        );
+        assert_eq!(
+            bootstrap.request_npub,
+            request.request_keys.public_key().to_bech32().unwrap()
+        );
+        assert!(
+            request.url.len()
+                <= nostr_identity::NOSTR_IDENTITY_DEVICE_APPROVAL_BOOTSTRAP_MAX_URI_LENGTH,
+            "bootstrap URL was {}",
+            request.url.len()
+        );
     }
 
     #[test]
@@ -669,9 +692,7 @@ mod tests {
 
         let request = create_app_key_approval_request(&app_key, None, None, Some("iPhone"), 123)
             .expect("encode manual join request");
-        let parsed = parse_app_key_approval_request(&request.url)
-            .expect("parse request")
-            .expect("request");
+        let parsed = request.request.clone();
 
         assert_eq!(parsed.profile_id, None);
         assert_eq!(parsed.device_app_key_pubkey, app_key.public_key().to_hex());
@@ -679,38 +700,23 @@ mod tests {
         assert_eq!(parsed.label.as_deref(), Some("iPhone"));
         assert_full_device_approval_request(&parsed);
         assert_drive_device_approval_resources(&parsed);
-        assert_eq!(
-            app_key_approval_request_relay(&parsed).unwrap(),
-            APP_KEY_APPROVAL_RELAY_URL
-        );
         assert!(request.url.starts_with(APP_KEY_APPROVAL_REQUEST_PREFIX));
-    }
-
-    #[test]
-    fn approval_request_can_extract_one_signed_request_relay() {
-        let app_key = nostr_sdk::Keys::generate();
-        let request = create_app_key_approval_request_for_relay(
-            &app_key,
-            None,
-            None,
-            Some("Test device"),
-            123,
-            "ws://127.0.0.1:4815",
-        )
-        .expect("request");
-
         assert_eq!(
-            app_key_approval_request_relay(&request.request).unwrap(),
-            "ws://127.0.0.1:4815"
+            parse_app_key_approval_bootstrap(&request.url)
+                .unwrap()
+                .expect("bootstrap")
+                .label
+                .as_deref(),
+            Some("iPhone")
         );
     }
 
     #[test]
-    fn approval_policy_requires_one_signed_request_relay() {
+    fn approval_policy_accepts_compact_bootstrap_request_without_relay() {
         let profile_id = NostrIdentityId::new_v4();
         let app_key = nostr_sdk::Keys::generate();
         let admin = nostr_sdk::Keys::generate();
-        let mut request = create_app_key_approval_request(
+        let request = create_app_key_approval_request(
             &app_key,
             Some(profile_id),
             Some(&admin.public_key().to_hex()),
@@ -719,18 +725,14 @@ mod tests {
         )
         .expect("request")
         .request;
-        request
-            .resources
-            .retain(|resource| resource.resource_type != "nostr_relay");
 
-        let error = validate_app_key_approval_request_policy(
+        validate_app_key_approval_request_policy(
             &request,
             profile_id,
             &admin.public_key().to_hex(),
             123,
         )
-        .expect_err("missing request relay must fail");
-        assert!(format!("{error:#}").contains("exactly one request relay"));
+        .expect("compact bootstrap request");
     }
 
     #[test]
@@ -739,18 +741,18 @@ mod tests {
         let app_key_hex = app_key.public_key().to_hex();
         let url = format!("iris-drive://app-key-link?app_key={app_key_hex}&ignored=yes");
         assert!(!app_key_approval_input_has_prefix(&url));
-        assert!(parse_app_key_approval_request(&url).unwrap().is_none());
+        assert!(parse_app_key_approval_bootstrap(&url).unwrap().is_none());
     }
 
     #[test]
-    fn approval_request_parser_accepts_shared_prefix_and_rejects_nearby_routes() {
+    fn approval_bootstrap_parser_accepts_shared_prefix_and_rejects_nearby_routes() {
         let profile_id = NostrIdentityId::new_v4();
         let app_key = nostr_sdk::Keys::generate();
         let local = nostr_identity::create_nostr_identity_device_approval_request(
             &app_key,
             nostr_identity::CreateNostrIdentityDeviceApprovalRequestOptions {
                 request_keys: None,
-                request_secret: Some("secret_abcdefghijklmnopqrstuvwxyz123456".to_owned()),
+                request_secret: None,
                 requested_at: 123,
                 request_type: Some("device_link".to_owned()),
                 resources: Vec::new(),
@@ -761,18 +763,22 @@ mod tests {
             },
         )
         .expect("request");
-        let url =
-            nostr_identity::encode_nostr_identity_device_approval_request(&local.request, None)
-                .expect("encode request");
-        let parsed = parse_app_key_approval_request(&url)
-            .expect("parse request")
-            .expect("request");
+        let bootstrap = nostr_identity_device_approval_bootstrap(&local.request).unwrap();
+        let url = encode_nostr_identity_device_approval_bootstrap(
+            &bootstrap,
+            Some(APP_KEY_APPROVAL_REQUEST_PREFIX),
+        )
+        .expect("encode bootstrap");
+        let parsed = parse_app_key_approval_bootstrap(&url)
+            .expect("parse bootstrap")
+            .expect("bootstrap");
 
-        assert_eq!(parsed.profile_id, Some(profile_id));
-        assert_eq!(parsed.device_app_key_pubkey, app_key.public_key().to_hex());
-        assert_eq!(parsed.label.as_deref(), Some("Phone Browser"));
+        assert_eq!(
+            parsed.device_app_key_npub,
+            app_key.public_key().to_bech32().unwrap()
+        );
         assert!(
-            parse_app_key_approval_request("https://drive.iris.to/app-key-linker?owner=x")
+            parse_app_key_approval_bootstrap("https://drive.iris.to/app-key-linker?owner=x")
                 .unwrap()
                 .is_none()
         );

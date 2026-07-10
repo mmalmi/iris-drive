@@ -1,9 +1,6 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
-pub(crate) use iris_drive_core::app_key_link_transport::{
-    create_app_key_approval_request,
-    parse_app_key_approval_request as decode_app_key_approval_request,
-};
+pub(crate) use iris_drive_core::app_key_link_transport::create_app_key_approval_request;
 use nostr_sdk::Keys;
 
 pub(crate) fn normalize_pubkey(input: &str) -> Result<String> {
@@ -11,25 +8,37 @@ pub(crate) fn normalize_pubkey(input: &str) -> Result<String> {
 }
 
 pub(crate) fn resolve_app_key_approval_input(
+    config: &AppConfig,
     input: &str,
     expected_profile_id: iris_drive_core::NostrIdentityId,
     expected_admin_app_key_pubkey: &str,
     explicit_label: Option<String>,
 ) -> Result<(String, Option<String>)> {
-    if let Some(request) = decode_app_key_approval_request(input)? {
-        iris_drive_core::app_key_link_transport::validate_app_key_approval_request_policy(
-            &request,
-            expected_profile_id,
-            expected_admin_app_key_pubkey,
-            unix_now_seconds(),
-        )?;
-        let label = explicit_label.or(request.label);
-        return Ok((request.device_app_key_pubkey, label));
-    }
+    let request = decode_app_key_approval_request(config, input)?;
+    iris_drive_core::app_key_link_transport::validate_app_key_approval_request_policy(
+        &request,
+        expected_profile_id,
+        expected_admin_app_key_pubkey,
+        unix_now_seconds(),
+    )?;
+    let label = explicit_label.or(request.label);
+    Ok((request.device_app_key_pubkey, label))
+}
 
-    Err(anyhow::anyhow!(
-        "expected a full NostrIdentity device approval request"
-    ))
+pub(crate) fn decode_app_key_approval_request(
+    config: &AppConfig,
+    input: &str,
+) -> Result<iris_drive_core::app_key_link_transport::AppKeyApprovalRequest> {
+    let state = config
+        .profile
+        .as_ref()
+        .ok_or_else(|| anyhow::anyhow!("profile admin is required to approve devices"))?;
+    iris_drive_core::app_key_link_transport::parse_app_key_approval_request(
+        input,
+        state.profile_id,
+        &state.app_key_pubkey,
+        unix_now_seconds(),
+    )
 }
 
 pub(crate) fn resolve_app_key_link_target_with_admin(
@@ -127,9 +136,10 @@ pub(crate) fn ensure_cached_app_key_link_request(
     }
 
     let pending = state.outbound_app_key_link_request.as_ref();
-    if let Some(pending) = pending {
-        iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(pending)
-            .context("validating persisted app-key approval request")?;
+    if let Some(pending) = pending
+        && iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(pending)
+            .is_ok()
+    {
         return Ok(false);
     }
     let profile_id = state.profile_id;

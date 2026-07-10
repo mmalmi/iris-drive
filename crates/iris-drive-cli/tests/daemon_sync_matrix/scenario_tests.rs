@@ -84,7 +84,10 @@ async fn live_daemons_running_app_key_link_approval_clears_waiting_quickly() {
         linked_cfg.path(),
         &["link", owner_invite, "--label", "iphone"],
     );
-    let request = replace_pending_approval_relay(linked_cfg.path(), &request_relay.url);
+    let request = request_relay
+        .publish_pending_approval_request(linked_cfg.path())
+        .await;
+    add_config_relay(owner_cfg.path(), &request_relay.url);
     let owner_log = owner_cfg.path().join("owner.log");
     let linked_log = linked_cfg.path().join("linked.log");
     let owner_daemon = DaemonChild::spawn(

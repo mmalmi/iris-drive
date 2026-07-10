@@ -1,9 +1,40 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 use iris_drive_core::app_key_link_transport::{
-    APP_KEY_APPROVAL_REQUEST_PREFIX, app_key_approval_request_relay,
-    drive_device_approval_resources, parse_app_key_approval_request,
+    APP_KEY_APPROVAL_REQUEST_PREFIX, drive_device_approval_resources,
 };
+
+fn pending_request(
+    config_dir: &std::path::Path,
+) -> iris_drive_core::app_key_link_transport::AppKeyApprovalRequest {
+    let config = iris_drive_core::AppConfig::load_or_default(
+        iris_drive_core::paths::config_path_in(config_dir),
+    )
+    .unwrap();
+    let pending = config
+        .profile
+        .as_ref()
+        .and_then(|profile| profile.outbound_app_key_link_request.as_ref())
+        .expect("pending request");
+    iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(pending)
+        .unwrap()
+        .0
+}
+
+fn event_has_type(event: &serde_json::Value, type_name: &str) -> bool {
+    event["tags"].as_array().is_some_and(|tags| {
+        tags.iter().any(|tag| {
+            tag.as_array().is_some_and(|values| {
+                values.first().and_then(serde_json::Value::as_str) == Some("type")
+                    && values.get(1).and_then(serde_json::Value::as_str) == Some(type_name)
+            })
+        })
+    })
+}
+
+fn is_approval_receipt_event(event: &serde_json::Value) -> bool {
+    event_has_type(event, "nostr_identity_device_approval_receipt")
+}
 
 fn current_app_key_npub(value: &serde_json::Value) -> &str {
     value["current_app_key_npub"].as_str().unwrap()
@@ -216,26 +247,28 @@ fn link_creates_awaiting_device_with_no_owner_key() {
     );
     let request_url = v["app_key_link_request"]["url"].as_str().unwrap();
     assert!(request_url.starts_with(APP_KEY_APPROVAL_REQUEST_PREFIX));
-    let request = parse_app_key_approval_request(request_url)
-        .unwrap()
-        .unwrap();
+    let request = pending_request(dir.path());
     assert_eq!(
         iris_drive_core::app_key_summary::pubkey_npub(&request.device_app_key_pubkey),
         v["current_app_key_npub"].as_str().unwrap()
     );
-    assert_eq!(
-        request.profile_id.map(|id| id.to_string()).as_deref(),
-        init_v["profile_id"].as_str()
-    );
+    assert_eq!(request.profile_id, None);
     assert!(!request.request_pubkey.is_empty());
     assert!(!request.request_secret.is_empty());
-    assert!(!request.device_app_key_proof.is_empty());
+    assert!(request.device_app_key_proof.is_empty());
     assert_eq!(request.resources, drive_device_approval_resources());
-    assert!(
-        !v["app_key_link_request"]["url"]
-            .as_str()
+    let bootstrap =
+        iris_drive_core::app_key_link_transport::parse_app_key_approval_bootstrap(request_url)
             .unwrap()
-            .contains("secret=")
+            .unwrap();
+    assert_eq!(
+        bootstrap.device_app_key_npub,
+        v["current_app_key_npub"].as_str().unwrap()
+    );
+    assert!(
+        request_url.len()
+            <= iris_drive_core::nostr_identity::NOSTR_IDENTITY_DEVICE_APPROVAL_BOOTSTRAP_MAX_URI_LENGTH,
+        "bootstrap URL was {request_url}"
     );
     let status = run_json(dir.path(), &["status"]);
     let peers = status["peers"].as_array().unwrap();
@@ -426,27 +459,16 @@ fn app_keys_can_appoint_and_demote_admin() {
 #[test]
 fn owner_approves_device_request_link() {
     let owner_dir = tempdir().unwrap();
-    let other_owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
 
     let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
     let owner_invite = app_key_link_invite_url(&owner).to_string();
-    run_json(other_owner_dir.path(), &["init", "--label", "other-admin"]);
 
     let linked = run_json(
         linked_dir.path(),
         &["link", &owner_invite, "--label", "windows-peer"],
     );
-    let request_url = linked["app_key_link_request"]["url"].as_str().unwrap();
     let linked_app_key = current_app_key_npub(&linked);
-
-    idrive(other_owner_dir.path())
-        .args(["approve", request_url])
-        .assert()
-        .failure()
-        .stderr(contains(
-            "device approval request belongs to a different profile",
-        ));
 
     let approved = approve_with_local_relay(owner_dir.path(), linked_dir.path(), None);
     assert_eq!(approved["roster_size"], 2);
@@ -469,8 +491,16 @@ fn owner_rejects_device_request_link() {
         linked_dir.path(),
         &["link", owner_invite, "--label", "rejected-phone"],
     );
-    let request_url = linked["app_key_link_request"]["url"].as_str().unwrap();
     let linked_app_key = current_app_key_npub(&linked);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let request_relay = runtime.block_on(LocalNostrRelay::spawn());
+    let request_url =
+        runtime.block_on(request_relay.publish_pending_approval_request(linked_dir.path()));
+    add_config_relay(owner_dir.path(), &request_relay.url);
 
     {
         let config_path = iris_drive_core::paths::config_path_in(owner_dir.path());
@@ -499,7 +529,7 @@ fn owner_rejects_device_request_link() {
         config.save(&config_path).unwrap();
     }
 
-    let rejected = run_json(owner_dir.path(), &["app-keys", "reject", request_url]);
+    let rejected = run_json(owner_dir.path(), &["app-keys", "reject", &request_url]);
     assert_eq!(rejected["rejected"], true);
     assert!(
         rejected["inbound_app_key_link_requests"]
@@ -542,25 +572,29 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
     assert_eq!(linked["authorization_state"], "awaiting_approval");
     let request_url = linked["app_key_link_request"]["url"].as_str().unwrap();
     assert!(request_url.starts_with(APP_KEY_APPROVAL_REQUEST_PREFIX));
-    let request = parse_app_key_approval_request(request_url)
-        .unwrap()
-        .unwrap();
+    let request = pending_request(linked_dir.path());
     assert_eq!(
         iris_drive_core::app_key_summary::pubkey_npub(&request.device_app_key_pubkey),
         linked["current_app_key_npub"].as_str().unwrap()
     );
-    assert_eq!(
-        request.profile_id.map(|id| id.to_string()).as_deref(),
-        owner["profile_id"].as_str()
-    );
+    assert_eq!(request.profile_id, None);
     assert!(!request.request_pubkey.is_empty());
     assert!(!request.request_secret.is_empty());
-    assert!(!request.device_app_key_proof.is_empty());
+    assert!(request.device_app_key_proof.is_empty());
     assert_eq!(request.resources, drive_device_approval_resources());
-    assert!(!request_url.contains("owner="));
-    assert!(!request_url.contains("secret="));
-    assert!(!request_url.contains("local-owner"));
-    assert!(!request_url.contains("app_key=device-"));
+    let bootstrap =
+        iris_drive_core::app_key_link_transport::parse_app_key_approval_bootstrap(request_url)
+            .unwrap()
+            .unwrap();
+    assert_eq!(
+        bootstrap.device_app_key_npub,
+        linked["current_app_key_npub"].as_str().unwrap()
+    );
+    assert!(
+        request_url.len()
+            <= iris_drive_core::nostr_identity::NOSTR_IDENTITY_DEVICE_APPROVAL_BOOTSTRAP_MAX_URI_LENGTH,
+        "bootstrap URL was {request_url}"
+    );
     assert_eq!(
         linked["app_key_link_request"]["admin_app_key_npub"].as_str(),
         Some(admin_app_key_npub)
@@ -589,15 +623,14 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn approval_uses_signed_request_relay_not_ordinary_relays() {
-    let ordinary_relay = LocalNostrRelay::spawn().await;
-    let request_relay = LocalNostrRelay::spawn().await;
+async fn approval_publishes_roster_and_receipt_to_configured_relay() {
+    let relay = LocalNostrRelay::spawn().await;
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
 
     let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
     let mut owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
-    owner_config.relays = vec![ordinary_relay.url.clone()];
+    owner_config.relays = vec![relay.url.clone()];
     owner_config.save(config_path_in(owner_dir.path())).unwrap();
     run_json(
         linked_dir.path(),
@@ -605,66 +638,49 @@ async fn approval_uses_signed_request_relay_not_ordinary_relays() {
             "link",
             app_key_link_invite_url(&owner),
             "--label",
-            "request-relay-device",
+            "relay-device",
         ],
     );
-    let request_url = replace_pending_approval_relay(linked_dir.path(), &request_relay.url);
-    let request = parse_app_key_approval_request(&request_url)
-        .unwrap()
-        .unwrap();
-    assert_eq!(
-        app_key_approval_request_relay(&request).unwrap(),
-        request_relay.url
-    );
-    assert_ne!(request_relay.url, ordinary_relay.url);
+    let request_url = relay
+        .publish_pending_approval_request(linked_dir.path())
+        .await;
+    let request = pending_request(linked_dir.path());
+    assert_eq!(request.resources, drive_device_approval_resources());
 
     let approved = run_json(owner_dir.path(), &["approve", &request_url]);
     assert_eq!(approved["roster_size"], 2);
-    assert_eq!(approved["request_relay"], request_relay.url);
 
     let saved_owner = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
     let owner_state = saved_owner.profile.as_ref().unwrap();
-    let request_events = request_relay.events().await;
+    let request_events = relay.events().await;
+    assert_eq!(
+        request_events
+            .iter()
+            .filter(|event| is_approval_receipt_event(event))
+            .count(),
+        1
+    );
     assert_eq!(
         request_events.len(),
         owner_state.profile_roster_ops.len() + 1,
-        "request relay must receive the complete roster and encrypted receipt"
+        "configured relay must receive the complete roster and encrypted receipt"
     );
     assert!(request_events.iter().all(|event| {
         event["kind"].as_u64() == Some(u64::from(iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP))
     }));
-    let is_approval_receipt = |event: &serde_json::Value| {
-        event["tags"].as_array().is_some_and(|tags| {
-            tags.iter().any(|tag| {
-                tag.as_array().is_some_and(|values| {
-                    values.first().and_then(serde_json::Value::as_str) == Some("type")
-                        && values.get(1).and_then(serde_json::Value::as_str)
-                            == Some("nostr_identity_device_approval_receipt")
-                })
-            })
-        })
-    };
-    assert_eq!(
-        request_events
-            .iter()
-            .filter(|event| is_approval_receipt(event))
-            .count(),
-        1
-    );
     assert!(
-        request_events.last().is_some_and(is_approval_receipt),
+        request_events.last().is_some_and(is_approval_receipt_event),
         "the encrypted receipt must be accepted after the complete roster"
     );
     assert!(
         request_events[..request_events.len() - 1]
             .iter()
-            .all(|event| !is_approval_receipt(event))
+            .all(|event| !is_approval_receipt_event(event))
     );
-    assert!(ordinary_relay.events().await.is_empty());
 
     let synced = run_json(
         linked_dir.path(),
-        &["sync", "--relay", &ordinary_relay.url, "--timeout", "1"],
+        &["sync", "--relay", &relay.url, "--timeout", "1"],
     );
     assert_eq!(synced["device_approval_receipts_applied"], 1);
     let linked_status = run_json(linked_dir.path(), &["status"]);
@@ -675,9 +691,9 @@ async fn approval_uses_signed_request_relay_not_ordinary_relays() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn rejected_request_relay_rolls_back_cli_approval() {
-    let request_relay = LocalNostrRelay::spawn().await;
-    request_relay.reject_kinds(&[iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP]);
+async fn rejected_configured_relay_rolls_back_cli_approval() {
+    let relay = LocalNostrRelay::spawn().await;
+    relay.reject_kinds(&[iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP]);
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
     let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
@@ -690,7 +706,10 @@ async fn rejected_request_relay_rolls_back_cli_approval() {
             "rejected-device",
         ],
     );
-    let request_url = replace_pending_approval_relay(linked_dir.path(), &request_relay.url);
+    let request_url = relay
+        .publish_pending_approval_request(linked_dir.path())
+        .await;
+    add_config_relay(owner_dir.path(), &relay.url);
     let before = AppConfig::load_or_default(config_path_in(owner_dir.path()))
         .unwrap()
         .profile;
@@ -708,7 +727,6 @@ async fn rejected_request_relay_rolls_back_cli_approval() {
         after, before,
         "rejected publication must not persist approval"
     );
-    assert!(request_relay.events().await.is_empty());
 }
 
 #[test]

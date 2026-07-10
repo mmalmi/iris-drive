@@ -15,7 +15,7 @@ use crate::app_key_link_invite::{
     APP_KEY_LINK_INVITE_PREFIX, APP_KEY_LINK_INVITE_WEB_PREFIX, parse_app_key_link_invite,
 };
 use crate::app_key_link_transport::{
-    app_key_approval_input_has_prefix, parse_app_key_approval_request,
+    app_key_approval_input_has_prefix, parse_app_key_approval_bootstrap,
 };
 use crate::app_key_summary::pubkey_npub;
 use crate::gateway::{
@@ -177,10 +177,10 @@ fn classify_app_key_approval_link_input(input: &str) -> Option<LinkInputClassifi
         is_complete: true,
         ..LinkInputClassification::default()
     };
-    match parse_app_key_approval_request(input) {
-        Ok(Some(request)) => {
+    match parse_app_key_approval_bootstrap(input) {
+        Ok(Some(bootstrap)) => {
             classification.is_valid = true;
-            classification.app_key_pubkey = pubkey_npub(&request.device_app_key_pubkey);
+            classification.app_key_pubkey = bootstrap.device_app_key_npub;
         }
         Ok(None) => {
             "device request was not recognized".clone_into(&mut classification.error);
