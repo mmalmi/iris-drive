@@ -369,11 +369,8 @@ async fn relay_publish_sends_profile_ops_without_legacy_app_keys_roster() {
     let init_a = run_json(cfg_a.path(), &["init", "--label", "device-a"]);
     let owner_invite = init_a["app_key_link_invite"]["url"].as_str().unwrap();
 
-    let linked_b = run_json(cfg_b.path(), &["link", owner_invite, "--label", "device-b"]);
-    let device_b_request = linked_b["app_key_link_request"]["url"]
-        .as_str()
-        .unwrap()
-        .to_string();
+    run_json(cfg_b.path(), &["link", owner_invite, "--label", "device-b"]);
+    let device_b_request = replace_pending_approval_relay(cfg_b.path(), &relay.url);
 
     let approved = run_json(cfg_a.path(), &["approve", &device_b_request]);
     assert_eq!(approved["roster_size"], 2);

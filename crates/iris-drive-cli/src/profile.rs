@@ -227,6 +227,13 @@ pub(crate) fn cmd_approve(
         .approve_device_request(&request, label)
         .context("approving AppKey")?;
     let device_count = snap.app_actors.len();
+    let pending = profile
+        .state
+        .pending_device_approval_receipts
+        .iter()
+        .find(|pending| pending.request_pubkey == request.request_pubkey)
+        .ok_or_else(|| anyhow::anyhow!("approval did not retain its encrypted receipt"))?;
+    let published_events = publish_device_approval(&profile.state, pending)?;
     config.profile = Some(profile.state.clone());
     config.save(config_path_in(config_dir))?;
     println!(
@@ -234,9 +241,33 @@ pub(crate) fn cmd_approve(
         json!({
             "approved_app_key_npub": approved_app_key_npub,
             "roster_size": device_count,
+            "request_relay": pending.request_relay,
+            "published_approval_events": published_events,
         })
     );
     Ok(())
+}
+
+fn publish_device_approval(
+    state: &ProfileState,
+    pending: &iris_drive_core::profile::PendingDeviceApprovalReceipt,
+) -> Result<usize> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("building device approval relay runtime")?;
+    let event_ids = runtime
+        .block_on(async {
+            tokio::time::timeout(
+                std::time::Duration::from_secs(APP_KEY_LINK_RELAY_PUBLISH_TIMEOUT_SECS),
+                iris_drive_core::relay_sync::publish_device_approval_to_request_relay(
+                    state, pending,
+                ),
+            )
+            .await
+        })
+        .context("publishing device approval to request relay timed out")??;
+    Ok(event_ids.len())
 }
 
 pub(crate) fn cmd_reject(config_dir: &std::path::Path, device: &str) -> Result<()> {
@@ -850,7 +881,7 @@ pub(crate) async fn send_authorized_app_key_link_rosters(
         }
         tokio::time::timeout(
             std::time::Duration::from_secs(APP_KEY_LINK_RELAY_PUBLISH_TIMEOUT_SECS),
-            relay_client.send_event(&event),
+            iris_drive_core::relay_sync::publish_device_approval_to_request_relay(state, pending),
         )
         .await
         .context("publishing device approval receipt timed out")??;

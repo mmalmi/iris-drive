@@ -24,6 +24,7 @@ use thiserror::Error;
 
 use crate::app_key_link_transport::{
     AppKeyLinkRosterFrame, parse_pending_app_key_approval_receipt_event,
+    pending_app_key_approval_request_relay,
 };
 use crate::app_keys::{AppKeysProjection, ApplyDecision};
 use crate::calendar::CALENDAR_TREE_NAME;
@@ -38,7 +39,9 @@ use crate::nostr_identity::{
     NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_TYPE,
     parse_nostr_identity_device_approval_receipt_roster_op,
 };
-use crate::profile::{app_key_link_invite_keys, app_keys_from_profile_projection};
+use crate::profile::{
+    PendingDeviceApprovalReceipt, app_key_link_invite_keys, app_keys_from_profile_projection,
+};
 pub use crate::relay_filters::{
     device_approval_receipt_filter, subscription_filters, subscription_filters_for_shared_roots,
 };
@@ -879,6 +882,83 @@ pub async fn publish_nostr_identity_roster_ops(
     Ok(event_ids)
 }
 
+/// Publish the complete roster log and encrypted receipt only to the relay
+/// retained from the signed approval request.
+pub async fn publish_device_approval_to_request_relay(
+    state: &crate::ProfileState,
+    pending: &PendingDeviceApprovalReceipt,
+) -> Result<Vec<nostr_sdk::EventId>, RelayError> {
+    let relay = normalize_pending_device_approval_relay(&pending.request_relay)?;
+    let client = connect(std::slice::from_ref(&relay)).await?;
+    let result = publish_device_approval_with_client(&client, &relay, state, pending).await;
+    shutdown_client(&client).await;
+    result
+}
+
+async fn publish_device_approval_with_client(
+    client: &Client,
+    relay: &str,
+    state: &crate::ProfileState,
+    pending: &PendingDeviceApprovalReceipt,
+) -> Result<Vec<nostr_sdk::EventId>, RelayError> {
+    let mut event_ids = Vec::with_capacity(state.profile_roster_ops.len() + 1);
+    let receipt = Event::from_json(&pending.event_json)
+        .map_err(|error| RelayError::Client(format!("device approval receipt JSON: {error}")))?;
+    if !is_device_approval_receipt_event(&receipt) {
+        return Err(RelayError::Client(
+            "pending device approval receipt has the wrong event coordinate".to_string(),
+        ));
+    }
+    event_ids.push(send_event_to_accepted_relay(client, relay, &receipt).await?);
+
+    for op in &state.profile_roster_ops {
+        let event = Event::from_json(&op.event_json)
+            .map_err(|error| RelayError::Client(format!("profile roster op JSON: {error}")))?;
+        let parsed = parse_nostr_identity_roster_op_event(&event)?;
+        if parsed.op_id != op.op_id {
+            return Err(RelayError::Client(format!(
+                "profile roster op id mismatch: stored {}, parsed {}",
+                op.op_id, parsed.op_id
+            )));
+        }
+        event_ids.push(send_event_to_accepted_relay(client, relay, &event).await?);
+    }
+    Ok(event_ids)
+}
+
+async fn send_event_to_accepted_relay(
+    client: &Client,
+    relay: &str,
+    event: &Event,
+) -> Result<nostr_sdk::EventId, RelayError> {
+    let output = client
+        .send_event_to([relay], event)
+        .await
+        .map_err(|error| RelayError::Client(error.to_string()))?;
+    if output.success.len() != 1 {
+        let reason = output
+            .failed
+            .values()
+            .next()
+            .map_or("relay did not accept event", String::as_str);
+        return Err(RelayError::Client(format!(
+            "request relay {relay} rejected event {}: {reason}",
+            event.id.to_hex()
+        )));
+    }
+    Ok(*output.id())
+}
+
+fn normalize_pending_device_approval_relay(relay: &str) -> Result<String, RelayError> {
+    let resource = crate::nostr_identity::nostr_identity_device_approval_relay_resource(relay)?;
+    if resource.id != relay {
+        return Err(RelayError::Client(
+            "pending device approval request relay is not normalized".to_string(),
+        ));
+    }
+    Ok(resource.id)
+}
+
 /// Publish a signed canonical share access snapshot.
 pub async fn publish_share_access_snapshot(
     client: &Client,
@@ -1006,19 +1086,111 @@ pub async fn fetch_nostr_identity_roster_ops(
         .collect())
 }
 
-pub async fn fetch_device_approval_receipts(
-    client: &Client,
+#[derive(Debug, Default)]
+pub struct DeviceApprovalRelayEvents {
+    pub receipt_events: Vec<Event>,
+    pub roster_events: Vec<Event>,
+}
+
+pub async fn fetch_device_approval_events(
     state: &crate::ProfileState,
     timeout: Duration,
-) -> Result<Vec<Event>, RelayError> {
+) -> Result<DeviceApprovalRelayEvents, RelayError> {
     let Some(filter) = device_approval_receipt_filter(state) else {
-        return Ok(Vec::new());
+        return Ok(DeviceApprovalRelayEvents::default());
     };
-    Ok(fetch_events(client, vec![filter], timeout)
-        .await?
-        .into_iter()
-        .filter(is_device_approval_receipt_event)
-        .collect())
+    let pending = state
+        .outbound_app_key_link_request
+        .as_ref()
+        .ok_or_else(|| RelayError::Client("pending approval request disappeared".to_string()))?;
+    let relay = pending_app_key_approval_request_relay(pending)
+        .map_err(|error| RelayError::Client(error.to_string()))?;
+    let client = connect(std::slice::from_ref(&relay)).await?;
+    let result = async {
+        let receipt_events = fetch_events(&client, vec![filter], timeout)
+            .await?
+            .into_iter()
+            .filter(is_device_approval_receipt_event)
+            .collect::<Vec<_>>();
+        let (request, _) =
+            crate::app_key_link_transport::parse_pending_app_key_approval_request(pending)
+                .map_err(|error| RelayError::Client(error.to_string()))?;
+        let profile_id = request.profile_id.or_else(|| {
+            receipt_events.iter().find_map(|event| {
+                parse_pending_app_key_approval_receipt_event(pending, event)
+                    .ok()
+                    .map(|receipt| receipt.profile_id)
+            })
+        });
+        let roster_events = if let Some(profile_id) = profile_id {
+            fetch_events(
+                &client,
+                vec![nostr_identity_roster_op_filter(profile_id)],
+                timeout,
+            )
+            .await?
+            .into_iter()
+            .filter(|event| !is_device_approval_receipt_event(event))
+            .filter(|event| {
+                parse_nostr_identity_roster_op_event(event)
+                    .is_ok_and(|op| op.content.profile_id == profile_id)
+            })
+            .collect()
+        } else {
+            Vec::new()
+        };
+        Ok(DeviceApprovalRelayEvents {
+            receipt_events,
+            roster_events,
+        })
+    }
+    .await;
+    shutdown_client(&client).await;
+    result
+}
+
+pub async fn subscribe_device_approval_events(
+    state: &crate::ProfileState,
+) -> Result<Option<Client>, RelayError> {
+    let Some(filter) = device_approval_receipt_filter(state) else {
+        return Ok(None);
+    };
+    let pending = state
+        .outbound_app_key_link_request
+        .as_ref()
+        .ok_or_else(|| RelayError::Client("pending approval request disappeared".to_string()))?;
+    let relay = pending_app_key_approval_request_relay(pending)
+        .map_err(|error| RelayError::Client(error.to_string()))?;
+    let client = connect(&[relay]).await?;
+    let subscribe_result = client
+        .subscribe(filter, None)
+        .await
+        .map_err(|error| RelayError::Client(error.to_string()));
+    if let Err(error) = subscribe_result {
+        shutdown_client(&client).await;
+        return Err(error);
+    }
+    let (request, _) =
+        crate::app_key_link_transport::parse_pending_app_key_approval_request(pending)
+            .map_err(|error| RelayError::Client(error.to_string()))?;
+    if let Some(profile_id) = request.profile_id {
+        if let Err(error) = subscribe_nostr_identity_roster_ops(&client, profile_id).await {
+            shutdown_client(&client).await;
+            return Err(error);
+        }
+    }
+    Ok(Some(client))
+}
+
+pub async fn subscribe_nostr_identity_roster_ops(
+    client: &Client,
+    profile_id: NostrIdentityId,
+) -> Result<(), RelayError> {
+    client
+        .subscribe(nostr_identity_roster_op_filter(profile_id), None)
+        .await
+        .map_err(|error| RelayError::Client(error.to_string()))?;
+    Ok(())
 }
 
 /// Fetch signed canonical share access snapshots for one share.

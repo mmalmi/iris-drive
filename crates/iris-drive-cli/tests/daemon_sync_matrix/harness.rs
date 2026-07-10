@@ -84,19 +84,19 @@ impl SyncCluster {
 
         let init = run_json(windows_cfg.path(), &["init", "--label", "windows-peer"]);
         let owner_invite = init["app_key_link_invite"]["url"].as_str().unwrap();
-        let linked = run_json(
+        run_json(
             ubuntu_cfg.path(),
             &["link", owner_invite, "--label", "linux-peer"],
         );
-        let request = linked["app_key_link_request"]["url"].as_str().unwrap();
-        run_json(windows_cfg.path(), &["approve", request]);
+        let request = replace_pending_approval_relay(ubuntu_cfg.path(), &relay.url);
+        let mut linked_requests = vec![(Client::Ubuntu, request)];
         if let Some(config) = macos_cfg.as_ref() {
-            let linked = run_json(
+            run_json(
                 config.path(),
                 &["link", owner_invite, "--label", "macos-peer"],
             );
-            let request = linked["app_key_link_request"]["url"].as_str().unwrap();
-            run_json(windows_cfg.path(), &["approve", request]);
+            let request = replace_pending_approval_relay(config.path(), &relay.url);
+            linked_requests.push((Client::MacOS, request));
         }
 
         for seed in &options.seed_files {
@@ -151,7 +151,7 @@ impl SyncCluster {
                 None
             };
 
-        Self {
+        let cluster = Self {
             test_name,
             relay,
             _blossom: blossom,
@@ -168,7 +168,14 @@ impl SyncCluster {
             windows_daemon,
             ubuntu_daemon,
             macos_daemon,
+        };
+
+        for (client, request) in linked_requests {
+            run_json(cluster.windows_cfg.path(), &["approve", &request]);
+            cluster.wait_until_client_authorized(client).await;
         }
+
+        cluster
     }
 
     async fn wait_until_authorized(&self) {
@@ -181,6 +188,17 @@ impl SyncCluster {
                     status["profile"]["authorization_state"] == "authorized"
                 })
         })
+        .await;
+    }
+
+    async fn wait_until_client_authorized(&self, client: Client) {
+        self.wait_until(
+            &format!("{} linked peer authorized", client.label()),
+            || {
+                let status = run_json(self.config_path(client), &["status"]);
+                status["profile"]["authorization_state"] == "authorized"
+            },
+        )
         .await;
     }
 

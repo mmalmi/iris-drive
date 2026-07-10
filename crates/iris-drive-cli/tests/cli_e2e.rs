@@ -18,7 +18,7 @@ use tempfile::tempdir;
 
 mod support;
 
-use support::{LocalBlossomServer, LocalNostrRelay};
+use support::{LocalBlossomServer, LocalNostrRelay, replace_pending_approval_relay};
 
 fn idrive(dir: &std::path::Path) -> Command {
     let mut cmd = Command::cargo_bin("idrive").unwrap();
@@ -44,10 +44,6 @@ fn app_key_link_invite_url(value: &serde_json::Value) -> &str {
     value["app_key_link_invite"]["url"].as_str().unwrap()
 }
 
-fn app_key_link_request_url(value: &serde_json::Value) -> &str {
-    value["app_key_link_request"]["url"].as_str().unwrap()
-}
-
 fn run_json(dir: &std::path::Path, args: &[&str]) -> serde_json::Value {
     let output = idrive(dir).args(args).output().unwrap();
     assert_success(&output);
@@ -58,6 +54,39 @@ fn run_json(dir: &std::path::Path, args: &[&str]) -> serde_json::Value {
             String::from_utf8_lossy(&output.stderr)
         )
     })
+}
+
+fn approve_with_local_relay(
+    owner_dir: &std::path::Path,
+    linked_dir: &std::path::Path,
+    label: Option<&str>,
+) -> serde_json::Value {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let relay = runtime.block_on(LocalNostrRelay::spawn());
+    let request = replace_pending_approval_relay(linked_dir, &relay.url);
+    let mut args = vec!["approve", request.as_str()];
+    if let Some(label) = label {
+        args.extend(["--label", label]);
+    }
+    run_json(owner_dir, &args)
+}
+
+fn app_keys_approve_with_local_relay(
+    owner_dir: &std::path::Path,
+    linked_dir: &std::path::Path,
+) -> serde_json::Value {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let relay = runtime.block_on(LocalNostrRelay::spawn());
+    let request = replace_pending_approval_relay(linked_dir, &relay.url);
+    run_json(owner_dir, &["app-keys", "approve", &request])
 }
 
 #[test]
@@ -694,10 +723,7 @@ fn status_reports_fips_latency_for_direct_peer() {
         &["link", &owner_invite, "--label", "linux-peer"],
     );
     let linked_app_key_npub = current_app_key_npub(&linked).to_string();
-    run_json(
-        owner_dir.path(),
-        &["approve", app_key_link_request_url(&linked)],
-    );
+    approve_with_local_relay(owner_dir.path(), linked_dir.path(), None);
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -764,15 +790,7 @@ fn status_hydrates_encrypted_device_labels_after_approval() {
     );
     let linked_device = current_app_key_npub(&linked).to_string();
 
-    run_json(
-        owner_dir.path(),
-        &[
-            "approve",
-            app_key_link_request_url(&linked),
-            "--label",
-            "Phone",
-        ],
-    );
+    approve_with_local_relay(owner_dir.path(), linked_dir.path(), Some("Phone"));
 
     let status = run_json(owner_dir.path(), &["status"]);
     let linked_peer = status["peers"]
@@ -796,10 +814,7 @@ fn status_marks_mesh_fips_peer_online_without_direct_endpoint_link() {
         &["link", &owner_invite, "--label", "linux-peer"],
     );
     let linked_app_key_npub = current_app_key_npub(&linked).to_string();
-    run_json(
-        owner_dir.path(),
-        &["approve", app_key_link_request_url(&linked)],
-    );
+    approve_with_local_relay(owner_dir.path(), linked_dir.path(), None);
 
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -849,10 +864,7 @@ fn status_drops_stale_fips_mesh_peers() {
         &["link", &owner_invite, "--label", "linux-peer"],
     );
     let linked_app_key_npub = current_app_key_npub(&linked).to_string();
-    run_json(
-        owner_dir.path(),
-        &["approve", app_key_link_request_url(&linked)],
-    );
+    approve_with_local_relay(owner_dir.path(), linked_dir.path(), None);
 
     std::fs::write(
         owner_dir.path().join("daemon-status.json"),

@@ -66,15 +66,12 @@ pub(crate) fn cmd_daemon(
         .iter()
         .map(|folder| folder.share_id)
         .collect::<Vec<_>>();
-    let mut filters = relay_sync::subscription_filters_for_shared_roots(
+    let filters = relay_sync::subscription_filters_for_shared_roots(
         &state.app_key_pubkey,
         &root_scope_id,
         iris_drive_core::PRIMARY_DRIVE_ID,
         &share_ids,
     );
-    if let Some(filter) = relay_sync::device_approval_receipt_filter(&state) {
-        filters.push(filter);
-    }
     if filters.is_empty() {
         return Err(anyhow::anyhow!("no filters to subscribe to"));
     }
@@ -254,6 +251,21 @@ pub(crate) fn cmd_daemon(
         }
         let mut notifications = client.notifications();
         let mut relay_notifications_open = true;
+        let mut approval_roster_subscription_pending = state
+            .outbound_app_key_link_request
+            .as_ref()
+            .and_then(|pending| {
+                iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(
+                    pending,
+                )
+                .ok()
+            })
+            .is_some_and(|(request, _)| request.profile_id.is_none());
+        let approval_client = relay_sync::subscribe_device_approval_events(&state)
+            .await
+            .context("subscribing to request-scoped device approval events")?;
+        let mut approval_notifications = approval_client.as_ref().map(nostr_sdk::Client::notifications);
+        let mut approval_notifications_open = approval_notifications.is_some();
         let mut direct_roots = DirectRootExchange::default();
         let startup_fips_block_sync_status = fips_block_sync_status(fips_blocks.as_deref()).await;
         let mut config = config.clone();
@@ -419,6 +431,9 @@ pub(crate) fn cmd_daemon(
                 } => {
                     match recv {
                         Some(Ok(RelayPoolNotification::Event { event, .. })) => {
+                            if relay_sync::is_device_approval_receipt_event(&event) {
+                                continue;
+                            }
                             if !relay_sync::relay_event_matches_policy(&subscription_policy, &event)
                             {
                                 continue;
@@ -463,6 +478,69 @@ pub(crate) fn cmd_daemon(
                         }
                         Some(Err(RecvError::Lagged(n))) => {
                             println!("{}", json!({"event": "lagged", "skipped": n}));
+                        }
+                    }
+                }
+                recv = async {
+                    if approval_notifications_open {
+                        approval_notifications
+                            .as_mut()
+                            .expect("open approval notifications require a receiver")
+                            .recv()
+                            .await
+                            .into()
+                    } else {
+                        std::future::pending::<Option<Result<RelayPoolNotification, RecvError>>>().await
+                    }
+                } => {
+                    match recv {
+                        Some(Ok(RelayPoolNotification::Event { event, .. })) => {
+                            let is_receipt = relay_sync::is_device_approval_receipt_event(&event);
+                            match apply_one_event(
+                                &client,
+                                config_dir,
+                                &event,
+                                fips_blocks.clone(),
+                                mount_refresh_tx.clone(),
+                                &daemon_tasks,
+                            )
+                            .await
+                            {
+                                Ok(_) => {
+                                    if is_receipt && approval_roster_subscription_pending {
+                                        let config = AppConfig::load_or_default_cached_profile(
+                                            config_path_in(config_dir),
+                                        )?;
+                                        if let (Some(approval_client), Some(profile)) =
+                                            (approval_client.as_ref(), config.profile.as_ref())
+                                        {
+                                            relay_sync::subscribe_nostr_identity_roster_ops(
+                                                approval_client,
+                                                profile.profile_id,
+                                            )
+                                            .await
+                                            .context("subscribing to unbound approval roster ops")?;
+                                            approval_roster_subscription_pending = false;
+                                        }
+                                    }
+                                }
+                                Err(error) => println!(
+                                    "{}",
+                                    json!({"event": "device_approval_apply_error", "id": event.id.to_hex(), "error": error.to_string()})
+                                ),
+                            }
+                        }
+                        Some(Ok(RelayPoolNotification::Shutdown)) => {
+                            approval_notifications_open = false;
+                            println!("{}", json!({"event": "device_approval_notifications_closed", "reason": "shutdown"}));
+                        }
+                        Some(Ok(_)) | None => {}
+                        Some(Err(RecvError::Closed)) => {
+                            approval_notifications_open = false;
+                            println!("{}", json!({"event": "device_approval_notifications_closed", "reason": "closed"}));
+                        }
+                        Some(Err(RecvError::Lagged(n))) => {
+                            println!("{}", json!({"event": "device_approval_lagged", "skipped": n}));
                         }
                     }
                 }
@@ -1050,6 +1128,7 @@ pub(crate) fn cmd_daemon(
             }
         }
         drop(notifications);
+        drop(approval_notifications);
         drop(direct_app_message_rx);
         daemon_tasks.abort_all().await;
         if let Some(sync) = fips_blocks {
@@ -1076,6 +1155,9 @@ pub(crate) fn cmd_daemon(
                     std::mem::forget(sync);
                 }
             }
+        }
+        if let Some(approval_client) = approval_client {
+            relay_sync::shutdown_client(&approval_client).await;
         }
         relay_sync::shutdown_client_for_process_exit(client).await;
         Ok::<_, anyhow::Error>(())

@@ -142,12 +142,11 @@ async fn sync_once_inner(
         ..NetworkSyncReport::default()
     };
 
-    let receipt_events =
-        relay_sync::fetch_device_approval_receipts(&client, &initial_state, timeout)
-            .await
-            .context("fetching device approval receipts")?;
-    report.device_approval_receipts_seen = receipt_events.len();
-    for event in &receipt_events {
+    let approval_events = relay_sync::fetch_device_approval_events(&initial_state, timeout)
+        .await
+        .context("fetching request-scoped device approval events")?;
+    report.device_approval_receipts_seen = approval_events.receipt_events.len();
+    for event in &approval_events.receipt_events {
         if matches!(
             relay_sync::apply_remote_device_approval_receipt_event(&mut config, event)
                 .context("applying device approval receipt")?,
@@ -156,16 +155,38 @@ async fn sync_once_inner(
             report.device_approval_receipts_applied += 1;
         }
     }
+    report.profile_roster_ops_seen = approval_events.roster_events.len();
+    for event in &approval_events.roster_events {
+        if matches!(
+            relay_sync::apply_remote_nostr_identity_roster_op_event(&mut config, event)
+                .context("applying request-scoped NostrIdentity roster op")?,
+            relay_sync::NostrIdentityRosterOpApply::Applied
+        ) {
+            report.profile_roster_ops_applied += 1;
+        }
+    }
+
+    let approval_still_pending = initial_state.outbound_app_key_link_request.is_some()
+        && config.profile.as_ref().is_some_and(|state| {
+            state.authorization_state == crate::AppKeyAuthorizationState::AwaitingApproval
+        });
+    if !approval_events.receipt_events.is_empty() && approval_still_pending {
+        anyhow::bail!("request relay returned an incomplete device approval roster");
+    }
 
     let profile_id = config
         .profile
         .as_ref()
         .map(|state| state.profile_id)
         .ok_or_else(|| anyhow::anyhow!("profile disappeared during sync"))?;
-    let profile_events = relay_sync::fetch_nostr_identity_roster_ops(&client, profile_id, timeout)
-        .await
-        .context("fetching NostrIdentity roster ops")?;
-    report.profile_roster_ops_seen = profile_events.len();
+    let profile_events = if approval_still_pending {
+        Vec::new()
+    } else {
+        relay_sync::fetch_nostr_identity_roster_ops(&client, profile_id, timeout)
+            .await
+            .context("fetching NostrIdentity roster ops")?
+    };
+    report.profile_roster_ops_seen += profile_events.len();
     for event in &profile_events {
         if matches!(
             relay_sync::apply_remote_nostr_identity_roster_op_event(&mut config, event)

@@ -149,6 +149,8 @@ pub struct HandledAppKeyLinkRequest {
 pub struct PendingDeviceApprovalReceipt {
     pub request_pubkey: String,
     pub device_app_key_pubkey: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub request_relay: String,
     pub event_json: String,
 }
 
@@ -1345,6 +1347,7 @@ impl Profile {
         request: &NostrIdentityDeviceApprovalRequest,
         label: Option<String>,
     ) -> Result<&AppKeysProjection, ProfileError> {
+        let request_relay = crate::app_key_link_transport::app_key_approval_request_relay(request)?;
         self.approve_app_key(&request.device_app_key_pubkey, label)?;
         let approval_op = self
             .state
@@ -1382,6 +1385,7 @@ impl Profile {
             .push(PendingDeviceApprovalReceipt {
                 request_pubkey: request.request_pubkey.clone(),
                 device_app_key_pubkey: request.device_app_key_pubkey.clone(),
+                request_relay,
                 event_json: event.as_json(),
             });
         let overflow = self

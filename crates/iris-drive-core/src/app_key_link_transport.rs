@@ -2,8 +2,9 @@ use anyhow::{Context, Result};
 use nostr_identity::{
     CreateNostrIdentityDeviceApprovalRequestOptions, NOSTR_IDENTITY_DEVICE_APPROVAL_REQUEST_PREFIX,
     NostrIdentityDeviceApprovalReceipt, NostrIdentityDeviceApprovalRequest,
-    NostrIdentityDeviceApprovalRequestedResource, create_nostr_identity_device_approval_request,
-    encode_nostr_identity_device_approval_request,
+    NostrIdentityDeviceApprovalRequestedResource, NostrIdentityError,
+    create_nostr_identity_device_approval_request, encode_nostr_identity_device_approval_request,
+    nostr_identity_device_approval_relay_resource, nostr_identity_device_approval_request_relays,
     parse_nostr_identity_device_approval_receipt_event,
     parse_nostr_identity_device_approval_request,
 };
@@ -18,6 +19,7 @@ pub const APP_KEY_LINK_ROSTER_APP_TOPIC: &str = "iris-drive/app-key-link/v1/rost
 pub const APP_KEY_LINK_ROSTER_ACK_APP_TOPIC: &str = "iris-drive/app-key-link/v1/roster-ack";
 pub const APP_KEY_APPROVAL_RECEIPT_APP_TOPIC: &str = "iris-drive/device-approval/v1/receipt";
 pub const APP_KEY_APPROVAL_REQUEST_PREFIX: &str = "https://drive.iris.to/approve-device/";
+pub const APP_KEY_APPROVAL_RELAY_URL: &str = "wss://temp.iris.to";
 pub const APP_KEY_APPROVAL_REQUEST_TYPE: &str = "device_link";
 pub const APP_KEY_APPROVAL_RESOURCE_TYPE: &str = "iris_drive";
 pub const APP_KEY_APPROVAL_RESOURCE_ID: &str = "drive.iris.to";
@@ -243,8 +245,31 @@ pub fn create_app_key_approval_request(
     label: Option<&str>,
     requested_at: u64,
 ) -> Result<LocalAppKeyApprovalRequest> {
+    create_app_key_approval_request_for_relay(
+        device_app_key_keys,
+        profile_id,
+        admin_app_key_pubkey,
+        label,
+        requested_at,
+        APP_KEY_APPROVAL_RELAY_URL,
+    )
+}
+
+pub fn create_app_key_approval_request_for_relay(
+    device_app_key_keys: &Keys,
+    profile_id: Option<NostrIdentityId>,
+    admin_app_key_pubkey: Option<&str>,
+    label: Option<&str>,
+    requested_at: u64,
+    request_relay: &str,
+) -> Result<LocalAppKeyApprovalRequest> {
     let requested_at =
         i64::try_from(requested_at).context("app-key approval request timestamp overflows i64")?;
+    let mut resources = drive_device_approval_resources_without_relay();
+    resources.push(
+        nostr_identity_device_approval_relay_resource(request_relay)
+            .context("normalizing app-key approval request relay")?,
+    );
     let local = create_nostr_identity_device_approval_request(
         device_app_key_keys,
         CreateNostrIdentityDeviceApprovalRequestOptions {
@@ -252,7 +277,7 @@ pub fn create_app_key_approval_request(
             request_secret: None,
             requested_at,
             request_type: Some(APP_KEY_APPROVAL_REQUEST_TYPE.to_owned()),
-            resources: drive_device_approval_resources(),
+            resources,
             expires_at: None,
             profile_id,
             admin_app_key_pubkey: admin_app_key_pubkey.map(str::to_owned),
@@ -290,6 +315,26 @@ pub fn parse_pending_app_key_approval_request(
         anyhow::bail!("pending app-key approval request key mismatch");
     }
     Ok((request, request_keys))
+}
+
+pub fn app_key_approval_request_relay(
+    request: &AppKeyApprovalRequest,
+) -> std::result::Result<String, NostrIdentityError> {
+    let relays = nostr_identity_device_approval_request_relays(request)?;
+    let [relay] = relays.as_slice() else {
+        return Err(NostrIdentityError::BadContent(
+            "device approval request must contain exactly one request relay".to_string(),
+        ));
+    };
+    Ok(relay.clone())
+}
+
+pub fn pending_app_key_approval_request_relay(
+    pending: &crate::profile::PendingAppKeyLinkRequest,
+) -> Result<String> {
+    let (request, _) = parse_pending_app_key_approval_request(pending)?;
+    app_key_approval_request_relay(&request)
+        .context("extracting pending app-key approval request relay")
 }
 
 pub fn parse_pending_app_key_approval_receipt_event(
@@ -356,6 +401,7 @@ pub fn validate_app_key_approval_request_policy(
     if !has_drive_resource {
         anyhow::bail!("device approval request is missing Drive access scopes");
     }
+    app_key_approval_request_relay(request).context("validating device approval request relay")?;
     Ok(())
 }
 
@@ -373,6 +419,16 @@ pub fn app_key_approval_request_url_is_full(input: &str) -> bool {
 
 #[must_use]
 pub fn drive_device_approval_resources() -> Vec<NostrIdentityDeviceApprovalRequestedResource> {
+    let mut resources = drive_device_approval_resources_without_relay();
+    resources.push(
+        nostr_identity_device_approval_relay_resource(APP_KEY_APPROVAL_RELAY_URL)
+            .expect("canonical device approval relay URL must be valid"),
+    );
+    resources
+}
+
+fn drive_device_approval_resources_without_relay()
+-> Vec<NostrIdentityDeviceApprovalRequestedResource> {
     vec![NostrIdentityDeviceApprovalRequestedResource {
         resource_type: APP_KEY_APPROVAL_RESOURCE_TYPE.to_owned(),
         id: APP_KEY_APPROVAL_RESOURCE_ID.to_owned(),
@@ -598,6 +654,10 @@ mod tests {
         assert_eq!(parsed.label.as_deref(), Some("Web + Native"));
         assert_full_device_approval_request(&parsed);
         assert_drive_device_approval_resources(&parsed);
+        assert_eq!(
+            app_key_approval_request_relay(&parsed).unwrap(),
+            APP_KEY_APPROVAL_RELAY_URL
+        );
         assert!(request.url.starts_with(APP_KEY_APPROVAL_REQUEST_PREFIX));
         assert!(!request.url.contains("app_key="));
         assert!(!request.url.contains("owner="));
@@ -619,7 +679,58 @@ mod tests {
         assert_eq!(parsed.label.as_deref(), Some("iPhone"));
         assert_full_device_approval_request(&parsed);
         assert_drive_device_approval_resources(&parsed);
+        assert_eq!(
+            app_key_approval_request_relay(&parsed).unwrap(),
+            APP_KEY_APPROVAL_RELAY_URL
+        );
         assert!(request.url.starts_with(APP_KEY_APPROVAL_REQUEST_PREFIX));
+    }
+
+    #[test]
+    fn approval_request_can_extract_one_signed_request_relay() {
+        let app_key = nostr_sdk::Keys::generate();
+        let request = create_app_key_approval_request_for_relay(
+            &app_key,
+            None,
+            None,
+            Some("Test device"),
+            123,
+            "ws://127.0.0.1:4815",
+        )
+        .expect("request");
+
+        assert_eq!(
+            app_key_approval_request_relay(&request.request).unwrap(),
+            "ws://127.0.0.1:4815"
+        );
+    }
+
+    #[test]
+    fn approval_policy_requires_one_signed_request_relay() {
+        let profile_id = NostrIdentityId::new_v4();
+        let app_key = nostr_sdk::Keys::generate();
+        let admin = nostr_sdk::Keys::generate();
+        let mut request = create_app_key_approval_request(
+            &app_key,
+            Some(profile_id),
+            Some(&admin.public_key().to_hex()),
+            None,
+            123,
+        )
+        .expect("request")
+        .request;
+        request
+            .resources
+            .retain(|resource| resource.resource_type != "nostr_relay");
+
+        let error = validate_app_key_approval_request_policy(
+            &request,
+            profile_id,
+            &admin.public_key().to_hex(),
+            123,
+        )
+        .expect_err("missing request relay must fail");
+        assert!(format!("{error:#}").contains("exactly one request relay"));
     }
 
     #[test]

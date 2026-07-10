@@ -170,7 +170,7 @@ wait_for_owner_inbound_request() {
   local seconds="$2"
   for _ in $(seq 1 "$((seconds * 5))"); do
     if "$IDRIVE" --config-dir "$OWNER_CONFIG" status 2>/dev/null \
-      | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; reqs=((s.get("profile") or {}).get("inbound_app_key_link_requests") or []); raise SystemExit(0 if any(r.get("app_key_npub") == expected and r.get("url") for r in reqs) else 1)' "$expected_device" >/dev/null 2>&1; then
+      | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; prefix="https://drive.iris.to/approve-device/"; reqs=((s.get("profile") or {}).get("inbound_app_key_link_requests") or []); raise SystemExit(0 if any(r.get("app_key_npub") == expected and str(r.get("url") or "").startswith(prefix) for r in reqs) else 1)' "$expected_device" >/dev/null 2>&1; then
       return 0
     fi
     sleep 0.2
@@ -181,7 +181,7 @@ wait_for_owner_inbound_request() {
 owner_inbound_request_url() {
   local expected_device="$1"
   "$IDRIVE" --config-dir "$OWNER_CONFIG" status \
-    | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; reqs=((s.get("profile") or {}).get("inbound_app_key_link_requests") or []); print(next(r["url"] for r in reqs if r.get("app_key_npub") == expected and r.get("url"))) ' "$expected_device"
+    | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; prefix="https://drive.iris.to/approve-device/"; reqs=((s.get("profile") or {}).get("inbound_app_key_link_requests") or []); print(next(r["url"] for r in reqs if r.get("app_key_npub") == expected and str(r.get("url") or "").startswith(prefix)))' "$expected_device"
 }
 
 wait_for_android_authorized() {

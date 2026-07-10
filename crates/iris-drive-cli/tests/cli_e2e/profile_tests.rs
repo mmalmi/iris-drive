@@ -1,8 +1,8 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
 use iris_drive_core::app_key_link_transport::{
-    APP_KEY_APPROVAL_REQUEST_PREFIX, drive_device_approval_resources,
-    parse_app_key_approval_request,
+    APP_KEY_APPROVAL_REQUEST_PREFIX, app_key_approval_request_relay,
+    drive_device_approval_resources, parse_app_key_approval_request,
 };
 
 fn current_app_key_npub(value: &serde_json::Value) -> &str {
@@ -348,7 +348,7 @@ fn link_then_approve_authorizes_the_linked_app_key() {
     let owner_invite = app_key_link_invite_url(&owner).to_string();
 
     let linked_dir = tempdir().unwrap();
-    let linked_v: serde_json::Value = serde_json::from_str(
+    let _linked_v: serde_json::Value = serde_json::from_str(
         &String::from_utf8(
             idrive(linked_dir.path())
                 .args(["link", &owner_invite])
@@ -359,16 +359,8 @@ fn link_then_approve_authorizes_the_linked_app_key() {
         .unwrap(),
     )
     .unwrap();
-    let linked_request_url = linked_v["app_key_link_request"]["url"].as_str().unwrap();
-
     // Owner approves the linked device.
-    let approve = idrive(owner_dir.path())
-        .args(["approve", linked_request_url])
-        .output()
-        .unwrap();
-    assert!(approve.status.success(), "{approve:?}");
-    let v: serde_json::Value =
-        serde_json::from_str(&String::from_utf8(approve.stdout).unwrap()).unwrap();
+    let v = approve_with_local_relay(owner_dir.path(), linked_dir.path(), None);
     assert_eq!(v["roster_size"], 2);
 
     // Roster on the owner side now has 2 AppKey actors.
@@ -401,8 +393,7 @@ fn app_keys_can_appoint_and_demote_admin() {
         &["link", owner_invite, "--label", "laptop"],
     );
     let linked_app_key = current_app_key_npub(&linked);
-    let linked_request_url = linked["app_key_link_request"]["url"].as_str().unwrap();
-    run_json(owner_dir.path(), &["approve", linked_request_url]);
+    approve_with_local_relay(owner_dir.path(), linked_dir.path(), None);
 
     let promoted = run_json(
         owner_dir.path(),
@@ -457,7 +448,7 @@ fn owner_approves_device_request_link() {
             "device approval request belongs to a different profile",
         ));
 
-    let approved = run_json(owner_dir.path(), &["approve", request_url]);
+    let approved = approve_with_local_relay(owner_dir.path(), linked_dir.path(), None);
     assert_eq!(approved["roster_size"], 2);
 
     let roster = run_json(owner_dir.path(), &["roster"]);
@@ -583,7 +574,7 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
     assert!(requests["outbound"].is_object());
     assert!(requests["inbound"].as_array().unwrap().is_empty());
 
-    let approved = run_json(owner_dir.path(), &["app-keys", "approve", request_url]);
+    let approved = app_keys_approve_with_local_relay(owner_dir.path(), linked_dir.path());
     assert_eq!(
         approved["approved_app_key_npub"],
         linked["current_app_key_npub"]
@@ -595,6 +586,119 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
         devices["app_keys"]["app_actors"].as_array().unwrap().len(),
         2
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn approval_uses_signed_request_relay_not_ordinary_relays() {
+    let ordinary_relay = LocalNostrRelay::spawn().await;
+    let request_relay = LocalNostrRelay::spawn().await;
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let mut owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
+    owner_config.relays = vec![ordinary_relay.url.clone()];
+    owner_config.save(config_path_in(owner_dir.path())).unwrap();
+    run_json(
+        linked_dir.path(),
+        &[
+            "link",
+            app_key_link_invite_url(&owner),
+            "--label",
+            "request-relay-device",
+        ],
+    );
+    let request_url = replace_pending_approval_relay(linked_dir.path(), &request_relay.url);
+    let request = parse_app_key_approval_request(&request_url)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        app_key_approval_request_relay(&request).unwrap(),
+        request_relay.url
+    );
+    assert_ne!(request_relay.url, ordinary_relay.url);
+
+    let approved = run_json(owner_dir.path(), &["approve", &request_url]);
+    assert_eq!(approved["roster_size"], 2);
+    assert_eq!(approved["request_relay"], request_relay.url);
+
+    let saved_owner = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
+    let owner_state = saved_owner.profile.as_ref().unwrap();
+    let request_events = request_relay.events().await;
+    assert_eq!(
+        request_events.len(),
+        owner_state.profile_roster_ops.len() + 1,
+        "request relay must receive the complete roster and encrypted receipt"
+    );
+    assert!(request_events.iter().all(|event| {
+        event["kind"].as_u64() == Some(u64::from(iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP))
+    }));
+    assert_eq!(
+        request_events
+            .iter()
+            .filter(|event| {
+                event["tags"].as_array().is_some_and(|tags| {
+                    tags.iter().any(|tag| {
+                        tag.as_array().is_some_and(|values| {
+                            values.first().and_then(serde_json::Value::as_str) == Some("type")
+                                && values.get(1).and_then(serde_json::Value::as_str)
+                                    == Some("nostr_identity_device_approval_receipt")
+                        })
+                    })
+                })
+            })
+            .count(),
+        1
+    );
+    assert!(ordinary_relay.events().await.is_empty());
+
+    let synced = run_json(
+        linked_dir.path(),
+        &["sync", "--relay", &ordinary_relay.url, "--timeout", "1"],
+    );
+    assert_eq!(synced["device_approval_receipts_applied"], 1);
+    let linked_status = run_json(linked_dir.path(), &["status"]);
+    assert_eq!(
+        linked_status["profile"]["authorization_state"],
+        "authorized"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rejected_request_relay_rolls_back_cli_approval() {
+    let request_relay = LocalNostrRelay::spawn().await;
+    request_relay.reject_kinds(&[iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP]);
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    run_json(
+        linked_dir.path(),
+        &[
+            "link",
+            app_key_link_invite_url(&owner),
+            "--label",
+            "rejected-device",
+        ],
+    );
+    let request_url = replace_pending_approval_relay(linked_dir.path(), &request_relay.url);
+    let before = AppConfig::load_or_default(config_path_in(owner_dir.path()))
+        .unwrap()
+        .profile;
+
+    idrive(owner_dir.path())
+        .args(["approve", &request_url])
+        .assert()
+        .failure()
+        .stderr(contains("rejected by test relay"));
+
+    let after = AppConfig::load_or_default(config_path_in(owner_dir.path()))
+        .unwrap()
+        .profile;
+    assert_eq!(
+        after, before,
+        "rejected publication must not persist approval"
+    );
+    assert!(request_relay.events().await.is_empty());
 }
 
 #[test]
@@ -767,12 +871,7 @@ fn owner_can_revoke_a_linked_app_key() {
     )
     .unwrap();
     let linked_app_key_npub = current_app_key_npub(&linked_v).to_string();
-    let linked_request_url = linked_v["app_key_link_request"]["url"].as_str().unwrap();
-
-    idrive(owner_dir.path())
-        .args(["approve", linked_request_url])
-        .assert()
-        .success();
+    approve_with_local_relay(owner_dir.path(), linked_dir.path(), None);
     let revoked = run_json(owner_dir.path(), &["revoke", &linked_app_key_npub]);
     assert_eq!(revoked["revoked_app_key_npub"], linked_app_key_npub);
     assert_eq!(revoked["roster_size"], 1);
@@ -918,7 +1017,7 @@ fn approve_advances_dck_generation() {
     .unwrap();
     let owner_invite = app_key_link_invite_url(&owner).to_string();
     let linked_dir = tempdir().unwrap();
-    let linked_v: serde_json::Value = serde_json::from_str(
+    let _linked_v: serde_json::Value = serde_json::from_str(
         &String::from_utf8(
             idrive(linked_dir.path())
                 .args(["link", &owner_invite])
@@ -929,12 +1028,7 @@ fn approve_advances_dck_generation() {
         .unwrap(),
     )
     .unwrap();
-    let linked_request_url = linked_v["app_key_link_request"]["url"].as_str().unwrap();
-
-    idrive(owner_dir.path())
-        .args(["approve", linked_request_url])
-        .assert()
-        .success();
+    approve_with_local_relay(owner_dir.path(), linked_dir.path(), None);
 
     let gen_after = serde_json::from_str::<serde_json::Value>(
         &String::from_utf8(

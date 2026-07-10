@@ -205,6 +205,10 @@ fn roster_ops_cannot_authorize_waiting_native_device_before_bound_receipt() {
     assert!(approved.error.is_empty(), "{}", approved.error);
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
     let owner_state = owner_config.profile.unwrap();
+    assert_eq!(
+        owner_state.pending_device_approval_receipts[0].request_relay,
+        iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_RELAY_URL
+    );
     let receipt_event = Event::from_json(
         &owner_state
             .pending_device_approval_receipts

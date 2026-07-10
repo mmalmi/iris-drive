@@ -572,8 +572,7 @@ class IrisDriveAndroidGuiFlowTest {
         )
         assertTrue(applied.optString("error"), applied.optString("error").isBlank())
 
-        val linkedState = refreshedAppState(linkedHandle)
-        assertEquals("authorized", linkedState.profile?.authorizationState)
+        val linkedState = waitForAuthorizedState(linkedHandle)
         assertEquals(1, linkedState.fileCount)
 
         render(state = linkedState)
@@ -617,8 +616,7 @@ class IrisDriveAndroidGuiFlowTest {
         )
         assertTrue(applied.optString("error"), applied.optString("error").isBlank())
 
-        val beforeRestart = refreshedAppState(linkedHandle)
-        assertEquals("authorized", beforeRestart.profile?.authorizationState)
+        val beforeRestart = waitForAuthorizedState(linkedHandle)
         assertEquals("Pixel", beforeRestart.profile?.appKeyLabel)
         assertEquals(1, beforeRestart.fileCount)
 
@@ -738,7 +736,7 @@ class IrisDriveAndroidGuiFlowTest {
         val linked = createLinkedProfile(owner.invite)
         val approved = dispatch(
             owner.handle,
-            NativeActions.approveDevice(linked.devicePubkey, "Pixel"),
+            NativeActions.approveDevice(linked.requestLink, "Pixel"),
         )
         assertTrue(approved.error, approved.error.isBlank())
         val linkedDevice = approved.devices.single { it.pubkey == linked.devicePubkey }
@@ -1020,6 +1018,7 @@ class IrisDriveAndroidGuiFlowTest {
             handle = handle,
             invite = profile.appKeyLinkInvite,
             devicePubkey = profile.devicePubkey,
+            requestLink = "",
         )
     }
 
@@ -1032,6 +1031,7 @@ class IrisDriveAndroidGuiFlowTest {
             handle = handle,
             invite = profile.appKeyLinkInvite,
             devicePubkey = profile.devicePubkey,
+            requestLink = profile.appKeyLinkRequest,
         )
     }
 
@@ -1053,6 +1053,15 @@ class IrisDriveAndroidGuiFlowTest {
 
     private fun refreshedAppState(handle: Long): AppState =
         AppState.fromJson(NativeCore.refreshJson(handle))
+
+    private fun waitForAuthorizedState(handle: Long): AppState {
+        var latest = refreshedAppState(handle)
+        compose.waitUntil(timeoutMillis = 5_000) {
+            latest = refreshedAppState(handle)
+            latest.profile?.authorizationState == "authorized"
+        }
+        return latest
+    }
 
     private fun SemanticsNodeInteraction.activate() {
         performSemanticsAction(SemanticsActions.OnClick)
@@ -1102,5 +1111,6 @@ class IrisDriveAndroidGuiFlowTest {
         val handle: Long,
         val invite: String,
         val devicePubkey: String,
+        val requestLink: String,
     )
 }

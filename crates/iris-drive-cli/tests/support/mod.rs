@@ -16,6 +16,13 @@ use axum::{
 };
 use futures::{SinkExt, StreamExt};
 use hashtree_core::{sha256, to_hex};
+use iris_drive_core::{
+    AppConfig, AppKey,
+    app_key_link_transport::{
+        create_app_key_approval_request_for_relay, parse_pending_app_key_approval_request,
+    },
+    paths::{config_path_in, key_path_in},
+};
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 use tokio::sync::{Mutex, broadcast};
@@ -25,6 +32,7 @@ struct LocalRelayState {
     events: Arc<Mutex<Vec<Value>>>,
     broadcasts: broadcast::Sender<Value>,
     drop_kinds: Arc<StdMutex<BTreeSet<u64>>>,
+    reject_kinds: Arc<StdMutex<BTreeSet<u64>>>,
 }
 
 pub(crate) struct LocalNostrRelay {
@@ -32,6 +40,10 @@ pub(crate) struct LocalNostrRelay {
     task: tokio::task::JoinHandle<()>,
     #[allow(dead_code)]
     drop_kinds: Arc<StdMutex<BTreeSet<u64>>>,
+    #[allow(dead_code)]
+    reject_kinds: Arc<StdMutex<BTreeSet<u64>>>,
+    #[allow(dead_code)]
+    events: Arc<Mutex<Vec<Value>>>,
 }
 
 impl LocalNostrRelay {
@@ -41,8 +53,11 @@ impl LocalNostrRelay {
             events: Arc::new(Mutex::new(Vec::new())),
             broadcasts,
             drop_kinds: Arc::new(StdMutex::new(BTreeSet::new())),
+            reject_kinds: Arc::new(StdMutex::new(BTreeSet::new())),
         };
         let drop_kinds = state.drop_kinds.clone();
+        let reject_kinds = state.reject_kinds.clone();
+        let events = state.events.clone();
         let app = Router::new().route("/", get(relay_ws)).with_state(state);
         let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
             .await
@@ -55,6 +70,8 @@ impl LocalNostrRelay {
             url: format!("ws://{addr}"),
             task,
             drop_kinds,
+            reject_kinds,
+            events,
         }
     }
 
@@ -64,6 +81,19 @@ impl LocalNostrRelay {
             .lock()
             .unwrap()
             .extend(kinds.iter().map(|kind| u64::from(*kind)));
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn reject_kinds(&self, kinds: &[u16]) {
+        self.reject_kinds
+            .lock()
+            .unwrap()
+            .extend(kinds.iter().map(|kind| u64::from(*kind)));
+    }
+
+    #[allow(dead_code)]
+    pub(crate) async fn events(&self) -> Vec<Value> {
+        self.events.lock().await.clone()
     }
 }
 
@@ -119,6 +149,15 @@ async fn relay_socket(socket: WebSocket, state: LocalRelayState) {
                         };
                         let event_id = event["id"].as_str().unwrap_or_default().to_string();
                         let kind = event["kind"].as_u64().unwrap_or_default();
+                        if state.reject_kinds.lock().unwrap().contains(&kind) {
+                            let _ = sender
+                                .send(WsMessage::Text(
+                                    json!(["OK", event_id, false, "rejected by test relay"])
+                                        .to_string(),
+                                ))
+                                .await;
+                            continue;
+                        }
                         if state.drop_kinds.lock().unwrap().contains(&kind) {
                             let _ = sender
                                 .send(WsMessage::Text(json!(["OK", event_id, true, ""]).to_string()))
@@ -182,6 +221,39 @@ async fn relay_socket(socket: WebSocket, state: LocalRelayState) {
             }
         }
     }
+}
+
+pub(crate) fn replace_pending_approval_relay(
+    config_dir: &std::path::Path,
+    relay_url: &str,
+) -> String {
+    let config_path = config_path_in(config_dir);
+    let mut config = AppConfig::load_or_default(&config_path).unwrap();
+    let pending = config
+        .profile
+        .as_ref()
+        .and_then(|state| state.outbound_app_key_link_request.as_ref())
+        .expect("pending app-key approval request")
+        .clone();
+    let (request, _) = parse_pending_app_key_approval_request(&pending).unwrap();
+    let app_key = AppKey::load(key_path_in(config_dir)).unwrap();
+    let requested_at = u64::try_from(request.requested_at).unwrap();
+    let local = create_app_key_approval_request_for_relay(
+        app_key.keys(),
+        request.profile_id,
+        request.admin_app_key_pubkey.as_deref(),
+        request.label.as_deref(),
+        requested_at,
+        relay_url,
+    )
+    .unwrap();
+    let request_key_secret = local.request_keys.secret_key().to_secret_hex();
+    let state = config.profile.as_mut().unwrap();
+    let pending = state.outbound_app_key_link_request.as_mut().unwrap();
+    pending.request_url.clone_from(&local.url);
+    pending.request_key_secret = request_key_secret;
+    config.save(config_path).unwrap();
+    local.url
 }
 
 fn event_matches_filter(event: &Value, filter: &Value) -> bool {

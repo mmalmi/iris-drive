@@ -418,20 +418,9 @@ pub(crate) async fn publish_current_state(
         }
     }
     for pending in &state.pending_device_approval_receipts {
-        let event = match nostr_sdk::Event::from_json(&pending.event_json) {
-            Ok(event) => event,
-            Err(error) => {
-                report.device_approval_receipt_publish_error =
-                    Some(format!("parsing pending device approval receipt: {error}"));
-                continue;
-            }
-        };
-        match relay_publish_with_timeout(async {
-            client
-                .send_event(&event)
-                .await
-                .map_err(|error| relay_sync::RelayError::Client(error.to_string()))
-        })
+        match relay_publish_with_timeout(relay_sync::publish_device_approval_to_request_relay(
+            state, pending,
+        ))
         .await
         {
             Ok(_) => report.published_device_approval_receipts += 1,

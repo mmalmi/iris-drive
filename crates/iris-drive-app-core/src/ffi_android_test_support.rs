@@ -3,6 +3,7 @@ use std::path::Path;
 use anyhow::Context;
 use iris_drive_core::AppConfig;
 use iris_drive_core::paths::config_path_in;
+use nostr_sdk::{Event, JsonUtil};
 use serde_json::{Value, json};
 
 use super::invalidate_native_runtime_config_cache;
@@ -30,6 +31,25 @@ fn native_apply_owner_snapshot_for_test(
         .as_ref()
         .context("owner account missing")?;
     let mut linked_config = AppConfig::load_or_default(config_path_in(linked_dir))?;
+    let linked_app_key_pubkey = linked_config
+        .profile
+        .as_ref()
+        .context("linked account missing")?
+        .app_key_pubkey
+        .clone();
+    for receipt in owner_account_state
+        .pending_device_approval_receipts
+        .iter()
+        .filter(|receipt| receipt.device_app_key_pubkey == linked_app_key_pubkey)
+    {
+        let event = Event::from_json(&receipt.event_json)
+            .context("parsing owner approval receipt event")?;
+        iris_drive_core::relay_sync::apply_remote_device_approval_receipt_event(
+            &mut linked_config,
+            &event,
+        )
+        .context("applying owner approval receipt event")?;
+    }
     let roster_frame = iris_drive_core::app_key_link_transport::app_key_link_roster_frame(
         owner_account_state,
         123,

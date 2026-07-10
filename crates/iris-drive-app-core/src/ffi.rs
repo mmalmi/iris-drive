@@ -2117,15 +2117,11 @@ async fn run_app_key_link_exchange_async(
             .map_err(|error| format!("normalizing relays: {error}"))?
     };
     let root_scope_id = account_state.root_scope_id();
-    let mut relay_filters = iris_drive_core::relay_sync::subscription_filters(
+    let relay_filters = iris_drive_core::relay_sync::subscription_filters(
         &account_state.app_key_pubkey,
         &root_scope_id,
         iris_drive_core::PRIMARY_DRIVE_ID,
     );
-    if let Some(filter) = iris_drive_core::relay_sync::device_approval_receipt_filter(account_state)
-    {
-        relay_filters.push(filter);
-    }
     let relay_client = iris_drive_core::relay_sync::connect(&relays)
         .await
         .map_err(|error| format!("connecting app-key-link relays: {error}"))?;
@@ -2136,6 +2132,23 @@ async fn run_app_key_link_exchange_async(
             .map_err(|error| format!("subscribing app-key-link relays: {error}"))?;
     }
     let mut relay_notifications = relay_client.notifications();
+    let mut approval_roster_subscription_pending = account_state
+        .outbound_app_key_link_request
+        .as_ref()
+        .and_then(|pending| {
+            iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_request(pending)
+                .ok()
+        })
+        .is_some_and(|(request, _)| request.profile_id.is_none());
+    let approval_client =
+        iris_drive_core::relay_sync::subscribe_device_approval_events(account_state)
+            .await
+            .map_err(|error| {
+                format!("subscribing to request-scoped device approval events: {error}")
+            })?;
+    let mut approval_notifications = approval_client
+        .as_ref()
+        .map(nostr_sdk::Client::notifications);
     let daemon = iris_drive_core::Daemon::open(config_dir)
         .map_err(|error| format!("opening block store: {error}"))?;
     let local = daemon.tree().get_store().clone();
@@ -2298,6 +2311,9 @@ async fn run_app_key_link_exchange_async(
             notification = relay_notifications.recv() => {
                 match notification {
                     Ok(nostr_sdk::RelayPoolNotification::Event { event, .. }) => {
+                        if iris_drive_core::relay_sync::is_device_approval_receipt_event(&event) {
+                            continue;
+                        }
                         if let Err(error) = handle_native_app_key_link_relay_event(config_dir, &event) {
                             tracing::warn!(error = %error, event_id = %event.id.to_hex(), "handling native app-key-link relay event failed");
                         }
@@ -2312,7 +2328,53 @@ async fn run_app_key_link_exchange_async(
                     Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
                 }
             }
+            notification = async {
+                if let Some(notifications) = approval_notifications.as_mut() {
+                    Some(notifications.recv().await)
+                } else {
+                    std::future::pending().await
+                }
+            } => {
+                match notification {
+                    Some(Ok(nostr_sdk::RelayPoolNotification::Event { event, .. })) => {
+                        let is_receipt =
+                            iris_drive_core::relay_sync::is_device_approval_receipt_event(&event);
+                        if let Err(error) = handle_native_app_key_link_relay_event(config_dir, &event) {
+                            tracing::warn!(error = %error, event_id = %event.id.to_hex(), "handling request-scoped device approval receipt failed");
+                        } else if is_receipt && approval_roster_subscription_pending {
+                            let config = AppConfig::load_or_default(config_path_in(config_dir))
+                                .map_err(|error| format!("loading approved profile: {error}"))?;
+                            if let (Some(approval_client), Some(profile)) =
+                                (approval_client.as_ref(), config.profile.as_ref())
+                            {
+                                iris_drive_core::relay_sync::subscribe_nostr_identity_roster_ops(
+                                    approval_client,
+                                    profile.profile_id,
+                                )
+                                .await
+                                .map_err(|error| {
+                                    format!("subscribing to unbound approval roster ops: {error}")
+                                })?;
+                                approval_roster_subscription_pending = false;
+                            }
+                        }
+                    }
+                    Some(Ok(nostr_sdk::RelayPoolNotification::Shutdown)) => {
+                        tracing::warn!("request-scoped device approval notifications shut down");
+                    }
+                    Some(Ok(_)) | None => {}
+                    Some(Err(tokio::sync::broadcast::error::RecvError::Lagged(skipped))) => {
+                        tracing::warn!(skipped, "request-scoped device approval receiver lagged");
+                    }
+                    Some(Err(tokio::sync::broadcast::error::RecvError::Closed)) => {
+                        approval_notifications = None;
+                    }
+                }
+            }
         }
+    }
+    if let Some(approval_client) = approval_client {
+        iris_drive_core::relay_sync::shutdown_client(&approval_client).await;
     }
     iris_drive_core::relay_sync::shutdown_client(&relay_client).await;
     Ok(())
@@ -2403,9 +2465,14 @@ async fn publish_native_profile_roster_ops(
         published_roster_op_ids.insert(op.op_id);
     }
     for event in pending_receipts {
+        let pending = state
+            .pending_device_approval_receipts
+            .iter()
+            .find(|pending| pending.event_json == event.as_json())
+            .ok_or_else(|| "pending native device approval receipt disappeared".to_string())?;
         tokio::time::timeout(
             std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS),
-            relay_client.send_event(&event),
+            iris_drive_core::relay_sync::publish_device_approval_to_request_relay(state, pending),
         )
         .await
         .map_err(|_| "publishing native device approval receipt timed out".to_string())?
