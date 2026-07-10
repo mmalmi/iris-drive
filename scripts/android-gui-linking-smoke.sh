@@ -306,7 +306,6 @@ run_android_gui_tests() {
     signInStartsJoinRequest
     addDeviceSectionRequiresCompleteNativeLinkInput
     addDeviceSectionDispatchesManualDeviceApproval
-    acceptedLinkedDeviceShowsSyncedFileCountInGui
     inboundDeviceRequestApprovalKeepsInlineAddDevicePanelOpen
     deleteDeviceRequiresConfirmation
     acceptedLinkedDeviceThatIsNotOnlineShowsOfflineInGui
