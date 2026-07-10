@@ -438,14 +438,17 @@ pub(crate) fn cmd_daemon(
                         Some(Ok(RelayPoolNotification::Event { event, .. })) => {
                             let is_device_approval_receipt =
                                 relay_sync::is_device_approval_receipt_event(&event);
-                            if event.kind.as_u16() == iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP
-                                && AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?
+                            if should_defer_relay_roster_event_while_awaiting(
+                                event.kind.as_u16(),
+                                is_device_approval_receipt,
+                                AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?
                                     .profile
                                     .as_ref()
                                     .is_some_and(|profile| {
                                         profile.authorization_state
                                             == iris_drive_core::AppKeyAuthorizationState::AwaitingApproval
-                                    })
+                                    }),
+                            )
                             {
                                 continue;
                             }
@@ -1160,4 +1163,33 @@ pub(crate) fn cmd_daemon(
         relay_sync::shutdown_client_for_process_exit(client).await;
         Ok::<_, anyhow::Error>(())
     })
+}
+
+fn should_defer_relay_roster_event_while_awaiting(
+    kind: u16,
+    is_device_approval_receipt: bool,
+    awaiting_approval: bool,
+) -> bool {
+    kind == iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP
+        && awaiting_approval
+        && !is_device_approval_receipt
+}
+
+#[cfg(test)]
+mod runtime_tests {
+    use super::should_defer_relay_roster_event_while_awaiting;
+
+    #[test]
+    fn awaiting_devices_still_accept_approval_receipt_events() {
+        assert!(!should_defer_relay_roster_event_while_awaiting(
+            iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP,
+            true,
+            true,
+        ));
+        assert!(should_defer_relay_roster_event_while_awaiting(
+            iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP,
+            false,
+            true,
+        ));
+    }
 }
