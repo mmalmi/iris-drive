@@ -614,11 +614,18 @@ fn refresh_profile_skips_provider_summary_until_full_refresh() {
             .is_empty()
     );
 
+    let cached_provider_summary = app.state().ui;
     let profile_refresh = app.dispatch(NativeAppAction::RefreshProfile);
     assert!(profile_refresh.ui.setup_complete);
-    assert_eq!(profile_refresh.ui.file_count, 0);
-    assert_eq!(profile_refresh.ui.visible_file_bytes, 0);
-    assert!(profile_refresh.ui.provider_change_key.is_empty());
+    assert_eq!(profile_refresh.ui.file_count, cached_provider_summary.file_count);
+    assert_eq!(
+        profile_refresh.ui.visible_file_bytes,
+        cached_provider_summary.visible_file_bytes
+    );
+    assert_eq!(
+        profile_refresh.ui.provider_change_key,
+        cached_provider_summary.provider_change_key
+    );
 
     let full_refresh = app.dispatch(NativeAppAction::Refresh);
     assert_eq!(full_refresh.ui.file_count, 1);
