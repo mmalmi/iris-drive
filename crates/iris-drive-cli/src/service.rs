@@ -12,7 +12,6 @@ use std::time::{Duration, Instant};
 const BINARY_VERSION_QUERY_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(target_os = "macos")]
 const BINARY_VERSION_QUERY_POLL_INTERVAL: Duration = Duration::from_millis(20);
-#[cfg(any(target_os = "macos", test))]
 const MACOS_DAEMON_NOFILE_LIMIT: u32 = 4096;
 
 pub(crate) fn cmd_service(config_dir: &Path, command: ServiceCmd) -> Result<()> {
