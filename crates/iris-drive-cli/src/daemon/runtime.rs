@@ -900,15 +900,6 @@ pub(crate) fn cmd_daemon(
                     }
                 }
                 _ = app_key_link_timer.tick() => {
-                    if let Some(sync) = fips_blocks.as_deref() {
-                        match AppConfig::load_or_default(config_path_in(config_dir)) {
-                            Ok(config) => sync.refresh_authorized_peers(&config).await,
-                            Err(error) => println!(
-                                "{}",
-                                json!({"event": "app_key_link_peer_refresh_error", "error": format!("{error:#}")})
-                            ),
-                        }
-                    }
                     match send_pending_app_key_link_request(
                         config_dir,
                         fips_blocks.as_deref(),
@@ -938,23 +929,6 @@ pub(crate) fn cmd_daemon(
                         Err(error) => println!(
                             "{}",
                             json!({"event": "app_key_link_roster_send_error", "error": format!("{error:#}")})
-                        ),
-                    }
-                    match publish_provider_root_if_changed(
-                        &client,
-                        config_dir,
-                        &mut last_provider_root_key,
-                        &mut provider_root_publish_cache,
-                        &mut direct_roots,
-                        fips_blocks.as_deref(),
-                        &daemon_tasks,
-                    )
-                    .await
-                    {
-                        Ok(_) => {}
-                        Err(error) => println!(
-                            "{}",
-                            json!({"event": "provider_root_publish_error", "trigger": "app_key_link_timer", "error": format!("{error:#}")})
                         ),
                     }
                 }
