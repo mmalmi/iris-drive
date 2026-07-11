@@ -901,6 +901,32 @@ test('iOS build uses the shared App Store Connect auth defaults', () => {
   assert.match(script, /issuer\.txt/)
 })
 
+test('iOS automatic signing uses a development identity for provisioning bootstrap', () => {
+  const script = readFileSync(
+    fileURLToPath(new URL('./ios-build', import.meta.url)),
+    'utf8',
+  )
+  const buildSettings = script.match(
+    /build_settings_args\(\) \{([\s\S]*?)\n\}/,
+  )?.[1] ?? ''
+  const runArchive = script.match(
+    /run_ios_archive\(\) \{([\s\S]*?)\n\}/,
+  )?.[1] ?? ''
+  const automaticArchive = script.match(
+    /run_ios_archive\(\) \{[\s\S]*?if \[\[ "\$IOS_SIGNING_STYLE" == "automatic" \]\]; then([\s\S]*?)\n    return/,
+  )?.[1] ?? ''
+
+  assert.match(buildSettings, /\[\[ "\$IOS_SIGNING_STYLE" == "automatic" \]\]/)
+  assert.match(buildSettings, /Apple Development/)
+  assert.match(buildSettings, /Apple Distribution/)
+  assert.match(buildSettings, /IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY/)
+  assert.match(runArchive, /run_ios_project/)
+  assert.match(automaticArchive, /CODE_SIGN_STYLE=Automatic/)
+  assert.doesNotMatch(automaticArchive, /Apple Distribution/)
+  assert.match(script, /ProvisioningStyle = Manual;/)
+  assert.match(script, /ProvisioningStyle = Automatic;/)
+})
+
 test('iOS build defaults to the Sirius Business release bundle', () => {
   const script = readFileSync(
     fileURLToPath(new URL('./ios-build', import.meta.url)),

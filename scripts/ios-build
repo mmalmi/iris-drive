@@ -249,6 +249,18 @@ run_ios_project() {
     echo "$PROJECT is missing and xcodegen is not installed." >&2
     exit 1
   fi
+  if [[ "$IOS_SIGNING_STYLE" == "automatic" ]]; then
+    python3 - "$PROJECT/project.pbxproj" <<'PY'
+import sys
+from pathlib import Path
+
+path = Path(sys.argv[1])
+text = path.read_text(encoding="utf-8")
+updated = text.replace("ProvisioningStyle = Manual;", "ProvisioningStyle = Automatic;")
+if updated != text:
+    path.write_text(updated, encoding="utf-8")
+PY
+  fi
 }
 
 ensure_profiles() {
@@ -270,7 +282,7 @@ load_profiles_env() {
 }
 
 build_settings_args() {
-  printf '%s\n' \
+  local args=(
     "DEVELOPMENT_TEAM=$TEAM_ID" \
     "IRIS_DRIVE_IOS_BUNDLE_ID=$BUNDLE_ID" \
     "IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID=$FILE_PROVIDER_BUNDLE_ID" \
@@ -278,11 +290,17 @@ build_settings_args() {
     "IRIS_DRIVE_IOS_SHARE_SOURCE_BUNDLE_ID=$SHARE_SOURCE_BUNDLE_ID" \
     "IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER=$APP_GROUP_IDENTIFIER" \
     "IRIS_DRIVE_IOS_BACKGROUND_SYNC_TASK_IDENTIFIER=$BACKGROUND_SYNC_TASK_IDENTIFIER" \
-    "IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY=${IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY:-Apple Distribution}" \
     "MARKETING_VERSION=$(marketing_version)" \
     "CURRENT_PROJECT_VERSION=$(build_number)" \
     "LIBRARY_SEARCH_PATHS=$RUST_LIB_DIR" \
     "OTHER_LDFLAGS=$RUST_STATIC_LIB"
+  )
+  if [[ "$IOS_SIGNING_STYLE" == "automatic" ]]; then
+    args+=("IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY=${IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY:-Apple Development}")
+  else
+    args+=("IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY=${IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY:-Apple Distribution}")
+  fi
+  printf '%s\n' "${args[@]}"
 }
 
 run_ios_archive() {
