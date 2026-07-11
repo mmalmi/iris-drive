@@ -503,18 +503,18 @@ ensure_app_store_record() {
 
 run_ios_testflight() {
   IOS_INTERNAL_ONLY="${IRIS_DRIVE_IOS_INTERNAL_ONLY:-true}"
+  ensure_app_store_record
   run_ios_archive
   run_ios_export
-  ensure_app_store_record
   run_ios_upload
   run_testflight_helper testflight-internal put
 }
 
 run_ios_testflight_public() {
   IOS_INTERNAL_ONLY=false
+  ensure_app_store_record
   run_ios_archive
   run_ios_export
-  ensure_app_store_record
   run_ios_upload
   run_testflight_helper testflight-internal put
   run_testflight_helper testflight-public put

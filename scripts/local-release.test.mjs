@@ -901,6 +901,28 @@ test('iOS build uses the shared App Store Connect auth defaults', () => {
   assert.match(script, /issuer\.txt/)
 })
 
+test('iOS TestFlight path checks the App Store record before archiving', () => {
+  const script = readFileSync(
+    fileURLToPath(new URL('./ios-build', import.meta.url)),
+    'utf8',
+  )
+  const internal = script.match(
+    /run_ios_testflight\(\) \{([\s\S]*?)\n\}/,
+  )?.[1] ?? ''
+  const publicFlow = script.match(
+    /run_ios_testflight_public\(\) \{([\s\S]*?)\n\}/,
+  )?.[1] ?? ''
+
+  assert.ok(
+    internal.indexOf('ensure_app_store_record') >= 0 &&
+      internal.indexOf('ensure_app_store_record') < internal.indexOf('run_ios_archive'),
+  )
+  assert.ok(
+    publicFlow.indexOf('ensure_app_store_record') >= 0 &&
+      publicFlow.indexOf('ensure_app_store_record') < publicFlow.indexOf('run_ios_archive'),
+  )
+})
+
 test('iOS automatic signing uses a development identity for provisioning bootstrap', () => {
   const script = readFileSync(
     fileURLToPath(new URL('./ios-build', import.meta.url)),
