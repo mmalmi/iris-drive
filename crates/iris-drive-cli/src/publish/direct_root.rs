@@ -83,6 +83,12 @@ struct CachedCurrentSyncEvents {
     events: Vec<DirectRootEvent>,
 }
 
+#[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
+struct DirectRootPeerChanges {
+    mesh_changed: bool,
+    has_new_publish_peer: bool,
+}
+
 impl DirectRootExchange {
     pub(crate) fn invalidate_current_sync_events_cache(&mut self) {
         self.current_sync_events_cache = None;
@@ -93,14 +99,15 @@ impl DirectRootExchange {
         &mut self,
         root_scope_id: &str,
         sync: Option<&FsFipsBlockSync>,
-    ) -> bool {
+    ) -> DirectRootPeerChanges {
         let Some(sync) = sync else {
             self.subscribed_streams.clear();
-            return false;
+            return DirectRootPeerChanges::default();
         };
         let stream = direct_root_mesh_stream(root_scope_id);
-        let peers_changed = self.refresh_known_mesh_peers(sync).await;
-        let should_subscribe = self.subscribed_streams.insert(stream.clone()) || peers_changed;
+        let peer_changes = self.refresh_known_mesh_peers(sync).await;
+        let should_subscribe =
+            self.subscribed_streams.insert(stream.clone()) || peer_changes.mesh_changed;
         if should_subscribe {
             let subscribe_stats = sync.subscribe_mesh_pubsub(stream.clone()).await;
             println!(
@@ -113,7 +120,7 @@ impl DirectRootExchange {
                 })
             );
         }
-        should_subscribe
+        peer_changes
     }
 
     async fn announce_current_state(
@@ -683,6 +690,7 @@ impl DirectRootExchange {
             && self
                 .subscribe_profile_stream(&root_scope_id, Some(sync))
                 .await
+                .has_new_publish_peer
         {
             let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
             if let Some(state) = config.profile.as_ref() {
@@ -1172,7 +1180,7 @@ impl DirectRootExchange {
         true
     }
 
-    async fn refresh_known_mesh_peers(&mut self, sync: &FsFipsBlockSync) -> bool {
+    async fn refresh_known_mesh_peers(&mut self, sync: &FsFipsBlockSync) -> DirectRootPeerChanges {
         let authorized_peers = sync.authorized_peer_ids().await;
         let mesh_peers = sync.mesh_peer_ids().await;
         let connected_peers = sync.connected_peer_ids().await;
@@ -1184,7 +1192,7 @@ impl DirectRootExchange {
         authorized_peers: impl IntoIterator<Item = String>,
         mesh_peers: impl IntoIterator<Item = String>,
         connected_peers: impl IntoIterator<Item = String>,
-    ) -> bool {
+    ) -> DirectRootPeerChanges {
         let publish_peers = authorized_peers.into_iter().collect::<BTreeSet<_>>();
         let connected_peers = connected_peers.into_iter().collect::<BTreeSet<_>>();
         let mesh_peers = mesh_peers.into_iter().collect::<BTreeSet<_>>();
@@ -1201,8 +1209,8 @@ impl DirectRootExchange {
                 .map(|peer| format!("visible:{peer}")),
         );
 
-        let peers_changed = root_peers != self.known_mesh_peers;
-        if peers_changed {
+        let mesh_changed = root_peers != self.known_mesh_peers;
+        if mesh_changed {
             self.known_mesh_peers = root_peers;
         }
         let has_new_publish_peer = publish_peers
@@ -1216,7 +1224,10 @@ impl DirectRootExchange {
         }
         self.known_publish_peers = publish_peers;
         self.known_visible_publish_peers = visible_publish_peers;
-        peers_changed
+        DirectRootPeerChanges {
+            mesh_changed,
+            has_new_publish_peer: has_new_publish_peer || has_new_visible_publish_peer,
+        }
     }
 
     fn next_mesh_publish_seq(&mut self) -> u64 {

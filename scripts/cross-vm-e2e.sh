@@ -55,6 +55,10 @@ Environment:
                                   non-alphanumeric characters become underscores.
   IRIS_DRIVE_E2E_WINDOWS_IDRIVE   Override idrive path for every Windows host.
   IRIS_DRIVE_E2E_POSIX_IDRIVE     Override idrive path for every POSIX host.
+  IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST
+                                  Windows SSH alias to use from a Linux jump host.
+                                  The managed lab treats host "vader" as a jump
+                                  host to "win11-dev" when this is unset.
   IRIS_DRIVE_E2E_IDLE_CPU_GATE    Sample every host daemon's idle CPU after convergence (default: 1).
   IRIS_DRIVE_IDLE_CPU_WARMUP_SECS Override the post-workload idle CPU settle warmup (default: 90).
   IRIS_DRIVE_E2E_KEEP            Keep remote temp dirs/daemons when set to 1.
@@ -271,6 +275,26 @@ ps_quote() {
   printf "'%s'" "$(printf "%s" "$1" | sed "s/'/''/g")"
 }
 
+windows_guest_host_for() {
+  local ssh_host="$1"
+  if [[ -n "${IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST:-}" ]]; then
+    printf "%s" "$IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST"
+  elif [[ "$ssh_host" == "vader" ]]; then
+    printf "win11-dev"
+  fi
+}
+
+windows_powershell_command_for() {
+  local ssh_host="$1"
+  local guest
+  guest="$(windows_guest_host_for "$ssh_host")"
+  if [[ -n "$guest" ]]; then
+    printf 'ssh %s powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -' "$(sh_quote "$guest")"
+  else
+    printf 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -'
+  fi
+}
+
 env_key_suffix() {
   printf "%s" "$1" | tr '[:lower:]' '[:upper:]' | sed 's/[^A-Z0-9_]/_/g'
 }
@@ -300,7 +324,7 @@ run_remote_exec() {
   kind="$(host_value "$label" kind)"
   ssh_host="$(host_value "$label" ssh)"
   if [[ "$kind" == "windows" ]]; then
-    printf "%s\n" "$script" | ssh "$ssh_host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -'
+    printf "%s\n" "$script" | ssh "$ssh_host" "$(windows_powershell_command_for "$ssh_host")"
   elif [[ "$ssh_host" == "local" ]]; then printf "%s\n" "$script" | bash -se
   else
     printf "%s\n" "$script" | ssh "$ssh_host" 'bash -se'
@@ -386,7 +410,7 @@ detect_host_fips_addr() {
     return 0
   fi
   if [[ "$kind" == "windows" ]]; then
-    ip="$(ssh "$ssh_host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -' <<'REMOTE_PS' 2>/dev/null || true
+    ip="$(ssh "$ssh_host" "$(windows_powershell_command_for "$ssh_host")" <<'REMOTE_PS' 2>/dev/null || true
 $TunnelIp = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -eq 'nvpn' -and $_.IPAddress -like '10.44.*' } | Select-Object -First 1 -ExpandProperty IPAddress)
 if (-not $TunnelIp) {
   $Nvpn = (Get-Command nvpn -ErrorAction SilentlyContinue).Source
@@ -803,7 +827,7 @@ Set-Content -LiteralPath \$pidFile -Value \$PID
 \$ErrorActionPreference = 'Continue'
 & \$idrive @daemonArgs > \$log 2> \$err
 "
-    printf "%s\n" "$script" | ssh "$ssh_host" 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -' >/dev/null 2>&1 &
+    printf "%s\n" "$script" | ssh "$ssh_host" "$(windows_powershell_command_for "$ssh_host")" >/dev/null 2>&1 &
     set_host_value "$label" daemon_ssh_pid "$!"
     sleep 1
     if ! kill -0 "$(host_value "$label" daemon_ssh_pid)" 2>/dev/null; then

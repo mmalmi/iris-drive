@@ -419,6 +419,12 @@ fn provider_root_poll_period(watch_interval_secs: u64) -> std::time::Duration {
     std::time::Duration::from_secs(watch_interval_secs.max(PROVIDER_ROOT_SAFETY_POLL_MIN_SECS))
 }
 
+fn provider_root_event_recheck_delay(debounce: std::time::Duration) -> std::time::Duration {
+    debounce
+        .saturating_mul(4)
+        .max(std::time::Duration::from_secs(1))
+}
+
 fn current_app_key_root_key(config: &AppConfig) -> Option<String> {
     let state = config.profile.as_ref()?;
     let mut roots = config

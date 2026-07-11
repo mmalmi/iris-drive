@@ -12,6 +12,26 @@ ps_quote() {
   printf "'%s'" "$(printf "%s" "$1" | sed "s/'/''/g")"
 }
 
+windows_guest_host_for() {
+  local host="$1"
+  if [[ -n "${IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST:-}" ]]; then
+    printf "%s" "$IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST"
+  elif [[ "$host" == "vader" ]]; then
+    printf "win11-dev"
+  fi
+}
+
+windows_powershell_command_for() {
+  local host="$1"
+  local guest
+  guest="$(windows_guest_host_for "$host")"
+  if [[ -n "$guest" ]]; then
+    printf 'ssh %s powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -' "$(sh_quote "$guest")"
+  else
+    printf 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -'
+  fi
+}
+
 run_posix_reset() {
   local host="$1"
   shift
@@ -50,7 +70,7 @@ try {
   exit 75
 }
 REMOTE_PS
-  } | ssh "$host" 'cmd /d /s /c "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""`$script = [Console]::In.ReadToEnd(); & ([scriptblock]::Create(`$script))"""' || exit 75
+  } | ssh "$host" "$(windows_powershell_command_for "$host")" || exit 75
 }
 
 if [[ "${IRIS_DRIVE_E2E_IOS_HOST}" == "local" ]]; then

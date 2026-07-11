@@ -401,6 +401,9 @@ pub(crate) fn cmd_daemon(
         let mut direct_root_change_announce_pending = false;
         let mut direct_root_change_announce_timer =
             Box::pin(tokio::time::sleep(std::time::Duration::from_hours(24)));
+        let mut provider_root_event_recheck_pending = false;
+        let mut provider_root_event_recheck_timer =
+            Box::pin(tokio::time::sleep(std::time::Duration::from_hours(24)));
         let config_root_watch_active = config_root_change_rx.is_some();
         let mut provider_root_poll_timer =
             tokio::time::interval(provider_root_poll_period(watch_interval));
@@ -608,13 +611,13 @@ pub(crate) fn cmd_daemon(
                     }
                     match publish_provider_root_if_changed(
                         &client,
-	                        config_dir,
-	                        &mut last_provider_root_key,
-	                        &mut provider_root_publish_cache,
-	                        &mut direct_roots,
-	                        fips_blocks.as_deref(),
-	                        &daemon_tasks,
-	                    )
+                        config_dir,
+                        &mut last_provider_root_key,
+                        &mut provider_root_publish_cache,
+                        &mut direct_roots,
+                        fips_blocks.as_deref(),
+                        &daemon_tasks,
+                    )
                     .await
                     {
                         Ok(Some(_updated_config)) => {}
@@ -624,6 +627,11 @@ pub(crate) fn cmd_daemon(
                             json!({"event": "provider_root_publish_error", "trigger": "config_root_watch", "error": format!("{error:#}")})
                         ),
                     }
+                    provider_root_event_recheck_pending = true;
+                    provider_root_event_recheck_timer.as_mut().reset(
+                        tokio::time::Instant::now()
+                            + provider_root_event_recheck_delay(root_update_debounce),
+                    );
                 }
                 Some(wake_payload) = async {
                     if let Some(rx) = provider_root_wake_rx.as_mut() {
@@ -652,13 +660,13 @@ pub(crate) fn cmd_daemon(
                     }
                     match publish_provider_root_if_changed(
                         &client,
-	                        config_dir,
-	                        &mut last_provider_root_key,
-	                        &mut provider_root_publish_cache,
-	                        &mut direct_roots,
-	                        fips_blocks.as_deref(),
-	                        &daemon_tasks,
-	                    )
+                        config_dir,
+                        &mut last_provider_root_key,
+                        &mut provider_root_publish_cache,
+                        &mut direct_roots,
+                        fips_blocks.as_deref(),
+                        &daemon_tasks,
+                    )
                     .await
                     {
                         Ok(Some(_updated_config)) => {}
@@ -668,6 +676,11 @@ pub(crate) fn cmd_daemon(
                             json!({"event": "provider_root_publish_error", "trigger": "provider_root_wake", "error": format!("{error:#}")})
                         ),
                     }
+                    provider_root_event_recheck_pending = true;
+                    provider_root_event_recheck_timer.as_mut().reset(
+                        tokio::time::Instant::now()
+                            + provider_root_event_recheck_delay(root_update_debounce),
+                    );
                 }
                 Some(reason) = async {
                     if let Some(rx) = mount_refresh_rx.as_mut() {
@@ -877,6 +890,27 @@ pub(crate) fn cmd_daemon(
                             "{}",
                             json!({"event": "direct_root_mesh_error", "trigger": "changed_event_coalesced", "error": format!("{error:#}")})
                         );
+                    }
+                }
+                () = &mut provider_root_event_recheck_timer, if provider_root_event_recheck_pending => {
+                    provider_root_event_recheck_pending = false;
+                    match publish_provider_root_if_changed(
+                        &client,
+                        config_dir,
+                        &mut last_provider_root_key,
+                        &mut provider_root_publish_cache,
+                        &mut direct_roots,
+                        fips_blocks.as_deref(),
+                        &daemon_tasks,
+                    )
+                    .await
+                    {
+                        Ok(Some(_updated_config)) => {}
+                        Ok(None) => {}
+                        Err(error) => println!(
+                            "{}",
+                            json!({"event": "provider_root_publish_error", "trigger": "provider_root_event_recheck", "error": format!("{error:#}")})
+                        ),
                     }
                 }
                 _ = provider_root_poll_timer.tick(), if provider_root_poll_enabled(config_root_watch_active) => {

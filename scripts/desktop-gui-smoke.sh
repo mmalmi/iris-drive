@@ -12,6 +12,10 @@ Runs a native desktop GUI smoke against the selected platform shell. Linux uses
 the real GTK window on the user's X11 session, or a disposable Xvfb display
 when the VM has no active desktop session. Windows uses WPF UI Automation
 against the real IrisDrive.exe window.
+
+When the Windows VM is reachable only from a Linux jump host, set
+IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST to the Windows SSH alias. The managed lab
+also treats ssh host "vader" as a jump host to "win11-dev".
 USAGE
 }
 
@@ -21,6 +25,26 @@ sh_quote() {
 
 ps_quote() {
   printf "'%s'" "$(printf "%s" "$1" | sed "s/'/''/g")"
+}
+
+windows_guest_host_for() {
+  local remote="$1"
+  if [[ -n "${IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST:-}" ]]; then
+    printf "%s" "$IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST"
+  elif [[ "$remote" == "vader" ]]; then
+    printf "win11-dev"
+  fi
+}
+
+windows_powershell_command_for() {
+  local remote="$1"
+  local guest
+  guest="$(windows_guest_host_for "$remote")"
+  if [[ -n "$guest" ]]; then
+    printf 'ssh %s powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -' "$(sh_quote "$guest")"
+  else
+    printf 'powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -'
+  fi
 }
 
 linux_remote_shell() {
@@ -705,7 +729,7 @@ try {
 
 Invoke-InteractiveGuiSmoke
 REMOTE_PS
-  } | ssh "$remote" 'cmd /d /s /c "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""`$script = [Console]::In.ReadToEnd(); & ([scriptblock]::Create(`$script))"""'
+  } | ssh "$remote" "$(windows_powershell_command_for "$remote")"
 }
 
 case "$target" in

@@ -209,6 +209,18 @@ fn provider_root_poll_is_safety_sweep_only_without_config_watch() {
 }
 
 #[test]
+fn provider_root_event_recheck_is_reactive_and_coalesced() {
+    assert_eq!(
+        provider_root_event_recheck_delay(std::time::Duration::from_millis(150)),
+        std::time::Duration::from_secs(1)
+    );
+    assert_eq!(
+        provider_root_event_recheck_delay(std::time::Duration::from_secs(2)),
+        std::time::Duration::from_secs(8)
+    );
+}
+
+#[test]
 fn provider_root_publish_cache_matches_fingerprint_and_root_key() {
     let fingerprint = ConfigFileFingerprint::for_test(10);
     let other_fingerprint = ConfigFileFingerprint::for_test(11);
