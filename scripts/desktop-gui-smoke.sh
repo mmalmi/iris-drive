@@ -585,6 +585,7 @@ try {
   Start-Sleep -Milliseconds 500
 
   $env:IRIS_DRIVE_CLI = $Idrive
+  $env:IRIS_DRIVE_CONFIG_DIR = $ConfigDir
   $env:IRIS_DRIVE_EXTERNAL_DAEMON = "true"
   $env:IRIS_DRIVE_WINDOWS_SHELL_TRACE = $ShellTrace
   $Started = Start-Process -FilePath $Exe -WorkingDirectory $PublishDir -PassThru
@@ -645,9 +646,16 @@ try {
   Capture-Screenshot $Screenshot
   "WINDOWS_GUI_SMOKE_OK" | Set-Content -Encoding ASCII $ResultFile
   Log "WINDOWS_GUI_SMOKE_OK"
-  exit 0
 } catch {
   Fail (($_ | Out-String).Trim())
+} finally {
+  if ($Process -and -not $Process.HasExited) {
+    Log "stopping IrisDrive pid=$($Process.Id)"
+    Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+  } elseif ($Started -and -not $Started.HasExited) {
+    Log "stopping IrisDrive pid=$($Started.Id)"
+    Stop-Process -Id $Started.Id -Force -ErrorAction SilentlyContinue
+  }
 }
 '@ | Set-Content -Encoding ASCII $WorkerScript
 

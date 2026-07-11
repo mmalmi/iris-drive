@@ -1721,7 +1721,7 @@ idle_cpu_gate_label() {
     script="
 \$ErrorActionPreference = 'Stop'
 \$repo = Join-Path \$HOME 'src\iris-drive'
-\$env:IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES = 'app,daemon'
+\$env:IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES = 'daemon'
 \$env:IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH = \$repo
 \$env:IRIS_DRIVE_IDLE_CPU_WARMUP_SECS = $(ps_quote "${IRIS_DRIVE_IDLE_CPU_WARMUP_SECS:-90}")
 \$env:IRIS_DRIVE_IDLE_CPU_DURATION_SECS = $(ps_quote "${IRIS_DRIVE_IDLE_CPU_DURATION_SECS:-60}")

@@ -29,10 +29,19 @@ public sealed partial class IrisDriveService
     public string AppVersion =>
         typeof(IrisDriveService).Assembly.GetName().Version?.ToString() ?? "0.1.0";
 
-    public string DefaultConfigDirectory =>
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "iris-drive");
+    public string DefaultConfigDirectory => ConfigDirectoryOverride() ??
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "iris-drive");
+
+    private static string? ConfigDirectoryOverride()
+    {
+        var configured = Environment.GetEnvironmentVariable("IRIS_DRIVE_CONFIG_DIR");
+        configured = string.IsNullOrWhiteSpace(configured)
+            ? Environment.GetEnvironmentVariable("IRIS_DRIVE_DEV_VM_WINDOWS_CONFIG_DIR")
+            : configured;
+        return string.IsNullOrWhiteSpace(configured)
+            ? null
+            : Path.GetFullPath(Environment.ExpandEnvironmentVariables(configured.Trim()));
+    }
 
     public Task<IrisDriveStatusData> StatusAsync(bool refreshProvider = true)
     {
