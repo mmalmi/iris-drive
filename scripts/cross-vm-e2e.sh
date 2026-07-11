@@ -412,25 +412,12 @@ detect_host_fips_addr() {
   if [[ "$kind" == "windows" ]]; then
     ip="$(ssh "$ssh_host" "$(windows_powershell_command_for "$ssh_host")" <<'REMOTE_PS' 2>/dev/null || true
 $TunnelIp = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -eq 'nvpn' -and $_.IPAddress -like '10.44.*' } | Select-Object -First 1 -ExpandProperty IPAddress)
-if (-not $TunnelIp) {
-  $Nvpn = (Get-Command nvpn -ErrorAction SilentlyContinue).Source
-  if (-not $Nvpn) {
-    $Candidate = Join-Path $HOME "src\nostr-vpn\target\debug\nvpn.exe"
-    if (Test-Path $Candidate) { $Nvpn = $Candidate }
-  }
-  if ($Nvpn) {
-    try {
-      $Status = & $Nvpn status --json | ConvertFrom-Json
-      if ($Status.tunnel_ip) { $TunnelIp = (($Status.tunnel_ip -as [string]) -replace "/.*$", "") }
-    } catch {}
-  }
-}
-if (-not $TunnelIp) {
-  $TunnelIp = (Get-NetIPAddress -AddressFamily IPv4 |
-    Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
-    Select-Object -First 1 -ExpandProperty IPAddress)
-}
-if ($TunnelIp) { Write-Output $TunnelIp }
+if ($TunnelIp) { Write-Output $TunnelIp; exit 0 }
+$FallbackIp = (Get-NetIPAddress -AddressFamily IPv4 |
+  Where-Object { $_.IPAddress -notlike '127.*' -and $_.IPAddress -notlike '169.254.*' } |
+  Select-Object -First 1 -ExpandProperty IPAddress)
+if ($FallbackIp) { Write-Output $FallbackIp; exit 0 }
+exit 1
 REMOTE_PS
 )"
   else
