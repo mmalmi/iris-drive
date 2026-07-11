@@ -551,6 +551,15 @@ fn app_key_link_roster_retry_uses_short_burst_then_steady_interval() {
 }
 
 #[test]
+fn app_key_link_roster_startup_burst_covers_authorization_window() {
+    assert!(
+        u64::from(APP_KEY_LINK_ROSTER_STARTUP_BURST_ATTEMPTS)
+            * APP_KEY_LINK_ROSTER_STARTUP_RETRY_SECS
+            >= 60
+    );
+}
+
+#[test]
 fn authorized_roster_snapshot_cache_reuses_unchanged_config_and_invalidates_on_save() {
     let admin_dir = tempdir().unwrap();
     let mut admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();

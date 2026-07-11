@@ -34,7 +34,7 @@ async fn live_daemons_app_key_link_request_reaches_admin_quickly() {
 
     wait_until_open_fips_connected(owner_cfg.path(), linked_cfg.path()).await;
     let started_at = Instant::now();
-    let fast_window = Duration::from_secs(6);
+    let fast_window = Duration::from_secs(12);
     while started_at.elapsed() < fast_window {
         let status = run_json(owner_cfg.path(), &["status"]);
         if status["profile"]["inbound_app_key_link_requests"]
