@@ -1985,7 +1985,7 @@ fn app_key_link_request_startup_burst_covers_approval_window() {
     assert!(
         u64::from(super::APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS)
             * super::APP_KEY_LINK_EXCHANGE_TICK_MILLIS
-            >= 30_000
+            >= 90_000
     );
 }
 

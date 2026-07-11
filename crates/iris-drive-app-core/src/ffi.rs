@@ -160,7 +160,7 @@ const APP_KEY_LINK_REQUEST_RETRY_SECS: u64 = 30;
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 const APP_KEY_LINK_REQUEST_STARTUP_RETRY_MILLIS: u64 = 1_000;
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
-const APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS: u8 = 12;
+const APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS: u8 = 24;
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 const APP_KEY_LINK_ROSTER_RETRY_SECS: u64 = 2;
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]

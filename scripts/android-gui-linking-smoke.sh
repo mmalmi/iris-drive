@@ -23,6 +23,7 @@ LOCAL_RELAY_LOG="$(mktemp -t iris-drive-android-gui-relay.XXXXXX.log)"
 LOCAL_RELAY_PID=""
 LOCAL_RELAY_URL=""
 USE_DIRECT_STATIC_PEER="${IRIS_DRIVE_ANDROID_USE_DIRECT_STATIC_PEER:-true}"
+ANDROID_FIPS_PORT="${IRIS_DRIVE_ANDROID_FIPS_PORT:-59011}"
 LINK_TIMEOUT_SECS="${IRIS_DRIVE_ANDROID_LINK_TIMEOUT_SECS:-90}"
 PUBLISH_TIMEOUT_SECS="${IRIS_DRIVE_ANDROID_PUBLISH_TIMEOUT_SECS:-3}"
 NETWORK_PROBE_HOST="${IRIS_DRIVE_ANDROID_NETWORK_PROBE_HOST:-1.1.1.1}"
@@ -161,6 +162,19 @@ PY
     exit 1
   fi
   printf '%s\n' "$OWNER_HOST_ADDR"
+}
+
+android_device_addr() {
+  local addr
+  addr="$("$ADB" -s "$serial" shell 'ip route get 8.8.8.8 2>/dev/null | sed -n "s/.* src \([0-9.]*\).*/\1/p" | head -n 1' | tr -d '\r' || true)"
+  if [[ -z "$addr" ]]; then
+    addr="$("$ADB" -s "$serial" shell 'ip -4 addr show wlan0 2>/dev/null | sed -n "s/.*inet \([0-9.]*\)\/.*/\1/p" | head -n 1' | tr -d '\r' || true)"
+  fi
+  if [[ -z "$addr" ]]; then
+    echo "FAIL: could not determine an Android device IP reachable from the owner host." >&2
+    exit 1
+  fi
+  printf '%s\n' "$addr"
 }
 
 wait_for_owner_fips() {
@@ -428,6 +442,7 @@ android_fips_args=()
 if bool_true "$USE_DIRECT_STATIC_PEER"; then
   OWNER_FIPS_PORT="$(unused_loopback_port)"
   owner_host_addr="$(android_host_addr)"
+  android_addr="$(android_device_addr)"
   owner_fips_peer="$owner_app_key_npub=$owner_host_addr:$OWNER_FIPS_PORT"
   owner_fips_addr="$owner_host_addr:$OWNER_FIPS_PORT"
   owner_daemon_env+=(
@@ -441,7 +456,9 @@ if bool_true "$USE_DIRECT_STATIC_PEER"; then
     --es IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP false
     --es IRIS_DRIVE_FIPS_ENABLE_WEBRTC false
     --es IRIS_DRIVE_FIPS_STATIC_PEERS "$owner_fips_peer"
-    --es IRIS_DRIVE_FIPS_UDP_BIND_ADDR "0.0.0.0:0"
+    --es IRIS_DRIVE_FIPS_UDP_BIND_ADDR "0.0.0.0:$ANDROID_FIPS_PORT"
+    --es IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR "$android_addr:$ANDROID_FIPS_PORT"
+    --es IRIS_DRIVE_FIPS_UDP_PUBLIC false
   )
 else
   owner_daemon_env+=(
@@ -452,15 +469,6 @@ else
     --es IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP true
     --es IRIS_DRIVE_FIPS_ENABLE_WEBRTC true
   )
-fi
-env "${owner_daemon_env[@]}" \
-  "$IDRIVE" --config-dir "$OWNER_CONFIG" daemon --watch-interval 0 --no-gateway \
-  >"$OWNER_DAEMON_LOG" 2>&1 &
-OWNER_DAEMON_PID="$!"
-if ! wait_for_owner_fips 20; then
-  echo "FAIL: owner daemon did not start FIPS for Android GUI link delivery." >&2
-  cat "$OWNER_DAEMON_LOG" >&2 || true
-  exit 1
 fi
 
 "$ADB" -s "$serial" shell pm clear "$PACKAGE_NAME" >/dev/null
@@ -490,6 +498,21 @@ fi
 
 linked_device="$("$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-state.json \
   | python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["profile"]["current_app_key_npub"])')"
+if bool_true "$USE_DIRECT_STATIC_PEER"; then
+  owner_daemon_env+=(
+    "IRIS_DRIVE_FIPS_STATIC_PEERS=$linked_device=$android_addr:$ANDROID_FIPS_PORT"
+  )
+fi
+env "${owner_daemon_env[@]}" \
+  "$IDRIVE" --config-dir "$OWNER_CONFIG" daemon --watch-interval 0 --no-gateway \
+  >"$OWNER_DAEMON_LOG" 2>&1 &
+OWNER_DAEMON_PID="$!"
+if ! wait_for_owner_fips 20; then
+  echo "FAIL: owner daemon did not start FIPS for Android GUI link delivery." >&2
+  cat "$OWNER_DAEMON_LOG" >&2 || true
+  exit 1
+fi
+
 if ! wait_for_owner_inbound_request "$linked_device" "$LINK_TIMEOUT_SECS"; then
   echo "FAIL: owner did not receive the Android GUI app-key-link request over FIPS." >&2
   dump_android_debug_files
