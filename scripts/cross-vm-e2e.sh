@@ -147,8 +147,8 @@ host_value() {
     fips_port) printf "%s" "${FIPS_PORTS[$idx]:-}" ;;
     fips_addr) printf "%s" "${FIPS_ADDRS[$idx]:-}" ;;
     fips_static_peers) printf "%s" "${FIPS_STATIC_PEERS[$idx]:-}" ;;
-    fips_bootstrap) printf "%s" "${FIPS_BOOTSTRAP[$idx]:-true}" ;;
-    fips_open_discovery) printf "%s" "${FIPS_OPEN_DISCOVERY[$idx]:-16}" ;;
+    fips_bootstrap) printf "%s" "${FIPS_BOOTSTRAP[$idx]:-false}" ;;
+    fips_open_discovery) printf "%s" "${FIPS_OPEN_DISCOVERY[$idx]:-0}" ;;
     app_key_npub) printf "%s" "${APP_KEY_NPUBS[$idx]:-}" ;;
     *) echo "unknown host field: $field" >&2; exit 1 ;;
   esac
@@ -498,8 +498,8 @@ configure_fips_static_hints() {
     if [[ ${#pieces[@]} -gt 0 ]]; then
       local IFS=,
       set_host_value "$label" fips_static_peers "${pieces[*]}"
-      set_host_value "$label" fips_bootstrap "true"
-      set_host_value "$label" fips_open_discovery "16"
+      set_host_value "$label" fips_bootstrap "false"
+      set_host_value "$label" fips_open_discovery "0"
       echo "static FIPS hints for $label: $(host_value "$label" fips_static_peers)"
     fi
   done

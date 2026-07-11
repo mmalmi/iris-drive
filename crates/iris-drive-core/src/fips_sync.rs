@@ -37,7 +37,6 @@ const FIPS_REQUEST_MAX_ATTEMPTS: usize = 4;
 const FIPS_PACKET_CHANNEL_CAPACITY: usize = 8192;
 const FIPS_WEBRTC_MAX_CONNECTIONS: usize = 16;
 const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 0;
-const APP_KEY_LINK_OPEN_DISCOVERY_MAX_PENDING: usize = 64;
 pub const IRIS_DRIVE_FIPS_DISCOVERY_SCOPE: &str = "fips-overlay-v1";
 #[derive(Debug, Error)]
 pub enum FipsSyncError {
@@ -80,12 +79,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             .to_bech32()
             .map_err(|error| FipsSyncError::Identity(error.to_string()))?;
         let discovery_scope = discovery_scope(config);
-        let mut transport_settings = FipsTransportSettings::from_env();
-        if accepts_app_key_link_requests(config) {
-            transport_settings.open_discovery_max_pending = transport_settings
-                .open_discovery_max_pending
-                .max(APP_KEY_LINK_OPEN_DISCOVERY_MAX_PENDING);
-        }
+        let transport_settings = FipsTransportSettings::from_env();
         let endpoint = Box::pin(bind_fips_endpoint(fips_endpoint_options(
             identity_nsec,
             discovery_scope.clone(),
@@ -424,7 +418,7 @@ impl Default for FipsTransportSettings {
             udp_external_addr: None,
             share_local_candidates: target_allows_default_desktop_fips(std::env::consts::OS),
             static_peer_hints: Vec::new(),
-            bootstrap_peer_hints: default_fips_bootstrap_peer_hints(),
+            bootstrap_peer_hints: Vec::new(),
             webrtc_max_connections: FIPS_WEBRTC_MAX_CONNECTIONS,
             open_discovery_max_pending: FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
         }
@@ -439,7 +433,7 @@ impl FipsTransportSettings {
         let udp_external_addr = non_empty_env("IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR");
         let udp_public =
             bool_env("IRIS_DRIVE_FIPS_UDP_PUBLIC").unwrap_or_else(|| udp_external_addr.is_some());
-        let bootstrap_enabled = bool_env("IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP").unwrap_or(true);
+        let bootstrap_enabled = bool_env("IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP").unwrap_or(false);
         let bootstrap_peer_hints = if !bootstrap_enabled {
             Vec::new()
         } else if let Ok(value) = std::env::var("IRIS_DRIVE_FIPS_BOOTSTRAP_PEERS") {
@@ -481,14 +475,9 @@ fn fips_endpoint_options(
     identity_nsec: String,
     discovery_scope: String,
     relays: Vec<String>,
-    config: &AppConfig,
+    _config: &AppConfig,
     settings: &FipsTransportSettings,
 ) -> FipsEndpointOptions {
-    let mut open_discovery_max_pending = settings.open_discovery_max_pending;
-    if accepts_app_key_link_requests(config) {
-        open_discovery_max_pending =
-            open_discovery_max_pending.max(APP_KEY_LINK_OPEN_DISCOVERY_MAX_PENDING);
-    }
     FipsEndpointOptions {
         identity_nsec,
         discovery_scope,
@@ -502,7 +491,7 @@ fn fips_endpoint_options(
         share_local_candidates: settings.share_local_candidates,
         webrtc_auto_connect: true,
         webrtc_max_connections: settings.webrtc_max_connections,
-        open_discovery_max_pending,
+        open_discovery_max_pending: settings.open_discovery_max_pending,
         packet_channel_capacity: FIPS_PACKET_CHANNEL_CAPACITY,
     }
 }

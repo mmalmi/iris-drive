@@ -449,20 +449,13 @@ fn endpoint_options_can_advertise_native_udp_without_disabling_webrtc() {
 }
 
 #[test]
-fn default_transport_settings_seed_fips_bootstrap_transit() {
+fn default_transport_settings_do_not_seed_fips_bootstrap_transit() {
     let settings = FipsTransportSettings::default();
 
     assert_eq!(settings.webrtc_max_connections, 16);
     assert_eq!(settings.open_discovery_max_pending, 0);
-    assert_eq!(
-        settings.bootstrap_peer_hints.len(),
-        DEFAULT_FIPS_BOOTSTRAP_PEERS.len()
-    );
-    assert!(settings.bootstrap_peer_hints.iter().any(|(_, addresses)| {
-        addresses
-            .iter()
-            .any(|address| address.starts_with("tcp:") || address.starts_with("udp:"))
-    }));
+    assert!(settings.bootstrap_peer_hints.is_empty());
+    assert!(settings.enable_lan_discovery);
 }
 
 #[test]
@@ -582,7 +575,7 @@ fn admin_accepting_link_requests_promotes_connected_joiners_to_application_peers
 }
 
 #[test]
-fn remote_authorized_device_keeps_bootstrap_fips_routing_peers() {
+fn remote_authorized_device_does_not_seed_bootstrap_fips_routing_peers() {
     let current_pubkey = "dd".repeat(32);
     let remote_pubkey = "ee".repeat(32);
     let profile_id = crate::NostrIdentityId::new_v4();
@@ -615,8 +608,49 @@ fn remote_authorized_device_keeps_bootstrap_fips_routing_peers() {
         ..Default::default()
     };
 
+    assert!(routing_fips_peers(&config, &FipsTransportSettings::default()).is_empty());
+}
+
+#[test]
+fn explicit_bootstrap_hints_add_fips_routing_peers() {
+    let current_pubkey = "dd".repeat(32);
+    let remote_pubkey = "ee".repeat(32);
+    let profile_id = crate::NostrIdentityId::new_v4();
+    let config = AppConfig {
+        profile: Some(crate::ProfileState {
+            profile_id,
+            app_key_pubkey: current_pubkey.clone(),
+            profile_roster_ops: Vec::new(),
+            app_key_link_secret: "link-secret".into(),
+            authorization_state: crate::AppKeyAuthorizationState::Authorized,
+            app_key_label: None,
+            app_keys: Some(crate::app_keys::AppKeysProjection {
+                profile_id: profile_id.to_string(),
+                signed_by_pubkey: Some(current_pubkey.clone()),
+                created_at: 1,
+                app_actors: vec![
+                    crate::app_keys::AppActorEntry::admin(current_pubkey, 1, Some("Mac".into())),
+                    crate::app_keys::AppActorEntry::member(remote_pubkey, 1, Some("iPhone".into())),
+                ],
+                dck_generation: 0,
+                wrapped_dck: std::collections::BTreeMap::default(),
+            }),
+            profile_roster_projection: None,
+            outbound_app_key_link_request: None,
+            inbound_app_key_link_requests: Vec::new(),
+            handled_app_key_link_requests: Vec::new(),
+
+            pending_device_approval_receipts: Vec::new(),
+        }),
+        ..Default::default()
+    };
+    let settings = FipsTransportSettings {
+        bootstrap_peer_hints: default_fips_bootstrap_peer_hints(),
+        ..Default::default()
+    };
+
     assert_eq!(
-        routing_fips_peers(&config, &FipsTransportSettings::default()).len(),
+        routing_fips_peers(&config, &settings).len(),
         DEFAULT_FIPS_BOOTSTRAP_PEERS.len()
     );
 }
@@ -679,7 +713,7 @@ fn fips_peer_config_snapshot_matches_endpoint_peer_sanitizing() {
 }
 
 #[test]
-fn legacy_drive_roots_keep_bootstrap_fips_routing_peers() {
+fn legacy_drive_roots_do_not_seed_bootstrap_fips_routing_peers() {
     let current_keys = nostr_sdk::Keys::generate();
     let remote_keys = nostr_sdk::Keys::generate();
     let current_pubkey = current_keys.public_key().to_hex();
@@ -718,10 +752,7 @@ fn legacy_drive_roots_keep_bootstrap_fips_routing_peers() {
     let authorized = authorized_device_fips_peers(&config, &FipsTransportSettings::default());
     assert_eq!(authorized.len(), 1);
     assert_eq!(authorized[0].npub, remote_npub);
-    assert_eq!(
-        routing_fips_peers(&config, &FipsTransportSettings::default()).len(),
-        DEFAULT_FIPS_BOOTSTRAP_PEERS.len()
-    );
+    assert!(routing_fips_peers(&config, &FipsTransportSettings::default()).is_empty());
 }
 
 #[test]
@@ -901,7 +932,7 @@ fn endpoint_options_keep_packet_queue_large_enough_for_root_bursts() {
 }
 
 #[test]
-fn admin_endpoint_options_allow_open_app_key_link_requests() {
+fn admin_endpoint_options_keep_open_discovery_closed_by_default() {
     let settings = FipsTransportSettings::default();
     let dir = tempfile::tempdir().unwrap();
     let profile = crate::Profile::create(dir.path(), Some("admin".into())).unwrap();
@@ -918,7 +949,7 @@ fn admin_endpoint_options_allow_open_app_key_link_requests() {
         &settings,
     );
 
-    assert_eq!(options.open_discovery_max_pending, 64);
+    assert_eq!(options.open_discovery_max_pending, 0);
 }
 
 #[test]
