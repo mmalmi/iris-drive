@@ -8,6 +8,7 @@ pub(crate) enum EventApplyOutcome {
 const ROOT_APPLY_FOLLOWUP_COALESCE_MS: u64 = 750;
 const ROOT_APPLY_STATE_REPLY_SETTLE_MS: u64 = 500;
 const DIRECT_ROOT_STATE_REQUEST_MIN_INTERVAL_SECS: u64 = 10;
+const DIRECT_ROOT_STATE_REQUEST_SEND_TIMEOUT_SECS: u64 = 1;
 
 static DIRECT_ROOT_STATE_REQUEST_THROTTLE: std::sync::OnceLock<
     std::sync::Mutex<std::collections::BTreeMap<String, std::time::Instant>>,
@@ -853,36 +854,68 @@ async fn request_latest_direct_root_state(
             return;
         }
     };
-    let send_stats =
-        crate::publish::send_direct_root_app_message_to_authorized_peers(sync, bytes.clone()).await;
-    println!(
-        "{}",
-        json!({
-            "event": "direct_root_state_request_publish",
-            "trigger": projection_event,
-            "root_scope_id": root_scope_id.clone(),
-            "selected_peers": send_stats.selected_peers,
-            "visible_peers": visible_peers.len(),
-            "sent_peers": send_stats.sent_peers,
-            "failed_peers": send_stats.failed_peers,
-        })
-    );
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_SEND_TIMEOUT_SECS),
+        crate::publish::send_direct_root_app_message_to_authorized_peers(sync, bytes.clone()),
+    )
+    .await
+    {
+        Ok(send_stats) => println!(
+            "{}",
+            json!({
+                "event": "direct_root_state_request_publish",
+                "trigger": projection_event,
+                "root_scope_id": root_scope_id.clone(),
+                "selected_peers": send_stats.selected_peers,
+                "visible_peers": visible_peers.len(),
+                "sent_peers": send_stats.sent_peers,
+                "failed_peers": send_stats.failed_peers,
+            })
+        ),
+        Err(_) => println!(
+            "{}",
+            json!({
+                "event": "direct_root_state_request_publish_timeout",
+                "trigger": projection_event,
+                "root_scope_id": root_scope_id.clone(),
+                "visible_peers": visible_peers.len(),
+                "timeout_secs": DIRECT_ROOT_STATE_REQUEST_SEND_TIMEOUT_SECS,
+            })
+        ),
+    }
     let stream = iris_drive_core::direct_root_mesh_stream(&root_scope_id);
     let seq = direct_root_followup_mesh_seq();
-    let publish_stats = sync.publish_mesh_pubsub(stream.clone(), seq, bytes).await;
-    println!(
-        "{}",
-        json!({
-            "event": "direct_root_state_request_mesh_publish",
-            "trigger": projection_event,
-            "stream": stream,
-            "seq": seq,
-            "root_scope_id": root_scope_id,
-            "selected_peers": publish_stats.selected_peers,
-            "sent_peers": publish_stats.sent_peers,
-            "sent_bytes": publish_stats.sent_bytes,
-        })
-    );
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_SEND_TIMEOUT_SECS),
+        sync.publish_mesh_pubsub(stream.clone(), seq, bytes),
+    )
+    .await
+    {
+        Ok(publish_stats) => println!(
+            "{}",
+            json!({
+                "event": "direct_root_state_request_mesh_publish",
+                "trigger": projection_event,
+                "stream": stream,
+                "seq": seq,
+                "root_scope_id": root_scope_id,
+                "selected_peers": publish_stats.selected_peers,
+                "sent_peers": publish_stats.sent_peers,
+                "sent_bytes": publish_stats.sent_bytes,
+            })
+        ),
+        Err(_) => println!(
+            "{}",
+            json!({
+                "event": "direct_root_state_request_mesh_publish_timeout",
+                "trigger": projection_event,
+                "stream": stream,
+                "seq": seq,
+                "root_scope_id": root_scope_id,
+                "timeout_secs": DIRECT_ROOT_STATE_REQUEST_SEND_TIMEOUT_SECS,
+            })
+        ),
+    }
 }
 
 fn direct_root_followup_mesh_seq() -> u64 {

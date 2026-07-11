@@ -687,6 +687,17 @@ fn event_block_pull_retry_budget_stays_short_without_blossom() {
 }
 
 #[test]
+fn direct_root_state_request_timeout_keeps_followup_on_block_pull_path() {
+    let config = AppConfig {
+        blossom_servers: Vec::new(),
+        ..AppConfig::default()
+    };
+
+    assert!(DIRECT_ROOT_STATE_REQUEST_SEND_TIMEOUT_SECS < event_block_pull_timeout_secs(&config));
+    assert!(DIRECT_ROOT_STATE_REQUEST_SEND_TIMEOUT_SECS <= 1);
+}
+
+#[test]
 fn event_block_pull_timeout_allows_blossom_retry_window() {
     let config = AppConfig {
         blossom_servers: vec!["http://127.0.0.1:12345".to_string()],

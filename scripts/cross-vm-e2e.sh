@@ -456,7 +456,11 @@ REMOTE_SH
   fi
   ip="${ip//$'\r'/}"
   ip="$(printf "%s\n" "$ip" | awk 'NF { print $1; exit }')"
-  printf "%s" "${ip:-$ssh_host}"
+  if [[ -z "$ip" ]]; then
+    echo "failed to detect FIPS address for $label via $ssh_host; set $key to a reachable peer address" >&2
+    return 2
+  fi
+  printf "%s" "$ip"
 }
 
 configure_fips_static_hints() {
