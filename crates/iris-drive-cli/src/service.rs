@@ -12,6 +12,8 @@ use std::time::{Duration, Instant};
 const BINARY_VERSION_QUERY_TIMEOUT: Duration = Duration::from_secs(2);
 #[cfg(target_os = "macos")]
 const BINARY_VERSION_QUERY_POLL_INTERVAL: Duration = Duration::from_millis(20);
+#[cfg(any(target_os = "macos", test))]
+const MACOS_DAEMON_NOFILE_LIMIT: u32 = 4096;
 
 pub(crate) fn cmd_service(config_dir: &Path, command: ServiceCmd) -> Result<()> {
     let json_output = service_command_json(&command);
@@ -218,6 +220,16 @@ fn macos_launch_agent_plist_with_home(
     <true/>
 {}    <key>ProcessType</key>
     <string>Background</string>
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>{}</integer>
+    </dict>
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>{}</integer>
+    </dict>
     <key>StandardOutPath</key>
     <string>{}</string>
     <key>StandardErrorPath</key>
@@ -228,6 +240,8 @@ fn macos_launch_agent_plist_with_home(
         xml_escape(&label),
         program_arguments,
         environment_variables,
+        MACOS_DAEMON_NOFILE_LIMIT,
+        MACOS_DAEMON_NOFILE_LIMIT,
         xml_escape(&stdout_path.display().to_string()),
         xml_escape(&stderr_path.display().to_string())
     )
@@ -579,6 +593,19 @@ mod tests {
         assert!(plist.contains("<key>EnvironmentVariables</key>"));
         assert!(plist.contains("<key>HOME</key>"));
         assert!(plist.contains("<string>/Users/example &amp; co</string>"));
+    }
+
+    #[test]
+    fn macos_launch_agent_plist_raises_daemon_file_limit() {
+        let config_dir = Path::new("/Users/example/Library/Application Support/Iris Drive/Config");
+        let executable = Path::new("/Applications/Iris Drive.app/Contents/MacOS/idrive");
+
+        let plist = macos_launch_agent_plist(config_dir, executable);
+        let limit = format!("<integer>{MACOS_DAEMON_NOFILE_LIMIT}</integer>");
+
+        assert!(plist.contains("<key>SoftResourceLimits</key>"));
+        assert!(plist.contains("<key>HardResourceLimits</key>"));
+        assert_eq!(plist.matches(&limit).count(), 2);
     }
 
     #[test]

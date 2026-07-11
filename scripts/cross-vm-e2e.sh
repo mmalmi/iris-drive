@@ -863,6 +863,7 @@ case \" \$mount_labels \" in
     mkdir -p \"\$work\"
     ;;
 esac
+ulimit -n 4096 2>/dev/null || true
 if (( mount_enabled )); then
   nohup env \\
     IRIS_DRIVE_FIPS_UDP_BIND_ADDR=$(sh_quote "${fips_port:+0.0.0.0:$fips_port}") \\
