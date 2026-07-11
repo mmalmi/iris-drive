@@ -66,6 +66,62 @@ function Resolve-InnoSetupCompiler {
   throw "Inno Setup compiler not found. Install JRSoftware.InnoSetup or put ISCC.exe on PATH."
 }
 
+function Resolve-SignTool {
+  $Command = Get-Command signtool -ErrorAction SilentlyContinue
+  if ($Command) {
+    return $Command.Source
+  }
+
+  $KitsRoot = "${env:ProgramFiles(x86)}\Windows Kits\10\bin"
+  if (Test-Path $KitsRoot) {
+    $Candidate = Get-ChildItem -Path $KitsRoot -Filter signtool.exe -Recurse -ErrorAction SilentlyContinue |
+      Where-Object { $_.FullName -match '\\x64\\signtool\.exe$' } |
+      Sort-Object FullName -Descending |
+      Select-Object -First 1
+    if ($Candidate) {
+      return $Candidate.FullName
+    }
+  }
+
+  throw "signtool.exe not found. Install the Windows SDK or put signtool on PATH."
+}
+
+function Test-WindowsSigningConfigured {
+  return [bool](
+    $env:IRIS_DRIVE_WINDOWS_SIGNTOOL_CERT_SHA1 -or
+    $env:IRIS_DRIVE_WINDOWS_SIGNTOOL_PFX_PATH
+  )
+}
+
+function Invoke-WindowsSign {
+  param([string]$Path)
+
+  if (-not (Test-WindowsSigningConfigured)) {
+    return
+  }
+  if (-not (Test-Path $Path)) {
+    throw "Cannot sign missing Windows artifact: $Path"
+  }
+
+  $SignTool = Resolve-SignTool
+  $TimestampUrl = if ($env:IRIS_DRIVE_WINDOWS_SIGNTOOL_TIMESTAMP_URL) {
+    $env:IRIS_DRIVE_WINDOWS_SIGNTOOL_TIMESTAMP_URL
+  } else {
+    "http://timestamp.digicert.com"
+  }
+  $Args = @("sign", "/fd", "SHA256", "/tr", $TimestampUrl, "/td", "SHA256")
+  if ($env:IRIS_DRIVE_WINDOWS_SIGNTOOL_PFX_PATH) {
+    $Args += @("/f", $env:IRIS_DRIVE_WINDOWS_SIGNTOOL_PFX_PATH)
+    if ($env:IRIS_DRIVE_WINDOWS_SIGNTOOL_PFX_PASSWORD) {
+      $Args += @("/p", $env:IRIS_DRIVE_WINDOWS_SIGNTOOL_PFX_PASSWORD)
+    }
+  } else {
+    $Args += @("/sha1", $env:IRIS_DRIVE_WINDOWS_SIGNTOOL_CERT_SHA1)
+  }
+  $Args += $Path
+  Invoke-Checked $SignTool $Args
+}
+
 function Resolve-OutputPath {
   param([string]$Path)
   if ([System.IO.Path]::IsPathRooted($Path)) {
@@ -107,6 +163,11 @@ $CargoProfile = if ($Configuration -eq "Release") { "release" } else { "debug" }
 $Idrive = Join-Path $Root "target\$CargoProfile\idrive.exe"
 if (Test-Path $Idrive) {
   Copy-Item $Idrive (Join-Path $PublishDir "idrive.exe") -Force
+}
+
+if ($Configuration -eq "Release") {
+  Invoke-WindowsSign (Join-Path $PublishDir "IrisDrive.exe")
+  Invoke-WindowsSign (Join-Path $PublishDir "idrive.exe")
 }
 
 if ($DesktopShortcut) {
@@ -170,5 +231,6 @@ if ($Installer) {
   if (!(Test-Path $InstallerPath)) {
     throw "Expected Windows installer was not produced: $InstallerPath"
   }
+  Invoke-WindowsSign $InstallerPath
   Write-Output "Built Iris Drive installer: $InstallerPath"
 }

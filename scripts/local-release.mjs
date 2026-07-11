@@ -35,6 +35,7 @@ import {
   semverFromTag,
   splitCsv,
   validateReleaseAssetSet,
+  windowsPeHasAuthenticodeSignature,
 } from './local-release-lib.mjs'
 import {
   macosRestrictedProfileEntitlementKeys,
@@ -932,8 +933,43 @@ function validateFinalReleaseBuildInputs({ env, steps }) {
       missing.push('App Store Connect issuer ID is required for iOS TestFlight')
     }
   }
+  if (
+    steps.includes('windows') &&
+    !windowsSigningIsConfigured(env) &&
+    !boolEnv(env.IRIS_DRIVE_ALLOW_UNSIGNED_WINDOWS)
+  ) {
+    missing.push(
+      'Windows Authenticode signing inputs: IRIS_DRIVE_WINDOWS_SIGNTOOL_CERT_SHA1 or IRIS_DRIVE_WINDOWS_SIGNTOOL_PFX_PATH',
+    )
+  }
   if (missing.length > 0) {
     throw new Error(`Missing final release input(s): ${missing.join('; ')}`)
+  }
+}
+
+function boolEnv(value) {
+  return /^(1|true|yes|on)$/i.test(String(value ?? '').trim())
+}
+
+function windowsSigningIsConfigured(env) {
+  const certSha1 = String(env.IRIS_DRIVE_WINDOWS_SIGNTOOL_CERT_SHA1 ?? '').trim()
+  const pfxPath = String(env.IRIS_DRIVE_WINDOWS_SIGNTOOL_PFX_PATH ?? '').trim()
+  return Boolean(certSha1 || pfxPath)
+}
+
+function validateWindowsInstallerSignatures({ assetPaths, env, requireCompleteAppRelease }) {
+  if (!requireCompleteAppRelease || boolEnv(env.IRIS_DRIVE_ALLOW_UNSIGNED_WINDOWS)) {
+    return
+  }
+  const installers = assetPaths.filter((assetPath) =>
+    /^iris-drive-v.*-windows-x64-setup\.exe$/.test(basename(assetPath)),
+  )
+  for (const installer of installers) {
+    if (!windowsPeHasAuthenticodeSignature(readFileSync(installer))) {
+      throw new Error(
+        `Windows installer is not Authenticode signed: ${installer}. Set IRIS_DRIVE_ALLOW_UNSIGNED_WINDOWS=1 only for non-production testing.`,
+      )
+    }
   }
 }
 
@@ -1191,6 +1227,7 @@ function stageRelease({
   stageDir,
   draft,
   dryRun,
+  env,
   plannedAssetNames = [],
   requireCompleteAppRelease = false,
 }) {
@@ -1203,6 +1240,11 @@ function stageRelease({
       ? assetNames
       : plannedAssetNames
   validateReleaseAssetSet(validationNames, {
+    requireCompleteAppRelease,
+  })
+  validateWindowsInstallerSignatures({
+    assetPaths,
+    env,
     requireCompleteAppRelease,
   })
   if (hasPlannedDryRunAssets) {
@@ -1409,6 +1451,7 @@ function main() {
     dryRun: options.dryRun,
     plannedAssetNames,
     requireCompleteAppRelease: options.publish && !options.draft,
+    env,
   })
 
   if (options.publish) {

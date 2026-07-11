@@ -58,7 +58,7 @@ run_parallel_checks() {
     pids+=("$!")
   }
 
-  start_check local-release-tests node --test scripts/local-release.test.mjs
+  start_check local-release-tests node --test scripts/local-release*.test.mjs
   start_check fmt cargo fmt --check
   start_check structure just structure
   start_check workspace-tests cargo test --workspace --exclude idrive

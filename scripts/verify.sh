@@ -35,7 +35,7 @@ run_fast() {
   cargo fmt --all --check
   cargo clippy --workspace --all-targets -- -D warnings
   just structure
-  node --test scripts/local-release.test.mjs
+  node --test scripts/local-release*.test.mjs
   cargo test --workspace --exclude idrive
   cargo test -p idrive --bin idrive --test link_input_e2e
 }

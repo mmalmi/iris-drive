@@ -322,6 +322,7 @@ test('local-release dry-run validates planned build assets over partial existing
         ANDROID_KEY_ALIAS: 'iris',
         ANDROID_KEY_PASSWORD: 'password',
         IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: 'iris-drive-notary',
+        IRIS_DRIVE_WINDOWS_SIGNTOOL_CERT_SHA1: '00FAKECERT',
       },
     },
   )
@@ -335,12 +336,7 @@ test('local-release final dry-run refreshes public release resolver after htree 
   const assetDir = join(root, 'dist')
   const stageDir = join(root, 'stage')
   mkdirSync(assetDir)
-  for (const assetName of plannedReleaseAssetNames('v9.9.9', [
-    'macos',
-    'linux',
-    'windows',
-    'android',
-  ])) {
+  for (const assetName of plannedReleaseAssetNames('v9.9.9', ['macos', 'linux', 'windows', 'android'])) {
     writeFileSync(join(assetDir, assetName), assetName)
   }
 
@@ -364,15 +360,13 @@ test('local-release final dry-run refreshes public release resolver after htree 
         ...process.env,
         IRIS_DRIVE_RELEASE_NPUB: 'npub1example',
         IRIS_DRIVE_RELEASE_RESOLVER_REFRESH_BASE_URLS: 'https://cdn.iris.to',
+        IRIS_DRIVE_ALLOW_UNSIGNED_WINDOWS: '1',
       },
     },
   )
 
   assert.equal(result.status, 0, result.stderr)
-  assert.match(
-    result.stdout,
-    /api\/resolve\/npub1example\/releases%2Firis-drive\?refresh=1/,
-  )
+  assert.match(result.stdout, /api\/resolve\/npub1example\/releases%2Firis-drive\?refresh=1/)
   assert.match(
     result.stdout,
     /Would verify public release manifest https:\/\/cdn\.iris\.to\/npub1example\/releases%2Firis-drive\/latest\/release\.json/,
@@ -552,6 +546,7 @@ test('local-release final dry-run can plan Zapstore publish from signed Android 
         PATH: `${binDir}:${process.env.PATH}`,
         SIGN_WITH: 'nsec1test',
         IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: 'iris-drive-notary',
+        IRIS_DRIVE_WINDOWS_SIGNTOOL_CERT_SHA1: '00FAKECERT',
       },
     },
   )

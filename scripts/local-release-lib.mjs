@@ -205,6 +205,43 @@ export function validateReleaseAssetSet(
   }
 }
 
+export function windowsPeHasAuthenticodeSignature(bytes) {
+  if (!Buffer.isBuffer(bytes)) {
+    bytes = Buffer.from(bytes)
+  }
+  if (bytes.length < 0x40 || bytes.toString('ascii', 0, 2) !== 'MZ') {
+    return false
+  }
+  const peOffset = bytes.readUInt32LE(0x3c)
+  if (peOffset + 24 > bytes.length || bytes.toString('ascii', peOffset, peOffset + 4) !== 'PE\0\0') {
+    return false
+  }
+  const optionalHeaderOffset = peOffset + 24
+  const optionalHeaderSize = bytes.readUInt16LE(peOffset + 20)
+  const optionalHeaderEnd = optionalHeaderOffset + optionalHeaderSize
+  if (optionalHeaderEnd > bytes.length) {
+    return false
+  }
+  const magic = bytes.readUInt16LE(optionalHeaderOffset)
+  let dataDirectoryOffset = -1
+  if (magic === 0x10b) {
+    dataDirectoryOffset = optionalHeaderOffset + 96
+  } else if (magic === 0x20b) {
+    dataDirectoryOffset = optionalHeaderOffset + 112
+  }
+  if (dataDirectoryOffset < 0 || dataDirectoryOffset + 40 > optionalHeaderEnd) {
+    return false
+  }
+  const certificateDirectoryOffset = dataDirectoryOffset + 8 * 4
+  const certificateTableFileOffset = bytes.readUInt32LE(certificateDirectoryOffset)
+  const certificateTableSize = bytes.readUInt32LE(certificateDirectoryOffset + 4)
+  return (
+    certificateTableFileOffset > 0 &&
+    certificateTableSize > 0 &&
+    certificateTableFileOffset + certificateTableSize <= bytes.length
+  )
+}
+
 export function plannedReleaseAssetNames(tag, steps, { signedAndroid = true } = {}) {
   const normalizedTag = normalizeTag(tag)
   const names = []
