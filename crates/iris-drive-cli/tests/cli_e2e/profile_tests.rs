@@ -691,7 +691,7 @@ async fn approval_publishes_roster_and_receipt_to_configured_relay() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn rejected_configured_relay_rolls_back_cli_approval() {
+async fn rejected_configured_relay_reports_publish_error_without_rollback() {
     let relay = LocalNostrRelay::spawn().await;
     relay.reject_kinds(&[iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP]);
     let owner_dir = tempdir().unwrap();
@@ -712,18 +712,21 @@ async fn rejected_configured_relay_rolls_back_cli_approval() {
         .unwrap()
         .profile;
 
-    idrive(owner_dir.path())
-        .args(["approve", &request_url])
-        .assert()
-        .failure()
-        .stderr(contains("rejected by test relay"));
+    let approved = run_json(owner_dir.path(), &["approve", &request_url]);
+    assert_eq!(approved["published_approval_events"], 0);
+    assert!(
+        approved["approval_publish_error"]
+            .as_str()
+            .is_some_and(|error| error.contains("rejected by test relay"))
+    );
+    assert_eq!(approved["roster_size"], 2);
 
     let after = AppConfig::load_or_default(config_path_in(owner_dir.path()))
         .unwrap()
         .profile;
-    assert_eq!(
+    assert_ne!(
         after, before,
-        "rejected publication must not persist approval"
+        "local approval must survive relay publish failure"
     );
 }
 
