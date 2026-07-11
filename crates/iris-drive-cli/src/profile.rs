@@ -3,7 +3,9 @@ use super::*;
 use std::hash::{Hash, Hasher};
 
 mod app_key_link_urls;
+mod device_approval_publish;
 pub(crate) use app_key_link_urls::*;
+use device_approval_publish::publish_device_approval;
 #[cfg(test)]
 pub(crate) use iris_drive_core::app_key_link_transport::app_key_link_roster_fingerprint;
 pub(crate) use iris_drive_core::app_key_link_transport::{
@@ -241,10 +243,10 @@ pub(crate) fn cmd_approve(
     config.profile = Some(profile.state.clone());
     config.save(config_path_in(config_dir))?;
     let (published_events, approval_publish_error) =
-        match publish_device_approval(&config, &profile.state, &pending) {
-            Ok(events) => (events, None),
-            Err(error) => (0, Some(format!("{error:#}"))),
-        };
+        publish_device_approval(&config, &profile.state, &pending).map_or_else(
+            |error| (0, Some(format!("{error:#}"))),
+            |events| (events, None),
+        );
     println!(
         "{}",
         json!({
@@ -255,35 +257,6 @@ pub(crate) fn cmd_approve(
         })
     );
     Ok(())
-}
-
-fn publish_device_approval(
-    config: &AppConfig,
-    state: &ProfileState,
-    pending: &iris_drive_core::profile::PendingDeviceApprovalReceipt,
-) -> Result<usize> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .context("building device approval relay runtime")?;
-    let relays = iris_drive_core::relay_config::normalize_relay_urls(&config.relays)
-        .context("normalizing relay config")?;
-    let event_ids = runtime.block_on(async {
-        let client = iris_drive_core::relay_sync::connect(&relays).await?;
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(APP_KEY_LINK_RELAY_PUBLISH_TIMEOUT_SECS),
-            iris_drive_core::relay_sync::publish_device_approval_receipt(&client, state, pending),
-        )
-        .await
-        .map_err(|_| {
-            iris_drive_core::relay_sync::RelayError::Client(
-                "publishing device approval receipt timed out".to_string(),
-            )
-        })?;
-        iris_drive_core::relay_sync::shutdown_client(&client).await;
-        result
-    })?;
-    Ok(event_ids.len())
 }
 
 pub(crate) fn cmd_reject(config_dir: &std::path::Path, device: &str) -> Result<()> {

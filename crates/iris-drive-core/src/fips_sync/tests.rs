@@ -854,14 +854,10 @@ fn endpoint_options_keep_native_udp_private_by_default() {
 
 #[test]
 fn mobile_fips_defaults_keep_lan_without_local_candidate_sharing() {
-    assert!(!target_allows_default_local_candidate_sharing("android"));
-    assert!(!target_allows_default_local_candidate_sharing("ios"));
-    assert!(target_allows_default_local_candidate_sharing("macos"));
-    assert!(target_allows_default_local_candidate_sharing("linux"));
-    assert!(!target_allows_default_fips_webrtc("android"));
-    assert!(!target_allows_default_fips_webrtc("ios"));
-    assert!(target_allows_default_fips_webrtc("macos"));
-    assert!(target_allows_default_fips_webrtc("linux"));
+    assert!(!target_allows_default_desktop_fips("android"));
+    assert!(!target_allows_default_desktop_fips("ios"));
+    assert!(target_allows_default_desktop_fips("macos"));
+    assert!(target_allows_default_desktop_fips("linux"));
 }
 
 #[test]

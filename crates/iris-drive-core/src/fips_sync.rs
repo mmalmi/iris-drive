@@ -39,7 +39,6 @@ const FIPS_WEBRTC_MAX_CONNECTIONS: usize = 16;
 const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 0;
 const APP_KEY_LINK_OPEN_DISCOVERY_MAX_PENDING: usize = 64;
 pub const IRIS_DRIVE_FIPS_DISCOVERY_SCOPE: &str = "fips-overlay-v1";
-const IRIS_DRIVE_FIPS_PROFILE_DISCOVERY_PREFIX: &str = "iris-drive";
 #[derive(Debug, Error)]
 pub enum FipsSyncError {
     #[error("fips endpoint: {0}")]
@@ -417,15 +416,13 @@ impl Default for FipsTransportSettings {
     fn default() -> Self {
         Self {
             enable_udp: true,
-            enable_webrtc: target_allows_default_fips_webrtc(std::env::consts::OS),
+            enable_webrtc: target_allows_default_desktop_fips(std::env::consts::OS),
             enable_lan_discovery: true,
             enable_mesh_pubsub: true,
             udp_bind_addr: None,
             udp_public: false,
             udp_external_addr: None,
-            share_local_candidates: target_allows_default_local_candidate_sharing(
-                std::env::consts::OS,
-            ),
+            share_local_candidates: target_allows_default_desktop_fips(std::env::consts::OS),
             static_peer_hints: Vec::new(),
             bootstrap_peer_hints: default_fips_bootstrap_peer_hints(),
             webrtc_max_connections: FIPS_WEBRTC_MAX_CONNECTIONS,
@@ -476,11 +473,7 @@ impl FipsTransportSettings {
     }
 }
 
-fn target_allows_default_local_candidate_sharing(target_os: &str) -> bool {
-    !matches!(target_os, "android" | "ios")
-}
-
-fn target_allows_default_fips_webrtc(target_os: &str) -> bool {
+fn target_allows_default_desktop_fips(target_os: &str) -> bool {
     !matches!(target_os, "android" | "ios")
 }
 
@@ -630,15 +623,10 @@ where
 
 #[must_use]
 pub fn discovery_scope(config: &AppConfig) -> String {
-    config.profile.as_ref().map_or_else(
-        || IRIS_DRIVE_FIPS_DISCOVERY_SCOPE.to_string(),
-        |profile| {
-            format!(
-                "{IRIS_DRIVE_FIPS_PROFILE_DISCOVERY_PREFIX}:{}",
-                profile.profile_id
-            )
-        },
-    )
+    if let Some(profile) = &config.profile {
+        return format!("iris-drive:{}", profile.profile_id);
+    }
+    IRIS_DRIVE_FIPS_DISCOVERY_SCOPE.to_string()
 }
 
 fn authorized_device_fips_peers(
