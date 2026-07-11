@@ -6,6 +6,7 @@ PACKAGE_NAME="${IRIS_DRIVE_ANDROID_PACKAGE:-to.iris.drive.uitest}"
 MAIN_ACTIVITY="${IRIS_DRIVE_ANDROID_ACTIVITY:-to.iris.drive.uitest/to.iris.drive.app.MainActivity}"
 DEBUG_ACTION_EXTRA="${IRIS_DRIVE_ANDROID_DEBUG_ACTION_EXTRA:-to.iris.drive.DEBUG_ACTION}"
 DEBUG_OWNER_EXTRA="${IRIS_DRIVE_ANDROID_DEBUG_OWNER_EXTRA:-to.iris.drive.DEBUG_OWNER}"
+DEBUG_RELAY_EXTRA="${IRIS_DRIVE_ANDROID_DEBUG_RELAY_EXTRA:-to.iris.drive.DEBUG_RELAY}"
 DEBUG_NETWORK_HOST_EXTRA="${IRIS_DRIVE_ANDROID_DEBUG_NETWORK_HOST_EXTRA:-to.iris.drive.DEBUG_NETWORK_HOST}"
 DEBUG_NETWORK_PORT_EXTRA="${IRIS_DRIVE_ANDROID_DEBUG_NETWORK_PORT_EXTRA:-to.iris.drive.DEBUG_NETWORK_PORT}"
 APK_PATH="${IRIS_DRIVE_ANDROID_APK:-$ROOT/android/app/build/outputs/apk/uiTest/app-uiTest.apk}"
@@ -81,9 +82,10 @@ select_serial() {
 wait_for_debug_state() {
   local jq_expr="$1"
   local seconds="$2"
+  shift 2
   for _ in $(seq 1 "$((seconds * 5))"); do
     if "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-state.json 2>/dev/null \
-      | python3 -c "$jq_expr" >/dev/null 2>&1; then
+      | python3 -c "$jq_expr" "$@" >/dev/null 2>&1; then
       return 0
     fi
     sleep 0.2
@@ -462,6 +464,17 @@ if ! wait_for_owner_fips 20; then
 fi
 
 "$ADB" -s "$serial" shell pm clear "$PACKAGE_NAME" >/dev/null
+adb_am_start -S -n "$MAIN_ACTIVITY" \
+  --es "$DEBUG_ACTION_EXTRA" add-relay \
+  --es "$DEBUG_RELAY_EXTRA" "$LOCAL_RELAY_URL" >/dev/null
+
+if ! wait_for_debug_state \
+  'import json,sys; s=json.load(sys.stdin); relay=sys.argv[1]; relays=s.get("ui",{}).get("relays") or []; raise SystemExit(0 if relay in relays else 1)' \
+  10 "$LOCAL_RELAY_URL"; then
+  echo "FAIL: Android did not persist the local relay needed for deterministic FIPS link discovery." >&2
+  dump_android_debug_files
+  exit 1
+fi
 adb_am_start -S -n "$MAIN_ACTIVITY" \
   --es "$DEBUG_ACTION_EXTRA" link-device \
   --es "$DEBUG_OWNER_EXTRA" "$owner_invite" \

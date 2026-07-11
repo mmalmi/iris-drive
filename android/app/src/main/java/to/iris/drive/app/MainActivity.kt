@@ -938,6 +938,10 @@ class MainActivity : ComponentActivity() {
                 val request = intent.getStringExtra(AndroidDebugSupport.REQUEST_EXTRA).orEmpty()
                 dispatch(NativeActions.approveDevice(request, "Android smoke"))
             }
+            "add-relay" -> {
+                val relay = intent.getStringExtra(AndroidDebugSupport.RELAY_EXTRA).orEmpty()
+                dispatch(NativeActions.addRelay(relay))
+            }
             "add-root" -> dispatch(
                 NativeActions.addRoot(
                     "Android smoke",

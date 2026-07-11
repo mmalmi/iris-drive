@@ -378,10 +378,11 @@ async fn downloads_tree_blocks_over_indirect_fips_mesh_peer() {
 }
 
 #[test]
-fn discovery_scope_uses_iris_drive_overlay() {
+fn discovery_scope_is_profile_scoped() {
+    let profile_id = crate::NostrIdentityId::new_v4();
     let config = AppConfig {
         profile: Some(crate::ProfileState {
-            profile_id: crate::NostrIdentityId::new_v4(),
+            profile_id,
             app_key_pubkey: "bb".repeat(32),
             profile_roster_ops: Vec::new(),
             app_key_link_secret: "link-secret".into(),
@@ -398,7 +399,15 @@ fn discovery_scope_uses_iris_drive_overlay() {
         ..Default::default()
     };
 
-    assert_eq!(discovery_scope(&config), IRIS_DRIVE_FIPS_DISCOVERY_SCOPE);
+    assert_eq!(discovery_scope(&config), format!("iris-drive:{profile_id}"));
+}
+
+#[test]
+fn discovery_scope_uses_iris_drive_overlay_without_profile() {
+    assert_eq!(
+        discovery_scope(&AppConfig::default()),
+        IRIS_DRIVE_FIPS_DISCOVERY_SCOPE
+    );
 }
 
 #[test]

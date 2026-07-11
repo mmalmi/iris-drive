@@ -236,16 +236,22 @@ pub(crate) fn cmd_approve(
         .pending_device_approval_receipts
         .iter()
         .find(|pending| pending.request_pubkey == request_pubkey)
+        .cloned()
         .ok_or_else(|| anyhow::anyhow!("approval did not retain its encrypted receipt"))?;
-    let published_events = publish_device_approval(&config, &profile.state, pending)?;
     config.profile = Some(profile.state.clone());
     config.save(config_path_in(config_dir))?;
+    let (published_events, approval_publish_error) =
+        match publish_device_approval(&config, &profile.state, &pending) {
+            Ok(events) => (events, None),
+            Err(error) => (0, Some(format!("{error:#}"))),
+        };
     println!(
         "{}",
         json!({
             "approved_app_key_npub": approved_app_key_npub,
             "roster_size": device_count,
             "published_approval_events": published_events,
+            "approval_publish_error": approval_publish_error,
         })
     );
     Ok(())

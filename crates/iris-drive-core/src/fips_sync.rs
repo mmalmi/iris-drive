@@ -39,6 +39,7 @@ const FIPS_WEBRTC_MAX_CONNECTIONS: usize = 16;
 const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 0;
 const APP_KEY_LINK_OPEN_DISCOVERY_MAX_PENDING: usize = 64;
 pub const IRIS_DRIVE_FIPS_DISCOVERY_SCOPE: &str = "fips-overlay-v1";
+const IRIS_DRIVE_FIPS_PROFILE_DISCOVERY_PREFIX: &str = "iris-drive";
 #[derive(Debug, Error)]
 pub enum FipsSyncError {
     #[error("fips endpoint: {0}")]
@@ -629,8 +630,15 @@ where
 
 #[must_use]
 pub fn discovery_scope(config: &AppConfig) -> String {
-    let _ = config;
-    IRIS_DRIVE_FIPS_DISCOVERY_SCOPE.to_string()
+    config.profile.as_ref().map_or_else(
+        || IRIS_DRIVE_FIPS_DISCOVERY_SCOPE.to_string(),
+        |profile| {
+            format!(
+                "{IRIS_DRIVE_FIPS_PROFILE_DISCOVERY_PREFIX}:{}",
+                profile.profile_id
+            )
+        },
+    )
 }
 
 fn authorized_device_fips_peers(

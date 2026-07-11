@@ -16,6 +16,7 @@ internal object AndroidDebugSupport {
     const val ACTION_EXTRA = "to.iris.drive.DEBUG_ACTION"
     const val OWNER_EXTRA = "to.iris.drive.DEBUG_OWNER"
     const val REQUEST_EXTRA = "to.iris.drive.DEBUG_REQUEST"
+    const val RELAY_EXTRA = "to.iris.drive.DEBUG_RELAY"
     private const val STATE_FILE = "debug-state.json"
     private const val ENV_FILE = "debug-env.json"
     private const val PROVIDER_LIST_FILE = "debug-provider-list.json"
