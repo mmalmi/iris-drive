@@ -75,6 +75,9 @@ impl SyncCluster {
         let windows_gateway_port = unused_loopback_port();
         let ubuntu_gateway_port = unused_loopback_port();
         let macos_gateway_port = include_macos.then(unused_loopback_port);
+        let windows_fips_port = unused_udp_loopback_port();
+        let ubuntu_fips_port = unused_udp_loopback_port();
+        let macos_fips_port = include_macos.then(unused_udp_loopback_port);
 
         configure_local_blossom(windows_cfg.path(), &blossom.url);
         configure_local_blossom(ubuntu_cfg.path(), &blossom.url);
@@ -83,22 +86,40 @@ impl SyncCluster {
         }
 
         let init = run_json(windows_cfg.path(), &["init", "--label", "windows-peer"]);
+        let windows_npub = init["current_app_key_npub"].as_str().unwrap().to_string();
         let owner_invite = init["app_key_link_invite"]["url"].as_str().unwrap();
-        run_json(
+        let ubuntu_link = run_json(
             ubuntu_cfg.path(),
             &["link", owner_invite, "--label", "linux-peer"],
         );
+        let ubuntu_npub = ubuntu_link["current_app_key_npub"]
+            .as_str()
+            .unwrap()
+            .to_string();
         let request = relay
             .pending_approval_request_url(ubuntu_cfg.path())
             .await;
         let mut linked_requests = vec![(Client::Ubuntu, request)];
+        let mut fips_peers = vec![
+            (Client::Windows, windows_npub, windows_fips_port),
+            (Client::Ubuntu, ubuntu_npub, ubuntu_fips_port),
+        ];
         if let Some(config) = macos_cfg.as_ref() {
-            run_json(
+            let macos_link = run_json(
                 config.path(),
                 &["link", owner_invite, "--label", "macos-peer"],
             );
+            let macos_npub = macos_link["current_app_key_npub"]
+                .as_str()
+                .unwrap()
+                .to_string();
             let request = relay.pending_approval_request_url(config.path()).await;
             linked_requests.push((Client::MacOS, request));
+            fips_peers.push((
+                Client::MacOS,
+                macos_npub,
+                macos_fips_port.expect("macos FIPS port"),
+            ));
         }
         add_config_relay(windows_cfg.path(), &relay.url);
 
@@ -130,25 +151,32 @@ impl SyncCluster {
             run_json(config.path(), &["import", work.path().to_str().unwrap()]);
         }
 
-        let windows_daemon = Some(DaemonChild::spawn(
+        let windows_daemon = Some(DaemonChild::spawn_with_fips_peers(
             windows_cfg.path(),
             &relay.url,
             windows_cfg.path().join("win.log"),
             windows_gateway_port,
+            windows_fips_port,
+            &static_fips_peers_except(Client::Windows, &fips_peers),
         ));
-        let ubuntu_daemon = Some(DaemonChild::spawn(
+        let ubuntu_daemon = Some(DaemonChild::spawn_with_fips_peers(
             ubuntu_cfg.path(),
             &relay.url,
             ubuntu_cfg.path().join("ubuntu.log"),
             ubuntu_gateway_port,
+            ubuntu_fips_port,
+            &static_fips_peers_except(Client::Ubuntu, &fips_peers),
         ));
         let macos_daemon =
             if let (Some(config), Some(gateway_port)) = (macos_cfg.as_ref(), macos_gateway_port) {
-                Some(DaemonChild::spawn(
+                let fips_port = macos_fips_port.expect("macos FIPS port");
+                Some(DaemonChild::spawn_with_fips_peers(
                     config.path(),
                     &relay.url,
                     config.path().join("macos.log"),
                     gateway_port,
+                    fips_port,
+                    &static_fips_peers_except(Client::MacOS, &fips_peers),
                 ))
             } else {
                 None
@@ -703,6 +731,35 @@ struct DaemonChild {
 
 impl DaemonChild {
     fn spawn(config_dir: &Path, relay_url: &str, log_path: PathBuf, gateway_port: u16) -> Self {
+        Self::spawn_inner(config_dir, relay_url, log_path, gateway_port, None, "")
+    }
+
+    fn spawn_with_fips_peers(
+        config_dir: &Path,
+        relay_url: &str,
+        log_path: PathBuf,
+        gateway_port: u16,
+        fips_port: u16,
+        static_peers: &str,
+    ) -> Self {
+        Self::spawn_inner(
+            config_dir,
+            relay_url,
+            log_path,
+            gateway_port,
+            Some(fips_port),
+            static_peers,
+        )
+    }
+
+    fn spawn_inner(
+        config_dir: &Path,
+        relay_url: &str,
+        log_path: PathBuf,
+        gateway_port: u16,
+        fips_port: Option<u16>,
+        static_peers: &str,
+    ) -> Self {
         let mut stdout = OpenOptions::new()
             .create(true)
             .append(true)
@@ -711,13 +768,23 @@ impl DaemonChild {
         writeln!(stdout, "\n--- daemon start ---").unwrap();
         let stderr = stdout.try_clone().unwrap();
         let gateway_port = gateway_port.to_string();
-        let child = Command::new(idrive_bin())
+        let fips_bind = fips_port.map_or_else(
+            || "127.0.0.1:0".to_string(),
+            |port| format!("127.0.0.1:{port}"),
+        );
+        let fips_external = fips_port.map_or_else(String::new, |port| format!("127.0.0.1:{port}"));
+        let mut command = Command::new(idrive_bin());
+        command
             .env("IRIS_DRIVE_CONFIG_DIR", config_dir)
             .env("IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP", "false")
             .env("IRIS_DRIVE_FIPS_ENABLE_WEBRTC", "false")
-            .env("IRIS_DRIVE_FIPS_UDP_BIND_ADDR", "127.0.0.1:0")
-            .env("IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR", "")
-            .env("IRIS_DRIVE_FIPS_UDP_PUBLIC", "false")
+            .env("IRIS_DRIVE_FIPS_UDP_BIND_ADDR", fips_bind)
+            .env("IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR", fips_external)
+            .env("IRIS_DRIVE_FIPS_UDP_PUBLIC", "false");
+        if !static_peers.trim().is_empty() {
+            command.env("IRIS_DRIVE_FIPS_STATIC_PEERS", static_peers);
+        }
+        let child = command
             .args([
                 "daemon",
                 "--relay",
@@ -868,6 +935,26 @@ fn unused_loopback_port() -> u16 {
         .local_addr()
         .unwrap()
         .port()
+}
+
+fn unused_udp_loopback_port() -> u16 {
+    std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0))
+        .unwrap()
+        .local_addr()
+        .unwrap()
+        .port()
+}
+
+fn static_fips_peers_except(
+    local: Client,
+    peers: &[(Client, String, u16)],
+) -> String {
+    peers
+        .iter()
+        .filter(|(client, _, _)| *client != local)
+        .map(|(_, npub, port)| format!("{npub}=127.0.0.1:{port}"))
+        .collect::<Vec<_>>()
+        .join(",")
 }
 
 async fn config_visible_snapshot(config_dir: &Path) -> Option<DirSnapshot> {

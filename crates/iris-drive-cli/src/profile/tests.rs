@@ -529,11 +529,11 @@ fn app_key_link_roster_retry_uses_short_burst_then_steady_interval() {
     };
     assert!(!app_key_link_roster_send_due(
         Some(first),
-        now + std::time::Duration::from_secs(1)
+        now + std::time::Duration::from_millis(500)
     ));
     assert!(app_key_link_roster_send_due(
         Some(first),
-        now + std::time::Duration::from_secs(2)
+        now + std::time::Duration::from_secs(1)
     ));
 
     let steady = SentAppKeyLinkRoster {

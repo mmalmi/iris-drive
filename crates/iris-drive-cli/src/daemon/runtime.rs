@@ -981,6 +981,10 @@ pub(crate) fn cmd_daemon(
                                 );
                             }
                             for message in messages {
+                                let wakes_direct_roots_after_app_key_link =
+                                    message.topic == crate::profile::APP_KEY_LINK_ROSTER_APP_TOPIC
+                                        || message.topic
+                                            == crate::profile::APP_KEY_APPROVAL_RECEIPT_APP_TOPIC;
                                 match handle_app_key_link_app_message(
                                     config_dir,
                                     &message,
@@ -989,7 +993,27 @@ pub(crate) fn cmd_daemon(
                                 )
                                 .await
                                 {
-                                    Ok(true) => continue,
+                                    Ok(true) => {
+                                        if wakes_direct_roots_after_app_key_link
+                                            && fips_blocks.is_some()
+                                        {
+                                            direct_root_change_announce_pending = true;
+                                            direct_root_change_announce_timer.as_mut().reset(
+                                                tokio::time::Instant::now()
+                                                    + std::time::Duration::from_millis(
+                                                        DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS,
+                                                    ),
+                                            );
+                                            enqueue_pending_root_sync_followups(
+                                                config_dir,
+                                                fips_blocks.clone(),
+                                                mount_refresh_tx.clone(),
+                                                &daemon_tasks,
+                                                "app_key_link_authorization_message",
+                                            );
+                                        }
+                                        continue;
+                                    }
                                     Ok(false) => {}
                                     Err(error) => {
                                         println!(

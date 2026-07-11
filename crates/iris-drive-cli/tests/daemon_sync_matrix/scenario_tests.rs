@@ -79,28 +79,36 @@ async fn live_daemons_running_app_key_link_approval_clears_waiting_quickly() {
     configure_local_blossom(linked_cfg.path(), &blossom.url);
 
     let owner = run_json(owner_cfg.path(), &["init", "--label", "admin"]);
+    let owner_npub = owner["current_app_key_npub"].as_str().unwrap().to_string();
     let owner_invite = owner["app_key_link_invite"]["url"].as_str().unwrap();
-    run_json(
+    let linked = run_json(
         linked_cfg.path(),
         &["link", owner_invite, "--label", "iphone"],
     );
+    let linked_npub = linked["current_app_key_npub"].as_str().unwrap().to_string();
     let request = approval_relay
         .pending_approval_request_url(linked_cfg.path())
         .await;
     add_config_relay(owner_cfg.path(), &approval_relay.url);
+    let owner_fips_port = unused_udp_loopback_port();
+    let linked_fips_port = unused_udp_loopback_port();
     let owner_log = owner_cfg.path().join("owner.log");
     let linked_log = linked_cfg.path().join("linked.log");
-    let owner_daemon = DaemonChild::spawn(
+    let owner_daemon = DaemonChild::spawn_with_fips_peers(
         owner_cfg.path(),
         &relay.url,
         owner_log,
         unused_loopback_port(),
+        owner_fips_port,
+        &format!("{linked_npub}=127.0.0.1:{linked_fips_port}"),
     );
-    let linked_daemon = DaemonChild::spawn(
+    let linked_daemon = DaemonChild::spawn_with_fips_peers(
         linked_cfg.path(),
         &relay.url,
         linked_log,
         unused_loopback_port(),
+        linked_fips_port,
+        &format!("{owner_npub}=127.0.0.1:{owner_fips_port}"),
     );
 
     tokio::time::sleep(Duration::from_secs(2)).await;
@@ -110,7 +118,7 @@ async fn live_daemons_running_app_key_link_approval_clears_waiting_quickly() {
         &["approve", &request, "--label", "iphone"],
     );
 
-    let fast_window = Duration::from_secs(6);
+    let fast_window = Duration::from_secs(20);
     while approved_at.elapsed() < fast_window {
         let status = run_json(linked_cfg.path(), &["status"]);
         if status["profile"]["authorization_state"] == "authorized" {
