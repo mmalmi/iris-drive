@@ -19,6 +19,8 @@ Environment:
   IRIS_DRIVE_RELEASE_GATE_IOS=0        Skip local iOS build/smoke.
   IRIS_DRIVE_RELEASE_GATE_MACOS=0      Skip local macOS build/smoke.
   IRIS_DRIVE_RELEASE_GATE_IDLE_CPU=0   Skip idle CPU sampling gates.
+  IRIS_DRIVE_RELEASE_GATE_ANDROID_IDLE_CPU_WARMUP_SECS=90
+                                        Override Android idle CPU warmup.
   IRIS_DRIVE_RELEASE_GATE_MACOS_IDLE_CPU_WARMUP_SECS=60
                                         Override macOS idle CPU warmup.
 USAGE
@@ -80,7 +82,8 @@ run_parallel_checks() {
 
 run_rust_tests() {
   run cargo build -p idrive --bin idrive
-  run cargo test -p idrive --bin idrive --test cli_e2e --test link_input_e2e --test daemon_sync_matrix -- --test-threads=1
+  run cargo test -p idrive --bin idrive --test cli_e2e --test link_input_e2e -- --test-threads=1
+  run cargo test -p idrive --test daemon_sync_matrix -- --test-threads=1
 }
 
 run_macos_idle_cpu_gate() {
@@ -194,6 +197,7 @@ case "$(uname -s)" in
       if idle_cpu_gate_enabled; then
         run env \
           IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="${IRIS_DRIVE_RELEASE_GATE_ANDROID_IDLE_CPU_ROLES:-app}" \
+          IRIS_DRIVE_IDLE_CPU_WARMUP_SECS="${IRIS_DRIVE_RELEASE_GATE_ANDROID_IDLE_CPU_WARMUP_SECS:-90}" \
           IRIS_DRIVE_IDLE_CPU_ANDROID_PACKAGE="${IRIS_DRIVE_ANDROID_PACKAGE:-to.iris.drive.uitest}" \
           ./scripts/idle-cpu-gate.sh --platform android
       fi

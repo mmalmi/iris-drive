@@ -2,14 +2,16 @@ use anyhow::{Context, Result};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use nostr_identity::{
-    NostrIdentityDeviceApprovalReceipt, ParseNostrIdentityDeviceApprovalReceiptForBootstrapOptions,
+    NostrIdentityDeviceApprovalReceipt, NostrIdentityRosterOp,
+    ParseNostrIdentityDeviceApprovalReceiptForBootstrapOptions,
     encode_nostr_identity_device_approval_bootstrap,
     nostr_identity_device_approval_bootstrap_has_prefix,
     parse_nostr_identity_device_approval_bootstrap,
     parse_nostr_identity_device_approval_receipt_event_for_bootstrap_with_options,
+    parse_nostr_identity_device_approval_receipt_roster_op,
 };
 use nostr_sdk::nips::nip19::ToBech32;
-use nostr_sdk::{Event, Keys, PublicKey, SecretKey};
+use nostr_sdk::{Event, JsonUtil, Keys, PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -309,6 +311,34 @@ pub fn parse_pending_app_key_approval_receipt_event(
         },
     )
     .context("validating device approval receipt")
+}
+
+pub fn pending_app_key_approval_receipt_authorizes_app_key(
+    pending: &crate::profile::PendingAppKeyLinkRequest,
+    app_key_pubkey: &str,
+) -> bool {
+    let Some(event_json) = pending.approval_receipt_event.as_deref() else {
+        return false;
+    };
+    let Ok(event) = Event::from_json(event_json) else {
+        return false;
+    };
+    let Ok(receipt) = parse_pending_app_key_approval_receipt_event(pending, &event) else {
+        return false;
+    };
+    if receipt.device_app_key_pubkey != app_key_pubkey {
+        return false;
+    }
+    let Ok(roster_op) = parse_nostr_identity_device_approval_receipt_roster_op(&receipt) else {
+        return false;
+    };
+    matches!(
+        &roster_op.content.op,
+        NostrIdentityRosterOp::AddFacet { facet }
+            if facet.pubkey == app_key_pubkey
+                && facet.is_app_key()
+                && facet.capabilities.can_write_roots
+    )
 }
 
 #[must_use]

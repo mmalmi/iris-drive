@@ -311,6 +311,15 @@ impl ProfileState {
 
     #[must_use]
     pub fn can_write_roots_for_app_key(&self, app_key_pubkey: &str) -> bool {
+        if app_key_pubkey == self.app_key_pubkey
+            && self.pending_device_approval_receipt_authorizes_current_app_key()
+            && !self
+                .profile_projection()
+                .tombstones
+                .contains_key(&self.app_key_pubkey)
+        {
+            return true;
+        }
         if self.has_profile_roster_evidence() {
             return self.profile_projection().can_write_roots(app_key_pubkey);
         }
@@ -400,9 +409,10 @@ impl ProfileState {
     #[must_use]
     pub fn can_write_roots(&self) -> bool {
         if self.has_profile_roster_evidence() {
-            return self
-                .profile_projection()
-                .can_write_roots(&self.app_key_pubkey);
+            let projection = self.profile_projection();
+            return projection.can_write_roots(&self.app_key_pubkey)
+                || (self.pending_device_approval_receipt_authorizes_current_app_key()
+                    && !projection.tombstones.contains_key(&self.app_key_pubkey));
         }
         if let Some(app_keys) = &self.app_keys {
             return app_keys.contains(&self.app_key_pubkey);
@@ -422,7 +432,13 @@ impl ProfileState {
             .as_ref()
             .is_some_and(|keys| keys.contains(&self.app_key_pubkey))
             && projection.can_write_roots(&self.app_key_pubkey);
+        let pending_receipt_authorizes_current_app_key =
+            self.pending_device_approval_receipt_authorizes_current_app_key();
         self.authorization_state = if current_app_key_has_usable_profile {
+            AppKeyAuthorizationState::Authorized
+        } else if pending_receipt_authorizes_current_app_key
+            && !projection.tombstones.contains_key(&self.app_key_pubkey)
+        {
             AppKeyAuthorizationState::Authorized
         } else if projection.tombstones.contains_key(&self.app_key_pubkey)
             || (self.authorization_state == AppKeyAuthorizationState::Authorized
@@ -436,23 +452,36 @@ impl ProfileState {
         } else {
             self.authorization_state
         };
-        if self.authorization_state == AppKeyAuthorizationState::Authorized {
+        if current_app_key_has_usable_profile {
             self.outbound_app_key_link_request = None;
         }
         self.profile_roster_projection = Some(projection);
     }
 
     fn recompute_authorization_from_app_keys(&mut self, projection: &AppKeysProjection) {
-        self.authorization_state = if projection.contains(&self.app_key_pubkey) {
+        let current_app_key_is_projected = projection.contains(&self.app_key_pubkey);
+        self.authorization_state = if current_app_key_is_projected
+            || self.pending_device_approval_receipt_authorizes_current_app_key()
+        {
             AppKeyAuthorizationState::Authorized
         } else if self.authorization_state == AppKeyAuthorizationState::Authorized {
             AppKeyAuthorizationState::Revoked
         } else {
             self.authorization_state
         };
-        if self.authorization_state == AppKeyAuthorizationState::Authorized {
+        if current_app_key_is_projected {
             self.outbound_app_key_link_request = None;
         }
+    }
+
+    fn pending_device_approval_receipt_authorizes_current_app_key(&self) -> bool {
+        let Some(pending) = self.outbound_app_key_link_request.as_ref() else {
+            return false;
+        };
+        crate::app_key_link_transport::pending_app_key_approval_receipt_authorizes_app_key(
+            pending,
+            &self.app_key_pubkey,
+        )
     }
 
     pub fn queue_outbound_app_key_link_request(

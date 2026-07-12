@@ -15,7 +15,7 @@ webrtc = ["fips-core/webrtc-transport"]
 
 [dependencies]
 async-trait = "0.1"
-fips-core = "0.3.80"
+fips-core = "0.3.89"
 hashtree-core = { version = "0.2.76", path = "../../../hashtree/rust/crates/hashtree-core" }
 hashtree-network = { version = "0.2.76", path = "../../../hashtree/rust/crates/hashtree-network" }
 hex = "0.4"

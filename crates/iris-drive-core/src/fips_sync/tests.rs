@@ -3,6 +3,7 @@ use hashtree_core::{DirEntry, LinkType, MemoryStore};
 use hashtree_fips_transport::{FipsEndpointIo, FipsEndpointPacket, FipsTransportError};
 use tokio::sync::{Mutex as TokioMutex, mpsc};
 
+mod app_key_link_peers;
 mod mesh_fallback;
 
 type PacketSenderMap =
@@ -393,7 +394,6 @@ fn discovery_scope_is_profile_scoped() {
             outbound_app_key_link_request: None,
             inbound_app_key_link_requests: Vec::new(),
             handled_app_key_link_requests: Vec::new(),
-
             pending_device_approval_receipts: Vec::new(),
         }),
         ..Default::default()

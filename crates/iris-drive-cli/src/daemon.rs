@@ -987,6 +987,7 @@ pub(crate) async fn parent_exit_signal(service_mode: bool) {
     }
 }
 
+include!("daemon/direct_root_state_request.rs");
 include!("daemon/apply_and_blocks.rs");
 
 pub(crate) fn record_block_sync(
@@ -1095,4 +1096,5 @@ pub(crate) fn files_root_apply_label(
 mod tests {
     include!("daemon/tests_part1.rs");
     include!("daemon/tests_part2.rs");
+    include!("daemon/tests_part3.rs");
 }

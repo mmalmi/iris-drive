@@ -1221,6 +1221,7 @@ impl DirectRootExchange {
             .any(|peer| !self.known_visible_publish_peers.contains(peer));
         if has_new_publish_peer || has_new_visible_publish_peer {
             self.published_keys.clear();
+            self.invalidate_current_sync_events_cache();
         }
         self.known_publish_peers = publish_peers;
         self.known_visible_publish_peers = visible_publish_peers;

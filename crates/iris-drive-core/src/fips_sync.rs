@@ -738,12 +738,18 @@ fn pending_app_key_link_fips_peer(
     settings: &FipsTransportSettings,
 ) -> Option<FipsPeerConfig> {
     let account = config.profile.as_ref()?;
-    if account.can_admin_profile()
-        || account.authorization_state != crate::AppKeyAuthorizationState::AwaitingApproval
-    {
+    let request = account.outbound_app_key_link_request.as_ref()?;
+    let request_can_still_receive_full_roster = matches!(
+        account.authorization_state,
+        crate::AppKeyAuthorizationState::AwaitingApproval
+    )
+        || crate::app_key_link_transport::pending_app_key_approval_receipt_authorizes_app_key(
+            request,
+            &account.app_key_pubkey,
+        );
+    if account.can_admin_profile() || !request_can_still_receive_full_roster {
         return None;
     }
-    let request = account.outbound_app_key_link_request.as_ref()?;
     fips_peer_config_for_pubkey(&request.admin_app_key_pubkey, settings)
 }
 

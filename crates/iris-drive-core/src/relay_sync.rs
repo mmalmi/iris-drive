@@ -370,7 +370,7 @@ pub fn apply_remote_device_approval_receipt_event(
     config: &mut AppConfig,
     event: &Event,
 ) -> Result<NostrIdentityRosterOpApply, RelayError> {
-    let (receipt, roster_event, bind_profile) = {
+    let (receipt, roster_event, bind_profile, receipt_authorizes_current_app_key) = {
         let Some(account) = config.profile.as_ref() else {
             return Err(RelayError::NoAccount);
         };
@@ -385,13 +385,29 @@ pub fn apply_remote_device_approval_receipt_event(
         let roster_op = parse_nostr_identity_device_approval_receipt_roster_op(&receipt)?;
         let roster_event = Event::from_json(&roster_op.event_json)
             .map_err(|error| RelayError::AppKeyLinkRoster(error.to_string()))?;
+        let receipt_authorizes_current_app_key =
+            parse_nostr_identity_roster_op_event(&roster_event).is_ok_and(|signed| {
+                match &signed.content.op {
+                    crate::NostrIdentityRosterOp::AddFacet { facet } => {
+                        facet.pubkey == account.app_key_pubkey
+                            && facet.is_app_key()
+                            && facet.capabilities.can_write_roots
+                    }
+                    _ => false,
+                }
+            });
         let bind_profile = account.profile_id != receipt.profile_id
             && account.profile_roster_ops.is_empty()
             && pending.admin_app_key_pubkey.trim().is_empty();
         if account.profile_id != receipt.profile_id && !bind_profile {
             return Ok(NostrIdentityRosterOpApply::NotOurProfile);
         }
-        (receipt, roster_event, bind_profile)
+        (
+            receipt,
+            roster_event,
+            bind_profile,
+            receipt_authorizes_current_app_key,
+        )
     };
 
     if bind_profile {
@@ -409,21 +425,28 @@ pub fn apply_remote_device_approval_receipt_event(
         .ok_or(RelayError::NoAccount)?;
     pending.approval_receipt_event = Some(event.as_json());
     let outcome = apply_remote_nostr_identity_roster_op_event(config, &roster_event)?;
-    if outcome != NostrIdentityRosterOpApply::Current {
-        return Ok(outcome);
-    }
+    let mut changed = matches!(outcome, NostrIdentityRosterOpApply::Applied);
     let root_scope_id = {
         let account = config.profile.as_mut().ok_or(RelayError::NoAccount)?;
         let before = account.authorization_state;
         account.sync_app_keys_from_profile();
         account.recompute_authorization();
-        if account.authorization_state == before {
-            return Ok(NostrIdentityRosterOpApply::Current);
+        if account.authorization_state == crate::AppKeyAuthorizationState::AwaitingApproval
+            && receipt_authorizes_current_app_key
+        {
+            account.authorization_state = crate::AppKeyAuthorizationState::Authorized;
+        }
+        if account.authorization_state != before {
+            changed = true;
         }
         account.root_scope_id()
     };
     config.sync_primary_drive_scope(root_scope_id);
-    Ok(NostrIdentityRosterOpApply::Applied)
+    if changed {
+        Ok(NostrIdentityRosterOpApply::Applied)
+    } else {
+        Ok(NostrIdentityRosterOpApply::Current)
+    }
 }
 
 pub fn apply_remote_share_access_snapshot_event(

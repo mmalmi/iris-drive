@@ -360,9 +360,9 @@ impl AppConfig {
                 .active_root_writer_app_key_pubkeys()
                 .into_iter()
                 .collect::<BTreeSet<_>>();
-            if matches!(
+            if !matches!(
                 account.authorization_state,
-                crate::profile::AppKeyAuthorizationState::AwaitingApproval
+                crate::profile::AppKeyAuthorizationState::Revoked
             ) {
                 active.insert(account.app_key_pubkey.clone());
             }
@@ -1238,7 +1238,18 @@ dck_generation = 1
     }
 
     #[test]
-    fn save_preserves_awaiting_current_root_during_partial_roster_merge() {
+    fn save_preserves_current_root_during_partial_roster_merge() {
+        for authorization_state in [
+            crate::profile::AppKeyAuthorizationState::AwaitingApproval,
+            crate::profile::AppKeyAuthorizationState::Authorized,
+        ] {
+            assert_current_root_survives_partial_roster_save(authorization_state);
+        }
+    }
+
+    fn assert_current_root_survives_partial_roster_save(
+        authorization_state: crate::profile::AppKeyAuthorizationState,
+    ) {
         let dir = tempdir().unwrap();
         let path = dir.path().join("config.toml");
         let owner_dir = tempdir().unwrap();
@@ -1252,15 +1263,7 @@ dck_generation = 1
             Some("phone".into()),
         )
         .expect("linked profile created");
-        let linked_root = AppKeyRootRef {
-            root_cid: "linked-root".into(),
-            published_at: 20,
-            dck_generation: 1,
-            app_key_seq: 1,
-            parents: Vec::new(),
-            observed: BTreeMap::new(),
-            local_only: false,
-        };
+        let linked_root = AppKeyRootRef::legacy("linked-root", 20, 1);
 
         let mut existing = AppConfig {
             profile: Some(linked.state.clone()),
@@ -1277,8 +1280,7 @@ dck_generation = 1
         partial_state.profile_roster_ops = vec![owner.state.profile_roster_ops[0].clone()];
         partial_state.app_keys = None;
         partial_state.profile_roster_projection = None;
-        partial_state.authorization_state =
-            crate::profile::AppKeyAuthorizationState::AwaitingApproval;
+        partial_state.authorization_state = authorization_state;
         assert!(
             !partial_state
                 .active_root_writer_app_key_pubkeys()
@@ -1298,7 +1300,7 @@ dck_generation = 1
             .unwrap()
             .app_key_roots
             .get(&linked.state.app_key_pubkey)
-            .expect("awaiting app key root should survive partial roster saves");
+            .expect("current app key root should survive partial roster saves");
         assert_eq!(root.root_cid, linked_root.root_cid);
     }
 

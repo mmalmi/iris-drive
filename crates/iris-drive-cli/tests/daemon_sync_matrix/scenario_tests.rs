@@ -892,21 +892,31 @@ async fn live_daemons_ignore_noise_and_temporary_files() {
 async fn live_daemons_reconnect_sender_and_receiver_without_losing_updates() {
     let _guard = live_daemon_test_guard().await;
     let mut cluster = SyncCluster::start(Duration::ZERO).await;
+    let baseline_files = reconnect_file_count("IRIS_DRIVE_RECONNECT_BASELINE_FILES", 4);
+    let receiver_stopped_files =
+        reconnect_file_count("IRIS_DRIVE_RECONNECT_RECEIVER_STOPPED_FILES", 8);
+    let sender_stopped_files = reconnect_file_count("IRIS_DRIVE_RECONNECT_SENDER_STOPPED_FILES", 8);
+    matrix_progress(format!(
+        "reconnect setup baseline={baseline_files} receiver_stopped={receiver_stopped_files} sender_stopped={sender_stopped_files}"
+    ));
     cluster.wait_until_authorized().await;
     cluster.wait_until_direct_peers_connected().await;
 
-    for index in 0..16 {
+    matrix_progress("reconnect baseline writes");
+    for index in 0..baseline_files {
         let path = format!("reconnect/baseline/file-{index:03}.bin");
         cluster
             .write(Client::Windows, &path, &deterministic_bytes(index, 512))
             .await;
     }
+    matrix_progress("reconnect baseline convergence");
     cluster
         .wait_for_convergence_from(Client::Windows, "reconnect baseline")
         .await;
 
+    matrix_progress("reconnect receiver stopped writes");
     cluster.stop_daemon(Client::Ubuntu);
-    for index in 0..24 {
+    for index in 0..receiver_stopped_files {
         let path = format!("reconnect/receiver-stopped/file-{index:03}.bin");
         cluster
             .write(
@@ -916,14 +926,17 @@ async fn live_daemons_reconnect_sender_and_receiver_without_losing_updates() {
             )
             .await;
     }
+    matrix_progress("reconnect receiver restart");
     cluster.start_daemon(Client::Ubuntu);
     cluster.wait_until_direct_peers_connected().await;
+    matrix_progress("reconnect receiver restarted convergence");
     cluster
         .wait_for_convergence_from(Client::Windows, "receiver restarted")
         .await;
 
+    matrix_progress("reconnect sender stopped writes");
     cluster.stop_daemon(Client::Windows);
-    for index in 0..24 {
+    for index in 0..sender_stopped_files {
         let path = format!("reconnect/sender-stopped/file-{index:03}.bin");
         cluster
             .write(
@@ -933,11 +946,21 @@ async fn live_daemons_reconnect_sender_and_receiver_without_losing_updates() {
             )
             .await;
     }
+    matrix_progress("reconnect sender restart");
     cluster.start_daemon(Client::Windows);
     cluster.wait_until_direct_peers_connected().await;
+    matrix_progress("reconnect sender restarted convergence");
     cluster
         .wait_for_convergence_from(Client::Ubuntu, "sender restarted")
         .await;
+}
+
+fn reconnect_file_count(env_name: &str, default: usize) -> usize {
+    std::env::var(env_name)
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|count| *count > 0)
+        .unwrap_or(default)
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

@@ -537,60 +537,6 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     @Test
-    fun acceptedLinkedDevicePersistsLoginAndFileCountAfterRestartInGui() {
-        val ownerDir = tempDataDir("iris-drive-owner")
-        val ownerHandle = NativeCore.appNew(ownerDir.absolutePath, "ui-test").also(nativeHandles::add)
-        val owner = dispatch(ownerHandle, NativeActions.createProfile("Mac"))
-        val source = File(context.cacheDir, "owner-note-${UUID.randomUUID()}.txt")
-        source.writeText("from owner")
-        val write = JSONObject(
-            NativeCore.providerWriteJson(
-                ownerDir.absolutePath,
-                "owner-note.txt",
-                source.absolutePath,
-            ),
-        )
-        assertTrue(write.optString("error"), write.optString("error").isBlank())
-
-        val linkedDir = tempDataDir("iris-drive-linked")
-        val linkedHandle = NativeCore.appNew(linkedDir.absolutePath, "ui-test").also(nativeHandles::add)
-        val linked = dispatch(
-            linkedHandle,
-            NativeActions.linkDevice(owner.profile!!.appKeyLinkInvite, "Pixel"),
-        )
-        val approved = dispatch(
-            ownerHandle,
-            NativeActions.approveDevice(linked.profile!!.appKeyLinkRequest, "Pixel"),
-        )
-        assertTrue(approved.error, approved.error.isBlank())
-
-        val applied = JSONObject(
-            NativeCore.applyOwnerSnapshotForTest(
-                ownerDir.absolutePath,
-                linkedDir.absolutePath,
-            ),
-        )
-        assertTrue(applied.optString("error"), applied.optString("error").isBlank())
-
-        val beforeRestart = waitForAuthorizedState(linkedHandle, expectedFileCount = 1)
-        assertEquals("Pixel", beforeRestart.profile?.appKeyLabel)
-        assertEquals(1, beforeRestart.fileCount)
-
-        NativeCore.appFree(linkedHandle)
-        nativeHandles.remove(linkedHandle)
-
-        val restartedHandle = NativeCore.appNew(linkedDir.absolutePath, "ui-test").also(nativeHandles::add)
-        val restarted = waitForAuthorizedState(restartedHandle, expectedFileCount = 1)
-        assertEquals("authorized", restarted.profile?.authorizationState)
-        assertEquals("Pixel", restarted.profile?.appKeyLabel)
-        assertEquals(1, restarted.fileCount)
-
-        render(state = restarted)
-        compose.onNodeWithTag("driveContent").performScrollToNode(hasText("1 files"))
-        compose.onNodeWithText("1 files").assertIsDisplayed()
-    }
-
-    @Test
     fun authenticatedAppShowsBottomTabsAndSeparateDevicesView() {
         val owner = createOwnerProfile("Android UI owner")
 
@@ -1006,19 +952,6 @@ class IrisDriveAndroidGuiFlowTest {
 
     private fun appState(handle: Long): AppState =
         AppState.fromJson(NativeCore.stateJson(handle))
-
-    private fun refreshedAppState(handle: Long): AppState =
-        AppState.fromJson(NativeCore.refreshJson(handle))
-
-    private fun waitForAuthorizedState(handle: Long, expectedFileCount: Int? = null): AppState {
-        var latest = refreshedAppState(handle)
-        compose.waitUntil(timeoutMillis = 30_000) {
-            latest = refreshedAppState(handle)
-            latest.profile?.authorizationState == "authorized" &&
-                (expectedFileCount == null || latest.fileCount == expectedFileCount)
-        }
-        return latest
-    }
 
     private fun SemanticsNodeInteraction.activate() {
         performSemanticsAction(SemanticsActions.OnClick)

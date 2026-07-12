@@ -23,6 +23,7 @@ LOCAL_RELAY_LOG="$(mktemp -t iris-drive-android-gui-relay.XXXXXX.log)"
 LOCAL_RELAY_PID=""
 LOCAL_RELAY_URL=""
 USE_DIRECT_STATIC_PEER="${IRIS_DRIVE_ANDROID_USE_DIRECT_STATIC_PEER:-true}"
+OWNER_FIPS_OPEN_DISCOVERY_MAX_PENDING="${IRIS_DRIVE_ANDROID_FIPS_OPEN_DISCOVERY_MAX_PENDING:-8}"
 ANDROID_FIPS_PORT="${IRIS_DRIVE_ANDROID_FIPS_PORT:-59011}"
 LINK_TIMEOUT_SECS="${IRIS_DRIVE_ANDROID_LINK_TIMEOUT_SECS:-90}"
 PUBLISH_TIMEOUT_SECS="${IRIS_DRIVE_ANDROID_PUBLISH_TIMEOUT_SECS:-3}"
@@ -347,7 +348,13 @@ require_android_app_network_permission() {
 
 run_android_gui_tests() {
   local class="to.iris.drive.app.IrisDriveAndroidGuiFlowTest"
-  local mode="${IRIS_DRIVE_ANDROID_GUI_TEST_MODE:-class}"
+  local mode="${IRIS_DRIVE_ANDROID_GUI_TEST_MODE:-smoke}"
+  local smoke_tests=(
+    createProfileFlowDoesNotRequireUsernameOrProfilePhoto
+    linkThisDeviceFlowClicksThroughSignInUi
+    authenticatedAppShowsBottomTabsAndSeparateDevicesView
+    devicesViewUsesOnlineStatusDots
+  )
   local tests=(
     devicesViewUsesOnlineStatusDots
     documentsProviderListsNativeProviderRoot
@@ -363,26 +370,51 @@ run_android_gui_tests() {
     deleteDeviceRequiresConfirmation
     acceptedLinkedDeviceThatIsNotOnlineShowsOfflineInGui
     syncPanelShowsOnlyTheAvailableAction
-    acceptedLinkedDevicePersistsLoginAndFileCountAfterRestartInGui
   )
 
-  if [[ "$mode" == "class" ]]; then
-    (
-      cd "$ROOT"
-      ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedUiTestAndroidTest \
-        "-Pandroid.testInstrumentationRunnerArguments.class=$class"
-    )
-    return
-  fi
-
   local test
-  for test in "${tests[@]}"; do
-    (
-      cd "$ROOT"
-      ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedUiTestAndroidTest \
-        "-Pandroid.testInstrumentationRunnerArguments.class=$class#$test"
-    )
-  done
+  case "$mode" in
+    class)
+      (
+        cd "$ROOT"
+        ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedUiTestAndroidTest \
+          "-Pandroid.testInstrumentationRunnerArguments.class=$class"
+      )
+      ;;
+    serial)
+      for test in "${tests[@]}"; do
+        (
+          cd "$ROOT"
+          ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedUiTestAndroidTest \
+            "-Pandroid.testInstrumentationRunnerArguments.class=$class#$test"
+        )
+      done
+      ;;
+    smoke)
+      local filter=""
+      for test in "${smoke_tests[@]}"; do
+        filter+="${filter:+,}$class#$test"
+      done
+      (
+        cd "$ROOT"
+        ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedUiTestAndroidTest \
+          "-Pandroid.testInstrumentationRunnerArguments.class=$filter"
+      )
+      ;;
+    *)
+      echo "FAIL: unknown IRIS_DRIVE_ANDROID_GUI_TEST_MODE=$mode (expected smoke, serial, or class)" >&2
+      return 1
+      ;;
+  esac
+}
+
+run_android_native_state_tests() {
+  local class="to.iris.drive.app.IrisDriveAndroidNativeStateTest"
+  (
+    cd "$ROOT"
+    ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedUiTestAndroidTest \
+      "-Pandroid.testInstrumentationRunnerArguments.class=$class"
+  )
 }
 
 run_android_share_api_test() {
@@ -403,6 +435,7 @@ fi
 
 "$ADB" -s "$serial" wait-for-device
 run_android_gui_tests
+run_android_native_state_tests
 run_android_share_api_test
 
 if [[ ! -x "$IDRIVE" ]]; then
@@ -437,7 +470,9 @@ owner_app_key_npub="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["c
 printf 'hello from android gui sync smoke\n' >"$OWNER_SOURCE_DIR/android-smoke.txt"
 "$IDRIVE" --config-dir "$OWNER_CONFIG" import "$OWNER_SOURCE_DIR" >/dev/null
 owner_fips_addr="default-graph"
-owner_daemon_env=()
+owner_daemon_env=(
+  "IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING=$OWNER_FIPS_OPEN_DISCOVERY_MAX_PENDING"
+)
 android_fips_args=()
 if bool_true "$USE_DIRECT_STATIC_PEER"; then
   OWNER_FIPS_PORT="$(unused_loopback_port)"

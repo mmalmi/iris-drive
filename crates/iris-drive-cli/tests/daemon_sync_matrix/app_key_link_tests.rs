@@ -23,21 +23,23 @@ async fn live_daemons_app_key_link_request_reaches_admin_quickly() {
     let linked_fips_port = unused_udp_loopback_port();
     let owner_log = owner_cfg.path().join("owner.log");
     let linked_log = linked_cfg.path().join("linked.log");
-    let owner_daemon = DaemonChild::spawn_with_fips_peers(
+    let owner_daemon = DaemonChild::spawn_with_fips_peers_and_open_discovery(
         owner_cfg.path(),
         &relay.url,
         owner_log,
         unused_loopback_port(),
         owner_fips_port,
         &format!("{linked_npub}=127.0.0.1:{linked_fips_port}"),
+        8,
     );
-    let linked_daemon = DaemonChild::spawn_with_fips_peers(
+    let linked_daemon = DaemonChild::spawn_with_fips_peers_and_open_discovery(
         linked_cfg.path(),
         &relay.url,
         linked_log,
         unused_loopback_port(),
         linked_fips_port,
         &format!("{owner_npub}=127.0.0.1:{owner_fips_port}"),
+        8,
     );
 
     wait_until_open_fips_connected(owner_cfg.path(), linked_cfg.path()).await;

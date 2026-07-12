@@ -45,6 +45,9 @@ info:
     @echo
     @echo "Checks"
     @echo "  just test"
+    @echo "  just daemon-matrix-dev"
+    @echo "  just daemon-matrix-fail-fast"
+    @echo "  just daemon-matrix-rerun-failed"
     @echo "  just verify-fast"
     @echo "  just verify-full"
     @echo "  just verify-health"
@@ -182,6 +185,15 @@ release-final:
 
 test:
     cargo test --workspace
+
+daemon-matrix-dev *args:
+    cargo nextest run --target-dir target/daemon-matrix-nextest -p idrive --test daemon_sync_matrix --fail-fast -j 1 --failure-output immediate-final {{args}} -- --skip live_daemons_initial_merge_existing_trees_from_both_peers --skip live_daemons_provider_write_viewer_to_viewer_latency_probe --skip live_daemons_sync_when_relay_drops_root_events_after_fips_connect --skip provider_visibility_tests::live_daemons_provider_add_appears_on_all_connected_devices --skip live_daemons_preserve_virtual_delete_across_source_restart --skip live_daemons_reconnect_sender_and_receiver_without_losing_updates
+
+daemon-matrix-fail-fast *args:
+    cargo nextest run --target-dir target/daemon-matrix-nextest -p idrive --test daemon_sync_matrix --fail-fast -j 1 --failure-output immediate-final {{args}}
+
+daemon-matrix-rerun-failed *args:
+    cargo nextest run --target-dir target/daemon-matrix-nextest -p idrive --test daemon_sync_matrix --rerun latest -j 1 --failure-output immediate-final {{args}}
 
 verify-fast:
     ./scripts/verify.sh fast

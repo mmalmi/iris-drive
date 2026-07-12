@@ -15,6 +15,7 @@ const DIRECT_ROOT_PEER_REFRESH_INTERVAL_SECS: u64 = 30;
 const DIRECT_ROOT_REPAIR_INTERVAL_SECS: u64 = 300;
 const RELAY_STATUS_PROBE_INTERVAL_SECS: u64 = 120;
 const STATUS_PROBE_TASK_KEY: &str = "status_probe";
+const DAEMON_TOKIO_WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
 
 #[allow(
     clippy::needless_pass_by_value,
@@ -41,6 +42,7 @@ pub(crate) fn cmd_daemon(
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(4)
+        .thread_stack_size(DAEMON_TOKIO_WORKER_STACK_BYTES)
         .enable_all()
         .build()
         .context("building tokio runtime")?;

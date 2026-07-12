@@ -210,14 +210,14 @@ impl SyncCluster {
     }
 
     async fn wait_until_authorized(&self) {
+        let expected_devices = self.clients().len() as u64;
         self.wait_until("linked peers authorized", || {
-            self.clients()
-                .into_iter()
-                .filter(|client| *client != Client::Windows)
-                .all(|client| {
-                    let status = run_json(self.config_path(client), &["status"]);
-                    status["profile"]["authorization_state"] == "authorized"
-                })
+            self.clients().into_iter().all(|client| {
+                let status = run_json(self.config_path(client), &["status"]);
+                status["profile"]["authorization_state"] == "authorized"
+                    && status["network"]["authorized_app_key_count"].as_u64()
+                        == Some(expected_devices)
+            })
         })
         .await;
     }
@@ -731,7 +731,7 @@ struct DaemonChild {
 
 impl DaemonChild {
     fn spawn(config_dir: &Path, relay_url: &str, log_path: PathBuf, gateway_port: u16) -> Self {
-        Self::spawn_inner(config_dir, relay_url, log_path, gateway_port, None, "")
+        Self::spawn_inner(config_dir, relay_url, log_path, gateway_port, None, "", None)
     }
 
     fn spawn_with_fips_peers(
@@ -749,6 +749,27 @@ impl DaemonChild {
             gateway_port,
             Some(fips_port),
             static_peers,
+            None,
+        )
+    }
+
+    fn spawn_with_fips_peers_and_open_discovery(
+        config_dir: &Path,
+        relay_url: &str,
+        log_path: PathBuf,
+        gateway_port: u16,
+        fips_port: u16,
+        static_peers: &str,
+        open_discovery_max_pending: usize,
+    ) -> Self {
+        Self::spawn_inner(
+            config_dir,
+            relay_url,
+            log_path,
+            gateway_port,
+            Some(fips_port),
+            static_peers,
+            Some(open_discovery_max_pending),
         )
     }
 
@@ -759,6 +780,7 @@ impl DaemonChild {
         gateway_port: u16,
         fips_port: Option<u16>,
         static_peers: &str,
+        open_discovery_max_pending: Option<usize>,
     ) -> Self {
         let mut stdout = OpenOptions::new()
             .create(true)
@@ -783,6 +805,12 @@ impl DaemonChild {
             .env("IRIS_DRIVE_FIPS_UDP_PUBLIC", "false");
         if !static_peers.trim().is_empty() {
             command.env("IRIS_DRIVE_FIPS_STATIC_PEERS", static_peers);
+        }
+        if let Some(open_discovery_max_pending) = open_discovery_max_pending {
+            command.env(
+                "IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING",
+                open_discovery_max_pending.to_string(),
+            );
         }
         let child = command
             .args([
