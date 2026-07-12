@@ -1037,28 +1037,28 @@ function buildAndroidArtifacts({ env, tag, dryRun }) {
   }
 }
 
-function buildWindowsArtifacts({ env, tag, dryRun }) {
+function buildWindowsArtifacts({ env, tag, dryRun, requireSigning }) {
   if (!dryRun && process.platform !== 'win32') {
     throw new SkipStepError('Windows release artifacts must be built on Windows.')
   }
-  run(
-    'powershell.exe',
-    [
-      '-NoProfile',
-      '-ExecutionPolicy',
-      'Bypass',
-      '-File',
-      join(repoRoot, 'scripts', 'windows-publish.ps1'),
-      '-Configuration',
-      'Release',
-      '-Installer',
-      '-Tag',
-      tag,
-      '-OutputDir',
-      distDir,
-    ],
-    { dryRun, env },
-  )
+  const args = [
+    '-NoProfile',
+    '-ExecutionPolicy',
+    'Bypass',
+    '-File',
+    join(repoRoot, 'scripts', 'windows-publish.ps1'),
+    '-Configuration',
+    'Release',
+    '-Installer',
+    '-Tag',
+    tag,
+    '-OutputDir',
+    distDir,
+  ]
+  if (requireSigning) {
+    args.push('-RequireSigning')
+  }
+  run('powershell.exe', args, { dryRun, env })
   const cliPath = join(repoRoot, 'target', 'release', 'idrive.exe')
   const cliZipPath = join(distDir, `idrive-${tag}-x86_64-pc-windows-msvc.zip`)
   if (!dryRun) {
@@ -1125,6 +1125,7 @@ function resolveIosTestFlightChannels(env) {
 function buildReleaseArtifacts({ env, tag, options }) {
   const steps = selectedBuildSteps(options)
   const signedAndroid = androidSigningIsComplete(env)
+  const requireWindowsSigning = options.publish && !options.draft && !boolEnv(env.IRIS_DRIVE_ALLOW_UNSIGNED_WINDOWS)
   console.log(`Release build steps: ${steps.join(', ') || '(none)'}`)
   console.log(
     `Planned dist artifacts: ${plannedReleaseAssetNames(tag, steps, { signedAndroid }).join(', ') || '(none)'}`,
@@ -1133,7 +1134,16 @@ function buildReleaseArtifacts({ env, tag, options }) {
     ['platform-versions', () => syncPlatformVersions({ tag, dryRun: options.dryRun })],
     ['macos', () => buildMacosArtifacts({ env, tag, dryRun: options.dryRun })],
     ['linux', () => buildLinuxArtifacts({ env, tag, dryRun: options.dryRun })],
-    ['windows', () => buildWindowsArtifacts({ env, tag, dryRun: options.dryRun })],
+    [
+      'windows',
+      () =>
+        buildWindowsArtifacts({
+          env,
+          tag,
+          dryRun: options.dryRun,
+          requireSigning: requireWindowsSigning,
+        }),
+    ],
     ['android', () => buildAndroidArtifacts({ env, tag, dryRun: options.dryRun })],
     ['ios', () => buildIosTestFlight({ env, tag, dryRun: options.dryRun })],
   ])

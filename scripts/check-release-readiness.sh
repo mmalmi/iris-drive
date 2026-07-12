@@ -152,6 +152,7 @@ require_contains zapstore.yaml "release_source: dist/zapstore-current-android-ar
 require_contains .env.release.example "IRIS_DRIVE_RELEASE_TREE=releases/iris-drive"
 require_contains .env.release.example "IRIS_DRIVE_RELEASE_RESOLVER_REFRESH_BASE_URLS="
 require_contains scripts/windows-publish.ps1 '[switch]$Installer'
+require_contains scripts/windows-publish.ps1 '[switch]$RequireSigning'
 require_contains scripts/windows-publish.ps1 "Invoke-WindowsSign"
 require_contains scripts/windows-publish.ps1 "signtool"
 require_contains scripts/windows-installer.iss "OutputBaseFilename"

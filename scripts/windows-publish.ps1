@@ -14,6 +14,8 @@ param(
 
   [switch]$Installer,
 
+  [switch]$RequireSigning,
+
   [string]$Tag,
 
   [string]$OutputDir
@@ -93,6 +95,12 @@ function Test-WindowsSigningConfigured {
   )
 }
 
+function Assert-WindowsSigningConfigured {
+  if (-not (Test-WindowsSigningConfigured)) {
+    throw "Windows signing is required, but no Authenticode signing input is configured. Set IRIS_DRIVE_WINDOWS_SIGNTOOL_CERT_SHA1 or IRIS_DRIVE_WINDOWS_SIGNTOOL_PFX_PATH."
+  }
+}
+
 function Invoke-WindowsSign {
   param([string]$Path)
 
@@ -133,6 +141,10 @@ function Resolve-OutputPath {
 if ($StopRunningApp) {
   Get-Process IrisDrive -ErrorAction SilentlyContinue | Stop-Process -Force
   Get-Process idrive -ErrorAction SilentlyContinue | Stop-Process -Force
+}
+
+if ($RequireSigning) {
+  Assert-WindowsSigningConfigured
 }
 
 if (-not $SkipCliBuild) {

@@ -552,6 +552,7 @@ test('local-release final dry-run can plan Zapstore publish from signed Android 
   )
 
   assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /-RequireSigning/)
   assert.match(result.stdout, /Would publish iris-drive-v9\.9\.9-android-arm64\.apk to Zapstore/)
 })
 
@@ -573,6 +574,7 @@ test('local-release dry-run builds the Windows installer in dist', () => {
   assert.equal(result.status, 0, result.stderr)
   assert.match(result.stdout, /scripts\/windows-publish\.ps1/)
   assert.match(result.stdout, /-Installer/)
+  assert.doesNotMatch(result.stdout, /-RequireSigning/)
   assert.match(result.stdout, /-Tag/)
   assert.match(result.stdout, /v9\.9\.9/)
 })
