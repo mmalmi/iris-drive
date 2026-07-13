@@ -64,26 +64,48 @@ pub(super) async fn send_native_device_approval_applied_ack(
             ack.as_json().into_bytes(),
         )
         .await;
-    let relay_result = tokio::time::timeout(
+    if fips_result.is_ok() {
+        let relay_client = relay_client.clone();
+        tokio::spawn(async move {
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS),
+                iris_drive_core::relay_sync::publish_device_approval_applied_ack(
+                    &relay_client,
+                    &ack,
+                ),
+            )
+            .await
+            {
+                Ok(Ok(_)) => {}
+                Ok(Err(error)) => tracing::warn!(
+                    error = %error,
+                    "publishing redundant device approval applied ACK failed"
+                ),
+                Err(_) => {
+                    tracing::warn!("publishing redundant device approval applied ACK timed out")
+                }
+            }
+        });
+        return Ok(());
+    }
+
+    let fips_error = fips_result.unwrap_err();
+    tracing::warn!(
+        error = %fips_error,
+        "sending device approval applied ACK over FIPS failed"
+    );
+    match tokio::time::timeout(
         std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS),
         iris_drive_core::relay_sync::publish_device_approval_applied_ack(relay_client, &ack),
     )
-    .await;
-    if fips_result.is_err() && !matches!(relay_result, Ok(Ok(_))) {
-        return Err(format!(
-            "sending device approval applied ACK failed over FIPS ({}) and relays",
-            fips_result.unwrap_err()
-        ));
+    .await
+    {
+        Ok(Ok(_)) => Ok(()),
+        Ok(Err(error)) => Err(format!(
+            "sending device approval applied ACK failed over FIPS ({fips_error}) and relays ({error})"
+        )),
+        Err(_) => Err(format!(
+            "sending device approval applied ACK failed over FIPS ({fips_error}) and relays timed out"
+        )),
     }
-    if let Err(error) = fips_result {
-        tracing::warn!(error = %error, "sending device approval applied ACK over FIPS failed");
-    }
-    match relay_result {
-        Ok(Ok(_)) => {}
-        Ok(Err(error)) => {
-            tracing::warn!(error = %error, "publishing device approval applied ACK failed")
-        }
-        Err(_) => tracing::warn!("publishing device approval applied ACK timed out"),
-    }
-    Ok(())
 }

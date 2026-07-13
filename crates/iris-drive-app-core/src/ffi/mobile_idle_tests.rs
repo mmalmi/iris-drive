@@ -57,6 +57,20 @@ fn mobile_app_key_link_exchange_runs_only_for_rostered_idle_state_or_approval() 
         phone_dir.path(),
         Some("Phone".to_owned()),
     );
+    apply_owner_approval_receipt_to_linked_config(owner_dir.path(), phone_dir.path());
+    let receipt_only = AppConfig::load_or_default(config_path_in(phone_dir.path())).unwrap();
+    assert_eq!(
+        receipt_only
+            .profile
+            .as_ref()
+            .map(|profile| profile.authorization_state),
+        Some(AppKeyAuthorizationState::Authorized)
+    );
+    assert!(native_app_key_link_exchange_should_run(
+        &receipt_only,
+        false
+    ));
+
     apply_owner_profile_roster_to_linked_config(owner_dir.path(), phone_dir.path());
     mark_daemon_live(phone_dir.path());
 
@@ -161,6 +175,19 @@ fn apply_owner_profile_roster_to_linked_config(owner_dir: &Path, linked_dir: &Pa
         sent_at: 123,
     };
     let mut linked_config = AppConfig::load_or_default(config_path_in(linked_dir)).unwrap();
+    iris_drive_core::relay_sync::apply_app_key_link_roster_frame(
+        &mut linked_config,
+        &roster_frame,
+        &owner_state.app_key_pubkey,
+    )
+    .unwrap();
+    linked_config.save(config_path_in(linked_dir)).unwrap();
+}
+
+fn apply_owner_approval_receipt_to_linked_config(owner_dir: &Path, linked_dir: &Path) {
+    let owner_config = AppConfig::load_or_default(config_path_in(owner_dir)).unwrap();
+    let owner_state = owner_config.profile.as_ref().unwrap();
+    let mut linked_config = AppConfig::load_or_default(config_path_in(linked_dir)).unwrap();
     for receipt in &owner_state.pending_device_approval_receipts {
         let event = Event::from_json(&receipt.event_json).unwrap();
         iris_drive_core::relay_sync::apply_remote_device_approval_receipt_event(
@@ -169,12 +196,6 @@ fn apply_owner_profile_roster_to_linked_config(owner_dir: &Path, linked_dir: &Pa
         )
         .unwrap();
     }
-    iris_drive_core::relay_sync::apply_app_key_link_roster_frame(
-        &mut linked_config,
-        &roster_frame,
-        &owner_state.app_key_pubkey,
-    )
-    .unwrap();
     linked_config.save(config_path_in(linked_dir)).unwrap();
 }
 

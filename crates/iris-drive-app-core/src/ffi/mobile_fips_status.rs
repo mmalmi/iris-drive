@@ -73,14 +73,18 @@ pub(super) fn native_app_key_link_exchange_should_run(
     config: &AppConfig,
     sync_running: bool,
 ) -> bool {
-    match config
-        .profile
-        .as_ref()
-        .map(|profile| profile.authorization_state)
-    {
-        Some(AppKeyAuthorizationState::Authorized) => sync_running,
-        Some(AppKeyAuthorizationState::AwaitingApproval) => true,
-        _ => false,
+    let Some(profile) = config.profile.as_ref() else {
+        return false;
+    };
+    match profile.authorization_state {
+        AppKeyAuthorizationState::Authorized => {
+            sync_running
+                || !profile
+                    .current_app_keys_projection()
+                    .is_some_and(|roster| roster.contains(&profile.app_key_pubkey))
+        }
+        AppKeyAuthorizationState::AwaitingApproval => true,
+        AppKeyAuthorizationState::Revoked => false,
     }
 }
 
