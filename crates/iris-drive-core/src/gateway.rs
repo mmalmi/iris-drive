@@ -113,11 +113,7 @@ pub struct GatewayServer {
 ///
 /// The browser keeps the original Iris-local URL and origin, while the proxy
 /// forwards only those hosts to the already-running gateway on loopback.
-pub struct GatewayProxyServer {
-    local_addr: SocketAddr,
-    shutdown_tx: Option<oneshot::Sender<()>>,
-    handle: Option<JoinHandle<Result<(), GatewayError>>>,
-}
+pub type GatewayProxyServer = GatewayServer;
 
 impl GatewayServer {
     pub async fn bind(
@@ -185,34 +181,6 @@ impl GatewayServer {
         })
     }
 
-    #[must_use]
-    pub fn local_addr(&self) -> SocketAddr {
-        self.local_addr
-    }
-
-    pub async fn shutdown(mut self) -> Result<(), GatewayError> {
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(());
-        }
-        if let Some(handle) = self.handle.take() {
-            handle
-                .await
-                .map_err(|e| GatewayError::Task(e.to_string()))?
-        } else {
-            Ok(())
-        }
-    }
-}
-
-impl Drop for GatewayServer {
-    fn drop(&mut self) {
-        if let Some(tx) = self.shutdown_tx.take() {
-            let _ = tx.send(());
-        }
-    }
-}
-
-impl GatewayProxyServer {
     pub async fn bind_for_gateway(gateway_addr: SocketAddr) -> Result<Self, GatewayError> {
         let listener =
             TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).await?;
@@ -248,7 +216,7 @@ impl GatewayProxyServer {
     }
 }
 
-impl Drop for GatewayProxyServer {
+impl Drop for GatewayServer {
     fn drop(&mut self) {
         if let Some(tx) = self.shutdown_tx.take() {
             let _ = tx.send(());
