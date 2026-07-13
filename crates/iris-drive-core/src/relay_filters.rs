@@ -48,6 +48,7 @@ pub fn subscription_filters_for_shared_roots(
         push_drive_root_filters(&mut filters, &share_scope, crate::PRIMARY_DRIVE_ID);
     }
     if let Ok(current_app_key) = PublicKey::from_hex(current_app_key_pubkey_hex) {
+        filters.push(device_approval_applied_ack_filter(current_app_key));
         let mut tree_names = vec![drive_id, CALENDAR_TREE_NAME];
         tree_names.sort_unstable();
         tree_names.dedup();
@@ -67,22 +68,40 @@ pub fn subscription_filters_for_shared_roots(
     filters
 }
 
+pub(crate) fn device_approval_applied_ack_filter(admin_app_key: PublicKey) -> Filter {
+    Filter::new()
+        .kind(nostr_sdk::Kind::from(KIND_NOSTR_IDENTITY_ROSTER_OP))
+        .custom_tag(
+            SingleLetterTag::lowercase(nostr_sdk::Alphabet::P),
+            admin_app_key.to_hex(),
+        )
+        .limit(64)
+}
+
 #[must_use]
 pub fn device_approval_receipt_filter(state: &crate::ProfileState) -> Option<Filter> {
+    device_approval_receipt_subscription(state).map(|(_, filter)| filter)
+}
+
+pub(crate) fn device_approval_receipt_subscription(
+    state: &crate::ProfileState,
+) -> Option<(String, Filter)> {
     let pending = state.outbound_app_key_link_request.as_ref()?;
     let (bootstrap, _) =
         crate::app_key_link_transport::parse_pending_app_key_approval_bootstrap(pending).ok()?;
     let request_pubkey = PublicKey::parse(&bootstrap.request_npub).ok()?;
-    Some(
+    let request_pubkey_hex = request_pubkey.to_hex();
+    Some((
+        request_pubkey_hex.clone(),
         Filter::new()
             .kind(nostr_sdk::Kind::from(KIND_NOSTR_IDENTITY_ROSTER_OP))
             .custom_tag(
                 SingleLetterTag::lowercase(nostr_sdk::Alphabet::P),
-                request_pubkey.to_hex(),
+                request_pubkey_hex,
             )
             .since(Timestamp::from(pending.requested_at))
             .limit(8),
-    )
+    ))
 }
 
 fn push_drive_root_filters(filters: &mut Vec<Filter>, root_scope_id: &str, drive_id: &str) {

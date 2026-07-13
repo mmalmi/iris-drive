@@ -6,7 +6,9 @@ use crate::nostr_events::{
     build_private_hashtree_root_event, drive_root_d_tag,
 };
 use crate::nostr_identity::{
-    NostrIdentityCapabilities, NostrIdentityFacet, NostrIdentityId, NostrIdentityRosterOp,
+    NOSTR_IDENTITY_DEVICE_APPROVAL_APPLIED_ACK_SCHEMA, NostrIdentityCapabilities,
+    NostrIdentityDeviceApprovalAppliedAck, NostrIdentityFacet, NostrIdentityId,
+    NostrIdentityRosterOp, build_nostr_identity_device_approval_applied_ack_event,
     build_nostr_identity_roster_op_event,
 };
 use crate::profile::{AppKeyAuthorizationState, Profile};
@@ -129,6 +131,36 @@ fn relay_event_retention_policy_accepts_subscription_events() {
     assert_eq!(policy.max_events, RELAY_SYNC_EVENT_CACHE_LIMIT);
     assert!(relay_event_matches_policy(&policy, &profile_op));
     assert!(!relay_event_matches_policy(&policy, &unrelated));
+}
+
+#[test]
+fn relay_event_retention_policy_accepts_device_approval_applied_ack_for_admin() {
+    let dir = tempdir().unwrap();
+    let (_cfg, admin) = config_with_owner_account(dir.path());
+    let device = Keys::generate();
+    let request = Keys::generate();
+    let approval_event_id = profile_event(&admin.state.profile_roster_ops[0])
+        .id
+        .to_hex();
+    let ack = build_nostr_identity_device_approval_applied_ack_event(
+        &device,
+        NostrIdentityDeviceApprovalAppliedAck {
+            schema: NOSTR_IDENTITY_DEVICE_APPROVAL_APPLIED_ACK_SCHEMA,
+            request_pubkey: request.public_key().to_hex(),
+            device_app_key_pubkey: device.public_key().to_hex(),
+            approval_event_id,
+            approved_by_pubkey: admin.state.app_key_pubkey.clone(),
+            applied_at: 1,
+        },
+    )
+    .unwrap();
+    let policy = event_retention_policy(subscription_filters(
+        &admin.state.app_key_pubkey,
+        &admin.state.root_scope_id(),
+        crate::PRIMARY_DRIVE_ID,
+    ));
+
+    assert!(relay_event_matches_policy(&policy, &ack));
 }
 
 fn encrypted_root(seed: u8, published_at: i64, dck_generation: u64) -> AppKeyRootRef {

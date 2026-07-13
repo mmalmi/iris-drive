@@ -36,7 +36,7 @@ pub(crate) fn drive_root_apply_outcome_is_retryable(
     clippy::too_many_lines
 )]
 pub(crate) async fn apply_one_event(
-    _client: &nostr_sdk::Client,
+    client: &nostr_sdk::Client,
     config_dir: &std::path::Path,
     event: &nostr_sdk::Event,
     fips_blocks: Option<Arc<FsFipsBlockSync>>,
@@ -47,7 +47,33 @@ pub(crate) async fn apply_one_event(
     let config_lock = ConfigMutationLock::acquire(config_dir).await?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let kind = event.kind.as_u16();
-    if relay_sync::is_device_approval_receipt_event(event) {
+    if relay_sync::is_device_approval_applied_ack_event(event) {
+        let changed = match config.profile.as_mut() {
+            Some(state) => {
+                iris_drive_core::app_key_link_transport::apply_device_approval_applied_ack_event(
+                    state, event,
+                )?
+            }
+            None => false,
+        };
+        if changed {
+            config.save(config_path_in(config_dir))?;
+        }
+        emit_daemon_status_event(
+            config_dir,
+            json!({
+                "event": "nostr_identity_device_approval_applied_ack",
+                "event_id": event.id.to_hex(),
+                "author": pubkey_npub(&event.pubkey.to_hex()),
+                "outcome": if changed { "applied" } else { "ignored" },
+            }),
+        );
+        return Ok(if changed {
+            EventApplyOutcome::Changed
+        } else {
+            EventApplyOutcome::Unchanged
+        });
+    } else if relay_sync::is_device_approval_receipt_event(event) {
         let outcome = relay_sync::apply_remote_device_approval_receipt_event(&mut config, event)?;
         emit_daemon_status_event(
             config_dir,
@@ -58,15 +84,53 @@ pub(crate) async fn apply_one_event(
                 "outcome": format!("{outcome:?}"),
             }),
         );
+        let should_ack = matches!(
+            outcome,
+            relay_sync::NostrIdentityRosterOpApply::Applied
+                | relay_sync::NostrIdentityRosterOpApply::Current
+        );
         if matches!(outcome, relay_sync::NostrIdentityRosterOpApply::Applied) {
             config.save(config_path_in(config_dir))?;
-            drop(config_lock);
+        }
+        drop(config_lock);
+        if should_ack {
+            let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
+                .context("loading app key for approval ACK")?;
+            let ack = iris_drive_core::app_key_link_transport::device_approval_applied_ack_event(
+                config.profile.as_ref().ok_or_else(|| anyhow::anyhow!("profile disappeared"))?,
+                device.keys(),
+                event,
+                crate::provider_staging::unix_now_seconds(),
+            )?;
+            if let Err(error) = relay_sync::publish_device_approval_applied_ack(client, &ack).await {
+                emit_daemon_status_event(
+                    config_dir,
+                    json!({"event": "device_approval_applied_ack_publish_error", "error": format!("{error:#}")}),
+                );
+            }
             if let Some(sync) = fips_blocks.as_deref() {
+                let parsed = iris_drive_core::nostr_identity::parse_nostr_identity_device_approval_applied_ack_event(&ack)?;
+                if let Err(error) = sync
+                    .send_app_message(
+                        &pubkey_npub(&parsed.approved_by_pubkey),
+                        crate::profile::APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC,
+                        ack.as_json().into_bytes(),
+                    )
+                    .await
+                {
+                    emit_daemon_status_event(
+                        config_dir,
+                        json!({"event": "device_approval_applied_ack_fips_error", "error": format!("{error:#}")}),
+                    );
+                }
                 sync.refresh_authorized_peers(&config).await;
             }
-            return Ok(EventApplyOutcome::Changed);
         }
-        return Ok(EventApplyOutcome::Unchanged);
+        return Ok(if matches!(outcome, relay_sync::NostrIdentityRosterOpApply::Applied) {
+            EventApplyOutcome::Changed
+        } else {
+            EventApplyOutcome::Unchanged
+        });
     } else if iris_drive_core::is_nostr_identity_roster_op_event_coordinate(event) {
         let outcome = relay_sync::apply_remote_nostr_identity_roster_op_event(&mut config, event)?;
         emit_daemon_status_event(

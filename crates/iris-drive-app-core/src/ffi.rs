@@ -12,11 +12,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 use iris_drive_core::app_key_link_transport::{
-    APP_KEY_APPROVAL_RECEIPT_APP_TOPIC, APP_KEY_LINK_REQUEST_APP_TOPIC,
-    APP_KEY_LINK_ROSTER_ACK_APP_TOPIC, APP_KEY_LINK_ROSTER_APP_TOPIC, AppKeyLinkRequestFrame,
-    AppKeyLinkRosterAckFrame, AppKeyLinkRosterFrame, app_key_link_roster_ack_frame,
-    app_key_link_roster_ack_matches_state, app_key_link_roster_frame,
-    app_key_link_roster_recipients, pending_app_key_link_request_frame,
+    APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC, APP_KEY_APPROVAL_RECEIPT_APP_TOPIC,
+    APP_KEY_LINK_REQUEST_APP_TOPIC, APP_KEY_LINK_ROSTER_ACK_APP_TOPIC,
+    APP_KEY_LINK_ROSTER_APP_TOPIC, AppKeyLinkRequestFrame, AppKeyLinkRosterAckFrame,
+    AppKeyLinkRosterFrame, app_key_link_roster_ack_frame, app_key_link_roster_ack_matches_state,
+    app_key_link_roster_frame, app_key_link_roster_recipients, pending_app_key_link_request_frame,
 };
 use iris_drive_core::app_key_link_transport::{
     AppKeyApprovalBootstrap, create_app_key_approval_bootstrap,
@@ -198,12 +198,20 @@ enum NativeAppKeyLinkRelayEventApply {
     Ignored,
     Current,
     AppliedRoster,
+    AppliedApprovalAck,
 }
 
 #[path = "ffi/app_key_link_urls.rs"]
 mod app_key_link_urls;
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+#[path = "ffi/device_approval_ack.rs"]
+mod device_approval_ack;
 use app_key_link_urls::{
     app_key_link_invite_url, app_key_link_request_url, ensure_cached_app_key_link_request_url,
+};
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+use device_approval_ack::{
+    handle_native_device_approval_applied_ack, send_native_device_approval_applied_ack,
 };
 use snapshot_link::{drive_link_for_cid_value, update_snapshot_link};
 
@@ -212,6 +220,22 @@ fn apply_native_app_key_link_relay_event_to_config(
     config: &mut AppConfig,
     event: &Event,
 ) -> Result<NativeAppKeyLinkRelayEventApply, String> {
+    if iris_drive_core::relay_sync::is_device_approval_applied_ack_event(event) {
+        let changed = match config.profile.as_mut() {
+            Some(state) => {
+                iris_drive_core::app_key_link_transport::apply_device_approval_applied_ack_event(
+                    state, event,
+                )
+                .map_err(|error| format!("applying device approval applied ACK: {error}"))?
+            }
+            None => false,
+        };
+        return Ok(if changed {
+            NativeAppKeyLinkRelayEventApply::AppliedApprovalAck
+        } else {
+            NativeAppKeyLinkRelayEventApply::Ignored
+        });
+    }
     if event.kind.as_u16() == iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP {
         let outcome = if iris_drive_core::relay_sync::is_device_approval_receipt_event(event) {
             iris_drive_core::relay_sync::apply_remote_device_approval_receipt_event(config, event)
@@ -2111,6 +2135,8 @@ async fn run_app_key_link_exchange_async(
     iris_drive_core::relay_sync::subscribe_device_approval_events(&relay_client, account_state)
         .await
         .map_err(|error| format!("subscribing to device approval events: {error}"))?;
+    let mut relay_subscriptions =
+        iris_drive_core::relay_sync::AppKeyLinkRelaySubscriptionState::from_profile(account_state);
     let daemon = iris_drive_core::Daemon::open(config_dir)
         .map_err(|error| format!("opening block store: {error}"))?;
     let local = daemon.tree().get_store().clone();
@@ -2146,6 +2172,7 @@ async fn run_app_key_link_exchange_async(
         &mut published_roster_op_ids,
         &acked_rosters,
         &mut app_key_link_config_cache,
+        &mut relay_subscriptions,
     )
     .await
     {
@@ -2179,6 +2206,7 @@ async fn run_app_key_link_exchange_async(
                     &mut published_roster_op_ids,
                     &acked_rosters,
                     &mut app_key_link_config_cache,
+                    &mut relay_subscriptions,
                 ).await {
                     tracing::warn!(error = %error, "native app-key-link FIPS tick failed");
                 }
@@ -2246,6 +2274,7 @@ async fn run_app_key_link_exchange_async(
                         for message in messages {
                             if let Err(error) = handle_native_app_key_link_app_message(
                                 config_dir,
+                                &relay_client,
                                 &sync,
                                 &message,
                                 &mut acked_rosters,
@@ -2274,6 +2303,7 @@ async fn run_app_key_link_exchange_async(
                         let is_device_approval_receipt =
                             iris_drive_core::relay_sync::is_device_approval_receipt_event(&event);
                         if event.kind.as_u16() == iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP
+                            && !is_device_approval_receipt
                             && AppConfig::load_or_default(config_path_in(config_dir))
                                 .map_err(|error| {
                                     format!("loading approval state before ordinary roster: {error}")
@@ -2291,7 +2321,12 @@ async fn run_app_key_link_exchange_async(
                             // Approval receipts are subscribed on the same relay client as normal
                             // app-key-link traffic.
                         }
-                        if let Err(error) = handle_native_app_key_link_relay_event(config_dir, &event) {
+                        if let Err(error) = handle_native_app_key_link_relay_event(
+                            config_dir,
+                            &relay_client,
+                            &sync,
+                            &event,
+                        ).await {
                             tracing::warn!(error = %error, event_id = %event.id.to_hex(), "handling native app-key-link relay event failed");
                         }
                     }
@@ -2321,12 +2356,20 @@ async fn drive_app_key_link_exchange_tick(
     published_roster_op_ids: &mut BTreeSet<String>,
     acked_rosters: &BTreeSet<String>,
     config_cache: &mut NativeAppConfigCache,
+    relay_subscriptions: &mut iris_drive_core::relay_sync::AppKeyLinkRelaySubscriptionState,
 ) -> Result<bool, String> {
     let config = config_cache.load(config_dir)?;
     let Some(state) = config.profile.as_ref() else {
         return Ok(false);
     };
 
+    iris_drive_core::relay_sync::refresh_app_key_link_relay_subscriptions(
+        relay_client,
+        state,
+        relay_subscriptions,
+    )
+    .await
+    .map_err(|error| format!("refreshing app-key-link relay subscriptions: {error}"))?;
     sync.refresh_authorized_peers(&config).await;
     send_native_pending_app_key_link_request(sync, state, sent_requests).await?;
     publish_native_profile_roster_ops(relay_client, state, published_roster_op_ids).await?;
@@ -2568,6 +2611,7 @@ async fn send_native_authorized_app_key_link_rosters(
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 async fn handle_native_app_key_link_app_message(
     config_dir: &Path,
+    relay_client: &nostr_sdk::Client,
     sync: &iris_drive_core::FsFipsBlockSync,
     message: &iris_drive_core::FipsAppMessage,
     acked_rosters: &mut BTreeSet<String>,
@@ -2575,7 +2619,10 @@ async fn handle_native_app_key_link_app_message(
     match message.topic.as_str() {
         APP_KEY_LINK_REQUEST_APP_TOPIC => handle_native_app_key_link_request(config_dir, message),
         APP_KEY_APPROVAL_RECEIPT_APP_TOPIC => {
-            handle_native_device_approval_receipt(config_dir, message)
+            handle_native_device_approval_receipt(config_dir, relay_client, sync, message).await
+        }
+        APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC => {
+            handle_native_device_approval_applied_ack(config_dir, message)
         }
         APP_KEY_LINK_ROSTER_APP_TOPIC => {
             handle_native_app_key_link_roster(config_dir, sync, message).await
@@ -2588,8 +2635,10 @@ async fn handle_native_app_key_link_app_message(
 }
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
-fn handle_native_device_approval_receipt(
+async fn handle_native_device_approval_receipt(
     config_dir: &Path,
+    relay_client: &nostr_sdk::Client,
+    sync: &iris_drive_core::FsFipsBlockSync,
     message: &iris_drive_core::FipsAppMessage,
 ) -> Result<bool, String> {
     let event_json = std::str::from_utf8(&message.data)
@@ -2616,6 +2665,7 @@ fn handle_native_device_approval_receipt(
     config
         .save(config_path_in(config_dir))
         .map_err(|error| format!("saving device approval receipt: {error}"))?;
+    send_native_device_approval_applied_ack(config_dir, relay_client, sync, &event).await?;
     Ok(true)
 }
 
@@ -2675,8 +2725,10 @@ fn handle_native_app_key_link_request(
 }
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
-fn handle_native_app_key_link_relay_event(
+async fn handle_native_app_key_link_relay_event(
     config_dir: &Path,
+    relay_client: &nostr_sdk::Client,
+    sync: &iris_drive_core::FsFipsBlockSync,
     event: &nostr_sdk::Event,
 ) -> Result<bool, String> {
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))
@@ -2692,9 +2744,25 @@ fn handle_native_app_key_link_relay_event(
                 app_key_npub = pubkey_npub(&event.pubkey.to_hex()),
                 "applied native app-key-link roster op over relay"
             );
+            if iris_drive_core::relay_sync::is_device_approval_receipt_event(event) {
+                send_native_device_approval_applied_ack(config_dir, relay_client, sync, event)
+                    .await?;
+            }
             Ok(true)
         }
-        NativeAppKeyLinkRelayEventApply::Current => Ok(true),
+        NativeAppKeyLinkRelayEventApply::Current => {
+            if iris_drive_core::relay_sync::is_device_approval_receipt_event(event) {
+                send_native_device_approval_applied_ack(config_dir, relay_client, sync, event)
+                    .await?;
+            }
+            Ok(true)
+        }
+        NativeAppKeyLinkRelayEventApply::AppliedApprovalAck => {
+            config
+                .save(config_path_in(config_dir))
+                .map_err(|error| format!("saving device approval applied ACK: {error}"))?;
+            Ok(true)
+        }
         NativeAppKeyLinkRelayEventApply::Ignored => Ok(false),
     }
 }

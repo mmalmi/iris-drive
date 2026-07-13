@@ -254,7 +254,7 @@ private struct AwaitingApprovalSetupView: View {
                     Button(role: .destructive) {
                         model.logout()
                     } label: {
-                        Label("Log out", systemImage: "rectangle.portrait.and.arrow.right")
+                        Label("Start over", systemImage: "arrow.counterclockwise")
                     }
                 }
             }

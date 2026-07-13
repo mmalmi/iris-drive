@@ -2239,10 +2239,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 DispatchQueue.main.async {
                     self.updateStatus(success)
                     if restartSyncAfterSuccess {
-                        if IrisDriveStatus.shared.daemonRunning {
-                            self.restartSync()
+                        if self.externalDaemonMode {
+                            self.refreshStatus()
+                        } else if self.daemonServiceSupervisionEnabled && self.daemon == nil {
+                            self.userRequestedSyncStop = false
+                            self.startDaemonService(
+                                self.idriveExecutableURL(),
+                                paths: paths,
+                                forceRestart: true
+                            )
                         } else {
-                            self.startSync()
+                            self.restartSync()
                         }
                     }
                     completion?()

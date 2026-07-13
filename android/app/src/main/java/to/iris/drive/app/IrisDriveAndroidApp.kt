@@ -477,7 +477,7 @@ private fun AwaitingApprovalContent(
                         modifier = Modifier.fillMaxWidth().height(48.dp),
                         shape = RoundedCornerShape(6.dp),
                     ) {
-                        Text("Log out")
+                        Text("Start over")
                     }
                 }
                 SetupRoute.RestoreRecoveryPhrase -> {

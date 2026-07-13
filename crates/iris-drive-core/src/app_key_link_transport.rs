@@ -2,10 +2,13 @@ use anyhow::{Context, Result};
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use nostr_identity::{
+    NOSTR_IDENTITY_DEVICE_APPROVAL_APPLIED_ACK_SCHEMA, NostrIdentityDeviceApprovalAppliedAck,
     NostrIdentityDeviceApprovalReceipt, NostrIdentityRosterOp,
     ParseNostrIdentityDeviceApprovalReceiptForBootstrapOptions,
+    build_nostr_identity_device_approval_applied_ack_event,
     encode_nostr_identity_device_approval_bootstrap,
     nostr_identity_device_approval_bootstrap_has_prefix,
+    parse_nostr_identity_device_approval_applied_ack_event,
     parse_nostr_identity_device_approval_bootstrap,
     parse_nostr_identity_device_approval_receipt_event_for_bootstrap_with_options,
     parse_nostr_identity_device_approval_receipt_roster_op,
@@ -21,6 +24,8 @@ pub const APP_KEY_LINK_REQUEST_APP_TOPIC: &str = "iris-drive/app-key-link/v1/req
 pub const APP_KEY_LINK_ROSTER_APP_TOPIC: &str = "iris-drive/app-key-link/v1/roster";
 pub const APP_KEY_LINK_ROSTER_ACK_APP_TOPIC: &str = "iris-drive/app-key-link/v1/roster-ack";
 pub const APP_KEY_APPROVAL_RECEIPT_APP_TOPIC: &str = "iris-drive/device-approval/v1/receipt";
+pub const APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC: &str =
+    "iris-drive/device-approval/v1/applied-ack";
 pub const APP_KEY_APPROVAL_REQUEST_PREFIX: &str = "https://drive.iris.to/approve-device/";
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -313,6 +318,61 @@ pub fn parse_pending_app_key_approval_receipt_event(
     .context("validating device approval receipt")
 }
 
+/// Build the shared, device-AppKey-signed proof that an exact approval receipt
+/// has been durably applied locally.
+pub fn device_approval_applied_ack_event(
+    state: &ProfileState,
+    device_app_key_keys: &Keys,
+    approval_event: &Event,
+    applied_at: u64,
+) -> Result<Event> {
+    let pending = state
+        .outbound_app_key_link_request
+        .as_ref()
+        .context("device approval request is no longer pending")?;
+    let receipt = parse_pending_app_key_approval_receipt_event(pending, approval_event)?;
+    if state.authorization_state != AppKeyAuthorizationState::Authorized {
+        anyhow::bail!("device approval was not durably applied as authorized");
+    }
+    build_nostr_identity_device_approval_applied_ack_event(
+        device_app_key_keys,
+        NostrIdentityDeviceApprovalAppliedAck {
+            schema: NOSTR_IDENTITY_DEVICE_APPROVAL_APPLIED_ACK_SCHEMA,
+            request_pubkey: receipt.request_pubkey,
+            device_app_key_pubkey: receipt.device_app_key_pubkey,
+            approval_event_id: approval_event.id.to_hex(),
+            approved_by_pubkey: receipt.approved_by_pubkey,
+            applied_at: i64::try_from(applied_at).context("approval ACK timestamp overflow")?,
+        },
+    )
+    .context("building device approval applied ACK")
+}
+
+/// Remove a pending approval receipt only after validating the shared signed
+/// durable-apply ACK against every exact receipt coordinate.
+pub fn apply_device_approval_applied_ack_event(
+    state: &mut ProfileState,
+    event: &Event,
+) -> Result<bool> {
+    let ack = parse_nostr_identity_device_approval_applied_ack_event(event)
+        .context("validating device approval applied ACK")?;
+    if !state.can_admin_profile() || ack.approved_by_pubkey != state.app_key_pubkey {
+        return Ok(false);
+    }
+    let before = state.pending_device_approval_receipts.len();
+    state.pending_device_approval_receipts.retain(|pending| {
+        if pending.request_pubkey != ack.request_pubkey
+            || pending.device_app_key_pubkey != ack.device_app_key_pubkey
+        {
+            return true;
+        }
+        Event::from_json(&pending.event_json)
+            .map(|receipt| receipt.id.to_hex() != ack.approval_event_id)
+            .unwrap_or(true)
+    });
+    Ok(state.pending_device_approval_receipts.len() != before)
+}
+
 #[must_use]
 pub fn pending_app_key_approval_receipt_authorizes_app_key(
     pending: &crate::profile::PendingAppKeyLinkRequest,
@@ -376,7 +436,7 @@ fn normalize_approval_label(label: Option<&str>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Profile;
+    use crate::{AppConfig, Profile};
     use nostr_sdk::ToBech32;
     use tempfile::tempdir;
 
@@ -429,6 +489,50 @@ mod tests {
             &account.state,
             &frame
         ));
+    }
+
+    #[test]
+    fn applied_ack_clears_only_the_exact_durably_applied_approval() {
+        let owner_dir = tempdir().unwrap();
+        let mut owner = Profile::create(owner_dir.path(), Some("iPhone".into())).unwrap();
+        let linked_dir = tempdir().unwrap();
+        let mut linked =
+            Profile::start_join_request(linked_dir.path(), Some("Mac".into())).unwrap();
+        let approval = create_app_key_approval_bootstrap(
+            linked.app_key.keys(),
+            linked.state.app_key_label.as_deref(),
+        )
+        .unwrap();
+        linked.state.queue_unbound_app_key_join_request(
+            10,
+            approval.url,
+            approval.request_keys.secret_key().to_secret_hex(),
+        );
+        owner
+            .approve_device_bootstrap(&approval.bootstrap, Some("Mac".into()))
+            .unwrap();
+        let receipt =
+            Event::from_json(&owner.state.pending_device_approval_receipts[0].event_json).unwrap();
+        let mut linked_config = AppConfig {
+            profile: Some(linked.state),
+            ..AppConfig::default()
+        };
+        assert_eq!(
+            crate::relay_sync::apply_remote_device_approval_receipt_event(
+                &mut linked_config,
+                &receipt,
+            )
+            .unwrap(),
+            crate::relay_sync::NostrIdentityRosterOpApply::Applied,
+        );
+        let linked_state = linked_config.profile.as_ref().unwrap();
+        let ack =
+            device_approval_applied_ack_event(linked_state, linked.app_key.keys(), &receipt, 11)
+                .unwrap();
+
+        assert!(apply_device_approval_applied_ack_event(&mut owner.state, &ack).unwrap());
+        assert!(owner.state.pending_device_approval_receipts.is_empty());
+        assert!(!apply_device_approval_applied_ack_event(&mut owner.state, &ack).unwrap());
     }
 
     #[test]

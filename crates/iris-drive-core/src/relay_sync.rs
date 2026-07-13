@@ -34,7 +34,8 @@ use crate::nostr_events::{
     parse_drive_root_event_for_device, parse_drive_root_event_preview,
 };
 use crate::nostr_identity::{
-    NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_TYPE,
+    NOSTR_IDENTITY_DEVICE_APPROVAL_APPLIED_ACK_TYPE, NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_TYPE,
+    parse_nostr_identity_device_approval_applied_ack_event,
     parse_nostr_identity_device_approval_receipt_roster_op,
 };
 use crate::profile::{PendingDeviceApprovalReceipt, app_keys_from_profile_projection};
@@ -49,6 +50,7 @@ use crate::{
 };
 
 pub const RELAY_SYNC_EVENT_CACHE_LIMIT: usize = 4096;
+pub type RelayEventRetentionPolicy = nostr_pubsub::EventRetentionPolicy;
 
 #[must_use]
 pub fn is_device_approval_receipt_event(event: &Event) -> bool {
@@ -58,6 +60,17 @@ pub fn is_device_approval_receipt_event(event: &Event) -> bool {
             values.len() == 2
                 && values[0] == "type"
                 && values[1] == NOSTR_IDENTITY_DEVICE_APPROVAL_RECEIPT_TYPE
+        })
+}
+
+#[must_use]
+pub fn is_device_approval_applied_ack_event(event: &Event) -> bool {
+    event.kind.as_u16() == crate::KIND_NOSTR_IDENTITY_ROSTER_OP
+        && event.tags.iter().any(|tag| {
+            let values = tag.as_slice();
+            values.len() == 2
+                && values[0] == "type"
+                && values[1] == NOSTR_IDENTITY_DEVICE_APPROVAL_APPLIED_ACK_TYPE
         })
 }
 
@@ -169,6 +182,12 @@ mod restore_candidates;
 pub use restore_candidates::{
     NostrIdentityRestoreCandidate, fetch_nostr_identity_restore_candidates,
     nostr_identity_restore_candidate_filters, nostr_identity_restore_candidates_from_events,
+};
+
+#[path = "relay_sync/subscriptions.rs"]
+mod subscriptions;
+pub use subscriptions::{
+    AppKeyLinkRelaySubscriptionState, refresh_app_key_link_relay_subscriptions,
 };
 
 /// Apply a signed roster delivered over app-key-link/FIPS.
@@ -898,6 +917,34 @@ pub async fn publish_device_approval_receipt(
     }
     event_ids.push(*output.id());
     Ok(event_ids)
+}
+
+pub async fn publish_device_approval_applied_ack(
+    client: &Client,
+    event: &Event,
+) -> Result<nostr_sdk::EventId, RelayError> {
+    parse_nostr_identity_device_approval_applied_ack_event(event)?;
+    let output = client
+        .send_event(event)
+        .await
+        .map_err(|error| RelayError::Client(error.to_string()))?;
+    if output.success.is_empty() {
+        let failed = output
+            .failed
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(RelayError::Client(format!(
+            "publishing device approval applied ACK was not accepted by any relay{}",
+            if failed.is_empty() {
+                String::new()
+            } else {
+                format!(": {failed}")
+            }
+        )));
+    }
+    Ok(*output.id())
 }
 
 /// Publish a signed canonical share access snapshot.

@@ -3,17 +3,21 @@ use super::*;
 use std::hash::{Hash, Hasher};
 
 mod app_key_link_urls;
+mod device_approval_ack;
 mod device_approval_publish;
 pub(crate) use app_key_link_urls::*;
+use device_approval_ack::{
+    handle_device_approval_applied_ack_app_message, handle_device_approval_receipt_app_message,
+};
 use device_approval_publish::publish_device_approval;
 #[cfg(test)]
 pub(crate) use iris_drive_core::app_key_link_transport::app_key_link_roster_fingerprint;
 pub(crate) use iris_drive_core::app_key_link_transport::{
-    APP_KEY_APPROVAL_RECEIPT_APP_TOPIC, APP_KEY_LINK_REQUEST_APP_TOPIC,
-    APP_KEY_LINK_ROSTER_ACK_APP_TOPIC, APP_KEY_LINK_ROSTER_APP_TOPIC, AppKeyLinkRequestFrame,
-    AppKeyLinkRosterAckFrame, AppKeyLinkRosterFrame, app_key_link_roster_ack_frame,
-    app_key_link_roster_ack_matches_state, app_key_link_roster_frame,
-    app_key_link_roster_recipients,
+    APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC, APP_KEY_APPROVAL_RECEIPT_APP_TOPIC,
+    APP_KEY_LINK_REQUEST_APP_TOPIC, APP_KEY_LINK_ROSTER_ACK_APP_TOPIC,
+    APP_KEY_LINK_ROSTER_APP_TOPIC, AppKeyLinkRequestFrame, AppKeyLinkRosterAckFrame,
+    AppKeyLinkRosterFrame, app_key_link_roster_ack_frame, app_key_link_roster_ack_matches_state,
+    app_key_link_roster_frame, app_key_link_roster_recipients,
 };
 
 pub(crate) fn cmd_init(
@@ -1065,7 +1069,10 @@ pub(crate) async fn handle_app_key_link_app_message(
             handle_app_key_link_request_app_message(config_dir, message).await
         }
         APP_KEY_APPROVAL_RECEIPT_APP_TOPIC => {
-            handle_device_approval_receipt_app_message(config_dir, message).await
+            handle_device_approval_receipt_app_message(config_dir, message, fips_blocks).await
+        }
+        APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC => {
+            handle_device_approval_applied_ack_app_message(config_dir, message).await
         }
         APP_KEY_LINK_ROSTER_APP_TOPIC => {
             handle_app_key_link_roster_app_message(config_dir, message, fips_blocks).await
@@ -1075,36 +1082,6 @@ pub(crate) async fn handle_app_key_link_app_message(
         }
         _ => Ok(false),
     }
-}
-
-async fn handle_device_approval_receipt_app_message(
-    config_dir: &Path,
-    message: &iris_drive_core::FipsAppMessage,
-) -> Result<bool> {
-    let event_json =
-        std::str::from_utf8(&message.data).context("device approval receipt is not UTF-8")?;
-    let event =
-        nostr_sdk::Event::from_json(event_json).context("parsing device approval receipt event")?;
-    if !iris_drive_core::relay_sync::is_device_approval_receipt_event(&event) {
-        return Err(anyhow::anyhow!(
-            "FIPS device approval receipt has the wrong event type"
-        ));
-    }
-    let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
-    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let outcome = iris_drive_core::relay_sync::apply_remote_device_approval_receipt_event(
-        &mut config,
-        &event,
-    )?;
-    if matches!(
-        outcome,
-        iris_drive_core::relay_sync::NostrIdentityRosterOpApply::NotOurProfile
-            | iris_drive_core::relay_sync::NostrIdentityRosterOpApply::ApprovalReceiptRequired
-    ) {
-        return Ok(true);
-    }
-    config.save(config_path_in(config_dir))?;
-    Ok(true)
 }
 
 async fn handle_app_key_link_request_app_message(

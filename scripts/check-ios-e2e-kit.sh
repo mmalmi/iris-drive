@@ -150,6 +150,7 @@ require_contains ios/Sources/IrisDriveRootView.swift "private enum SetupRoute"
 require_contains ios/Sources/IrisDriveRootView.swift "path.append(.create)"
 require_contains ios/Sources/IrisDriveRootView.swift "path.append(.restoreOptions)"
 require_contains ios/Sources/IrisDriveRootView.swift "Copy Request Link"
+require_contains ios/Sources/IrisDriveRootView.swift "Start over"
 require_contains ios/Sources/IrisDriveMobileModel.swift '"type": "start_join_request"'
 require_contains ios/Sources/IrisDriveRootView.swift "Request link or device ID"
 require_contains ios/Sources/IrisDriveRootView.swift "copyRequestLink"

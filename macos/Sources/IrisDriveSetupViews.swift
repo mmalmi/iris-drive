@@ -97,7 +97,7 @@ struct AwaitingApprovalSetupView: View {
             Button(role: .destructive) {
                 controller.logout()
             } label: {
-                buttonLabel("Log out", systemImage: "rectangle.portrait.and.arrow.right")
+                buttonLabel("Start over", systemImage: "arrow.counterclockwise")
             }
             .buttonStyle(.bordered)
         }

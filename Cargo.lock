@@ -2520,7 +2520,7 @@ dependencies = [
 
 [[package]]
 name = "hashtree-provider"
-version = "0.1.24"
+version = "0.1.25"
 dependencies = [
  "async-trait",
  "futures",
@@ -2870,7 +2870,7 @@ dependencies = [
 
 [[package]]
 name = "idrive"
-version = "0.1.24"
+version = "0.1.25"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -3019,7 +3019,7 @@ checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
 
 [[package]]
 name = "iris-drive-app-core"
-version = "0.1.24"
+version = "0.1.25"
 dependencies = [
  "anyhow",
  "hashtree-core",
@@ -3041,7 +3041,7 @@ dependencies = [
 
 [[package]]
 name = "iris-drive-core"
-version = "0.1.24"
+version = "0.1.25"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -3083,7 +3083,7 @@ dependencies = [
 
 [[package]]
 name = "iris-drive-mac"
-version = "0.1.24"
+version = "0.1.25"
 dependencies = [
  "anyhow",
  "iris-drive-core",
@@ -3771,7 +3771,7 @@ dependencies = [
 
 [[package]]
 name = "nostr-identity"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "anyhow",
  "nostr-sdk",

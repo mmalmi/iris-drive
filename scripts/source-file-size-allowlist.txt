@@ -46,7 +46,7 @@ scripts/dev-vm-update-run.sh 2950 Cross-platform VM orchestration needs a later 
 scripts/cross-vm-e2e.sh 2131 Multi-device e2e harness includes release-profile/per-host daemon selection, provider mutation coverage, Devices-list online roster coverage, stale daemon cleanup, and final idle daemon CPU gate; pending harness helper split.
 scripts/macos-smoke.sh 1250 macOS smoke harness now includes path-scoped cleanup and survival assertions; needs a later helper split.
 macos/Sources/IrisDriveControlPanel.swift 2850 Legacy macOS control panel includes backup target and device approval controls; pending view split.
-scripts/local-release.mjs 1500 Local release orchestration needs a later module split.
+scripts/local-release.mjs 1504 Local release orchestration includes fail-fast Windows signing checks and needs a later module split.
 scripts/local-release.test.mjs 1318 Local release test coverage needs a later fixture/helper split.
 windows/IrisDriveService.cs 1070 Legacy Windows service bridge now includes start-join dispatch, default device labels, and device rename dispatch; pending command-client split.
 windows/MainWindow.xaml.cs 1800 Legacy Windows window controller pending view-model split.

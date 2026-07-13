@@ -170,8 +170,8 @@
           </Button>
           <Button Style="{StaticResource SetupButton}" Click="Logout_Click">
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-              <TextBlock Text="&#xE8AC;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
-              <TextBlock Text="Log out" />
+              <TextBlock Text="&#xE777;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+              <TextBlock Text="Start over" />
             </StackPanel>
           </Button>
         </StackPanel>

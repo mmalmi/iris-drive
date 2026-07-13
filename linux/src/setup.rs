@@ -74,7 +74,7 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
     }
     container.append(&secret);
 
-    let logout_button = pill_button("Log out");
+    let logout_button = pill_button("Start over");
     logout_button.add_css_class("destructive-action");
     {
         let model = Rc::clone(model);

@@ -80,7 +80,7 @@ pub(crate) fn cmd_daemon(
     if filters.is_empty() {
         return Err(anyhow::anyhow!("no filters to subscribe to"));
     }
-    let subscription_policy = relay_sync::event_retention_policy(filters.clone());
+    let mut subscription_policy = relay_sync::event_retention_policy(filters.clone());
     let embedded_hashtree_requested = enable_gateway && config.local_nhash_resolver_enabled;
     let (embedded_hashtree, embedded_hashtree_status) = if embedded_hashtree_requested {
         match EmbeddedHashtreeHost::start(config_dir, &config) {
@@ -259,6 +259,8 @@ pub(crate) fn cmd_daemon(
         relay_sync::subscribe_device_approval_events(&client, &state)
             .await
             .context("subscribing to device approval events")?;
+        let mut app_key_link_relay_subscriptions =
+            relay_sync::AppKeyLinkRelaySubscriptionState::from_profile(&state);
         let mut direct_roots = DirectRootExchange::default();
         let startup_fips_block_sync_status = fips_block_sync_status(fips_blocks.as_deref()).await;
         let mut config = config.clone();
@@ -936,6 +938,18 @@ pub(crate) fn cmd_daemon(
                     }
                 }
                 _ = app_key_link_timer.tick() => {
+                    match refresh_app_key_link_relay_subscriptions_for_config(
+                        &client,
+                        config_dir,
+                        &mut app_key_link_relay_subscriptions,
+                    ).await {
+                        Ok(Some(policy)) => subscription_policy = policy,
+                        Ok(None) => {}
+                        Err(error) => println!(
+                            "{}",
+                            json!({"event": "app_key_link_subscription_refresh_error", "error": format!("{error:#}")})
+                        ),
+                    }
                     match send_pending_app_key_link_request(
                         config_dir,
                         fips_blocks.as_deref(),
@@ -1197,33 +1211,4 @@ pub(crate) fn cmd_daemon(
         relay_sync::shutdown_client_for_process_exit(client).await;
         Ok::<_, anyhow::Error>(())
     })
-}
-
-fn should_defer_relay_roster_event_while_awaiting(
-    kind: u16,
-    is_device_approval_receipt: bool,
-    awaiting_approval: bool,
-) -> bool {
-    kind == iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP
-        && awaiting_approval
-        && !is_device_approval_receipt
-}
-
-#[cfg(test)]
-mod runtime_tests {
-    use super::should_defer_relay_roster_event_while_awaiting;
-
-    #[test]
-    fn awaiting_devices_still_accept_approval_receipt_events() {
-        assert!(!should_defer_relay_roster_event_while_awaiting(
-            iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP,
-            true,
-            true,
-        ));
-        assert!(should_defer_relay_roster_event_while_awaiting(
-            iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP,
-            false,
-            true,
-        ));
-    }
 }

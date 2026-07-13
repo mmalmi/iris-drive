@@ -263,25 +263,31 @@ fn event_matches_filter(event: &Value, filter: &Value) -> bool {
             return false;
         }
     }
-    if let Some(d_values) = filter.get("#d").and_then(Value::as_array) {
+    for (filter_key, candidates) in filter.as_object().into_iter().flatten() {
+        let Some(tag_name) = filter_key.strip_prefix('#') else {
+            continue;
+        };
+        let Some(candidates) = candidates.as_array() else {
+            return false;
+        };
         let Some(tags) = event.get("tags").and_then(Value::as_array) else {
             return false;
         };
-        let has_matching_d_tag = tags.iter().any(|tag| {
+        let has_matching_tag = tags.iter().any(|tag| {
             let Some(tag_items) = tag.as_array() else {
                 return false;
             };
-            tag_items.first().and_then(Value::as_str) == Some("d")
+            tag_items.first().and_then(Value::as_str) == Some(tag_name)
                 && tag_items
                     .get(1)
                     .and_then(Value::as_str)
                     .is_some_and(|value| {
-                        d_values
+                        candidates
                             .iter()
                             .any(|candidate| candidate.as_str() == Some(value))
                     })
         });
-        if !has_matching_d_tag {
+        if !has_matching_tag {
             return false;
         }
     }

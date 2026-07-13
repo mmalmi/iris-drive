@@ -97,6 +97,7 @@ require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "Na
 require_contains crates/iris-drive-app-core/src/actions.rs "RefreshProfile"
 require_absent android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Text(\"Setup\")"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Copy Request Link"
+require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Start over"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "openRecoveryPhrase"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "openSecretKey"
 require_contains android/app/src/main/java/to/iris/drive/app/core/AppState.kt '"start_join_request"'

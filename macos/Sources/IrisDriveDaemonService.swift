@@ -49,7 +49,11 @@ extension AppDelegate {
         }
     }
 
-    func startDaemonService(_ idrive: URL?, paths: IrisDriveRuntimePaths) {
+    func startDaemonService(
+        _ idrive: URL?,
+        paths: IrisDriveRuntimePaths,
+        forceRestart: Bool = false
+    ) {
         DispatchQueue.global(qos: .utility).async {
             do {
                 if currentProcessHasEntitlement("com.apple.security.app-sandbox") {
@@ -60,7 +64,10 @@ extension AppDelegate {
                     )
                     if Self.serviceInstalled(from: data) {
                         var serviceData = data
-                        if Self.serviceRunning(from: data) != true || Self.daemonStatusNeedsRestart(paths: paths) {
+                        if forceRestart
+                            || Self.serviceRunning(from: data) != true
+                            || Self.daemonStatusNeedsRestart(paths: paths)
+                        {
                             do {
                                 serviceData = try self.runIDrive(
                                     idrive,

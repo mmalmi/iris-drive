@@ -2,6 +2,103 @@
 use super::*;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn running_daemon_subscribes_when_join_request_is_created_after_startup() {
+    let _guard = live_daemon_test_guard().await;
+    let relay = LocalNostrRelay::spawn().await;
+    let owner_cfg = tempdir().unwrap();
+    let linked_cfg = tempdir().unwrap();
+
+    let _owner = run_json(owner_cfg.path(), &["init", "--label", "admin"]);
+    add_config_relay(owner_cfg.path(), &relay.url);
+    let owner_log = owner_cfg.path().join("owner.log");
+    let owner_daemon = DaemonChild::spawn(
+        owner_cfg.path(),
+        &relay.url,
+        owner_log,
+        unused_loopback_port(),
+    );
+
+    let mut linked = iris_drive_core::Profile::start_join_request(
+        linked_cfg.path(),
+        Some("already-running-mac".to_string()),
+    )
+    .unwrap();
+    let mut linked_config = iris_drive_core::AppConfig {
+        profile: Some(linked.state.clone()),
+        ..iris_drive_core::AppConfig::default()
+    };
+    linked_config
+        .save(iris_drive_core::paths::config_path_in(linked_cfg.path()))
+        .unwrap();
+
+    let linked_log = linked_cfg.path().join("linked.log");
+    let linked_daemon = DaemonChild::spawn(
+        linked_cfg.path(),
+        &relay.url,
+        linked_log,
+        unused_loopback_port(),
+    );
+    let startup_deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < startup_deadline && !linked_daemon.log().contains("subscribed") {
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    assert!(
+        linked_daemon.log().contains("subscribed"),
+        "linked daemon did not start:\n{}",
+        linked_daemon.log()
+    );
+
+    let approval = iris_drive_core::app_key_link_transport::create_app_key_approval_bootstrap(
+        linked.app_key.keys(),
+        linked.state.app_key_label.as_deref(),
+    )
+    .unwrap();
+    linked.state.queue_unbound_app_key_join_request(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs(),
+        approval.url.clone(),
+        approval.request_keys.secret_key().to_secret_hex(),
+    );
+    linked_config.profile = Some(linked.state);
+    linked_config
+        .save(iris_drive_core::paths::config_path_in(linked_cfg.path()))
+        .unwrap();
+
+    let approval_result = run_json(
+        owner_cfg.path(),
+        &["app-keys", "approve", &approval.url, "--label", "Mac"],
+    );
+    assert_eq!(approval_result["approval_publish_error"], Value::Null);
+
+    let authorization_deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < authorization_deadline {
+        let status = run_json(linked_cfg.path(), &["status"]);
+        let owner_receipt_acknowledged = iris_drive_core::AppConfig::load_or_default(
+            iris_drive_core::paths::config_path_in(owner_cfg.path()),
+        )
+        .unwrap()
+        .profile
+        .is_some_and(|profile| profile.pending_device_approval_receipts.is_empty());
+        if status["profile"]["authorization_state"] == "authorized"
+            && status["profile"]["roster_size"] == 2
+            && owner_receipt_acknowledged
+        {
+            return;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+
+    panic!(
+        "already-running daemon did not apply the approval and complete roster\nlinked status: {}\nlinked log:\n{}\nowner log:\n{}",
+        serde_json::to_string_pretty(&run_json(linked_cfg.path(), &["status"])).unwrap(),
+        linked_daemon.log(),
+        owner_daemon.log(),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn live_daemons_app_key_link_request_reaches_admin_quickly() {
     let _guard = live_daemon_test_guard().await;
     let relay = LocalNostrRelay::spawn().await;
