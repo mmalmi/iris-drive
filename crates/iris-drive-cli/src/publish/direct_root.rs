@@ -1062,7 +1062,7 @@ impl DirectRootExchange {
         !self.cached_events.keys().any(|key| {
             direct_root_cache_slot(key).is_some_and(|cached| {
                 cached.family == incoming.family
-                    && direct_root_slot_is_strictly_newer(&cached, &incoming)
+                    && direct_root_slot_is_newer(&cached, &incoming)
             })
         })
     }
@@ -1077,7 +1077,7 @@ impl DirectRootExchange {
                 key.as_str() != incoming_key
                     && direct_root_cache_slot(key).is_some_and(|cached| {
                         cached.family == incoming.family
-                            && !direct_root_slot_is_strictly_newer(&cached, &incoming)
+                            && !direct_root_slot_is_newer(&cached, &incoming)
                     })
             })
             .cloned()
@@ -1426,53 +1426,42 @@ struct DirectRootCacheSlot {
     recipient_count: usize,
 }
 
-fn direct_root_cache_slot(key: &str) -> Option<DirectRootCacheSlot> {
+struct ParsedDirectRootKey<'a> {
+    family: String,
+    seq: &'a str,
+    root_cid: &'a str,
+    recipients: &'a str,
+}
+
+fn parse_direct_root_key(key: &str) -> Option<ParsedDirectRootKey<'_>> {
     let (prefix, rest) = key.split_once(':')?;
-    match prefix {
-        "drive-root" => {
-            let mut parts = rest.splitn(4, ':');
-            let app_key = parts.next()?;
-            let drive_id = parts.next()?;
-            let seq = parts.next()?.parse().ok()?;
-            let root_and_recipients = parts.next()?;
-            let (_root_cid, recipients) = root_and_recipients.rsplit_once(':')?;
-            Some(DirectRootCacheSlot {
-                family: format!("drive-root:{app_key}:{drive_id}"),
-                seq,
-                recipient_count: direct_root_recipient_count(recipients),
-            })
-        }
-        "share-root" => {
-            let mut parts = rest.splitn(4, ':');
-            let share_id = parts.next()?;
-            let app_key = parts.next()?;
-            let seq = parts.next()?.parse().ok()?;
-            let root_and_recipients = parts.next()?;
-            let (_root_cid, recipients) = root_and_recipients.rsplit_once(':')?;
-            Some(DirectRootCacheSlot {
-                family: format!("share-root:{share_id}:{app_key}"),
-                seq,
-                recipient_count: direct_root_recipient_count(recipients),
-            })
-        }
-        _ => None,
+    if !matches!(prefix, "drive-root" | "share-root") {
+        return None;
     }
+    let mut parts = rest.splitn(4, ':');
+    let scope_a = parts.next()?;
+    let scope_b = parts.next()?;
+    let seq = parts.next()?;
+    let (root_cid, recipients) = parts.next()?.rsplit_once(':')?;
+    Some(ParsedDirectRootKey {
+        family: format!("{prefix}:{scope_a}:{scope_b}"),
+        seq,
+        root_cid,
+        recipients,
+    })
+}
+
+fn direct_root_cache_slot(key: &str) -> Option<DirectRootCacheSlot> {
+    let parsed = parse_direct_root_key(key)?;
+    Some(DirectRootCacheSlot {
+        family: parsed.family,
+        seq: parsed.seq.parse().ok()?,
+        recipient_count: direct_root_recipient_count(parsed.recipients),
+    })
 }
 
 fn direct_root_retry_root_cid(key: &str) -> Option<String> {
-    let (prefix, rest) = key.split_once(':')?;
-    match prefix {
-        "drive-root" | "share-root" => {
-            let mut parts = rest.splitn(4, ':');
-            let _scope_a = parts.next()?;
-            let _scope_b = parts.next()?;
-            let _seq = parts.next()?;
-            let root_and_recipients = parts.next()?;
-            let (root_cid, _recipients) = root_and_recipients.rsplit_once(':')?;
-            Some(root_cid.to_string())
-        }
-        _ => None,
-    }
+    Some(parse_direct_root_key(key)?.root_cid.to_string())
 }
 
 fn direct_root_recipient_count(recipients: &str) -> usize {
@@ -1488,13 +1477,6 @@ fn direct_root_slot_is_newer(
 ) -> bool {
     candidate.seq > current.seq
         || (candidate.seq == current.seq && candidate.recipient_count > current.recipient_count)
-}
-
-fn direct_root_slot_is_strictly_newer(
-    candidate: &DirectRootCacheSlot,
-    current: &DirectRootCacheSlot,
-) -> bool {
-    direct_root_slot_is_newer(candidate, current)
 }
 
 fn should_cache_unsequenced_direct_root_key(key: &str) -> bool {
