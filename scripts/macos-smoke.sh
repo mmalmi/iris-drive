@@ -11,7 +11,7 @@ case "$(uname -s)" in
 esac
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/cargo-target}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/macos/.build/cargo-target}"
 APP_PROCESS_NAME="Iris Drive"
 APP_BUNDLE_ID="to.iris.drive.macos"
 SMOKE_DIR="$(mktemp -d -t iris-drive-macos-smoke)"

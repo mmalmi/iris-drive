@@ -37,7 +37,7 @@ load_env_file_defaults() {
 
 load_env_file_defaults "$ROOT/.env.local"
 
-export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$HOME/.cache/cargo-target}"
+export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/macos/.build/cargo-target}"
 
 PROJECT="$ROOT/macos/IrisDriveMac.xcodeproj"
 SCHEME="IrisDriveMac"

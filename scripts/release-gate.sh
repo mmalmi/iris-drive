@@ -96,7 +96,7 @@ run_macos_idle_cpu_gate() {
 
   app_base_dir="$(mktemp -d -t iris-drive-macos-idle.XXXXXX)"
   config_dir="$app_base_dir/Config"
-  idrive="${CARGO_TARGET_DIR:-$HOME/.cache/cargo-target}/debug/idrive"
+  idrive="${CARGO_TARGET_DIR:-$ROOT/target}/debug/idrive"
   if [[ ! -x "$idrive" ]]; then
     idrive="$ROOT/target/debug/idrive"
   fi

@@ -18,14 +18,12 @@ idrive="$override_idrive"
 if [[ -z "$idrive" && "$rebuild_idrive" != "0" && -f "$repo/Cargo.toml" ]] && command -v cargo >/dev/null 2>&1; then
   (cd "$repo" && cargo build -q $cargo_profile_arg -p idrive --bin idrive)
   idrive="$repo/target/$profile/idrive"
-  [[ -x "$idrive" ]] || idrive="$HOME/.cache/cargo-target/$profile/idrive"
   [[ -x "$idrive" ]] || idrive="${CARGO_TARGET_DIR:+$CARGO_TARGET_DIR/$profile/idrive}"
 fi
 
 if [[ -z "$idrive" ]]; then
   for candidate in \
     "$repo/target/$profile/idrive" \
-    "$HOME/.cache/cargo-target/$profile/idrive" \
     "${CARGO_TARGET_DIR:+$CARGO_TARGET_DIR/$profile/idrive}"
   do
     if supports_app_keys "$candidate"; then
@@ -47,7 +45,6 @@ fi
 if ! supports_app_keys "$idrive" && [[ -f "$repo/Cargo.toml" ]] && command -v cargo >/dev/null 2>&1; then
   (cd "$repo" && cargo build -q $cargo_profile_arg -p idrive --bin idrive)
   idrive="$repo/target/$profile/idrive"
-  [[ -x "$idrive" ]] || idrive="$HOME/.cache/cargo-target/$profile/idrive"
   [[ -x "$idrive" ]] || idrive="${CARGO_TARGET_DIR:+$CARGO_TARGET_DIR/$profile/idrive}"
 fi
 
@@ -55,7 +52,6 @@ if ! supports_app_keys "$idrive"; then
   idrive="${CARGO_TARGET_DIR:+$CARGO_TARGET_DIR/$profile/idrive}"
   idrive="${idrive:-$repo/target/$profile/idrive}"
 fi
-supports_app_keys "$idrive" || idrive="$HOME/.cache/cargo-target/$profile/idrive"
 if [[ "$profile" == "debug" ]]; then
   supports_app_keys "$idrive" || idrive="$HOME/.cargo/bin/idrive"
   supports_app_keys "$idrive" || idrive="$(command -v idrive || true)"
