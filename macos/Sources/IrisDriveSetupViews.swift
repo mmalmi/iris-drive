@@ -63,6 +63,14 @@ struct AwaitingApprovalSetupView: View {
 
     var body: some View {
         VStack(alignment: .center, spacing: 12) {
+            Button {
+                controller.logout()
+            } label: {
+                Label("Back", systemImage: "chevron.left")
+            }
+            .buttonStyle(.borderless)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityIdentifier("awaitingApprovalBack")
             Text("Waiting for approval")
                 .font(.title2.weight(.semibold))
             if let request = status.appKeyLinkRequestURL, !request.isEmpty {
@@ -94,35 +102,7 @@ struct AwaitingApprovalSetupView: View {
                 openSecretKey()
             }
             .buttonStyle(.bordered)
-            Button(role: .destructive) {
-                controller.logout()
-            } label: {
-                buttonLabel("Start over", systemImage: "arrow.counterclockwise")
-            }
-            .buttonStyle(.bordered)
         }
         .multilineTextAlignment(.center)
-    }
-
-    private func keyedValue(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .center, spacing: 4) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.system(.caption, design: .monospaced))
-                .lineLimit(2)
-                .textSelection(.enabled)
-        }
-    }
-
-    private func buttonLabel(_ title: String, systemImage: String) -> some View {
-        HStack(spacing: 8) {
-            Image(systemName: systemImage)
-                .frame(width: 18)
-            Text(title)
-        }
-        .frame(maxWidth: .infinity, minHeight: setupButtonMinHeight)
-        .contentShape(Rectangle())
     }
 }

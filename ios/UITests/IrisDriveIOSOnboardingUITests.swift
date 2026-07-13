@@ -52,6 +52,8 @@ extension IrisDriveIOSUITests {
 
         let awaitingApproval = app.descendants(matching: .any)["awaitingApprovalView"]
         XCTAssertTrue(awaitingApproval.waitForExistence(timeout: 15), app.debugDescription)
+        XCTAssertTrue(app.buttons["awaitingApprovalBack"].isHittable, app.debugDescription)
+        XCTAssertFalse(app.buttons["Start over"].exists, app.debugDescription)
     }
 
     func testSignInStartsJoinRequest() throws {

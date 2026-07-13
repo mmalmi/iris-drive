@@ -449,6 +449,11 @@ private fun AwaitingApprovalContent(
         ) {
             when (route) {
                 SetupRoute.RestoreOptions -> {
+                    SetupFormHeader(
+                        title = null,
+                        onBack = onLogout,
+                        backTestTag = "awaitingApprovalBack",
+                    )
                     SetupBrand()
                     Text("Waiting for approval", color = Ink, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.headlineSmall)
                     if (profile.appKeyLinkRequest.isNotBlank()) {
@@ -472,13 +477,6 @@ private fun AwaitingApprovalContent(
                         onClick = { route = SetupRoute.RestoreSecretKey },
                         testTag = "openSecretKey",
                     )
-                    OutlinedButton(
-                        onClick = onLogout,
-                        modifier = Modifier.fillMaxWidth().height(48.dp),
-                        shape = RoundedCornerShape(6.dp),
-                    ) {
-                        Text("Start over")
-                    }
                 }
                 SetupRoute.RestoreRecoveryPhrase -> {
                     SetupFormHeader(title = "Recovery phrase", onBack = { route = SetupRoute.RestoreOptions })
@@ -943,9 +941,16 @@ private fun SetupBrand() {
 }
 
 @Composable
-private fun SetupFormHeader(title: String?, onBack: () -> Unit) {
+private fun SetupFormHeader(
+    title: String?,
+    onBack: () -> Unit,
+    backTestTag: String? = null,
+) {
     Column(modifier = Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        TextButton(onClick = onBack) {
+        TextButton(
+            onClick = onBack,
+            modifier = if (backTestTag == null) Modifier else Modifier.testTag(backTestTag),
+        ) {
             Text("Back")
         }
         if (title != null) {

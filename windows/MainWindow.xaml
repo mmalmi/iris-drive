@@ -146,6 +146,12 @@
         </StackPanel>
 
         <StackPanel x:Name="AwaitingPanel" Visibility="Collapsed">
+          <Button Style="{StaticResource SetupBackButton}" Click="AwaitingBack_Click" HorizontalAlignment="Left">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE72B;" Style="{StaticResource IconGlyph}" Margin="0,0,6,0" />
+              <TextBlock Text="Back" />
+            </StackPanel>
+          </Button>
           <TextBlock Text="Waiting for approval" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,12" />
           <Border Background="White" CornerRadius="8" Padding="10" Width="220" Height="220" HorizontalAlignment="Center" Margin="0,0,0,12">
             <UniformGrid x:Name="AwaitingQrGrid" />
@@ -166,12 +172,6 @@
             <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
               <TextBlock Text="&#xE8D7;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
               <TextBlock Text="Restore from secret key" />
-            </StackPanel>
-          </Button>
-          <Button Style="{StaticResource SetupButton}" Click="Logout_Click">
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-              <TextBlock Text="&#xE777;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
-              <TextBlock Text="Start over" />
             </StackPanel>
           </Button>
         </StackPanel>

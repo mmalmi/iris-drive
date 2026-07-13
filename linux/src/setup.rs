@@ -21,6 +21,13 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
     container.set_valign(gtk::Align::Center);
     container.set_width_request(420);
 
+    let back = setup_back_button();
+    {
+        let model = Rc::clone(model);
+        back.connect_clicked(move |_| logout(&model));
+    }
+    container.append(&back);
+
     let header = gtk::Label::new(Some("Waiting for approval"));
     header.add_css_class("title-2");
     header.set_halign(gtk::Align::Start);
@@ -74,13 +81,6 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
     }
     container.append(&secret);
 
-    let logout_button = pill_button("Start over");
-    logout_button.add_css_class("destructive-action");
-    {
-        let model = Rc::clone(model);
-        logout_button.connect_clicked(move |_| logout(&model));
-    }
-    container.append(&logout_button);
     container.append(&notice);
 
     append_centered_setup(model, &container);
@@ -198,21 +198,15 @@ pub(crate) fn setup_container(model: &AppRef, title: &str) -> gtk::Box {
     container.set_valign(gtk::Align::Center);
     container.set_width_request(340);
 
-    let back = gtk::Button::new();
-    back.add_css_class("flat");
-    back.set_tooltip_text(Some("Back"));
-    back.set_halign(gtk::Align::Start);
-    let back_content = adw::ButtonContent::builder()
-        .icon_name("go-previous-symbolic")
-        .label("Back")
-        .build();
-    back.set_child(Some(&back_content));
+    let back = setup_back_button();
     {
         let model = Rc::clone(model);
         back.connect_clicked(move |_| {
             let target = match *model.setup_screen.borrow() {
                 SetupScreen::CreatePhoto => SetupScreen::Create,
-                SetupScreen::RestorePhrase | SetupScreen::RestoreSecretKey => SetupScreen::RestoreOptions,
+                SetupScreen::RestorePhrase | SetupScreen::RestoreSecretKey => {
+                    SetupScreen::RestoreOptions
+                }
                 _ => SetupScreen::Welcome,
             };
             *model.setup_screen.borrow_mut() = target;
@@ -229,6 +223,19 @@ pub(crate) fn setup_container(model: &AppRef, title: &str) -> gtk::Box {
     }
 
     container
+}
+
+fn setup_back_button() -> gtk::Button {
+    let back = gtk::Button::new();
+    back.add_css_class("flat");
+    back.set_tooltip_text(Some("Back"));
+    back.set_halign(gtk::Align::Start);
+    let content = adw::ButtonContent::builder()
+        .icon_name("go-previous-symbolic")
+        .label("Back")
+        .build();
+    back.set_child(Some(&content));
+    back
 }
 
 pub(crate) fn render_setup_welcome(model: &AppRef) {

@@ -250,12 +250,15 @@ private struct AwaitingApprovalSetupView: View {
                     }
                     .accessibilityIdentifier("openSecretKey")
                 }
-                Section {
-                    Button(role: .destructive) {
+            }
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    Button {
                         model.logout()
                     } label: {
-                        Label("Start over", systemImage: "arrow.counterclockwise")
+                        Label("Back", systemImage: "chevron.left")
                     }
+                    .accessibilityIdentifier("awaitingApprovalBack")
                 }
             }
             .accessibilityIdentifier("awaitingApprovalView")

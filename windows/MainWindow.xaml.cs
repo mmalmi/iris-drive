@@ -1040,9 +1040,14 @@ public partial class MainWindow : Window
         await LogoutAsync();
     }
 
-    private async Task LogoutAsync()
+    private async void AwaitingBack_Click(object sender, RoutedEventArgs e)
     {
-        if (System.Windows.MessageBox.Show(
+        await LogoutAsync(confirm: false);
+    }
+
+    private async Task LogoutAsync(bool confirm = true)
+    {
+        if (confirm && System.Windows.MessageBox.Show(
                 this,
                 "Remove this local Iris Drive profile from Windows?",
                 "Log out",

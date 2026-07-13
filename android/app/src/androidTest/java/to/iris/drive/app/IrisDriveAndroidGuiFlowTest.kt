@@ -146,6 +146,22 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     @Test
+    fun awaitingApprovalUsesBackNavigationOutsideRecoveryActions() {
+        val owner = createOwnerProfile("Android back owner")
+        val linked = createLinkedProfile(owner.invite)
+        var backActions = 0
+
+        render(
+            state = appState(linked.handle),
+            onLogout = { backActions += 1 },
+        )
+
+        compose.onNodeWithTag("awaitingApprovalBack").assertIsDisplayed().activate()
+        compose.onAllNodesWithText("Start over").assertCountEquals(0)
+        assertEquals(1, backActions)
+    }
+
+    @Test
     fun linkThisDeviceFlowClicksThroughSignInUi() {
         val owner = createOwnerProfile("Android UI owner")
         val linkedHandle = newNativeHandle()
@@ -803,6 +819,7 @@ class IrisDriveAndroidGuiFlowTest {
         state: AppState,
         onCreateProfile: (String) -> Unit = {},
         onStartJoinRequest: (String) -> Unit = {},
+        onLogout: () -> Unit = {},
         onApproveDevice: (String, String) -> Unit = { _, _ -> },
         onRejectDevice: (String) -> Unit = {},
         onAddRecoveryKey: (String) -> Unit = {},
@@ -871,7 +888,7 @@ class IrisDriveAndroidGuiFlowTest {
                 onAppointAdmin = { _ -> },
                 onDemoteAdmin = { _ -> },
                 onRenameDevice = { _, _ -> },
-                onLogout = {},
+                onLogout = onLogout,
                 onAddRelay = { _ -> },
                 onRemoveRelay = { _ -> },
                 onResetRelays = {},
