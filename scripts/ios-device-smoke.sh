@@ -22,9 +22,10 @@ CODE_SIGN_IDENTITY="${IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY:-Apple Development}"
 LAUNCH_WAIT_SECONDS="${IRIS_DRIVE_IOS_LAUNCH_WAIT_SECONDS:-3}"
 ALLOW_SCREEN_OFF="${IRIS_DRIVE_IOS_ALLOW_SCREEN_OFF:-0}"
 RUN_SHARE_EXTENSION_TESTS="${IRIS_DRIVE_IOS_RUN_SHARE_EXTENSION_TESTS:-0}"
-TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
+TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/ios/.build/RustDeviceTarget}"
 RUST_IOS_TARGET="${IRIS_DRIVE_IOS_RUST_TARGET:-aarch64-apple-ios}"
-RUST_LIB_DIR="$TARGET_DIR/$RUST_IOS_TARGET/debug"
+RUST_IOS_DEPLOYMENT_TARGET="${IRIS_DRIVE_IOS_DEPLOYMENT_TARGET:-17.0}"
+RUST_LIB_DIR="$TARGET_DIR/$RUST_IOS_TARGET/release"
 RUST_STATIC_LIB="$RUST_LIB_DIR/libiris_drive_app_core.a"
 
 select_device() {
@@ -181,7 +182,9 @@ run_share_extension_tests() {
 DEVICE_UDID="$(select_device)"
 assert_device_awake_for_launch "$DEVICE_UDID"
 
-cargo build -p iris-drive-app-core --target "$RUST_IOS_TARGET"
+CARGO_TARGET_DIR="$TARGET_DIR" \
+  IPHONEOS_DEPLOYMENT_TARGET="$RUST_IOS_DEPLOYMENT_TARGET" \
+  cargo build -p iris-drive-app-core --target "$RUST_IOS_TARGET" --release
 if [[ ! -f "$RUST_STATIC_LIB" ]]; then
   echo "FAIL: static app-core library not found at $RUST_STATIC_LIB" >&2
   exit 1

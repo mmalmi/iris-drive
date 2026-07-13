@@ -181,6 +181,11 @@ require_contains scripts/ios-gui-linking-smoke.sh "--app-group"
 require_contains scripts/ios-gui-linking-smoke.sh "IrisDriveIOSShareExtensionTests"
 require_contains scripts/ios-device-smoke.sh "IrisDriveIOSShareExtensionTests"
 require_contains scripts/ios-device-smoke.sh "IOS_DEVICE_SHARE_EXTENSION_TESTS_OK"
+require_contains scripts/ios-device-smoke.sh 'TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/ios/.build/RustDeviceTarget}"'
+require_contains scripts/ios-device-smoke.sh 'RUST_LIB_DIR="$TARGET_DIR/$RUST_IOS_TARGET/release"'
+require_contains scripts/ios-device-smoke.sh 'cargo build -p iris-drive-app-core --target "$RUST_IOS_TARGET" --release'
+require_contains scripts/ios-device-smoke.sh 'CARGO_TARGET_DIR="$TARGET_DIR"'
+require_contains scripts/ios-device-smoke.sh 'IPHONEOS_DEPLOYMENT_TARGET="$RUST_IOS_DEPLOYMENT_TARGET"'
 require_contains scripts/ios-device-smoke.sh 'local status'
 require_contains scripts/ios-device-smoke.sh 'return "$status"'
 require_contains scripts/ios-device-iris-apps-smoke.sh 'local status'
