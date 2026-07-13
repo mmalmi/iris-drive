@@ -10,13 +10,13 @@ use crate::nostr_identity::NostrIdentityId;
 use crate::paths::{config_path_in, key_path_in};
 use crate::profile::Profile;
 use crate::sharing::{
-    ShareRecipient, ShareRecipientProfileEvidence, ShareRole, ShareShortcut, SharedFolderView,
-    create_shared_folder, default_share_shortcut_path, invite_shared_folder_member,
-    invite_shared_folder_resolved_recipient, record_pending_share_invite,
-    repair_shared_folder_key_epoch_wraps, resolve_share_recipient_from_evidence,
-    revoke_shared_folder_member, set_shared_folder_member_role,
-    shared_folder_from_invite_for_profile, shared_folder_missing_key_wrap_pubkeys,
-    shared_folder_views,
+    ShareRecipient, ShareRecipientProfileEvidence, ShareRole, ShareShortcut, SharedFolder,
+    SharedFolderView, create_shared_folder, default_share_shortcut_path,
+    invite_shared_folder_member, invite_shared_folder_resolved_recipient,
+    record_pending_share_invite, repair_shared_folder_key_epoch_wraps,
+    resolve_share_recipient_from_evidence, revoke_shared_folder_member,
+    set_shared_folder_member_role, shared_folder_from_invite_for_profile,
+    shared_folder_missing_key_wrap_pubkeys, shared_folder_views,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
@@ -370,11 +370,7 @@ fn invite_share_member(
     now_seconds: i64,
 ) -> Result<ShareActionMetadata> {
     let account = load_profile(config_dir, config)?;
-    let folder = config
-        .shared_folders
-        .iter_mut()
-        .find(|folder| folder.share_id == share_id)
-        .with_context(|| format!("share not found: {share_id}"))?;
+    let folder = shared_folder_mut(config, share_id)?;
     let outcome =
         invite_shared_folder_member(folder, account.app_key.keys(), recipient, now_seconds)?;
     Ok(ShareActionMetadata {
@@ -400,11 +396,7 @@ fn invite_share_member_from_evidence(
     let resolved = resolve_share_recipient_from_evidence(&evidence, display_name)
         .context("resolving share recipient evidence")?;
     let account = load_profile(config_dir, config)?;
-    let folder = config
-        .shared_folders
-        .iter_mut()
-        .find(|folder| folder.share_id == share_id)
-        .with_context(|| format!("share not found: {share_id}"))?;
+    let folder = shared_folder_mut(config, share_id)?;
     let outcome = invite_shared_folder_resolved_recipient(
         folder,
         account.app_key.keys(),
@@ -431,11 +423,7 @@ fn record_pending_invite(
     now_seconds: i64,
 ) -> Result<ShareActionMetadata> {
     let account = load_profile(config_dir, config)?;
-    let folder = config
-        .shared_folders
-        .iter_mut()
-        .find(|folder| folder.share_id == share_id)
-        .with_context(|| format!("share not found: {share_id}"))?;
+    let folder = shared_folder_mut(config, share_id)?;
     let pending = record_pending_share_invite(
         folder,
         account.app_key.keys(),
@@ -482,11 +470,7 @@ fn revoke_share_member(
     now_seconds: i64,
 ) -> Result<ShareActionMetadata> {
     let account = load_profile(config_dir, config)?;
-    let folder = config
-        .shared_folders
-        .iter_mut()
-        .find(|folder| folder.share_id == share_id)
-        .with_context(|| format!("share not found: {share_id}"))?;
+    let folder = shared_folder_mut(config, share_id)?;
     let outcome = revoke_shared_folder_member(
         folder,
         account.app_key.keys(),
@@ -512,11 +496,7 @@ fn set_share_member_role(
     now_seconds: i64,
 ) -> Result<ShareActionMetadata> {
     let account = load_profile(config_dir, config)?;
-    let folder = config
-        .shared_folders
-        .iter_mut()
-        .find(|folder| folder.share_id == share_id)
-        .with_context(|| format!("share not found: {share_id}"))?;
+    let folder = shared_folder_mut(config, share_id)?;
     let outcome = set_shared_folder_member_role(
         folder,
         account.app_key.keys(),
@@ -603,11 +583,7 @@ fn repair_share_wraps(
     now_seconds: i64,
 ) -> Result<ShareActionMetadata> {
     let account = load_profile(config_dir, config)?;
-    let folder = config
-        .shared_folders
-        .iter_mut()
-        .find(|folder| folder.share_id == share_id)
-        .with_context(|| format!("share not found: {share_id}"))?;
+    let folder = shared_folder_mut(config, share_id)?;
     let repair = repair_shared_folder_key_epoch_wraps(folder, account.app_key.keys(), now_seconds)?;
     let remaining_missing_key_wrap_pubkeys =
         shared_folder_missing_key_wrap_pubkeys(folder, repair.epoch);
@@ -620,6 +596,17 @@ fn repair_share_wraps(
         remaining_missing_key_wrap_pubkeys,
         ..ShareActionMetadata::default()
     })
+}
+
+fn shared_folder_mut(
+    config: &mut AppConfig,
+    share_id: NostrIdentityId,
+) -> Result<&mut SharedFolder> {
+    config
+        .shared_folders
+        .iter_mut()
+        .find(|folder| folder.share_id == share_id)
+        .with_context(|| format!("share not found: {share_id}"))
 }
 
 fn load_profile(config_dir: &Path, config: &AppConfig) -> Result<Profile> {
