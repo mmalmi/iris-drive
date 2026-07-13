@@ -219,8 +219,6 @@ internal fun IrisDriveAndroidApp(
     onAddShareShortcut: (String, String) -> Unit,
     onRepairShareWraps: (String) -> Unit,
     onAddRoot: (String, String) -> Unit,
-    onStartSync: () -> Unit,
-    onStopSync: () -> Unit,
 ) {
     val state by stateFlow.collectAsState()
     val shareDialogRequest by shareDialogFlow.collectAsState()
@@ -314,8 +312,6 @@ internal fun IrisDriveAndroidApp(
                     selfUpdateActions = selfUpdateActions,
                     backupCheckProgress = backupCheckProgress,
                     isOpeningIrisApps = isOpeningIrisApps,
-                    onStartSync = onStartSync,
-                    onStopSync = onStopSync,
                     onCopyDeviceKey = { onCopyText("Device ID", activeProfile.devicePubkey) },
                     onCopyText = onCopyText,
                     onExportRecoverySecret = onExportRecoverySecret,

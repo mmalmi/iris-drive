@@ -66,8 +66,6 @@ internal fun AuthenticatedContent(
     backupCheckProgress: BackupCheckProgress,
     isOpeningIrisApps: Boolean,
     androidCalendarSyncEnabled: Boolean,
-    onStartSync: () -> Unit,
-    onStopSync: () -> Unit,
     onCopyDeviceKey: () -> Unit,
     onCopyText: (String, String) -> Unit,
     onExportRecoverySecret: () -> RecoverySecretExport,
@@ -113,8 +111,6 @@ internal fun AuthenticatedContent(
             selfUpdateActions = selfUpdateActions,
             isOpeningIrisApps = isOpeningIrisApps,
             onShowDevices = { onSelectTab(MainTab.Devices) },
-            onStartSync = onStartSync,
-            onStopSync = onStopSync,
             onCopySnapshotLink = onCopySnapshotLink,
             onOpenSnapshotLink = onOpenSnapshotLink,
             onOpenIrisApps = onOpenIrisApps,
@@ -184,8 +180,6 @@ private fun DriveContent(
     selfUpdateActions: SelfUpdateActions,
     isOpeningIrisApps: Boolean,
     onShowDevices: () -> Unit,
-    onStartSync: () -> Unit,
-    onStopSync: () -> Unit,
     onCopySnapshotLink: () -> Unit,
     onOpenSnapshotLink: () -> Unit,
     onOpenIrisApps: () -> Unit,
@@ -223,11 +217,7 @@ private fun DriveContent(
             )
         }
         item {
-            SyncPanel(
-                state = state,
-                onStartSync = onStartSync,
-                onStopSync = onStopSync,
-            )
+            SyncPanel(state = state)
         }
     }
 }
@@ -456,26 +446,9 @@ private fun SummaryPanel(state: AppState, onShowDevices: () -> Unit) {
 @Composable
 private fun SyncPanel(
     state: AppState,
-    onStartSync: () -> Unit,
-    onStopSync: () -> Unit,
 ) {
     CardSection(title = "Sync", trailing = state.sync.statusLabel) {
         StatRow("State", state.sync.statusLabel)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            if (state.sync.running) {
-                OutlinedButton(onClick = onStopSync) {
-                    Icon(painterResource(R.drawable.ic_stop), contentDescription = null)
-                    Spacer(Modifier.size(8.dp))
-                    Text("Pause")
-                }
-            } else {
-                Button(onClick = onStartSync) {
-                    Icon(painterResource(R.drawable.ic_play), contentDescription = null)
-                    Spacer(Modifier.size(8.dp))
-                    Text("Resume")
-                }
-            }
-        }
     }
 }
 

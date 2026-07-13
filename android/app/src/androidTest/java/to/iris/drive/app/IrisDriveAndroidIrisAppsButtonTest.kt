@@ -105,8 +105,6 @@ class IrisDriveAndroidIrisAppsButtonTest {
                 onDeleteShare = {},
                 onAddShareShortcut = { _, _ -> },
                 onRepairShareWraps = {},
-                onStartSync = {},
-                onStopSync = {},
             )
         }
         compose.waitForIdle()

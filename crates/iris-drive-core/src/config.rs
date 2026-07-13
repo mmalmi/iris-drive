@@ -81,6 +81,11 @@ pub struct AppConfig {
     /// interoperable with web Drive links without extra setup.
     #[serde(default = "default_true")]
     pub local_nhash_resolver_enabled: bool,
+    /// Whether file/root synchronization should run. This is durable user
+    /// intent so native process restarts and app upgrades do not silently
+    /// pause an authorized device.
+    #[serde(default = "default_true")]
+    pub sync_enabled: bool,
     /// Launch the native desktop shell when the user signs in. Native shells
     /// apply this by registering their platform-specific per-user autostart
     /// entry and launching hidden.
@@ -142,6 +147,7 @@ impl Default for AppConfig {
             relays: default_relays(),
             blossom_servers: default_blossom_servers(),
             local_nhash_resolver_enabled: true,
+            sync_enabled: true,
             launch_on_startup: true,
             backup_targets: Vec::new(),
         }
@@ -581,6 +587,9 @@ impl Drive {
 }
 
 #[cfg(test)]
+mod default_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::{NostrIdentityRosterOp, parse_nostr_identity_roster_op_event};
@@ -604,18 +613,6 @@ mod tests {
     fn default_relays_match_hashtree_defaults() {
         let cfg = AppConfig::default();
         assert_eq!(cfg.relays, hashtree_config::DEFAULT_RELAYS);
-    }
-
-    #[test]
-    fn default_enables_local_nhash_resolver() {
-        let cfg = AppConfig::default();
-        assert!(cfg.local_nhash_resolver_enabled);
-    }
-
-    #[test]
-    fn default_enables_launch_on_startup() {
-        let cfg = AppConfig::default();
-        assert!(cfg.launch_on_startup);
     }
 
     #[test]
@@ -820,20 +817,6 @@ root_cid = "cid-parent"
         let raw = format!("schema_version = {CONFIG_SCHEMA_VERSION}\n");
         let cfg: AppConfig = toml::from_str(&raw).unwrap();
         assert_eq!(cfg.blossom_servers, vec!["https://upload.iris.to"]);
-    }
-
-    #[test]
-    fn missing_local_nhash_resolver_field_loads_enabled() {
-        let raw = format!("schema_version = {CONFIG_SCHEMA_VERSION}\n");
-        let cfg: AppConfig = toml::from_str(&raw).unwrap();
-        assert!(cfg.local_nhash_resolver_enabled);
-    }
-
-    #[test]
-    fn missing_launch_on_startup_field_loads_enabled() {
-        let raw = format!("schema_version = {CONFIG_SCHEMA_VERSION}\n");
-        let cfg: AppConfig = toml::from_str(&raw).unwrap();
-        assert!(cfg.launch_on_startup);
     }
 
     #[test]

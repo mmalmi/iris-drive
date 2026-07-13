@@ -6,7 +6,6 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
@@ -17,7 +16,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.core.content.ContextCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
@@ -83,15 +81,6 @@ class MainActivity : ComponentActivity() {
             )
 
         setContent {
-            val notificationPermissionLauncher =
-                rememberLauncherForActivityResult(
-                    ActivityResultContracts.RequestPermission(),
-                ) { granted ->
-                    if (granted) {
-                        dispatch(NativeActions.startSync(), ::autoStartSyncIfNeeded)
-                        startSyncService()
-                    }
-                }
             val calendarPermissionLauncher =
                 rememberLauncherForActivityResult(
                     ActivityResultContracts.RequestMultiplePermissions(),
@@ -289,20 +278,6 @@ class MainActivity : ComponentActivity() {
                     dispatch(NativeActions.repairShareWraps(shareId))
                 },
                 onAddRoot = { name, path -> dispatch(NativeActions.addRoot(name, path)) },
-                onStartSync = {
-                    if (needsNotificationPermission()) {
-                        notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                    } else {
-                        dispatch(NativeActions.startSync(), ::autoStartSyncIfNeeded)
-                        startSyncService()
-                    }
-                },
-                onStopSync = {
-                    dispatch(NativeActions.stopSync()) { state ->
-                        IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, state)
-                    }
-                    stopSyncService()
-                },
             )
         }
         startNativeCore(intent)
@@ -848,13 +823,6 @@ class MainActivity : ComponentActivity() {
         }
         return label.replace(Regex("\\s+"), " ").takeIf { it.isNotBlank() } ?: "Android"
     }
-
-    private fun needsNotificationPermission(): Boolean =
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
-            ContextCompat.checkSelfPermission(
-                this,
-                Manifest.permission.POST_NOTIFICATIONS,
-            ) != PackageManager.PERMISSION_GRANTED
 
     private fun refreshAndroidCalendarSyncEnabled() {
         androidCalendarSyncEnabledFlow.value = AndroidCalendarAutoSync.isActive(this)

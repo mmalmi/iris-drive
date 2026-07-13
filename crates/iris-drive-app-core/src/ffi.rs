@@ -601,7 +601,7 @@ impl NativeAppRuntime {
                 self.check_backups(&target);
             }
             NativeAppAction::StartSync | NativeAppAction::RestartSync => self.start_sync(),
-            NativeAppAction::StopSync => self.set_sync_running(false),
+            NativeAppAction::StopSync => self.stop_sync(),
             NativeAppAction::AddRoot { name, local_path } => self.add_root(&name, &local_path),
             NativeAppAction::RemoveRoot { name } => self.remove_root(&name),
             share_action @ (NativeAppAction::CreateShare { .. }
@@ -1618,6 +1618,9 @@ impl NativeAppRuntime {
             self.logout_current_revoked_device(provider_summary);
             return;
         }
+        if self.state.ui.sync.status == "ready" {
+            self.set_sync_running(config.sync_enabled);
+        }
         let gateway_port = if config.local_nhash_resolver_enabled && account.is_authorized() {
             native_browser_gateway_port_for_state(Path::new(&self.data_dir))
         } else {
@@ -1780,6 +1783,9 @@ impl NativeAppRuntime {
     }
 
     fn start_sync(&mut self) {
+        if !self.persist_sync_intent(true) {
+            return;
+        }
         self.set_sync_running(true);
         match run_native_sync_once(&self.data_dir) {
             Ok(report) => {
@@ -1792,6 +1798,31 @@ impl NativeAppRuntime {
                 self.state.error = format!("syncing drive: {error:#}");
             }
         }
+    }
+
+    fn stop_sync(&mut self) {
+        if self.persist_sync_intent(false) {
+            self.set_sync_running(false);
+        }
+    }
+
+    fn persist_sync_intent(&mut self, enabled: bool) -> bool {
+        let mut config = match self.load_config() {
+            Ok(config) => config,
+            Err(error) => {
+                self.state.error = error;
+                return false;
+            }
+        };
+        if config.sync_enabled == enabled {
+            return true;
+        }
+        config.sync_enabled = enabled;
+        if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
+            self.state.error = format!("saving sync preference: {error}");
+            return false;
+        }
+        true
     }
 
     fn add_root(&mut self, name: &str, local_path: &str) {

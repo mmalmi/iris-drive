@@ -634,16 +634,18 @@ fn direct_root_publish_cache_can_be_invalidated_for_provider_updates() {
 
 #[test]
 fn direct_root_new_visible_peer_invalidates_current_event_cache() {
-    let mut exchange = DirectRootExchange::default();
-    exchange.current_sync_events_cache = Some(CachedCurrentSyncEvents {
-        config_fingerprint: ConfigFileFingerprint::for_test(10),
-        events: vec![DirectRootEvent {
-            key: "drive-root:local:main:1:stale-root:stale-key:local,peer-a".to_string(),
-            event_id: "stale-event".to_string(),
-            kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
-            json: "{\"id\":\"stale\"}".to_string(),
-        }],
-    });
+    let mut exchange = DirectRootExchange {
+        current_sync_events_cache: Some(CachedCurrentSyncEvents {
+            config_fingerprint: ConfigFileFingerprint::for_test(10),
+            events: vec![DirectRootEvent {
+                key: "drive-root:local:main:1:stale-root:stale-key:local,peer-a".to_string(),
+                event_id: "stale-event".to_string(),
+                kind: iris_drive_core::nostr_events::KIND_DRIVE_ROOT,
+                json: "{\"id\":\"stale\"}".to_string(),
+            }],
+        }),
+        ..DirectRootExchange::default()
+    };
 
     let changes = exchange.refresh_known_root_peers(
         ["peer-a".to_string()],

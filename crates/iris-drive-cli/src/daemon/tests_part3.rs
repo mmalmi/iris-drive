@@ -6,7 +6,7 @@ fn direct_root_state_request_timeout_keeps_followup_on_block_pull_path() {
     };
 
     assert!(DIRECT_ROOT_STATE_REQUEST_SEND_TIMEOUT_SECS < event_block_pull_timeout_secs(&config));
-    assert!(DIRECT_ROOT_STATE_REQUEST_SEND_TIMEOUT_SECS <= 1);
+    const { assert!(DIRECT_ROOT_STATE_REQUEST_SEND_TIMEOUT_SECS <= 1) };
 }
 
 #[test]

@@ -672,22 +672,24 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     @Test
-    fun syncPanelShowsOnlyTheAvailableAction() {
+    fun syncPanelShowsStatusWithoutMobilePauseControls() {
         val owner = createOwnerProfile("Android UI owner")
         val running = appState(owner.handle)
 
         val stateFlow = render(state = running)
 
-        compose.onNodeWithTag("driveContent").performScrollToNode(hasText("Pause"))
-        compose.onNodeWithText("Pause").assertIsDisplayed()
+        compose.onNodeWithTag("driveContent").performScrollToNode(hasText("Sync on"))
+        compose.onNodeWithText("Sync on").assertIsDisplayed()
+        compose.onAllNodesWithText("Pause").assertCountEquals(0)
         compose.onAllNodesWithText("Resume").assertCountEquals(0)
 
         stateFlow.value = running.copy(sync = SyncState(running = false, status = "paused"))
         compose.waitForIdle()
 
-        compose.onNodeWithTag("driveContent").performScrollToNode(hasText("Resume"))
-        compose.onNodeWithText("Resume").assertIsDisplayed()
+        compose.onNodeWithTag("driveContent").performScrollToNode(hasText("Sync paused"))
+        compose.onNodeWithText("Sync paused").assertIsDisplayed()
         compose.onAllNodesWithText("Pause").assertCountEquals(0)
+        compose.onAllNodesWithText("Resume").assertCountEquals(0)
     }
 
     @Test
@@ -910,8 +912,6 @@ class IrisDriveAndroidGuiFlowTest {
                 onDeleteShare = onDeleteShare,
                 onAddShareShortcut = onAddShareShortcut,
                 onRepairShareWraps = onRepairShareWraps,
-                onStartSync = {},
-                onStopSync = {},
             )
         }
         waitForRenderedApp()

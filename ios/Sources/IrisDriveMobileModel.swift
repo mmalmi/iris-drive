@@ -248,11 +248,11 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private var shouldRunDriveBackgroundSync: Bool {
-        syncRunning && !isRevoked && (isSetupComplete || isAwaitingApproval)
+        !isRevoked && (isSetupComplete || isAwaitingApproval)
     }
 
     private var shouldRunDriveForegroundRefresh: Bool {
-        syncRunning && !isRevoked && (isSetupComplete || isAwaitingApproval)
+        !isRevoked && (isSetupComplete || isAwaitingApproval)
     }
 
     private var shouldRunAppleCalendarSync: Bool {

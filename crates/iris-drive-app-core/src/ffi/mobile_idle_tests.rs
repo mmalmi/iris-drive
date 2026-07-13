@@ -37,7 +37,7 @@ fn approve_owner_from_pending_request(owner_dir: &Path, linked_dir: &Path, label
 }
 
 #[test]
-fn mobile_app_key_link_exchange_runs_only_for_rostered_idle_state_or_approval() {
+fn mobile_app_key_link_exchange_stays_on_for_authorized_or_awaiting_approval() {
     let owner_dir = tempfile::tempdir().unwrap();
     let owner_app = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
     let owner = owner_app.dispatch(NativeAppAction::CreateProfile {
@@ -66,10 +66,7 @@ fn mobile_app_key_link_exchange_runs_only_for_rostered_idle_state_or_approval() 
             .map(|profile| profile.authorization_state),
         Some(AppKeyAuthorizationState::Authorized)
     );
-    assert!(native_app_key_link_exchange_should_run(
-        &receipt_only,
-        false
-    ));
+    assert!(native_app_key_link_exchange_should_run(&receipt_only));
 
     apply_owner_profile_roster_to_linked_config(owner_dir.path(), phone_dir.path());
     mark_daemon_live(phone_dir.path());
@@ -109,18 +106,13 @@ fn mobile_app_key_link_exchange_runs_only_for_rostered_idle_state_or_approval() 
     }));
 
     let config = AppConfig::load_or_default(config_path_in(phone_dir.path())).unwrap();
-    assert!(native_app_key_link_exchange_should_run(&config, true));
-    assert!(!native_app_key_link_exchange_should_run(&config, false));
+    assert!(native_app_key_link_exchange_should_run(&config));
 
     let awaiting_approval = native_exchange_config(AppKeyAuthorizationState::AwaitingApproval);
-    assert!(native_app_key_link_exchange_should_run(
-        &awaiting_approval,
-        false
-    ));
+    assert!(native_app_key_link_exchange_should_run(&awaiting_approval));
 
     assert!(!native_app_key_link_exchange_should_run(
-        &AppConfig::default(),
-        true
+        &AppConfig::default()
     ));
 }
 

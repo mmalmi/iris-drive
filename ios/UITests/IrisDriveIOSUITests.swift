@@ -128,14 +128,16 @@ final class IrisDriveIOSUITests: XCTestCase {
         assertOpenIrisAppsLoads(in: app)
     }
 
-    func testOpenIrisAppsLoadsBrowserWhenSyncPaused() throws {
+    func testMyDriveShowsSyncStatusWithoutMobilePauseControls() throws {
         let app = launchApp()
         ensureMyDriveReady(in: app)
 
-        pauseSyncIfNeeded(in: app)
-        app.swipeDown()
-
-        assertOpenIrisAppsLoads(in: app)
+        for _ in 0..<6 where !app.staticTexts["Sync"].exists {
+            app.swipeUp()
+        }
+        XCTAssertTrue(app.staticTexts["Sync"].exists, app.debugDescription)
+        XCTAssertFalse(app.buttons["Pause sync"].exists)
+        XCTAssertFalse(app.buttons["Resume sync"].exists)
     }
 
     func testIrisWebFooterBrowserStyleScreenshots() throws {
@@ -349,30 +351,6 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTAssertTrue(focusedAddress.waitForExistence(timeout: 5), app.debugDescription, file: file, line: line)
         XCTAssertTrue(accessibilityValue(focusedAddress).contains("iris.localhost"), file: file, line: line)
         app.buttons["irisWebCloseButton"].tap()
-    }
-
-    private func pauseSyncIfNeeded(in app: XCUIApplication) {
-        if app.staticTexts["Sync paused"].waitForExistence(timeout: 2) {
-            return
-        }
-        let resumeSync = app.buttons["Resume sync"].firstMatch
-        if resumeSync.exists {
-            return
-        }
-        let pauseSync = app.buttons["Pause sync"].firstMatch
-        for _ in 0..<6 where !pauseSync.exists && !resumeSync.exists {
-            app.swipeUp()
-        }
-        if resumeSync.exists {
-            return
-        }
-        makeHittable(pauseSync, in: app)
-        pauseSync.tap()
-        XCTAssertTrue(
-            app.staticTexts["Sync paused"].waitForExistence(timeout: 5)
-                || resumeSync.waitForExistence(timeout: 5),
-            app.debugDescription
-        )
     }
 
     private func assertIrisAppsLauncherContentLoaded(

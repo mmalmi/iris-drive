@@ -24,7 +24,7 @@ impl NativeAppRuntime {
                 self.stop_app_key_link_exchange();
                 return;
             };
-            if !native_app_key_link_exchange_should_run(&config, self.state.ui.sync.running) {
+            if !native_app_key_link_exchange_should_run(&config) {
                 self.stop_app_key_link_exchange();
                 write_native_fips_paused(Path::new(&self.data_dir));
                 return;
@@ -69,21 +69,12 @@ impl NativeAppRuntime {
 }
 
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
-pub(super) fn native_app_key_link_exchange_should_run(
-    config: &AppConfig,
-    sync_running: bool,
-) -> bool {
+pub(super) fn native_app_key_link_exchange_should_run(config: &AppConfig) -> bool {
     let Some(profile) = config.profile.as_ref() else {
         return false;
     };
     match profile.authorization_state {
-        AppKeyAuthorizationState::Authorized => {
-            sync_running
-                || !profile
-                    .current_app_keys_projection()
-                    .is_some_and(|roster| roster.contains(&profile.app_key_pubkey))
-        }
-        AppKeyAuthorizationState::AwaitingApproval => true,
+        AppKeyAuthorizationState::Authorized | AppKeyAuthorizationState::AwaitingApproval => true,
         AppKeyAuthorizationState::Revoked => false,
     }
 }

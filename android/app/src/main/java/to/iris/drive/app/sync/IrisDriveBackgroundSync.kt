@@ -23,11 +23,15 @@ internal object BackgroundSyncPolicy {
             shouldScheduleAndroidCalendar(state, androidCalendarSyncActive)
 
     fun actionFor(state: AppState): BackgroundSyncAction {
-        if (state.isRevoked || !state.sync.running) {
+        if (state.isRevoked) {
             return BackgroundSyncAction.None
         }
         if (state.isSetupComplete) {
-            return BackgroundSyncAction.RestartSync
+            return if (state.sync.running) {
+                BackgroundSyncAction.RestartSync
+            } else {
+                BackgroundSyncAction.RefreshOnly
+            }
         }
         if (state.isAwaitingApproval) {
             return BackgroundSyncAction.RefreshOnly
@@ -105,13 +109,6 @@ internal object IrisDriveBackgroundSync {
     fun runOnce(context: Context): AppState =
         NativeSyncSession(context).use { session ->
             session.runBackgroundSyncOnce()
-        }
-
-    fun pause(context: Context): AppState =
-        NativeSyncSession(context).use { session ->
-            val state = session.dispatch(NativeActions.stopSync())
-            scheduleIfNeeded(context, state)
-            state
         }
 
     fun scheduleIfNeeded(context: Context, state: AppState) {

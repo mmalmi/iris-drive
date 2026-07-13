@@ -302,6 +302,26 @@ fn profile_actions_populate_mobile_parity_state() {
     assert!(!state.ui.sync.running);
     assert_eq!(state.ui.sync.status, "paused");
     assert_eq!(state.ui.sync.status_label, "Sync paused");
+
+    let paused_config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+    assert!(!paused_config.sync_enabled);
+    drop(app);
+
+    let reopened = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let state = reopened.state();
+    assert!(!state.ui.sync.running);
+    assert_eq!(state.ui.sync.status, "paused");
+
+    let state = reopened.dispatch(NativeAppAction::StartSync);
+    assert!(state.ui.sync.running);
+    let running_config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+    assert!(running_config.sync_enabled);
+    drop(reopened);
+
+    let reopened = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
+    let state = reopened.state();
+    assert!(state.ui.sync.running);
+    assert_eq!(state.ui.sync.status, "running");
 }
 
 #[test]

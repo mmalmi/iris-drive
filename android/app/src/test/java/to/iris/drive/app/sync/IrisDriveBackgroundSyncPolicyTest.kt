@@ -31,7 +31,7 @@ class IrisDriveBackgroundSyncPolicyTest {
     }
 
     @Test
-    fun pausedOrRevokedProfilesDoNotScheduleBackgroundSync() {
+    fun pausedProfilesKeepPresenceRefreshesScheduledButRevokedProfilesDoNot() {
         val paused = AppState(
             isSetupComplete = true,
             sync = SyncState(running = false),
@@ -42,8 +42,8 @@ class IrisDriveBackgroundSyncPolicyTest {
             sync = SyncState(running = true),
         )
 
-        assertFalse(BackgroundSyncPolicy.shouldSchedule(paused))
-        assertEquals(BackgroundSyncAction.None, BackgroundSyncPolicy.actionFor(paused))
+        assertTrue(BackgroundSyncPolicy.shouldSchedule(paused))
+        assertEquals(BackgroundSyncAction.RefreshOnly, BackgroundSyncPolicy.actionFor(paused))
         assertFalse(BackgroundSyncPolicy.shouldSchedule(revoked))
         assertEquals(BackgroundSyncAction.None, BackgroundSyncPolicy.actionFor(revoked))
     }
@@ -55,9 +55,9 @@ class IrisDriveBackgroundSyncPolicyTest {
             sync = SyncState(running = false),
         )
 
-        assertFalse(BackgroundSyncPolicy.shouldSchedule(state))
+        assertTrue(BackgroundSyncPolicy.shouldSchedule(state))
         assertTrue(BackgroundSyncPolicy.shouldSchedule(state, androidCalendarSyncActive = true))
-        assertEquals(BackgroundSyncAction.None, BackgroundSyncPolicy.actionFor(state))
+        assertEquals(BackgroundSyncAction.RefreshOnly, BackgroundSyncPolicy.actionFor(state))
     }
 
     @Test

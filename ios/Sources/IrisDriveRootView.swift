@@ -720,19 +720,6 @@ private struct DriveHomeView: View {
 
             Section("Sync") {
                 LabeledContent("State", value: model.syncStateTitle)
-                if model.syncRunning {
-                    Button {
-                        model.stopSync()
-                    } label: {
-                        Label("Pause sync", systemImage: "pause.fill")
-                    }
-                } else {
-                    Button {
-                        model.startSync()
-                    } label: {
-                        Label("Resume sync", systemImage: "play.fill")
-                    }
-                }
             }
         }
         .navigationTitle("My Drive")
