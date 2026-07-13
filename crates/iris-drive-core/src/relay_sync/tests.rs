@@ -313,7 +313,7 @@ fn apply_app_key_link_roster_accepts_newer_admin_roster_after_initial_approval()
     let linked_roster = linked_state.app_keys.as_ref().unwrap();
     assert!(linked_roster.contains(&linked_state.app_key_pubkey));
     assert!(linked_roster.contains(&third_device));
-    assert!(linked_state.outbound_app_key_link_request.is_none());
+    assert!(linked_state.outbound_app_key_link_request.is_some());
 }
 
 #[test]
@@ -383,7 +383,7 @@ fn apply_app_key_link_roster_accepts_unbound_manual_join_request() {
         linked_state.authorization_state,
         AppKeyAuthorizationState::Authorized
     );
-    assert!(linked_state.outbound_app_key_link_request.is_none());
+    assert!(linked_state.outbound_app_key_link_request.is_some());
     assert_eq!(
         cfg.drive(crate::PRIMARY_DRIVE_ID).unwrap().root_scope_id,
         admin.state.profile_id.to_string()

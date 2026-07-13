@@ -367,8 +367,7 @@ pub fn apply_device_approval_applied_ack_event(
             return true;
         }
         Event::from_json(&pending.event_json)
-            .map(|receipt| receipt.id.to_hex() != ack.approval_event_id)
-            .unwrap_or(true)
+            .map_or(true, |receipt| receipt.id.to_hex() != ack.approval_event_id)
     });
     Ok(state.pending_device_approval_receipts.len() != before)
 }
@@ -533,6 +532,91 @@ mod tests {
         assert!(apply_device_approval_applied_ack_event(&mut owner.state, &ack).unwrap());
         assert!(owner.state.pending_device_approval_receipts.is_empty());
         assert!(!apply_device_approval_applied_ack_event(&mut owner.state, &ack).unwrap());
+    }
+
+    #[test]
+    fn lost_applied_ack_is_rebuilt_after_full_roster_apply() {
+        let owner_dir = tempdir().unwrap();
+        let mut owner = Profile::create(owner_dir.path(), Some("iPhone".into())).unwrap();
+        let linked_dir = tempdir().unwrap();
+        let mut linked =
+            Profile::start_join_request(linked_dir.path(), Some("Mac".into())).unwrap();
+        let approval = create_app_key_approval_bootstrap(
+            linked.app_key.keys(),
+            linked.state.app_key_label.as_deref(),
+        )
+        .unwrap();
+        linked.state.queue_unbound_app_key_join_request(
+            10,
+            approval.url,
+            approval.request_keys.secret_key().to_secret_hex(),
+        );
+        owner
+            .approve_device_bootstrap(&approval.bootstrap, Some("Mac".into()))
+            .unwrap();
+        let receipt =
+            Event::from_json(&owner.state.pending_device_approval_receipts[0].event_json).unwrap();
+        let mut linked_config = AppConfig {
+            profile: Some(linked.state),
+            ..AppConfig::default()
+        };
+        assert_eq!(
+            crate::relay_sync::apply_remote_device_approval_receipt_event(
+                &mut linked_config,
+                &receipt,
+            )
+            .unwrap(),
+            crate::relay_sync::NostrIdentityRosterOpApply::Applied,
+        );
+        let first_ack = device_approval_applied_ack_event(
+            linked_config.profile.as_ref().unwrap(),
+            linked.app_key.keys(),
+            &receipt,
+            11,
+        )
+        .unwrap();
+
+        let roster = app_key_link_roster_frame(&owner.state, 12).unwrap();
+        assert!(matches!(
+            crate::relay_sync::apply_app_key_link_roster_frame(
+                &mut linked_config,
+                &roster,
+                &owner.state.app_key_pubkey,
+            )
+            .unwrap(),
+            crate::relay_sync::AppKeyLinkRosterApply::Applied(_)
+        ));
+        let linked_config_path = linked_dir.path().join("config.toml");
+        linked_config.save(&linked_config_path).unwrap();
+        let mut linked_config = AppConfig::load_or_default(&linked_config_path).unwrap();
+
+        // The first ACK is lost. The owner therefore resends the exact receipt
+        // after the linked device has restarted with the full roster applied.
+        assert_eq!(
+            crate::relay_sync::apply_remote_device_approval_receipt_event(
+                &mut linked_config,
+                &receipt,
+            )
+            .unwrap(),
+            crate::relay_sync::NostrIdentityRosterOpApply::Current,
+        );
+        let replayed_ack = device_approval_applied_ack_event(
+            linked_config.profile.as_ref().unwrap(),
+            linked.app_key.keys(),
+            &receipt,
+            13,
+        )
+        .unwrap();
+        let first = parse_nostr_identity_device_approval_applied_ack_event(&first_ack).unwrap();
+        let replayed =
+            parse_nostr_identity_device_approval_applied_ack_event(&replayed_ack).unwrap();
+        assert_eq!(replayed.request_pubkey, first.request_pubkey);
+        assert_eq!(replayed.device_app_key_pubkey, first.device_app_key_pubkey);
+        assert_eq!(replayed.approval_event_id, first.approval_event_id);
+        assert_eq!(replayed.approved_by_pubkey, first.approved_by_pubkey);
+
+        assert!(apply_device_approval_applied_ack_event(&mut owner.state, &replayed_ack).unwrap());
+        assert!(owner.state.pending_device_approval_receipts.is_empty());
     }
 
     #[test]

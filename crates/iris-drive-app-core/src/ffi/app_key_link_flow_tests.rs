@@ -488,7 +488,7 @@ fn manual_join_request_approval_roster_authorizes_waiting_native_device_e2e() {
         AppKeyAuthorizationState::Authorized
     );
     assert_eq!(linked_state.profile_id, owner_state.profile_id);
-    assert!(linked_state.outbound_app_key_link_request.is_none());
+    assert!(linked_state.outbound_app_key_link_request.is_some());
     linked_config
         .save(config_path_in(linked_dir.path()))
         .expect("save linked config");
@@ -667,6 +667,19 @@ fn revoked_current_device_refresh_logs_out_and_allows_fresh_relink() {
     assert!(revoked.error.is_empty(), "{}", revoked.error);
     apply_latest_profile_roster_frame(owner_dir.path(), linked_dir.path());
 
+    let revoked_config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
+    let revoked_state = revoked_config.profile.as_ref().unwrap();
+    assert!(
+        revoked_state
+            .profile_projection()
+            .tombstones
+            .contains_key(&revoked_state.app_key_pubkey)
+    );
+    assert_eq!(
+        revoked_state.authorization_state,
+        AppKeyAuthorizationState::Revoked
+    );
+
     let refreshed = linked_app.refresh();
     assert!(refreshed.error.is_empty(), "{}", refreshed.error);
     assert!(refreshed.ui.profile.is_none());
@@ -715,11 +728,21 @@ fn apply_latest_profile_roster_frame(from: &Path, to: &Path) {
         )
         .unwrap();
     }
-    iris_drive_core::relay_sync::apply_app_key_link_roster_frame(
+    let outcome = iris_drive_core::relay_sync::apply_app_key_link_roster_frame(
         &mut linked_config,
         &frame,
         &owner_state.app_key_pubkey,
     )
     .unwrap();
+    assert!(
+        !matches!(
+            outcome,
+            iris_drive_core::relay_sync::AppKeyLinkRosterApply::Ignored
+                | iris_drive_core::relay_sync::AppKeyLinkRosterApply::Applied(
+                    iris_drive_core::ApplyDecision::Rejected
+                )
+        ),
+        "expected latest profile roster to apply, got {outcome:?}"
+    );
     linked_config.save(config_path_in(to)).unwrap();
 }

@@ -237,7 +237,9 @@ pub fn apply_app_key_link_roster_frame(
     if !has_current_roster && !pending_device_approval_receipt_is_valid(account) {
         return Ok(AppKeyLinkRosterApply::Ignored);
     }
-    if pending_allows_first_roster && !incoming_projection.can_write_roots(&account.app_key_pubkey)
+    if !has_current_roster
+        && pending_allows_first_roster
+        && !incoming_projection.can_write_roots(&account.app_key_pubkey)
     {
         return Ok(AppKeyLinkRosterApply::Ignored);
     }

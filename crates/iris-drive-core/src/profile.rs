@@ -187,6 +187,8 @@ pub struct ProfileState {
     /// Runtime roster projection cache derived from `profile_roster_ops`.
     #[serde(skip)]
     pub profile_roster_projection: Option<NostrIdentityRosterProjection>,
+    /// Join bootstrap retained through authorization when it carries an applied
+    /// receipt, allowing exact ACK replay if the owner retransmits that receipt.
     #[serde(alias = "outbound_device_link_request")]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outbound_app_key_link_request: Option<PendingAppKeyLinkRequest>,
@@ -356,7 +358,10 @@ impl ProfileState {
             )
         });
         let requests_changed = self.inbound_app_key_link_requests.len() != request_count_before;
-        self.recompute_authorization_from_app_keys(&projection);
+        let current_app_key_is_tombstoned = profile_projection
+            .tombstones
+            .contains_key(&self.app_key_pubkey);
+        self.recompute_authorization_from_app_keys(&projection, current_app_key_is_tombstoned);
         self.profile_roster_projection = Some(profile_projection);
         self.app_keys = Some(projection);
         app_keys_changed || requests_changed
@@ -451,26 +456,40 @@ impl ProfileState {
         } else {
             self.authorization_state
         };
-        if current_app_key_has_usable_profile {
+        if current_app_key_has_usable_profile && !self.has_applied_device_approval_receipt() {
             self.outbound_app_key_link_request = None;
         }
         self.profile_roster_projection = Some(projection);
     }
 
-    fn recompute_authorization_from_app_keys(&mut self, projection: &AppKeysProjection) {
+    fn recompute_authorization_from_app_keys(
+        &mut self,
+        projection: &AppKeysProjection,
+        current_app_key_is_tombstoned: bool,
+    ) {
         let current_app_key_is_projected = projection.contains(&self.app_key_pubkey);
         self.authorization_state = if current_app_key_is_projected
-            || self.pending_device_approval_receipt_authorizes_current_app_key()
+            || (self.pending_device_approval_receipt_authorizes_current_app_key()
+                && !current_app_key_is_tombstoned)
         {
             AppKeyAuthorizationState::Authorized
-        } else if self.authorization_state == AppKeyAuthorizationState::Authorized {
+        } else if current_app_key_is_tombstoned
+            || self.authorization_state == AppKeyAuthorizationState::Authorized
+        {
             AppKeyAuthorizationState::Revoked
         } else {
             self.authorization_state
         };
-        if current_app_key_is_projected {
+        if current_app_key_is_projected && !self.has_applied_device_approval_receipt() {
             self.outbound_app_key_link_request = None;
         }
+    }
+
+    fn has_applied_device_approval_receipt(&self) -> bool {
+        self.outbound_app_key_link_request
+            .as_ref()
+            .and_then(|pending| pending.approval_receipt_event.as_ref())
+            .is_some()
     }
 
     fn pending_device_approval_receipt_authorizes_current_app_key(&self) -> bool {

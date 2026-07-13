@@ -405,7 +405,7 @@ async fn app_key_link_roster_message_authorizes_only_after_local_request() {
         state.authorization_state,
         iris_drive_core::AppKeyAuthorizationState::Authorized
     );
-    assert!(state.outbound_app_key_link_request.is_none());
+    assert!(state.outbound_app_key_link_request.is_some());
     assert!(state.app_keys.as_ref().unwrap().contains(&joiner_pubkey));
 
     let third_device = nostr_sdk::Keys::generate().public_key().to_hex();
