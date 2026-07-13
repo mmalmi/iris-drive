@@ -313,6 +313,7 @@ pub fn parse_pending_app_key_approval_receipt_event(
     .context("validating device approval receipt")
 }
 
+#[must_use]
 pub fn pending_app_key_approval_receipt_authorizes_app_key(
     pending: &crate::profile::PendingAppKeyLinkRequest,
     app_key_pubkey: &str,

@@ -73,8 +73,7 @@ impl AppActorEntry {
 /// `AppKey` revocation: a revoked app install retains anything it already
 /// downloaded but cannot decrypt the drive's new root once the next rotation
 /// lands.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct AppKeysProjection {
     /// Stable `NostrIdentity` UUID string that scopes this roster.
     #[serde(default)]
@@ -101,6 +100,47 @@ pub struct AppKeysProjection {
     /// the current content.
     #[serde(default)]
     pub wrapped_dck: BTreeMap<String, String>,
+}
+
+impl<'de> Deserialize<'de> for AppKeysProjection {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct PersistedAppKeysProjection {
+            #[serde(default)]
+            profile_id: String,
+            #[serde(default)]
+            signed_by_pubkey: Option<String>,
+            #[serde(default)]
+            owner_pubkey: Option<String>,
+            created_at: i64,
+            #[serde(default)]
+            app_actors: Option<Vec<AppActorEntry>>,
+            #[serde(default)]
+            devices: Option<Vec<AppActorEntry>>,
+            #[serde(default)]
+            dck_generation: u64,
+            #[serde(default)]
+            wrapped_dck: BTreeMap<String, String>,
+        }
+
+        let persisted = PersistedAppKeysProjection::deserialize(deserializer)?;
+        let app_actors = persisted
+            .app_actors
+            .or(persisted.devices)
+            .ok_or_else(|| serde::de::Error::missing_field("app_actors"))?;
+        Ok(Self {
+            profile_id: persisted.profile_id,
+            signed_by_pubkey: persisted.signed_by_pubkey.or(persisted.owner_pubkey),
+            created_at: persisted.created_at,
+            app_actors,
+            dck_generation: persisted.dck_generation,
+            wrapped_dck: persisted.wrapped_dck,
+        })
+    }
 }
 
 impl AppKeysProjection {

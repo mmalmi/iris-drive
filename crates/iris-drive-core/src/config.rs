@@ -715,6 +715,7 @@ device_label = "Old Android"
 
 [account.app_keys]
 owner_pubkey = "{device_a}"
+signed_by_pubkey = "{device_a}"
 created_at = 123
 dck_generation = 1
 
