@@ -44,21 +44,21 @@ uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.44", default-features = false, features = ["nip06", "nip44", "nip59"] }
 nostr-pubsub = "0.1.1"
+nostr-pubsub-relay = "0.1.4"
 nostr-identity = { version = "0.3.1", path = "../nostr-social-graph/rust/crates/nostr-identity" }
-# In-flight hashtree path deps — hashtree-provider and FIPS-backed embedded
-# daemon support have not shipped to crates.io yet. Keep all hashtree crates
-# pinned to the same checkout so the Store trait and transport stack line up.
-hashtree-core = { version = "0.2.72", path = "../hashtree/rust/crates/hashtree-core" }
-hashtree-blossom = { version = "0.2.72", path = "../hashtree/rust/crates/hashtree-blossom", features = ["store"] }
-hashtree-config = { version = "0.2.72", path = "../hashtree/rust/crates/hashtree-config" }
-hashtree-embedded = "0.2.72"
+# Iris Drive's provider abstraction and FIPS adapter remain local workspace
+# crates; the shared Hashtree stack is consumed from its published release.
+hashtree-core = "0.2.80"
+hashtree-blossom = { version = "0.2.80", features = ["store"] }
+hashtree-config = "0.2.80"
+hashtree-embedded = "0.2.80"
 hashtree-fips-transport = { version = "0.2.72", path = "crates/hashtree-fips-transport", features = ["webrtc"] }
-hashtree-fs = { version = "0.2.72", path = "../hashtree/rust/crates/hashtree-fs" }
-hashtree-fuse = { version = "0.2.72", path = "../hashtree/rust/crates/fuse", features = ["fuse"] }
-hashtree-lmdb = { version = "0.2.72", path = "../hashtree/rust/crates/hashtree-lmdb" }
-hashtree-nostr = { version = "0.2.72", path = "../hashtree/rust/crates/hashtree-nostr" }
-hashtree-resolver = { version = "0.2.72", path = "../hashtree/rust/crates/hashtree-resolver", features = ["nostr"] }
-hashtree-updater = { version = "0.2.72", path = "../hashtree/rust/crates/hashtree-updater" }
+hashtree-fs = "0.2.80"
+hashtree-fuse = { version = "0.2.80", features = ["fuse"] }
+hashtree-lmdb = "0.2.80"
+hashtree-nostr = "0.2.80"
+hashtree-resolver = { version = "0.2.80", features = ["nostr"] }
+hashtree-updater = "0.2.80"
 hashtree-provider = { path = "crates/hashtree-provider" }
 nostr = { version = "0.44", features = ["nip44"] }
 tempfile = "3"
@@ -86,14 +86,4 @@ struct_excessive_bools = "allow"
 unsafe_code = "forbid"
 
 [patch.crates-io]
-hashtree-blossom = { path = "../hashtree/rust/crates/hashtree-blossom" }
-hashtree-config = { path = "../hashtree/rust/crates/hashtree-config" }
-hashtree-core = { path = "../hashtree/rust/crates/hashtree-core" }
 hashtree-fips-transport = { path = "crates/hashtree-fips-transport" }
-hashtree-fs = { path = "../hashtree/rust/crates/hashtree-fs" }
-hashtree-index = { path = "../hashtree/rust/crates/hashtree-index" }
-hashtree-lmdb = { path = "../hashtree/rust/crates/hashtree-lmdb" }
-hashtree-network = { path = "../hashtree/rust/crates/hashtree-network" }
-hashtree-nostr = { path = "../hashtree/rust/crates/hashtree-nostr" }
-hashtree-resolver = { path = "../hashtree/rust/crates/hashtree-resolver" }
-hashtree-updater = { path = "../hashtree/rust/crates/hashtree-updater" }

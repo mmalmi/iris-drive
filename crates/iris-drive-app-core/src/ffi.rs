@@ -2184,6 +2184,7 @@ async fn run_app_key_link_exchange_async(
     let mut acked_rosters = BTreeSet::new();
     let mut app_key_link_config_cache = NativeAppConfigCache::default();
     let mut direct_roots = iris_drive_core::DirectRootExchange::default();
+    let mut update_announcements = iris_drive_core::UpdateAnnouncementExchange::load(config_dir)?;
     let mut app_key_link_tick = tokio::time::interval(std::time::Duration::from_millis(
         APP_KEY_LINK_EXCHANGE_TICK_MILLIS,
     ));
@@ -2221,6 +2222,9 @@ async fn run_app_key_link_exchange_async(
     if let Err(error) = direct_roots.drain_mesh_events(config_dir, &sync).await {
         tracing::warn!(error = %error, "native direct-root FIPS mesh drain failed");
     }
+    update_announcements
+        .sync_with_peers(config_dir, &sync)
+        .await;
 
     while !stop.load(Ordering::Acquire) {
         tokio::select! {
@@ -2255,10 +2259,25 @@ async fn run_app_key_link_exchange_async(
                 {
                     tracing::warn!(error = %error, "native direct-root state request failed");
                 }
+                update_announcements.sync_with_peers(config_dir, &sync).await;
             }
             message = sync.recv_mesh_pubsub_event() => {
                 let mut messages = vec![message];
                 messages.extend(sync.drain_mesh_pubsub_events().await);
+                for message in &messages {
+                    match update_announcements.handle_mesh_event(config_dir, message) {
+                        Ok(true) => tracing::info!(
+                            peer = message.from_peer_id,
+                            origin = message.origin_peer_id,
+                            "received signed update announcement over FIPS"
+                        ),
+                        Ok(false) => {}
+                        Err(error) => tracing::warn!(
+                            error = %error,
+                            "native update-announcement FIPS event failed"
+                        ),
+                    }
+                }
                 let received_messages = messages.len();
                 let (messages, skipped_roots) =
                     iris_drive_core::coalesce_direct_root_mesh_events(messages);

@@ -72,6 +72,11 @@ pub fn sync_cache_path_in(config_dir: &std::path::Path) -> PathBuf {
     config_dir.join("sync-cache.json")
 }
 
+#[must_use]
+pub fn update_announcement_path_in(config_dir: &std::path::Path) -> PathBuf {
+    config_dir.join("update-announcement.json")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,6 +110,10 @@ mod tests {
         assert_eq!(
             sync_cache_path_in(base),
             PathBuf::from("/tmp/x/sync-cache.json")
+        );
+        assert_eq!(
+            update_announcement_path_in(base),
+            PathBuf::from("/tmp/x/update-announcement.json")
         );
     }
 

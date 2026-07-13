@@ -262,6 +262,9 @@ pub(crate) fn cmd_daemon(
         let mut app_key_link_relay_subscriptions =
             relay_sync::AppKeyLinkRelaySubscriptionState::from_profile(&state);
         let mut direct_roots = DirectRootExchange::default();
+        let mut update_announcements =
+            iris_drive_core::UpdateAnnouncementExchange::load(config_dir)
+                .map_err(anyhow::Error::msg)?;
         let startup_fips_block_sync_status = fips_block_sync_status(fips_blocks.as_deref()).await;
         let mut config = config.clone();
         match import_staged_provider_root(config_dir).await {
@@ -374,6 +377,9 @@ pub(crate) fn cmd_daemon(
                 "{}",
                 json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
             );
+        }
+        if let Some(sync) = fips_blocks.as_deref() {
+            update_announcements.sync_with_peers(config_dir, sync).await;
         }
         println!("(running — Ctrl+C to stop)");
 
@@ -809,6 +815,9 @@ pub(crate) fn cmd_daemon(
                     );
                 }
                 _ = direct_root_peer_refresh_timer.tick() => {
+                    if let Some(sync) = fips_blocks.as_deref() {
+                        update_announcements.sync_with_peers(config_dir, sync).await;
+                    }
                     let direct_root_peers_changed = match direct_roots
                         .request_roots_from_new_peers(config_dir, fips_blocks.as_deref())
                         .await
@@ -1141,6 +1150,23 @@ pub(crate) fn cmd_daemon(
                         ))
                         .await;
                         messages.extend(sync.drain_mesh_pubsub_events().await);
+                        for message in &messages {
+                            match update_announcements.handle_mesh_event(config_dir, message) {
+                                Ok(true) => println!(
+                                    "{}",
+                                    json!({
+                                        "event": "update_announcement_received",
+                                        "peer": message.from_peer_id,
+                                        "origin": message.origin_peer_id,
+                                    })
+                                ),
+                                Ok(false) => {}
+                                Err(error) => println!(
+                                    "{}",
+                                    json!({"event": "update_announcement_error", "trigger": "mesh_event", "error": error})
+                                ),
+                            }
+                        }
                         let result = direct_roots
                             .handle_mesh_events(
                                 &client,

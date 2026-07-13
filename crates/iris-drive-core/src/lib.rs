@@ -63,6 +63,7 @@ pub mod share_actions;
 pub mod sharing;
 pub mod sync;
 pub mod sync_cache;
+pub mod update_announcement;
 pub mod updater;
 
 pub use app_keys::{AppActorEntry, AppActorRole, AppKeysProjection, ApplyDecision};
@@ -172,6 +173,7 @@ pub use sync_cache::{
     SOURCE_STATE_AVAILABLE, SOURCE_STATE_MISSING, SOURCE_STATE_POISONED, SOURCE_STATE_UNKNOWN,
     SourceAvailability, SyncCache, SyncCacheError,
 };
+pub use update_announcement::{UPDATE_ANNOUNCEMENT_MESH_STREAM, UpdateAnnouncementExchange};
 
 /// Schema version for the iris-drive config file. Bump when fields are
 /// removed or repurposed so older installs fail closed instead of carrying

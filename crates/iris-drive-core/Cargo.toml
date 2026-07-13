@@ -32,6 +32,7 @@ mime_guess.workspace = true
 nostr-identity.workspace = true
 nostr-sdk.workspace = true
 nostr-pubsub.workspace = true
+nostr-pubsub-relay.workspace = true
 reqwest.workspace = true
 rustls.workspace = true
 serde.workspace = true

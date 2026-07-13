@@ -23,10 +23,16 @@ pub(crate) fn cmd_update(config_dir: &Path, args: UpdateArgs) -> Result<()> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))
         .with_context(|| format!("reading {}", config_path_in(config_dir).display()))?;
     let daemon_status = load_daemon_status(config_dir);
-    runtime.block_on(run_update(&config, daemon_status.as_ref(), args))
+    runtime.block_on(run_update(
+        config_dir,
+        &config,
+        daemon_status.as_ref(),
+        args,
+    ))
 }
 
 async fn run_update(
+    config_dir: &Path,
     config: &AppConfig,
     daemon_status: Option<&Value>,
     args: UpdateArgs,
@@ -36,7 +42,8 @@ async fn run_update(
     } else {
         ProductUpdateMode::Cli
     };
-    let update_config = product_update_config(config, daemon_status, args.reference.as_deref());
+    let update_config =
+        product_update_config(config_dir, config, daemon_status, args.reference.as_deref());
     let check = check_product_update(PRODUCT_VERSION, mode, update_config.clone())
         .await
         .context("resolving signed hashtree release")?;
@@ -81,6 +88,7 @@ async fn run_update(
 }
 
 fn product_update_config(
+    config_dir: &Path,
     config: &AppConfig,
     daemon_status: Option<&Value>,
     reference: Option<&str>,
@@ -90,6 +98,7 @@ fn product_update_config(
         blossom_servers: config.blossom_servers.clone(),
         embedded_hashtree_base_url: embedded_hashtree_base_url(daemon_status).map(str::to_string),
         update_ref: reference.map(str::to_string),
+        config_dir: Some(config_dir.to_path_buf()),
     }
 }
 
@@ -343,7 +352,9 @@ mod tests {
             blossom_servers: vec!["https://backup.example".to_string()],
             ..AppConfig::default()
         };
-        let update_config = product_update_config(&app_config, Some(&status), Some("htree://test"));
+        let config_dir = Path::new("/tmp/iris-drive-test");
+        let update_config =
+            product_update_config(config_dir, &app_config, Some(&status), Some("htree://test"));
 
         assert_eq!(
             update_config.embedded_hashtree_base_url.as_deref(),
@@ -354,5 +365,6 @@ mod tests {
             vec!["https://backup.example"]
         );
         assert_eq!(update_config.update_ref.as_deref(), Some("htree://test"));
+        assert_eq!(update_config.config_dir.as_deref(), Some(config_dir));
     }
 }
