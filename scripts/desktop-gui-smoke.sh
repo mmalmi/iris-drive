@@ -14,8 +14,7 @@ when the VM has no active desktop session. Windows uses WPF UI Automation
 against the real IrisDrive.exe window.
 
 When the Windows VM is reachable only from a Linux jump host, set
-IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST to the Windows SSH alias. The managed lab
-also treats ssh host "vader" as a jump host to "win11-dev".
+IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST to the Windows SSH alias.
 USAGE
 }
 
@@ -28,11 +27,8 @@ ps_quote() {
 }
 
 windows_guest_host_for() {
-  local remote="$1"
   if [[ -n "${IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST:-}" ]]; then
     printf "%s" "$IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST"
-  elif [[ "$remote" == "vader" ]]; then
-    printf "win11-dev"
   fi
 }
 

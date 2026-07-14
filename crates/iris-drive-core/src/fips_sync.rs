@@ -32,8 +32,6 @@ use crate::fips_bootstrap::DEFAULT_FIPS_BOOTSTRAP_PEERS;
 use crate::identity::AppKey;
 
 const FIPS_REQUEST_TIMEOUT: Duration = Duration::from_millis(1_250);
-const FIPS_REQUEST_RETRY_INTERVAL: Duration = Duration::from_millis(250);
-const FIPS_REQUEST_MAX_ATTEMPTS: usize = 4;
 const FIPS_PACKET_CHANNEL_CAPACITY: usize = 8192;
 const FIPS_WEBRTC_MAX_CONNECTIONS: usize = 16;
 const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 0;
@@ -93,8 +91,6 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         let transport = Arc::new(
             HashtreeFipsTransport::new(endpoint.endpoint, local_store.clone())
                 .with_request_timeout(FIPS_REQUEST_TIMEOUT)
-                .with_request_retry_interval(FIPS_REQUEST_RETRY_INTERVAL)
-                .with_request_max_attempts(FIPS_REQUEST_MAX_ATTEMPTS)
                 .with_unconfigured_app_message_topics(unconfigured_app_message_topics()),
         );
         transport

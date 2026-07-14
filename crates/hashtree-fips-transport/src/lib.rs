@@ -20,24 +20,21 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use thiserror::Error;
-use tokio::sync::{broadcast, mpsc, oneshot, Mutex, Notify, RwLock};
+use tokio::sync::{broadcast, mpsc, Mutex, Notify, RwLock};
 use tokio::task::JoinHandle;
-use tokio::time::{timeout, Duration};
+use tokio::time::Duration;
+
+mod tcp_blob;
+use tcp_blob::TcpBlobTransport;
 
 pub const DEFAULT_FIPS_DISCOVERY_SCOPE: &str = "hashtree-v1";
 pub const DEFAULT_FIPS_REQUEST_TIMEOUT: Duration = Duration::from_millis(5_500);
-pub const DEFAULT_FIPS_REQUEST_RETRY_INTERVAL: Duration = Duration::from_millis(750);
-pub const DEFAULT_FIPS_REQUEST_MAX_ATTEMPTS: usize = 4;
-pub const FIPS_RESPONSE_FRAGMENT_SIZE: usize = 1024;
 pub const FIPS_APP_FRAGMENT_SIZE: usize = 512;
-pub const MAX_HTL: u8 = 10;
 pub const DEFAULT_FIPS_WEBRTC_MAX_CONNECTIONS: usize = 512;
 const APP_MESSAGE_BROADCAST_CAPACITY: usize = 4096;
 
-const MSG_TYPE_REQUEST: u8 = 0x00;
-const MSG_TYPE_RESPONSE: u8 = 0x01;
 const MSG_TYPE_APP: u8 = 0x7f;
-const MAX_RESPONSE_FRAGMENTS: u32 = 16_384;
+const MAX_APP_FRAGMENTS: u32 = 16_384;
 const FIPS_MESH_SIGNALING_TOPIC: &str = "hashtree/fips/mesh/signaling/v1";
 const FIPS_MESH_DATA_TOPIC: &str = "hashtree/fips/mesh/data/v1";
 const FIPS_MESH_PUMP_INTERVAL: Duration = Duration::from_millis(250);
@@ -460,26 +457,6 @@ impl FipsEndpointIo for fips_core::FipsEndpoint {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct DataRequest {
-    #[serde(with = "serde_bytes")]
-    h: Vec<u8>,
-    #[serde(default = "default_htl", skip_serializing_if = "is_max_htl")]
-    htl: u8,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DataResponse {
-    #[serde(with = "serde_bytes")]
-    h: Vec<u8>,
-    #[serde(with = "serde_bytes")]
-    d: Vec<u8>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    i: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    n: Option<u32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
 struct AppPacket {
     t: String,
     #[serde(with = "serde_bytes")]
@@ -492,87 +469,9 @@ struct AppPacket {
     n: Option<u32>,
 }
 
-enum Message {
-    Request(DataRequest),
-    Response(DataResponse),
-    App(AppPacket),
-}
-
-fn default_htl() -> u8 {
-    MAX_HTL
-}
-
-fn is_max_htl(htl: &u8) -> bool {
-    *htl == MAX_HTL
-}
-
-fn hash_key(hash: &Hash) -> String {
-    hex::encode(hash)
-}
-
-fn bytes_to_hash(bytes: &[u8]) -> Option<Hash> {
-    if bytes.len() != 32 {
-        return None;
-    }
-    let mut hash = [0u8; 32];
-    hash.copy_from_slice(bytes);
-    Some(hash)
-}
-
 fn verify_hash(data: &[u8], hash: &Hash) -> bool {
     let digest = Sha256::digest(data);
     digest.as_slice() == hash
-}
-
-fn remaining_until(deadline: tokio::time::Instant) -> Duration {
-    deadline
-        .checked_duration_since(tokio::time::Instant::now())
-        .unwrap_or_default()
-}
-
-fn encode_request(hash: &Hash, htl: u8) -> Result<Vec<u8>, FipsTransportError> {
-    let body = rmp_serde::to_vec_named(&DataRequest {
-        h: hash.to_vec(),
-        htl,
-    })
-    .map_err(|err| FipsTransportError::Wire(err.to_string()))?;
-    let mut out = Vec::with_capacity(1 + body.len());
-    out.push(MSG_TYPE_REQUEST);
-    out.extend(body);
-    Ok(out)
-}
-
-fn encode_response(hash: &Hash, data: &[u8]) -> Result<Vec<u8>, FipsTransportError> {
-    let body = rmp_serde::to_vec_named(&DataResponse {
-        h: hash.to_vec(),
-        d: data.to_vec(),
-        i: None,
-        n: None,
-    })
-    .map_err(|err| FipsTransportError::Wire(err.to_string()))?;
-    let mut out = Vec::with_capacity(1 + body.len());
-    out.push(MSG_TYPE_RESPONSE);
-    out.extend(body);
-    Ok(out)
-}
-
-fn encode_fragment_response(
-    hash: &Hash,
-    data: &[u8],
-    index: u32,
-    total: u32,
-) -> Result<Vec<u8>, FipsTransportError> {
-    let body = rmp_serde::to_vec_named(&DataResponse {
-        h: hash.to_vec(),
-        d: data.to_vec(),
-        i: Some(index),
-        n: Some(total),
-    })
-    .map_err(|err| FipsTransportError::Wire(err.to_string()))?;
-    let mut out = Vec::with_capacity(1 + body.len());
-    out.push(MSG_TYPE_RESPONSE);
-    out.extend(body);
-    Ok(out)
 }
 
 fn encode_app_message(topic: &str, data: &[u8]) -> Result<Vec<u8>, FipsTransportError> {
@@ -612,7 +511,7 @@ fn encode_app_messages(topic: &str, data: &[u8]) -> Result<Vec<Vec<u8>>, FipsTra
     }
 
     let total = data.len().div_ceil(FIPS_APP_FRAGMENT_SIZE);
-    if total > MAX_RESPONSE_FRAGMENTS as usize {
+    if total > MAX_APP_FRAGMENTS as usize {
         return Err(FipsTransportError::Wire(format!(
             "application message has too many fragments: {total}"
         )));
@@ -636,32 +535,16 @@ fn encode_app_messages(topic: &str, data: &[u8]) -> Result<Vec<Vec<u8>>, FipsTra
     Ok(out)
 }
 
-fn parse_message(data: &[u8]) -> Result<Option<Message>, FipsTransportError> {
+fn parse_app_message(data: &[u8]) -> Result<Option<AppPacket>, FipsTransportError> {
     let Some((&kind, body)) = data.split_first() else {
         return Ok(None);
     };
     match kind {
-        MSG_TYPE_REQUEST => rmp_serde::from_slice::<DataRequest>(body)
-            .map(|req| Some(Message::Request(req)))
-            .map_err(|err| FipsTransportError::Wire(err.to_string())),
-        MSG_TYPE_RESPONSE => rmp_serde::from_slice::<DataResponse>(body)
-            .map(|resp| Some(Message::Response(resp)))
-            .map_err(|err| FipsTransportError::Wire(err.to_string())),
         MSG_TYPE_APP => rmp_serde::from_slice::<AppPacket>(body)
-            .map(|packet| Some(Message::App(packet)))
+            .map(Some)
             .map_err(|err| FipsTransportError::Wire(err.to_string())),
         _ => Ok(None),
     }
-}
-
-struct PendingRequest {
-    resolve: oneshot::Sender<Option<Vec<u8>>>,
-}
-
-struct ResponseReassembly {
-    total: u32,
-    fragments: HashMap<u32, Vec<u8>>,
-    received_bytes: usize,
 }
 
 struct AppReassembly {
@@ -677,15 +560,10 @@ pub struct HashtreeFipsTransport<S: Store + Send + Sync + 'static = MemoryStore>
     peers: Arc<RwLock<Vec<String>>>,
     peer_filter_configured: Arc<RwLock<bool>>,
     unconfigured_app_message_topics: Vec<String>,
-    pending: Arc<Mutex<HashMap<String, Vec<PendingRequest>>>>,
-    response_fragments: Arc<Mutex<HashMap<String, ResponseReassembly>>>,
     app_fragments: Arc<Mutex<HashMap<String, AppReassembly>>>,
     app_messages: broadcast::Sender<FipsAppMessage>,
     request_timeout: Duration,
-    request_retry_interval: Duration,
-    request_max_attempts: usize,
-    request_htl: u8,
-    cache_responses: bool,
+    tcp_blobs: TcpBlobTransport<S>,
 }
 
 impl HashtreeFipsTransport<MemoryStore> {
@@ -698,49 +576,20 @@ impl<S: Store + Send + Sync + 'static> HashtreeFipsTransport<S> {
     pub fn new(endpoint: Arc<dyn FipsEndpointIo>, local_store: Arc<S>) -> Self {
         let (app_messages, _) = broadcast::channel(APP_MESSAGE_BROADCAST_CAPACITY);
         Self {
+            tcp_blobs: TcpBlobTransport::new(endpoint.clone(), local_store.clone()),
             endpoint,
             local_store,
             peers: Arc::new(RwLock::new(Vec::new())),
             peer_filter_configured: Arc::new(RwLock::new(false)),
             unconfigured_app_message_topics: Vec::new(),
-            pending: Arc::new(Mutex::new(HashMap::new())),
-            response_fragments: Arc::new(Mutex::new(HashMap::new())),
             app_fragments: Arc::new(Mutex::new(HashMap::new())),
             app_messages,
             request_timeout: DEFAULT_FIPS_REQUEST_TIMEOUT,
-            request_retry_interval: DEFAULT_FIPS_REQUEST_RETRY_INTERVAL,
-            request_max_attempts: DEFAULT_FIPS_REQUEST_MAX_ATTEMPTS,
-            request_htl: MAX_HTL,
-            cache_responses: true,
         }
     }
 
     pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
         self.request_timeout = timeout;
-        self
-    }
-
-    pub fn with_request_retry_interval(mut self, interval: Duration) -> Self {
-        self.request_retry_interval = if interval.is_zero() {
-            Duration::from_millis(1)
-        } else {
-            interval
-        };
-        self
-    }
-
-    pub fn with_request_max_attempts(mut self, attempts: usize) -> Self {
-        self.request_max_attempts = attempts.max(1);
-        self
-    }
-
-    pub fn with_request_htl(mut self, htl: u8) -> Self {
-        self.request_htl = htl;
-        self
-    }
-
-    pub fn with_cache_responses(mut self, cache_responses: bool) -> Self {
-        self.cache_responses = cache_responses;
         self
     }
 
@@ -872,8 +721,17 @@ impl<S: Store + Send + Sync + 'static> HashtreeFipsTransport<S> {
     pub fn start(self: &Arc<Self>) -> JoinHandle<()> {
         let this = self.clone();
         tokio::spawn(async move {
-            while let Some(packet) = this.endpoint.recv().await {
-                let _ = this.handle_packet(packet).await;
+            let mut poll = tokio::time::interval(Duration::from_millis(20));
+            loop {
+                tokio::select! {
+                    packet = this.endpoint.recv() => {
+                        let Some(packet) = packet else { break };
+                        let _ = this.handle_packet(packet).await;
+                    }
+                    _ = poll.tick() => {
+                        let _ = this.tcp_blobs.poll().await;
+                    }
+                }
             }
         })
     }
@@ -887,133 +745,36 @@ impl<S: Store + Send + Sync + 'static> HashtreeFipsTransport<S> {
         hash: &Hash,
         peers: &[String],
     ) -> Result<Option<Vec<u8>>, FipsTransportError> {
-        if let Some(data) = self.local_store.get(hash).await? {
-            if verify_hash(&data, hash) {
-                return Ok(Some(data));
-            }
-        }
-        if peers.is_empty() {
-            return Ok(None);
-        }
-
-        let key = hash_key(hash);
-        let (tx, rx) = oneshot::channel();
-        self.pending
-            .lock()
-            .await
-            .entry(key.clone())
-            .or_default()
-            .push(PendingRequest { resolve: tx });
-
-        let payload = encode_request(hash, self.request_htl)?;
-        let deadline = tokio::time::Instant::now() + self.request_timeout;
-        let mut rx = rx;
-        for attempt in 0..self.request_max_attempts {
-            if attempt > 0 && remaining_until(deadline).is_zero() {
-                break;
-            }
-            let sent = self.send_request_to_peers(peers, &payload).await;
-            if sent == 0 && attempt == 0 {
-                self.resolve_pending(&key, None).await;
-                return Ok(None);
-            }
-            if attempt + 1 >= self.request_max_attempts {
-                break;
-            }
-            let remaining = remaining_until(deadline);
-            if remaining.is_zero() {
-                break;
-            }
-            match timeout(self.request_retry_interval.min(remaining), &mut rx).await {
-                Ok(Ok(result)) => return Ok(result),
-                Ok(Err(_)) => return Ok(None),
-                Err(_) => {
-                    if remaining_until(deadline).is_zero() {
-                        break;
-                    }
-                }
-            }
-        }
-
-        match timeout(remaining_until(deadline), rx).await {
-            Ok(Ok(result)) => Ok(result),
-            _ => {
-                self.remove_pending_sender(&key).await;
-                Ok(None)
-            }
-        }
-    }
-
-    async fn send_request_to_peers(&self, peers: &[String], payload: &[u8]) -> usize {
-        let mut sent = 0usize;
-        for peer in peers {
-            if self.endpoint.send(peer, payload.to_vec()).await.is_ok() {
-                sent += 1;
-            }
-        }
-        sent
+        self.tcp_blobs.get(hash, peers, self.request_timeout).await
     }
 
     async fn handle_packet(&self, packet: FipsEndpointPacket) -> Result<(), FipsTransportError> {
-        let Some(message) = parse_message(&packet.data)? else {
+        if self.tcp_blobs.handles(&packet.data) {
+            if self.is_application_peer(&packet.peer_id).await {
+                return self.tcp_blobs.input(packet.peer_id, &packet.data).await;
+            }
+            return Ok(());
+        }
+        let Some(app) = parse_app_message(&packet.data)? else {
             return Ok(());
         };
-        let unconfigured_app_message_allowed = match &message {
-            Message::App(app) => self
-                .unconfigured_app_message_topics
-                .iter()
-                .any(|topic| topic == &app.t),
-            _ => false,
-        };
+        let unconfigured_app_message_allowed = self
+            .unconfigured_app_message_topics
+            .iter()
+            .any(|topic| topic == &app.t);
         let is_application_peer = self.is_application_peer(&packet.peer_id).await;
         if !is_application_peer && !unconfigured_app_message_allowed {
             return Ok(());
         }
-        match message {
-            Message::Request(req) => {
-                let Some(hash) = bytes_to_hash(&req.h) else {
-                    return Ok(());
-                };
-                let Some(data) = self.local_store.get(&hash).await? else {
-                    return Ok(());
-                };
-                if !verify_hash(&data, &hash) {
-                    return Ok(());
-                }
-                self.send_response(&packet.peer_id, &hash, &data).await?;
-            }
-            Message::Response(resp) => {
-                let Some(hash) = bytes_to_hash(&resp.h) else {
-                    return Ok(());
-                };
-                let key = hash_key(&hash);
-                if !self.pending.lock().await.contains_key(&key) {
-                    return Ok(());
-                }
-                let Some(data) = self.response_data_from_message(&key, resp).await else {
-                    return Ok(());
-                };
-                if !verify_hash(&data, &hash) {
-                    return Ok(());
-                }
-                if self.cache_responses {
-                    let _ = self.local_store.put(hash, data.clone()).await;
-                }
-                self.resolve_pending(&key, Some(data)).await;
-            }
-            Message::App(app) => {
-                if app.t.trim().is_empty() {
-                    return Ok(());
-                }
-                if let Some((topic, data)) = self.app_data_from_message(&packet.peer_id, app).await
-                {
-                    let _ = self.app_messages.send(FipsAppMessage {
-                        peer_id: packet.peer_id,
-                        topic,
-                        data,
-                    });
-                }
-            }
+        if app.t.trim().is_empty() {
+            return Ok(());
+        }
+        if let Some((topic, data)) = self.app_data_from_message(&packet.peer_id, app).await {
+            let _ = self.app_messages.send(FipsAppMessage {
+                peer_id: packet.peer_id,
+                topic,
+                data,
+            });
         }
         Ok(())
     }
@@ -1024,89 +785,6 @@ impl<S: Store + Send + Sync + 'static> HashtreeFipsTransport<S> {
             return true;
         }
         peers.iter().any(|peer| peer == peer_id)
-    }
-
-    async fn send_response(
-        &self,
-        peer_id: &str,
-        hash: &Hash,
-        data: &[u8],
-    ) -> Result<(), FipsTransportError> {
-        if data.len() <= FIPS_RESPONSE_FRAGMENT_SIZE {
-            self.endpoint
-                .send(peer_id, encode_response(hash, data)?)
-                .await?;
-            return Ok(());
-        }
-
-        let total = data.len().div_ceil(FIPS_RESPONSE_FRAGMENT_SIZE) as u32;
-        for index in 0..total {
-            let start = index as usize * FIPS_RESPONSE_FRAGMENT_SIZE;
-            let end = (start + FIPS_RESPONSE_FRAGMENT_SIZE).min(data.len());
-            self.endpoint
-                .send(
-                    peer_id,
-                    encode_fragment_response(hash, &data[start..end], index, total)?,
-                )
-                .await?;
-        }
-        Ok(())
-    }
-
-    async fn response_data_from_message(&self, key: &str, resp: DataResponse) -> Option<Vec<u8>> {
-        match (resp.i, resp.n) {
-            (Some(index), Some(total)) => {
-                self.reassemble_response_fragment(key, resp.d, index, total)
-                    .await
-            }
-            (None, None) => Some(resp.d),
-            _ => None,
-        }
-    }
-
-    async fn reassemble_response_fragment(
-        &self,
-        key: &str,
-        data: Vec<u8>,
-        index: u32,
-        total: u32,
-    ) -> Option<Vec<u8>> {
-        if total == 0 || total > MAX_RESPONSE_FRAGMENTS || index >= total {
-            return None;
-        }
-
-        let mut fragments = self.response_fragments.lock().await;
-        let entry = fragments
-            .entry(key.to_string())
-            .or_insert_with(|| ResponseReassembly {
-                total,
-                fragments: HashMap::new(),
-                received_bytes: 0,
-            });
-        if entry.total != total {
-            *entry = ResponseReassembly {
-                total,
-                fragments: HashMap::new(),
-                received_bytes: 0,
-            };
-        }
-
-        if let std::collections::hash_map::Entry::Vacant(slot) = entry.fragments.entry(index) {
-            entry.received_bytes += data.len();
-            slot.insert(data);
-        }
-
-        if entry.fragments.len() != entry.total as usize {
-            return None;
-        }
-
-        let mut assembled = Vec::with_capacity(entry.received_bytes);
-        for fragment_index in 0..entry.total {
-            let fragment = entry.fragments.get(&fragment_index)?;
-            assembled.extend_from_slice(fragment);
-        }
-        fragments.remove(key);
-        Some(assembled)
     }
 
     async fn app_data_from_message(
@@ -1133,7 +811,7 @@ impl<S: Store + Send + Sync + 'static> HashtreeFipsTransport<S> {
         index: u32,
         total: u32,
     ) -> Option<(String, Vec<u8>)> {
-        if total == 0 || total > MAX_RESPONSE_FRAGMENTS || index >= total {
+        if total == 0 || total > MAX_APP_FRAGMENTS || index >= total {
             return None;
         }
 
@@ -1173,36 +851,6 @@ impl<S: Store + Send + Sync + 'static> HashtreeFipsTransport<S> {
         let topic = entry.topic.clone();
         fragments.remove(&key);
         Some((topic, assembled))
-    }
-
-    async fn resolve_pending(&self, key: &str, data: Option<Vec<u8>>) {
-        self.response_fragments.lock().await.remove(key);
-        let pending = self.pending.lock().await.remove(key);
-        if let Some(pending) = pending {
-            for request in pending {
-                let _ = request.resolve.send(data.clone());
-            }
-        }
-    }
-
-    async fn remove_pending_sender(&self, key: &str) {
-        let remove_fragments = {
-            let mut pending = self.pending.lock().await;
-            if let Some(requests) = pending.get_mut(key) {
-                requests.retain(|request| !request.resolve.is_closed());
-                if requests.is_empty() {
-                    pending.remove(key);
-                    true
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        };
-        if remove_fragments {
-            self.response_fragments.lock().await.remove(key);
-        }
     }
 }
 
@@ -1708,6 +1356,7 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
     use tokio::sync::mpsc;
+    use tokio::time::timeout;
 
     struct FakeEndpoint {
         id: String,
@@ -1830,6 +1479,64 @@ mod tests {
         fn local_peer_id(&self) -> Option<String> {
             Some(self.id.clone())
         }
+    }
+
+    struct ServeAfterFirstGet {
+        hash: Hash,
+        data: Vec<u8>,
+        gets: AtomicUsize,
+    }
+
+    #[async_trait]
+    impl Store for ServeAfterFirstGet {
+        async fn put(&self, _hash: Hash, _data: Vec<u8>) -> Result<bool, StoreError> {
+            Ok(true)
+        }
+
+        async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
+            let call = self.gets.fetch_add(1, Ordering::Relaxed);
+            Ok((hash == &self.hash && call > 0).then(|| self.data.clone()))
+        }
+
+        async fn has(&self, hash: &Hash) -> Result<bool, StoreError> {
+            Ok(hash == &self.hash)
+        }
+
+        async fn delete(&self, _hash: &Hash) -> Result<bool, StoreError> {
+            Ok(false)
+        }
+    }
+
+    #[tokio::test]
+    async fn tcp_blob_runs_through_real_fips_endpoint_api() {
+        let endpoint = Arc::new(
+            fips_core::FipsEndpoint::builder()
+                .without_system_tun()
+                .bind()
+                .await
+                .expect("bind FIPS endpoint"),
+        );
+        let peer = endpoint.npub().to_string();
+        let data = (0..180_000)
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        let hash = hash(&data);
+        let store = Arc::new(ServeAfterFirstGet {
+            hash,
+            data: data.clone(),
+            gets: AtomicUsize::new(0),
+        });
+        let transport = Arc::new(HashtreeFipsTransport::new(endpoint, store));
+        let task = transport.start();
+
+        let received = transport
+            .get_from_peers(&hash, &[peer])
+            .await
+            .expect("TCP/FIPS blob request");
+
+        assert_eq!(received, Some(data));
+        transport.shutdown().await.expect("shutdown FIPS endpoint");
+        task.abort();
     }
 
     fn hash(data: &[u8]) -> Hash {
@@ -2085,7 +1792,7 @@ mod tests {
         let network = Arc::new(Mutex::new(HashMap::new()));
         let endpoint_a = FakeEndpoint::new("a", network.clone()).await;
         let endpoint_b = FakeEndpoint::new("b", network).await;
-        let data = (0..(FIPS_RESPONSE_FRAGMENT_SIZE * 2 + 17))
+        let data = (0..(1024 * 2 + 17))
             .map(|index| (index % 251) as u8)
             .collect::<Vec<_>>();
         let hash = hash(&data);
@@ -2338,7 +2045,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn silence_resolves_unknown_without_retrying_same_peer() {
+    async fn explicit_tcp_stream_miss_resolves_unknown() {
         let network = Arc::new(Mutex::new(HashMap::new()));
         let endpoint_a = FakeEndpoint::new("a", network.clone()).await;
         let endpoint_b = FakeEndpoint::new("b", network).await;
@@ -2359,10 +2066,9 @@ mod tests {
         tokio::time::advance(Duration::from_millis(30)).await;
 
         assert_eq!(pending.await.unwrap(), None);
-        assert_eq!(endpoint_b.sent_count(), 1);
         assert!(
-            transport_b.pending.lock().await.is_empty(),
-            "timed-out requests should not leave stale pending senders"
+            endpoint_b.sent_count() >= 3,
+            "TCP handshake and stream ACKs must be carried"
         );
     }
 
@@ -2379,8 +2085,7 @@ mod tests {
         let transport_a = Arc::new(HashtreeFipsTransport::new(endpoint_a, store_a));
         let transport_b = Arc::new(
             HashtreeFipsTransport::new(endpoint_b.clone(), Arc::new(MemoryStore::new()))
-                .with_request_timeout(Duration::from_millis(300))
-                .with_request_retry_interval(Duration::from_millis(50)),
+                .with_request_timeout(Duration::from_millis(300)),
         );
         transport_a.start();
         transport_b.start();
@@ -2390,6 +2095,9 @@ mod tests {
         tokio::time::advance(Duration::from_millis(60)).await;
 
         assert_eq!(pending.await.unwrap(), Some(data));
-        assert_eq!(endpoint_b.sent_count(), 2);
+        assert!(
+            endpoint_b.sent_count() >= 3,
+            "TCP must retransmit the dropped SYN and carry the request"
+        );
     }
 }

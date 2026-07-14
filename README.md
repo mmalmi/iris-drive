@@ -190,9 +190,9 @@ See the platform READMEs for focused instructions:
   drive-root events while the iris-drive daemon is running.
 - Imports local source trees into the persistent htree block store and exposes a
   merged virtual primary drive view through native provider bridges.
-- Replicates blocks directly over hashtree-over-[FIPS] between authorized
-  app installs when peers are reachable; Blossom remains a configured remote/cache
-  path.
+- Replicates blocks through [reliable TCP/FIPS streams](docs/tcp-fips-blob-v1.md)
+  between authorized app installs when peers are reachable; Blossom remains a
+  configured remote/cache path.
 - Supports encrypted backup targets for Blossom, filesystem, and LMDB endpoints.
 - Serves local browser views for `*.iris.localhost` and `nhash.iris.localhost`.
 - Provides release-update plumbing through signed hashtree manifests.
@@ -367,5 +367,3 @@ files for machine-specific signing, htree release, and Zapstore settings.
 ## License
 
 MIT.
-
-[FIPS]: https://github.com/jmcorgan/fips

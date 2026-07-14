@@ -57,8 +57,6 @@ Environment:
   IRIS_DRIVE_E2E_POSIX_IDRIVE     Override idrive path for every POSIX host.
   IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST
                                   Windows SSH alias to use from a Linux jump host.
-                                  The managed lab treats host "vader" as a jump
-                                  host to "win11-dev" when this is unset.
   IRIS_DRIVE_E2E_IDLE_CPU_GATE    Sample every host daemon's idle CPU after convergence (default: 1).
   IRIS_DRIVE_IDLE_CPU_WARMUP_SECS Override the post-workload idle CPU settle warmup (default: 90).
   IRIS_DRIVE_E2E_KEEP            Keep remote temp dirs/daemons when set to 1.
@@ -276,11 +274,8 @@ ps_quote() {
 }
 
 windows_guest_host_for() {
-  local ssh_host="$1"
   if [[ -n "${IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST:-}" ]]; then
     printf "%s" "$IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST"
-  elif [[ "$ssh_host" == "vader" ]]; then
-    printf "win11-dev"
   fi
 }
 

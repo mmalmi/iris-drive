@@ -13,11 +13,8 @@ ps_quote() {
 }
 
 windows_guest_host_for() {
-  local host="$1"
   if [[ -n "${IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST:-}" ]]; then
     printf "%s" "$IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST"
-  elif [[ "$host" == "vader" ]]; then
-    printf "win11-dev"
   fi
 }
 
