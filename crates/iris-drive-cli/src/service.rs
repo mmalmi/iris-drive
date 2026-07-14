@@ -9,7 +9,7 @@ use std::process::{Command as ProcessCommand, Stdio};
 use std::time::{Duration, Instant};
 
 #[cfg(target_os = "macos")]
-const BINARY_VERSION_QUERY_TIMEOUT: Duration = Duration::from_secs(2);
+const BINARY_VERSION_QUERY_TIMEOUT: Duration = Duration::from_secs(5);
 #[cfg(target_os = "macos")]
 const BINARY_VERSION_QUERY_POLL_INTERVAL: Duration = Duration::from_millis(20);
 const MACOS_DAEMON_NOFILE_LIMIT: u32 = 4096;
@@ -668,6 +668,29 @@ gui/501/to.iris.drive.daemon.test = {
             &idrive,
             format!(
                 "#!/bin/sh\n[ \"$1\" = version ] || exit 2\n[ \"$2\" = --json ] || exit 2\necho '{{\"version\":\"{}\"}}'\n",
+                env!("CARGO_PKG_VERSION")
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&idrive, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+        assert_eq!(
+            query_binary_version(&idrive).as_deref(),
+            Some(env!("CARGO_PKG_VERSION")),
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_binary_version_query_tolerates_busy_startup() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let dir = tempfile::tempdir().unwrap();
+        let idrive = dir.path().join("idrive");
+        std::fs::write(
+            &idrive,
+            format!(
+                "#!/bin/sh\nsleep 2.2\necho '{{\"version\":\"{}\"}}'\n",
                 env!("CARGO_PKG_VERSION")
             ),
         )
