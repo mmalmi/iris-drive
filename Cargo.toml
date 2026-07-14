@@ -43,22 +43,22 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.44", default-features = false, features = ["nip06", "nip44", "nip59"] }
-nostr-pubsub = "0.1.1"
-nostr-pubsub-relay = "0.1.4"
+nostr-pubsub = "0.1.8"
+nostr-pubsub-relay = "0.1.8"
 nostr-identity = { version = "0.3.1", path = "../nostr-social-graph/rust/crates/nostr-identity" }
 # Iris Drive's provider abstraction and FIPS adapter remain local workspace
 # crates; the shared Hashtree stack is consumed from its published release.
-hashtree-core = "0.2.80"
-hashtree-blossom = { version = "0.2.80", features = ["store"] }
-hashtree-config = "0.2.80"
-hashtree-embedded = "0.2.80"
+hashtree-core = "0.2.81"
+hashtree-blossom = { version = "0.2.81", features = ["store"] }
+hashtree-config = "0.2.81"
+hashtree-embedded = "0.2.81"
 hashtree-fips-transport = { version = "0.2.72", path = "crates/hashtree-fips-transport", features = ["webrtc"] }
-hashtree-fs = "0.2.80"
-hashtree-fuse = { version = "0.2.80", features = ["fuse"] }
-hashtree-lmdb = "0.2.80"
-hashtree-nostr = "0.2.80"
-hashtree-resolver = { version = "0.2.80", features = ["nostr"] }
-hashtree-updater = "0.2.80"
+hashtree-fs = "0.2.81"
+hashtree-fuse = { version = "0.2.81", features = ["fuse"] }
+hashtree-lmdb = "0.2.81"
+hashtree-nostr = "0.2.81"
+hashtree-resolver = { version = "0.2.81", features = ["nostr"] }
+hashtree-updater = "0.2.81"
 hashtree-provider = { path = "crates/hashtree-provider" }
 nostr = { version = "0.44", features = ["nip44"] }
 tempfile = "3"

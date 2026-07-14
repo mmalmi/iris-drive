@@ -1635,9 +1635,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.3.96"
+version = "0.3.97"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29c525c088b450ef1ea00e22bdb1be881134caf2b2a302bad2aeb5e3944e8b84"
+checksum = "5c947b6a9c7acae6801f76b3c0b0d2cac49314e75b0e0bbf96b7a325834caa5c"
 dependencies = [
  "bluer",
  "bytes",
@@ -2082,9 +2082,9 @@ dependencies = [
 
 [[package]]
 name = "git-remote-htree"
-version = "0.2.80"
+version = "0.2.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7336b07f8be11bfe1dfba3241aac0735c7e0e7c7bdd1e0962b887f2e94c32ad6"
+checksum = "86bad91e063936daa3711dde0646dd31e6f5ddd464a6d64ab38a24bf9e09c7b3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2317,9 +2317,9 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "hashtree-blossom"
-version = "0.2.80"
+version = "0.2.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1961103103a3b250f39016d0f4e089cee7f61c598234c5773c98f00b43473dee"
+checksum = "3f21cfa746914890d2376eac8a195bc2d9fe432d3e79a99c3b685c1539bb6b91"
 dependencies = [
  "async-trait",
  "base64",
@@ -2339,9 +2339,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-cli"
-version = "0.2.80"
+version = "0.2.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7e339c495fd0f8f28a7cfa95e73bc2e1c97547839bc9ce059cb817ed5134897"
+checksum = "d0767c1cb8847d8d8c6718ddc5081cfee1b579b5c86a33923955dc2faf95b15d"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2356,7 +2356,7 @@ dependencies = [
  "hashtree-blossom",
  "hashtree-config",
  "hashtree-core",
- "hashtree-fips-transport 0.2.80",
+ "hashtree-fips-transport 0.2.81",
  "hashtree-fs",
  "hashtree-index",
  "hashtree-lmdb",
@@ -2402,9 +2402,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-collection"
-version = "0.2.80"
+version = "0.2.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "be1e003ccad1aacd46248c3561765f7b932fac0456c50333f889ba9d6fda3a66"
+checksum = "1ffa950674a18f21a9a33c0f621c92138884d46b1c8f02aecdd373b48a3a48e2"
 dependencies = [
  "futures",
  "hashtree-core",
@@ -2417,9 +2417,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-config"
-version = "0.2.80"
+version = "0.2.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1f6e108351f28899e1bc4516a99c1f0efbd0e14e99c61fe14368e64bd89ff6c"
+checksum = "fd3a80e1664fb6d9a5e7dc2a0ccb8debbc582826b7ca35d78d9fad03eb065cae"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -2429,9 +2429,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-core"
-version = "0.2.80"
+version = "0.2.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cbb452596ed45e59fd51478545703e3b4f0e35f2d9ffe79a9f9731140f08ddd"
+checksum = "12f565220cbc4329feb8a182fdac178b0549667fbeb19ec0e3f42f839df5981b"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -2450,9 +2450,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-embedded"
-version = "0.2.80"
+version = "0.2.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c1443e19b0460926fc8b1ffe34a96c412fd69f4bf66fb49fef62b57666943e8f"
+checksum = "836e7f44128dac3985b5b5eac1ccc5f2c6313d358cce560e5d63bc9078f31401"
 dependencies = [
  "anyhow",
  "hashtree-cli",
@@ -2483,9 +2483,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-fips-transport"
-version = "0.2.80"
+version = "0.2.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2dcedc4d055e3f728552e623e109261206dc1d978d09e187ef27a31723bad1b8"
+checksum = "03afd9a40d4ce8eabfaf84ccc71e010307bbbf411eac6c9a9fb482867fbf9cda"
 dependencies = [
  "async-trait",
  "fips-core",
@@ -2504,9 +2504,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-fs"
-version = "0.2.80"
+version = "0.2.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d24d55907ccae2d0c9886fb9a044034603c51538f0f45ca5fbe5a397ffa57126"
+checksum = "9fc225bc1aa2a9f11c14c79eba500556290adb20574f3108a05b66667581ffab"
 dependencies = [
  "async-trait",
  "hashtree-core",
@@ -2518,9 +2518,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-fuse"
-version = "0.2.80"
+version = "0.2.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f5ffc397aded465a10a7d53035478264b39032f50a7ec5df79ce4274ab988a7b"
+checksum = "8557ce89eccd7a38eb7be8f4cc8b97b957910b164e7d102411a25096d7b533b2"
 dependencies = [
  "fuser",
  "futures",
@@ -2532,9 +2532,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-index"
-version = "0.2.80"
+version = "0.2.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58f3880858a31d482fb8b34a1a449b8a4a0fbe4e7bc539e0cde89d461c17ab03"
+checksum = "0e12809e711b8c8f93b73663956ddcaf26d1a32e198ea5a198e71cd32ab33c7b"
 dependencies = [
  "futures",
  "hashtree-core",
@@ -2544,9 +2544,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-lmdb"
-version = "0.2.80"
+version = "0.2.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "33ca1338435e096bab2919ea900f4d15371da0412016650813ecca7cd931734d"
+checksum = "65303f822fbe392925c85db633be0a91d6d96e84d09e49bb86c9989c0f2b9e70"
 dependencies = [
  "async-trait",
  "hashtree-core",
@@ -2556,9 +2556,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-network"
-version = "0.2.80"
+version = "0.2.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "11b91555cf8d383810e06d8f8e369e652b9af382a28ecdc0c554b7a4a1cd122e"
+checksum = "52df6bcfc21dd00039b44211edb7648b1248378a3d87a3e032272a7103372717"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2584,9 +2584,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-nostr"
-version = "0.2.80"
+version = "0.2.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9d949ef8381adb45910af84b995c53331224d65cdce17c6e07078bfa37ea5562"
+checksum = "185eab2249d0d96f0bbef7a8514a391cbcf328f78ef1be6fb8d05ab140cfad23"
 dependencies = [
  "futures",
  "hashtree-collection",
@@ -2616,9 +2616,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-resolver"
-version = "0.2.80"
+version = "0.2.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3886054a4e540317f0a2ae580d3a7aa40694b632a4dc4b7ee2e4959f73927535"
+checksum = "169eee807ca0c4c94d57177e855506921e2cd2ddecf1c3208bef0c37f282b585"
 dependencies = [
  "async-trait",
  "hashtree-core",
@@ -2631,9 +2631,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-updater"
-version = "0.2.80"
+version = "0.2.81"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3fbd714b573c9c962023551ab12fa0bcbc8e3b185faa480abb8d2bb2b224c056"
+checksum = "dc624dac6eef28884f49f273c0a50103cc1761b081d60664fdc4465a7a9c371f"
 dependencies = [
  "flate2",
  "hashtree-blossom",
@@ -3906,9 +3906,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub"
-version = "0.1.7"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a8d57bfbe3c303f2fc0499745a9a1e1cb18f38c2a94bdd92246cc23c7766d54b"
+checksum = "6aa91817a80d1a8077489d006e7f58936a094ad52f79b17697ee5e06b88ce625"
 dependencies = [
  "async-trait",
  "nostr",
@@ -3919,9 +3919,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.1.8"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16273e48a909dd95096b112af5a8e0c079ba1446c50adf93663f3c47cd638c87"
+checksum = "de761d2063ad86c23c209664a141e2de1c32de5b4eed71ffc06f447dee465c36"
 dependencies = [
  "async-trait",
  "fips-core",
@@ -3933,9 +3933,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-relay"
-version = "0.1.4"
+version = "0.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7d9e278806e79e040d274708f35a008cb947fa37aed185a6d6142cf7561c223"
+checksum = "c8e92646da4f7e240ec836cbe013735bc6456b6a3e38bb2908604aeef4dfed93"
 dependencies = [
  "async-trait",
  "nostr-pubsub",
@@ -3946,9 +3946,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-social-graph"
-version = "0.1.7"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "29c11ac9ed42cfcf5b26af89111af4e82c357bc5ad06c47a1b0428430358b6d5"
+checksum = "2e9d15368dd3bf700906a3a20ad6ac976544589f80642815a6570a4302740c81"
 dependencies = [
  "async-trait",
  "nostr",
