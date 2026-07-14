@@ -19,8 +19,13 @@ extension IrisDriveIOSUITests {
         app.buttons["welcomeSignIn"].tap()
         XCTAssertTrue(app.buttons["openRecoveryPhrase"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["openRecoveryPhrase"].label.contains("Restore from recovery phrase"))
-        XCTAssertTrue(app.buttons["openSecretKey"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["openSecretKey"].label.contains("Restore from secret key"))
+        let openSecretKey = app.buttons["openSecretKey"]
+        for _ in 0..<4 where !openSecretKey.isHittable {
+            app.swipeUp()
+        }
+        XCTAssertTrue(openSecretKey.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(openSecretKey.isHittable, openSecretKey.debugDescription)
+        XCTAssertTrue(openSecretKey.label.contains("Restore from secret key"))
         let copyRequestLink = app.buttons["copyRequestLink"]
         let awaitingApproval = app.descendants(matching: .any)["awaitingApprovalView"]
         let deadline = Date().addingTimeInterval(5)
