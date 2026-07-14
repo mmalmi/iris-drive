@@ -3545,9 +3545,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.2.0"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "de761d2063ad86c23c209664a141e2de1c32de5b4eed71ffc06f447dee465c36"
+checksum = "d6899ab1067aff08925024d25ca4d95a5267c1cafdbfcc9ead2a59670086f552"
 dependencies = [
  "async-trait",
  "fips-core",
@@ -3572,9 +3572,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-social-graph"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e9d15368dd3bf700906a3a20ad6ac976544589f80642815a6570a4302740c81"
+checksum = "ab2a809f4b1a54e5d8dd2956bf7216f4672618562772da40f339f16c0e1eb345"
 dependencies = [
  "async-trait",
  "nostr",
