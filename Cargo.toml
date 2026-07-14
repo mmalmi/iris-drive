@@ -43,8 +43,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.44", default-features = false, features = ["nip06", "nip44", "nip59"] }
-nostr-pubsub = "0.1.8"
-nostr-pubsub-relay = "0.1.8"
+nostr-pubsub = "0.1.9"
+nostr-pubsub-relay = "0.1.9"
 nostr-identity = { version = "0.3.1", path = "../nostr-social-graph/rust/crates/nostr-identity" }
 # Iris Drive's provider abstraction and FIPS adapter remain local workspace
 # crates; the shared Hashtree stack is consumed from its published release.
