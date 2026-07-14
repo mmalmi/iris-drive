@@ -35,81 +35,21 @@ pub(crate) fn cmd_daemon(
 ) -> Result<()> {
     use iris_drive_core::relay_sync;
     use nostr_sdk::RelayPoolNotification;
-    use tokio::sync::broadcast::error::{RecvError, TryRecvError};
+    use tokio::sync::broadcast::error::RecvError;
     use tokio::sync::mpsc;
 
     let _daemon_lock = DaemonProcessLock::acquire(config_dir)?;
-
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(4)
-        .thread_stack_size(DAEMON_TOKIO_WORKER_STACK_BYTES)
-        .enable_all()
-        .build()
-        .context("building tokio runtime")?;
-
-    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let state = config
-        .profile
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    if state.authorization_state == iris_drive_core::AppKeyAuthorizationState::Revoked {
-        write_runtime_daemon_status(
-            config_dir,
-            json!({
-                "event": "revoked",
-                "error": "device removed",
-            }),
-        );
-        return Err(anyhow::anyhow!(
-            "this device has been removed from Iris Drive; link it again or log out"
-        ));
-    }
-    let relays = pick_relays(&config, relay_override);
-    let root_scope_id = state.root_scope_id();
-    let share_ids = config
-        .shared_folders
-        .iter()
-        .map(|folder| folder.share_id)
-        .collect::<Vec<_>>();
-    let filters = relay_sync::subscription_filters_for_shared_roots(
-        &state.app_key_pubkey,
-        &root_scope_id,
-        iris_drive_core::PRIMARY_DRIVE_ID,
-        &share_ids,
-    );
-    if filters.is_empty() {
-        return Err(anyhow::anyhow!("no filters to subscribe to"));
-    }
-    let mut subscription_policy = relay_sync::event_retention_policy(filters.clone());
-    let embedded_hashtree_requested = enable_gateway && config.local_nhash_resolver_enabled;
-    let (embedded_hashtree, embedded_hashtree_status) = if embedded_hashtree_requested {
-        match EmbeddedHashtreeHost::start(config_dir, &config) {
-            Ok(host) => {
-                let status = host.status_payload();
-                (Some(host), status)
-            }
-            Err(error) => {
-                let error = format!("{error:#}");
-                println!(
-                    "{}",
-                    json!({
-                        "event": "embedded_hashtree_unavailable",
-                        "error": error,
-                    })
-                );
-                (None, json!({"running": false, "error": error}))
-            }
-        }
-    } else {
-        let disabled_by = if enable_gateway { "settings" } else { "cli" };
-        (
-            None,
-            json!({
-                "running": false,
-                "disabled_by": disabled_by,
-            }),
-        )
-    };
+    let DaemonCommandStartup {
+        runtime,
+        config,
+        state,
+        relays,
+        filters,
+        mut subscription_policy,
+        embedded_hashtree_requested,
+        embedded_hashtree,
+        embedded_hashtree_status,
+    } = prepare_daemon_command(config_dir, relay_override, enable_gateway)?;
 
     runtime.block_on(async {
         let mut block_config = config.clone();
@@ -998,142 +938,26 @@ pub(crate) fn cmd_daemon(
                         std::future::pending().await
                     }
                 } => {
-                    match recv {
-                        Some(Ok(message)) => {
-                            let should_coalesce_direct_roots =
-                                message.topic == iris_drive_core::DIRECT_ROOT_APP_TOPIC;
-                            let mut messages = vec![message];
-                            let mut receiver_closed = false;
-                            if should_coalesce_direct_roots {
-                                tokio::time::sleep(std::time::Duration::from_millis(
-                                    DIRECT_ROOT_RECEIVE_COALESCE_MS,
-                                ))
-                                .await;
-                            }
-                            if let Some(rx) = direct_app_message_rx.as_mut() {
-                                while messages.len() < DIRECT_APP_MESSAGE_DRAIN_LIMIT {
-                                    match rx.try_recv() {
-                                        Ok(message) => messages.push(message),
-                                        Err(TryRecvError::Empty) => break,
-                                        Err(TryRecvError::Lagged(n)) => {
-                                            println!("{}", json!({"event": "direct_root_app_lagged", "skipped": n}));
-                                        }
-                                        Err(TryRecvError::Closed) => {
-                                            receiver_closed = true;
-                                            break;
-                                        }
-                                    }
-                                }
-                            }
-                            let received_messages = messages.len();
-                            let (messages, coalesced_roots) =
-                                iris_drive_core::coalesce_direct_root_app_messages(messages);
-                            if coalesced_roots > 0 {
-                                println!(
-                                    "{}",
-                                    json!({
-                                        "event": "direct_root_app_coalesced",
-                                        "received_messages": received_messages,
-                                        "applied_messages": messages.len(),
-                                        "skipped_roots": coalesced_roots,
-                                    })
-                                );
-                            }
-                            for message in messages {
-                                let wakes_direct_roots_after_app_key_link =
-                                    message.topic == crate::profile::APP_KEY_LINK_ROSTER_APP_TOPIC
-                                        || message.topic
-                                            == crate::profile::APP_KEY_APPROVAL_RECEIPT_APP_TOPIC;
-                                match handle_app_key_link_app_message(
-                                    config_dir,
-                                    &message,
-                                    fips_blocks.as_deref(),
-                                    &mut acked_app_key_link_rosters,
-                                )
-                                .await
-                                {
-                                    Ok(true) => {
-                                        if wakes_direct_roots_after_app_key_link
-                                            && fips_blocks.is_some()
-                                        {
-                                            direct_root_change_announce_pending = true;
-                                            direct_root_change_announce_timer.as_mut().reset(
-                                                tokio::time::Instant::now()
-                                                    + std::time::Duration::from_millis(
-                                                        DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS,
-                                                    ),
-                                            );
-                                            enqueue_pending_root_sync_followups(
-                                                config_dir,
-                                                fips_blocks.clone(),
-                                                mount_refresh_tx.clone(),
-                                                &daemon_tasks,
-                                                "app_key_link_authorization_message",
-                                            );
-                                        }
-                                        continue;
-                                    }
-                                    Ok(false) => {}
-                                    Err(error) => {
-                                        println!(
-                                            "{}",
-                                            json!({"event": "app_key_link_request_receive_error", "error": format!("{error:#}")})
-                                        );
-                                        continue;
-                                    }
-                                }
-                                if let Some(sync) = fips_blocks.as_ref() {
-                                    match direct_roots
-                                        .handle_app_message(
-                                            &client,
-                                            config_dir,
-                                            sync.clone(),
-                                            mount_refresh_tx.clone(),
-                                            &daemon_tasks,
-                                            message,
-                                        )
-                                        .await
-                                    {
-                                        Ok(true) => {
-                                            direct_root_change_announce_pending = true;
-                                            direct_root_change_announce_timer.as_mut().reset(
-                                                tokio::time::Instant::now()
-                                                    + std::time::Duration::from_millis(
-                                                        DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS,
-                                                    ),
-                                            );
-                                        }
-                                        Ok(false) => {}
-                                        Err(error) => {
-                                            println!(
-                                                "{}",
-                                                json!({"event": "direct_root_app_error", "error": format!("{error:#}")})
-                                            );
-                                        }
-                                    }
-                                }
-                            }
-                            if should_coalesce_direct_roots {
-                                enqueue_pending_root_sync_followups(
-                                    config_dir,
-                                    fips_blocks.clone(),
-                                    mount_refresh_tx.clone(),
-                                    &daemon_tasks,
-                                    "direct_root_app_message",
-                                );
-                            }
-                            if receiver_closed {
-                                direct_app_message_rx = None;
-                                println!("{}", json!({"event": "direct_root_app_closed"}));
-                            }
-                        }
-                        Some(Err(RecvError::Lagged(n))) => {
-                            println!("{}", json!({"event": "direct_root_app_lagged", "skipped": n}));
-                        }
-                        Some(Err(RecvError::Closed)) | None => {
-                            direct_app_message_rx = None;
-                            println!("{}", json!({"event": "direct_root_app_closed"}));
-                        }
+                    if handle_direct_app_message_event(
+                        recv,
+                        &mut direct_app_message_rx,
+                        config_dir,
+                        &mut acked_app_key_link_rosters,
+                        &mut direct_roots,
+                        &client,
+                        fips_blocks.as_ref(),
+                        mount_refresh_tx.as_ref(),
+                        &daemon_tasks,
+                    )
+                    .await
+                    {
+                        direct_root_change_announce_pending = true;
+                        direct_root_change_announce_timer.as_mut().reset(
+                            tokio::time::Instant::now()
+                                + std::time::Duration::from_millis(
+                                    DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS,
+                                ),
+                        );
                     }
                 }
                 message = async {
@@ -1143,64 +967,24 @@ pub(crate) fn cmd_daemon(
                         std::future::pending::<iris_drive_core::FipsMeshPubsubEvent>().await
                     }
                 } => {
-                    if let Some(sync) = fips_blocks.as_ref() {
-                        let mut messages = vec![message];
-                        tokio::time::sleep(std::time::Duration::from_millis(
-                            DIRECT_ROOT_RECEIVE_COALESCE_MS,
-                        ))
-                        .await;
-                        messages.extend(sync.drain_mesh_pubsub_events().await);
-                        for message in &messages {
-                            match update_announcements.handle_mesh_event(config_dir, message) {
-                                Ok(true) => println!(
-                                    "{}",
-                                    json!({
-                                        "event": "update_announcement_received",
-                                        "peer": message.from_peer_id,
-                                        "origin": message.origin_peer_id,
-                                    })
+                    if handle_mesh_pubsub_event(
+                        message,
+                        &mut update_announcements,
+                        &mut direct_roots,
+                        &client,
+                        config_dir,
+                        fips_blocks.as_ref(),
+                        mount_refresh_tx.as_ref(),
+                        &daemon_tasks,
+                    )
+                    .await
+                    {
+                        direct_root_change_announce_pending = true;
+                        direct_root_change_announce_timer.as_mut().reset(
+                            tokio::time::Instant::now()
+                                + std::time::Duration::from_millis(
+                                    DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS,
                                 ),
-                                Ok(false) => {}
-                                Err(error) => println!(
-                                    "{}",
-                                    json!({"event": "update_announcement_error", "trigger": "mesh_event", "error": error})
-                                ),
-                            }
-                        }
-                        let result = direct_roots
-                            .handle_mesh_events(
-                                &client,
-                                config_dir,
-                                sync.clone(),
-                                mount_refresh_tx.clone(),
-                                &daemon_tasks,
-                                messages,
-                            )
-                            .await;
-                        match result {
-                            Ok(true) => {
-                                direct_root_change_announce_pending = true;
-                                direct_root_change_announce_timer.as_mut().reset(
-                                    tokio::time::Instant::now()
-                                        + std::time::Duration::from_millis(
-                                            DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS,
-                                        ),
-                                );
-                            }
-                            Ok(false) => {}
-                            Err(error) => {
-                                println!(
-                                    "{}",
-                                    json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
-                                );
-                            }
-                        }
-                        enqueue_pending_root_sync_followups(
-                            config_dir,
-                            fips_blocks.clone(),
-                            mount_refresh_tx.clone(),
-                            &daemon_tasks,
-                            "direct_root_mesh_event",
                         );
                     }
                 }
@@ -1209,31 +993,7 @@ pub(crate) fn cmd_daemon(
         drop(notifications);
         drop(direct_app_message_rx);
         daemon_tasks.abort_all().await;
-        if let Some(sync) = fips_blocks {
-            match Arc::try_unwrap(sync) {
-                Ok(sync) => {
-                    if let Err(error) = sync.shutdown().await {
-                        println!(
-                            "{}",
-                            json!({"event": "fips_block_sync_shutdown_error", "error": format!("{error:#}")})
-                        );
-                    }
-                }
-                Err(sync) => {
-                    if let Err(error) = sync.shutdown_endpoint().await {
-                        println!(
-                            "{}",
-                            json!({"event": "fips_block_sync_shutdown_error", "error": format!("{error:#}")})
-                        );
-                    }
-                    println!(
-                        "{}",
-                        json!({"event": "fips_block_sync_shutdown_retained", "owners": Arc::strong_count(&sync)})
-                    );
-                    std::mem::forget(sync);
-                }
-            }
-        }
+        shutdown_fips_block_sync(fips_blocks).await;
         relay_sync::shutdown_client_for_process_exit(client).await;
         Ok::<_, anyhow::Error>(())
     })
