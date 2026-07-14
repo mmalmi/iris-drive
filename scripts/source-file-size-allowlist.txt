@@ -6,7 +6,6 @@ crates/iris-drive-app-core/src/c_abi.rs 1100 C ABI/JNI bridge includes platform 
 crates/iris-drive-app-core/src/ffi.rs 3773 Legacy app-core FFI runtime now includes native browser, CalDAV status, manual app-key join request paths, mobile roster cache invalidation, and request-scoped approval receipt subscription plus bootstrap-only request-link lookup; split pending action/provider/app-key-link modules.
 crates/iris-drive-app-core/src/ffi/tests.rs 2256 App-core parity and native action fixtures include startup defaults, provider batch-copy, and mobile roster cache regressions; split pending scenario modules.
 crates/iris-drive-cli/src/daemon.rs 1150 CLI daemon orchestration is legacy monolith pending runtime helper split.
-crates/iris-drive-cli/src/daemon/runtime.rs 1229 CLI daemon runtime is legacy monolith pending lifecycle/helper split; request-scoped approval receipt subscription, event-driven pending-root repair, split peer-refresh/root-repair/status idle-safe timers, and explicit daemon worker stack sizing should move into app-key-link/direct-root runtime helpers.
 crates/iris-drive-cli/src/drive.rs 1060 CLI drive command surface includes provider directory delete tombstone hardening; pending command/provider helper split.
 crates/iris-drive-cli/src/drive/tests.rs 1094 CLI drive provider tests include directory descendant tombstone release coverage and staged ignored-provider-write regression coverage; pending provider scenario-module split.
 crates/iris-drive-cli/src/shares.rs 1350 CLI share command surface needs a later command/test split.
@@ -33,7 +32,6 @@ crates/iris-drive-core/src/relay_sync/tests.rs 1510 Relay/app-key/share sync cov
 crates/iris-drive-core/src/share_actions.rs 1100 Share action dispatcher needs a later action-module split.
 crates/iris-drive-core/src/sharing.rs 5200 Share roster, key epoch, and shortcut model needs a later module/test split.
 crates/iris-drive-core/src/fips_sync.rs 1204 FIPS sync runtime includes peer-config idle deduplication, mobile ambient-discovery defaults, and optional mesh pubsub; needs a later transport/state split.
-crates/iris-drive-core/src/fips_sync/tests.rs 1028 FIPS sync coverage includes open-discovery app-key-link admission, pre-authorization app-message delivery, and quiet idle-discovery default regressions; pending transport test split.
 crates/hashtree-fips-transport/src/lib.rs 2405 Vendored hashtree FIPS transport shim includes embedded endpoint option tests and fragmented pre-authorization app-message regression coverage; replace with published compatible crate when available.
 ios/Sources/IrisDriveMobileModel.swift 2520 Legacy iOS model includes FileProvider, browser gateway, approval refresh plumbing, and v0.1.18 foreground sync gating; pending FileProvider/model split.
 ios/Sources/IrisDriveRootView.swift 2800 Legacy iOS SwiftUI shell includes setup, drive, sharing, and browser views; pending view split.

@@ -32,13 +32,13 @@ grep -Fq "drop(notifications);" \
   }
 
 grep -Fq "Arc::try_unwrap(sync)" \
-  "$ROOT/crates/iris-drive-cli/src/daemon/runtime.rs" || {
+  "$ROOT/crates/iris-drive-cli/src/daemon/runtime_support.rs" || {
     echo "daemon runtime must own the FIPS sync before clean shutdown when possible" >&2
     exit 1
   }
 
 grep -Fq "sync.shutdown().await" \
-  "$ROOT/crates/iris-drive-cli/src/daemon/runtime.rs" || {
+  "$ROOT/crates/iris-drive-cli/src/daemon/runtime_support.rs" || {
     echo "daemon runtime must explicitly shut down FIPS sync before runtime teardown" >&2
     exit 1
   }
