@@ -9,12 +9,9 @@ mod mesh_fallback;
 
 type PacketSenderMap =
     Arc<TokioMutex<std::collections::HashMap<String, mpsc::UnboundedSender<FipsEndpointPacket>>>>;
-type PeerLinkMap = Arc<TokioMutex<std::collections::BTreeMap<String, Vec<String>>>>;
-
 struct FakeEndpoint {
     id: String,
     network: PacketSenderMap,
-    links: Option<PeerLinkMap>,
     rx: TokioMutex<mpsc::UnboundedReceiver<FipsEndpointPacket>>,
 }
 
@@ -25,31 +22,11 @@ impl FakeEndpoint {
         Arc::new(Self {
             id: id.to_string(),
             network,
-            links: None,
-            rx: TokioMutex::new(rx),
-        })
-    }
-
-    async fn new_linked(id: &str, network: PacketSenderMap, links: PeerLinkMap) -> Arc<Self> {
-        let (tx, rx) = mpsc::unbounded_channel();
-        network.lock().await.insert(id.to_string(), tx);
-        Arc::new(Self {
-            id: id.to_string(),
-            network,
-            links: Some(links),
             rx: TokioMutex::new(rx),
         })
     }
 
     async fn visible_peers(&self) -> Vec<String> {
-        if let Some(links) = self.links.as_ref() {
-            return links
-                .lock()
-                .await
-                .get(&self.id)
-                .cloned()
-                .unwrap_or_default();
-        }
         self.network
             .lock()
             .await
