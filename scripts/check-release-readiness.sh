@@ -111,10 +111,14 @@ require_contains scripts/release-gate.sh "just structure"
 require_contains scripts/release-gate.sh "cargo test --workspace --exclude idrive"
 require_contains scripts/release-gate.sh "--test daemon_sync_matrix"
 require_contains scripts/release-gate.sh "cargo build --workspace --release"
+require_contains Cargo.toml 'fips-core = "=0.4.0"'
 require_contains Cargo.toml 'hashtree-core = "=0.2.83"'
 require_contains Cargo.toml 'hashtree-embedded = "=0.2.83"'
 require_contains Cargo.toml 'hashtree-fips-transport = { version = "=0.3.0"'
 require_contains Cargo.toml 'nostr-identity = "=0.3.1"'
+require_contains crates/iris-drive-core/Cargo.toml "fips-core.workspace = true"
+require_absent Cargo.toml "[patch.crates-io]"
+require_absent Cargo.toml "git = "
 require_absent Cargo.toml 'path = "crates/hashtree-fips-transport"'
 require_absent Cargo.toml 'path = "../nostr-social-graph'
 require_absent linux/Cargo.toml "[patch.crates-io]"
