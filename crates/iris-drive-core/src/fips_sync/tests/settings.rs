@@ -536,6 +536,40 @@ fn endpoint_options_carry_ambient_discovery_settings() {
 }
 
 #[test]
+fn endpoint_options_add_local_rendezvous_without_changing_outbound_policy() {
+    let settings = FipsTransportSettings {
+        enable_udp: true,
+        enable_webrtc: true,
+        enable_lan_discovery: false,
+        share_local_candidates: false,
+        udp_bind_addr: Some("127.0.0.1:32123".to_string()),
+        udp_public: true,
+        udp_external_addr: Some("198.51.100.9:32123".to_string()),
+        ..Default::default()
+    };
+    let relays = vec!["wss://relay.example".to_string()];
+
+    let options = fips_endpoint_options(
+        "nsec1example".to_string(),
+        IRIS_DRIVE_FIPS_DISCOVERY_SCOPE.to_string(),
+        relays.clone(),
+        &AppConfig::default(),
+        &settings,
+    );
+
+    assert!(options.enable_local_rendezvous);
+    assert!(options.enable_udp);
+    assert!(options.enable_webrtc);
+    assert!(!options.enable_lan_discovery);
+    assert!(!options.share_local_candidates);
+    assert_eq!(options.udp_bind_addr, settings.udp_bind_addr);
+    assert_eq!(options.udp_public, settings.udp_public);
+    assert_eq!(options.udp_external_addr, settings.udp_external_addr);
+    assert_eq!(options.relays, relays);
+    assert!(options.webrtc_auto_connect);
+}
+
+#[test]
 fn endpoint_options_keep_packet_queue_large_enough_for_root_bursts() {
     let settings = FipsTransportSettings::default();
 

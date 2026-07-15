@@ -1,7 +1,28 @@
 use super::*;
 
+struct NoResultBlobStore;
+
+#[async_trait]
+impl Store for NoResultBlobStore {
+    async fn put(&self, _hash: Hash, _data: Vec<u8>) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    async fn get(&self, _hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
+        Ok(None)
+    }
+
+    async fn has(&self, _hash: &Hash) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    async fn delete(&self, _hash: &Hash) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+}
+
 #[tokio::test]
-async fn fips_block_sync_falls_back_to_mesh_after_direct_miss() {
+async fn same_host_no_result_does_not_suppress_existing_mesh_route() {
     let network = Arc::new(TokioMutex::new(std::collections::HashMap::new()));
     let links = Arc::new(TokioMutex::new(std::collections::BTreeMap::from([
         ("target".to_string(), vec!["relay".to_string()]),
@@ -81,6 +102,7 @@ async fn fips_block_sync_falls_back_to_mesh_after_direct_miss() {
     assert!(wait_for_mesh_neighbors(&target_mesh, &["relay"]).await);
     let sync = FipsBlockSync {
         transport: target_transport,
+        blob_store: Arc::new(NoResultBlobStore),
         local_store: target_store.clone(),
         receiver_task: None,
         mesh_pubsub: Some(target_mesh),

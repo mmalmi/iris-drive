@@ -30,6 +30,15 @@ require_contains() {
   fi
 }
 
+require_absent() {
+  local path="$1"
+  local needle="$2"
+  if grep -Fq -- "$needle" "$ROOT/$path"; then
+    echo "unexpected '$needle' in $path" >&2
+    exit 1
+  fi
+}
+
 require_executable scripts/release-gate.sh
 require_executable scripts/verify.sh
 require_executable scripts/verify_full_native.sh
@@ -102,6 +111,15 @@ require_contains scripts/release-gate.sh "just structure"
 require_contains scripts/release-gate.sh "cargo test --workspace --exclude idrive"
 require_contains scripts/release-gate.sh "--test daemon_sync_matrix"
 require_contains scripts/release-gate.sh "cargo build --workspace --release"
+require_contains Cargo.toml 'hashtree-core = "=0.2.83"'
+require_contains Cargo.toml 'hashtree-embedded = "=0.2.83"'
+require_contains Cargo.toml 'hashtree-fips-transport = { version = "=0.3.0"'
+require_contains Cargo.toml 'nostr-identity = "=0.3.1"'
+require_absent Cargo.toml 'path = "crates/hashtree-fips-transport"'
+require_absent Cargo.toml 'path = "../nostr-social-graph'
+require_absent linux/Cargo.toml "[patch.crates-io]"
+require_absent scripts/docker-cli-e2e.sh "Missing required sibling checkout"
+require_contains scripts/docker-cli-e2e.sh '-v "$ROOT:/work/iris-drive:ro"'
 require_contains scripts/release-gate.sh "IRIS_DRIVE_RELEASE_GATE_FULL"
 require_contains scripts/release-gate.sh "IRIS_DRIVE_RELEASE_GATE_IDLE_CPU"
 require_contains scripts/release-gate.sh "just macos-build"

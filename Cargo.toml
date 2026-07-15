@@ -45,14 +45,14 @@ uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.44", default-features = false, features = ["nip06", "nip44", "nip59"] }
 nostr-pubsub = "=0.1.10"
 nostr-pubsub-relay = "0.1.9"
-nostr-identity = { version = "0.3.1", path = "../nostr-social-graph/rust/crates/nostr-identity" }
+nostr-identity = "=0.3.1"
 # Iris Drive's provider abstraction and FIPS adapter remain local workspace
 # crates; the shared Hashtree stack is consumed from its published release.
-hashtree-core = "=0.2.82"
+hashtree-core = "=0.2.83"
 hashtree-blossom = { version = "=0.2.82", features = ["store"] }
 hashtree-config = "=0.2.82"
-hashtree-embedded = "=0.2.82"
-hashtree-fips-transport = { version = "=0.2.82", path = "crates/hashtree-fips-transport", features = ["webrtc"] }
+hashtree-embedded = "=0.2.83"
+hashtree-fips-transport = { version = "=0.3.0", features = ["webrtc"] }
 hashtree-fs = "=0.2.82"
 hashtree-fuse = { version = "=0.2.82", features = ["fuse"] }
 hashtree-lmdb = "=0.2.82"
@@ -84,6 +84,3 @@ struct_excessive_bools = "allow"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"
-
-[patch.crates-io]
-hashtree-fips-transport = { path = "crates/hashtree-fips-transport" }
