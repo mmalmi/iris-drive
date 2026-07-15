@@ -5,7 +5,9 @@
 //! app-owned endpoint bytes.
 
 use async_trait::async_trait;
-use fips_core::config::{NostrDiscoveryPolicy, PeerAddress, RoutingMode, TransportInstances};
+use fips_core::config::{
+    EthernetConfig, NostrDiscoveryPolicy, PeerAddress, RoutingMode, TransportInstances,
+};
 use fips_core::PeerIdentity;
 use hashtree_core::{Hash, MemoryStore, Store, StoreError};
 pub use hashtree_network::PubsubPublishStats;
@@ -136,6 +138,9 @@ pub struct FipsEndpointOptions {
     pub relays: Vec<String>,
     pub enable_udp: bool,
     pub enable_webrtc: bool,
+    /// Host-local Ethernet interfaces used as an underlay when ordinary
+    /// network transports are disabled (for example, a browser VM virtio NIC).
+    pub ethernet_interfaces: Vec<String>,
     pub enable_lan_discovery: bool,
     pub udp_bind_addr: Option<String>,
     pub udp_public: bool,
@@ -155,6 +160,7 @@ impl FipsEndpointOptions {
             relays: Vec::new(),
             enable_udp: true,
             enable_webrtc: true,
+            ethernet_interfaces: Vec::new(),
             enable_lan_discovery: true,
             udp_bind_addr: None,
             udp_public: false,
@@ -170,6 +176,7 @@ impl FipsEndpointOptions {
 
 pub struct BoundFipsEndpoint {
     pub endpoint: Arc<dyn FipsEndpointIo>,
+    pub native_endpoint: Arc<fips_core::FipsEndpoint>,
     pub local_peer_id: String,
     pub discovery_scope: String,
 }
@@ -177,7 +184,7 @@ pub struct BoundFipsEndpoint {
 pub async fn bind_fips_endpoint(
     options: FipsEndpointOptions,
 ) -> Result<BoundFipsEndpoint, FipsTransportError> {
-    if !options.enable_udp && !options.enable_webrtc {
+    if !options.enable_udp && !options.enable_webrtc && options.ethernet_interfaces.is_empty() {
         return Err(FipsTransportError::Endpoint(
             "at least one FIPS transport must be enabled".to_string(),
         ));
@@ -191,18 +198,22 @@ pub async fn bind_fips_endpoint(
     let packet_channel_capacity = options.packet_channel_capacity;
     let config = fips_endpoint_config(options, &discovery_scope);
 
-    let endpoint = fips_core::FipsEndpoint::builder()
+    let builder = fips_core::FipsEndpoint::builder()
         .config(config)
         .discovery_scope(discovery_scope.clone())
         .without_system_tun()
-        .packet_channel_capacity(packet_channel_capacity)
-        .bind()
-        .await
-        .map_err(|err| FipsTransportError::Endpoint(err.to_string()))?;
+        .packet_channel_capacity(packet_channel_capacity);
+    let endpoint = Arc::new(
+        builder
+            .bind()
+            .await
+            .map_err(|err| FipsTransportError::Endpoint(err.to_string()))?,
+    );
     let local_peer_id = endpoint.npub().to_string();
 
     Ok(BoundFipsEndpoint {
-        endpoint: Arc::new(endpoint),
+        endpoint: endpoint.clone(),
+        native_endpoint: endpoint,
         local_peer_id,
         discovery_scope,
     })
@@ -228,8 +239,10 @@ fn fips_endpoint_config(options: FipsEndpointOptions, discovery_scope: &str) -> 
     config.node.discovery.lan.scope = options
         .enable_lan_discovery
         .then(|| discovery_scope.to_string());
-    config.node.discovery.nostr.enabled = true;
-    config.node.discovery.nostr.advertise = true;
+    let external_discovery =
+        options.enable_udp || options.enable_webrtc || !options.relays.is_empty();
+    config.node.discovery.nostr.enabled = external_discovery;
+    config.node.discovery.nostr.advertise = external_discovery;
     config.node.discovery.nostr.policy = if options.open_discovery_max_pending == 0 {
         NostrDiscoveryPolicy::ConfiguredOnly
     } else {
@@ -241,6 +254,36 @@ fn fips_endpoint_config(options: FipsEndpointOptions, discovery_scope: &str) -> 
     if !options.relays.is_empty() {
         config.node.discovery.nostr.advert_relays = options.relays.clone();
         config.node.discovery.nostr.dm_relays = options.relays;
+    }
+
+    let ethernet_configs = options
+        .ethernet_interfaces
+        .into_iter()
+        .enumerate()
+        .map(|(index, interface)| {
+            (
+                format!("local-ethernet-{index}"),
+                EthernetConfig {
+                    interface,
+                    discovery: Some(true),
+                    announce: Some(true),
+                    auto_connect: Some(true),
+                    accept_connections: Some(true),
+                    discovery_scope: Some(discovery_scope.to_string()),
+                    ..EthernetConfig::default()
+                },
+            )
+        })
+        .collect::<HashMap<_, _>>();
+    if ethernet_configs.len() == 1 {
+        config.transports.ethernet = TransportInstances::Single(
+            ethernet_configs
+                .into_values()
+                .next()
+                .expect("one Ethernet configuration"),
+        );
+    } else if !ethernet_configs.is_empty() {
+        config.transports.ethernet = TransportInstances::Named(ethernet_configs);
     }
 
     if options.enable_udp {
@@ -279,9 +322,11 @@ fn fips_endpoint_config(options: FipsEndpointOptions, discovery_scope: &str) -> 
         );
     }
 
-    // Some shared bootstrap peers expose tcp:443 for UDP-hostile networks.
-    // Binding stays disabled by default, so this is outbound-only.
-    config.transports.tcp = TransportInstances::Single(Default::default());
+    if options.enable_udp || options.enable_webrtc {
+        // Some shared bootstrap peers expose tcp:443 for UDP-hostile networks.
+        // Binding stays disabled by default, so this is outbound-only.
+        config.transports.tcp = TransportInstances::Single(Default::default());
+    }
 
     config
 }
@@ -590,6 +635,11 @@ impl<S: Store + Send + Sync + 'static> HashtreeFipsTransport<S> {
 
     pub fn with_request_timeout(mut self, timeout: Duration) -> Self {
         self.request_timeout = timeout;
+        self
+    }
+
+    pub fn with_cache_responses(mut self, cache_responses: bool) -> Self {
+        self.tcp_blobs = self.tcp_blobs.with_cache_responses(cache_responses);
         self
     }
 
@@ -1785,6 +1835,31 @@ mod tests {
 
         assert_eq!(transport_b.get(&hash).await.unwrap(), Some(data.clone()));
         assert_eq!(store_b.get(&hash).await.unwrap(), Some(data));
+    }
+
+    #[tokio::test]
+    async fn cache_responses_can_be_disabled_for_storage_routers() {
+        let network = Arc::new(Mutex::new(HashMap::new()));
+        let endpoint_a = FakeEndpoint::new("a", network.clone()).await;
+        let endpoint_b = FakeEndpoint::new("b", network).await;
+        let data = b"verified without duplicate caching".to_vec();
+        let hash = hash(&data);
+        let store_a = Arc::new(MemoryStore::new());
+        let store_b = Arc::new(MemoryStore::new());
+        store_a.put(hash, data.clone()).await.unwrap();
+
+        let transport_a = Arc::new(HashtreeFipsTransport::new(endpoint_a, store_a));
+        let transport_b = Arc::new(
+            HashtreeFipsTransport::new(endpoint_b, store_b.clone())
+                .with_request_timeout(Duration::from_millis(100))
+                .with_cache_responses(false),
+        );
+        transport_a.start();
+        transport_b.start();
+        transport_b.set_peers(vec!["a".to_string()]).await;
+
+        assert_eq!(transport_b.get(&hash).await.unwrap(), Some(data));
+        assert_eq!(store_b.get(&hash).await.unwrap(), None);
     }
 
     #[tokio::test]

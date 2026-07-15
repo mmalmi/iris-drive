@@ -22,6 +22,7 @@ pub(super) struct TcpBlobTransport<S> {
     store: Arc<S>,
     state: Mutex<TcpBlobState>,
     epoch: Instant,
+    cache_responses: bool,
 }
 
 struct TcpBlobState {
@@ -66,7 +67,13 @@ impl<S: Store + Send + Sync + 'static> TcpBlobTransport<S> {
                 connections: HashMap::new(),
             }),
             epoch: Instant::now(),
+            cache_responses: true,
         }
+    }
+
+    pub(super) fn with_cache_responses(mut self, cache_responses: bool) -> Self {
+        self.cache_responses = cache_responses;
+        self
     }
 
     pub(super) async fn get(
@@ -213,7 +220,9 @@ impl<S: Store + Send + Sync + 'static> TcpBlobTransport<S> {
         {
             let verified = match data {
                 Some(data) if verify_hash(&data, &hash) => {
-                    let _ = self.store.put(hash, data.clone()).await;
+                    if self.cache_responses {
+                        let _ = self.store.put(hash, data.clone()).await;
+                    }
                     Some(data)
                 }
                 _ => None,

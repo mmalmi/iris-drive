@@ -1,6 +1,6 @@
 [package]
 name = "hashtree-fips-transport"
-version = "0.2.76"
+version = "0.2.82"
 edition = "2021"
 license = "MIT"
 repository = "https://git.iris.to/#/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/hashtree"
@@ -15,10 +15,10 @@ webrtc = ["fips-core/webrtc-transport"]
 
 [dependencies]
 async-trait = "0.1"
-fips-core = "0.3.98"
+fips-core = "=0.3.98"
 fips-tcp = "0.1.0"
-hashtree-core = "0.2.81"
-hashtree-network = "0.2.81"
+hashtree-core = "=0.2.82"
+hashtree-network = "=0.2.82"
 hex = "0.4"
 rmp-serde = "1.3"
 serde = { version = "1", features = ["derive"] }

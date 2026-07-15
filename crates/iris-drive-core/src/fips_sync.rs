@@ -480,6 +480,7 @@ fn fips_endpoint_options(
         relays,
         enable_udp: settings.enable_udp,
         enable_webrtc: settings.enable_webrtc,
+        ethernet_interfaces: Vec::new(),
         enable_lan_discovery: settings.enable_lan_discovery,
         udp_bind_addr: settings.udp_bind_addr.clone(),
         udp_public: settings.udp_public,
