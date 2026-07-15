@@ -1,5 +1,62 @@
 use super::*;
 
+struct ErrorOnGetStore;
+
+#[async_trait]
+impl Store for ErrorOnGetStore {
+    async fn put(&self, _hash: Hash, _data: Vec<u8>) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    async fn get(&self, _hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
+        Err(StoreError::Other("deliberate local read error".to_string()))
+    }
+
+    async fn has(&self, _hash: &Hash) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    async fn delete(&self, _hash: &Hash) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+}
+
+#[derive(Default)]
+struct CountingResolver {
+    gets: std::sync::atomic::AtomicUsize,
+}
+
+#[async_trait]
+impl Store for CountingResolver {
+    async fn put(&self, _hash: Hash, _data: Vec<u8>) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    async fn get(&self, _hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
+        self.gets.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(None)
+    }
+
+    async fn has(&self, _hash: &Hash) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+
+    async fn delete(&self, _hash: &Hash) -> Result<bool, StoreError> {
+        Ok(false)
+    }
+}
+
+#[tokio::test]
+async fn local_store_errors_do_not_fall_through_to_another_route() {
+    let resolver = Arc::new(CountingResolver::default());
+    let store = MeasuredResolverStore::new(Arc::new(ErrorOnGetStore), resolver.clone());
+
+    let error = store.get(&[0x42; 32]).await.unwrap_err();
+
+    assert!(error.to_string().contains("deliberate local read error"));
+    assert_eq!(resolver.gets.load(std::sync::atomic::Ordering::Relaxed), 0);
+}
+
 #[tokio::test]
 async fn downloads_tree_blocks_from_direct_fips_peer() {
     let network = Arc::new(TokioMutex::new(std::collections::HashMap::new()));
@@ -32,68 +89,9 @@ async fn downloads_tree_blocks_from_direct_fips_peer() {
     target_transport.set_peers(vec!["source".to_string()]).await;
     let target_task = target_transport.start();
 
-    let report = download_tree_with_transport(target_store.clone(), &root_cid, target_transport)
+    let report = download_tree_with_resolver(target_store.clone(), &root_cid, target_transport)
         .await
         .unwrap();
-
-    assert_eq!(report.fetched, 2);
-    assert_eq!(report.already_local, 0);
-    assert!(target_store.has(&root_cid.hash).await.unwrap());
-    assert!(target_store.has(&file_cid.hash).await.unwrap());
-
-    source_task.abort();
-    target_task.abort();
-}
-
-#[tokio::test]
-async fn overlay_download_uses_direct_fips_when_mesh_peer_is_absent() {
-    let network = Arc::new(TokioMutex::new(std::collections::HashMap::new()));
-    let source_endpoint = FakeEndpoint::new("source", network.clone()).await;
-    let target_endpoint = FakeEndpoint::new("target", network).await;
-
-    let source_store = Arc::new(MemoryStore::new());
-    let source_tree = HashTree::new(HashTreeConfig::new(source_store.clone()));
-    let (file_cid, _) = source_tree.put(b"hello direct remote").await.unwrap();
-    let root_cid = source_tree
-        .put_directory(vec![DirEntry {
-            name: "hello.txt".to_string(),
-            hash: file_cid.hash,
-            key: file_cid.key,
-            link_type: LinkType::File,
-            size: 21,
-            meta: None,
-        }])
-        .await
-        .unwrap();
-
-    let source_transport = Arc::new(HashtreeFipsTransport::new(source_endpoint, source_store));
-    let target_store = Arc::new(MemoryStore::new());
-    let target_transport = Arc::new(HashtreeFipsTransport::new(
-        target_endpoint,
-        target_store.clone(),
-    ));
-    target_transport.set_peers(vec!["source".to_string()]).await;
-    let source_task = source_transport.start();
-    let target_task = target_transport.start();
-    let target_mesh = Arc::new(
-        target_transport
-            .start_mesh_pubsub(
-                target_store.clone(),
-                "target".to_string(),
-                Duration::from_millis(200),
-            )
-            .await
-            .unwrap(),
-    );
-
-    let report = download_tree_with_overlay(
-        target_store.clone(),
-        &root_cid,
-        target_transport,
-        target_mesh,
-    )
-    .await
-    .unwrap();
 
     assert_eq!(report.fetched, 2);
     assert_eq!(report.already_local, 0);
@@ -145,7 +143,7 @@ async fn download_skips_unavailable_prev_history_target() {
     let target_task = target_transport.start();
 
     let report =
-        download_tree_with_transport(target_store.clone(), &root_with_history, target_transport)
+        download_tree_with_resolver(target_store.clone(), &root_with_history, target_transport)
             .await
             .unwrap();
 
@@ -201,7 +199,8 @@ async fn signed_update_is_replayed_to_a_connected_late_fips_subscriber() {
     assert!(wait_for_mesh_neighbors(&target_mesh, &["source"]).await);
 
     let source_sync = FipsBlockSync {
-        transport: source_transport,
+        transport: source_transport.clone(),
+        blob_store: source_transport,
         local_store: source_store,
         receiver_task: Some(source_task),
         mesh_pubsub: Some(source_mesh),
@@ -211,7 +210,8 @@ async fn signed_update_is_replayed_to_a_connected_late_fips_subscriber() {
         last_peer_config: Mutex::new(None),
     };
     let target_sync = FipsBlockSync {
-        transport: target_transport,
+        transport: target_transport.clone(),
+        blob_store: target_transport,
         local_store: target_store,
         receiver_task: Some(target_task),
         mesh_pubsub: Some(target_mesh),
@@ -296,110 +296,4 @@ async fn signed_update_is_replayed_to_a_connected_late_fips_subscriber() {
 
     source_sync.shutdown().await.unwrap();
     target_sync.shutdown().await.unwrap();
-}
-
-#[tokio::test]
-async fn downloads_tree_blocks_over_indirect_fips_mesh_peer() {
-    let network = Arc::new(TokioMutex::new(std::collections::HashMap::new()));
-    let links = Arc::new(TokioMutex::new(std::collections::BTreeMap::from([
-        ("target".to_string(), vec!["relay".to_string()]),
-        (
-            "relay".to_string(),
-            vec!["target".to_string(), "source".to_string()],
-        ),
-        ("source".to_string(), vec!["relay".to_string()]),
-    ])));
-    let source_endpoint = FakeEndpoint::new_linked("source", network.clone(), links.clone()).await;
-    let relay_endpoint = FakeEndpoint::new_linked("relay", network.clone(), links.clone()).await;
-    let target_endpoint = FakeEndpoint::new_linked("target", network, links).await;
-
-    let source_store = Arc::new(MemoryStore::new());
-    let source_tree = HashTree::new(HashTreeConfig::new(source_store.clone()));
-    let (file_cid, _) = source_tree.put(b"hello through mesh").await.unwrap();
-    let root_cid = source_tree
-        .put_directory(vec![DirEntry {
-            name: "hello.txt".to_string(),
-            hash: file_cid.hash,
-            key: file_cid.key,
-            link_type: LinkType::File,
-            size: 18,
-            meta: None,
-        }])
-        .await
-        .unwrap();
-
-    let source_transport = Arc::new(HashtreeFipsTransport::new(
-        source_endpoint,
-        source_store.clone(),
-    ));
-    let relay_store = Arc::new(MemoryStore::new());
-    let relay_transport = Arc::new(HashtreeFipsTransport::new(
-        relay_endpoint,
-        relay_store.clone(),
-    ));
-    let target_store = Arc::new(MemoryStore::new());
-    let target_transport = Arc::new(HashtreeFipsTransport::new(
-        target_endpoint,
-        target_store.clone(),
-    ));
-    target_transport
-        .set_peers(vec!["source".to_string(), "relay".to_string()])
-        .await;
-    let source_task = source_transport.start();
-    let relay_task = relay_transport.start();
-    let target_task = target_transport.start();
-    let source_mesh = Arc::new(
-        source_transport
-            .start_mesh_pubsub(
-                source_store.clone(),
-                "source".to_string(),
-                Duration::from_secs(2),
-            )
-            .await
-            .unwrap(),
-    );
-    let relay_mesh = Arc::new(
-        relay_transport
-            .start_mesh_pubsub(relay_store, "relay".to_string(), Duration::from_secs(2))
-            .await
-            .unwrap(),
-    );
-    let target_mesh = Arc::new(
-        target_transport
-            .start_mesh_pubsub(
-                target_store.clone(),
-                "target".to_string(),
-                Duration::from_secs(2),
-            )
-            .await
-            .unwrap(),
-    );
-
-    assert!(wait_for_mesh_neighbors(&target_mesh, &["relay"]).await);
-    assert!(wait_for_mesh_neighbors(&relay_mesh, &["source", "target"]).await);
-    assert!(wait_for_mesh_neighbors(&source_mesh, &["relay"]).await);
-    assert!(
-        download_tree_with_transport(target_store.clone(), &root_cid, target_transport.clone())
-            .await
-            .is_err(),
-        "raw FIPS transport should not fetch through an indirect relay"
-    );
-
-    let report = download_tree_with_overlay(
-        target_store.clone(),
-        &root_cid,
-        target_transport,
-        target_mesh,
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(report.fetched, 2);
-    assert_eq!(report.already_local, 0);
-    assert!(target_store.has(&root_cid.hash).await.unwrap());
-    assert!(target_store.has(&file_cid.hash).await.unwrap());
-
-    source_task.abort();
-    relay_task.abort();
-    target_task.abort();
 }

@@ -10,11 +10,13 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use hashtree_core::{
-    Cid, Hash, HashTree, HashTreeConfig, HashTreeError, Store, StoreError, to_hex,
+    BlobRoute, Cid, Hash, HashTree, HashTreeConfig, HashTreeError, Store, StoreBlobRoute,
+    StoreError, to_hex,
 };
 use hashtree_fips_transport::{
-    FipsAppMessage, FipsEndpointOptions, FipsMeshPubsub, FipsMeshPubsubEvent, FipsPeerConfig,
-    FipsPeerStatus, FipsRelayStatus, HashtreeFipsTransport, PubsubPublishStats, bind_fips_endpoint,
+    BoundFipsEndpoint, FipsAppMessage, FipsEndpointOptions, FipsMeshPubsub, FipsMeshPubsubEvent,
+    FipsPeerConfig, FipsPeerStatus, FipsRelayStatus, HashtreeFipsTransport, PubsubPublishStats,
+    SameHostBlobStore, SameHostBlobStoreConfig, bind_fips_endpoint,
 };
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
@@ -53,6 +55,7 @@ pub enum FipsSyncError {
 /// Running FIPS block exchange bound to the Iris Drive block store.
 pub struct FipsBlockSync<L: Store + Send + Sync + 'static> {
     transport: Arc<HashtreeFipsTransport<L>>,
+    blob_store: Arc<dyn Store>,
     local_store: Arc<L>,
     receiver_task: Option<JoinHandle<()>>,
     mesh_pubsub: Option<Arc<FipsMeshPubsub<L>>>,
@@ -88,8 +91,24 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         .await
         .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?;
 
+        Self::start_with_bound_endpoint(endpoint, local_store, config, transport_settings).await
+    }
+
+    async fn start_with_bound_endpoint(
+        endpoint: BoundFipsEndpoint,
+        local_store: Arc<L>,
+        config: &AppConfig,
+        transport_settings: FipsTransportSettings,
+    ) -> Result<Self, FipsSyncError> {
+        let BoundFipsEndpoint {
+            endpoint,
+            native_endpoint,
+            local_peer_id,
+            discovery_scope,
+        } = endpoint;
+
         let transport = Arc::new(
-            HashtreeFipsTransport::new(endpoint.endpoint, local_store.clone())
+            HashtreeFipsTransport::new(endpoint, local_store.clone())
                 .with_request_timeout(FIPS_REQUEST_TIMEOUT)
                 .with_unconfigured_app_message_topics(unconfigured_app_message_topics()),
         );
@@ -100,12 +119,23 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             )
             .await;
         let receiver_task = transport.start();
+        let standalone: Arc<dyn BlobRoute> = Arc::new(StoreBlobRoute::new(transport.clone()));
+        let blob_store: Arc<dyn Store> = Arc::new(
+            SameHostBlobStore::bind(
+                native_endpoint,
+                local_store.clone(),
+                Some(standalone),
+                SameHostBlobStoreConfig::default(),
+            )
+            .await
+            .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?,
+        );
         let mesh_pubsub = if transport_settings.enable_mesh_pubsub {
             Some(Arc::new(
                 transport
                     .start_mesh_pubsub(
                         local_store.clone(),
-                        endpoint.local_peer_id.clone(),
+                        local_peer_id.clone(),
                         FIPS_REQUEST_TIMEOUT,
                     )
                     .await
@@ -117,10 +147,11 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
 
         Ok(Self {
             transport,
+            blob_store,
             local_store,
             receiver_task: Some(receiver_task),
             mesh_pubsub,
-            endpoint_npub: endpoint.local_peer_id,
+            endpoint_npub: local_peer_id,
             discovery_scope,
             transport_settings,
             last_peer_config: Mutex::new(None),
@@ -275,7 +306,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     }
     pub async fn download_tree(&self, root: &Cid) -> Result<DownloadReport, FipsSyncError> {
         let direct =
-            download_tree_with_transport(self.local_store.clone(), root, self.transport.clone())
+            download_tree_with_resolver(self.local_store.clone(), root, self.blob_store.clone())
                 .await;
         let Some(mesh_pubsub) = self.mesh_pubsub.as_ref() else {
             return direct;
@@ -283,7 +314,8 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         match direct {
             Ok(report) => Ok(report),
             Err(FipsSyncError::MissingOnFips(_)) => {
-                download_tree_with_mesh(self.local_store.clone(), root, mesh_pubsub.clone()).await
+                download_tree_with_resolver(self.local_store.clone(), root, mesh_pubsub.clone())
+                    .await
             }
             Err(error) => Err(error),
         }
@@ -480,6 +512,7 @@ fn fips_endpoint_options(
         relays,
         enable_udp: settings.enable_udp,
         enable_webrtc: settings.enable_webrtc,
+        enable_local_rendezvous: true,
         ethernet_interfaces: Vec::new(),
         enable_lan_discovery: settings.enable_lan_discovery,
         udp_bind_addr: settings.udp_bind_addr.clone(),
@@ -531,66 +564,16 @@ impl<L: Store + Send + Sync + 'static> Drop for FipsBlockSync<L> {
     }
 }
 
-pub async fn download_tree_with_transport<L>(
+async fn download_tree_with_resolver<L, R>(
     local_store: Arc<L>,
     root: &Cid,
-    transport: Arc<HashtreeFipsTransport<L>>,
+    resolver: Arc<R>,
 ) -> Result<DownloadReport, FipsSyncError>
 where
     L: Store + Send + Sync + 'static,
+    R: Store + ?Sized + 'static,
 {
-    let writeback = Arc::new(WriteBackFipsStore::new(local_store, transport));
-    let tree = HashTree::new(HashTreeConfig::new(writeback.clone()));
-    let hashes = collect_live_sync_hashes(&tree, root, 4).await?;
-    if writeback.missing() > 0 {
-        let detail = writeback
-            .first_missing()
-            .unwrap_or_else(|| format!("{} blocks", writeback.missing()));
-        return Err(FipsSyncError::MissingOnFips(detail));
-    }
-
-    Ok(DownloadReport {
-        total_hashes: hashes.len(),
-        fetched: writeback.fetched(),
-        already_local: writeback.already_local(),
-    })
-}
-
-pub async fn download_tree_with_mesh<L>(
-    local_store: Arc<L>,
-    root: &Cid,
-    mesh: Arc<FipsMeshPubsub<L>>,
-) -> Result<DownloadReport, FipsSyncError>
-where
-    L: Store + Send + Sync + 'static,
-{
-    let writeback = Arc::new(WriteBackMeshStore::new(local_store, mesh));
-    let tree = HashTree::new(HashTreeConfig::new(writeback.clone()));
-    let hashes = collect_live_sync_hashes(&tree, root, 4).await?;
-    if writeback.missing() > 0 {
-        let detail = writeback
-            .first_missing()
-            .unwrap_or_else(|| format!("{} blocks", writeback.missing()));
-        return Err(FipsSyncError::MissingOnFips(detail));
-    }
-
-    Ok(DownloadReport {
-        total_hashes: hashes.len(),
-        fetched: writeback.fetched(),
-        already_local: writeback.already_local(),
-    })
-}
-
-pub async fn download_tree_with_overlay<L>(
-    local_store: Arc<L>,
-    root: &Cid,
-    transport: Arc<HashtreeFipsTransport<L>>,
-    mesh: Arc<FipsMeshPubsub<L>>,
-) -> Result<DownloadReport, FipsSyncError>
-where
-    L: Store + Send + Sync + 'static,
-{
-    let writeback = Arc::new(WriteBackOverlayStore::new(local_store, transport, mesh));
+    let writeback = Arc::new(MeasuredResolverStore::new(local_store, resolver));
     let tree = HashTree::new(HashTreeConfig::new(writeback.clone()));
     let hashes = collect_live_sync_hashes(&tree, root, 4).await?;
     if writeback.missing() > 0 {
@@ -870,20 +853,24 @@ fn parse_static_peer_hints(value: &str) -> Vec<(String, Vec<String>)> {
         .collect()
 }
 
-struct WriteBackFipsStore<L: Store + Send + Sync + 'static> {
+struct MeasuredResolverStore<L: Store + Send + Sync + 'static, R: Store + ?Sized + 'static> {
     local: Arc<L>,
-    transport: Arc<HashtreeFipsTransport<L>>,
+    resolver: Arc<R>,
     fetched: std::sync::atomic::AtomicUsize,
     already_local: std::sync::atomic::AtomicUsize,
     missing: std::sync::atomic::AtomicUsize,
     first_missing: Mutex<Option<String>>,
 }
 
-impl<L: Store + Send + Sync + 'static> WriteBackFipsStore<L> {
-    fn new(local: Arc<L>, transport: Arc<HashtreeFipsTransport<L>>) -> Self {
+impl<L, R> MeasuredResolverStore<L, R>
+where
+    L: Store + Send + Sync + 'static,
+    R: Store + ?Sized + 'static,
+{
+    fn new(local: Arc<L>, resolver: Arc<R>) -> Self {
         Self {
             local,
-            transport,
+            resolver,
             fetched: std::sync::atomic::AtomicUsize::new(0),
             already_local: std::sync::atomic::AtomicUsize::new(0),
             missing: std::sync::atomic::AtomicUsize::new(0),
@@ -913,7 +900,11 @@ impl<L: Store + Send + Sync + 'static> WriteBackFipsStore<L> {
 }
 
 #[async_trait]
-impl<L: Store + Send + Sync + 'static> Store for WriteBackFipsStore<L> {
+impl<L, R> Store for MeasuredResolverStore<L, R>
+where
+    L: Store + Send + Sync + 'static,
+    R: Store + ?Sized + 'static,
+{
     async fn put(&self, hash: Hash, data: Vec<u8>) -> Result<bool, StoreError> {
         self.local.put(hash, data).await
     }
@@ -925,7 +916,7 @@ impl<L: Store + Send + Sync + 'static> Store for WriteBackFipsStore<L> {
             return Ok(Some(bytes));
         }
 
-        if let Some(bytes) = self.transport.get(hash).await? {
+        if let Some(bytes) = self.resolver.get(hash).await? {
             self.fetched
                 .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             Ok(Some(bytes))
@@ -947,240 +938,7 @@ impl<L: Store + Send + Sync + 'static> Store for WriteBackFipsStore<L> {
         if self.local.has(hash).await? {
             return Ok(true);
         }
-        self.transport.has(hash).await
-    }
-
-    async fn delete(&self, hash: &Hash) -> Result<bool, StoreError> {
-        self.local.delete(hash).await
-    }
-}
-
-struct WriteBackMeshStore<L: Store + Send + Sync + 'static> {
-    local: Arc<L>,
-    mesh: Arc<FipsMeshPubsub<L>>,
-    fetched: std::sync::atomic::AtomicUsize,
-    already_local: std::sync::atomic::AtomicUsize,
-    missing: std::sync::atomic::AtomicUsize,
-    first_missing: Mutex<Option<String>>,
-}
-
-impl<L: Store + Send + Sync + 'static> WriteBackMeshStore<L> {
-    fn new(local: Arc<L>, mesh: Arc<FipsMeshPubsub<L>>) -> Self {
-        Self {
-            local,
-            mesh,
-            fetched: std::sync::atomic::AtomicUsize::new(0),
-            already_local: std::sync::atomic::AtomicUsize::new(0),
-            missing: std::sync::atomic::AtomicUsize::new(0),
-            first_missing: Mutex::new(None),
-        }
-    }
-
-    fn fetched(&self) -> usize {
-        self.fetched.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    fn already_local(&self) -> usize {
-        self.already_local
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    fn missing(&self) -> usize {
-        self.missing.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    fn first_missing(&self) -> Option<String> {
-        self.first_missing
-            .lock()
-            .ok()
-            .and_then(|value| value.clone())
-    }
-}
-
-#[async_trait]
-impl<L: Store + Send + Sync + 'static> Store for WriteBackMeshStore<L> {
-    async fn put(&self, hash: Hash, data: Vec<u8>) -> Result<bool, StoreError> {
-        self.local.put(hash, data).await
-    }
-
-    async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
-        if let Some(bytes) = self.local.get(hash).await? {
-            self.already_local
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            return Ok(Some(bytes));
-        }
-
-        if let Some(bytes) = self.mesh.get(hash).await? {
-            self.fetched
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            Ok(Some(bytes))
-        } else {
-            let hex = to_hex(hash);
-            if self
-                .missing
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                == 0
-                && let Ok(mut first_missing) = self.first_missing.lock()
-            {
-                *first_missing = Some(hex);
-            }
-            Ok(None)
-        }
-    }
-
-    async fn has(&self, hash: &Hash) -> Result<bool, StoreError> {
-        if self.local.has(hash).await? {
-            return Ok(true);
-        }
-        self.mesh.has(hash).await
-    }
-
-    async fn delete(&self, hash: &Hash) -> Result<bool, StoreError> {
-        self.local.delete(hash).await
-    }
-}
-
-struct WriteBackOverlayStore<L: Store + Send + Sync + 'static> {
-    local: Arc<L>,
-    transport: Arc<HashtreeFipsTransport<L>>,
-    mesh: Arc<FipsMeshPubsub<L>>,
-    fetched: std::sync::atomic::AtomicUsize,
-    already_local: std::sync::atomic::AtomicUsize,
-    missing: std::sync::atomic::AtomicUsize,
-    first_missing: Mutex<Option<String>>,
-}
-
-impl<L: Store + Send + Sync + 'static> WriteBackOverlayStore<L> {
-    fn new(
-        local: Arc<L>,
-        transport: Arc<HashtreeFipsTransport<L>>,
-        mesh: Arc<FipsMeshPubsub<L>>,
-    ) -> Self {
-        Self {
-            local,
-            transport,
-            mesh,
-            fetched: std::sync::atomic::AtomicUsize::new(0),
-            already_local: std::sync::atomic::AtomicUsize::new(0),
-            missing: std::sync::atomic::AtomicUsize::new(0),
-            first_missing: Mutex::new(None),
-        }
-    }
-
-    fn fetched(&self) -> usize {
-        self.fetched.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    fn already_local(&self) -> usize {
-        self.already_local
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    fn missing(&self) -> usize {
-        self.missing.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    fn first_missing(&self) -> Option<String> {
-        self.first_missing
-            .lock()
-            .ok()
-            .and_then(|value| value.clone())
-    }
-
-    async fn fetch_remote(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
-        let direct_peers = self.transport.peer_ids().await;
-        let direct = async {
-            if direct_peers.is_empty() {
-                Ok(None)
-            } else {
-                self.transport
-                    .get_from_peers(hash, &direct_peers)
-                    .await
-                    .map_err(|error| StoreError::Other(error.to_string()))
-            }
-        };
-        let mesh = self.mesh.get(hash);
-        tokio::pin!(direct);
-        tokio::pin!(mesh);
-
-        let mut direct_done = false;
-        let mut mesh_done = false;
-        let mut first_error: Option<StoreError> = None;
-
-        loop {
-            tokio::select! {
-                result = &mut direct, if !direct_done => {
-                    direct_done = true;
-                    match result {
-                        Ok(Some(bytes)) => return Ok(Some(bytes)),
-                        Ok(None) => {}
-                        Err(error) => {
-                            if first_error.is_none() {
-                                first_error = Some(error);
-                            }
-                        }
-                    }
-                }
-                result = &mut mesh, if !mesh_done => {
-                    mesh_done = true;
-                    match result {
-                        Ok(Some(bytes)) => return Ok(Some(bytes)),
-                        Ok(None) => {}
-                        Err(error) => {
-                            if first_error.is_none() {
-                                first_error = Some(error);
-                            }
-                        }
-                    }
-                }
-                else => break,
-            }
-
-            if direct_done && mesh_done {
-                break;
-            }
-        }
-
-        if let Some(error) = first_error {
-            return Err(error);
-        }
-        Ok(None)
-    }
-}
-
-#[async_trait]
-impl<L: Store + Send + Sync + 'static> Store for WriteBackOverlayStore<L> {
-    async fn put(&self, hash: Hash, data: Vec<u8>) -> Result<bool, StoreError> {
-        self.local.put(hash, data).await
-    }
-
-    async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
-        if let Some(bytes) = self.local.get(hash).await? {
-            self.already_local
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            return Ok(Some(bytes));
-        }
-
-        if let Some(bytes) = self.fetch_remote(hash).await? {
-            self.fetched
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            Ok(Some(bytes))
-        } else {
-            let hex = to_hex(hash);
-            if self
-                .missing
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                == 0
-                && let Ok(mut first_missing) = self.first_missing.lock()
-            {
-                *first_missing = Some(hex);
-            }
-            Ok(None)
-        }
-    }
-
-    async fn has(&self, hash: &Hash) -> Result<bool, StoreError> {
-        self.local.has(hash).await
+        self.resolver.has(hash).await
     }
 
     async fn delete(&self, hash: &Hash) -> Result<bool, StoreError> {

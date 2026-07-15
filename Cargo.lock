@@ -1635,10 +1635,11 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.3.98"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16149f0fd238336ef647520f89cb78e8dc52a27c1304683b63bb0c704cd0288c"
+checksum = "5eb5c2cd49701461cfe2a9604eec3ddad6d3fadca67aceb11f472b6e665ecf89"
 dependencies = [
+ "base64",
  "bluer",
  "bytes",
  "dirs 6.0.0",
@@ -1646,6 +1647,7 @@ dependencies = [
  "futures",
  "hex",
  "hkdf",
+ "if-addrs",
  "libc",
  "mdns-sd",
  "nostr",
@@ -1670,6 +1672,7 @@ dependencies = [
  "tun",
  "uuid",
  "webrtc",
+ "windows-sys 0.61.2",
  "wintun",
 ]
 
@@ -1689,9 +1692,19 @@ dependencies = [
 
 [[package]]
 name = "fips-tcp"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e7db0b403ebcb8953be95f8f7d545edf773933762abeb7120437c59839585596"
+checksum = "d18861c5eca7c472fbbdbbfb498f8d2525405081a9a24b42633c600ba6f6e42a"
+
+[[package]]
+name = "fips-tcp-endpoint"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e3e01e352b709b80f4261e2cd7d0ffde2d3aaf175267b3960997e70f7305c12"
+dependencies = [
+ "fips-core",
+ "fips-tcp",
+]
 
 [[package]]
 name = "flate2"
@@ -2344,9 +2357,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-cli"
-version = "0.2.82"
+version = "0.2.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2e645a8528c75656aacc3775c9dcf64da3816d100852a6eeb07ea0c0f590192"
+checksum = "76e0753fa12fcbf6e8b18555c9198c5ccef046d0b6431483f3edb89d15db3956"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2434,9 +2447,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-core"
-version = "0.2.82"
+version = "0.2.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "180606218ee85090328e7b6c7d6438b270c76b8731587c3b54f929843332f407"
+checksum = "b758b7d9f8d1cdd4357eb63e391211e28847cc6432737bdf65cce024a521c4be"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -2455,9 +2468,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-embedded"
-version = "0.2.82"
+version = "0.2.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6877a4fcd874aecc455b24c3527e0eb9a4786f84925bb1c24f8e18ab2bd9aab1"
+checksum = "1975afb5602938dcb8a7062116f37174bf79a9128873a30c6b0c3f297ec08bcc"
 dependencies = [
  "anyhow",
  "hashtree-cli",
@@ -2469,11 +2482,14 @@ dependencies = [
 
 [[package]]
 name = "hashtree-fips-transport"
-version = "0.2.82"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "71fa154de6ad38aa3bc38a55a85ff88db53113ebc83c8e98c9b91d034ae8a323"
 dependencies = [
  "async-trait",
  "fips-core",
  "fips-tcp",
+ "fips-tcp-endpoint",
  "hashtree-core",
  "hashtree-network",
  "hex",
@@ -3149,6 +3165,7 @@ dependencies = [
  "base64",
  "bip39",
  "dirs 6.0.0",
+ "fips-core",
  "futures",
  "hashtree-blossom",
  "hashtree-config",
@@ -3879,6 +3896,8 @@ dependencies = [
 [[package]]
 name = "nostr-identity"
 version = "0.3.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0af733d7fc22088128b58d63aaeefc0fca5429ee6a1c43578f9be51e32f84591"
 dependencies = [
  "anyhow",
  "nostr-sdk",
@@ -3904,9 +3923,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.2.3"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "03649ec74a5e1a0794a5dacfb79340badeccd4625b6cc6bc16d7a6e64d2a8afe"
+checksum = "c2e2904004e5d0e55a676db596f8f052e171eabd236799b5aec7718b04a0a79e"
 dependencies = [
  "async-trait",
  "fips-core",
@@ -7004,7 +7023,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
