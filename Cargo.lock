@@ -2357,9 +2357,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-cli"
-version = "0.2.83"
+version = "0.2.84"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "76e0753fa12fcbf6e8b18555c9198c5ccef046d0b6431483f3edb89d15db3956"
+checksum = "16c4f0d08bf2b71cceecf87d9b8eff2007164fbb5eca3474e7018f8b07ef70a6"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2378,6 +2378,7 @@ dependencies = [
  "hashtree-fs",
  "hashtree-index",
  "hashtree-lmdb",
+ "hashtree-network",
  "hashtree-nostr",
  "hashtree-resolver",
  "hashtree-updater",
@@ -2447,9 +2448,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-core"
-version = "0.2.83"
+version = "0.2.84"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b758b7d9f8d1cdd4357eb63e391211e28847cc6432737bdf65cce024a521c4be"
+checksum = "a6ef5a7d8f14aef725aebde27e670548832e95f0813d6f84bf3f3a66503561fc"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -2482,9 +2483,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-fips-transport"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "71fa154de6ad38aa3bc38a55a85ff88db53113ebc83c8e98c9b91d034ae8a323"
+checksum = "5614e0b7217c9e8050ee57bea3ea8cbd996d8426eaa871513a889858e516f92b"
 dependencies = [
  "async-trait",
  "fips-core",
@@ -2557,9 +2558,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-network"
-version = "0.2.82"
+version = "0.2.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "63b09436949fd0602c3c08bdb4ec3deef56c5c0fe32cd177b61f4d3b96e1dbca"
+checksum = "b36c9bbacf53d551883b345f1034701067fc5e9f6ffedda47100e6b97c300c28"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -3173,6 +3174,7 @@ dependencies = [
  "hashtree-embedded",
  "hashtree-fips-transport",
  "hashtree-fs",
+ "hashtree-network",
  "hashtree-nostr",
  "hashtree-provider",
  "hashtree-resolver",

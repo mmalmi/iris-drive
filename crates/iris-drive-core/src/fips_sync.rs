@@ -10,13 +10,12 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use hashtree_core::{
-    BlobRoute, Cid, Hash, HashTree, HashTreeConfig, HashTreeError, Store, StoreBlobRoute,
-    StoreError, to_hex,
+    BLOB_DEFAULT_HTL, Cid, Hash, HashTree, HashTreeConfig, HashTreeError, Store, StoreError, to_hex,
 };
 use hashtree_fips_transport::{
     BoundFipsEndpoint, FipsAppMessage, FipsEndpointOptions, FipsMeshPubsub, FipsMeshPubsubEvent,
     FipsPeerConfig, FipsPeerStatus, FipsRelayStatus, HashtreeFipsTransport, PubsubPublishStats,
-    SameHostBlobStore, SameHostBlobStoreConfig, bind_fips_endpoint,
+    SameHostBlobStoreConfig, bind_fips_endpoint,
 };
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
@@ -32,6 +31,9 @@ use crate::config::AppConfig;
 use crate::direct_root_transport::DIRECT_ROOT_APP_TOPIC;
 use crate::fips_bootstrap::DEFAULT_FIPS_BOOTSTRAP_PEERS;
 use crate::identity::AppKey;
+
+mod blob_runtime;
+use blob_runtime::DriveBlobRuntime;
 
 const FIPS_REQUEST_TIMEOUT: Duration = Duration::from_millis(1_250);
 const FIPS_PACKET_CHANNEL_CAPACITY: usize = 8192;
@@ -56,6 +58,7 @@ pub enum FipsSyncError {
 pub struct FipsBlockSync<L: Store + Send + Sync + 'static> {
     transport: Arc<HashtreeFipsTransport<L>>,
     blob_store: Arc<dyn Store>,
+    blob_runtime: Option<DriveBlobRuntime<L>>,
     local_store: Arc<L>,
     receiver_task: Option<JoinHandle<()>>,
     mesh_pubsub: Option<Arc<FipsMeshPubsub<L>>>,
@@ -112,24 +115,21 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
                 .with_request_timeout(FIPS_REQUEST_TIMEOUT)
                 .with_unconfigured_app_message_topics(unconfigured_app_message_topics()),
         );
+        let application_peers = authorized_device_fips_peers(config, &transport_settings);
+        let routing_peers = routing_fips_peers(config, &transport_settings);
+        let blob_peers = authorized_blob_fips_peers(config, &transport_settings);
         transport
-            .set_peer_configs_with_routing_peers(
-                authorized_device_fips_peers(config, &transport_settings),
-                routing_fips_peers(config, &transport_settings),
-            )
+            .set_peer_configs_with_routing_peers(application_peers, routing_peers)
             .await;
         let receiver_task = transport.start();
-        let standalone: Arc<dyn BlobRoute> = Arc::new(StoreBlobRoute::new(transport.clone()));
-        let blob_store: Arc<dyn Store> = Arc::new(
-            SameHostBlobStore::bind(
-                native_endpoint,
-                local_store.clone(),
-                Some(standalone),
-                SameHostBlobStoreConfig::default(),
-            )
-            .await
-            .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?,
-        );
+        let blob_runtime = DriveBlobRuntime::bind(
+            native_endpoint,
+            local_store.clone(),
+            local_peer_id.clone(),
+            &blob_peers,
+        )
+        .await?;
+        let blob_store: Arc<dyn Store> = blob_runtime.store.clone();
         let mesh_pubsub = if transport_settings.enable_mesh_pubsub {
             Some(Arc::new(
                 transport
@@ -148,6 +148,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         Ok(Self {
             transport,
             blob_store,
+            blob_runtime: Some(blob_runtime),
             local_store,
             receiver_task: Some(receiver_task),
             mesh_pubsub,
@@ -181,6 +182,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     pub async fn refresh_authorized_peers(&self, config: &AppConfig) {
         let mut application_peers = authorized_device_fips_peers(config, &self.transport_settings);
         let routing_peers = routing_fips_peers(config, &self.transport_settings);
+        let blob_peers = authorized_blob_fips_peers(config, &self.transport_settings);
         if accepts_app_key_link_requests(config) {
             add_connected_app_key_link_application_peers(
                 &mut application_peers,
@@ -193,6 +195,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             Some(self.endpoint_npub.as_str()),
             &application_peers,
             &routing_peers,
+            &blob_peers,
         );
         if !self.update_peer_config_snapshot(snapshot) {
             return;
@@ -200,6 +203,9 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         self.transport
             .set_peer_configs_with_routing_peers(application_peers, routing_peers)
             .await;
+        if let Some(runtime) = self.blob_runtime.as_ref() {
+            runtime.set_authorized_peers(&blob_peers).await;
+        }
     }
 
     pub async fn peer_ids(&self) -> Vec<String> {
@@ -305,20 +311,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         mesh_pubsub.peer_ids().await
     }
     pub async fn download_tree(&self, root: &Cid) -> Result<DownloadReport, FipsSyncError> {
-        let direct =
-            download_tree_with_resolver(self.local_store.clone(), root, self.blob_store.clone())
-                .await;
-        let Some(mesh_pubsub) = self.mesh_pubsub.as_ref() else {
-            return direct;
-        };
-        match direct {
-            Ok(report) => Ok(report),
-            Err(FipsSyncError::MissingOnFips(_)) => {
-                download_tree_with_resolver(self.local_store.clone(), root, mesh_pubsub.clone())
-                    .await
-            }
-            Err(error) => Err(error),
-        }
+        download_tree_with_resolver(self.local_store.clone(), root, self.blob_store.clone()).await
     }
 
     pub async fn shutdown(mut self) -> Result<(), FipsSyncError> {
@@ -350,6 +343,12 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     }
 }
 
+fn drive_same_host_blob_store_config() -> SameHostBlobStoreConfig {
+    SameHostBlobStoreConfig::default()
+        .with_provider_htl(BLOB_DEFAULT_HTL)
+        .with_standalone_htl(BLOB_DEFAULT_HTL)
+}
+
 fn unconfigured_app_message_topics() -> [&'static str; 4] {
     [
         APP_KEY_LINK_REQUEST_APP_TOPIC,
@@ -361,19 +360,23 @@ fn unconfigured_app_message_topics() -> [&'static str; 4] {
 
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct FipsPeerConfigSnapshot {
-    application_peers: Vec<FipsPeerConfig>,
-    routing_peers: Vec<FipsPeerConfig>,
+    application: Vec<FipsPeerConfig>,
+    routing: Vec<FipsPeerConfig>,
+    blob: Vec<FipsPeerConfig>,
 }
 
 fn fips_peer_config_snapshot(
     local: Option<&str>,
     application_peers: &[FipsPeerConfig],
     routing_peers: &[FipsPeerConfig],
+    blob_peers: &[FipsPeerConfig],
 ) -> FipsPeerConfigSnapshot {
     let mut seen = std::collections::HashSet::new();
+    let mut blob_seen = std::collections::HashSet::new();
     FipsPeerConfigSnapshot {
-        application_peers: normalize_fips_peer_configs(local, application_peers, &mut seen),
-        routing_peers: normalize_fips_peer_configs(local, routing_peers, &mut seen),
+        application: normalize_fips_peer_configs(local, application_peers, &mut seen),
+        routing: normalize_fips_peer_configs(local, routing_peers, &mut seen),
+        blob: normalize_fips_peer_configs(local, blob_peers, &mut blob_seen),
     }
 }
 
@@ -605,6 +608,31 @@ fn authorized_device_fips_peers(
     let Some(account) = config.profile.as_ref() else {
         return Vec::new();
     };
+    let mut peers = authorized_blob_fips_peers(config, settings);
+    if let Some(pending) = pending_app_key_link_fips_peer(config, settings)
+        && !peers.iter().any(|peer| peer.npub == pending.npub)
+    {
+        peers.push(pending);
+    }
+    if account.can_admin_profile() {
+        for request in &account.inbound_app_key_link_requests {
+            if let Some(pending) = fips_peer_config_for_pubkey(&request.app_key_pubkey, settings)
+                && !peers.iter().any(|peer| peer.npub == pending.npub)
+            {
+                peers.push(pending);
+            }
+        }
+    }
+    peers
+}
+
+fn authorized_blob_fips_peers(
+    config: &AppConfig,
+    settings: &FipsTransportSettings,
+) -> Vec<FipsPeerConfig> {
+    let Some(account) = config.profile.as_ref() else {
+        return Vec::new();
+    };
     let mut peers = Vec::new();
     let local_device = &account.app_key_pubkey;
     let devices = account.current_app_keys_projection().map_or_else(
@@ -629,20 +657,6 @@ fn authorized_device_fips_peers(
                     })
             }),
     );
-    if let Some(pending) = pending_app_key_link_fips_peer(config, settings)
-        && !peers.iter().any(|peer| peer.npub == pending.npub)
-    {
-        peers.push(pending);
-    }
-    if account.can_admin_profile() {
-        for request in &account.inbound_app_key_link_requests {
-            if let Some(pending) = fips_peer_config_for_pubkey(&request.app_key_pubkey, settings)
-                && !peers.iter().any(|peer| peer.npub == pending.npub)
-            {
-                peers.push(pending);
-            }
-        }
-    }
     peers
 }
 

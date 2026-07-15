@@ -168,6 +168,7 @@ fn admin_inbound_app_key_link_request_configures_pending_fips_peer() {
 
     assert_eq!(peers.len(), 1);
     assert_eq!(peers[0].npub, pending_npub);
+    assert!(authorized_blob_fips_peers(&config, &FipsTransportSettings::default()).is_empty());
 }
 
 #[test]
@@ -313,10 +314,14 @@ fn fips_peer_config_snapshot_matches_endpoint_peer_sanitizing() {
                 udp_addresses: vec![" udp:203.0.113.7:2121 ".to_string()],
             },
         ],
+        &[FipsPeerConfig {
+            npub: " remote ".to_string(),
+            udp_addresses: vec![" 10.44.1.8:22121 ".to_string()],
+        }],
     );
 
     assert_eq!(
-        snapshot.application_peers,
+        snapshot.application,
         vec![FipsPeerConfig {
             npub: "remote".to_string(),
             udp_addresses: vec![
@@ -326,10 +331,17 @@ fn fips_peer_config_snapshot_matches_endpoint_peer_sanitizing() {
         }]
     );
     assert_eq!(
-        snapshot.routing_peers,
+        snapshot.routing,
         vec![FipsPeerConfig {
             npub: "bootstrap".to_string(),
             udp_addresses: vec!["udp:203.0.113.7:2121".to_string()],
+        }]
+    );
+    assert_eq!(
+        snapshot.blob,
+        vec![FipsPeerConfig {
+            npub: "remote".to_string(),
+            udp_addresses: vec!["10.44.1.8:22121".to_string()],
         }]
     );
 }
@@ -374,6 +386,10 @@ fn legacy_drive_roots_do_not_seed_bootstrap_fips_routing_peers() {
     let authorized = authorized_device_fips_peers(&config, &FipsTransportSettings::default());
     assert_eq!(authorized.len(), 1);
     assert_eq!(authorized[0].npub, remote_npub);
+    assert_eq!(
+        authorized_blob_fips_peers(&config, &FipsTransportSettings::default()),
+        authorized,
+    );
     assert!(routing_fips_peers(&config, &FipsTransportSettings::default()).is_empty());
 }
 
@@ -431,6 +447,7 @@ fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
     let peers = authorized_device_fips_peers(&config, &settings);
 
     assert_eq!(peers.len(), 2);
+    assert_eq!(authorized_blob_fips_peers(&config, &settings), peers);
     assert!(peers.iter().any(|peer| peer.npub == first_npub
         && peer.udp_addresses == vec!["10.44.34.102:22121".to_string()]));
     assert!(
@@ -480,6 +497,7 @@ fn pending_app_key_link_admin_is_allowed_for_roster_app_messages() {
     assert_eq!(authorized.len(), 1);
     assert_eq!(authorized[0].npub, admin_npub);
     assert_eq!(authorized[0].udp_addresses, vec!["10.44.1.9:22121"]);
+    assert!(authorized_blob_fips_peers(&config, &settings).is_empty());
     let routing = routing_fips_peers(&config, &settings);
     assert_eq!(routing.len(), 1);
     assert_eq!(routing[0].npub, admin_npub);

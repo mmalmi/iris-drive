@@ -1,4 +1,6 @@
 use super::*;
+use hashtree_core::StoreBlobRoute;
+use hashtree_network::{MeshReadSource, MeshRoutingConfig, NamedBlobRoute, blob_resolver};
 
 struct ErrorOnGetStore;
 
@@ -58,56 +60,7 @@ async fn local_store_errors_do_not_fall_through_to_another_route() {
 }
 
 #[tokio::test]
-async fn downloads_tree_blocks_from_direct_fips_peer() {
-    let network = Arc::new(TokioMutex::new(std::collections::HashMap::new()));
-    let source_endpoint = FakeEndpoint::new("source", network.clone()).await;
-    let target_endpoint = FakeEndpoint::new("target", network).await;
-
-    let source_store = Arc::new(MemoryStore::new());
-    let source_tree = HashTree::new(HashTreeConfig::new(source_store.clone()));
-    let (file_cid, _) = source_tree.put(b"hello from fips").await.unwrap();
-    let root_cid = source_tree
-        .put_directory(vec![DirEntry {
-            name: "hello.txt".to_string(),
-            hash: file_cid.hash,
-            key: file_cid.key,
-            link_type: LinkType::File,
-            size: 15,
-            meta: None,
-        }])
-        .await
-        .unwrap();
-
-    let source_transport = Arc::new(HashtreeFipsTransport::new(source_endpoint, source_store));
-    let source_task = source_transport.start();
-
-    let target_store = Arc::new(MemoryStore::new());
-    let target_transport = Arc::new(HashtreeFipsTransport::new(
-        target_endpoint,
-        target_store.clone(),
-    ));
-    target_transport.set_peers(vec!["source".to_string()]).await;
-    let target_task = target_transport.start();
-
-    let report = download_tree_with_resolver(target_store.clone(), &root_cid, target_transport)
-        .await
-        .unwrap();
-
-    assert_eq!(report.fetched, 2);
-    assert_eq!(report.already_local, 0);
-    assert!(target_store.has(&root_cid.hash).await.unwrap());
-    assert!(target_store.has(&file_cid.hash).await.unwrap());
-
-    source_task.abort();
-    target_task.abort();
-}
-
-#[tokio::test]
 async fn download_skips_unavailable_prev_history_target() {
-    let network = Arc::new(TokioMutex::new(std::collections::HashMap::new()));
-    let source_endpoint = FakeEndpoint::new("source", network.clone()).await;
-    let target_endpoint = FakeEndpoint::new("target", network).await;
-
     let source_store = Arc::new(MemoryStore::new());
     let source_tree = HashTree::new(HashTreeConfig::new(source_store.clone()));
     let (file_cid, _) = source_tree.put(b"current visible bytes").await.unwrap();
@@ -131,29 +84,27 @@ async fn download_skips_unavailable_prev_history_target() {
             .await
             .unwrap();
 
-    let source_transport = Arc::new(HashtreeFipsTransport::new(source_endpoint, source_store));
-    let source_task = source_transport.start();
-
     let target_store = Arc::new(MemoryStore::new());
-    let target_transport = Arc::new(HashtreeFipsTransport::new(
-        target_endpoint,
+    let resolver = Arc::new(blob_resolver(
         target_store.clone(),
+        "history-test-target",
+        Duration::from_secs(1),
+        MeshRoutingConfig::default(),
     ));
-    target_transport.set_peers(vec!["source".to_string()]).await;
-    let target_task = target_transport.start();
-
-    let report =
-        download_tree_with_resolver(target_store.clone(), &root_with_history, target_transport)
-            .await
-            .unwrap();
+    resolver
+        .set_read_sources(vec![Arc::new(NamedBlobRoute::terminal(
+            "history-test-source",
+            Arc::new(StoreBlobRoute::new(source_store)),
+        )) as Arc<dyn MeshReadSource>])
+        .await;
+    let report = download_tree_with_resolver(target_store.clone(), &root_with_history, resolver)
+        .await
+        .unwrap();
 
     assert!(report.fetched >= 3);
     assert!(target_store.has(&root_with_history.hash).await.unwrap());
     assert!(target_store.has(&file_cid.hash).await.unwrap());
     assert!(!target_store.has(&missing_prev.hash).await.unwrap());
-
-    source_task.abort();
-    target_task.abort();
 }
 
 #[tokio::test]
@@ -200,7 +151,8 @@ async fn signed_update_is_replayed_to_a_connected_late_fips_subscriber() {
 
     let source_sync = FipsBlockSync {
         transport: source_transport.clone(),
-        blob_store: source_transport,
+        blob_store: source_store.clone(),
+        blob_runtime: None,
         local_store: source_store,
         receiver_task: Some(source_task),
         mesh_pubsub: Some(source_mesh),
@@ -211,7 +163,8 @@ async fn signed_update_is_replayed_to_a_connected_late_fips_subscriber() {
     };
     let target_sync = FipsBlockSync {
         transport: target_transport.clone(),
-        blob_store: target_transport,
+        blob_store: target_store.clone(),
+        blob_runtime: None,
         local_store: target_store,
         receiver_task: Some(target_task),
         mesh_pubsub: Some(target_mesh),
