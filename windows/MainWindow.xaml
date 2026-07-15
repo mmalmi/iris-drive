@@ -1,0 +1,594 @@
+<Window x:Class="IrisDrive.WindowsShell.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Iris Drive"
+        Width="960"
+        Height="620"
+        MinWidth="760"
+        MinHeight="500"
+        Loaded="Window_Loaded"
+        Closing="Window_Closing">
+  <Grid>
+    <Grid x:Name="SetupRoot" Visibility="Collapsed">
+      <StackPanel Width="340" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <Image Source="IrisDrive.png"
+               Width="96"
+               Height="96"
+               HorizontalAlignment="Center"
+               RenderOptions.BitmapScalingMode="HighQuality" />
+        <TextBlock Text="Iris Drive"
+                   FontSize="30"
+                   FontWeight="SemiBold"
+                   HorizontalAlignment="Center"
+                   Margin="0,10,0,24" />
+
+        <StackPanel x:Name="WelcomePanel">
+          <Button Style="{StaticResource SetupPrimaryButton}" Click="ShowCreate_Click" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <TextBlock Text="&#xE710;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock Text="Create profile" />
+            </StackPanel>
+          </Button>
+          <Button Style="{StaticResource SetupButton}" Click="ShowRestore_Click" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <TextBlock Text="&#xE8B5;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock Text="Sign in" />
+            </StackPanel>
+          </Button>
+        </StackPanel>
+
+        <StackPanel x:Name="CreatePanel" Visibility="Collapsed">
+          <Button Style="{StaticResource SetupBackButton}" Click="ShowWelcome_Click" HorizontalAlignment="Left">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE72B;" Style="{StaticResource IconGlyph}" Margin="0,0,6,0" />
+              <TextBlock Text="Back" />
+            </StackPanel>
+          </Button>
+          <TextBlock Text="Create profile" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
+          <TextBlock Text="Username" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
+          <TextBox x:Name="CreateUsernameBox" Tag="Optional" MinHeight="34" Margin="0,0,0,12" TextChanged="CreateUsernameBox_TextChanged" KeyDown="CreateUsernameBox_KeyDown" />
+          <Button x:Name="CreateSubmitButton" Style="{StaticResource SetupPrimaryButton}" Click="CreateSubmit_Click">
+            <TextBlock x:Name="CreateSubmitText" Text="Create profile" HorizontalAlignment="Center" />
+          </Button>
+        </StackPanel>
+
+        <StackPanel x:Name="CreatePhotoPanel" Visibility="Collapsed">
+          <Button Style="{StaticResource SetupBackButton}" Click="ShowCreate_Click" HorizontalAlignment="Left">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE72B;" Style="{StaticResource IconGlyph}" Margin="0,0,6,0" />
+              <TextBlock Text="Back" />
+            </StackPanel>
+          </Button>
+          <TextBlock Text="Profile photo" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
+          <TextBlock Text="Photo" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
+          <TextBox x:Name="CreatePhotoPathBox" Tag="Optional" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
+          <Button Style="{StaticResource SetupButton}" Click="ChooseCreatePhoto_Click" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <TextBlock Text="&#xEB9F;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock Text="Choose photo" />
+            </StackPanel>
+          </Button>
+          <Button x:Name="CreatePhotoSubmitButton" Style="{StaticResource SetupPrimaryButton}" Click="CreatePhotoSubmit_Click">
+            <TextBlock x:Name="CreatePhotoSubmitText" Text="Later" HorizontalAlignment="Center" />
+          </Button>
+        </StackPanel>
+
+        <StackPanel x:Name="RestoreOptionsPanel" Visibility="Collapsed">
+          <Button Style="{StaticResource SetupBackButton}" Click="ShowWelcome_Click" HorizontalAlignment="Left">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE72B;" Style="{StaticResource IconGlyph}" Margin="0,0,6,0" />
+              <TextBlock Text="Back" />
+            </StackPanel>
+          </Button>
+          <Button Style="{StaticResource SetupButton}" Click="ShowRecoveryPhrase_Click" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <TextBlock Text="&#xE8D7;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock Text="Restore from recovery phrase" />
+            </StackPanel>
+          </Button>
+          <Button Style="{StaticResource SetupButton}" Click="ShowSecretKey_Click">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <TextBlock Text="&#xE8D7;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock Text="Restore from secret key" />
+            </StackPanel>
+          </Button>
+        </StackPanel>
+
+        <StackPanel x:Name="RecoveryPhrasePanel" Visibility="Collapsed">
+          <Button Style="{StaticResource SetupBackButton}" Click="ShowRestore_Click" HorizontalAlignment="Left">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE72B;" Style="{StaticResource IconGlyph}" Margin="0,0,6,0" />
+              <TextBlock Text="Back" />
+            </StackPanel>
+          </Button>
+          <TextBlock Text="Recovery phrase" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
+          <TextBlock x:Name="RecoveryWordLabel" Text="Word 1 of 12" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
+          <TextBox x:Name="RecoveryWordBox" Tag="word" MinHeight="34" Margin="0,0,0,12" TextChanged="RecoveryWordBox_TextChanged" KeyDown="RecoveryWordBox_KeyDown" />
+          <Button Style="{StaticResource SetupButton}" Click="RecoveryPaste_Click" Margin="0,0,0,12">
+            <TextBlock Text="Paste from clipboard" HorizontalAlignment="Center" />
+          </Button>
+          <Grid>
+            <Grid.ColumnDefinitions>
+              <ColumnDefinition Width="*" />
+              <ColumnDefinition Width="8" />
+              <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+            <Button x:Name="RecoveryBackButton" Grid.Column="0" Style="{StaticResource SetupButton}" Click="RecoveryBack_Click">
+              <TextBlock Text="Back" HorizontalAlignment="Center" />
+            </Button>
+            <Button x:Name="RecoveryNextButton" Grid.Column="2" Style="{StaticResource SetupPrimaryButton}" Click="RecoveryNext_Click">
+              <TextBlock x:Name="RecoveryNextText" Text="Next" HorizontalAlignment="Center" />
+            </Button>
+          </Grid>
+        </StackPanel>
+
+        <StackPanel x:Name="RestorePanel" Visibility="Collapsed">
+          <Button Style="{StaticResource SetupBackButton}" Click="ShowRestore_Click" HorizontalAlignment="Left">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE72B;" Style="{StaticResource IconGlyph}" Margin="0,0,6,0" />
+              <TextBlock Text="Back" />
+            </StackPanel>
+          </Button>
+          <TextBlock Text="Secret key" FontSize="22" FontWeight="SemiBold" Margin="0,8,0,12" />
+          <TextBlock Text="Secret key" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
+          <Grid Margin="0,0,0,10">
+            <PasswordBox x:Name="RestoreSecretBox" PasswordChanged="RestoreSecretBox_PasswordChanged" KeyDown="RestoreSecretBox_KeyDown" />
+            <TextBlock x:Name="RestoreSecretPlaceholder"
+                       Text="nsec1... or hex secret key"
+                       Foreground="{StaticResource IrisMutedBrush}"
+                       Margin="9,0,0,0"
+                       VerticalAlignment="Center"
+                       IsHitTestVisible="False" />
+          </Grid>
+          <Button x:Name="RestoreSubmitButton" Style="{StaticResource SetupPrimaryButton}" Click="RestoreSubmit_Click" Margin="0,0,0,10">
+            <TextBlock Text="Restore" HorizontalAlignment="Center" />
+          </Button>
+        </StackPanel>
+
+        <StackPanel x:Name="AwaitingPanel" Visibility="Collapsed">
+          <Button Style="{StaticResource SetupBackButton}" Click="AwaitingBack_Click" HorizontalAlignment="Left">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE72B;" Style="{StaticResource IconGlyph}" Margin="0,0,6,0" />
+              <TextBlock Text="Back" />
+            </StackPanel>
+          </Button>
+          <TextBlock Text="Waiting for approval" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,12" />
+          <Border Background="White" CornerRadius="8" Padding="10" Width="220" Height="220" HorizontalAlignment="Center" Margin="0,0,0,12">
+            <UniformGrid x:Name="AwaitingQrGrid" />
+          </Border>
+          <Button Style="{StaticResource SetupPrimaryButton}" Click="CopyAwaitingRequest_Click" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <TextBlock Text="&#xE71B;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+              <TextBlock Text="Copy Request Link" />
+            </StackPanel>
+          </Button>
+          <Button Style="{StaticResource SetupButton}" Click="ShowRecoveryPhrase_Click" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <TextBlock Text="&#xE8D7;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock Text="Restore from recovery phrase" />
+            </StackPanel>
+          </Button>
+          <Button Style="{StaticResource SetupButton}" Click="ShowSecretKey_Click" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <TextBlock Text="&#xE8D7;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock Text="Restore from secret key" />
+            </StackPanel>
+          </Button>
+        </StackPanel>
+
+        <StackPanel x:Name="RevokedPanel" Visibility="Collapsed">
+          <TextBlock Text="Device removed" FontSize="22" FontWeight="SemiBold" Margin="0,0,0,8" />
+          <TextBlock Text="This device no longer has access to Iris Drive."
+                     Foreground="{StaticResource IrisMutedBrush}"
+                     TextWrapping="Wrap"
+                     Margin="0,0,0,12" />
+          <TextBlock Text="Current Device ID" Style="{StaticResource FieldName}" Margin="0,0,0,4" />
+          <TextBox x:Name="RevokedDeviceBox" IsReadOnly="True" MinHeight="34" Margin="0,0,0,10" />
+          <Button Style="{StaticResource SetupButton}" Click="CopyRevokedDevice_Click" Margin="0,0,0,10">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <TextBlock Text="&#xE8C8;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+              <TextBlock Text="Copy Device ID" />
+            </StackPanel>
+          </Button>
+          <Button Style="{StaticResource SetupButton}" Click="Logout_Click">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+              <TextBlock Text="&#xE8AC;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+              <TextBlock Text="Log out" />
+            </StackPanel>
+          </Button>
+        </StackPanel>
+
+        <TextBlock x:Name="SetupNotice"
+                   Foreground="{StaticResource IrisMutedBrush}"
+                   TextWrapping="Wrap"
+                   Margin="0,14,0,0" />
+      </StackPanel>
+    </Grid>
+
+    <Grid x:Name="MainRoot" Visibility="Collapsed">
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="160" />
+        <ColumnDefinition Width="1" />
+        <ColumnDefinition Width="*" />
+      </Grid.ColumnDefinitions>
+
+      <Border Background="{StaticResource IrisSidebarBrush}">
+        <StackPanel Margin="12,18">
+          <Button x:Name="NavDriveButton" Tag="Drive" Style="{StaticResource NavButton}" Click="Nav_Click" AutomationProperties.Name="My Drive">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE8B7;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock Text="My Drive" />
+            </StackPanel>
+          </Button>
+          <Button x:Name="SidebarOpenButton" Style="{StaticResource SidebarActionButton}" Click="OpenDrive_Click">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE8B7;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock Text="Open" />
+            </StackPanel>
+          </Button>
+          <Button x:Name="NavDevicesButton" Tag="Devices" Style="{StaticResource NavButton}" Click="Nav_Click" AutomationProperties.Name="Devices">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE716;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock Text="Devices" />
+            </StackPanel>
+          </Button>
+          <Button x:Name="NavSharesButton" Tag="Shares" Style="{StaticResource NavButton}" Click="Nav_Click" AutomationProperties.Name="Shares">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE8D7;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock Text="Shares" />
+            </StackPanel>
+          </Button>
+          <Button x:Name="NavBackupsButton" Tag="Backups" Style="{StaticResource NavButton}" Click="Nav_Click" AutomationProperties.Name="Backup">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE8C7;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock Text="Backup" />
+            </StackPanel>
+          </Button>
+          <Button x:Name="NavNetworkButton" Tag="Network" Style="{StaticResource NavButton}" Click="Nav_Click" AutomationProperties.Name="Network">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE968;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock Text="Network" />
+            </StackPanel>
+          </Button>
+          <Button x:Name="NavSettingsButton" Tag="Settings" Style="{StaticResource NavButton}" Click="Nav_Click" AutomationProperties.Name="Settings">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE713;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock Text="Settings" />
+            </StackPanel>
+          </Button>
+        </StackPanel>
+      </Border>
+
+      <Border Grid.Column="1" Background="{StaticResource IrisBorderBrush}" />
+
+      <Grid Grid.Column="2">
+        <Grid.RowDefinitions>
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="Auto" />
+          <RowDefinition Height="*" />
+        </Grid.RowDefinitions>
+
+        <WrapPanel Margin="18,14,18,6" ItemHeight="34">
+          <Button Click="OpenDrive_Click" Margin="0,0,8,8">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE8B7;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+              <TextBlock Text="Open Drive Folder" />
+            </StackPanel>
+          </Button>
+          <Button x:Name="CopySnapshotButton" Click="CopySnapshot_Click" Margin="0,0,8,8">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE8C8;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+              <TextBlock Text="Copy Link" />
+            </StackPanel>
+          </Button>
+          <Button x:Name="OpenSnapshotButton" Click="OpenSnapshot_Click" Margin="0,0,16,8">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE774;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+              <TextBlock Text="View on drive.iris.to" />
+            </StackPanel>
+          </Button>
+          <Button x:Name="StopButton" Click="Stop_Click" Margin="0,0,8,8">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE769;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+              <TextBlock Text="Pause" />
+            </StackPanel>
+          </Button>
+          <Button x:Name="StartButton" Click="Start_Click" Margin="0,0,8,8">
+            <StackPanel Orientation="Horizontal">
+              <TextBlock Text="&#xE768;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+              <TextBlock Text="Resume" />
+            </StackPanel>
+          </Button>
+        </WrapPanel>
+
+        <Border x:Name="UpdateBanner"
+                Grid.Row="1"
+                Background="{StaticResource IrisSidebarBrush}"
+                BorderBrush="{StaticResource IrisBorderBrush}"
+                BorderThickness="0,1,0,1"
+                Padding="18,7"
+                Visibility="Collapsed">
+          <DockPanel LastChildFill="True">
+            <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+              <CheckBox x:Name="UpdateBannerAutoInstallCheckBox"
+                        Content="Install automatically"
+                        VerticalAlignment="Center"
+                        Margin="0,0,12,0"
+                        Checked="AutoInstallUpdates_Changed"
+                        Unchecked="AutoInstallUpdates_Changed" />
+              <Button x:Name="UpdateBannerInstallButton"
+                      Click="InstallUpdate_Click"
+                      MinWidth="78"
+                      Padding="10,3">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="&#xE896;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                  <TextBlock Text="Install" />
+                </StackPanel>
+              </Button>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+              <TextBlock Text="&#xE946;" Style="{StaticResource IconGlyph}" Margin="0,0,8,0" />
+              <TextBlock x:Name="UpdateBannerText"
+                         Text="Update available"
+                         TextTrimming="CharacterEllipsis"
+                         VerticalAlignment="Center" />
+            </StackPanel>
+          </DockPanel>
+        </Border>
+
+        <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto">
+          <StackPanel Margin="24,12,24,24">
+            <Grid Margin="0,0,0,20">
+              <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+              </Grid.ColumnDefinitions>
+              <TextBlock Text="&#xE8B7;"
+                         Style="{StaticResource IconGlyph}"
+                         FontSize="38"
+                         Margin="0,0,14,0"
+                         Foreground="{StaticResource IrisTextBrush}" />
+              <StackPanel Grid.Column="1">
+                <TextBlock x:Name="DriveTitle" Text="My Drive" FontSize="23" FontWeight="SemiBold" />
+                <TextBlock x:Name="DriveMessage" Text="Turning sync on" Foreground="{StaticResource IrisMutedBrush}" />
+              </StackPanel>
+              <Border Grid.Column="2"
+                      Background="{StaticResource IrisSuccessBrush}"
+                      CornerRadius="12"
+                      Padding="10,5"
+                      VerticalAlignment="Top">
+                <TextBlock x:Name="StatusPill" Text="Paused" Foreground="White" FontWeight="SemiBold" />
+              </Border>
+            </Grid>
+
+            <StackPanel x:Name="DrivePage">
+              <UniformGrid Columns="3" Margin="0,0,0,16">
+                <Border Style="{StaticResource PanelBorder}" Margin="0,0,10,0">
+                  <StackPanel>
+                    <TextBlock Text="Files" Style="{StaticResource FieldName}" />
+                    <TextBlock x:Name="FilesValue" Text="0" FontSize="23" FontWeight="Bold" />
+                  </StackPanel>
+                </Border>
+                <Border Style="{StaticResource PanelBorder}" Margin="0,0,10,0">
+                  <StackPanel>
+                    <TextBlock Text="Storage" Style="{StaticResource FieldName}" />
+                    <TextBlock x:Name="StorageValue" Text="0 B" FontSize="23" FontWeight="Bold" />
+                  </StackPanel>
+                </Border>
+                <Border Style="{StaticResource PanelBorder}">
+                  <StackPanel>
+                    <TextBlock Text="Devices" Style="{StaticResource FieldName}" />
+                    <TextBlock x:Name="DevicesValue" Text="0/0" FontSize="23" FontWeight="Bold" />
+                  </StackPanel>
+                </Border>
+              </UniformGrid>
+              <TextBlock x:Name="NoticeText"
+                         Foreground="{StaticResource IrisMutedBrush}"
+                         TextWrapping="Wrap"
+                         Margin="0,0,0,12" />
+              <ListBox x:Name="DrivesList" BorderBrush="{StaticResource IrisBorderBrush}" />
+            </StackPanel>
+
+            <StackPanel x:Name="DevicesPage" Visibility="Collapsed">
+              <TextBlock Text="Devices" FontWeight="SemiBold" FontSize="18" Margin="0,0,0,10" />
+              <Border Style="{StaticResource PanelBorder}" Margin="0,0,0,14">
+                <Grid>
+                  <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="90" />
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="40" />
+                  </Grid.ColumnDefinitions>
+                  <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" />
+                  </Grid.RowDefinitions>
+                  <TextBlock Text="Current Device ID" Style="{StaticResource FieldName}" />
+                  <TextBlock x:Name="DeviceValue" Grid.Column="1" Style="{StaticResource ValueText}" />
+                  <Button Grid.Column="2" Style="{StaticResource IconButton}" Click="CopyDevice_Click">
+                    <TextBlock Text="&#xE8C8;" Style="{StaticResource IconGlyph}" />
+                  </Button>
+                  <TextBlock Grid.Row="1" Text="State" Style="{StaticResource FieldName}" Margin="0,8,0,0" Visibility="Collapsed" />
+                  <TextBlock x:Name="AuthValue" Grid.Row="1" Grid.Column="1" Style="{StaticResource ValueText}" Margin="0,8,0,0" Visibility="Collapsed" />
+                </Grid>
+              </Border>
+
+              <StackPanel x:Name="ApprovePanel" Margin="0,0,0,16" HorizontalAlignment="Left">
+                <Button Style="{StaticResource PrimaryButton}" Click="ShowAddDevice_Click">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE710;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                    <TextBlock Text="Add Device" />
+                  </StackPanel>
+                </Button>
+                <Button Click="ShowAddRecoveryKey_Click" Margin="0,8,0,0">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE72E;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                    <TextBlock Text="Add Recovery Key" />
+                  </StackPanel>
+                </Button>
+              </StackPanel>
+
+              <TextBlock Text="Linked Devices" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
+              <ListBox x:Name="PeersList" BorderBrush="{StaticResource IrisBorderBrush}" />
+            </StackPanel>
+
+            <StackPanel x:Name="SharesPage" Visibility="Collapsed">
+              <DockPanel Margin="0,0,0,10">
+                <Button DockPanel.Dock="Right" Click="CopyShareIdentity_Click">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE77B;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                    <TextBlock Text="Copy share identity" />
+                  </StackPanel>
+                </Button>
+                <TextBlock Text="Shares" FontWeight="SemiBold" FontSize="18" />
+              </DockPanel>
+              <TextBlock Text="Create shared folder" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
+              <DockPanel LastChildFill="True" Margin="0,0,0,12">
+                <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}" Click="CreateShare_Click" Margin="8,0,0,0">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE710;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                    <TextBlock Text="Create" />
+                  </StackPanel>
+                </Button>
+                <TextBox x:Name="ShareSourceBox" Tag="My Drive/Folder" MinHeight="34" />
+              </DockPanel>
+              <TextBlock Text="Accept invite" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
+              <DockPanel LastChildFill="True" Margin="0,0,0,14">
+                <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}" Click="AcceptShareInvite_Click" Margin="8,0,0,0">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE896;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                    <TextBlock Text="Accept" />
+                  </StackPanel>
+                </Button>
+                <TextBox x:Name="ShareInviteBox" Tag="iris-drive://share-invite/..." MinHeight="34" />
+              </DockPanel>
+              <TextBlock Text="Shared with me" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
+              <ListBox x:Name="SharesList" BorderBrush="{StaticResource IrisBorderBrush}" />
+            </StackPanel>
+
+            <StackPanel x:Name="BackupsPage" Visibility="Collapsed">
+              <TextBlock Text="Backup" FontWeight="SemiBold" FontSize="18" Margin="0,0,0,10" />
+              <ListBox x:Name="BackupsList" BorderBrush="{StaticResource IrisBorderBrush}" Margin="0,0,0,14" />
+              <DockPanel LastChildFill="True">
+                <Button x:Name="SyncBackupsButton" DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}" Click="SyncBackups_Click" Margin="8,0,0,0">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE895;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                    <TextBlock Text="Sync" />
+                  </StackPanel>
+                </Button>
+                <Button x:Name="CheckBackupsButton" DockPanel.Dock="Right" Click="CheckBackups_Click" Margin="8,0,0,0">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE73E;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                    <TextBlock Text="Check" />
+                  </StackPanel>
+                </Button>
+                <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="AddBackup_Click" ToolTip="Add backup" Margin="8,0,0,0">
+                  <TextBlock Text="&#xE710;" Style="{StaticResource IconGlyph}" />
+                </Button>
+                <TextBox x:Name="BackupLabelBox" Tag="Label" DockPanel.Dock="Right" Width="150" MinHeight="34" Margin="8,0,0,0" />
+                <TextBox x:Name="BackupTargetBox" Tag="Destination URL, User ID, or folder path" MinHeight="34" />
+              </DockPanel>
+              <StackPanel x:Name="BackupCheckProgressPanel" Visibility="Collapsed" Margin="0,8,0,0">
+                <ProgressBar x:Name="BackupCheckProgressBar" Minimum="0" Maximum="1" Height="6" />
+                <TextBlock x:Name="BackupCheckProgressText" Foreground="{StaticResource IrisMutedBrush}" FontSize="12" Margin="0,4,0,0" />
+              </StackPanel>
+            </StackPanel>
+
+            <StackPanel x:Name="NetworkPage" Visibility="Collapsed">
+              <TextBlock Text="Network" FontWeight="SemiBold" FontSize="18" Margin="0,0,0,12" />
+              <TextBlock Text="FIPS" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
+              <ListBox x:Name="FipsList" BorderBrush="{StaticResource IrisBorderBrush}" Margin="0,0,0,14" />
+              <TextBlock Text="File Servers" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
+              <ListBox x:Name="BlossomList" BorderBrush="{StaticResource IrisBorderBrush}" Margin="0,0,0,14" />
+              <TextBlock Text="Relays" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
+              <ListBox x:Name="RelaysList" BorderBrush="{StaticResource IrisBorderBrush}" Margin="0,0,0,10" />
+              <DockPanel LastChildFill="True">
+                <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="ResetRelays_Click" Margin="8,0,0,0">
+                  <TextBlock Text="&#xE777;" Style="{StaticResource IconGlyph}" />
+                </Button>
+                <Button DockPanel.Dock="Right" Style="{StaticResource IconButton}" Click="AddRelay_Click" Margin="8,0,0,0">
+                  <TextBlock Text="&#xE710;" Style="{StaticResource IconGlyph}" />
+                </Button>
+                <TextBox x:Name="RelayBox" Tag="wss://relay.example" MinHeight="34" />
+              </DockPanel>
+            </StackPanel>
+
+            <StackPanel x:Name="SettingsPage" Visibility="Collapsed">
+              <TextBlock Text="Settings" FontWeight="SemiBold" FontSize="18" Margin="0,0,0,12" />
+              <CheckBox x:Name="CloseToTrayCheckBox" Content="Tray on close" Checked="CloseToTray_Changed" Unchecked="CloseToTray_Changed" />
+              <CheckBox x:Name="LaunchOnStartupCheckBox" Content="Launch on startup" Margin="0,8,0,0" Checked="LaunchOnStartup_Changed" Unchecked="LaunchOnStartup_Changed" />
+              <CheckBox x:Name="LocalNhashResolverCheckBox" Content="*.iris.localhost resolver" Margin="0,8,0,0" Checked="LocalNhashResolver_Changed" Unchecked="LocalNhashResolver_Changed" />
+              <Button x:Name="OpenSitesPortalButton" Click="OpenSitesPortal_Click" Margin="0,10,0,0">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="&#xE774;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                  <TextBlock Text="Open Iris Apps" />
+                </StackPanel>
+              </Button>
+              <TextBlock Text="Calendar" Style="{StaticResource FieldName}" Margin="0,16,0,6" />
+              <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <TextBlock Text="CalDAV URL" Style="{StaticResource FieldName}" Width="90" />
+                <TextBlock x:Name="CalDavUrlText"
+                           Style="{StaticResource ValueText}"
+                           TextWrapping="NoWrap"
+                           TextTrimming="CharacterEllipsis" />
+              </StackPanel>
+              <Button x:Name="CopyCalDavButton" Click="CopyCalDav_Click" HorizontalAlignment="Left">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="&#xE787;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                  <TextBlock Text="Copy CalDAV URL" />
+                </StackPanel>
+              </Button>
+              <TextBlock Text="Updates" Style="{StaticResource FieldName}" Margin="0,18,0,6" />
+              <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
+                <TextBlock Text="Version" Style="{StaticResource FieldName}" Width="90" />
+                <TextBlock x:Name="AppVersionText"
+                           Style="{StaticResource ValueText}"
+                           TextWrapping="NoWrap"
+                           TextTrimming="CharacterEllipsis" />
+              </StackPanel>
+              <CheckBox x:Name="AutoCheckUpdatesCheckBox"
+                        Content="Check automatically"
+                        Checked="AutoCheckUpdates_Changed"
+                        Unchecked="AutoCheckUpdates_Changed" />
+              <CheckBox x:Name="AutoInstallUpdatesCheckBox"
+                        Content="Install automatically"
+                        Margin="0,8,0,0"
+                        Checked="AutoInstallUpdates_Changed"
+                        Unchecked="AutoInstallUpdates_Changed" />
+              <StackPanel Orientation="Horizontal" Margin="0,10,0,0">
+                <Button x:Name="CheckUpdatesButton" Click="CheckUpdates_Click" Margin="0,0,8,0">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE72C;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                    <TextBlock Text="Check Updates" />
+                  </StackPanel>
+                </Button>
+                <Button x:Name="InstallUpdateButton" Click="InstallUpdate_Click">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE896;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                    <TextBlock Text="Install Update" />
+                  </StackPanel>
+                </Button>
+              </StackPanel>
+              <TextBlock x:Name="UpdateStatusText"
+                         Foreground="{StaticResource IrisMutedBrush}"
+                         TextWrapping="Wrap"
+                         Margin="0,8,0,0" />
+              <Button x:Name="RecoveryPhraseButton" Click="RecoveryPhrase_Click" Margin="0,16,0,0" HorizontalAlignment="Left">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="&#xE8D7;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                  <TextBlock Text="Recovery phrase" />
+                </StackPanel>
+              </Button>
+              <Button Click="Logout_Click" Margin="0,16,0,0" HorizontalAlignment="Left">
+                <StackPanel Orientation="Horizontal">
+                  <TextBlock Text="&#xE8BB;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                  <TextBlock Text="Log out" />
+                </StackPanel>
+              </Button>
+            </StackPanel>
+          </StackPanel>
+        </ScrollViewer>
+      </Grid>
+    </Grid>
+  </Grid>
+</Window>

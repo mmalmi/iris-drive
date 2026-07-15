@@ -1,0 +1,40 @@
+[package]
+name = "iris-drive-linux"
+version = "0.1.25"
+description = "Linux desktop shell for Iris Drive."
+edition = "2024"
+publish = false
+
+[[bin]]
+name = "iris-drive"
+path = "src/main.rs"
+
+[dependencies]
+adw = { package = "libadwaita", version = "0.7", features = ["v1_5"] }
+gio = "0.20"
+glib = "0.20"
+gtk = { package = "gtk4", version = "0.9", features = ["v4_12"] }
+iris-drive-app-core = { path = "../crates/iris-drive-app-core" }
+iris-drive-core = { path = "../crates/iris-drive-core" }
+serde_json = "1"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3.4", features = ["blocking"] }
+
+[patch.crates-io]
+hashtree-fips-transport = { path = "../crates/hashtree-fips-transport" }
+
+[package.metadata.deb]
+name = "iris-drive"
+maintainer = "Iris Drive"
+copyright = "Iris Drive"
+extended-description = "End-user file sync built on hashtree."
+section = "net"
+priority = "optional"
+depends = "$auto, xdg-utils"
+assets = [
+    ["target/release/iris-drive", "usr/bin/", "755"],
+    ["target/release/idrive", "usr/bin/", "755"],
+    ["resources/iris-drive.svg", "usr/share/icons/hicolor/scalable/apps/iris-drive.svg", "644"],
+    ["resources/iris-drive.desktop", "usr/share/applications/iris-drive.desktop", "644"],
+]

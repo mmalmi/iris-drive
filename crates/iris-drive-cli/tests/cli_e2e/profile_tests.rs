@@ -1,0 +1,1124 @@
+#[allow(clippy::wildcard_imports)]
+use super::*;
+use iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_REQUEST_PREFIX;
+
+fn pending_request(
+    config_dir: &std::path::Path,
+) -> iris_drive_core::app_key_link_transport::AppKeyApprovalBootstrap {
+    let config = iris_drive_core::AppConfig::load_or_default(
+        iris_drive_core::paths::config_path_in(config_dir),
+    )
+    .unwrap();
+    let pending = config
+        .profile
+        .as_ref()
+        .and_then(|profile| profile.outbound_app_key_link_request.as_ref())
+        .expect("pending request");
+    iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_bootstrap(pending)
+        .unwrap()
+        .0
+}
+
+fn event_has_type(event: &serde_json::Value, type_name: &str) -> bool {
+    event["tags"].as_array().is_some_and(|tags| {
+        tags.iter().any(|tag| {
+            tag.as_array().is_some_and(|values| {
+                values.first().and_then(serde_json::Value::as_str) == Some("type")
+                    && values.get(1).and_then(serde_json::Value::as_str) == Some(type_name)
+            })
+        })
+    })
+}
+
+fn is_approval_receipt_event(event: &serde_json::Value) -> bool {
+    event_has_type(event, "nostr_identity_device_approval_receipt")
+}
+
+fn current_app_key_npub(value: &serde_json::Value) -> &str {
+    value["current_app_key_npub"].as_str().unwrap()
+}
+
+fn app_key_link_invite_url(value: &serde_json::Value) -> &str {
+    value["app_key_link_invite"]["url"].as_str().unwrap()
+}
+
+#[test]
+fn init_creates_key_and_config() {
+    let dir = tempdir().unwrap();
+    idrive(dir.path())
+        .arg("init")
+        .assert()
+        .success()
+        .stdout(contains("npub1"))
+        .stdout(contains("main"));
+    assert!(dir.path().join("key").exists());
+    assert!(!dir.path().join("owner_key").exists());
+    assert!(!dir.path().join("recovery_phrase").exists());
+    assert!(dir.path().join("config.toml").exists());
+}
+
+#[test]
+fn init_yields_authorized_owner_capable_account() {
+    let dir = tempdir().unwrap();
+    let out = idrive(dir.path()).arg("init").output().unwrap();
+    assert!(out.status.success());
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    assert_eq!(v["can_admin_profile"], true);
+    assert_eq!(v["can_write_roots"], true);
+    assert_eq!(v["authorization_state"], "authorized");
+    assert!(current_app_key_npub(&v).starts_with("npub1"));
+    assert!(v["profile_id"].as_str().unwrap().contains('-'));
+    assert_eq!(v["profile"]["profile_id"], v["profile_id"]);
+    assert_eq!(
+        v["profile"]["current_app_key_npub"],
+        v["current_app_key_npub"]
+    );
+    assert_eq!(v["profile"]["can_admin_profile"], true);
+    assert_eq!(v["profile"]["can_write_roots"], true);
+    assert_eq!(v["profile"]["active_app_key_count"], 1);
+    assert_eq!(v["profile"]["current_key_epoch"], 1);
+    assert_eq!(v["profile"]["recovery_phrase_facet_count"], 0);
+}
+
+#[test]
+fn logout_removes_local_account_and_key_material() {
+    let dir = tempdir().unwrap();
+    idrive(dir.path()).arg("init").assert().success();
+    assert!(dir.path().join("key").exists());
+
+    let out = idrive(dir.path()).arg("logout").output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    assert_eq!(v["logged_out"], true);
+    assert_eq!(v["removed_key"], true);
+
+    assert!(!dir.path().join("key").exists());
+    assert!(!dir.path().join("owner_key").exists());
+
+    let config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+    assert!(config.profile.is_none());
+    assert!(config.user_profile.is_none());
+    assert!(config.drives.is_empty());
+
+    let status = run_json(dir.path(), &["status"]);
+    assert_eq!(status["initialized"], false);
+    assert!(status["drives"].as_array().unwrap().is_empty());
+
+    idrive(dir.path()).arg("whoami").assert().failure();
+    idrive(dir.path()).arg("logout").assert().success();
+}
+
+#[test]
+fn recovery_phrase_restore_creates_fresh_profile_and_uses_fresh_app_key() {
+    let dir_a = tempdir().unwrap();
+    let recovery_phrase = iris_drive_core::recovery_phrase::generate_recovery_phrase().unwrap();
+    idrive(dir_a.path())
+        .args(["restore", &recovery_phrase])
+        .assert()
+        .success();
+    let original_owner =
+        String::from_utf8(idrive(dir_a.path()).arg("whoami").output().unwrap().stdout).unwrap();
+    let original_v: serde_json::Value = serde_json::from_str(&original_owner).unwrap();
+    let original_app_key_npub = current_app_key_npub(&original_v).to_string();
+
+    let dir_b = tempdir().unwrap();
+    let out = idrive(dir_b.path())
+        .args(["restore", &recovery_phrase])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    assert_ne!(v["profile_id"], original_v["profile_id"]);
+    assert_eq!(v["can_admin_profile"], true);
+    assert_ne!(v["current_app_key_npub"], original_app_key_npub);
+    assert!(!dir_b.path().join("owner_key").exists());
+    assert!(dir_b.path().join("recovery_phrase").exists());
+}
+
+#[test]
+fn raw_nsec_restore_creates_fresh_profile_and_uses_fresh_app_key() {
+    let dir_a = tempdir().unwrap();
+    idrive(dir_a.path()).arg("init").assert().success();
+    let nsec = std::fs::read_to_string(dir_a.path().join("key"))
+        .unwrap()
+        .trim()
+        .to_string();
+    let original = run_json(dir_a.path(), &["whoami"]);
+    let original_app_key_npub = current_app_key_npub(&original).to_string();
+
+    let dir_b = tempdir().unwrap();
+    let restored = run_json(dir_b.path(), &["restore", &nsec]);
+    let dir_c = tempdir().unwrap();
+    let restored_again = run_json(dir_c.path(), &["restore", &nsec]);
+
+    assert_ne!(restored["profile_id"], restored_again["profile_id"]);
+    assert_ne!(restored["profile_id"], original["profile_id"]);
+    assert_ne!(
+        restored["current_app_key_npub"].as_str(),
+        Some(original_app_key_npub.as_str())
+    );
+    assert_eq!(restored["can_admin_profile"], true);
+    assert_eq!(restored["authorization_state"], "authorized");
+    assert!(!dir_b.path().join("owner_key").exists());
+    assert!(!dir_b.path().join("recovery_phrase").exists());
+}
+
+#[test]
+fn macos_login_restore_can_replace_existing_local_setup_with_force() {
+    let original_dir = tempdir().unwrap();
+    let recovery_phrase = iris_drive_core::recovery_phrase::generate_recovery_phrase().unwrap();
+    idrive(original_dir.path())
+        .args(["restore", &recovery_phrase])
+        .assert()
+        .success();
+    let original = run_json(original_dir.path(), &["whoami"]);
+    let original_app_key = current_app_key_npub(&original);
+
+    let macos_dir = tempdir().unwrap();
+    let stale = run_json(
+        macos_dir.path(),
+        &["init", "--label", "stale macOS profile"],
+    );
+    assert_ne!(
+        stale["current_app_key_npub"].as_str(),
+        Some(original_app_key)
+    );
+
+    idrive(macos_dir.path())
+        .args(["restore", &recovery_phrase])
+        .assert()
+        .failure()
+        .stderr(contains("already initialized"));
+
+    let restored = run_json(macos_dir.path(), &["restore", &recovery_phrase, "--force"]);
+    assert_ne!(restored["profile_id"], original["profile_id"]);
+    assert_ne!(
+        restored["current_app_key_npub"].as_str(),
+        Some(original_app_key)
+    );
+    assert_eq!(restored["can_admin_profile"], true);
+    assert_eq!(restored["authorization_state"], "authorized");
+}
+
+#[test]
+fn link_creates_awaiting_device_with_no_owner_key() {
+    let dir = tempdir().unwrap();
+    // Use the test owner's npub from a separate init.
+    let owner_dir = tempdir().unwrap();
+    let init_v: serde_json::Value = serde_json::from_str(
+        &String::from_utf8(
+            idrive(owner_dir.path())
+                .arg("init")
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let invite_url = app_key_link_invite_url(&init_v).to_string();
+
+    let out = idrive(dir.path())
+        .args(["link", &invite_url])
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    assert_eq!(v["can_admin_profile"], false);
+    assert_eq!(v["authorization_state"], "awaiting_approval");
+    assert_eq!(v["profile_id"], init_v["profile_id"]);
+    assert_eq!(
+        v["app_key_link_invite"]["profile_id"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        v["app_key_link_request"]["profile_id"],
+        init_v["profile_id"]
+    );
+    assert_eq!(
+        v["app_key_link_request"]["app_key_npub"],
+        v["current_app_key_npub"]
+    );
+    let request_url = v["app_key_link_request"]["url"].as_str().unwrap();
+    assert!(request_url.starts_with(APP_KEY_APPROVAL_REQUEST_PREFIX));
+    let request = pending_request(dir.path());
+    assert_eq!(
+        request.device_app_key_npub,
+        v["current_app_key_npub"].as_str().unwrap()
+    );
+    assert!(!request.request_npub.is_empty());
+    assert_eq!(request.request_secret.len(), 43);
+    assert_ne!(request.device_app_key_npub, request.request_npub);
+    let bootstrap =
+        iris_drive_core::app_key_link_transport::parse_app_key_approval_bootstrap(request_url)
+            .unwrap()
+            .unwrap();
+    assert_eq!(request, bootstrap);
+    assert_eq!(
+        bootstrap.device_app_key_npub,
+        v["current_app_key_npub"].as_str().unwrap()
+    );
+    assert!(
+        request_url.len()
+            <= iris_drive_core::nostr_identity::NOSTR_IDENTITY_DEVICE_APPROVAL_BOOTSTRAP_MAX_URI_LENGTH,
+        "bootstrap URL was {request_url}"
+    );
+    let status = run_json(dir.path(), &["status"]);
+    let peers = status["peers"].as_array().unwrap();
+    assert!(
+        peers.is_empty(),
+        "pending AppKeys should not appear in roster"
+    );
+    assert_eq!(status["network"]["authorized_app_key_count"], 0);
+    assert!(dir.path().join("key").exists());
+    assert!(!dir.path().join("owner_key").exists()); // never on a linked device
+}
+
+#[test]
+fn macos_login_link_can_replace_existing_local_setup_with_force() {
+    let owner_dir = tempdir().unwrap();
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let owner_invite = app_key_link_invite_url(&owner);
+
+    let macos_dir = tempdir().unwrap();
+    run_json(
+        macos_dir.path(),
+        &["init", "--label", "stale macOS profile"],
+    );
+
+    idrive(macos_dir.path())
+        .args(["link", owner_invite])
+        .assert()
+        .failure()
+        .stderr(contains("already initialized"));
+
+    let linked = run_json(macos_dir.path(), &["link", owner_invite, "--force"]);
+    assert_eq!(linked["can_admin_profile"], false);
+    assert_eq!(linked["authorization_state"], "awaiting_approval");
+    assert!(linked["app_key_link_request"]["url"].as_str().is_some());
+}
+
+#[test]
+fn owner_invite_link_queues_fips_request_to_admin_app_key() {
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let invite_url = owner["app_key_link_invite"]["url"].as_str().unwrap();
+    assert!(invite_url.starts_with("https://drive.iris.to/invite/"));
+    let admin_app_key_npub = current_app_key_npub(&owner);
+
+    let linked = run_json(linked_dir.path(), &["link", invite_url, "--label", "phone"]);
+
+    assert_eq!(linked["profile_id"], owner["profile_id"]);
+    assert_eq!(
+        linked["app_key_link_invite"]["profile_id"],
+        serde_json::Value::Null
+    );
+    assert_eq!(
+        linked["app_key_link_request"]["profile_id"],
+        owner["profile_id"]
+    );
+    assert_eq!(
+        linked["app_key_link_request"]["admin_app_key_npub"],
+        admin_app_key_npub
+    );
+    assert!(
+        linked["app_key_link_request"]["requested_at"]
+            .as_u64()
+            .is_some()
+    );
+
+    let owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
+    let owner_state = owner_config.profile.as_ref().unwrap();
+    let config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
+    let state = config.profile.as_ref().unwrap();
+    assert_eq!(
+        state
+            .outbound_app_key_link_request
+            .as_ref()
+            .unwrap()
+            .admin_app_key_pubkey
+            .as_str(),
+        owner_state.app_key_pubkey.as_str()
+    );
+    assert_eq!(
+        state
+            .outbound_app_key_link_request
+            .as_ref()
+            .unwrap()
+            .invite_pubkey
+            .as_str(),
+        iris_drive_core::app_key_link_invite_pubkey(&owner_state.app_key_link_secret)
+            .unwrap()
+            .as_str()
+    );
+}
+
+#[test]
+fn link_then_approve_authorizes_the_linked_app_key() {
+    // Set up owner-capable install + a separate linked install.
+    let owner_dir = tempdir().unwrap();
+    idrive(owner_dir.path()).arg("init").assert().success();
+    let owner = serde_json::from_str::<serde_json::Value>(
+        &String::from_utf8(
+            idrive(owner_dir.path())
+                .arg("whoami")
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let owner_invite = app_key_link_invite_url(&owner).to_string();
+
+    let linked_dir = tempdir().unwrap();
+    let _linked_v: serde_json::Value = serde_json::from_str(
+        &String::from_utf8(
+            idrive(linked_dir.path())
+                .args(["link", &owner_invite])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    // Owner approves the linked device.
+    let v = approve_with_local_relay(owner_dir.path(), linked_dir.path(), None);
+    assert_eq!(v["roster_size"], 2);
+
+    // Roster on the owner side now has 2 AppKey actors.
+    let roster = serde_json::from_str::<serde_json::Value>(
+        &String::from_utf8(
+            idrive(owner_dir.path())
+                .arg("roster")
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        roster["app_keys"]["app_actors"].as_array().unwrap().len(),
+        2
+    );
+}
+
+#[test]
+fn app_keys_can_appoint_and_demote_admin() {
+    let owner_dir = tempdir().unwrap();
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let owner_invite = app_key_link_invite_url(&owner);
+
+    let linked_dir = tempdir().unwrap();
+    let linked = run_json(
+        linked_dir.path(),
+        &["link", owner_invite, "--label", "laptop"],
+    );
+    let linked_app_key = current_app_key_npub(&linked);
+    approve_with_local_relay(owner_dir.path(), linked_dir.path(), None);
+
+    let promoted = run_json(
+        owner_dir.path(),
+        &["app-keys", "appoint-admin", linked_app_key],
+    );
+    assert_eq!(promoted["app_key_npub"], linked_app_key);
+    assert_eq!(promoted["role"], "admin");
+    let status = run_json(owner_dir.path(), &["status"]);
+    assert!(status["peers"].as_array().unwrap().iter().any(|device| {
+        device["app_key_npub"].as_str() == Some(linked_app_key)
+            && device["role"].as_str() == Some("admin")
+    }));
+    let roster = run_json(owner_dir.path(), &["app-keys", "list"]);
+    assert!(
+        roster["app_keys"]["app_actors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|device| device["npub"].as_str() == Some(linked_app_key)
+                && device["role"].as_str() == Some("admin"))
+    );
+
+    let demoted = run_json(
+        owner_dir.path(),
+        &["app-keys", "demote-admin", linked_app_key],
+    );
+    assert_eq!(demoted["role"], "member");
+}
+
+#[test]
+fn owner_approves_device_request_link() {
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let owner_invite = app_key_link_invite_url(&owner).to_string();
+
+    let linked = run_json(
+        linked_dir.path(),
+        &["link", &owner_invite, "--label", "windows-peer"],
+    );
+    let linked_app_key = current_app_key_npub(&linked);
+
+    let approved = approve_with_local_relay(owner_dir.path(), linked_dir.path(), None);
+    assert_eq!(approved["roster_size"], 2);
+
+    let roster = run_json(owner_dir.path(), &["roster"]);
+    let app_actors = roster["app_keys"]["app_actors"].as_array().unwrap();
+    assert!(app_actors.iter().any(|device| {
+        device["npub"].as_str() == Some(linked_app_key) && device["role"].as_str() == Some("member")
+    }));
+}
+
+#[test]
+fn owner_rejects_device_request_link() {
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let owner_invite = app_key_link_invite_url(&owner);
+    let linked = run_json(
+        linked_dir.path(),
+        &["link", owner_invite, "--label", "rejected-phone"],
+    );
+    let linked_app_key = current_app_key_npub(&linked);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .enable_all()
+        .build()
+        .unwrap();
+    let approval_relay = runtime.block_on(LocalNostrRelay::spawn());
+    let request_url =
+        runtime.block_on(approval_relay.pending_approval_request_url(linked_dir.path()));
+    add_config_relay(owner_dir.path(), &approval_relay.url);
+
+    {
+        let config_path = iris_drive_core::paths::config_path_in(owner_dir.path());
+        let mut config = iris_drive_core::AppConfig::load_or_default(&config_path).unwrap();
+        let state = config.profile.as_mut().unwrap();
+        let profile_id = state.profile_id;
+        let invite_pubkey =
+            iris_drive_core::app_key_link_invite_pubkey(&state.app_key_link_secret).unwrap();
+        let linked_hex = iris_drive_core::AppConfig::load_or_default(
+            iris_drive_core::paths::config_path_in(linked_dir.path()),
+        )
+        .unwrap()
+        .profile
+        .unwrap()
+        .app_key_pubkey;
+        state
+            .record_inbound_app_key_link_request(
+                profile_id,
+                &linked_hex,
+                Some("rejected-phone".into()),
+                &invite_pubkey,
+                request_url.clone(),
+                42,
+            )
+            .unwrap();
+        config.save(&config_path).unwrap();
+    }
+
+    let rejected = run_json(owner_dir.path(), &["app-keys", "reject", &request_url]);
+    assert_eq!(rejected["rejected"], true);
+    assert!(
+        rejected["inbound_app_key_link_requests"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    let roster = run_json(owner_dir.path(), &["app-keys", "list"]);
+    assert!(
+        roster["app_keys"]["app_actors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|device| device["npub"].as_str() != Some(linked_app_key))
+    );
+}
+
+#[test]
+fn app_keys_group_covers_invite_request_approve_and_list_flow() {
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let admin_app_key_npub = current_app_key_npub(&owner);
+    let invite = run_json(owner_dir.path(), &["app-keys", "invite"]);
+    let invite_url = invite["url"].as_str().unwrap();
+    assert!(invite_url.starts_with("https://drive.iris.to/invite/"));
+    assert!(!invite_url.contains("local-owner"));
+    assert!(!invite_url.contains("device-"));
+    assert_eq!(
+        invite["admin_app_key_npub"].as_str(),
+        Some(admin_app_key_npub)
+    );
+
+    let linked = run_json(
+        linked_dir.path(),
+        &["app-keys", "request", invite_url, "--label", "laptop"],
+    );
+    assert_eq!(linked["authorization_state"], "awaiting_approval");
+    let request_url = linked["app_key_link_request"]["url"].as_str().unwrap();
+    assert!(request_url.starts_with(APP_KEY_APPROVAL_REQUEST_PREFIX));
+    let request = pending_request(linked_dir.path());
+    assert_eq!(
+        request.device_app_key_npub,
+        linked["current_app_key_npub"].as_str().unwrap()
+    );
+    assert!(!request.request_npub.is_empty());
+    assert_eq!(request.request_secret.len(), 43);
+    assert_ne!(request.device_app_key_npub, request.request_npub);
+    let bootstrap =
+        iris_drive_core::app_key_link_transport::parse_app_key_approval_bootstrap(request_url)
+            .unwrap()
+            .unwrap();
+    assert_eq!(request, bootstrap);
+    assert_eq!(
+        bootstrap.device_app_key_npub,
+        linked["current_app_key_npub"].as_str().unwrap()
+    );
+    assert!(
+        request_url.len()
+            <= iris_drive_core::nostr_identity::NOSTR_IDENTITY_DEVICE_APPROVAL_BOOTSTRAP_MAX_URI_LENGTH,
+        "bootstrap URL was {request_url}"
+    );
+    assert_eq!(
+        linked["app_key_link_request"]["admin_app_key_npub"].as_str(),
+        Some(admin_app_key_npub)
+    );
+    assert_eq!(
+        linked["app_key_link_request"]["sent_over_fips"],
+        serde_json::Value::Bool(true)
+    );
+
+    let requests = run_json(linked_dir.path(), &["app-keys", "requests"]);
+    assert!(requests["outbound"].is_object());
+    assert!(requests["inbound"].as_array().unwrap().is_empty());
+
+    let approved = app_keys_approve_with_local_relay(owner_dir.path(), linked_dir.path());
+    assert_eq!(
+        approved["approved_app_key_npub"],
+        linked["current_app_key_npub"]
+    );
+    assert_eq!(approved["roster_size"], 2);
+
+    let devices = run_json(owner_dir.path(), &["app-keys", "list"]);
+    assert_eq!(
+        devices["app_keys"]["app_actors"].as_array().unwrap().len(),
+        2
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn approval_publishes_roster_and_receipt_to_configured_relay() {
+    let relay = LocalNostrRelay::spawn().await;
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let mut owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
+    owner_config.relays = vec![relay.url.clone()];
+    owner_config.save(config_path_in(owner_dir.path())).unwrap();
+    run_json(
+        linked_dir.path(),
+        &[
+            "link",
+            app_key_link_invite_url(&owner),
+            "--label",
+            "relay-device",
+        ],
+    );
+    let request_url = relay.pending_approval_request_url(linked_dir.path()).await;
+    let request = pending_request(linked_dir.path());
+    assert_eq!(
+        request.label.as_deref(),
+        Some("relay-device"),
+        "the request link carries only compact bootstrap fields"
+    );
+
+    let approved = run_json(owner_dir.path(), &["approve", &request_url]);
+    assert_eq!(approved["roster_size"], 2);
+
+    let saved_owner = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
+    let owner_state = saved_owner.profile.as_ref().unwrap();
+    let approval_events = relay.events().await;
+    assert_eq!(
+        approval_events
+            .iter()
+            .filter(|event| is_approval_receipt_event(event))
+            .count(),
+        1
+    );
+    assert_eq!(
+        approval_events.len(),
+        owner_state.profile_roster_ops.len() + 1,
+        "configured relay must receive the complete roster and encrypted receipt"
+    );
+    assert!(approval_events.iter().all(|event| {
+        event["kind"].as_u64() == Some(u64::from(iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP))
+    }));
+    assert!(
+        approval_events
+            .last()
+            .is_some_and(is_approval_receipt_event),
+        "the encrypted receipt must be accepted after the complete roster"
+    );
+    assert!(
+        approval_events[..approval_events.len() - 1]
+            .iter()
+            .all(|event| !is_approval_receipt_event(event))
+    );
+
+    let synced = run_json(
+        linked_dir.path(),
+        &["sync", "--relay", &relay.url, "--timeout", "1"],
+    );
+    assert_eq!(synced["device_approval_receipts_applied"], 1);
+    let linked_status = run_json(linked_dir.path(), &["status"]);
+    assert_eq!(
+        linked_status["profile"]["authorization_state"],
+        "authorized"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn rejected_configured_relay_reports_publish_error_without_rollback() {
+    let relay = LocalNostrRelay::spawn().await;
+    relay.reject_kinds(&[iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP]);
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    run_json(
+        linked_dir.path(),
+        &[
+            "link",
+            app_key_link_invite_url(&owner),
+            "--label",
+            "rejected-device",
+        ],
+    );
+    let request_url = relay.pending_approval_request_url(linked_dir.path()).await;
+    add_config_relay(owner_dir.path(), &relay.url);
+    let before = AppConfig::load_or_default(config_path_in(owner_dir.path()))
+        .unwrap()
+        .profile;
+
+    let approved = run_json(owner_dir.path(), &["approve", &request_url]);
+    assert_eq!(approved["published_approval_events"], 0);
+    assert!(
+        approved["approval_publish_error"]
+            .as_str()
+            .is_some_and(|error| error.contains("rejected by test relay"))
+    );
+    assert_eq!(approved["roster_size"], 2);
+
+    let after = AppConfig::load_or_default(config_path_in(owner_dir.path()))
+        .unwrap()
+        .profile;
+    assert_ne!(
+        after, before,
+        "local approval must survive relay publish failure"
+    );
+}
+
+#[test]
+fn app_keys_repair_wraps_reports_noop_when_epoch_is_complete() {
+    let owner_dir = tempdir().unwrap();
+    run_json(owner_dir.path(), &["init", "--label", "admin"]);
+
+    let repaired = run_json(owner_dir.path(), &["app-keys", "repair-wraps"]);
+
+    assert_eq!(repaired["repaired_key_wrap_count"], 0);
+    assert!(
+        repaired["repaired_key_wraps"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    assert!(
+        repaired["remaining_missing_key_wraps"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn app_keys_reset_invite_rotates_secret_and_clears_inbound_requests() {
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let old_invite = owner["app_key_link_invite"]["url"].as_str().unwrap();
+    let linked = run_json(
+        linked_dir.path(),
+        &["app-keys", "request", old_invite, "--label", "phone"],
+    );
+    let linked_request_url = linked["app_key_link_request"]["url"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let linked_config = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
+    let linked_app_key = linked_config
+        .profile
+        .as_ref()
+        .unwrap()
+        .app_key_pubkey
+        .clone();
+
+    let config_path = config_path_in(owner_dir.path());
+    let mut config = AppConfig::load_or_default(&config_path).unwrap();
+    let state = config.profile.as_mut().unwrap();
+    let profile_id = state.profile_id;
+    let old_secret = state.app_key_link_secret.clone();
+    let old_invite_pubkey = iris_drive_core::app_key_link_invite_pubkey(&old_secret).unwrap();
+    state
+        .record_inbound_app_key_link_request(
+            profile_id,
+            &linked_app_key,
+            Some("phone".to_string()),
+            &old_invite_pubkey,
+            linked_request_url.clone(),
+            linked["app_key_link_request"]["requested_at"]
+                .as_u64()
+                .unwrap(),
+        )
+        .unwrap();
+    config.save(&config_path).unwrap();
+    let requests = run_json(owner_dir.path(), &["app-keys", "requests"]);
+    assert_eq!(requests["inbound"].as_array().unwrap().len(), 1);
+
+    let reset = run_json(owner_dir.path(), &["app-keys", "reset-invite"]);
+    let new_invite = reset["app_key_link_invite"]["url"].as_str().unwrap();
+    assert_ne!(new_invite, old_invite);
+    assert!(
+        reset["inbound_app_key_link_requests"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+
+    let mut config = AppConfig::load_or_default(&config_path).unwrap();
+    let state = config.profile.as_mut().unwrap();
+    assert_ne!(state.app_key_link_secret, old_secret);
+    assert!(
+        !state
+            .record_inbound_app_key_link_request(
+                profile_id,
+                &linked_app_key,
+                Some("phone".to_string()),
+                &old_invite_pubkey,
+                linked_request_url,
+                999,
+            )
+            .unwrap()
+    );
+
+    let invite = run_json(owner_dir.path(), &["app-keys", "invite"]);
+    assert_eq!(invite["url"].as_str(), Some(new_invite));
+}
+
+#[test]
+fn app_keys_request_rejects_manual_profile_without_invite_pubkey() {
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let admin_app_key_npub = current_app_key_npub(&owner);
+    let profile_id = owner["profile_id"].as_str().unwrap();
+
+    idrive(linked_dir.path())
+        .args([
+            "app-keys",
+            "request",
+            profile_id,
+            "--admin-app-key",
+            admin_app_key_npub,
+            "--label",
+            "manual laptop",
+        ])
+        .assert()
+        .failure()
+        .stderr(contains("device invite is missing invite pubkey"));
+}
+
+#[test]
+fn app_keys_request_rejects_manual_app_key_without_profile_id() {
+    let owner_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+
+    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    let admin_app_key_npub = current_app_key_npub(&owner);
+
+    idrive(linked_dir.path())
+        .args([
+            "app-keys",
+            "request",
+            admin_app_key_npub,
+            "--admin-app-key",
+            admin_app_key_npub,
+        ])
+        .assert()
+        .failure()
+        .stderr(contains(
+            "manual device linking requires an NostrIdentity UUID",
+        ));
+}
+
+#[test]
+fn owner_can_revoke_a_linked_app_key() {
+    let owner_dir = tempdir().unwrap();
+    idrive(owner_dir.path()).arg("init").assert().success();
+    let owner = serde_json::from_str::<serde_json::Value>(
+        &String::from_utf8(
+            idrive(owner_dir.path())
+                .arg("whoami")
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let owner_invite = app_key_link_invite_url(&owner).to_string();
+
+    let linked_dir = tempdir().unwrap();
+    let linked_v: serde_json::Value = serde_json::from_str(
+        &String::from_utf8(
+            idrive(linked_dir.path())
+                .args(["link", &owner_invite])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let linked_app_key_npub = current_app_key_npub(&linked_v).to_string();
+    approve_with_local_relay(owner_dir.path(), linked_dir.path(), None);
+    let revoked = run_json(owner_dir.path(), &["revoke", &linked_app_key_npub]);
+    assert_eq!(revoked["revoked_app_key_npub"], linked_app_key_npub);
+    assert_eq!(revoked["roster_size"], 1);
+    assert!(revoked["dck_generation"].as_u64().unwrap() > 1);
+
+    let roster = run_json(owner_dir.path(), &["roster"]);
+    let app_actors = roster["app_keys"]["app_actors"].as_array().unwrap();
+    assert_eq!(app_actors.len(), 1);
+    assert_ne!(app_actors[0]["npub"], linked_app_key_npub);
+}
+
+#[test]
+fn approve_without_admin_authority_errors() {
+    // Linked-only AppKey tries to approve.
+    let owner_dir = tempdir().unwrap();
+    idrive(owner_dir.path()).arg("init").assert().success();
+    let owner = serde_json::from_str::<serde_json::Value>(
+        &String::from_utf8(
+            idrive(owner_dir.path())
+                .arg("whoami")
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let owner_invite = app_key_link_invite_url(&owner).to_string();
+    let linked_dir = tempdir().unwrap();
+    idrive(linked_dir.path())
+        .args(["link", &owner_invite])
+        .assert()
+        .success();
+    idrive(linked_dir.path())
+        .args(["approve", &"ff".repeat(32)])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn roster_before_init_errors() {
+    let dir = tempdir().unwrap();
+    idrive(dir.path()).arg("roster").assert().failure();
+}
+
+#[test]
+fn roster_after_init_shows_dck_generation_and_self_wrap() {
+    let dir = tempdir().unwrap();
+    idrive(dir.path()).arg("init").assert().success();
+    let out = idrive(dir.path()).arg("roster").output().unwrap();
+    assert!(out.status.success());
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    assert_eq!(v["app_keys"]["dck_generation"], 1);
+    assert_eq!(v["profile"]["active_app_key_count"], 1);
+    assert_eq!(v["profile"]["current_key_epoch"], 1);
+    assert_eq!(
+        v["profile"]["missing_key_wraps"].as_array().unwrap().len(),
+        0
+    );
+    let app_actors = v["app_keys"]["app_actors"].as_array().unwrap();
+    assert_eq!(app_actors.len(), 1);
+    assert_eq!(app_actors[0]["has_dck_wrap"], true);
+    assert_eq!(app_actors[0]["is_current_app_key"], true);
+}
+
+#[test]
+fn rotate_dck_advances_generation() {
+    let dir = tempdir().unwrap();
+    idrive(dir.path()).arg("init").assert().success();
+    let before: serde_json::Value = serde_json::from_str(
+        &String::from_utf8(idrive(dir.path()).arg("roster").output().unwrap().stdout).unwrap(),
+    )
+    .unwrap();
+    let gen_before = before["app_keys"]["dck_generation"].as_u64().unwrap();
+
+    let out = idrive(dir.path()).arg("rotate-dck").output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    let gen_after = v["dck_generation"].as_u64().unwrap();
+    assert!(
+        gen_after > gen_before,
+        "{gen_after} should exceed {gen_before}"
+    );
+}
+
+#[test]
+fn rotate_dck_on_linked_app_key_errors() {
+    let owner_dir = tempdir().unwrap();
+    idrive(owner_dir.path()).arg("init").assert().success();
+    let owner = serde_json::from_str::<serde_json::Value>(
+        &String::from_utf8(
+            idrive(owner_dir.path())
+                .arg("whoami")
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let owner_invite = app_key_link_invite_url(&owner).to_string();
+    let linked_dir = tempdir().unwrap();
+    idrive(linked_dir.path())
+        .args(["link", &owner_invite])
+        .assert()
+        .success();
+    idrive(linked_dir.path())
+        .arg("rotate-dck")
+        .assert()
+        .failure();
+}
+
+#[test]
+fn approve_advances_dck_generation() {
+    let owner_dir = tempdir().unwrap();
+    idrive(owner_dir.path()).arg("init").assert().success();
+    let gen_before = serde_json::from_str::<serde_json::Value>(
+        &String::from_utf8(
+            idrive(owner_dir.path())
+                .arg("roster")
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
+    )
+    .unwrap()["app_keys"]["dck_generation"]
+        .as_u64()
+        .unwrap();
+
+    let owner = serde_json::from_str::<serde_json::Value>(
+        &String::from_utf8(
+            idrive(owner_dir.path())
+                .arg("whoami")
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    let owner_invite = app_key_link_invite_url(&owner).to_string();
+    let linked_dir = tempdir().unwrap();
+    let _linked_v: serde_json::Value = serde_json::from_str(
+        &String::from_utf8(
+            idrive(linked_dir.path())
+                .args(["link", &owner_invite])
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
+    )
+    .unwrap();
+    approve_with_local_relay(owner_dir.path(), linked_dir.path(), None);
+
+    let gen_after = serde_json::from_str::<serde_json::Value>(
+        &String::from_utf8(
+            idrive(owner_dir.path())
+                .arg("roster")
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap(),
+    )
+    .unwrap()["app_keys"]["dck_generation"]
+        .as_u64()
+        .unwrap();
+    assert!(
+        gen_after > gen_before,
+        "{gen_after} should exceed {gen_before}"
+    );
+}
+
+#[test]
+fn double_init_errors_without_force() {
+    let dir = tempdir().unwrap();
+    idrive(dir.path()).arg("init").assert().success();
+    idrive(dir.path()).arg("init").assert().failure();
+}
+
+#[test]
+fn double_init_with_force_succeeds() {
+    let dir = tempdir().unwrap();
+    idrive(dir.path()).arg("init").assert().success();
+    idrive(dir.path())
+        .args(["init", "--force"])
+        .assert()
+        .success()
+        .stdout(contains("npub1"));
+}
+
+#[test]
+fn whoami_after_init_reports_profile_and_current_app_key() {
+    let dir = tempdir().unwrap();
+    idrive(dir.path()).arg("init").assert().success();
+    let out = idrive(dir.path()).arg("whoami").output().unwrap();
+    assert!(out.status.success());
+    let v: serde_json::Value =
+        serde_json::from_str(&String::from_utf8(out.stdout).unwrap()).unwrap();
+    assert!(
+        v["current_app_key_npub"]
+            .as_str()
+            .unwrap()
+            .starts_with("npub1")
+    );
+    assert_eq!(
+        v["profile"]["current_app_key_npub"],
+        v["current_app_key_npub"]
+    );
+    assert_eq!(v["profile"]["can_admin_profile"], true);
+    assert_eq!(v["can_admin_profile"], true);
+    assert_eq!(v["can_write_roots"], true);
+}

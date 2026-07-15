@@ -1,0 +1,28 @@
+[package]
+name = "iris-drive-mac"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "macOS menu bar wrapper around the idrive daemon"
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+iris-drive-core.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tao.workspace = true
+tray-icon.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[[bin]]
+name = "iris-drive-mac"
+path = "src/main.rs"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

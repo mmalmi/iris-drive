@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Iris Drive
+Exec=iris-drive %u
+Icon=iris-drive
+Terminal=false
+Categories=Network;FileTransfer;
+MimeType=x-scheme-handler/iris-drive;
+StartupNotify=true

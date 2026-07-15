@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" role="img" aria-label="Iris Drive">
+  <defs>
+    <linearGradient id="ring" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ff3ff2"/>
+      <stop offset="1" stop-color="#ff8f3f"/>
+    </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#6d5dfc"/>
+      <stop offset="1" stop-color="#35d4ff"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1024" height="1024" rx="224" fill="#050507"/>
+
+  <circle cx="512" cy="512" r="300" fill="none" stroke="url(#ring)" stroke-width="104"/>
+  <circle cx="512" cy="512" r="72" fill="url(#mark)"/>
+  <path d="M208 816 392 632" fill="none" stroke="url(#mark)" stroke-width="104" stroke-linecap="round"/>
+</svg>

@@ -1,0 +1,45 @@
+[package]
+name = "iris-drive-app-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Native app state and action contract for Iris Drive"
+repository.workspace = true
+publish = false
+
+[lib]
+name = "iris_drive_app_core"
+crate-type = ["cdylib", "staticlib", "rlib"]
+
+[dependencies]
+anyhow.workspace = true
+iris-drive-core.workspace = true
+hashtree-provider.workspace = true
+hashtree-core.workspace = true
+hashtree-fs.workspace = true
+nostr-sdk.workspace = true
+qrcode = { version = "0.14", default-features = false }
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+rustls.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uniffi.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
+jni = "0.21"
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+
+[lints.rust]
+unsafe_code = "allow"

@@ -1,0 +1,369 @@
+# Iris Drive
+
+<p align="center">
+  <img src="linux/resources/iris-drive.svg" alt="Iris Drive logo" width="112">
+</p>
+
+> Canonical repository: `htree://self/iris-drive` · package name: `iris-drive`
+
+Iris Drive is end-user file sync built on local `htree` storage and Nostr
+identity. It includes the `idrive` CLI/daemon, a shared Rust core, a UniFFI app
+core, and native shells for desktop and mobile platforms. Think Drive-style
+sync, but content-addressed, peer-aware, and free of DNS/SSL/CDN dependencies.
+
+OS-visible drives are virtual provider surfaces only: FileProvider, FUSE,
+Windows Cloud Files/WinFsp, SAF, or the platform equivalent over htree/provider
+roots. Iris Drive should not silently substitute a normal user folder.
+
+## Downloads
+
+Public binary downloads are not a stable channel yet. Build from source for
+now:
+
+```bash
+just build
+just run
+```
+
+The `idrive update` path is already wired for signed hashtree releases at:
+
+```text
+htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-drive/latest
+```
+
+Release staging consumes already-built files from `dist/`; see "Release" under
+Maintainer Notes.
+
+## Quick Start
+
+Launch the native app for the current desktop platform:
+
+```bash
+just run
+```
+
+On macOS this builds and opens the SwiftUI/AppKit app, registers the File
+Provider domain when signing allows it, and starts the bundled iris-drive
+daemon. On Linux it starts the GTK/libadwaita shell. Use the platform READMEs
+for platform-specific signing, packaging, and smoke-test details.
+
+For a terminal-only flow:
+
+```bash
+just run-cli init --label "Laptop"
+just run-cli import /path/to/seed-folder
+just run-cli daemon
+```
+
+Useful CLI probes:
+
+```bash
+just run-cli stats
+just run-cli status
+just run-cli whoami
+just run-cli list
+just run-cli update --check
+```
+
+Common device-link and backup flows:
+
+```bash
+just run-cli app-keys invite
+just run-cli app-keys request <device-invite-url> --label "Laptop"
+just run-cli app-keys request <nostr-identity-uuid> --admin-app-key <admin-device-npub> --label "Laptop"
+just run-cli app-keys approve <device-request-url-or-device-npub>
+just run-cli app-keys list
+just run-cli app-keys repair-wraps
+just run-cli shares create "Projects/Alpha" --name "Alpha"
+just run-cli shares recipient-evidence --display-name "Alice" > recipient-profile.json
+just run-cli shares invite <share-id> --recipient-evidence recipient-profile.json --role reader
+just run-cli shares invite <share-id> --profile <nostr-identity-id> --app-key <recipient-device-npub> --role reader
+just run-cli shares accept <share-invite-url>
+just run-cli shares list
+just run-cli shares members <share-id>
+just run-cli shares role <share-id> <nostr-identity-id> editor
+just run-cli shares revoke <share-id> <nostr-identity-id>
+just run-cli shares shortcut <share-id> --parent "Projects"
+just run-cli shares repair-wraps <share-id>
+just run-cli shares list --diagnostics
+just run-cli backups add fs:/path/to/encrypted-backup --label "External disk"
+just run-cli backups sync
+```
+
+Native apps expose the same share operations from the **Shares** tab: create a
+shared folder, invite a NostrIdentity member, accept an invite, change member
+roles, revoke a member, add a shortcut, and repair missing key wraps. The UI
+shows people/profile members first; invite dialogs prefer signed
+recipient-evidence JSON. `idrive shares recipient-evidence` or the app-core
+`export_share_recipient_evidence` action exports the local NostrIdentity/device
+proof bundle another user can pass to `idrive shares invite
+--recipient-evidence` or `invite_share_member_from_evidence`; native share
+screens expose this as **Copy my share identity**. Direct device-key entry
+remains an admin fallback.
+
+CLI share JSON follows the same shape by default: members are NostrIdentity
+entities and repair/revocation output reports counts. Raw device-key lists are
+available only from explicit diagnostics output such as
+`idrive shares list --diagnostics`,
+`idrive shares revoke <share-id> <nostr-identity-id> --diagnostics`, and
+`idrive shares repair-wraps <share-id> --diagnostics`.
+
+OS share/open integrations do not grant access by themselves. They open the app
+share dialog for a selected Iris Drive folder using
+`iris-drive://share?path=<folder>&name=<optional-name>` or the equivalent
+`https://drive.iris.to/share?...` route; the user still confirms through the
+normal Shares tab create flow. Web/contact handoff may include
+`recipient_npub`, `recipient_name`, and `recipient_profile` query hints to
+prefill the invite form, but those hints are display/discovery data only. Signed
+recipient evidence and roster ops establish the IrisProfile member that receives
+access.
+
+Share invites include a signed roster checkpoint that summarizes the current
+entity members, the materialized AppKey-to-IrisProfile participant mapping,
+compact AppKey/key-epoch and member-roster heads, key epoch, and missing-wrap
+state. IrisProfile roster proofs establish which AppKeys belong to a profile;
+the share member roster records the IrisProfile UUID-to-role/status grants.
+Projected `members` are cache/display state; the signed append-only share logs
+remain the source of truth. The checkpoint is an invite-time proof for
+recipients and web preview surfaces.
+
+When `idrive daemon` is running it starts a loopback browser gateway on port
+`17321` by default. The current primary drive can be opened at:
+
+```text
+http://main.drive.iris.localhost:17321/
+```
+
+The hand-typed root `http://iris.localhost:17321/` redirects to the canonical
+hashtree apps portal at `sites.<publisher-npub>.iris.localhost`.
+
+Immutable hashtree roots are served from per-root hosts under
+`*.sites.iris.localhost`, and nhash links can be opened through:
+
+```text
+http://nhash.iris.localhost:17321/<nhash>/...
+```
+
+Non-HTML files from mutable published htree refs can be opened through the
+portal host with any `npub1...` owner. Encode slash-containing tree names as
+one path segment:
+
+```text
+http://iris.localhost:17321/<npub>/releases%2Fhashtree/latest/install.sh
+```
+
+HTML apps should use an isolated origin such as
+`<tree>.<npub>.iris.localhost`; the shared portal path refuses `text/html`.
+
+Toggle the resolver/gateway setting with:
+
+```bash
+just run-cli nhash-resolver enable
+just run-cli nhash-resolver disable
+```
+
+## Native Apps
+
+The native apps share the Rust app-core state/action contract and use platform
+shells for macOS, Linux, Windows, Android, and iOS.
+
+```bash
+just run
+just run-linux
+just android-build
+just ios-build
+```
+
+See the platform READMEs for focused instructions:
+
+- [macOS](macos/README.md)
+- [Linux](linux/README.md)
+- [Windows](windows/README.md)
+- [Android](android/README.md)
+- [iOS](ios/README.md)
+
+## What Works Today
+
+- Creates, restores, links, approves, revokes, and lists Nostr-backed Iris Drive
+  app installs through the CLI and desktop control panels.
+- Maintains open Nostr subscriptions for IrisProfile roster ops and mutable
+  drive-root events while the iris-drive daemon is running.
+- Imports local source trees into the persistent htree block store and exposes a
+  merged virtual primary drive view through native provider bridges.
+- Replicates blocks through [reliable TCP/FIPS streams](docs/tcp-fips-blob-v1.md)
+  between authorized app installs when peers are reachable; Blossom remains a
+  configured remote/cache path.
+- Supports encrypted backup targets for Blossom, filesystem, and LMDB endpoints.
+- Serves local browser views for `*.iris.localhost` and `nhash.iris.localhost`.
+- Provides release-update plumbing through signed hashtree manifests.
+
+## Platform Status
+
+| Platform | Status |
+| --- | --- |
+| macOS | SwiftUI/AppKit app, Shares/AppKeys/Backup control, File Provider domain, app-group/runtime wiring, local smoke fixture |
+| Linux x64 | GTK/libadwaita app, Shares/AppKeys/Backup control, FUSE-backed provider path, desktop entry/deep links, native smoke coverage |
+| Windows x64 | WPF app, tray control, Cloud Files placeholder/hydration path, self-contained publish script |
+| Android arm64 | Compose shell with Shares/AppKeys/Backup plus SAF DocumentsProvider with create/read/write/rename/delete/list and folder share-dialog handoff support |
+| iOS | SwiftUI shell with Shares/AppKeys/Backup plus File Provider extension, simulator smoke, multi-app harness peer |
+| CLI | `idrive` create/restore/link, daemon, provider bridge, FIPS sync, Blossom/cache, backups, updater |
+
+See [Platform GUI parity](docs/PARITY.md) for the detailed cross-platform
+matrix and current e2e target.
+
+## Further Reading
+
+- [Design](docs/DESIGN.md): architecture, phases, provider boundaries, and risks
+- [Platform GUI parity](docs/PARITY.md): native shell capability matrix and e2e
+  targets
+- [Snapshot sync implementation plan](docs/SNAPSHOT_SYNC_IMPLEMENTATION_PLAN.md):
+  root reconciliation, miss/timeout semantics, and FIPS retrieval plan
+- [Apple FileProvider entitlement notes](docs/APPLE_FILEPROVIDER_ENTITLEMENT.md):
+  macOS/iOS distribution requirements
+- [Experiments](docs/EXPERIMENTS.md): benchmark and integration notes
+
+## Maintainer Notes
+
+This section is intentionally compact and command-oriented. Keep user-facing
+product detail above; keep agent/operator reference material here.
+
+### Config Model
+
+`idrive init` creates a NostrIdentity and a fresh per-install device key. Recovery
+phrases are explicit recovery material, not part of normal profile creation.
+`idrive restore` creates a fresh device key for the restored install, and
+`idrive link` creates a fresh device key that waits for admin approval.
+
+By default, CLI config lives under the OS config directory with the
+`iris-drive` suffix. Set `IRIS_DRIVE_CONFIG_DIR` or pass `--config-dir` for
+isolated development and tests. Important files live under that directory:
+
+- `config.toml`: app config, relays, drives, roster, backup targets
+- `key`: this app install's device signing key
+- `recovery_phrase`: 12-word NostrIdentity recovery authority, when available
+- `blocks/`: Iris Drive htree block store
+- `Hashtree/`: embedded hashtree daemon runtime state
+
+Native apps may use app-group or app-owned runtime directories, but they still
+pass an explicit config directory to `idrive`/`iris-drive-app-core`.
+
+### Validation
+
+Run the deterministic per-change tier without simulators, phones, VMs, or GUI:
+
+```bash
+just verify-fast
+```
+
+It includes the normal Rust gate, structure/contracts, release-script tests,
+and local core/app-core/CLI contract tests:
+
+```bash
+cargo fmt --check
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+```
+
+Repository structure and parity checks:
+
+```bash
+just structure
+```
+
+Useful focused checks:
+
+```bash
+just smoke-macos
+just docker-cli-e2e
+just android-smoke
+just android-gui-smoke
+just ios-smoke
+just ios-gui-smoke
+```
+
+Full configured lab checks:
+
+```bash
+just verify-health
+just verify-full
+```
+
+`verify-full` reserves the five-platform lab, records a machine-readable result
+under `artifacts/verification/`, and classifies unavailable hosts/devices as
+`infrastructure_unavailable` (exit 75) rather than a product failure. It runs
+the full GUI/physical-device matrix and is intended for nightly or release
+boundaries, not every edit. Dedicated simulator/device reset is opt-in through
+`IRIS_NATIVE_LAB_RESET=1`; see `docs/verification-tiers.md`.
+
+### Release
+
+1. Bump `[workspace.package].version` in `Cargo.toml`.
+2. Run the release gate:
+
+```bash
+just verify-fast
+just verify-full
+```
+
+The full gate runs the five-platform lab (`just e2e-5devices`) and requires
+the Linux, Windows, macOS, iOS, and Android hosts/app installs configured in the
+local environment.
+
+3. Build platform artifacts into `dist/`:
+
+```bash
+node scripts/local-release.mjs --build --only macos
+node scripts/local-release.mjs --build --only linux
+node scripts/local-release.mjs --build --only windows
+node scripts/local-release.mjs --build --only android
+node scripts/local-release.mjs --build --only ios
+```
+
+Use `--dry-run` to print the planned artifact names and commands without
+building. The iOS step runs `scripts/ios-build ios-testflight`; set
+`IRIS_DRIVE_IOS_PUBLIC_TESTFLIGHT=1` for the public-TestFlight-capable export.
+The iOS release script runs `scripts/ios-profiles ensure` before archiving so
+the app, File Provider, and Share Extension are exported with installed manual
+App Store provisioning profiles instead of Xcode cloud signing.
+Before the first iOS upload for a bundle ID, run
+`scripts/testflight-internal ensure-app` or create the App Store Connect app
+record manually with the documented bundle ID and SKU if the API key cannot
+create app records.
+`just release` runs the same build entrypoint.
+
+4. Stage the release tree:
+
+```bash
+node scripts/local-release.mjs --tag v0.1.0
+```
+
+Publish a draft or final signed hashtree release:
+
+```bash
+node scripts/local-release.mjs --tag v0.1.0 --publish --draft
+node scripts/local-release.mjs --tag v0.1.0 --final
+```
+
+The default release tree is `releases/iris-drive`. Copy
+`.env.release.example` and `.env.zapstore.example` to local `.env.*.local`
+files for machine-specific signing, htree release, and Zapstore settings.
+
+### Workspace Layout
+
+- [`crates/iris-drive-cli`](crates/iris-drive-cli): `idrive` CLI and daemon
+- [`crates/iris-drive-core`](crates/iris-drive-core): config, identity, htree,
+  sync, gateway, AppKey-link, and backup logic
+- [`crates/iris-drive-app-core`](crates/iris-drive-app-core): native app
+  state/action contract and UniFFI bridge
+- [`crates/hashtree-provider`](crates/hashtree-provider): provider-facing tree
+  trait used by virtual file surfaces
+- [`crates/iris-drive-mac`](crates/iris-drive-mac): Rust macOS menu-bar dev
+  wrapper
+- [`macos`](macos), [`linux`](linux), [`windows`](windows), [`android`](android),
+  [`ios`](ios): native platform shells
+- [`scripts`](scripts): build, smoke, e2e, release, and lab helpers
+- [`docs`](docs): design notes, parity matrix, experiments, and platform plans
+
+## License
+
+MIT.

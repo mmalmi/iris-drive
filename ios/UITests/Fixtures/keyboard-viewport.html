@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Keyboard Viewport Fixture</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+      background: #000;
+      color: #111827;
+    }
+    body {
+      margin: 0;
+      background: #000;
+    }
+    .hero {
+      box-sizing: border-box;
+      min-height: 100dvh;
+      padding: 72px 24px;
+      background:
+        radial-gradient(circle at 20% 18%, rgba(255, 255, 255, 0.9), transparent 26%),
+        linear-gradient(160deg, #7dd3fc 0%, #fef3c7 48%, #f9a8d4 100%);
+    }
+    h1 {
+      max-width: 10em;
+      margin: 0;
+      font-size: 42px;
+      line-height: 1;
+    }
+    p {
+      max-width: 18em;
+      margin: 18px 0 0;
+      color: rgba(17, 24, 39, 0.78);
+      font-size: 18px;
+      line-height: 1.4;
+    }
+    .after {
+      min-height: 100vh;
+      background: #000;
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="hero">
+      <h1>Keyboard viewport</h1>
+      <p>The bright panel should stay behind the native address bar while it is focused.</p>
+    </section>
+    <section class="after" aria-label="black section"></section>
+  </main>
+</body>
+</html>

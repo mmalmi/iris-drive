@@ -1,0 +1,1060 @@
+#[allow(clippy::wildcard_imports)]
+use super::*;
+use iris_drive_core::provider::{
+    ProviderListEntry, compose_provider_path, normalize_provider_document_path,
+    normalize_provider_parent_path, normalize_provider_path, provider_cache_destination,
+    provider_entry_is_probable_os_placeholder, provider_file_probable_os_placeholder_family,
+    provider_list_summary, provider_write_is_probable_os_placeholder, sanitized_provider_file_name,
+    split_provider_path, unique_provider_path,
+};
+
+use crate::provider_staging::{
+    ProviderStagedRoot, clear_provider_staging, read_provider_staging, unix_now_seconds,
+    write_provider_staging,
+};
+
+mod commands;
+mod provider_retry;
+pub(crate) use commands::*;
+use provider_retry::{
+    ensure_provider_root_locally_available, import_provider_root_with_retry,
+    primary_merged_root_from_view_with_retry, primary_merged_root_with_retry,
+    primary_merged_view_with_retry,
+};
+
+pub(crate) fn cmd_drives(config_dir: &std::path::Path) -> Result<()> {
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    if config.drives.is_empty() {
+        println!("(no drives — run `idrive init`)");
+        return Ok(());
+    }
+    for d in &config.drives {
+        println!(
+            "{:<24}  {:<7}  {:<32}  {}",
+            d.drive_id,
+            drive_role_label(d.role),
+            short_scope_id(&d.root_scope_id),
+            d.display_name,
+        );
+    }
+    Ok(())
+}
+
+fn short_scope_id(scope_id: &str) -> String {
+    if scope_id.len() <= 16 {
+        return scope_id.to_owned();
+    }
+    format!("{}…{}", &scope_id[..8], &scope_id[scope_id.len() - 8..])
+}
+
+pub(crate) fn cmd_import(config_dir: &std::path::Path, source_dir: &std::path::Path) -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .context("building tokio runtime")?;
+    runtime.block_on(async {
+        let mut daemon = Daemon::open(config_dir)
+            .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
+        let report = daemon
+            .import_source_dir(source_dir)
+            .await
+            .with_context(|| format!("importing {}", source_dir.display()))?;
+        let reported_source = report.source_dir.as_deref().unwrap_or(source_dir);
+        println!(
+            "{}",
+            json!({
+                "source_dir": reported_source.display().to_string(),
+                "root_cid": report.root_cid,
+                "drive_iris_to_url": drive_iris_to_url_for_primary_drive(daemon.config()),
+                "files_iris_to_url": drive_iris_to_url_for_primary_drive(daemon.config()),
+                "snapshot_url": drive_iris_to_snapshot_url_for_root(&report.root_cid),
+                "permalink_url": drive_iris_to_snapshot_url_for_root(&report.root_cid),
+                "local_gateway": local_gateway_urls_for_root(
+                    Some(&report.root_cid),
+                    DEFAULT_GATEWAY_PORT,
+                    daemon.config().local_nhash_resolver_enabled,
+                    crate::status::current_app_key_npub(daemon.config()).as_deref(),
+                ),
+                "file_count": report.file_count,
+                "top_level_entries": report.top_level_entries,
+                "blocks_dir": daemon.blocks_dir().display().to_string(),
+            })
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("building tokio runtime")?;
+    runtime.block_on(async {
+        let daemon = Daemon::open(config_dir)
+            .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
+        let config = daemon.config();
+        let drive = config
+            .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+            .ok_or_else(|| anyhow::anyhow!("primary drive missing"))?;
+        let account = config
+            .profile
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("no account; run `idrive init` first"))?;
+        let authorized = authorized_app_key_pubkeys(account);
+        if at == 0 {
+            let projected = iris_drive_core::primary_merged_view(daemon.tree(), config).await?;
+            print_drive_list(
+                drive,
+                at,
+                authorized.len(),
+                projected.app_key_roots_present,
+                &projected.view,
+            );
+            return Ok::<_, anyhow::Error>(());
+        }
+
+        let merge_app_keys = iris_drive_core::projection::merge_app_key_pubkeys(account, drive);
+
+        // Fetch each trusted AppKey root's tree + tombstones from htree.
+        // With `--at N`, this AppKey's own root walks back N revisions
+        // via the `.hashtree/prev` chain; other AppKeys' roots stay at their
+        // current state.
+        let mut snapshots_data = Vec::new();
+        for app_key_pubkey in &merge_app_keys {
+            let Some(root) = drive.app_key_roots.get(app_key_pubkey) else {
+                continue; // AppKey has not published its root yet
+            };
+            let mut cid = Cid::parse(&root.root_cid)
+                .with_context(|| format!("parsing root CID for AppKey {app_key_pubkey}"))?;
+            if at > 0 && *app_key_pubkey == account.app_key_pubkey {
+                cid = iris_drive_core::history::revision_at(daemon.tree(), &cid, at)
+                    .await
+                    .with_context(|| format!("revision -{at} not in chain"))?;
+            }
+            let (files, tombstones) = walk_app_key_tree(daemon.tree(), &cid).await?;
+            snapshots_data.push((app_key_pubkey.clone(), root.clone(), files, tombstones));
+        }
+
+        let merge_app_key_refs: Vec<&str> = merge_app_keys.iter().map(String::as_str).collect();
+        let snapshots: Vec<AppKeySnapshot> = snapshots_data
+            .iter()
+            .map(|(pk, root, files, tombs)| AppKeySnapshot {
+                app_key_pubkey: pk.as_str(),
+                root,
+                files: files.clone(),
+                tombstones: tombs.clone(),
+            })
+            .collect();
+
+        let view = merge_drives(&merge_app_key_refs, &snapshots);
+
+        print_drive_list(drive, at, authorized.len(), snapshots.len(), &view);
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+fn print_drive_list(
+    drive: &Drive,
+    at: usize,
+    authorized_app_key_count: usize,
+    app_key_roots_present: usize,
+    view: &iris_drive_core::merge::MergedView,
+) {
+    println!(
+        "{}",
+        json!({
+            "drive_id": drive.drive_id,
+            "at_revision": at,
+            "authorized_app_keys": authorized_app_key_count,
+            "app_key_roots_present": app_key_roots_present,
+            "files": view
+                .files
+                .iter()
+                .map(|e| json!({
+                    "path": e.path,
+                    "size": e.size,
+                    "sha256": e.whole_file_hash.unwrap_or(e.hash).map(|byte| format!("{byte:02x}")).join(""),
+                    "source_app_key_pubkey": e.source_app_key_pubkey,
+                    "modified_at": e.modified_at,
+                    "published_at": e.published_at,
+                }))
+                .collect::<Vec<_>>(),
+            "suppressed_by_tombstone": view.suppressed_by_tombstone,
+        })
+    );
+}
+
+#[allow(clippy::too_many_lines)]
+pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -> Result<()> {
+    if let ProviderCmd::NormalizePath { path } = command {
+        let path = normalize_provider_document_path(&path)?;
+        let (parent_path, display_name) = split_provider_path(&path)?;
+        println!(
+            "{}",
+            json!({
+                "parent_path": parent_path,
+                "display_name": display_name,
+                "path": path,
+                "error": "",
+            })
+        );
+        return Ok(());
+    }
+    if let ProviderCmd::ComposePath {
+        parent_path,
+        display_name,
+    } = command
+    {
+        let (parent_path, display_name, path) = compose_provider_path(&parent_path, &display_name)?;
+        println!(
+            "{}",
+            json!({
+                "parent_path": parent_path,
+                "display_name": display_name,
+                "path": path,
+                "error": "",
+            })
+        );
+        return Ok(());
+    }
+
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(4)
+        .enable_all()
+        .build()
+        .context("building tokio runtime")?;
+    runtime.block_on(async {
+        let started = std::time::Instant::now();
+        let provider_mutation = provider_command_is_mutation(&command);
+        let _config_lock = if provider_mutation {
+            iris_drive_core::daemon_liveness::ensure_daemon_available_for_provider_mutation(
+                config_dir,
+            )?;
+            Some(ConfigMutationLock::acquire(config_dir).await?)
+        } else {
+            None
+        };
+        let mut daemon = Daemon::open(config_dir)
+            .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
+        tracing::debug!(
+            elapsed_ms = started.elapsed().as_millis(),
+            "provider command opened daemon"
+        );
+        let staged_root =
+            read_provider_staging(config_dir).context("reading staged provider root")?;
+        let supplied_base_root_cid = provider_command_base_root_cid(&command)?;
+        let visible_view = if provider_command_needs_merged_view(&command) {
+            let phase = std::time::Instant::now();
+            let view = primary_merged_view_with_retry(&daemon)
+                .await
+                .context("building virtual provider timestamp index")?;
+            tracing::debug!(
+                elapsed_ms = phase.elapsed().as_millis(),
+                "provider command built merged view"
+            );
+            Some(view)
+        } else {
+            None
+        };
+        let phase = std::time::Instant::now();
+        let visible = if let Some(staged) = staged_root.as_ref() {
+            tracing::debug!("provider command using staged visible root anchor");
+            iris_drive_core::projection::PrimaryMergedRoot {
+                root_cid: staged.root()?,
+                file_count: 0,
+                top_level_entries: 0,
+            }
+        } else if let Some(root_cid) = supplied_base_root_cid.clone() {
+            tracing::debug!("provider command using supplied visible root anchor");
+            iris_drive_core::projection::PrimaryMergedRoot {
+                root_cid,
+                file_count: 0,
+                top_level_entries: 0,
+            }
+        } else if let Some(visible_view) = visible_view.as_ref() {
+            primary_merged_root_from_view_with_retry(&daemon, visible_view)
+                .await
+                .context("building virtual provider root")?
+        } else {
+            primary_merged_root_with_retry(&daemon)
+                .await
+                .context("building virtual provider root")?
+        };
+        tracing::debug!(
+            elapsed_ms = phase.elapsed().as_millis(),
+            "provider command built merged root"
+        );
+        if provider_command_is_mutation(&command) {
+            if staged_root.is_none() && supplied_base_root_cid.is_none() {
+                let phase = std::time::Instant::now();
+                ensure_provider_root_locally_available(&daemon, &visible.root_cid).await?;
+                tracing::debug!(
+                    elapsed_ms = phase.elapsed().as_millis(),
+                    "provider command checked provider root availability"
+                );
+            } else {
+                tracing::debug!("provider command skipped provider root availability preflight");
+            }
+        }
+        let tombstone_base_root = if provider_command_is_mutation(&command) {
+            match staged_root.as_ref() {
+                Some(staged) => staged
+                    .tombstone_base_root()?
+                    .or_else(|| Some(visible.root_cid.clone())),
+                None => Some(visible.root_cid.clone()),
+            }
+        } else {
+            None
+        };
+        let phase = std::time::Instant::now();
+        let provider =
+            HashTreeProviderFs::open(daemon.tree_handle(), visible.root_cid.clone()).await?;
+        tracing::debug!(
+            elapsed_ms = phase.elapsed().as_millis(),
+            "provider command opened provider root"
+        );
+
+        match command {
+            ProviderCmd::List => {
+                let phase = std::time::Instant::now();
+                let visible_view = visible_view
+                    .as_ref()
+                    .expect("list command should have prebuilt merged view");
+                let modified_at_by_path = provider_modified_at_index(visible_view);
+                let entries =
+                    provider_entries(daemon.tree(), &visible.root_cid, &modified_at_by_path)
+                        .await?;
+                let summary = provider_list_summary(provider.anchor().await.as_str(), &entries);
+                tracing::debug!(
+                    elapsed_ms = phase.elapsed().as_millis(),
+                    "provider command listed entries"
+                );
+                println!(
+                    "{}",
+                    json!({
+                        "anchor": provider.anchor().await.as_str(),
+                        "root_cid": visible.root_cid.to_string(),
+                        "file_count": summary.file_count,
+                        "top_level_entries": top_level_entry_count(&entries),
+                        "visible_file_bytes": summary.visible_file_bytes,
+                        "directory_paths": summary.directory_paths,
+                        "change_key": summary.change_key,
+                        "entries": entries,
+                    })
+                );
+            }
+            ProviderCmd::ResolvePath {
+                base_root_cid: _,
+                parent_path,
+                display_name,
+                excluding_path,
+            } => {
+                let parent_path = normalize_provider_parent_path(&parent_path)?;
+                let display_name = sanitized_provider_file_name(&display_name);
+                let excluding_path = excluding_path
+                    .as_deref()
+                    .map(normalize_provider_path)
+                    .transpose()?;
+                let modified_at_by_path = visible_view
+                    .as_ref()
+                    .map(provider_modified_at_index)
+                    .unwrap_or_default();
+                let entries =
+                    provider_entries(daemon.tree(), &visible.root_cid, &modified_at_by_path)
+                        .await?;
+                let path = unique_provider_path(
+                    &entries,
+                    &parent_path,
+                    &display_name,
+                    excluding_path.as_deref(),
+                );
+                let (resolved_parent_path, resolved_display_name) = split_provider_path(&path)?;
+                println!(
+                    "{}",
+                    json!({
+                        "parent_path": resolved_parent_path,
+                        "display_name": resolved_display_name,
+                        "path": path,
+                        "root_cid": visible.root_cid.to_string(),
+                        "error": "",
+                    })
+                );
+            }
+            ProviderCmd::NormalizePath { .. } | ProviderCmd::ComposePath { .. } => {
+                unreachable!("handled before opening provider state")
+            }
+            ProviderCmd::Read { path, output } => {
+                let path = normalize_provider_path(&path)?;
+                let item = provider.item(&path).await?;
+                if item.kind == ItemKind::Directory {
+                    anyhow::bail!("cannot read directory: {path}");
+                }
+                let bytes = provider.read(&path, 0, item.size).await?;
+                if let Some(parent) = output.parent() {
+                    std::fs::create_dir_all(parent)
+                        .with_context(|| format!("creating {}", parent.display()))?;
+                }
+                std::fs::write(&output, bytes)
+                    .with_context(|| format!("writing {}", output.display()))?;
+                println!(
+                    "{}",
+                    json!({
+                        "path": path,
+                        "output": output.display().to_string(),
+                        "size": item.size,
+                    })
+                );
+            }
+            ProviderCmd::HydrateCache { dir } => {
+                let phase = std::time::Instant::now();
+                let modified_at_by_path = BTreeMap::new();
+                let entries =
+                    provider_entries(daemon.tree(), &visible.root_cid, &modified_at_by_path)
+                        .await?;
+                let report = hydrate_provider_cache(&provider, &entries, &dir).await?;
+                tracing::debug!(
+                    elapsed_ms = phase.elapsed().as_millis(),
+                    "provider command hydrated private cache"
+                );
+                println!(
+                    "{}",
+                    json!({
+                        "target_dir": dir.display().to_string(),
+                        "file_count": report.file_count,
+                        "directory_count": report.directory_count,
+                        "written": report.written,
+                        "updated": report.updated,
+                        "unchanged": report.unchanged,
+                        "skipped": report.skipped,
+                        "changed": report.written + report.updated,
+                    })
+                );
+            }
+            ProviderCmd::Write {
+                base_root_cid: _,
+                path,
+                source,
+            } => {
+                let path = normalize_provider_path(&path)?;
+                let bytes = std::fs::read(&source)
+                    .with_context(|| format!("reading {}", source.display()))?;
+                if provider_file_probable_os_placeholder_family(&path, bytes.len() as u64).is_some()
+                {
+                    let entries =
+                        provider_entries(daemon.tree(), &visible.root_cid, &BTreeMap::new())
+                            .await?;
+                    if provider_write_is_probable_os_placeholder(&entries, &path, &bytes) {
+                        anyhow::bail!("refusing probable FileProvider placeholder copy: {path}");
+                    }
+                }
+                let phase = std::time::Instant::now();
+                write_provider_file(&provider, &path, &bytes).await?;
+                tracing::debug!(
+                    elapsed_ms = phase.elapsed().as_millis(),
+                    "provider command wrote file"
+                );
+                print_provider_mutation(
+                    &mut daemon,
+                    &provider,
+                    &path,
+                    tombstone_base_root.clone(),
+                    provider_mutation_tombstone_paths(
+                        staged_root.as_ref(),
+                        BTreeSet::from([path.clone()]),
+                    ),
+                )
+                .await?;
+            }
+            ProviderCmd::Mkdir {
+                base_root_cid: _,
+                path,
+            } => {
+                let path = normalize_provider_path(&path)?;
+                let phase = std::time::Instant::now();
+                create_provider_dir(&provider, &path).await?;
+                tracing::debug!(
+                    elapsed_ms = phase.elapsed().as_millis(),
+                    "provider command created directory"
+                );
+                print_provider_mutation(
+                    &mut daemon,
+                    &provider,
+                    &path,
+                    tombstone_base_root.clone(),
+                    provider_mutation_tombstone_paths(
+                        staged_root.as_ref(),
+                        BTreeSet::from([path.clone()]),
+                    ),
+                )
+                .await?;
+            }
+            ProviderCmd::Delete {
+                base_root_cid: _,
+                path,
+            } => {
+                let path = normalize_provider_path(&path)?;
+                let deleted_paths = provider_delete_tombstone_paths(&provider, &path).await?;
+                let phase = std::time::Instant::now();
+                delete_provider_path(&provider, &path).await?;
+                tracing::debug!(
+                    elapsed_ms = phase.elapsed().as_millis(),
+                    "provider command deleted path"
+                );
+                print_provider_mutation(
+                    &mut daemon,
+                    &provider,
+                    &path,
+                    tombstone_base_root.clone(),
+                    provider_mutation_tombstone_paths(staged_root.as_ref(), deleted_paths),
+                )
+                .await?;
+            }
+            ProviderCmd::Rename {
+                base_root_cid: _,
+                old_path,
+                new_path,
+            } => {
+                let old_path = normalize_provider_path(&old_path)?;
+                let new_path = normalize_provider_path(&new_path)?;
+                let phase = std::time::Instant::now();
+                rename_provider_path(&provider, &old_path, &new_path).await?;
+                tracing::debug!(
+                    elapsed_ms = phase.elapsed().as_millis(),
+                    "provider command renamed path"
+                );
+                print_provider_mutation(
+                    &mut daemon,
+                    &provider,
+                    &new_path,
+                    tombstone_base_root.clone(),
+                    provider_mutation_tombstone_paths(
+                        staged_root.as_ref(),
+                        BTreeSet::from([old_path.clone(), new_path.clone()]),
+                    ),
+                )
+                .await?;
+            }
+        }
+
+        Ok::<_, anyhow::Error>(())
+    })
+}
+
+fn provider_command_is_mutation(command: &ProviderCmd) -> bool {
+    matches!(
+        command,
+        ProviderCmd::Write { .. }
+            | ProviderCmd::Mkdir { .. }
+            | ProviderCmd::Delete { .. }
+            | ProviderCmd::Rename { .. }
+    )
+}
+
+fn provider_command_needs_merged_view(command: &ProviderCmd) -> bool {
+    matches!(
+        command,
+        ProviderCmd::List
+            | ProviderCmd::ResolvePath {
+                base_root_cid: None,
+                ..
+            }
+    )
+}
+
+fn provider_command_base_root_cid(command: &ProviderCmd) -> Result<Option<Cid>> {
+    let raw = match command {
+        ProviderCmd::Write { base_root_cid, .. }
+        | ProviderCmd::Mkdir { base_root_cid, .. }
+        | ProviderCmd::Delete { base_root_cid, .. }
+        | ProviderCmd::Rename { base_root_cid, .. }
+        | ProviderCmd::ResolvePath { base_root_cid, .. } => base_root_cid.as_deref(),
+        _ => None,
+    };
+    raw.map(Cid::parse)
+        .transpose()
+        .context("parsing provider base root cid")
+}
+
+async fn provider_entries(
+    tree: &HashTree<FsBlobStore>,
+    root: &Cid,
+    modified_at_by_path: &BTreeMap<String, i64>,
+) -> Result<Vec<ProviderListEntry>> {
+    let mut entries = Vec::new();
+    let mut stack = vec![(String::new(), root.clone())];
+    while let Some((parent, dir_cid)) = stack.pop() {
+        let mut children = tree.list_directory(&dir_cid).await?;
+        children.sort_by(|a, b| a.name.cmp(&b.name));
+        for child in children {
+            let path = if parent.is_empty() {
+                child.name.clone()
+            } else {
+                format!("{parent}/{}", child.name)
+            };
+            let cid = Cid {
+                hash: child.hash,
+                key: child.key,
+            };
+            let kind = match child.link_type {
+                LinkType::Dir | LinkType::Fanout => {
+                    stack.push((path.clone(), cid.clone()));
+                    "directory"
+                }
+                LinkType::Blob | LinkType::File => "file",
+            };
+            entries.push(ProviderListEntry {
+                modified_at: modified_at_by_path.get(&path).copied(),
+                path,
+                parent_path: parent.clone(),
+                display_name: child.name,
+                kind,
+                size: child.size,
+                version: cid.to_string(),
+            });
+        }
+    }
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    let all_entries = entries.clone();
+    entries.retain(|entry| !provider_entry_is_probable_os_placeholder(&all_entries, entry));
+    Ok(entries)
+}
+
+fn provider_modified_at_index(
+    view: &iris_drive_core::projection::PrimaryMergedView,
+) -> BTreeMap<String, i64> {
+    let mut index = BTreeMap::new();
+    for entry in &view.view.files {
+        let Some(modified_at) = entry.modified_at else {
+            continue;
+        };
+        remember_provider_modified_at(&mut index, &entry.path, modified_at);
+        let mut path = entry.path.as_str();
+        while let Some((parent, _name)) = path.rsplit_once('/') {
+            remember_provider_modified_at(&mut index, parent, modified_at);
+            path = parent;
+        }
+    }
+    index
+}
+
+fn remember_provider_modified_at(index: &mut BTreeMap<String, i64>, path: &str, modified_at: i64) {
+    if path.is_empty() || modified_at < 946_684_800 {
+        return;
+    }
+    index
+        .entry(path.to_owned())
+        .and_modify(|existing| *existing = (*existing).max(modified_at))
+        .or_insert(modified_at);
+}
+
+fn top_level_entry_count(entries: &[ProviderListEntry]) -> usize {
+    entries
+        .iter()
+        .filter(|entry| entry.parent_path.is_empty())
+        .count()
+}
+
+fn provider_mutation_tombstone_paths(
+    staged: Option<&ProviderStagedRoot>,
+    changed_paths: BTreeSet<String>,
+) -> BTreeSet<String> {
+    let mut tombstone_paths = staged
+        .map(|staged| staged.tombstone_paths.clone())
+        .unwrap_or_default();
+    tombstone_paths.extend(changed_paths);
+    tombstone_paths
+}
+
+#[derive(Default)]
+struct ProviderCacheReport {
+    file_count: usize,
+    directory_count: usize,
+    written: usize,
+    updated: usize,
+    unchanged: usize,
+    skipped: usize,
+}
+
+async fn hydrate_provider_cache(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    entries: &[ProviderListEntry],
+    target_dir: &Path,
+) -> Result<ProviderCacheReport> {
+    std::fs::create_dir_all(target_dir)
+        .with_context(|| format!("creating {}", target_dir.display()))?;
+    let mut report = ProviderCacheReport::default();
+    for entry in entries {
+        let Some(destination) = provider_cache_destination(target_dir, &entry.path) else {
+            report.skipped += 1;
+            continue;
+        };
+        if entry.kind == "directory" {
+            report.directory_count += 1;
+            if destination.is_dir() {
+                report.unchanged += 1;
+                continue;
+            }
+            let existed = destination.exists();
+            remove_provider_cache_destination(&destination)?;
+            std::fs::create_dir_all(&destination)
+                .with_context(|| format!("creating {}", destination.display()))?;
+            if existed {
+                report.updated += 1;
+            } else {
+                report.written += 1;
+            }
+            continue;
+        }
+
+        report.file_count += 1;
+        if let Some(parent) = destination.parent() {
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("creating {}", parent.display()))?;
+        }
+        let bytes = provider.read(&entry.path, 0, entry.size).await?;
+        if destination.is_file() {
+            let existing = std::fs::read(&destination)
+                .with_context(|| format!("reading {}", destination.display()))?;
+            if existing == bytes {
+                report.unchanged += 1;
+                continue;
+            }
+            std::fs::write(&destination, bytes)
+                .with_context(|| format!("writing {}", destination.display()))?;
+            report.updated += 1;
+            continue;
+        }
+
+        let existed = destination.exists();
+        remove_provider_cache_destination(&destination)?;
+        std::fs::write(&destination, bytes)
+            .with_context(|| format!("writing {}", destination.display()))?;
+        if existed {
+            report.updated += 1;
+        } else {
+            report.written += 1;
+        }
+    }
+    Ok(report)
+}
+
+fn remove_provider_cache_destination(path: &Path) -> Result<()> {
+    if path.is_dir() {
+        std::fs::remove_dir_all(path).with_context(|| format!("removing {}", path.display()))?;
+    } else if path.exists() {
+        std::fs::remove_file(path).with_context(|| format!("removing {}", path.display()))?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn write_provider_file(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    path: &str,
+    bytes: &[u8],
+) -> Result<()> {
+    let (parent, name) = split_provider_path(path)?;
+    ensure_provider_dirs(provider, &parent).await?;
+    match provider.item(&path.to_string()).await {
+        Ok(item) if item.kind == ItemKind::Directory => {
+            delete_provider_path(provider, path).await?;
+            provider.create_file(&parent, &name).await?;
+        }
+        Ok(_) => {
+            provider.truncate(&path.to_string(), 0).await?;
+        }
+        Err(_) => {
+            provider.create_file(&parent, &name).await?;
+        }
+    }
+    if !bytes.is_empty() {
+        provider.write(&path.to_string(), 0, bytes).await?;
+    }
+    Ok(())
+}
+
+pub(crate) async fn create_provider_dir(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    path: &str,
+) -> Result<()> {
+    let (parent, name) = split_provider_path(path)?;
+    ensure_provider_dirs(provider, &parent).await?;
+    match provider.item(&path.to_string()).await {
+        Ok(item) if item.kind == ItemKind::Directory => Ok(()),
+        Ok(_) => {
+            provider.remove(&parent, &name).await?;
+            provider.create_dir(&parent, &name).await?;
+            Ok(())
+        }
+        Err(_) => {
+            provider.create_dir(&parent, &name).await?;
+            Ok(())
+        }
+    }
+}
+
+async fn ensure_provider_dirs(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    parent: &str,
+) -> Result<()> {
+    let mut current = String::new();
+    for segment in parent.split('/').filter(|segment| !segment.is_empty()) {
+        let next = if current.is_empty() {
+            segment.to_string()
+        } else {
+            format!("{current}/{segment}")
+        };
+        match provider.item(&next).await {
+            Ok(item) if item.kind == ItemKind::Directory => {}
+            Ok(_) => {
+                provider.remove(&current, segment).await?;
+                provider.create_dir(&current, segment).await?;
+            }
+            Err(_) => {
+                provider.create_dir(&current, segment).await?;
+            }
+        }
+        current = next;
+    }
+    Ok(())
+}
+
+pub(crate) async fn delete_provider_path(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    path: &str,
+) -> Result<()> {
+    let root = path.to_string();
+    let mut stack = vec![root.clone()];
+    let mut directories = Vec::new();
+    while let Some(current) = stack.pop() {
+        let item = match provider.item(&current).await {
+            Ok(item) => item,
+            Err(hashtree_provider::ProviderError::NotFound) => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if item.kind == ItemKind::Directory {
+            directories.push(current.clone());
+            for child in provider.read_dir(&current).await? {
+                stack.push(child.id);
+            }
+        } else {
+            let (parent, name) = split_provider_path(&current)?;
+            match provider.remove(&parent, &name).await {
+                Ok(()) | Err(hashtree_provider::ProviderError::NotFound) => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+    for directory in directories.into_iter().rev() {
+        let (parent, name) = split_provider_path(&directory)?;
+        match provider.remove(&parent, &name).await {
+            Ok(()) | Err(hashtree_provider::ProviderError::NotFound) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+async fn provider_delete_tombstone_paths(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    path: &str,
+) -> Result<BTreeSet<String>> {
+    let mut tombstone_paths = BTreeSet::from([path.to_string()]);
+    let mut stack = vec![path.to_string()];
+    while let Some(current) = stack.pop() {
+        let item = match provider.item(&current).await {
+            Ok(item) => item,
+            Err(hashtree_provider::ProviderError::NotFound) => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if item.kind != ItemKind::Directory {
+            continue;
+        }
+        for child in provider.read_dir(&current).await? {
+            tombstone_paths.insert(child.id.clone());
+            stack.push(child.id);
+        }
+    }
+    Ok(tombstone_paths)
+}
+
+pub(crate) async fn rename_provider_path(
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    old_path: &str,
+    new_path: &str,
+) -> Result<()> {
+    if old_path == new_path {
+        return Ok(());
+    }
+    let (old_parent, old_name) = split_provider_path(old_path)?;
+    let (new_parent, new_name) = split_provider_path(new_path)?;
+    ensure_provider_dirs(provider, &new_parent).await?;
+    if provider.item(&new_path.to_string()).await.is_ok() {
+        delete_provider_path(provider, new_path).await?;
+    }
+    provider
+        .rename(&old_parent, &old_name, &new_parent, &new_name)
+        .await?;
+    Ok(())
+}
+
+async fn print_provider_mutation(
+    daemon: &mut Daemon,
+    provider: &HashTreeProviderFs<FsBlobStore>,
+    changed_path: &str,
+    tombstone_base_root: Option<Cid>,
+    tombstone_paths: BTreeSet<String>,
+) -> Result<()> {
+    let phase = std::time::Instant::now();
+    let root = provider.current_root().await;
+    tracing::debug!(
+        elapsed_ms = phase.elapsed().as_millis(),
+        "provider command read current root"
+    );
+    let phase = std::time::Instant::now();
+    let report = provider_root_report(daemon.tree(), &root).await?;
+    let staged = ProviderStagedRoot {
+        root_cid: root.to_string(),
+        tombstone_base_root_cid: tombstone_base_root.as_ref().map(ToString::to_string),
+        tombstone_paths: tombstone_paths.clone(),
+        updated_at: unix_now_seconds(),
+    };
+    write_provider_staging(daemon.config_dir(), &staged)?;
+    let wake_payload = json!({
+        "root_cid": report.root_cid,
+        "file_count": report.file_count,
+        "top_level_entries": report.top_level_entries,
+        "staged": true,
+    });
+    let woke = match wake_provider_root_publisher(daemon.config_dir(), Some(wake_payload)).await {
+        Ok(woke) => woke,
+        Err(error) => {
+            tracing::warn!(
+                error = %error,
+                "provider root wake failed; importing staged root immediately"
+            );
+            false
+        }
+    };
+    let (root_cid, file_count, top_level_entries, staged) = if woke {
+        (
+            report.root_cid,
+            report.file_count,
+            report.top_level_entries,
+            true,
+        )
+    } else {
+        clear_provider_staging(daemon.config_dir())?;
+        let report = import_provider_root_with_retry(
+            daemon,
+            root,
+            tombstone_base_root,
+            Some(&tombstone_paths),
+        )
+        .await?;
+        let wake_payload = json!({
+            "root_cid": report.root_cid,
+            "file_count": report.file_count,
+            "top_level_entries": report.top_level_entries,
+        });
+        if let Err(error) =
+            wake_provider_root_publisher(daemon.config_dir(), Some(wake_payload)).await
+        {
+            tracing::warn!(
+                error = %error,
+                "provider root wake failed after immediate provider import"
+            );
+        }
+        (
+            report.root_cid,
+            u64::try_from(report.file_count).unwrap_or(u64::MAX),
+            report.top_level_entries,
+            false,
+        )
+    };
+    iris_drive_core::paths::touch_provider_root_signal_in(daemon.config_dir())
+        .context("signaling provider root change")?;
+    tracing::debug!(
+        elapsed_ms = phase.elapsed().as_millis(),
+        staged,
+        "provider command staged provider root"
+    );
+    println!(
+        "{}",
+        json!({
+            "path": changed_path,
+            "root_cid": root_cid,
+            "file_count": file_count,
+            "top_level_entries": top_level_entries,
+            "staged": staged,
+        })
+    );
+    Ok(())
+}
+
+async fn wake_provider_root_publisher(config_dir: &Path, payload: Option<Value>) -> Result<bool> {
+    use tokio::io::AsyncWriteExt as _;
+
+    let wake_path = iris_drive_core::paths::provider_root_wake_path_in(config_dir);
+    let raw = match tokio::fs::read_to_string(&wake_path).await {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(error).with_context(|| {
+                format!(
+                    "reading provider root wake endpoint {}",
+                    wake_path.display()
+                )
+            });
+        }
+    };
+    let value: Value = serde_json::from_str(&raw).with_context(|| {
+        format!(
+            "parsing provider root wake endpoint {}",
+            wake_path.display()
+        )
+    })?;
+    let port = value
+        .get("port")
+        .and_then(Value::as_u64)
+        .and_then(|port| u16::try_from(port).ok())
+        .ok_or_else(|| anyhow::anyhow!("provider root wake endpoint missing port"))?;
+    let mut stream = tokio::time::timeout(
+        std::time::Duration::from_secs(2),
+        tokio::net::TcpStream::connect((std::net::Ipv4Addr::LOCALHOST, port)),
+    )
+    .await
+    .context("provider root wake timed out")?
+    .with_context(|| format!("connecting to provider root wake endpoint on port {port}"))?;
+    if let Some(payload) = payload {
+        let bytes = serde_json::to_vec(&payload)?;
+        stream
+            .write_all(&bytes)
+            .await
+            .context("writing provider root wake payload")?;
+        let _ = stream.shutdown().await;
+    }
+    Ok(true)
+}
+
+struct ProviderRootReport {
+    root_cid: String,
+    file_count: u64,
+    top_level_entries: usize,
+}
+
+async fn provider_root_report(
+    tree: &HashTree<FsBlobStore>,
+    root: &Cid,
+) -> Result<ProviderRootReport> {
+    let entries = provider_entries(tree, root, &BTreeMap::new()).await?;
+    let summary = provider_list_summary(&root.to_string(), &entries);
+    Ok(ProviderRootReport {
+        root_cid: root.to_string(),
+        file_count: summary.file_count,
+        top_level_entries: top_level_entry_count(&entries),
+    })
+}
+
+#[cfg(test)]
+mod tests;
