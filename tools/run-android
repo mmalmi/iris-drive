@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ANDROID_DIR="$ROOT/android"
+
+find_gradle() {
+  local cached
+  cached="$(find "$HOME/.gradle/wrapper/dists" -path '*/bin/gradle' -type f 2>/dev/null | sort -V | grep -v '/gradle-9\.' | tail -n 1 || true)"
+  if [[ -n "$cached" ]]; then
+    printf '%s\n' "$cached"
+    return
+  fi
+  if command -v gradle >/dev/null 2>&1; then
+    command -v gradle
+    return
+  fi
+  cached="$(find "$HOME/.gradle/wrapper/dists" -path '*/bin/gradle' -type f 2>/dev/null | sort -V | tail -n 1 || true)"
+  if [[ -n "$cached" ]]; then
+    printf '%s\n' "$cached"
+    return
+  fi
+  echo "gradle not found; install Gradle or use a machine with a cached Gradle wrapper distribution" >&2
+  exit 1
+}
+
+if [[ -z "${ANDROID_HOME:-}" && -d "$HOME/Library/Android/sdk" ]]; then
+  export ANDROID_HOME="$HOME/Library/Android/sdk"
+fi
+if [[ -n "${ANDROID_NDK_HOME:-}" && ! -d "$ANDROID_NDK_HOME" ]]; then
+  unset ANDROID_NDK_HOME
+fi
+if [[ -n "${NDK_HOME:-}" && ! -d "$NDK_HOME" ]]; then
+  unset NDK_HOME
+fi
+if [[ -z "${ANDROID_NDK_HOME:-}" && -n "${ANDROID_HOME:-}" ]]; then
+  latest_ndk="$(find "$ANDROID_HOME/ndk" -maxdepth 1 -mindepth 1 -type d 2>/dev/null | sort -V | tail -n 1 || true)"
+  if [[ -n "$latest_ndk" ]]; then
+    export ANDROID_NDK_HOME="$latest_ndk"
+  fi
+fi
+export NDK_HOME="${ANDROID_NDK_HOME:-${NDK_HOME:-}}"
+
+GRADLE="$(find_gradle)"
+cmd="${1:-assembleDebug}"
+if [[ $# -gt 0 ]]; then
+  shift
+fi
+
+case "$cmd" in
+  build|assembleDebug|debug)
+    exec "$GRADLE" -p "$ANDROID_DIR" :app:assembleDebug "$@"
+    ;;
+  release|assembleRelease)
+    exec "$GRADLE" -p "$ANDROID_DIR" :app:assembleRelease "$@"
+    ;;
+  install|installDebug)
+    exec "$GRADLE" -p "$ANDROID_DIR" :app:installDebug "$@"
+    ;;
+  ui-test|connectedUiTestAndroidTest)
+    exec "$GRADLE" -p "$ANDROID_DIR" :app:connectedUiTestAndroidTest "$@"
+    ;;
+  ui-test-build|assembleUiTest)
+    exec "$GRADLE" -p "$ANDROID_DIR" :app:assembleUiTest "$@"
+    ;;
+  *)
+    exec "$GRADLE" -p "$ANDROID_DIR" "$cmd" "$@"
+    ;;
+esac

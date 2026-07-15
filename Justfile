@@ -1,0 +1,249 @@
+set shell := ["bash", "-eu", "-o", "pipefail", "-c"]
+
+default:
+    @just --list
+
+info:
+    @echo "Iris Drive commands"
+    @echo
+    @echo "Run"
+    @echo "  just run"
+    @echo "  just dev"
+    @echo "  just run-linux"
+    @echo "  just run-android"
+    @echo "  just run-cli --help"
+    @echo
+    @echo "Build"
+    @echo "  just build"
+    @echo "  just linux-build"
+    @echo "  just release"
+    @echo "  just release-gate"
+    @echo "  just release-publish"
+    @echo "  just release-final"
+    @echo "  just macos-xcodeproj"
+    @echo "  just macos-build"
+    @echo "  just android-build"
+    @echo "  just android-install"
+    @echo "  just android-smoke"
+    @echo "  just android-gui-smoke"
+    @echo "  just ios-xcodeproj"
+    @echo "  just ios-build"
+    @echo "  just ios-smoke"
+    @echo "  just ios-gui-smoke"
+    @echo "  just lab"
+    @echo "  just lab-smoke"
+    @echo "  just desktop-gui-smoke linux local"
+    @echo "  just lab-test"
+    @echo "  just e2e"
+    @echo "  just e2e-3vms"
+    @echo "  just e2e-4devices"
+    @echo "  just e2e-5devices"
+    @echo "  just dev-vms"
+    @echo "  just smoke"
+    @echo "  just smoke-macos"
+    @echo "  just docker-cli-e2e"
+    @echo
+    @echo "Checks"
+    @echo "  just test"
+    @echo "  just daemon-matrix-dev"
+    @echo "  just daemon-matrix-fail-fast"
+    @echo "  just daemon-matrix-rerun-failed"
+    @echo "  just verify-fast"
+    @echo "  just verify-full"
+    @echo "  just verify-health"
+    @echo "  just structure"
+    @echo "  just fmt"
+    @echo "  just clippy"
+
+run:
+    @case "$(uname -s)" in \
+        Darwin) ./scripts/macos-dev-app.sh run ;; \
+        Linux) just run-linux ;; \
+        *) echo "No local run target for $(uname -s). Use just --list for available commands." >&2; exit 1 ;; \
+    esac
+
+run-linux:
+    ./tools/run-linux
+
+run-android:
+    ./tools/run-android install
+
+dev:
+    @case "$(uname -s)" in \
+        Darwin) ./scripts/macos-dev-watch.sh ;; \
+        *) echo "No local dev watcher for $(uname -s)." >&2; exit 1 ;; \
+    esac
+
+smoke:
+    @case "$(uname -s)" in \
+        Darwin) just smoke-macos ;; \
+        *) just test ;; \
+    esac
+
+smoke-macos:
+    ./scripts/macos-smoke.sh
+
+_run-daemon *args:
+    @profile="${IRIS_DRIVE_PROFILE:-debug}"; \
+    build_profile_arg=""; \
+    profile_dir="debug"; \
+    if [[ "$profile" == "release" ]]; then \
+        build_profile_arg="--release"; \
+        profile_dir="release"; \
+    elif [[ "$profile" != "debug" ]]; then \
+        echo "IRIS_DRIVE_PROFILE must be 'debug' or 'release'." >&2; \
+        exit 2; \
+    fi; \
+    target_dir="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')"; \
+    cargo build $build_profile_arg -p idrive; \
+    exec "$target_dir/$profile_dir/idrive" daemon {{args}}
+
+run-cli *args:
+    cargo run -p idrive -- {{args}}
+
+build:
+    cargo build --workspace
+
+linux-build:
+    cargo build -p idrive
+    cd linux && cargo build
+
+linux-install-menu:
+    ./linux/scripts/install-dev-desktop.sh
+
+macos-xcodeproj:
+    cd macos && xcodegen generate
+
+macos-build:
+    cargo build -p iris-drive-app-core
+    RUST_LIB_DIR="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')/debug"; xcodebuild -project macos/IrisDriveMac.xcodeproj -scheme IrisDriveMac -configuration Debug -derivedDataPath macos/.build/DerivedData CODE_SIGNING_ALLOWED=NO LIBRARY_SEARCH_PATHS="$RUST_LIB_DIR" OTHER_LDFLAGS="$RUST_LIB_DIR/libiris_drive_app_core.a" build
+
+android-build:
+    ./tools/run-android build
+
+android-install:
+    ./tools/run-android install
+
+android-smoke:
+    ./scripts/mobile-android-smoke.sh
+
+android-gui-smoke:
+    ./scripts/android-gui-linking-smoke.sh
+
+ios-xcodeproj:
+    cd ios && xcodegen generate
+
+ios-build:
+    cd ios && xcodegen generate
+    ./scripts/ios-simulator-smoke.sh --build-only
+
+ios-smoke:
+    ./scripts/ios-simulator-smoke.sh
+
+ios-gui-smoke:
+    ./scripts/ios-gui-linking-smoke.sh
+
+dev-vms *args:
+    ./scripts/dev-vm-update-run.sh {{args}}
+
+lab *args:
+    ./scripts/dev-lab.sh {{args}}
+
+lab-smoke:
+    ./scripts/dev-vm-smoke.sh
+
+desktop-gui-smoke target host="local":
+    ./scripts/desktop-gui-smoke.sh {{target}} {{host}}
+
+lab-test *args:
+    just lab {{args}}
+    just lab-smoke
+
+e2e *args:
+    ./scripts/e2e-everything-3vms.sh {{args}}
+
+e2e-3vms *args:
+    ./scripts/e2e-everything-3vms.sh {{args}}
+
+e2e-4devices *args:
+    ./scripts/cross-vm-four-platform-e2e.sh {{args}}
+
+e2e-5devices *args:
+    ./scripts/cross-vm-five-platform-e2e.sh {{args}}
+
+release *args:
+    node scripts/local-release.mjs --build {{args}}
+
+release-gate *args:
+    ./scripts/release-gate.sh {{args}}
+
+release-publish:
+    node scripts/local-release.mjs --build --publish
+
+release-final:
+    node scripts/local-release.mjs --build --final
+
+test:
+    cargo test --workspace
+
+daemon-matrix-dev *args:
+    cargo nextest run --target-dir target/daemon-matrix-nextest -p idrive --test daemon_sync_matrix --fail-fast -j 1 --failure-output immediate-final {{args}} -- --skip live_daemons_initial_merge_existing_trees_from_both_peers --skip live_daemons_provider_write_viewer_to_viewer_latency_probe --skip live_daemons_sync_when_relay_drops_root_events_after_fips_connect --skip provider_visibility_tests::live_daemons_provider_add_appears_on_all_connected_devices --skip live_daemons_preserve_virtual_delete_across_source_restart --skip live_daemons_reconnect_sender_and_receiver_without_losing_updates
+
+daemon-matrix-fail-fast *args:
+    cargo nextest run --target-dir target/daemon-matrix-nextest -p idrive --test daemon_sync_matrix --fail-fast -j 1 --failure-output immediate-final {{args}}
+
+daemon-matrix-rerun-failed *args:
+    cargo nextest run --target-dir target/daemon-matrix-nextest -p idrive --test daemon_sync_matrix --rerun latest -j 1 --failure-output immediate-final {{args}}
+
+verify-fast:
+    ./scripts/verify.sh fast
+
+verify-full:
+    ./scripts/verify.sh full
+
+verify-health:
+    ./scripts/verify.sh health
+
+structure:
+    ./scripts/check-platform-parity-matrix.sh
+    ./scripts/check-android-e2e-kit.sh
+    ./scripts/check-ios-e2e-kit.sh
+    ./scripts/check-desktop-gui-e2e-kit.sh
+    ./scripts/check-sharing-menu-parity.sh
+    ./scripts/check-client-primary-status-ownership.sh
+    ./scripts/check-client-sync-status-ownership.sh
+    ./scripts/check-backup-target-summary-ownership.sh
+    ./scripts/check-backup-control-parity.sh
+    ./scripts/check-windows-provider-refresh-key-ownership.sh
+    ./scripts/check-app-key-summary-ownership.sh
+    ./scripts/check-fips-status-normalization.sh
+    ./scripts/check-linux-core-owned-status.sh
+    ./scripts/check-desktop-core-backed-actions.sh
+    ./scripts/check-admin-role-no-daemon-restart.sh
+    ./scripts/check-tray-menu-state.sh
+    ./scripts/check-nostr-client-shutdown.sh
+    ./scripts/check-macos-native-core-serialization.sh
+    ./scripts/check-macos-native-link-input.sh
+    ./scripts/check-macos-normalized-status.sh
+    ./scripts/check-macos-gateway-default.sh
+    ./scripts/check-macos-smoke-process-scope.sh
+    ./scripts/check-macos-fileprovider-lifecycle.sh
+    ./scripts/check-macos-provider-summary.sh
+    ./scripts/check-ios-idle-work-gates.sh
+    ./scripts/check-macos-relay-status-rendering.sh
+    ./scripts/check-updater-wiring.sh
+    ./scripts/check-relay-config-normalization.sh
+    ./scripts/check-provider-entry-normalization.sh
+    ./scripts/check-release-readiness.sh
+    ./scripts/check-dev-vm-update-run.sh
+    ./scripts/check-source-file-size.sh
+
+docker-cli-e2e:
+    ./scripts/docker-cli-e2e.sh
+
+fmt:
+    cargo fmt --all
+
+clippy:
+    just structure
+    cargo clippy --workspace --all-targets -- -D warnings

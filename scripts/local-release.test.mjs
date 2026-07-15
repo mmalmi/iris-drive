@@ -1,0 +1,1315 @@
+import test from 'node:test'
+import assert from 'node:assert/strict'
+import { spawn, spawnSync } from 'node:child_process'
+import { generateKeyPairSync } from 'node:crypto'
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
+import { join } from 'node:path'
+import { tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
+
+import {
+  buildNumberFromVersion,
+  bumpCargoPackageVersion,
+  bumpPbxprojReleaseVersions,
+  bumpXcodegenProjectVersions,
+  buildReleaseManifest,
+  buildReleaseManifestFiles,
+  buildZapstorePublishPlan,
+  describeAsset,
+  parseNotarytoolSubmitOutput,
+  plannedReleaseAssetNames,
+  readWorkspaceVersionTag,
+  renderReleaseNotes,
+  validateReleaseAssetSet,
+} from './local-release-lib.mjs'
+
+test('readWorkspaceVersionTag reads the workspace package version', () => {
+  const tag = readWorkspaceVersionTag(`
+[workspace]
+members = []
+
+[workspace.package]
+version = "0.2.27"
+`)
+
+  assert.equal(tag, 'v0.2.27')
+})
+
+test('release version helpers sync native platform metadata', () => {
+  assert.equal(buildNumberFromVersion('v0.1.5'), '1005')
+
+  assert.equal(
+    bumpCargoPackageVersion('[package]\nname = "iris-drive-linux"\nversion = "0.1.4"\n\n[dependencies]\n', 'v0.1.5'),
+    '[package]\nname = "iris-drive-linux"\nversion = "0.1.5"\n\n[dependencies]\n',
+  )
+
+  assert.equal(
+    bumpXcodegenProjectVersions(
+      'settings:\n  base:\n    MARKETING_VERSION: "0.1.4"\n    CURRENT_PROJECT_VERSION: "1004"\n',
+      'v0.1.5',
+    ),
+    'settings:\n  base:\n    MARKETING_VERSION: "0.1.5"\n    CURRENT_PROJECT_VERSION: "1005"\n',
+  )
+
+  assert.equal(
+    bumpPbxprojReleaseVersions(
+      'MARKETING_VERSION = 0.1.4;\nCURRENT_PROJECT_VERSION = 1004;\n',
+      'v0.1.5',
+    ),
+    'MARKETING_VERSION = 0.1.5;\nCURRENT_PROJECT_VERSION = 1005;\n',
+  )
+})
+
+test('buildReleaseManifest marks idrive archives as binary archives', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-test-'))
+  const cli = join(root, 'idrive-v0.2.27-x86_64-unknown-linux-musl.tar.gz')
+  writeFileSync(cli, 'archive')
+
+  const manifest = buildReleaseManifest({
+    tag: 'v0.2.27',
+    commit: 'abc123',
+    createdAt: 1774523304,
+    assetPaths: [cli],
+  })
+
+  assert.equal(manifest.app, 'iris-drive')
+  assert.equal(manifest.version, '0.2.27')
+  assert.equal(manifest.assets[0].kind, 'binary-archive')
+  assert.equal(manifest.assets[0].executable, 'idrive')
+  assert.equal(manifest.assets[0].target, 'x86_64-unknown-linux-musl')
+})
+
+test('buildReleaseManifest records the Windows idrive executable name', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-test-'))
+  const cli = join(root, 'idrive-v0.2.27-x86_64-pc-windows-msvc.zip')
+  writeFileSync(cli, 'archive')
+
+  const manifest = buildReleaseManifest({
+    tag: 'v0.2.27',
+    commit: 'abc123',
+    createdAt: 1774523304,
+    assetPaths: [cli],
+  })
+
+  assert.equal(manifest.assets[0].kind, 'binary-archive')
+  assert.equal(manifest.assets[0].executable, 'idrive.exe')
+  assert.equal(manifest.assets[0].target, 'x86_64-pc-windows-msvc')
+})
+
+test('buildReleaseManifest marks the macOS updater archive as an app bundle', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-test-'))
+  const appArchive = join(root, 'iris-drive-v0.2.27-macos-arm64.app.tar.gz')
+  writeFileSync(appArchive, 'archive')
+
+  const manifest = buildReleaseManifest({
+    tag: 'v0.2.27',
+    commit: 'abc123',
+    createdAt: 1774523304,
+    assetPaths: [appArchive],
+  })
+
+  assert.equal(manifest.assets[0].kind, 'app-bundle')
+  assert.equal(manifest.assets[0].executable, 'Iris Drive.app')
+  assert.equal(manifest.assets[0].target, 'darwin-aarch64')
+})
+
+test('buildReleaseManifestFiles writes both updater manifest names', () => {
+  const files = buildReleaseManifestFiles({
+    app: 'iris-drive',
+    version: '0.2.27',
+    tag: 'v0.2.27',
+    assets: [],
+  })
+
+  assert.deepEqual(files.map(([name]) => name), ['release.json', 'manifest.json'])
+})
+
+test('describeAsset labels idrive release assets', () => {
+  assert.equal(
+    describeAsset('idrive-v0.2.27-x86_64-pc-windows-msvc.zip'),
+    'Windows x64 idrive CLI',
+  )
+  assert.equal(
+    describeAsset('idrive-v0.2.27-x86_64-unknown-linux-gnu.tar.gz'),
+    'Linux x64 idrive CLI',
+  )
+})
+
+test('parseNotarytoolSubmitOutput reads accepted and invalid statuses', () => {
+  assert.deepEqual(
+    parseNotarytoolSubmitOutput(`
+Submission ID received
+  id: 957413ec-c90f-4f17-8c4a-24666bf4ad6a
+Processing complete
+  id: 957413ec-c90f-4f17-8c4a-24666bf4ad6a
+  status: Accepted
+`),
+    {
+      id: '957413ec-c90f-4f17-8c4a-24666bf4ad6a',
+      status: 'accepted',
+    },
+  )
+
+  assert.deepEqual(
+    parseNotarytoolSubmitOutput(
+      'Waiting for processing to complete.\rCurrent status: In Progress...\rCurrent status: Invalid',
+    ),
+    {
+      id: '',
+      status: 'invalid',
+    },
+  )
+})
+
+test('buildZapstorePublishPlan fails on missing required publish inputs', () => {
+  const distRoot = join(tmpdir(), 'iris-drive-dist')
+  const base = {
+    tag: '0.2.27',
+    assetDir: distRoot,
+    distDir: distRoot,
+    apkExists: true,
+    zspAvailable: true,
+    signWith: 'nsec1example',
+    zapstoreYamlExists: true,
+  }
+
+  assert.throws(
+    () => buildZapstorePublishPlan({ ...base, apkExists: false }),
+    /Missing Android APK/,
+  )
+  assert.throws(
+    () => buildZapstorePublishPlan({ ...base, zspAvailable: false }),
+    /Missing zsp/,
+  )
+  assert.throws(
+    () => buildZapstorePublishPlan({ ...base, signWith: '' }),
+    /Missing Zapstore signing key/,
+  )
+})
+
+test('buildZapstorePublishPlan resolves the Zapstore release source path', () => {
+  const distRoot = join(tmpdir(), 'iris-drive-dist')
+  const plan = buildZapstorePublishPlan({
+    tag: '0.2.27',
+    assetDir: distRoot,
+    distDir: distRoot,
+    apkExists: true,
+    zspAvailable: true,
+    signWith: 'nsec1example',
+    zapstoreYamlExists: true,
+  })
+
+  assert.equal(plan.apkName, 'iris-drive-v0.2.27-android-arm64.apk')
+  assert.equal(plan.apkPath, join(distRoot, 'iris-drive-v0.2.27-android-arm64.apk'))
+  assert.equal(plan.releaseSourcePath, join(distRoot, 'zapstore-current-android-arm64.apk'))
+})
+
+test('validateReleaseAssetSet requires complete public app artifacts for final releases', () => {
+  assert.throws(
+    () => validateReleaseAssetSet(['idrive-v0.2.27-aarch64-apple-darwin.tar.gz'], {
+      requireCompleteAppRelease: true,
+    }),
+    /macOS DMG.*macOS updater archive.*Linux x64 desktop package.*Windows x64 installer.*signed Android APK/,
+  )
+})
+
+test('validateReleaseAssetSet requires a macOS updater archive beside the DMG', () => {
+  assert.throws(
+    () => validateReleaseAssetSet(['iris-drive-v0.2.27-macos-arm64.dmg']),
+    /macOS \.app\.tar\.gz updater archive/,
+  )
+})
+
+test('validateReleaseAssetSet rejects unsigned Android public artifacts', () => {
+  assert.throws(
+    () => validateReleaseAssetSet(['iris-drive-v0.2.27-android-arm64-unsigned.apk']),
+    /unsigned Android/,
+  )
+})
+
+test('plannedReleaseAssetNames names the public release artifacts', () => {
+  assert.deepEqual(plannedReleaseAssetNames('0.2.27', ['macos', 'linux', 'windows', 'android']), [
+    'idrive-v0.2.27-aarch64-apple-darwin.tar.gz',
+    'iris-drive-v0.2.27-macos-arm64.dmg',
+    'iris-drive-v0.2.27-macos-arm64.app.tar.gz',
+    'idrive-v0.2.27-x86_64-unknown-linux-gnu.tar.gz',
+    'iris-drive-v0.2.27-linux-x64.deb',
+    'idrive-v0.2.27-x86_64-pc-windows-msvc.zip',
+    'iris-drive-v0.2.27-windows-x64-setup.exe',
+    'iris-drive-v0.2.27-android-arm64.apk',
+    'iris-drive-v0.2.27-android-arm64.aab',
+  ])
+})
+
+test('plannedReleaseAssetNames covers the complete final release validator', () => {
+  const names = plannedReleaseAssetNames('v0.2.27', ['macos', 'linux', 'windows', 'android'])
+  assert.doesNotThrow(() => validateReleaseAssetSet(names, { requireCompleteAppRelease: true }))
+})
+
+test('renderReleaseNotes groups common app downloads before advanced files', () => {
+  const notes = renderReleaseNotes({
+    tag: 'v0.2.27',
+    commit: 'abc123',
+    assetNames: [
+      'iris-drive-v0.2.27-macos-arm64.dmg',
+      'iris-drive-v0.2.27-macos-arm64.app.tar.gz',
+      'iris-drive-v0.2.27-linux-x64.deb',
+      'iris-drive-v0.2.27-windows-x64-setup.exe',
+      'iris-drive-v0.2.27-android-arm64.apk',
+      'iris-drive-v0.2.27-android-arm64.aab',
+      'idrive-v0.2.27-aarch64-apple-darwin.tar.gz',
+      'idrive-v0.2.27-x86_64-unknown-linux-gnu.tar.gz',
+      'idrive-v0.2.27-x86_64-pc-windows-msvc.zip',
+    ],
+  })
+
+  assert.match(notes, /### Most People Will Want/)
+  assert.match(notes, /Iris Drive for macOS/)
+  assert.match(notes, /Iris Drive for Debian\/Ubuntu \(\.deb\)/)
+  assert.match(notes, /Iris Drive for Windows/)
+  assert.match(notes, /Iris Drive for Android/)
+  assert.match(notes, /### Command Line/)
+  assert.match(notes, /macOS Apple Silicon idrive CLI/)
+  assert.match(notes, /Linux x64 idrive CLI/)
+  assert.match(notes, /Windows x64 idrive CLI/)
+  assert.match(notes, /### Other Files/)
+  assert.match(notes, /Iris Drive macOS updater archive/)
+  assert.match(notes, /Iris Drive Android app bundle/)
+  assert(
+    notes.indexOf('### Most People Will Want') < notes.indexOf('### Command Line'),
+    'common downloads should appear before CLI archives',
+  )
+  assert(
+    notes.indexOf('### Command Line') < notes.indexOf('### Other Files'),
+    'CLI archives should appear before other files',
+  )
+})
+
+test('local-release dry-run validates planned build assets over partial existing dist assets', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-cli-test-'))
+  const assetDir = join(root, 'dist')
+  const stageDir = join(root, 'stage')
+  const keystorePath = join(root, 'upload-keystore.jks')
+  mkdirSync(assetDir)
+  writeFileSync(join(assetDir, 'iris-drive-v9.9.9-macos-arm64.dmg'), 'partial')
+  writeFileSync(keystorePath, 'test keystore placeholder')
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--publish',
+      '--final',
+      '--dry-run',
+      '--skip-zapstore',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'macos,linux,windows,android',
+      '--asset-dir',
+      assetDir,
+      '--stage-dir',
+      stageDir,
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        ANDROID_KEYSTORE_PATH: keystorePath,
+        ANDROID_KEYSTORE_PASSWORD: 'password',
+        ANDROID_KEY_ALIAS: 'iris',
+        ANDROID_KEY_PASSWORD: 'password',
+        IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: 'iris-drive-notary',
+        IRIS_DRIVE_WINDOWS_SIGNTOOL_CERT_SHA1: '00FAKECERT',
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /Would stage 9 planned asset\(s\)/)
+})
+
+test('local-release final dry-run refreshes public release resolver after htree publish', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-refresh-test-'))
+  const assetDir = join(root, 'dist')
+  const stageDir = join(root, 'stage')
+  mkdirSync(assetDir)
+  for (const assetName of plannedReleaseAssetNames('v9.9.9', ['macos', 'linux', 'windows', 'android'])) {
+    writeFileSync(join(assetDir, assetName), assetName)
+  }
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--final',
+      '--dry-run',
+      '--skip-zapstore',
+      '--tag',
+      'v9.9.9',
+      '--asset-dir',
+      assetDir,
+      '--stage-dir',
+      stageDir,
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        IRIS_DRIVE_RELEASE_NPUB: 'npub1example',
+        IRIS_DRIVE_RELEASE_RESOLVER_REFRESH_BASE_URLS: 'https://cdn.iris.to',
+        IRIS_DRIVE_ALLOW_UNSIGNED_WINDOWS: '1',
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /api\/resolve\/npub1example\/releases%2Firis-drive\?refresh=1/)
+  assert.match(
+    result.stdout,
+    /Would verify public release manifest https:\/\/cdn\.iris\.to\/npub1example\/releases%2Firis-drive\/latest\/release\.json/,
+  )
+})
+
+test('local-release final dry-run rejects a missing Android keystore file', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--final',
+      '--dry-run',
+      '--skip-zapstore',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'android',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        ANDROID_KEYSTORE_PATH: '/tmp/iris-drive-missing-upload-keystore.jks',
+        ANDROID_KEYSTORE_PASSWORD: 'password',
+        ANDROID_KEY_ALIAS: 'iris',
+        ANDROID_KEY_PASSWORD: 'password',
+      },
+    },
+  )
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /Android keystore file not found/)
+})
+
+test('local-release final dry-run rejects missing App Store Connect auth for iOS', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-asc-preflight-test-'))
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--final',
+      '--dry-run',
+      '--skip-zapstore',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'ios',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        IRIS_DRIVE_ASC_ROOT: root,
+        IRIS_DRIVE_ASC_AUTH_KEY_PATH: '',
+        IRIS_DRIVE_ASC_KEY_PATH: '',
+        IRIS_DRIVE_ASC_AUTH_KEY_ID: '',
+        IRIS_DRIVE_ASC_KEY_ID: '',
+        IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID: '',
+        IRIS_DRIVE_ASC_ISSUER_ID: '',
+      },
+    },
+  )
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /App Store Connect/)
+  assert.doesNotMatch(result.stdout, /htree release publish/)
+})
+
+test('local-release final dry-run rejects missing macOS notarization auth', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--final',
+      '--dry-run',
+      '--skip-zapstore',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'macos',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: '',
+        IRIS_DRIVE_MACOS_NOTARY_PROFILE: '',
+        IRIS_DRIVE_MACOS_NOTARY_KEY_PATH: '',
+        IRIS_DRIVE_MACOS_NOTARY_KEY_ID: '',
+        IRIS_DRIVE_MACOS_NOTARY_ISSUER_ID: '',
+        IRIS_DRIVE_ASC_ROOT: join(tmpdir(), 'iris-drive-missing-asc-root'),
+        IRIS_DRIVE_ASC_AUTH_KEY_PATH: '',
+        IRIS_DRIVE_ASC_KEY_PATH: '',
+        IRIS_DRIVE_ASC_AUTH_KEY_ID: '',
+        IRIS_DRIVE_ASC_KEY_ID: '',
+        IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID: '',
+        IRIS_DRIVE_ASC_ISSUER_ID: '',
+      },
+    },
+  )
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /macOS notarization/)
+  assert.doesNotMatch(result.stdout, /cargo build/)
+})
+
+test('local-release final dry-run preflights Zapstore signing before publishing', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-zapstore-preflight-test-'))
+  const keystorePath = join(root, 'upload-keystore.jks')
+  writeFileSync(keystorePath, 'test keystore placeholder')
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--final',
+      '--dry-run',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'android',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        ANDROID_KEYSTORE_PATH: keystorePath,
+        ANDROID_KEYSTORE_PASSWORD: 'password',
+        ANDROID_KEY_ALIAS: 'iris',
+        ANDROID_KEY_PASSWORD: 'password',
+        NOSTR_KEY_PATH: '',
+        SIGN_WITH: '',
+      },
+    },
+  )
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /Missing Zapstore signing key/)
+  assert.doesNotMatch(result.stdout, /htree release publish/)
+})
+
+test('local-release final dry-run can plan Zapstore publish from signed Android build output', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-zapstore-plan-test-'))
+  const binDir = join(root, 'bin')
+  const keystorePath = join(root, 'upload-keystore.jks')
+  mkdirSync(binDir)
+  writeFileSync(keystorePath, 'test keystore placeholder')
+  const zspPath = join(binDir, 'zsp')
+  writeFileSync(zspPath, '#!/bin/sh\nexit 0\n')
+  chmodSync(zspPath, 0o755)
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--final',
+      '--dry-run',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'macos,linux,windows,android',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        ANDROID_KEYSTORE_PATH: keystorePath,
+        ANDROID_KEYSTORE_PASSWORD: 'password',
+        ANDROID_KEY_ALIAS: 'iris',
+        ANDROID_KEY_PASSWORD: 'password',
+        PATH: `${binDir}:${process.env.PATH}`,
+        SIGN_WITH: 'nsec1test',
+        IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: 'iris-drive-notary',
+        IRIS_DRIVE_WINDOWS_SIGNTOOL_CERT_SHA1: '00FAKECERT',
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /-RequireSigning/)
+  assert.match(result.stdout, /Would publish iris-drive-v9\.9\.9-android-arm64\.apk to Zapstore/)
+})
+
+test('local-release dry-run builds the Windows installer in dist', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--dry-run',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'windows',
+    ],
+    { encoding: 'utf8' },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /scripts\/windows-publish\.ps1/)
+  assert.match(result.stdout, /-Installer/)
+  assert.doesNotMatch(result.stdout, /-RequireSigning/)
+  assert.match(result.stdout, /-Tag/)
+  assert.match(result.stdout, /v9\.9\.9/)
+})
+
+test('local-release dry-run stages Linux CLI binary for cargo-deb', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--dry-run',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'linux',
+    ],
+    { encoding: 'utf8' },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /\$ mkdir -p .*target\/release/)
+  assert.match(
+    result.stdout,
+    /\$ cp .*\/x86_64-unknown-linux-gnu\/release\/idrive .*linux\/target\/release\/idrive[\s\S]*\$ cargo deb --no-build/,
+  )
+})
+
+test('local-release dry-run passes release versions to macOS and Android builders', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--dry-run',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'macos,android',
+    ],
+    { encoding: 'utf8' },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /MARKETING_VERSION=9\.9\.9/)
+  assert.match(result.stdout, /CURRENT_PROJECT_VERSION=9009009/)
+  assert.match(result.stdout, /--timestamp/)
+  assert.match(result.stdout, /codesign --force --timestamp --options runtime --sign/)
+  assert.match(result.stdout, /iris-drive-v9\.9\.9-macos-arm64\.app\.tar\.gz/)
+  assert.match(result.stdout, /-PirisDriveVersionName=9\.9\.9/)
+  assert.match(result.stdout, /-PirisDriveVersionCode=9009009/)
+  assert.match(result.stdout, /tools\/run-android .* clean :app:assembleRelease :app:bundleRelease/)
+})
+
+test('local-release dry-run notarizes macOS artifacts and adds Applications shortcut', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--dry-run',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'macos',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: 'iris-drive-notary',
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /xcrun notarytool submit .*IrisDriveMac\.notary\.zip .*--keychain-profile/)
+  assert.match(result.stdout, /xcrun stapler staple .*Iris Drive\.app/)
+  assert.match(result.stdout, /ditto .*ReleaseDmgRoot\/Iris Drive\.app/)
+  assert.match(result.stdout, /Would link \/Applications -> .*ReleaseDmgRoot\/Applications/)
+  assert.match(result.stdout, /hdiutil create .* -srcfolder .*ReleaseDmgRoot .*iris-drive-v9\.9\.9-macos-arm64\.dmg/)
+  assert.match(result.stdout, /codesign .*iris-drive-v9\.9\.9-macos-arm64\.dmg/)
+  assert.match(result.stdout, /xcrun notarytool submit .*iris-drive-v9\.9\.9-macos-arm64\.dmg .*--keychain-profile/)
+  assert.match(result.stdout, /xcrun stapler staple .*iris-drive-v9\.9\.9-macos-arm64\.dmg/)
+})
+
+test('local-release dry-run wires restricted entitlement scrubbing and macOS release launch smoke', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--dry-run',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'macos',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        IRIS_DRIVE_MACOS_KEEP_PROVISIONED_ENTITLEMENTS: 'false',
+        IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: 'iris-drive-notary',
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(
+    result.stdout,
+    /Would prepare entitlements .*Release\.entitlements.*strip.*com\.apple\.developer\.associated-domains/s,
+  )
+  assert.match(result.stdout, /scripts\/macos-release-smoke\.sh/)
+  assert.match(result.stdout, /--app .*Iris Drive\.app/)
+  assert.match(result.stdout, /--archive .*iris-drive-v9\.9\.9-macos-arm64\.app\.tar\.gz/)
+  assert.match(result.stdout, /--dmg .*iris-drive-v9\.9\.9-macos-arm64\.dmg/)
+})
+
+test('local-release dry-run embeds macOS provisioning profiles when provisioned entitlements are kept', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-macos-profiles-test-'))
+  const appProfile = join(root, 'app.provisionprofile')
+  const fileProviderProfile = join(root, 'fileprovider.provisionprofile')
+  const envFile = join(root, 'provisioning.env')
+  writeFileSync(appProfile, 'app profile')
+  writeFileSync(fileProviderProfile, 'file provider profile')
+  writeFileSync(
+    envFile,
+    [
+      'IRIS_DRIVE_MACOS_KEEP_PROVISIONED_ENTITLEMENTS=true',
+      `IRIS_DRIVE_MACOS_APP_PROVISIONING_PROFILE='${appProfile}'`,
+      `IRIS_DRIVE_MACOS_FILEPROVIDER_PROVISIONING_PROFILE='${fileProviderProfile}'`,
+      '',
+    ].join('\n'),
+  )
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--dry-run',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'macos',
+      '--env-file',
+      envFile,
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: 'iris-drive-notary',
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /keep provisioned entitlements/)
+  assert.match(result.stdout, /Would embed provisioning profile .*app\.provisionprofile/)
+  assert.match(result.stdout, /Would embed provisioning profile .*fileprovider\.provisionprofile/)
+})
+
+test('macOS release entitlements strip Associated Domains when profile wildcard is not launch-safe', async () => {
+  const { prepareMacosEntitlementsData } = await import('./macos-entitlements.mjs')
+
+  const { entitlements, dropped } = prepareMacosEntitlementsData({
+    teamId: 'J8PPJKD7TA',
+    keepProvisionedEntitlements: true,
+    profileEntitlements: {
+      'com.apple.application-identifier': 'J8PPJKD7TA.to.iris.drive.macos',
+      'com.apple.developer.associated-domains': '*',
+      'com.apple.developer.team-identifier': 'J8PPJKD7TA',
+    },
+    sourceEntitlements: {
+      'com.apple.security.app-sandbox': true,
+      'com.apple.security.application-groups': ['$(TeamIdentifierPrefix)to.iris.drive'],
+      'com.apple.developer.associated-domains': [
+        'applinks:drive.iris.to',
+        'webcredentials:drive.iris.to',
+      ],
+      'com.apple.security.network.client': true,
+      'com.apple.security.network.server': true,
+    },
+  })
+
+  assert.deepEqual(entitlements['com.apple.security.application-groups'], [
+    'J8PPJKD7TA.to.iris.drive',
+  ])
+  assert.equal(entitlements['com.apple.developer.associated-domains'], undefined)
+  assert.deepEqual(dropped, ['com.apple.developer.associated-domains'])
+})
+
+test('local-release build-only mode does not stage existing unsigned artifacts', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-build-only-test-'))
+  const assetDir = join(root, 'dist')
+  mkdirSync(assetDir)
+  writeFileSync(join(assetDir, 'iris-drive-v9.9.9-android-arm64-unsigned.apk'), 'unsigned')
+
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      '',
+      '--asset-dir',
+      assetDir,
+    ],
+    { encoding: 'utf8' },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /Release build steps: \(none\)/)
+})
+
+test('local-release dry-run routes iOS builds through the TestFlight script', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--dry-run',
+      '--only',
+      'ios',
+      '--tag',
+      'v9.9.9',
+    ],
+    { encoding: 'utf8' },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /scripts\/ios-build ios-testflight/)
+  assert.doesNotMatch(result.stdout, /Would archive\/export\/upload/)
+})
+
+test('local-release dry-run passes release versions to the iOS TestFlight builder', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--dry-run',
+      '--only',
+      'ios',
+      '--tag',
+      'v9.9.9',
+    ],
+    { encoding: 'utf8' },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /iOS TestFlight version: 9\.9\.9 \(9009009\)/)
+})
+
+test('local-release dry-run uses a public-capable iOS upload for internal plus public TestFlight', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--dry-run',
+      '--only',
+      'ios',
+      '--tag',
+      'v9.9.9',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        IRIS_DRIVE_IOS_TESTFLIGHT_CHANNELS: 'internal,public',
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /scripts\/ios-build ios-testflight-public/)
+})
+
+test('TestFlight helper documents iris-drive App Store Connect inputs', () => {
+  const result = spawnSync('bash', ['scripts/testflight-internal', '--help'], {
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
+    encoding: 'utf8',
+  })
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /ensure-app/)
+  assert.match(result.stdout, /IRIS_DRIVE_ASC_AUTH_KEY_PATH/)
+  assert.match(result.stdout, /IRIS_DRIVE_TESTFLIGHT_GROUPS/)
+})
+
+test('iOS manual build keeps App Store Connect auth out of Xcode signing', () => {
+  const script = readFileSync(
+    fileURLToPath(new URL('./ios-build', import.meta.url)),
+    'utf8',
+  )
+  const manualArchive = script.match(
+    /return\n  fi\n\n([\s\S]*?xcodebuild[\s\S]*?CODE_SIGN_STYLE=Manual[\s\S]*?archive)/,
+  )?.[1] ?? ''
+
+  assert.match(manualArchive, /CODE_SIGN_STYLE=Manual/)
+  assert.doesNotMatch(manualArchive, /-authenticationKeyPath/)
+  assert.doesNotMatch(manualArchive, /\$\{auth_args\[@\]\}/)
+  assert.match(script, /xcode_auth_args\(\)/)
+  assert.match(script, /scripts\/ios-profiles/)
+  assert.match(script, /CODE_SIGN_STYLE=Manual/)
+})
+
+test('iOS build uses the shared App Store Connect auth defaults', () => {
+  const script = readFileSync(
+    fileURLToPath(new URL('./ios-build', import.meta.url)),
+    'utf8',
+  )
+
+  assert.match(script, /IRIS_DRIVE_ASC_ROOT/)
+  assert.match(script, /private_keys/)
+  assert.match(script, /AuthKey_\*\.p8/)
+  assert.match(script, /issuer\.txt/)
+})
+
+test('iOS TestFlight path checks the App Store record before archiving', () => {
+  const script = readFileSync(
+    fileURLToPath(new URL('./ios-build', import.meta.url)),
+    'utf8',
+  )
+  const internal = script.match(
+    /run_ios_testflight\(\) \{([\s\S]*?)\n\}/,
+  )?.[1] ?? ''
+  const publicFlow = script.match(
+    /run_ios_testflight_public\(\) \{([\s\S]*?)\n\}/,
+  )?.[1] ?? ''
+
+  assert.ok(
+    internal.indexOf('ensure_app_store_record') >= 0 &&
+      internal.indexOf('ensure_app_store_record') < internal.indexOf('run_ios_archive'),
+  )
+  assert.ok(
+    publicFlow.indexOf('ensure_app_store_record') >= 0 &&
+      publicFlow.indexOf('ensure_app_store_record') < publicFlow.indexOf('run_ios_archive'),
+  )
+})
+
+test('iOS automatic signing uses a development identity for provisioning bootstrap', () => {
+  const script = readFileSync(
+    fileURLToPath(new URL('./ios-build', import.meta.url)),
+    'utf8',
+  )
+  const buildSettings = script.match(
+    /build_settings_args\(\) \{([\s\S]*?)\n\}/,
+  )?.[1] ?? ''
+  const runArchive = script.match(
+    /run_ios_archive\(\) \{([\s\S]*?)\n\}/,
+  )?.[1] ?? ''
+  const automaticArchive = script.match(
+    /run_ios_archive\(\) \{[\s\S]*?if \[\[ "\$IOS_SIGNING_STYLE" == "automatic" \]\]; then([\s\S]*?)\n    return/,
+  )?.[1] ?? ''
+
+  assert.match(buildSettings, /\[\[ "\$IOS_SIGNING_STYLE" == "automatic" \]\]/)
+  assert.match(buildSettings, /Apple Development/)
+  assert.match(buildSettings, /Apple Distribution/)
+  assert.match(buildSettings, /IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY/)
+  assert.match(runArchive, /run_ios_project/)
+  assert.match(automaticArchive, /CODE_SIGN_STYLE=Automatic/)
+  assert.doesNotMatch(automaticArchive, /Apple Distribution/)
+  assert.match(script, /ProvisioningStyle = Manual;/)
+  assert.match(script, /ProvisioningStyle = Automatic;/)
+})
+
+test('iOS build defaults to the Sirius Business release bundle', () => {
+  const script = readFileSync(
+    fileURLToPath(new URL('./ios-build', import.meta.url)),
+    'utf8',
+  )
+
+  assert.match(script, /DEFAULT_TEAM_ID="8G9P8AN75D"/)
+  assert.match(script, /DEFAULT_BUNDLE_ID="fi\.siriusbusiness\.drive"/)
+  assert.match(script, /BUNDLE_ID="\$\{IRIS_DRIVE_IOS_BUNDLE_ID:-\$DEFAULT_BUNDLE_ID\}"/)
+  assert.match(script, /"\$BUNDLE_ID" == "to\.iris\.drive\.ios"/)
+  assert.match(script, /DEFAULT_APP_GROUP_IDENTIFIER="group\.to\.iris\.drive"/)
+})
+
+test('iOS build provisions manual App Store profiles before TestFlight export', () => {
+  const script = readFileSync(
+    fileURLToPath(new URL('./ios-build', import.meta.url)),
+    'utf8',
+  )
+
+  assert.match(script, /PROVISIONING_ENV=/)
+  assert.match(script, /ensure_profiles\(\)/)
+  assert.match(script, /scripts\/ios-profiles/)
+  assert.match(script, /source "\$PROVISIONING_ENV"/)
+  assert.match(script, /IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID/)
+  assert.match(script, /IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID/)
+})
+
+test('iOS project uses manual Release provisioning for all shipped targets', () => {
+  const project = readFileSync(
+    fileURLToPath(new URL('../ios/project.yml', import.meta.url)),
+    'utf8',
+  )
+
+  for (const uuidEnv of [
+    'IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID',
+    'IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID',
+    'IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID',
+  ]) {
+    assert.match(project, new RegExp(`Release:[\\s\\S]*PROVISIONING_PROFILE: \\$\\(${uuidEnv}\\)`))
+  }
+})
+
+test('iOS provisioning helper covers the app and extension bundle IDs', () => {
+  const script = readFileSync(
+    fileURLToPath(new URL('./ios-profiles', import.meta.url)),
+    'utf8',
+  )
+
+  assert.match(script, /defaultIosBundleId = 'fi\.siriusbusiness\.drive'/)
+  assert.match(script, /\$\{iosBundleId\}\.FileProvider/)
+  assert.match(script, /\$\{iosBundleId\}\.ShareExtension/)
+  assert.match(script, /IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID/)
+  assert.match(script, /IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID/)
+  assert.match(script, /IRIS_DRIVE_ASC_AUTH_KEY_PATH/)
+  assert.match(script, /IRIS_DRIVE_IOS_PROFILES_ENV_PATH/)
+  assert.match(script, /IRIS_DRIVE_IOS_PROFILE_RECREATE/)
+})
+
+test('macOS provisioning helper covers the Developer ID app and FileProvider profiles', () => {
+  const wrapper = readFileSync(
+    fileURLToPath(new URL('./macos-profiles', import.meta.url)),
+    'utf8',
+  )
+  const script = readFileSync(
+    fileURLToPath(new URL('./ios-profiles', import.meta.url)),
+    'utf8',
+  )
+
+  assert.match(wrapper, /IRIS_DRIVE_PROFILES_PLATFORM=macos/)
+  assert.match(script, /MAC_APP_DIRECT/)
+  assert.match(script, /to\.iris\.drive\.macos/)
+  assert.match(script, /to\.iris\.drive\.macos\.FileProvider/)
+  assert.match(script, /IRIS_DRIVE_MACOS_APP_PROVISIONING_PROFILE/)
+  assert.match(script, /IRIS_DRIVE_MACOS_FILEPROVIDER_PROVISIONING_PROFILE/)
+  assert.match(script, /DEVELOPER_ID_APPLICATION/)
+})
+
+test('TestFlight helper creates a missing App Store Connect app record', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-asc-test-'))
+  const keyPath = join(root, 'AuthKey_TESTKEY123.p8')
+  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+  writeFileSync(keyPath, privateKey.export({ type: 'pkcs8', format: 'pem' }))
+
+  const requests = []
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, `http://${request.headers.host}`)
+    const chunks = []
+    for await (const chunk of request) {
+      chunks.push(chunk)
+    }
+    const rawBody = Buffer.concat(chunks).toString('utf8')
+    const body = rawBody ? JSON.parse(rawBody) : null
+    requests.push({ method: request.method, path: url.pathname, query: url.searchParams, body })
+
+    if (request.method === 'GET' && url.pathname === '/v1/apps') {
+      writeJson(response, 200, { data: [] })
+      return
+    }
+    if (request.method === 'GET' && url.pathname === '/v1/bundleIds') {
+      writeJson(response, 200, {
+        data: [
+          {
+            type: 'bundleIds',
+            id: 'BUNDLE123',
+            attributes: { identifier: 'fi.siriusbusiness.drive' },
+          },
+        ],
+      })
+      return
+    }
+    if (request.method === 'POST' && url.pathname === '/v1/apps') {
+      writeJson(response, 201, {
+        data: {
+          type: 'apps',
+          id: 'APP123',
+          attributes: { name: body.data.attributes.name, bundleId: 'fi.siriusbusiness.drive' },
+        },
+      })
+      return
+    }
+    writeJson(response, 404, { errors: [{ title: 'unexpected request' }] })
+  })
+  t.after(() => server.close())
+  await listen(server)
+
+  const result = await spawnForTest('bash', ['scripts/testflight-internal', 'ensure-app'], {
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
+    env: {
+      ...process.env,
+      IRIS_DRIVE_ASC_BASE_URL: `http://127.0.0.1:${server.address().port}/v1/`,
+      IRIS_DRIVE_ASC_AUTH_KEY_PATH: keyPath,
+      IRIS_DRIVE_ASC_AUTH_KEY_ID: 'TESTKEY123',
+      IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID: '00000000-0000-0000-0000-000000000000',
+      IRIS_DRIVE_IOS_BUNDLE_ID: 'fi.siriusbusiness.drive',
+      IRIS_DRIVE_ASC_APP_NAME: 'Iris Drive',
+    },
+  })
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /Created App Store Connect app: Iris Drive \[APP123\]/)
+  const createRequest = requests.find((request) => request.method === 'POST' && request.path === '/v1/apps')
+  assert.ok(createRequest)
+  assert.deepEqual(createRequest.body, {
+    data: {
+      type: 'apps',
+      attributes: {
+        name: 'Iris Drive',
+        primaryLocale: 'en-US',
+        sku: 'fi.siriusbusiness.drive',
+        platform: 'IOS',
+      },
+      relationships: {
+        bundleId: { data: { type: 'bundleIds', id: 'BUNDLE123' } },
+      },
+    },
+  })
+})
+
+test('TestFlight helper explains App Store Connect app creation permission failures', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-asc-test-'))
+  const keyPath = join(root, 'AuthKey_TESTKEY123.p8')
+  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+  writeFileSync(keyPath, privateKey.export({ type: 'pkcs8', format: 'pem' }))
+
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, `http://${request.headers.host}`)
+    const chunks = []
+    for await (const chunk of request) {
+      chunks.push(chunk)
+    }
+
+    if (request.method === 'GET' && url.pathname === '/v1/apps') {
+      writeJson(response, 200, { data: [] })
+      return
+    }
+    if (request.method === 'GET' && url.pathname === '/v1/bundleIds') {
+      writeJson(response, 200, {
+        data: [
+          {
+            type: 'bundleIds',
+            id: 'BUNDLE123',
+            attributes: { identifier: 'fi.siriusbusiness.drive' },
+          },
+        ],
+      })
+      return
+    }
+    if (request.method === 'POST' && url.pathname === '/v1/apps') {
+      writeJson(response, 403, {
+        errors: [
+          {
+            status: '403',
+            code: 'FORBIDDEN_ERROR',
+            detail: "The resource 'apps' does not allow 'CREATE'. Allowed operations are: GET_COLLECTION, GET_INSTANCE, UPDATE",
+          },
+        ],
+      })
+      return
+    }
+    writeJson(response, 404, { errors: [{ title: 'unexpected request' }] })
+  })
+  t.after(() => server.close())
+  await listen(server)
+
+  const result = await spawnForTest('bash', ['scripts/testflight-internal', 'ensure-app'], {
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
+    env: {
+      ...process.env,
+      IRIS_DRIVE_ASC_BASE_URL: `http://127.0.0.1:${server.address().port}/v1/`,
+      IRIS_DRIVE_ASC_AUTH_KEY_PATH: keyPath,
+      IRIS_DRIVE_ASC_AUTH_KEY_ID: 'TESTKEY123',
+      IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID: '00000000-0000-0000-0000-000000000000',
+      IRIS_DRIVE_IOS_BUNDLE_ID: 'fi.siriusbusiness.drive',
+      IRIS_DRIVE_ASC_APP_NAME: 'Iris Drive',
+    },
+  })
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /cannot create App Store Connect app records/)
+  assert.match(result.stderr, /Name: Iris Drive/)
+  assert.match(result.stderr, /Bundle ID: fi\.siriusbusiness\.drive/)
+  assert.match(result.stderr, /SKU: fi\.siriusbusiness\.drive/)
+})
+
+test('TestFlight helper matches builds by marketing version and build number', async (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-asc-test-'))
+  const keyPath = join(root, 'AuthKey_TESTKEY123.p8')
+  const { privateKey } = generateKeyPairSync('ec', { namedCurve: 'P-256' })
+  writeFileSync(keyPath, privateKey.export({ type: 'pkcs8', format: 'pem' }))
+
+  const server = createServer(async (request, response) => {
+    const url = new URL(request.url, `http://${request.headers.host}`)
+    if (request.method === 'GET' && url.pathname === '/v1/apps') {
+      writeJson(response, 200, {
+        data: [
+          {
+            type: 'apps',
+            id: 'APP123',
+            attributes: { name: 'Iris Drive', bundleId: 'fi.siriusbusiness.drive' },
+          },
+        ],
+      })
+      return
+    }
+    if (request.method === 'GET' && url.pathname === '/v1/builds') {
+      writeJson(response, 200, {
+        data: [
+          {
+            type: 'builds',
+            id: 'OLD1017',
+            attributes: { version: '1017', processingState: 'VALID' },
+            relationships: {
+              preReleaseVersion: { data: { type: 'preReleaseVersions', id: 'PR016' } },
+            },
+          },
+        ],
+        included: [
+          {
+            type: 'preReleaseVersions',
+            id: 'PR016',
+            attributes: { version: '0.1.16', platform: 'IOS' },
+          },
+        ],
+      })
+      return
+    }
+    writeJson(response, 404, { errors: [{ title: 'unexpected request' }] })
+  })
+  t.after(() => server.close())
+  await listen(server)
+
+  const result = await spawnForTest('bash', ['scripts/testflight-internal', 'status'], {
+    cwd: fileURLToPath(new URL('..', import.meta.url)),
+    env: {
+      ...process.env,
+      IRIS_DRIVE_ASC_BASE_URL: `http://127.0.0.1:${server.address().port}/v1/`,
+      IRIS_DRIVE_ASC_AUTH_KEY_PATH: keyPath,
+      IRIS_DRIVE_ASC_AUTH_KEY_ID: 'TESTKEY123',
+      IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID: '00000000-0000-0000-0000-000000000000',
+      IRIS_DRIVE_IOS_BUNDLE_ID: 'fi.siriusbusiness.drive',
+      IRIS_DRIVE_IOS_MARKETING_VERSION: '0.1.17',
+      IRIS_DRIVE_IOS_BUILD_NUMBER: '1017',
+    },
+  })
+
+  assert.equal(result.status, 1)
+  assert.match(result.stderr, /No TestFlight build 0\.1\.17 \(1017\) found/)
+})
+
+test('iOS FileProvider declares the required App Store document group', () => {
+  const plist = readFileSync(
+    fileURLToPath(new URL('../ios/FileProvider/Info.plist', import.meta.url)),
+    'utf8',
+  )
+  const project = readFileSync(
+    fileURLToPath(new URL('../ios/project.yml', import.meta.url)),
+    'utf8',
+  )
+
+  assert.match(
+    plist,
+    /<key>NSExtensionFileProviderDocumentGroup<\/key>\s*<string>\$\(IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER\)<\/string>/,
+  )
+  assert.match(project, /IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER: group\.fi\.siriusbusiness\.drive/)
+})
+
+test('iOS app icons have no alpha channel', () => {
+  const appIconSet = fileURLToPath(
+    new URL('../ios/Resources/Assets.xcassets/AppIcon.appiconset/', import.meta.url),
+  )
+  const contents = JSON.parse(readFileSync(join(appIconSet, 'Contents.json'), 'utf8'))
+  const icons = contents.images.filter((image) => image.filename)
+
+  assert.ok(
+    icons.some((image) => image.size === '1024x1024'),
+    'AppIcon.appiconset must declare a 1024x1024 marketing icon',
+  )
+  for (const icon of icons) {
+    assert.equal(pngHasAlpha(join(appIconSet, icon.filename)), false, `${icon.filename} must be opaque`)
+  }
+})
+
+function writeJson(response, status, body) {
+  response.writeHead(status, { 'content-type': 'application/json' })
+  response.end(JSON.stringify(body))
+}
+
+function listen(server) {
+  return new Promise((resolve, reject) => {
+    server.once('error', reject)
+    server.listen(0, '127.0.0.1', resolve)
+  })
+}
+
+function spawnForTest(command, args, options) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, { ...options, encoding: 'utf8' })
+    let stdout = ''
+    let stderr = ''
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk
+    })
+    child.on('close', (status) => resolve({ status, stdout, stderr }))
+  })
+}
+
+function pngHasAlpha(path) {
+  const bytes = readFileSync(path)
+  assert.equal(bytes.subarray(0, 8).toString('hex'), '89504e470d0a1a0a', `${path} is not a PNG`)
+  const colorType = bytes[25]
+  if (colorType === 4 || colorType === 6) {
+    return true
+  }
+  let offset = 8
+  while (offset + 12 <= bytes.length) {
+    const length = bytes.readUInt32BE(offset)
+    const type = bytes.subarray(offset + 4, offset + 8).toString('ascii')
+    if (type === 'tRNS') {
+      return true
+    }
+    offset += 12 + length
+  }
+  return false
+}

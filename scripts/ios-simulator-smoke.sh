@@ -1,0 +1,451 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+case "$(uname -s)" in
+  Darwin) ;;
+  *)
+    echo "iOS simulator smoke is Darwin-only; skipping on $(uname -s)"
+    exit 0
+    ;;
+esac
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/ios-simulator-signing.sh"
+PROJECT="$ROOT/ios/IrisDriveIOS.xcodeproj"
+SCHEME="IrisDriveIOS"
+CONFIGURATION="${IRIS_DRIVE_IOS_XCODE_CONFIGURATION:-Debug}"
+DERIVED_DATA="$ROOT/ios/.build/DerivedData"
+BUILD_LOG="${IRIS_DRIVE_IOS_BUILD_LOG:-/tmp/iris-drive-ios-build.log}"
+BUNDLE_ID="${IRIS_DRIVE_IOS_BUNDLE_ID:-fi.siriusbusiness.drive}"
+DEVICE_NAME="${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-}"
+SIMULATOR_BOOT_TIMEOUT_SECONDS="${IRIS_DRIVE_IOS_SIMULATOR_BOOT_TIMEOUT_SECONDS:-180}"
+APP_GROUP_ID="${IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER:-group.fi.siriusbusiness.drive}"
+TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
+IDRIVE="${IRIS_DRIVE_IDRIVE_BIN:-$TARGET_DIR/debug/idrive}"
+RUST_IOS_TARGET="${IRIS_DRIVE_IOS_RUST_TARGET:-aarch64-apple-ios-sim}"
+RUST_LIB_DIR="$TARGET_DIR/$RUST_IOS_TARGET/debug"
+RUST_STATIC_LIB="$RUST_LIB_DIR/libiris_drive_app_core.a"
+OWNER_CONFIG="$(mktemp -d -t iris-drive-ios-gui-owner)"
+LOCAL_RELAY_READY="$(mktemp -t iris-drive-ios-smoke-relay.XXXXXX)"
+LOCAL_RELAY_LOG="$(mktemp -t iris-drive-ios-smoke-relay.XXXXXX.log)"
+LOCAL_RELAY_PID=""
+LOCAL_RELAY_URL=""
+
+usage() {
+  cat <<'USAGE'
+Usage:
+  scripts/ios-simulator-smoke.sh [--build-only]
+
+Environment:
+  IRIS_DRIVE_IOS_SIMULATOR_DEVICE  Optional simulator device name.
+  IRIS_DRIVE_IOS_BUILD_LOG         Build log path.
+  IRIS_DRIVE_IOS_SIMULATOR_BOOT_TIMEOUT_SECONDS
+                                      Seconds to wait for simctl bootstatus.
+USAGE
+}
+
+cleanup() {
+  if [[ -n "$LOCAL_RELAY_PID" ]]; then
+    kill "$LOCAL_RELAY_PID" >/dev/null 2>&1 || true
+    wait "$LOCAL_RELAY_PID" 2>/dev/null || true
+  fi
+  rm -rf "$OWNER_CONFIG"
+  rm -f "$LOCAL_RELAY_READY" "$LOCAL_RELAY_LOG"
+}
+trap cleanup EXIT
+
+BUILD_ONLY=0
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --build-only)
+      BUILD_ONLY=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      echo "unknown argument: $1" >&2
+      usage >&2
+      exit 2
+      ;;
+  esac
+done
+
+select_simulator() {
+  local devices_json candidates_file
+  devices_json="$(mktemp -t iris-drive-ios-simulators.XXXXXX.json)"
+  candidates_file="$(mktemp -t iris-drive-ios-simulator-candidates.XXXXXX.tsv)"
+  xcrun simctl list devices available --json >"$devices_json"
+  python3 - "$DEVICE_NAME" "$devices_json" >"$candidates_file" <<'PY'
+import json
+import sys
+
+preferred = sys.argv[1]
+with open(sys.argv[2], "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+candidates = []
+
+def runtime_key(runtime):
+    parts = []
+    for piece in runtime.replace("-", ".").split("."):
+        if piece.isdigit():
+            parts.append(int(piece))
+    return parts
+
+runtime_items = sorted(
+    data.get("devices", {}).items(),
+    key=lambda item: runtime_key(item[0]),
+    reverse=True,
+)
+for runtime_index, (runtime, devices) in enumerate(runtime_items):
+    if "iOS" not in runtime:
+        continue
+    for device in devices:
+        if not device.get("isAvailable"):
+            continue
+        if preferred and preferred not in (device.get("name"), device.get("udid")):
+            continue
+        if "iPhone" not in device.get("name", ""):
+            continue
+        state_rank = {"Booted": 0, "Shutdown": 1}.get(device.get("state"), 2)
+        name_rank = 0 if device.get("name", "").startswith("iPhone ") else 1
+        candidates.append((state_rank, runtime_index, name_rank, len(candidates), runtime, device))
+
+if not candidates:
+    raise SystemExit("no available iPhone simulator found")
+choices = sorted(candidates, key=lambda item: (item[0], item[1], item[2], item[3]))
+for _state_rank, _runtime_index, _name_rank, _order, runtime, device in choices:
+    print("\t".join([
+        device.get("udid", ""),
+        device.get("name", ""),
+        device.get("state", ""),
+        runtime,
+    ]))
+PY
+
+  while IFS=$'\t' read -r udid name state runtime; do
+    if [[ -z "$udid" ]]; then
+      continue
+    fi
+    if [[ "$state" == "Booted" ]]; then
+      echo "$udid"
+      rm -f "$devices_json" "$candidates_file"
+      return 0
+    fi
+
+    local boot_output boot_status
+    boot_status=0
+    boot_output="$(xcrun simctl boot "$udid" 2>&1)" || boot_status="$?"
+    if [[ "$boot_status" == "0" ]] || grep -F "current state: Booted" <<<"$boot_output" >/dev/null; then
+      echo "$udid"
+      rm -f "$devices_json" "$candidates_file"
+      return 0
+    fi
+    if [[ -n "$DEVICE_NAME" ]]; then
+      echo "FAIL: requested iOS simulator '$DEVICE_NAME' is unavailable or unbootable: $boot_output" >&2
+      rm -f "$devices_json" "$candidates_file"
+      exit 1
+    fi
+    echo "Skipping unbootable iOS simulator $name ($udid, $runtime): $boot_output" >&2
+  done <"$candidates_file"
+  rm -f "$devices_json" "$candidates_file"
+  echo "FAIL: no bootable iPhone simulator found" >&2
+  exit 1
+}
+
+resolve_app_path() {
+  find "$DERIVED_DATA/Build/Products" \
+    -path "*/$CONFIGURATION-iphonesimulator/Iris Drive.app" \
+    -type d \
+    -print \
+    -quit 2>/dev/null
+}
+
+assert_static_app_core_linkage() {
+  local app_path="$1"
+  local offenders
+
+  offenders="$(
+    find "$app_path" -type f -perm -111 -print 2>/dev/null |
+      while IFS= read -r binary; do
+        if otool -L "$binary" 2>/dev/null | grep -F "libiris_drive_app_core.dylib" >/dev/null; then
+          printf '%s\n' "$binary"
+        fi
+      done
+  )"
+  if [[ -n "$offenders" ]]; then
+    echo "FAIL: iOS app links iris-drive app-core dynamically; use the static archive instead." >&2
+    echo "$offenders" >&2
+    exit 1
+  fi
+}
+
+app_group_container() {
+  xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" "$APP_GROUP_ID" 2>/dev/null
+}
+
+app_data_container() {
+  xcrun simctl get_app_container "$DEVICE_UDID" "$BUNDLE_ID" data 2>/dev/null
+}
+
+safe_remove_sim_container() {
+  local container="$1"
+
+  if [[ -z "$container" ]]; then
+    return 0
+  fi
+  if [[ "$container" != *"/CoreSimulator/Devices/$DEVICE_UDID/"* ]]; then
+    echo "FAIL: refusing to remove unexpected simulator container path: $container" >&2
+    exit 1
+  fi
+  rm -rf "$container"
+}
+
+simulator_state() {
+  local udid="$1"
+  local devices_json
+  devices_json="$(mktemp -t iris-drive-ios-simulator-state.XXXXXX.json)"
+  xcrun simctl list devices available --json >"$devices_json"
+  python3 - "$udid" "$devices_json" <<'PY'
+import json
+import sys
+
+udid = sys.argv[1]
+with open(sys.argv[2], "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+for devices in data.get("devices", {}).values():
+    for device in devices:
+        if device.get("udid") == udid:
+            print(device.get("state", ""))
+            raise SystemExit(0)
+raise SystemExit(1)
+PY
+  local status=$?
+  rm -f "$devices_json"
+  return "$status"
+}
+
+wait_for_simulator_boot() {
+  local udid="$1"
+  local timeout_seconds="$2"
+  local attempts
+
+  if ! [[ "$timeout_seconds" =~ ^[0-9]+$ ]] || [[ "$timeout_seconds" -le 0 ]]; then
+    echo "FAIL: IRIS_DRIVE_IOS_SIMULATOR_BOOT_TIMEOUT_SECONDS must be a positive integer." >&2
+    exit 1
+  fi
+
+  xcrun simctl boot "$udid" >/dev/null 2>&1 || true
+  xcrun simctl bootstatus "$udid" -b >/dev/null &
+  local bootstatus_pid="$!"
+  attempts="$((timeout_seconds * 5))"
+  for _ in $(seq 1 "$attempts"); do
+    if ! kill -0 "$bootstatus_pid" >/dev/null 2>&1; then
+      wait "$bootstatus_pid"
+      return 0
+    fi
+    sleep 0.2
+  done
+
+  kill "$bootstatus_pid" >/dev/null 2>&1 || true
+  wait "$bootstatus_pid" >/dev/null 2>&1 || true
+
+  local state
+  state="$(simulator_state "$udid" || true)"
+  echo "FAIL: simulator $udid did not finish bootstatus within ${timeout_seconds}s (state=${state:-unknown})." >&2
+  exit 1
+}
+
+wait_for_debug_state() {
+  local state_file="$1"
+  local jq_expr="$2"
+  local seconds="$3"
+  for _ in $(seq 1 "$((seconds * 5))"); do
+    if [[ -f "$state_file" ]] && python3 -c "$jq_expr" <"$state_file" >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
+start_local_relay() {
+  if [[ -n "$LOCAL_RELAY_URL" ]]; then
+    return 0
+  fi
+  python3 "$ROOT/scripts/local-nostr-relay.py" --ready-file "$LOCAL_RELAY_READY" \
+    >"$LOCAL_RELAY_LOG" 2>&1 &
+  LOCAL_RELAY_PID="$!"
+  for _ in $(seq 1 100); do
+    if [[ -s "$LOCAL_RELAY_READY" ]]; then
+      LOCAL_RELAY_URL="$(cat "$LOCAL_RELAY_READY")"
+      return 0
+    fi
+    if ! kill -0 "$LOCAL_RELAY_PID" >/dev/null 2>&1; then
+      echo "FAIL: local Nostr relay exited before becoming ready" >&2
+      cat "$LOCAL_RELAY_LOG" >&2 || true
+      exit 1
+    fi
+    sleep 0.1
+  done
+  echo "FAIL: local Nostr relay did not become ready" >&2
+  cat "$LOCAL_RELAY_LOG" >&2 || true
+  exit 1
+}
+
+configure_owner_local_relay() {
+  start_local_relay
+  "$IDRIVE" --config-dir "$OWNER_CONFIG" relays add "$LOCAL_RELAY_URL" >/dev/null
+}
+
+if [[ ! -x "$IDRIVE" ]]; then
+  cargo build -p idrive
+fi
+
+cargo build -p iris-drive-app-core --target "$RUST_IOS_TARGET"
+if [[ ! -f "$RUST_STATIC_LIB" ]]; then
+  echo "FAIL: static app-core library not found at $RUST_STATIC_LIB" >&2
+  exit 1
+fi
+
+if command -v xcodegen >/dev/null 2>&1; then
+  (cd "$ROOT/ios" && xcodegen generate)
+elif [[ ! -d "$PROJECT" ]]; then
+  echo "FAIL: $PROJECT is missing and xcodegen is not installed" >&2
+  exit 1
+fi
+
+DEVICE_UDID="$(select_simulator)"
+DESTINATION="platform=iOS Simulator,id=$DEVICE_UDID"
+
+xcodebuild \
+  -project "$PROJECT" \
+  -scheme "$SCHEME" \
+  -configuration "$CONFIGURATION" \
+  -derivedDataPath "$DERIVED_DATA" \
+  -destination "$DESTINATION" \
+  CODE_SIGNING_ALLOWED=YES \
+  CODE_SIGNING_REQUIRED=YES \
+  CODE_SIGN_IDENTITY="${IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY:--}" \
+  PROVISIONING_PROFILE_SPECIFIER= \
+  LIBRARY_SEARCH_PATHS="$RUST_LIB_DIR" \
+  OTHER_LDFLAGS="$RUST_STATIC_LIB" \
+  build >"$BUILD_LOG"
+
+APP_PATH="$(resolve_app_path)"
+if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
+  echo "FAIL: built iOS app not found. Build log: $BUILD_LOG" >&2
+  exit 1
+fi
+assert_static_app_core_linkage "$APP_PATH"
+iris_drive_ios_assert_simulator_entitlements "$DERIVED_DATA" "$CONFIGURATION"
+
+if [[ "$BUILD_ONLY" == "1" ]]; then
+  echo "IOS_BUILD_OK"
+  echo "$APP_PATH"
+  exit 0
+fi
+
+wait_for_simulator_boot "$DEVICE_UDID" "$SIMULATOR_BOOT_TIMEOUT_SECONDS"
+
+xcrun simctl uninstall "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
+configure_owner_local_relay
+owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["app_key_link_invite"]["url"])' <<<"$owner_json")"
+
+xcrun simctl install "$DEVICE_UDID" "$APP_PATH"
+
+DATA_CONTAINER="$(app_data_container || true)"
+GROUP_CONTAINER="$(app_group_container || true)"
+if [[ -z "$DATA_CONTAINER" || ! -d "$DATA_CONTAINER" ]]; then
+  echo "FAIL: iOS app container unavailable after install" >&2
+  exit 1
+fi
+if [[ -z "$GROUP_CONTAINER" || ! -d "$GROUP_CONTAINER" ]]; then
+  echo "FAIL: iOS app group container unavailable after install" >&2
+  exit 1
+fi
+safe_remove_sim_container "$DATA_CONTAINER/Library/Application Support/IrisDrive"
+SIM_APP_BASE_DIR="$GROUP_CONTAINER/IrisDrive"
+safe_remove_sim_container "$SIM_APP_BASE_DIR"
+mkdir -p "$SIM_APP_BASE_DIR"
+
+PROVIDER_SMOKE_DIR="$GROUP_CONTAINER/IrisDriveProviderSmoke"
+safe_remove_sim_container "$PROVIDER_SMOKE_DIR"
+mkdir -p "$PROVIDER_SMOKE_DIR"
+provider_smoke_name="iOS provider smoke.txt"
+provider_smoke_content="iOS provider smoke contents"
+SIMCTL_CHILD_IRIS_DRIVE_DEBUG_ACTION=reset-and-seed-provider-file \
+  SIMCTL_CHILD_IRIS_DRIVE_DEBUG_PROVIDER_FILE_NAME="$provider_smoke_name" \
+  SIMCTL_CHILD_IRIS_DRIVE_DEBUG_PROVIDER_FILE_CONTENT="$provider_smoke_content" \
+  SIMCTL_CHILD_IRIS_DRIVE_UI_TEST_BASE_DIR="$PROVIDER_SMOKE_DIR" \
+  xcrun simctl launch --terminate-running-process "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null
+PROVIDER_STATE_FILE="$PROVIDER_SMOKE_DIR/debug-state.json"
+if ! wait_for_debug_state \
+  "$PROVIDER_STATE_FILE" \
+  'import json,sys; s=json.load(sys.stdin); ui=s.get("ui",{}); raise SystemExit(0 if ui.get("file_count") == 1 and ui.get("visible_file_bytes") == len("iOS provider smoke contents") else 1)' \
+  20; then
+  echo "FAIL: iOS provider debug seed did not update app state." >&2
+  [[ -f "$PROVIDER_STATE_FILE" ]] && cat "$PROVIDER_STATE_FILE" >&2
+  exit 1
+fi
+provider_json="$("$IDRIVE" --config-dir "$PROVIDER_SMOKE_DIR" provider list)"
+if ! PROVIDER_JSON="$provider_json" python3 - "$provider_smoke_name" "$provider_smoke_content" <<'PY'; then
+import json
+import os
+import sys
+
+expected_name = sys.argv[1]
+expected_size = len(sys.argv[2].encode("utf-8"))
+provider = json.loads(os.environ["PROVIDER_JSON"])
+entries = provider.get("entries") or []
+ok = (
+    provider.get("file_count") == 1
+    and any(
+        entry.get("path") == expected_name
+        and entry.get("kind") == "file"
+        and entry.get("size") == expected_size
+        for entry in entries
+    )
+)
+raise SystemExit(0 if ok else 1)
+PY
+  echo "FAIL: iOS provider list did not include seeded file." >&2
+  echo "$provider_json" >&2
+  exit 1
+fi
+
+safe_remove_sim_container "$SIM_APP_BASE_DIR"
+mkdir -p "$SIM_APP_BASE_DIR"
+
+SIMCTL_CHILD_IRIS_DRIVE_DEBUG_ACTION=link-device \
+  SIMCTL_CHILD_IRIS_DRIVE_DEBUG_OWNER="$owner_invite" \
+  SIMCTL_CHILD_IRIS_DRIVE_UI_TEST_BASE_DIR="$SIM_APP_BASE_DIR" \
+  xcrun simctl launch --terminate-running-process "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null
+
+STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
+if ! wait_for_debug_state \
+  "$STATE_FILE" \
+  'import json,sys; s=json.load(sys.stdin); a=s.get("ui",{}).get("profile") or {}; raise SystemExit(0 if a.get("authorization_state") == "awaiting_approval" and a.get("app_key_link_request") else 1)' \
+  15; then
+  echo "FAIL: iOS GUI did not create a real awaiting linked-device profile." >&2
+  [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2
+  exit 1
+fi
+
+request_url="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["profile"]["app_key_link_request"])' <"$STATE_FILE")"
+approved_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" approve "$request_url" --label "iOS GUI")"
+roster_size="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["roster_size"])' <<<"$approved_json")"
+if [[ "$roster_size" != "2" ]]; then
+  echo "FAIL: CLI owner did not approve the iOS GUI request." >&2
+  echo "$approved_json" >&2
+  exit 1
+fi
+
+echo "IOS_SIMULATOR_SMOKE_OK"
+echo "device=$DEVICE_UDID"
+echo "app=$APP_PATH"
+echo "owner_config=$OWNER_CONFIG"

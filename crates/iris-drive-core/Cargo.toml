@@ -1,0 +1,54 @@
+[package]
+name = "iris-drive-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Shared Iris Drive configuration, sync state, htree client, and share model"
+repository.workspace = true
+readme = "README.md"
+
+[dependencies]
+anyhow.workspace = true
+aes-gcm.workspace = true
+async-trait.workspace = true
+axum = { workspace = true, features = ["ws"] }
+base64.workspace = true
+bip39.workspace = true
+dirs.workspace = true
+futures.workspace = true
+hashtree-core.workspace = true
+hashtree-blossom.workspace = true
+hashtree-config.workspace = true
+hashtree-embedded.workspace = true
+hashtree-fips-transport.workspace = true
+hashtree-fs.workspace = true
+hashtree-nostr.workspace = true
+hashtree-resolver.workspace = true
+hashtree-updater = { workspace = true, features = ["secure-nostr-blossom"] }
+hashtree-provider.workspace = true
+http.workspace = true
+mime_guess.workspace = true
+nostr-identity.workspace = true
+nostr-sdk.workspace = true
+nostr-pubsub.workspace = true
+nostr-pubsub-relay.workspace = true
+reqwest.workspace = true
+rustls.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+toml.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+hex.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
+tokio = { workspace = true, features = ["full", "macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

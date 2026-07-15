@@ -1,0 +1,19 @@
+[package]
+name = "hashtree-provider"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+description = "Backend-neutral filesystem provider abstraction over hashtree trees"
+
+[dependencies]
+hashtree-core.workspace = true
+async-trait.workspace = true
+thiserror.workspace = true
+futures.workspace = true
+serde_json.workspace = true
+tokio = { version = "1", features = ["sync"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full", "rt-multi-thread", "macros"] }

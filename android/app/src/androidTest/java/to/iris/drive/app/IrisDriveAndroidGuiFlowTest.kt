@@ -1,0 +1,1023 @@
+package to.iris.drive.app
+
+import android.content.Context
+import androidx.activity.compose.setContent
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.assertCountEquals
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTextInput
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.espresso.Espresso.closeSoftKeyboard
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import java.io.File
+import java.util.UUID
+import kotlinx.coroutines.flow.MutableStateFlow
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Rule
+import org.junit.Test
+import org.junit.runner.RunWith
+import org.json.JSONObject
+import to.iris.drive.app.core.AppState
+import to.iris.drive.app.core.BackupState
+import to.iris.drive.app.core.NativeActions
+import to.iris.drive.app.core.NativeCore
+import to.iris.drive.app.core.RelayStatus
+import to.iris.drive.app.core.RecoverySecretExport
+import to.iris.drive.app.core.ShareState
+import to.iris.drive.app.core.SyncState
+import to.iris.drive.app.provider.IrisDriveDocumentStore
+import to.iris.drive.app.update.AndroidSelfUpdateState
+import to.iris.drive.app.update.SelfUpdateActions
+
+@RunWith(AndroidJUnit4::class)
+class IrisDriveAndroidGuiFlowTest {
+    @get:Rule
+    val compose = createComposeRule()
+
+    private lateinit var context: Context
+    private val nativeHandles = mutableListOf<Long>()
+
+    @Before
+    fun setUp() {
+        context = ApplicationProvider.getApplicationContext()
+        NativeCore.initializeAndroidContext(context)
+    }
+
+    @After
+    fun tearDown() {
+        nativeHandles.forEach(NativeCore::appFree)
+        nativeHandles.clear()
+    }
+
+    @Test
+    fun createProfileFlowDoesNotRequireUsernameOrProfilePhoto() {
+        val handle = newNativeHandle()
+        val createdLabels = mutableListOf<String>()
+
+        render(
+            state = AppState(),
+            onCreateProfile = { label ->
+                createdLabels += label
+                dispatch(handle, NativeActions.createProfile(label))
+            },
+            onAddRoot = { name, path -> dispatch(handle, NativeActions.addRoot(name, path)) },
+        )
+
+        compose.onAllNodesWithText("Setup").assertCountEquals(0)
+        compose.onNodeWithTag("welcomeCreateProfile").assertIsDisplayed().activate()
+        compose.onNodeWithTag("createUsername").assertIsDisplayed()
+        compose.onNodeWithText("Username (optional)").assertIsDisplayed()
+        compose.onNodeWithTag("createProfileSubmit").assertIsDisplayed().assertIsEnabled().activate()
+        compose.onAllNodesWithText("Profile photo").assertCountEquals(0)
+
+        assertEquals(listOf(""), createdLabels)
+        val state = appState(handle)
+        assertEquals("authorized", state.profile?.authorizationState)
+        assertTrue(state.profile?.canAdminProfile == true)
+        assertEquals(1, state.roots.size)
+    }
+
+    @Test
+    fun createProfileFlowWithUsernameCanSkipProfilePhoto() {
+        val handle = newNativeHandle()
+        val createdLabels = mutableListOf<String>()
+
+        render(
+            state = AppState(),
+            onCreateProfile = { label ->
+                createdLabels += label
+                dispatch(handle, NativeActions.createProfile(label))
+            },
+            onAddRoot = { name, path -> dispatch(handle, NativeActions.addRoot(name, path)) },
+        )
+
+        compose.onNodeWithTag("welcomeCreateProfile").assertIsDisplayed().activate()
+        compose.onNodeWithTag("createUsername").assertIsDisplayed().performTextInput("Ada")
+        closeSoftKeyboard()
+        compose.onNodeWithTag("createProfileSubmit").assertIsDisplayed().assertIsEnabled().activate()
+        compose.onNodeWithText("Profile photo").assertIsDisplayed()
+        compose.onNodeWithTag("createPhotoSubmit").assertIsDisplayed().assertIsEnabled().activate()
+
+        assertEquals(1, createdLabels.size)
+        val state = appState(handle)
+        assertEquals("authorized", state.profile?.authorizationState)
+        assertTrue(state.profile?.canAdminProfile == true)
+        assertEquals(1, state.roots.size)
+    }
+
+    @Test
+    fun startupPendingStateDoesNotFlashWelcomeActions() {
+        compose.mainClock.autoAdvance = false
+        try {
+            render(state = AppState(isLoaded = false))
+
+            compose.onNodeWithTag("startupLoadingView").assertIsDisplayed()
+            compose.onAllNodesWithTag("welcomeCreateProfile").assertCountEquals(0)
+            compose.onAllNodesWithTag("welcomeSignIn").assertCountEquals(0)
+            compose.onAllNodesWithText("Loading").assertCountEquals(0)
+
+            compose.mainClock.advanceTimeBy(1_999)
+            compose.onAllNodesWithText("Loading").assertCountEquals(0)
+            compose.mainClock.advanceTimeBy(1)
+            compose.onNodeWithText("Loading").assertIsDisplayed()
+        } finally {
+            compose.mainClock.autoAdvance = true
+        }
+    }
+
+    @Test
+    fun awaitingApprovalUsesBackNavigationOutsideRecoveryActions() {
+        val owner = createOwnerProfile("Android back owner")
+        val linked = createLinkedProfile(owner.invite)
+        var backActions = 0
+
+        render(
+            state = appState(linked.handle),
+            onLogout = { backActions += 1 },
+        )
+
+        compose.onNodeWithTag("awaitingApprovalBack").assertIsDisplayed().activate()
+        compose.onAllNodesWithText("Start over").assertCountEquals(0)
+        assertEquals(1, backActions)
+    }
+
+    @Test
+    fun linkThisDeviceFlowClicksThroughSignInUi() {
+        val owner = createOwnerProfile("Android UI owner")
+        val linkedHandle = newNativeHandle()
+
+        render(
+            state = AppState(),
+            onStartJoinRequest = { label ->
+                dispatch(linkedHandle, NativeActions.startJoinRequest(label))
+            },
+        )
+
+        compose.onNodeWithContentDescription("Iris Drive").assertIsDisplayed()
+        compose.onNodeWithText("Iris Drive").assertIsDisplayed()
+        compose.onNodeWithText("Create profile").assertIsDisplayed()
+        compose.onNodeWithText("Sign in").assertIsDisplayed()
+        compose.onNodeWithTag("welcomeSignIn").assertIsDisplayed().activate()
+        compose.onNodeWithText("Restore from recovery phrase").assertIsDisplayed()
+        compose.onNodeWithText("Restore from secret key").assertIsDisplayed()
+        compose.waitUntil(timeoutMillis = 5_000) {
+            appState(linkedHandle).profile?.appKeyLinkRequest?.isNotBlank() == true
+        }
+
+        val linked = appState(linkedHandle).profile
+        assertEquals("awaiting_approval", linked?.authorizationState)
+        assertTrue(linked?.appKeyLinkRequest?.isNotBlank() == true)
+
+        dispatch(owner.handle, NativeActions.approveDevice(linked!!.appKeyLinkRequest, ""))
+        assertEquals(2, appState(owner.handle).devices.size)
+    }
+
+    @Test
+    fun signInStartsJoinRequest() {
+        var joinRequests = 0
+        render(
+            state = AppState(),
+            onStartJoinRequest = { joinRequests += 1 },
+        )
+
+        compose.onNodeWithTag("welcomeSignIn").assertIsDisplayed().activate()
+        compose.waitUntil(timeoutMillis = 5_000) { joinRequests == 1 }
+    }
+
+    @Test
+    fun addDeviceSectionDispatchesManualDeviceApproval() {
+        val approvedRequests = mutableListOf<Pair<String, String>>()
+        val approvalBootstrap = "https://drive.iris.to/approve-device/eyJkZXZpY2VBcHBLZXlOcHViIjoibnB1YjFjY3o4bDl6cGE0N2s2dno5Z3BoZnRzcnVtcHc4MHJqdDNuaG5lZmF0NHN5bWpocnNubWpzMzhtbnlkIiwicmVxdWVzdE5wdWIiOiJucHViMWx5Y2c1cXZqdHJwM3FqZjVmN3psMzgyajl4Nm5yano5c2RoZW52eXhxOGMzODA4cXhtdXM2Z3EyNjYiLCJyZXF1ZXN0U2VjcmV0IjoiQUFFQ0F3UUZCZ2NJQ1FvTERBME9EeEFSRWhNVUZSWVhHQmthR3h3ZEhoOCIsImxhYmVsIjoiRml4dHVyZSBkZXZpY2UifQ"
+
+        render(
+            state = AppState(
+                profile = profileState(),
+                setupState = "authorized",
+                isSetupComplete = true,
+            ),
+            onApproveDevice = { request, label ->
+                approvedRequests += request to label
+            },
+        )
+
+        compose.onNodeWithTag("tabDevices").activate()
+        compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceToggle"))
+        compose.onNodeWithTag("addDeviceToggle").activate()
+        compose.onNodeWithTag("manualDeviceId").performScrollTo().assertIsDisplayed()
+            .performTextInput(approvalBootstrap)
+        dismissSoftKeyboard()
+        compose.onNodeWithText("Approve").assertIsDisplayed().activate()
+
+        assertEquals(listOf(approvalBootstrap to ""), approvedRequests)
+    }
+
+    @Test
+    fun addDeviceSectionRejectsBareDeviceNpub() {
+        val state = AppState(
+            profile = profileState(),
+            setupState = "authorized",
+            isSetupComplete = true,
+        )
+
+        render(state = state)
+
+        compose.onNodeWithTag("tabDevices").activate()
+        compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceToggle"))
+        compose.onNodeWithTag("addDeviceToggle").activate()
+        compose.onNodeWithTag("manualDeviceId").performScrollTo().assertIsDisplayed()
+            .performTextInput("npub1ccz8l9zpa47k6vz9gphftsrumpw80rjt3nhnefat4symjhrsnmjs38mnyd")
+
+        compose.onAllNodesWithText("Approve").assertCountEquals(0)
+        dismissSoftKeyboard()
+    }
+
+    @Test
+    fun shareInviteDialogDispatchesRecipientEvidence() {
+        val evidenceInvites = mutableListOf<List<String>>()
+        var directInviteCount = 0
+        val share = ShareState(
+            shareId = "123e4567-e89b-42d3-a456-426614174000",
+            displayName = "Alpha",
+            sourcePath = "My Drive/Alpha",
+            sharedWithMePath = "Shared with me/Alpha",
+            role = "admin",
+            roleLabel = "Admin",
+            keyStatus = "available",
+            keyStatusLabel = "Available",
+            writeAuthorization = "authorized",
+            writeAuthorizationLabel = "Authorized",
+            canWrite = true,
+            canAdmin = true,
+            currentKeyEpoch = 1,
+            hasCurrentKeyWrap = true,
+            keyUnavailable = false,
+            repairNeeded = false,
+            missingKeyWraps = emptyList(),
+            participantCount = 1,
+            appKeyCount = 1,
+            members = emptyList(),
+            shortcutPaths = emptyList(),
+        )
+
+        render(
+            state = AppState(
+                profile = profileState(),
+                shares = listOf(share),
+                setupState = "authorized",
+                isSetupComplete = true,
+            ),
+            onInviteShareMember = { _, _, _, _, _, _, _ -> directInviteCount += 1 },
+            onInviteShareMemberFromEvidence = { shareId, evidenceJson, role, displayName ->
+                evidenceInvites += listOf(shareId, evidenceJson, role, displayName)
+            },
+        )
+
+        compose.onNodeWithTag("tabShares").activate()
+        compose.onNodeWithText("My Drive/Alpha", substring = true).assertIsDisplayed()
+        compose.onNodeWithText("Invite").performScrollTo().assertIsDisplayed().activate()
+        compose.onNodeWithText("Recipient identity evidence").assertIsDisplayed()
+        compose.onNodeWithText("Member profile UUID").assertIsDisplayed()
+        compose.onNodeWithText("Recipient device ID").assertIsDisplayed()
+        compose.onNodeWithText("Device label").assertIsDisplayed()
+        compose.onNodeWithTag("shareRecipientEvidenceInput")
+            .performTextInput("""{"profile_id":"profile-1"}""")
+        compose.onNodeWithTag("shareInviteConfirm").assertIsEnabled().activate()
+
+        assertEquals(0, directInviteCount)
+        assertEquals(
+            listOf(
+                listOf(
+                    share.shareId,
+                    """{"profile_id":"profile-1"}""",
+                    "reader",
+                    "",
+                ),
+            ),
+            evidenceInvites,
+        )
+    }
+
+    @Test
+    fun sharesPanelExportsRecipientEvidenceFromAppCore() {
+        val exportedDisplayNames = mutableListOf<String>()
+
+        render(
+            state = AppState(
+                profile = profileState(),
+                setupState = "authorized",
+                isSetupComplete = true,
+            ),
+            onExportShareRecipientEvidence = { displayName ->
+                exportedDisplayNames += displayName
+            },
+        )
+
+        compose.onNodeWithTag("tabShares").activate()
+        compose.onNodeWithTag("copyShareIdentityButton")
+            .performScrollTo()
+            .assertIsEnabled()
+            .activate()
+
+        assertEquals(listOf("Pixel"), exportedDisplayNames)
+    }
+
+    @Test
+    fun shareInviteDialogDispatchesPendingNpubHintWithoutAuthority() {
+        val pendingInvites = mutableListOf<List<String>>()
+        var directInviteCount = 0
+        var evidenceInviteCount = 0
+        val share = ShareState(
+            shareId = "123e4567-e89b-42d3-a456-426614174000",
+            displayName = "Alpha",
+            sourcePath = "My Drive/Alpha",
+            sharedWithMePath = "Shared with me/Alpha",
+            role = "admin",
+            roleLabel = "Admin",
+            keyStatus = "available",
+            keyStatusLabel = "Available",
+            writeAuthorization = "authorized",
+            writeAuthorizationLabel = "Authorized",
+            canWrite = true,
+            canAdmin = true,
+            currentKeyEpoch = 1,
+            hasCurrentKeyWrap = true,
+            keyUnavailable = false,
+            repairNeeded = false,
+            missingKeyWraps = emptyList(),
+            participantCount = 1,
+            appKeyCount = 1,
+            members = emptyList(),
+            shortcutPaths = emptyList(),
+        )
+
+        render(
+            state = AppState(
+                profile = profileState(),
+                shares = listOf(share),
+                setupState = "authorized",
+                isSetupComplete = true,
+            ),
+            onInviteShareMember = { _, _, _, _, _, _, _ -> directInviteCount += 1 },
+            onInviteShareMemberFromEvidence = { _, _, _, _ -> evidenceInviteCount += 1 },
+            onRecordPendingShareInvite = { shareId, npubHint, role, displayName ->
+                pendingInvites += listOf(shareId, npubHint, role, displayName)
+            },
+        )
+
+        compose.onNodeWithTag("tabShares").activate()
+        compose.onNodeWithText("Invite").performScrollTo().assertIsDisplayed().activate()
+        compose.onNodeWithTag("shareRecipientNpubInput")
+            .performTextInput("npub1alice")
+        compose.onNodeWithTag("shareRecipientNameInput")
+            .performTextInput("Alice")
+        compose.onNodeWithTag("shareInviteConfirm").assertIsEnabled().activate()
+
+        assertEquals(0, directInviteCount)
+        assertEquals(0, evidenceInviteCount)
+        assertEquals(listOf(listOf(share.shareId, "npub1alice", "reader", "Alice")), pendingInvites)
+    }
+
+    @Test
+    fun backupPanelShowsFilesystemAndServerDestinations() {
+        render(
+            state = AppState(
+                profile = profileState(),
+                backups = listOf(
+                    BackupState(
+                        id = "blossom:https://backup.example",
+                        kind = "blossom",
+                        target = "https://backup.example",
+                        label = "File server",
+                        configuredLabel = "",
+                        state = "ready",
+                        detail = "https://backup.example",
+                        enabled = true,
+                    ),
+                    BackupState(
+                        id = "filesystem:/tmp/iris-drive-backup",
+                        kind = "filesystem",
+                        target = "/tmp/iris-drive-backup",
+                        label = "Cloud folder",
+                        configuredLabel = "Cloud folder",
+                        state = "ready",
+                        detail = "/tmp/iris-drive-backup",
+                        enabled = true,
+                    ),
+                ),
+                setupState = "authorized",
+                isSetupComplete = true,
+            ),
+        )
+
+        compose.onNodeWithTag("tabBackups").activate()
+        compose.onNodeWithText("Add Backup").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Destination URL, User ID, or folder path").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("File server").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Cloud folder").performScrollTo().assertIsDisplayed()
+        compose.onAllNodesWithText("Remove backup").assertCountEquals(2)
+        compose.onAllNodesWithText("Add Custom Target").assertCountEquals(0)
+        compose.onAllNodesWithText("File Servers").assertCountEquals(0)
+        compose.onAllNodesWithText("Add File Server").assertCountEquals(0)
+        compose.onAllNodesWithText("Remove file server").assertCountEquals(0)
+        compose.onAllNodesWithText("Remove target").assertCountEquals(0)
+        compose.onAllNodesWithText("Blossom", substring = true).assertCountEquals(0)
+    }
+
+    @Test
+    fun shareDialogRequestOpensSharesWithPrefilledCreateForm() {
+        val createdShares = mutableListOf<Pair<String, String>>()
+
+        render(
+            state = AppState(
+                profile = profileState(),
+                setupState = "authorized",
+                isSetupComplete = true,
+            ),
+            shareDialogRequest = ShareDialogRequest(
+                id = 1,
+                sourcePath = "My Drive/Projects",
+                displayName = "Projects",
+            ),
+            onCreateShare = { sourcePath, displayName ->
+                createdShares += sourcePath to displayName
+            },
+        )
+
+        compose.onNodeWithTag("sharesContent").assertIsDisplayed()
+        compose.onNodeWithTag("shareSourceInput").assertTextContains("My Drive/Projects")
+        compose.onAllNodesWithTag("shareNameInput").assertCountEquals(0)
+        compose.onNodeWithText("Create shared folder").assertIsEnabled().activate()
+
+        assertEquals(listOf("My Drive/Projects" to ""), createdShares)
+    }
+
+    @Test
+    fun shareDialogRecipientHintsPrefillInviteDialogOnly() {
+        var inviteCount = 0
+        val share = ShareState(
+            shareId = "123e4567-e89b-42d3-a456-426614174000",
+            displayName = "Projects",
+            sourcePath = "My Drive/Projects",
+            sharedWithMePath = "Shared with me/Projects",
+            role = "admin",
+            roleLabel = "Admin",
+            keyStatus = "available",
+            keyStatusLabel = "Available",
+            writeAuthorization = "authorized",
+            writeAuthorizationLabel = "Authorized",
+            canWrite = true,
+            canAdmin = true,
+            currentKeyEpoch = 1,
+            hasCurrentKeyWrap = true,
+            keyUnavailable = false,
+            repairNeeded = false,
+            missingKeyWraps = emptyList(),
+            participantCount = 1,
+            appKeyCount = 1,
+            members = emptyList(),
+            shortcutPaths = emptyList(),
+        )
+
+        render(
+            state = AppState(
+                profile = profileState(),
+                shares = listOf(share),
+                setupState = "authorized",
+                isSetupComplete = true,
+            ),
+            shareDialogRequest = ShareDialogRequest(
+                id = 1,
+                sourcePath = "My Drive/Projects",
+                displayName = "Projects",
+                recipientNpubHint = "npub1alice",
+                recipientDisplayName = "Alice",
+                recipientProfileId = "123e4567-e89b-42d3-a456-426614174111",
+            ),
+            onInviteShareMember = { _, _, _, _, _, _, _ -> inviteCount += 1 },
+        )
+
+        compose.onNodeWithTag("sharesContent").assertIsDisplayed()
+        compose.onNodeWithText("Invite").performScrollTo().assertIsDisplayed().activate()
+        compose.onNodeWithTag("shareRecipientProfileInput")
+            .assertTextContains("123e4567-e89b-42d3-a456-426614174111")
+        compose.onNodeWithTag("shareRecipientNpubInput")
+            .assertTextContains("npub1alice")
+        compose.onNodeWithTag("shareRecipientNameInput")
+            .assertTextContains("Alice")
+        compose.onNodeWithTag("shareInviteConfirm").assertIsNotEnabled()
+
+        assertEquals(0, inviteCount)
+    }
+
+    @Test
+    fun documentsProviderListsNativeProviderRoot() {
+        val dataDir = tempDataDir("iris-drive-provider")
+        val handle = NativeCore.appNew(dataDir.absolutePath, "ui-test").also(nativeHandles::add)
+        dispatch(handle, NativeActions.createProfile("Android UI provider"))
+        val source = File(context.cacheDir, "native-provider-source-${UUID.randomUUID()}.txt")
+        source.writeText("from native provider")
+
+        val write = JSONObject(
+            NativeCore.providerWriteJson(
+                dataDir.absolutePath,
+                "provider-note.txt",
+                source.absolutePath,
+            ),
+        )
+        assertTrue(write.optString("error"), write.optString("error").isBlank())
+
+        val names = IrisDriveDocumentStore(dataDir)
+            .childDocuments(IrisDriveDocumentStore.ROOT_DOCUMENT_ID)
+            .map { it.displayName }
+        assertTrue(names.toString(), names.contains("provider-note.txt"))
+    }
+
+    @Test
+    fun authenticatedAppShowsBottomTabsAndSeparateDevicesView() {
+        val owner = createOwnerProfile("Android UI owner")
+
+        render(state = appState(owner.handle))
+
+        compose.onNodeWithTag("tabMyDrive").assertIsDisplayed()
+        compose.onNodeWithTag("tabDevices").assertIsDisplayed()
+        compose.onNodeWithTag("tabShares").assertIsDisplayed()
+        compose.onNodeWithTag("tabBackups").assertIsDisplayed()
+        compose.onNodeWithTag("tabSettings").assertIsDisplayed()
+        compose.onNodeWithTag("driveContent").assertIsDisplayed()
+
+        compose.onNodeWithTag("tabDevices").activate()
+
+        compose.onNodeWithTag("devicesContent").assertIsDisplayed()
+        compose.onAllNodesWithTag("driveContent").assertCountEquals(0)
+    }
+
+    @Test
+    fun settingsViewUsesNativeRelayStatusRows() {
+        val state = AppState(
+            profile = profileState(),
+            setupState = "authorized",
+            isSetupComplete = true,
+            relayStatuses = listOf(
+                RelayStatus(
+                    url = "wss://relay.example",
+                    status = "connected",
+                    statusLabel = "connected",
+                    health = "online",
+                ),
+            ),
+        )
+
+        render(state = state)
+
+        compose.onNodeWithTag("tabSettings").activate()
+        compose.onNodeWithTag("settingsContent").performScrollToNode(hasText("wss://relay.example"))
+        compose.onNodeWithText("wss://relay.example").assertIsDisplayed()
+        compose.onNodeWithText("connected").assertIsDisplayed()
+    }
+
+    @Test
+    fun devicesViewUsesOnlineStatusDots() {
+        val state = AppState(
+            profile = profileState(),
+            setupState = "authorized",
+            isSetupComplete = true,
+            devices = listOf(
+                deviceState(
+                    pubkey = "device-a",
+                    label = "Pixel",
+                    isCurrentDevice = true,
+                    canRevoke = false,
+                ),
+                deviceState(
+                    pubkey = "device-b",
+                    label = "Tablet",
+                    isCurrentDevice = false,
+                    canRevoke = true,
+                ),
+                to.iris.drive.app.core.DeviceState(
+                    pubkey = "recovery-key",
+                    label = "Recovery key",
+                    displayLabel = "Recovery key",
+                    role = "recovery",
+                    roleLabel = "Recovery",
+                    state = "linked",
+                    stateLabel = "Linked",
+                    connectionState = "recovery",
+                    connectionLabel = "Recovery key",
+                    detail = "recovery-key",
+                    isCurrentDevice = false,
+                    isOnline = false,
+                    canRevoke = false,
+                    canAppointAdmin = false,
+                    canDemoteAdmin = false,
+                    actorKind = "recovery_key",
+                ),
+            ),
+        )
+
+        render(state = state)
+
+        compose.onNodeWithTag("tabDevices").activate()
+        compose.onNodeWithContentDescription("Pixel online").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Tablet offline").assertIsDisplayed()
+        compose.onAllNodesWithTag("deviceStatusDotOnline").assertCountEquals(1)
+        compose.onAllNodesWithTag("deviceStatusDotOffline").assertCountEquals(1)
+        compose.onNodeWithText("Admin | Linked | This Device").assertIsDisplayed()
+        compose.onNodeWithText("Member | Linked | Offline").assertIsDisplayed()
+        compose.onNodeWithText("Recovery Keys").assertIsDisplayed()
+        compose.onNodeWithText("Recovery | Linked").assertIsDisplayed()
+    }
+
+    @Test
+    fun acceptedLinkedDeviceThatIsNotOnlineShowsOfflineInGui() {
+        val owner = createOwnerProfile("Mac")
+        val linked = createLinkedProfile(owner.invite)
+        val approved = dispatch(
+            owner.handle,
+            NativeActions.approveDevice(linked.requestLink, "Pixel"),
+        )
+        assertTrue(approved.error, approved.error.isBlank())
+        val linkedDevice = approved.devices.single { it.pubkey == linked.devicePubkey }
+        assertFalse(linkedDevice.isOnline)
+        assertEquals("member", linkedDevice.role)
+        assertEquals("Linked", linkedDevice.state)
+        assertEquals(2, approved.authorizedDeviceCount)
+
+        render(state = approved)
+        compose.onNodeWithText("/2 devices", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag("tabDevices").activate()
+        compose.onNodeWithTag("devicesContent")
+            .performScrollToNode(hasText("Member | Linked | Offline"))
+        compose.onNodeWithText("Member | Linked | Offline").assertIsDisplayed()
+    }
+
+    @Test
+    fun syncPanelShowsStatusWithoutMobilePauseControls() {
+        val owner = createOwnerProfile("Android UI owner")
+        val running = appState(owner.handle)
+
+        val stateFlow = render(state = running)
+
+        compose.onNodeWithTag("driveContent").performScrollToNode(hasText("Sync on"))
+        compose.onNodeWithText("Sync on").assertIsDisplayed()
+        compose.onAllNodesWithText("Pause").assertCountEquals(0)
+        compose.onAllNodesWithText("Resume").assertCountEquals(0)
+
+        stateFlow.value = running.copy(sync = SyncState(running = false, status = "paused"))
+        compose.waitForIdle()
+
+        compose.onNodeWithTag("driveContent").performScrollToNode(hasText("Sync paused"))
+        compose.onNodeWithText("Sync paused").assertIsDisplayed()
+        compose.onAllNodesWithText("Pause").assertCountEquals(0)
+        compose.onAllNodesWithText("Resume").assertCountEquals(0)
+    }
+
+    @Test
+    fun deleteDeviceRequiresConfirmation() {
+        val deletedDevices = mutableListOf<String>()
+        val state = AppState(
+            profile = profileState(),
+            setupState = "authorized",
+            isSetupComplete = true,
+            devices = listOf(
+                deviceState(
+                    pubkey = "device-a",
+                    label = "Pixel",
+                    isCurrentDevice = true,
+                    canRevoke = false,
+                ),
+                deviceState(
+                    pubkey = "device-b",
+                    label = "Tablet",
+                    isCurrentDevice = false,
+                    canRevoke = true,
+                ),
+            ),
+        )
+
+        render(
+            state = state,
+            onDeleteDevice = { deletedDevices += it },
+        )
+
+        compose.onNodeWithTag("tabDevices").activate()
+        compose.onNodeWithTag("devicesContent").performScrollToNode(hasText("Remove"))
+        compose.onNodeWithText("Remove").assertIsDisplayed().activate()
+        assertTrue(deletedDevices.isEmpty())
+        compose.onNodeWithText("Remove Device?").assertIsDisplayed()
+
+        compose.onNodeWithTag("confirmDeleteDevice").assertIsDisplayed().activate()
+
+        assertEquals(listOf("device-b"), deletedDevices)
+    }
+
+    @Test
+    fun inboundDeviceRequestCanBeRejected() {
+        val rejectedRequests = mutableListOf<String>()
+        val requestLink = "iris-drive://request/device-b"
+        val state = AppState(
+            profile = profileState().copy(
+                inboundAppKeyLinkRequests = listOf(
+                    to.iris.drive.app.core.AppKeyLinkRequestState(
+                        devicePubkey = "device-b",
+                        label = "Tablet",
+                        requestedAt = 42,
+                        requestLink = requestLink,
+                    ),
+                ),
+            ),
+            setupState = "authorized",
+            isSetupComplete = true,
+        )
+
+        render(
+            state = state,
+            onRejectDevice = { rejectedRequests += it },
+        )
+
+        compose.onNodeWithTag("tabDevices").activate()
+        compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceToggle"))
+        compose.onNodeWithTag("addDeviceToggle").assertIsDisplayed().activate()
+        compose.onNodeWithText("Device requests").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithText("Reject").performScrollTo().assertIsDisplayed().activate()
+
+        assertEquals(listOf(requestLink), rejectedRequests)
+    }
+
+    @Test
+    fun inboundDeviceRequestApprovalKeepsInlineAddDevicePanelOpen() {
+        val approvedRequests = mutableListOf<Pair<String, String>>()
+        val requestLink = "https://drive.iris.to/approve-device/eyJkZXZpY2VBcHBLZXlOcHViIjoibnB1YjFjY3o4bDl6cGE0N2s2dno5Z3BoZnRzcnVtcHc4MHJqdDNuaG5lZmF0NHN5bWpocnNubWpzMzhtbnlkIiwicmVxdWVzdE5wdWIiOiJucHViMWx5Y2c1cXZqdHJwM3FqZjVmN3psMzgyajl4Nm5yano5c2RoZW52eXhxOGMzODA4cXhtdXM2Z3EyNjYiLCJyZXF1ZXN0U2VjcmV0IjoiQUFFQ0F3UUZCZ2NJQ1FvTERBME9EeEFSRWhNVUZSWVhHQmthR3h3ZEhoOCIsImxhYmVsIjoiVGFibGV0In0"
+        val state = AppState(
+            profile = profileState().copy(
+                inboundAppKeyLinkRequests = listOf(
+                    to.iris.drive.app.core.AppKeyLinkRequestState(
+                        devicePubkey = "device-b",
+                        label = "Tablet",
+                        requestedAt = 42,
+                        requestLink = requestLink,
+                    ),
+                ),
+            ),
+            setupState = "authorized",
+            isSetupComplete = true,
+        )
+
+        render(
+            state = state,
+            onApproveDevice = { request, label -> approvedRequests += request to label },
+        )
+
+        compose.onNodeWithTag("tabDevices").activate()
+        compose.onNodeWithTag("devicesContent").performScrollToNode(hasTestTag("addDeviceToggle"))
+        compose.onNodeWithTag("addDeviceToggle").assertIsDisplayed().activate()
+        compose.onNodeWithText("Device requests").performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("requestDeviceReview").performScrollTo().assertIsDisplayed().activate()
+        compose.onNodeWithText("Approve").assertIsDisplayed().activate()
+        assertEquals(listOf(requestLink to ""), approvedRequests)
+        compose.onNodeWithTag("addDevicePanel").assertIsDisplayed()
+        compose.onNodeWithText("Device requests").assertIsDisplayed()
+    }
+
+    @Test
+    fun settingsExposeAndroidCalendarSyncToggle() {
+        val syncStates = mutableListOf<Boolean>()
+        render(
+            state = AppState(
+                profile = profileState(),
+                setupState = "authorized",
+                isSetupComplete = true,
+            ),
+            onSetAndroidCalendarSync = { syncStates += it },
+        )
+
+        compose.onNodeWithTag("tabSettings").activate()
+        compose.onNodeWithTag("settingsContent").performScrollToNode(hasTestTag("androidCalendarSyncToggle"))
+        compose.onNodeWithTag("androidCalendarSyncToggle").assertIsDisplayed().activate()
+        assertEquals(listOf(true), syncStates)
+    }
+
+    private fun render(
+        state: AppState,
+        onCreateProfile: (String) -> Unit = {},
+        onStartJoinRequest: (String) -> Unit = {},
+        onLogout: () -> Unit = {},
+        onApproveDevice: (String, String) -> Unit = { _, _ -> },
+        onRejectDevice: (String) -> Unit = {},
+        onAddRecoveryKey: (String) -> Unit = {},
+        onDeleteDevice: (String) -> Unit = {},
+        onAddRoot: (String, String) -> Unit = { _, _ -> },
+        onExportRecoverySecret: () -> RecoverySecretExport = { RecoverySecretExport() },
+        androidCalendarSyncEnabled: Boolean = false,
+        onSetAndroidCalendarSync: (Boolean) -> Unit = {},
+        onAddBackupTarget: (String, String) -> Unit = { _, _ -> },
+        onRemoveBackupTarget: (String) -> Unit = {},
+        onAddBlossomServer: (String) -> Unit = {},
+        onRemoveBlossomServer: (String) -> Unit = {},
+        onSyncBackups: (String) -> Unit = {},
+        onCheckBackups: (String) -> Unit = {},
+        onCreateShare: (String, String) -> Unit = { _, _ -> },
+        onInviteShareMember: (String, String, String, String, String, String, String) -> Unit =
+            { _, _, _, _, _, _, _ -> },
+        onInviteShareMemberFromEvidence: (String, String, String, String) -> Unit =
+            { _, _, _, _ -> },
+        onExportShareRecipientEvidence: (String) -> Unit = {},
+        onRecordPendingShareInvite: (String, String, String, String) -> Unit =
+            { _, _, _, _ -> },
+        onAcceptShareInvite: (String) -> Unit = {},
+        onRevokeShareMember: (String, String) -> Unit = { _, _ -> },
+        onOpenSharePath: (String) -> Unit = {},
+        onDeleteShare: (String) -> Unit = {},
+        onAddShareShortcut: (String, String) -> Unit = { _, _ -> },
+        onRepairShareWraps: (String) -> Unit = {},
+        onOpenIrisApps: (String) -> Unit = {},
+        isOpeningIrisApps: Boolean = false,
+        shareDialogRequest: ShareDialogRequest? = null,
+    ): MutableStateFlow<AppState> {
+        val stateFlow = MutableStateFlow(state)
+        val shareDialogFlow = MutableStateFlow(shareDialogRequest)
+        val selfUpdateStateFlow = MutableStateFlow(AndroidSelfUpdateState())
+        val backupCheckProgressFlow = MutableStateFlow(BackupCheckProgress())
+        val isOpeningIrisAppsFlow = MutableStateFlow(isOpeningIrisApps)
+        val androidCalendarSyncEnabledFlow = MutableStateFlow(androidCalendarSyncEnabled)
+        compose.setContent {
+            IrisDriveAndroidApp(
+                stateFlow = stateFlow,
+                shareDialogFlow = shareDialogFlow,
+                selfUpdateStateFlow = selfUpdateStateFlow,
+                backupCheckProgressFlow = backupCheckProgressFlow,
+                isOpeningIrisAppsFlow = isOpeningIrisAppsFlow,
+                androidCalendarSyncEnabledFlow = androidCalendarSyncEnabledFlow,
+                selfUpdateActions = SelfUpdateActions(
+                    setAutoCheck = {},
+                    check = {},
+                    download = {},
+                    install = {},
+                ),
+                onCreateProfile = onCreateProfile,
+                onRestoreProfile = { _, _ -> },
+                onStartJoinRequest = onStartJoinRequest,
+                onCopyText = { _, _ -> },
+                onExportRecoverySecret = onExportRecoverySecret,
+                onSetAndroidCalendarSync = onSetAndroidCalendarSync,
+                onOpenUrl = { _ -> },
+                onOpenIrisApps = onOpenIrisApps,
+                onOpenDriveFolder = {},
+                onApproveDevice = onApproveDevice,
+                onRejectDevice = onRejectDevice,
+                onAddRecoveryKey = onAddRecoveryKey,
+                onDeleteDevice = onDeleteDevice,
+                onAppointAdmin = { _ -> },
+                onDemoteAdmin = { _ -> },
+                onRenameDevice = { _, _ -> },
+                onLogout = onLogout,
+                onAddRelay = { _ -> },
+                onRemoveRelay = { _ -> },
+                onResetRelays = {},
+                onAddRoot = onAddRoot,
+                onAddBackupTarget = onAddBackupTarget,
+                onRemoveBackupTarget = onRemoveBackupTarget,
+                onAddBlossomServer = onAddBlossomServer,
+                onRemoveBlossomServer = onRemoveBlossomServer,
+                onSyncBackups = onSyncBackups,
+                onCheckBackups = onCheckBackups,
+                onCreateShare = onCreateShare,
+                onInviteShareMember = onInviteShareMember,
+                onInviteShareMemberFromEvidence = onInviteShareMemberFromEvidence,
+                onExportShareRecipientEvidence = onExportShareRecipientEvidence,
+                onRecordPendingShareInvite = onRecordPendingShareInvite,
+                onAcceptShareInvite = onAcceptShareInvite,
+                onRevokeShareMember = onRevokeShareMember,
+                onOpenSharePath = onOpenSharePath,
+                onDeleteShare = onDeleteShare,
+                onAddShareShortcut = onAddShareShortcut,
+                onRepairShareWraps = onRepairShareWraps,
+            )
+        }
+        waitForRenderedApp()
+        return stateFlow
+    }
+
+    private fun waitForRenderedApp() {
+        compose.waitUntil(timeoutMillis = 5_000) {
+            runCatching {
+                compose.onAllNodesWithTag("irisDriveApp", useUnmergedTree = true)
+                    .fetchSemanticsNodes()
+                    .isNotEmpty()
+            }.getOrDefault(false)
+        }
+        compose.waitForIdle()
+    }
+
+    private fun createOwnerProfile(label: String): TestProfile {
+        val handle = newNativeHandle()
+        val state = dispatch(handle, NativeActions.createProfile(label))
+        val profile = state.profile ?: error("owner account missing")
+        return TestProfile(
+            handle = handle,
+            invite = profile.appKeyLinkInvite,
+            devicePubkey = profile.devicePubkey,
+            requestLink = "",
+        )
+    }
+
+    private fun createLinkedProfile(invite: String): TestProfile {
+        val handle = newNativeHandle()
+        val state = dispatch(handle, NativeActions.linkDevice(invite, "Android UI linked"))
+        val profile = state.profile ?: error("linked account missing")
+        assertEquals("awaiting_approval", profile.authorizationState)
+        return TestProfile(
+            handle = handle,
+            invite = profile.appKeyLinkInvite,
+            devicePubkey = profile.devicePubkey,
+            requestLink = profile.appKeyLinkRequest,
+        )
+    }
+
+    private fun newNativeHandle(): Long {
+        val dir = tempDataDir("iris-drive-ui")
+        return NativeCore.appNew(dir.absolutePath, "ui-test").also(nativeHandles::add)
+    }
+
+    private fun tempDataDir(prefix: String): File =
+        File(context.cacheDir, "$prefix-${UUID.randomUUID()}").also { it.mkdirs() }
+
+    private fun dispatch(handle: Long, action: String): AppState {
+        NativeCore.dispatchJson(handle, action)
+        return appState(handle)
+    }
+
+    private fun appState(handle: Long): AppState =
+        AppState.fromJson(NativeCore.stateJson(handle))
+
+    private fun SemanticsNodeInteraction.activate() {
+        performSemanticsAction(SemanticsActions.OnClick)
+    }
+
+    private fun dismissSoftKeyboard() {
+        closeSoftKeyboard()
+        compose.waitForIdle()
+    }
+
+    private fun profileState() = to.iris.drive.app.core.ProfileState(
+        profileId = "profile-a",
+        currentAppKeyNpub = "app-key",
+        devicePubkey = "device-a",
+        appKeyLabel = "Pixel",
+        authorizationState = "authorized",
+        canAdminProfile = true,
+        appKeyLinkRequest = "",
+        appKeyLinkInvite = "https://drive.iris.to/invite/test",
+        inboundAppKeyLinkRequests = emptyList(),
+    )
+
+    private fun deviceState(
+        pubkey: String,
+        label: String,
+        isCurrentDevice: Boolean,
+        canRevoke: Boolean,
+    ) = to.iris.drive.app.core.DeviceState(
+        pubkey = pubkey,
+        label = label,
+        displayLabel = label,
+        role = if (isCurrentDevice) "admin" else "member",
+        roleLabel = if (isCurrentDevice) "Admin" else "Member",
+        state = "linked",
+        stateLabel = "Linked",
+        connectionState = if (isCurrentDevice) "local" else "offline",
+        connectionLabel = if (isCurrentDevice) "This Device" else "Offline",
+        detail = pubkey,
+        isCurrentDevice = isCurrentDevice,
+        isOnline = isCurrentDevice,
+        canRevoke = canRevoke,
+        canAppointAdmin = canRevoke,
+        canDemoteAdmin = false,
+    )
+
+    private data class TestProfile(
+        val handle: Long,
+        val invite: String,
+        val devicePubkey: String,
+        val requestLink: String,
+    )
+}

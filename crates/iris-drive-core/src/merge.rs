@@ -1,0 +1,727 @@
+//! Multi-AppKey drive merge.
+//!
+//! Each authorized `AppKey` publishes its own htree root tree carrying
+//! that app install's contribution to the drive. The merged drive view is
+//! computed by walking every authorized `AppKey`'s tree and resolving
+//! per-path conflicts with causal root metadata. Publication time is
+//! only legacy ordering for roots without `app_key_seq` / observations.
+//!
+//! Tombstones are stored alongside regular files under a reserved
+//! `.hashtree/tombstones/` subtree in each `AppKey`'s root. A tombstone
+//! is a leaf whose path is `.hashtree/tombstones/<mirror of original
+//! path>` and whose content is the unix-seconds timestamp at which
+//! the file was removed. Tombstones participate in the same causal
+//! ordering as writes; timestamp ordering is only for legacy roots.
+//!
+//! This module is pure logic — it takes pre-fetched per-AppKey entry
+//! and tombstone lists and produces a `MergedView`. The actual htree
+//! traversal happens in the caller; this keeps the algorithm trivially
+//! testable against synthetic inputs.
+
+use std::collections::BTreeMap;
+
+use hashtree_core::{Cid, HashTree, HashTreeError, LinkType, Store, from_hex, to_hex};
+use serde::{Deserialize, Serialize};
+
+use crate::config::AppKeyRootRef;
+use crate::indexer::{path_has_ignored_component, should_ignore_name};
+
+/// Reserved top-level subdirectory inside any hashtree directory for
+/// htree-format metadata. Everything iris-drive (and future htree
+/// consumers) stashes structurally goes under here, so only one name
+/// is ever reserved at the user-visible top level. Currently used for:
+///
+/// - `.hashtree/prev` — back-link to the prior version of this dir
+/// - `.hashtree/root.json` — causal metadata for this root snapshot
+/// - `.hashtree/tombstones/<path>` — deletion markers
+/// - `.hashtree/conflicts/<id>.json` — conflict provenance records
+pub const META_DIR: &str = ".hashtree";
+
+/// Reserved entry path for the root-level causal metadata record.
+pub const ROOT_META_PATH: &str = ".hashtree/root.json";
+
+/// Reserved path prefix for the tombstone subtree (inside `META_DIR`).
+/// Files written under this prefix by the indexer are not part of the
+/// user-visible drive; only the merge engine reads them.
+pub const TOMBSTONE_PREFIX: &str = ".hashtree/tombstones";
+
+/// Reserved path prefix for durable conflict provenance records. These
+/// records are snapshot metadata and must not appear as user files.
+pub const CONFLICTS_PREFIX: &str = ".hashtree/conflicts";
+
+/// Directory-entry metadata key carrying SHA-256 of the whole file
+/// plaintext. This is distinct from `hash`, which may be a chunk-tree
+/// CID hash or encrypted node hash.
+pub const WHOLE_FILE_HASH_META_KEY: &str = "whole_file_hash";
+
+/// Directory-entry metadata key carrying the user-visible file mtime as Unix
+/// seconds. This lives on the htree link so provider surfaces can expose a
+/// stable per-file timestamp instead of the AppKey-root publish time.
+pub const MODIFIED_AT_META_KEY: &str = "modified_at";
+
+/// Reserved entry path for the directory-revision back-link. A
+/// directory whose contents have a prior version stores that previous
+/// version's `Cid` (hash + key) at this path. Walking the chain
+/// backwards through history is just following `.hashtree/prev` from
+/// each `TreeNode` to the next.
+///
+/// The capability follows naturally: the link's `Cid` carries the
+/// decryption key for the prior `TreeNode`, so any reader who can
+/// decrypt the current root can decrypt all of history (until either
+/// the chain terminates or a block is GC'd).
+pub const PREV_LINK_PATH: &str = ".hashtree/prev";
+
+/// One entry from an `AppKey`'s tree, as observed by the merge engine.
+/// Hash + size are enough to identify content; the merge does not
+/// need to inspect bytes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppKeyFileEntry {
+    pub path: String,
+    pub hash: [u8; 32],
+    pub size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whole_file_hash: Option<[u8; 32]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_at: Option<i64>,
+}
+
+/// One tombstone from an `AppKey`'s tree.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AppKeyTombstone {
+    /// Original path that was removed (the `.hashtree/tombstones/`
+    /// prefix has been stripped).
+    pub path: String,
+    /// Unix-seconds when this `AppKey` removed the file.
+    pub tombstoned_at: i64,
+}
+
+/// What a single `AppKey` contributes to a merge.
+#[derive(Debug, Clone)]
+pub struct AppKeySnapshot<'a> {
+    pub app_key_pubkey: &'a str,
+    pub root: &'a AppKeyRootRef,
+    pub files: Vec<AppKeyFileEntry>,
+    pub tombstones: Vec<AppKeyTombstone>,
+}
+
+/// One file in the merged view. `source_app_key_pubkey` is the `AppKey` whose
+/// write currently wins for this path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergedEntry {
+    pub path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_path: Option<String>,
+    pub hash: [u8; 32],
+    pub size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub whole_file_hash: Option<[u8; 32]>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_at: Option<i64>,
+    pub source_app_key_pubkey: String,
+    pub published_at: i64,
+}
+
+/// Why a path is conflicted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MergedConflictKind {
+    WriteWrite,
+    WriteDelete,
+}
+
+/// File-producing side of a conflicted path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergedConflictFile {
+    pub app_key_pubkey: String,
+    pub app_key_seq: u64,
+    pub root_cid: String,
+    pub content_hash: String,
+    pub content_cid_hash: String,
+    pub size: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modified_at: Option<i64>,
+}
+
+/// Tombstone-producing side of a conflicted path.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergedConflictTombstone {
+    pub app_key_pubkey: String,
+    pub app_key_seq: u64,
+    pub root_cid: String,
+    pub tombstoned_at: i64,
+}
+
+/// Provenance for a conflicted path. Callers can turn these sides into
+/// visible conflict files plus `.hashtree/conflicts/<id>.json` records.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MergedConflict {
+    pub path: String,
+    pub kind: MergedConflictKind,
+    pub files: Vec<MergedConflictFile>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tombstone: Option<MergedConflictTombstone>,
+}
+
+/// The full merged drive view: every path that is currently present,
+/// plus a paths-that-are-tombstoned list for diagnostics.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct MergedView {
+    pub files: Vec<MergedEntry>,
+    /// Paths suppressed by tombstones (would have been files but a
+    /// tombstone is newer than the newest write). Useful in test and
+    /// debug output.
+    pub suppressed_by_tombstone: Vec<String>,
+    /// Paths where concurrent roots disagree. The merged view still
+    /// picks a deterministic visible entry for now, but callers can
+    /// surface a conflict record/copy for these paths.
+    pub conflicts: Vec<String>,
+    /// Detailed provenance for each path in `conflicts`.
+    pub conflict_details: Vec<MergedConflict>,
+}
+
+#[derive(Debug, Clone)]
+struct WriteCandidate {
+    entry: MergedEntry,
+    app_key_pubkey: String,
+    root: AppKeyRootRef,
+}
+
+#[derive(Debug, Clone)]
+struct TombstoneCandidate {
+    tombstoned_at: i64,
+    app_key_pubkey: String,
+    root: AppKeyRootRef,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RootRelation {
+    Same,
+    LeftDescends,
+    RightDescends,
+    Concurrent,
+}
+
+/// Merge across all authorized `AppKey` snapshots. `authorized_app_keys`
+/// is the AppKey-pubkey allowlist from the current `AppKeys` roster;
+/// any snapshot whose `app_key_pubkey` is not in the allowlist is
+/// silently ignored.
+///
+/// Conflict resolution per path:
+///   - causal descendants win over ancestors
+///   - newest publication time wins only when causality is unknown
+///   - if a tombstone is newer than the newest write, the path is
+///     suppressed
+///   - if the latest write and a tombstone share the same timestamp,
+///     the tombstone wins (deletion is conservative)
+#[must_use]
+pub fn merge_drives(authorized_app_keys: &[&str], snapshots: &[AppKeySnapshot<'_>]) -> MergedView {
+    let allow: std::collections::BTreeSet<&str> = authorized_app_keys.iter().copied().collect();
+
+    let mut writes: BTreeMap<String, WriteCandidate> = BTreeMap::new();
+    let mut tombstones: BTreeMap<String, TombstoneCandidate> = BTreeMap::new();
+    let mut local_only_writes: BTreeMap<String, WriteCandidate> = BTreeMap::new();
+    let mut local_only_tombstones: BTreeMap<String, TombstoneCandidate> = BTreeMap::new();
+    let mut conflicts: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
+    let mut conflict_details: BTreeMap<String, MergedConflict> = BTreeMap::new();
+
+    for snap in snapshots {
+        if !allow.contains(snap.app_key_pubkey) {
+            continue;
+        }
+        for f in &snap.files {
+            if path_has_ignored_component(&f.path) {
+                continue;
+            }
+            let candidate = MergedEntry {
+                path: f.path.clone(),
+                source_path: None,
+                hash: f.hash,
+                size: f.size,
+                whole_file_hash: f.whole_file_hash,
+                modified_at: f.modified_at,
+                source_app_key_pubkey: snap.app_key_pubkey.to_string(),
+                published_at: snap.root.published_at,
+            };
+            let candidate = WriteCandidate {
+                entry: candidate,
+                app_key_pubkey: snap.app_key_pubkey.to_string(),
+                root: snap.root.clone(),
+            };
+            if snap.root.local_only {
+                insert_write_candidate(&mut local_only_writes, None, None, candidate);
+            } else {
+                insert_write_candidate(
+                    &mut writes,
+                    Some(&mut conflicts),
+                    Some(&mut conflict_details),
+                    candidate,
+                );
+            }
+        }
+        for t in &snap.tombstones {
+            if path_has_ignored_component(&t.path) {
+                continue;
+            }
+            let candidate = TombstoneCandidate {
+                tombstoned_at: t.tombstoned_at,
+                app_key_pubkey: snap.app_key_pubkey.to_string(),
+                root: snap.root.clone(),
+            };
+            if snap.root.local_only {
+                insert_tombstone_candidate(&mut local_only_tombstones, t.path.clone(), candidate);
+            } else {
+                insert_tombstone_candidate(&mut tombstones, t.path.clone(), candidate);
+            }
+        }
+    }
+
+    for (path, write) in local_only_writes {
+        if !writes.contains_key(&path) && !tombstones.contains_key(&path) {
+            writes.insert(path, write);
+        }
+    }
+    for (path, tombstone) in local_only_tombstones {
+        if !writes.contains_key(&path) && !tombstones.contains_key(&path) {
+            tombstones.insert(path, tombstone);
+        }
+    }
+
+    let mut view = MergedView::default();
+    for (path, write) in &writes {
+        let tombstone = tombstones.get(path);
+        if let Some(tombstone) = tombstone
+            && should_mark_write_delete_conflict(write, tombstone)
+        {
+            conflicts.insert(path.clone());
+            record_write_delete_conflict(&mut conflict_details, path.as_str(), write, tombstone);
+        }
+        let suppressed = tombstone.is_some_and(|t| tombstone_suppresses_write(t, write));
+        if suppressed {
+            view.suppressed_by_tombstone.push(path.clone());
+        } else {
+            view.files.push(write.entry.clone());
+        }
+    }
+    // Tombstones that don't have a surviving write anywhere should also
+    // show up as evidence the path was deleted. Without this, a
+    // single-AppKey delete (no concurrent write to suppress) would
+    // silently vanish from both lists.
+    for path in tombstones.keys() {
+        if !writes.contains_key(path) {
+            view.suppressed_by_tombstone.push(path.clone());
+        }
+    }
+    view.files.sort_by(|a, b| a.path.cmp(&b.path));
+    view.suppressed_by_tombstone.sort();
+    view.suppressed_by_tombstone.dedup();
+    view.conflicts = conflicts.into_iter().collect();
+    view.conflict_details = conflict_details.into_values().collect();
+    view
+}
+
+fn insert_write_candidate(
+    writes: &mut BTreeMap<String, WriteCandidate>,
+    conflicts: Option<&mut std::collections::BTreeSet<String>>,
+    conflict_details: Option<&mut BTreeMap<String, MergedConflict>>,
+    candidate: WriteCandidate,
+) {
+    let path = candidate.entry.path.clone();
+    if let Some(existing) = writes.get_mut(&path) {
+        if should_mark_write_conflict(&candidate, existing)
+            && let (Some(conflicts), Some(conflict_details)) = (conflicts, conflict_details)
+        {
+            conflicts.insert(candidate.entry.path.clone());
+            record_write_conflict(conflict_details, &candidate, existing);
+        }
+        if write_candidate_wins(&candidate, existing) {
+            *existing = candidate;
+        }
+    } else {
+        writes.insert(path, candidate);
+    }
+}
+
+fn insert_tombstone_candidate(
+    tombstones: &mut BTreeMap<String, TombstoneCandidate>,
+    path: String,
+    candidate: TombstoneCandidate,
+) {
+    if let Some(current) = tombstones.get_mut(&path) {
+        if tombstone_candidate_wins(&candidate, current) {
+            *current = candidate;
+        }
+    } else {
+        tombstones.insert(path, candidate);
+    }
+}
+
+fn record_write_conflict(
+    conflicts: &mut BTreeMap<String, MergedConflict>,
+    candidate: &WriteCandidate,
+    existing: &WriteCandidate,
+) {
+    let path = candidate.entry.path.clone();
+    let detail = conflicts
+        .entry(path.clone())
+        .or_insert_with(|| MergedConflict {
+            path,
+            kind: MergedConflictKind::WriteWrite,
+            files: Vec::new(),
+            tombstone: None,
+        });
+    detail.kind = MergedConflictKind::WriteWrite;
+    insert_conflict_file(&mut detail.files, conflict_file_side(candidate));
+    insert_conflict_file(&mut detail.files, conflict_file_side(existing));
+}
+
+fn record_write_delete_conflict(
+    conflicts: &mut BTreeMap<String, MergedConflict>,
+    path: &str,
+    write: &WriteCandidate,
+    tombstone: &TombstoneCandidate,
+) {
+    let detail = conflicts
+        .entry(path.to_string())
+        .or_insert_with(|| MergedConflict {
+            path: path.to_string(),
+            kind: MergedConflictKind::WriteDelete,
+            files: Vec::new(),
+            tombstone: None,
+        });
+    detail.kind = MergedConflictKind::WriteDelete;
+    insert_conflict_file(&mut detail.files, conflict_file_side(write));
+    detail.tombstone = Some(MergedConflictTombstone {
+        app_key_pubkey: tombstone.app_key_pubkey.clone(),
+        app_key_seq: tombstone.root.app_key_seq,
+        root_cid: tombstone.root.root_cid.clone(),
+        tombstoned_at: tombstone.tombstoned_at,
+    });
+}
+
+fn insert_conflict_file(files: &mut Vec<MergedConflictFile>, file: MergedConflictFile) {
+    if !files.iter().any(|f| {
+        f.app_key_pubkey == file.app_key_pubkey
+            && f.app_key_seq == file.app_key_seq
+            && f.root_cid == file.root_cid
+            && f.content_hash == file.content_hash
+    }) {
+        files.push(file);
+        files.sort_by(|a, b| {
+            a.app_key_pubkey
+                .cmp(&b.app_key_pubkey)
+                .then(a.app_key_seq.cmp(&b.app_key_seq))
+                .then(a.root_cid.cmp(&b.root_cid))
+                .then(a.content_hash.cmp(&b.content_hash))
+        });
+    }
+}
+
+fn conflict_file_side(write: &WriteCandidate) -> MergedConflictFile {
+    MergedConflictFile {
+        app_key_pubkey: write.app_key_pubkey.clone(),
+        app_key_seq: write.root.app_key_seq,
+        root_cid: write.root.root_cid.clone(),
+        content_hash: to_hex(&identity_hash(&write.entry)),
+        content_cid_hash: to_hex(&write.entry.hash),
+        size: write.entry.size,
+        modified_at: write.entry.modified_at,
+    }
+}
+
+fn write_candidate_wins(candidate: &WriteCandidate, existing: &WriteCandidate) -> bool {
+    match root_relation(
+        &candidate.app_key_pubkey,
+        &candidate.root,
+        &existing.app_key_pubkey,
+        &existing.root,
+    ) {
+        RootRelation::Same | RootRelation::LeftDescends => true,
+        RootRelation::RightDescends => false,
+        RootRelation::Concurrent => legacy_order_newer(
+            candidate.entry.published_at,
+            &candidate.app_key_pubkey,
+            existing.entry.published_at,
+            &existing.app_key_pubkey,
+        ),
+    }
+}
+
+fn tombstone_candidate_wins(candidate: &TombstoneCandidate, existing: &TombstoneCandidate) -> bool {
+    match root_relation(
+        &candidate.app_key_pubkey,
+        &candidate.root,
+        &existing.app_key_pubkey,
+        &existing.root,
+    ) {
+        RootRelation::Same | RootRelation::LeftDescends => true,
+        RootRelation::RightDescends => false,
+        RootRelation::Concurrent => legacy_order_newer(
+            candidate.tombstoned_at,
+            &candidate.app_key_pubkey,
+            existing.tombstoned_at,
+            &existing.app_key_pubkey,
+        ),
+    }
+}
+
+fn tombstone_suppresses_write(tombstone: &TombstoneCandidate, write: &WriteCandidate) -> bool {
+    match root_relation(
+        &tombstone.app_key_pubkey,
+        &tombstone.root,
+        &write.app_key_pubkey,
+        &write.root,
+    ) {
+        RootRelation::Same | RootRelation::LeftDescends => true,
+        RootRelation::RightDescends => false,
+        RootRelation::Concurrent => tombstone.tombstoned_at >= write.entry.published_at,
+    }
+}
+
+fn should_mark_write_conflict(candidate: &WriteCandidate, existing: &WriteCandidate) -> bool {
+    if file_identity_matches(&candidate.entry, &existing.entry) {
+        return false;
+    }
+    roots_are_causal(&candidate.root)
+        && roots_are_causal(&existing.root)
+        && matches!(
+            root_relation(
+                &candidate.app_key_pubkey,
+                &candidate.root,
+                &existing.app_key_pubkey,
+                &existing.root,
+            ),
+            RootRelation::Concurrent
+        )
+}
+
+fn file_identity_matches(left: &MergedEntry, right: &MergedEntry) -> bool {
+    left.size == right.size && identity_hash(left) == identity_hash(right)
+}
+
+fn identity_hash(entry: &MergedEntry) -> [u8; 32] {
+    entry.whole_file_hash.unwrap_or(entry.hash)
+}
+
+fn should_mark_write_delete_conflict(
+    write: &WriteCandidate,
+    tombstone: &TombstoneCandidate,
+) -> bool {
+    roots_are_causal(&write.root)
+        && roots_are_causal(&tombstone.root)
+        && matches!(
+            root_relation(
+                &write.app_key_pubkey,
+                &write.root,
+                &tombstone.app_key_pubkey,
+                &tombstone.root,
+            ),
+            RootRelation::Concurrent
+        )
+}
+
+fn root_relation(
+    left_app_key: &str,
+    left: &AppKeyRootRef,
+    right_app_key: &str,
+    right: &AppKeyRootRef,
+) -> RootRelation {
+    if left.root_cid == right.root_cid {
+        return RootRelation::Same;
+    }
+    let left_descends = root_observes(left_app_key, left, right_app_key, right);
+    let right_descends = root_observes(right_app_key, right, left_app_key, left);
+    match (left_descends, right_descends) {
+        (true, false) => RootRelation::LeftDescends,
+        (false, true) => RootRelation::RightDescends,
+        _ => RootRelation::Concurrent,
+    }
+}
+
+fn root_observes(
+    newer_app_key_pubkey: &str,
+    newer_root: &AppKeyRootRef,
+    candidate_app_key_pubkey: &str,
+    candidate_root: &AppKeyRootRef,
+) -> bool {
+    if newer_root.root_cid == candidate_root.root_cid {
+        return true;
+    }
+    if newer_app_key_pubkey == candidate_app_key_pubkey
+        && newer_root.app_key_seq > 0
+        && candidate_root.app_key_seq > 0
+        && newer_root.app_key_seq > candidate_root.app_key_seq
+    {
+        return true;
+    }
+    if newer_root.parents.iter().any(|parent| {
+        parent.app_key_pubkey == candidate_app_key_pubkey
+            && (parent.root_cid == candidate_root.root_cid
+                || (candidate_root.app_key_seq > 0
+                    && parent.app_key_seq > candidate_root.app_key_seq))
+    }) {
+        return true;
+    }
+    newer_root
+        .observed
+        .get(candidate_app_key_pubkey)
+        .is_some_and(|o| {
+            o.root_cid == candidate_root.root_cid
+                || (candidate_root.app_key_seq > 0 && o.app_key_seq > candidate_root.app_key_seq)
+        })
+}
+
+fn roots_are_causal(root: &AppKeyRootRef) -> bool {
+    root.app_key_seq > 0 || !root.parents.is_empty() || !root.observed.is_empty()
+}
+
+fn legacy_order_newer(
+    left_time: i64,
+    left_app_key: &str,
+    right_time: i64,
+    right_app_key: &str,
+) -> bool {
+    left_time > right_time || (left_time == right_time && left_app_key > right_app_key)
+}
+
+/// Encode a file path into the path under `.hashtree/tombstones/`
+/// used to store the tombstone leaf in htree.
+#[must_use]
+pub fn tombstone_path(file_path: &str) -> String {
+    format!("{TOMBSTONE_PREFIX}/{file_path}")
+}
+
+/// Inverse of `tombstone_path`. Returns `None` if the input is not
+/// under the tombstone prefix.
+#[must_use]
+pub fn original_path_from_tombstone(tombstone_path: &str) -> Option<&str> {
+    tombstone_path
+        .strip_prefix(TOMBSTONE_PREFIX)
+        .and_then(|rest| rest.strip_prefix('/'))
+}
+
+/// Walk an htree directory root and partition its contents into
+/// regular files and tombstones. Tombstone leaves (under `.tombstones/`)
+/// are decoded by parsing their content as a unix-seconds integer; any
+/// leaf whose content can't be parsed is silently skipped.
+pub async fn walk_app_key_tree<S: Store>(
+    tree: &HashTree<S>,
+    root: &Cid,
+) -> Result<(Vec<AppKeyFileEntry>, Vec<AppKeyTombstone>), HashTreeError> {
+    let mut files = Vec::new();
+    let mut tombstones = Vec::new();
+    walk_dir_recursive(tree, root, "", &mut files, &mut tombstones).await?;
+    Ok((files, tombstones))
+}
+
+/// Walk inside `.hashtree/` collecting tombstones and ignoring other
+/// structural metadata.
+/// Lifted out so the main walker doesn't need to know `META_DIR`
+/// internals.
+fn walk_meta_dir<'a, S: Store>(
+    tree: &'a HashTree<S>,
+    dir_cid: &'a Cid,
+    prefix: &'a str,
+    files: &'a mut Vec<AppKeyFileEntry>,
+    tombstones: &'a mut Vec<AppKeyTombstone>,
+) -> futures::future::BoxFuture<'a, Result<(), HashTreeError>> {
+    Box::pin(async move {
+        let entries = tree.list_directory(dir_cid).await?;
+        for entry in entries {
+            let path = format!("{prefix}/{}", entry.name);
+            // Structural metadata is not user-visible content. Only
+            // the tombstone subtree is intentionally traversed.
+            if path == PREV_LINK_PATH || path == ROOT_META_PATH || path == CONFLICTS_PREFIX {
+                continue;
+            }
+            let child_cid = Cid {
+                hash: entry.hash,
+                key: entry.key,
+            };
+            if entry.link_type == LinkType::Dir && path == TOMBSTONE_PREFIX {
+                // The tombstones subtree mirrors original paths; recurse
+                // and let the tombstone-leaf check below pick them up.
+                walk_dir_recursive(tree, &child_cid, &path, files, tombstones).await?;
+            }
+        }
+        Ok(())
+    })
+}
+
+fn walk_dir_recursive<'a, S: Store>(
+    tree: &'a HashTree<S>,
+    dir_cid: &'a Cid,
+    prefix: &'a str,
+    files: &'a mut Vec<AppKeyFileEntry>,
+    tombstones: &'a mut Vec<AppKeyTombstone>,
+) -> futures::future::BoxFuture<'a, Result<(), HashTreeError>> {
+    Box::pin(async move {
+        let entries = tree.list_directory(dir_cid).await?;
+        for entry in entries {
+            let path = if prefix.is_empty() {
+                entry.name.clone()
+            } else {
+                format!("{prefix}/{}", entry.name)
+            };
+            let child_cid = Cid {
+                hash: entry.hash,
+                key: entry.key,
+            };
+            if entry.name == META_DIR && prefix.is_empty() {
+                // `.hashtree/` subtree carries htree-format metadata
+                // (revision back-link, tombstones, ...). Recurse so the
+                // tombstone walker can pick up entries under
+                // `.hashtree/tombstones/`, but skip the `prev` link.
+                walk_meta_dir(tree, &child_cid, META_DIR, files, tombstones).await?;
+                continue;
+            }
+            if should_ignore_name(&entry.name) {
+                continue;
+            }
+            if entry.link_type == LinkType::Dir {
+                walk_dir_recursive(tree, &child_cid, &path, files, tombstones).await?;
+            } else if let Some(orig_path) = original_path_from_tombstone(&path) {
+                let raw = tree
+                    .get(&child_cid, None)
+                    .await?
+                    .ok_or_else(|| HashTreeError::MissingChunk(to_hex(&entry.hash)))?;
+                let ts_str = String::from_utf8_lossy(&raw);
+                if let Ok(tombstoned_at) = ts_str.trim().parse::<i64>() {
+                    tombstones.push(AppKeyTombstone {
+                        path: orig_path.to_string(),
+                        tombstoned_at,
+                    });
+                } else {
+                    tracing::warn!("malformed tombstone at {path}: {ts_str:?}");
+                }
+            } else {
+                files.push(AppKeyFileEntry {
+                    path,
+                    hash: entry.hash,
+                    size: entry.size,
+                    whole_file_hash: whole_file_hash_from_meta(entry.meta.as_ref()),
+                    modified_at: modified_at_from_meta(entry.meta.as_ref()),
+                });
+            }
+        }
+        Ok(())
+    })
+}
+
+fn whole_file_hash_from_meta(
+    meta: Option<&std::collections::HashMap<String, serde_json::Value>>,
+) -> Option<[u8; 32]> {
+    meta.and_then(|m| m.get(WHOLE_FILE_HASH_META_KEY))
+        .and_then(serde_json::Value::as_str)
+        .and_then(|s| from_hex(s).ok())
+}
+
+fn modified_at_from_meta(
+    meta: Option<&std::collections::HashMap<String, serde_json::Value>>,
+) -> Option<i64> {
+    meta.and_then(|m| m.get(MODIFIED_AT_META_KEY))
+        .and_then(serde_json::Value::as_i64)
+        .filter(|value| *value > 0)
+}
+
+#[cfg(test)]
+mod tests;

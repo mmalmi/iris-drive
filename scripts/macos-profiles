@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+IRIS_DRIVE_PROFILES_PLATFORM=macos exec "$ROOT/scripts/ios-profiles" "$@"

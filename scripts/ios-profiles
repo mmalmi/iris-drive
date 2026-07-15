@@ -1,0 +1,634 @@
+#!/usr/bin/env node
+
+import { createPrivateKey, sign as cryptoSign } from 'node:crypto'
+import {
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  writeFileSync,
+} from 'node:fs'
+import os from 'node:os'
+import { basename, dirname, join, resolve } from 'node:path'
+import process from 'node:process'
+import { fileURLToPath } from 'node:url'
+
+const __dirname = dirname(fileURLToPath(import.meta.url))
+const repoRoot = resolve(__dirname, '..')
+loadEnvFileDefaults(join(repoRoot, '.env.release.local'))
+
+const rawBaseUrl = process.env.IRIS_DRIVE_ASC_BASE_URL || 'https://api.appstoreconnect.apple.com/v1/'
+const baseUrl = rawBaseUrl.endsWith('/') ? rawBaseUrl : `${rawBaseUrl}/`
+const action = process.argv[2] || 'ensure'
+const profilePlatform = envValue(['IRIS_DRIVE_PROFILES_PLATFORM'], 'ios').toLowerCase()
+if (!['ios', 'macos'].includes(profilePlatform)) {
+  fail(`Unsupported IRIS_DRIVE_PROFILES_PLATFORM=${profilePlatform}`, 2)
+}
+const profileType = envValue(
+  profilePlatform === 'macos' ? ['IRIS_DRIVE_MACOS_PROFILE_TYPE'] : ['IRIS_DRIVE_IOS_PROFILE_TYPE'],
+  profilePlatform === 'macos' ? 'MAC_APP_DIRECT' : 'IOS_APP_STORE',
+)
+const defaultProfileLabel = defaultLabelForProfileType(profileType)
+const defaultCodeSignIdentity = defaultIdentityForProfileType(profileType)
+const codeSignIdentity = envValue(
+  profilePlatform === 'macos'
+    ? ['IRIS_DRIVE_MACOS_CODE_SIGN_IDENTITY']
+    : ['IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY'],
+  defaultCodeSignIdentity,
+)
+const profilesEnvPath = resolve(
+  repoRoot,
+  envValue(
+    profilePlatform === 'macos'
+      ? ['IRIS_DRIVE_MACOS_PROFILES_ENV_PATH']
+      : ['IRIS_DRIVE_IOS_PROFILES_ENV_PATH'],
+    join(repoRoot, 'dist', profilePlatform, 'provisioning.env'),
+  ),
+)
+const deviceUdids = splitCsv(envValue(['IRIS_DRIVE_IOS_DEVICE_UDIDS']))
+const profileNameSuffix = envValue(
+  profilePlatform === 'macos'
+    ? ['IRIS_DRIVE_MACOS_PROFILE_NAME_SUFFIX']
+    : ['IRIS_DRIVE_IOS_PROFILE_NAME_SUFFIX'],
+)
+const defaultIosBundleId = 'fi.siriusbusiness.drive'
+const iosBundleId = envValue(['IRIS_DRIVE_IOS_BUNDLE_ID'], defaultIosBundleId)
+const recreateProfiles = boolEnv(
+  profilePlatform === 'macos'
+    ? 'IRIS_DRIVE_MACOS_PROFILE_RECREATE'
+    : 'IRIS_DRIVE_IOS_PROFILE_RECREATE',
+  false,
+)
+const targets = profileTargets(profilePlatform, defaultProfileLabel)
+
+function usage() {
+  const commandName = profilePlatform === 'macos' ? 'scripts/macos-profiles' : 'scripts/ios-profiles'
+  console.log(`usage: ${commandName} <ensure|list>
+
+Commands:
+  ensure  create or download provisioning profiles for manual ${profilePlatform} export
+  list    list matching provisioning profiles known to App Store Connect
+
+Environment:
+  IRIS_DRIVE_ASC_AUTH_KEY_PATH or IRIS_DRIVE_ASC_KEY_PATH
+  IRIS_DRIVE_ASC_AUTH_KEY_ID or IRIS_DRIVE_ASC_KEY_ID
+  IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID or IRIS_DRIVE_ASC_ISSUER_ID
+  IRIS_DRIVE_ASC_CERTIFICATE_ID
+  ${profilePlatform === 'macos' ? 'IRIS_DRIVE_MACOS_PROFILE_TYPE' : 'IRIS_DRIVE_IOS_PROFILE_TYPE'}
+  ${profilePlatform === 'macos' ? 'IRIS_DRIVE_MACOS_PROFILE_RECREATE' : 'IRIS_DRIVE_IOS_PROFILE_RECREATE'}
+  ${profilePlatform === 'macos' ? 'IRIS_DRIVE_MACOS_PROFILE_NAME_SUFFIX' : 'IRIS_DRIVE_IOS_PROFILE_NAME_SUFFIX'}
+  ${profilePlatform === 'macos' ? 'IRIS_DRIVE_MACOS_PROFILES_ENV_PATH' : 'IRIS_DRIVE_IOS_PROFILES_ENV_PATH'}`)
+}
+
+if (['-h', '--help', 'help'].includes(action)) {
+  usage()
+  process.exit(0)
+}
+
+if (!['ensure', 'list'].includes(action)) {
+  usage()
+  process.exit(2)
+}
+
+let authToken = ''
+
+try {
+  authToken = createToken(resolveAscAuth())
+  if (action === 'list') {
+    await listMatchingProfiles()
+  } else {
+    await ensureProfiles()
+  }
+} catch (error) {
+  fail(error instanceof Error ? error.message : String(error))
+}
+
+function loadEnvFileDefaults(path) {
+  if (!existsSync(path)) {
+    return
+  }
+  for (const line of readFileSync(path, 'utf8').split(/\r?\n/)) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#') || !trimmed.includes('=')) {
+      continue
+    }
+    const key = trimmed.slice(0, trimmed.indexOf('=')).trim()
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key) || process.env[key]) {
+      continue
+    }
+    let value = trimmed.slice(trimmed.indexOf('=') + 1).trim()
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1)
+    }
+    process.env[key] = value
+  }
+}
+
+function envValue(names, fallback = '') {
+  for (const name of names) {
+    const value = String(process.env[name] ?? '').trim()
+    if (value) {
+      return value
+    }
+  }
+  return fallback
+}
+
+function boolEnv(name, fallback = false) {
+  const value = String(process.env[name] ?? '').trim().toLowerCase()
+  if (!value) {
+    return fallback
+  }
+  return ['1', 'true', 'yes', 'on'].includes(value)
+}
+
+function splitCsv(value) {
+  return String(value)
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean)
+}
+
+function defaultLabelForProfileType(type) {
+  const upper = String(type).toUpperCase()
+  if (upper.includes('DEVELOPMENT')) {
+    return 'Development'
+  }
+  if (upper === 'MAC_APP_DIRECT') {
+    return 'Developer ID'
+  }
+  if (upper.includes('APP_STORE')) {
+    return 'App Store'
+  }
+  return 'Distribution'
+}
+
+function defaultIdentityForProfileType(type) {
+  const upper = String(type).toUpperCase()
+  if (upper.includes('DEVELOPMENT')) {
+    return 'Apple Development'
+  }
+  if (upper === 'MAC_APP_DIRECT') {
+    return 'Developer ID Application'
+  }
+  return 'Apple Distribution'
+}
+
+function profileTargets(platform, label) {
+  if (platform === 'macos') {
+    return [
+      {
+        role: 'app',
+        identifier: envValue(['IRIS_DRIVE_MACOS_BUNDLE_ID'], 'to.iris.drive.macos'),
+        profileName: envValue(
+          ['IRIS_DRIVE_MACOS_PROFILE_NAME'],
+          `Iris Drive Mac ${label} main`,
+        ),
+        envKey: 'IRIS_DRIVE_MACOS_APP_PROVISIONING_PROFILE',
+      },
+      {
+        role: 'file_provider',
+        identifier: envValue(
+          ['IRIS_DRIVE_MACOS_FILE_PROVIDER_BUNDLE_ID'],
+          'to.iris.drive.macos.FileProvider',
+        ),
+        profileName: envValue(
+          ['IRIS_DRIVE_MACOS_FILE_PROVIDER_PROFILE_NAME'],
+          `Iris Drive Mac ${label} file provider`,
+        ),
+        envKey: 'IRIS_DRIVE_MACOS_FILEPROVIDER_PROVISIONING_PROFILE',
+      },
+    ]
+  }
+  return [
+    {
+      role: 'app',
+      identifier: iosBundleId,
+      profileName: envValue(['IRIS_DRIVE_IOS_PROFILE_NAME'], `Iris Drive ${label} main`),
+      envKey: 'IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID',
+    },
+    {
+      role: 'file_provider',
+      identifier: envValue(
+        ['IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID'],
+        `${iosBundleId}.FileProvider`,
+      ),
+      profileName: envValue(
+        ['IRIS_DRIVE_IOS_FILE_PROVIDER_PROFILE_NAME'],
+        `Iris Drive ${label} file provider`,
+      ),
+      envKey: 'IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID',
+    },
+    {
+      role: 'share_extension',
+      identifier: envValue(
+        ['IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID'],
+        `${iosBundleId}.ShareExtension`,
+      ),
+      profileName: envValue(
+        ['IRIS_DRIVE_IOS_SHARE_EXTENSION_PROFILE_NAME'],
+        `Iris Drive ${label} share extension`,
+      ),
+      envKey: 'IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID',
+    },
+  ]
+}
+
+function resolveAscAuth() {
+  const ascRoot = envValue(['IRIS_DRIVE_ASC_ROOT'], join(os.homedir(), '.appstoreconnect'))
+  let keyPath = envValue(['IRIS_DRIVE_ASC_AUTH_KEY_PATH', 'IRIS_DRIVE_ASC_KEY_PATH'])
+  if (!keyPath) {
+    const keyDir = join(ascRoot, 'private_keys')
+    if (existsSync(keyDir)) {
+      keyPath = readdirSync(keyDir)
+        .filter((entry) => /^AuthKey_.*\.p8$/.test(entry))
+        .sort()
+        .map((entry) => join(keyDir, entry))[0] ?? ''
+    }
+  }
+  let keyId = envValue(['IRIS_DRIVE_ASC_AUTH_KEY_ID', 'IRIS_DRIVE_ASC_KEY_ID'])
+  if (!keyId && keyPath) {
+    keyId = basename(keyPath).replace(/^AuthKey_/, '').replace(/\.p8$/, '')
+  }
+  let issuerId = envValue([
+    'IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID',
+    'IRIS_DRIVE_ASC_ISSUER_ID',
+  ])
+  const issuerPath = join(ascRoot, 'issuer.txt')
+  if (!issuerId && existsSync(issuerPath)) {
+    issuerId = readFileSync(issuerPath, 'utf8').trim()
+  }
+  if (!keyPath) {
+    fail('IRIS_DRIVE_ASC_AUTH_KEY_PATH is required for App Store Connect API calls', 2)
+  }
+  if (!keyId) {
+    fail('IRIS_DRIVE_ASC_AUTH_KEY_ID is required for App Store Connect API calls', 2)
+  }
+  if (!issuerId) {
+    fail('IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID is required for App Store Connect API calls', 2)
+  }
+  if (!existsSync(keyPath)) {
+    fail(`ASC API key file not found: ${keyPath}`)
+  }
+  return { keyPath, keyId, issuerId }
+}
+
+function base64url(input) {
+  return Buffer.from(input).toString('base64url')
+}
+
+function createToken({ keyPath, keyId, issuerId }) {
+  const now = Math.floor(Date.now() / 1000)
+  const header = base64url(JSON.stringify({ alg: 'ES256', kid: keyId, typ: 'JWT' }))
+  const payload = base64url(JSON.stringify({
+    iss: issuerId,
+    iat: now,
+    exp: now + 20 * 60,
+    aud: 'appstoreconnect-v1',
+  }))
+  const signingInput = `${header}.${payload}`
+  const signature = cryptoSign('sha256', Buffer.from(signingInput), {
+    key: createPrivateKey(readFileSync(keyPath)),
+    dsaEncoding: 'ieee-p1363',
+  })
+  return `${signingInput}.${base64url(signature)}`
+}
+
+async function request(method, pathOrUrl, params = {}, body = undefined) {
+  const url = pathOrUrl.startsWith('https://') ? new URL(pathOrUrl) : new URL(pathOrUrl, baseUrl)
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value !== undefined && value !== null && value !== '') {
+      url.searchParams.set(key, String(value))
+    }
+  }
+  const response = await fetch(url, {
+    method,
+    headers: {
+      Authorization: `Bearer ${authToken}`,
+      'Content-Type': 'application/json',
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+  const text = await response.text()
+  const parsed = text ? JSON.parse(text) : {}
+  return [response.status, parsed]
+}
+
+function requireOk(status, body, operation) {
+  if (status >= 200 && status < 300) {
+    return body
+  }
+  fail(`${operation} failed: HTTP ${status}\n${JSON.stringify(body, null, 2)}`)
+}
+
+async function getAll(path, params = {}) {
+  let [status, body] = await request('GET', path, { ...params, limit: params.limit ?? '200' })
+  body = requireOk(status, body, `GET ${path}`)
+  const data = [...(body.data ?? [])]
+  let nextUrl = body.links?.next
+  while (nextUrl) {
+    ;[status, body] = await request('GET', nextUrl)
+    body = requireOk(status, body, `GET ${nextUrl}`)
+    data.push(...(body.data ?? []))
+    nextUrl = body.links?.next
+  }
+  return data
+}
+
+function parseTime(value) {
+  if (!value) {
+    return new Date(0)
+  }
+  return new Date(value)
+}
+
+async function exactBundleId(identifier) {
+  const bundleIds = await getAll('bundleIds', {
+    'filter[identifier]': identifier,
+    limit: '200',
+  })
+  const exact = bundleIds.find((candidate) => candidate.attributes?.identifier === identifier)
+  if (!exact) {
+    fail(`No Apple Developer bundle ID found for ${identifier}`)
+  }
+  return exact
+}
+
+async function selectCertificate() {
+  const configured = envValue(['IRIS_DRIVE_ASC_CERTIFICATE_ID'])
+  if (configured) {
+    return configured
+  }
+
+  const requiredType = certificateTypeForProfileType(profileType)
+  const certificates = await getAll('certificates', { limit: '200' })
+  const now = Date.now()
+  const candidates = certificates
+    .filter((certificate) => {
+      const attrs = certificate.attributes ?? {}
+      const certificateType = attrs.certificateType ?? ''
+      const expiration = parseTime(attrs.expirationDate)
+      return certificateType.includes(requiredType) && expiration.getTime() > now
+    })
+    .sort((left, right) => (
+      parseTime(right.attributes?.expirationDate).getTime() -
+      parseTime(left.attributes?.expirationDate).getTime()
+    ))
+
+  if (candidates.length === 0) {
+    fail(`No non-expired ${requiredType.toLowerCase()} certificate found in App Store Connect`)
+  }
+
+  const certificate = candidates[0]
+  console.error(
+    `Using ${requiredType.toLowerCase()} certificate ` +
+      `${certificate.attributes?.displayName ?? certificate.id} [${certificate.id}]`,
+  )
+  return certificate.id
+}
+
+function certificateTypeForProfileType(type) {
+  const upper = String(type).toUpperCase()
+  if (upper === 'MAC_APP_DIRECT') {
+    return 'DEVELOPER_ID_APPLICATION'
+  }
+  if (upper.includes('DEVELOPMENT')) {
+    return 'DEVELOPMENT'
+  }
+  return 'DISTRIBUTION'
+}
+
+function profileRequiresDevices() {
+  return profilePlatform === 'ios' && ['IOS_APP_DEVELOPMENT', 'IOS_APP_ADHOC'].includes(profileType)
+}
+
+async function selectDevices() {
+  if (!profileRequiresDevices()) {
+    return []
+  }
+
+  const devices = await getAll('devices', { 'filter[platform]': 'IOS', limit: '200' })
+  const requested = new Set(deviceUdids)
+  const found = new Set()
+  const selected = devices.filter((device) => {
+    const attrs = device.attributes ?? {}
+    const udid = attrs.udid || attrs.identifier
+    if (attrs.status && attrs.status !== 'ENABLED') {
+      return false
+    }
+    if (requested.size > 0 && !requested.has(udid)) {
+      return false
+    }
+    if (udid) {
+      found.add(udid)
+    }
+    return true
+  })
+
+  const missing = [...requested].filter((udid) => !found.has(udid))
+  if (missing.length > 0) {
+    fail(`No enabled App Store Connect device registration found for: ${missing.join(', ')}`)
+  }
+  if (selected.length === 0) {
+    fail('No enabled iOS devices found in App Store Connect')
+  }
+  console.error(`Using iOS devices: ${selected.map((device) => device.attributes?.name ?? device.id).join(', ')}`)
+  return selected
+}
+
+async function listProfiles() {
+  return getAll('profiles', {
+    'filter[profileType]': profileType,
+    include: 'bundleId',
+    limit: '200',
+  })
+}
+
+function usableProfile(profile) {
+  return !['EXPIRED', 'INVALID'].includes(profile.attributes?.profileState)
+}
+
+function profileBundleId(profile) {
+  return profile.relationships?.bundleId?.data?.id ?? ''
+}
+
+async function findProfile(bundleId, name = '') {
+  let profiles = (await listProfiles())
+    .filter((profile) => profileBundleId(profile) === bundleId.id && usableProfile(profile))
+  if (name) {
+    const named = profiles.filter((profile) => profile.attributes?.name === name)
+    if (named.length > 0) {
+      profiles = named
+    }
+  }
+  return profiles
+    .sort((left, right) => (
+      parseTime(
+        right.attributes?.createdDate ||
+          right.attributes?.expirationDate,
+      ).getTime() -
+      parseTime(
+        left.attributes?.createdDate ||
+          left.attributes?.expirationDate,
+      ).getTime()
+    ))[0] ?? null
+}
+
+async function fetchProfile(profileId) {
+  const [status, body] = await request('GET', `profiles/${profileId}`)
+  return requireOk(status, body, 'Get profile').data
+}
+
+async function installProfile(profile) {
+  let attrs = profile.attributes ?? {}
+  if (!attrs.profileContent) {
+    profile = await fetchProfile(profile.id)
+    attrs = profile.attributes ?? {}
+  }
+
+  const uuid = attrs.uuid
+  const content = attrs.profileContent
+  if (!uuid || !content) {
+    fail(`Profile ${profile.id} is missing uuid or content`)
+  }
+
+  const profileDir = join(os.homedir(), 'Library', 'MobileDevice', 'Provisioning Profiles')
+  mkdirSync(profileDir, { recursive: true })
+  const extension = profilePlatform === 'macos' ? 'provisionprofile' : 'mobileprovision'
+  const profilePath = join(profileDir, `${uuid}.${extension}`)
+  writeFileSync(profilePath, Buffer.from(content, 'base64'))
+  return { uuid, profilePath }
+}
+
+async function createProfile(target, bundleId, certificateId, devices) {
+  let name = target.profileName
+  if (profileNameSuffix) {
+    name = `${name} ${profileNameSuffix}`
+  }
+
+  const relationships = {
+    bundleId: {
+      data: {
+        type: 'bundleIds',
+        id: bundleId.id,
+      },
+    },
+    certificates: {
+      data: [
+        {
+          type: 'certificates',
+          id: certificateId,
+        },
+      ],
+    },
+  }
+  if (devices.length > 0) {
+    relationships.devices = {
+      data: devices.map((device) => ({
+        type: 'devices',
+        id: device.id,
+      })),
+    }
+  }
+
+  const body = {
+    data: {
+      type: 'profiles',
+      attributes: {
+        name,
+        profileType,
+      },
+      relationships,
+    },
+  }
+  let [status, response] = await request('POST', 'profiles', {}, body)
+  if (status === 409) {
+    body.data.attributes.name = `${name} ${Math.floor(Date.now() / 1000)}`
+    ;[status, response] = await request('POST', 'profiles', {}, body)
+  }
+  if (status === 403) {
+    fail([
+      `The current App Store Connect API key cannot create a profile for ${target.identifier}.`,
+      'Create the profile in Apple Developer, set IRIS_DRIVE_IOS_PROFILE_RECREATE=false,',
+      'or rerun with credentials that can create provisioning profiles.',
+      `Apple response: ${JSON.stringify(response, null, 2)}`,
+    ].join('\n'))
+  }
+  return requireOk(status, response, `Create profile for ${target.identifier}`).data
+}
+
+async function ensureProfiles() {
+  const certificateId = await selectCertificate()
+  const devices = await selectDevices()
+  const envValues = profilePlatform === 'macos'
+    ? { IRIS_DRIVE_MACOS_KEEP_PROVISIONED_ENTITLEMENTS: 'true' }
+    : {
+        IRIS_DRIVE_IOS_SIGNING_STYLE: 'manual',
+        IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY: codeSignIdentity,
+      }
+  const installed = []
+
+  for (const target of targets) {
+    const bundleId = await exactBundleId(target.identifier)
+    const profileName = profileNameSuffix ? `${target.profileName} ${profileNameSuffix}` : target.profileName
+    let profile = recreateProfiles ? null : await findProfile(bundleId, profileName)
+    if (!profile) {
+      profile = await createProfile(target, bundleId, certificateId, devices)
+    }
+
+    const { uuid, profilePath } = await installProfile(profile)
+    envValues[target.envKey] = profilePlatform === 'macos' ? profilePath : uuid
+    installed.push({
+      identifier: target.identifier,
+      name: profile.attributes?.name ?? profile.id,
+      uuid,
+      profilePath,
+    })
+  }
+
+  mkdirSync(dirname(profilesEnvPath), { recursive: true })
+  writeFileSync(
+    profilesEnvPath,
+    Object.entries(envValues)
+      .map(([key, value]) => `${key}=${shellQuote(value)}`)
+      .join('\n') + '\n',
+  )
+
+  console.log(`Installed ${profilePlatform} provisioning profiles:`)
+  for (const item of installed) {
+    console.log(`  - ${item.identifier}: ${item.name} [${item.uuid}]`)
+    console.log(`    ${item.profilePath}`)
+  }
+  console.log(`Wrote ${profilesEnvPath}`)
+}
+
+async function listMatchingProfiles() {
+  const bundleIds = new Map()
+  for (const target of targets) {
+    bundleIds.set((await exactBundleId(target.identifier)).id, target.identifier)
+  }
+  console.log(`${profileType} profiles for Iris Drive (${profilePlatform}):`)
+  for (const profile of await listProfiles()) {
+    const identifier = bundleIds.get(profileBundleId(profile))
+    if (!identifier) {
+      continue
+    }
+    const attrs = profile.attributes ?? {}
+    console.log(
+      `  - ${identifier}: ${attrs.name ?? profile.id} ` +
+        `[${attrs.uuid ?? ''}] ${attrs.profileState ?? ''}`.trimEnd(),
+    )
+  }
+}
+
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`
+}
+
+function fail(message, code = 1) {
+  console.error(message)
+  process.exit(code)
+}

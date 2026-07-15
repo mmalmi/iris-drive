@@ -1,0 +1,2441 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+ENV_FILE="${IRIS_DRIVE_DEV_LAB_ENV:-$HOME/.config/iris-drive/dev-lab.env}"
+if [[ -f "$ENV_FILE" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  . "$ENV_FILE"
+  set +a
+fi
+RUN_ID="${IRIS_DRIVE_DEV_VM_SMOKE_ID:-$(date -u +%Y%m%d-%H%M%S)}"
+SMOKE_BASE_ROOT="${IRIS_DRIVE_DEV_VM_SMOKE_ROOT:-codex-lab-smoke}"
+SMOKE_ROOT="$SMOKE_BASE_ROOT"
+SMOKE_DIR="${IRIS_DRIVE_DEV_VM_SMOKE_DIR:-$SMOKE_ROOT/$RUN_ID}"
+SMOKE_CLEANUP_ROOT="${IRIS_DRIVE_DEV_VM_SMOKE_CLEANUP_ROOT:-}"
+SMOKE_CLEAN_PREVIOUS_RUNS="${IRIS_DRIVE_DEV_VM_SMOKE_CLEAN_PREVIOUS_RUNS:-0}"
+SMOKE_CLEAN_PREVIOUS_RUNS_WAIT="${IRIS_DRIVE_DEV_VM_SMOKE_CLEAN_PREVIOUS_RUNS_WAIT:-0}"
+TIMINGS_FILE="${IRIS_DRIVE_DEV_VM_SMOKE_TIMINGS_FILE:-$ROOT/target/e2e-3vms-$RUN_ID-timings.jsonl}"
+MAX_SYNC_WAIT_TIMEOUT="${IRIS_DRIVE_DEV_VM_MAX_SYNC_WAIT_TIMEOUT:-30}"
+
+cap_wait_timeout() {
+  local value="$1"
+  local max="$2"
+  case "$value:$max" in
+    *[!0-9:]* | :* | *:) printf '%s\n' "$value"; return 0 ;;
+  esac
+  if (( value > max )); then
+    printf '%s\n' "$max"
+  else
+    printf '%s\n' "$value"
+  fi
+}
+
+scale_wait_timeout() {
+  local value="$1"
+  local multiplier="$2"
+  case "$value:$multiplier" in
+    *[!0-9:]* | :* | *:) printf '%s\n' "$value"; return 0 ;;
+  esac
+  printf '%s\n' "$((value * multiplier))"
+}
+
+add_wait_timeout() {
+  local value="$1"
+  local increment="$2"
+  case "$value:$increment" in
+    *[!0-9:]* | :* | *:) printf '%s\n' "$value"; return 0 ;;
+  esac
+  printf '%s\n' "$((value + increment))"
+}
+
+SYNC_WAIT_TIMEOUT="$(cap_wait_timeout "${IRIS_DRIVE_DEV_VM_SYNC_WAIT_TIMEOUT:-30}" "$MAX_SYNC_WAIT_TIMEOUT")"
+MACOS_PROVIDER_SYNC_WAIT_TIMEOUT="$(cap_wait_timeout "${IRIS_DRIVE_DEV_VM_MACOS_PROVIDER_SYNC_WAIT_TIMEOUT:-30}" "$MAX_SYNC_WAIT_TIMEOUT")"
+WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT="$(cap_wait_timeout "${IRIS_DRIVE_DEV_VM_WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT:-30}" "$MAX_SYNC_WAIT_TIMEOUT")"
+HEAVY_PROJECTION_SYNC_WAIT_TIMEOUT="${IRIS_DRIVE_DEV_VM_HEAVY_PROJECTION_SYNC_WAIT_TIMEOUT:-$(scale_wait_timeout "$SYNC_WAIT_TIMEOUT" 4)}"
+SYNC_QUIET_POLL_INTERVAL="${IRIS_DRIVE_DEV_VM_SYNC_QUIET_POLL_INTERVAL:-2}"
+MACOS_VISIBLE_PROBE_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_PROBE_TIMEOUT:-3}"
+MACOS_VISIBLE_WRITE_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_WRITE_TIMEOUT:-180}"
+MACOS_VISIBLE_WRITE_SSH_TIMEOUT="${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_WRITE_SSH_TIMEOUT:-$(scale_wait_timeout "$MACOS_VISIBLE_WRITE_TIMEOUT" 2)}"
+VISIBLE_MANIFEST_PROBE_TIMEOUT="${IRIS_DRIVE_DEV_VM_VISIBLE_MANIFEST_PROBE_TIMEOUT:-15}"
+VISIBLE_MANIFEST_SSH_TIMEOUT="${IRIS_DRIVE_DEV_VM_VISIBLE_MANIFEST_SSH_TIMEOUT:-$(add_wait_timeout "$VISIBLE_MANIFEST_PROBE_TIMEOUT" 5)}"
+WINDOWS_PROBE_SSH_TIMEOUT="${IRIS_DRIVE_DEV_VM_WINDOWS_PROBE_SSH_TIMEOUT:-20}"
+SMOKE_CLEANUP_TIMEOUT="${IRIS_DRIVE_DEV_VM_SMOKE_CLEANUP_TIMEOUT:-15}"
+WINDOWS_PROJECTION_STABILITY_SECONDS="${IRIS_DRIVE_DEV_VM_WINDOWS_PROJECTION_STABILITY_SECONDS:-10}"
+WINDOWS_PROJECTION_STABILITY_SSH_TIMEOUT="${IRIS_DRIVE_DEV_VM_WINDOWS_PROJECTION_STABILITY_SSH_TIMEOUT:-$(add_wait_timeout "$WINDOWS_PROJECTION_STABILITY_SECONDS" 10)}"
+PROJECTION_STRESS_FILES="${IRIS_DRIVE_DEV_VM_PROJECTION_STRESS_FILES:-32}"
+PROJECTION_STRESS_LARGE_BYTES="${IRIS_DRIVE_DEV_VM_PROJECTION_STRESS_LARGE_BYTES:-262144}"
+SMOKE_ONLY="${IRIS_DRIVE_DEV_VM_SMOKE_ONLY:-all}"
+SMOKE_ACTIVE_PHASE="$SMOKE_ONLY"
+MACOS_VISIBLE_FILEPROVIDER_STATE=""
+WINDOWS_CLOUDFILES_STATE=""
+mkdir -p "$(dirname "$TIMINGS_FILE")"
+: >"$TIMINGS_FILE"
+
+log() {
+  printf '[dev-vm-smoke] %s\n' "$*" >&2
+}
+
+print_failure_context() {
+  log "recent timings from $TIMINGS_FILE"
+  if [[ -s "$TIMINGS_FILE" ]]; then
+    tail -20 "$TIMINGS_FILE" >&2
+  else
+    log "no timings recorded yet"
+  fi
+  log "rerun this smoke phase:"
+  log "  IRIS_DRIVE_E2E_SKIP_CARGO=1 IRIS_DRIVE_E2E_SKIP_DEPLOY=1 scripts/e2e-everything-3vms.sh --smoke-only $SMOKE_ACTIVE_PHASE"
+  log "rerun all native smoke phases:"
+  log "  IRIS_DRIVE_E2E_SKIP_CARGO=1 IRIS_DRIVE_E2E_SKIP_DEPLOY=1 scripts/e2e-everything-3vms.sh --smoke-only all"
+}
+
+die() {
+  printf '[dev-vm-smoke] ERROR: %s\n' "$*" >&2
+  print_failure_context
+  exit 1
+}
+
+ssh_limited() {
+  local timeout="$1"
+  shift
+  perl -e '
+    my $timeout = shift @ARGV;
+    my $pid = fork();
+    die "fork failed: $!" unless defined $pid;
+    if ($pid == 0) {
+      exec @ARGV or die "exec failed: $!";
+    }
+    my $timed_out = 0;
+    local $SIG{ALRM} = sub {
+      $timed_out = 1;
+      kill "TERM", $pid;
+    };
+    alarm $timeout;
+    waitpid($pid, 0);
+    my $status = $?;
+    alarm 0;
+    if ($timed_out) {
+      sleep 1;
+      kill "KILL", $pid;
+      waitpid($pid, 0);
+      exit 124;
+    }
+    exit($status == -1 ? 1 : ($status >> 8));
+  ' "$timeout" ssh "$@"
+}
+
+json_escape() {
+  local value="$1"
+  value="${value//\\/\\\\}"
+  value="${value//\"/\\\"}"
+  value="${value//$'\n'/\\n}"
+  printf '%s' "$value"
+}
+
+base64_arg() {
+  printf '%s' "$1" | base64 | tr -d '\n'
+}
+
+record_timing() {
+  local label="$1"
+  local elapsed="$2"
+  local status="$3"
+  printf '{"run_id":"%s","label":"%s","elapsed_seconds":%s,"status":"%s"}\n' \
+    "$(json_escape "$RUN_ID")" \
+    "$(json_escape "$label")" \
+    "$elapsed" \
+    "$(json_escape "$status")" \
+    >>"$TIMINGS_FILE"
+}
+
+remote_or_die() {
+  local env_var="$1"
+  local generic_name="$2"
+  local value="${!env_var:-}"
+  if [[ -n "$value" ]]; then
+    printf '%s\n' "$value"
+    return 0
+  fi
+  if git -C "$ROOT" remote get-url "$generic_name" >/dev/null 2>&1; then
+    printf '%s\n' "$generic_name"
+    return 0
+  fi
+  die "set $env_var in $ENV_FILE or add a local git remote named $generic_name"
+}
+
+ssh_host_for_label() {
+  local label="$1"
+  local default_host="$2"
+  local env_var
+  local value
+  env_var="IRIS_DRIVE_DEV_VM_$(printf '%s' "$label" | tr '[:lower:]-' '[:upper:]_')_SSH_HOST"
+  value="${!env_var:-}"
+  printf '%s\n' "${value:-$default_host}"
+}
+
+MACOS_REMOTE="$(remote_or_die IRIS_DRIVE_DEV_VM_MACOS_REMOTE macos)"
+UBUNTU_REMOTE="$(remote_or_die IRIS_DRIVE_DEV_VM_UBUNTU_REMOTE ubuntu)"
+WINDOWS_REMOTE="$(remote_or_die IRIS_DRIVE_DEV_VM_WINDOWS_REMOTE windows)"
+MACOS_SSH_HOST="$(ssh_host_for_label macos "$MACOS_REMOTE")"
+UBUNTU_SSH_HOST="$(ssh_host_for_label ubuntu "$UBUNTU_REMOTE")"
+WINDOWS_SSH_HOST="$(ssh_host_for_label windows "$WINDOWS_REMOTE")"
+
+ps_single_quote() {
+  printf "'%s'" "$(printf "%s" "$1" | sed "s/'/''/g")"
+}
+
+win_ps() {
+  ssh "$WINDOWS_SSH_HOST" \
+    'cmd /d /s /c "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""`$script = [Console]::In.ReadToEnd(); & ([scriptblock]::Create(`$script))"""'
+}
+
+win_ps_limited() {
+  local timeout="$1"
+  ssh_limited "$timeout" "$WINDOWS_SSH_HOST" \
+    'cmd /d /s /c "powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command ""`$script = [Console]::In.ReadToEnd(); & ([scriptblock]::Create(`$script))"""'
+}
+
+win_idrive_json() {
+  local args=("$@")
+  local ps_args=""
+  local arg
+  if [[ ${#args[@]} -eq 1 && "${args[0]}" == "status" ]]; then
+    ssh "$WINDOWS_SSH_HOST" 'cmd /d /s /c ""%USERPROFILE%\src\iris-drive\windows\bin\Debug\net8.0-windows\win-x64\publish\idrive.exe" --config-dir "%APPDATA%\iris-drive" status"'
+    return
+  fi
+  if [[ ${#args[@]} -eq 2 && "${args[0]}" == "provider" && "${args[1]}" == "list" ]]; then
+    ssh "$WINDOWS_SSH_HOST" 'cmd /d /s /c ""%USERPROFILE%\src\iris-drive\windows\bin\Debug\net8.0-windows\win-x64\publish\idrive.exe" --config-dir "%APPDATA%\iris-drive" provider list"'
+    return
+  fi
+  for arg in "${args[@]}"; do
+    ps_args+=" '$(printf "%s" "$arg" | sed "s/'/''/g")'"
+  done
+  win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$IrisRepo = Join-Path \$HOME "src\\iris-drive"
+\$Idrive = Join-Path \$IrisRepo "windows\\bin\\Debug\\net8.0-windows\\win-x64\\publish\\idrive.exe"
+if (-not (Test-Path \$Idrive)) {
+  \$Idrive = Join-Path \$IrisRepo "target\\debug\\idrive.exe"
+}
+\$ConfigDir = Join-Path \$env:APPDATA "iris-drive"
+& \$Idrive --config-dir \$ConfigDir$ps_args
+REMOTE_PS
+}
+
+macos_idrive_json() {
+  local args=("$@")
+  ssh "$MACOS_SSH_HOST" 'bash -se' "${args[@]}" <<'REMOTE_SH'
+set -Eeuo pipefail
+macos_config_dir() {
+  if [[ -n "${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-}" ]]; then
+    printf '%s\n' "$IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR/Config"
+    return 0
+  fi
+  local candidate status_file candidate_mtime
+  local best=""
+  local best_mtime=-1
+  for candidate in \
+    "$HOME"/Library/Group\ Containers/*.to.iris.drive/Iris\ Drive\ Dev/Config \
+    "$HOME"/Library/Group\ Containers/group.to.iris.drive/Iris\ Drive\ Dev/Config \
+    "$HOME"/Library/Containers/to.iris.drive.macos/Data/Library/Application\ Support/Iris\ Drive\ Dev/Config
+  do
+    [[ -d "$candidate" ]] || continue
+    [[ -f "$candidate/key" || -f "$candidate/config.json" ]] || continue
+    status_file="$candidate/daemon-status.json"
+    if [[ -f "$status_file" ]]; then
+      candidate_mtime="$(stat -f %m "$status_file" 2>/dev/null || printf '0')"
+    else
+      candidate_mtime=0
+    fi
+    case "$candidate_mtime" in
+      ''|*[!0-9]*) candidate_mtime=0 ;;
+    esac
+    if [[ -z "$best" || "$candidate_mtime" -gt "$best_mtime" ]]; then
+      best="$candidate"
+      best_mtime="$candidate_mtime"
+    fi
+  done
+  [[ -n "$best" ]] || return 1
+  printf '%s\n' "$best"
+}
+config_dir="$(macos_config_dir)"
+"$HOME/src/iris-drive/target/debug/idrive" --config-dir "$config_dir" "$@"
+REMOTE_SH
+}
+
+macos_visible_fileprovider_available() {
+  if [[ -n "$MACOS_VISIBLE_FILEPROVIDER_STATE" ]]; then
+    [[ "$MACOS_VISIBLE_FILEPROVIDER_STATE" == "1" ]]
+    return
+  fi
+  case "${IRIS_DRIVE_DEV_VM_MACOS_VISIBLE_FILEPROVIDER:-auto}" in
+    1|true|TRUE|yes|YES|on|ON|force|FORCE)
+      MACOS_VISIBLE_FILEPROVIDER_STATE="1"
+      return 0
+      ;;
+    0|false|FALSE|no|NO|off|OFF|skip|SKIP)
+      MACOS_VISIBLE_FILEPROVIDER_STATE="0"
+      return 1
+      ;;
+  esac
+
+  local line
+  line="$(ssh "$MACOS_SSH_HOST" "grep -F 'Iris Drive FileProvider integration enabled=' /tmp/iris-drive-macos-app.err 2>/dev/null | tail -1" || true)"
+  if [[ "$line" == *"enabled=true"* ]]; then
+    MACOS_VISIBLE_FILEPROVIDER_STATE="1"
+    return 0
+  fi
+  MACOS_VISIBLE_FILEPROVIDER_STATE="0"
+  return 1
+}
+
+windows_cloudfiles_available() {
+  if [[ -n "$WINDOWS_CLOUDFILES_STATE" ]]; then
+    [[ "$WINDOWS_CLOUDFILES_STATE" == "1" ]]
+    return
+  fi
+  case "${IRIS_DRIVE_DEV_VM_WINDOWS_CLOUDFILES:-auto}" in
+    1|true|TRUE|yes|YES|on|ON|force|FORCE)
+      WINDOWS_CLOUDFILES_STATE="1"
+      return 0
+      ;;
+    0|false|FALSE|no|NO|off|OFF|skip|SKIP)
+      WINDOWS_CLOUDFILES_STATE="0"
+      return 1
+      ;;
+  esac
+
+  if win_ps <<'REMOTE_PS' >/dev/null 2>&1
+$Process = Get-Process | Where-Object {
+  $_.ProcessName -like "IrisDrive*" -or $_.ProcessName -like "Iris Drive*"
+} | Select-Object -First 1
+if ($Process) { exit 0 }
+exit 1
+REMOTE_PS
+  then
+    WINDOWS_CLOUDFILES_STATE="1"
+    return 0
+  fi
+  WINDOWS_CLOUDFILES_STATE="0"
+  return 1
+}
+
+ubuntu_provider_has() {
+  local path="$1"
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$path" <<'REMOTE_SH'
+set -Eeuo pipefail
+path="$1"
+"$HOME/src/iris-drive/target/debug/idrive" provider list \
+  | python3 -c 'import json, sys; needle = sys.argv[1]; data = json.load(sys.stdin); raise SystemExit(0 if any(e.get("path") == needle for e in data.get("entries", [])) else 1)' "$path"
+REMOTE_SH
+}
+
+ubuntu_provider_missing() {
+  ! ubuntu_provider_has "$1"
+}
+
+macos_provider_has() {
+  local path="$1"
+  macos_idrive_json provider list \
+    | python3 -c 'import json, sys; needle = sys.argv[1]; data = json.load(sys.stdin); raise SystemExit(0 if any(e.get("path") == needle for e in data.get("entries", [])) else 1)' "$path"
+}
+
+macos_visible_drive_has() {
+  local path="$1"
+  ssh "$MACOS_SSH_HOST" 'bash -se' "$path" "$MACOS_VISIBLE_PROBE_TIMEOUT" <<'REMOTE_SH'
+set -Eeuo pipefail
+path="$1"
+probe_timeout="$2"
+
+run_limited() {
+  local limit="$1"
+  shift
+  perl -e '
+    my $timeout = shift @ARGV;
+    my $pid = fork();
+    die "fork failed: $!" unless defined $pid;
+    if ($pid == 0) {
+      exec @ARGV or die "exec failed: $!";
+    }
+    my $timed_out = 0;
+    local $SIG{ALRM} = sub {
+      $timed_out = 1;
+      kill "TERM", $pid;
+    };
+    alarm $timeout;
+    waitpid($pid, 0);
+    my $status = $?;
+    alarm 0;
+    if ($timed_out) {
+      sleep 1;
+      kill "KILL", $pid;
+      waitpid($pid, 0);
+      exit 124;
+    }
+    exit($status == -1 ? 1 : ($status >> 8));
+  ' "$limit" "$@"
+}
+
+enumerate_parent_chain() {
+  local root="$1"
+  local relative="$2"
+  local parent
+  local current
+  local part
+
+  parent="$(dirname "$relative")"
+  current="$root"
+  run_limited "$probe_timeout" /bin/ls -la "$current" >/dev/null 2>&1 || true
+  [[ "$parent" != "." ]] || return 0
+  IFS='/' read -r -a parts <<< "$parent"
+  for part in "${parts[@]}"; do
+    [[ -n "$part" ]] || continue
+    current="$current/$part"
+    run_limited "$probe_timeout" /bin/ls -la "$current" >/dev/null 2>&1 || true
+  done
+}
+
+while IFS= read -r root; do
+  [[ -n "$root" ]] || continue
+  enumerate_parent_chain "$root" "$path"
+  if run_limited "$probe_timeout" /bin/test -e "$root/$path"; then
+    exit 0
+  fi
+done < <(find "$HOME/Library/CloudStorage" -maxdepth 1 -type d -name 'IrisDrive*' -print 2>/dev/null || true)
+exit 1
+REMOTE_SH
+}
+
+windows_provider_has() {
+  local path="$1"
+  win_ps_limited "$WINDOWS_PROBE_SSH_TIMEOUT" <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$IrisRepo = Join-Path \$HOME "src\\iris-drive"
+\$Idrive = Join-Path \$IrisRepo "windows\\bin\\Debug\\net8.0-windows\\win-x64\\publish\\idrive.exe"
+if (-not (Test-Path \$Idrive)) {
+  \$Idrive = Join-Path \$IrisRepo "target\\debug\\idrive.exe"
+}
+\$ConfigDir = Join-Path \$env:APPDATA "iris-drive"
+\$Provider = & \$Idrive --config-dir \$ConfigDir provider list | ConvertFrom-Json
+if (@(\$Provider.entries | Where-Object { \$_.path -eq "$path" }).Count -gt 0) {
+  exit 0
+}
+exit 1
+REMOTE_PS
+}
+
+windows_provider_missing() {
+  ! windows_provider_has "$1"
+}
+
+macos_provider_missing() {
+  ! macos_provider_has "$1"
+}
+
+windows_disk_state() {
+  local path="$1"
+  win_ps_limited "$WINDOWS_PROBE_SSH_TIMEOUT" <<REMOTE_PS | tr -d '\r'
+\$ErrorActionPreference = "Stop"
+\$Path = Join-Path \$HOME ("Iris Drive\\$path")
+\$Exists = Test-Path -LiteralPath \$Path
+if (\$Exists) {
+  \$Item = Get-Item -LiteralPath \$Path -Force
+  \$Kind = if ((\$Item.Attributes -band [IO.FileAttributes]::ReparsePoint) -ne 0) {
+    "reparse"
+  } else {
+    "regular"
+  }
+  Write-Output ("yes:" + \$Kind + ":" + \$Item.Attributes.ToString())
+} else {
+  Write-Output "no"
+}
+REMOTE_PS
+}
+
+windows_start_directory_monitor() {
+  local dir="$1"
+  local token="$2"
+  win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$Target = Join-Path \$HOME ("Iris Drive\\$dir")
+New-Item -ItemType Directory -Force -Path \$Target | Out-Null
+Get-ChildItem -LiteralPath \$Target -Force | Out-Null
+\$Log = Join-Path \$env:TEMP "iris-drive-fsw-$token.log"
+\$PidFile = Join-Path \$env:TEMP "iris-drive-fsw-$token.pid"
+\$Script = Join-Path \$env:TEMP "iris-drive-fsw-$token.ps1"
+Remove-Item -LiteralPath \$Log, \$PidFile, \$Script -Force -ErrorAction SilentlyContinue
+@'
+param(
+  [Parameter(Mandatory = \$true)][string]\$Target,
+  [Parameter(Mandatory = \$true)][string]\$Log
+)
+\$ErrorActionPreference = "Stop"
+\$Watcher = [System.IO.FileSystemWatcher]::new(\$Target)
+\$Watcher.IncludeSubdirectories = \$false
+\$Watcher.EnableRaisingEvents = \$true
+\$Registrations = @()
+foreach (\$EventName in @("Created", "Deleted", "Changed", "Renamed")) {
+  \$Registrations += Register-ObjectEvent -InputObject \$Watcher -EventName \$EventName -MessageData \$Log -Action {
+    \$Name = \$EventArgs.Name
+    if (-not \$Name -and \$EventArgs.FullPath) {
+      \$Name = [System.IO.Path]::GetFileName(\$EventArgs.FullPath)
+    }
+    Add-Content -LiteralPath \$Event.MessageData -Value ("{0} {1}" -f \$EventArgs.ChangeType, \$Name)
+  }
+}
+try {
+  \$Deadline = (Get-Date).AddSeconds(90)
+  while ((Get-Date) -lt \$Deadline) {
+    Wait-Event -Timeout 1 | Out-Null
+  }
+} finally {
+  foreach (\$Registration in \$Registrations) {
+    Unregister-Event -SubscriptionId \$Registration.Id -ErrorAction SilentlyContinue
+  }
+  \$Watcher.Dispose()
+}
+'@ | Set-Content -LiteralPath \$Script -Encoding UTF8
+\$Process = Start-Process -FilePath "powershell" -ArgumentList @(
+  "-NoProfile",
+  "-ExecutionPolicy",
+  "Bypass",
+  "-File",
+  \$Script,
+  "-Target",
+  \$Target,
+  "-Log",
+  \$Log
+) -WindowStyle Hidden -PassThru
+Set-Content -LiteralPath \$PidFile -Encoding ASCII -Value \$Process.Id
+REMOTE_PS
+}
+
+windows_monitor_saw_any() {
+  local token="$1"
+  shift
+  local needles=("$@")
+  local ps_needles="@("
+  local sep=""
+  local needle
+  for needle in "${needles[@]}"; do
+    ps_needles+="$sep$(ps_single_quote "$needle")"
+    sep=","
+  done
+  ps_needles+=")"
+  win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$Log = Join-Path \$env:TEMP "iris-drive-fsw-$token.log"
+if (-not (Test-Path -LiteralPath \$Log)) {
+  exit 1
+}
+\$Text = Get-Content -LiteralPath \$Log -Raw
+foreach (\$Needle in $ps_needles) {
+  if (\$Text.Contains(\$Needle)) {
+    exit 0
+  }
+}
+exit 1
+REMOTE_PS
+}
+
+windows_monitor_saw_any_or_disk_has() {
+  local token="$1"
+  local path="$2"
+  local name
+  name="$(basename "$path")"
+  windows_monitor_saw_any "$token" "$name" || wait_windows_disk_has "$path"
+}
+
+windows_stop_directory_monitor() {
+  local token="$1"
+  win_ps <<REMOTE_PS || true
+\$ErrorActionPreference = "SilentlyContinue"
+\$PidFile = Join-Path \$env:TEMP "iris-drive-fsw-$token.pid"
+\$Log = Join-Path \$env:TEMP "iris-drive-fsw-$token.log"
+\$Script = Join-Path \$env:TEMP "iris-drive-fsw-$token.ps1"
+if (Test-Path -LiteralPath \$PidFile) {
+  \$ProcessId = [int](Get-Content -LiteralPath \$PidFile -Raw)
+  Stop-Process -Id \$ProcessId -Force
+}
+Remove-Item -LiteralPath \$PidFile, \$Log, \$Script -Force
+REMOTE_PS
+}
+
+wait_for() {
+  local label="$1"
+  local timeout="$2"
+  shift 2
+  local start
+  start="$(date +%s)"
+  while true; do
+    if "$@"; then
+      local elapsed=$(( $(date +%s) - start ))
+      record_timing "$label" "$elapsed" "ok"
+      log "ok in ${elapsed}s: $label"
+      return 0
+    fi
+    if (( $(date +%s) - start >= timeout )); then
+      local elapsed=$(( $(date +%s) - start ))
+      record_timing "$label" "$elapsed" "timeout"
+      die "timed out waiting for $label"
+    fi
+    sleep 1
+  done
+}
+
+wait_for_quiet() {
+  local label="$1"
+  local timeout="$2"
+  local interval="$3"
+  shift 3
+  local start
+  start="$(date +%s)"
+  while true; do
+    if "$@"; then
+      local elapsed=$(( $(date +%s) - start ))
+      record_timing "$label" "$elapsed" "ok"
+      log "ok in ${elapsed}s: $label"
+      return 0
+    fi
+    if (( $(date +%s) - start >= timeout )); then
+      local elapsed=$(( $(date +%s) - start ))
+      record_timing "$label" "$elapsed" "timeout"
+      die "timed out waiting for $label"
+    fi
+    sleep "$interval"
+  done
+}
+
+wait_windows_disk_has() {
+  local path="$1"
+  [[ "$(windows_disk_state "$path")" == yes:* ]]
+}
+
+wait_windows_disk_missing() {
+  local path="$1"
+  [[ "$(windows_disk_state "$path")" == "no" ]]
+}
+
+wait_windows_disk_reparse() {
+  local path="$1"
+  [[ "$(windows_disk_state "$path")" == yes:reparse:* ]]
+}
+
+wait_windows_file_has_content() {
+  local path="$1"
+  local expected="$2"
+  local expected_b64
+  expected_b64="$(base64_arg "$expected")"
+  win_ps_limited "$WINDOWS_PROBE_SSH_TIMEOUT" <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$Path = Join-Path \$HOME ("Iris Drive\\$path")
+if (-not (Test-Path -LiteralPath \$Path -PathType Leaf)) {
+  exit 1
+}
+\$Expected = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("$expected_b64")) + [string][char]10
+\$Actual = [System.IO.File]::ReadAllText(\$Path)
+if (\$Actual -ne \$Expected) {
+  exit 1
+}
+REMOTE_PS
+}
+
+windows_projection_stays_visible_during_local_create() {
+  local local_path="$1"
+  shift
+  local expected_paths=("$@")
+  local expected_ps="@("
+  local separator=""
+  local expected
+  for expected in "${expected_paths[@]}"; do
+    expected_ps+="$separator$(ps_single_quote "$expected")"
+    separator=", "
+  done
+  expected_ps+=")"
+  local start
+  start="$(date +%s)"
+  if win_ps_limited "$WINDOWS_PROJECTION_STABILITY_SSH_TIMEOUT" <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+function FullPath([string]\$Relative) {
+  \$Native = \$Relative.Replace("/", [IO.Path]::DirectorySeparatorChar)
+  return Join-Path (Join-Path \$HOME "Iris Drive") \$Native
+}
+\$Expected = $expected_ps
+\$LocalPath = FullPath $(ps_single_quote "$local_path")
+\$MissingBefore = @(\$Expected | Where-Object { -not (Test-Path -LiteralPath (FullPath \$_)) })
+if (\$MissingBefore.Count -gt 0) {
+  throw ("expected Windows projection paths missing before local create: " + (\$MissingBefore -join ", "))
+}
+New-Item -ItemType Directory -Force -Path ([IO.Path]::GetDirectoryName(\$LocalPath)) | Out-Null
+[System.IO.File]::WriteAllText(
+  \$LocalPath,
+  $(ps_single_quote "projection guard windows $RUN_ID") + [string][char]10,
+  [System.Text.Encoding]::ASCII)
+\$Deadline = (Get-Date).AddSeconds($WINDOWS_PROJECTION_STABILITY_SECONDS)
+while ((Get-Date) -lt \$Deadline) {
+  \$Missing = @(\$Expected | Where-Object { -not (Test-Path -LiteralPath (FullPath \$_)) })
+  if (\$Missing.Count -gt 0) {
+    throw ("Windows projection dropped expected paths during local create: " + (\$Missing -join ", "))
+  }
+  Start-Sleep -Milliseconds 250
+}
+REMOTE_PS
+  then
+    local elapsed=$(( $(date +%s) - start ))
+    record_timing "Windows projection stays visible during local create" "$elapsed" "ok"
+    log "ok in ${elapsed}s: Windows projection stays visible during local create"
+    return 0
+  fi
+  local elapsed=$(( $(date +%s) - start ))
+  record_timing "Windows projection stays visible during local create" "$elapsed" "failed"
+  die "Windows projection hid existing paths during local create"
+}
+
+wait_ubuntu_file_has() {
+  local path="$1"
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$path" <<'REMOTE_SH'
+set -Eeuo pipefail
+path="$1"
+if command -v timeout >/dev/null 2>&1; then
+  timeout 5s test -f "$HOME/Iris Drive/$path"
+else
+  test -f "$HOME/Iris Drive/$path"
+fi
+REMOTE_SH
+}
+
+wait_ubuntu_missing() {
+  local path="$1"
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$path" <<'REMOTE_SH'
+set -Eeuo pipefail
+path="$1"
+if command -v timeout >/dev/null 2>&1; then
+  timeout 5s test ! -e "$HOME/Iris Drive/$path"
+else
+  test ! -e "$HOME/Iris Drive/$path"
+fi
+REMOTE_SH
+}
+
+assert_no_ignored_provider_paths() {
+  local label="$1"
+  local json="$2"
+  printf '%s\n' "$json" | python3 -c '
+import json
+import sys
+
+label = sys.argv[1]
+data = json.load(sys.stdin)
+bad = []
+for entry in data.get("entries", []):
+    parts = entry.get("path", "").split("/")
+    if any(part == ".Trash" or part.startswith(".Trash-") or part == "$RECYCLE.BIN" for part in parts):
+        bad.append(entry.get("path", ""))
+if bad:
+    raise SystemExit(f"{label} provider exposes ignored trash paths: {bad}")
+' "$label"
+}
+
+check_revisions() {
+  case "${IRIS_DRIVE_DEV_VM_SKIP_REVISION_CHECK:-0}" in
+    1|true|TRUE|yes|YES|on|ON)
+      log "skipping VM revision check"
+      return 0
+      ;;
+  esac
+  local local_head local_display ubuntu_head macos_head windows_head
+  local_head="$(git -C "$ROOT" rev-parse HEAD)"
+  local_display="${local_head:0:12}"
+  log "checking VM revisions against $local_display"
+  ubuntu_head="$(ssh "$UBUNTU_SSH_HOST" 'git -C ~/src/iris-drive rev-parse HEAD' | tr -d '\r')"
+  [[ "$ubuntu_head" == "$local_head" ]] \
+    || die "ubuntu VM is not on $local_display (found ${ubuntu_head:0:12})"
+  macos_head="$(ssh "$MACOS_SSH_HOST" 'git -C ~/src/iris-drive rev-parse HEAD' | tr -d '\r')"
+  [[ "$macos_head" == "$local_head" ]] \
+    || die "macOS VM is not on $local_display (found ${macos_head:0:12})"
+  windows_head="$(win_ps <<'REMOTE_PS' | tr -d '\r'
+git -C (Join-Path $HOME "src\iris-drive") rev-parse HEAD
+REMOTE_PS
+)"
+  [[ "$windows_head" == "$local_head" ]] \
+    || die "Windows VM is not on $local_display (found ${windows_head:0:12})"
+}
+
+check_fips_online() {
+  log "checking FIPS roster online state"
+  local ubuntu_status
+  local macos_status
+  local windows_status
+  ubuntu_status="$(ssh "$UBUNTU_SSH_HOST" '"$HOME/src/iris-drive/target/debug/idrive" status')"
+  macos_status="$(macos_idrive_json status)"
+  windows_status="$(win_idrive_json status)"
+STATUS_UBUNTU="$ubuntu_status" STATUS_MACOS="$macos_status" STATUS_WINDOWS="$windows_status" python3 <<'PY'
+import json
+import os
+
+statuses = {
+    "ubuntu": json.loads(os.environ["STATUS_UBUNTU"]),
+    "macos": json.loads(os.environ["STATUS_MACOS"]),
+    "windows": json.loads(os.environ["STATUS_WINDOWS"]),
+}
+current_npubs = {}
+for name, status in statuses.items():
+    npub = status.get("current_app_key_npub")
+    if not npub:
+        npub = ((status.get("profile") or {}).get("profile") or {}).get("current_app_key_npub")
+    if not npub:
+        npub = (status.get("profile") or {}).get("current_app_key_npub")
+    if not npub:
+        raise SystemExit(f"{name} current app-key npub unavailable")
+    current_npubs[name] = npub
+
+for name, status in statuses.items():
+    peers = {}
+    for peer in status.get("peers", []):
+        for key in ("label", "display_label", "app_key_npub", "app_key_pubkey"):
+            value = peer.get(key)
+            if value:
+                peers[value] = peer
+    fips = (status.get("network") or {}).get("fips") or {}
+    online_fips = set(
+        (fips.get("online_peers") or [])
+        + (fips.get("online_devices") or [])
+        + (fips.get("direct_peers") or [])
+        + (fips.get("direct_devices") or [])
+        + (fips.get("connected_peers") or [])
+        + (fips.get("mesh_peers") or [])
+        + (fips.get("mesh_devices") or [])
+    )
+    offline = []
+    for peer_name, npub in sorted(current_npubs.items()):
+        if peer_name == name:
+            continue
+        peer = peers.get(npub)
+        if peer is None:
+            if npub not in online_fips:
+                offline.append(f"{peer_name}: missing")
+        elif not peer.get("fips_online"):
+            offline.append(
+                f"{peer_name}: online={peer.get('fips_online')} state={peer.get('sync_state')}"
+            )
+    if offline:
+        raise SystemExit(f"{name} has offline FIPS peers: {offline}")
+PY
+}
+
+check_provider_noise() {
+  log "checking provider views for ignored trash paths"
+  assert_no_ignored_provider_paths ubuntu "$(ssh "$UBUNTU_SSH_HOST" '"$HOME/src/iris-drive/target/debug/idrive" provider list')"
+  assert_no_ignored_provider_paths macos "$(macos_idrive_json provider list)"
+  assert_no_ignored_provider_paths windows "$(win_idrive_json provider list)"
+}
+
+write_windows_file() {
+  local path="$1"
+  local content="$2"
+  local content_b64
+  content_b64="$(base64_arg "$content")"
+  win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$Path = Join-Path \$HOME ("Iris Drive\\$path")
+\$Parent = Split-Path -Parent \$Path
+New-Item -ItemType Directory -Force -Path \$Parent | Out-Null
+\$Content = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("$content_b64"))
+[System.IO.File]::WriteAllText(\$Path, \$Content + [string][char]10, [System.Text.Encoding]::ASCII)
+REMOTE_PS
+}
+
+delete_windows_path() {
+  local path="$1"
+  win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$Path = Join-Path \$HOME ("Iris Drive\\$path")
+if (Test-Path -LiteralPath \$Path) {
+  Remove-Item -LiteralPath \$Path -Force -Recurse
+}
+REMOTE_PS
+}
+
+rename_windows_path() {
+  local old_path="$1"
+  local new_path="$2"
+  win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$OldPath = Join-Path \$HOME ("Iris Drive\\$old_path")
+\$NewPath = Join-Path \$HOME ("Iris Drive\\$new_path")
+\$Parent = Split-Path -Parent \$NewPath
+New-Item -ItemType Directory -Force -Path \$Parent | Out-Null
+\$OldParent = Split-Path -Parent \$OldPath
+if (\$OldParent -eq \$Parent) {
+  Rename-Item -LiteralPath \$OldPath -NewName (Split-Path -Leaf \$NewPath) -Force
+} else {
+  Move-Item -LiteralPath \$OldPath -Destination \$NewPath -Force
+}
+REMOTE_PS
+}
+
+write_windows_provider_file() {
+  local path="$1"
+  local content="$2"
+  local content_b64
+  content_b64="$(base64_arg "$content")"
+  win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$IrisRepo = Join-Path \$HOME "src\\iris-drive"
+\$Idrive = Join-Path \$IrisRepo "windows\\bin\\Debug\\net8.0-windows\\win-x64\\publish\\idrive.exe"
+if (-not (Test-Path \$Idrive)) {
+  \$Idrive = Join-Path \$IrisRepo "target\\debug\\idrive.exe"
+}
+\$ConfigDir = Join-Path \$env:APPDATA "iris-drive"
+\$Tmp = Join-Path \$env:TEMP ("iris-drive-provider-write-" + [guid]::NewGuid().ToString() + ".txt")
+try {
+  \$Content = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("$content_b64"))
+  [System.IO.File]::WriteAllText(\$Tmp, \$Content + [string][char]10, [System.Text.Encoding]::ASCII)
+  & \$Idrive --config-dir \$ConfigDir provider write "$path" \$Tmp | Out-Null
+} finally {
+  Remove-Item -LiteralPath \$Tmp -Force -ErrorAction SilentlyContinue
+}
+REMOTE_PS
+}
+
+write_windows_provider_zero_file() {
+  local path="$1"
+  local bytes="$2"
+  win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$IrisRepo = Join-Path \$HOME "src\\iris-drive"
+\$Idrive = Join-Path \$IrisRepo "windows\\bin\\Debug\\net8.0-windows\\win-x64\\publish\\idrive.exe"
+if (-not (Test-Path \$Idrive)) {
+  \$Idrive = Join-Path \$IrisRepo "target\\debug\\idrive.exe"
+}
+\$ConfigDir = Join-Path \$env:APPDATA "iris-drive"
+\$Tmp = Join-Path \$env:TEMP ("iris-drive-provider-zero-" + [guid]::NewGuid().ToString() + ".bin")
+try {
+  [System.IO.File]::WriteAllBytes(\$Tmp, [byte[]]::new($bytes))
+  & \$Idrive --config-dir \$ConfigDir provider write "$path" \$Tmp | Out-Null
+} finally {
+  Remove-Item -LiteralPath \$Tmp -Force -ErrorAction SilentlyContinue
+}
+REMOTE_PS
+}
+
+rename_windows_provider_path() {
+  local old_path="$1"
+  local new_path="$2"
+  win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$IrisRepo = Join-Path \$HOME "src\\iris-drive"
+\$Idrive = Join-Path \$IrisRepo "windows\\bin\\Debug\\net8.0-windows\\win-x64\\publish\\idrive.exe"
+if (-not (Test-Path \$Idrive)) {
+  \$Idrive = Join-Path \$IrisRepo "target\\debug\\idrive.exe"
+}
+\$ConfigDir = Join-Path \$env:APPDATA "iris-drive"
+& \$Idrive --config-dir \$ConfigDir provider rename "$old_path" "$new_path" | Out-Null
+REMOTE_PS
+}
+
+wait_windows_provider_file_has_content() {
+  local path="$1"
+  local expected="$2"
+  local expected_b64
+  expected_b64="$(base64_arg "$expected")"
+  win_ps_limited "$WINDOWS_PROBE_SSH_TIMEOUT" <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$IrisRepo = Join-Path \$HOME "src\\iris-drive"
+\$Idrive = Join-Path \$IrisRepo "windows\\bin\\Debug\\net8.0-windows\\win-x64\\publish\\idrive.exe"
+if (-not (Test-Path \$Idrive)) {
+  \$Idrive = Join-Path \$IrisRepo "target\\debug\\idrive.exe"
+}
+\$ConfigDir = Join-Path \$env:APPDATA "iris-drive"
+\$Tmp = Join-Path \$env:TEMP ("iris-drive-provider-read-" + [guid]::NewGuid().ToString() + ".txt")
+try {
+  \$PreviousErrorAction = \$ErrorActionPreference
+  \$ErrorActionPreference = "SilentlyContinue"
+  & \$Idrive --config-dir \$ConfigDir provider read "$path" \$Tmp *>\$null
+  \$ReadExit = \$LASTEXITCODE
+  \$ErrorActionPreference = \$PreviousErrorAction
+  if (\$ReadExit -ne 0 -or -not (Test-Path -LiteralPath \$Tmp)) {
+    exit 1
+  }
+  \$Expected = [System.Text.Encoding]::UTF8.GetString([Convert]::FromBase64String("$expected_b64")) + [string][char]10
+  \$Actual = [System.IO.File]::ReadAllText(\$Tmp)
+  if (\$Actual -ne \$Expected) {
+    exit 1
+  }
+} finally {
+  Remove-Item -LiteralPath \$Tmp -Force -ErrorAction SilentlyContinue
+}
+REMOTE_PS
+}
+
+write_windows_surface_file() {
+  if windows_cloudfiles_available; then
+    write_windows_file "$@"
+  else
+    write_windows_provider_file "$@"
+  fi
+}
+
+write_windows_surface_zero_file() {
+  if windows_cloudfiles_available; then
+    write_windows_zero_file "$@"
+  else
+    write_windows_provider_zero_file "$@"
+  fi
+}
+
+delete_windows_surface_path() {
+  if windows_cloudfiles_available; then
+    delete_windows_path "$@"
+  else
+    delete_windows_provider_path "$@"
+  fi
+}
+
+rename_windows_surface_path() {
+  if windows_cloudfiles_available; then
+    rename_windows_path "$@"
+  else
+    rename_windows_provider_path "$@"
+  fi
+}
+
+wait_windows_surface_has() {
+  if windows_cloudfiles_available; then
+    wait_windows_disk_has "$@"
+  else
+    windows_provider_has "$@"
+  fi
+}
+
+wait_windows_surface_missing() {
+  if windows_cloudfiles_available; then
+    wait_windows_disk_missing "$@"
+  else
+    windows_provider_missing "$@"
+  fi
+}
+
+wait_windows_surface_reparse() {
+  if windows_cloudfiles_available; then
+    wait_windows_disk_reparse "$@"
+  else
+    return 0
+  fi
+}
+
+wait_windows_surface_file_has_content() {
+  if windows_cloudfiles_available; then
+    wait_windows_file_has_content "$@"
+  else
+    wait_windows_provider_file_has_content "$@"
+  fi
+}
+
+write_ubuntu_file() {
+  local path="$1"
+  local content="$2"
+  local content_b64
+  content_b64="$(base64_arg "$content")"
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$path" "$content_b64" <<'REMOTE_SH'
+set -Eeuo pipefail
+path="$1"
+content_b64="$2"
+content="$(python3 -c 'import base64, sys; sys.stdout.write(base64.b64decode(sys.argv[1]).decode("utf-8"))' "$content_b64")"
+if command -v timeout >/dev/null 2>&1; then
+  timeout 10s mkdir -p "$(dirname "$HOME/Iris Drive/$path")"
+  printf '%s\n' "$content" | timeout 10s tee "$HOME/Iris Drive/$path" >/dev/null
+else
+  mkdir -p "$(dirname "$HOME/Iris Drive/$path")"
+  printf '%s\n' "$content" > "$HOME/Iris Drive/$path"
+fi
+REMOTE_SH
+}
+
+write_ubuntu_zero_file() {
+  local path="$1"
+  local bytes="$2"
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$path" "$bytes" <<'REMOTE_SH'
+set -Eeuo pipefail
+path="$1"
+bytes="$2"
+target="$HOME/Iris Drive/$path"
+mkdir -p "$(dirname "$target")"
+head -c "$bytes" /dev/zero >"$target"
+REMOTE_SH
+}
+
+delete_ubuntu_path() {
+  local path="$1"
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$path" <<'REMOTE_SH'
+set -Eeuo pipefail
+path="$1"
+if command -v timeout >/dev/null 2>&1; then
+  timeout 10s rm -rf "$HOME/Iris Drive/$path"
+else
+  rm -rf "$HOME/Iris Drive/$path"
+fi
+REMOTE_SH
+}
+
+delete_ubuntu_provider_path() {
+  local path="$1"
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$path" <<'REMOTE_SH'
+set -Eeuo pipefail
+path="$1"
+"$HOME/src/iris-drive/target/debug/idrive" provider delete "$path" >/dev/null
+REMOTE_SH
+}
+
+cleanup_previous_smoke_root() {
+  case "${IRIS_DRIVE_DEV_VM_SMOKE_CLEAN_ROOT:-1}" in
+    1|true|TRUE|yes|YES|on|ON) ;;
+    *) log "skipping smoke root cleanup"; return 0 ;;
+  esac
+  if [[ -z "$SMOKE_CLEANUP_ROOT" ]]; then
+    log "skipping smoke root cleanup"
+    return 0
+  fi
+
+  local cleanup_is_current=0
+  if [[ "$SMOKE_CLEANUP_ROOT" == "$SMOKE_DIR" ]]; then
+    cleanup_is_current=1
+  elif [[ "$SMOKE_DIR" == "$SMOKE_CLEANUP_ROOT/"* ]]; then
+    die "smoke cleanup root '$SMOKE_CLEANUP_ROOT' must not contain current run dir '$SMOKE_DIR'"
+  fi
+
+  log "cleaning previous native smoke root $SMOKE_CLEANUP_ROOT"
+  delete_ubuntu_path "$SMOKE_CLEANUP_ROOT" || true
+  delete_ubuntu_provider_path "$SMOKE_CLEANUP_ROOT" >/dev/null 2>&1 || true
+  delete_windows_path "$SMOKE_CLEANUP_ROOT" || true
+  delete_windows_provider_path "$SMOKE_CLEANUP_ROOT" >/dev/null 2>&1 || true
+  delete_macos_provider_path "$SMOKE_CLEANUP_ROOT" >/dev/null 2>&1 || true
+
+  local start
+  start="$(date +%s)"
+  while (( $(date +%s) - start < SMOKE_CLEANUP_TIMEOUT )); do
+    if wait_ubuntu_missing "$SMOKE_CLEANUP_ROOT" &&
+      ubuntu_provider_missing "$SMOKE_CLEANUP_ROOT" &&
+      wait_windows_disk_missing "$SMOKE_CLEANUP_ROOT" &&
+      windows_provider_missing "$SMOKE_CLEANUP_ROOT" &&
+      macos_provider_missing "$SMOKE_CLEANUP_ROOT"; then
+      local elapsed=$(( $(date +%s) - start ))
+      record_timing "smoke root best-effort cleanup" "$elapsed" "ok"
+      log "ok in ${elapsed}s: smoke root best-effort cleanup"
+      return 0
+    fi
+    sleep 1
+  done
+  local elapsed=$(( $(date +%s) - start ))
+  local remnants=()
+  local remnant_text
+  wait_ubuntu_missing "$SMOKE_CLEANUP_ROOT" || remnants+=("ubuntu-disk")
+  ubuntu_provider_missing "$SMOKE_CLEANUP_ROOT" || remnants+=("ubuntu-provider")
+  wait_windows_disk_missing "$SMOKE_CLEANUP_ROOT" || remnants+=("windows-disk")
+  windows_provider_missing "$SMOKE_CLEANUP_ROOT" || remnants+=("windows-provider")
+  macos_provider_missing "$SMOKE_CLEANUP_ROOT" || remnants+=("macos-provider")
+  remnant_text="none observed"
+  if (( ${#remnants[@]} > 0 )); then
+    remnant_text="${remnants[*]}"
+  fi
+  record_timing "smoke root best-effort cleanup" "$elapsed" "warning"
+  if (( cleanup_is_current )); then
+    die "current smoke dir cleanup incomplete after ${elapsed}s: $remnant_text"
+  fi
+  log "warning after ${elapsed}s: smoke root still has local remnants: $remnant_text"
+}
+
+previous_smoke_run_dirs() {
+  local provider_file
+  provider_file="$(mktemp -t iris-drive-provider-list.XXXXXX.json)"
+  if ! ssh "$UBUNTU_SSH_HOST" 'bash -se' >"$provider_file" <<'REMOTE_SH'
+set -Eeuo pipefail
+"$HOME/src/iris-drive/target/debug/idrive" provider list
+REMOTE_SH
+  then
+    rm -f "$provider_file"
+    return 1
+  fi
+  PROVIDER_JSON_FILE="$provider_file" SMOKE_ROOT="$SMOKE_ROOT" SMOKE_DIR="$SMOKE_DIR" python3 <<'PY'
+import json
+import os
+import re
+
+def clean(path):
+    return "/".join(part for part in path.replace("\\", "/").split("/") if part)
+
+root = clean(os.environ["SMOKE_ROOT"])
+current = clean(os.environ["SMOKE_DIR"])
+if not root:
+    raise SystemExit(0)
+
+preserve = None
+prefix = root + "/"
+if current == root:
+    preserve = root
+elif current.startswith(prefix):
+    preserve = prefix + current[len(prefix):].split("/", 1)[0]
+
+try:
+    with open(os.environ["PROVIDER_JSON_FILE"], "r", encoding="utf-8") as handle:
+        data = json.load(handle)
+except json.JSONDecodeError:
+    raise SystemExit(1)
+
+runs = set()
+for entry in data.get("entries", []):
+    path = clean(str(entry.get("path", "")))
+    if not path.startswith(prefix):
+        continue
+    run = path[len(prefix):].split("/", 1)[0]
+    if not re.fullmatch(r"\d{8}-\d{6}", run):
+        continue
+    run_path = f"{root}/{run}"
+    if run_path != preserve:
+        runs.add(run_path)
+
+for run_path in sorted(runs):
+    print(run_path)
+PY
+  local status=$?
+  rm -f "$provider_file"
+  return "$status"
+}
+
+cleanup_previous_smoke_runs() {
+  case "$SMOKE_CLEAN_PREVIOUS_RUNS" in
+    1|true|TRUE|yes|YES|on|ON) ;;
+    *) return 0 ;;
+  esac
+
+  local candidates
+  if ! candidates="$(previous_smoke_run_dirs)"; then
+    log "warning: could not list previous native smoke runs"
+    return 0
+  fi
+  [[ -n "$candidates" ]] || return 0
+
+  local count
+  count="$(printf '%s\n' "$candidates" | sed '/^$/d' | wc -l | tr -d ' ')"
+  log "cleaning $count previous native smoke run(s) under $SMOKE_ROOT"
+  local start
+  start="$(date +%s)"
+  local path
+  while IFS= read -r path; do
+    [[ -n "$path" ]] || continue
+    delete_ubuntu_path "$path" || true
+    delete_ubuntu_provider_path "$path" >/dev/null 2>&1 || true
+    delete_windows_path "$path" || true
+    delete_windows_provider_path "$path" >/dev/null 2>&1 || true
+    delete_macos_provider_path "$path" >/dev/null 2>&1 || true
+  done <<<"$candidates"
+
+  case "$SMOKE_CLEAN_PREVIOUS_RUNS_WAIT" in
+    1|true|TRUE|yes|YES|on|ON) ;;
+    *)
+      local elapsed=$(( $(date +%s) - start ))
+      record_timing "previous smoke runs cleanup" "$elapsed" "queued"
+      log "queued in ${elapsed}s: previous smoke runs cleanup"
+      return 0
+      ;;
+  esac
+
+  while (( $(date +%s) - start < SMOKE_CLEANUP_TIMEOUT )); do
+    if [[ -z "$(previous_smoke_run_dirs || true)" ]]; then
+      local elapsed=$(( $(date +%s) - start ))
+      record_timing "previous smoke runs cleanup" "$elapsed" "ok"
+      log "ok in ${elapsed}s: previous smoke runs cleanup"
+      return 0
+    fi
+    sleep 1
+  done
+
+  local elapsed=$(( $(date +%s) - start ))
+  record_timing "previous smoke runs cleanup" "$elapsed" "warning"
+  log "warning after ${elapsed}s: previous smoke runs still visible in provider list"
+}
+
+write_windows_zero_file() {
+  local path="$1"
+  local bytes="$2"
+  win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$Path = Join-Path \$HOME ("Iris Drive\\$path")
+\$Parent = Split-Path -Parent \$Path
+New-Item -ItemType Directory -Force -Path \$Parent | Out-Null
+[System.IO.File]::WriteAllBytes(\$Path, [byte[]]::new($bytes))
+REMOTE_PS
+}
+
+write_macos_provider_file() {
+  local path="$1"
+  local content="$2"
+  local content_b64
+  content_b64="$(base64_arg "$content")"
+  ssh "$MACOS_SSH_HOST" 'bash -se' "$path" "$content_b64" <<'REMOTE_SH'
+set -Eeuo pipefail
+path="$1"
+content_b64="$2"
+content="$(python3 -c 'import base64, sys; sys.stdout.write(base64.b64decode(sys.argv[1]).decode("utf-8"))' "$content_b64")"
+macos_config_dir() {
+  if [[ -n "${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-}" ]]; then
+    printf '%s\n' "$IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR/Config"
+    return 0
+  fi
+  local candidate status_file candidate_mtime
+  local best=""
+  local best_mtime=-1
+  for candidate in \
+    "$HOME"/Library/Group\ Containers/*.to.iris.drive/Iris\ Drive\ Dev/Config \
+    "$HOME"/Library/Group\ Containers/group.to.iris.drive/Iris\ Drive\ Dev/Config \
+    "$HOME"/Library/Containers/to.iris.drive.macos/Data/Library/Application\ Support/Iris\ Drive\ Dev/Config
+  do
+    [[ -d "$candidate" ]] || continue
+    [[ -f "$candidate/key" || -f "$candidate/config.json" ]] || continue
+    status_file="$candidate/daemon-status.json"
+    if [[ -f "$status_file" ]]; then
+      candidate_mtime="$(stat -f %m "$status_file" 2>/dev/null || printf '0')"
+    else
+      candidate_mtime=0
+    fi
+    case "$candidate_mtime" in
+      ''|*[!0-9]*) candidate_mtime=0 ;;
+    esac
+    if [[ -z "$best" || "$candidate_mtime" -gt "$best_mtime" ]]; then
+      best="$candidate"
+      best_mtime="$candidate_mtime"
+    fi
+  done
+  [[ -n "$best" ]] || return 1
+  printf '%s\n' "$best"
+}
+config_dir="$(macos_config_dir)"
+tmp="$(mktemp -t iris-drive-macos-provider-write)"
+trap 'rm -f "$tmp"' EXIT
+printf '%s\n' "$content" > "$tmp"
+"$HOME/src/iris-drive/target/debug/idrive" --config-dir "$config_dir" provider write "$path" "$tmp" >/dev/null
+REMOTE_SH
+}
+
+write_macos_provider_zero_file() {
+  local path="$1"
+  local bytes="$2"
+  ssh "$MACOS_SSH_HOST" 'bash -se' "$path" "$bytes" <<'REMOTE_SH'
+set -Eeuo pipefail
+path="$1"
+bytes="$2"
+macos_config_dir() {
+  if [[ -n "${IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR:-}" ]]; then
+    printf '%s\n' "$IRIS_DRIVE_DEV_VM_MACOS_APP_BASE_DIR/Config"
+    return 0
+  fi
+  local candidate status_file candidate_mtime
+  local best=""
+  local best_mtime=-1
+  for candidate in \
+    "$HOME"/Library/Group\ Containers/*.to.iris.drive/Iris\ Drive\ Dev/Config \
+    "$HOME"/Library/Group\ Containers/group.to.iris.drive/Iris\ Drive\ Dev/Config \
+    "$HOME"/Library/Containers/to.iris.drive.macos/Data/Library/Application\ Support/Iris\ Drive\ Dev/Config
+  do
+    [[ -d "$candidate" ]] || continue
+    [[ -f "$candidate/key" || -f "$candidate/config.json" ]] || continue
+    status_file="$candidate/daemon-status.json"
+    if [[ -f "$status_file" ]]; then
+      candidate_mtime="$(stat -f %m "$status_file" 2>/dev/null || printf '0')"
+    else
+      candidate_mtime=0
+    fi
+    case "$candidate_mtime" in
+      ''|*[!0-9]*) candidate_mtime=0 ;;
+    esac
+    if [[ -z "$best" || "$candidate_mtime" -gt "$best_mtime" ]]; then
+      best="$candidate"
+      best_mtime="$candidate_mtime"
+    fi
+  done
+  [[ -n "$best" ]] || return 1
+  printf '%s\n' "$best"
+}
+config_dir="$(macos_config_dir)"
+tmp="$(mktemp -t iris-drive-macos-provider-zero)"
+trap 'rm -f "$tmp"' EXIT
+python3 -c 'import sys; open(sys.argv[1], "wb").write(b"\0" * int(sys.argv[2]))' "$tmp" "$bytes"
+"$HOME/src/iris-drive/target/debug/idrive" --config-dir "$config_dir" provider write "$path" "$tmp" >/dev/null
+REMOTE_SH
+}
+
+write_macos_visible_file() {
+  local path="$1"
+  local content="$2"
+  local content_b64
+  content_b64="$(base64_arg "$content")"
+  ssh_limited "$MACOS_VISIBLE_WRITE_SSH_TIMEOUT" \
+    "$MACOS_SSH_HOST" 'bash -se' "$path" "$content_b64" "$MACOS_VISIBLE_WRITE_TIMEOUT" <<'REMOTE_SH'
+set -Eeuo pipefail
+path="$1"
+content_b64="$2"
+write_timeout="$3"
+cloud_root="$HOME/Library/CloudStorage"
+drive_root=""
+if [[ -d "$cloud_root" ]]; then
+  while IFS= read -r candidate; do
+    drive_root="$candidate"
+    break
+  done < <(find "$cloud_root" -maxdepth 1 -type d -name 'IrisDrive*' -print 2>/dev/null | sort)
+fi
+[[ -n "$drive_root" ]] || {
+  echo "macOS visible IrisDrive root not found" >&2
+  exit 1
+}
+target="$drive_root/$path"
+mkdir -p "$(dirname "$target")"
+run_limited() {
+  local limit="$1"
+  shift
+  perl -e '
+    my $timeout = shift @ARGV;
+    my $pid = fork();
+    die "fork failed: $!" unless defined $pid;
+    if ($pid == 0) {
+      exec @ARGV or die "exec failed: $!";
+    }
+    my $timed_out = 0;
+    local $SIG{ALRM} = sub {
+      $timed_out = 1;
+      kill "TERM", $pid;
+    };
+    alarm $timeout;
+    waitpid($pid, 0);
+    my $status = $?;
+    alarm 0;
+    if ($timed_out) {
+      sleep 1;
+      kill "KILL", $pid;
+      waitpid($pid, 0);
+      exit 124;
+    }
+    exit($status == -1 ? 1 : ($status >> 8));
+  ' "$limit" "$@"
+}
+run_limited "$write_timeout" python3 - "$content_b64" "$target" "$write_timeout" <<'PY'
+import base64
+import signal
+import sys
+
+def timeout(_signum, _frame):
+    raise TimeoutError("macOS visible write timed out")
+
+content = base64.b64decode(sys.argv[1]).decode("utf-8")
+signal.signal(signal.SIGALRM, timeout)
+signal.alarm(int(sys.argv[3]))
+with open(sys.argv[2], "w", encoding="utf-8") as handle:
+    handle.write(content + "\n")
+PY
+REMOTE_SH
+}
+
+write_macos_visible_zero_file() {
+  local path="$1"
+  local bytes="$2"
+  ssh_limited "$MACOS_VISIBLE_WRITE_SSH_TIMEOUT" \
+    "$MACOS_SSH_HOST" 'bash -se' "$path" "$bytes" "$MACOS_VISIBLE_WRITE_TIMEOUT" <<'REMOTE_SH'
+set -Eeuo pipefail
+path="$1"
+bytes="$2"
+write_timeout="$3"
+cloud_root="$HOME/Library/CloudStorage"
+drive_root=""
+if [[ -d "$cloud_root" ]]; then
+  while IFS= read -r candidate; do
+    drive_root="$candidate"
+    break
+  done < <(find "$cloud_root" -maxdepth 1 -type d -name 'IrisDrive*' -print 2>/dev/null | sort)
+fi
+[[ -n "$drive_root" ]] || {
+  echo "macOS visible IrisDrive root not found" >&2
+  exit 1
+}
+target="$drive_root/$path"
+mkdir -p "$(dirname "$target")"
+run_limited() {
+  local limit="$1"
+  shift
+  perl -e '
+    my $timeout = shift @ARGV;
+    my $pid = fork();
+    die "fork failed: $!" unless defined $pid;
+    if ($pid == 0) {
+      exec @ARGV or die "exec failed: $!";
+    }
+    my $timed_out = 0;
+    local $SIG{ALRM} = sub {
+      $timed_out = 1;
+      kill "TERM", $pid;
+    };
+    alarm $timeout;
+    waitpid($pid, 0);
+    my $status = $?;
+    alarm 0;
+    if ($timed_out) {
+      sleep 1;
+      kill "KILL", $pid;
+      waitpid($pid, 0);
+      exit 124;
+    }
+    exit($status == -1 ? 1 : ($status >> 8));
+  ' "$limit" "$@"
+}
+run_limited "$write_timeout" python3 - "$bytes" "$target" "$write_timeout" <<'PY'
+import signal
+import sys
+
+def timeout(_signum, _frame):
+    raise TimeoutError("macOS visible zero write timed out")
+
+remaining = int(sys.argv[1])
+signal.signal(signal.SIGALRM, timeout)
+signal.alarm(int(sys.argv[3]))
+chunk = b"\0" * min(1024 * 1024, max(1, remaining))
+with open(sys.argv[2], "wb") as handle:
+    while remaining > 0:
+        data = chunk[:remaining]
+        handle.write(data)
+        remaining -= len(data)
+PY
+REMOTE_SH
+}
+
+delete_macos_provider_path() {
+  local path="$1"
+  macos_idrive_json provider delete "$path" >/dev/null
+}
+
+delete_windows_provider_path() {
+  local path="$1"
+  win_ps <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$IrisRepo = Join-Path \$HOME "src\\iris-drive"
+\$Idrive = Join-Path \$IrisRepo "windows\\bin\\Debug\\net8.0-windows\\win-x64\\publish\\idrive.exe"
+if (-not (Test-Path \$Idrive)) {
+  \$Idrive = Join-Path \$IrisRepo "target\\debug\\idrive.exe"
+}
+\$ConfigDir = Join-Path \$env:APPDATA "iris-drive"
+& \$Idrive --config-dir \$ConfigDir provider delete "$path" | Out-Null
+REMOTE_PS
+}
+
+macos_app_log_line_count() {
+  ssh "$MACOS_SSH_HOST" 'test -f /tmp/iris-drive-macos-app.err && wc -l < /tmp/iris-drive-macos-app.err || echo 0'
+}
+
+macos_log_has_fileprovider_signal_after() {
+  local before="$1"
+  ssh "$MACOS_SSH_HOST" "tail -n +$((before + 1)) /tmp/iris-drive-macos-app.err 2>/dev/null || true" \
+    | grep -F "Iris Drive FileProvider signal working set ok" >/dev/null
+}
+
+ubuntu_start_directory_monitor() {
+  local dir="$1"
+  local token="$2"
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$dir" "$token" <<'REMOTE_SH'
+set -Eeuo pipefail
+dir="$1"
+token="$2"
+target="$HOME/Iris Drive/$dir"
+mkdir -p "$target"
+find "$target" -maxdepth 1 -mindepth 1 >/dev/null 2>&1 || true
+log="/tmp/iris-drive-gio-monitor-$token.log"
+pidfile="/tmp/iris-drive-gio-monitor-$token.pid"
+rm -f "$log" "$pidfile"
+(timeout 90 gio monitor "$target" >"$log" 2>&1 & echo $! >"$pidfile")
+REMOTE_SH
+}
+
+ubuntu_monitor_saw_any() {
+  local token="$1"
+  shift
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$token" "$@" <<'REMOTE_SH'
+set -Eeuo pipefail
+token="$1"
+shift
+for needle in "$@"; do
+  grep -F "$needle" "/tmp/iris-drive-gio-monitor-$token.log" >/dev/null && exit 0
+done
+exit 1
+REMOTE_SH
+}
+
+ubuntu_stop_directory_monitor() {
+  local token="$1"
+  ssh "$UBUNTU_SSH_HOST" 'bash -se' "$token" <<'REMOTE_SH' || true
+set -Eeuo pipefail
+token="$1"
+pidfile="/tmp/iris-drive-gio-monitor-$token.pid"
+if [[ -f "$pidfile" ]]; then
+  kill "$(cat "$pidfile")" 2>/dev/null || true
+fi
+REMOTE_SH
+}
+
+ubuntu_visible_manifest() {
+  local dir="$1"
+  ssh_limited "$VISIBLE_MANIFEST_SSH_TIMEOUT" \
+    "$UBUNTU_SSH_HOST" 'bash -se' "$dir" "$VISIBLE_MANIFEST_PROBE_TIMEOUT" <<'REMOTE_SH'
+set -Eeuo pipefail
+dir="$1"
+probe_timeout="$2"
+root="$HOME/Iris Drive/$dir"
+probe_script="$(mktemp -t iris-drive-visible-manifest.XXXXXX.py)"
+trap 'rm -f "$probe_script"' EXIT
+cat >"$probe_script" <<'PY'
+import hashlib
+import json
+import os
+import signal
+import sys
+
+root = sys.argv[1]
+probe_timeout = int(sys.argv[2])
+def timeout(_signum, _frame):
+    raise TimeoutError("visible manifest probe timed out")
+signal.signal(signal.SIGALRM, timeout)
+signal.alarm(probe_timeout)
+ignored = {".DS_Store", "Thumbs.db", "desktop.ini", ".iris-drive-refresh", "iris-drive-refresh"}
+if not os.path.isdir(root):
+    raise SystemExit(1)
+entries = []
+for current, dirs, files in os.walk(root):
+    dirs[:] = sorted(name for name in dirs if name not in ignored)
+    for name in dirs:
+        path = os.path.relpath(os.path.join(current, name), root).replace(os.sep, "/")
+        entries.append({"path": path, "kind": "directory", "size": 0, "sha256": None})
+    for name in sorted(files):
+        if name in ignored:
+            continue
+        full = os.path.join(current, name)
+        path = os.path.relpath(full, root).replace(os.sep, "/")
+        digest = hashlib.sha256()
+        with open(full, "rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        entries.append({
+            "path": path,
+            "kind": "file",
+            "size": os.path.getsize(full),
+            "sha256": digest.hexdigest(),
+        })
+entries.sort(key=lambda entry: entry["path"])
+print(json.dumps({"entries": entries}, sort_keys=True))
+PY
+perl -e '
+  my $timeout = shift @ARGV;
+  my $pid = fork();
+  die "fork failed: $!" unless defined $pid;
+  if ($pid == 0) {
+    exec @ARGV or die "exec failed: $!";
+  }
+  my $timed_out = 0;
+  local $SIG{ALRM} = sub {
+    $timed_out = 1;
+    kill "TERM", $pid;
+  };
+  alarm $timeout;
+  waitpid($pid, 0);
+  my $status = $?;
+  alarm 0;
+  if ($timed_out) {
+    sleep 1;
+    kill "KILL", $pid;
+    waitpid($pid, 0);
+    exit 124;
+  }
+  exit($status == -1 ? 1 : ($status >> 8));
+' "$probe_timeout" python3 "$probe_script" "$root" "$probe_timeout"
+REMOTE_SH
+}
+
+macos_visible_manifest() {
+  local dir="$1"
+  ssh_limited "$VISIBLE_MANIFEST_SSH_TIMEOUT" \
+    "$MACOS_SSH_HOST" 'bash -se' "$dir" "$VISIBLE_MANIFEST_PROBE_TIMEOUT" <<'REMOTE_SH'
+set -Eeuo pipefail
+dir="$1"
+probe_timeout="$2"
+probe_script="$(mktemp -t iris-drive-visible-manifest.XXXXXX.py)"
+trap 'rm -f "$probe_script"' EXIT
+cat >"$probe_script" <<'PY'
+import hashlib
+import json
+import os
+import signal
+import sys
+
+cloud_root = sys.argv[1]
+relative = sys.argv[2]
+probe_timeout = int(sys.argv[3])
+def timeout(_signum, _frame):
+    raise TimeoutError("visible manifest probe timed out")
+signal.signal(signal.SIGALRM, timeout)
+signal.alarm(probe_timeout)
+ignored = {".DS_Store", "Thumbs.db", "desktop.ini", ".iris-drive-refresh", "iris-drive-refresh"}
+roots = []
+if os.path.isdir(cloud_root):
+    roots = [
+        os.path.join(cloud_root, name)
+        for name in sorted(os.listdir(cloud_root))
+        if name.startswith("IrisDrive")
+    ]
+for drive_root in roots:
+    root = os.path.join(drive_root, relative)
+    if not os.path.isdir(root):
+        continue
+    entries = []
+    for current, dirs, files in os.walk(root):
+        dirs[:] = sorted(name for name in dirs if name not in ignored)
+        for name in dirs:
+            path = os.path.relpath(os.path.join(current, name), root).replace(os.sep, "/")
+            entries.append({"path": path, "kind": "directory", "size": 0, "sha256": None})
+        for name in sorted(files):
+            if name in ignored:
+                continue
+            full = os.path.join(current, name)
+            path = os.path.relpath(full, root).replace(os.sep, "/")
+            digest = hashlib.sha256()
+            with open(full, "rb") as handle:
+                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                    digest.update(chunk)
+            entries.append({
+                "path": path,
+                "kind": "file",
+                "size": os.path.getsize(full),
+                "sha256": digest.hexdigest(),
+            })
+    entries.sort(key=lambda entry: entry["path"])
+    print(json.dumps({"entries": entries}, sort_keys=True))
+    raise SystemExit(0)
+raise SystemExit(1)
+PY
+perl -e '
+  my $timeout = shift @ARGV;
+  my $pid = fork();
+  die "fork failed: $!" unless defined $pid;
+  if ($pid == 0) {
+    exec @ARGV or die "exec failed: $!";
+  }
+  my $timed_out = 0;
+  local $SIG{ALRM} = sub {
+    $timed_out = 1;
+    kill "TERM", $pid;
+  };
+  alarm $timeout;
+  waitpid($pid, 0);
+  my $status = $?;
+  alarm 0;
+  if ($timed_out) {
+    sleep 1;
+    kill "KILL", $pid;
+    waitpid($pid, 0);
+    exit 124;
+  }
+  exit($status == -1 ? 1 : ($status >> 8));
+' "$probe_timeout" python3 "$probe_script" "$HOME/Library/CloudStorage" "$dir" "$probe_timeout"
+REMOTE_SH
+}
+
+windows_visible_manifest() {
+  local dir="$1"
+  local output
+  local status=0
+  output="$(win_ps_limited "$VISIBLE_MANIFEST_SSH_TIMEOUT" <<REMOTE_PS
+\$ErrorActionPreference = "Stop"
+\$Root = Join-Path \$HOME ("Iris Drive\\$dir")
+if (-not (Test-Path -LiteralPath \$Root -PathType Container)) {
+  exit 1
+}
+\$Ignored = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+@(".DS_Store", "Thumbs.db", "desktop.ini", ".iris-drive-refresh", "iris-drive-refresh") | ForEach-Object { [void]\$Ignored.Add(\$_) }
+\$Entries = @()
+Get-ChildItem -LiteralPath \$Root -Force -Recurse | Sort-Object FullName | ForEach-Object {
+  if (\$Ignored.Contains(\$_.Name)) {
+    return
+  }
+  \$Relative = \$_.FullName.Substring(\$Root.Length).TrimStart([IO.Path]::DirectorySeparatorChar, [IO.Path]::AltDirectorySeparatorChar).Replace("\\", "/")
+  if ([string]::IsNullOrWhiteSpace(\$Relative)) {
+    return
+  }
+  if (\$_.PSIsContainer) {
+    \$Entries += [pscustomobject]@{
+      path = \$Relative
+      kind = "directory"
+      size = 0
+      sha256 = \$null
+    }
+  } else {
+    \$Hash = (Get-FileHash -LiteralPath \$_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    \$Entries += [pscustomobject]@{
+      path = \$Relative
+      kind = "file"
+      size = \$_.Length
+      sha256 = \$Hash
+    }
+  }
+}
+[pscustomobject]@{ entries = @(\$Entries) } | ConvertTo-Json -Depth 5 -Compress
+REMOTE_PS
+)" || status=$?
+  if [[ "$status" -ne 0 ]]; then
+    if [[ "$status" -eq 124 ]]; then
+      log "windows visible manifest probe timed out after ${VISIBLE_MANIFEST_SSH_TIMEOUT}s"
+    fi
+    return "$status"
+  fi
+  printf '%s\n' "$output" | tr -d '\r'
+}
+
+visible_smoke_dir_matches() {
+  local dir="$1"
+  shift
+  local expected_json
+  local ubuntu_json
+  local macos_json
+  local windows_json
+  expected_json="$(python3 - "$@" <<'PY'
+import hashlib
+import json
+import sys
+
+args = sys.argv[1:]
+if len(args) % 2:
+    raise SystemExit("expected path/content pairs")
+entries = []
+for path, content in zip(args[0::2], args[1::2]):
+    data = (content + "\n").encode()
+    entries.append({
+        "path": path,
+        "kind": "file",
+        "size": len(data),
+        "sha256": hashlib.sha256(data).hexdigest(),
+    })
+entries.sort(key=lambda entry: entry["path"])
+print(json.dumps({"entries": entries}, sort_keys=True))
+PY
+)"
+  ubuntu_json="$(ubuntu_visible_manifest "$dir")" || return 1
+  if macos_visible_fileprovider_available; then
+    macos_json="$(macos_visible_manifest "$dir")" || return 1
+  else
+    macos_json=""
+  fi
+  if windows_cloudfiles_available; then
+    windows_json="$(windows_visible_manifest "$dir")" || return 1
+  else
+    windows_json=""
+  fi
+  EXPECTED_JSON="$expected_json" \
+    UBUNTU_JSON="$ubuntu_json" \
+    MACOS_JSON="$macos_json" \
+    WINDOWS_JSON="$windows_json" \
+    python3 <<'PY'
+import json
+import os
+import sys
+
+expected = json.loads(os.environ["EXPECTED_JSON"])
+manifests = {
+    "ubuntu": json.loads(os.environ["UBUNTU_JSON"]),
+}
+if os.environ.get("MACOS_JSON"):
+    manifests["macos"] = json.loads(os.environ["MACOS_JSON"])
+if os.environ.get("WINDOWS_JSON"):
+    manifests["windows"] = json.loads(os.environ["WINDOWS_JSON"])
+
+for name, manifest in manifests.items():
+    conflicts = [
+        entry["path"]
+        for entry in manifest.get("entries", [])
+        if "(conflict from " in entry.get("path", "")
+    ]
+    if conflicts:
+        raise SystemExit(f"{name} contains unexpected conflict files: {conflicts}")
+    if manifest != expected:
+        raise SystemExit(
+            f"{name} visible manifest differs: expected={expected} actual={manifest}"
+        )
+PY
+}
+
+visible_smoke_dir_converges_with_paths() {
+  local dir="$1"
+  shift
+  local expected_paths_json
+  local ubuntu_json
+  local macos_json
+  local windows_json
+  expected_paths_json="$(python3 - "$@" <<'PY'
+import json
+import sys
+
+print(json.dumps(sorted(sys.argv[1:])))
+PY
+)"
+  ubuntu_json="$(ubuntu_visible_manifest "$dir")" || return 1
+  if macos_visible_fileprovider_available; then
+    macos_json="$(macos_visible_manifest "$dir")" || return 1
+  else
+    macos_json=""
+  fi
+  if windows_cloudfiles_available; then
+    windows_json="$(windows_visible_manifest "$dir")" || return 1
+  else
+    windows_json=""
+  fi
+  EXPECTED_PATHS_JSON="$expected_paths_json" \
+    UBUNTU_JSON="$ubuntu_json" \
+    MACOS_JSON="$macos_json" \
+    WINDOWS_JSON="$windows_json" \
+    python3 <<'PY'
+import json
+import os
+
+expected_paths = set(json.loads(os.environ["EXPECTED_PATHS_JSON"]))
+manifests = {
+    "ubuntu": json.loads(os.environ["UBUNTU_JSON"]),
+}
+if os.environ.get("MACOS_JSON"):
+    manifests["macos"] = json.loads(os.environ["MACOS_JSON"])
+if os.environ.get("WINDOWS_JSON"):
+    manifests["windows"] = json.loads(os.environ["WINDOWS_JSON"])
+
+baseline_name = "ubuntu"
+baseline = manifests[baseline_name]
+for name, manifest in manifests.items():
+    conflicts = [
+        entry["path"]
+        for entry in manifest.get("entries", [])
+        if "(conflict from " in entry.get("path", "")
+    ]
+    if conflicts:
+        raise SystemExit(f"{name} contains unexpected conflict files: {conflicts}")
+    if manifest != baseline:
+        raise SystemExit(
+            f"{name} visible manifest differs from {baseline_name}: baseline={baseline} actual={manifest}"
+        )
+
+actual_paths = {entry["path"] for entry in baseline.get("entries", [])}
+missing = sorted(expected_paths - actual_paths)
+if missing:
+    raise SystemExit(f"visible manifest is missing expected stress paths: {missing}")
+PY
+}
+
+heavy_projection_manifest_matches() {
+  local dir="$1"
+  local file_count="$2"
+  local large_bytes="$3"
+  local run_id="$4"
+  local ubuntu_json
+  local macos_json
+  local windows_json
+  ubuntu_json="$(ubuntu_visible_manifest "$dir")" || return 1
+  if macos_visible_fileprovider_available; then
+    macos_json="$(macos_visible_manifest "$dir")" || return 1
+  else
+    macos_json=""
+  fi
+  if windows_cloudfiles_available; then
+    windows_json="$(windows_visible_manifest "$dir")" || return 1
+  else
+    windows_json=""
+  fi
+  FILE_COUNT="$file_count" \
+    LARGE_BYTES="$large_bytes" \
+    RUN_ID="$run_id" \
+    UBUNTU_JSON="$ubuntu_json" \
+    MACOS_JSON="$macos_json" \
+    WINDOWS_JSON="$windows_json" \
+    python3 <<'PY'
+import hashlib
+import json
+import os
+
+file_count = int(os.environ["FILE_COUNT"])
+large_bytes = int(os.environ["LARGE_BYTES"])
+run_id = os.environ["RUN_ID"]
+zero_digest = hashlib.sha256(b"\0" * large_bytes).hexdigest()
+
+entries = []
+directories = set()
+
+def add_file(path, data=None, size=None, sha256=None):
+    parts = path.split("/")[:-1]
+    for index in range(1, len(parts) + 1):
+        directories.add("/".join(parts[:index]))
+    if data is not None:
+        size = len(data)
+        sha256 = hashlib.sha256(data).hexdigest()
+    entries.append({
+        "path": path,
+        "kind": "file",
+        "size": size,
+        "sha256": sha256,
+    })
+
+for index in range(1, file_count + 1):
+    suffix = f"{index:03d}"
+    add_file(f"ubuntu/{suffix}.txt", f"stress ubuntu {suffix} {run_id}\n".encode())
+    add_file(f"windows/{suffix}.txt", f"stress windows {suffix} {run_id}\n".encode())
+    add_file(f"macos/{suffix}.txt", f"stress macos {suffix} {run_id}\n".encode())
+
+add_file("large/ubuntu-zero.bin", size=large_bytes, sha256=zero_digest)
+add_file("large/windows-zero.bin", size=large_bytes, sha256=zero_digest)
+add_file("large/macos-zero.bin", size=large_bytes, sha256=zero_digest)
+
+expected_entries = [
+    {"path": path, "kind": "directory", "size": 0, "sha256": None}
+    for path in directories
+]
+expected_entries.extend(entries)
+expected = {"entries": sorted(expected_entries, key=lambda entry: entry["path"])}
+
+manifests = {
+    "ubuntu": json.loads(os.environ["UBUNTU_JSON"]),
+}
+if os.environ.get("MACOS_JSON"):
+    manifests["macos"] = json.loads(os.environ["MACOS_JSON"])
+if os.environ.get("WINDOWS_JSON"):
+    manifests["windows"] = json.loads(os.environ["WINDOWS_JSON"])
+
+def path_key(entry):
+    return entry.get("path", "")
+
+def summarize_manifest_diff(expected, actual, sample_size=12):
+    expected_by_path = {path_key(entry): entry for entry in expected.get("entries", [])}
+    actual_by_path = {path_key(entry): entry for entry in actual.get("entries", [])}
+    expected_paths = set(expected_by_path)
+    actual_paths = set(actual_by_path)
+    missing = sorted(expected_paths - actual_paths)
+    extra = sorted(actual_paths - expected_paths)
+    mismatched = sorted(
+        path for path in expected_paths & actual_paths
+        if expected_by_path[path] != actual_by_path[path]
+    )
+    samples = []
+    if missing:
+        samples.append(f"missing={missing[:sample_size]}")
+    if extra:
+        samples.append(f"extra={extra[:sample_size]}")
+    if mismatched:
+        samples.append(f"mismatched={mismatched[:sample_size]}")
+    counts = (
+        f"expected={len(expected_paths)} actual={len(actual_paths)} "
+        f"missing={len(missing)} extra={len(extra)} mismatched={len(mismatched)}"
+    )
+    return counts + (" " + " ".join(samples) if samples else "")
+
+for name, manifest in manifests.items():
+    conflicts = [
+        entry["path"]
+        for entry in manifest.get("entries", [])
+        if "(conflict from " in entry.get("path", "")
+    ]
+    if conflicts:
+        raise SystemExit(f"{name} contains unexpected conflict files: {conflicts}")
+    if manifest != expected:
+        raise SystemExit(
+            f"{name} heavy projection manifest differs: "
+            f"{summarize_manifest_diff(expected, manifest)}"
+        )
+PY
+}
+
+check_native_status_summaries() {
+  log "checking native status summaries report files, bytes, and devices"
+  local ubuntu_status
+  local macos_status
+  local windows_status
+  ubuntu_status="$(ssh "$UBUNTU_SSH_HOST" '"$HOME/src/iris-drive/target/debug/idrive" status')"
+  macos_status="$(macos_idrive_json status)"
+  windows_status="$(win_idrive_json status)"
+  STATUS_UBUNTU="$ubuntu_status" STATUS_MACOS="$macos_status" STATUS_WINDOWS="$windows_status" python3 <<'PY'
+import json
+import os
+
+statuses = {
+    "ubuntu": json.loads(os.environ["STATUS_UBUNTU"]),
+    "macos": json.loads(os.environ["STATUS_MACOS"]),
+    "windows": json.loads(os.environ["STATUS_WINDOWS"]),
+}
+errors = []
+for name, status in statuses.items():
+    hashtree = status.get("hashtree", {})
+    network = status.get("network", {})
+    summary = status.get("summary", {})
+    peers = status.get("peers", [])
+    file_count = hashtree.get("file_count") or hashtree.get("top_level_entries") or 0
+    visible_file_bytes = hashtree.get("visible_file_bytes") or 0
+    authorized_app_keys = (
+        summary.get("authorized_app_key_count")
+        or network.get("authorized_app_key_count")
+        or len([peer for peer in peers if peer.get("authorized")])
+    )
+    if file_count <= 0:
+        errors.append(f"{name} status file_count={file_count}")
+    if visible_file_bytes <= 0:
+        errors.append(f"{name} status visible_file_bytes={visible_file_bytes}")
+    if authorized_app_keys < 3:
+        errors.append(f"{name} status authorized_app_key_count={authorized_app_keys}")
+if errors:
+    raise SystemExit("; ".join(errors))
+PY
+}
+
+run_sync_smoke() {
+  local windows_file="$SMOKE_DIR/from-windows.txt"
+  local ubuntu_file="$SMOKE_DIR/from-ubuntu-placeholder.txt"
+  local macos_file="$SMOKE_DIR/from-macos-provider.txt"
+  local macos_delete_file="$SMOKE_DIR/delete-from-macos-provider.txt"
+  local windows_rename_src="$SMOKE_DIR/windows-rename-src.txt"
+  local windows_rename_dst="$SMOKE_DIR/windows-rename-dst.txt"
+  local live_file="$SMOKE_DIR/live-from-windows.txt"
+  local windows_live_file="$SMOKE_DIR/live-from-ubuntu-for-windows.txt"
+  local windows_projection_guard_ubuntu="$SMOKE_DIR/windows-projection-guard-ubuntu.txt"
+  local windows_projection_guard_macos="$SMOKE_DIR/windows-projection-guard-macos.txt"
+  local windows_projection_guard_local="$SMOKE_DIR/windows-projection-guard-local.txt"
+  local ubuntu_edit_windows_hydrated="$SMOKE_DIR/ubuntu-edit-windows-hydrated.txt"
+  local monitor_token="${RUN_ID//[^A-Za-z0-9]/}-ubuntu-live"
+  local ubuntu_delete_monitor_token="${RUN_ID//[^A-Za-z0-9]/}-ubuntu-delete"
+  local windows_monitor_token="${RUN_ID//[^A-Za-z0-9]/}-windows-live"
+
+  if macos_visible_fileprovider_available; then
+    log "macOS visible FileProvider folder checks enabled"
+  else
+    log "skipping macOS visible FileProvider folder checks; app reports FileProvider disabled"
+  fi
+  if windows_cloudfiles_available; then
+    log "Windows CloudFiles disk checks enabled"
+  else
+    log "skipping Windows CloudFiles disk checks; Windows app GUI is not running"
+  fi
+
+  log "checking Windows-origin create then Ubuntu-origin delete"
+  write_windows_surface_file "$windows_file" "from windows $RUN_ID"
+  wait_for "Windows file reaches Ubuntu" "$SYNC_WAIT_TIMEOUT" \
+    wait_ubuntu_file_has "$windows_file"
+  wait_for "Windows file reaches macOS provider" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+    macos_provider_has "$windows_file"
+  if macos_visible_fileprovider_available; then
+    wait_for "Windows file reaches macOS visible FileProvider folder" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+      macos_visible_drive_has "$windows_file"
+  fi
+  delete_ubuntu_path "$windows_file"
+  wait_for_quiet "Ubuntu delete removes Windows surface file" \
+    "$SYNC_WAIT_TIMEOUT" "$SYNC_QUIET_POLL_INTERVAL" \
+    wait_windows_surface_missing "$windows_file"
+  wait_for "Ubuntu delete removes Windows provider file" "$SYNC_WAIT_TIMEOUT" \
+    windows_provider_missing "$windows_file"
+
+  log "checking Windows placeholder delete publishes back to Ubuntu"
+  write_ubuntu_file "$ubuntu_file" "from ubuntu $RUN_ID"
+  wait_for "Ubuntu file reaches Windows surface" "$SYNC_WAIT_TIMEOUT" \
+    wait_windows_surface_has "$ubuntu_file"
+  if windows_cloudfiles_available; then
+    wait_for "Ubuntu file is represented as a Windows Cloud Files placeholder" \
+      "$SYNC_WAIT_TIMEOUT" wait_windows_surface_reparse "$ubuntu_file"
+  fi
+  delete_windows_surface_path "$ubuntu_file"
+  wait_for "Windows placeholder delete removes Ubuntu file" \
+    "$WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT" \
+    wait_ubuntu_missing "$ubuntu_file"
+  wait_for "Windows placeholder delete removes Windows provider file" \
+    "$WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT" windows_provider_missing "$ubuntu_file"
+  wait_for "Windows placeholder delete removes macOS provider file" \
+    "$WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT" macos_provider_missing "$ubuntu_file"
+
+  log "checking macOS-origin provider create then Windows-origin delete"
+  write_macos_provider_file "$macos_file" "from macos $RUN_ID"
+  wait_for "macOS provider file reaches Ubuntu" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+    wait_ubuntu_file_has "$macos_file"
+  wait_for "macOS provider file reaches Windows surface" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+    wait_windows_surface_has "$macos_file"
+  if windows_cloudfiles_available; then
+    wait_for "macOS provider file is represented as a Windows Cloud Files placeholder" \
+      "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" wait_windows_surface_reparse "$macos_file"
+  fi
+  delete_windows_surface_path "$macos_file"
+  wait_for "Windows delete removes macOS provider file" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+    macos_provider_missing "$macos_file"
+  wait_for "Windows delete removes Ubuntu copy of macOS file" \
+    "$WINDOWS_PLACEHOLDER_DELETE_SYNC_WAIT_TIMEOUT" \
+    wait_ubuntu_missing "$macos_file"
+
+  if windows_cloudfiles_available; then
+    log "checking Windows local create does not hide existing placeholders"
+  else
+    log "checking Windows provider create preserves remote projection"
+  fi
+  write_ubuntu_file "$windows_projection_guard_ubuntu" "projection guard ubuntu $RUN_ID"
+  write_macos_provider_file "$windows_projection_guard_macos" "projection guard macos $RUN_ID"
+  wait_for "Ubuntu projection guard reaches Windows surface" "$SYNC_WAIT_TIMEOUT" \
+    wait_windows_surface_has "$windows_projection_guard_ubuntu"
+  if windows_cloudfiles_available; then
+    wait_for "Ubuntu projection guard is a Windows Cloud Files placeholder" \
+      "$SYNC_WAIT_TIMEOUT" wait_windows_surface_reparse "$windows_projection_guard_ubuntu"
+  fi
+  wait_for "macOS projection guard reaches Windows surface" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+    wait_windows_surface_has "$windows_projection_guard_macos"
+  if windows_cloudfiles_available; then
+    wait_for "macOS projection guard is a Windows Cloud Files placeholder" \
+      "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" wait_windows_surface_reparse "$windows_projection_guard_macos"
+  fi
+  if windows_cloudfiles_available; then
+    windows_projection_stays_visible_during_local_create \
+      "$windows_projection_guard_local" \
+      "$windows_projection_guard_ubuntu" \
+      "$windows_projection_guard_macos"
+  else
+    write_windows_provider_file "$windows_projection_guard_local" "projection guard windows $RUN_ID"
+  fi
+  wait_for "Windows projection guard local create reaches Ubuntu" "$SYNC_WAIT_TIMEOUT" \
+    wait_ubuntu_file_has "$windows_projection_guard_local"
+  wait_for "Windows projection guard local create reaches macOS provider" \
+    "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" macos_provider_has "$windows_projection_guard_local"
+
+  log "checking Ubuntu edit replaces hydrated Windows projection bytes"
+  write_ubuntu_file "$ubuntu_edit_windows_hydrated" "old ubuntu bytes $RUN_ID"
+  wait_for "Ubuntu edit baseline reaches Windows bytes" "$SYNC_WAIT_TIMEOUT" \
+    wait_windows_surface_file_has_content "$ubuntu_edit_windows_hydrated" "old ubuntu bytes $RUN_ID"
+  write_ubuntu_file "$ubuntu_edit_windows_hydrated" "new ubuntu bytes $RUN_ID"
+  wait_for "Ubuntu edit updates hydrated Windows bytes" "$SYNC_WAIT_TIMEOUT" \
+    wait_windows_surface_file_has_content "$ubuntu_edit_windows_hydrated" "new ubuntu bytes $RUN_ID"
+
+  log "checking Ubuntu-origin create then macOS-origin provider delete"
+  write_ubuntu_file "$macos_delete_file" "delete from macos $RUN_ID"
+  wait_for "Ubuntu file reaches macOS provider" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+    macos_provider_has "$macos_delete_file"
+  wait_for "Ubuntu file reaches Windows surface before macOS delete" "$SYNC_WAIT_TIMEOUT" \
+    wait_windows_surface_has "$macos_delete_file"
+  ubuntu_start_directory_monitor "$SMOKE_DIR" "$ubuntu_delete_monitor_token"
+  delete_macos_provider_path "$macos_delete_file"
+  wait_for "macOS provider delete removes Ubuntu file" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+    wait_ubuntu_missing "$macos_delete_file"
+  wait_for "Ubuntu directory monitor wakes for macOS delete" "$SYNC_WAIT_TIMEOUT" \
+    ubuntu_monitor_saw_any "$ubuntu_delete_monitor_token" \
+      "$(basename "$macos_delete_file")" "iris-drive-refresh" ".iris-drive-refresh"
+  ubuntu_stop_directory_monitor "$ubuntu_delete_monitor_token"
+  wait_for_quiet "macOS provider delete removes Windows surface file" \
+    "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" "$SYNC_QUIET_POLL_INTERVAL" \
+    wait_windows_surface_missing "$macos_delete_file"
+  wait_for "macOS provider delete removes Windows provider file" \
+    "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" windows_provider_missing "$macos_delete_file"
+
+  log "checking Windows-origin rename/create updates other live providers"
+  write_windows_surface_file "$windows_rename_src" "rename from windows $RUN_ID"
+  wait_for "Windows rename source reaches Ubuntu" "$SYNC_WAIT_TIMEOUT" \
+    wait_ubuntu_file_has "$windows_rename_src"
+  wait_for "Windows rename source reaches macOS provider" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+    macos_provider_has "$windows_rename_src"
+  local macos_log_before
+  macos_log_before="$(macos_app_log_line_count)"
+  rename_windows_surface_path "$windows_rename_src" "$windows_rename_dst"
+  wait_for "Windows rename destination reaches Ubuntu" "$SYNC_WAIT_TIMEOUT" \
+    wait_ubuntu_file_has "$windows_rename_dst"
+  wait_for "Windows rename source disappears from Ubuntu" "$SYNC_WAIT_TIMEOUT" \
+    wait_ubuntu_missing "$windows_rename_src"
+  wait_for "Windows rename destination reaches macOS provider" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+    macos_provider_has "$windows_rename_dst"
+  wait_for "Windows rename source disappears from macOS provider" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" \
+    macos_provider_missing "$windows_rename_src"
+  if macos_visible_fileprovider_available; then
+    wait_for "macOS FileProvider was signaled after Windows rename" "$SYNC_WAIT_TIMEOUT" \
+      macos_log_has_fileprovider_signal_after "$macos_log_before"
+  fi
+
+  log "checking Linux directory monitor sees a remote Windows create"
+  ubuntu_start_directory_monitor "$SMOKE_DIR" "$monitor_token"
+  write_windows_surface_file "$live_file" "live from windows $RUN_ID"
+  wait_for "Ubuntu directory monitor wakes for Windows create" "$SYNC_WAIT_TIMEOUT" \
+    ubuntu_monitor_saw_any "$monitor_token" "$(basename "$live_file")" "iris-drive-refresh" ".iris-drive-refresh"
+  wait_for "Ubuntu live create is visible after monitor wake" 15 wait_ubuntu_file_has "$live_file"
+  ubuntu_stop_directory_monitor "$monitor_token"
+  wait_for "Windows live create reaches macOS provider" "$MACOS_PROVIDER_SYNC_WAIT_TIMEOUT" macos_provider_has "$live_file"
+
+  log "checking Windows directory monitor sees a remote Ubuntu create"
+  if windows_cloudfiles_available; then
+    windows_start_directory_monitor "$SMOKE_DIR" "$windows_monitor_token"
+  fi
+  write_ubuntu_file "$windows_live_file" "live from ubuntu $RUN_ID"
+  if windows_cloudfiles_available; then
+    wait_for "Windows directory monitor wakes or disk refreshes for Ubuntu create" \
+      "$SYNC_WAIT_TIMEOUT" windows_monitor_saw_any_or_disk_has \
+      "$windows_monitor_token" "$windows_live_file"
+    wait_for "Ubuntu live create is visible on Windows disk" 15 wait_windows_disk_has "$windows_live_file"
+    windows_stop_directory_monitor "$windows_monitor_token"
+  else
+    wait_for "Ubuntu live create reaches Windows provider" "$SYNC_WAIT_TIMEOUT" \
+      windows_provider_has "$windows_live_file"
+  fi
+
+  log "checking native visible directories converge without conflict fan-out"
+  wait_for "native visible smoke directory manifests converge" "$SYNC_WAIT_TIMEOUT" \
+    visible_smoke_dir_matches "$SMOKE_DIR" \
+    "$(basename "$live_file")" "live from windows $RUN_ID" \
+    "$(basename "$windows_live_file")" "live from ubuntu $RUN_ID" \
+    "$(basename "$windows_projection_guard_ubuntu")" "projection guard ubuntu $RUN_ID" \
+    "$(basename "$windows_projection_guard_macos")" "projection guard macos $RUN_ID" \
+    "$(basename "$windows_projection_guard_local")" "projection guard windows $RUN_ID" \
+    "$(basename "$ubuntu_edit_windows_hydrated")" "new ubuntu bytes $RUN_ID" \
+    "$(basename "$windows_rename_dst")" "rename from windows $RUN_ID"
+  check_native_status_summaries
+}
+
+run_heavy_projection_stress() {
+  log "checking heavy native projection stress converges on all OS surfaces"
+  local stress_dir="$SMOKE_DIR/heavy-projection"
+  local i
+  for i in $(seq 1 "$PROJECTION_STRESS_FILES"); do
+    local suffix
+    suffix="$(printf "%03d" "$i")"
+    write_ubuntu_file "$stress_dir/ubuntu/$suffix.txt" "stress ubuntu $suffix $RUN_ID"
+    write_windows_surface_file "$stress_dir/windows/$suffix.txt" "stress windows $suffix $RUN_ID"
+    if macos_visible_fileprovider_available; then
+      write_macos_visible_file "$stress_dir/macos/$suffix.txt" "stress macos $suffix $RUN_ID"
+    else
+      write_macos_provider_file "$stress_dir/macos/$suffix.txt" "stress macos $suffix $RUN_ID"
+    fi
+  done
+  write_ubuntu_zero_file "$stress_dir/large/ubuntu-zero.bin" "$PROJECTION_STRESS_LARGE_BYTES"
+  write_windows_surface_zero_file "$stress_dir/large/windows-zero.bin" "$PROJECTION_STRESS_LARGE_BYTES"
+  if macos_visible_fileprovider_available; then
+    write_macos_visible_zero_file "$stress_dir/large/macos-zero.bin" "$PROJECTION_STRESS_LARGE_BYTES"
+  else
+    write_macos_provider_zero_file "$stress_dir/large/macos-zero.bin" "$PROJECTION_STRESS_LARGE_BYTES"
+  fi
+  wait_for "heavy native projection manifests converge with expected bytes" "$HEAVY_PROJECTION_SYNC_WAIT_TIMEOUT" \
+    heavy_projection_manifest_matches \
+    "$stress_dir" "$PROJECTION_STRESS_FILES" "$PROJECTION_STRESS_LARGE_BYTES" "$RUN_ID"
+}
+
+run_linux_ui_smoke() {
+  case "${IRIS_DRIVE_DEV_VM_SMOKE_LINUX_UI:-1}" in
+    1|true|TRUE|yes|YES|on|ON) ;;
+    *) log "skipping Linux GTK UI smoke"; return 0 ;;
+  esac
+
+  log "checking Linux GTK GUI shell"
+  "$ROOT/scripts/desktop-gui-smoke.sh" linux "$UBUNTU_SSH_HOST"
+}
+
+run_windows_ui_smoke() {
+  case "${IRIS_DRIVE_DEV_VM_SMOKE_WINDOWS_UI:-1}" in
+    1|true|TRUE|yes|YES|on|ON) ;;
+    *) log "skipping Windows WPF UI smoke"; return 0 ;;
+  esac
+
+  log "checking Windows WPF GUI shell"
+  "$ROOT/scripts/desktop-gui-smoke.sh" windows "$WINDOWS_SSH_HOST"
+}
+
+run_macos_open_smoke() {
+  case "${IRIS_DRIVE_DEV_VM_SMOKE_MACOS_UI:-1}" in
+    1|true|TRUE|yes|YES|on|ON) ;;
+    *) log "skipping macOS UI smoke"; return 0 ;;
+  esac
+
+  log "requesting macOS Open Drive Folder"
+  local before
+  before="$(ssh "$MACOS_SSH_HOST" 'test -f /tmp/iris-drive-macos-app.err && wc -l < /tmp/iris-drive-macos-app.err || echo 0')"
+  ssh "$MACOS_SSH_HOST" '/usr/bin/swift -' <<'REMOTE_SWIFT' >/dev/null
+import Foundation
+
+DistributedNotificationCenter.default().postNotificationName(
+    Notification.Name("to.iris.drive.showDriveFolder"),
+    object: nil,
+    userInfo: nil,
+    deliverImmediately: true
+)
+RunLoop.current.run(until: Date().addingTimeInterval(0.2))
+REMOTE_SWIFT
+
+  local start
+  start="$(date +%s)"
+  while true; do
+    local recent
+    recent="$(ssh "$MACOS_SSH_HOST" "tail -n +$((before + 1)) /tmp/iris-drive-macos-app.err 2>/dev/null || true")"
+    if grep -F "Iris Drive FileProvider open failed" <<<"$recent" >/dev/null ||
+      grep -F "Iris Drive failed to open mounted drive folder" <<<"$recent" >/dev/null; then
+      printf '%s\n' "$recent" >&2
+      die "macOS Open Drive Folder logged a FileProvider open failure"
+    fi
+    if grep -F "Iris Drive mounted drive folder opened" <<<"$recent" >/dev/null ||
+      grep -F "Iris Drive mounted drive folder revealed" <<<"$recent" >/dev/null; then
+      return 0
+    fi
+    if (( $(date +%s) - start >= 15 )); then
+      printf '%s\n' "$recent" >&2
+      die "macOS Open Drive Folder did not log success"
+    fi
+    sleep 1
+  done
+}
+
+check_revisions
+check_fips_online
+check_provider_noise
+case "$SMOKE_ONLY" in
+  all)
+    cleanup_previous_smoke_root
+    cleanup_previous_smoke_runs
+    SMOKE_ACTIVE_PHASE="sync"
+    run_sync_smoke
+    SMOKE_ACTIVE_PHASE="heavy-projection"
+    run_heavy_projection_stress
+    delete_ubuntu_path "$SMOKE_DIR" || true
+    SMOKE_ACTIVE_PHASE="linux-ui"
+    run_linux_ui_smoke
+    SMOKE_ACTIVE_PHASE="windows-ui"
+    run_windows_ui_smoke
+    SMOKE_ACTIVE_PHASE="macos-ui"
+    run_macos_open_smoke
+    ;;
+  sync)
+    cleanup_previous_smoke_root
+    cleanup_previous_smoke_runs
+    SMOKE_ACTIVE_PHASE="sync"
+    run_sync_smoke
+    delete_ubuntu_path "$SMOKE_DIR" || true
+    ;;
+  heavy|heavy-projection)
+    cleanup_previous_smoke_root
+    cleanup_previous_smoke_runs
+    SMOKE_ACTIVE_PHASE="heavy-projection"
+    run_heavy_projection_stress
+    delete_ubuntu_path "$SMOKE_DIR" || true
+    ;;
+  macos-ui)
+    SMOKE_ACTIVE_PHASE="macos-ui"
+    run_macos_open_smoke
+    ;;
+  linux-ui)
+    SMOKE_ACTIVE_PHASE="linux-ui"
+    run_linux_ui_smoke
+    ;;
+  windows-ui)
+    SMOKE_ACTIVE_PHASE="windows-ui"
+    run_windows_ui_smoke
+    ;;
+  desktop-ui)
+    SMOKE_ACTIVE_PHASE="linux-ui"
+    run_linux_ui_smoke
+    SMOKE_ACTIVE_PHASE="windows-ui"
+    run_windows_ui_smoke
+    SMOKE_ACTIVE_PHASE="macos-ui"
+    run_macos_open_smoke
+    ;;
+  *)
+    die "unknown IRIS_DRIVE_DEV_VM_SMOKE_ONLY=$SMOKE_ONLY (expected all, sync, heavy-projection, linux-ui, windows-ui, desktop-ui, or macos-ui)"
+    ;;
+esac
+log "timings written to $TIMINGS_FILE"
+log "ok"

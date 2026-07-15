@@ -1,0 +1,1070 @@
+using System;
+using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
+using System.Linq;
+using System.Text.Json;
+using System.Threading;
+using System.Threading.Tasks;
+
+namespace IrisDrive.WindowsShell;
+
+public sealed partial class IrisDriveService
+{
+    private const string LocalMutationScanEnv = "IRIS_DRIVE_WINDOWS_CLOUD_SCAN_LOCAL_MUTATIONS";
+    private static readonly SemaphoreSlim ProviderMutationGate = new(1, 1);
+    private readonly Lazy<IrisDriveNativeCore> nativeCore;
+
+    public IrisDriveService()
+    {
+        WindowsShellTrace.Write("IrisDriveService constructor entered");
+        nativeCore = new Lazy<IrisDriveNativeCore>(() => new IrisDriveNativeCore(
+            DefaultConfigDirectory,
+            AppVersion));
+        WindowsShellTrace.Write("IrisDriveService constructor completed");
+    }
+
+    private IrisDriveNativeCore NativeCore => nativeCore.Value;
+
+    public string AppVersion =>
+        typeof(IrisDriveService).Assembly.GetName().Version?.ToString() ?? "0.1.0";
+
+    public string DefaultConfigDirectory => ConfigDirectoryOverride() ??
+        Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "iris-drive");
+
+    private static string? ConfigDirectoryOverride()
+    {
+        var configured = Environment.GetEnvironmentVariable("IRIS_DRIVE_CONFIG_DIR");
+        configured = string.IsNullOrWhiteSpace(configured)
+            ? Environment.GetEnvironmentVariable("IRIS_DRIVE_DEV_VM_WINDOWS_CONFIG_DIR")
+            : configured;
+        return string.IsNullOrWhiteSpace(configured)
+            ? null
+            : Path.GetFullPath(Environment.ExpandEnvironmentVariables(configured.Trim()));
+    }
+
+    public Task<IrisDriveStatusData> StatusAsync(bool refreshProvider = true)
+    {
+        return refreshProvider
+            ? RunNativeCoreAsync(core => IrisDriveStatusData.FromNativeJson(core.RefreshJson()))
+            : DispatchNativeActionAsync(
+                new Dictionary<string, object> { ["type"] = "refresh_profile" });
+    }
+
+    public Task<IrisDriveUpdateResult> CheckUpdateAsync()
+    {
+        return Task.Run(() => IrisDriveNativeCore.CheckUpdate(DefaultConfigDirectory, AppVersion));
+    }
+
+    public Task<IrisDriveUpdateResult> DownloadUpdateAsync(string downloadDirectory)
+    {
+        return Task.Run(() =>
+            IrisDriveNativeCore.DownloadUpdate(DefaultConfigDirectory, AppVersion, downloadDirectory));
+    }
+
+    public Task CreateProfileAsync(string username, string profilePhotoPath)
+    {
+        var args = new[] { "init", "--force" }.ToList();
+        args.Add("--label");
+        args.Add(DefaultDeviceLabel());
+        if (!string.IsNullOrWhiteSpace(username))
+        {
+            args.Add("--username");
+            args.Add(username.Trim());
+            if (!string.IsNullOrWhiteSpace(profilePhotoPath))
+            {
+                args.Add("--profile-photo");
+                args.Add(profilePhotoPath.Trim());
+            }
+        }
+        return FinishSetupAsync(args.ToArray());
+    }
+
+    public Task RestoreProfileAsync(string secret)
+    {
+        if (string.IsNullOrWhiteSpace(secret))
+        {
+            throw new InvalidOperationException("Secret key is required.");
+        }
+
+        return FinishSetupAsync(new[] { "restore", secret.Trim(), "--label", DefaultDeviceLabel() });
+    }
+
+    public Task LinkDeviceAsync(string target)
+    {
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            throw new InvalidOperationException("Device link target is required.");
+        }
+
+        return FinishSetupAsync(new[] { "link", target.Trim(), "--label", DefaultDeviceLabel() });
+    }
+
+    public Task StartJoinRequestAsync() => DispatchNativeActionAsync(
+        new Dictionary<string, object>
+        {
+            ["type"] = "start_join_request",
+            ["app_key_label"] = DefaultDeviceLabel(),
+        });
+
+    public Task<bool> IsCompleteDeviceInviteInputAsync(string input)
+    {
+        return Task.FromResult(IrisDriveNativeCore.IsCompleteDeviceInviteInput(input));
+    }
+
+    public Task<bool> IsCompleteDeviceApprovalInputAsync(string input)
+    {
+        return Task.FromResult(IrisDriveNativeCore.IsCompleteDeviceApprovalInput(input));
+    }
+
+    public async Task ApproveDeviceAsync(string device, string label)
+    {
+        if (string.IsNullOrWhiteSpace(device))
+        {
+            throw new InvalidOperationException("Device request is required.");
+        }
+
+        await DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "approve_device",
+                ["request"] = device.Trim(),
+                ["label"] = label.Trim(),
+            });
+    }
+
+    public async Task RejectDeviceAsync(string request)
+    {
+        if (string.IsNullOrWhiteSpace(request))
+        {
+            throw new InvalidOperationException("Device request is required.");
+        }
+
+        await DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "reject_device",
+                ["request"] = request.Trim(),
+            });
+    }
+
+    public Task ResetInviteAsync()
+    {
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object> { ["type"] = "reset_invite" });
+    }
+
+    public Task RevokeDeviceAsync(string device)
+    {
+        return DeleteDeviceAsync(device);
+    }
+
+    public Task DeleteDeviceAsync(string device)
+    {
+        if (string.IsNullOrWhiteSpace(device))
+        {
+            throw new InvalidOperationException("Device ID is required.");
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "revoke_device",
+                ["app_key_pubkey"] = device.Trim(),
+            });
+    }
+
+    public Task AppointAdminAsync(string device)
+    {
+        if (string.IsNullOrWhiteSpace(device))
+        {
+            throw new InvalidOperationException("Device ID is required.");
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "appoint_admin",
+                ["app_key_pubkey"] = device.Trim(),
+            });
+    }
+
+    public Task DemoteAdminAsync(string device)
+    {
+        if (string.IsNullOrWhiteSpace(device))
+        {
+            throw new InvalidOperationException("Device ID is required.");
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "demote_admin",
+                ["app_key_pubkey"] = device.Trim(),
+            });
+    }
+
+    public Task RenameDeviceAsync(string device, string label)
+    {
+        if (string.IsNullOrWhiteSpace(device))
+        {
+            throw new InvalidOperationException("Device ID is required.");
+        }
+
+        if (string.IsNullOrWhiteSpace(label))
+        {
+            throw new InvalidOperationException("Device name is required.");
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "rename_device",
+                ["app_key_pubkey"] = device.Trim(),
+                ["label"] = label.Trim(),
+            });
+    }
+
+    public Task AddRelayAsync(string relay)
+    {
+        if (string.IsNullOrWhiteSpace(relay))
+        {
+            return Task.CompletedTask;
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "add_relay",
+                ["url"] = relay.Trim(),
+            });
+    }
+
+    public Task ResetRelaysAsync()
+    {
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object> { ["type"] = "reset_relays" });
+    }
+
+    public Task AddBackupTargetAsync(string target, string label)
+    {
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            return Task.CompletedTask;
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "add_backup_target",
+                ["target"] = target.Trim(),
+                ["label"] = label.Trim(),
+            });
+    }
+
+    public Task RemoveBackupTargetAsync(string target)
+    {
+        if (string.IsNullOrWhiteSpace(target))
+        {
+            return Task.CompletedTask;
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "remove_backup_target",
+                ["target"] = target.Trim(),
+            });
+    }
+
+    public Task AddBlossomServerAsync(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return Task.CompletedTask;
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "add_blossom_server",
+                ["url"] = url.Trim(),
+            });
+    }
+
+    public Task RemoveBlossomServerAsync(string url)
+    {
+        if (string.IsNullOrWhiteSpace(url))
+        {
+            return Task.CompletedTask;
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "remove_blossom_server",
+                ["url"] = url.Trim(),
+            });
+    }
+
+    public Task SyncBackupsAsync()
+    {
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "sync_backups",
+                ["target"] = "",
+            });
+    }
+
+    public Task CheckBackupsAsync(string target = "")
+    {
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "check_backups",
+                ["target"] = target.Trim(),
+            });
+    }
+
+    public async Task CreateShareAsync(string sourcePath)
+    {
+        var normalizedSourcePath = NormalizeProviderPath(sourcePath);
+        if (string.IsNullOrWhiteSpace(normalizedSourcePath))
+        {
+            throw new InvalidOperationException("Folder path is required.");
+        }
+
+        var resolvedSourcePath = await ResolveShareSourcePathForCreateAsync(normalizedSourcePath);
+        await DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "create_share",
+                ["source_path"] = resolvedSourcePath,
+                ["display_name"] = "",
+            });
+    }
+
+    public Task DeleteShareAsync(string shareId)
+    {
+        if (string.IsNullOrWhiteSpace(shareId))
+        {
+            throw new InvalidOperationException("Share is required.");
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "delete_share",
+                ["share_id"] = shareId.Trim(),
+            });
+    }
+
+    public GeneratedRecoveryKey GenerateRecoveryKey()
+    {
+        return IrisDriveNativeCore.GenerateRecoveryKey();
+    }
+
+    public GeneratedRecoveryKey RecoveryPubkeyForPhrase(string recoveryPhrase)
+    {
+        return IrisDriveNativeCore.RecoveryPubkeyForPhrase(recoveryPhrase);
+    }
+
+    public Task AddRecoveryDeviceAsync(string recoveryPubkey)
+    {
+        if (string.IsNullOrWhiteSpace(recoveryPubkey))
+        {
+            throw new InvalidOperationException("Recovery key is required.");
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "add_recovery_device",
+                ["recovery_pubkey"] = recoveryPubkey.Trim(),
+            });
+    }
+
+    public Task AcceptShareInviteAsync(string invite)
+    {
+        if (string.IsNullOrWhiteSpace(invite))
+        {
+            throw new InvalidOperationException("Share invite is required.");
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "accept_share_invite",
+                ["invite"] = invite.Trim(),
+            });
+    }
+
+    public Task<IrisDriveStatusData> InviteShareMemberFromEvidenceAsync(
+        string shareId,
+        string evidenceJson,
+        string role,
+        string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(shareId))
+        {
+            throw new InvalidOperationException("Share is required.");
+        }
+        if (string.IsNullOrWhiteSpace(evidenceJson))
+        {
+            throw new InvalidOperationException("Recipient identity evidence is required.");
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "invite_share_member_from_evidence",
+                ["share_id"] = shareId.Trim(),
+                ["evidence_json"] = evidenceJson.Trim(),
+                ["role"] = string.IsNullOrWhiteSpace(role) ? "reader" : role.Trim(),
+                ["display_name"] = displayName.Trim(),
+            });
+    }
+
+    public Task<IrisDriveStatusData> ExportShareRecipientEvidenceAsync(string displayName)
+    {
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "export_share_recipient_evidence",
+                ["display_name"] = displayName.Trim(),
+            });
+    }
+
+    public Task RecordPendingShareInviteAsync(
+        string shareId,
+        string representativeNpubHint,
+        string role,
+        string displayName)
+    {
+        if (string.IsNullOrWhiteSpace(shareId))
+        {
+            throw new InvalidOperationException("Share is required.");
+        }
+        if (string.IsNullOrWhiteSpace(representativeNpubHint))
+        {
+            throw new InvalidOperationException("User ID is required.");
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "record_pending_share_invite",
+                ["share_id"] = shareId.Trim(),
+                ["representative_npub_hint"] = representativeNpubHint.Trim(),
+                ["role"] = string.IsNullOrWhiteSpace(role) ? "reader" : role.Trim(),
+                ["display_name"] = displayName.Trim(),
+            });
+    }
+
+    public Task AddShareShortcutAsync(string shareId)
+    {
+        if (string.IsNullOrWhiteSpace(shareId))
+        {
+            throw new InvalidOperationException("Share is required.");
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "add_share_shortcut",
+                ["share_id"] = shareId.Trim(),
+                ["path"] = "",
+                ["parent"] = "",
+                ["target_path"] = "",
+            });
+    }
+
+    public Task RepairShareWrapsAsync(string shareId)
+    {
+        if (string.IsNullOrWhiteSpace(shareId))
+        {
+            throw new InvalidOperationException("Share is required.");
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "repair_share_wraps",
+                ["share_id"] = shareId.Trim(),
+            });
+    }
+
+    public Task RevokeShareMemberAsync(string shareId, string profileId)
+    {
+        if (string.IsNullOrWhiteSpace(shareId) || string.IsNullOrWhiteSpace(profileId))
+        {
+            throw new InvalidOperationException("Share and member are required.");
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "revoke_share_member",
+                ["share_id"] = shareId.Trim(),
+                ["profile_id"] = profileId.Trim(),
+                ["reason"] = "Removed from share",
+            });
+    }
+
+    public Task SetShareMemberRoleAsync(string shareId, string profileId, string role)
+    {
+        if (string.IsNullOrWhiteSpace(shareId) ||
+            string.IsNullOrWhiteSpace(profileId) ||
+            string.IsNullOrWhiteSpace(role))
+        {
+            throw new InvalidOperationException("Share, member, and role are required.");
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "set_share_member_role",
+                ["share_id"] = shareId.Trim(),
+                ["profile_id"] = profileId.Trim(),
+                ["role"] = role.Trim(),
+            });
+    }
+
+    public Task SetNhashResolverAsync(bool enabled)
+    {
+        return RunAsync("nhash-resolver", enabled ? "enable" : "disable");
+    }
+
+    public Task SetLaunchOnStartupAsync(bool enabled)
+    {
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "set_launch_on_startup",
+                ["enabled"] = enabled,
+            });
+    }
+
+    public Task LogoutAsync()
+    {
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object> { ["type"] = "logout" });
+    }
+
+    public Process StartDaemonProcess()
+    {
+        var process = new Process
+        {
+            StartInfo = CreateStartInfo(
+                "daemon",
+                "--watch-debounce-ms",
+                "100"),
+            EnableRaisingEvents = true,
+        };
+        process.OutputDataReceived += (_, _) => { };
+        process.ErrorDataReceived += (_, _) => { };
+        process.Start();
+        process.BeginOutputReadLine();
+        process.BeginErrorReadLine();
+        return process;
+    }
+
+    public async Task<DriveFolderPreparation> PrepareDriveFolderAsync()
+    {
+        var entries = await ProviderEntriesAsync();
+        WindowsCloudFiles.ReconcilePendingProviderMutations(entries);
+        var previousState = WindowsCloudFiles.LoadLocalState(DefaultConfigDirectory);
+        if (LocalMutationScanEnabled &&
+            await PublishRecentLocalFileMutationsAsync(entries, previousState))
+        {
+            entries = await ProviderEntriesAsync();
+            WindowsCloudFiles.ReconcilePendingProviderMutations(entries);
+        }
+
+        var preparation = WindowsCloudFiles.EnsureSyncRoot(
+            entries,
+            ReadProviderFile,
+            QueueProviderDelete,
+            QueueProviderRename,
+            previousState);
+        WindowsCloudFiles.DebugLog(
+            $"prepare entries={entries.Count} native={preparation.NativeSyncRootReady} " +
+            $"placeholders={preparation.PlaceholderCount} skipped={preparation.SkippedLocalItemCount} " +
+            $"warning={preparation.Warning ?? ""}");
+        if (!preparation.NativeSyncRootReady)
+        {
+            return preparation;
+        }
+
+        WindowsCloudFiles.RemoveStaleSyncedLocalItems(
+            entries,
+            previousState,
+            preparation.ProtectedLocalItemPaths);
+        WindowsCloudFiles.NotifyShellEntriesChanged(entries, previousState);
+        WindowsCloudFiles.WriteLocalState(
+            DefaultConfigDirectory,
+            entries,
+            ReadProviderFile,
+            previousState,
+            preparation.RefreshedPlaceholderPaths,
+            preparation.ProtectedLocalItemPaths);
+        WriteProviderPathCache(entries);
+        return preparation;
+    }
+
+    private static bool LocalMutationScanEnabled =>
+        string.Equals(
+            Environment.GetEnvironmentVariable(LocalMutationScanEnv),
+            "1",
+            StringComparison.Ordinal);
+
+    public bool DaemonLockIsRunning(IrisDriveStatusData status)
+    {
+        var pid = DaemonLockPid(status);
+        return pid.HasValue && ProcessIsRunning(pid.Value);
+    }
+
+    public int? DaemonLockPid(IrisDriveStatusData status)
+    {
+        var configDirectory = status.ConfigDirectory;
+        if (string.IsNullOrWhiteSpace(configDirectory))
+        {
+            return null;
+        }
+
+        var lockPath = Path.Combine(configDirectory, "daemon.lock");
+        if (!File.Exists(lockPath))
+        {
+            return null;
+        }
+
+        return int.TryParse(File.ReadAllText(lockPath).Trim(), out var pid) ? pid : null;
+    }
+
+    public static bool ProcessIsRunning(int pid)
+    {
+        try
+        {
+            using var process = Process.GetProcessById(pid);
+            return !process.HasExited;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    public void OpenPath(string path)
+    {
+        Process.Start(new ProcessStartInfo(path) { UseShellExecute = true });
+    }
+
+    public void OpenDrivePath(string providerPath)
+    {
+        var normalized = NormalizeProviderPath(providerPath);
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            throw new InvalidOperationException("Share folder path is unavailable.");
+        }
+
+        var localPath = Path.Combine(
+            WindowsCloudFiles.SyncRootPath,
+            normalized.Replace('/', Path.DirectorySeparatorChar));
+        OpenPath(localPath);
+    }
+
+    public void OpenUri(string uri)
+    {
+        Process.Start(new ProcessStartInfo(uri) { UseShellExecute = true });
+    }
+
+    public async Task<string> CurrentAccountValueAsync(string key)
+    {
+        var status = await StatusAsync();
+        var value = key switch
+        {
+            "current_app_key_npub" => status.CurrentAppKeyNpub,
+            "app_key_npub" => status.DeviceNpub,
+            _ => null,
+        };
+
+        return string.IsNullOrWhiteSpace(value)
+            ? throw new InvalidOperationException("No account key available.")
+            : value;
+    }
+
+    private async Task FinishSetupAsync(string[] arguments)
+    {
+        await RunAsync(arguments);
+    }
+
+    private static string DefaultDeviceLabel()
+    {
+        var machineName = Environment.MachineName?.Trim() ?? "";
+        var label = string.Join(
+            " ",
+            machineName
+                .Split(new[] { ' ', '\t', '\r', '\n', '.' }, StringSplitOptions.RemoveEmptyEntries)
+                .Take(8));
+        return string.IsNullOrWhiteSpace(label) ||
+            string.Equals(label, "localhost", StringComparison.OrdinalIgnoreCase)
+                ? "Windows PC"
+                : label;
+    }
+
+    private async Task<string> ResolveShareSourcePathForCreateAsync(string sourcePath)
+    {
+        var entries = await ProviderEntriesAsync();
+        var existing = entries.FirstOrDefault(entry =>
+            string.Equals(entry.Path, sourcePath, StringComparison.Ordinal));
+        if (existing is not null)
+        {
+            if (!existing.IsDirectory)
+            {
+                throw new InvalidOperationException("Share source must be a folder.");
+            }
+            return sourcePath;
+        }
+
+        var createdPath = DefaultCreatedShareSourcePath(sourcePath);
+        existing = entries.FirstOrDefault(entry =>
+            string.Equals(entry.Path, createdPath, StringComparison.Ordinal));
+        if (existing is not null)
+        {
+            if (!existing.IsDirectory)
+            {
+                throw new InvalidOperationException($"{createdPath} is not a folder.");
+            }
+            return createdPath;
+        }
+
+        await RunProviderMutationAsync("provider", "mkdir", createdPath);
+        return createdPath;
+    }
+
+    private static string DefaultCreatedShareSourcePath(string sourcePath)
+    {
+        return sourcePath == "Shared" || sourcePath.StartsWith("Shared/", StringComparison.Ordinal)
+            ? sourcePath
+            : $"Shared/{sourcePath}";
+    }
+
+    private static string NormalizeProviderPath(string path)
+    {
+        return path.Trim()
+            .Replace('\\', '/')
+            .Trim('/');
+    }
+
+    private async Task<JsonDocument> RunJsonAsync(params string[] arguments)
+    {
+        var output = await RunForOutputAsync(arguments);
+        return JsonDocument.Parse(output);
+    }
+
+    private Task RunAsync(params string[] arguments)
+    {
+        return RunForOutputAsync(arguments);
+    }
+
+    private async Task RunProviderMutationAsync(params string[] arguments)
+    {
+        await ProviderMutationGate.WaitAsync();
+        try
+        {
+            await RunAsync(arguments);
+        }
+        finally
+        {
+            ProviderMutationGate.Release();
+        }
+    }
+
+    private async Task<IReadOnlyList<WindowsCloudFileEntry>> ProviderEntriesAsync()
+    {
+        using var document = await RunJsonAsync("provider", "list");
+        if (!document.RootElement.TryGetProperty("entries", out var entries) ||
+            entries.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<WindowsCloudFileEntry>();
+        }
+
+        return entries
+            .EnumerateArray()
+            .Select(WindowsCloudFileEntry.FromJson)
+            .Where(entry => !string.IsNullOrWhiteSpace(entry.Path))
+            .ToArray();
+    }
+
+    private void WriteProviderPathCache(IReadOnlyList<WindowsCloudFileEntry> entries)
+    {
+        try
+        {
+            Directory.CreateDirectory(DefaultConfigDirectory);
+            var paths = entries
+                .Select(entry => entry.Path)
+                .Where(path => !string.IsNullOrWhiteSpace(path))
+                .Where(WindowsCloudFiles.SyncRootEntryExists)
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(path => path, StringComparer.Ordinal)
+                .ToArray();
+            var json = JsonSerializer.Serialize(new { paths });
+            File.WriteAllText(
+                Path.Combine(DefaultConfigDirectory, "windows-cloud-provider-paths.json"),
+                json);
+        }
+        catch
+        {
+            // The Rust watcher treats this as an optimization hint; sync still works without it.
+        }
+    }
+
+    private async Task<bool> PublishRecentLocalFileMutationsAsync(
+        IReadOnlyList<WindowsCloudFileEntry> entries,
+        IReadOnlyList<WindowsCloudLocalStateEntry> previousState)
+    {
+        var upserts = WindowsCloudFiles.RecentLocalFileUpserts(entries, previousState);
+        var deletes = WindowsCloudFiles.RecentLocalFileDeletes(entries, previousState);
+
+        var changed = false;
+        foreach (var delete in deletes)
+        {
+            if (!WindowsCloudFiles.TryMarkProviderDeletePending(delete.Path))
+            {
+                WindowsCloudFiles.DebugLog(
+                    $"provider delete skipped from local scan because mutation is pending path={delete.Path}");
+                continue;
+            }
+
+            try
+            {
+                WindowsCloudFiles.DebugLog($"provider delete start from local scan path={delete.Path}");
+                await RunProviderMutationAsync("provider", "delete", delete.Path);
+                WindowsCloudFiles.DebugLog($"provider delete published from local scan path={delete.Path}");
+                changed = true;
+            }
+            catch (Exception error)
+            {
+                WindowsCloudFiles.ClearProviderMutationPending(delete.Path);
+                WindowsCloudFiles.DebugLog(
+                    $"provider delete local scan failed path={delete.Path} error={error.Message}");
+            }
+        }
+
+        foreach (var upsert in upserts)
+        {
+            if (WindowsCloudFiles.ProviderMutationIsPending(upsert.Path))
+            {
+                WindowsCloudFiles.DebugLog(
+                    $"provider write skipped from local scan because mutation is pending path={upsert.Path}");
+                continue;
+            }
+
+            try
+            {
+                WindowsCloudFiles.DebugLog($"provider write start from local scan path={upsert.Path}");
+                await RunProviderMutationAsync("provider", "write", upsert.Path, upsert.FullPath);
+                WindowsCloudFiles.DebugLog($"provider write published from local scan path={upsert.Path}");
+                changed = true;
+            }
+            catch (Exception error)
+            {
+                WindowsCloudFiles.DebugLog(
+                    $"provider write local scan failed path={upsert.Path} error={error.Message}");
+            }
+        }
+
+        return changed;
+    }
+
+    private byte[] ReadProviderFile(string path)
+    {
+        var tempDirectory = Path.Combine(Path.GetTempPath(), "iris-drive");
+        Directory.CreateDirectory(tempDirectory);
+        var tempFile = Path.Combine(tempDirectory, $"{Guid.NewGuid():N}.bin");
+        try
+        {
+            RunForOutput("provider", "read", path, tempFile);
+            return File.ReadAllBytes(tempFile);
+        }
+        finally
+        {
+            try
+            {
+                File.Delete(tempFile);
+            }
+            catch
+            {
+                // Best-effort cleanup for provider callback scratch files.
+            }
+        }
+    }
+
+    private void QueueProviderDelete(string path)
+    {
+        if (!WindowsCloudFiles.MarkProviderDeletePending(path))
+        {
+            WindowsCloudFiles.DebugLog($"provider delete skipped from Cloud Files notify path={path}");
+            return;
+        }
+
+        WindowsCloudFiles.DebugLog($"provider delete queued from Cloud Files notify path={path}");
+        _ = Task.Run(async () =>
+        {
+            var deletePath = path;
+            try
+            {
+                for (var attempt = 0; attempt < 50 && WindowsCloudFiles.SyncRootEntryExists(path); attempt++)
+                {
+                    await Task.Delay(100);
+                }
+                if (!WindowsCloudFiles.ProviderDeleteIsPending(path))
+                {
+                    WindowsCloudFiles.DebugLog(
+                        $"provider delete skipped because pending marker was coalesced path={path}");
+                    return;
+                }
+
+                deletePath = WindowsCloudFiles.PromoteProviderDeleteToMissingAncestor(path);
+                if (!WindowsCloudFiles.ProviderDeleteIsPending(deletePath))
+                {
+                    WindowsCloudFiles.DebugLog(
+                        $"provider delete skipped because promoted marker was coalesced path={deletePath}");
+                    return;
+                }
+
+                if (WindowsCloudFiles.SyncRootEntryExists(deletePath))
+                {
+                    WindowsCloudFiles.DebugLog(
+                        $"provider delete continuing even though local path still exists path={deletePath}");
+                }
+
+                WindowsCloudFiles.DebugLog($"provider delete start from Cloud Files notify path={deletePath}");
+                await RunProviderMutationAsync("provider", "delete", deletePath);
+                WindowsCloudFiles.DebugLog($"provider delete published from Cloud Files notify path={deletePath}");
+            }
+            catch (Exception error)
+            {
+                WindowsCloudFiles.ClearProviderMutationPending(path, deletePath);
+                WindowsCloudFiles.DebugLog($"provider delete notify failed path={path} error={error.Message}");
+            }
+        });
+    }
+
+    private void QueueProviderRename(string oldPath, string newPath)
+    {
+        WindowsCloudFiles.MarkProviderRenamePending(oldPath, newPath);
+        WindowsCloudFiles.DebugLog(
+            $"provider rename queued from Cloud Files notify old={oldPath} new={newPath}");
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                WindowsCloudFiles.DebugLog(
+                    $"provider rename start from Cloud Files notify old={oldPath} new={newPath}");
+                await RunProviderMutationAsync("provider", "rename", oldPath, newPath);
+                WindowsCloudFiles.DebugLog(
+                    $"provider rename published from Cloud Files notify old={oldPath} new={newPath}");
+            }
+            catch (Exception error)
+            {
+                WindowsCloudFiles.ClearProviderMutationPending(oldPath, newPath);
+                WindowsCloudFiles.DebugLog(
+                    $"provider rename notify failed old={oldPath} new={newPath} error={error.Message}");
+            }
+        });
+    }
+
+    private async Task<string> RunForOutputAsync(params string[] arguments)
+    {
+        using var process = new Process { StartInfo = CreateStartInfo(arguments) };
+        process.Start();
+        var stdout = await process.StandardOutput.ReadToEndAsync();
+        var stderr = await process.StandardError.ReadToEndAsync();
+        await process.WaitForExitAsync();
+
+        if (process.ExitCode == 0)
+        {
+            return stdout;
+        }
+
+        var message = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+        throw new InvalidOperationException(message.Trim());
+    }
+
+    private string RunForOutput(params string[] arguments)
+    {
+        using var process = new Process { StartInfo = CreateStartInfo(arguments) };
+        process.Start();
+        var stdout = process.StandardOutput.ReadToEnd();
+        var stderr = process.StandardError.ReadToEnd();
+        process.WaitForExit();
+
+        if (process.ExitCode == 0)
+        {
+            return stdout;
+        }
+
+        var message = string.IsNullOrWhiteSpace(stderr) ? stdout : stderr;
+        throw new InvalidOperationException(message.Trim());
+    }
+
+    private ProcessStartInfo CreateStartInfo(params string[] arguments)
+    {
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = ResolveIdrivePath(),
+            UseShellExecute = false,
+            CreateNoWindow = true,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+        };
+
+        foreach (var argument in arguments)
+        {
+            startInfo.ArgumentList.Add(argument);
+        }
+
+        return startInfo;
+    }
+
+    private string ResolveIdrivePath()
+    {
+        var overridePath = Environment.GetEnvironmentVariable("IRIS_DRIVE_CLI");
+        if (!string.IsNullOrWhiteSpace(overridePath))
+        {
+            return overridePath;
+        }
+
+        foreach (var candidate in CandidateIdrivePaths())
+        {
+            if (File.Exists(candidate))
+            {
+                return candidate;
+            }
+        }
+
+        return "idrive.exe";
+    }
+
+    private static string[] CandidateIdrivePaths()
+    {
+        var exe = "idrive.exe";
+        var current = Directory.GetCurrentDirectory();
+        var app = AppContext.BaseDirectory;
+        return new[]
+        {
+            Path.Combine(app, exe),
+            Path.Combine(current, exe),
+            Path.Combine(current, "..", "target", "debug", exe),
+            Path.Combine(current, "..", "target", "release", exe),
+            Path.Combine(current, "..", "..", "target", "debug", exe),
+            Path.Combine(current, "..", "..", "target", "release", exe),
+            Path.Combine(app, "..", "..", "..", "..", "target", "debug", exe),
+            Path.Combine(app, "..", "..", "..", "..", "target", "release", exe),
+            Path.Combine(app, "..", "..", "..", "..", "..", "target", "debug", exe),
+            Path.Combine(app, "..", "..", "..", "..", "..", "target", "release", exe),
+        }.Select(Path.GetFullPath).ToArray();
+    }
+}
