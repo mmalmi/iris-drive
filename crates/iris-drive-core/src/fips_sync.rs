@@ -14,9 +14,9 @@ use hashtree_core::{
     StoreError, to_hex,
 };
 use hashtree_fips_transport::{
-    FipsAppMessage, FipsEndpointOptions, FipsMeshPubsub, FipsMeshPubsubEvent, FipsPeerConfig,
-    FipsPeerStatus, FipsRelayStatus, HashtreeFipsTransport, PubsubPublishStats, SameHostBlobStore,
-    SameHostBlobStoreConfig, bind_fips_endpoint,
+    BoundFipsEndpoint, FipsAppMessage, FipsEndpointOptions, FipsMeshPubsub, FipsMeshPubsubEvent,
+    FipsPeerConfig, FipsPeerStatus, FipsRelayStatus, HashtreeFipsTransport, PubsubPublishStats,
+    SameHostBlobStore, SameHostBlobStoreConfig, bind_fips_endpoint,
 };
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
@@ -91,8 +91,24 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         .await
         .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?;
 
+        Self::start_with_bound_endpoint(endpoint, local_store, config, transport_settings).await
+    }
+
+    async fn start_with_bound_endpoint(
+        endpoint: BoundFipsEndpoint,
+        local_store: Arc<L>,
+        config: &AppConfig,
+        transport_settings: FipsTransportSettings,
+    ) -> Result<Self, FipsSyncError> {
+        let BoundFipsEndpoint {
+            endpoint,
+            native_endpoint,
+            local_peer_id,
+            discovery_scope,
+        } = endpoint;
+
         let transport = Arc::new(
-            HashtreeFipsTransport::new(endpoint.endpoint, local_store.clone())
+            HashtreeFipsTransport::new(endpoint, local_store.clone())
                 .with_request_timeout(FIPS_REQUEST_TIMEOUT)
                 .with_unconfigured_app_message_topics(unconfigured_app_message_topics()),
         );
@@ -106,7 +122,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         let standalone: Arc<dyn BlobRoute> = Arc::new(StoreBlobRoute::new(transport.clone()));
         let blob_store: Arc<dyn Store> = Arc::new(
             SameHostBlobStore::bind(
-                endpoint.native_endpoint.clone(),
+                native_endpoint,
                 local_store.clone(),
                 Some(standalone),
                 SameHostBlobStoreConfig::default(),
@@ -119,7 +135,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
                 transport
                     .start_mesh_pubsub(
                         local_store.clone(),
-                        endpoint.local_peer_id.clone(),
+                        local_peer_id.clone(),
                         FIPS_REQUEST_TIMEOUT,
                     )
                     .await
@@ -135,7 +151,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             local_store,
             receiver_task: Some(receiver_task),
             mesh_pubsub,
-            endpoint_npub: endpoint.local_peer_id,
+            endpoint_npub: local_peer_id,
             discovery_scope,
             transport_settings,
             last_peer_config: Mutex::new(None),
