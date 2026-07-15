@@ -12,8 +12,7 @@ use std::time::Duration;
 use fips_core::FipsEndpoint;
 use hashtree_core::{BLOB_DEFAULT_HTL, Cid, HashTreeError, Store};
 use hashtree_fips_transport::{
-    BoundFipsEndpoint, FipsPeerConfig, SameHostBlobStoreConfig, bind_fips_endpoint,
-    set_fips_peer_configs,
+    BoundFipsEndpoint, FipsPeerConfig, SameHostBlobStoreConfig, set_fips_peer_configs,
 };
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
@@ -33,12 +32,14 @@ use crate::identity::AppKey;
 mod blob_runtime;
 mod control_runtime;
 mod download;
+mod endpoint_config;
 mod nostr_runtime;
 mod settings_runtime;
 use blob_runtime::DriveBlobRuntime;
 use control_runtime::DriveControlRuntime;
 pub use control_runtime::FipsAppMessage;
 use download::download_tree_with_resolver;
+use endpoint_config::bind_drive_fips_endpoint;
 use nostr_runtime::DriveNostrPubsubRuntime;
 pub use nostr_runtime::FipsNostrPubsubEvent;
 use settings_runtime::fips_endpoint_options;
@@ -91,7 +92,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             .map_err(|error| FipsSyncError::Identity(error.to_string()))?;
         let discovery_scope = discovery_scope(config);
         let transport_settings = FipsTransportSettings::from_env();
-        let endpoint = Box::pin(bind_fips_endpoint(fips_endpoint_options(
+        let endpoint = Box::pin(bind_drive_fips_endpoint(fips_endpoint_options(
             identity_nsec,
             discovery_scope.clone(),
             config.relays.clone(),

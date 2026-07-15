@@ -56,7 +56,7 @@ hashtree-core = "=0.2.84"
 hashtree-blossom = { version = "=0.2.82", features = ["store"] }
 hashtree-config = "=0.2.82"
 hashtree-embedded = "=0.2.83"
-hashtree-fips-transport = { version = "=0.4.0", features = ["webrtc-endpoint"] }
+hashtree-fips-transport = { version = "=0.4.1", features = ["webrtc-endpoint"] }
 hashtree-fs = "=0.2.82"
 hashtree-fuse = { version = "=0.2.82", features = ["fuse"] }
 hashtree-lmdb = "=0.2.82"

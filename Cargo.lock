@@ -2483,9 +2483,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-fips-transport"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb7c0685acbf63fce9f9e84c53abda7cd2d890534964202dde6b9d3e0769abbe"
+checksum = "e8a5920c11eadd389fb0e0a30396c596468c269fb88aa6eb3025490a8d03b564"
 dependencies = [
  "async-trait",
  "fips-core",
