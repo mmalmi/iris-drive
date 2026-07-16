@@ -22,9 +22,13 @@ async fn drive_reads_shared_store_without_a_provider_process() {
     let endpoint = drive_bound.native_endpoint.clone();
 
     let shared_dir = tempfile::tempdir().unwrap();
-    let shared = Arc::new(
-        hashtree_lmdb::open_shared_lmdb_blob_store(shared_dir.path(), 16 * 1024 * 1024).unwrap(),
-    );
+    let shared_store =
+        hashtree_lmdb::open_shared_lmdb_blob_store(shared_dir.path(), 16 * 1024 * 1024).unwrap();
+    assert!(matches!(
+        &shared_store,
+        hashtree_lmdb::ConfiguredLmdbBlobStore::Pool(_)
+    ));
+    let shared = Arc::new(shared_store);
     let shared_tree = HashTree::new(HashTreeConfig::new(shared.clone()));
     let file_bytes = b"immutable bytes from the shared Hashtree LMDB route".to_vec();
     let (file_cid, _) = shared_tree.put(&file_bytes).await.unwrap();

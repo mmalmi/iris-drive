@@ -1635,9 +1635,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.4.3"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd3055f5d90b7564d91180b529317a1fcc7478e7a70106510aa5573a4bbfe806"
+checksum = "fd805bf7990f441969502703261c4710672f6fd974f2b681ec68e47700a73c5b"
 dependencies = [
  "base64",
  "bluer",
@@ -2357,9 +2357,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-cli"
-version = "0.2.89"
+version = "0.2.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "246a9c317270dd05401d7d1da1ab4008ed5d2179e5f630b2b1b097b5c7a03b06"
+checksum = "f16c4af257e5aa090e7e535f574bc628735d69dceebee990c3be93b4108cea21"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2448,9 +2448,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-core"
-version = "0.2.85"
+version = "0.2.86"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fc5855a304c4f833ccb4bf770028709ce82882aa6d6246a03135e5ed2d90888"
+checksum = "574476b1fe122bddc7783ba0346dca42ec673a241128b0edf9e38166c1bb800f"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -2483,9 +2483,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-fips-transport"
-version = "0.4.4"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b50872f0bc28e1ee59e63c270234af6bba2eaddb827a606583992d810e801ba"
+checksum = "20907d2e8892fac6562d535b01f41eaa74964a9ea31e66c9674f74e035bf2580"
 dependencies = [
  "async-trait",
  "fips-core",
@@ -2540,14 +2540,17 @@ dependencies = [
 
 [[package]]
 name = "hashtree-lmdb"
-version = "0.2.83"
+version = "0.2.84"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66194f768a2146d04f4d3eaef7524f617c9a7a34092bda0569854678ccb9ee34"
+checksum = "0b1c1b6ec24b5e1e294f8fe934e5f7b6455a207e5bd1777efc652f51b4bee49a"
 dependencies = [
  "async-trait",
  "hashtree-core",
  "heed",
  "page_size",
+ "rmp-serde",
+ "serde",
+ "uuid",
 ]
 
 [[package]]
