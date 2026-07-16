@@ -145,7 +145,7 @@ for lock in Cargo.lock linux/Cargo.lock; do
   require_registry_package "$lock" fips-core 0.4.5 fd805bf7990f441969502703261c4710672f6fd974f2b681ec68e47700a73c5b
   require_registry_package "$lock" fips-tcp 0.2.0 d18861c5eca7c472fbbdbbfb498f8d2525405081a9a24b42633c600ba6f6e42a
   require_registry_package "$lock" fips-tcp-endpoint 0.2.0 8e3e01e352b709b80f4261e2cd7d0ffde2d3aaf175267b3960997e70f7305c12
-  require_registry_package "$lock" hashtree-cli 0.2.92 f16c4af257e5aa090e7e535f574bc628735d69dceebee990c3be93b4108cea21
+  require_registry_package "$lock" hashtree-cli 0.2.93 2a6f2540246a6663672a1ad841d1cd76d72e84bf6ede73a8eaea821cf33cfcbc
   require_registry_package "$lock" hashtree-core 0.2.86 574476b1fe122bddc7783ba0346dca42ec673a241128b0edf9e38166c1bb800f
   require_registry_package "$lock" hashtree-embedded 0.2.83 1975afb5602938dcb8a7062116f37174bf79a9128873a30c6b0c3f297ec08bcc
   require_registry_package "$lock" hashtree-fips-transport 0.4.5 20907d2e8892fac6562d535b01f41eaa74964a9ea31e66c9674f74e035bf2580
