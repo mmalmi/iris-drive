@@ -607,7 +607,7 @@ fn status_reports_fips_network_diagnostics_from_daemon_status() {
                 "udp_public": true,
                 "udp_external_addr": "10.44.94.98:2121",
                 "webrtc_enabled": true,
-                "webrtc_max_connections": 16,
+                "webrtc_max_connections": 8,
                 "open_discovery_max_pending": 0,
                 "mesh_peer_count": 1,
                 "mesh_peers": ["npub1remote"],
@@ -652,7 +652,7 @@ fn status_reports_fips_network_diagnostics_from_daemon_status() {
     assert_eq!(fips["udp_public"], true);
     assert_eq!(fips["udp_external_addr"], "10.44.94.98:2121");
     assert_eq!(fips["webrtc_enabled"], true);
-    assert_eq!(fips["webrtc_max_connections"], 16);
+    assert_eq!(fips["webrtc_max_connections"], 8);
     assert_eq!(fips["open_discovery_max_pending"], 0);
     assert_eq!(fips["mesh_peer_count"], 1);
     assert_eq!(fips["mesh_device_count"], 1);

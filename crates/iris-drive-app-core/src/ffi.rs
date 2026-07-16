@@ -1421,14 +1421,14 @@ impl NativeAppRuntime {
             let Ok(config) = self.load_config() else {
                 write_native_browser_gateway_status(
                     Path::new(&self.data_dir),
-                    json!({"running": false, "state": "error", "error": "loading config failed"}),
+                    &json!({"running": false, "state": "error", "error": "loading config failed"}),
                 );
                 return;
             };
             let Some(mut profile) = config.profile.clone() else {
                 write_native_browser_gateway_status(
                     Path::new(&self.data_dir),
-                    json!({"running": false, "state": "not_configured"}),
+                    &json!({"running": false, "state": "not_configured"}),
                 );
                 return;
             };
@@ -1438,14 +1438,14 @@ impl NativeAppRuntime {
                 AppKeyAuthorizationState::AwaitingApproval => {
                     write_native_browser_gateway_status(
                         Path::new(&self.data_dir),
-                        json!({"running": false, "state": "awaiting_approval"}),
+                        &json!({"running": false, "state": "awaiting_approval"}),
                     );
                     return;
                 }
                 AppKeyAuthorizationState::Revoked => {
                     write_native_browser_gateway_status(
                         Path::new(&self.data_dir),
-                        json!({"running": false, "state": "revoked"}),
+                        &json!({"running": false, "state": "revoked"}),
                     );
                     return;
                 }
@@ -1453,7 +1453,7 @@ impl NativeAppRuntime {
             if !config.local_nhash_resolver_enabled {
                 write_native_browser_gateway_status(
                     Path::new(&self.data_dir),
-                    json!({"running": false, "state": "disabled_by_settings"}),
+                    &json!({"running": false, "state": "disabled_by_settings"}),
                 );
                 return;
             }
@@ -1463,7 +1463,7 @@ impl NativeAppRuntime {
 
             write_native_browser_gateway_status(
                 Path::new(&self.data_dir),
-                json!({"running": false, "state": "starting"}),
+                &json!({"running": false, "state": "starting"}),
             );
             self.browser_gateway_stop.store(false, Ordering::Release);
             let data_dir = self.data_dir.clone();
@@ -1486,7 +1486,7 @@ impl NativeAppRuntime {
                     Ok(Err(error)) => {
                         write_native_browser_gateway_status(
                             Path::new(&data_dir),
-                            json!({"running": false, "state": "error", "error": error}),
+                            &json!({"running": false, "state": "error", "error": error}),
                         );
                         tracing::warn!(error = %error, "native browser gateway stopped");
                     }
@@ -1500,7 +1500,7 @@ impl NativeAppRuntime {
                         };
                         write_native_browser_gateway_status(
                             Path::new(&data_dir),
-                            json!({"running": false, "state": "panic", "error": panic}),
+                            &json!({"running": false, "state": "panic", "error": panic}),
                         );
                         tracing::warn!(panic = %panic, "native browser gateway panicked");
                     }
@@ -1515,7 +1515,7 @@ impl NativeAppRuntime {
         #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
         write_native_browser_gateway_status(
             Path::new(&self.data_dir),
-            json!({"running": false, "state": "new_process"}),
+            &json!({"running": false, "state": "new_process"}),
         );
     }
 
@@ -1526,7 +1526,7 @@ impl NativeAppRuntime {
             self.browser_gateway_stop.store(true, Ordering::Release);
             write_native_browser_gateway_status(
                 Path::new(&self.data_dir),
-                json!({"running": false, "state": "stopping"}),
+                &json!({"running": false, "state": "stopping"}),
             );
         }
     }
@@ -1969,14 +1969,14 @@ fn run_native_browser_gateway(data_dir: &str, stop: Arc<AtomicBool>) -> Result<(
     let data_dir = PathBuf::from(data_dir);
     write_native_browser_gateway_status(
         &data_dir,
-        json!({"running": false, "state": "loading_config"}),
+        &json!({"running": false, "state": "loading_config"}),
     );
     let config = AppConfig::load_or_default(config_path_in(&data_dir))
         .map_err(|error| format!("loading config: {error}"))?;
     let Some(mut profile) = config.profile.clone() else {
         write_native_browser_gateway_status(
             &data_dir,
-            json!({"running": false, "state": "disabled"}),
+            &json!({"running": false, "state": "disabled"}),
         );
         return Ok(());
     };
@@ -1984,13 +1984,13 @@ fn run_native_browser_gateway(data_dir: &str, stop: Arc<AtomicBool>) -> Result<(
     if !profile.is_authorized() || !config.local_nhash_resolver_enabled {
         write_native_browser_gateway_status(
             &data_dir,
-            json!({"running": false, "state": "disabled"}),
+            &json!({"running": false, "state": "disabled"}),
         );
         return Ok(());
     }
     write_native_browser_gateway_status(
         &data_dir,
-        json!({"running": false, "state": "starting_embedded_hashtree"}),
+        &json!({"running": false, "state": "starting_embedded_hashtree"}),
     );
     let embedded_hashtree = EmbeddedHashtreeHost::start(&data_dir, &config)
         .map_err(|error| format!("starting embedded hashtree: {error:#}"))?;
@@ -1998,7 +1998,7 @@ fn run_native_browser_gateway(data_dir: &str, stop: Arc<AtomicBool>) -> Result<(
     let embedded_hashtree_status = embedded_hashtree.status_payload();
     write_native_browser_gateway_status(
         &data_dir,
-        json!({
+        &json!({
             "running": false,
             "state": "starting_gateway",
             "hashtree_base_url": hashtree_base_url,
@@ -2031,7 +2031,7 @@ fn run_native_browser_gateway(data_dir: &str, stop: Arc<AtomicBool>) -> Result<(
         let proxy_port = proxy.local_addr().port();
         write_native_browser_gateway_status(
             &gateway_data_dir,
-            json!({
+            &json!({
                 "running": true,
                 "state": "running",
                 "bind": gateway.local_addr().to_string(),
@@ -2058,7 +2058,7 @@ fn run_native_browser_gateway(data_dir: &str, stop: Arc<AtomicBool>) -> Result<(
             .map_err(|error| format!("stopping browser gateway: {error}"))?;
         write_native_browser_gateway_status(
             &gateway_data_dir,
-            json!({"running": false, "state": "stopped"}),
+            &json!({"running": false, "state": "stopped"}),
         );
         Ok(())
     });
@@ -2111,12 +2111,12 @@ fn native_browser_gateway_status_path(config_dir: &Path) -> PathBuf {
 }
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
-fn write_native_browser_gateway_status(config_dir: &Path, value: Value) {
+fn write_native_browser_gateway_status(config_dir: &Path, value: &Value) {
     let path = native_browser_gateway_status_path(config_dir);
     let _ = std::fs::create_dir_all(config_dir);
     if let Err(error) = std::fs::write(
         &path,
-        serde_json::to_vec_pretty(&value).unwrap_or_else(|_| b"{}".to_vec()),
+        serde_json::to_vec_pretty(value).unwrap_or_else(|_| b"{}".to_vec()),
     ) {
         tracing::warn!(
             error = %error,
@@ -2282,11 +2282,13 @@ async fn run_app_key_link_exchange_async(
                         while messages.len() < NATIVE_APP_MESSAGE_DRAIN_LIMIT {
                             match app_messages.try_recv() {
                                 Ok(message) => messages.push(message),
-                                Err(tokio::sync::broadcast::error::TryRecvError::Empty) => break,
+                                Err(
+                                    tokio::sync::broadcast::error::TryRecvError::Empty
+                                    | tokio::sync::broadcast::error::TryRecvError::Closed,
+                                ) => break,
                                 Err(tokio::sync::broadcast::error::TryRecvError::Lagged(skipped)) => {
                                     tracing::warn!(skipped, "native app-key-link FIPS receiver lagged");
                                 }
-                                Err(tokio::sync::broadcast::error::TryRecvError::Closed) => break,
                             }
                         }
                         let received_messages = messages.len();
@@ -2376,6 +2378,7 @@ async fn run_app_key_link_exchange_async(
 }
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+#[allow(clippy::too_many_arguments)]
 async fn drive_app_key_link_exchange_tick(
     config_dir: &Path,
     relay_client: &nostr_sdk::Client,
@@ -2863,6 +2866,7 @@ async fn handle_native_app_key_link_roster(
             apply_outcome = ?outcome,
             "accepted native app-key-link roster over FIPS"
         );
+        sync.refresh_authorized_peers(&config).await;
     }
     if let Some(frame) = ack_frame {
         send_native_app_key_link_roster_ack(sync, &frame).await?;

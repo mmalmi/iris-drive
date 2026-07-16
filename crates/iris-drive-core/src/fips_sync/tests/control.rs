@@ -432,7 +432,7 @@ async fn wait_for_connected_endpoint(endpoint: &FipsEndpoint, peer: &str) {
     .expect("FIPS endpoint peer did not connect");
 }
 
-async fn wait_for_tcp_state(
+pub(super) async fn wait_for_tcp_state(
     tcp: &mut FipsTcpEndpoint,
     id: ConnectionId,
     expected: Option<State>,
@@ -453,7 +453,7 @@ async fn wait_for_tcp_state(
     .unwrap_or_else(|_| panic!("TCP/FIPS stream did not reach {expected:?}"));
 }
 
-fn now_ms() -> u64 {
+pub(super) fn now_ms() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()

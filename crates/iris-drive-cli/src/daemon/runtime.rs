@@ -1,14 +1,3 @@
-#[allow(clippy::needless_pass_by_value)]
-fn emit_daemon_status_event(config_dir: &Path, payload: Value) {
-    let payload = write_runtime_daemon_status(config_dir, payload);
-    println!("{payload}");
-}
-
-#[allow(clippy::needless_pass_by_value)]
-fn write_runtime_daemon_status(config_dir: &Path, payload: Value) -> Value {
-    write_daemon_status(config_dir, payload)
-}
-
 const DIRECT_APP_MESSAGE_DRAIN_LIMIT: usize = 4096;
 const DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS: u64 = 750;
 const DIRECT_ROOT_PEER_REFRESH_INTERVAL_SECS: u64 = 30;

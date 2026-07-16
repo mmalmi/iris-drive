@@ -1,10 +1,9 @@
 use super::*;
 
 use super::super::settings_runtime::{
-    fips_endpoint_options, parse_bool_env_value, parse_static_peer_hints,
-    target_allows_default_desktop_fips,
+    bounded_webrtc_max_connections, fips_endpoint_options, parse_bool_env_value,
+    parse_static_peer_hints, target_allows_default_desktop_fips,
 };
-use fips_core::discovery::local::{LocalInstanceAdvertisement, LocalInstanceCapability};
 
 #[test]
 fn discovery_scope_is_profile_scoped() {
@@ -72,15 +71,24 @@ fn endpoint_options_can_advertise_native_udp_without_disabling_webrtc() {
         Some("10.44.94.98:2121")
     );
     assert!(options.webrtc_auto_connect);
-    assert_eq!(options.webrtc_max_connections, 12);
+    assert_eq!(options.webrtc_max_connections, 8);
     assert_eq!(options.open_discovery_max_pending, 8);
+}
+
+#[test]
+fn webrtc_connection_limit_is_always_within_candidate_socket_budget() {
+    assert_eq!(bounded_webrtc_max_connections(None), 8);
+    assert_eq!(bounded_webrtc_max_connections(Some(0)), 1);
+    assert_eq!(bounded_webrtc_max_connections(Some(4)), 4);
+    assert_eq!(bounded_webrtc_max_connections(Some(8)), 8);
+    assert_eq!(bounded_webrtc_max_connections(Some(16)), 8);
 }
 
 #[test]
 fn default_transport_settings_do_not_seed_fips_bootstrap_transit() {
     let settings = FipsTransportSettings::default();
 
-    assert_eq!(settings.webrtc_max_connections, 16);
+    assert_eq!(settings.webrtc_max_connections, 8);
     assert_eq!(settings.open_discovery_max_pending, 0);
     assert!(settings.bootstrap_peer_hints.is_empty());
     assert!(settings.enable_lan_discovery);
@@ -130,7 +138,8 @@ fn admin_inbound_app_key_link_request_configures_pending_fips_peer() {
     let pending_pubkey = "ee".repeat(32);
     let invite_pubkey = "ff".repeat(32);
     let profile_id = crate::NostrIdentityId::new_v4();
-    let config = AppConfig {
+    let mut config = AppConfig {
+        relays: Vec::new(),
         profile: Some(crate::ProfileState {
             profile_id,
             app_key_pubkey: current_pubkey.clone(),
@@ -174,32 +183,15 @@ fn admin_inbound_app_key_link_request_configures_pending_fips_peer() {
 
     assert_eq!(peers.len(), 1);
     assert_eq!(peers[0].npub, pending_npub);
+    assert!(peers[0].udp_addresses.is_empty());
     assert!(authorized_blob_fips_peers(&config, &FipsTransportSettings::default()).is_empty());
-}
-
-#[test]
-fn admin_accepting_link_requests_promotes_connected_joiners_to_application_peers() {
-    let mut application_peers = vec![FipsPeerConfig::new("already-app".to_string())];
-    let routing_peers = vec![FipsPeerConfig::new("already-routing".to_string())];
-
-    add_connected_app_key_link_application_peers(
-        &mut application_peers,
-        &routing_peers,
-        "local",
-        [
-            "local".to_string(),
-            "already-app".to_string(),
-            "already-routing".to_string(),
-            "pending-joiner".to_string(),
-        ],
-    );
-
+    config.relays = vec!["wss://relay.example".to_string()];
+    let peers = authorized_device_fips_peers(&config, &FipsTransportSettings::default());
+    assert_eq!(peers.len(), 1);
+    assert_eq!(peers[0].npub, pending_npub);
     assert_eq!(
-        application_peers
-            .iter()
-            .map(|peer| peer.npub.as_str())
-            .collect::<Vec<_>>(),
-        vec!["already-app", "pending-joiner"]
+        peers[0].udp_addresses,
+        vec![format!("nostr_relay:{pending_npub}")]
     );
 }
 
@@ -400,12 +392,13 @@ fn legacy_drive_roots_do_not_seed_bootstrap_fips_routing_peers() {
 }
 
 #[test]
-fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
+fn relay_fallback_preserves_static_addresses_for_authorized_devices() {
     let first_keys = nostr_sdk::Keys::generate();
     let second_keys = nostr_sdk::Keys::generate();
     let first_pubkey = first_keys.public_key().to_hex();
     let second_pubkey = second_keys.public_key().to_hex();
     let first_npub = first_keys.public_key().to_bech32().unwrap();
+    let second_npub = second_keys.public_key().to_bech32().unwrap();
     let profile_id = crate::NostrIdentityId::new_v4();
     let settings = FipsTransportSettings {
         static_peer_hints: parse_static_peer_hints(&format!(
@@ -414,6 +407,7 @@ fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
         ..Default::default()
     };
     let config = AppConfig {
+        relays: vec!["wss://relay.example".to_string()],
         profile: Some(crate::ProfileState {
             profile_id,
             app_key_pubkey: "dd".repeat(32),
@@ -455,12 +449,17 @@ fn static_peer_hints_match_authorized_devices_by_label_or_npub() {
     assert_eq!(peers.len(), 2);
     assert_eq!(authorized_blob_fips_peers(&config, &settings), peers);
     assert!(peers.iter().any(|peer| peer.npub == first_npub
-        && peer.udp_addresses == vec!["10.44.34.102:22121".to_string()]));
-    assert!(
-        peers
-            .iter()
-            .any(|peer| peer.udp_addresses == vec!["10.44.214.2:22121".to_string()])
-    );
+        && peer.udp_addresses
+            == vec![
+                "10.44.34.102:22121".to_string(),
+                format!("nostr_relay:{first_npub}"),
+            ]));
+    assert!(peers.iter().any(|peer| peer.npub == second_npub
+        && peer.udp_addresses
+            == vec![
+                "10.44.214.2:22121".to_string(),
+                format!("nostr_relay:{second_npub}"),
+            ]));
 }
 
 #[test]
@@ -502,12 +501,16 @@ fn pending_app_key_link_admin_is_allowed_for_roster_app_messages() {
     let authorized = authorized_device_fips_peers(&config, &settings);
     assert_eq!(authorized.len(), 1);
     assert_eq!(authorized[0].npub, admin_npub);
-    assert_eq!(authorized[0].udp_addresses, vec!["10.44.1.9:22121"]);
+    let expected_addresses = vec![
+        "10.44.1.9:22121".to_string(),
+        format!("nostr_relay:{admin_npub}"),
+    ];
+    assert_eq!(authorized[0].udp_addresses, expected_addresses);
     assert!(authorized_blob_fips_peers(&config, &settings).is_empty());
     let routing = routing_fips_peers(&config, &settings);
     assert_eq!(routing.len(), 1);
     assert_eq!(routing[0].npub, admin_npub);
-    assert_eq!(routing[0].udp_addresses, vec!["10.44.1.9:22121"]);
+    assert_eq!(routing[0].udp_addresses, expected_addresses);
 }
 
 #[test]
@@ -634,13 +637,7 @@ fn admin_endpoint_options_keep_open_discovery_closed_by_default() {
 
 #[test]
 fn bootstrap_control_policy_excludes_protected_root_frames() {
-    let dir = tempfile::tempdir().unwrap();
-    let profile = crate::Profile::create(dir.path(), Some("admin".into())).unwrap();
-    let config = AppConfig {
-        profile: Some(profile.state),
-        ..Default::default()
-    };
-    let topics = control_bootstrap_topics(&config);
+    let topics = control_bootstrap_topics();
 
     assert!(topics.contains(crate::app_key_link_transport::APP_KEY_LINK_REQUEST_APP_TOPIC));
     assert!(topics.contains(crate::app_key_link_transport::APP_KEY_LINK_ROSTER_APP_TOPIC));
@@ -656,36 +653,4 @@ fn bool_env_parser_accepts_common_spellings() {
         assert_eq!(parse_bool_env_value(value), Some(false));
     }
     assert_eq!(parse_bool_env_value("maybe"), None);
-}
-
-#[test]
-fn same_host_blob_provider_selection_requires_the_exact_service_port() {
-    let advertisement =
-        |npub: &str, capability: LocalInstanceCapability| LocalInstanceAdvertisement {
-            npub: npub.to_string(),
-            startup_epoch: [0; 8],
-            capabilities: vec![capability],
-        };
-    let providers = same_host_blob_provider_ids([
-        advertisement(
-            "correct",
-            LocalInstanceCapability::service(
-                hashtree_fips_transport::TCP_BLOB_CAPABILITY,
-                hashtree_fips_transport::TCP_BLOB_SERVICE_PORT,
-            ),
-        ),
-        advertisement(
-            "wrong-port",
-            LocalInstanceCapability::service(
-                hashtree_fips_transport::TCP_BLOB_CAPABILITY,
-                hashtree_fips_transport::TCP_BLOB_SERVICE_PORT + 1,
-            ),
-        ),
-        advertisement(
-            "missing-port",
-            LocalInstanceCapability::role(hashtree_fips_transport::TCP_BLOB_CAPABILITY),
-        ),
-    ]);
-
-    assert_eq!(providers, vec!["correct"]);
 }

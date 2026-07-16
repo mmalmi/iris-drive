@@ -1,4 +1,8 @@
-use super::*;
+use super::{
+    APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC, AppConfig, Event, JsonUtil,
+    NATIVE_SYNC_RELAY_TIMEOUT_SECS, Path, config_path_in, key_path_in, normalize_pubkey,
+    pubkey_npub, unix_now_seconds,
+};
 
 pub(super) fn handle_native_device_approval_applied_ack(
     config_dir: &Path,
@@ -82,7 +86,7 @@ pub(super) async fn send_native_device_approval_applied_ack(
                     "publishing redundant device approval applied ACK failed"
                 ),
                 Err(_) => {
-                    tracing::warn!("publishing redundant device approval applied ACK timed out")
+                    tracing::warn!("publishing redundant device approval applied ACK timed out");
                 }
             }
         });

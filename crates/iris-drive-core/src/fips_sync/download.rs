@@ -1,25 +1,27 @@
-//! Measured block retrieval through the configured Hashtree resolver.
+//! Measured block retrieval through Drive's configured Hashtree blob router.
 
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use hashtree_core::{Cid, Hash, HashTree, HashTreeConfig, Store, StoreError, to_hex};
+use hashtree_network::{BlobRouteIdentity, BlobRouter};
 
 use crate::block_sync::collect_live_sync_hashes;
 use crate::blossom_sync::DownloadReport;
 
 use super::FipsSyncError;
 
-pub(super) async fn download_tree_with_resolver<L, R>(
+use super::blob_runtime::LOCAL_ROUTE_ID;
+
+pub(super) async fn download_tree_with_router<L>(
     local_store: Arc<L>,
     root: &Cid,
-    resolver: Arc<R>,
+    router: Arc<BlobRouter>,
 ) -> Result<DownloadReport, FipsSyncError>
 where
     L: Store + Send + Sync + 'static,
-    R: Store + ?Sized + 'static,
 {
-    let writeback = Arc::new(MeasuredResolverStore::new(local_store, resolver));
+    let writeback = Arc::new(MeasuredRouterStore::new(local_store, router));
     let tree = HashTree::new(HashTreeConfig::new(writeback.clone()));
     let hashes = collect_live_sync_hashes(&tree, root, 4).await?;
     if writeback.missing() > 0 {
@@ -36,24 +38,25 @@ where
     })
 }
 
-struct MeasuredResolverStore<L: Store + Send + Sync + 'static, R: Store + ?Sized + 'static> {
+struct MeasuredRouterStore<L: Store + Send + Sync + 'static> {
     local: Arc<L>,
-    resolver: Arc<R>,
+    router: Arc<BlobRouter>,
+    preferred: [BlobRouteIdentity; 1],
     fetched: std::sync::atomic::AtomicUsize,
     already_local: std::sync::atomic::AtomicUsize,
     missing: std::sync::atomic::AtomicUsize,
     first_missing: Mutex<Option<String>>,
 }
 
-impl<L, R> MeasuredResolverStore<L, R>
+impl<L> MeasuredRouterStore<L>
 where
     L: Store + Send + Sync + 'static,
-    R: Store + ?Sized + 'static,
 {
-    fn new(local: Arc<L>, resolver: Arc<R>) -> Self {
+    fn new(local: Arc<L>, router: Arc<BlobRouter>) -> Self {
         Self {
             local,
-            resolver,
+            router,
+            preferred: [BlobRouteIdentity::from(LOCAL_ROUTE_ID)],
             fetched: std::sync::atomic::AtomicUsize::new(0),
             already_local: std::sync::atomic::AtomicUsize::new(0),
             missing: std::sync::atomic::AtomicUsize::new(0),
@@ -83,25 +86,24 @@ where
 }
 
 #[async_trait]
-impl<L, R> Store for MeasuredResolverStore<L, R>
+impl<L> Store for MeasuredRouterStore<L>
 where
     L: Store + Send + Sync + 'static,
-    R: Store + ?Sized + 'static,
 {
     async fn put(&self, hash: Hash, data: Vec<u8>) -> Result<bool, StoreError> {
         self.local.put(hash, data).await
     }
 
     async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
-        if let Some(bytes) = self.local.get(hash).await? {
-            self.already_local
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            return Ok(Some(bytes));
-        }
-
-        if let Some(bytes) = self.resolver.get(hash).await? {
-            self.fetched
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let was_local = self.local.has(hash).await.unwrap_or(false);
+        if let Some(bytes) = self.router.get(hash, Some(&self.preferred)).await? {
+            if was_local {
+                self.already_local
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            } else {
+                self.fetched
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             Ok(Some(bytes))
         } else {
             let hex = to_hex(hash);
@@ -118,10 +120,11 @@ where
     }
 
     async fn has(&self, hash: &Hash) -> Result<bool, StoreError> {
-        if self.local.has(hash).await? {
-            return Ok(true);
-        }
-        self.resolver.has(hash).await
+        Ok(self
+            .router
+            .get(hash, Some(&self.preferred))
+            .await?
+            .is_some())
     }
 
     async fn delete(&self, hash: &Hash) -> Result<bool, StoreError> {

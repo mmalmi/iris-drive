@@ -26,6 +26,7 @@ use tokio::sync::Mutex;
 mod support;
 
 include!("daemon_sync_matrix/harness.rs");
+include!("daemon_sync_matrix/daemon_process.rs");
 #[path = "daemon_sync_matrix/provider_harness.rs"]
 mod provider_harness;
 use support::{LocalBlossomServer, LocalNostrRelay, add_config_relay};
