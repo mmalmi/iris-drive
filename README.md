@@ -193,7 +193,9 @@ See the platform READMEs for focused instructions:
 - Retrieves hash-verified blocks through Hashtree's adaptive `BlobRouter`: the
   configured Drive store, the same-user shared LMDB store, and one bounded FIPS
   provider set over reliable TCP streams. Drive keeps its own configured
-  outbound links, and Blossom remains a configured remote/cache path.
+  outbound links, and Blossom remains a configured remote/cache path. Shared
+  access covers immutable blob bytes only; Drive retains ownership of roots,
+  pins, garbage collection, and other mutable application metadata.
 - Supports encrypted backup targets for Blossom, filesystem, and LMDB endpoints.
 - Serves local browser views for `*.iris.localhost` and `nhash.iris.localhost`.
 - Provides release-update plumbing through signed hashtree manifests.

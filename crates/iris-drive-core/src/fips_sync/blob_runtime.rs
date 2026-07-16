@@ -133,7 +133,8 @@ fn drive_blob_router_config() -> BlobRouterConfig {
     BlobRouterConfig {
         request_timeout: DRIVE_BLOB_SEARCH_TIMEOUT,
         max_routes: 3,
-        max_route_attempts: 3,
+        max_route_attempts: MAX_PROVIDER_ATTEMPTS,
+        route_attempt_budget: MAX_PROVIDER_ATTEMPTS,
         ..BlobRouterConfig::default()
     }
 }
