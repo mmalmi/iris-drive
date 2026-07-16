@@ -139,7 +139,13 @@ async fn live_daemons_app_key_link_request_reaches_admin_quickly() {
         8,
     );
 
-    wait_until_open_fips_connected(owner_cfg.path(), linked_cfg.path()).await;
+    wait_until_open_fips_connected(
+        owner_cfg.path(),
+        linked_cfg.path(),
+        &owner_daemon,
+        &linked_daemon,
+    )
+    .await;
     let started_at = Instant::now();
     let fast_window = Duration::from_secs(30);
     while started_at.elapsed() < fast_window {
@@ -163,7 +169,12 @@ async fn live_daemons_app_key_link_request_reaches_admin_quickly() {
     );
 }
 
-async fn wait_until_open_fips_connected(owner_cfg: &Path, linked_cfg: &Path) {
+async fn wait_until_open_fips_connected(
+    owner_cfg: &Path,
+    linked_cfg: &Path,
+    owner_daemon: &DaemonChild,
+    linked_daemon: &DaemonChild,
+) {
     let started_at = Instant::now();
     let window = Duration::from_secs(10);
     while started_at.elapsed() < window {
@@ -175,10 +186,12 @@ async fn wait_until_open_fips_connected(owner_cfg: &Path, linked_cfg: &Path) {
         tokio::time::sleep(POLL_INTERVAL).await;
     }
     panic!(
-        "open FIPS discovery did not connect within {:?}\nowner status: {}\nlinked status: {}",
+        "open FIPS discovery did not connect within {:?}\nowner status: {}\nlinked status: {}\nowner log:\n{}\nlinked log:\n{}",
         started_at.elapsed(),
         serde_json::to_string_pretty(&run_json(owner_cfg, &["status"])).unwrap(),
         serde_json::to_string_pretty(&run_json(linked_cfg, &["status"])).unwrap(),
+        owner_daemon.log(),
+        linked_daemon.log(),
     );
 }
 

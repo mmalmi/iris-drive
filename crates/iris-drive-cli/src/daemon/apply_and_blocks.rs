@@ -780,9 +780,8 @@ pub(crate) async fn pull_blocks_for_root(
     let mut errors = Vec::new();
     if let Some(sync) = fips_blocks {
         let connected_peers = sync.connected_peer_ids().await;
-        let mesh_peers = sync.mesh_peer_ids().await;
-        fips_had_peers = !connected_peers.is_empty() || !mesh_peers.is_empty();
-        if connected_peers.is_empty() && mesh_peers.is_empty() {
+        fips_had_peers = !connected_peers.is_empty();
+        if connected_peers.is_empty() {
             println!(
                 "{}",
                 json!({
@@ -817,7 +816,6 @@ pub(crate) async fn pull_blocks_for_root(
                             "root_cid": root_cid_str,
                             "error": error,
                             "connected_peers": connected_peers,
-                            "mesh_peers": mesh_peers,
                         })
                     );
                 }

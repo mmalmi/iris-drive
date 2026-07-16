@@ -13,7 +13,9 @@ const DIRECT_APP_MESSAGE_DRAIN_LIMIT: usize = 4096;
 const DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS: u64 = 750;
 const DIRECT_ROOT_PEER_REFRESH_INTERVAL_SECS: u64 = 30;
 const DIRECT_ROOT_REPAIR_INTERVAL_SECS: u64 = 300;
+const FIPS_STATUS_PROBE_INTERVAL_SECS: u64 = 2;
 const RELAY_STATUS_PROBE_INTERVAL_SECS: u64 = 120;
+const FIPS_STATUS_PROBE_TASK_KEY: &str = "fips_status_probe";
 const STATUS_PROBE_TASK_KEY: &str = "status_probe";
 const DAEMON_TOKIO_WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
 
@@ -334,6 +336,12 @@ pub(crate) fn cmd_daemon(
             relay_status_period,
         );
         relay_status_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let fips_status_period = std::time::Duration::from_secs(FIPS_STATUS_PROBE_INTERVAL_SECS);
+        let mut fips_status_timer = tokio::time::interval_at(
+            tokio::time::Instant::now() + fips_status_period,
+            fips_status_period,
+        );
+        fips_status_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let direct_root_peer_refresh_period =
             std::time::Duration::from_secs(DIRECT_ROOT_PEER_REFRESH_INTERVAL_SECS);
         let mut direct_root_peer_refresh_timer = tokio::time::interval_at(
@@ -754,6 +762,15 @@ pub(crate) fn cmd_daemon(
                         ),
                     );
                 }
+                _ = fips_status_timer.tick(), if fips_blocks.is_some() => {
+                    let _ = daemon_tasks.push_keyed(
+                        FIPS_STATUS_PROBE_TASK_KEY.to_string(),
+                        spawn_fips_status_probe(
+                            config_dir.to_path_buf(),
+                            fips_blocks.clone(),
+                        ),
+                    );
+                }
                 _ = direct_root_peer_refresh_timer.tick() => {
                     if let Some(sync) = fips_blocks.as_deref() {
                         update_announcements.sync_with_peers(config_dir, sync).await;
@@ -962,31 +979,16 @@ pub(crate) fn cmd_daemon(
                 }
                 message = async {
                     if let Some(sync) = fips_blocks.clone() {
-                        sync.recv_mesh_pubsub_event().await
+                        sync.recv_nostr_pubsub_event().await
                     } else {
-                        std::future::pending::<iris_drive_core::FipsMeshPubsubEvent>().await
+                        std::future::pending::<iris_drive_core::FipsNostrPubsubEvent>().await
                     }
                 } => {
-                    if handle_mesh_pubsub_event(
-                        message,
+                    handle_nostr_pubsub_event(
+                        &message,
                         &mut update_announcements,
-                        &mut direct_roots,
-                        &client,
                         config_dir,
-                        fips_blocks.as_ref(),
-                        mount_refresh_tx.as_ref(),
-                        &daemon_tasks,
-                    )
-                    .await
-                    {
-                        direct_root_change_announce_pending = true;
-                        direct_root_change_announce_timer.as_mut().reset(
-                            tokio::time::Instant::now()
-                                + std::time::Duration::from_millis(
-                                    DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS,
-                                ),
-                        );
-                    }
+                    );
                 }
             }
         }

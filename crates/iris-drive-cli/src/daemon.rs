@@ -825,18 +825,7 @@ pub(crate) fn spawn_status_probe(
             Ok(statuses) => statuses,
             Err(_) => vec![json!({"url": "*", "status": "timeout"})],
         };
-        let (fips_status, fips_block_sync_error) = match tokio::time::timeout(
-            std::time::Duration::from_secs(STATUS_PROBE_TIMEOUT_SECS),
-            fips_block_sync_status(fips_blocks.as_deref()),
-        )
-        .await
-        {
-            Ok(status) => (status, Value::Null),
-            Err(_) => (
-                Some(json!({"status": "timeout"})),
-                json!("FIPS status probe timed out"),
-            ),
-        };
+        let (fips_status, fips_block_sync_error) = probe_fips_status(fips_blocks.as_deref()).await;
         let status = json!({
             "event": "relay_statuses",
             "relay_statuses": relay_statuses,
@@ -846,6 +835,39 @@ pub(crate) fn spawn_status_probe(
         let status = write_daemon_status(&config_dir, status);
         println!("{status}");
     })
+}
+
+pub(crate) fn spawn_fips_status_probe(
+    config_dir: PathBuf,
+    fips_blocks: Option<Arc<FsFipsBlockSync>>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let (fips_status, fips_block_sync_error) = probe_fips_status(fips_blocks.as_deref()).await;
+        let status = write_daemon_status(
+            &config_dir,
+            json!({
+                "event": "fips_status",
+                "fips_block_sync": fips_status,
+                "fips_block_sync_error": fips_block_sync_error,
+            }),
+        );
+        println!("{status}");
+    })
+}
+
+async fn probe_fips_status(sync: Option<&FsFipsBlockSync>) -> (Option<Value>, Value) {
+    match tokio::time::timeout(
+        std::time::Duration::from_secs(STATUS_PROBE_TIMEOUT_SECS),
+        fips_block_sync_status(sync),
+    )
+    .await
+    {
+        Ok(status) => (status, Value::Null),
+        Err(_) => (
+            Some(json!({"status": "timeout"})),
+            json!("FIPS status probe timed out"),
+        ),
+    }
 }
 
 pub(crate) async fn relay_status_payload(client: &nostr_sdk::Client) -> Vec<serde_json::Value> {
@@ -867,7 +889,7 @@ pub(crate) async fn fips_block_sync_status(sync: Option<&FsFipsBlockSync>) -> Op
     let sync = sync?;
     let transport = sync.transport_settings();
     let direct_devices = sync.connected_peer_ids().await;
-    let mesh_devices = sync.mesh_peer_ids().await;
+    let mesh_devices = Vec::new();
     let online_devices = fips_online_device_ids(&direct_devices, &mesh_devices);
     Some(json!({
         "endpoint_npub": sync.endpoint_npub(),
@@ -885,7 +907,7 @@ pub(crate) async fn fips_block_sync_status(sync: Option<&FsFipsBlockSync>) -> Op
         "mesh_peer_count": mesh_devices.len(),
         "mesh_devices": mesh_devices.clone(),
         "mesh_peers": mesh_devices,
-        "authorized_peers": sync.authorized_peer_ids().await,
+        "authorized_peers": sync.authorized_peer_ids(),
         "direct_devices": direct_devices.clone(),
         "direct_peers": direct_devices.clone(),
         "connected_peers": direct_devices,

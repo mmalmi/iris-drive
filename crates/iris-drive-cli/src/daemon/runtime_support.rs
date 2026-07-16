@@ -254,71 +254,25 @@ async fn handle_direct_app_message_event(
     announce_pending
 }
 
-#[allow(clippy::too_many_arguments)]
-async fn handle_mesh_pubsub_event(
-    message: iris_drive_core::FipsMeshPubsubEvent,
+fn handle_nostr_pubsub_event(
+    message: &iris_drive_core::FipsNostrPubsubEvent,
     update_announcements: &mut iris_drive_core::UpdateAnnouncementExchange,
-    direct_roots: &mut DirectRootExchange,
-    client: &nostr_sdk::Client,
     config_dir: &Path,
-    fips_blocks: Option<&Arc<FsFipsBlockSync>>,
-    mount_refresh_tx: Option<&tokio::sync::mpsc::Sender<&'static str>>,
-    daemon_tasks: &DaemonTaskSet,
-) -> bool {
-    let Some(sync) = fips_blocks else {
-        return false;
-    };
-    let mut messages = vec![message];
-    tokio::time::sleep(std::time::Duration::from_millis(
-        DIRECT_ROOT_RECEIVE_COALESCE_MS,
-    ))
-    .await;
-    messages.extend(sync.drain_mesh_pubsub_events().await);
-    for message in &messages {
-        match update_announcements.handle_mesh_event(config_dir, message) {
-            Ok(true) => println!(
-                "{}",
-                json!({
-                    "event": "update_announcement_received",
-                    "peer": message.from_peer_id,
-                    "origin": message.origin_peer_id,
-                })
-            ),
-            Ok(false) => {}
-            Err(error) => println!(
-                "{}",
-                json!({"event": "update_announcement_error", "trigger": "mesh_event", "error": error})
-            ),
-        }
+) {
+    match update_announcements.handle_nostr_event(config_dir, message) {
+        Ok(true) => println!(
+            "{}",
+            json!({
+                "event": "update_announcement_received",
+                "origin": message.origin_peer_id,
+            })
+        ),
+        Ok(false) => {}
+        Err(error) => println!(
+            "{}",
+            json!({"event": "update_announcement_error", "trigger": "nostr_pubsub_event", "error": error})
+        ),
     }
-    let announce_pending = match direct_roots
-        .handle_mesh_events(
-            client,
-            config_dir,
-            sync.clone(),
-            mount_refresh_tx.cloned(),
-            daemon_tasks,
-            messages,
-        )
-        .await
-    {
-        Ok(changed) => changed,
-        Err(error) => {
-            println!(
-                "{}",
-                json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
-            );
-            false
-        }
-    };
-    enqueue_pending_root_sync_followups(
-        config_dir,
-        fips_blocks.cloned(),
-        mount_refresh_tx.cloned(),
-        daemon_tasks,
-        "direct_root_mesh_event",
-    );
-    announce_pending
 }
 
 async fn shutdown_fips_block_sync(fips_blocks: Option<Arc<FsFipsBlockSync>>) {

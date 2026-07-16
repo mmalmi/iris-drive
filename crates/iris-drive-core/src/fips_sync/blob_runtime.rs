@@ -12,7 +12,7 @@ use hashtree_network::{
     BlobResolver, MeshReadSource, MeshRoutingConfig, NamedBlobRoute, blob_resolver,
 };
 
-use super::{FIPS_REQUEST_TIMEOUT, FipsSyncError, drive_same_host_blob_store_config};
+use super::{DRIVE_BLOB_SEARCH_TIMEOUT, FipsSyncError, drive_same_host_blob_store_config};
 
 pub(super) struct DriveBlobRuntime<L: Store + Send + Sync + 'static> {
     pub(super) store: Arc<SameHostBlobStore<L>>,
@@ -30,7 +30,7 @@ impl<L: Store + Send + Sync + 'static> DriveBlobRuntime<L> {
         let resolver = Arc::new(blob_resolver(
             local_store.clone(),
             local_peer_id,
-            FIPS_REQUEST_TIMEOUT,
+            DRIVE_BLOB_SEARCH_TIMEOUT,
             MeshRoutingConfig::default(),
         ));
         let authorized_inbound = Arc::new(RwLock::new(Vec::new()));

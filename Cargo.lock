@@ -1635,9 +1635,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.4.0"
+version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5eb5c2cd49701461cfe2a9604eec3ddad6d3fadca67aceb11f472b6e665ecf89"
+checksum = "e720d19a0f9b007dad9c03e7e952df8cb79bd0e1a7ab4da1c5cb8c2619cadbe0"
 dependencies = [
  "base64",
  "bluer",
@@ -2357,9 +2357,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-cli"
-version = "0.2.84"
+version = "0.2.85"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "16c4f0d08bf2b71cceecf87d9b8eff2007164fbb5eca3474e7018f8b07ef70a6"
+checksum = "a251b03701586d7987f8346354e0e008d14461865e1561742ca31d891339587a"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2483,21 +2483,15 @@ dependencies = [
 
 [[package]]
 name = "hashtree-fips-transport"
-version = "0.3.1"
+version = "0.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5614e0b7217c9e8050ee57bea3ea8cbd996d8426eaa871513a889858e516f92b"
+checksum = "bb7c0685acbf63fce9f9e84c53abda7cd2d890534964202dde6b9d3e0769abbe"
 dependencies = [
  "async-trait",
  "fips-core",
  "fips-tcp",
  "fips-tcp-endpoint",
  "hashtree-core",
- "hashtree-network",
- "hex",
- "rmp-serde",
- "serde",
- "serde_bytes",
- "serde_json",
  "sha2",
  "thiserror 1.0.69",
  "tokio",
@@ -3167,6 +3161,8 @@ dependencies = [
  "bip39",
  "dirs 6.0.0",
  "fips-core",
+ "fips-tcp",
+ "fips-tcp-endpoint",
  "futures",
  "hashtree-blossom",
  "hashtree-config",
@@ -3184,6 +3180,7 @@ dependencies = [
  "mime_guess",
  "nostr-identity 0.3.1",
  "nostr-pubsub",
+ "nostr-pubsub-fips",
  "nostr-pubsub-relay",
  "nostr-sdk",
  "reqwest",
@@ -3912,9 +3909,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub"
-version = "0.1.10"
+version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0a3c668aede5ebf20501199206e1853ee8e26f38d476a60f54fb27443dfb552f"
+checksum = "f3c509d68c8de0f87de781630cca6d3d4e61b2fe8a1ba3d21463efd7bc4780c6"
 dependencies = [
  "async-trait",
  "nostr",
@@ -3925,12 +3922,14 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c2e2904004e5d0e55a676db596f8f052e171eabd236799b5aec7718b04a0a79e"
+checksum = "5663a6108ae432879d6d7441036b979605fc032011c0a6e81dbf1798ce844f6c"
 dependencies = [
  "async-trait",
  "fips-core",
+ "fips-tcp",
+ "fips-tcp-endpoint",
  "nostr",
  "nostr-pubsub",
  "nostr-pubsub-social-graph",

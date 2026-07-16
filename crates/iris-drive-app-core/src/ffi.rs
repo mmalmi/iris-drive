@@ -2219,9 +2219,6 @@ async fn run_app_key_link_exchange_async(
     {
         tracing::warn!(error = %error, "native direct-root state request failed");
     }
-    if let Err(error) = direct_roots.drain_mesh_events(config_dir, &sync).await {
-        tracing::warn!(error = %error, "native direct-root FIPS mesh drain failed");
-    }
     update_announcements
         .sync_with_peers(config_dir, &sync)
         .await;
@@ -2261,13 +2258,12 @@ async fn run_app_key_link_exchange_async(
                 }
                 update_announcements.sync_with_peers(config_dir, &sync).await;
             }
-            message = sync.recv_mesh_pubsub_event() => {
+            message = sync.recv_nostr_pubsub_event() => {
                 let mut messages = vec![message];
-                messages.extend(sync.drain_mesh_pubsub_events().await);
+                messages.extend(sync.drain_nostr_pubsub_events().await);
                 for message in &messages {
-                    match update_announcements.handle_mesh_event(config_dir, message) {
+                    match update_announcements.handle_nostr_event(config_dir, message) {
                         Ok(true) => tracing::info!(
-                            peer = message.from_peer_id,
                             origin = message.origin_peer_id,
                             "received signed update announcement over FIPS"
                         ),
@@ -2276,23 +2272,6 @@ async fn run_app_key_link_exchange_async(
                             error = %error,
                             "native update-announcement FIPS event failed"
                         ),
-                    }
-                }
-                let received_messages = messages.len();
-                let (messages, skipped_roots) =
-                    iris_drive_core::coalesce_direct_root_mesh_events(messages);
-                if skipped_roots > 0 {
-                    tracing::debug!(
-                        received_messages,
-                        applied_messages = messages.len(),
-                        skipped_roots,
-                        "coalesced native direct-root FIPS mesh events"
-                    );
-                }
-                for message in messages {
-                    if let Err(error) = direct_roots.handle_mesh_event(config_dir, &sync, message).await {
-                        tracing::warn!(error = %error, "native direct-root FIPS mesh event failed");
-                        continue;
                     }
                 }
             }
@@ -3195,7 +3174,7 @@ async fn write_native_fips_status(
     error: Option<&str>,
 ) -> Result<(), String> {
     let direct_devices = sync.connected_peer_ids().await;
-    let mesh_devices = sync.mesh_peer_ids().await;
+    let mesh_devices = Vec::new();
     let online_devices = online_device_ids(&direct_devices, &mesh_devices);
     let updated_at = unix_now_seconds();
     let error_value = error.map_or(Value::Null, |error| Value::String(error.to_owned()));
@@ -3214,7 +3193,7 @@ async fn write_native_fips_status(
         "open_discovery_max_pending": transport_settings.open_discovery_max_pending,
         "static_peer_hint_count": transport_settings.static_peer_hints.len(),
         "bootstrap_peer_hint_count": transport_settings.bootstrap_peer_hints.len(),
-        "authorized_peers": sync.authorized_peer_ids().await,
+        "authorized_peers": sync.authorized_peer_ids(),
         "online_devices": online_devices.clone(),
         "online_peers": online_devices,
         "direct_devices": direct_devices.clone(),

@@ -25,7 +25,9 @@ base64 = "0.22"
 bip39 = { version = "2.2", features = ["rand"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-core = "=0.4.0"
+fips-core = "=0.4.1"
+fips-tcp = "=0.2.0"
+fips-tcp-endpoint = "=0.2.0"
 futures = "0.3"
 hex = "0.4"
 http = "1"
@@ -44,7 +46,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.44", default-features = false, features = ["nip06", "nip44", "nip59"] }
-nostr-pubsub = "=0.1.10"
+nostr-pubsub = "=0.1.11"
+nostr-pubsub-fips = "=0.3.1"
 nostr-pubsub-relay = "0.1.9"
 nostr-identity = "=0.3.1"
 # Iris Drive's provider abstraction and FIPS adapter remain local workspace
@@ -53,7 +56,7 @@ hashtree-core = "=0.2.84"
 hashtree-blossom = { version = "=0.2.82", features = ["store"] }
 hashtree-config = "=0.2.82"
 hashtree-embedded = "=0.2.83"
-hashtree-fips-transport = { version = "=0.3.1", features = ["webrtc"] }
+hashtree-fips-transport = { version = "=0.4.0", features = ["webrtc-endpoint"] }
 hashtree-fs = "=0.2.82"
 hashtree-fuse = { version = "=0.2.82", features = ["fuse"] }
 hashtree-lmdb = "=0.2.82"

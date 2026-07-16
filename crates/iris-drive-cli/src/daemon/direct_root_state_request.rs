@@ -17,12 +17,11 @@ async fn request_latest_direct_root_state(
     let Some(root_scope_id) = config.profile.as_ref().map(ProfileState::root_scope_id) else {
         return;
     };
-    let mut visible_peers = sync
+    let visible_peers = sync
         .connected_peer_ids()
         .await
         .into_iter()
         .collect::<std::collections::BTreeSet<_>>();
-    visible_peers.extend(sync.mesh_peer_ids().await);
     if !should_publish_direct_root_state_request(
         &root_scope_id,
         visible_peers.iter().map(String::as_str),
@@ -55,7 +54,7 @@ async fn request_latest_direct_root_state(
     };
     match tokio::time::timeout(
         std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_SEND_TIMEOUT_SECS),
-        crate::publish::send_direct_root_app_message_to_authorized_peers(sync, bytes.clone()),
+        crate::publish::send_direct_root_app_message_to_authorized_peers(sync, bytes),
     )
     .await
     {
@@ -82,47 +81,6 @@ async fn request_latest_direct_root_state(
             })
         ),
     }
-    let stream = iris_drive_core::direct_root_mesh_stream(&root_scope_id);
-    let seq = direct_root_followup_mesh_seq();
-    match tokio::time::timeout(
-        std::time::Duration::from_secs(DIRECT_ROOT_STATE_REQUEST_SEND_TIMEOUT_SECS),
-        sync.publish_mesh_pubsub(stream.clone(), seq, bytes),
-    )
-    .await
-    {
-        Ok(publish_stats) => println!(
-            "{}",
-            json!({
-                "event": "direct_root_state_request_mesh_publish",
-                "trigger": projection_event,
-                "stream": stream,
-                "seq": seq,
-                "root_scope_id": root_scope_id,
-                "selected_peers": publish_stats.selected_peers,
-                "sent_peers": publish_stats.sent_peers,
-                "sent_bytes": publish_stats.sent_bytes,
-            })
-        ),
-        Err(_) => println!(
-            "{}",
-            json!({
-                "event": "direct_root_state_request_mesh_publish_timeout",
-                "trigger": projection_event,
-                "stream": stream,
-                "seq": seq,
-                "root_scope_id": root_scope_id,
-                "timeout_secs": DIRECT_ROOT_STATE_REQUEST_SEND_TIMEOUT_SECS,
-            })
-        ),
-    }
-}
-
-fn direct_root_followup_mesh_seq() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map_or(0, |duration| {
-            duration.as_millis().try_into().unwrap_or(u64::MAX)
-        })
 }
 
 fn should_publish_direct_root_state_request<'a>(

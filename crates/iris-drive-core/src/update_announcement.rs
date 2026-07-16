@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 use std::path::Path;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
 use hashtree_core::Store;
 use hashtree_updater::{UpdateEventCache, UpdateRef};
@@ -10,11 +10,7 @@ use nostr_sdk::{Event, JsonUtil};
 
 use crate::atomic_file::atomic_write;
 use crate::paths::update_announcement_path_in;
-use crate::{FipsBlockSync, FipsMeshPubsubEvent};
-
-/// One transport-neutral stream is enough: `UpdateEventCache` applies the
-/// trusted author/tree filter before anything reaches the updater.
-pub const UPDATE_ANNOUNCEMENT_MESH_STREAM: &str = "hashtree/update-events/v1";
+use crate::{FipsBlockSync, FipsNostrPubsubEvent};
 
 const UPDATE_REPUBLISH_INTERVAL: Duration = Duration::from_secs(30);
 
@@ -22,9 +18,7 @@ const UPDATE_REPUBLISH_INTERVAL: Duration = Duration::from_secs(30);
 /// mesh. It owns no endpoint and deliberately has no legacy-manifest path.
 pub struct UpdateAnnouncementExchange {
     cache: UpdateEventCache,
-    known_mesh_peers: BTreeSet<String>,
-    subscribed: bool,
-    next_publish_seq: u64,
+    known_peers: BTreeSet<String>,
     last_publish: Option<Instant>,
 }
 
@@ -52,9 +46,7 @@ impl UpdateAnnouncementExchange {
     fn from_cache(cache: UpdateEventCache) -> Self {
         Self {
             cache,
-            known_mesh_peers: BTreeSet::new(),
-            subscribed: false,
-            next_publish_seq: unix_millis(),
+            known_peers: BTreeSet::new(),
             last_publish: None,
         }
     }
@@ -69,15 +61,9 @@ impl UpdateAnnouncementExchange {
             tracing::warn!(error, "ignoring invalid cached update announcement");
             false
         });
-        let mesh_peers = sync.mesh_peer_ids().await.into_iter().collect();
-        let peers_changed = mesh_peers != self.known_mesh_peers;
-        self.known_mesh_peers = mesh_peers;
-
-        if !self.subscribed || peers_changed {
-            sync.subscribe_mesh_pubsub(UPDATE_ANNOUNCEMENT_MESH_STREAM.to_string())
-                .await;
-            self.subscribed = true;
-        }
+        let peers = sync.connected_peer_ids().await.into_iter().collect();
+        let peers_changed = peers != self.known_peers;
+        self.known_peers = peers;
 
         let periodic_replay = self
             .last_publish
@@ -90,17 +76,12 @@ impl UpdateAnnouncementExchange {
 
     /// Accept only a valid, newer release-root event and persist exactly that
     /// event for updater checks and late-peer replay.
-    pub fn handle_mesh_event(
+    pub fn handle_nostr_event(
         &mut self,
         config_dir: &Path,
-        message: &FipsMeshPubsubEvent,
+        message: &FipsNostrPubsubEvent,
     ) -> Result<bool, String> {
-        if message.stream_id != UPDATE_ANNOUNCEMENT_MESH_STREAM {
-            return Ok(false);
-        }
-        let event = Event::from_json(&message.payload)
-            .map_err(|error| format!("parsing signed update announcement: {error}"))?;
-        self.ingest_event(config_dir, event)
+        self.ingest_event(config_dir, message.event.clone())
     }
 
     pub(crate) fn ingest_event(&mut self, config_dir: &Path, event: Event) -> Result<bool, String> {
@@ -121,14 +102,6 @@ impl UpdateAnnouncementExchange {
             .map(nostr_pubsub::VerifiedEvent::as_event)
     }
 
-    #[cfg(test)]
-    pub(crate) async fn replay_cached<L>(&mut self, sync: &FipsBlockSync<L>) -> bool
-    where
-        L: Store + Send + Sync + 'static,
-    {
-        self.publish_cached(sync).await
-    }
-
     async fn publish_cached<L>(&mut self, sync: &FipsBlockSync<L>) -> bool
     where
         L: Store + Send + Sync + 'static,
@@ -136,14 +109,9 @@ impl UpdateAnnouncementExchange {
         let Some(event) = self.cache.latest() else {
             return false;
         };
-        self.next_publish_seq = self.next_publish_seq.saturating_add(1).max(unix_millis());
-        let payload = event.as_event().as_json().into_bytes();
-        sync.publish_mesh_pubsub(
-            UPDATE_ANNOUNCEMENT_MESH_STREAM.to_string(),
-            self.next_publish_seq,
-            payload,
-        )
-        .await;
+        if let Err(error) = sync.publish_nostr_event(event.as_event().clone()).await {
+            tracing::debug!(%error, "Drive update announcement had no FIPS pubsub route");
+        }
         self.last_publish = Some(Instant::now());
         true
     }
@@ -192,13 +160,4 @@ pub(crate) fn persist_update_event_cache(
     let path = update_announcement_path_in(config_dir);
     atomic_write(&path, event.as_event().as_json().as_bytes())
         .map_err(|error| format!("writing {}: {error}", path.display()))
-}
-
-fn unix_millis() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis()
-        .try_into()
-        .unwrap_or(u64::MAX)
 }
