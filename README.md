@@ -190,10 +190,10 @@ See the platform READMEs for focused instructions:
   drive-root events while the iris-drive daemon is running.
 - Imports local source trees into the persistent htree block store and exposes a
   merged virtual primary drive view through native provider bridges.
-- Replicates blocks through the shared Hashtree `SameHostBlobStore` and
-  `TcpBlobTransport` APIs over reliable TCP/FIPS streams between authorized app
-  installs when peers are reachable; Blossom remains a configured remote/cache
-  path.
+- Retrieves hash-verified blocks through Hashtree's adaptive `BlobRouter`: the
+  configured Drive store, the same-user shared LMDB store, and one bounded FIPS
+  provider set over reliable TCP streams. Drive keeps its own configured
+  outbound links, and Blossom remains a configured remote/cache path.
 - Supports encrypted backup targets for Blossom, filesystem, and LMDB endpoints.
 - Serves local browser views for `*.iris.localhost` and `nhash.iris.localhost`.
 - Provides release-update plumbing through signed hashtree manifests.

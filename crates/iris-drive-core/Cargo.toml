@@ -26,6 +26,7 @@ hashtree-config.workspace = true
 hashtree-embedded.workspace = true
 hashtree-fips-transport.workspace = true
 hashtree-fs.workspace = true
+hashtree-lmdb.workspace = true
 hashtree-nostr.workspace = true
 hashtree-network.workspace = true
 hashtree-resolver.workspace = true

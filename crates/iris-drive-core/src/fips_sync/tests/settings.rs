@@ -4,7 +4,6 @@ use super::super::settings_runtime::{
     fips_endpoint_options, parse_bool_env_value, parse_static_peer_hints,
     target_allows_default_desktop_fips,
 };
-use fips_core::discovery::local::{LocalInstanceAdvertisement, LocalInstanceCapability};
 
 #[test]
 fn discovery_scope_is_profile_scoped() {
@@ -656,36 +655,4 @@ fn bool_env_parser_accepts_common_spellings() {
         assert_eq!(parse_bool_env_value(value), Some(false));
     }
     assert_eq!(parse_bool_env_value("maybe"), None);
-}
-
-#[test]
-fn same_host_blob_provider_selection_requires_the_exact_service_port() {
-    let advertisement =
-        |npub: &str, capability: LocalInstanceCapability| LocalInstanceAdvertisement {
-            npub: npub.to_string(),
-            startup_epoch: [0; 8],
-            capabilities: vec![capability],
-        };
-    let providers = same_host_blob_provider_ids([
-        advertisement(
-            "correct",
-            LocalInstanceCapability::service(
-                hashtree_fips_transport::TCP_BLOB_CAPABILITY,
-                hashtree_fips_transport::TCP_BLOB_SERVICE_PORT,
-            ),
-        ),
-        advertisement(
-            "wrong-port",
-            LocalInstanceCapability::service(
-                hashtree_fips_transport::TCP_BLOB_CAPABILITY,
-                hashtree_fips_transport::TCP_BLOB_SERVICE_PORT + 1,
-            ),
-        ),
-        advertisement(
-            "missing-port",
-            LocalInstanceCapability::role(hashtree_fips_transport::TCP_BLOB_CAPABILITY),
-        ),
-    ]);
-
-    assert_eq!(providers, vec!["correct"]);
 }

@@ -2,159 +2,60 @@ use super::*;
 use async_trait::async_trait;
 use fips_core::PeerIdentity;
 use hashtree_core::{
-    BLOB_DEFAULT_HTL, BlobReply, BlobRequest, BlobRoute, Hash, HashTree, HashTreeConfig, StoreError,
+    BlobReply, BlobRequest, BlobRoute, HashTree, HashTreeConfig, StoreBlobRoute, StoreError,
 };
 use hashtree_fips_transport::{
-    FipsEndpointOptions, SameHostBlobStore, TcpBlobTransport, TcpBlobTransportConfig,
+    FipsEndpointOptions, TcpBlobTransport, TcpBlobTransportConfig,
     bind_fips_endpoint_at_local_rendezvous,
 };
-use hashtree_network::{MeshReadSource, MeshRoutingConfig, NamedBlobRoute, blob_resolver};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
-use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::super::settings_runtime::FIPS_PACKET_CHANNEL_CAPACITY;
 
-#[derive(Clone, Copy)]
-enum ProviderOutcome {
-    NoResult,
-    Failure,
-}
-
-struct RecordingProviderRoute {
-    outcome: ProviderOutcome,
-    request_htl: AtomicU8,
-}
-
-#[async_trait]
-impl BlobRoute for RecordingProviderRoute {
-    async fn route(&self, request: BlobRequest) -> Result<BlobReply, StoreError> {
-        self.request_htl.store(request.htl, Ordering::Relaxed);
-        match self.outcome {
-            ProviderOutcome::NoResult => Ok(BlobReply::NoResult),
-            ProviderOutcome::Failure => Err(StoreError::Other(
-                "deliberate same-host route failure".to_string(),
-            )),
-        }
-    }
-}
-
-struct RecordingStandaloneRoute {
-    hash: Hash,
-    data: Vec<u8>,
-    request_htl: AtomicU8,
-}
-
-#[async_trait]
-impl BlobRoute for RecordingStandaloneRoute {
-    async fn route(&self, request: BlobRequest) -> Result<BlobReply, StoreError> {
-        self.request_htl.store(request.htl, Ordering::Relaxed);
-        if request.hash == self.hash {
-            Ok(BlobReply::Data(self.data.clone()))
-        } else {
-            Ok(BlobReply::NoResult)
-        }
-    }
-}
-
 #[tokio::test]
-async fn same_host_no_result_uses_nonzero_htl_then_falls_through_to_standalone() {
-    assert_same_host_route_falls_through(ProviderOutcome::NoResult).await;
-}
-
-#[tokio::test]
-async fn same_host_failure_uses_nonzero_htl_then_falls_through_to_standalone() {
-    assert_same_host_route_falls_through(ProviderOutcome::Failure).await;
-}
-
-#[tokio::test]
-async fn same_host_provider_can_continue_over_remote_mesh_with_one_htl_decrement() {
-    let remote_device = AppKey::generate("remote-mesh-route-test");
-    let provider_device = AppKey::generate("local-provider-mesh-route-test");
-    let target_device = AppKey::generate("drive-target-mesh-route-test");
+async fn drive_reads_shared_store_without_a_provider_process() {
+    let drive_device = AppKey::generate("drive-shared-store-test");
     let rendezvous_addr = reserve_udp_address();
-    let remote_bound =
-        bind_local_test_endpoint(&remote_device, "remote-mesh-route-test", rendezvous_addr).await;
-    let provider_bound = bind_local_test_endpoint(
-        &provider_device,
-        "local-provider-mesh-route-test",
-        rendezvous_addr,
-    )
-    .await;
-    let target_bound = bind_local_test_endpoint(
-        &target_device,
-        "drive-target-mesh-route-test",
-        rendezvous_addr,
-    )
-    .await;
+    let drive_bound =
+        bind_local_test_endpoint(&drive_device, "drive-shared-store-test", rendezvous_addr).await;
+    let endpoint = drive_bound.native_endpoint.clone();
 
-    let data = b"Drive to local htree to remote FIPS mesh".to_vec();
-    let hash = hashtree_core::sha256(&data);
-    let remote_route = Arc::new(RecordingStandaloneRoute {
-        hash,
-        data: data.clone(),
-        request_htl: AtomicU8::new(0),
-    });
-    let remote_transport = TcpBlobTransport::bind_route_with_config(
-        remote_bound.native_endpoint.clone(),
-        Arc::new(MemoryStore::new()),
-        remote_route.clone(),
-        TcpBlobTransportConfig::default(),
-    )
-    .await
-    .unwrap();
-
-    let provider_local = Arc::new(MemoryStore::new());
-    let provider_resolver = Arc::new(blob_resolver(
-        provider_local.clone(),
-        provider_device.pubkey_bech32(),
-        Duration::from_secs(2),
-        MeshRoutingConfig::default(),
-    ));
-    let provider_transport = Arc::new(
-        TcpBlobTransport::bind_advertised_route_with_config(
-            provider_bound.native_endpoint.clone(),
-            provider_local.clone(),
-            provider_resolver.clone(),
-            TcpBlobTransportConfig::default(),
-            100,
-        )
+    let shared_dir = tempfile::tempdir().unwrap();
+    let shared = Arc::new(
+        hashtree_lmdb::open_shared_lmdb_blob_store(shared_dir.path(), 16 * 1024 * 1024).unwrap(),
+    );
+    let shared_tree = HashTree::new(HashTreeConfig::new(shared.clone()));
+    let file_bytes = b"immutable bytes from the shared Hashtree LMDB route".to_vec();
+    let (file_cid, _) = shared_tree.put(&file_bytes).await.unwrap();
+    let root_cid = shared_tree
+        .put_directory(vec![DirEntry {
+            name: "shared.txt".to_string(),
+            hash: file_cid.hash,
+            key: file_cid.key,
+            link_type: LinkType::File,
+            size: file_bytes.len() as u64,
+            meta: None,
+        }])
         .await
-        .unwrap(),
-    );
-    let remote_peer = PeerIdentity::from_npub(&remote_device.pubkey_bech32()).unwrap();
-    provider_resolver
-        .set_read_sources(vec![Arc::new(NamedBlobRoute::mesh_peer(
-            remote_device.pubkey_bech32(),
-            Arc::new(provider_transport.weak_route_to(remote_peer)),
-        )) as Arc<dyn MeshReadSource>])
-        .await;
+        .unwrap();
+    let shared_route: Arc<dyn BlobRoute> = Arc::new(StoreBlobRoute::new(shared));
+    let local = Arc::new(MemoryStore::new());
+    let drive = DriveBlobRuntime::bind(endpoint.clone(), local.clone(), &[], Some(shared_route))
+        .await
+        .unwrap();
 
-    wait_for_blob_provider(&target_bound, &provider_device.pubkey_bech32()).await;
-    let target_local = Arc::new(MemoryStore::new());
-    let target_store = SameHostBlobStore::bind(
-        target_bound.native_endpoint.clone(),
-        target_local.clone(),
-        None,
-        drive_same_host_blob_store_config(),
-    )
-    .await
-    .unwrap();
+    let report = download_tree_with_router(local.clone(), &root_cid, drive.router.clone())
+        .await
+        .unwrap();
 
-    assert_eq!(target_store.get(&hash).await.unwrap(), Some(data.clone()));
-    assert_eq!(target_local.get(&hash).await.unwrap(), Some(data.clone()));
-    assert_eq!(provider_local.get(&hash).await.unwrap(), Some(data));
-    assert_eq!(
-        remote_route.request_htl.load(Ordering::Relaxed),
-        BLOB_DEFAULT_HTL - 1,
-    );
+    assert_eq!(report.fetched, 2);
+    assert_eq!(report.already_local, 0);
+    assert!(local.has(&root_cid.hash).await.unwrap());
+    assert!(local.has(&file_cid.hash).await.unwrap());
 
-    drop(target_store);
-    drop(provider_resolver);
-    drop(provider_transport);
-    drop(remote_transport);
-    target_bound.native_endpoint.shutdown().await.unwrap();
-    provider_bound.native_endpoint.shutdown().await.unwrap();
-    remote_bound.native_endpoint.shutdown().await.unwrap();
+    drop(drive);
+    endpoint.shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -180,8 +81,8 @@ async fn drive_blob_service_accepts_roster_peer_and_rejects_unrelated_identity()
     let drive = DriveBlobRuntime::bind(
         drive_bound.native_endpoint.clone(),
         drive_local,
-        drive_device.pubkey_bech32(),
         &[FipsPeerConfig::new(roster_device.pubkey_bech32())],
+        None,
     )
     .await
     .unwrap();
@@ -222,97 +123,6 @@ async fn drive_blob_service_accepts_roster_peer_and_rejects_unrelated_identity()
     unrelated_bound.native_endpoint.shutdown().await.unwrap();
     roster_bound.native_endpoint.shutdown().await.unwrap();
     drive_bound.native_endpoint.shutdown().await.unwrap();
-}
-
-async fn assert_same_host_route_falls_through(outcome: ProviderOutcome) {
-    let provider_device = AppKey::generate("provider-route-fallback-test");
-    let target_device = AppKey::generate("target-route-fallback-test");
-    let rendezvous_addr = reserve_udp_address();
-    let provider_bound = bind_local_test_endpoint(
-        &provider_device,
-        "provider-route-fallback-test",
-        rendezvous_addr,
-    )
-    .await;
-    let target_bound = bind_local_test_endpoint(
-        &target_device,
-        "target-route-fallback-test",
-        rendezvous_addr,
-    )
-    .await;
-
-    let provider_route = Arc::new(RecordingProviderRoute {
-        outcome,
-        request_htl: AtomicU8::new(0),
-    });
-    let provider_transport = TcpBlobTransport::bind_advertised_route_with_config(
-        provider_bound.native_endpoint.clone(),
-        Arc::new(MemoryStore::new()),
-        provider_route.clone(),
-        TcpBlobTransportConfig::default(),
-        100,
-    )
-    .await
-    .unwrap();
-
-    wait_for_blob_provider(&target_bound, &provider_device.pubkey_bech32()).await;
-
-    let data = b"standalone route remains available after a local provider miss".to_vec();
-    let hash = hashtree_core::sha256(&data);
-    let standalone = Arc::new(RecordingStandaloneRoute {
-        hash,
-        data: data.clone(),
-        request_htl: AtomicU8::new(0),
-    });
-    let local = Arc::new(MemoryStore::new());
-    let store = SameHostBlobStore::bind(
-        target_bound.native_endpoint.clone(),
-        local.clone(),
-        Some(standalone.clone()),
-        drive_same_host_blob_store_config(),
-    )
-    .await
-    .unwrap();
-
-    assert_eq!(store.get(&hash).await.unwrap(), Some(data.clone()));
-    assert_eq!(local.get(&hash).await.unwrap(), Some(data));
-    assert_eq!(
-        provider_route.request_htl.load(Ordering::Relaxed),
-        BLOB_DEFAULT_HTL
-    );
-    assert_eq!(
-        standalone.request_htl.load(Ordering::Relaxed),
-        BLOB_DEFAULT_HTL
-    );
-
-    drop(store);
-    drop(provider_transport);
-    target_bound.native_endpoint.shutdown().await.unwrap();
-    provider_bound.native_endpoint.shutdown().await.unwrap();
-}
-
-async fn wait_for_blob_provider(endpoint: &BoundFipsEndpoint, npub: &str) {
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            if endpoint
-                .native_endpoint
-                .local_instance_advertisements()
-                .unwrap()
-                .iter()
-                .any(|advert| {
-                    advert.npub == npub
-                        && advert
-                            .capability(hashtree_fips_transport::TCP_BLOB_CAPABILITY)
-                            .is_some()
-                })
-            {
-                return;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("same-host blob provider did not become visible");
 }
 
 pub(super) async fn wait_for_peer_connection(endpoint: &BoundFipsEndpoint, npub: &str) {
@@ -396,13 +206,14 @@ async fn real_same_host_provider_failure_still_uses_drive_standalone_route() {
         .unwrap();
 
     let provider_gets = Arc::new(AtomicUsize::new(0));
-    let provider = SameHostBlobStore::bind(
+    let provider = TcpBlobTransport::bind_advertised_route_with_config(
         provider_bound.native_endpoint,
-        Arc::new(FailingSameHostStore {
+        Arc::new(MemoryStore::new()),
+        Arc::new(FailingProviderRoute {
             gets: provider_gets.clone(),
         }),
-        None,
-        SameHostBlobStoreConfig::provider(100),
+        TcpBlobTransportConfig::default(),
+        100,
     )
     .await
     .unwrap();
@@ -412,6 +223,7 @@ async fn real_same_host_provider_failure_still_uses_drive_standalone_route() {
         target_store.clone(),
         &config,
         local_only_settings(&source_device, source_udp_addr, target_udp_addr),
+        None,
     )
     .await
     .unwrap();
@@ -617,28 +429,16 @@ fn authorized_pair_config(target: &AppKey, source: &AppKey) -> AppConfig {
     }
 }
 
-struct FailingSameHostStore {
+struct FailingProviderRoute {
     gets: Arc<AtomicUsize>,
 }
 
 #[async_trait]
-impl Store for FailingSameHostStore {
-    async fn put(&self, _hash: Hash, _data: Vec<u8>) -> Result<bool, StoreError> {
-        Ok(false)
-    }
-
-    async fn get(&self, _hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
+impl BlobRoute for FailingProviderRoute {
+    async fn route(&self, _request: BlobRequest) -> Result<BlobReply, StoreError> {
         self.gets.fetch_add(1, Ordering::Relaxed);
         Err(StoreError::Other(
             "deliberate same-host provider failure".to_string(),
         ))
-    }
-
-    async fn has(&self, _hash: &Hash) -> Result<bool, StoreError> {
-        Ok(false)
-    }
-
-    async fn delete(&self, _hash: &Hash) -> Result<bool, StoreError> {
-        Ok(false)
     }
 }

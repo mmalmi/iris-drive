@@ -10,10 +10,8 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use fips_core::FipsEndpoint;
-use hashtree_core::{BLOB_DEFAULT_HTL, Cid, HashTreeError, Store};
-use hashtree_fips_transport::{
-    BoundFipsEndpoint, FipsPeerConfig, SameHostBlobStoreConfig, set_fips_peer_configs,
-};
+use hashtree_core::{BlobRoute, Cid, HashTreeError, Store};
+use hashtree_fips_transport::{BoundFipsEndpoint, FipsPeerConfig, set_fips_peer_configs};
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
 use serde::{Deserialize, Serialize};
@@ -35,10 +33,10 @@ mod download;
 mod endpoint_config;
 mod nostr_runtime;
 mod settings_runtime;
-use blob_runtime::DriveBlobRuntime;
+use blob_runtime::{DriveBlobRuntime, configured_shared_lmdb_route};
 use control_runtime::DriveControlRuntime;
 pub use control_runtime::FipsAppMessage;
-use download::download_tree_with_resolver;
+use download::download_tree_with_router;
 use endpoint_config::bind_drive_fips_endpoint;
 use nostr_runtime::DriveNostrPubsubRuntime;
 pub use nostr_runtime::FipsNostrPubsubEvent;
@@ -58,12 +56,14 @@ pub enum FipsSyncError {
     MissingOnFips(String),
     #[error("identity: {0}")]
     Identity(String),
+    #[error("shared Hashtree LMDB: {0}")]
+    SharedStore(String),
 }
 
 /// Running FIPS block exchange bound to the Iris Drive block store.
 pub struct FipsBlockSync<L: Store + Send + Sync + 'static> {
     endpoint: Arc<FipsEndpoint>,
-    blob_store: Arc<dyn Store>,
+    blob_router: Arc<hashtree_network::BlobRouter>,
     blob_runtime: Option<DriveBlobRuntime<L>>,
     control_runtime: Option<DriveControlRuntime>,
     nostr_runtime: Option<DriveNostrPubsubRuntime>,
@@ -92,6 +92,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             .map_err(|error| FipsSyncError::Identity(error.to_string()))?;
         let discovery_scope = discovery_scope(config);
         let transport_settings = FipsTransportSettings::from_env();
+        let shared_store = configured_shared_lmdb_route()?;
         let endpoint = Box::pin(bind_drive_fips_endpoint(fips_endpoint_options(
             identity_nsec,
             discovery_scope.clone(),
@@ -102,7 +103,14 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         .await
         .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?;
 
-        Self::start_with_bound_endpoint(endpoint, local_store, config, transport_settings).await
+        Self::start_with_bound_endpoint(
+            endpoint,
+            local_store,
+            config,
+            transport_settings,
+            shared_store,
+        )
+        .await
     }
 
     async fn start_with_bound_endpoint(
@@ -110,6 +118,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         local_store: Arc<L>,
         config: &AppConfig,
         transport_settings: FipsTransportSettings,
+        shared_store: Option<Arc<dyn BlobRoute>>,
     ) -> Result<Self, FipsSyncError> {
         let BoundFipsEndpoint {
             native_endpoint,
@@ -130,11 +139,11 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         let blob_runtime = DriveBlobRuntime::bind(
             native_endpoint.clone(),
             local_store.clone(),
-            local_peer_id.clone(),
             &blob_peers,
+            shared_store,
         )
         .await?;
-        let blob_store: Arc<dyn Store> = blob_runtime.store.clone();
+        let blob_router = blob_runtime.router.clone();
         let control_runtime = DriveControlRuntime::bind(
             native_endpoint.clone(),
             peer_ids(&application_peers),
@@ -158,7 +167,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
 
         Ok(Self {
             endpoint: native_endpoint,
-            blob_store,
+            blob_router,
             blob_runtime: Some(blob_runtime),
             control_runtime: Some(control_runtime),
             nostr_runtime,
@@ -231,7 +240,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             tracing::warn!(%error, "failed to refresh Drive control policy");
         }
         if let Some(runtime) = self.blob_runtime.as_ref() {
-            runtime.set_authorized_peers(&blob_peers).await;
+            runtime.set_authorized_peers(&blob_peers);
         }
     }
 
@@ -269,11 +278,10 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
 
     #[must_use]
     pub fn same_host_blob_provider_ids(&self) -> Vec<String> {
-        same_host_blob_provider_ids(
-            self.endpoint
-                .local_instance_advertisements()
-                .unwrap_or_default(),
-        )
+        self.blob_runtime
+            .as_ref()
+            .map(DriveBlobRuntime::same_host_provider_ids)
+            .unwrap_or_default()
     }
 
     pub async fn fips_peer_statuses(&self) -> Vec<FipsPeerStatus> {
@@ -390,7 +398,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     }
 
     pub async fn download_tree(&self, root: &Cid) -> Result<DownloadReport, FipsSyncError> {
-        download_tree_with_resolver(self.local_store.clone(), root, self.blob_store.clone()).await
+        download_tree_with_router(self.local_store.clone(), root, self.blob_router.clone()).await
     }
 
     pub async fn shutdown(mut self) -> Result<(), FipsSyncError> {
@@ -400,6 +408,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         if let Some(mut runtime) = self.nostr_runtime.take() {
             runtime.shutdown().await;
         }
+        self.blob_runtime.take();
         self.shutdown_endpoint().await
     }
 
@@ -421,30 +430,6 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         *last = Some(snapshot);
         true
     }
-}
-
-fn same_host_blob_provider_ids(
-    advertisements: impl IntoIterator<Item = fips_core::discovery::local::LocalInstanceAdvertisement>,
-) -> Vec<String> {
-    let mut providers = advertisements
-        .into_iter()
-        .filter(|advertisement| {
-            advertisement
-                .capability(hashtree_fips_transport::TCP_BLOB_CAPABILITY)
-                .and_then(|capability| capability.fsp_port)
-                == Some(hashtree_fips_transport::TCP_BLOB_SERVICE_PORT)
-        })
-        .map(|advertisement| advertisement.npub)
-        .collect::<Vec<_>>();
-    providers.sort();
-    providers.dedup();
-    providers
-}
-
-fn drive_same_host_blob_store_config() -> SameHostBlobStoreConfig {
-    SameHostBlobStoreConfig::default()
-        .with_provider_htl(BLOB_DEFAULT_HTL)
-        .with_standalone_htl(BLOB_DEFAULT_HTL)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
