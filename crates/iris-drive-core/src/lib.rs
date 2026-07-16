@@ -77,18 +77,19 @@ pub use conflict::{
 };
 pub use daemon::{Daemon, DaemonError, ImportReport, PRIMARY_DRIVE_ID};
 pub use direct_root_transport::{
-    DIRECT_ROOT_APP_TOPIC, DIRECT_ROOT_MESH_STREAM_PREFIX, DirectRootEvent, DirectRootExchange,
-    DirectRootFrame, DirectRootHintApply, DirectRootHintApplyReport, DirectRootHintFrame,
-    DirectRootHintScope, DirectRootKeyHint, DirectRootStateRequestFrame, DirectRootWireFrame,
-    apply_direct_root_event, apply_direct_root_key_hint_to_config,
-    build_current_direct_root_events, coalesce_direct_root_app_messages,
-    coalesce_direct_root_mesh_events, decode_direct_root_wire_frame, direct_root_mesh_stream,
+    DIRECT_ROOT_APP_TOPIC, DirectRootEvent, DirectRootExchange, DirectRootFrame,
+    DirectRootHintApply, DirectRootHintApplyReport, DirectRootHintFrame, DirectRootHintScope,
+    DirectRootKeyHint, DirectRootStateRequestFrame, DirectRootWireFrame, apply_direct_root_event,
+    apply_direct_root_key_hint_to_config, build_current_direct_root_events,
+    coalesce_direct_root_app_messages, decode_direct_root_wire_frame,
     encode_direct_root_hint_frame, encode_direct_root_state_request_frame,
     parse_direct_root_key_hint,
 };
-pub use fips_sync::{FipsBlockSync, FipsSyncError, FsFipsBlockSync};
+pub use fips_sync::{
+    FipsAppMessage, FipsBlockSync, FipsNostrPubsubEvent, FipsPeerStatus, FipsRelayStatus,
+    FipsSyncError, FsFipsBlockSync,
+};
 pub use gateway::{GatewayBind, GatewayError, GatewayProxyServer, GatewayServer};
-pub use hashtree_fips_transport::{FipsAppMessage, FipsMeshPubsubEvent};
 pub use identity::{AppKey, Identity, IdentityError, RecoveryKey};
 pub use indexer::{
     IndexError, filter_ignored_entries_from_root, index_dir, layer_conflict_records,
@@ -173,7 +174,7 @@ pub use sync_cache::{
     SOURCE_STATE_AVAILABLE, SOURCE_STATE_MISSING, SOURCE_STATE_POISONED, SOURCE_STATE_UNKNOWN,
     SourceAvailability, SyncCache, SyncCacheError,
 };
-pub use update_announcement::{UPDATE_ANNOUNCEMENT_MESH_STREAM, UpdateAnnouncementExchange};
+pub use update_announcement::UpdateAnnouncementExchange;
 
 /// Schema version for the iris-drive config file. Bump when fields are
 /// removed or repurposed so older installs fail closed instead of carrying

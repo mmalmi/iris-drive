@@ -1,20 +1,7 @@
 use super::*;
 
 #[test]
-fn direct_root_mesh_publish_sequence_is_monotonic() {
-    let mut exchange = DirectRootExchange::default();
-
-    let first = exchange.next_mesh_publish_seq();
-    let second = exchange.next_mesh_publish_seq();
-    let third = exchange.next_mesh_publish_seq();
-
-    assert!(first > 0);
-    assert_eq!(second, first + 1);
-    assert_eq!(third, second + 1);
-}
-
-#[test]
-fn direct_root_mesh_reuses_cached_event_for_same_logical_root() {
+fn direct_root_reuses_cached_event_for_same_logical_root() {
     let mut exchange = DirectRootExchange::default();
     let first = DirectRootEvent {
         key: "drive-root:device:main:7:root-hash:root-key:device".to_string(),
@@ -127,13 +114,11 @@ fn direct_root_peer_churn_does_not_clear_republish_throttle() {
 
     let changes = exchange.refresh_known_root_peers(
         ["authorized-a".to_string(), "authorized-b".to_string()],
-        ["mesh-a".to_string()],
-        [] as [String; 0],
+        ["authorized-a".to_string()],
     );
     assert_eq!(
         changes,
         DirectRootPeerChanges {
-            mesh_changed: true,
             has_new_publish_peer: true,
         }
     );
@@ -141,28 +126,25 @@ fn direct_root_peer_churn_does_not_clear_republish_throttle() {
 
     let changes = exchange.refresh_known_root_peers(
         ["authorized-a".to_string(), "authorized-b".to_string()],
-        ["mesh-a".to_string()],
-        [] as [String; 0],
+        ["authorized-a".to_string()],
     );
     assert_eq!(changes, DirectRootPeerChanges::default());
     assert!(!exchange.should_publish_key(key, now + std::time::Duration::from_millis(500)));
 }
 
 #[test]
-fn direct_root_mesh_route_churn_does_not_clear_republish_throttle() {
+fn direct_root_unrelated_connected_peer_churn_does_not_clear_republish_throttle() {
     let mut exchange = DirectRootExchange::default();
     let key = "drive-root:device:main:7:root-hash:root-key:device,remote";
     let now = std::time::Instant::now();
 
     let changes = exchange.refresh_known_root_peers(
         ["authorized-a".to_string(), "authorized-b".to_string()],
-        ["mesh-a".to_string()],
-        [] as [String; 0],
+        ["untrusted-a".to_string()],
     );
     assert_eq!(
         changes,
         DirectRootPeerChanges {
-            mesh_changed: true,
             has_new_publish_peer: true,
         }
     );
@@ -170,16 +152,9 @@ fn direct_root_mesh_route_churn_does_not_clear_republish_throttle() {
 
     let changes = exchange.refresh_known_root_peers(
         ["authorized-a".to_string(), "authorized-b".to_string()],
-        ["mesh-b".to_string()],
-        [] as [String; 0],
+        ["untrusted-b".to_string()],
     );
-    assert_eq!(
-        changes,
-        DirectRootPeerChanges {
-            mesh_changed: true,
-            has_new_publish_peer: false,
-        }
-    );
+    assert_eq!(changes, DirectRootPeerChanges::default());
     assert!(!exchange.should_publish_key(key, now + std::time::Duration::from_millis(500)));
 }
 
@@ -191,21 +166,16 @@ fn direct_root_authorized_peer_loss_does_not_clear_republish_throttle() {
 
     let changes = exchange.refresh_known_root_peers(
         ["authorized-a".to_string(), "authorized-b".to_string()],
-        ["mesh-a".to_string()],
-        [] as [String; 0],
+        ["authorized-a".to_string(), "authorized-b".to_string()],
     );
     assert!(changes.has_new_publish_peer);
     assert!(exchange.should_publish_key(key, now));
 
-    let changes = exchange.refresh_known_root_peers(
-        ["authorized-a".to_string()],
-        ["mesh-a".to_string()],
-        [] as [String; 0],
-    );
+    let changes = exchange
+        .refresh_known_root_peers(["authorized-a".to_string()], ["authorized-a".to_string()]);
     assert_eq!(
         changes,
         DirectRootPeerChanges {
-            mesh_changed: true,
             has_new_publish_peer: false,
         }
     );
@@ -220,8 +190,7 @@ fn direct_root_new_authorized_peer_clears_republish_throttle() {
 
     let changes = exchange.refresh_known_root_peers(
         ["authorized-a".to_string(), "authorized-b".to_string()],
-        ["mesh-a".to_string()],
-        [] as [String; 0],
+        ["authorized-a".to_string(), "authorized-b".to_string()],
     );
     assert!(changes.has_new_publish_peer);
     assert!(exchange.should_publish_key(key, now));
@@ -232,13 +201,11 @@ fn direct_root_new_authorized_peer_clears_republish_throttle() {
             "authorized-b".to_string(),
             "authorized-c".to_string(),
         ],
-        ["mesh-a".to_string()],
-        [] as [String; 0],
+        ["authorized-a".to_string(), "authorized-b".to_string()],
     );
     assert_eq!(
         changes,
         DirectRootPeerChanges {
-            mesh_changed: true,
             has_new_publish_peer: true,
         }
     );
@@ -251,29 +218,21 @@ fn direct_root_new_visible_authorized_peer_clears_republish_throttle() {
     let key = "drive-root:device:main:7:root-hash:root-key:device,remote";
     let now = std::time::Instant::now();
 
-    let changes = exchange.refresh_known_root_peers(
-        ["authorized-a".to_string()],
-        [] as [String; 0],
-        [] as [String; 0],
-    );
+    let changes =
+        exchange.refresh_known_root_peers(["authorized-a".to_string()], [] as [String; 0]);
     assert_eq!(
         changes,
         DirectRootPeerChanges {
-            mesh_changed: true,
             has_new_publish_peer: true,
         }
     );
     assert!(exchange.should_publish_key(key, now));
 
-    let changes = exchange.refresh_known_root_peers(
-        ["authorized-a".to_string()],
-        [] as [String; 0],
-        ["authorized-a".to_string()],
-    );
+    let changes = exchange
+        .refresh_known_root_peers(["authorized-a".to_string()], ["authorized-a".to_string()]);
     assert_eq!(
         changes,
         DirectRootPeerChanges {
-            mesh_changed: true,
             has_new_publish_peer: true,
         }
     );
@@ -647,11 +606,7 @@ fn direct_root_new_visible_peer_invalidates_current_event_cache() {
         ..DirectRootExchange::default()
     };
 
-    let changes = exchange.refresh_known_root_peers(
-        ["peer-a".to_string()],
-        std::iter::empty::<String>(),
-        ["peer-a".to_string()],
-    );
+    let changes = exchange.refresh_known_root_peers(["peer-a".to_string()], ["peer-a".to_string()]);
 
     assert!(changes.has_new_publish_peer);
     assert!(exchange.current_sync_events_cache.is_none());
@@ -793,16 +748,6 @@ fn direct_root_state_request_reply_throttle_is_per_target_peer() {
         now + std::time::Duration::from_secs(
             DIRECT_ROOT_STATE_REQUEST_REPLY_REPUBLISH_INTERVAL_SECS
         )
-    ));
-}
-
-#[test]
-fn direct_root_state_request_replies_also_use_mesh_for_targeted_recovery() {
-    assert!(should_publish_targeted_direct_root_reply_over_mesh(
-        DirectRootPublishSource::StateRequestReply
-    ));
-    assert!(!should_publish_targeted_direct_root_reply_over_mesh(
-        DirectRootPublishSource::LocalCurrent
     ));
 }
 

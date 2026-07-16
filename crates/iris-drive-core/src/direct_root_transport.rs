@@ -14,7 +14,6 @@ use crate::{
 };
 
 pub const DIRECT_ROOT_APP_TOPIC: &str = "iris-drive/root-events/v1/direct";
-pub const DIRECT_ROOT_MESH_STREAM_PREFIX: &str = "iris-drive/root-events/v1";
 
 const DIRECT_ROOT_EVENT_CACHE_CAP: usize = 128;
 const DIRECT_ROOT_REPUBLISH_INTERVAL_SECS: u64 = 5;
@@ -106,7 +105,6 @@ pub struct DirectRootHintApplyReport {
 
 #[derive(Debug, Clone, Copy, Default, Eq, PartialEq)]
 struct DirectRootPeerChanges {
-    mesh_changed: bool,
     has_new_publish_peer: bool,
 }
 
@@ -115,10 +113,7 @@ pub struct DirectRootExchange {
     cached_events: BTreeMap<String, DirectRootEvent>,
     published_keys: BTreeMap<String, Instant>,
     seen_keys: BTreeSet<String>,
-    subscribed_streams: BTreeSet<String>,
-    known_mesh_peers: BTreeSet<String>,
     known_publish_peers: BTreeSet<String>,
-    next_mesh_publish_seq: u64,
     state_request_times: BTreeMap<String, Instant>,
 }
 
@@ -134,17 +129,14 @@ impl DirectRootExchange {
         let Some(state) = config.profile.as_ref() else {
             return Ok(());
         };
-        let root_scope_id = state.root_scope_id();
-        self.subscribe_profile_stream(&root_scope_id, sync).await;
-        let stream = direct_root_mesh_stream(&root_scope_id);
+        self.refresh_known_root_peers(sync);
         let events = self.events_for_publish(
             build_current_direct_root_events(config_dir, &config, state)
                 .map_err(|error| format!("{error:#}"))?,
         );
         let now = Instant::now();
         for publish_event in events {
-            self.publish_event(sync, &stream, publish_event, None, now)
-                .await?;
+            self.publish_event(sync, publish_event, None, now).await?;
         }
         self.prune_published_keys();
         Ok(())
@@ -158,16 +150,13 @@ impl DirectRootExchange {
         state: &ProfileState,
         reply_peer: &str,
     ) -> Result<(), String> {
-        let root_scope_id = state.root_scope_id();
-        self.subscribe_profile_stream(&root_scope_id, sync).await;
-        let stream = direct_root_mesh_stream(&root_scope_id);
         let events = self.state_request_events_for_publish(
             build_current_direct_root_events(config_dir, config, state)
                 .map_err(|error| format!("{error:#}"))?,
         );
         let now = Instant::now();
         for publish_event in events {
-            self.publish_event(sync, &stream, publish_event, Some(reply_peer), now)
+            self.publish_event(sync, publish_event, Some(reply_peer), now)
                 .await?;
         }
         self.prune_published_keys();
@@ -190,7 +179,6 @@ impl DirectRootExchange {
             tracing::debug!(root_scope_id, "native direct-root state request throttled");
             return Ok(());
         }
-        self.subscribe_profile_stream(&root_scope_id, sync).await;
         let bytes = encode_direct_root_state_request_frame(&root_scope_id)
             .map_err(|error| format!("encoding direct-root state request: {error}"))?;
         match sync
@@ -208,23 +196,12 @@ impl DirectRootExchange {
                 "requesting current direct-root state over FIPS failed"
             ),
         }
-        let stream = direct_root_mesh_stream(&root_scope_id);
-        let seq = self.next_mesh_publish_seq();
-        let publish = sync.publish_mesh_pubsub(stream.clone(), seq, bytes).await;
-        tracing::debug!(
-            root_scope_id,
-            stream,
-            seq,
-            sent_peers = publish.sent_peers,
-            "requested current direct-root state over FIPS mesh"
-        );
         Ok(())
     }
 
     async fn publish_event(
         &mut self,
         sync: &FsFipsBlockSync,
-        stream: &str,
         publish_event: DirectRootPublishEvent,
         target_peer: Option<&str>,
         now: Instant,
@@ -245,8 +222,6 @@ impl DirectRootExchange {
             .transpose()
             .map_err(|error| format!("encoding direct-root hint: {error}"))?;
         let attempts = direct_root_publish_attempts_for_source(&event.key, source);
-        let publish_targeted_reply_over_mesh =
-            should_publish_targeted_direct_root_reply_over_mesh(source);
         for attempt in 0..attempts {
             let publish_full_frame =
                 should_publish_direct_root_full_frame(&event.key, source, attempt);
@@ -322,33 +297,6 @@ impl DirectRootExchange {
                     }
                 }
             }
-            if target_peer.is_some() && !publish_targeted_reply_over_mesh {
-                continue;
-            }
-            if publish_full_frame {
-                let seq = self.next_mesh_publish_seq();
-                let publish = sync
-                    .publish_mesh_pubsub(stream.to_string(), seq, bytes.clone())
-                    .await;
-                tracing::debug!(
-                    root_key = event.key.as_str(),
-                    sent_peers = publish.sent_peers,
-                    seq,
-                    "published direct-root mesh event over FIPS"
-                );
-            }
-            if let Some(hint_bytes) = hint_bytes.as_ref() {
-                let seq = self.next_mesh_publish_seq();
-                let publish = sync
-                    .publish_mesh_pubsub(stream.to_string(), seq, hint_bytes.clone())
-                    .await;
-                tracing::debug!(
-                    root_key = event.key.as_str(),
-                    sent_peers = publish.sent_peers,
-                    seq,
-                    "published direct-root mesh hint over FIPS"
-                );
-            }
         }
         Ok(())
     }
@@ -376,58 +324,6 @@ impl DirectRootExchange {
                 Ok(false)
             }
         }
-    }
-
-    pub async fn drain_mesh_events(
-        &mut self,
-        config_dir: &Path,
-        sync: &FsFipsBlockSync,
-    ) -> Result<(), String> {
-        let messages = sync.drain_mesh_pubsub_events().await;
-        let received_messages = messages.len();
-        let (messages, skipped_roots) = coalesce_direct_root_mesh_events(messages);
-        if skipped_roots > 0 {
-            tracing::debug!(
-                received_messages,
-                applied_messages = messages.len(),
-                skipped_roots,
-                "coalesced native direct-root FIPS mesh events"
-            );
-        }
-        for message in messages {
-            self.handle_mesh_event(config_dir, sync, message).await?;
-        }
-        Ok(())
-    }
-
-    pub async fn handle_mesh_event(
-        &mut self,
-        config_dir: &Path,
-        sync: &FsFipsBlockSync,
-        message: crate::FipsMeshPubsubEvent,
-    ) -> Result<(), String> {
-        if !message
-            .stream_id
-            .starts_with(DIRECT_ROOT_MESH_STREAM_PREFIX)
-        {
-            return Ok(());
-        }
-        match decode_direct_root_wire_frame(&message.payload)
-            .map_err(|error| format!("parsing direct-root mesh frame: {error}"))?
-        {
-            DirectRootWireFrame::Full(frame) => {
-                self.apply_frame(config_dir, sync, frame).await?;
-            }
-            DirectRootWireFrame::Hint(frame) => {
-                self.apply_hint_frame(config_dir, sync, frame, &message.origin_peer_id)
-                    .await?;
-            }
-            DirectRootWireFrame::Request(frame) => {
-                self.handle_state_request_frame(config_dir, sync, frame, &message.origin_peer_id)
-                    .await?;
-            }
-        }
-        Ok(())
     }
 
     async fn handle_state_request_frame(
@@ -500,40 +396,15 @@ impl DirectRootExchange {
         Ok(changed)
     }
 
-    async fn subscribe_profile_stream(&mut self, root_scope_id: &str, sync: &FsFipsBlockSync) {
-        let stream = direct_root_mesh_stream(root_scope_id);
-        let peer_changes = self.refresh_known_root_peers(sync).await;
-        if self.subscribed_streams.insert(stream.clone()) || peer_changes.mesh_changed {
-            let stats = sync.subscribe_mesh_pubsub(stream.clone()).await;
-            tracing::debug!(
-                stream,
-                selected_peers = stats.selected_peers,
-                sent_peers = stats.sent_peers,
-                "subscribed direct-root mesh stream over FIPS"
-            );
-        }
-    }
-
-    async fn refresh_known_root_peers(&mut self, sync: &FsFipsBlockSync) -> DirectRootPeerChanges {
-        self.refresh_known_root_peer_sets(
-            sync.authorized_peer_ids().await,
-            sync.mesh_peer_ids().await,
-        )
+    fn refresh_known_root_peers(&mut self, sync: &FsFipsBlockSync) -> DirectRootPeerChanges {
+        self.refresh_known_root_peer_sets(sync.authorized_peer_ids())
     }
 
     fn refresh_known_root_peer_sets(
         &mut self,
         authorized_peers: impl IntoIterator<Item = String>,
-        mesh_peers: impl IntoIterator<Item = String>,
     ) -> DirectRootPeerChanges {
         let publish_peers = authorized_peers.into_iter().collect::<BTreeSet<_>>();
-        let mut root_peers = publish_peers.clone();
-        root_peers.extend(mesh_peers);
-
-        let mesh_changed = root_peers != self.known_mesh_peers;
-        if mesh_changed {
-            self.known_mesh_peers = root_peers;
-        }
         let has_new_publish_peer = publish_peers
             .iter()
             .any(|peer| !self.known_publish_peers.contains(peer));
@@ -542,14 +413,8 @@ impl DirectRootExchange {
         }
         self.known_publish_peers = publish_peers;
         DirectRootPeerChanges {
-            mesh_changed,
             has_new_publish_peer,
         }
-    }
-
-    fn next_mesh_publish_seq(&mut self) -> u64 {
-        self.next_mesh_publish_seq = self.next_mesh_publish_seq.saturating_add(1).max(1);
-        self.next_mesh_publish_seq
     }
 
     #[cfg(test)]
@@ -819,64 +684,6 @@ pub fn coalesce_direct_root_app_messages(
     (coalesced, skipped)
 }
 
-#[must_use]
-pub fn coalesce_direct_root_mesh_events(
-    messages: Vec<crate::FipsMeshPubsubEvent>,
-) -> (Vec<crate::FipsMeshPubsubEvent>, usize) {
-    let mut passthrough = Vec::new();
-    let mut latest_roots =
-        BTreeMap::<String, (DirectRootCacheSlot, bool, crate::FipsMeshPubsubEvent)>::new();
-    let mut unsequenced_indices = BTreeMap::<String, usize>::new();
-    let mut skipped = 0usize;
-
-    for message in messages {
-        let Some(frame) = direct_root_mesh_event_batch_frame(&message) else {
-            passthrough.push(message);
-            continue;
-        };
-        let Some(slot) = direct_root_cache_slot(&frame.key) else {
-            if let Some(cache_key) = direct_root_unsequenced_batch_key(&frame.key) {
-                if let Some(index) = unsequenced_indices.get(&cache_key).copied() {
-                    passthrough[index] = message;
-                    skipped = skipped.saturating_add(1);
-                } else {
-                    unsequenced_indices.insert(cache_key, passthrough.len());
-                    passthrough.push(message);
-                }
-            } else {
-                passthrough.push(message);
-            }
-            continue;
-        };
-        match latest_roots.entry(slot.family.clone()) {
-            std::collections::btree_map::Entry::Vacant(entry) => {
-                entry.insert((slot, frame.hint, message));
-            }
-            std::collections::btree_map::Entry::Occupied(mut entry) => {
-                let (current_slot, current_is_hint, _) = entry.get();
-                if direct_root_should_replace_batched_frame(
-                    &slot,
-                    frame.hint,
-                    current_slot,
-                    *current_is_hint,
-                ) {
-                    skipped = skipped.saturating_add(1);
-                    entry.insert((slot, frame.hint, message));
-                } else {
-                    skipped = skipped.saturating_add(1);
-                }
-            }
-        }
-    }
-
-    let mut coalesced = latest_roots
-        .into_values()
-        .map(|(_, _, message)| message)
-        .collect::<Vec<_>>();
-    coalesced.extend(passthrough);
-    (coalesced, skipped)
-}
-
 #[derive(Debug, Clone, Eq, PartialEq)]
 struct DirectRootBatchFrame {
     key: String,
@@ -890,18 +697,6 @@ fn direct_root_message_batch_frame(
         return None;
     }
     direct_root_batch_frame(&message.data)
-}
-
-fn direct_root_mesh_event_batch_frame(
-    message: &crate::FipsMeshPubsubEvent,
-) -> Option<DirectRootBatchFrame> {
-    if !message
-        .stream_id
-        .starts_with(DIRECT_ROOT_MESH_STREAM_PREFIX)
-    {
-        return None;
-    }
-    direct_root_batch_frame(&message.payload)
 }
 
 fn direct_root_batch_frame(data: &[u8]) -> Option<DirectRootBatchFrame> {
@@ -1095,14 +890,6 @@ fn should_publish_direct_root_full_frame(
     true
 }
 
-fn should_publish_targeted_direct_root_reply_over_mesh(source: DirectRootPublishSource) -> bool {
-    matches!(
-        source,
-        DirectRootPublishSource::StateRequestReply
-            | DirectRootPublishSource::CachedStateRequestReply
-    )
-}
-
 pub fn encode_direct_root_hint_frame(
     key: &str,
     event_id: &str,
@@ -1189,11 +976,6 @@ fn direct_root_event(key: String, event: &Event) -> DirectRootEvent {
         event_id: event.id.to_hex(),
         event_json: event.as_json(),
     }
-}
-
-#[must_use]
-pub fn direct_root_mesh_stream(root_scope_id: &str) -> String {
-    format!("{DIRECT_ROOT_MESH_STREAM_PREFIX}/{root_scope_id}")
 }
 
 pub async fn apply_direct_root_event(
@@ -1833,25 +1615,6 @@ mod tests {
     }
 
     #[test]
-    fn direct_root_hint_frame_fits_single_fips_app_packet() {
-        let local = "11".repeat(32);
-        let remote = "22".repeat(32);
-        let third = "33".repeat(32);
-        let root_cid = sample_root_cid('a', 'b');
-        let key = format!("drive-root:{remote}:main:7:{root_cid}:{local},{remote},{third}");
-        let hint_bytes = encode_direct_root_hint_frame(&key, &"44".repeat(32)).unwrap();
-        let full_bytes = serde_json::to_vec(&DirectRootFrame {
-            key,
-            event_id: "44".repeat(32),
-            event_json: "x".repeat(3000),
-        })
-        .unwrap();
-
-        assert!(hint_bytes.len() <= hashtree_fips_transport::FIPS_APP_FRAGMENT_SIZE);
-        assert!(full_bytes.len() > hashtree_fips_transport::FIPS_APP_FRAGMENT_SIZE);
-    }
-
-    #[test]
     fn direct_root_hint_applies_authorized_drive_root_from_source_app_key() {
         let dir = tempfile::tempdir().unwrap();
         let owner = Profile::create(dir.path(), Some("Mac".to_string())).unwrap();
@@ -1962,122 +1725,6 @@ mod tests {
         assert_eq!(skipped, 0);
         assert_eq!(messages.len(), 2);
         assert!(messages.contains(&request));
-    }
-
-    #[test]
-    fn direct_root_mesh_event_coalescing_keeps_latest_root_per_family() {
-        let older_drive =
-            direct_root_mesh_event("drive-root:remote:main:7:old-hash:old-key:local,remote");
-        let newer_drive =
-            direct_root_mesh_event("drive-root:remote:main:8:new-hash:new-key:local,remote");
-        let duplicate_newer =
-            direct_root_mesh_event("drive-root:remote:main:8:new-hash:new-key:local,remote");
-        let share_root =
-            direct_root_mesh_event("share-root:share:remote:2:share-hash:share-key:local,remote");
-
-        let (messages, skipped) = coalesce_direct_root_mesh_events(vec![
-            older_drive,
-            share_root,
-            newer_drive,
-            duplicate_newer,
-        ]);
-
-        assert_eq!(skipped, 2);
-        assert_eq!(
-            direct_root_mesh_event_keys(&messages),
-            vec![
-                "drive-root:remote:main:8:new-hash:new-key:local,remote".to_string(),
-                "share-root:share:remote:2:share-hash:share-key:local,remote".to_string(),
-            ]
-        );
-    }
-
-    #[test]
-    fn direct_root_mesh_event_coalescing_preserves_unsequenced_messages() {
-        let profile = direct_root_mesh_event("profile-op:profile:event");
-        let broken = crate::FipsMeshPubsubEvent {
-            stream_id: direct_root_mesh_stream("scope"),
-            seq: 1,
-            origin_peer_id: "origin".to_string(),
-            from_peer_id: "peer".to_string(),
-            payload: b"not json".to_vec(),
-        };
-        let other_stream = crate::FipsMeshPubsubEvent {
-            stream_id: "other-stream".to_string(),
-            seq: 1,
-            origin_peer_id: "origin".to_string(),
-            from_peer_id: "peer".to_string(),
-            payload: b"not direct roots".to_vec(),
-        };
-        let older_drive =
-            direct_root_mesh_event("drive-root:remote:main:7:old-hash:old-key:local,remote");
-        let newer_drive =
-            direct_root_mesh_event("drive-root:remote:main:8:new-hash:new-key:local,remote");
-
-        let (messages, skipped) = coalesce_direct_root_mesh_events(vec![
-            profile.clone(),
-            broken.clone(),
-            older_drive,
-            other_stream.clone(),
-            newer_drive,
-        ]);
-
-        assert_eq!(skipped, 1);
-        assert_eq!(
-            direct_root_mesh_event_keys(&messages[..1]),
-            vec!["drive-root:remote:main:8:new-hash:new-key:local,remote".to_string()]
-        );
-        assert_eq!(messages[1], profile);
-        assert_eq!(messages[2], broken);
-        assert_eq!(messages[3], other_stream);
-    }
-
-    #[test]
-    fn direct_root_mesh_event_coalescing_dedupes_unsequenced_direct_frames() {
-        let first_profile =
-            direct_root_mesh_event_with_event_json("profile-op:profile:event", "old");
-        let latest_profile =
-            direct_root_mesh_event_with_event_json("profile-op:profile:event", "latest");
-        let other_profile =
-            direct_root_mesh_event_with_event_json("profile-op:profile:other-event", "other");
-
-        let (messages, skipped) = coalesce_direct_root_mesh_events(vec![
-            first_profile,
-            other_profile.clone(),
-            latest_profile,
-        ]);
-
-        assert_eq!(skipped, 1);
-        assert_eq!(messages.len(), 2);
-        assert_eq!(direct_root_mesh_event_event_json(&messages[0]), "latest");
-        assert_eq!(messages[1], other_profile);
-    }
-
-    #[test]
-    fn direct_root_mesh_event_coalescing_dedupes_files_root_frames() {
-        let first_files_root = direct_root_mesh_event_with_event_json(
-            "files-root:remote:main:root-hash:root-key",
-            "old",
-        );
-        let latest_files_root = direct_root_mesh_event_with_event_json(
-            "files-root:remote:main:root-hash:root-key",
-            "latest",
-        );
-        let other_files_root = direct_root_mesh_event_with_event_json(
-            "files-root:remote:main:other-root:other-key",
-            "other",
-        );
-
-        let (messages, skipped) = coalesce_direct_root_mesh_events(vec![
-            first_files_root,
-            other_files_root.clone(),
-            latest_files_root,
-        ]);
-
-        assert_eq!(skipped, 1);
-        assert_eq!(messages.len(), 2);
-        assert_eq!(direct_root_mesh_event_event_json(&messages[0]), "latest");
-        assert_eq!(messages[1], other_files_root);
     }
 
     #[test]
@@ -2312,22 +1959,6 @@ mod tests {
     }
 
     #[test]
-    fn direct_root_state_request_replies_also_use_mesh_for_targeted_recovery() {
-        assert!(should_publish_targeted_direct_root_reply_over_mesh(
-            DirectRootPublishSource::StateRequestReply
-        ));
-        assert!(should_publish_targeted_direct_root_reply_over_mesh(
-            DirectRootPublishSource::CachedStateRequestReply
-        ));
-        assert!(!should_publish_targeted_direct_root_reply_over_mesh(
-            DirectRootPublishSource::LocalCurrent
-        ));
-        assert!(!should_publish_targeted_direct_root_reply_over_mesh(
-            DirectRootPublishSource::CachedRelay
-        ));
-    }
-
-    #[test]
     fn direct_root_periodic_state_requests_are_throttled() {
         let mut exchange = DirectRootExchange::default();
         let now = Instant::now();
@@ -2366,56 +1997,13 @@ mod tests {
     }
 
     #[test]
-    fn direct_root_mesh_route_churn_does_not_clear_cached_relay_throttle() {
-        let mut exchange = DirectRootExchange::default();
-        let key = "drive-root:device:main:7:root-hash:root-key:device,remote";
-        let now = Instant::now();
-
-        let changes = exchange.refresh_known_root_peer_sets(
-            ["authorized-a".to_string(), "authorized-b".to_string()],
-            ["mesh-a".to_string()],
-        );
-        assert_eq!(
-            changes,
-            DirectRootPeerChanges {
-                mesh_changed: true,
-                has_new_publish_peer: true,
-            }
-        );
-        assert!(exchange.should_publish_candidate_key(
-            key,
-            DirectRootPublishSource::CachedRelay,
-            now
-        ));
-
-        let changes = exchange.refresh_known_root_peer_sets(
-            ["authorized-a".to_string(), "authorized-b".to_string()],
-            ["mesh-b".to_string()],
-        );
-        assert_eq!(
-            changes,
-            DirectRootPeerChanges {
-                mesh_changed: true,
-                has_new_publish_peer: false,
-            }
-        );
-        assert!(!exchange.should_publish_candidate_key(
-            key,
-            DirectRootPublishSource::CachedRelay,
-            now + Duration::from_millis(500)
-        ));
-    }
-
-    #[test]
     fn direct_root_authorized_peer_loss_does_not_clear_republish_throttle() {
         let mut exchange = DirectRootExchange::default();
         let key = "drive-root:device:main:7:root-hash:root-key:device,remote";
         let now = Instant::now();
 
-        let changes = exchange.refresh_known_root_peer_sets(
-            ["authorized-a".to_string(), "authorized-b".to_string()],
-            ["mesh-a".to_string()],
-        );
+        let changes = exchange
+            .refresh_known_root_peer_sets(["authorized-a".to_string(), "authorized-b".to_string()]);
         assert!(changes.has_new_publish_peer);
         assert!(exchange.should_publish_candidate_key(
             key,
@@ -2423,12 +2011,10 @@ mod tests {
             now
         ));
 
-        let changes = exchange
-            .refresh_known_root_peer_sets(["authorized-a".to_string()], ["mesh-a".to_string()]);
+        let changes = exchange.refresh_known_root_peer_sets(["authorized-a".to_string()]);
         assert_eq!(
             changes,
             DirectRootPeerChanges {
-                mesh_changed: true,
                 has_new_publish_peer: false,
             }
         );
@@ -2445,10 +2031,8 @@ mod tests {
         let key = "drive-root:device:main:7:root-hash:root-key:device,remote";
         let now = Instant::now();
 
-        let changes = exchange.refresh_known_root_peer_sets(
-            ["authorized-a".to_string(), "authorized-b".to_string()],
-            ["mesh-a".to_string()],
-        );
+        let changes = exchange
+            .refresh_known_root_peer_sets(["authorized-a".to_string(), "authorized-b".to_string()]);
         assert!(changes.has_new_publish_peer);
         assert!(exchange.should_publish_candidate_key(
             key,
@@ -2456,18 +2040,14 @@ mod tests {
             now
         ));
 
-        let changes = exchange.refresh_known_root_peer_sets(
-            [
-                "authorized-a".to_string(),
-                "authorized-b".to_string(),
-                "authorized-c".to_string(),
-            ],
-            ["mesh-a".to_string()],
-        );
+        let changes = exchange.refresh_known_root_peer_sets([
+            "authorized-a".to_string(),
+            "authorized-b".to_string(),
+            "authorized-c".to_string(),
+        ]);
         assert_eq!(
             changes,
             DirectRootPeerChanges {
-                mesh_changed: true,
                 has_new_publish_peer: true,
             }
         );
@@ -2484,10 +2064,8 @@ mod tests {
         let key = "drive-root:device:main:7:root-hash:root-key:device,remote";
         let now = Instant::now();
 
-        let changes = exchange.refresh_known_root_peer_sets(
-            ["authorized-a".to_string(), "authorized-b".to_string()],
-            ["mesh-a".to_string()],
-        );
+        let changes = exchange
+            .refresh_known_root_peer_sets(["authorized-a".to_string(), "authorized-b".to_string()]);
         assert!(changes.has_new_publish_peer);
         assert!(exchange.should_publish_candidate_key(
             key,
@@ -2495,8 +2073,7 @@ mod tests {
             now
         ));
 
-        let changes = exchange
-            .refresh_known_root_peer_sets(["authorized-a".to_string()], ["mesh-a".to_string()]);
+        let changes = exchange.refresh_known_root_peer_sets(["authorized-a".to_string()]);
         assert!(!changes.has_new_publish_peer);
         assert!(!exchange.should_publish_candidate_key(
             key,
@@ -2504,10 +2081,8 @@ mod tests {
             now + Duration::from_millis(500)
         ));
 
-        let changes = exchange.refresh_known_root_peer_sets(
-            ["authorized-a".to_string(), "authorized-b".to_string()],
-            ["mesh-a".to_string()],
-        );
+        let changes = exchange
+            .refresh_known_root_peer_sets(["authorized-a".to_string(), "authorized-b".to_string()]);
         assert!(changes.has_new_publish_peer);
         assert!(exchange.should_publish_candidate_key(
             key,
@@ -2581,41 +2156,5 @@ mod tests {
             hash_char.to_string().repeat(64),
             key_char.to_string().repeat(64)
         )
-    }
-
-    fn direct_root_mesh_event(key: &str) -> crate::FipsMeshPubsubEvent {
-        direct_root_mesh_event_with_event_json(key, "{}")
-    }
-
-    fn direct_root_mesh_event_with_event_json(
-        key: &str,
-        event_json: &str,
-    ) -> crate::FipsMeshPubsubEvent {
-        let frame = DirectRootFrame {
-            key: key.to_string(),
-            event_id: format!("{key}:event"),
-            event_json: event_json.to_string(),
-        };
-        crate::FipsMeshPubsubEvent {
-            stream_id: direct_root_mesh_stream("scope"),
-            seq: 1,
-            origin_peer_id: "origin".to_string(),
-            from_peer_id: "peer".to_string(),
-            payload: serde_json::to_vec(&frame).unwrap(),
-        }
-    }
-
-    fn direct_root_mesh_event_keys(messages: &[crate::FipsMeshPubsubEvent]) -> Vec<String> {
-        messages
-            .iter()
-            .filter_map(|message| serde_json::from_slice::<DirectRootFrame>(&message.payload).ok())
-            .map(|frame| frame.key)
-            .collect()
-    }
-
-    fn direct_root_mesh_event_event_json(message: &crate::FipsMeshPubsubEvent) -> String {
-        serde_json::from_slice::<DirectRootFrame>(&message.payload)
-            .unwrap()
-            .event_json
     }
 }

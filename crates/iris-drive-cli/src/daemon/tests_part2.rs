@@ -2,6 +2,7 @@
 fn daemon_status_probe_uses_idle_safe_cadence() {
     assert_eq!(super::DIRECT_ROOT_PEER_REFRESH_INTERVAL_SECS, 30);
     assert_eq!(super::DIRECT_ROOT_REPAIR_INTERVAL_SECS, 300);
+    assert_eq!(super::FIPS_STATUS_PROBE_INTERVAL_SECS, 2);
     assert_eq!(super::RELAY_STATUS_PROBE_INTERVAL_SECS, 120);
 }
 

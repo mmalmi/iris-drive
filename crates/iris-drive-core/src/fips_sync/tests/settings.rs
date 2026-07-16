@@ -1,5 +1,11 @@
 use super::*;
 
+use super::super::settings_runtime::{
+    fips_endpoint_options, parse_bool_env_value, parse_static_peer_hints,
+    target_allows_default_desktop_fips,
+};
+use fips_core::discovery::local::{LocalInstanceAdvertisement, LocalInstanceCapability};
+
 #[test]
 fn discovery_scope_is_profile_scoped() {
     let profile_id = crate::NostrIdentityId::new_v4();
@@ -627,67 +633,18 @@ fn admin_endpoint_options_keep_open_discovery_closed_by_default() {
 }
 
 #[test]
-fn signed_control_topics_are_allowed_before_peer_is_configured() {
-    assert_eq!(
-        super::unconfigured_app_message_topics(),
-        [
-            crate::app_key_link_transport::APP_KEY_LINK_REQUEST_APP_TOPIC,
-            crate::app_key_link_transport::APP_KEY_APPROVAL_RECEIPT_APP_TOPIC,
-            crate::app_key_link_transport::APP_KEY_LINK_ROSTER_APP_TOPIC,
-            crate::direct_root_transport::DIRECT_ROOT_APP_TOPIC,
-        ]
-    );
-}
+fn bootstrap_control_policy_excludes_protected_root_frames() {
+    let dir = tempfile::tempdir().unwrap();
+    let profile = crate::Profile::create(dir.path(), Some("admin".into())).unwrap();
+    let config = AppConfig {
+        profile: Some(profile.state),
+        ..Default::default()
+    };
+    let topics = control_bootstrap_topics(&config);
 
-#[tokio::test]
-async fn unconfigured_signed_control_app_messages_are_delivered() {
-    let network = Arc::new(TokioMutex::new(std::collections::HashMap::new()));
-    let admin_endpoint = FakeEndpoint::new("admin", network.clone()).await;
-    let phone_endpoint = FakeEndpoint::new("phone", network).await;
-    let admin_transport = Arc::new(HashtreeFipsTransport::new(
-        admin_endpoint,
-        Arc::new(MemoryStore::new()),
-    ));
-    let phone_transport = Arc::new(
-        HashtreeFipsTransport::new(phone_endpoint, Arc::new(MemoryStore::new()))
-            .with_unconfigured_app_message_topics(unconfigured_app_message_topics()),
-    );
-    phone_transport
-        .set_peers(vec!["configured-but-not-admin".to_string()])
-        .await;
-    let mut app_messages = phone_transport.subscribe_app_messages();
-    let admin_task = admin_transport.start();
-    let phone_task = phone_transport.start();
-
-    for (topic, data) in [
-        (
-            crate::app_key_link_transport::APP_KEY_LINK_ROSTER_APP_TOPIC,
-            b"signed roster".as_slice(),
-        ),
-        (
-            crate::app_key_link_transport::APP_KEY_APPROVAL_RECEIPT_APP_TOPIC,
-            b"signed receipt".as_slice(),
-        ),
-        (
-            crate::direct_root_transport::DIRECT_ROOT_APP_TOPIC,
-            b"signed direct root".as_slice(),
-        ),
-    ] {
-        admin_transport
-            .send_app_message("phone", topic, data.to_vec())
-            .await
-            .unwrap();
-        let message = tokio::time::timeout(Duration::from_millis(250), app_messages.recv())
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(message.peer_id, "admin");
-        assert_eq!(message.topic, topic);
-        assert_eq!(message.data, data);
-    }
-
-    admin_task.abort();
-    phone_task.abort();
+    assert!(topics.contains(crate::app_key_link_transport::APP_KEY_LINK_REQUEST_APP_TOPIC));
+    assert!(topics.contains(crate::app_key_link_transport::APP_KEY_LINK_ROSTER_APP_TOPIC));
+    assert!(!topics.contains(crate::direct_root_transport::DIRECT_ROOT_APP_TOPIC));
 }
 
 #[test]
@@ -699,4 +656,36 @@ fn bool_env_parser_accepts_common_spellings() {
         assert_eq!(parse_bool_env_value(value), Some(false));
     }
     assert_eq!(parse_bool_env_value("maybe"), None);
+}
+
+#[test]
+fn same_host_blob_provider_selection_requires_the_exact_service_port() {
+    let advertisement =
+        |npub: &str, capability: LocalInstanceCapability| LocalInstanceAdvertisement {
+            npub: npub.to_string(),
+            startup_epoch: [0; 8],
+            capabilities: vec![capability],
+        };
+    let providers = same_host_blob_provider_ids([
+        advertisement(
+            "correct",
+            LocalInstanceCapability::service(
+                hashtree_fips_transport::TCP_BLOB_CAPABILITY,
+                hashtree_fips_transport::TCP_BLOB_SERVICE_PORT,
+            ),
+        ),
+        advertisement(
+            "wrong-port",
+            LocalInstanceCapability::service(
+                hashtree_fips_transport::TCP_BLOB_CAPABILITY,
+                hashtree_fips_transport::TCP_BLOB_SERVICE_PORT + 1,
+            ),
+        ),
+        advertisement(
+            "missing-port",
+            LocalInstanceCapability::role(hashtree_fips_transport::TCP_BLOB_CAPABILITY),
+        ),
+    ]);
+
+    assert_eq!(providers, vec!["correct"]);
 }

@@ -1,11 +1,18 @@
 use super::*;
+use async_trait::async_trait;
 use fips_core::PeerIdentity;
-use fips_core::config::{RoutingMode, TransportInstances};
-use hashtree_core::{BLOB_DEFAULT_HTL, BlobReply, BlobRequest, BlobRoute};
-use hashtree_fips_transport::{SameHostBlobStore, TcpBlobTransport, TcpBlobTransportConfig};
+use hashtree_core::{
+    BLOB_DEFAULT_HTL, BlobReply, BlobRequest, BlobRoute, Hash, HashTree, HashTreeConfig, StoreError,
+};
+use hashtree_fips_transport::{
+    FipsEndpointOptions, SameHostBlobStore, TcpBlobTransport, TcpBlobTransportConfig,
+    bind_fips_endpoint_at_local_rendezvous,
+};
 use hashtree_network::{MeshReadSource, MeshRoutingConfig, NamedBlobRoute, blob_resolver};
 use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, UdpSocket};
 use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+
+use super::super::settings_runtime::FIPS_PACKET_CHANNEL_CAPACITY;
 
 #[derive(Clone, Copy)]
 enum ProviderOutcome {
@@ -308,7 +315,7 @@ async fn wait_for_blob_provider(endpoint: &BoundFipsEndpoint, npub: &str) {
     .expect("same-host blob provider did not become visible");
 }
 
-async fn wait_for_peer_connection(endpoint: &BoundFipsEndpoint, npub: &str) {
+pub(super) async fn wait_for_peer_connection(endpoint: &BoundFipsEndpoint, npub: &str) {
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             if endpoint
@@ -371,17 +378,15 @@ async fn real_same_host_provider_failure_still_uses_drive_standalone_route() {
 
     let source_store = Arc::new(MemoryStore::new());
     let source_tree = HashTree::new(HashTreeConfig::new(source_store.clone()));
-    let (file_cid, _) = source_tree
-        .put(b"Drive standalone retrieval after a real same-host failure")
-        .await
-        .unwrap();
+    let file_bytes = (0_u8..=250).cycle().take(192 * 1024).collect::<Vec<_>>();
+    let (file_cid, _) = source_tree.put(&file_bytes).await.unwrap();
     let root_cid = source_tree
         .put_directory(vec![DirEntry {
             name: "fallback.txt".to_string(),
             hash: file_cid.hash,
             key: file_cid.key,
             link_type: LinkType::File,
-            size: 57,
+            size: file_bytes.len() as u64,
             meta: None,
         }])
         .await
@@ -410,6 +415,15 @@ async fn real_same_host_provider_failure_still_uses_drive_standalone_route() {
     )
     .await
     .unwrap();
+    set_fips_peer_configs(
+        source_native.as_ref(),
+        vec![FipsPeerConfig {
+            npub: target_device.pubkey_bech32(),
+            udp_addresses: vec![target_udp_addr.to_string()],
+        }],
+    )
+    .await
+    .unwrap();
 
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
@@ -431,6 +445,22 @@ async fn real_same_host_provider_failure_still_uses_drive_standalone_route() {
     })
     .await
     .expect("failing same-host provider did not become visible");
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if target_native
+                .peers()
+                .await
+                .unwrap()
+                .iter()
+                .any(|peer| peer.npub == source_device.pubkey_bech32() && peer.connected)
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("Drive standalone FIPS route did not connect");
 
     let report = tokio::time::timeout(Duration::from_secs(15), sync.download_tree(&root_cid))
         .await
@@ -443,7 +473,7 @@ async fn real_same_host_provider_failure_still_uses_drive_standalone_route() {
     assert!(target_store.has(&file_cid.hash).await.unwrap());
     assert!(provider_gets.load(Ordering::Relaxed) > 0);
     assert_eq!(
-        sync.authorized_peer_ids().await,
+        sync.authorized_peer_ids(),
         vec![source_device.pubkey_bech32()]
     );
     let source_status = sync
@@ -468,50 +498,36 @@ async fn real_same_host_provider_failure_still_uses_drive_standalone_route() {
     provider_native.shutdown().await.unwrap();
 }
 
-async fn bind_test_endpoint(
+pub(super) async fn bind_test_endpoint(
     device: &AppKey,
     scope: &str,
     rendezvous_addr: SocketAddrV4,
     udp_bind_addr: SocketAddrV4,
     enable_local_rendezvous: bool,
-) -> Result<BoundFipsEndpoint, fips_core::FipsEndpointError> {
+) -> Result<BoundFipsEndpoint, hashtree_fips_transport::FipsTransportError> {
     let identity_nsec = device.keys().secret_key().to_bech32().unwrap();
-    let mut config = fips_core::Config::new();
-    config.node.identity = fips_core::IdentityConfig {
-        nsec: Some(identity_nsec),
-        persistent: false,
-    };
-    config.node.routing.mode = RoutingMode::ReplyLearned;
-    config.node.control.enabled = false;
-    config.node.system_files_enabled = false;
-    config.node.discovery.local.rendezvous_addr = rendezvous_addr;
-    config.node.discovery.lan.enabled = false;
-    config.node.discovery.nostr.enabled = false;
-    config.node.discovery.nostr.advertise = false;
-    config.tun.enabled = false;
-    config.dns.enabled = false;
-    config.transports.udp = TransportInstances::Single(fips_core::UdpConfig {
-        bind_addr: Some(udp_bind_addr.to_string()),
-        advertise_on_nostr: Some(false),
-        public: Some(false),
-        ..fips_core::UdpConfig::default()
-    });
-    let builder = fips_core::FipsEndpoint::builder()
-        .config(config)
-        .discovery_scope(scope)
-        .without_system_tun();
-    let builder = if enable_local_rendezvous {
-        builder.local_rendezvous()
-    } else {
-        builder
-    };
-    let endpoint = Arc::new(Box::pin(builder.bind()).await?);
-    Ok(BoundFipsEndpoint {
-        endpoint: endpoint.clone(),
-        native_endpoint: endpoint.clone(),
-        local_peer_id: endpoint.npub().to_string(),
-        discovery_scope: scope.to_string(),
-    })
+    Box::pin(bind_fips_endpoint_at_local_rendezvous(
+        FipsEndpointOptions {
+            identity_nsec,
+            discovery_scope: scope.to_string(),
+            relays: Vec::new(),
+            enable_udp: true,
+            enable_webrtc: false,
+            enable_local_rendezvous,
+            ethernet_interfaces: Vec::new(),
+            enable_lan_discovery: false,
+            udp_bind_addr: Some(udp_bind_addr.to_string()),
+            udp_public: false,
+            udp_external_addr: None,
+            share_local_candidates: false,
+            webrtc_auto_connect: false,
+            webrtc_max_connections: 8,
+            open_discovery_max_pending: 0,
+            packet_channel_capacity: FIPS_PACKET_CHANNEL_CAPACITY,
+        },
+        rendezvous_addr,
+    ))
+    .await
 }
 
 async fn bind_local_test_endpoint(
@@ -519,9 +535,15 @@ async fn bind_local_test_endpoint(
     scope: &str,
     rendezvous_addr: SocketAddrV4,
 ) -> BoundFipsEndpoint {
-    bind_test_endpoint(device, scope, rendezvous_addr, reserve_udp_address(), true)
-        .await
-        .unwrap()
+    Box::pin(bind_test_endpoint(
+        device,
+        scope,
+        rendezvous_addr,
+        reserve_udp_address(),
+        true,
+    ))
+    .await
+    .unwrap()
 }
 
 fn local_only_settings(
@@ -545,7 +567,7 @@ fn local_only_settings(
     }
 }
 
-fn reserve_udp_address() -> SocketAddrV4 {
+pub(super) fn reserve_udp_address() -> SocketAddrV4 {
     let socket = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve loopback UDP port");
     let SocketAddr::V4(address) = socket.local_addr().expect("reserved loopback UDP address")
     else {

@@ -5,41 +5,46 @@
 //! between authorized app installs. Blossom remains useful as a public remote,
 //! but the local app should first ask peer instances over FIPS.
 
+use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use async_trait::async_trait;
-use hashtree_core::{
-    BLOB_DEFAULT_HTL, Cid, Hash, HashTree, HashTreeConfig, HashTreeError, Store, StoreError, to_hex,
-};
+use fips_core::FipsEndpoint;
+use hashtree_core::{BLOB_DEFAULT_HTL, Cid, HashTreeError, Store};
 use hashtree_fips_transport::{
-    BoundFipsEndpoint, FipsAppMessage, FipsEndpointOptions, FipsMeshPubsub, FipsMeshPubsubEvent,
-    FipsPeerConfig, FipsPeerStatus, FipsRelayStatus, HashtreeFipsTransport, PubsubPublishStats,
-    SameHostBlobStoreConfig, bind_fips_endpoint,
+    BoundFipsEndpoint, FipsPeerConfig, SameHostBlobStoreConfig, bind_fips_endpoint,
+    set_fips_peer_configs,
 };
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
-use tokio::task::JoinHandle;
 
 use crate::app_key_link_transport::{
-    APP_KEY_LINK_REQUEST_APP_TOPIC, APP_KEY_LINK_ROSTER_APP_TOPIC,
+    APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC, APP_KEY_APPROVAL_RECEIPT_APP_TOPIC,
+    APP_KEY_LINK_REQUEST_APP_TOPIC, APP_KEY_LINK_ROSTER_ACK_APP_TOPIC,
+    APP_KEY_LINK_ROSTER_APP_TOPIC,
 };
-use crate::block_sync::collect_live_sync_hashes;
 use crate::blossom_sync::DownloadReport;
 use crate::config::AppConfig;
-use crate::direct_root_transport::DIRECT_ROOT_APP_TOPIC;
 use crate::fips_bootstrap::DEFAULT_FIPS_BOOTSTRAP_PEERS;
 use crate::identity::AppKey;
 
 mod blob_runtime;
+mod control_runtime;
+mod download;
+mod nostr_runtime;
+mod settings_runtime;
 use blob_runtime::DriveBlobRuntime;
+use control_runtime::DriveControlRuntime;
+pub use control_runtime::FipsAppMessage;
+use download::download_tree_with_resolver;
+use nostr_runtime::DriveNostrPubsubRuntime;
+pub use nostr_runtime::FipsNostrPubsubEvent;
+use settings_runtime::fips_endpoint_options;
+pub use settings_runtime::{FipsTransportSettings, IRIS_DRIVE_FIPS_DISCOVERY_SCOPE};
 
-const FIPS_REQUEST_TIMEOUT: Duration = Duration::from_millis(1_250);
-const FIPS_PACKET_CHANNEL_CAPACITY: usize = 8192;
-const FIPS_WEBRTC_MAX_CONNECTIONS: usize = 16;
-const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 0;
-pub const IRIS_DRIVE_FIPS_DISCOVERY_SCOPE: &str = "fips-overlay-v1";
+const DRIVE_BLOB_SEARCH_TIMEOUT: Duration = Duration::from_secs(10);
 #[derive(Debug, Error)]
 pub enum FipsSyncError {
     #[error("fips endpoint: {0}")]
@@ -56,12 +61,14 @@ pub enum FipsSyncError {
 
 /// Running FIPS block exchange bound to the Iris Drive block store.
 pub struct FipsBlockSync<L: Store + Send + Sync + 'static> {
-    transport: Arc<HashtreeFipsTransport<L>>,
+    endpoint: Arc<FipsEndpoint>,
     blob_store: Arc<dyn Store>,
     blob_runtime: Option<DriveBlobRuntime<L>>,
+    control_runtime: Option<DriveControlRuntime>,
+    nostr_runtime: Option<DriveNostrPubsubRuntime>,
+    nostr_receiver:
+        Option<tokio::sync::Mutex<tokio::sync::broadcast::Receiver<FipsNostrPubsubEvent>>>,
     local_store: Arc<L>,
-    receiver_task: Option<JoinHandle<()>>,
-    mesh_pubsub: Option<Arc<FipsMeshPubsub<L>>>,
     endpoint_npub: String,
     discovery_scope: String,
     transport_settings: FipsTransportSettings,
@@ -104,58 +111,62 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         transport_settings: FipsTransportSettings,
     ) -> Result<Self, FipsSyncError> {
         let BoundFipsEndpoint {
-            endpoint,
             native_endpoint,
             local_peer_id,
             discovery_scope,
+            ..
         } = endpoint;
 
-        let transport = Arc::new(
-            HashtreeFipsTransport::new(endpoint, local_store.clone())
-                .with_request_timeout(FIPS_REQUEST_TIMEOUT)
-                .with_unconfigured_app_message_topics(unconfigured_app_message_topics()),
-        );
         let application_peers = authorized_device_fips_peers(config, &transport_settings);
         let routing_peers = routing_fips_peers(config, &transport_settings);
         let blob_peers = authorized_blob_fips_peers(config, &transport_settings);
-        transport
-            .set_peer_configs_with_routing_peers(application_peers, routing_peers)
-            .await;
-        let receiver_task = transport.start();
+        set_fips_peer_configs(
+            native_endpoint.as_ref(),
+            merged_endpoint_peers(&application_peers, &routing_peers, &blob_peers),
+        )
+        .await
+        .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?;
         let blob_runtime = DriveBlobRuntime::bind(
-            native_endpoint,
+            native_endpoint.clone(),
             local_store.clone(),
             local_peer_id.clone(),
             &blob_peers,
         )
         .await?;
         let blob_store: Arc<dyn Store> = blob_runtime.store.clone();
-        let mesh_pubsub = if transport_settings.enable_mesh_pubsub {
-            Some(Arc::new(
-                transport
-                    .start_mesh_pubsub(
-                        local_store.clone(),
-                        local_peer_id.clone(),
-                        FIPS_REQUEST_TIMEOUT,
-                    )
-                    .await
-                    .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?,
-            ))
+        let control_runtime = DriveControlRuntime::bind(
+            native_endpoint.clone(),
+            peer_ids(&application_peers),
+            control_bootstrap_topics(config),
+        )
+        .await?;
+        let nostr_runtime = if transport_settings.enable_mesh_pubsub {
+            Some(DriveNostrPubsubRuntime::bind(native_endpoint.clone()).await?)
         } else {
             None
         };
+        let nostr_receiver = nostr_runtime
+            .as_ref()
+            .map(|runtime| tokio::sync::Mutex::new(runtime.subscribe()));
+        let peer_snapshot = fips_peer_config_snapshot(
+            Some(local_peer_id.as_str()),
+            &application_peers,
+            &routing_peers,
+            &blob_peers,
+        );
 
         Ok(Self {
-            transport,
+            endpoint: native_endpoint,
             blob_store,
             blob_runtime: Some(blob_runtime),
+            control_runtime: Some(control_runtime),
+            nostr_runtime,
+            nostr_receiver,
             local_store,
-            receiver_task: Some(receiver_task),
-            mesh_pubsub,
             endpoint_npub: local_peer_id,
             discovery_scope,
             transport_settings,
-            last_peer_config: Mutex::new(None),
+            last_peer_config: Mutex::new(Some(peer_snapshot)),
         })
     }
 
@@ -188,7 +199,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
                 &mut application_peers,
                 &routing_peers,
                 self.endpoint_npub.as_str(),
-                self.transport.connected_peer_ids().await,
+                self.connected_peer_ids().await,
             );
         }
         let snapshot = fips_peer_config_snapshot(
@@ -200,42 +211,112 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         if !self.update_peer_config_snapshot(snapshot) {
             return;
         }
-        self.transport
-            .set_peer_configs_with_routing_peers(application_peers, routing_peers)
-            .await;
+        if let Err(error) = set_fips_peer_configs(
+            self.endpoint.as_ref(),
+            merged_endpoint_peers(&application_peers, &routing_peers, &blob_peers),
+        )
+        .await
+        {
+            tracing::warn!(%error, "failed to refresh Drive FIPS peers");
+        }
+        if let Some(runtime) = self.control_runtime.as_ref()
+            && let Err(error) = runtime
+                .set_policy(
+                    peer_ids(&application_peers),
+                    control_bootstrap_topics(config),
+                )
+                .await
+        {
+            tracing::warn!(%error, "failed to refresh Drive control policy");
+        }
         if let Some(runtime) = self.blob_runtime.as_ref() {
             runtime.set_authorized_peers(&blob_peers).await;
         }
     }
 
     pub async fn peer_ids(&self) -> Vec<String> {
-        self.transport.peer_ids().await
+        endpoint_peers(self.endpoint.as_ref())
+            .await
+            .into_iter()
+            .map(|peer| peer.npub)
+            .collect()
     }
 
-    pub async fn authorized_peer_ids(&self) -> Vec<String> {
-        self.transport.configured_peer_ids().await
+    pub fn authorized_peer_ids(&self) -> Vec<String> {
+        self.last_peer_config
+            .lock()
+            .expect("FIPS peer config snapshot lock poisoned")
+            .as_ref()
+            .map(|snapshot| {
+                snapshot
+                    .application
+                    .iter()
+                    .map(|peer| peer.npub.clone())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub async fn connected_peer_ids(&self) -> Vec<String> {
-        self.transport.connected_peer_ids().await
+        endpoint_peers(self.endpoint.as_ref())
+            .await
+            .into_iter()
+            .filter(|peer| peer.connected)
+            .map(|peer| peer.npub)
+            .collect()
+    }
+
+    #[must_use]
+    pub fn same_host_blob_provider_ids(&self) -> Vec<String> {
+        same_host_blob_provider_ids(
+            self.endpoint
+                .local_instance_advertisements()
+                .unwrap_or_default(),
+        )
     }
 
     pub async fn fips_peer_statuses(&self) -> Vec<FipsPeerStatus> {
-        self.transport.peer_statuses().await
+        endpoint_peers(self.endpoint.as_ref())
+            .await
+            .into_iter()
+            .map(|peer| FipsPeerStatus {
+                npub: peer.npub,
+                connected: peer.connected,
+                transport_addr: peer.transport_addr,
+                transport_type: peer.transport_type,
+                srtt_ms: peer.srtt_ms,
+                packets_sent: peer.packets_sent,
+                packets_recv: peer.packets_recv,
+                bytes_sent: peer.bytes_sent,
+                bytes_recv: peer.bytes_recv,
+            })
+            .collect()
     }
 
     pub async fn fips_relay_statuses(&self) -> Vec<FipsRelayStatus> {
-        self.transport.relay_statuses().await
+        self.endpoint
+            .relay_statuses()
+            .await
+            .unwrap_or_default()
+            .into_iter()
+            .map(|relay| FipsRelayStatus {
+                url: relay.url,
+                status: relay.status,
+            })
+            .collect()
     }
 
     #[must_use]
     pub fn subscribe_app_messages(&self) -> tokio::sync::broadcast::Receiver<FipsAppMessage> {
-        self.transport.subscribe_app_messages()
+        self.control_runtime
+            .as_ref()
+            .expect("Drive control runtime is stopped")
+            .subscribe()
     }
 
     #[must_use]
     pub fn mesh_pubsub_enabled(&self) -> bool {
-        self.mesh_pubsub.is_some()
+        self.nostr_runtime.is_some()
     }
 
     pub async fn send_app_message(
@@ -244,10 +325,11 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         topic: &str,
         data: Vec<u8>,
     ) -> Result<(), FipsSyncError> {
-        self.transport
-            .send_app_message(peer_id, topic, data)
+        self.control_runtime
+            .as_ref()
+            .ok_or_else(|| FipsSyncError::Endpoint("Drive control runtime is stopped".into()))?
+            .send(peer_id.to_string(), topic.to_string(), data)
             .await
-            .map_err(|error| FipsSyncError::Endpoint(error.to_string()))
     }
 
     pub async fn broadcast_app_message(
@@ -255,76 +337,73 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         topic: &str,
         data: Vec<u8>,
     ) -> Result<usize, FipsSyncError> {
-        self.transport
-            .broadcast_app_message(topic, data)
+        self.control_runtime
+            .as_ref()
+            .ok_or_else(|| FipsSyncError::Endpoint("Drive control runtime is stopped".into()))?
+            .broadcast(topic.to_string(), data)
             .await
-            .map_err(|error| FipsSyncError::Endpoint(error.to_string()))
     }
 
-    pub async fn subscribe_mesh_pubsub(&self, stream_id: String) -> PubsubPublishStats {
-        let Some(mesh_pubsub) = self.mesh_pubsub.as_ref() else {
-            let _ = stream_id;
-            return PubsubPublishStats::default();
-        };
-        mesh_pubsub.subscribe_pubsub(stream_id).await
-    }
-
-    pub async fn publish_mesh_pubsub(
+    pub async fn publish_nostr_event(
         &self,
-        stream_id: String,
-        seq: u64,
-        payload: Vec<u8>,
-    ) -> PubsubPublishStats {
-        let Some(mesh_pubsub) = self.mesh_pubsub.as_ref() else {
-            let _ = (stream_id, seq, payload);
-            return PubsubPublishStats::default();
+        event: nostr_sdk::Event,
+    ) -> Result<usize, FipsSyncError> {
+        let Some(runtime) = self.nostr_runtime.as_ref() else {
+            return Ok(0);
         };
-        mesh_pubsub.publish_pubsub(stream_id, seq, payload).await
+        runtime.publish(event).await
     }
 
-    pub async fn drain_mesh_pubsub_events(&self) -> Vec<FipsMeshPubsubEvent> {
-        let Some(mesh_pubsub) = self.mesh_pubsub.as_ref() else {
+    pub async fn drain_nostr_pubsub_events(&self) -> Vec<FipsNostrPubsubEvent> {
+        let Some(receiver) = self.nostr_receiver.as_ref() else {
             return Vec::new();
         };
-        mesh_pubsub.drain_pubsub_events().await
+        let mut receiver = receiver.lock().await;
+        let mut events = Vec::new();
+        while events.len() < 64 {
+            match receiver.try_recv() {
+                Ok(event) => events.push(event),
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {}
+                Err(_) => break,
+            }
+        }
+        events
     }
 
-    pub async fn recv_mesh_pubsub_event(&self) -> FipsMeshPubsubEvent {
-        self.mesh_pubsub
+    pub async fn recv_nostr_pubsub_event(&self) -> FipsNostrPubsubEvent {
+        self.nostr_receiver
             .as_ref()
-            .expect("mesh pubsub is disabled")
-            .recv_pubsub_event()
+            .expect("Nostr pubsub is disabled")
+            .lock()
             .await
+            .recv()
+            .await
+            .expect("Nostr pubsub runtime stopped")
     }
 
     pub async fn mesh_peer_count(&self) -> usize {
-        let Some(mesh_pubsub) = self.mesh_pubsub.as_ref() else {
+        let Some(runtime) = self.nostr_runtime.as_ref() else {
             return 0;
         };
-        mesh_pubsub.peer_count().await
+        runtime.connected_peer_count().await
     }
 
-    pub async fn mesh_peer_ids(&self) -> Vec<String> {
-        let Some(mesh_pubsub) = self.mesh_pubsub.as_ref() else {
-            return Vec::new();
-        };
-        mesh_pubsub.peer_ids().await
-    }
     pub async fn download_tree(&self, root: &Cid) -> Result<DownloadReport, FipsSyncError> {
         download_tree_with_resolver(self.local_store.clone(), root, self.blob_store.clone()).await
     }
 
     pub async fn shutdown(mut self) -> Result<(), FipsSyncError> {
-        let shutdown_result = self.shutdown_endpoint().await;
-        if let Some(receiver_task) = self.receiver_task.take() {
-            receiver_task.abort();
-            let _ = receiver_task.await;
+        if let Some(mut runtime) = self.control_runtime.take() {
+            runtime.shutdown().await?;
         }
-        shutdown_result
+        if let Some(mut runtime) = self.nostr_runtime.take() {
+            runtime.shutdown().await;
+        }
+        self.shutdown_endpoint().await
     }
 
     pub async fn shutdown_endpoint(&self) -> Result<(), FipsSyncError> {
-        self.transport
+        self.endpoint
             .shutdown()
             .await
             .map_err(|error| FipsSyncError::Endpoint(error.to_string()))
@@ -343,19 +422,105 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     }
 }
 
+fn same_host_blob_provider_ids(
+    advertisements: impl IntoIterator<Item = fips_core::discovery::local::LocalInstanceAdvertisement>,
+) -> Vec<String> {
+    let mut providers = advertisements
+        .into_iter()
+        .filter(|advertisement| {
+            advertisement
+                .capability(hashtree_fips_transport::TCP_BLOB_CAPABILITY)
+                .and_then(|capability| capability.fsp_port)
+                == Some(hashtree_fips_transport::TCP_BLOB_SERVICE_PORT)
+        })
+        .map(|advertisement| advertisement.npub)
+        .collect::<Vec<_>>();
+    providers.sort();
+    providers.dedup();
+    providers
+}
+
 fn drive_same_host_blob_store_config() -> SameHostBlobStoreConfig {
     SameHostBlobStoreConfig::default()
         .with_provider_htl(BLOB_DEFAULT_HTL)
         .with_standalone_htl(BLOB_DEFAULT_HTL)
 }
 
-fn unconfigured_app_message_topics() -> [&'static str; 4] {
-    [
-        APP_KEY_LINK_REQUEST_APP_TOPIC,
-        crate::app_key_link_transport::APP_KEY_APPROVAL_RECEIPT_APP_TOPIC,
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FipsRelayStatus {
+    pub url: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FipsPeerStatus {
+    pub npub: String,
+    pub connected: bool,
+    pub transport_addr: Option<String>,
+    pub transport_type: Option<String>,
+    pub srtt_ms: Option<u64>,
+    pub packets_sent: u64,
+    pub packets_recv: u64,
+    pub bytes_sent: u64,
+    pub bytes_recv: u64,
+}
+
+async fn endpoint_peers(endpoint: &FipsEndpoint) -> Vec<fips_core::endpoint::FipsEndpointPeer> {
+    endpoint.peers().await.unwrap_or_else(|error| {
+        tracing::warn!(%error, "failed to snapshot Drive FIPS peers");
+        Vec::new()
+    })
+}
+
+fn peer_ids(peers: &[FipsPeerConfig]) -> BTreeSet<String> {
+    peers
+        .iter()
+        .map(|peer| peer.npub.trim())
+        .filter(|npub| !npub.is_empty())
+        .map(str::to_string)
+        .collect()
+}
+
+fn merged_endpoint_peers(
+    groups: &[FipsPeerConfig],
+    routing: &[FipsPeerConfig],
+    blob: &[FipsPeerConfig],
+) -> Vec<FipsPeerConfig> {
+    let mut peers = std::collections::BTreeMap::<String, BTreeSet<String>>::new();
+    for peer in groups.iter().chain(routing).chain(blob) {
+        let npub = peer.npub.trim();
+        if npub.is_empty() {
+            continue;
+        }
+        let addresses = peers.entry(npub.to_string()).or_default();
+        addresses.extend(
+            peer.udp_addresses
+                .iter()
+                .map(|address| address.trim())
+                .filter(|address| !address.is_empty())
+                .map(str::to_string),
+        );
+    }
+    peers
+        .into_iter()
+        .map(|(npub, udp_addresses)| FipsPeerConfig {
+            npub,
+            udp_addresses: udp_addresses.into_iter().collect(),
+        })
+        .collect()
+}
+
+fn control_bootstrap_topics(config: &AppConfig) -> BTreeSet<&'static str> {
+    let mut topics = BTreeSet::from([
+        APP_KEY_APPROVAL_RECEIPT_APP_TOPIC,
+        APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC,
         APP_KEY_LINK_ROSTER_APP_TOPIC,
-        DIRECT_ROOT_APP_TOPIC,
-    ]
+        APP_KEY_LINK_ROSTER_ACK_APP_TOPIC,
+    ]);
+    if accepts_app_key_link_requests(config) {
+        topics.insert(APP_KEY_LINK_REQUEST_APP_TOPIC);
+    }
+    topics
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -421,176 +586,11 @@ fn normalize_fips_peer_configs(
     out
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct FipsTransportSettings {
-    pub enable_udp: bool,
-    pub enable_webrtc: bool,
-    pub enable_lan_discovery: bool,
-    pub enable_mesh_pubsub: bool,
-    pub udp_bind_addr: Option<String>,
-    pub udp_public: bool,
-    pub udp_external_addr: Option<String>,
-    pub share_local_candidates: bool,
-    pub static_peer_hints: Vec<(String, Vec<String>)>,
-    pub bootstrap_peer_hints: Vec<(String, Vec<String>)>,
-    pub webrtc_max_connections: usize,
-    pub open_discovery_max_pending: usize,
-}
-
-impl Default for FipsTransportSettings {
-    fn default() -> Self {
-        Self {
-            enable_udp: true,
-            enable_webrtc: target_allows_default_desktop_fips(std::env::consts::OS),
-            enable_lan_discovery: true,
-            enable_mesh_pubsub: true,
-            udp_bind_addr: None,
-            udp_public: false,
-            udp_external_addr: None,
-            share_local_candidates: target_allows_default_desktop_fips(std::env::consts::OS),
-            static_peer_hints: Vec::new(),
-            bootstrap_peer_hints: Vec::new(),
-            webrtc_max_connections: FIPS_WEBRTC_MAX_CONNECTIONS,
-            open_discovery_max_pending: FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
-        }
-    }
-}
-
-impl FipsTransportSettings {
-    #[must_use]
-    pub fn from_env() -> Self {
-        let defaults = Self::default();
-        let udp_bind_addr = non_empty_env("IRIS_DRIVE_FIPS_UDP_BIND_ADDR");
-        let udp_external_addr = non_empty_env("IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR");
-        let udp_public =
-            bool_env("IRIS_DRIVE_FIPS_UDP_PUBLIC").unwrap_or_else(|| udp_external_addr.is_some());
-        let bootstrap_enabled = bool_env("IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP").unwrap_or(false);
-        let bootstrap_peer_hints = if !bootstrap_enabled {
-            Vec::new()
-        } else if let Ok(value) = std::env::var("IRIS_DRIVE_FIPS_BOOTSTRAP_PEERS") {
-            parse_static_peer_hints(&value)
-        } else {
-            default_fips_bootstrap_peer_hints()
-        };
-        Self {
-            enable_udp: bool_env("IRIS_DRIVE_FIPS_ENABLE_UDP").unwrap_or(defaults.enable_udp),
-            enable_webrtc: bool_env("IRIS_DRIVE_FIPS_ENABLE_WEBRTC")
-                .unwrap_or(defaults.enable_webrtc),
-            enable_lan_discovery: bool_env("IRIS_DRIVE_FIPS_ENABLE_LAN_DISCOVERY")
-                .unwrap_or(defaults.enable_lan_discovery),
-            enable_mesh_pubsub: bool_env("IRIS_DRIVE_FIPS_ENABLE_MESH_PUBSUB")
-                .unwrap_or(defaults.enable_mesh_pubsub),
-            udp_bind_addr,
-            udp_public,
-            udp_external_addr,
-            share_local_candidates: bool_env("IRIS_DRIVE_FIPS_SHARE_LOCAL_CANDIDATES")
-                .unwrap_or(defaults.share_local_candidates),
-            static_peer_hints: parse_static_peer_hints(
-                &std::env::var("IRIS_DRIVE_FIPS_STATIC_PEERS").unwrap_or_default(),
-            ),
-            bootstrap_peer_hints,
-            webrtc_max_connections: usize_env("IRIS_DRIVE_FIPS_WEBRTC_MAX_CONNECTIONS")
-                .unwrap_or(FIPS_WEBRTC_MAX_CONNECTIONS)
-                .max(1),
-            open_discovery_max_pending: usize_env("IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING")
-                .unwrap_or(FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING),
-        }
-    }
-}
-
-fn target_allows_default_desktop_fips(target_os: &str) -> bool {
-    !matches!(target_os, "android" | "ios")
-}
-
-fn fips_endpoint_options(
-    identity_nsec: String,
-    discovery_scope: String,
-    relays: Vec<String>,
-    _config: &AppConfig,
-    settings: &FipsTransportSettings,
-) -> FipsEndpointOptions {
-    FipsEndpointOptions {
-        identity_nsec,
-        discovery_scope,
-        relays,
-        enable_udp: settings.enable_udp,
-        enable_webrtc: settings.enable_webrtc,
-        enable_local_rendezvous: true,
-        ethernet_interfaces: Vec::new(),
-        enable_lan_discovery: settings.enable_lan_discovery,
-        udp_bind_addr: settings.udp_bind_addr.clone(),
-        udp_public: settings.udp_public,
-        udp_external_addr: settings.udp_external_addr.clone(),
-        share_local_candidates: settings.share_local_candidates,
-        webrtc_auto_connect: true,
-        webrtc_max_connections: settings.webrtc_max_connections,
-        open_discovery_max_pending: settings.open_discovery_max_pending,
-        packet_channel_capacity: FIPS_PACKET_CHANNEL_CAPACITY,
-    }
-}
-
 fn accepts_app_key_link_requests(config: &AppConfig) -> bool {
     config
         .profile
         .as_ref()
         .is_some_and(crate::ProfileState::can_admin_profile)
-}
-
-fn non_empty_env(name: &str) -> Option<String> {
-    std::env::var(name)
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty())
-}
-
-fn bool_env(name: &str) -> Option<bool> {
-    parse_bool_env_value(std::env::var(name).ok()?.trim())
-}
-
-fn usize_env(name: &str) -> Option<usize> {
-    std::env::var(name).ok()?.trim().parse().ok()
-}
-
-fn parse_bool_env_value(value: &str) -> Option<bool> {
-    match value.to_ascii_lowercase().as_str() {
-        "1" | "true" | "yes" | "on" => Some(true),
-        "0" | "false" | "no" | "off" => Some(false),
-        _ => None,
-    }
-}
-
-impl<L: Store + Send + Sync + 'static> Drop for FipsBlockSync<L> {
-    fn drop(&mut self) {
-        if let Some(receiver_task) = self.receiver_task.take() {
-            receiver_task.abort();
-        }
-    }
-}
-
-async fn download_tree_with_resolver<L, R>(
-    local_store: Arc<L>,
-    root: &Cid,
-    resolver: Arc<R>,
-) -> Result<DownloadReport, FipsSyncError>
-where
-    L: Store + Send + Sync + 'static,
-    R: Store + ?Sized + 'static,
-{
-    let writeback = Arc::new(MeasuredResolverStore::new(local_store, resolver));
-    let tree = HashTree::new(HashTreeConfig::new(writeback.clone()));
-    let hashes = collect_live_sync_hashes(&tree, root, 4).await?;
-    if writeback.missing() > 0 {
-        let detail = writeback
-            .first_missing()
-            .unwrap_or_else(|| format!("{} blocks", writeback.missing()));
-        return Err(FipsSyncError::MissingOnFips(detail));
-    }
-
-    Ok(DownloadReport {
-        total_hashes: hashes.len(),
-        fetched: writeback.fetched(),
-        already_local: writeback.already_local(),
-    })
 }
 
 #[must_use]
@@ -845,119 +845,6 @@ fn static_peer_key_matches_any(key: &str, values: &[&str]) -> bool {
     values
         .iter()
         .any(|value| key.eq_ignore_ascii_case(value.trim()))
-}
-
-fn parse_static_peer_hints(value: &str) -> Vec<(String, Vec<String>)> {
-    value
-        .split([',', ';'])
-        .filter_map(|entry| {
-            let (key, addresses) = entry.split_once('=')?;
-            let key = key.trim();
-            if key.is_empty() {
-                return None;
-            }
-            let addresses = addresses
-                .split('|')
-                .map(str::trim)
-                .filter(|address| !address.is_empty())
-                .map(ToString::to_string)
-                .collect::<Vec<_>>();
-            (!addresses.is_empty()).then(|| (key.to_string(), addresses))
-        })
-        .collect()
-}
-
-struct MeasuredResolverStore<L: Store + Send + Sync + 'static, R: Store + ?Sized + 'static> {
-    local: Arc<L>,
-    resolver: Arc<R>,
-    fetched: std::sync::atomic::AtomicUsize,
-    already_local: std::sync::atomic::AtomicUsize,
-    missing: std::sync::atomic::AtomicUsize,
-    first_missing: Mutex<Option<String>>,
-}
-
-impl<L, R> MeasuredResolverStore<L, R>
-where
-    L: Store + Send + Sync + 'static,
-    R: Store + ?Sized + 'static,
-{
-    fn new(local: Arc<L>, resolver: Arc<R>) -> Self {
-        Self {
-            local,
-            resolver,
-            fetched: std::sync::atomic::AtomicUsize::new(0),
-            already_local: std::sync::atomic::AtomicUsize::new(0),
-            missing: std::sync::atomic::AtomicUsize::new(0),
-            first_missing: Mutex::new(None),
-        }
-    }
-
-    fn fetched(&self) -> usize {
-        self.fetched.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    fn already_local(&self) -> usize {
-        self.already_local
-            .load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    fn missing(&self) -> usize {
-        self.missing.load(std::sync::atomic::Ordering::Relaxed)
-    }
-
-    fn first_missing(&self) -> Option<String> {
-        self.first_missing
-            .lock()
-            .ok()
-            .and_then(|value| value.clone())
-    }
-}
-
-#[async_trait]
-impl<L, R> Store for MeasuredResolverStore<L, R>
-where
-    L: Store + Send + Sync + 'static,
-    R: Store + ?Sized + 'static,
-{
-    async fn put(&self, hash: Hash, data: Vec<u8>) -> Result<bool, StoreError> {
-        self.local.put(hash, data).await
-    }
-
-    async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
-        if let Some(bytes) = self.local.get(hash).await? {
-            self.already_local
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            return Ok(Some(bytes));
-        }
-
-        if let Some(bytes) = self.resolver.get(hash).await? {
-            self.fetched
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            Ok(Some(bytes))
-        } else {
-            let hex = to_hex(hash);
-            if self
-                .missing
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                == 0
-                && let Ok(mut first_missing) = self.first_missing.lock()
-            {
-                *first_missing = Some(hex);
-            }
-            Ok(None)
-        }
-    }
-
-    async fn has(&self, hash: &Hash) -> Result<bool, StoreError> {
-        if self.local.has(hash).await? {
-            return Ok(true);
-        }
-        self.resolver.has(hash).await
-    }
-
-    async fn delete(&self, hash: &Hash) -> Result<bool, StoreError> {
-        self.local.delete(hash).await
-    }
 }
 
 #[cfg(test)]
