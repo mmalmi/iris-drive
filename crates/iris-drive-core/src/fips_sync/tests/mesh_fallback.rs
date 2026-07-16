@@ -362,7 +362,7 @@ async fn bind_local_test_endpoint(
     .unwrap()
 }
 
-fn local_only_settings(
+pub(super) fn local_only_settings(
     source: &AppKey,
     source_udp_addr: SocketAddrV4,
     target_udp_addr: SocketAddrV4,
