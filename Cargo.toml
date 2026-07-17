@@ -25,7 +25,7 @@ base64 = "0.22"
 bip39 = { version = "2.2", features = ["rand"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-core = "=0.4.5"
+fips-core = "=0.4.6"
 fips-tcp = "=0.2.0"
 fips-tcp-endpoint = "=0.2.0"
 futures = "0.3"
@@ -56,12 +56,12 @@ hashtree-core = "=0.2.86"
 hashtree-blossom = { version = "=0.2.82", features = ["store"] }
 hashtree-config = "=0.2.82"
 hashtree-embedded = "=0.2.83"
-hashtree-fips-transport = { version = "=0.4.5", features = ["webrtc-endpoint"] }
+hashtree-fips-transport = { version = "=0.4.6", features = ["webrtc-endpoint"] }
 hashtree-fs = "=0.2.82"
 hashtree-fuse = { version = "=0.2.82", features = ["fuse"] }
-hashtree-lmdb = "=0.2.84"
-hashtree-nostr = "=0.2.82"
-hashtree-network = "=0.2.84"
+hashtree-lmdb = "=0.2.85"
+hashtree-nostr = "=0.2.83"
+hashtree-network = "=0.2.85"
 hashtree-resolver = { version = "=0.2.82", features = ["nostr"] }
 hashtree-updater = "=0.2.82"
 hashtree-provider = { path = "crates/hashtree-provider" }
