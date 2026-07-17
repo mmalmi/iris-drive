@@ -128,12 +128,13 @@ require_contains scripts/release-gate.sh "just structure"
 require_contains scripts/release-gate.sh "cargo test --workspace --exclude idrive"
 require_contains scripts/release-gate.sh "--test daemon_sync_matrix"
 require_contains scripts/release-gate.sh "cargo build --workspace --release"
-require_contains Cargo.toml 'fips-core = "=0.4.5"'
+require_contains Cargo.toml 'fips-core = "=0.4.6"'
 require_contains Cargo.toml 'hashtree-core = "=0.2.86"'
 require_contains Cargo.toml 'hashtree-embedded = "=0.2.83"'
-require_contains Cargo.toml 'hashtree-fips-transport = { version = "=0.4.5"'
-require_contains Cargo.toml 'hashtree-lmdb = "=0.2.84"'
-require_contains Cargo.toml 'hashtree-network = "=0.2.84"'
+require_contains Cargo.toml 'hashtree-fips-transport = { version = "=0.4.6"'
+require_contains Cargo.toml 'hashtree-lmdb = "=0.2.85"'
+require_contains Cargo.toml 'hashtree-network = "=0.2.85"'
+require_contains Cargo.toml 'hashtree-nostr = "=0.2.83"'
 require_contains Cargo.toml 'nostr-identity = "=0.3.1"'
 require_contains crates/iris-drive-core/Cargo.toml "fips-core.workspace = true"
 require_absent Cargo.toml "[patch.crates-io]"
@@ -142,15 +143,16 @@ require_absent Cargo.toml 'path = "crates/hashtree-fips-transport"'
 require_absent Cargo.toml 'path = "../nostr-social-graph'
 require_absent linux/Cargo.toml "[patch.crates-io]"
 for lock in Cargo.lock linux/Cargo.lock; do
-  require_registry_package "$lock" fips-core 0.4.5 fd805bf7990f441969502703261c4710672f6fd974f2b681ec68e47700a73c5b
+  require_registry_package "$lock" fips-core 0.4.6 12cc0df5e04a1aae16efa85313976e87eb037d6e7955b8a035febd91b00383dc
   require_registry_package "$lock" fips-tcp 0.2.0 d18861c5eca7c472fbbdbbfb498f8d2525405081a9a24b42633c600ba6f6e42a
   require_registry_package "$lock" fips-tcp-endpoint 0.2.0 8e3e01e352b709b80f4261e2cd7d0ffde2d3aaf175267b3960997e70f7305c12
-  require_registry_package "$lock" hashtree-cli 0.2.93 2a6f2540246a6663672a1ad841d1cd76d72e84bf6ede73a8eaea821cf33cfcbc
+  require_registry_package "$lock" hashtree-cli 0.2.97 68f50690aa798fa948a47ed2870b7d6f65f30ae40b6096dcde2422b1adcd02e5
   require_registry_package "$lock" hashtree-core 0.2.86 574476b1fe122bddc7783ba0346dca42ec673a241128b0edf9e38166c1bb800f
   require_registry_package "$lock" hashtree-embedded 0.2.83 1975afb5602938dcb8a7062116f37174bf79a9128873a30c6b0c3f297ec08bcc
-  require_registry_package "$lock" hashtree-fips-transport 0.4.5 20907d2e8892fac6562d535b01f41eaa74964a9ea31e66c9674f74e035bf2580
-  require_registry_package "$lock" hashtree-lmdb 0.2.84 0b1c1b6ec24b5e1e294f8fe934e5f7b6455a207e5bd1777efc652f51b4bee49a
-  require_registry_package "$lock" hashtree-network 0.2.84 ddc33a39f6b302de9ab541c6c2f8e68c97d33254eb9c0e9916c0466b65c199c3
+  require_registry_package "$lock" hashtree-fips-transport 0.4.6 3817b451831f915787090cb1ca33dac2e5313bc1e5afd2da515f0e57bb0c997f
+  require_registry_package "$lock" hashtree-lmdb 0.2.85 e61f72986fce9c84f9fd03c72c581af092e25ea698e8b7bc54ddc18fe821286b
+  require_registry_package "$lock" hashtree-network 0.2.85 1c7668c591e04c3326165eb2e85cf878baf8348601e36c6086ecec6f451354f5
+  require_registry_package "$lock" hashtree-nostr 0.2.83 489b2bf6d5e57921409aeee0a199a0f82512d473d290143306fc053d815c6973
   require_registry_package "$lock" nostr-pubsub-fips 0.3.1 5663a6108ae432879d6d7441036b979605fc032011c0a6e81dbf1798ce844f6c
 done
 require_absent scripts/docker-cli-e2e.sh "Missing required sibling checkout"
