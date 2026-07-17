@@ -55,13 +55,13 @@ nostr-identity = "=0.3.1"
 hashtree-core = "=0.2.86"
 hashtree-blossom = { version = "=0.2.82", features = ["store"] }
 hashtree-config = "=0.2.83"
-hashtree-embedded = "=0.2.85"
+hashtree-embedded = "=0.2.86"
 hashtree-fips-transport = { version = "=0.4.6", features = ["webrtc-endpoint"] }
 hashtree-fs = "=0.2.82"
 hashtree-fuse = { version = "=0.2.82", features = ["fuse"] }
 hashtree-lmdb = "=0.2.85"
 hashtree-nostr = "=0.2.83"
-hashtree-network = "=0.2.86"
+hashtree-network = "=0.2.87"
 hashtree-resolver = { version = "=0.2.82", features = ["nostr"] }
 hashtree-updater = "=0.2.82"
 hashtree-provider = { path = "crates/hashtree-provider" }
