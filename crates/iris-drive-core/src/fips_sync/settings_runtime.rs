@@ -1,5 +1,6 @@
 //! Environment-derived FIPS carrier settings and endpoint construction.
 
+use fips_core::config::WebSocketConfig;
 use hashtree_fips_transport::FipsEndpointOptions;
 
 use crate::config::AppConfig;
@@ -19,6 +20,7 @@ pub struct FipsTransportSettings {
     pub enable_webrtc: bool,
     pub enable_lan_discovery: bool,
     pub enable_mesh_pubsub: bool,
+    pub websocket_seed_urls: Vec<String>,
     pub udp_bind_addr: Option<String>,
     pub udp_public: bool,
     pub udp_external_addr: Option<String>,
@@ -36,6 +38,7 @@ impl Default for FipsTransportSettings {
             enable_webrtc: target_allows_default_desktop_fips(std::env::consts::OS),
             enable_lan_discovery: true,
             enable_mesh_pubsub: true,
+            websocket_seed_urls: Vec::new(),
             udp_bind_addr: None,
             udp_public: false,
             udp_external_addr: None,
@@ -72,6 +75,7 @@ impl FipsTransportSettings {
                 .unwrap_or(defaults.enable_lan_discovery),
             enable_mesh_pubsub: bool_env("IRIS_DRIVE_FIPS_ENABLE_MESH_PUBSUB")
                 .unwrap_or(defaults.enable_mesh_pubsub),
+            websocket_seed_urls: list_env("IRIS_FIPS_WEBSOCKET_SEED_URLS"),
             udp_bind_addr,
             udp_public,
             udp_external_addr,
@@ -107,6 +111,10 @@ pub(super) fn fips_endpoint_options(
         relays,
         enable_udp: settings.enable_udp,
         enable_webrtc: settings.enable_webrtc,
+        websocket: (!settings.websocket_seed_urls.is_empty()).then(|| WebSocketConfig {
+            seed_urls: settings.websocket_seed_urls.clone(),
+            ..WebSocketConfig::default()
+        }),
         enable_local_rendezvous: true,
         ethernet_interfaces: Vec::new(),
         enable_lan_discovery: settings.enable_lan_discovery,
@@ -137,6 +145,15 @@ pub(super) fn parse_bool_env_value(value: &str) -> Option<bool> {
     }
 }
 
+pub(super) fn parse_list_env_value(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
+}
+
 pub(super) fn parse_static_peer_hints(value: &str) -> Vec<(String, Vec<String>)> {
     value
         .split([',', ';'])
@@ -162,6 +179,10 @@ fn non_empty_env(name: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn list_env(name: &str) -> Vec<String> {
+    std::env::var(name).map_or_else(|_| Vec::new(), |value| parse_list_env_value(&value))
 }
 
 fn bool_env(name: &str) -> Option<bool> {

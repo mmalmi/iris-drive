@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use fips_core::{FipsEndpoint, NostrRelayAdapter};
+use fips_core::FipsEndpoint;
 use hashtree_core::{BlobRoute, Cid, HashTreeError, Store};
 use hashtree_fips_transport::{BoundFipsEndpoint, FipsPeerConfig, set_fips_peer_configs};
 use nostr_sdk::PublicKey;
@@ -63,7 +63,6 @@ pub enum FipsSyncError {
 /// Running FIPS block exchange bound to the Iris Drive block store.
 pub struct FipsBlockSync<L: Store + Send + Sync + 'static> {
     endpoint: Arc<FipsEndpoint>,
-    relay_adapter: Mutex<Option<NostrRelayAdapter>>,
     blob_router: Arc<hashtree_network::BlobRouter>,
     blob_runtime: Option<DriveBlobRuntime<L>>,
     control_runtime: Option<DriveControlRuntime>,
@@ -159,11 +158,6 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         let nostr_receiver = nostr_runtime
             .as_ref()
             .map(|runtime| tokio::sync::Mutex::new(runtime.subscribe()));
-        let relay_adapter = NostrRelayAdapter::start(native_endpoint.clone(), &config.relays)
-            .await
-            .map_err(|error| {
-                FipsSyncError::Endpoint(format!("starting Nostr relay carrier: {error}"))
-            })?;
         let peer_snapshot = fips_peer_config_snapshot(
             Some(local_peer_id.as_str()),
             &application_peers,
@@ -173,7 +167,6 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
 
         Ok(Self {
             endpoint: native_endpoint,
-            relay_adapter: Mutex::new(relay_adapter),
             blob_router,
             blob_runtime: Some(blob_runtime),
             control_runtime: Some(control_runtime),
@@ -373,11 +366,11 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         recv_optional_nostr_pubsub_event(self.nostr_receiver.as_ref()).await
     }
 
-    pub async fn mesh_peer_count(&self) -> usize {
+    pub fn mesh_peer_count(&self) -> usize {
         let Some(runtime) = self.nostr_runtime.as_ref() else {
             return 0;
         };
-        runtime.connected_peer_count().await
+        runtime.connected_peer_count()
     }
 
     pub async fn download_tree(&self, root: &Cid) -> Result<DownloadReport, FipsSyncError> {
@@ -396,14 +389,6 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     }
 
     pub async fn shutdown_endpoint(&self) -> Result<(), FipsSyncError> {
-        let relay_adapter = self
-            .relay_adapter
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take();
-        if let Some(adapter) = relay_adapter {
-            adapter.stop().await;
-        }
         self.endpoint
             .shutdown()
             .await
@@ -581,8 +566,7 @@ fn authorized_device_fips_peers(
     }
     if account.can_admin_profile() {
         for request in &account.inbound_app_key_link_requests {
-            if let Some(pending) =
-                fips_peer_config_for_pubkey(&request.app_key_pubkey, settings, &config.relays)
+            if let Some(pending) = fips_peer_config_for_pubkey(&request.app_key_pubkey, settings)
                 && !peers.iter().any(|peer| peer.npub == pending.npub)
             {
                 peers.push(pending);
@@ -623,9 +607,6 @@ fn authorized_blob_fips_peers(
                     })
             }),
     );
-    for peer in &mut peers {
-        add_nostr_relay_fallback(peer, &config.relays);
-    }
     peers
 }
 
@@ -713,38 +694,23 @@ fn pending_app_key_link_fips_peer(
     if account.can_admin_profile() || !request_can_still_receive_full_roster {
         return None;
     }
-    fips_peer_config_for_pubkey(&request.admin_app_key_pubkey, settings, &config.relays)
+    fips_peer_config_for_pubkey(&request.admin_app_key_pubkey, settings)
 }
 
 fn fips_peer_config_for_pubkey(
     pubkey_hex: &str,
     settings: &FipsTransportSettings,
-    relays: &[String],
 ) -> Option<FipsPeerConfig> {
     PublicKey::from_hex(pubkey_hex)
         .ok()
         .and_then(|pubkey| pubkey.to_bech32().ok())
-        .map(|npub| {
-            let mut peer = FipsPeerConfig {
-                udp_addresses: static_peer_addresses_for_keys(
-                    &settings.static_peer_hints,
-                    &[pubkey_hex, &npub],
-                ),
-                npub,
-            };
-            add_nostr_relay_fallback(&mut peer, relays);
-            peer
+        .map(|npub| FipsPeerConfig {
+            udp_addresses: static_peer_addresses_for_keys(
+                &settings.static_peer_hints,
+                &[pubkey_hex, &npub],
+            ),
+            npub,
         })
-}
-
-fn add_nostr_relay_fallback(peer: &mut FipsPeerConfig, relays: &[String]) {
-    if !relays.iter().any(|relay| !relay.trim().is_empty()) {
-        return;
-    }
-    let address = format!("nostr_relay:{}", peer.npub);
-    if !peer.udp_addresses.contains(&address) {
-        peer.udp_addresses.push(address);
-    }
 }
 
 fn bootstrap_fips_peers(settings: &FipsTransportSettings) -> Vec<FipsPeerConfig> {

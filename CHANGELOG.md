@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Use the transport-neutral Nostr pubsub router and shared INV/WANT protocol
+  through FIPS/TCP, with traditional Nostr relay support remaining a separate
+  router source.
+- Remove the retired Nostr-relay FIPS packet carrier from the consumed
+  Hashtree/FIPS stack.
+
 ## 0.1.27 - 2026-07-18
 
 ### Changed

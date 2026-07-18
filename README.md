@@ -55,6 +55,11 @@ just run-cli import /path/to/seed-folder
 just run-cli daemon
 ```
 
+An optional authenticated FIPS first-adjacency service can be configured with
+`IRIS_FIPS_WEBSOCKET_SEED_URLS`, using a comma-separated list of explicit
+`wss://.../fips` URLs. Normal Nostr relay settings remain event and
+discovery/signaling routes; they do not carry FIPS packets.
+
 Useful CLI probes:
 
 ```bash

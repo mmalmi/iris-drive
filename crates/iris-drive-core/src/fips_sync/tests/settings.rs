@@ -2,7 +2,7 @@ use super::*;
 
 use super::super::settings_runtime::{
     bounded_webrtc_max_connections, fips_endpoint_options, parse_bool_env_value,
-    parse_static_peer_hints, target_allows_default_desktop_fips,
+    parse_list_env_value, parse_static_peer_hints, target_allows_default_desktop_fips,
 };
 
 #[test]
@@ -44,6 +44,7 @@ fn endpoint_options_can_advertise_native_udp_without_disabling_webrtc() {
         enable_webrtc: true,
         enable_lan_discovery: true,
         enable_mesh_pubsub: true,
+        websocket_seed_urls: vec!["wss://seed.example/fips".to_string()],
         udp_bind_addr: Some("0.0.0.0:2121".to_string()),
         udp_public: true,
         udp_external_addr: Some("10.44.94.98:2121".to_string()),
@@ -64,6 +65,10 @@ fn endpoint_options_can_advertise_native_udp_without_disabling_webrtc() {
 
     assert!(options.enable_udp);
     assert!(options.enable_webrtc);
+    assert_eq!(
+        options.websocket.expect("WebSocket seeds").seed_urls,
+        vec!["wss://seed.example/fips"]
+    );
     assert_eq!(options.udp_bind_addr.as_deref(), Some("0.0.0.0:2121"));
     assert!(options.udp_public);
     assert_eq!(
@@ -73,6 +78,17 @@ fn endpoint_options_can_advertise_native_udp_without_disabling_webrtc() {
     assert!(options.webrtc_auto_connect);
     assert_eq!(options.webrtc_max_connections, 8);
     assert_eq!(options.open_discovery_max_pending, 8);
+}
+
+#[test]
+fn websocket_seed_list_ignores_empty_entries_and_whitespace() {
+    assert_eq!(
+        parse_list_env_value(" wss://one.example/fips, ,wss://two.example/fips "),
+        vec![
+            "wss://one.example/fips".to_string(),
+            "wss://two.example/fips".to_string(),
+        ]
+    );
 }
 
 #[test]
@@ -189,10 +205,7 @@ fn admin_inbound_app_key_link_request_configures_pending_fips_peer() {
     let peers = authorized_device_fips_peers(&config, &FipsTransportSettings::default());
     assert_eq!(peers.len(), 1);
     assert_eq!(peers[0].npub, pending_npub);
-    assert_eq!(
-        peers[0].udp_addresses,
-        vec![format!("nostr_relay:{pending_npub}")]
-    );
+    assert!(peers[0].udp_addresses.is_empty());
 }
 
 #[test]
@@ -392,7 +405,7 @@ fn legacy_drive_roots_do_not_seed_bootstrap_fips_routing_peers() {
 }
 
 #[test]
-fn relay_fallback_preserves_static_addresses_for_authorized_devices() {
+fn ordinary_relays_do_not_change_authorized_fips_peer_addresses() {
     let first_keys = nostr_sdk::Keys::generate();
     let second_keys = nostr_sdk::Keys::generate();
     let first_pubkey = first_keys.public_key().to_hex();
@@ -449,17 +462,9 @@ fn relay_fallback_preserves_static_addresses_for_authorized_devices() {
     assert_eq!(peers.len(), 2);
     assert_eq!(authorized_blob_fips_peers(&config, &settings), peers);
     assert!(peers.iter().any(|peer| peer.npub == first_npub
-        && peer.udp_addresses
-            == vec![
-                "10.44.34.102:22121".to_string(),
-                format!("nostr_relay:{first_npub}"),
-            ]));
+        && peer.udp_addresses == vec!["10.44.34.102:22121".to_string()]));
     assert!(peers.iter().any(|peer| peer.npub == second_npub
-        && peer.udp_addresses
-            == vec![
-                "10.44.214.2:22121".to_string(),
-                format!("nostr_relay:{second_npub}"),
-            ]));
+        && peer.udp_addresses == vec!["10.44.214.2:22121".to_string()]));
 }
 
 #[test]
@@ -501,10 +506,7 @@ fn pending_app_key_link_admin_is_allowed_for_roster_app_messages() {
     let authorized = authorized_device_fips_peers(&config, &settings);
     assert_eq!(authorized.len(), 1);
     assert_eq!(authorized[0].npub, admin_npub);
-    let expected_addresses = vec![
-        "10.44.1.9:22121".to_string(),
-        format!("nostr_relay:{admin_npub}"),
-    ];
+    let expected_addresses = vec!["10.44.1.9:22121".to_string()];
     assert_eq!(authorized[0].udp_addresses, expected_addresses);
     assert!(authorized_blob_fips_peers(&config, &settings).is_empty());
     let routing = routing_fips_peers(&config, &settings);
