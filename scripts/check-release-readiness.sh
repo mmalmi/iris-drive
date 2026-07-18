@@ -200,6 +200,7 @@ require_contains scripts/cross-vm-five-platform-e2e.sh "scripts/ios-gui-linking-
 require_contains scripts/cross-vm-five-platform-e2e.sh "scripts/android-gui-linking-smoke.sh"
 require_contains scripts/cross-vm-five-platform-e2e.sh "scripts/mobile-android-smoke.sh --no-build"
 require_contains scripts/cross-vm-e2e.sh "IRIS_DRIVE_E2E_IDLE_CPU_GATE"
+require_contains scripts/cross-vm-e2e.sh 'SETUP_REMOTE_TIMEOUT_SECS="${IRIS_DRIVE_E2E_SETUP_REMOTE_TIMEOUT_SECS:-300}"'
 require_contains scripts/cross-vm-e2e.sh "idle daemon CPU gate"
 require_contains scripts/cross-vm-e2e.sh "idle-cpu-gate-windows.ps1"
 require_contains scripts/cross-vm-e2e.sh "IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES = 'daemon'"
