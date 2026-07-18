@@ -21,3 +21,4 @@
 - Keep the daemon responsive when mesh pubsub is explicitly disabled instead of panicking in its receive loop.
 - Share one native mobile runtime between foreground and background handles to avoid duplicate FIPS and gateway workers.
 - Allow cold Windows peer builds enough setup time in the cross-platform release gate.
+- Retry transient local root-resolution misses while opening Iris Apps on iOS.
