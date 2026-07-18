@@ -29,6 +29,7 @@ const IO_CHUNK_BYTES: usize = 16 * 1024;
 const COMMAND_CAPACITY: usize = 256;
 const DELIVERY_CAPACITY: usize = 1024;
 const SEEN_RECORD_CAPACITY: usize = 1024;
+pub(super) const CONTROL_POLL_INTERVAL: Duration = Duration::from_millis(100);
 pub(super) const BOOTSTRAP_STREAM_LIFETIME_MS: u64 = 5_000;
 const QUEUED_RECORD_LIFETIME_MS: u64 = 60_000;
 const RECONNECT_DELAY_MS: u64 = 1_000;
@@ -275,7 +276,7 @@ struct ControlActor {
 
 impl ControlActor {
     async fn run(mut self, mut commands: mpsc::Receiver<Command>) {
-        let mut tick = tokio::time::interval(Duration::from_millis(20));
+        let mut tick = tokio::time::interval(CONTROL_POLL_INTERVAL);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             let now_ms = unix_millis();

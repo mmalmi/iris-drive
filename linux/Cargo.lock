@@ -1497,9 +1497,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.4.3"
+version = "0.4.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "dd3055f5d90b7564d91180b529317a1fcc7478e7a70106510aa5573a4bbfe806"
+checksum = "12cc0df5e04a1aae16efa85313976e87eb037d6e7955b8a035febd91b00383dc"
 dependencies = [
  "base64",
  "bluer",
@@ -2274,9 +2274,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-core"
-version = "0.2.85"
+version = "0.2.86"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fc5855a304c4f833ccb4bf770028709ce82882aa6d6246a03135e5ed2d90888"
+checksum = "574476b1fe122bddc7783ba0346dca42ec673a241128b0edf9e38166c1bb800f"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -2309,9 +2309,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-fips-transport"
-version = "0.4.4"
+version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b50872f0bc28e1ee59e63c270234af6bba2eaddb827a606583992d810e801ba"
+checksum = "8773b6be6b43f2623725c8b1cae97d700aaa312fe68febb40451a26d1453d661"
 dependencies = [
  "async-trait",
  "fips-core",
@@ -2412,7 +2412,7 @@ dependencies = [
 
 [[package]]
 name = "hashtree-provider"
-version = "0.1.26"
+version = "0.1.27"
 dependencies = [
  "async-trait",
  "futures",
@@ -2879,7 +2879,7 @@ checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
 
 [[package]]
 name = "iris-drive-app-core"
-version = "0.1.26"
+version = "0.1.27"
 dependencies = [
  "anyhow",
  "hashtree-core",
@@ -2900,7 +2900,7 @@ dependencies = [
 
 [[package]]
 name = "iris-drive-core"
-version = "0.1.26"
+version = "0.1.27"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2948,7 +2948,7 @@ dependencies = [
 
 [[package]]
 name = "iris-drive-linux"
-version = "0.1.26"
+version = "0.1.27"
 dependencies = [
  "gio",
  "glib",

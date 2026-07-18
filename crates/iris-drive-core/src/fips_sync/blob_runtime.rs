@@ -23,6 +23,7 @@ const SHARED_LMDB_ROUTE_ID: &str = "hashtree.shared-lmdb";
 const FIPS_ROUTE_ID: &str = "fips.blob-providers";
 const MAX_PROVIDER_ATTEMPTS: usize = 4;
 const DRIVE_BLOB_SERVICE_PRIORITY: i16 = 100;
+const DRIVE_BLOB_REPLY_MARGIN: std::time::Duration = std::time::Duration::from_secs(1);
 
 pub(super) struct DriveBlobRuntime<L: Store + Send + Sync + 'static> {
     pub(super) router: Arc<BlobRouter>,
@@ -70,7 +71,7 @@ impl<L: Store + Send + Sync + 'static> DriveBlobRuntime<L> {
                 endpoint.clone(),
                 local_store,
                 route,
-                TcpBlobTransportConfig::default(),
+                drive_blob_transport_config(),
                 DRIVE_BLOB_SERVICE_PRIORITY,
                 inbound_policy,
             )
@@ -139,7 +140,16 @@ fn drive_blob_router_config() -> BlobRouterConfig {
     }
 }
 
+pub(super) fn drive_blob_transport_config() -> TcpBlobTransportConfig {
+    TcpBlobTransportConfig {
+        idle_timeout: DRIVE_BLOB_SEARCH_TIMEOUT.saturating_add(DRIVE_BLOB_REPLY_MARGIN),
+    }
+}
+
 pub(super) fn configured_shared_lmdb_route() -> Result<Option<Arc<dyn BlobRoute>>, FipsSyncError> {
+    if !uses_shared_lmdb_route(std::env::consts::OS) {
+        return Ok(None);
+    }
     let config = hashtree_config::Config::load()
         .map_err(|error| FipsSyncError::SharedStore(error.to_string()))?;
     if config.storage.backend == StorageBackend::Fs {
@@ -156,4 +166,27 @@ pub(super) fn configured_shared_lmdb_route() -> Result<Option<Arc<dyn BlobRoute>
             .map_err(|error| FipsSyncError::SharedStore(error.to_string()))?,
     );
     Ok(Some(Arc::new(StoreBlobRoute::new(store))))
+}
+
+const fn uses_shared_lmdb_route(target_os: &str) -> bool {
+    !matches!(target_os.as_bytes(), b"android" | b"ios")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn transport_idle_timeout_exceeds_blob_search_timeout() {
+        assert!(drive_blob_transport_config().idle_timeout > DRIVE_BLOB_SEARCH_TIMEOUT);
+    }
+
+    #[test]
+    fn shared_lmdb_route_is_not_opened_in_mobile_sandboxes() {
+        assert!(!uses_shared_lmdb_route("android"));
+        assert!(!uses_shared_lmdb_route("ios"));
+        assert!(uses_shared_lmdb_route("linux"));
+        assert!(uses_shared_lmdb_route("macos"));
+        assert!(uses_shared_lmdb_route("windows"));
+    }
 }

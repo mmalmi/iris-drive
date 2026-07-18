@@ -115,7 +115,7 @@ macos-xcodeproj:
     cd macos && xcodegen generate
 
 macos-build:
-    cargo build -p iris-drive-app-core
+    MACOSX_DEPLOYMENT_TARGET=14.0 cargo build -p iris-drive-app-core
     RUST_LIB_DIR="$(cargo metadata --no-deps --format-version 1 | python3 -c 'import json, sys; print(json.load(sys.stdin)["target_directory"])')/debug"; xcodebuild -project macos/IrisDriveMac.xcodeproj -scheme IrisDriveMac -configuration Debug -derivedDataPath macos/.build/DerivedData CODE_SIGNING_ALLOWED=NO LIBRARY_SEARCH_PATHS="$RUST_LIB_DIR" OTHER_LDFLAGS="$RUST_LIB_DIR/libiris_drive_app_core.a" build
 
 android-build:

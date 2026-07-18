@@ -57,6 +57,8 @@ require_contains macos/Sources/IrisDriveControlPanel.swift 'scanApprovalRequestQ
 require_contains macos/Sources/IrisDriveControlPanel.swift 'Label("Review", systemImage: "checkmark.circle")'
 require_contains macos/Sources/IrisDriveControlPanel.swift "pendingInvites"
 require_contains scripts/macos-dev-app.sh "cargo build -p iris-drive-app-core"
+require_contains scripts/macos-dev-app.sh 'export MACOSX_DEPLOYMENT_TARGET="${IRIS_DRIVE_MACOS_DEPLOYMENT_TARGET:-14.0}"'
+require_contains Justfile 'MACOSX_DEPLOYMENT_TARGET=14.0 cargo build -p iris-drive-app-core'
 require_contains scripts/macos-dev-app.sh "libiris_drive_app_core.a"
 require_contains scripts/local-release.mjs "iris-drive-app-core"
 require_contains scripts/local-release.mjs "libiris_drive_app_core.a"

@@ -1,3 +1,9 @@
+#[allow(clippy::needless_pass_by_value)]
+fn emit_daemon_status_event(config_dir: &Path, payload: Value) {
+    let payload = write_runtime_daemon_status(config_dir, payload);
+    println!("{payload}");
+}
+
 struct DaemonCommandStartup {
     runtime: tokio::runtime::Runtime,
     config: AppConfig,

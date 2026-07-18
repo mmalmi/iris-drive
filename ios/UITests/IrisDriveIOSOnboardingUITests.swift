@@ -17,17 +17,22 @@ extension IrisDriveIOSUITests {
         app.terminate()
         app.launch()
         app.buttons["welcomeSignIn"].tap()
-        XCTAssertTrue(app.buttons["openRecoveryPhrase"].waitForExistence(timeout: 5))
-        XCTAssertTrue(app.buttons["openRecoveryPhrase"].label.contains("Restore from recovery phrase"))
+        let awaitingApproval = app.descendants(matching: .any)["awaitingApprovalView"]
+        XCTAssertTrue(awaitingApproval.waitForExistence(timeout: 15), app.debugDescription)
+        let openRecoveryPhrase = app.buttons["openRecoveryPhrase"]
+        for _ in 0..<4 where !openRecoveryPhrase.isHittable {
+            awaitingApproval.swipeUp()
+        }
+        XCTAssertTrue(openRecoveryPhrase.waitForExistence(timeout: 5), app.debugDescription)
+        XCTAssertTrue(openRecoveryPhrase.label.contains("Restore from recovery phrase"))
         let openSecretKey = app.buttons["openSecretKey"]
         for _ in 0..<4 where !openSecretKey.isHittable {
-            app.swipeUp()
+            awaitingApproval.swipeUp()
         }
         XCTAssertTrue(openSecretKey.waitForExistence(timeout: 5), app.debugDescription)
         XCTAssertTrue(openSecretKey.isHittable, openSecretKey.debugDescription)
         XCTAssertTrue(openSecretKey.label.contains("Restore from secret key"))
         let copyRequestLink = app.buttons["copyRequestLink"]
-        let awaitingApproval = app.descendants(matching: .any)["awaitingApprovalView"]
         let deadline = Date().addingTimeInterval(5)
         while Date() < deadline, !copyRequestLink.exists, !awaitingApproval.exists {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))

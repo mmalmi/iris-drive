@@ -116,7 +116,7 @@ pub fn app_key_link_request_frame_url(
             device_app_key_npub,
             request_npub: frame.request_npub.clone(),
             request_secret: frame.request_secret.clone(),
-            label: frame.label.clone(),
+            label: normalize_approval_label(frame.label.as_deref()),
         },
         Some(APP_KEY_APPROVAL_REQUEST_PREFIX),
     )
@@ -429,6 +429,7 @@ fn normalize_approval_label(label: Option<&str>) -> Option<String> {
         }
         compact.push(character);
     }
+    let compact = compact.trim_end().to_owned();
     (!compact.is_empty()).then_some(compact)
 }
 
@@ -700,6 +701,27 @@ mod tests {
             "bootstrap URL was {}",
             frame_url.len()
         );
+    }
+
+    #[test]
+    fn pending_request_frame_compacts_long_utf8_device_labels() {
+        let device_app_key = Keys::generate();
+        let request_keys = Keys::generate();
+        let frame = AppKeyLinkRequestFrame {
+            schema: 1,
+            invite_pubkey: Keys::generate().public_key().to_hex(),
+            label: Some("Iris Drive 🚀 Release iPhone".to_owned()),
+            request_npub: request_keys.public_key().to_bech32().unwrap(),
+            request_secret: URL_SAFE_NO_PAD.encode([7_u8; 32]),
+        };
+
+        let url = app_key_link_request_frame_url(&frame, &device_app_key.public_key().to_hex())
+            .expect("encode compact frame URL");
+        let bootstrap = parse_app_key_approval_bootstrap(&url)
+            .unwrap()
+            .expect("bootstrap");
+
+        assert_eq!(bootstrap.label.as_deref(), Some("Iris Drive 🚀"));
     }
 
     #[test]
