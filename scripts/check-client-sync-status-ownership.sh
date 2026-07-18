@@ -25,7 +25,7 @@ require_absent() {
 require_contains crates/iris-drive-core/src/app_key_summary.rs "pub fn sync_status_label"
 require_contains crates/iris-drive-app-core/src/state.rs "pub status_label: String"
 require_contains crates/iris-drive-app-core/src/ffi.rs "sync_status_label(status)"
-require_contains crates/iris-drive-cli/src/daemon/runtime.rs "write_daemon_status(config_dir, payload)"
+require_contains crates/iris-drive-cli/src/daemon/runtime_support.rs "write_daemon_status(config_dir, payload)"
 require_contains crates/iris-drive-cli/src/status.rs '"sync_status": sync_status'
 require_contains crates/iris-drive-cli/src/status.rs '"sync_status_label": sync_status_label(sync_status)'
 

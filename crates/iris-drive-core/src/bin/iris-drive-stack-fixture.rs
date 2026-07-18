@@ -79,14 +79,7 @@ async fn main() -> Result<()> {
                 if fields.next().is_some() {
                     bail!("fetch accepts exactly one CID");
                 }
-                let report = sync
-                    .download_tree(&cid)
-                    .await
-                    .with_context(|| format!("Iris Drive fetch {cid}"))?;
-                let cached = local
-                    .has(&cid.hash)
-                    .await
-                    .context("check Drive root cache")?;
+                let result = sync.download_tree(&cid).await;
                 let remote = sync
                     .fips_peer_statuses()
                     .await
@@ -95,16 +88,32 @@ async fn main() -> Result<()> {
                 let remote_connected = remote
                     .as_ref()
                     .is_some_and(|peer| peer.transport_addr.is_some());
-                emit(&json!({
-                    "event": "fetch",
-                    "cid": cid.to_string(),
-                    "fetched": report.fetched,
-                    "already_local": report.already_local,
-                    "root_cached": cached,
-                    "remote_connected": remote_connected,
-                    "remote_transport": remote.as_ref().and_then(|peer| peer.transport_type.clone()),
-                    "remote_addr": remote.as_ref().and_then(|peer| peer.transport_addr.clone()),
-                }))?;
+                match result {
+                    Ok(report) => {
+                        let cached = local
+                            .has(&cid.hash)
+                            .await
+                            .context("check Drive root cache")?;
+                        emit(&json!({
+                            "event": "fetch",
+                            "cid": cid.to_string(),
+                            "fetched": report.fetched,
+                            "already_local": report.already_local,
+                            "root_cached": cached,
+                            "remote_connected": remote_connected,
+                            "remote_transport": remote.as_ref().and_then(|peer| peer.transport_type.clone()),
+                            "remote_addr": remote.as_ref().and_then(|peer| peer.transport_addr.clone()),
+                        }))?;
+                    }
+                    Err(error) => emit(&json!({
+                        "event": "fetch",
+                        "cid": cid.to_string(),
+                        "error": format!("{error:#}"),
+                        "remote_connected": remote_connected,
+                        "remote_transport": remote.as_ref().and_then(|peer| peer.transport_type.clone()),
+                        "remote_addr": remote.as_ref().and_then(|peer| peer.transport_addr.clone()),
+                    }))?,
+                }
             }
             Some("status") => {
                 let remote = sync

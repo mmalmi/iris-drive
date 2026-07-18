@@ -4,6 +4,11 @@ fn emit_daemon_status_event(config_dir: &Path, payload: Value) {
     println!("{payload}");
 }
 
+#[allow(clippy::needless_pass_by_value)]
+fn write_runtime_daemon_status(config_dir: &Path, payload: Value) -> Value {
+    write_daemon_status(config_dir, payload)
+}
+
 struct DaemonCommandStartup {
     runtime: tokio::runtime::Runtime,
     config: AppConfig,

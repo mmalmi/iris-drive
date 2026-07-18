@@ -1159,7 +1159,7 @@ async fn handle_app_key_link_roster_app_message(
         normalize_pubkey(&frame.admin_app_key_pubkey).context("parsing roster admin AppKey")?;
     let sender_hex = normalize_pubkey(&message.peer_id).ok();
 
-    let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
+    let config_lock = ConfigMutationLock::acquire(config_dir).await?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let Some(state) = config.profile.as_mut() else {
         return Ok(true);
@@ -1212,6 +1212,10 @@ async fn handle_app_key_link_roster_app_message(
                 "apply_decision": format!("{outcome:?}").to_ascii_lowercase(),
             })
         );
+    }
+    drop(config_lock);
+    if changed && let Some(sync) = fips_blocks {
+        sync.refresh_authorized_peers(&config).await;
     }
     if let Some(frame) = ack_frame {
         send_app_key_link_roster_ack(fips_blocks, &frame).await?;

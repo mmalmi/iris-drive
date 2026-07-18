@@ -196,6 +196,11 @@ See the platform READMEs for focused instructions:
   outbound links, and Blossom remains a configured remote/cache path. Shared
   access covers immutable blob bytes only; Drive retains ownership of roots,
   pins, garbage collection, and other mutable application metadata.
+- Owns and stops its Nostr relay carrier with the embedded FIPS endpoint, so
+  authenticated WebRTC signaling works without replacing UDP or other direct
+  links. Only roster members enter the Drive data ACL; explicit pending-link
+  identities are limited to bootstrap topics, and ambient same-host blob
+  providers remain retrieval routes.
 - Supports encrypted backup targets for Blossom, filesystem, and LMDB endpoints.
 - Serves local browser views for `*.iris.localhost` and `nhash.iris.localhost`.
 - Provides release-update plumbing through signed hashtree manifests.

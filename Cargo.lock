@@ -2357,9 +2357,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-cli"
-version = "0.2.89"
+version = "0.2.100"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "246a9c317270dd05401d7d1da1ab4008ed5d2179e5f630b2b1b097b5c7a03b06"
+checksum = "eb8ee2266a43e58b4182da07c8829fa06b0e27e32d66164d6385ccedd6de2e89"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2436,9 +2436,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-config"
-version = "0.2.82"
+version = "0.2.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6dbe3d3e0663d768ace0100e954702e21c7a41a0eaeae9bbc50736e7049da6bf"
+checksum = "661c0bec57ba49999860fc418a7e656714cd79d82a3c3ee272794b90bb49db76"
 dependencies = [
  "anyhow",
  "dirs 5.0.1",
@@ -2469,9 +2469,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-embedded"
-version = "0.2.83"
+version = "0.2.86"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1975afb5602938dcb8a7062116f37174bf79a9128873a30c6b0c3f297ec08bcc"
+checksum = "28482b66ec409702a50ceeac1a49f5fae42b141326822f394ad66a6ebc37562f"
 dependencies = [
  "anyhow",
  "hashtree-cli",
@@ -2540,49 +2540,37 @@ dependencies = [
 
 [[package]]
 name = "hashtree-lmdb"
-version = "0.2.83"
+version = "0.2.85"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "66194f768a2146d04f4d3eaef7524f617c9a7a34092bda0569854678ccb9ee34"
+checksum = "e61f72986fce9c84f9fd03c72c581af092e25ea698e8b7bc54ddc18fe821286b"
 dependencies = [
  "async-trait",
  "hashtree-core",
  "heed",
  "page_size",
-]
-
-[[package]]
-name = "hashtree-network"
-version = "0.2.84"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ddc33a39f6b302de9ab541c6c2f8e68c97d33254eb9c0e9916c0466b65c199c3"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes",
- "cashu-service",
- "futures",
- "hashtree-blossom",
- "hashtree-core",
- "hex",
- "lazy_static",
- "nostr-sdk",
- "rand 0.8.7",
  "rmp-serde",
  "serde",
- "serde_bytes",
- "serde_json",
- "socket2 0.5.10",
- "thiserror 1.0.69",
- "tokio",
- "tracing",
+ "sha2",
  "uuid",
 ]
 
 [[package]]
-name = "hashtree-nostr"
-version = "0.2.82"
+name = "hashtree-network"
+version = "0.2.87"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5e7b54ff4bbe0f85a5d95b700f1898561c6b99fcb5b6a771a09445cbc06dbfe0"
+checksum = "aa83a68204dfbdc10f2fa9e810740c981e6f87c114a763ee56d8823df02c077e"
+dependencies = [
+ "async-trait",
+ "futures",
+ "hashtree-core",
+ "tokio",
+]
+
+[[package]]
+name = "hashtree-nostr"
+version = "0.2.83"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "489b2bf6d5e57921409aeee0a199a0f82512d473d290143306fc053d815c6973"
 dependencies = [
  "futures",
  "hashtree-collection",

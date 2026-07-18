@@ -1,5 +1,6 @@
 //! Measured block retrieval through Drive's configured Hashtree blob router.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
@@ -44,6 +45,7 @@ struct MeasuredRouterStore<L: Store + Send + Sync + 'static> {
     preferred: [BlobRouteIdentity; 1],
     fetched: std::sync::atomic::AtomicUsize,
     already_local: std::sync::atomic::AtomicUsize,
+    classified: Mutex<HashSet<Hash>>,
     missing: std::sync::atomic::AtomicUsize,
     first_missing: Mutex<Option<String>>,
 }
@@ -59,6 +61,7 @@ where
             preferred: [BlobRouteIdentity::from(LOCAL_ROUTE_ID)],
             fetched: std::sync::atomic::AtomicUsize::new(0),
             already_local: std::sync::atomic::AtomicUsize::new(0),
+            classified: Mutex::new(HashSet::new()),
             missing: std::sync::atomic::AtomicUsize::new(0),
             first_missing: Mutex::new(None),
         }
@@ -75,6 +78,24 @@ where
 
     fn missing(&self) -> usize {
         self.missing.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn record_found(&self, hash: &Hash, was_local: bool) {
+        let first_observation = self
+            .classified
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(*hash);
+        if !first_observation {
+            return;
+        }
+        if was_local {
+            self.already_local
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        } else {
+            self.fetched
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
     }
 
     fn first_missing(&self) -> Option<String> {
@@ -95,15 +116,9 @@ where
     }
 
     async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, StoreError> {
-        let was_local = self.local.has(hash).await.unwrap_or(false);
+        let was_local = self.local.has(hash).await?;
         if let Some(bytes) = self.router.get(hash, Some(&self.preferred)).await? {
-            if was_local {
-                self.already_local
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            } else {
-                self.fetched
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            }
+            self.record_found(hash, was_local);
             Ok(Some(bytes))
         } else {
             let hex = to_hex(hash);
@@ -120,14 +135,56 @@ where
     }
 
     async fn has(&self, hash: &Hash) -> Result<bool, StoreError> {
-        Ok(self
+        let was_local = self.local.has(hash).await?;
+        let found = self
             .router
             .get(hash, Some(&self.preferred))
             .await?
-            .is_some())
+            .is_some();
+        if found {
+            self.record_found(hash, was_local);
+        }
+        Ok(found)
     }
 
     async fn delete(&self, hash: &Hash) -> Result<bool, StoreError> {
         self.local.delete(hash).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hashtree_core::{MemoryStore, StoreBlobRoute, sha256};
+    use hashtree_network::{BlobRouteEntry, BlobRouterConfig};
+
+    #[tokio::test]
+    async fn route_probe_cache_fill_is_reported_as_fetched_once() {
+        let bytes = b"route probe cache fill".to_vec();
+        let hash = sha256(&bytes);
+        let source = Arc::new(MemoryStore::new());
+        source.put(hash, bytes.clone()).await.unwrap();
+        let local = Arc::new(MemoryStore::new());
+        let cache: Arc<dyn Store> = local.clone();
+        let router = Arc::new(
+            BlobRouter::new(
+                vec![
+                    BlobRouteEntry::new(
+                        LOCAL_ROUTE_ID,
+                        Arc::new(StoreBlobRoute::new(local.clone())),
+                    ),
+                    BlobRouteEntry::new("test.source", Arc::new(StoreBlobRoute::new(source))),
+                ],
+                Some(cache),
+                BlobRouterConfig::default(),
+            )
+            .unwrap(),
+        );
+        let measured = MeasuredRouterStore::new(local, router);
+
+        assert!(measured.has(&hash).await.unwrap());
+        assert_eq!(measured.get(&hash).await.unwrap(), Some(bytes));
+        assert_eq!(measured.fetched(), 1);
+        assert_eq!(measured.already_local(), 0);
     }
 }

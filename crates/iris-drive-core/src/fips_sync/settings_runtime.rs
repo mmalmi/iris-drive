@@ -7,7 +7,9 @@ use crate::config::AppConfig;
 use super::default_fips_bootstrap_peer_hints;
 
 pub(super) const FIPS_PACKET_CHANNEL_CAPACITY: usize = 8192;
-const FIPS_WEBRTC_MAX_CONNECTIONS: usize = 16;
+// Three default STUN servers reserve twelve candidate sockets per link. Eight
+// links fit fips-core's 96-socket endpoint budget; nine do not.
+const FIPS_WEBRTC_MAX_CONNECTIONS: usize = 8;
 const FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING: usize = 0;
 pub const IRIS_DRIVE_FIPS_DISCOVERY_SCOPE: &str = "fips-overlay-v1";
 
@@ -79,9 +81,9 @@ impl FipsTransportSettings {
                 &std::env::var("IRIS_DRIVE_FIPS_STATIC_PEERS").unwrap_or_default(),
             ),
             bootstrap_peer_hints,
-            webrtc_max_connections: usize_env("IRIS_DRIVE_FIPS_WEBRTC_MAX_CONNECTIONS")
-                .unwrap_or(FIPS_WEBRTC_MAX_CONNECTIONS)
-                .max(1),
+            webrtc_max_connections: bounded_webrtc_max_connections(usize_env(
+                "IRIS_DRIVE_FIPS_WEBRTC_MAX_CONNECTIONS",
+            )),
             open_discovery_max_pending: usize_env("IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING")
                 .unwrap_or(FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING),
         }
@@ -113,10 +115,18 @@ pub(super) fn fips_endpoint_options(
         udp_external_addr: settings.udp_external_addr.clone(),
         share_local_candidates: settings.share_local_candidates,
         webrtc_auto_connect: true,
-        webrtc_max_connections: settings.webrtc_max_connections,
+        webrtc_max_connections: bounded_webrtc_max_connections(Some(
+            settings.webrtc_max_connections,
+        )),
         open_discovery_max_pending: settings.open_discovery_max_pending,
         packet_channel_capacity: FIPS_PACKET_CHANNEL_CAPACITY,
     }
+}
+
+pub(super) fn bounded_webrtc_max_connections(configured: Option<usize>) -> usize {
+    configured
+        .unwrap_or(FIPS_WEBRTC_MAX_CONNECTIONS)
+        .clamp(1, FIPS_WEBRTC_MAX_CONNECTIONS)
 }
 
 pub(super) fn parse_bool_env_value(value: &str) -> Option<bool> {
