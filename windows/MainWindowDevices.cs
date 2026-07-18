@@ -237,7 +237,7 @@ public partial class MainWindow
         await RefreshAsync();
     }
 
-    private async void RenameDevice_Click(object sender, RoutedEventArgs e)
+    private void RenameDevice_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not WpfButton { Tag: PeerRow peer } ||
             string.IsNullOrWhiteSpace(peer.DeviceNpub))
