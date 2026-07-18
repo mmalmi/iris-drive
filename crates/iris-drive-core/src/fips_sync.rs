@@ -370,14 +370,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     }
 
     pub async fn recv_nostr_pubsub_event(&self) -> FipsNostrPubsubEvent {
-        self.nostr_receiver
-            .as_ref()
-            .expect("Nostr pubsub is disabled")
-            .lock()
-            .await
-            .recv()
-            .await
-            .expect("Nostr pubsub runtime stopped")
+        recv_optional_nostr_pubsub_event(self.nostr_receiver.as_ref()).await
     }
 
     pub async fn mesh_peer_count(&self) -> usize {
@@ -428,6 +421,20 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         *last = Some(snapshot);
         true
     }
+}
+
+async fn recv_optional_nostr_pubsub_event(
+    receiver: Option<&tokio::sync::Mutex<tokio::sync::broadcast::Receiver<FipsNostrPubsubEvent>>>,
+) -> FipsNostrPubsubEvent {
+    let Some(receiver) = receiver else {
+        return std::future::pending().await;
+    };
+    receiver
+        .lock()
+        .await
+        .recv()
+        .await
+        .expect("Nostr pubsub runtime stopped")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

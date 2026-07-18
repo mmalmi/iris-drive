@@ -6,7 +6,7 @@
 
 - Route Drive blob reads adaptively across local, direct FIPS, and shared Hashtree paths.
 - Reuse same-host Hashtree blobs and the released Hashtree transport substrate.
-- Keep FIPS control and blob routing on the shared reliable carrier stack, with the hardened FIPS 0.4.6 stream lifecycle.
+- Keep FIPS control and blob routing on the shared reliable carrier stack, with the hardened FIPS 0.4.8 stream and relay lifecycle.
 
 ### Fixed
 
@@ -17,3 +17,5 @@
 - Hedge Hashtree provider reads so a failed or slow first TCP/FIPS provider cannot starve a healthy peer.
 - Back off inactive TCP/FIPS blob and control polling to keep mobile idle CPU within the release budget.
 - Keep mobile FIPS startup inside the app sandbox instead of opening the desktop shared LMDB route.
+- Clean up simulator app and File Provider processes after iOS idle checks so later platform gates remain isolated.
+- Keep the daemon responsive when mesh pubsub is explicitly disabled instead of panicking in its receive loop.

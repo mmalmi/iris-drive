@@ -86,6 +86,28 @@ run_rust_tests() {
   run cargo test -p idrive --test daemon_sync_matrix -- --test-threads=1
 }
 
+terminate_booted_ios_simulator_instances() {
+  [[ "$(uname -s)" == "Darwin" ]] || return 0
+  command -v xcrun >/dev/null 2>&1 || return 0
+
+  local app_bundle_id="${IRIS_DRIVE_IOS_BUNDLE_ID:-fi.siriusbusiness.drive}"
+  local provider_bundle_id="${IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID:-fi.siriusbusiness.drive.FileProvider}"
+  local devices
+  if ! devices="$(
+    xcrun simctl list devices booted --json 2>/dev/null |
+      python3 -c 'import json,sys; data=json.load(sys.stdin); print("\n".join(d["udid"] for runtime, devices in data.get("devices", {}).items() if "iOS" in runtime for d in devices if d.get("state") == "Booted"))'
+  )"; then
+    return 0
+  fi
+
+  local device
+  while IFS= read -r device; do
+    [[ -n "$device" ]] || continue
+    xcrun simctl terminate "$device" "$app_bundle_id" >/dev/null 2>&1 || true
+    xcrun simctl terminate "$device" "$provider_bundle_id" >/dev/null 2>&1 || true
+  done <<<"$devices"
+}
+
 run_macos_idle_cpu_gate() {
   local app_base_dir
   local config_dir
@@ -93,6 +115,11 @@ run_macos_idle_cpu_gate() {
   local output
   local app_path
   local status=0
+
+  # A prior iOS gate can leave its simulator process owning FIPS's shared
+  # loopback rendezvous. That unrelated process must not drive the isolated
+  # macOS idle sample into peer-routing work.
+  terminate_booted_ios_simulator_instances
 
   app_base_dir="$(mktemp -d -t iris-drive-macos-idle.XXXXXX)"
   config_dir="$app_base_dir/Config"

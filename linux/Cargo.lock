@@ -1497,9 +1497,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.4.6"
+version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12cc0df5e04a1aae16efa85313976e87eb037d6e7955b8a035febd91b00383dc"
+checksum = "cbe19ffed3f8d517f06cb04deccc2834749c1f0d8e230eacf0ea53bab5bda781"
 dependencies = [
  "base64",
  "bluer",

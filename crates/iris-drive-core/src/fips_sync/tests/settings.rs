@@ -644,6 +644,18 @@ fn bootstrap_control_policy_excludes_protected_root_frames() {
     assert!(!topics.contains(crate::direct_root_transport::DIRECT_ROOT_APP_TOPIC));
 }
 
+#[tokio::test]
+async fn disabled_mesh_pubsub_receiver_stays_pending() {
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(20),
+            recv_optional_nostr_pubsub_event(None),
+        )
+        .await
+        .is_err()
+    );
+}
+
 #[test]
 fn bool_env_parser_accepts_common_spellings() {
     for value in ["1", "true", "TRUE", "yes", "on"] {

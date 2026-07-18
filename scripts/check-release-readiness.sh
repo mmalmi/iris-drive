@@ -128,7 +128,7 @@ require_contains scripts/release-gate.sh "just structure"
 require_contains scripts/release-gate.sh "cargo test --workspace --exclude idrive"
 require_contains scripts/release-gate.sh "--test daemon_sync_matrix"
 require_contains scripts/release-gate.sh "cargo build --workspace --release"
-require_contains Cargo.toml 'fips-core = "=0.4.6"'
+require_contains Cargo.toml 'fips-core = "=0.4.8"'
 require_contains Cargo.toml 'hashtree-core = "=0.2.86"'
 require_contains Cargo.toml 'hashtree-config = "=0.2.83"'
 require_contains Cargo.toml 'hashtree-embedded = "=0.2.86"'
@@ -144,7 +144,7 @@ require_absent Cargo.toml 'path = "crates/hashtree-fips-transport"'
 require_absent Cargo.toml 'path = "../nostr-social-graph'
 require_absent linux/Cargo.toml "[patch.crates-io]"
 for lock in Cargo.lock linux/Cargo.lock; do
-  require_registry_package "$lock" fips-core 0.4.6 12cc0df5e04a1aae16efa85313976e87eb037d6e7955b8a035febd91b00383dc
+  require_registry_package "$lock" fips-core 0.4.8 cbe19ffed3f8d517f06cb04deccc2834749c1f0d8e230eacf0ea53bab5bda781
   require_registry_package "$lock" fips-tcp 0.2.0 d18861c5eca7c472fbbdbbfb498f8d2525405081a9a24b42633c600ba6f6e42a
   require_registry_package "$lock" fips-tcp-endpoint 0.2.0 8e3e01e352b709b80f4261e2cd7d0ffde2d3aaf175267b3960997e70f7305c12
   require_registry_package "$lock" hashtree-cli 0.2.100 eb8ee2266a43e58b4182da07c8829fa06b0e27e32d66164d6385ccedd6de2e89
@@ -166,6 +166,8 @@ require_contains scripts/release-gate.sh "just smoke-macos"
 require_contains scripts/release-gate.sh "run_macos_idle_cpu_gate"
 require_contains scripts/release-gate.sh "macOS idle CPU gate"
 require_contains scripts/release-gate.sh "idle-cpu-gate.sh --platform macos"
+require_contains scripts/release-gate.sh "terminate_booted_ios_simulator_instances"
+require_contains scripts/release-gate.sh "IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID"
 require_contains scripts/release-gate.sh "ios-smoke builds the simulator app"
 require_contains scripts/release-gate.sh "just ios-smoke"
 require_contains scripts/release-gate.sh "just ios-gui-smoke"
@@ -176,6 +178,8 @@ require_contains scripts/release-gate.sh "idle-cpu-gate.sh --platform android"
 require_contains scripts/release-gate.sh "just e2e-5devices"
 require_contains scripts/idle-cpu-gate.sh "IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES"
 require_contains scripts/idle-cpu-gate.sh "IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH"
+require_contains scripts/idle-cpu-gate.sh "cleanup_ios_idle_cpu"
+require_contains scripts/idle-cpu-gate.sh "simctl terminate"
 require_contains scripts/idle-cpu-gate.sh "/Iris Drive.app/Contents/PlugIns/IrisDriveFileProvider.appex/Contents/MacOS/IrisDriveFileProvider"
 require_contains scripts/idle-cpu-gate.sh "idle-cpu-gate-windows.ps1"
 require_contains scripts/idle-cpu-gate-windows.ps1 "IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES"
