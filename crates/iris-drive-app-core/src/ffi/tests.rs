@@ -1,7 +1,7 @@
 use super::{
     FfiApp, NATIVE_RUNTIME_CONFIG_CACHE, NativeAppConfigCache, SentAppKeyLinkRequest,
     app_key_link_request_send_due, load_native_runtime_config_cached, native_calendar_export_json,
-    normalize_pubkey,
+    normalize_pubkey, shared_native_runtime,
 };
 use crate::NativeAppAction;
 use crate::state::{UiShare, UiShareMember};
@@ -9,6 +9,17 @@ use iris_drive_core::paths::config_path_in;
 use iris_drive_core::{AppConfig, AppKeyRootRef, Drive};
 use nostr_sdk::{Event, JsonUtil};
 use std::path::Path;
+
+#[test]
+fn ffi_apps_for_same_data_dir_share_native_runtime() {
+    let dir = tempfile::tempdir().unwrap();
+    let data_dir = dir.path().display().to_string();
+
+    let first = shared_native_runtime(data_dir.clone(), "test".to_owned());
+    let second = shared_native_runtime(data_dir, "test".to_owned());
+
+    assert!(std::sync::Arc::ptr_eq(&first, &second));
+}
 
 fn share_recipient_evidence_json(config_dir: &Path, display_name: &str) -> String {
     let config = AppConfig::load_or_default(config_path_in(config_dir)).unwrap();

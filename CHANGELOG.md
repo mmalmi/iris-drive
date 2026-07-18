@@ -19,3 +19,4 @@
 - Keep mobile FIPS startup inside the app sandbox instead of opening the desktop shared LMDB route.
 - Clean up simulator app and File Provider processes after iOS idle checks so later platform gates remain isolated.
 - Keep the daemon responsive when mesh pubsub is explicitly disabled instead of panicking in its receive loop.
+- Share one native mobile runtime between foreground and background handles to avoid duplicate FIPS and gateway workers.

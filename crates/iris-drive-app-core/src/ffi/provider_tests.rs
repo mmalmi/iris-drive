@@ -578,6 +578,7 @@ fn app_constructor_defers_provider_summary_until_refresh() {
             .is_empty()
     );
 
+    drop(app);
     let restarted = FfiApp::new(dir.path().display().to_string(), "test".to_owned());
     let initial = restarted.state();
     assert!(initial.ui.setup_complete);

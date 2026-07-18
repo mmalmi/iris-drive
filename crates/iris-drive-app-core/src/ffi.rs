@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, Weak};
 
 use anyhow::Context;
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
@@ -394,7 +394,23 @@ fn config_file_content_hash(path: &Path) -> std::io::Result<u64> {
 
 #[derive(uniffi::Object, Debug)]
 pub struct FfiApp {
-    runtime: Mutex<NativeAppRuntime>,
+    runtime: Arc<Mutex<NativeAppRuntime>>,
+}
+
+static SHARED_NATIVE_RUNTIMES: LazyLock<Mutex<BTreeMap<PathBuf, Weak<Mutex<NativeAppRuntime>>>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+fn shared_native_runtime(data_dir: String, app_version: String) -> Arc<Mutex<NativeAppRuntime>> {
+    let key = std::fs::canonicalize(&data_dir).unwrap_or_else(|_| PathBuf::from(&data_dir));
+    let mut runtimes = SHARED_NATIVE_RUNTIMES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(runtime) = runtimes.get(&key).and_then(Weak::upgrade) {
+        return runtime;
+    }
+    let runtime = Arc::new(Mutex::new(NativeAppRuntime::new(data_dir, app_version)));
+    runtimes.insert(key, Arc::downgrade(&runtime));
+    runtime
 }
 
 #[uniffi::export]
@@ -405,7 +421,7 @@ impl FfiApp {
     pub fn new(data_dir: String, app_version: String) -> Arc<Self> {
         install_rustls_crypto_provider();
         Arc::new(Self {
-            runtime: Mutex::new(NativeAppRuntime::new(data_dir, app_version)),
+            runtime: shared_native_runtime(data_dir, app_version),
         })
     }
 
