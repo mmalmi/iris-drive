@@ -20,6 +20,8 @@ pub struct FipsTransportSettings {
     pub enable_webrtc: bool,
     pub enable_lan_discovery: bool,
     pub enable_mesh_pubsub: bool,
+    pub enable_local_rendezvous: bool,
+    pub websocket_bind_addr: Option<String>,
     pub websocket_seed_urls: Vec<String>,
     pub udp_bind_addr: Option<String>,
     pub udp_public: bool,
@@ -38,6 +40,8 @@ impl Default for FipsTransportSettings {
             enable_webrtc: target_allows_default_desktop_fips(std::env::consts::OS),
             enable_lan_discovery: true,
             enable_mesh_pubsub: true,
+            enable_local_rendezvous: true,
+            websocket_bind_addr: None,
             websocket_seed_urls: DEFAULT_FIPS_WEBSOCKET_SEED_URLS
                 .iter()
                 .map(|url| (*url).to_string())
@@ -78,6 +82,9 @@ impl FipsTransportSettings {
                 .unwrap_or(defaults.enable_lan_discovery),
             enable_mesh_pubsub: bool_env("IRIS_DRIVE_FIPS_ENABLE_MESH_PUBSUB")
                 .unwrap_or(defaults.enable_mesh_pubsub),
+            enable_local_rendezvous: bool_env("IRIS_DRIVE_FIPS_ENABLE_LOCAL_RENDEZVOUS")
+                .unwrap_or(defaults.enable_local_rendezvous),
+            websocket_bind_addr: non_empty_env("IRIS_FIPS_WEBSOCKET_BIND_ADDR"),
             websocket_seed_urls: std::env::var("IRIS_FIPS_WEBSOCKET_SEED_URLS").map_or_else(
                 |_| defaults.websocket_seed_urls.clone(),
                 |value| parse_list_env_value(&value),
@@ -117,11 +124,14 @@ pub(super) fn fips_endpoint_options(
         relays,
         enable_udp: settings.enable_udp,
         enable_webrtc: settings.enable_webrtc,
-        websocket: (!settings.websocket_seed_urls.is_empty()).then(|| WebSocketConfig {
+        websocket: (settings.websocket_bind_addr.is_some()
+            || !settings.websocket_seed_urls.is_empty())
+        .then(|| WebSocketConfig {
+            bind_addr: settings.websocket_bind_addr.clone(),
             seed_urls: settings.websocket_seed_urls.clone(),
             ..WebSocketConfig::default()
         }),
-        enable_local_rendezvous: true,
+        enable_local_rendezvous: settings.enable_local_rendezvous,
         ethernet_interfaces: Vec::new(),
         enable_lan_discovery: settings.enable_lan_discovery,
         udp_bind_addr: settings.udp_bind_addr.clone(),

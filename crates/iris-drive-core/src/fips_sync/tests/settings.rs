@@ -44,6 +44,8 @@ fn endpoint_options_can_advertise_native_udp_without_disabling_webrtc() {
         enable_webrtc: true,
         enable_lan_discovery: true,
         enable_mesh_pubsub: true,
+        enable_local_rendezvous: true,
+        websocket_bind_addr: None,
         websocket_seed_urls: vec!["wss://seed.example/fips".to_string()],
         udp_bind_addr: Some("0.0.0.0:2121".to_string()),
         udp_public: true,
@@ -89,6 +91,29 @@ fn websocket_seed_list_ignores_empty_entries_and_whitespace() {
             "wss://two.example/fips".to_string(),
         ]
     );
+}
+
+#[test]
+fn endpoint_options_can_bind_a_native_websocket_entry_point() {
+    let settings = FipsTransportSettings {
+        enable_local_rendezvous: false,
+        websocket_bind_addr: Some("127.0.0.1:2121".to_string()),
+        websocket_seed_urls: Vec::new(),
+        ..Default::default()
+    };
+
+    let options = fips_endpoint_options(
+        "nsec1example".to_string(),
+        IRIS_DRIVE_FIPS_DISCOVERY_SCOPE.to_string(),
+        Vec::new(),
+        &AppConfig::default(),
+        &settings,
+    );
+    let websocket = options.websocket.expect("WebSocket listener");
+
+    assert_eq!(websocket.bind_addr.as_deref(), Some("127.0.0.1:2121"));
+    assert!(!options.enable_local_rendezvous);
+    assert!(websocket.seed_urls.is_empty());
 }
 
 #[test]

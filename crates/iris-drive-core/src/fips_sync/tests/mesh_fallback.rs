@@ -393,6 +393,8 @@ pub(super) fn local_only_settings(
         enable_webrtc: false,
         enable_lan_discovery: false,
         enable_mesh_pubsub: false,
+        enable_local_rendezvous: false,
+        websocket_bind_addr: None,
         websocket_seed_urls: Vec::new(),
         udp_bind_addr: Some(target_udp_addr.to_string()),
         udp_public: false,
