@@ -24,7 +24,7 @@ use crate::app_key_link_transport::{
 };
 use crate::blossom_sync::DownloadReport;
 use crate::config::AppConfig;
-use crate::fips_bootstrap::DEFAULT_FIPS_BOOTSTRAP_PEERS;
+use crate::fips_bootstrap::{DEFAULT_FIPS_BOOTSTRAP_PEERS, DEFAULT_FIPS_WEBSOCKET_SEED_URLS};
 use crate::identity::AppKey;
 
 mod blob_runtime;

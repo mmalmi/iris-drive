@@ -31,3 +31,8 @@ pub(super) const DEFAULT_FIPS_BOOTSTRAP_PEERS: &[(&str, &[&str])] = &[
         &["udp:74.208.245.160:2121"],
     ),
 ];
+
+/// Stable public first-adjacency services. LNVPS and Osiris run the two
+/// independent gateways so a fresh client is not tied to either entry point.
+pub(super) const DEFAULT_FIPS_WEBSOCKET_SEED_URLS: &[&str] =
+    &["wss://fips1.iris.to/fips", "wss://fips2.iris.to/fips"];

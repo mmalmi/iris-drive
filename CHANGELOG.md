@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.28 - 2026-07-19
 
 ### Changed
 
@@ -9,6 +9,9 @@
   router source.
 - Remove the retired Nostr-relay FIPS packet carrier from the consumed
   Hashtree/FIPS stack.
+- Use the LNVPS and Osiris authenticated WebSocket gateways as the default
+  FIPS first-adjacency entry points while preserving explicit overrides.
+- Update the FIPS adapter for `nostr-pubsub` to 0.4.3.
 
 ## 0.1.27 - 2026-07-18
 

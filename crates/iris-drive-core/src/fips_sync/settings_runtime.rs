@@ -5,7 +5,7 @@ use hashtree_fips_transport::FipsEndpointOptions;
 
 use crate::config::AppConfig;
 
-use super::default_fips_bootstrap_peer_hints;
+use super::{DEFAULT_FIPS_WEBSOCKET_SEED_URLS, default_fips_bootstrap_peer_hints};
 
 pub(super) const FIPS_PACKET_CHANNEL_CAPACITY: usize = 8192;
 // Three default STUN servers reserve twelve candidate sockets per link. Eight
@@ -38,7 +38,10 @@ impl Default for FipsTransportSettings {
             enable_webrtc: target_allows_default_desktop_fips(std::env::consts::OS),
             enable_lan_discovery: true,
             enable_mesh_pubsub: true,
-            websocket_seed_urls: Vec::new(),
+            websocket_seed_urls: DEFAULT_FIPS_WEBSOCKET_SEED_URLS
+                .iter()
+                .map(|url| (*url).to_string())
+                .collect(),
             udp_bind_addr: None,
             udp_public: false,
             udp_external_addr: None,
@@ -75,7 +78,10 @@ impl FipsTransportSettings {
                 .unwrap_or(defaults.enable_lan_discovery),
             enable_mesh_pubsub: bool_env("IRIS_DRIVE_FIPS_ENABLE_MESH_PUBSUB")
                 .unwrap_or(defaults.enable_mesh_pubsub),
-            websocket_seed_urls: list_env("IRIS_FIPS_WEBSOCKET_SEED_URLS"),
+            websocket_seed_urls: std::env::var("IRIS_FIPS_WEBSOCKET_SEED_URLS").map_or_else(
+                |_| defaults.websocket_seed_urls.clone(),
+                |value| parse_list_env_value(&value),
+            ),
             udp_bind_addr,
             udp_public,
             udp_external_addr,
@@ -179,10 +185,6 @@ fn non_empty_env(name: &str) -> Option<String> {
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-}
-
-fn list_env(name: &str) -> Vec<String> {
-    std::env::var(name).map_or_else(|_| Vec::new(), |value| parse_list_env_value(&value))
 }
 
 fn bool_env(name: &str) -> Option<bool> {

@@ -137,6 +137,8 @@ require_contains Cargo.toml 'hashtree-lmdb = "=0.2.85"'
 require_contains Cargo.toml 'hashtree-network = "=0.2.87"'
 require_contains Cargo.toml 'hashtree-nostr = "=0.2.83"'
 require_contains Cargo.toml 'nostr-identity = "=0.3.1"'
+require_contains crates/iris-drive-core/src/fips_bootstrap.rs '"wss://fips1.iris.to/fips"'
+require_contains crates/iris-drive-core/src/fips_bootstrap.rs '"wss://fips2.iris.to/fips"'
 require_contains crates/iris-drive-core/Cargo.toml "fips-core.workspace = true"
 require_absent Cargo.toml "[patch.crates-io]"
 require_absent Cargo.toml "git = "
@@ -157,7 +159,7 @@ for lock in Cargo.lock linux/Cargo.lock; do
   require_registry_package "$lock" hashtree-nostr 0.2.83 489b2bf6d5e57921409aeee0a199a0f82512d473d290143306fc053d815c6973
   require_registry_package "$lock" hashtree-nostr-pubsub 0.2.83 6fbf53cd18ddd9caf53dab8483db6a36011c11e3dc62233e0343ff5147c5672b
   require_registry_package "$lock" nostr-pubsub 0.1.13 84bfacf8bb4c535ad4c80dc14bdef1dfe94b2b7064f8bf83509a137f8068e0e1
-  require_registry_package "$lock" nostr-pubsub-fips 0.4.1 b537942272dbf79ad8ff4176766f6f1c7c49e0a28fe2d4feacea0a3f45b15125
+  require_registry_package "$lock" nostr-pubsub-fips 0.4.3 1bb92eb30b1994c5e2c2cacd310197d6c6553a85fbce76072b22114eab5af2c6
   require_registry_package "$lock" nostr-pubsub-relay 0.1.11 8641200920d163b2d82c34e6f15605cff93a0546e3e0087fce8f3bddaa2329ca
 done
 require_absent scripts/docker-cli-e2e.sh "Missing required sibling checkout"

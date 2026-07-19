@@ -106,6 +106,13 @@ fn default_transport_settings_do_not_seed_fips_bootstrap_transit() {
 
     assert_eq!(settings.webrtc_max_connections, 8);
     assert_eq!(settings.open_discovery_max_pending, 0);
+    assert_eq!(
+        settings.websocket_seed_urls,
+        vec![
+            "wss://fips1.iris.to/fips".to_string(),
+            "wss://fips2.iris.to/fips".to_string(),
+        ]
+    );
     assert!(settings.bootstrap_peer_hints.is_empty());
     assert!(settings.enable_lan_discovery);
 }

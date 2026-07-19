@@ -8,7 +8,7 @@ options:
 settings:
   base:
     PRODUCT_BUNDLE_IDENTIFIER: to.iris.drive.macos
-    MARKETING_VERSION: "0.1.27"
+    MARKETING_VERSION: "0.1.28"
     CURRENT_PROJECT_VERSION: "1027"
     VERSIONING_SYSTEM: apple-generic
     CODE_SIGN_STYLE: Automatic
