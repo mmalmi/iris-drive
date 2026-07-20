@@ -6,6 +6,7 @@
 //! but the local app should first ask peer instances over FIPS.
 
 use std::collections::BTreeSet;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -32,6 +33,7 @@ mod control_runtime;
 mod download;
 mod endpoint_config;
 mod nostr_runtime;
+mod recent_peer_cache;
 mod settings_runtime;
 use blob_runtime::{DriveBlobRuntime, configured_shared_lmdb_route};
 use control_runtime::DriveControlRuntime;
@@ -40,6 +42,7 @@ use download::download_tree_with_router;
 use endpoint_config::bind_drive_fips_endpoint;
 use nostr_runtime::DriveNostrPubsubRuntime;
 pub use nostr_runtime::FipsNostrPubsubEvent;
+use recent_peer_cache::{DriveRecentPeers, recent_peers_file_path, unix_time_ms};
 use settings_runtime::fips_endpoint_options;
 pub use settings_runtime::{FipsTransportSettings, IRIS_DRIVE_FIPS_DISCOVERY_SCOPE};
 
@@ -74,6 +77,7 @@ pub struct FipsBlockSync<L: Store + Send + Sync + 'static> {
     discovery_scope: String,
     transport_settings: FipsTransportSettings,
     last_peer_config: Mutex<Option<FipsPeerConfigSnapshot>>,
+    recent_peers: Option<Mutex<DriveRecentPeers>>,
 }
 
 pub type FsFipsBlockSync = FipsBlockSync<hashtree_fs::FsBlobStore>;
@@ -93,6 +97,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         let discovery_scope = discovery_scope(config);
         let transport_settings = FipsTransportSettings::from_env();
         let shared_store = configured_shared_lmdb_route()?;
+        let recent_peers_path = recent_peers_file_path(device.path());
         let endpoint = Box::pin(bind_drive_fips_endpoint(fips_endpoint_options(
             identity_nsec,
             discovery_scope.clone(),
@@ -103,22 +108,43 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         .await
         .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?;
 
-        Self::start_with_bound_endpoint(
+        Self::start_with_bound_endpoint_and_recent_peers(
             endpoint,
             local_store,
             config,
             transport_settings,
             shared_store,
+            Some(recent_peers_path),
         )
         .await
     }
 
+    #[cfg(test)]
     async fn start_with_bound_endpoint(
         endpoint: BoundFipsEndpoint,
         local_store: Arc<L>,
         config: &AppConfig,
         transport_settings: FipsTransportSettings,
         shared_store: Option<Arc<dyn BlobRoute>>,
+    ) -> Result<Self, FipsSyncError> {
+        Self::start_with_bound_endpoint_and_recent_peers(
+            endpoint,
+            local_store,
+            config,
+            transport_settings,
+            shared_store,
+            None,
+        )
+        .await
+    }
+
+    async fn start_with_bound_endpoint_and_recent_peers(
+        endpoint: BoundFipsEndpoint,
+        local_store: Arc<L>,
+        config: &AppConfig,
+        transport_settings: FipsTransportSettings,
+        shared_store: Option<Arc<dyn BlobRoute>>,
+        recent_peers_path: Option<PathBuf>,
     ) -> Result<Self, FipsSyncError> {
         let BoundFipsEndpoint {
             native_endpoint,
@@ -130,12 +156,17 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         let application_peers = authorized_device_fips_peers(config, &transport_settings);
         let routing_peers = routing_fips_peers(config, &transport_settings);
         let blob_peers = authorized_blob_fips_peers(config, &transport_settings);
-        set_fips_peer_configs(
-            native_endpoint.as_ref(),
-            merged_endpoint_peers(&application_peers, &routing_peers, &blob_peers),
-        )
-        .await
-        .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?;
+        let recent_peers = recent_peers_path.and_then(|path| {
+            DriveRecentPeers::load(&path, &local_peer_id, &discovery_scope, unix_time_ms())
+        });
+        let mut endpoint_peers =
+            merged_endpoint_peers(&application_peers, &routing_peers, &blob_peers);
+        if let Some(recent_peers) = recent_peers.as_ref() {
+            recent_peers.merge_into_peer_configs(&mut endpoint_peers);
+        }
+        set_fips_peer_configs(native_endpoint.as_ref(), endpoint_peers)
+            .await
+            .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?;
         let blob_runtime = DriveBlobRuntime::bind(
             native_endpoint.clone(),
             local_store.clone(),
@@ -177,6 +208,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             discovery_scope,
             transport_settings,
             last_peer_config: Mutex::new(Some(peer_snapshot)),
+            recent_peers: recent_peers.map(Mutex::new),
         })
     }
 
@@ -213,12 +245,10 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         if !self.update_peer_config_snapshot(snapshot) {
             return;
         }
-        if let Err(error) = set_fips_peer_configs(
-            self.endpoint.as_ref(),
-            merged_endpoint_peers(&application_peers, &routing_peers, &blob_peers),
-        )
-        .await
-        {
+        let mut endpoint_peers =
+            merged_endpoint_peers(&application_peers, &routing_peers, &blob_peers);
+        self.merge_recent_peer_routes(&mut endpoint_peers);
+        if let Err(error) = set_fips_peer_configs(self.endpoint.as_ref(), endpoint_peers).await {
             tracing::warn!(%error, "failed to refresh Drive FIPS peers");
         }
         if let Some(runtime) = self.control_runtime.as_ref()
@@ -234,7 +264,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     }
 
     pub async fn peer_ids(&self) -> Vec<String> {
-        endpoint_peers(self.endpoint.as_ref())
+        self.endpoint_peers(false)
             .await
             .into_iter()
             .map(|peer| peer.npub)
@@ -251,7 +281,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     }
 
     pub async fn connected_peer_ids(&self) -> Vec<String> {
-        endpoint_peers(self.endpoint.as_ref())
+        self.endpoint_peers(false)
             .await
             .into_iter()
             .filter(|peer| peer.connected)
@@ -268,7 +298,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     }
 
     pub async fn fips_peer_statuses(&self) -> Vec<FipsPeerStatus> {
-        endpoint_peers(self.endpoint.as_ref())
+        self.endpoint_peers(false)
             .await
             .into_iter()
             .map(|peer| FipsPeerStatus {
@@ -389,6 +419,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     }
 
     pub async fn shutdown_endpoint(&self) -> Result<(), FipsSyncError> {
+        self.endpoint_peers(true).await;
         self.endpoint
             .shutdown()
             .await
@@ -405,6 +436,36 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         }
         *last = Some(snapshot);
         true
+    }
+
+    fn merge_recent_peer_routes(&self, peer_configs: &mut [FipsPeerConfig]) {
+        let Some(recent_peers) = self.recent_peers.as_ref() else {
+            return;
+        };
+        recent_peers
+            .lock()
+            .expect("Drive recent-peer cache lock poisoned")
+            .merge_into_peer_configs(peer_configs);
+    }
+
+    async fn endpoint_peers(
+        &self,
+        save_even_if_unchanged: bool,
+    ) -> Vec<fips_core::endpoint::FipsEndpointPeer> {
+        let peers = self.endpoint.peers().await.unwrap_or_else(|error| {
+            tracing::warn!(%error, "failed to snapshot Drive FIPS peers");
+            Vec::new()
+        });
+        if let Some(recent_peers) = self.recent_peers.as_ref() {
+            let mut recent_peers = recent_peers
+                .lock()
+                .expect("Drive recent-peer cache lock poisoned");
+            let changed = recent_peers.observe(&peers, unix_time_ms());
+            if changed || save_even_if_unchanged {
+                recent_peers.save();
+            }
+        }
+        peers
     }
 }
 
@@ -439,13 +500,6 @@ pub struct FipsPeerStatus {
     pub packets_recv: u64,
     pub bytes_sent: u64,
     pub bytes_recv: u64,
-}
-
-async fn endpoint_peers(endpoint: &FipsEndpoint) -> Vec<fips_core::endpoint::FipsEndpointPeer> {
-    endpoint.peers().await.unwrap_or_else(|error| {
-        tracing::warn!(%error, "failed to snapshot Drive FIPS peers");
-        Vec::new()
-    })
 }
 
 fn peer_ids(peers: &[FipsPeerConfig]) -> BTreeSet<String> {

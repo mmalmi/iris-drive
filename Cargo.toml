@@ -25,7 +25,8 @@ base64 = "0.22"
 bip39 = { version = "2.2", features = ["rand"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-core = "=0.4.20"
+fips-core = "=0.4.28"
+fips-endpoint = "=0.4.28"
 fips-tcp = "=0.2.0"
 fips-tcp-endpoint = "=0.2.0"
 futures = "0.3"

@@ -1635,9 +1635,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.4.20"
+version = "0.4.28"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea03ec2992538be19336dcdb2a054baa58567e0613a2e71509589aebe2264a2f"
+checksum = "32df0dc0ec23734b8efff0caacb7bb4639dd458e0be9caaf611b4dce1f05caca"
 dependencies = [
  "base64",
  "bluer",
@@ -1675,6 +1675,15 @@ dependencies = [
  "webrtc",
  "windows-sys 0.61.2",
  "wintun",
+]
+
+[[package]]
+name = "fips-endpoint"
+version = "0.4.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "af729c3bc8ba40d1e9bc36ba3809cba289ef39fc52a379a0a87ec41eeb78ac4c"
+dependencies = [
+ "fips-core",
 ]
 
 [[package]]
@@ -3164,6 +3173,7 @@ dependencies = [
  "bip39",
  "dirs 6.0.0",
  "fips-core",
+ "fips-endpoint",
  "fips-tcp",
  "fips-tcp-endpoint",
  "futures",
