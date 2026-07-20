@@ -128,7 +128,7 @@ require_contains scripts/release-gate.sh "just structure"
 require_contains scripts/release-gate.sh "cargo test --workspace --exclude idrive"
 require_contains scripts/release-gate.sh "--test daemon_sync_matrix"
 require_contains scripts/release-gate.sh "cargo build --workspace --release"
-require_contains Cargo.toml 'fips-core = "=0.4.11"'
+require_contains Cargo.toml 'fips-core = "=0.4.19"'
 require_contains Cargo.toml 'hashtree-core = "=0.2.86"'
 require_contains Cargo.toml 'hashtree-config = "=0.2.83"'
 require_contains Cargo.toml 'hashtree-embedded = "=0.2.87"'
@@ -146,7 +146,7 @@ require_absent Cargo.toml 'path = "crates/hashtree-fips-transport"'
 require_absent Cargo.toml 'path = "../nostr-social-graph'
 require_absent linux/Cargo.toml "[patch.crates-io]"
 for lock in Cargo.lock linux/Cargo.lock; do
-  require_registry_package "$lock" fips-core 0.4.11 7256624419545fcdc2c0512810ee468b5a3097f1b05f06b576709f377f30947c
+  require_registry_package "$lock" fips-core 0.4.19 59f25c710228b85f5389709670e7affe0d6d4561325b261d4daee6658da4ca0b
   require_registry_package "$lock" fips-tcp 0.2.0 d18861c5eca7c472fbbdbbfb498f8d2525405081a9a24b42633c600ba6f6e42a
   require_registry_package "$lock" fips-tcp-endpoint 0.2.0 8e3e01e352b709b80f4261e2cd7d0ffde2d3aaf175267b3960997e70f7305c12
   require_registry_package "$lock" hashtree-cli 0.2.101 039d4fc44f50ca195c92c7e87f663c9a3a3329c62fc798875682921b42c2a034
