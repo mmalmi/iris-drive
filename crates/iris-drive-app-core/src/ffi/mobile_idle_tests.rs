@@ -178,10 +178,12 @@ fn app_key_link_exchange_uses_fast_ticks_only_while_approval_is_pending() {
 
 #[test]
 fn mobile_native_fips_status_suppresses_volatile_rewrites_until_heartbeat() {
-    assert!(
-        NATIVE_FIPS_STATUS_FRESH_SECS > NATIVE_FIPS_STATUS_STABLE_WRITE_MIN_SECS,
-        "the stable status heartbeat must refresh before UI freshness expires"
-    );
+    const {
+        assert!(
+            NATIVE_FIPS_STATUS_FRESH_SECS > NATIVE_FIPS_STATUS_STABLE_WRITE_MIN_SECS,
+            "the stable status heartbeat must refresh before UI freshness expires"
+        );
+    }
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(super::NATIVE_FIPS_STATUS_FILE_NAME);
     let now = super::unix_now_seconds();

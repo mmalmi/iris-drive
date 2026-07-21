@@ -66,6 +66,7 @@ run_host_repo_command() {
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/lib/parallel-gate.sh"
 UBUNTU_HOST="$(required_env IRIS_DRIVE_E2E_UBUNTU_HOST)"
 WINDOWS_HOST="$(required_env IRIS_DRIVE_E2E_WINDOWS_HOST)"
 MACOS_HOST="$(required_env IRIS_DRIVE_E2E_MACOS_HOST)"
@@ -76,38 +77,67 @@ if [[ -z "${IRIS_DRIVE_E2E_TIMEOUT_SECS+x}" ]]; then
   export IRIS_DRIVE_E2E_TIMEOUT_SECS=300
 fi
 
-echo "[e2e-5devices] running Linux GTK GUI smoke on $UBUNTU_HOST" >&2
-"$ROOT/scripts/desktop-gui-smoke.sh" linux "$UBUNTU_HOST"
+run_linux_smoke() {
+  echo "[e2e-5devices] running Linux GTK GUI smoke on $UBUNTU_HOST" >&2
+  "$ROOT/scripts/desktop-gui-smoke.sh" linux "$UBUNTU_HOST"
+}
 
-echo "[e2e-5devices] running Windows WPF GUI smoke on $WINDOWS_HOST" >&2
-"$ROOT/scripts/desktop-gui-smoke.sh" windows "$WINDOWS_HOST"
+run_windows_smoke() {
+  echo "[e2e-5devices] running Windows WPF GUI smoke on $WINDOWS_HOST" >&2
+  "$ROOT/scripts/desktop-gui-smoke.sh" windows "$WINDOWS_HOST"
+}
 
-echo "[e2e-5devices] running iOS simulator smoke on $IOS_HOST" >&2
-run_host_repo_command "$IOS_HOST" \
-  env "IRIS_DRIVE_IOS_SIMULATOR_DEVICE=${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-}" \
-  scripts/ios-simulator-smoke.sh
+run_apple_smokes() {
+  if [[ "$IOS_HOST" != "local" \
+    || "${IRIS_DRIVE_E2E_LOCAL_IOS_FUNCTIONAL_PRECHECKED:-0}" != "1" ]]; then
+    echo "[e2e-5devices] running iOS simulator smoke on $IOS_HOST" >&2
+    run_host_repo_command "$IOS_HOST" \
+      env "IRIS_DRIVE_IOS_SIMULATOR_DEVICE=${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-}" \
+      scripts/ios-simulator-smoke.sh
 
-echo "[e2e-5devices] running iOS GUI linking smoke on $IOS_HOST" >&2
-run_host_repo_command "$IOS_HOST" \
-  env "IRIS_DRIVE_IOS_SIMULATOR_DEVICE=${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-}" \
-  scripts/ios-gui-linking-smoke.sh
+    echo "[e2e-5devices] running iOS GUI linking smoke on $IOS_HOST" >&2
+    run_host_repo_command "$IOS_HOST" \
+      env "IRIS_DRIVE_IOS_SIMULATOR_DEVICE=${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-}" \
+      scripts/ios-gui-linking-smoke.sh
+  else
+    echo "[e2e-5devices] reusing local iOS functional smoke" >&2
+  fi
 
-echo "[e2e-5devices] running iOS physical Iris Apps WebView smoke on $IOS_HOST" >&2
-run_host_repo_command "$IOS_HOST" \
-  env "IRIS_DRIVE_IOS_DEVICE=${IRIS_DRIVE_IOS_DEVICE:-}" \
-  scripts/ios-device-iris-apps-smoke.sh
+  echo "[e2e-5devices] running iOS physical Iris Apps WebView smoke on $IOS_HOST" >&2
+  run_host_repo_command "$IOS_HOST" \
+    env "IRIS_DRIVE_IOS_DEVICE=${IRIS_DRIVE_IOS_DEVICE:-}" \
+    scripts/ios-device-iris-apps-smoke.sh
+}
 
-echo "[e2e-5devices] running Android GUI linking smoke on $ANDROID_HOST" >&2
-run_host_repo_command "$ANDROID_HOST" \
-  env \
-  "IRIS_DRIVE_ANDROID_SERIAL=${IRIS_DRIVE_ANDROID_SERIAL:-}" \
-  "IRIS_DRIVE_ANDROID_USE_DIRECT_STATIC_PEER=${IRIS_DRIVE_ANDROID_USE_DIRECT_STATIC_PEER:-true}" \
-  scripts/android-gui-linking-smoke.sh
+run_android_smokes() {
+  if [[ "$ANDROID_HOST" != "local" \
+    || "${IRIS_DRIVE_E2E_LOCAL_ANDROID_FUNCTIONAL_PRECHECKED:-0}" != "1" ]]; then
+    echo "[e2e-5devices] running Android GUI linking smoke on $ANDROID_HOST" >&2
+    run_host_repo_command "$ANDROID_HOST" \
+      env \
+      "IRIS_DRIVE_ANDROID_SERIAL=${IRIS_DRIVE_ANDROID_SERIAL:-}" \
+      "IRIS_DRIVE_ANDROID_USE_DIRECT_STATIC_PEER=${IRIS_DRIVE_ANDROID_USE_DIRECT_STATIC_PEER:-true}" \
+      scripts/android-gui-linking-smoke.sh
+  else
+    echo "[e2e-5devices] reusing local Android functional smoke" >&2
+  fi
 
-echo "[e2e-5devices] running Android adb provider smoke on $ANDROID_HOST" >&2
-run_host_repo_command "$ANDROID_HOST" \
-  env "IRIS_DRIVE_ANDROID_SERIAL=${IRIS_DRIVE_ANDROID_SERIAL:-}" \
-  scripts/mobile-android-smoke.sh --no-build
+  echo "[e2e-5devices] running Android adb provider smoke on $ANDROID_HOST" >&2
+  run_host_repo_command "$ANDROID_HOST" \
+    env "IRIS_DRIVE_ANDROID_SERIAL=${IRIS_DRIVE_ANDROID_SERIAL:-}" \
+    scripts/mobile-android-smoke.sh --no-build
+}
+
+parallel_group_begin e2e-5devices
+parallel_group_start linux run_linux_smoke
+parallel_group_start windows run_windows_smoke
+parallel_group_start apple run_apple_smokes
+parallel_group_start android run_android_smokes
+parallel_status=0
+parallel_group_wait || parallel_status=$?
+if [[ "$parallel_status" -ne 0 ]]; then
+  exit "$parallel_status"
+fi
 
 if [[ -z "${IRIS_DRIVE_E2E_MOUNT_LABELS+x}" ]]; then
   export IRIS_DRIVE_E2E_MOUNT_LABELS="ubuntu"

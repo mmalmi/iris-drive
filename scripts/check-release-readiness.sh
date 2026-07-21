@@ -57,6 +57,9 @@ require_registry_package() {
 }
 
 require_executable scripts/release-gate.sh
+require_executable scripts/lib/parallel-gate.sh
+require_file scripts/lib/cross-vm-parallel-setup.sh
+require_executable scripts/test_release_workflows.py
 require_executable scripts/verify.sh
 require_executable scripts/verify_full_native.sh
 require_executable scripts/native_lab.py
@@ -167,20 +170,21 @@ done
 require_absent scripts/docker-cli-e2e.sh "Missing required sibling checkout"
 require_contains scripts/docker-cli-e2e.sh '-v "$ROOT:/work/iris-drive:ro"'
 require_contains scripts/release-gate.sh "IRIS_DRIVE_RELEASE_GATE_FULL"
+require_contains scripts/release-gate.sh "IRIS_DRIVE_RELEASE_GATE_FAST_PRECHECKED"
 require_contains scripts/release-gate.sh "IRIS_DRIVE_RELEASE_GATE_IDLE_CPU"
-require_contains scripts/release-gate.sh "just macos-build"
 require_contains scripts/release-gate.sh "just smoke-macos"
+require_contains scripts/release-gate.sh "macos-dev-app.sh run-existing"
+require_absent scripts/release-gate.sh "just macos-build"
 require_contains scripts/release-gate.sh "run_macos_idle_cpu_gate"
 require_contains scripts/release-gate.sh "macOS idle CPU gate"
 require_contains scripts/release-gate.sh "idle-cpu-gate.sh --platform macos"
 require_contains scripts/release-gate.sh "terminate_booted_ios_simulator_instances"
 require_contains scripts/release-gate.sh "IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID"
-require_contains scripts/release-gate.sh "ios-smoke builds the simulator app"
-require_contains scripts/release-gate.sh "just ios-smoke"
+require_contains scripts/release-gate.sh "just ios-smoke --no-build"
 require_contains scripts/release-gate.sh "just ios-gui-smoke"
 require_contains scripts/release-gate.sh "idle-cpu-gate.sh --platform ios"
-require_contains scripts/release-gate.sh "just android-build"
 require_contains scripts/release-gate.sh "just android-gui-smoke"
+require_absent scripts/release-gate.sh "just android-build"
 require_contains scripts/release-gate.sh "idle-cpu-gate.sh --platform android"
 require_contains scripts/release-gate.sh "just e2e-5devices"
 require_contains scripts/idle-cpu-gate.sh "IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES"

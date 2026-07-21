@@ -1,0 +1,261 @@
+#!/usr/bin/env python3
+
+import os
+import shutil
+import subprocess
+import tempfile
+import textwrap
+import unittest
+from pathlib import Path
+
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+class ReleaseWorkflowTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.repo = Path(self.temp.name)
+        self.scripts = self.repo / "scripts"
+        self.bin = self.repo / "bin"
+        self.state = self.repo / "state"
+        self.scripts.mkdir()
+        self.bin.mkdir()
+        self.state.mkdir()
+
+    def copy_script(self, name: str) -> Path:
+        destination = self.scripts / name
+        shutil.copy2(ROOT / "scripts" / name, destination)
+        destination.chmod(0o755)
+        helper = ROOT / "scripts" / "lib" / "parallel-gate.sh"
+        if helper.exists():
+            helper_destination = self.scripts / "lib" / "parallel-gate.sh"
+            helper_destination.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(helper, helper_destination)
+        return destination
+
+    def write_executable(self, path: Path, body: str) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("#!/usr/bin/env bash\nset -Eeuo pipefail\n" + body, encoding="utf-8")
+        path.chmod(0o755)
+
+    def environment(self, **overrides: str) -> dict[str, str]:
+        environment = os.environ.copy()
+        environment.update(
+            {
+                "PATH": f"{self.bin}:{environment['PATH']}",
+                "RELEASE_WORKFLOW_TEST_STATE": str(self.state),
+            }
+        )
+        environment.update(overrides)
+        return environment
+
+    def install_parallel_lane(self, name: str, lane: str, *, barrier: bool = False) -> None:
+        barrier_body = ""
+        if barrier:
+            barrier_body = textwrap.dedent(
+                f"""
+                touch "$RELEASE_WORKFLOW_TEST_STATE/started-{lane}"
+                for _attempt in $(seq 1 100); do
+                  count=$(find "$RELEASE_WORKFLOW_TEST_STATE" -name 'started-*' -type f | wc -l | tr -d ' ')
+                  [[ "$count" -ge 4 ]] && break
+                  sleep 0.02
+                done
+                [[ "$count" -ge 4 ]] || exit 91
+                """
+            )
+        self.write_executable(
+            self.scripts / name,
+            f'printf "start {lane}\\n" >>"$RELEASE_WORKFLOW_TEST_STATE/events"\n'
+            + barrier_body
+            + f'printf "end {lane}\\n" >>"$RELEASE_WORKFLOW_TEST_STATE/events"\n',
+        )
+
+    def install_five_platform_fixture(self) -> Path:
+        script = self.copy_script("cross-vm-five-platform-e2e.sh")
+        self.install_parallel_lane("ios-simulator-smoke.sh", "ios", barrier=True)
+        self.install_parallel_lane("ios-gui-linking-smoke.sh", "ios-gui")
+        self.install_parallel_lane("ios-device-iris-apps-smoke.sh", "ios-device")
+        self.install_parallel_lane("android-gui-linking-smoke.sh", "android", barrier=True)
+        self.install_parallel_lane("mobile-android-smoke.sh", "android-provider")
+        self.write_executable(
+            self.scripts / "desktop-gui-smoke.sh",
+            textwrap.dedent(
+                """
+                lane="$1"
+                printf "start %s\n" "$lane" >>"$RELEASE_WORKFLOW_TEST_STATE/events"
+                touch "$RELEASE_WORKFLOW_TEST_STATE/started-$lane"
+                for _attempt in $(seq 1 100); do
+                  count=$(find "$RELEASE_WORKFLOW_TEST_STATE" -name 'started-*' -type f | wc -l | tr -d ' ')
+                  [[ "$count" -ge 4 ]] && break
+                  sleep 0.02
+                done
+                [[ "$count" -ge 4 ]] || exit 91
+                printf "end %s\n" "$lane" >>"$RELEASE_WORKFLOW_TEST_STATE/events"
+                """
+            ),
+        )
+        self.write_executable(
+            self.scripts / "cross-vm-e2e.sh",
+            'printf "sync\n" >>"$RELEASE_WORKFLOW_TEST_STATE/events"\n',
+        )
+        return script
+
+    def five_platform_environment(self) -> dict[str, str]:
+        return self.environment(
+            IRIS_DRIVE_E2E_UBUNTU_HOST="local",
+            IRIS_DRIVE_E2E_WINDOWS_HOST="local",
+            IRIS_DRIVE_E2E_MACOS_HOST="local",
+            IRIS_DRIVE_E2E_IOS_HOST="local",
+            IRIS_DRIVE_E2E_ANDROID_HOST="local",
+        )
+
+    def test_five_platform_smoke_lanes_start_in_parallel(self) -> None:
+        script = self.install_five_platform_fixture()
+        completed = subprocess.run(
+            [str(script)],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=self.five_platform_environment(),
+            timeout=5,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        events = (self.state / "events").read_text(encoding="utf-8").splitlines()
+        self.assertIn("sync", events)
+        first_end = next(index for index, event in enumerate(events) if event.startswith("end "))
+        self.assertEqual(set(events[:first_end]), {"start linux", "start windows", "start ios", "start android"})
+
+    def test_five_platform_parallel_failure_preserves_infrastructure_status(self) -> None:
+        script = self.install_five_platform_fixture()
+        self.write_executable(self.scripts / "desktop-gui-smoke.sh", 'exit 75\n')
+        for name in (
+            "ios-simulator-smoke.sh",
+            "ios-gui-linking-smoke.sh",
+            "ios-device-iris-apps-smoke.sh",
+            "android-gui-linking-smoke.sh",
+            "mobile-android-smoke.sh",
+        ):
+            self.write_executable(self.scripts / name, ":\n")
+        completed = subprocess.run(
+            [str(script)],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=self.five_platform_environment(),
+            timeout=5,
+        )
+
+        self.assertEqual(completed.returncode, 75, completed.stderr)
+        self.assertFalse((self.state / "events").exists() and "sync" in (self.state / "events").read_text())
+
+    def test_five_platform_reuses_local_functional_smokes_only(self) -> None:
+        script = self.install_five_platform_fixture()
+        for name in ("desktop-gui-smoke.sh", "ios-device-iris-apps-smoke.sh", "mobile-android-smoke.sh"):
+            self.write_executable(
+                self.scripts / name,
+                f'printf "{name}\\n" >>"$RELEASE_WORKFLOW_TEST_STATE/events"\n',
+            )
+        completed = subprocess.run(
+            [str(script)],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=self.five_platform_environment()
+            | {
+                "IRIS_DRIVE_E2E_LOCAL_IOS_FUNCTIONAL_PRECHECKED": "1",
+                "IRIS_DRIVE_E2E_LOCAL_ANDROID_FUNCTIONAL_PRECHECKED": "1",
+            },
+            timeout=5,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        events = (self.state / "events").read_text(encoding="utf-8")
+        self.assertNotIn("start ios", events)
+        self.assertNotIn("start ios-gui", events)
+        self.assertNotIn("start android", events)
+        self.assertIn("ios-device-iris-apps-smoke.sh", events)
+        self.assertIn("mobile-android-smoke.sh", events)
+        self.assertIn("sync", events)
+
+    def test_android_default_smoke_uses_one_gradle_instrumentation_graph(self) -> None:
+        source = (ROOT / "scripts/android-gui-linking-smoke.sh").read_text(encoding="utf-8")
+        self.assertIn(":app:assembleDebug :app:connectedUiTestAndroidTest", source)
+
+    def test_android_rust_build_declares_gradle_inputs_and_output(self) -> None:
+        source = (ROOT / "android/app/build.gradle.kts").read_text(encoding="utf-8")
+        self.assertIn("inputs.files(", source)
+        self.assertIn("outputs.file(", source)
+        self.assertIn("libiris_drive_app_core.so", source)
+        self.assertIn('"mergeDebugJniLibFolders"', source)
+
+    def test_parallel_group_restores_existing_exit_cleanup(self) -> None:
+        cleanup_marker = self.state / "cleanup"
+        completed = subprocess.run(
+            [
+                "bash",
+                "-c",
+                textwrap.dedent(
+                    f"""
+                    set -Eeuo pipefail
+                    source {ROOT / 'scripts/lib/parallel-gate.sh'}
+                    trap 'touch {cleanup_marker}' EXIT
+                    parallel_group_begin test
+                    parallel_group_start quick true
+                    parallel_group_wait
+                    """
+                ),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertTrue(cleanup_marker.exists())
+
+    def test_ios_idle_sample_precedes_macos_process_cleanup(self) -> None:
+        source = (ROOT / "scripts/release-gate.sh").read_text(encoding="utf-8")
+        idle_group = source.split("run_apple_idle_cpu_gates() {", 1)[1].split("\n}", 1)[0]
+        self.assertLess(
+            idle_group.index("idle-cpu-gate.sh --platform ios"),
+            idle_group.index("run run_macos_idle_cpu_gate"),
+        )
+
+    def test_release_gate_skips_only_prechecks_proven_by_fast_tier(self) -> None:
+        script = self.copy_script("release-gate.sh")
+        call_log = self.state / "calls"
+        for command in ("cargo", "node", "just"):
+            self.write_executable(
+                self.bin / command,
+                f'printf "{command} %s\\n" "$*" >>"$RELEASE_WORKFLOW_TEST_STATE/calls"\n',
+            )
+        self.write_executable(self.bin / "git", 'printf "0\n"\n')
+        self.write_executable(self.bin / "uname", 'printf "TestOS\n"\n')
+
+        completed = subprocess.run(
+            [str(script)],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=self.environment(IRIS_DRIVE_RELEASE_GATE_FAST_PRECHECKED="1"),
+            timeout=5,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        calls = call_log.read_text(encoding="utf-8")
+        self.assertNotIn("node --test", calls)
+        self.assertNotIn("cargo fmt --check", calls)
+        self.assertNotIn("just structure", calls)
+        self.assertNotIn("cargo test --workspace --exclude idrive", calls)
+        self.assertNotIn("--test link_input_e2e", calls)
+        self.assertIn("cargo test -p idrive --bin idrive --test cli_e2e", calls)
+        self.assertIn("cargo test -p idrive --test daemon_sync_matrix", calls)
+        self.assertIn("cargo build --workspace --release", calls)
+
+
+if __name__ == "__main__":
+    unittest.main()

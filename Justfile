@@ -137,8 +137,8 @@ ios-build:
     cd ios && xcodegen generate
     ./scripts/ios-simulator-smoke.sh --build-only
 
-ios-smoke:
-    ./scripts/ios-simulator-smoke.sh
+ios-smoke *args:
+    ./scripts/ios-simulator-smoke.sh {{args}}
 
 ios-gui-smoke:
     ./scripts/ios-gui-linking-smoke.sh

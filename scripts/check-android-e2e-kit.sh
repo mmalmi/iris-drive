@@ -129,6 +129,7 @@ require_contains scripts/android-gui-linking-smoke.sh "signInStartsJoinRequest"
 require_contains scripts/android-gui-linking-smoke.sh "addDeviceSectionRequiresCompleteNativeLinkInput"
 require_contains scripts/android-gui-linking-smoke.sh "addDeviceSectionDispatchesManualDeviceApproval"
 require_contains scripts/android-gui-linking-smoke.sh "ShareActivityInstrumentedTest"
+require_contains scripts/android-gui-linking-smoke.sh 'filter+=",$native_state_class,$share_api_class"'
 require_absent scripts/android-gui-linking-smoke.sh "linkDeviceSubmitRequiresCompleteNativeLinkInput"
 require_absent scripts/android-gui-linking-smoke.sh "addDeviceDialogRequiresCompleteNativeLinkInput"
 require_absent android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndroidGuiFlowTest.kt "linkDeviceSubmit\").assertIsEnabled().performClick()"

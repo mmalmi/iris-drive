@@ -68,7 +68,7 @@ BUILD_APP_PATH=""
 
 usage() {
   cat <<'EOF'
-usage: scripts/macos-dev-app.sh build|run
+usage: scripts/macos-dev-app.sh build|run|run-existing
 
 Environment:
   .env.local
@@ -659,14 +659,19 @@ remove_repo_local_daemon_service() {
 }
 
 run_app() {
-  local app_path
+  local app_path="${1:-}"
   local app_base_dir="${IRIS_DRIVE_APP_BASE_DIR:-}"
   local mode
   local service_config_dir=""
 
   mode="$(signing_mode)"
-  build_app
-  app_path="$BUILD_APP_PATH"
+  if [[ -z "$app_path" ]]; then
+    build_app
+    app_path="$BUILD_APP_PATH"
+  elif [[ ! -d "$app_path" ]]; then
+    echo "Existing macOS app not found: $app_path" >&2
+    exit 1
+  fi
   if [[ -z "$app_base_dir" && "$mode" != "development" ]]; then
     app_base_dir="$BUILD_DIR/AppData"
   fi
@@ -705,6 +710,9 @@ case "${1:-}" in
     ;;
   run)
     run_app
+    ;;
+  run-existing)
+    run_app "${2:-$INSTALL_APP_PATH}"
     ;;
   -h|--help|help)
     usage

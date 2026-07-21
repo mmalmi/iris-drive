@@ -4,6 +4,27 @@ Performance and integration experiments log. Omit identifying information
 (pubkeys, secrets, IPs, private hostnames, exact repo names, raw hashes)
 unless the user explicitly asks otherwise.
 
+## 2026-07-22 release-gate critical path
+
+- A warm serial `verify-fast` profile took about 142s. Rust tests accounted
+  for about 123s: workspace tests took 79s and the focused idrive command took
+  44s. Running those independent Cargo lanes together passed in 27s warm wall
+  time, versus about 46s warm serial time. The run shared Cargo artifacts and
+  reported brief artifact/package-cache lock waits.
+- The measurements were intentionally treated as directional: background VM,
+  backup, and Rust activity made the host noisy. The release workflow now
+  records grouped lane output so failures remain attributable even when work
+  overlaps. After the scheduling change, the same fast tier passed in 31.3s
+  wall time on the noisy host, about 78% below the measured serial baseline;
+  a later fully warm validation passed in 23.8s, about 83% below the baseline.
+- The full-gate topology also repeated native work: three macOS app builds,
+  two iOS builds, three Android instrumentation launches plus a separate
+  assemble, serial platform preflights, and serial five-host setup. The gate
+  now builds each local native app once, overlaps independent device/host
+  lanes, and reuses same-invocation local iOS/Android functional checks while
+  retaining physical-iOS, Android-provider, idle-CPU, and cross-device sync
+  coverage.
+
 ## 2026-06-23 macOS FileProvider provider-list CPU
 
 - Reproduced the Finder CPU spike as FileProvider-triggered

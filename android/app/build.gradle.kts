@@ -116,6 +116,22 @@ kotlin {
 }
 
 tasks.register<Exec>("buildRustArm64") {
+    inputs.files(
+        fileTree(repoRoot) {
+            include("Cargo.toml", "Cargo.lock", ".cargo/**")
+            include("crates/**/Cargo.toml", "crates/**/build.rs", "crates/**/*.rs")
+        },
+    )
+    inputs.property("rustFlags", providers.environmentVariable("RUSTFLAGS").orElse(""))
+    inputs.property(
+        "encodedRustFlags",
+        providers.environmentVariable("CARGO_ENCODED_RUSTFLAGS").orElse(""),
+    )
+    inputs.property(
+        "rustcVersion",
+        providers.exec { commandLine("rustc", "-Vv") }.standardOutput.asText,
+    )
+    outputs.file(rustOutputDir.file("arm64-v8a/libiris_drive_app_core.so"))
     workingDir = repoRoot.asFile
     commandLine(
         "cargo",
@@ -134,7 +150,15 @@ tasks.register<Exec>("buildRustArm64") {
 }
 
 tasks.matching { task ->
-    task.name in listOf("mergeDebugNativeLibs", "mergeUiTestNativeLibs", "mergeReleaseNativeLibs")
+    task.name in
+        listOf(
+            "mergeDebugJniLibFolders",
+            "mergeUiTestJniLibFolders",
+            "mergeReleaseJniLibFolders",
+            "mergeDebugNativeLibs",
+            "mergeUiTestNativeLibs",
+            "mergeReleaseNativeLibs",
+        )
 }.configureEach {
     dependsOn("buildRustArm64")
 }

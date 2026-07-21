@@ -64,6 +64,8 @@ USAGE
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/lib/parallel-gate.sh"
+source "$ROOT/scripts/lib/cross-vm-parallel-setup.sh"
 RUN_ID="run-$(date +%Y%m%d%H%M%S)-$$"
 TIMEOUT_SECS="${IRIS_DRIVE_E2E_TIMEOUT_SECS:-60}"
 REMOTE_TIMEOUT_SECS="${IRIS_DRIVE_E2E_REMOTE_TIMEOUT_SECS:-60}"
@@ -1988,10 +1990,7 @@ else
   echo "mutation surface: provider bridge on Windows; projections on POSIX mounts: ${MOUNT_LABELS:-none}"
 fi
 
-for label in "${LABELS[@]}"; do
-  echo "setting up $label ($(host_value "$label" ssh))"
-  setup_host "$label"
-done
+setup_hosts_parallel
 
 echo "initializing owner on $owner_label"
 owner_json="$(idrive_cmd "$owner_label" init --label "$owner_label")"

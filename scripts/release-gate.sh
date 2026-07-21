@@ -15,6 +15,9 @@ the configured Linux, Windows, macOS, iOS, and Android hosts/devices.
 
 Environment:
   IRIS_DRIVE_RELEASE_GATE_FULL=1       Same as --full.
+  IRIS_DRIVE_RELEASE_GATE_FAST_PRECHECKED=1
+                                        Reuse checks passed by verify-fast in
+                                        this same invocation.
   IRIS_DRIVE_RELEASE_GATE_ANDROID=0    Skip local Android build/smoke.
   IRIS_DRIVE_RELEASE_GATE_IOS=0        Skip local iOS build/smoke.
   IRIS_DRIVE_RELEASE_GATE_MACOS=0      Skip local macOS build/smoke.
@@ -37,53 +40,119 @@ idle_cpu_gate_enabled() {
   [[ "${IRIS_DRIVE_RELEASE_GATE_IDLE_CPU:-1}" != "0" ]]
 }
 
+source "$ROOT/scripts/lib/parallel-gate.sh"
+
 run() {
   printf '[release-gate] %s\n' "$*" >&2
   "$@"
 }
 
 run_parallel_checks() {
-  local tmpdir
-  tmpdir="$(mktemp -d -t iris-drive-release-gate.XXXXXX)"
-  local labels=()
-  local pids=()
-  local logs=()
+  parallel_group_begin release-gate
+  parallel_group_start release-workflow-tests python3 scripts/test_release_workflows.py
+  parallel_group_start local-release-tests node --test \
+    scripts/local-release.test.mjs scripts/local-release-windows-signing.test.mjs
+  parallel_group_start fmt cargo fmt --check
+  parallel_group_start structure just structure
+  parallel_group_start workspace-tests cargo test --workspace --exclude idrive
+  parallel_group_start idrive-tests run_rust_tests
+  parallel_group_wait
+}
 
-  start_check() {
-    local label="$1"
-    shift
-    local logfile="$tmpdir/$label.log"
-    labels+=("$label")
-    logs+=("$logfile")
-    printf '[release-gate] %s\n' "$*" >&2
-    ("$@" >"$logfile" 2>&1) &
-    pids+=("$!")
-  }
+run_parallel_functions() {
+  local group="$1"
+  shift
+  local label task
 
-  start_check local-release-tests node --test scripts/local-release*.test.mjs
-  start_check fmt cargo fmt --check
-  start_check structure just structure
-  start_check workspace-tests cargo test --workspace --exclude idrive
-
-  local failed=0
-  local index
-  for index in "${!pids[@]}"; do
-    if wait "${pids[$index]}"; then
-      sed "s/^/[release-gate:${labels[$index]}] /" "${logs[$index]}"
-    else
-      failed=1
-      sed "s/^/[release-gate:${labels[$index]}] /" "${logs[$index]}" >&2
-      printf '[release-gate] %s failed\n' "${labels[$index]}" >&2
-    fi
+  parallel_group_begin "release-gate-$group"
+  while [[ $# -gt 0 ]]; do
+    label="$1"
+    task="$2"
+    shift 2
+    parallel_group_start "$label" "$task"
   done
-  rm -rf "$tmpdir"
-  return "$failed"
+  parallel_group_wait
 }
 
 run_rust_tests() {
-  run cargo build -p idrive --bin idrive
-  run cargo test -p idrive --bin idrive --test cli_e2e --test link_input_e2e -- --test-threads=1
-  run cargo test -p idrive --test daemon_sync_matrix -- --test-threads=1
+  local compile_args=(--bin idrive --test cli_e2e --test daemon_sync_matrix)
+  local cli_args=(--bin idrive --test cli_e2e)
+  if [[ "${IRIS_DRIVE_RELEASE_GATE_FAST_PRECHECKED:-0}" != "1" ]]; then
+    compile_args+=(--test link_input_e2e)
+    cli_args+=(--test link_input_e2e)
+  fi
+
+  run cargo test -p idrive "${compile_args[@]}" --no-run
+  parallel_group_begin release-gate-rust
+  parallel_group_start cli-tests \
+    cargo test -p idrive "${cli_args[@]}" -- --test-threads=1
+  parallel_group_start daemon-tests \
+    cargo test -p idrive --test daemon_sync_matrix -- --test-threads=1
+  parallel_group_wait
+}
+
+macos_gate_enabled() {
+  ! bool_true "${IRIS_DRIVE_RELEASE_GATE_MACOS_SKIP:-0}" \
+    && [[ "${IRIS_DRIVE_RELEASE_GATE_MACOS:-1}" != "0" ]]
+}
+
+ios_gate_enabled() {
+  ! bool_true "${IRIS_DRIVE_RELEASE_GATE_IOS_SKIP:-0}" \
+    && [[ "${IRIS_DRIVE_RELEASE_GATE_IOS:-1}" != "0" ]]
+}
+
+android_gate_enabled() {
+  ! bool_true "${IRIS_DRIVE_RELEASE_GATE_ANDROID_SKIP:-0}" \
+    && [[ "${IRIS_DRIVE_RELEASE_GATE_ANDROID:-1}" != "0" ]]
+}
+
+run_macos_functional_gate() {
+  macos_gate_enabled || return 0
+  run env \
+    CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}" \
+    IRIS_DRIVE_MACOS_SIGNING="${IRIS_DRIVE_MACOS_SIGNING:-none}" \
+    IRIS_DRIVE_DISABLE_DAEMON_SERVICE="${IRIS_DRIVE_RELEASE_GATE_MACOS_DAEMON_SERVICE:-true}" \
+    just smoke-macos
+}
+
+run_ios_functional_gate() {
+  ios_gate_enabled || return 0
+  # The GUI build-for-testing produces the simulator app used by both suites.
+  run just ios-gui-smoke
+  run just ios-smoke --no-build
+}
+
+run_apple_functional_gates() {
+  run_macos_functional_gate
+  run_ios_functional_gate
+}
+
+run_android_functional_gate() {
+  android_gate_enabled || return 0
+  run env IRIS_DRIVE_ANDROID_KEEP_TEST_APP=true just android-gui-smoke
+}
+
+run_apple_idle_cpu_gates() {
+  if ios_gate_enabled; then
+    run env \
+      IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="${IRIS_DRIVE_RELEASE_GATE_IOS_IDLE_CPU_ROLES:-app}" \
+      IRIS_DRIVE_IDLE_CPU_IOS_DEVICE="${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-${IRIS_DRIVE_IOS_DEVICE:-}}" \
+      ./scripts/idle-cpu-gate.sh --platform ios
+  fi
+  if macos_gate_enabled; then
+    # This gate terminates simulator processes to isolate the macOS sample, so
+    # it must remain after the iOS idle sample.
+    run run_macos_idle_cpu_gate
+  fi
+}
+
+run_android_idle_cpu_gate() {
+  android_gate_enabled || return 0
+  run env \
+    IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="${IRIS_DRIVE_RELEASE_GATE_ANDROID_IDLE_CPU_ROLES:-app}" \
+    IRIS_DRIVE_IDLE_CPU_WARMUP_SECS="${IRIS_DRIVE_RELEASE_GATE_ANDROID_IDLE_CPU_WARMUP_SECS:-90}" \
+    IRIS_DRIVE_IDLE_CPU_ANDROID_PACKAGE="${IRIS_DRIVE_ANDROID_PACKAGE:-to.iris.drive.uitest}" \
+    ./scripts/idle-cpu-gate.sh --platform android
 }
 
 terminate_booted_ios_simulator_instances() {
@@ -136,9 +205,10 @@ run_macos_idle_cpu_gate() {
   "$idrive" --config-dir "$config_dir" init --force --label "macOS idle CPU gate" >/dev/null
 
   output="$(
-    IRIS_DRIVE_MACOS_SIGNING="${IRIS_DRIVE_MACOS_SIGNING:-none}" \
+    CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}" \
+      IRIS_DRIVE_MACOS_SIGNING="${IRIS_DRIVE_MACOS_SIGNING:-none}" \
       IRIS_DRIVE_APP_BASE_DIR="$app_base_dir" \
-      ./scripts/macos-dev-app.sh run
+      ./scripts/macos-dev-app.sh run-existing
   )"
   printf '%s\n' "$output"
   app_path="$(printf '%s\n' "$output" | sed -n 's/^macOS app launched: //p' | tail -n 1)"
@@ -188,46 +258,31 @@ if [[ -z "${SOURCE_DATE_EPOCH:-}" ]]; then
   export SOURCE_DATE_EPOCH
 fi
 
-run_parallel_checks
-run_rust_tests
+if [[ "${IRIS_DRIVE_RELEASE_GATE_FAST_PRECHECKED:-0}" == "1" ]]; then
+  printf '[release-gate] reusing prechecks passed by verify-fast\n' >&2
+  run_rust_tests
+else
+  run_parallel_checks
+fi
 run cargo build --workspace --release
 
 case "$(uname -s)" in
   Darwin)
-    if ! bool_true "${IRIS_DRIVE_RELEASE_GATE_MACOS_SKIP:-0}" \
-      && [[ "${IRIS_DRIVE_RELEASE_GATE_MACOS:-1}" != "0" ]]; then
-      run just macos-build
-      run env \
-        IRIS_DRIVE_MACOS_SIGNING="${IRIS_DRIVE_MACOS_SIGNING:-none}" \
-        IRIS_DRIVE_DISABLE_DAEMON_SERVICE="${IRIS_DRIVE_RELEASE_GATE_MACOS_DAEMON_SERVICE:-true}" \
-        just smoke-macos
-      if idle_cpu_gate_enabled; then
-        run run_macos_idle_cpu_gate
-      fi
+    run_parallel_functions native-functional \
+      apple run_apple_functional_gates \
+      android run_android_functional_gate
+    if ios_gate_enabled; then
+      export IRIS_DRIVE_E2E_LOCAL_IOS_FUNCTIONAL_PRECHECKED=1
     fi
-    if ! bool_true "${IRIS_DRIVE_RELEASE_GATE_IOS_SKIP:-0}" \
-      && [[ "${IRIS_DRIVE_RELEASE_GATE_IOS:-1}" != "0" ]]; then
-      # ios-smoke builds the simulator app before exercising it.
-      run just ios-smoke
-      run just ios-gui-smoke
-      if idle_cpu_gate_enabled; then
-        run env \
-          IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="${IRIS_DRIVE_RELEASE_GATE_IOS_IDLE_CPU_ROLES:-app}" \
-          IRIS_DRIVE_IDLE_CPU_IOS_DEVICE="${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-${IRIS_DRIVE_IOS_DEVICE:-}}" \
-          ./scripts/idle-cpu-gate.sh --platform ios
-      fi
+    if android_gate_enabled; then
+      export IRIS_DRIVE_E2E_LOCAL_ANDROID_FUNCTIONAL_PRECHECKED=1
     fi
-    if ! bool_true "${IRIS_DRIVE_RELEASE_GATE_ANDROID_SKIP:-0}" \
-      && [[ "${IRIS_DRIVE_RELEASE_GATE_ANDROID:-1}" != "0" ]]; then
-      run just android-build
-      run env IRIS_DRIVE_ANDROID_KEEP_TEST_APP=true just android-gui-smoke
-      if idle_cpu_gate_enabled; then
-        run env \
-          IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="${IRIS_DRIVE_RELEASE_GATE_ANDROID_IDLE_CPU_ROLES:-app}" \
-          IRIS_DRIVE_IDLE_CPU_WARMUP_SECS="${IRIS_DRIVE_RELEASE_GATE_ANDROID_IDLE_CPU_WARMUP_SECS:-90}" \
-          IRIS_DRIVE_IDLE_CPU_ANDROID_PACKAGE="${IRIS_DRIVE_ANDROID_PACKAGE:-to.iris.drive.uitest}" \
-          ./scripts/idle-cpu-gate.sh --platform android
-      fi
+    if idle_cpu_gate_enabled; then
+      # Finish CPU-heavy builds before sampling, but overlap independent Apple
+      # and Android device waits. macOS and iOS remain serial in the Apple lane.
+      run_parallel_functions native-idle-cpu \
+        apple-idle-cpu run_apple_idle_cpu_gates \
+        android-idle-cpu run_android_idle_cpu_gate
     fi
     ;;
   Linux)

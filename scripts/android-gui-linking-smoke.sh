@@ -348,6 +348,8 @@ require_android_app_network_permission() {
 
 run_android_gui_tests() {
   local class="to.iris.drive.app.IrisDriveAndroidGuiFlowTest"
+  local native_state_class="to.iris.drive.app.IrisDriveAndroidNativeStateTest"
+  local share_api_class="to.iris.drive.app.ShareActivityInstrumentedTest"
   local mode="${IRIS_DRIVE_ANDROID_GUI_TEST_MODE:-smoke}"
   local smoke_tests=(
     createProfileFlowDoesNotRequireUsernameOrProfilePhoto
@@ -373,13 +375,10 @@ run_android_gui_tests() {
   )
 
   local test
+  local filter=""
   case "$mode" in
     class)
-      (
-        cd "$ROOT"
-        ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedUiTestAndroidTest \
-          "-Pandroid.testInstrumentationRunnerArguments.class=$class"
-      )
+      filter="$class,$native_state_class,$share_api_class"
       ;;
     serial)
       for test in "${tests[@]}"; do
@@ -389,40 +388,23 @@ run_android_gui_tests() {
             "-Pandroid.testInstrumentationRunnerArguments.class=$class#$test"
         )
       done
+      filter="$native_state_class,$share_api_class"
       ;;
     smoke)
-      local filter=""
       for test in "${smoke_tests[@]}"; do
         filter+="${filter:+,}$class#$test"
       done
-      (
-        cd "$ROOT"
-        ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedUiTestAndroidTest \
-          "-Pandroid.testInstrumentationRunnerArguments.class=$filter"
-      )
+      filter+=",$native_state_class,$share_api_class"
       ;;
     *)
       echo "FAIL: unknown IRIS_DRIVE_ANDROID_GUI_TEST_MODE=$mode (expected smoke, serial, or class)" >&2
       return 1
       ;;
   esac
-}
-
-run_android_native_state_tests() {
-  local class="to.iris.drive.app.IrisDriveAndroidNativeStateTest"
   (
     cd "$ROOT"
-    ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedUiTestAndroidTest \
-      "-Pandroid.testInstrumentationRunnerArguments.class=$class"
-  )
-}
-
-run_android_share_api_test() {
-  local class="to.iris.drive.app.ShareActivityInstrumentedTest"
-  (
-    cd "$ROOT"
-    ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedUiTestAndroidTest \
-      "-Pandroid.testInstrumentationRunnerArguments.class=$class"
+    ANDROID_SERIAL="$serial" ./tools/run-android :app:assembleDebug :app:connectedUiTestAndroidTest \
+      "-Pandroid.testInstrumentationRunnerArguments.class=$filter"
   )
 }
 
@@ -435,8 +417,6 @@ fi
 
 "$ADB" -s "$serial" wait-for-device
 run_android_gui_tests
-run_android_native_state_tests
-run_android_share_api_test
 
 if [[ ! -x "$IDRIVE" ]]; then
   cargo build -p idrive

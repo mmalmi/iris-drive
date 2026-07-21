@@ -35,13 +35,16 @@ LOCAL_RELAY_URL=""
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/ios-simulator-smoke.sh [--build-only]
+  scripts/ios-simulator-smoke.sh [--build-only] [--no-build]
 
 Environment:
   IRIS_DRIVE_IOS_SIMULATOR_DEVICE  Optional simulator device name.
   IRIS_DRIVE_IOS_BUILD_LOG         Build log path.
   IRIS_DRIVE_IOS_SIMULATOR_BOOT_TIMEOUT_SECONDS
                                       Seconds to wait for simctl bootstatus.
+
+--no-build reuses the app produced by ios-gui-linking-smoke.sh in the shared
+DerivedData directory.
 USAGE
 }
 
@@ -56,10 +59,15 @@ cleanup() {
 trap cleanup EXIT
 
 BUILD_ONLY=0
+NO_BUILD=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --build-only)
       BUILD_ONLY=1
+      shift
+      ;;
+    --no-build)
+      NO_BUILD=1
       shift
       ;;
     -h|--help)
@@ -301,43 +309,45 @@ configure_owner_local_relay() {
   "$IDRIVE" --config-dir "$OWNER_CONFIG" relays add "$LOCAL_RELAY_URL" >/dev/null
 }
 
+DEVICE_UDID="$(select_simulator)"
+DESTINATION="platform=iOS Simulator,id=$DEVICE_UDID"
+
 if [[ ! -x "$IDRIVE" ]]; then
   cargo build -p idrive
 fi
 
-cargo build -p iris-drive-app-core --target "$RUST_IOS_TARGET"
-if [[ ! -f "$RUST_STATIC_LIB" ]]; then
-  echo "FAIL: static app-core library not found at $RUST_STATIC_LIB" >&2
-  exit 1
+if [[ "$NO_BUILD" == "0" ]]; then
+  cargo build -p iris-drive-app-core --target "$RUST_IOS_TARGET"
+  if [[ ! -f "$RUST_STATIC_LIB" ]]; then
+    echo "FAIL: static app-core library not found at $RUST_STATIC_LIB" >&2
+    exit 1
+  fi
+
+  if command -v xcodegen >/dev/null 2>&1; then
+    (cd "$ROOT/ios" && xcodegen generate)
+  elif [[ ! -d "$PROJECT" ]]; then
+    echo "FAIL: $PROJECT is missing and xcodegen is not installed" >&2
+    exit 1
+  fi
+
+  xcodebuild \
+    -project "$PROJECT" \
+    -scheme "$SCHEME" \
+    -configuration "$CONFIGURATION" \
+    -derivedDataPath "$DERIVED_DATA" \
+    -destination "$DESTINATION" \
+    CODE_SIGNING_ALLOWED=YES \
+    CODE_SIGNING_REQUIRED=YES \
+    CODE_SIGN_IDENTITY="${IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY:--}" \
+    PROVISIONING_PROFILE_SPECIFIER= \
+    LIBRARY_SEARCH_PATHS="$RUST_LIB_DIR" \
+    OTHER_LDFLAGS="$RUST_STATIC_LIB" \
+    build >"$BUILD_LOG"
 fi
-
-if command -v xcodegen >/dev/null 2>&1; then
-  (cd "$ROOT/ios" && xcodegen generate)
-elif [[ ! -d "$PROJECT" ]]; then
-  echo "FAIL: $PROJECT is missing and xcodegen is not installed" >&2
-  exit 1
-fi
-
-DEVICE_UDID="$(select_simulator)"
-DESTINATION="platform=iOS Simulator,id=$DEVICE_UDID"
-
-xcodebuild \
-  -project "$PROJECT" \
-  -scheme "$SCHEME" \
-  -configuration "$CONFIGURATION" \
-  -derivedDataPath "$DERIVED_DATA" \
-  -destination "$DESTINATION" \
-  CODE_SIGNING_ALLOWED=YES \
-  CODE_SIGNING_REQUIRED=YES \
-  CODE_SIGN_IDENTITY="${IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY:--}" \
-  PROVISIONING_PROFILE_SPECIFIER= \
-  LIBRARY_SEARCH_PATHS="$RUST_LIB_DIR" \
-  OTHER_LDFLAGS="$RUST_STATIC_LIB" \
-  build >"$BUILD_LOG"
 
 APP_PATH="$(resolve_app_path)"
 if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
-  echo "FAIL: built iOS app not found. Build log: $BUILD_LOG" >&2
+  echo "FAIL: iOS app not found in DerivedData. Build log: $BUILD_LOG" >&2
   exit 1
 fi
 assert_static_app_core_linkage "$APP_PATH"

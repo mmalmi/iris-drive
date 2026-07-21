@@ -53,7 +53,7 @@ async fn provider_root_wake_listener_reads_fragmented_payload() {
         .unwrap();
     let wake_path = iris_drive_core::paths::provider_root_wake_path_in(config_dir.path());
     let endpoint: Value = serde_json::from_slice(&std::fs::read(wake_path).unwrap()).unwrap();
-    let port = endpoint["port"].as_u64().unwrap() as u16;
+    let port = u16::try_from(endpoint["port"].as_u64().unwrap()).unwrap();
     let payload = json!({
         "root_cid": "root-fragmented",
         "file_count": 7,

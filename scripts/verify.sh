@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/scripts/lib/parallel-gate.sh"
 
 # Avoid the retired machine-wide target even when a long-lived shell still
 # exports it. An explicit non-legacy target remains supported.
@@ -31,13 +32,18 @@ EOF
 }
 
 run_fast() {
-  python3 scripts/test_native_lab.py
-  cargo fmt --all --check
-  cargo clippy --workspace --all-targets -- -D warnings
-  just structure
-  node --test scripts/local-release*.test.mjs
-  cargo test --workspace --exclude idrive
-  cargo test -p idrive --bin idrive --test link_input_e2e
+  parallel_group_begin verify-fast
+  parallel_group_start native-lab-tests python3 scripts/test_native_lab.py
+  parallel_group_start release-workflow-tests python3 scripts/test_release_workflows.py
+  parallel_group_start fmt cargo fmt --all --check
+  parallel_group_start structure just structure
+  parallel_group_start local-release-tests node --test \
+    scripts/local-release.test.mjs scripts/local-release-windows-signing.test.mjs
+  parallel_group_start clippy cargo clippy --workspace --all-targets -- -D warnings
+  parallel_group_start workspace-tests cargo test --workspace --exclude idrive
+  parallel_group_start idrive-tests cargo test -p idrive --bin idrive --test link_input_e2e
+  parallel_group_wait
+  export IRIS_DRIVE_RELEASE_GATE_FAST_PRECHECKED=1
 }
 
 required_lab_env=(
