@@ -99,7 +99,7 @@ async fn running_daemon_subscribes_when_join_request_is_created_after_startup() 
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn live_daemons_bootstrap_webrtc_over_relay_and_deliver_link_request() {
+async fn live_daemons_bootstrap_over_websocket_seed_and_deliver_link_request() {
     let _guard = live_daemon_test_guard().await;
     let relay = LocalNostrRelay::spawn().await;
     let blossom = LocalBlossomServer::spawn_with_upload_delay(Duration::ZERO).await;
@@ -116,28 +116,36 @@ async fn live_daemons_bootstrap_webrtc_over_relay_and_deliver_link_request() {
         &["link", invite_url, "--label", "iphone"],
     );
     let linked_npub = linked["current_app_key_npub"].as_str().unwrap().to_string();
-    let owner_rendezvous_port = unused_udp_loopback_port();
-    let linked_rendezvous_port = unused_udp_loopback_port();
+    let websocket_seed_port = unused_loopback_port();
     let owner_log = owner_cfg.path().join("owner.log");
     let linked_log = linked_cfg.path().join("linked.log");
-    let owner_daemon = DaemonChild::spawn_webrtc_only(
+    let owner_daemon = DaemonChild::spawn_websocket_listener(
         owner_cfg.path(),
         &relay.url,
         owner_log,
         unused_loopback_port(),
-        owner_rendezvous_port,
+        websocket_seed_port,
         8,
     );
-    let linked_daemon = DaemonChild::spawn_webrtc_only(
+    let owner_startup_deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < owner_startup_deadline && !owner_daemon.log().contains("subscribed") {
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    assert!(
+        owner_daemon.log().contains("subscribed"),
+        "WebSocket seed daemon did not start:\n{}",
+        owner_daemon.log()
+    );
+    let linked_daemon = DaemonChild::spawn_websocket_client(
         linked_cfg.path(),
         &relay.url,
         linked_log,
         unused_loopback_port(),
-        linked_rendezvous_port,
+        websocket_seed_port,
         8,
     );
 
-    wait_until_webrtc_fips_connected(
+    wait_until_websocket_fips_connected(
         owner_cfg.path(),
         linked_cfg.path(),
         &linked_npub,
@@ -169,7 +177,7 @@ async fn live_daemons_bootstrap_webrtc_over_relay_and_deliver_link_request() {
     );
 }
 
-async fn wait_until_webrtc_fips_connected(
+async fn wait_until_websocket_fips_connected(
     owner_cfg: &Path,
     linked_cfg: &Path,
     linked_npub: &str,
@@ -178,20 +186,19 @@ async fn wait_until_webrtc_fips_connected(
     linked_daemon: &DaemonChild,
 ) {
     let started_at = Instant::now();
-    // One failed negotiation may consume the 30-second FIPS attempt deadline;
-    // leave room for the bounded retry while still requiring a real WebRTC link.
-    let window = Duration::from_mins(1);
+    let window = Duration::from_secs(30);
     while started_at.elapsed() < window {
         let owner = run_json(owner_cfg, &["status"]);
         let linked = run_json(linked_cfg, &["status"]);
-        if webrtc_fips_connected(&owner, linked_npub) && webrtc_fips_connected(&linked, owner_npub)
+        if websocket_fips_connected(&owner, linked_npub)
+            && websocket_fips_connected(&linked, owner_npub)
         {
             return;
         }
         tokio::time::sleep(POLL_INTERVAL).await;
     }
     panic!(
-        "relay-carried FIPS WebRTC did not connect within {:?}\nowner status: {}\nlinked status: {}\nowner log:\n{}\nlinked log:\n{}",
+        "FIPS WebSocket first adjacency did not connect within {:?}\nowner status: {}\nlinked status: {}\nowner log:\n{}\nlinked log:\n{}",
         started_at.elapsed(),
         serde_json::to_string_pretty(&run_json(owner_cfg, &["status"])).unwrap(),
         serde_json::to_string_pretty(&run_json(linked_cfg, &["status"])).unwrap(),
@@ -200,7 +207,7 @@ async fn wait_until_webrtc_fips_connected(
     );
 }
 
-fn webrtc_fips_connected(status: &Value, expected_peer: &str) -> bool {
+fn websocket_fips_connected(status: &Value, expected_peer: &str) -> bool {
     let fips = &status["network"]["fips"];
     fips["running"].as_bool().unwrap_or(false)
         && fips["fresh"].as_bool().unwrap_or(false)
@@ -208,7 +215,7 @@ fn webrtc_fips_connected(status: &Value, expected_peer: &str) -> bool {
             peers.iter().any(|peer| {
                 peer["npub"].as_str() == Some(expected_peer)
                     && peer["connected"].as_bool() == Some(true)
-                    && peer["transport_type"].as_str() == Some("webrtc")
+                    && peer["transport_type"].as_str() == Some("websocket")
             })
         })
 }

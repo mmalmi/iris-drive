@@ -6,7 +6,10 @@ struct DaemonChild {
 #[derive(Clone, Copy)]
 enum FipsTestCarrier {
     Udp { port: Option<u16> },
-    WebRtc { local_rendezvous_port: u16 },
+    WebSocket {
+        bind_port: Option<u16>,
+        seed_port: Option<u16>,
+    },
 }
 
 impl DaemonChild {
@@ -43,12 +46,12 @@ impl DaemonChild {
         )
     }
 
-    fn spawn_webrtc_only(
+    fn spawn_websocket_listener(
         config_dir: &Path,
         relay_url: &str,
         log_path: PathBuf,
         gateway_port: u16,
-        local_rendezvous_port: u16,
+        websocket_port: u16,
         open_discovery_max_pending: usize,
     ) -> Self {
         Self::spawn_inner(
@@ -56,8 +59,31 @@ impl DaemonChild {
             relay_url,
             log_path,
             gateway_port,
-            FipsTestCarrier::WebRtc {
-                local_rendezvous_port,
+            FipsTestCarrier::WebSocket {
+                bind_port: Some(websocket_port),
+                seed_port: None,
+            },
+            "",
+            Some(open_discovery_max_pending),
+        )
+    }
+
+    fn spawn_websocket_client(
+        config_dir: &Path,
+        relay_url: &str,
+        log_path: PathBuf,
+        gateway_port: u16,
+        websocket_seed_port: u16,
+        open_discovery_max_pending: usize,
+    ) -> Self {
+        Self::spawn_inner(
+            config_dir,
+            relay_url,
+            log_path,
+            gateway_port,
+            FipsTestCarrier::WebSocket {
+                bind_port: None,
+                seed_port: Some(websocket_seed_port),
             },
             "",
             Some(open_discovery_max_pending),
@@ -83,7 +109,19 @@ impl DaemonChild {
         let gateway_port = gateway_port.to_string();
         let fips_port = match carrier {
             FipsTestCarrier::Udp { port } => port,
-            FipsTestCarrier::WebRtc { .. } => None,
+            FipsTestCarrier::WebSocket { .. } => None,
+        };
+        let (websocket_bind_addr, websocket_seed_urls) = match carrier {
+            FipsTestCarrier::Udp { .. } => (String::new(), String::new()),
+            FipsTestCarrier::WebSocket {
+                bind_port,
+                seed_port,
+            } => (
+                bind_port.map_or_else(String::new, |port| format!("127.0.0.1:{port}")),
+                seed_port.map_or_else(String::new, |port| {
+                    format!("ws://127.0.0.1:{port}/fips")
+                }),
+            ),
         };
         let fips_bind = fips_port.map_or_else(
             || "127.0.0.1:0".to_string(),
@@ -95,12 +133,20 @@ impl DaemonChild {
             .env("IRIS_DRIVE_CONFIG_DIR", config_dir)
             .env("IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP", "false")
             .env(
+                "IRIS_DRIVE_FIPS_ENABLE_LOCAL_RENDEZVOUS",
+                matches!(carrier, FipsTestCarrier::Udp { .. }).to_string(),
+            )
+            // Keep carrier-specific daemon tests deterministic now that
+            // production defaults include public WebSocket entry points.
+            .env("IRIS_FIPS_WEBSOCKET_BIND_ADDR", websocket_bind_addr)
+            .env("IRIS_FIPS_WEBSOCKET_SEED_URLS", websocket_seed_urls)
+            .env(
                 "IRIS_DRIVE_FIPS_ENABLE_UDP",
                 matches!(carrier, FipsTestCarrier::Udp { .. }).to_string(),
             )
             .env(
                 "IRIS_DRIVE_FIPS_ENABLE_WEBRTC",
-                matches!(carrier, FipsTestCarrier::WebRtc { .. }).to_string(),
+                "false",
             )
             .env(
                 "IRIS_DRIVE_FIPS_ENABLE_LAN_DISCOVERY",
@@ -115,15 +161,6 @@ impl DaemonChild {
             .env("IRIS_DRIVE_FIPS_UDP_BIND_ADDR", fips_bind)
             .env("IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR", fips_external)
             .env("IRIS_DRIVE_FIPS_UDP_PUBLIC", "false");
-        if let FipsTestCarrier::WebRtc {
-            local_rendezvous_port,
-        } = carrier
-        {
-            command.env(
-                "IRIS_DRIVE_FIPS_LOCAL_RENDEZVOUS_ADDR",
-                format!("127.0.0.1:{local_rendezvous_port}"),
-            );
-        }
         let child = command
             .args([
                 "daemon",

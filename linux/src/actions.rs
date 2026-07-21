@@ -1224,12 +1224,7 @@ pub(crate) fn copy_caldav_url(model: &AppRef) {
 pub(crate) fn copy_account_key(model: &AppRef, key: &str) {
     match current_account_value(key) {
         Ok(value) => {
-            let message = if key == "app_key_npub" || key == "current_app_key_npub" {
-                "Device ID copied"
-            } else {
-                "Device ID copied"
-            };
-            copy_text(model, &value, message);
+            copy_text(model, &value, "Device ID copied");
         }
         Err(error) => model.ui.notice.set_text(&error),
     }

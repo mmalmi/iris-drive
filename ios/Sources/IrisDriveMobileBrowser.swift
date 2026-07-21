@@ -51,7 +51,10 @@ func irisWebIsLocalGatewayHost(_ host: String?) -> Bool {
 
 func irisWebIsTransientGatewayNotFound(_ bodyText: String, url: URL?) -> Bool {
     guard irisWebIsLocalGatewayHost(url?.host) else { return false }
-    return bodyText.trimmingCharacters(in: .whitespacesAndNewlines) == "Not found"
+    let message = bodyText.trimmingCharacters(in: .whitespacesAndNewlines)
+    return message == "Not found"
+        || message == "Root not found through configured event provider"
+        || message == "Resolution failed through configured event provider and peers"
 }
 
 extension IrisDriveMobileModel {

@@ -123,6 +123,9 @@ impl DirectRootExchange {
         config_dir: &Path,
         sync: &FsFipsBlockSync,
     ) -> Result<(), String> {
+        if !periodic_direct_root_exchange_has_peer(sync).await {
+            return Ok(());
+        }
         let config = AppConfig::load_or_default(config_path_in(config_dir))
             .map_err(|error| format!("loading config: {error}"))?;
         sync.refresh_authorized_peers(&config).await;
@@ -168,6 +171,9 @@ impl DirectRootExchange {
         config_dir: &Path,
         sync: &FsFipsBlockSync,
     ) -> Result<(), String> {
+        if !periodic_direct_root_exchange_has_peer(sync).await {
+            return Ok(());
+        }
         let config = AppConfig::load_or_default(config_path_in(config_dir))
             .map_err(|error| format!("loading config: {error}"))?;
         let Some(state) = config.profile.as_ref() else {
@@ -624,6 +630,17 @@ impl DirectRootExchange {
             self.published_keys.remove(&oldest);
         }
     }
+}
+
+async fn periodic_direct_root_exchange_has_peer(sync: &FsFipsBlockSync) -> bool {
+    has_connected_authorized_peer(
+        &sync.authorized_peer_ids(),
+        &sync.connected_peer_ids().await,
+    )
+}
+
+fn has_connected_authorized_peer(authorized: &[String], connected: &[String]) -> bool {
+    authorized.iter().any(|peer| connected.contains(peer))
 }
 
 #[must_use]
@@ -1327,6 +1344,21 @@ async fn download_direct_root(sync: &FsFipsBlockSync, root_cid: &str) -> Result<
 mod tests {
     use super::*;
     use crate::{AppKeyRootRef, Drive, Profile};
+
+    #[test]
+    fn direct_root_periodic_exchange_requires_a_connected_authorized_peer() {
+        let authorized = vec!["authorized".to_string()];
+
+        assert!(!has_connected_authorized_peer(&authorized, &[]));
+        assert!(!has_connected_authorized_peer(
+            &authorized,
+            &["gateway".to_string()]
+        ));
+        assert!(has_connected_authorized_peer(
+            &authorized,
+            &["authorized".to_string()]
+        ));
+    }
 
     #[test]
     fn direct_root_events_fall_back_to_known_drive_roots_without_roster_cache() {

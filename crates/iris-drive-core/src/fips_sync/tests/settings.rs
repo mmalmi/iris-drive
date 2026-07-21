@@ -2,7 +2,8 @@ use super::*;
 
 use super::super::settings_runtime::{
     bounded_webrtc_max_connections, fips_endpoint_options, parse_bool_env_value,
-    parse_static_peer_hints, target_allows_default_desktop_fips,
+    parse_list_env_value, parse_static_peer_hints, target_allows_default_desktop_fips,
+    target_allows_default_lan_discovery,
 };
 
 #[test]
@@ -44,6 +45,9 @@ fn endpoint_options_can_advertise_native_udp_without_disabling_webrtc() {
         enable_webrtc: true,
         enable_lan_discovery: true,
         enable_mesh_pubsub: true,
+        enable_local_rendezvous: true,
+        websocket_bind_addr: None,
+        websocket_seed_urls: vec!["wss://seed.example/fips".to_string()],
         udp_bind_addr: Some("0.0.0.0:2121".to_string()),
         udp_public: true,
         udp_external_addr: Some("10.44.94.98:2121".to_string()),
@@ -64,6 +68,10 @@ fn endpoint_options_can_advertise_native_udp_without_disabling_webrtc() {
 
     assert!(options.enable_udp);
     assert!(options.enable_webrtc);
+    assert_eq!(
+        options.websocket.expect("WebSocket seeds").seed_urls,
+        vec!["wss://seed.example/fips"]
+    );
     assert_eq!(options.udp_bind_addr.as_deref(), Some("0.0.0.0:2121"));
     assert!(options.udp_public);
     assert_eq!(
@@ -73,6 +81,40 @@ fn endpoint_options_can_advertise_native_udp_without_disabling_webrtc() {
     assert!(options.webrtc_auto_connect);
     assert_eq!(options.webrtc_max_connections, 8);
     assert_eq!(options.open_discovery_max_pending, 8);
+}
+
+#[test]
+fn websocket_seed_list_ignores_empty_entries_and_whitespace() {
+    assert_eq!(
+        parse_list_env_value(" wss://one.example/fips, ,wss://two.example/fips "),
+        vec![
+            "wss://one.example/fips".to_string(),
+            "wss://two.example/fips".to_string(),
+        ]
+    );
+}
+
+#[test]
+fn endpoint_options_can_bind_a_native_websocket_entry_point() {
+    let settings = FipsTransportSettings {
+        enable_local_rendezvous: false,
+        websocket_bind_addr: Some("127.0.0.1:2121".to_string()),
+        websocket_seed_urls: Vec::new(),
+        ..Default::default()
+    };
+
+    let options = fips_endpoint_options(
+        "nsec1example".to_string(),
+        IRIS_DRIVE_FIPS_DISCOVERY_SCOPE.to_string(),
+        Vec::new(),
+        &AppConfig::default(),
+        &settings,
+    );
+    let websocket = options.websocket.expect("WebSocket listener");
+
+    assert_eq!(websocket.bind_addr.as_deref(), Some("127.0.0.1:2121"));
+    assert!(!options.enable_local_rendezvous);
+    assert!(websocket.seed_urls.is_empty());
 }
 
 #[test]
@@ -90,6 +132,13 @@ fn default_transport_settings_do_not_seed_fips_bootstrap_transit() {
 
     assert_eq!(settings.webrtc_max_connections, 8);
     assert_eq!(settings.open_discovery_max_pending, 0);
+    assert_eq!(
+        settings.websocket_seed_urls,
+        vec![
+            "wss://fips1.iris.to/fips".to_string(),
+            "wss://fips2.iris.to/fips".to_string(),
+        ]
+    );
     assert!(settings.bootstrap_peer_hints.is_empty());
     assert!(settings.enable_lan_discovery);
 }
@@ -189,10 +238,7 @@ fn admin_inbound_app_key_link_request_configures_pending_fips_peer() {
     let peers = authorized_device_fips_peers(&config, &FipsTransportSettings::default());
     assert_eq!(peers.len(), 1);
     assert_eq!(peers[0].npub, pending_npub);
-    assert_eq!(
-        peers[0].udp_addresses,
-        vec![format!("nostr_relay:{pending_npub}")]
-    );
+    assert!(peers[0].udp_addresses.is_empty());
 }
 
 #[test]
@@ -392,7 +438,7 @@ fn legacy_drive_roots_do_not_seed_bootstrap_fips_routing_peers() {
 }
 
 #[test]
-fn relay_fallback_preserves_static_addresses_for_authorized_devices() {
+fn ordinary_relays_do_not_change_authorized_fips_peer_addresses() {
     let first_keys = nostr_sdk::Keys::generate();
     let second_keys = nostr_sdk::Keys::generate();
     let first_pubkey = first_keys.public_key().to_hex();
@@ -449,17 +495,9 @@ fn relay_fallback_preserves_static_addresses_for_authorized_devices() {
     assert_eq!(peers.len(), 2);
     assert_eq!(authorized_blob_fips_peers(&config, &settings), peers);
     assert!(peers.iter().any(|peer| peer.npub == first_npub
-        && peer.udp_addresses
-            == vec![
-                "10.44.34.102:22121".to_string(),
-                format!("nostr_relay:{first_npub}"),
-            ]));
+        && peer.udp_addresses == vec!["10.44.34.102:22121".to_string()]));
     assert!(peers.iter().any(|peer| peer.npub == second_npub
-        && peer.udp_addresses
-            == vec![
-                "10.44.214.2:22121".to_string(),
-                format!("nostr_relay:{second_npub}"),
-            ]));
+        && peer.udp_addresses == vec!["10.44.214.2:22121".to_string()]));
 }
 
 #[test]
@@ -501,10 +539,7 @@ fn pending_app_key_link_admin_is_allowed_for_roster_app_messages() {
     let authorized = authorized_device_fips_peers(&config, &settings);
     assert_eq!(authorized.len(), 1);
     assert_eq!(authorized[0].npub, admin_npub);
-    let expected_addresses = vec![
-        "10.44.1.9:22121".to_string(),
-        format!("nostr_relay:{admin_npub}"),
-    ];
+    let expected_addresses = vec!["10.44.1.9:22121".to_string()];
     assert_eq!(authorized[0].udp_addresses, expected_addresses);
     assert!(authorized_blob_fips_peers(&config, &settings).is_empty());
     let routing = routing_fips_peers(&config, &settings);
@@ -533,11 +568,15 @@ fn endpoint_options_keep_native_udp_private_by_default() {
 }
 
 #[test]
-fn mobile_fips_defaults_keep_lan_without_local_candidate_sharing() {
+fn android_fips_defaults_avoid_ambient_lan_scans() {
     assert!(!target_allows_default_desktop_fips("android"));
     assert!(!target_allows_default_desktop_fips("ios"));
     assert!(target_allows_default_desktop_fips("macos"));
     assert!(target_allows_default_desktop_fips("linux"));
+    assert!(!target_allows_default_lan_discovery("android"));
+    assert!(target_allows_default_lan_discovery("ios"));
+    assert!(target_allows_default_lan_discovery("macos"));
+    assert!(target_allows_default_lan_discovery("linux"));
 }
 
 #[test]
@@ -642,6 +681,18 @@ fn bootstrap_control_policy_excludes_protected_root_frames() {
     assert!(topics.contains(crate::app_key_link_transport::APP_KEY_LINK_REQUEST_APP_TOPIC));
     assert!(topics.contains(crate::app_key_link_transport::APP_KEY_LINK_ROSTER_APP_TOPIC));
     assert!(!topics.contains(crate::direct_root_transport::DIRECT_ROOT_APP_TOPIC));
+}
+
+#[tokio::test]
+async fn disabled_mesh_pubsub_receiver_stays_pending() {
+    assert!(
+        tokio::time::timeout(
+            std::time::Duration::from_millis(20),
+            recv_optional_nostr_pubsub_event(None),
+        )
+        .await
+        .is_err()
+    );
 }
 
 #[test]

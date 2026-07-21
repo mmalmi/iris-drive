@@ -10,9 +10,17 @@ use hashtree_fips_transport::{BoundFipsEndpoint, FipsPeerConfig, set_fips_peer_c
 use nostr_sdk::{Alphabet, SingleLetterTag, Tag, TagKind};
 
 use super::super::control_runtime::{
-    BOOTSTRAP_STREAM_LIFETIME_MS, DRIVE_CONTROL_SERVICE_PORT, encode_record,
+    BOOTSTRAP_STREAM_LIFETIME_MS, CONTROL_POLL_INTERVAL, DRIVE_CONTROL_SERVICE_PORT, encode_record,
 };
 use super::mesh_fallback::{bind_test_endpoint, reserve_udp_address, wait_for_peer_connection};
+
+#[test]
+fn control_poll_interval_is_idle_safe() {
+    assert!(
+        CONTROL_POLL_INTERVAL >= Duration::from_millis(100),
+        "TCP/FIPS control polling below 100 ms keeps mobile runtimes busy while idle"
+    );
+}
 
 #[tokio::test]
 async fn reliable_control_enforces_topic_acl_and_survives_service_restart() {
@@ -221,6 +229,7 @@ async fn shared_pubsub_carries_only_verified_nostr_events() {
             if alice_runtime.publish(event.clone()).await.is_ok()
                 && let Ok(Ok(delivery)) =
                     tokio::time::timeout(Duration::from_millis(300), received.recv()).await
+                && delivery.event.id == event.id
             {
                 break delivery;
             }

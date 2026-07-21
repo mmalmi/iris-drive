@@ -3,6 +3,7 @@ import Foundation
 extension AppDelegate {
     var daemonServiceSupervisionEnabled: Bool {
         !IrisDriveEnvironment.flag("IRIS_DRIVE_DISABLE_DAEMON_SERVICE")
+            && IrisDriveCodeSigning.currentTeamIdentifier() != nil
     }
 
     func startAppManagedDaemon(_ idrive: URL?, paths: IrisDriveRuntimePaths) {

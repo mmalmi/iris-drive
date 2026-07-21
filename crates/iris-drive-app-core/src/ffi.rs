@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex};
+use std::sync::{Arc, LazyLock, Mutex, Weak};
 
 use anyhow::Context;
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
@@ -152,7 +152,7 @@ const DAEMON_STATUS_FILE_NAME: &str = "daemon-status.json";
 const DAEMON_STATUS_FRESH_SECS: u64 = 15;
 const NATIVE_FIPS_STATUS_FILE_NAME: &str = "native-fips-status.json";
 #[cfg(any(test, target_os = "ios", target_os = "android"))]
-const NATIVE_FIPS_STATUS_FRESH_SECS: u64 = 20;
+const NATIVE_FIPS_STATUS_FRESH_SECS: u64 = 75;
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 const NATIVE_SYNC_RELAY_TIMEOUT_SECS: u64 = 10;
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
@@ -164,7 +164,9 @@ const APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS: u8 = 24;
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 const APP_KEY_LINK_ROSTER_RETRY_SECS: u64 = 2;
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
-const APP_KEY_LINK_EXCHANGE_TICK_MILLIS: u64 = 5_000;
+const APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS: u64 = 5_000;
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
+const APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS: u64 = 15_000;
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 const NATIVE_DIRECT_ROOT_EXCHANGE_MILLIS: u64 = 10_000;
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
@@ -178,21 +180,6 @@ struct SentAppKeyLinkRequest {
 }
 
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct NativeConfigFileFingerprint {
-    len: u64,
-    modified: Option<std::time::SystemTime>,
-    content_hash: Option<u64>,
-}
-
-#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
-#[derive(Debug, Default)]
-struct NativeAppConfigCache {
-    fingerprint: Option<NativeConfigFileFingerprint>,
-    config: Option<AppConfig>,
-}
-
-#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum NativeAppKeyLinkRelayEventApply {
     Ignored,
@@ -201,11 +188,16 @@ enum NativeAppKeyLinkRelayEventApply {
     AppliedApprovalAck,
 }
 
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
+#[path = "ffi/app_config_cache.rs"]
+mod app_config_cache;
 #[path = "ffi/app_key_link_urls.rs"]
 mod app_key_link_urls;
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 #[path = "ffi/device_approval_ack.rs"]
 mod device_approval_ack;
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
+use app_config_cache::NativeAppConfigCache;
 use app_key_link_urls::{
     app_key_link_invite_url, app_key_link_request_url, ensure_cached_app_key_link_request_url,
 };
@@ -262,45 +254,6 @@ fn apply_native_app_key_link_relay_event_to_config(
 }
 
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
-impl NativeAppConfigCache {
-    fn load(&mut self, config_dir: &Path) -> Result<AppConfig, String> {
-        let config_path = config_path_in(config_dir);
-        let fingerprint = native_config_file_fingerprint(&config_path)
-            .map_err(|error| format!("reading config metadata: {error}"))?;
-        if self.fingerprint.as_ref() == Some(&fingerprint)
-            && let Some(config) = self.config.as_ref()
-        {
-            return Ok(config.clone());
-        }
-
-        let config = AppConfig::load_or_default(&config_path)
-            .map_err(|error| format!("loading config: {error}"))?;
-        self.fingerprint = Some(fingerprint);
-        self.config = Some(config.clone());
-        Ok(config)
-    }
-}
-
-#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
-fn native_config_file_fingerprint(path: &Path) -> std::io::Result<NativeConfigFileFingerprint> {
-    match std::fs::metadata(path) {
-        Ok(metadata) => Ok(NativeConfigFileFingerprint {
-            len: metadata.len(),
-            modified: metadata.modified().ok(),
-            content_hash: Some(config_file_content_hash(path)?),
-        }),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            Ok(NativeConfigFileFingerprint {
-                len: 0,
-                modified: None,
-                content_hash: None,
-            })
-        }
-        Err(error) => Err(error),
-    }
-}
-
-#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 fn app_key_link_request_send_due(
     sent: Option<SentAppKeyLinkRequest>,
     now: std::time::Instant,
@@ -317,6 +270,20 @@ fn app_key_link_request_retry_interval(attempts: u8) -> std::time::Duration {
         std::time::Duration::from_millis(APP_KEY_LINK_REQUEST_STARTUP_RETRY_MILLIS)
     } else {
         std::time::Duration::from_secs(APP_KEY_LINK_REQUEST_RETRY_SECS)
+    }
+}
+
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
+fn app_key_link_exchange_tick_millis(state: Option<&iris_drive_core::ProfileState>) -> u64 {
+    let approval_pending = state.is_some_and(|state| {
+        state.authorization_state == AppKeyAuthorizationState::AwaitingApproval
+            || state.outbound_app_key_link_request.is_some()
+            || !state.pending_device_approval_receipts.is_empty()
+    });
+    if approval_pending {
+        APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS
+    } else {
+        APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS
     }
 }
 
@@ -394,7 +361,23 @@ fn config_file_content_hash(path: &Path) -> std::io::Result<u64> {
 
 #[derive(uniffi::Object, Debug)]
 pub struct FfiApp {
-    runtime: Mutex<NativeAppRuntime>,
+    runtime: Arc<Mutex<NativeAppRuntime>>,
+}
+
+static SHARED_NATIVE_RUNTIMES: LazyLock<Mutex<BTreeMap<PathBuf, Weak<Mutex<NativeAppRuntime>>>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+
+fn shared_native_runtime(data_dir: String, app_version: String) -> Arc<Mutex<NativeAppRuntime>> {
+    let key = std::fs::canonicalize(&data_dir).unwrap_or_else(|_| PathBuf::from(&data_dir));
+    let mut runtimes = SHARED_NATIVE_RUNTIMES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(runtime) = runtimes.get(&key).and_then(Weak::upgrade) {
+        return runtime;
+    }
+    let runtime = Arc::new(Mutex::new(NativeAppRuntime::new(data_dir, app_version)));
+    runtimes.insert(key, Arc::downgrade(&runtime));
+    runtime
 }
 
 #[uniffi::export]
@@ -405,7 +388,7 @@ impl FfiApp {
     pub fn new(data_dir: String, app_version: String) -> Arc<Self> {
         install_rustls_crypto_provider();
         Arc::new(Self {
-            runtime: Mutex::new(NativeAppRuntime::new(data_dir, app_version)),
+            runtime: shared_native_runtime(data_dir, app_version),
         })
     }
 
@@ -2185,17 +2168,13 @@ async fn run_app_key_link_exchange_async(
     let mut app_key_link_config_cache = NativeAppConfigCache::default();
     let mut direct_roots = iris_drive_core::DirectRootExchange::default();
     let mut update_announcements = iris_drive_core::UpdateAnnouncementExchange::load(config_dir)?;
-    let mut app_key_link_tick = tokio::time::interval(std::time::Duration::from_millis(
-        APP_KEY_LINK_EXCHANGE_TICK_MILLIS,
-    ));
-    app_key_link_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     let direct_root_period = std::time::Duration::from_millis(NATIVE_DIRECT_ROOT_EXCHANGE_MILLIS);
     let mut direct_root_tick = tokio::time::interval_at(
         tokio::time::Instant::now() + direct_root_period,
         direct_root_period,
     );
     direct_root_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-    if let Err(error) = drive_app_key_link_exchange_tick(
+    let app_key_link_tick_millis = match drive_app_key_link_exchange_tick(
         config_dir,
         &relay_client,
         &sync,
@@ -2208,8 +2187,15 @@ async fn run_app_key_link_exchange_async(
     )
     .await
     {
-        tracing::warn!(error = %error, "native app-key-link FIPS startup tick failed");
-    }
+        Ok(tick_millis) => tick_millis,
+        Err(error) => {
+            tracing::warn!(error = %error, "native app-key-link FIPS startup tick failed");
+            APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS
+        }
+    };
+    let app_key_link_tick =
+        tokio::time::sleep(std::time::Duration::from_millis(app_key_link_tick_millis));
+    tokio::pin!(app_key_link_tick);
     if let Err(error) = direct_roots.announce_current_state(config_dir, &sync).await {
         tracing::warn!(error = %error, "native direct-root FIPS exchange failed");
     }
@@ -2225,11 +2211,11 @@ async fn run_app_key_link_exchange_async(
 
     while !stop.load(Ordering::Acquire) {
         tokio::select! {
-            _ = app_key_link_tick.tick() => {
+            _ = &mut app_key_link_tick => {
                 if stop.load(Ordering::Acquire) {
                     break;
                 }
-                if let Err(error) = drive_app_key_link_exchange_tick(
+                let tick_millis = match drive_app_key_link_exchange_tick(
                     config_dir,
                     &relay_client,
                     &sync,
@@ -2240,8 +2226,16 @@ async fn run_app_key_link_exchange_async(
                     &mut app_key_link_config_cache,
                     &mut relay_subscriptions,
                 ).await {
-                    tracing::warn!(error = %error, "native app-key-link FIPS tick failed");
-                }
+                    Ok(tick_millis) => tick_millis,
+                    Err(error) => {
+                        tracing::warn!(error = %error, "native app-key-link FIPS tick failed");
+                        APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS
+                    }
+                };
+                app_key_link_tick.as_mut().reset(
+                    tokio::time::Instant::now()
+                        + std::time::Duration::from_millis(tick_millis),
+                );
             }
             _ = direct_root_tick.tick() => {
                 if stop.load(Ordering::Acquire) {
@@ -2389,20 +2383,22 @@ async fn drive_app_key_link_exchange_tick(
     acked_rosters: &BTreeSet<String>,
     config_cache: &mut NativeAppConfigCache,
     relay_subscriptions: &mut iris_drive_core::relay_sync::AppKeyLinkRelaySubscriptionState,
-) -> Result<bool, String> {
-    let config = config_cache.load(config_dir)?;
+) -> Result<u64, String> {
+    let (config, config_changed) = config_cache.load_with_change(config_dir)?;
     let Some(state) = config.profile.as_ref() else {
-        return Ok(false);
+        return Ok(APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS);
     };
 
-    iris_drive_core::relay_sync::refresh_app_key_link_relay_subscriptions(
-        relay_client,
-        state,
-        relay_subscriptions,
-    )
-    .await
-    .map_err(|error| format!("refreshing app-key-link relay subscriptions: {error}"))?;
-    sync.refresh_authorized_peers(&config).await;
+    if config_changed {
+        iris_drive_core::relay_sync::refresh_app_key_link_relay_subscriptions(
+            relay_client,
+            state,
+            relay_subscriptions,
+        )
+        .await
+        .map_err(|error| format!("refreshing app-key-link relay subscriptions: {error}"))?;
+        sync.refresh_authorized_peers(&config).await;
+    }
     send_native_pending_app_key_link_request(sync, state, sent_requests).await?;
     publish_native_profile_roster_ops(relay_client, state, published_roster_op_ids).await?;
     send_native_authorized_app_key_link_rosters(
@@ -2416,7 +2412,7 @@ async fn drive_app_key_link_exchange_tick(
     if let Err(error) = write_native_fips_status(config_dir, sync, None).await {
         tracing::warn!(error = %error, "writing native FIPS status failed");
     }
-    Ok(true)
+    Ok(app_key_link_exchange_tick_millis(Some(state)))
 }
 
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]

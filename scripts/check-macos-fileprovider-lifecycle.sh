@@ -13,6 +13,7 @@ FILEPROVIDER_INFO="$ROOT/macos/FileProvider/Info.plist"
 HELPER_ENTITLEMENTS="$ROOT/macos/idrive-helper.entitlements"
 MACOS_PROJECT="$ROOT/macos/project.yml"
 DEV_APP="$ROOT/scripts/macos-dev-app.sh"
+DAEMON_SERVICE="$ROOT/macos/Sources/IrisDriveDaemonService.swift"
 DAEMON_RUNTIME="$ROOT/crates/iris-drive-cli/src/daemon/runtime.rs"
 DAEMON_GATEWAY_RUNTIME="$ROOT/crates/iris-drive-cli/src/daemon/gateway_runtime.rs"
 PROVIDER_COMMANDS="$ROOT/crates/iris-drive-cli/src/commands.rs"
@@ -118,10 +119,16 @@ require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" "candidate_plugins"
 require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" '$HOME/Applications/Iris Drive.app/Contents/PlugIns/IrisDriveFileProvider.appex'
 require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" "/Applications/Iris Drive.app/Contents/PlugIns/IrisDriveFileProvider.appex"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "registered_plugins"
+require_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'if (( ${#registered_plugins[@]} > 0 )); then'
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'pluginkit -r "$plugin"'
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "Reusing existing macOS FileProvider pluginkit registration"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "ensure_daemon_service"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "service install --launch --json"
+require_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'codesign --force --sign - "$appex"'
+require_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'codesign --force --sign - "$app_path"'
+require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" '--sign - --entitlements "$(xcode_appex_entitlements)"'
+require_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'remove_daemon_service "$app_path" "$service_config_dir"'
+require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "ad-hoc app manages daemon"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "macos_process_command_matches"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "default_install_app_path"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "/Applications/Iris Drive.app"
@@ -146,6 +153,7 @@ require_contains "$ROOT/macos/Sources/IrisDriveControlPanel.swift" "macos/Source
 require_contains "$ROOT/macos/Sources/IrisDriveDaemonService.swift" "macos/Sources/IrisDriveDaemonService.swift" "macOS app sandbox cannot install LaunchAgents directly"
 require_contains "$ROOT/macos/Sources/IrisDriveDaemonService.swift" "macos/Sources/IrisDriveDaemonService.swift" 'currentProcessHasEntitlement("com.apple.security.app-sandbox")'
 require_contains "$ROOT/macos/Sources/IrisDriveDaemonService.swift" "macos/Sources/IrisDriveDaemonService.swift" 'arguments: ["service", "status", "--json"]'
+require_contains "$DAEMON_SERVICE" "macos/Sources/IrisDriveDaemonService.swift" 'IrisDriveCodeSigning.currentTeamIdentifier() != nil'
 require_contains "$ROOT/macos/Sources/IrisDriveControlPanel.swift" "macos/Sources/IrisDriveControlPanel.swift" "Open on drive.iris.to"
 require_not_contains "$ROOT/macos/Sources/IrisDriveControlPanel.swift" "macos/Sources/IrisDriveControlPanel.swift" "return shareLocalGatewayLink(share, status: status)"
 require_contains "$DAEMON_RUNTIME" "crates/iris-drive-cli/src/daemon/runtime.rs" "embedded_hashtree_requested"

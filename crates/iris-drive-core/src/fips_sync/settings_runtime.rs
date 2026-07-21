@@ -1,10 +1,11 @@
 //! Environment-derived FIPS carrier settings and endpoint construction.
 
+use fips_core::config::WebSocketConfig;
 use hashtree_fips_transport::FipsEndpointOptions;
 
 use crate::config::AppConfig;
 
-use super::default_fips_bootstrap_peer_hints;
+use super::{DEFAULT_FIPS_WEBSOCKET_SEED_URLS, default_fips_bootstrap_peer_hints};
 
 pub(super) const FIPS_PACKET_CHANNEL_CAPACITY: usize = 8192;
 // Three default STUN servers reserve twelve candidate sockets per link. Eight
@@ -19,6 +20,9 @@ pub struct FipsTransportSettings {
     pub enable_webrtc: bool,
     pub enable_lan_discovery: bool,
     pub enable_mesh_pubsub: bool,
+    pub enable_local_rendezvous: bool,
+    pub websocket_bind_addr: Option<String>,
+    pub websocket_seed_urls: Vec<String>,
     pub udp_bind_addr: Option<String>,
     pub udp_public: bool,
     pub udp_external_addr: Option<String>,
@@ -34,8 +38,14 @@ impl Default for FipsTransportSettings {
         Self {
             enable_udp: true,
             enable_webrtc: target_allows_default_desktop_fips(std::env::consts::OS),
-            enable_lan_discovery: true,
+            enable_lan_discovery: target_allows_default_lan_discovery(std::env::consts::OS),
             enable_mesh_pubsub: true,
+            enable_local_rendezvous: true,
+            websocket_bind_addr: None,
+            websocket_seed_urls: DEFAULT_FIPS_WEBSOCKET_SEED_URLS
+                .iter()
+                .map(|url| (*url).to_string())
+                .collect(),
             udp_bind_addr: None,
             udp_public: false,
             udp_external_addr: None,
@@ -72,6 +82,13 @@ impl FipsTransportSettings {
                 .unwrap_or(defaults.enable_lan_discovery),
             enable_mesh_pubsub: bool_env("IRIS_DRIVE_FIPS_ENABLE_MESH_PUBSUB")
                 .unwrap_or(defaults.enable_mesh_pubsub),
+            enable_local_rendezvous: bool_env("IRIS_DRIVE_FIPS_ENABLE_LOCAL_RENDEZVOUS")
+                .unwrap_or(defaults.enable_local_rendezvous),
+            websocket_bind_addr: non_empty_env("IRIS_FIPS_WEBSOCKET_BIND_ADDR"),
+            websocket_seed_urls: std::env::var("IRIS_FIPS_WEBSOCKET_SEED_URLS").map_or_else(
+                |_| defaults.websocket_seed_urls.clone(),
+                |value| parse_list_env_value(&value),
+            ),
             udp_bind_addr,
             udp_public,
             udp_external_addr,
@@ -94,6 +111,10 @@ pub(super) fn target_allows_default_desktop_fips(target_os: &str) -> bool {
     !matches!(target_os, "android" | "ios")
 }
 
+pub(super) fn target_allows_default_lan_discovery(target_os: &str) -> bool {
+    target_os != "android"
+}
+
 pub(super) fn fips_endpoint_options(
     identity_nsec: String,
     discovery_scope: String,
@@ -107,7 +128,14 @@ pub(super) fn fips_endpoint_options(
         relays,
         enable_udp: settings.enable_udp,
         enable_webrtc: settings.enable_webrtc,
-        enable_local_rendezvous: true,
+        websocket: (settings.websocket_bind_addr.is_some()
+            || !settings.websocket_seed_urls.is_empty())
+        .then(|| WebSocketConfig {
+            bind_addr: settings.websocket_bind_addr.clone(),
+            seed_urls: settings.websocket_seed_urls.clone(),
+            ..WebSocketConfig::default()
+        }),
+        enable_local_rendezvous: settings.enable_local_rendezvous,
         ethernet_interfaces: Vec::new(),
         enable_lan_discovery: settings.enable_lan_discovery,
         udp_bind_addr: settings.udp_bind_addr.clone(),
@@ -135,6 +163,15 @@ pub(super) fn parse_bool_env_value(value: &str) -> Option<bool> {
         "0" | "false" | "no" | "off" => Some(false),
         _ => None,
     }
+}
+
+pub(super) fn parse_list_env_value(value: &str) -> Vec<String> {
+    value
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+        .collect()
 }
 
 pub(super) fn parse_static_peer_hints(value: &str) -> Vec<(String, Vec<String>)> {

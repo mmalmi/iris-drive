@@ -378,10 +378,28 @@ PY
       echo "iOS idle CPU gate needs IRIS_DRIVE_IDLE_CPU_IOS_DEVICE or a booted iOS simulator" >&2
       exit 2
     fi
+    ios_file_provider_bundle_id="${IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID:-fi.siriusbusiness.drive.FileProvider}"
+    ios_launch_kind=""
+    trace_dir=""
+    cleanup_ios_idle_cpu() {
+      if [[ "$ios_launch_kind" == "simulator" ]]; then
+        xcrun simctl terminate "$ios_device" "$bundle_id" >/dev/null 2>&1 || true
+        xcrun simctl terminate "$ios_device" "$ios_file_provider_bundle_id" >/dev/null 2>&1 || true
+      fi
+      if [[ -n "$trace_dir" && -d "$trace_dir" ]]; then
+        rm -rf "$trace_dir"
+      fi
+    }
+    trap cleanup_ios_idle_cpu EXIT
     launch_ios_app() {
-      xcrun simctl launch "$ios_device" "$bundle_id" >/dev/null 2>&1 ||
-        xcrun devicectl device process launch --device "$ios_device" "$bundle_id" >/dev/null 2>&1 ||
-        true
+      if xcrun simctl launch "$ios_device" "$bundle_id" >/dev/null 2>&1; then
+        ios_launch_kind="simulator"
+        return 0
+      fi
+      if xcrun devicectl device process launch --device "$ios_device" "$bundle_id" >/dev/null 2>&1; then
+        ios_launch_kind="device"
+      fi
+      return 0
     }
     run_ios_host_process_sampler() {
       if [[ "${IRIS_DRIVE_IDLE_CPU_IOS_XCTRACE_REQUIRED:-0}" == "1" ]]; then
@@ -513,7 +531,6 @@ PY
       launch_ios_app
     fi
     trace_dir="$(mktemp -d -t iris-drive-ios-idle-cpu.XXXXXX)"
-    trap 'rm -rf "$trace_dir"' EXIT
     start_trace="$trace_dir/start.trace"
     end_trace="$trace_dir/end.trace"
     start_xml="$trace_dir/start.xml"

@@ -133,7 +133,7 @@ pub(super) async fn primary_merged_root_from_view_with_retry(
     }
 }
 
-pub(super) async fn import_provider_root_with_retry(
+pub(crate) async fn import_provider_root_with_retry(
     daemon: &mut Daemon,
     root: Cid,
     tombstone_base_root: Option<Cid>,

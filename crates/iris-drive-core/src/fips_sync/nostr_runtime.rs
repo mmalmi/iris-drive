@@ -7,7 +7,8 @@ use std::time::Duration;
 use fips_core::FipsEndpoint;
 use nostr_pubsub::{EventBus, EventSource, Filter, VerifiedEvent};
 use nostr_pubsub_fips::{
-    FIPS_NOSTR_PUBSUB_MAX_DATAGRAM_BYTES, FipsPubsubClient, FipsPubsubClientOptions,
+    FIPS_NOSTR_PUBSUB_DEFAULT_MAX_HOPS, FIPS_NOSTR_PUBSUB_MAX_FRAME_BYTES, FipsPubsubClient,
+    FipsPubsubClientOptions,
 };
 use nostr_sdk::Event;
 use tokio::sync::broadcast;
@@ -38,12 +39,14 @@ impl DriveNostrPubsubRuntime {
                 endpoint.clone(),
                 FipsPubsubClientOptions {
                     query_timeout: Duration::from_millis(500),
-                    max_frame_bytes: FIPS_NOSTR_PUBSUB_MAX_DATAGRAM_BYTES,
+                    max_frame_bytes: FIPS_NOSTR_PUBSUB_MAX_FRAME_BYTES,
                     max_connected_peers: 64,
+                    fanout: nostr_pubsub::DEFAULT_INV_WANT_FANOUT,
                     max_active_subscriptions: 4,
                     max_filters_per_subscription: 4,
                     max_replay_events: 32,
                     receive_batch_size: 64,
+                    max_hops: FIPS_NOSTR_PUBSUB_DEFAULT_MAX_HOPS,
                 },
             )
             .await
@@ -110,9 +113,9 @@ impl DriveNostrPubsubRuntime {
         self.deliveries.subscribe()
     }
 
-    pub(super) async fn connected_peer_count(&self) -> usize {
+    pub(super) fn connected_peer_count(&self) -> usize {
         match self.client.as_ref() {
-            Some(client) => client.connected_peer_count().await.unwrap_or_default(),
+            Some(client) => client.connected_peer_count().unwrap_or_default(),
             None => 0,
         }
     }
@@ -125,7 +128,6 @@ impl DriveNostrPubsubRuntime {
         };
         let peers = client
             .connected_peer_count()
-            .await
             .map_err(|error| endpoint_error(error.to_string()))?;
         client
             .publish(event, EventSource::local_index("iris-drive"))

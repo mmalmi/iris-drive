@@ -38,6 +38,7 @@ load_env_file_defaults() {
 load_env_file_defaults "$ROOT/.env.local"
 
 export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/macos/.build/cargo-target}"
+export MACOSX_DEPLOYMENT_TARGET="${IRIS_DRIVE_MACOS_DEPLOYMENT_TARGET:-14.0}"
 
 PROJECT="$ROOT/macos/IrisDriveMac.xcodeproj"
 SCHEME="IrisDriveMac"
@@ -334,14 +335,16 @@ register_fileprovider_plugin() {
     registered_plugins+=("$plugin")
   done < <(pluginkit -m -i "$plugin_id" -ADv 2>/dev/null | awk -F '\t' 'NF >= 4 { print $4 }')
 
-  for plugin in "${registered_plugins[@]}"; do
-    if [[ "$plugin" == "$appex" ]]; then
-      appex_registered=1
-    else
-      log "Removing stale macOS FileProvider pluginkit registration for $plugin"
-      pluginkit -r "$plugin" >/dev/null 2>&1 || true
-    fi
-  done
+  if (( ${#registered_plugins[@]} > 0 )); then
+    for plugin in "${registered_plugins[@]}"; do
+      if [[ "$plugin" == "$appex" ]]; then
+        appex_registered=1
+      else
+        log "Removing stale macOS FileProvider pluginkit registration for $plugin"
+        pluginkit -r "$plugin" >/dev/null 2>&1 || true
+      fi
+    done
+  fi
 
   if [[ "$appex_registered" == "1" ]]; then
     log "Reusing existing macOS FileProvider pluginkit registration for $appex"
@@ -469,7 +472,7 @@ sign_fileprovider_extension() {
   if [[ "$mode" == "development" ]]; then
     codesign --force --sign "$identity" --entitlements "$entitlements" "$appex" >&2
   else
-    codesign --force --sign - --entitlements "$(xcode_appex_entitlements)" "$appex" >&2
+    codesign --force --sign - "$appex" >&2
   fi
 }
 
@@ -481,8 +484,10 @@ finalize_app_signature() {
 
   if [[ "$mode" == "development" ]]; then
     codesign --force --sign "$identity" --entitlements "$entitlements" "$app_path" >&2
-    codesign --verify --strict --deep "$app_path" >&2
+  else
+    codesign --force --sign - "$app_path" >&2
   fi
+  codesign --verify --strict --deep "$app_path" >&2
 }
 
 macos_process_command_matches() {
@@ -670,7 +675,8 @@ run_app() {
   if [[ -n "$app_base_dir" ]]; then
     mkdir -p "$app_base_dir"
     service_config_dir="$app_base_dir/Config"
-    ensure_daemon_service "$app_path" "$service_config_dir"
+    remove_daemon_service "$app_path" "$service_config_dir"
+    log "macOS daemon service skipped: ad-hoc app manages daemon"
     open \
       --env "IRIS_DRIVE_APP_BASE_DIR=$app_base_dir" \
       --env "IRIS_DRIVE_DISABLE_LOGIN_AGENT_SYNC=true" \

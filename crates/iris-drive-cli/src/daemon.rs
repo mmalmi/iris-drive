@@ -367,13 +367,13 @@ async fn import_staged_provider_root(
     let tombstone_paths = staged.tombstone_paths;
     let mut daemon = Daemon::open(config_dir)
         .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
-    let report = daemon
-        .import_visible_root_with_tombstone_base_and_paths(
-            root,
-            tombstone_base_root,
-            Some(&tombstone_paths),
-        )
-        .await?;
+    let report = crate::drive::import_provider_root_with_retry(
+        &mut daemon,
+        root,
+        tombstone_base_root,
+        Some(&tombstone_paths),
+    )
+    .await?;
     clear_provider_staging(config_dir)?;
     Ok(Some(report))
 }
@@ -700,15 +700,18 @@ async fn start_provider_root_wake_listener(
     let task = tokio::spawn(async move {
         use tokio::io::AsyncReadExt as _;
 
-        while let Ok((mut stream, _addr)) = listener.accept().await {
-            let mut bytes = vec![0_u8; 4096];
+        while let Ok((stream, _addr)) = listener.accept().await {
+            let mut bytes = Vec::with_capacity(512);
+            let mut limited = stream.take(4097);
             let payload = match tokio::time::timeout(
                 std::time::Duration::from_millis(200),
-                stream.read(&mut bytes),
+                limited.read_to_end(&mut bytes),
             )
             .await
             {
-                Ok(Ok(len)) if len > 0 => serde_json::from_slice::<Value>(&bytes[..len]).ok(),
+                Ok(Ok(_)) if !bytes.is_empty() && bytes.len() <= 4096 => {
+                    serde_json::from_slice::<Value>(&bytes).ok()
+                }
                 _ => None,
             };
             let _ = tx.send(payload);

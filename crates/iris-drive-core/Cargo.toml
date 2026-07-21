@@ -18,6 +18,7 @@ bip39.workspace = true
 dirs.workspace = true
 futures.workspace = true
 fips-core.workspace = true
+fips-endpoint.workspace = true
 fips-tcp.workspace = true
 fips-tcp-endpoint.workspace = true
 hashtree-core.workspace = true

@@ -173,7 +173,9 @@ fn append_peer_actor_row(
     if !actor.state_label.is_empty() {
         metadata.push(actor.state_label.clone());
     }
-    if !actor.detail.is_empty() && !(actor.is_current_app_key && actor.detail == app_key_pubkey) {
+    if !(actor.detail.is_empty()
+        || actor.is_current_app_key && actor.detail == app_key_pubkey)
+    {
         metadata.push(actor.detail.clone());
     }
     let connection = if actor.connection_label.is_empty() {
@@ -280,7 +282,7 @@ fn share_row(
     labels.append(&share_detail_label(&metadata.join(" | "), 72));
     let repair_text = share_repair_text(share);
     if let Some(repair_text) = repair_text.as_deref() {
-        labels.append(&share_detail_label(&repair_text, 72));
+        labels.append(&share_detail_label(repair_text, 72));
     }
     header.append(&labels);
 
@@ -345,7 +347,7 @@ fn share_row(
         .unwrap_or("");
     for member in &share.members {
         body.append(&share_member_row(
-            &model,
+            model,
             share,
             member,
             local_profile_id,
@@ -679,6 +681,7 @@ pub(crate) fn simple_row(title: &str, subtitle: &str) -> gtk::ListBoxRow {
     row
 }
 
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn peer_row(
     model: &AppRef,
     title: &str,

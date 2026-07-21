@@ -1,7 +1,7 @@
 use super::{
     FfiApp, NATIVE_RUNTIME_CONFIG_CACHE, NativeAppConfigCache, SentAppKeyLinkRequest,
     app_key_link_request_send_due, load_native_runtime_config_cached, native_calendar_export_json,
-    normalize_pubkey,
+    normalize_pubkey, shared_native_runtime,
 };
 use crate::NativeAppAction;
 use crate::state::{UiShare, UiShareMember};
@@ -9,6 +9,17 @@ use iris_drive_core::paths::config_path_in;
 use iris_drive_core::{AppConfig, AppKeyRootRef, Drive};
 use nostr_sdk::{Event, JsonUtil};
 use std::path::Path;
+
+#[test]
+fn ffi_apps_for_same_data_dir_share_native_runtime() {
+    let dir = tempfile::tempdir().unwrap();
+    let data_dir = dir.path().display().to_string();
+
+    let first = shared_native_runtime(data_dir.clone(), "test".to_owned());
+    let second = shared_native_runtime(data_dir, "test".to_owned());
+
+    assert!(std::sync::Arc::ptr_eq(&first, &second));
+}
 
 fn share_recipient_evidence_json(config_dir: &Path, display_name: &str) -> String {
     let config = AppConfig::load_or_default(config_path_in(config_dir)).unwrap();
@@ -99,11 +110,11 @@ fn native_app_key_link_config_cache_invalidates_same_metadata_content_change() {
     let mut cache = NativeAppConfigCache::default();
 
     save_config_with_fixed_time(&config_path, "wss://one.example", fixed_time);
-    let first = cache.load(dir.path()).unwrap();
+    let first = cache.load_with_change(dir.path()).unwrap().0;
     assert_eq!(first.relays, vec!["wss://one.example"]);
 
     save_config_with_fixed_time(&config_path, "wss://two.example", fixed_time);
-    let refreshed = cache.load(dir.path()).unwrap();
+    let refreshed = cache.load_with_change(dir.path()).unwrap().0;
 
     assert_eq!(refreshed.relays, vec!["wss://two.example"]);
 }
@@ -1118,7 +1129,10 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
 
 const _: () = {
     assert!(super::NATIVE_DIRECT_ROOT_EXCHANGE_MILLIS >= 5_000);
-    assert!(super::NATIVE_DIRECT_ROOT_EXCHANGE_MILLIS >= super::APP_KEY_LINK_EXCHANGE_TICK_MILLIS);
+    assert!(
+        super::NATIVE_DIRECT_ROOT_EXCHANGE_MILLIS
+            >= super::APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS
+    );
 };
 
 #[test]
@@ -2004,7 +2018,7 @@ fn app_key_link_request_retry_uses_startup_burst_before_steady_interval() {
 fn app_key_link_request_startup_burst_covers_approval_window() {
     assert!(
         u64::from(super::APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS)
-            * super::APP_KEY_LINK_EXCHANGE_TICK_MILLIS
+            * super::APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS
             >= 90_000
     );
 }

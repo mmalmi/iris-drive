@@ -205,9 +205,18 @@ async fn real_same_host_provider_failure_still_uses_drive_standalone_route() {
         }])
         .await
         .unwrap();
-    let source_transport = TcpBlobTransport::bind(source_bound.native_endpoint, source_store)
-        .await
-        .unwrap();
+    let source_gets = Arc::new(AtomicUsize::new(0));
+    let source_transport = TcpBlobTransport::bind_route_with_config(
+        source_bound.native_endpoint.clone(),
+        source_store.clone(),
+        Arc::new(CountingMemoryRoute {
+            gets: source_gets.clone(),
+            store: source_store,
+        }),
+        super::super::blob_runtime::drive_blob_transport_config(),
+    )
+    .await
+    .unwrap();
 
     let provider_gets = Arc::new(AtomicUsize::new(0));
     let provider = TcpBlobTransport::bind_advertised_route_with_config(
@@ -222,15 +231,6 @@ async fn real_same_host_provider_failure_still_uses_drive_standalone_route() {
     .await
     .unwrap();
     let target_store = Arc::new(MemoryStore::new());
-    let sync = FipsBlockSync::start_with_bound_endpoint(
-        target_bound,
-        target_store.clone(),
-        &config,
-        local_only_settings(&source_device, source_udp_addr, target_udp_addr),
-        None,
-    )
-    .await
-    .unwrap();
     set_fips_peer_configs(
         source_native.as_ref(),
         vec![FipsPeerConfig {
@@ -240,7 +240,15 @@ async fn real_same_host_provider_failure_still_uses_drive_standalone_route() {
     )
     .await
     .unwrap();
-
+    let sync = FipsBlockSync::start_with_bound_endpoint(
+        target_bound,
+        target_store.clone(),
+        &config,
+        local_only_settings(&source_device, source_udp_addr, target_udp_addr),
+        None,
+    )
+    .await
+    .unwrap();
     tokio::time::timeout(Duration::from_secs(10), async {
         loop {
             let advertised = target_native
@@ -277,11 +285,23 @@ async fn real_same_host_provider_failure_still_uses_drive_standalone_route() {
     })
     .await
     .expect("Drive standalone FIPS route did not connect");
+    wait_for_peer_connection(&source_bound, &target_device.pubkey_bech32()).await;
 
     let report = tokio::time::timeout(Duration::from_secs(15), sync.download_tree(&root_cid))
         .await
-        .expect("Drive fallback retrieval timed out")
-        .unwrap();
+        .expect("Drive fallback retrieval timed out");
+    if let Err(error) = &report {
+        panic!(
+            "Drive fallback retrieval failed: {error}; root_cached={}; file_cached={}; source_gets={}; provider_gets={}; source_peers={:?}; target_peers={:?}",
+            target_store.has(&root_cid.hash).await.unwrap(),
+            target_store.has(&file_cid.hash).await.unwrap(),
+            source_gets.load(Ordering::Relaxed),
+            provider_gets.load(Ordering::Relaxed),
+            source_native.peers().await.unwrap(),
+            target_native.peers().await.unwrap(),
+        );
+    }
+    let report = report.unwrap();
 
     assert_eq!(report.fetched, 2);
     assert_eq!(report.already_local, 0);
@@ -329,6 +349,7 @@ pub(super) async fn bind_test_endpoint(
             relays: Vec::new(),
             enable_udp: true,
             enable_webrtc: false,
+            websocket: None,
             enable_local_rendezvous,
             ethernet_interfaces: Vec::new(),
             enable_lan_discovery: false,
@@ -372,6 +393,9 @@ pub(super) fn local_only_settings(
         enable_webrtc: false,
         enable_lan_discovery: false,
         enable_mesh_pubsub: false,
+        enable_local_rendezvous: false,
+        websocket_bind_addr: None,
+        websocket_seed_urls: Vec::new(),
         udp_bind_addr: Some(target_udp_addr.to_string()),
         udp_public: false,
         udp_external_addr: None,
@@ -435,6 +459,22 @@ fn authorized_pair_config(target: &AppKey, source: &AppKey) -> AppConfig {
 
 struct FailingProviderRoute {
     gets: Arc<AtomicUsize>,
+}
+
+struct CountingMemoryRoute {
+    gets: Arc<AtomicUsize>,
+    store: Arc<MemoryStore>,
+}
+
+#[async_trait]
+impl BlobRoute for CountingMemoryRoute {
+    async fn route(&self, request: BlobRequest) -> Result<BlobReply, StoreError> {
+        self.gets.fetch_add(1, Ordering::Relaxed);
+        self.store
+            .get(&request.hash)
+            .await
+            .map(|data| data.map_or(BlobReply::NoResult, BlobReply::Data))
+    }
 }
 
 #[async_trait]

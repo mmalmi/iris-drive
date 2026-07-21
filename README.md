@@ -55,6 +55,13 @@ just run-cli import /path/to/seed-folder
 just run-cli daemon
 ```
 
+Fresh clients use the independent authenticated FIPS first-adjacency services
+on LNVPS (`wss://fips1.iris.to/fips`) and Osiris
+(`wss://fips2.iris.to/fips`) by default. Override or disable them with
+`IRIS_FIPS_WEBSOCKET_SEED_URLS`, using a comma-separated list of explicit
+`wss://.../fips` URLs or an empty value. Normal Nostr relay settings remain
+event and discovery/signaling routes; they do not carry FIPS packets.
+
 Useful CLI probes:
 
 ```bash
