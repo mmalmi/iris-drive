@@ -128,7 +128,8 @@ require_contains scripts/release-gate.sh "just structure"
 require_contains scripts/release-gate.sh "cargo test --workspace --exclude idrive"
 require_contains scripts/release-gate.sh "--test daemon_sync_matrix"
 require_contains scripts/release-gate.sh "cargo build --workspace --release"
-require_contains Cargo.toml 'fips-core = "=0.4.20"'
+require_contains Cargo.toml 'fips-core = "=0.4.34"'
+require_contains Cargo.toml 'fips-endpoint = "=0.4.34"'
 require_contains Cargo.toml 'hashtree-core = "=0.2.86"'
 require_contains Cargo.toml 'hashtree-config = "=0.2.83"'
 require_contains Cargo.toml 'hashtree-embedded = "=0.2.87"'
@@ -146,7 +147,8 @@ require_absent Cargo.toml 'path = "crates/hashtree-fips-transport"'
 require_absent Cargo.toml 'path = "../nostr-social-graph'
 require_absent linux/Cargo.toml "[patch.crates-io]"
 for lock in Cargo.lock linux/Cargo.lock; do
-  require_registry_package "$lock" fips-core 0.4.20 ea03ec2992538be19336dcdb2a054baa58567e0613a2e71509589aebe2264a2f
+  require_registry_package "$lock" fips-core 0.4.34 9f2cf90fed9ed72aef49ee1c0419adbb1d920a7947ee07103e2e81aaf919c8b3
+  require_registry_package "$lock" fips-endpoint 0.4.34 c3c02957332c1fab70b2014cbb42c443fa33f53f0ed467b35ae60fd0f9c54c08
   require_registry_package "$lock" fips-tcp 0.2.0 d18861c5eca7c472fbbdbbfb498f8d2525405081a9a24b42633c600ba6f6e42a
   require_registry_package "$lock" fips-tcp-endpoint 0.2.0 8e3e01e352b709b80f4261e2cd7d0ffde2d3aaf175267b3960997e70f7305c12
   require_registry_package "$lock" hashtree-cli 0.2.101 039d4fc44f50ca195c92c7e87f663c9a3a3329c62fc798875682921b42c2a034
@@ -159,7 +161,7 @@ for lock in Cargo.lock linux/Cargo.lock; do
   require_registry_package "$lock" hashtree-nostr 0.2.83 489b2bf6d5e57921409aeee0a199a0f82512d473d290143306fc053d815c6973
   require_registry_package "$lock" hashtree-nostr-pubsub 0.2.83 6fbf53cd18ddd9caf53dab8483db6a36011c11e3dc62233e0343ff5147c5672b
   require_registry_package "$lock" nostr-pubsub 0.1.13 84bfacf8bb4c535ad4c80dc14bdef1dfe94b2b7064f8bf83509a137f8068e0e1
-  require_registry_package "$lock" nostr-pubsub-fips 0.4.3 1bb92eb30b1994c5e2c2cacd310197d6c6553a85fbce76072b22114eab5af2c6
+  require_registry_package "$lock" nostr-pubsub-fips 0.4.7 fff9423f0785b558569a05c26879cae30ae7db6e4db806bda1f80fba558387d2
   require_registry_package "$lock" nostr-pubsub-relay 0.1.11 8641200920d163b2d82c34e6f15605cff93a0546e3e0087fce8f3bddaa2329ca
 done
 require_absent scripts/docker-cli-e2e.sh "Missing required sibling checkout"

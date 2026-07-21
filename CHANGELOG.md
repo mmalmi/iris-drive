@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.29 - 2026-07-21
+
+### Changed
+
+- Update FIPS to 0.4.34 for reliable direct-path recovery during network
+  changes, reconnects, handshakes, and rekeys.
+- Update the FIPS adapter for `nostr-pubsub` to 0.4.7 while keeping
+  `nostr-pubsub` on the newest 0.1.13 release.
+- Disable ambient Android LAN multicast discovery by default to stay within
+  the mobile idle-CPU budget; the explicit environment override remains.
+- Back off mobile app-key maintenance after approval is stable while retaining
+  the faster retry cadence during device approval.
+- Avoid rebuilding unchanged peer policy and periodic direct-root work without
+  a connected authorized peer.
+- Throttle unchanged recent-peer cache refreshes so status polling does not
+  rewrite the cache on every pass.
+- Refresh unchanged mobile connectivity counters once per minute while still
+  publishing peer and error changes immediately.
+
 ## 0.1.28 - 2026-07-19
 
 ### Changed

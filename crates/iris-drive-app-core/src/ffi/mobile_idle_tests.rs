@@ -4,10 +4,13 @@ use iris_drive_core::paths::config_path_in;
 use iris_drive_core::{AppConfig, AppKeyAuthorizationState};
 use nostr_sdk::{Event, JsonUtil};
 
-use super::FfiApp;
 use super::mobile_fips_status::{
     NATIVE_FIPS_STATUS_STABLE_WRITE_MIN_SECS, native_app_key_link_exchange_should_run,
     native_fips_status_write_is_due, write_native_fips_status_value,
+};
+use super::{
+    APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS, APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS, FfiApp,
+    NATIVE_FIPS_STATUS_FRESH_SECS, NativeAppConfigCache, app_key_link_exchange_tick_millis,
 };
 use crate::NativeAppAction;
 
@@ -117,7 +120,68 @@ fn mobile_app_key_link_exchange_stays_on_for_authorized_or_awaiting_approval() {
 }
 
 #[test]
+fn native_app_key_link_config_cache_reports_only_real_changes() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = config_path_in(dir.path());
+    let mut cache = NativeAppConfigCache::default();
+    AppConfig::default().save(&config_path).unwrap();
+
+    let (_, first_changed) = cache.load_with_change(dir.path()).unwrap();
+    let (_, second_changed) = cache.load_with_change(dir.path()).unwrap();
+
+    assert!(first_changed);
+    assert!(!second_changed);
+}
+
+#[test]
+fn app_key_link_exchange_uses_fast_ticks_only_while_approval_is_pending() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let linked_dir = tempfile::tempdir().unwrap();
+    let owner = iris_drive_core::Profile::create(owner_dir.path(), Some("Mac".into())).unwrap();
+    let mut linked = iris_drive_core::Profile::link_to_profile(
+        linked_dir.path(),
+        owner.state.profile_id,
+        owner.state.app_key_pubkey.clone(),
+        Some("Phone".into()),
+    )
+    .unwrap();
+    let approval_request =
+        iris_drive_core::app_key_link_transport::create_app_key_approval_bootstrap(
+            linked.app_key.keys(),
+            linked.state.app_key_label.as_deref(),
+        )
+        .unwrap();
+    linked
+        .state
+        .queue_outbound_app_key_link_request(
+            owner.state.app_key_pubkey.clone(),
+            &iris_drive_core::app_key_link_invite_pubkey(&owner.state.app_key_link_secret).unwrap(),
+            123,
+            approval_request.url,
+            approval_request.request_keys.secret_key().to_secret_hex(),
+        )
+        .unwrap();
+
+    assert_eq!(
+        app_key_link_exchange_tick_millis(Some(&linked.state)),
+        APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS
+    );
+    assert_eq!(
+        app_key_link_exchange_tick_millis(Some(&owner.state)),
+        APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS
+    );
+    assert_eq!(
+        app_key_link_exchange_tick_millis(None),
+        APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS
+    );
+}
+
+#[test]
 fn mobile_native_fips_status_suppresses_volatile_rewrites_until_heartbeat() {
+    assert!(
+        NATIVE_FIPS_STATUS_FRESH_SECS > NATIVE_FIPS_STATUS_STABLE_WRITE_MIN_SECS,
+        "the stable status heartbeat must refresh before UI freshness expires"
+    );
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(super::NATIVE_FIPS_STATUS_FILE_NAME);
     let now = super::unix_now_seconds();

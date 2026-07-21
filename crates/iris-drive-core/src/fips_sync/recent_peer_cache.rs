@@ -7,6 +7,7 @@ use fips_endpoint::RecentPeersFileStore;
 use hashtree_fips_transport::FipsPeerConfig;
 
 pub(super) const RECENT_PEERS_TTL_MS: u64 = 7 * 24 * 60 * 60 * 1_000;
+pub(super) const RECENT_PEERS_REFRESH_MS: u64 = 60 * 60 * 1_000;
 
 pub(super) struct DriveRecentPeers {
     store: RecentPeersFileStore,
@@ -48,14 +49,52 @@ impl DriveRecentPeers {
     }
 
     pub(super) fn observe(&mut self, peers: &[FipsEndpointPeer], now_ms: u64) -> bool {
-        let before = self.recent.clone();
+        let mut changed = false;
         for peer in peers {
-            if let Err(error) = self.recent.observe_authenticated_peer(peer, now_ms) {
-                tracing::warn!(%error, npub = %peer.npub, "ignoring invalid Drive peer snapshot");
+            if !self.observation_due(peer, now_ms) {
+                continue;
+            }
+            match self.recent.observe_authenticated_peer(peer, now_ms) {
+                Ok(observed_changed) => changed |= observed_changed,
+                Err(error) => {
+                    tracing::warn!(%error, npub = %peer.npub, "ignoring invalid Drive peer snapshot");
+                }
             }
         }
+        let before_counts = self.retained_counts();
         self.recent.prune(now_ms, RECENT_PEERS_TTL_MS);
-        self.recent != before
+        changed || self.retained_counts() != before_counts
+    }
+
+    fn observation_due(&self, peer: &FipsEndpointPeer, now_ms: u64) -> bool {
+        if !peer.connected {
+            return false;
+        }
+        let Some(recent) = self.recent.peers.get(&peer.npub) else {
+            return true;
+        };
+        let Some(addr) = peer.authenticated_udp_restart_addr() else {
+            return now_ms.saturating_sub(recent.last_authenticated_at_ms)
+                >= RECENT_PEERS_REFRESH_MS;
+        };
+        recent
+            .endpoints
+            .iter()
+            .find(|endpoint| endpoint.addr.parse().ok() == Some(addr))
+            .is_none_or(|endpoint| {
+                now_ms.saturating_sub(endpoint.last_authenticated_at_ms) >= RECENT_PEERS_REFRESH_MS
+            })
+    }
+
+    fn retained_counts(&self) -> (usize, usize) {
+        (
+            self.recent.peers.len(),
+            self.recent
+                .peers
+                .values()
+                .map(|peer| peer.endpoints.len())
+                .sum(),
+        )
     }
 
     pub(super) fn save(&self) {
@@ -219,6 +258,28 @@ mod tests {
             "198.51.100.50:32112"
         );
         assert_eq!(stored.peers[&remote].last_authenticated_at_ms, 2_000);
+    }
+
+    #[test]
+    fn unchanged_authenticated_route_is_not_rewritten_on_every_status_poll() {
+        let dir = tempfile::tempdir().unwrap();
+        let local = identity(9).npub();
+        let remote = identity(10).npub();
+        let mut cache = DriveRecentPeers::load(
+            dir.path().join("fips-recent-peers.json"),
+            &local,
+            "iris-drive:test",
+            1_000,
+        )
+        .unwrap();
+        let snapshot = connected_udp_peer(remote, "198.51.100.60:32112");
+
+        assert!(cache.observe(std::slice::from_ref(&snapshot), 2_000));
+        assert!(!cache.observe(std::slice::from_ref(&snapshot), 2_001));
+        assert!(cache.observe(
+            std::slice::from_ref(&snapshot),
+            2_000 + RECENT_PEERS_REFRESH_MS
+        ));
     }
 
     #[test]

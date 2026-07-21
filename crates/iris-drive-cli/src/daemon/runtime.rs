@@ -556,6 +556,14 @@ pub(crate) fn cmd_daemon(
                         )
                         .await;
                     }
+                    if iris_drive_core::paths::provider_root_staging_path_in(config_dir).exists() {
+                        handle_provider_root_wake_payload(
+                            config_dir,
+                            &json!({"staged": true}),
+                            "config_root_watch_signal",
+                        )
+                        .await;
+                    }
                     match publish_provider_root_if_changed(
                         &client,
                         config_dir,

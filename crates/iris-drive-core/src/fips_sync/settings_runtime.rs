@@ -38,7 +38,7 @@ impl Default for FipsTransportSettings {
         Self {
             enable_udp: true,
             enable_webrtc: target_allows_default_desktop_fips(std::env::consts::OS),
-            enable_lan_discovery: true,
+            enable_lan_discovery: target_allows_default_lan_discovery(std::env::consts::OS),
             enable_mesh_pubsub: true,
             enable_local_rendezvous: true,
             websocket_bind_addr: None,
@@ -109,6 +109,10 @@ impl FipsTransportSettings {
 
 pub(super) fn target_allows_default_desktop_fips(target_os: &str) -> bool {
     !matches!(target_os, "android" | "ios")
+}
+
+pub(super) fn target_allows_default_lan_discovery(target_os: &str) -> bool {
+    target_os != "android"
 }
 
 pub(super) fn fips_endpoint_options(

@@ -16,10 +16,10 @@ use crate::provider_staging::{
 mod commands;
 mod provider_retry;
 pub(crate) use commands::*;
+pub(crate) use provider_retry::import_provider_root_with_retry;
 use provider_retry::{
-    ensure_provider_root_locally_available, import_provider_root_with_retry,
-    primary_merged_root_from_view_with_retry, primary_merged_root_with_retry,
-    primary_merged_view_with_retry,
+    ensure_provider_root_locally_available, primary_merged_root_from_view_with_retry,
+    primary_merged_root_with_retry, primary_merged_view_with_retry,
 };
 
 pub(crate) fn cmd_drives(config_dir: &std::path::Path) -> Result<()> {

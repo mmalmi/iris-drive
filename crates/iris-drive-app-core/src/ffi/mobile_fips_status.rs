@@ -13,7 +13,10 @@ use serde_json::json;
 use super::NativeAppRuntime;
 
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
-pub(super) const NATIVE_FIPS_STATUS_STABLE_WRITE_MIN_SECS: u64 = 15;
+// Connectivity changes are still written immediately. Only volatile counters
+// and the freshness timestamp wait for this heartbeat, avoiding needless disk
+// writes and UI recomposition while an otherwise idle mobile link is stable.
+pub(super) const NATIVE_FIPS_STATUS_STABLE_WRITE_MIN_SECS: u64 = 60;
 
 impl NativeAppRuntime {
     #[allow(clippy::unused_self)]

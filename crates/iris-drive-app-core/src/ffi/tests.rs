@@ -110,11 +110,11 @@ fn native_app_key_link_config_cache_invalidates_same_metadata_content_change() {
     let mut cache = NativeAppConfigCache::default();
 
     save_config_with_fixed_time(&config_path, "wss://one.example", fixed_time);
-    let first = cache.load(dir.path()).unwrap();
+    let first = cache.load_with_change(dir.path()).unwrap().0;
     assert_eq!(first.relays, vec!["wss://one.example"]);
 
     save_config_with_fixed_time(&config_path, "wss://two.example", fixed_time);
-    let refreshed = cache.load(dir.path()).unwrap();
+    let refreshed = cache.load_with_change(dir.path()).unwrap().0;
 
     assert_eq!(refreshed.relays, vec!["wss://two.example"]);
 }
@@ -1129,7 +1129,10 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
 
 const _: () = {
     assert!(super::NATIVE_DIRECT_ROOT_EXCHANGE_MILLIS >= 5_000);
-    assert!(super::NATIVE_DIRECT_ROOT_EXCHANGE_MILLIS >= super::APP_KEY_LINK_EXCHANGE_TICK_MILLIS);
+    assert!(
+        super::NATIVE_DIRECT_ROOT_EXCHANGE_MILLIS
+            >= super::APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS
+    );
 };
 
 #[test]
@@ -2015,7 +2018,7 @@ fn app_key_link_request_retry_uses_startup_burst_before_steady_interval() {
 fn app_key_link_request_startup_burst_covers_approval_window() {
     assert!(
         u64::from(super::APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS)
-            * super::APP_KEY_LINK_EXCHANGE_TICK_MILLIS
+            * super::APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS
             >= 90_000
     );
 }

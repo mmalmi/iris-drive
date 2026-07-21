@@ -229,6 +229,7 @@ async fn shared_pubsub_carries_only_verified_nostr_events() {
             if alice_runtime.publish(event.clone()).await.is_ok()
                 && let Ok(Ok(delivery)) =
                     tokio::time::timeout(Duration::from_millis(300), received.recv()).await
+                && delivery.event.id == event.id
             {
                 break delivery;
             }

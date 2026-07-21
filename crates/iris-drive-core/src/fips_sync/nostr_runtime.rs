@@ -41,6 +41,7 @@ impl DriveNostrPubsubRuntime {
                     query_timeout: Duration::from_millis(500),
                     max_frame_bytes: FIPS_NOSTR_PUBSUB_MAX_FRAME_BYTES,
                     max_connected_peers: 64,
+                    fanout: nostr_pubsub::DEFAULT_INV_WANT_FANOUT,
                     max_active_subscriptions: 4,
                     max_filters_per_subscription: 4,
                     max_replay_events: 32,

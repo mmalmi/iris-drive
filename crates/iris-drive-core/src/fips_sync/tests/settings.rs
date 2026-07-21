@@ -3,6 +3,7 @@ use super::*;
 use super::super::settings_runtime::{
     bounded_webrtc_max_connections, fips_endpoint_options, parse_bool_env_value,
     parse_list_env_value, parse_static_peer_hints, target_allows_default_desktop_fips,
+    target_allows_default_lan_discovery,
 };
 
 #[test]
@@ -567,11 +568,15 @@ fn endpoint_options_keep_native_udp_private_by_default() {
 }
 
 #[test]
-fn mobile_fips_defaults_keep_lan_without_local_candidate_sharing() {
+fn android_fips_defaults_avoid_ambient_lan_scans() {
     assert!(!target_allows_default_desktop_fips("android"));
     assert!(!target_allows_default_desktop_fips("ios"));
     assert!(target_allows_default_desktop_fips("macos"));
     assert!(target_allows_default_desktop_fips("linux"));
+    assert!(!target_allows_default_lan_discovery("android"));
+    assert!(target_allows_default_lan_discovery("ios"));
+    assert!(target_allows_default_lan_discovery("macos"));
+    assert!(target_allows_default_lan_discovery("linux"));
 }
 
 #[test]

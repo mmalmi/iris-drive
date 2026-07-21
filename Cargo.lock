@@ -1635,9 +1635,9 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "fips-core"
-version = "0.4.28"
+version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "32df0dc0ec23734b8efff0caacb7bb4639dd458e0be9caaf611b4dce1f05caca"
+checksum = "9f2cf90fed9ed72aef49ee1c0419adbb1d920a7947ee07103e2e81aaf919c8b3"
 dependencies = [
  "base64",
  "bluer",
@@ -1679,9 +1679,9 @@ dependencies = [
 
 [[package]]
 name = "fips-endpoint"
-version = "0.4.28"
+version = "0.4.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "af729c3bc8ba40d1e9bc36ba3809cba289ef39fc52a379a0a87ec41eeb78ac4c"
+checksum = "c3c02957332c1fab70b2014cbb42c443fa33f53f0ed467b35ae60fd0f9c54c08"
 dependencies = [
  "fips-core",
 ]
@@ -2612,7 +2612,7 @@ dependencies = [
 
 [[package]]
 name = "hashtree-provider"
-version = "0.1.28"
+version = "0.1.29"
 dependencies = [
  "async-trait",
  "futures",
@@ -2994,7 +2994,7 @@ dependencies = [
 
 [[package]]
 name = "idrive"
-version = "0.1.28"
+version = "0.1.29"
 dependencies = [
  "anyhow",
  "assert_cmd",
@@ -3141,7 +3141,7 @@ checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
 
 [[package]]
 name = "iris-drive-app-core"
-version = "0.1.28"
+version = "0.1.29"
 dependencies = [
  "anyhow",
  "hashtree-core",
@@ -3163,7 +3163,7 @@ dependencies = [
 
 [[package]]
 name = "iris-drive-core"
-version = "0.1.28"
+version = "0.1.29"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -3213,7 +3213,7 @@ dependencies = [
 
 [[package]]
 name = "iris-drive-mac"
-version = "0.1.28"
+version = "0.1.29"
 dependencies = [
  "anyhow",
  "iris-drive-core",
@@ -3936,9 +3936,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.4.3"
+version = "0.4.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1bb92eb30b1994c5e2c2cacd310197d6c6553a85fbce76072b22114eab5af2c6"
+checksum = "fff9423f0785b558569a05c26879cae30ae7db6e4db806bda1f80fba558387d2"
 dependencies = [
  "async-trait",
  "fips-core",
