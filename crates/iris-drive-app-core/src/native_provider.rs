@@ -8,12 +8,13 @@ use hashtree_provider::{HashTreeProviderFs, ItemKind, ProviderFs};
 use iris_drive_core::config::DEFAULT_RELAYS;
 use iris_drive_core::paths::config_path_in;
 use iris_drive_core::provider::{
-    ProviderListEntry, compose_provider_path, normalize_provider_document_path,
-    normalize_provider_parent_path, normalize_provider_path, optional_normalized_provider_path,
-    provider_entry_is_probable_os_placeholder, provider_file_probable_os_placeholder_family,
-    provider_list_summary, provider_path_is_child_document,
-    provider_write_is_probable_os_placeholder, sanitized_provider_file_name, split_provider_path,
-    unique_provider_path,
+    ProviderListEntry, compose_provider_path, create_provider_dir, delete_provider_path,
+    normalize_provider_document_path, normalize_provider_parent_path, normalize_provider_path,
+    optional_normalized_provider_path, provider_entry_is_probable_os_placeholder,
+    provider_file_probable_os_placeholder_family, provider_list_summary,
+    provider_path_is_child_document, provider_write_is_probable_os_placeholder,
+    rename_provider_path, sanitized_provider_file_name, split_provider_path, unique_provider_path,
+    write_provider_file,
 };
 use iris_drive_core::{AppConfig, Profile};
 use serde_json::json;
@@ -689,127 +690,6 @@ pub(crate) fn native_sync_status_label(
     } else {
         "up to date"
     }
-}
-
-async fn write_provider_file<P>(provider: &P, path: &str, bytes: &[u8]) -> anyhow::Result<()>
-where
-    P: ProviderFs<ItemId = String>,
-{
-    let (parent, name) = split_provider_path(path)?;
-    ensure_provider_dirs(provider, &parent).await?;
-    match provider.item(&path.to_owned()).await {
-        Ok(item) if item.kind == ItemKind::Directory => {
-            delete_provider_path(provider, path).await?;
-            provider.create_file(&parent, &name).await?;
-        }
-        Ok(_) => {
-            provider.truncate(&path.to_owned(), 0).await?;
-        }
-        Err(_) => {
-            provider.create_file(&parent, &name).await?;
-        }
-    }
-    if !bytes.is_empty() {
-        provider.write(&path.to_owned(), 0, bytes).await?;
-    }
-    Ok(())
-}
-
-async fn create_provider_dir<P>(provider: &P, path: &str) -> anyhow::Result<()>
-where
-    P: ProviderFs<ItemId = String>,
-{
-    let (parent, name) = split_provider_path(path)?;
-    ensure_provider_dirs(provider, &parent).await?;
-    match provider.item(&path.to_owned()).await {
-        Ok(item) if item.kind == ItemKind::Directory => Ok(()),
-        Ok(_) => {
-            provider.remove(&parent, &name).await?;
-            provider.create_dir(&parent, &name).await?;
-            Ok(())
-        }
-        Err(_) => {
-            provider.create_dir(&parent, &name).await?;
-            Ok(())
-        }
-    }
-}
-
-async fn ensure_provider_dirs<P>(provider: &P, parent: &str) -> anyhow::Result<()>
-where
-    P: ProviderFs<ItemId = String>,
-{
-    let mut current = String::new();
-    for segment in parent.split('/').filter(|segment| !segment.is_empty()) {
-        let next = if current.is_empty() {
-            segment.to_owned()
-        } else {
-            format!("{current}/{segment}")
-        };
-        match provider.item(&next).await {
-            Ok(item) if item.kind == ItemKind::Directory => {}
-            Ok(_) => {
-                provider.remove(&current, segment).await?;
-                provider.create_dir(&current, segment).await?;
-            }
-            Err(_) => {
-                provider.create_dir(&current, segment).await?;
-            }
-        }
-        current = next;
-    }
-    Ok(())
-}
-
-async fn delete_provider_path<P>(provider: &P, path: &str) -> anyhow::Result<()>
-where
-    P: ProviderFs<ItemId = String>,
-{
-    let mut directories = Vec::new();
-    let mut stack = vec![path.to_owned()];
-    while let Some(current) = stack.pop() {
-        let item = match provider.item(&current).await {
-            Ok(item) => item,
-            Err(hashtree_provider::ProviderError::NotFound) => continue,
-            Err(error) => return Err(error.into()),
-        };
-        if item.kind == ItemKind::Directory {
-            directories.push(current.clone());
-            for child in provider.read_dir(&current).await? {
-                stack.push(child.id);
-            }
-        } else {
-            let (parent, name) = split_provider_path(&current)?;
-            match provider.remove(&parent, &name).await {
-                Ok(()) | Err(hashtree_provider::ProviderError::NotFound) => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-    }
-    for directory in directories.into_iter().rev() {
-        let (parent, name) = split_provider_path(&directory)?;
-        match provider.remove(&parent, &name).await {
-            Ok(()) | Err(hashtree_provider::ProviderError::NotFound) => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
-    Ok(())
-}
-
-async fn rename_provider_path<P>(provider: &P, old_path: &str, new_path: &str) -> anyhow::Result<()>
-where
-    P: ProviderFs<ItemId = String>,
-{
-    let (old_parent, old_name) = split_provider_path(old_path)?;
-    let (new_parent, new_name) = split_provider_path(new_path)?;
-    ensure_provider_dirs(provider, &new_parent).await?;
-    if provider.item(&new_path.to_owned()).await.is_ok() {
-        delete_provider_path(provider, new_path).await?;
-    }
-    provider
-        .rename(&old_parent, &old_name, &new_parent, &new_name)
-        .await?;
-    Ok(())
 }
 
 fn provider_import_error_message_is_retryable(message: &str) -> bool {

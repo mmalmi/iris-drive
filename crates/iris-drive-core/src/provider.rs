@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
+use hashtree_provider::{ItemKind, ProviderError, ProviderFs};
 use serde::Serialize;
 
 const PROBABLE_OS_PLACEHOLDER_COLLISION_DEPTH: usize = 3;
@@ -378,9 +379,218 @@ pub fn provider_cache_destination(target_dir: &Path, provider_path: &str) -> Opt
     Some(destination)
 }
 
+pub async fn write_provider_file<P>(provider: &P, path: &str, bytes: &[u8]) -> anyhow::Result<()>
+where
+    P: ProviderFs<ItemId = String>,
+{
+    let (parent, name) = split_provider_path(path)?;
+    ensure_provider_dirs(provider, &parent).await?;
+    let path = path.to_owned();
+    match provider.item(&path).await {
+        Ok(item) if item.kind == ItemKind::Directory => {
+            delete_provider_path(provider, &path).await?;
+            provider.create_file(&parent, &name).await?;
+        }
+        Ok(_) => {
+            provider.truncate(&path, 0).await?;
+        }
+        Err(_) => {
+            provider.create_file(&parent, &name).await?;
+        }
+    }
+    if !bytes.is_empty() {
+        provider.write(&path, 0, bytes).await?;
+    }
+    Ok(())
+}
+
+pub async fn create_provider_dir<P>(provider: &P, path: &str) -> anyhow::Result<()>
+where
+    P: ProviderFs<ItemId = String>,
+{
+    let (parent, name) = split_provider_path(path)?;
+    ensure_provider_dirs(provider, &parent).await?;
+    let path = path.to_owned();
+    match provider.item(&path).await {
+        Ok(item) if item.kind == ItemKind::Directory => Ok(()),
+        Ok(_) => {
+            provider.remove(&parent, &name).await?;
+            provider.create_dir(&parent, &name).await?;
+            Ok(())
+        }
+        Err(_) => {
+            provider.create_dir(&parent, &name).await?;
+            Ok(())
+        }
+    }
+}
+
+async fn ensure_provider_dirs<P>(provider: &P, parent: &str) -> anyhow::Result<()>
+where
+    P: ProviderFs<ItemId = String>,
+{
+    let mut current = String::new();
+    for segment in parent.split('/').filter(|segment| !segment.is_empty()) {
+        let next = if current.is_empty() {
+            segment.to_owned()
+        } else {
+            format!("{current}/{segment}")
+        };
+        match provider.item(&next).await {
+            Ok(item) if item.kind == ItemKind::Directory => {}
+            Ok(_) => {
+                provider.remove(&current, segment).await?;
+                provider.create_dir(&current, segment).await?;
+            }
+            Err(_) => {
+                provider.create_dir(&current, segment).await?;
+            }
+        }
+        current = next;
+    }
+    Ok(())
+}
+
+pub async fn delete_provider_path<P>(provider: &P, path: &str) -> anyhow::Result<()>
+where
+    P: ProviderFs<ItemId = String>,
+{
+    let mut directories = Vec::new();
+    let mut stack = vec![path.to_owned()];
+    while let Some(current) = stack.pop() {
+        let item = match provider.item(&current).await {
+            Ok(item) => item,
+            Err(ProviderError::NotFound) => continue,
+            Err(error) => return Err(error.into()),
+        };
+        if item.kind == ItemKind::Directory {
+            directories.push(current.clone());
+            for child in provider.read_dir(&current).await? {
+                stack.push(child.id);
+            }
+        } else {
+            let (parent, name) = split_provider_path(&current)?;
+            match provider.remove(&parent, &name).await {
+                Ok(()) | Err(ProviderError::NotFound) => {}
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+    for directory in directories.into_iter().rev() {
+        let (parent, name) = split_provider_path(&directory)?;
+        match provider.remove(&parent, &name).await {
+            Ok(()) | Err(ProviderError::NotFound) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+pub async fn rename_provider_path<P>(
+    provider: &P,
+    old_path: &str,
+    new_path: &str,
+) -> anyhow::Result<()>
+where
+    P: ProviderFs<ItemId = String>,
+{
+    let (old_parent, old_name) = split_provider_path(old_path)?;
+    let (new_parent, new_name) = split_provider_path(new_path)?;
+    ensure_provider_dirs(provider, &new_parent).await?;
+    if provider.item(&new_path.to_owned()).await.is_ok() {
+        delete_provider_path(provider, new_path).await?;
+    }
+    provider
+        .rename(&old_parent, &old_name, &new_parent, &new_name)
+        .await?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
+    use hashtree_core::{HashTree, HashTreeConfig, MemoryStore};
+    use hashtree_provider::{HashTreeProviderFs, ProviderFs};
+
     use super::*;
+
+    async fn fresh_provider() -> HashTreeProviderFs<MemoryStore> {
+        let tree = Arc::new(HashTree::new(
+            HashTreeConfig::new(Arc::new(MemoryStore::new())).public(),
+        ));
+        HashTreeProviderFs::fresh(tree).await.unwrap()
+    }
+
+    #[tokio::test]
+    async fn provider_mutations_replace_files_and_nonempty_directories() {
+        let provider = fresh_provider().await;
+
+        write_provider_file(&provider, "parent/entry", b"first")
+            .await
+            .unwrap();
+        create_provider_dir(&provider, "parent/entry")
+            .await
+            .unwrap();
+        assert_eq!(
+            provider
+                .item(&"parent/entry".to_owned())
+                .await
+                .unwrap()
+                .kind,
+            hashtree_provider::ItemKind::Directory
+        );
+
+        write_provider_file(&provider, "parent/entry/child.txt", b"stale")
+            .await
+            .unwrap();
+        write_provider_file(&provider, "parent/entry", b"replacement")
+            .await
+            .unwrap();
+
+        let path = "parent/entry".to_owned();
+        let item = provider.item(&path).await.unwrap();
+        assert_eq!(item.kind, hashtree_provider::ItemKind::File);
+        assert_eq!(
+            provider.read(&path, 0, item.size).await.unwrap(),
+            b"replacement"
+        );
+        assert!(matches!(
+            provider.item(&"parent/entry/child.txt".to_owned()).await,
+            Err(ProviderError::NotDir)
+        ));
+    }
+
+    #[tokio::test]
+    async fn provider_rename_replaces_existing_nonempty_directory() {
+        let provider = fresh_provider().await;
+        write_provider_file(&provider, "source.txt", b"source")
+            .await
+            .unwrap();
+        write_provider_file(&provider, "target/stale.txt", b"stale")
+            .await
+            .unwrap();
+
+        rename_provider_path(&provider, "source.txt", "target")
+            .await
+            .unwrap();
+
+        assert!(matches!(
+            provider.item(&"source.txt".to_owned()).await,
+            Err(ProviderError::NotFound)
+        ));
+        let target = "target".to_owned();
+        let item = provider.item(&target).await.unwrap();
+        assert_eq!(item.kind, hashtree_provider::ItemKind::File);
+        assert_eq!(
+            provider.read(&target, 0, item.size).await.unwrap(),
+            b"source"
+        );
+        assert!(matches!(
+            provider.item(&"target/stale.txt".to_owned()).await,
+            Err(ProviderError::NotDir)
+        ));
+    }
 
     #[test]
     fn provider_path_normalization_rejects_native_separator_aliases() {

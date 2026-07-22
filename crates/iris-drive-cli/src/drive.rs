@@ -1,11 +1,15 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
+use iris_drive_core::provider::rename_provider_path as shared_rename_provider_path;
 use iris_drive_core::provider::{
     ProviderListEntry, compose_provider_path, normalize_provider_document_path,
     normalize_provider_parent_path, normalize_provider_path, provider_cache_destination,
     provider_entry_is_probable_os_placeholder, provider_file_probable_os_placeholder_family,
     provider_list_summary, provider_write_is_probable_os_placeholder, sanitized_provider_file_name,
     split_provider_path, unique_provider_path,
+};
+pub(crate) use iris_drive_core::provider::{
+    create_provider_dir, delete_provider_path, write_provider_file,
 };
 
 use crate::provider_staging::{
@@ -748,113 +752,6 @@ fn remove_provider_cache_destination(path: &Path) -> Result<()> {
     Ok(())
 }
 
-pub(crate) async fn write_provider_file(
-    provider: &HashTreeProviderFs<FsBlobStore>,
-    path: &str,
-    bytes: &[u8],
-) -> Result<()> {
-    let (parent, name) = split_provider_path(path)?;
-    ensure_provider_dirs(provider, &parent).await?;
-    match provider.item(&path.to_string()).await {
-        Ok(item) if item.kind == ItemKind::Directory => {
-            delete_provider_path(provider, path).await?;
-            provider.create_file(&parent, &name).await?;
-        }
-        Ok(_) => {
-            provider.truncate(&path.to_string(), 0).await?;
-        }
-        Err(_) => {
-            provider.create_file(&parent, &name).await?;
-        }
-    }
-    if !bytes.is_empty() {
-        provider.write(&path.to_string(), 0, bytes).await?;
-    }
-    Ok(())
-}
-
-pub(crate) async fn create_provider_dir(
-    provider: &HashTreeProviderFs<FsBlobStore>,
-    path: &str,
-) -> Result<()> {
-    let (parent, name) = split_provider_path(path)?;
-    ensure_provider_dirs(provider, &parent).await?;
-    match provider.item(&path.to_string()).await {
-        Ok(item) if item.kind == ItemKind::Directory => Ok(()),
-        Ok(_) => {
-            provider.remove(&parent, &name).await?;
-            provider.create_dir(&parent, &name).await?;
-            Ok(())
-        }
-        Err(_) => {
-            provider.create_dir(&parent, &name).await?;
-            Ok(())
-        }
-    }
-}
-
-async fn ensure_provider_dirs(
-    provider: &HashTreeProviderFs<FsBlobStore>,
-    parent: &str,
-) -> Result<()> {
-    let mut current = String::new();
-    for segment in parent.split('/').filter(|segment| !segment.is_empty()) {
-        let next = if current.is_empty() {
-            segment.to_string()
-        } else {
-            format!("{current}/{segment}")
-        };
-        match provider.item(&next).await {
-            Ok(item) if item.kind == ItemKind::Directory => {}
-            Ok(_) => {
-                provider.remove(&current, segment).await?;
-                provider.create_dir(&current, segment).await?;
-            }
-            Err(_) => {
-                provider.create_dir(&current, segment).await?;
-            }
-        }
-        current = next;
-    }
-    Ok(())
-}
-
-pub(crate) async fn delete_provider_path(
-    provider: &HashTreeProviderFs<FsBlobStore>,
-    path: &str,
-) -> Result<()> {
-    let root = path.to_string();
-    let mut stack = vec![root.clone()];
-    let mut directories = Vec::new();
-    while let Some(current) = stack.pop() {
-        let item = match provider.item(&current).await {
-            Ok(item) => item,
-            Err(hashtree_provider::ProviderError::NotFound) => continue,
-            Err(error) => return Err(error.into()),
-        };
-        if item.kind == ItemKind::Directory {
-            directories.push(current.clone());
-            for child in provider.read_dir(&current).await? {
-                stack.push(child.id);
-            }
-        } else {
-            let (parent, name) = split_provider_path(&current)?;
-            match provider.remove(&parent, &name).await {
-                Ok(()) | Err(hashtree_provider::ProviderError::NotFound) => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-    }
-    for directory in directories.into_iter().rev() {
-        let (parent, name) = split_provider_path(&directory)?;
-        match provider.remove(&parent, &name).await {
-            Ok(()) | Err(hashtree_provider::ProviderError::NotFound) => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
-    Ok(())
-}
-
 async fn provider_delete_tombstone_paths(
     provider: &HashTreeProviderFs<FsBlobStore>,
     path: &str,
@@ -886,16 +783,7 @@ pub(crate) async fn rename_provider_path(
     if old_path == new_path {
         return Ok(());
     }
-    let (old_parent, old_name) = split_provider_path(old_path)?;
-    let (new_parent, new_name) = split_provider_path(new_path)?;
-    ensure_provider_dirs(provider, &new_parent).await?;
-    if provider.item(&new_path.to_string()).await.is_ok() {
-        delete_provider_path(provider, new_path).await?;
-    }
-    provider
-        .rename(&old_parent, &old_name, &new_parent, &new_name)
-        .await?;
-    Ok(())
+    shared_rename_provider_path(provider, old_path, new_path).await
 }
 
 async fn print_provider_mutation(
@@ -1054,6 +942,41 @@ async fn provider_root_report(
         file_count: summary.file_count,
         top_level_entries: top_level_entry_count(&entries),
     })
+}
+
+#[cfg(test)]
+mod provider_mutation_tests {
+    use hashtree_provider::ProviderFs;
+
+    use super::{rename_provider_path, write_provider_file};
+
+    #[tokio::test]
+    async fn rename_same_path_is_a_noop() {
+        let store = tempfile::tempdir().unwrap();
+        let tree = std::sync::Arc::new(hashtree_core::HashTree::new(
+            hashtree_core::HashTreeConfig::new(std::sync::Arc::new(
+                hashtree_fs::FsBlobStore::new(store.path()).unwrap(),
+            ))
+            .public(),
+        ));
+        let provider = hashtree_provider::HashTreeProviderFs::fresh(tree)
+            .await
+            .unwrap();
+        write_provider_file(&provider, "same.txt", b"preserved")
+            .await
+            .unwrap();
+
+        rename_provider_path(&provider, "same.txt", "same.txt")
+            .await
+            .unwrap();
+
+        let path = "same.txt".to_owned();
+        let item = provider.item(&path).await.unwrap();
+        assert_eq!(
+            provider.read(&path, 0, item.size).await.unwrap(),
+            b"preserved"
+        );
+    }
 }
 
 #[cfg(test)]

@@ -6,7 +6,6 @@ crates/iris-drive-app-core/src/c_abi.rs 1100 C ABI/JNI bridge includes platform 
 crates/iris-drive-app-core/src/ffi.rs 3773 Legacy app-core FFI runtime now includes native browser, CalDAV status, manual app-key join request paths, mobile roster cache invalidation, and request-scoped approval receipt subscription plus bootstrap-only request-link lookup; split pending action/provider/app-key-link modules.
 crates/iris-drive-app-core/src/ffi/tests.rs 2256 App-core parity and native action fixtures include startup defaults, provider batch-copy, and mobile roster cache regressions; split pending scenario modules.
 crates/iris-drive-cli/src/daemon.rs 1150 CLI daemon orchestration is legacy monolith pending runtime helper split.
-crates/iris-drive-cli/src/drive.rs 1060 CLI drive command surface includes provider directory delete tombstone hardening; pending command/provider helper split.
 crates/iris-drive-cli/src/drive/tests.rs 1094 CLI drive provider tests include directory descendant tombstone release coverage and staged ignored-provider-write regression coverage; pending provider scenario-module split.
 crates/iris-drive-cli/src/shares.rs 1350 CLI share command surface needs a later command/test split.
 crates/iris-drive-cli/src/profile.rs 1356 CLI profile command surface includes config + profile-roster sidecar fingerprint caching, AppKey device rename, compact request-link approval publishing, slim FIPS request-frame parsing, and rollback-on-relay-reject handling; pending command/test split.
