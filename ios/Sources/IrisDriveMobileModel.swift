@@ -192,11 +192,13 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     var syncStateTitle: String {
-        lastState?.ui.sync.statusLabel ?? "Ready"
+        screenshotFixtureEnabled ? "Up to date" : (lastState?.ui.sync.statusLabel ?? "Ready")
     }
 
     var snapshotLink: String {
-        lastState?.ui.snapshotLink ?? ""
+        screenshotFixtureEnabled
+            ? "https://drive.iris.to/#/nhash1fixture"
+            : (lastState?.ui.snapshotLink ?? "")
     }
 
     var lastShareInvite: String {
@@ -2175,6 +2177,7 @@ final class IrisDriveMobileModel: ObservableObject {
         roots = state.ui.roots.map { root in
             IrisDriveRoot(name: root.name, status: root.status, path: root.localPath)
         }
+        applyScreenshotFixtureIfRequested()
     }
 
     @discardableResult

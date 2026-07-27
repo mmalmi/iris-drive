@@ -2616,6 +2616,17 @@ private struct SettingsView: View {
                     .accessibilityIdentifier("appleCalendarSyncStatus")
             }
 
+            Section("Help") {
+                Link(
+                    "Privacy Policy",
+                    destination: URL(string: "https://getdrive.iris.to/privacy/")!
+                )
+                Link(
+                    "Support",
+                    destination: URL(string: "https://getdrive.iris.to/support/")!
+                )
+            }
+
             Section("Advanced") {
                 Button(role: .destructive) {
                     model.resetLocalState()

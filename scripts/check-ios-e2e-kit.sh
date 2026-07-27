@@ -34,14 +34,20 @@ require_file ios/project.yml
 require_file ios/Sources/IrisDriveIOSApp.swift
 require_file ios/Sources/IrisDriveClipboard.swift
 require_file ios/Sources/IrisDriveMobileModel.swift
+require_file ios/Sources/IrisDriveScreenshotFixture.swift
 require_file ios/Sources/IrisDriveNativeCore.swift
 require_file ios/Sources/IrisDriveTypes.swift
+require_file ios/Resources/PrivacyInfo.xcprivacy
 require_file ios/FileProvider/FileProviderExtension.swift
+require_file ios/FileProvider/PrivacyInfo.xcprivacy
 require_file ios/ShareExtension/ShareItemImporter.swift
+require_file ios/ShareExtension/PrivacyInfo.xcprivacy
 require_file ios/ShareSource/ShareSourceApp.swift
 require_file ios/UnitTests/ShareItemImporterTests.swift
 require_file ios/UITests/IrisDriveIOSUITests.swift
+require_file ios/UITests/IrisDriveAppStoreScreenshotTests.swift
 require_file ios/UITests/Fixtures/external-links.html
+require_file scripts/ios-app-store-screenshots.sh
 require_file scripts/ios-simulator-smoke.sh
 require_file scripts/ios-gui-linking-smoke.sh
 require_file scripts/cross-vm-four-platform-e2e.sh
@@ -61,7 +67,24 @@ require_contains ios/Info.plist "iris.localhost"
 require_contains ios/Info.plist "hash.localhost"
 require_contains ios/Info.plist "NSExceptionAllowsInsecureHTTPLoads"
 require_contains ios/Info.plist "NSIncludesSubdomains"
+require_contains ios/Info.plist "ITSAppUsesNonExemptEncryption"
+require_contains ios/Resources/PrivacyInfo.xcprivacy "NSPrivacyAccessedAPICategoryUserDefaults"
+require_contains ios/Resources/PrivacyInfo.xcprivacy "CA92.1"
+require_contains ios/Resources/PrivacyInfo.xcprivacy "NSPrivacyAccessedAPICategoryFileTimestamp"
+require_contains ios/Resources/PrivacyInfo.xcprivacy "C617.1"
+require_contains ios/Resources/PrivacyInfo.xcprivacy "NSPrivacyCollectedDataTypeOtherUserContent"
+require_contains ios/Resources/PrivacyInfo.xcprivacy "NSPrivacyCollectedDataTypeUserID"
+require_contains ios/Resources/PrivacyInfo.xcprivacy "NSPrivacyCollectedDataTypeDeviceID"
+require_contains ios/Resources/PrivacyInfo.xcprivacy "NSPrivacyCollectedDataTypePurposeAppFunctionality"
+require_contains ios/FileProvider/PrivacyInfo.xcprivacy "NSPrivacyAccessedAPICategoryFileTimestamp"
+require_contains ios/FileProvider/PrivacyInfo.xcprivacy "C617.1"
+require_contains ios/ShareExtension/PrivacyInfo.xcprivacy "NSPrivacyAccessedAPICategoryFileTimestamp"
+require_contains ios/ShareExtension/PrivacyInfo.xcprivacy "C617.1"
 require_contains ios/Sources/IrisDriveIOSApp.swift "ensureFileProviderDomain"
+require_contains ios/Sources/IrisDriveScreenshotFixture.swift "IRIS_DRIVE_UI_TEST_SCREENSHOT_FIXTURE"
+require_contains ios/UITests/IrisDriveAppStoreScreenshotTests.swift "testCaptureAppStoreScreenshots"
+require_contains scripts/ios-app-store-screenshots.sh "IPHONE_69"
+require_contains scripts/ios-app-store-screenshots.sh "IPAD_PRO_13"
 require_contains ios/Sources/IrisDriveMobileModel.swift "NSFileProviderManager.add"
 require_contains ios/Sources/IrisDriveMobileModel.swift "fileProviderRegistrationIdentity"
 require_contains ios/Sources/IrisDriveMobileModel.swift "shouldRepairFileProviderRegistration"
@@ -107,6 +130,8 @@ require_contains ios/Sources/IrisDriveRootView.swift "irisWebMoreButton"
 require_contains ios/Sources/IrisDriveRootView.swift "irisWebCompactTitle"
 require_contains ios/Sources/IrisDriveRootView.swift "irisWebNavigationAction(for: url)"
 require_absent ios/Sources/IrisDriveRootView.swift ".navigationTitle(\"Iris Apps\")"
+require_contains ios/Sources/IrisDriveRootView.swift "https://getdrive.iris.to/privacy/"
+require_contains ios/Sources/IrisDriveRootView.swift "https://getdrive.iris.to/support/"
 require_contains ios/Sources/IrisDriveTypes.swift "storageDirectoryName = \"IrisDrive\""
 require_absent ios/Sources/IrisDriveMobileModel.swift "applicationSupportDirectory"
 require_absent ios/Sources/IrisDriveMobileModel.swift "UIDocumentPickerViewController"
@@ -190,6 +215,9 @@ require_contains scripts/ios-device-smoke.sh 'RUST_LIB_DIR="$TARGET_DIR/$RUST_IO
 require_contains scripts/ios-device-smoke.sh 'cargo build -p iris-drive-app-core --target "$RUST_IOS_TARGET" --release'
 require_contains scripts/ios-device-smoke.sh 'CARGO_TARGET_DIR="$TARGET_DIR"'
 require_contains scripts/ios-device-smoke.sh 'IPHONEOS_DEPLOYMENT_TARGET="$RUST_IOS_DEPLOYMENT_TARGET"'
+require_contains scripts/ios-build 'RUST_IOS_DEPLOYMENT_TARGET="${IRIS_DRIVE_IOS_DEPLOYMENT_TARGET:-17.0}"'
+require_contains scripts/ios-build 'IPHONEOS_DEPLOYMENT_TARGET="$RUST_IOS_DEPLOYMENT_TARGET"'
+require_contains scripts/ios-app-store-screenshots.sh 'IPHONEOS_DEPLOYMENT_TARGET="$RUST_IOS_DEPLOYMENT_TARGET"'
 require_contains scripts/ios-device-smoke.sh 'local status'
 require_contains scripts/ios-device-smoke.sh 'return "$status"'
 require_contains scripts/ios-device-iris-apps-smoke.sh 'local status'
