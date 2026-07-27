@@ -205,17 +205,14 @@ async fn reliable_control_enforces_topic_acl_and_survives_service_restart() {
                 break message;
             }
         };
-        let restarted = match tokio::time::timeout(Duration::from_secs(8), next_queued_record).await
-        {
-            Ok(result) => result,
-            Err(_) => {
-                let alice_connected = alice_runtime.connected_peer_ids().await.unwrap();
-                let replacement_connected = replacement.connected_peer_ids().await.unwrap();
-                panic!(
-                    "queued Drive control record was not replayed after service restart; \
-                         alice connected={alice_connected:?}, replacement connected={replacement_connected:?}"
-                );
-            }
+        let Ok(restarted) = tokio::time::timeout(Duration::from_secs(8), next_queued_record).await
+        else {
+            let alice_connected = alice_runtime.connected_peer_ids().await.unwrap();
+            let replacement_connected = replacement.connected_peer_ids().await.unwrap();
+            panic!(
+                "queued Drive control record was not replayed after service restart; \
+                     alice connected={alice_connected:?}, replacement connected={replacement_connected:?}"
+            );
         };
         assert_eq!(restarted.data, expected);
     }
