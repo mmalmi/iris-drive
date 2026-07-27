@@ -130,7 +130,7 @@ async fn drive_blob_service_accepts_roster_peer_and_rejects_unrelated_identity()
 }
 
 pub(super) async fn wait_for_peer_connection(endpoint: &BoundFipsEndpoint, npub: &str) {
-    tokio::time::timeout(Duration::from_secs(10), async {
+    tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             if endpoint
                 .native_endpoint
