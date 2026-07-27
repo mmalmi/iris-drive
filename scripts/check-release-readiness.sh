@@ -217,6 +217,7 @@ require_contains scripts/cross-vm-e2e.sh "idle-cpu-gate-windows.ps1"
 require_contains scripts/cross-vm-e2e.sh "IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES = 'daemon'"
 require_contains scripts/cross-vm-e2e.sh 'IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH = \$repo'
 require_contains scripts/cross-vm-e2e.sh 'idle-cpu-gate.sh\" --platform auto'
+require_contains scripts/cross-vm-e2e.sh '${IRIS_DRIVE_IDLE_CPU_WARMUP_SECS:-180}'
 require_contains scripts/cross-vm-e2e.sh "https://drive.iris.to/approve-device/"
 require_contains scripts/dev-vm-update-run.sh "IRIS_DRIVE_SOCIAL_GRAPH_ROOT"
 require_contains scripts/dev-vm-update-run.sh "SOCIAL_GRAPH_BARE"
