@@ -152,6 +152,10 @@ impl DaemonChild {
                 "IRIS_DRIVE_FIPS_ENABLE_LAN_DISCOVERY",
                 matches!(carrier, FipsTestCarrier::Udp { .. }).to_string(),
             )
+            .env(
+                "IRIS_DRIVE_FIPS_SHARE_LOCAL_CANDIDATES",
+                matches!(carrier, FipsTestCarrier::Udp { .. }).to_string(),
+            )
             .env("IRIS_DRIVE_FIPS_STATIC_PEERS", static_peers)
             .env(
                 "IRIS_DRIVE_FIPS_OPEN_DISCOVERY_MAX_PENDING",

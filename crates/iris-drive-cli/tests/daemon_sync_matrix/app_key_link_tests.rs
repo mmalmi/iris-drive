@@ -252,11 +252,15 @@ async fn routed_websocket_devices_report_online_through_mesh_sessions() {
         linked_daemon.log(),
     );
 
+    // Accept the approval events at the relay but do not fan them out. The
+    // linked device must become authorized, and both roster entries must
+    // become online, through the routed FIPS session itself.
+    relay.drop_kinds(&[iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP]);
     let approval = run_json(
         owner_cfg.path(),
         &["app-keys", "approve", &request_url, "--label", "iPhone"],
     );
-    assert_eq!(approval["approval_publish_error"], Value::Null);
+    assert_eq!(approval["roster_size"], 2);
 
     let online_deadline = Instant::now() + Duration::from_secs(30);
     while Instant::now() < online_deadline {
