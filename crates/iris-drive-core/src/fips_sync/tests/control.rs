@@ -52,27 +52,31 @@ async fn authorized_control_peers_connect_before_any_record_is_queued() {
     )
     .await
     .unwrap();
+    let mut alice_presence = alice_runtime.subscribe_presence_changes();
+    let mut bob_presence = bob_runtime.subscribe_presence_changes();
 
-    tokio::time::timeout(Duration::from_secs(5), async {
-        loop {
-            let alice_connected = alice_runtime
-                .connected_peer_ids()
-                .await
-                .unwrap()
-                .contains(&bob.pubkey_bech32());
-            let bob_connected = bob_runtime
-                .connected_peer_ids()
-                .await
-                .unwrap()
-                .contains(&alice.pubkey_bech32());
-            if alice_connected && bob_connected {
-                break;
+    tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::join!(
+            async {
+                loop {
+                    if alice_presence.borrow().contains(&bob.pubkey_bech32()) {
+                        break;
+                    }
+                    alice_presence.changed().await.unwrap();
+                }
+            },
+            async {
+                loop {
+                    if bob_presence.borrow().contains(&alice.pubkey_bech32()) {
+                        break;
+                    }
+                    bob_presence.changed().await.unwrap();
+                }
             }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        );
     })
     .await
-    .expect("authorized peers did not establish an idle presence channel");
+    .expect("both authorized peers did not signal online presence within two seconds");
 
     alice_runtime.shutdown().await.unwrap();
     bob_runtime.shutdown().await.unwrap();
@@ -211,7 +215,7 @@ async fn reliable_control_enforces_topic_acl_and_survives_service_restart() {
             let replacement_connected = replacement.connected_peer_ids().await.unwrap();
             panic!(
                 "queued Drive control record was not replayed after service restart; \
-                     alice connected={alice_connected:?}, replacement connected={replacement_connected:?}"
+                 alice connected={alice_connected:?}, replacement connected={replacement_connected:?}"
             );
         };
         assert_eq!(restarted.data, expected);

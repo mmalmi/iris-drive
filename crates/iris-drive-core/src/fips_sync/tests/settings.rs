@@ -46,6 +46,7 @@ fn endpoint_options_can_advertise_native_udp_without_disabling_webrtc() {
         enable_udp: true,
         enable_webrtc: true,
         enable_lan_discovery: true,
+        enable_nostr_discovery: true,
         enable_mesh_pubsub: true,
         enable_local_rendezvous: true,
         websocket_bind_addr: None,
@@ -120,6 +121,29 @@ fn endpoint_options_can_bind_a_native_websocket_entry_point() {
 }
 
 #[test]
+fn websocket_mesh_tests_can_disable_nostr_direct_upgrades() {
+    let settings = FipsTransportSettings {
+        enable_udp: false,
+        enable_webrtc: false,
+        enable_nostr_discovery: false,
+        enable_local_rendezvous: false,
+        websocket_seed_urls: vec!["ws://127.0.0.1:2121/fips".to_string()],
+        ..Default::default()
+    };
+
+    let options = fips_endpoint_options(
+        "nsec1example".to_string(),
+        IRIS_DRIVE_FIPS_DISCOVERY_SCOPE.to_string(),
+        vec!["ws://127.0.0.1:4848".to_string()],
+        &AppConfig::default(),
+        &settings,
+    );
+
+    assert!(options.relays.is_empty());
+    assert!(options.websocket.is_some());
+}
+
+#[test]
 fn webrtc_connection_limit_is_always_within_candidate_socket_budget() {
     assert_eq!(bounded_webrtc_max_connections(None), 8);
     assert_eq!(bounded_webrtc_max_connections(Some(0)), 1);
@@ -143,6 +167,7 @@ fn default_transport_settings_do_not_seed_fips_bootstrap_transit() {
     );
     assert!(settings.bootstrap_peer_hints.is_empty());
     assert!(settings.enable_lan_discovery);
+    assert!(settings.enable_nostr_discovery);
 }
 
 #[test]

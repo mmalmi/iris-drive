@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.1.31 - 2026-07-27
+
+### Fixed
+
+- Publish authenticated FIPS presence transitions to the native mobile status
+  file immediately, so iOS and Android Devices views no longer wait for the
+  15-second idle maintenance tick before showing a peer online or offline.
+- Require bidirectional online presence signals within two seconds in the real
+  FIPS control runtime regression.
+- Disable Nostr direct-path upgrades in the routed-WebSocket regression lane,
+  ensuring it deterministically verifies mesh-only device presence.
+
 ## 0.1.30 - 2026-07-27
 
 ### Changed

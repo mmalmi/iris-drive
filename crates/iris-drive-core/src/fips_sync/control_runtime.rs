@@ -8,7 +8,7 @@ use fips_core::discovery::local::LocalInstanceCapability;
 use fips_core::{FipsEndpoint, PeerIdentity};
 use fips_tcp::{Config as TcpConfig, ConnectionId, MarkerStatus, SendMarker, State};
 use fips_tcp_endpoint::FipsTcpEndpoint;
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use super::FipsSyncError;
@@ -44,6 +44,7 @@ pub struct FipsAppMessage {
 pub(super) struct DriveControlRuntime {
     commands: mpsc::Sender<Command>,
     deliveries: broadcast::Sender<FipsAppMessage>,
+    presence_changes: watch::Sender<Vec<String>>,
     task: Option<JoinHandle<()>>,
 }
 
@@ -70,6 +71,7 @@ impl DriveControlRuntime {
         .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?;
         let (commands, command_rx) = mpsc::channel(COMMAND_CAPACITY);
         let (deliveries, _) = broadcast::channel(DELIVERY_CAPACITY);
+        let (presence_changes, _) = watch::channel(Vec::new());
         let actor = ControlActor {
             local_npub: endpoint.npub().to_string(),
             tcp,
@@ -83,17 +85,23 @@ impl DriveControlRuntime {
             seen_records: HashSet::new(),
             seen_record_order: VecDeque::new(),
             deliveries: deliveries.clone(),
+            presence_changes: presence_changes.clone(),
         };
         let task = tokio::spawn(actor.run(command_rx));
         Ok(Self {
             commands,
             deliveries,
+            presence_changes,
             task: Some(task),
         })
     }
 
     pub(super) fn subscribe(&self) -> broadcast::Receiver<FipsAppMessage> {
         self.deliveries.subscribe()
+    }
+
+    pub(super) fn subscribe_presence_changes(&self) -> watch::Receiver<Vec<String>> {
+        self.presence_changes.subscribe()
     }
 
     pub(super) async fn set_policy(
@@ -286,6 +294,7 @@ struct ControlActor {
     seen_records: HashSet<(String, [u8; RECORD_ID_BYTES])>,
     seen_record_order: VecDeque<(String, [u8; RECORD_ID_BYTES])>,
     deliveries: broadcast::Sender<FipsAppMessage>,
+    presence_changes: watch::Sender<Vec<String>>,
 }
 
 impl ControlActor {
@@ -314,6 +323,7 @@ impl ControlActor {
             if let Err(error) = self.drive(now_ms).await {
                 tracing::warn!(%error, "Drive control TCP/FIPS turn failed");
             }
+            self.publish_presence_if_changed();
         }
     }
 
@@ -358,13 +368,7 @@ impl ControlActor {
                 let _ = reply.send(result);
             }
             Command::ConnectedPeers { reply } => {
-                let peers = self
-                    .active
-                    .keys()
-                    .filter(|peer| self.authorized_peers.contains(*peer))
-                    .cloned()
-                    .collect();
-                let _ = reply.send(peers);
+                let _ = reply.send(self.connected_peer_snapshot());
             }
             Command::Shutdown { reply } => {
                 let ids = self.connections.keys().copied().collect::<Vec<_>>();
@@ -381,6 +385,25 @@ impl ControlActor {
             }
         }
         false
+    }
+
+    fn connected_peer_snapshot(&self) -> Vec<String> {
+        self.active
+            .keys()
+            .filter(|peer| self.authorized_peers.contains(*peer))
+            .cloned()
+            .collect()
+    }
+
+    fn publish_presence_if_changed(&self) {
+        let next = self.connected_peer_snapshot();
+        self.presence_changes.send_if_modified(|current| {
+            if *current == next {
+                return false;
+            }
+            current.clone_from(&next);
+            true
+        });
     }
 
     fn queue(

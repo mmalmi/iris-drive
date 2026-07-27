@@ -153,6 +153,10 @@ impl DaemonChild {
                 matches!(carrier, FipsTestCarrier::Udp { .. }).to_string(),
             )
             .env(
+                "IRIS_DRIVE_FIPS_ENABLE_NOSTR_DISCOVERY",
+                matches!(carrier, FipsTestCarrier::Udp { .. }).to_string(),
+            )
+            .env(
                 "IRIS_DRIVE_FIPS_SHARE_LOCAL_CANDIDATES",
                 matches!(carrier, FipsTestCarrier::Udp { .. }).to_string(),
             )

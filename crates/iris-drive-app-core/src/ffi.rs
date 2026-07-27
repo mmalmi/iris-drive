@@ -2157,6 +2157,7 @@ async fn run_app_key_link_exchange_async(
     let sync = iris_drive_core::FipsBlockSync::start(&device, local, &startup_config)
         .await
         .map_err(|error| format!("starting FIPS app-key-link exchange: {error}"))?;
+    let mut presence_changes = sync.subscribe_presence_changes();
     if let Err(error) = write_native_fips_status(config_dir, &sync, None).await {
         tracing::warn!(error = %error, "writing native FIPS status failed");
     }
@@ -2251,6 +2252,14 @@ async fn run_app_key_link_exchange_async(
                     tracing::warn!(error = %error, "native direct-root state request failed");
                 }
                 update_announcements.sync_with_peers(config_dir, &sync).await;
+            }
+            presence_changed = presence_changes.changed() => {
+                if presence_changed.is_err() {
+                    break;
+                }
+                if let Err(error) = write_native_fips_status(config_dir, &sync, None).await {
+                    tracing::warn!(error = %error, "writing native FIPS presence status failed");
+                }
             }
             message = sync.recv_nostr_pubsub_event() => {
                 let mut messages = vec![message];

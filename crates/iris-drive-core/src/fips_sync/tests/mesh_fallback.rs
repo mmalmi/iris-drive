@@ -397,6 +397,7 @@ pub(super) fn local_only_settings(
         enable_udp: true,
         enable_webrtc: false,
         enable_lan_discovery: false,
+        enable_nostr_discovery: false,
         enable_mesh_pubsub: false,
         enable_local_rendezvous: false,
         websocket_bind_addr: None,

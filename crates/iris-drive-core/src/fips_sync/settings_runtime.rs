@@ -19,6 +19,7 @@ pub struct FipsTransportSettings {
     pub enable_udp: bool,
     pub enable_webrtc: bool,
     pub enable_lan_discovery: bool,
+    pub enable_nostr_discovery: bool,
     pub enable_mesh_pubsub: bool,
     pub enable_local_rendezvous: bool,
     pub websocket_bind_addr: Option<String>,
@@ -39,6 +40,7 @@ impl Default for FipsTransportSettings {
             enable_udp: true,
             enable_webrtc: target_allows_default_desktop_fips(std::env::consts::OS),
             enable_lan_discovery: target_allows_default_lan_discovery(std::env::consts::OS),
+            enable_nostr_discovery: true,
             enable_mesh_pubsub: true,
             enable_local_rendezvous: true,
             websocket_bind_addr: None,
@@ -80,6 +82,8 @@ impl FipsTransportSettings {
                 .unwrap_or(defaults.enable_webrtc),
             enable_lan_discovery: bool_env("IRIS_DRIVE_FIPS_ENABLE_LAN_DISCOVERY")
                 .unwrap_or(defaults.enable_lan_discovery),
+            enable_nostr_discovery: bool_env("IRIS_DRIVE_FIPS_ENABLE_NOSTR_DISCOVERY")
+                .unwrap_or(defaults.enable_nostr_discovery),
             enable_mesh_pubsub: bool_env("IRIS_DRIVE_FIPS_ENABLE_MESH_PUBSUB")
                 .unwrap_or(defaults.enable_mesh_pubsub),
             enable_local_rendezvous: bool_env("IRIS_DRIVE_FIPS_ENABLE_LOCAL_RENDEZVOUS")
@@ -125,7 +129,11 @@ pub(super) fn fips_endpoint_options(
     FipsEndpointOptions {
         identity_nsec,
         discovery_scope,
-        relays,
+        relays: if settings.enable_nostr_discovery {
+            relays
+        } else {
+            Vec::new()
+        },
         enable_udp: settings.enable_udp,
         enable_webrtc: settings.enable_webrtc,
         websocket: (settings.websocket_bind_addr.is_some()

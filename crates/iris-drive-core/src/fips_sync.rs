@@ -394,6 +394,14 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     }
 
     #[must_use]
+    pub fn subscribe_presence_changes(&self) -> tokio::sync::watch::Receiver<Vec<String>> {
+        self.control_runtime
+            .as_ref()
+            .expect("Drive control runtime is stopped")
+            .subscribe_presence_changes()
+    }
+
+    #[must_use]
     pub fn mesh_pubsub_enabled(&self) -> bool {
         self.nostr_runtime.is_some()
     }
