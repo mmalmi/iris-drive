@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.1.32 - 2026-07-27
+
+### Fixed
+
+- Preserve the signed, notarized macOS app bundle during self-update so its
+  FileProvider entitlement remains valid and Iris Drive stays visible in
+  Finder.
+- Keep ad-hoc macOS development installs under `macos/.build` by default
+  instead of overwriting a signed release in `/Applications`.
+- Stop playing the system failure sound when FileProvider is unavailable.
+- Let the mobile browser page remain visible behind its compact controls
+  instead of painting an unnecessary dark footer or safe-area strip.
+
 ## 0.1.31 - 2026-07-27
 
 ### Fixed

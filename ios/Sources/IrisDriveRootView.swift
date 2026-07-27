@@ -1684,9 +1684,6 @@ private struct IrisWebBrowserView: View {
                 .background(.background)
             }
         }
-        .overlay {
-            IrisWebBrowserSafeAreaChrome()
-        }
         .overlay(alignment: .bottom) {
             IrisWebBrowserBar(
                 browser: browser,
@@ -1738,30 +1735,6 @@ private struct IrisWebBrowserView: View {
         guard let url = URL(string: candidate) else { return }
         browser.load(url)
         addressFocused = false
-    }
-}
-
-private struct IrisWebBrowserSafeAreaChrome: View {
-    var body: some View {
-        GeometryReader { proxy in
-            VStack(spacing: 0) {
-                IrisWebBrowserSafeAreaStrip()
-                    .frame(height: proxy.safeAreaInsets.top)
-                    .ignoresSafeArea(.container, edges: .top)
-                Spacer(minLength: 0)
-                IrisWebBrowserSafeAreaStrip()
-                    .frame(height: proxy.safeAreaInsets.bottom)
-                    .ignoresSafeArea(.container, edges: .bottom)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .accessibilityHidden(true)
-    }
-}
-
-private struct IrisWebBrowserSafeAreaStrip: View {
-    var body: some View {
-        Color(uiColor: .systemBackground)
     }
 }
 

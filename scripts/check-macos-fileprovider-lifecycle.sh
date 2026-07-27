@@ -131,8 +131,10 @@ require_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'remove_daemon_service "$
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "ad-hoc app manages daemon"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "macos_process_command_matches"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "default_install_app_path"
-require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "/Applications/Iris Drive.app"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "macos/.build/Applications/Iris Drive.app"
+require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "development signing never"
+require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'local stable_app="/Applications/Iris Drive.app"'
+require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" '-w "/Applications"'
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "IRIS_DRIVE_DISABLE_LOGIN_AGENT_SYNC=true"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "IRIS_DRIVE_FILEPROVIDER_RESET_ON_START=true"
 require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'pkill -TERM -x "$APP_PROCESS_NAME"'

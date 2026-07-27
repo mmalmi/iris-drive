@@ -47,16 +47,6 @@ BUILD_DIR="${IRIS_DRIVE_MACOS_BUILD_DIR:-$ROOT/macos/.build}"
 DERIVED_DATA="$BUILD_DIR/DerivedData"
 BUILD_LOG="${IRIS_DRIVE_MACOS_BUILD_LOG:-/tmp/iris-drive-macos-build.log}"
 default_install_app_path() {
-  local stable_app="/Applications/Iris Drive.app"
-
-  if [[ -d "$stable_app" && -w "$stable_app" ]]; then
-    printf '%s\n' "$stable_app"
-    return 0
-  fi
-  if [[ ! -e "$stable_app" && -w "/Applications" ]]; then
-    printf '%s\n' "$stable_app"
-    return 0
-  fi
   printf '%s\n' "$BUILD_DIR/Applications/Iris Drive.app"
 }
 
@@ -92,8 +82,9 @@ Environment:
       Optional App Store Connect API key for provisioning updates when Xcode
       has no signed-in account.
 	  IRIS_DRIVE_MACOS_INSTALL_APP
-	      Stable app bundle to install and launch. Defaults to /Applications/Iris Drive.app
-	      when writable, otherwise macos/.build/Applications/Iris Drive.app.
+	      App bundle to install and launch. Defaults to
+	      macos/.build/Applications/Iris Drive.app so development signing never
+	      overwrites a release installed in /Applications.
 EOF
 }
 

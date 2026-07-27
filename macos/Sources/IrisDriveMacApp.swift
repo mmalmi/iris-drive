@@ -1658,7 +1658,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func handleFileProviderOpenFailure(_ reason: String) {
         updateStatus("FileProvider unavailable")
         irisDriveDebugLog("Iris Drive FileProvider open failed: \(reason)")
-        NSSound.beep()
     }
 
     private func resetDisabledFileProviderDomainForOpen(
