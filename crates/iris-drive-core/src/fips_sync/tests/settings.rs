@@ -393,7 +393,7 @@ fn fips_peer_config_snapshot_matches_endpoint_peer_sanitizing() {
 }
 
 #[test]
-fn authorized_drive_pair_elects_exactly_one_auto_connector() {
+fn authorized_drive_pair_elects_one_bounded_auto_connector() {
     let lower = "npub1aaa";
     let higher = "npub1zzz";
     let lower_peer = FipsPeerConfig {
@@ -406,13 +406,18 @@ fn authorized_drive_pair_elects_exactly_one_auto_connector() {
     };
     let application_peer_ids = BTreeSet::from([lower.to_string(), higher.to_string()]);
 
-    let lower_policy =
-        drive_core_peer_configs(lower, &application_peer_ids, vec![lower_peer])[0].connect_policy;
-    let higher_policy =
-        drive_core_peer_configs(higher, &application_peer_ids, vec![higher_peer])[0].connect_policy;
+    let lower_config =
+        drive_core_peer_configs(lower, &application_peer_ids, vec![lower_peer]).remove(0);
+    let higher_config =
+        drive_core_peer_configs(higher, &application_peer_ids, vec![higher_peer]).remove(0);
 
-    assert_eq!(lower_policy, ConnectPolicy::AutoConnect);
-    assert_eq!(higher_policy, ConnectPolicy::Manual);
+    assert_eq!(lower_config.connect_policy, ConnectPolicy::AutoConnect);
+    assert_eq!(higher_config.connect_policy, ConnectPolicy::Manual);
+    assert!(
+        !lower_config.auto_reconnect,
+        "the authenticated control runtime owns application-peer reconnects"
+    );
+    assert!(!higher_config.auto_reconnect);
 }
 
 #[test]
@@ -428,6 +433,7 @@ fn routing_peer_remains_auto_connect_and_address_schemes_are_preserved() {
     let peers = drive_core_peer_configs("npub1local", &BTreeSet::new(), vec![config]);
 
     assert_eq!(peers[0].connect_policy, ConnectPolicy::AutoConnect);
+    assert!(peers[0].auto_reconnect);
     assert_eq!(peers[0].addresses.len(), 2);
     assert_eq!(peers[0].addresses[0].transport, "udp");
     assert_eq!(peers[0].addresses[0].addr, "127.0.0.1:2121");

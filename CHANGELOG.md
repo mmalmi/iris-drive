@@ -15,8 +15,12 @@
   and report established routed channels as mesh connectivity, so devices
   reachable through FIPS transit no longer appear offline merely because they
   are not direct physical neighbors.
+- Let that authenticated control channel own application-peer reconnects so a
+  healthy routed session does not continuously retry a redundant direct path.
 - Canonicalize simultaneous same-path edits from stable AppKey provenance so
   every device exposes the same original and conflict-copy filenames.
+- Order concurrent roots from their signed embedded causal metadata rather
+  than relay or direct-message republish time, which can differ by receiver.
 
 ## 0.1.29 - 2026-07-21
 

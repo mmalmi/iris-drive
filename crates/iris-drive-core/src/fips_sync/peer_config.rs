@@ -33,12 +33,12 @@ pub(super) fn drive_core_peer_configs(
     peer_configs
         .into_iter()
         .map(|peer| {
-            let connect_policy =
-                if application_peer_ids.contains(&peer.npub) && local_npub > peer.npub.as_str() {
-                    ConnectPolicy::Manual
-                } else {
-                    ConnectPolicy::AutoConnect
-                };
+            let application_peer = application_peer_ids.contains(&peer.npub);
+            let connect_policy = if application_peer && local_npub > peer.npub.as_str() {
+                ConnectPolicy::Manual
+            } else {
+                ConnectPolicy::AutoConnect
+            };
             CoreFipsPeerConfig {
                 npub: peer.npub,
                 addresses: peer
@@ -47,6 +47,12 @@ pub(super) fn drive_core_peer_configs(
                     .filter_map(|address| drive_peer_address(address))
                     .collect(),
                 connect_policy,
+                // Iris Drive's authenticated TCP control runtime owns
+                // application-peer liveness and reconnects. Leaving the
+                // endpoint's independent reconnect loop enabled makes a
+                // healthy routed control session repeatedly hunt for a
+                // redundant direct path.
+                auto_reconnect: !application_peer,
                 ..CoreFipsPeerConfig::default()
             }
         })

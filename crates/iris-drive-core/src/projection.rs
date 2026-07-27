@@ -736,10 +736,14 @@ async fn merge_root_for_device<S: Store>(
     let mut current = root.clone();
     for _ in 0..LOCAL_ONLY_PARENT_WALK_LIMIT {
         if !current.local_only {
-            return Ok(Some(current));
+            return canonical_merge_root_ref(tree, app_key_pubkey, current)
+                .await
+                .map(Some);
         }
         if should_use_local_only_root(app_key_pubkey, &current, active_app_keys) {
-            return Ok(Some(current));
+            return canonical_merge_root_ref(tree, app_key_pubkey, current)
+                .await
+                .map(Some);
         }
         let Some(parent) = current
             .parents
@@ -767,6 +771,29 @@ async fn merge_root_for_device<S: Store>(
         current = AppKeyRootRef::from_meta(parent.root_cid.clone(), meta.created_at, &meta);
     }
     Ok(None)
+}
+
+async fn canonical_merge_root_ref<S: Store>(
+    tree: &HashTree<S>,
+    app_key_pubkey: &str,
+    root: AppKeyRootRef,
+) -> Result<AppKeyRootRef, ProjectionError> {
+    let cid = Cid::parse(&root.root_cid).map_err(|source| ProjectionError::RootCid {
+        app_key_pubkey: app_key_pubkey.to_string(),
+        root_cid: root.root_cid.clone(),
+        source,
+    })?;
+    let Some(meta) = read_root_meta(tree, &cid).await? else {
+        return Ok(root);
+    };
+    if meta.app_key_pubkey != app_key_pubkey || meta.drive_id != PRIMARY_DRIVE_ID {
+        return Ok(root);
+    }
+    Ok(AppKeyRootRef::from_meta(
+        root.root_cid,
+        meta.created_at,
+        &meta,
+    ))
 }
 
 fn should_use_local_only_root(
