@@ -637,6 +637,12 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
   if (!dryRun && (process.platform !== 'darwin' || process.arch !== 'arm64')) {
     throw new SkipStepError('macOS release artifacts must be built on Apple Silicon macOS.')
   }
+  const deploymentTarget = String(env.MACOSX_DEPLOYMENT_TARGET ?? '14.0').trim()
+  if (!/^\d+(?:\.\d+){1,2}$/.test(deploymentTarget)) {
+    throw new Error(`Invalid MACOSX_DEPLOYMENT_TARGET: ${deploymentTarget}`)
+  }
+  env = { ...env, MACOSX_DEPLOYMENT_TARGET: deploymentTarget }
+  console.log(`macOS deployment target: ${deploymentTarget}`)
   run('cargo', ['build', '--release', '-p', 'idrive', '--target', 'aarch64-apple-darwin'], {
     env,
     dryRun,

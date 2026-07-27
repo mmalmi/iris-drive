@@ -660,6 +660,32 @@ test('local-release dry-run notarizes macOS artifacts and adds Applications shor
   assert.match(result.stdout, /xcrun stapler staple .*iris-drive-v9\.9\.9-macos-arm64\.dmg/)
 })
 
+test('local-release pins Rust macOS objects to the supported deployment target', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--dry-run',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'macos',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        MACOSX_DEPLOYMENT_TARGET: '14.0',
+        IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: 'iris-drive-notary',
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /macOS deployment target: 14\.0/)
+})
+
 test('local-release dry-run wires restricted entitlement scrubbing and macOS release launch smoke', () => {
   const result = spawnSync(
     process.execPath,
