@@ -180,21 +180,44 @@ extension AppDelegate {
                     userInfo: [NSLocalizedDescriptionKey: "Downloaded update did not contain Iris Drive.app"]
                 )
             }
-            let script = try updateInstallScript()
+            let currentApp = Bundle.main.bundleURL
+            let installScript = try updateInstallScript()
+            let relaunchScript = try updateRelaunchScript()
             let paths = runtimePathsForMenu ?? runtimePaths()
             let logURL = FileManager.default.temporaryDirectory
                 .appendingPathComponent("iris-drive-install-update.log")
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: "/bin/sh")
-            process.arguments = [
-                script.path,
-                Bundle.main.bundleURL.path,
-                newApp.path,
+
+            do {
+                try runUpdateProcess(
+                    "/bin/sh",
+                    arguments: [installScript.path, currentApp.path, newApp.path, logURL.path]
+                )
+            } catch {
+                try runPrivilegedUpdateInstall(
+                    script: installScript,
+                    currentApp: currentApp,
+                    newApp: newApp,
+                    logURL: logURL
+                )
+            }
+            guard FileManager.default.isExecutableFile(
+                atPath: currentApp
+                    .appendingPathComponent("Contents/MacOS/Iris Drive", isDirectory: false)
+                    .path
+            ) else {
+                throw updateError("Installed update is missing the Iris Drive executable")
+            }
+
+            let relaunch = Process()
+            relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
+            relaunch.arguments = [
+                relaunchScript.path,
+                currentApp.path,
                 "\(ProcessInfo.processInfo.processIdentifier)",
                 paths.configDirectory.path,
                 logURL.path,
             ]
-            try process.run()
+            try relaunch.run()
             installingAppUpdate = true
             NSApp.terminate(nil)
         } else {
@@ -222,19 +245,32 @@ extension AppDelegate {
     }
 
     private func updateInstallScript() throws -> URL {
+        guard let bundled = Bundle.main.url(
+            forResource: "iris-drive-install-update",
+            withExtension: "sh"
+        ) else {
+            throw updateError("Iris Drive update installer is missing")
+        }
         let script = FileManager.default.temporaryDirectory
             .appendingPathComponent("iris-drive-install-update-\(UUID().uuidString).sh")
+        try FileManager.default.copyItem(at: bundled, to: script)
+        try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: script.path)
+        return script
+    }
+
+    private func updateRelaunchScript() throws -> URL {
+        let script = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iris-drive-relaunch-update-\(UUID().uuidString).sh")
         let contents = """
         #!/bin/sh
         set -eu
         current_app="$1"
-        new_app="$2"
-        old_pid="$3"
-        config_dir="${4:-}"
-        log_path="${5:-${TMPDIR:-/tmp}/iris-drive-install-update.log}"
+        old_pid="$2"
+        config_dir="${3:-}"
+        log_path="${4:-${TMPDIR:-/tmp}/iris-drive-install-update.log}"
 
         exec >>"$log_path" 2>&1
-        echo "iris-drive updater: waiting for pid $old_pid"
+        echo "iris-drive updater: waiting to relaunch after pid $old_pid"
         count=0
         while kill -0 "$old_pid" 2>/dev/null && [ "$count" -lt 240 ]; do
             sleep 0.25
@@ -244,50 +280,6 @@ extension AppDelegate {
             echo "iris-drive updater: old app pid $old_pid did not exit"
             exit 1
         fi
-
-        install_direct() {
-            parent_dir="$(dirname "$current_app")"
-            temp_app="$parent_dir/.iris-drive-update-$$.app"
-            rm -rf "$temp_app"
-            /usr/bin/ditto "$new_app" "$temp_app"
-            rm -rf "$current_app"
-            mv "$temp_app" "$current_app"
-        }
-
-        install_admin() {
-            helper="${TMPDIR:-/tmp}/iris-drive-admin-install-$$.sh"
-            apple="${TMPDIR:-/tmp}/iris-drive-admin-install-$$.applescript"
-            cat >"$helper" <<'IRIS_DRIVE_ADMIN_INSTALL'
-        #!/bin/sh
-        set -eu
-        current_app="$1"
-        new_app="$2"
-        parent_dir="$(dirname "$current_app")"
-        temp_app="$parent_dir/.iris-drive-update-admin-$$.app"
-        rm -rf "$temp_app"
-        /usr/bin/ditto "$new_app" "$temp_app"
-        rm -rf "$current_app"
-        mv "$temp_app" "$current_app"
-        IRIS_DRIVE_ADMIN_INSTALL
-            chmod 700 "$helper"
-            cat >"$apple" <<'IRIS_DRIVE_ADMIN_APPLESCRIPT'
-        on run argv
-            set helperPath to item 1 of argv
-            set currentApp to item 2 of argv
-            set newApp to item 3 of argv
-            do shell script quoted form of helperPath & " " & quoted form of currentApp & " " & quoted form of newApp with administrator privileges
-        end run
-        IRIS_DRIVE_ADMIN_APPLESCRIPT
-            /usr/bin/osascript "$apple" "$helper" "$current_app" "$new_app"
-            rm -f "$helper" "$apple"
-        }
-
-        echo "iris-drive updater: installing $new_app over $current_app"
-        if ! install_direct; then
-            echo "iris-drive updater: direct install failed, requesting administrator install"
-            install_admin
-        fi
-        /usr/bin/xattr -dr com.apple.quarantine "$current_app" 2>/dev/null || true
 
         if [ -n "$config_dir" ] && [ -x "$current_app/Contents/MacOS/idrive" ]; then
             "$current_app/Contents/MacOS/idrive" --config-dir "$config_dir" service start --json >/dev/null 2>&1 || true
@@ -301,6 +293,51 @@ extension AppDelegate {
         return script
     }
 
+    private func runPrivilegedUpdateInstall(
+        script: URL,
+        currentApp: URL,
+        newApp: URL,
+        logURL: URL
+    ) throws {
+        let appleScript = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iris-drive-authorize-update-\(UUID().uuidString).applescript")
+        let contents = """
+        on run argv
+            set helperPath to item 1 of argv
+            set currentApp to item 2 of argv
+            set newApp to item 3 of argv
+            set logPath to item 4 of argv
+            do shell script quoted form of helperPath & " " & quoted form of currentApp & " " & quoted form of newApp & " " & quoted form of logPath with administrator privileges
+        end run
+        """
+        try contents.write(to: appleScript, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: appleScript) }
+
+        let process = Process()
+        let errorPipe = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = [
+            appleScript.path,
+            script.path,
+            currentApp.path,
+            newApp.path,
+            logURL.path,
+        ]
+        process.standardError = errorPipe
+        try process.run()
+        process.waitUntilExit()
+        guard process.terminationStatus == 0 else {
+            let details = String(
+                data: errorPipe.fileHandleForReading.readDataToEndOfFile(),
+                encoding: .utf8
+            )?.trimmingCharacters(in: .whitespacesAndNewlines)
+            let message = details?.isEmpty == false
+                ? "Administrator install failed: \(details!)"
+                : "Administrator install was cancelled"
+            throw updateError(message)
+        }
+    }
+
     private func runUpdateProcess(_ executable: String, arguments: [String]) throws {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
@@ -308,11 +345,15 @@ extension AppDelegate {
         try process.run()
         process.waitUntilExit()
         if process.terminationStatus != 0 {
-            throw NSError(
-                domain: "IrisDriveUpdate",
-                code: Int(process.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: "\(URL(fileURLWithPath: executable).lastPathComponent) failed"]
-            )
+            throw updateError("\(URL(fileURLWithPath: executable).lastPathComponent) failed")
         }
+    }
+
+    private func updateError(_ message: String) -> NSError {
+        NSError(
+            domain: "IrisDriveUpdate",
+            code: 1,
+            userInfo: [NSLocalizedDescriptionKey: message]
+        )
     }
 }
