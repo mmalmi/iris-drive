@@ -7,7 +7,7 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "0.1.33"
+    MARKETING_VERSION: "0.1.32"
     CURRENT_PROJECT_VERSION: "1033"
     VERSIONING_SYSTEM: apple-generic
     DEVELOPMENT_TEAM: 8G9P8AN75D

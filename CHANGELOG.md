@@ -1,20 +1,11 @@
 # Changelog
 
-## 0.1.33 - 2026-07-28
+## 0.1.32 - 2026-07-27
 
 ### Changed
 
 - Add Apple privacy manifests, in-app Privacy and Support links, and
   deterministic App Store screenshot fixtures for the iOS app and extensions.
-
-### Fixed
-
-- Harden macOS self-update verification and Finder registration so updating a
-  signed release keeps its FileProvider mount available.
-- Build native iOS dependencies for the app's iOS 17 deployment target so
-  release binaries do not accidentally require the current Xcode SDK.
-
-## 0.1.32 - 2026-07-27
 
 ### Fixed
 
@@ -26,6 +17,8 @@
 - Stop playing the system failure sound when FileProvider is unavailable.
 - Let the mobile browser page remain visible behind its compact controls
   instead of painting an unnecessary dark footer or safe-area strip.
+- Build native iOS dependencies for the app's iOS 17 deployment target so
+  release binaries do not accidentally require the current Xcode SDK.
 
 ## 0.1.31 - 2026-07-27
 
