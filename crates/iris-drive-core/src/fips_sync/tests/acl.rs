@@ -5,9 +5,7 @@ use fips_core::PeerIdentity;
 use fips_tcp::{Config as TcpConfig, State};
 use fips_tcp_endpoint::FipsTcpEndpoint;
 use hashtree_core::Store;
-use hashtree_fips_transport::{
-    FipsPeerConfig, TcpBlobTransport, TcpBlobTransportConfig, set_fips_peer_configs,
-};
+use hashtree_fips_transport::{FipsPeerConfig, TcpBlobTransport, TcpBlobTransportConfig};
 
 use crate::DIRECT_ROOT_APP_TOPIC;
 use crate::app_key_link_transport::APP_KEY_LINK_REQUEST_APP_TOPIC;
@@ -195,12 +193,15 @@ async fn pending_link_peer_can_bootstrap_but_cannot_access_drive_roots() {
     .await
     .unwrap();
     let pending_endpoint = pending_bound.native_endpoint.clone();
-    set_fips_peer_configs(
+    let admin_peer = FipsPeerConfig {
+        npub: admin.app_key.pubkey_bech32(),
+        udp_addresses: vec![admin_addr.to_string()],
+    };
+    set_drive_fips_peer_configs(
         pending_endpoint.as_ref(),
-        vec![FipsPeerConfig {
-            npub: admin.app_key.pubkey_bech32(),
-            udp_addresses: vec![admin_addr.to_string()],
-        }],
+        &pending.pubkey_bech32(),
+        std::slice::from_ref(&admin_peer),
+        vec![admin_peer.clone()],
     )
     .await
     .unwrap();
@@ -217,6 +218,7 @@ async fn pending_link_peer_can_bootstrap_but_cannot_access_drive_roots() {
         sync.authorized_peer_ids().is_empty(),
         "a pending device entered the approved Drive roster"
     );
+    wait_for_peer_connection(&pending_bound, &admin.app_key.pubkey_bech32()).await;
 
     let mut deliveries = sync.subscribe_app_messages();
     let mut control = FipsTcpEndpoint::bind(

@@ -369,7 +369,11 @@ impl ControlActor {
             Command::Shutdown { reply } => {
                 let ids = self.connections.keys().copied().collect::<Vec<_>>();
                 for id in ids {
-                    let _ = self.tcp.close(id, now_ms).await;
+                    // A control service shutdown must invalidate the peer's
+                    // stream immediately. A graceful half-close can leave the
+                    // remote side writing into an acknowledged but unobserved
+                    // socket while this actor is already gone.
+                    let _ = self.tcp.abort(id).await;
                 }
                 let _ = self.tcp.poll(now_ms).await;
                 let _ = reply.send(());
@@ -425,9 +429,7 @@ impl ControlActor {
             connection.peer == peer_id
                 && matches!(
                     self.tcp.state(*id),
-                    Some(
-                        State::SynSent | State::SynReceived | State::Established | State::CloseWait
-                    )
+                    Some(State::SynSent | State::SynReceived | State::Established)
                 )
         }) {
             return Ok(());
@@ -600,12 +602,20 @@ impl ControlActor {
     }
 
     async fn read(&mut self, now_ms: u64) -> Result<(), FipsSyncError> {
+        // Binding starts the actor before its owner can obtain a receiver.
+        // Leave bytes in the bounded TCP receive buffers until at least one
+        // subscriber exists so messages arriving during startup/restart are
+        // never acknowledged and then discarded by an empty broadcast.
+        if self.deliveries.receiver_count() == 0 {
+            return Ok(());
+        }
         let streams = self
             .active
             .iter()
             .map(|(peer, id)| (peer.clone(), *id))
             .collect::<Vec<_>>();
         for (peer, id) in streams {
+            let mut drained_closed_stream = false;
             for _ in 0..MAX_RECORDS_PER_TURN {
                 let decoded = match self.decode_next(&peer) {
                     Ok(decoded) => decoded,
@@ -642,6 +652,7 @@ impl ControlActor {
                     .await
                     .map_err(|error| endpoint_error(error.to_string()))?;
                 if bytes.is_empty() {
+                    drained_closed_stream = self.tcp.state(id) == Some(State::CloseWait);
                     break;
                 }
                 let input = self.inputs.entry(peer.clone()).or_default();
@@ -656,6 +667,9 @@ impl ControlActor {
                     break;
                 }
                 input.bytes.extend_from_slice(&bytes);
+            }
+            if drained_closed_stream {
+                self.abort_connection(id, &peer).await?;
             }
         }
         Ok(())

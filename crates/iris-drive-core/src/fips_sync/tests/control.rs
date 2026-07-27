@@ -94,26 +94,9 @@ async fn reliable_control_enforces_topic_acl_and_survives_service_restart() {
     let bob_bound = bind_test_endpoint(&bob, "drive-control-test", rendezvous, bob_addr, false)
         .await
         .unwrap();
+    connect_endpoint_pair(&alice_bound, &alice, alice_addr, &bob_bound, &bob, bob_addr).await;
     let alice_endpoint = alice_bound.native_endpoint;
     let bob_endpoint = bob_bound.native_endpoint;
-    set_fips_peer_configs(
-        alice_endpoint.as_ref(),
-        vec![FipsPeerConfig {
-            npub: bob.pubkey_bech32(),
-            udp_addresses: vec![bob_addr.to_string()],
-        }],
-    )
-    .await
-    .unwrap();
-    set_fips_peer_configs(
-        bob_endpoint.as_ref(),
-        vec![FipsPeerConfig {
-            npub: alice.pubkey_bech32(),
-            udp_addresses: vec![alice_addr.to_string()],
-        }],
-    )
-    .await
-    .unwrap();
 
     let mut alice_runtime = DriveControlRuntime::bind(
         alice_endpoint.clone(),
@@ -206,10 +189,34 @@ async fn reliable_control_enforces_topic_acl_and_survives_service_restart() {
         b"queued first during restart".as_slice(),
         b"queued second during restart".as_slice(),
     ] {
-        let restarted = tokio::time::timeout(Duration::from_secs(8), replacement_received.recv())
-            .await
-            .expect("queued Drive control record was not replayed after service restart")
-            .unwrap();
+        let next_queued_record = async {
+            loop {
+                let message = replacement_received.recv().await.unwrap();
+                if matches!(
+                    message.data.as_slice(),
+                    b"link request" | b"authorized root"
+                ) {
+                    // Reliable control is intentionally at-least-once across
+                    // a service restart. A record delivered just before the
+                    // old runtime stopped may be replayed until its transport
+                    // marker reaches the sender.
+                    continue;
+                }
+                break message;
+            }
+        };
+        let restarted = match tokio::time::timeout(Duration::from_secs(8), next_queued_record).await
+        {
+            Ok(result) => result,
+            Err(_) => {
+                let alice_connected = alice_runtime.connected_peer_ids().await.unwrap();
+                let replacement_connected = replacement.connected_peer_ids().await.unwrap();
+                panic!(
+                    "queued Drive control record was not replayed after service restart; \
+                         alice connected={alice_connected:?}, replacement connected={replacement_connected:?}"
+                );
+            }
+        };
         assert_eq!(restarted.data, expected);
     }
 
