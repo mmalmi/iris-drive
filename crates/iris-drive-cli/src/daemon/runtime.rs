@@ -301,11 +301,7 @@ pub(crate) fn cmd_daemon(
             startup_state,
         ));
         if let Err(error) = direct_roots
-            .request_current_state_from_peers(
-                config_dir,
-                fips_blocks.as_deref(),
-                "startup",
-            )
+            .request_current_state_from_peers(config_dir, fips_blocks.as_deref(), "startup")
             .await
         {
             println!(
