@@ -35,6 +35,8 @@ require_file_contains scripts/desktop-gui-smoke.sh "requires an unlocked interac
 require_file_contains scripts/desktop-gui-smoke.sh "Test-VisibleWindowLaunch"
 require_file_contains scripts/desktop-gui-smoke.sh "IrisDriveGuiSmokeInteractive"
 require_file_contains scripts/desktop-gui-smoke.sh "Wait-ShellReady"
+require_file_contains scripts/desktop-gui-smoke.sh "IRIS_DRIVE_WINDOWS_GUI_READY_TIMEOUT_SECS"
+require_file_contains scripts/desktop-gui-smoke.sh 'AddSeconds($ShellReadyTimeoutSeconds)'
 require_file_contains scripts/desktop-gui-smoke.sh "Windows GUI smoke requires a desktop session that exposes visible windows"
 require_file_contains scripts/dev-vm-update-run.sh "building Linux GTK app"
 require_file_contains scripts/dev-vm-update-run.sh "skipping Windows app GUI launch"

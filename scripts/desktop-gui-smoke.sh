@@ -15,6 +15,8 @@ against the real IrisDrive.exe window.
 
 When the Windows VM is reachable only from a Linux jump host, set
 IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST to the Windows SSH alias.
+IRIS_DRIVE_WINDOWS_GUI_READY_TIMEOUT_SECS controls the Windows cold-start
+native refresh deadline and defaults to 60 seconds.
 USAGE
 }
 
@@ -253,13 +255,19 @@ REMOTE_SH
 
 run_windows_remote() {
   local remote="$1"
+  local shell_ready_timeout_secs="${IRIS_DRIVE_WINDOWS_GUI_READY_TIMEOUT_SECS:-60}"
   [[ "$remote" != "local" ]] || {
     echo "windows GUI smoke requires a Windows SSH host" >&2
+    exit 2
+  }
+  [[ "$shell_ready_timeout_secs" =~ ^[1-9][0-9]*$ ]] || {
+    echo "IRIS_DRIVE_WINDOWS_GUI_READY_TIMEOUT_SECS must be a positive integer" >&2
     exit 2
   }
 
   {
     printf '$ConfigDirOverride = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_WINDOWS_CONFIG_DIR:-}")"
+    printf '$ShellReadyTimeoutSeconds = %s\n' "$shell_ready_timeout_secs"
     cat <<'REMOTE_PS'
 $ErrorActionPreference = "Stop"
 
@@ -485,7 +493,8 @@ param(
   [string]$ResultFile,
   [string]$ErrorFile,
   [string]$WorkerLog,
-  [string]$Screenshot
+  [string]$Screenshot,
+  [int]$ShellReadyTimeoutSeconds
 )
 
 $ErrorActionPreference = "Stop"
@@ -588,7 +597,8 @@ function Invoke-Button([System.Windows.Automation.AutomationElement]$Window, [st
 }
 
 function Wait-ShellReady {
-  for ($i = 0; $i -lt 40; $i++) {
+  $Deadline = (Get-Date).AddSeconds($ShellReadyTimeoutSeconds)
+  while ((Get-Date) -lt $Deadline) {
     if ((Test-Path $ShellTrace) -and
         (Select-String -Path $ShellTrace -Pattern "initial RefreshAsync completed" -Quiet)) {
       Log "shell initial refresh completed"
@@ -596,7 +606,7 @@ function Wait-ShellReady {
     }
     Start-Sleep -Milliseconds 250
   }
-  Fail "Windows shell did not finish initial refresh before UI assertions"
+  Fail "Windows shell did not finish initial refresh within $ShellReadyTimeoutSeconds seconds"
 }
 
 try {
@@ -680,7 +690,7 @@ try {
 '@ | Set-Content -Encoding ASCII $WorkerScript
 
   try {
-    $ActionArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$WorkerScript`" -PublishDir `"$PublishDir`" -Exe `"$Exe`" -Idrive `"$Idrive`" -ConfigDir `"$ConfigDir`" -ShellTrace `"$ShellTrace`" -ResultFile `"$ResultFile`" -ErrorFile `"$ErrorFile`" -WorkerLog `"$WorkerLog`" -Screenshot `"$InteractiveScreenshot`""
+    $ActionArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$WorkerScript`" -PublishDir `"$PublishDir`" -Exe `"$Exe`" -Idrive `"$Idrive`" -ConfigDir `"$ConfigDir`" -ShellTrace `"$ShellTrace`" -ResultFile `"$ResultFile`" -ErrorFile `"$ErrorFile`" -WorkerLog `"$WorkerLog`" -Screenshot `"$InteractiveScreenshot`" -ShellReadyTimeoutSeconds $ShellReadyTimeoutSeconds"
     Write-SmokeLog "launching Windows WPF shell in interactive task"
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
     $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $ActionArgs -WorkingDirectory $PublishDir
@@ -689,7 +699,8 @@ try {
     Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Force | Out-Null
     Start-ScheduledTask -TaskName $TaskName
 
-    for ($i = 0; $i -lt 90; $i++) {
+    $TaskDeadline = (Get-Date).AddSeconds($ShellReadyTimeoutSeconds + 45)
+    while ((Get-Date) -lt $TaskDeadline) {
       if ((Test-Path $ResultFile) -or (Test-Path $ErrorFile)) {
         break
       }
