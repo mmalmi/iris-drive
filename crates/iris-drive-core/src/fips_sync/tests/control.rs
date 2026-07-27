@@ -6,7 +6,7 @@ use crate::DIRECT_ROOT_APP_TOPIC;
 use fips_core::PeerIdentity;
 use fips_tcp::{Config as TcpConfig, ConnectionId, State};
 use fips_tcp_endpoint::FipsTcpEndpoint;
-use hashtree_fips_transport::{BoundFipsEndpoint, FipsPeerConfig, set_fips_peer_configs};
+use hashtree_fips_transport::{BoundFipsEndpoint, FipsPeerConfig};
 use nostr_sdk::{Alphabet, SingleLetterTag, Tag, TagKind};
 
 use super::super::control_runtime::{
@@ -233,36 +233,16 @@ async fn shared_pubsub_carries_only_verified_nostr_events() {
     let rendezvous = reserve_udp_address();
     let alice_addr = reserve_udp_address();
     let bob_addr = reserve_udp_address();
-    let alice_endpoint =
+    let alice_bound =
         bind_test_endpoint(&alice, "drive-pubsub-test", rendezvous, alice_addr, false)
             .await
-            .unwrap()
-            .native_endpoint;
-    let bob_endpoint = bind_test_endpoint(&bob, "drive-pubsub-test", rendezvous, bob_addr, false)
+            .unwrap();
+    let bob_bound = bind_test_endpoint(&bob, "drive-pubsub-test", rendezvous, bob_addr, false)
         .await
-        .unwrap()
-        .native_endpoint;
-    set_fips_peer_configs(
-        alice_endpoint.as_ref(),
-        vec![FipsPeerConfig {
-            npub: bob.pubkey_bech32(),
-            udp_addresses: vec![bob_addr.to_string()],
-        }],
-    )
-    .await
-    .unwrap();
-
-    set_fips_peer_configs(
-        bob_endpoint.as_ref(),
-        vec![FipsPeerConfig {
-            npub: alice.pubkey_bech32(),
-            udp_addresses: vec![alice_addr.to_string()],
-        }],
-    )
-    .await
-    .unwrap();
-    wait_for_connected_endpoint(&alice_endpoint, &bob.pubkey_bech32()).await;
-    wait_for_connected_endpoint(&bob_endpoint, &alice.pubkey_bech32()).await;
+        .unwrap();
+    connect_endpoint_pair(&alice_bound, &alice, alice_addr, &bob_bound, &bob, bob_addr).await;
+    let alice_endpoint = alice_bound.native_endpoint;
+    let bob_endpoint = bob_bound.native_endpoint;
 
     let mut alice_runtime = DriveNostrPubsubRuntime::bind(alice_endpoint.clone())
         .await
@@ -502,25 +482,6 @@ async fn configure_application_peer(
     )
     .await
     .unwrap();
-}
-
-async fn wait_for_connected_endpoint(endpoint: &FipsEndpoint, peer: &str) {
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            if endpoint
-                .peers()
-                .await
-                .unwrap()
-                .iter()
-                .any(|candidate| candidate.npub == peer && candidate.connected)
-            {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
-    .await
-    .expect("FIPS endpoint peer did not connect");
 }
 
 pub(super) async fn wait_for_tcp_state(

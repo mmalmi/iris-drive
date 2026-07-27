@@ -135,6 +135,8 @@ pub struct MergedConflictFile {
     pub app_key_pubkey: String,
     pub app_key_seq: u64,
     pub root_cid: String,
+    #[serde(default)]
+    pub published_at: i64,
     pub content_hash: String,
     pub content_cid_hash: String,
     pub size: u64,
@@ -421,6 +423,7 @@ fn conflict_file_side(write: &WriteCandidate) -> MergedConflictFile {
         app_key_pubkey: write.app_key_pubkey.clone(),
         app_key_seq: write.root.app_key_seq,
         root_cid: write.root.root_cid.clone(),
+        published_at: write.root.published_at,
         content_hash: to_hex(&identity_hash(&write.entry)),
         content_cid_hash: to_hex(&write.entry.hash),
         size: write.entry.size,

@@ -128,43 +128,49 @@ pub async fn primary_merged_view<S: Store>(
 }
 
 fn add_visible_conflict_entries(view: &mut MergedView) -> Result<(), ProjectionError> {
-    let winners_by_path = view
+    let mut occupied_paths = view
         .files
         .iter()
-        .map(|entry| (entry.path.clone(), entry.clone()))
-        .collect::<BTreeMap<_, _>>();
-    let mut occupied_paths = winners_by_path.keys().cloned().collect::<BTreeSet<_>>();
+        .map(|entry| entry.path.clone())
+        .collect::<BTreeSet<_>>();
     let mut conflict_entries = Vec::new();
 
     for conflict in &view.conflict_details {
         match conflict.kind {
             MergedConflictKind::WriteWrite => {
-                let Some(winner) = winners_by_path.get(&conflict.path) else {
+                let Some(winner_index) = view
+                    .files
+                    .iter()
+                    .position(|entry| entry.path == conflict.path)
+                else {
                     continue;
                 };
+                let Some(winner) = conflict.files.iter().max_by(|left, right| {
+                    canonical_conflict_file_key(left).cmp(&canonical_conflict_file_key(right))
+                }) else {
+                    continue;
+                };
+                view.files[winner_index] = conflict_file_entry(&conflict.path, None, winner)?;
 
                 for file in &conflict.files {
-                    if conflict_file_matches_entry(file, winner) {
+                    if conflict_file_matches_entry(file, &view.files[winner_index]) {
                         continue;
                     }
                     conflict_entries.push(visible_conflict_entry(
                         &conflict.path,
                         file,
-                        winner.published_at,
                         &mut occupied_paths,
                     )?);
                 }
             }
             MergedConflictKind::WriteDelete => {
-                if winners_by_path.contains_key(&conflict.path) {
+                if view.files.iter().any(|entry| entry.path == conflict.path) {
                     continue;
                 }
-                let published_at = conflict.tombstone.as_ref().map_or(0, |t| t.tombstoned_at);
                 for file in &conflict.files {
                     conflict_entries.push(visible_conflict_entry(
                         &conflict.path,
                         file,
-                        published_at,
                         &mut occupied_paths,
                     )?);
                 }
@@ -178,6 +184,17 @@ fn add_visible_conflict_entries(view: &mut MergedView) -> Result<(), ProjectionE
     }
 
     Ok(())
+}
+
+fn canonical_conflict_file_key(file: &MergedConflictFile) -> (i64, &str, u64, &str, &str, &str) {
+    (
+        file.published_at,
+        &file.app_key_pubkey,
+        file.app_key_seq,
+        &file.root_cid,
+        &file.content_hash,
+        &file.content_cid_hash,
+    )
 }
 
 fn suppress_probable_os_placeholder_entries(view: &mut MergedView) {
@@ -206,19 +223,26 @@ fn suppress_probable_os_placeholder_entries(view: &mut MergedView) {
 fn visible_conflict_entry(
     original_path: &str,
     file: &MergedConflictFile,
-    published_at: i64,
     occupied_paths: &mut BTreeSet<String>,
 ) -> Result<MergedEntry, ProjectionError> {
     let path = next_visible_conflict_path(original_path, &file.app_key_pubkey, occupied_paths);
+    conflict_file_entry(&path, Some(original_path), file)
+}
+
+fn conflict_file_entry(
+    path: &str,
+    source_path: Option<&str>,
+    file: &MergedConflictFile,
+) -> Result<MergedEntry, ProjectionError> {
     Ok(MergedEntry {
-        path,
-        source_path: Some(original_path.to_string()),
-        hash: parse_conflict_hash(&file.content_cid_hash, original_path)?,
+        path: path.to_string(),
+        source_path: source_path.map(str::to_string),
+        hash: parse_conflict_hash(&file.content_cid_hash, path)?,
         size: file.size,
-        whole_file_hash: parse_conflict_whole_file_hash(file, original_path)?,
+        whole_file_hash: parse_conflict_whole_file_hash(file, path)?,
         modified_at: file.modified_at,
         source_app_key_pubkey: file.app_key_pubkey.clone(),
-        published_at,
+        published_at: file.published_at,
     })
 }
 
@@ -869,6 +893,8 @@ fn may_replace_destination(
     destination_was_imported || local_entry.is_none()
 }
 
+#[cfg(test)]
+mod conflict_tests;
 #[cfg(test)]
 mod provider_perf_tests;
 #[cfg(test)]

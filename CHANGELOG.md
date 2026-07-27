@@ -15,6 +15,8 @@
   and report established routed channels as mesh connectivity, so devices
   reachable through FIPS transit no longer appear offline merely because they
   are not direct physical neighbors.
+- Canonicalize simultaneous same-path edits from stable AppKey provenance so
+  every device exposes the same original and conflict-copy filenames.
 
 ## 0.1.29 - 2026-07-21
 
