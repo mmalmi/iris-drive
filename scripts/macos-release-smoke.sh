@@ -13,6 +13,7 @@ RESULT_PATH="$ARTIFACT_ROOT/macos-release-smoke.json"
 WORK_DIR=""
 DMG_MOUNT=""
 LAUNCHED_PIDS=()
+RELAUNCH_APP_PATHS=()
 
 usage() {
   cat <<'USAGE'
@@ -65,15 +66,19 @@ fail() {
 }
 
 cleanup() {
-  for pid in "${LAUNCHED_PIDS[@]:-}"; do
-    kill "$pid" >/dev/null 2>&1 || true
-  done
+  stop_launched_apps
   if [[ -n "$DMG_MOUNT" ]]; then
     hdiutil detach "$DMG_MOUNT" -quiet >/dev/null 2>&1 || true
   fi
   if [[ -n "$WORK_DIR" ]]; then
     rm -rf "$WORK_DIR" >/dev/null 2>&1 || true
   fi
+  for app in "${RELAUNCH_APP_PATHS[@]:-}"; do
+    if [[ -d "$app" ]]; then
+      log "restoring app that was running before release smoke: $app"
+      open "$app" >/dev/null 2>&1 || true
+    fi
+  done
 }
 trap cleanup EXIT
 
@@ -90,6 +95,12 @@ stop_launched_apps() {
     done
     [[ "$any_alive" -eq 0 ]] && break
     sleep 0.1
+  done
+  for pid in "${LAUNCHED_PIDS[@]:-}"; do
+    if kill -0 "$pid" >/dev/null 2>&1; then
+      log "force-stopping isolated release-smoke pid $pid"
+      kill -KILL "$pid" >/dev/null 2>&1 || true
+    fi
   done
   LAUNCHED_PIDS=()
 }
@@ -139,6 +150,52 @@ app_pids_for_path() {
   local app="$1"
   local executable="$2"
   pgrep -f "$app/Contents/MacOS/$executable" 2>/dev/null || true
+}
+
+stop_conflicting_apps() {
+  local bundle_identifier executable_path app candidate_identifier
+  bundle_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+    "$APP_PATH/Contents/Info.plist")"
+
+  while IFS= read -r pid; do
+    [[ -n "$pid" ]] || continue
+    executable_path="$(lsof -a -p "$pid" -d txt -Fn 2>/dev/null \
+      | sed -n 's/^n//p' \
+      | grep '/Contents/MacOS/' \
+      | head -n 1 \
+      || true)"
+    [[ "$executable_path" == */Contents/MacOS/* ]] || continue
+    app="${executable_path%%/Contents/MacOS/*}"
+    [[ -f "$app/Contents/Info.plist" ]] || continue
+    candidate_identifier="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' \
+      "$app/Contents/Info.plist" 2>/dev/null || true)"
+    [[ "$candidate_identifier" == "$bundle_identifier" ]] || continue
+
+    log "stopping same-bundle app before isolated release smoke: $app (pid $pid)"
+    RELAUNCH_APP_PATHS+=("$app")
+    kill "$pid" >/dev/null 2>&1 || true
+  done < <(pgrep -f '/Contents/MacOS/Iris Drive($| )' 2>/dev/null || true)
+
+  for _ in {1..50}; do
+    local any_alive=0
+    for app in "${RELAUNCH_APP_PATHS[@]:-}"; do
+      executable_path="$(bundle_executable "$app")"
+      if [[ -n "$(app_pids_for_path "$app" "$executable_path")" ]]; then
+        any_alive=1
+      fi
+    done
+    [[ "$any_alive" -eq 0 ]] && return
+    sleep 0.1
+  done
+
+  for app in "${RELAUNCH_APP_PATHS[@]:-}"; do
+    executable_path="$(bundle_executable "$app")"
+    while IFS= read -r pid; do
+      [[ -n "$pid" ]] || continue
+      log "force-stopping same-bundle app before release smoke: $app (pid $pid)"
+      kill -KILL "$pid" >/dev/null 2>&1 || true
+    done < <(app_pids_for_path "$app" "$executable_path")
+  done
 }
 
 verify_app_bundle() {
@@ -292,6 +349,7 @@ verify_dmg
 
 archive_app="$(extract_archive_app)"
 verify_app_bundle "$archive_app"
+stop_conflicting_apps
 launch_app "archive-app" "$archive_app"
 stop_launched_apps
 
