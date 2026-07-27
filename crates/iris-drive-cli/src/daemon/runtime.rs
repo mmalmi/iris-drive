@@ -300,13 +300,17 @@ pub(crate) fn cmd_daemon(
             startup_config,
             startup_state,
         ));
-        if let Err(error) =
-            announce_current_state_direct(&mut direct_roots, config_dir, fips_blocks.as_deref())
-                .await
+        if let Err(error) = direct_roots
+            .request_current_state_from_peers(
+                config_dir,
+                fips_blocks.as_deref(),
+                "startup",
+            )
+            .await
         {
             println!(
                 "{}",
-                json!({"event": "direct_root_mesh_error", "error": format!("{error:#}")})
+                json!({"event": "direct_root_state_request_error", "trigger": "startup", "error": format!("{error:#}")})
             );
         }
         if let Some(sync) = fips_blocks.as_deref() {

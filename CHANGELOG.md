@@ -17,6 +17,9 @@
   are not direct physical neighbors.
 - Let that authenticated control channel own application-peer reconnects so a
   healthy routed session does not continuously retry a redundant direct path.
+- Request every peer's current root whenever a daemon starts, so a device that
+  reconnects through a cached FIPS route catches up on changes made while it
+  was stopped.
 - Canonicalize simultaneous same-path edits from stable AppKey provenance so
   every device exposes the same original and conflict-copy filenames.
 - Order concurrent roots from their signed embedded causal metadata rather
