@@ -23,6 +23,64 @@ fn control_poll_interval_is_idle_safe() {
 }
 
 #[tokio::test]
+async fn authorized_control_peers_connect_before_any_record_is_queued() {
+    let alice = AppKey::generate("presence-alice");
+    let bob = AppKey::generate("presence-bob");
+    let rendezvous = reserve_udp_address();
+    let alice_addr = reserve_udp_address();
+    let bob_addr = reserve_udp_address();
+    let alice_bound =
+        bind_test_endpoint(&alice, "drive-presence-test", rendezvous, alice_addr, false)
+            .await
+            .unwrap();
+    let bob_bound = bind_test_endpoint(&bob, "drive-presence-test", rendezvous, bob_addr, false)
+        .await
+        .unwrap();
+    connect_endpoint_pair(&alice_bound, &alice, alice_addr, &bob_bound, &bob, bob_addr).await;
+
+    let mut alice_runtime = DriveControlRuntime::bind(
+        alice_bound.native_endpoint.clone(),
+        BTreeSet::from([bob.pubkey_bech32()]),
+        BTreeSet::new(),
+    )
+    .await
+    .unwrap();
+    let mut bob_runtime = DriveControlRuntime::bind(
+        bob_bound.native_endpoint.clone(),
+        BTreeSet::from([alice.pubkey_bech32()]),
+        BTreeSet::new(),
+    )
+    .await
+    .unwrap();
+
+    tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let alice_connected = alice_runtime
+                .connected_peer_ids()
+                .await
+                .unwrap()
+                .contains(&bob.pubkey_bech32());
+            let bob_connected = bob_runtime
+                .connected_peer_ids()
+                .await
+                .unwrap()
+                .contains(&alice.pubkey_bech32());
+            if alice_connected && bob_connected {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("authorized peers did not establish an idle presence channel");
+
+    alice_runtime.shutdown().await.unwrap();
+    bob_runtime.shutdown().await.unwrap();
+    alice_bound.native_endpoint.shutdown().await.unwrap();
+    bob_bound.native_endpoint.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn reliable_control_enforces_topic_acl_and_survives_service_restart() {
     let alice = AppKey::generate("control-alice");
     let bob = AppKey::generate("control-bob");
@@ -400,26 +458,43 @@ async fn connect_endpoint_pair(
     right_key: &AppKey,
     right_addr: std::net::SocketAddrV4,
 ) {
-    set_fips_peer_configs(
-        left.native_endpoint.as_ref(),
-        vec![FipsPeerConfig {
-            npub: right_key.pubkey_bech32(),
-            udp_addresses: vec![right_addr.to_string()],
-        }],
-    )
-    .await
-    .unwrap();
-    set_fips_peer_configs(
-        right.native_endpoint.as_ref(),
-        vec![FipsPeerConfig {
-            npub: left_key.pubkey_bech32(),
-            udp_addresses: vec![left_addr.to_string()],
-        }],
-    )
-    .await
-    .unwrap();
+    let left_npub = left_key.pubkey_bech32();
+    let right_npub = right_key.pubkey_bech32();
+    let left_peer = FipsPeerConfig {
+        npub: right_npub.clone(),
+        udp_addresses: vec![right_addr.to_string()],
+    };
+    let right_peer = FipsPeerConfig {
+        npub: left_npub.clone(),
+        udp_addresses: vec![left_addr.to_string()],
+    };
+
+    // Configure the elected passive side first so the single automatic dial
+    // always arrives at an endpoint that already recognizes its peer.
+    if left_npub < right_npub {
+        configure_application_peer(right, &right_npub, right_peer).await;
+        configure_application_peer(left, &left_npub, left_peer).await;
+    } else {
+        configure_application_peer(left, &left_npub, left_peer).await;
+        configure_application_peer(right, &right_npub, right_peer).await;
+    }
     wait_for_peer_connection(left, &right_key.pubkey_bech32()).await;
     wait_for_peer_connection(right, &left_key.pubkey_bech32()).await;
+}
+
+async fn configure_application_peer(
+    endpoint: &BoundFipsEndpoint,
+    local_npub: &str,
+    peer: FipsPeerConfig,
+) {
+    set_drive_fips_peer_configs(
+        endpoint.native_endpoint.as_ref(),
+        local_npub,
+        std::slice::from_ref(&peer),
+        vec![peer.clone()],
+    )
+    .await
+    .unwrap();
 }
 
 async fn wait_for_connected_endpoint(endpoint: &FipsEndpoint, peer: &str) {

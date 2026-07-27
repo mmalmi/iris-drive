@@ -1,5 +1,21 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Update `fips-core` and `fips-endpoint` to 0.4.44 and the Hashtree FIPS
+  transport to 0.4.11.
+- Keep one deterministic Drive peer responsible for each direct connection,
+  avoiding duplicate simultaneous dials between authorized devices.
+
+### Fixed
+
+- Maintain an authenticated idle control channel between authorized devices
+  and report established routed channels as mesh connectivity, so devices
+  reachable through FIPS transit no longer appear offline merely because they
+  are not direct physical neighbors.
+
 ## 0.1.29 - 2026-07-21
 
 ### Changed

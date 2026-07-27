@@ -892,7 +892,7 @@ pub(crate) async fn fips_block_sync_status(sync: Option<&FsFipsBlockSync>) -> Op
     let sync = sync?;
     let transport = sync.transport_settings();
     let direct_devices = sync.connected_peer_ids().await;
-    let mesh_devices = Vec::new();
+    let mesh_devices = sync.mesh_peer_ids().await;
     let online_devices = fips_online_device_ids(&direct_devices, &mesh_devices);
     Some(json!({
         "endpoint_npub": sync.endpoint_npub(),

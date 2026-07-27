@@ -3174,7 +3174,7 @@ async fn write_native_fips_status(
     error: Option<&str>,
 ) -> Result<(), String> {
     let direct_devices = sync.connected_peer_ids().await;
-    let mesh_devices = Vec::new();
+    let mesh_devices = sync.mesh_peer_ids().await;
     let online_devices = online_device_ids(&direct_devices, &mesh_devices);
     let updated_at = unix_now_seconds();
     let error_value = error.map_or(Value::Null, |error| Value::String(error.to_owned()));

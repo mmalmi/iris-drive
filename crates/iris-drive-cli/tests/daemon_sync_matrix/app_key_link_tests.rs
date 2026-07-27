@@ -177,6 +177,109 @@ async fn live_daemons_bootstrap_over_websocket_seed_and_deliver_link_request() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn routed_websocket_devices_report_online_through_mesh_sessions() {
+    let _guard = live_daemon_test_guard().await;
+    let relay = LocalNostrRelay::spawn().await;
+    let blossom = LocalBlossomServer::spawn_with_upload_delay(Duration::ZERO).await;
+    let seed_cfg = tempdir().unwrap();
+    let owner_cfg = tempdir().unwrap();
+    let linked_cfg = tempdir().unwrap();
+    for config_dir in [seed_cfg.path(), owner_cfg.path(), linked_cfg.path()] {
+        configure_local_blossom(config_dir, &blossom.url);
+    }
+
+    let _seed = run_json(seed_cfg.path(), &["init", "--label", "transit"]);
+    let owner = run_json(owner_cfg.path(), &["init", "--label", "admin"]);
+    let owner_npub = owner["current_app_key_npub"].as_str().unwrap().to_string();
+    let invite_url = owner["app_key_link_invite"]["url"].as_str().unwrap();
+    let linked = run_json(
+        linked_cfg.path(),
+        &["link", invite_url, "--label", "iphone"],
+    );
+    let linked_npub = linked["current_app_key_npub"].as_str().unwrap().to_string();
+    let request_url = linked["app_key_link_request"]["url"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let websocket_seed_port = unused_loopback_port();
+    let seed_daemon = DaemonChild::spawn_websocket_listener(
+        seed_cfg.path(),
+        &relay.url,
+        seed_cfg.path().join("seed.log"),
+        unused_loopback_port(),
+        websocket_seed_port,
+        8,
+    );
+    let owner_daemon = DaemonChild::spawn_websocket_client(
+        owner_cfg.path(),
+        &relay.url,
+        owner_cfg.path().join("owner.log"),
+        unused_loopback_port(),
+        websocket_seed_port,
+        8,
+    );
+    let linked_daemon = DaemonChild::spawn_websocket_client(
+        linked_cfg.path(),
+        &relay.url,
+        linked_cfg.path().join("linked.log"),
+        unused_loopback_port(),
+        websocket_seed_port,
+        8,
+    );
+
+    let request_deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < request_deadline {
+        let owner_status = run_json(owner_cfg.path(), &["status"]);
+        if owner_status["profile"]["inbound_app_key_link_requests"]
+            .as_array()
+            .is_some_and(|requests| !requests.is_empty())
+        {
+            break;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    let owner_status = run_json(owner_cfg.path(), &["status"]);
+    assert!(
+        owner_status["profile"]["inbound_app_key_link_requests"]
+            .as_array()
+            .is_some_and(|requests| !requests.is_empty()),
+        "routed FIPS link request did not reach owner\nowner status: {}\nseed log:\n{}\nowner log:\n{}\nlinked log:\n{}",
+        serde_json::to_string_pretty(&owner_status).unwrap(),
+        seed_daemon.log(),
+        owner_daemon.log(),
+        linked_daemon.log(),
+    );
+
+    let approval = run_json(
+        owner_cfg.path(),
+        &["app-keys", "approve", &request_url, "--label", "iPhone"],
+    );
+    assert_eq!(approval["approval_publish_error"], Value::Null);
+
+    let online_deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < online_deadline {
+        let owner_status = run_json(owner_cfg.path(), &["status"]);
+        let linked_status = run_json(linked_cfg.path(), &["status"]);
+        if mesh_fips_connected(&owner_status, &linked_npub)
+            && mesh_fips_connected(&linked_status, &owner_npub)
+        {
+            return;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+
+    panic!(
+        "authorized devices stayed offline despite routed FIPS sessions\nowner status: {}\nlinked status: {}\nseed log:\n{}\nowner log:\n{}\nlinked log:\n{}",
+        serde_json::to_string_pretty(&run_json(owner_cfg.path(), &["status"])).unwrap(),
+        serde_json::to_string_pretty(&run_json(linked_cfg.path(), &["status"])).unwrap(),
+        seed_daemon.log(),
+        owner_daemon.log(),
+        linked_daemon.log(),
+    );
+}
+
 async fn wait_until_websocket_fips_connected(
     owner_cfg: &Path,
     linked_cfg: &Path,
@@ -218,4 +321,31 @@ fn websocket_fips_connected(status: &Value, expected_peer: &str) -> bool {
                     && peer["transport_type"].as_str() == Some("websocket")
             })
         })
+}
+
+fn mesh_fips_connected(status: &Value, expected_peer: &str) -> bool {
+    let fips = &status["network"]["fips"];
+    let mesh_online = fips["mesh_devices"].as_array().is_some_and(|peers| {
+        peers
+            .iter()
+            .any(|peer| peer.as_str() == Some(expected_peer))
+    });
+    let incorrectly_direct = fips["direct_devices"].as_array().is_some_and(|peers| {
+        peers
+            .iter()
+            .any(|peer| peer.as_str() == Some(expected_peer))
+    });
+    let roster_online = status["peers"].as_array().is_some_and(|peers| {
+        peers.iter().any(|peer| {
+            peer["app_key_npub"].as_str() == Some(expected_peer)
+                && peer["fips_online"].as_bool() == Some(true)
+                && peer["fips_online_via"].as_str() == Some("mesh")
+                && peer["connection_label"].as_str() == Some("Online (Mesh)")
+        })
+    });
+    fips["running"].as_bool().unwrap_or(false)
+        && fips["fresh"].as_bool().unwrap_or(false)
+        && mesh_online
+        && !incorrectly_direct
+        && roster_online
 }

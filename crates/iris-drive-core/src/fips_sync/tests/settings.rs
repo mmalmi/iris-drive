@@ -1,5 +1,7 @@
 use super::*;
 
+use fips_core::config::ConnectPolicy;
+
 use super::super::settings_runtime::{
     bounded_webrtc_max_connections, fips_endpoint_options, parse_bool_env_value,
     parse_list_env_value, parse_static_peer_hints, target_allows_default_desktop_fips,
@@ -388,6 +390,49 @@ fn fips_peer_config_snapshot_matches_endpoint_peer_sanitizing() {
             udp_addresses: vec!["10.44.1.8:22121".to_string()],
         }]
     );
+}
+
+#[test]
+fn authorized_drive_pair_elects_exactly_one_auto_connector() {
+    let lower = "npub1aaa";
+    let higher = "npub1zzz";
+    let lower_peer = FipsPeerConfig {
+        npub: higher.to_string(),
+        udp_addresses: vec!["udp:127.0.0.1:2121".to_string()],
+    };
+    let higher_peer = FipsPeerConfig {
+        npub: lower.to_string(),
+        udp_addresses: vec!["udp:127.0.0.1:2122".to_string()],
+    };
+    let application_peer_ids = BTreeSet::from([lower.to_string(), higher.to_string()]);
+
+    let lower_policy =
+        drive_core_peer_configs(lower, &application_peer_ids, vec![lower_peer])[0].connect_policy;
+    let higher_policy =
+        drive_core_peer_configs(higher, &application_peer_ids, vec![higher_peer])[0].connect_policy;
+
+    assert_eq!(lower_policy, ConnectPolicy::AutoConnect);
+    assert_eq!(higher_policy, ConnectPolicy::Manual);
+}
+
+#[test]
+fn routing_peer_remains_auto_connect_and_address_schemes_are_preserved() {
+    let config = FipsPeerConfig {
+        npub: "npub1routing".to_string(),
+        udp_addresses: vec![
+            "127.0.0.1:2121".to_string(),
+            "tcp:relay.example:443".to_string(),
+            "nostr_relay:npub1ignored".to_string(),
+        ],
+    };
+    let peers = drive_core_peer_configs("npub1local", &BTreeSet::new(), vec![config]);
+
+    assert_eq!(peers[0].connect_policy, ConnectPolicy::AutoConnect);
+    assert_eq!(peers[0].addresses.len(), 2);
+    assert_eq!(peers[0].addresses[0].transport, "udp");
+    assert_eq!(peers[0].addresses[0].addr, "127.0.0.1:2121");
+    assert_eq!(peers[0].addresses[1].transport, "tcp");
+    assert_eq!(peers[0].addresses[1].addr, "relay.example:443");
 }
 
 #[test]

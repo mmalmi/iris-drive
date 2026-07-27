@@ -79,6 +79,7 @@ impl DriveControlRuntime {
             active: BTreeMap::new(),
             inputs: HashMap::new(),
             queues: BTreeMap::new(),
+            next_connection_attempt_ms: BTreeMap::new(),
             seen_records: HashSet::new(),
             seen_record_order: VecDeque::new(),
             deliveries: deliveries.clone(),
@@ -137,6 +138,15 @@ impl DriveControlRuntime {
         response.await.map_err(|_| closed())?
     }
 
+    pub(super) async fn connected_peer_ids(&self) -> Result<Vec<String>, FipsSyncError> {
+        let (reply, response) = oneshot::channel();
+        self.commands
+            .send(Command::ConnectedPeers { reply })
+            .await
+            .map_err(|_| closed())?;
+        response.await.map_err(|_| closed())
+    }
+
     pub(super) async fn shutdown(&mut self) -> Result<(), FipsSyncError> {
         let (reply, response) = oneshot::channel();
         if self
@@ -191,6 +201,9 @@ enum Command {
         topic: String,
         data: Vec<u8>,
         reply: oneshot::Sender<Result<usize, FipsSyncError>>,
+    },
+    ConnectedPeers {
+        reply: oneshot::Sender<Vec<String>>,
     },
     Shutdown {
         reply: oneshot::Sender<()>,
@@ -269,6 +282,7 @@ struct ControlActor {
     active: BTreeMap<String, ConnectionId>,
     inputs: HashMap<String, RecordDecoder>,
     queues: BTreeMap<String, PeerQueue>,
+    next_connection_attempt_ms: BTreeMap<String, u64>,
     seen_records: HashSet<(String, [u8; RECORD_ID_BYTES])>,
     seen_record_order: VecDeque<(String, [u8; RECORD_ID_BYTES])>,
     deliveries: broadcast::Sender<FipsAppMessage>,
@@ -342,6 +356,15 @@ impl ControlActor {
                     Ok(sent)
                 };
                 let _ = reply.send(result);
+            }
+            Command::ConnectedPeers { reply } => {
+                let peers = self
+                    .active
+                    .keys()
+                    .filter(|peer| self.authorized_peers.contains(*peer))
+                    .cloned()
+                    .collect();
+                let _ = reply.send(peers);
             }
             Command::Shutdown { reply } => {
                 let ids = self.connections.keys().copied().collect::<Vec<_>>();
@@ -432,6 +455,7 @@ impl ControlActor {
         self.select_streams().await?;
         self.expire_bootstrap_connections(now_ms).await?;
         self.expire_queues(now_ms);
+        self.connect_authorized(now_ms).await;
         self.reconnect_queued(now_ms).await;
         self.read(now_ms).await?;
         self.flush(now_ms).await?;
@@ -452,6 +476,31 @@ impl ControlActor {
                 }
                 tracing::debug!(%peer, %error, "Drive control reconnect deferred");
             }
+        }
+    }
+
+    async fn connect_authorized(&mut self, now_ms: u64) {
+        self.next_connection_attempt_ms
+            .retain(|peer, _| self.authorized_peers.contains(peer));
+        let peers = self
+            .authorized_peers
+            .iter()
+            .filter(|peer| {
+                now_ms
+                    >= self
+                        .next_connection_attempt_ms
+                        .get(*peer)
+                        .copied()
+                        .unwrap_or_default()
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        for peer in peers {
+            if let Err(error) = self.ensure_connection(&peer, now_ms).await {
+                tracing::debug!(%peer, %error, "Drive control presence connection deferred");
+            }
+            self.next_connection_attempt_ms
+                .insert(peer, now_ms.saturating_add(RECONNECT_DELAY_MS));
         }
     }
 

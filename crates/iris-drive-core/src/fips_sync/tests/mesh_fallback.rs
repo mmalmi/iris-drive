@@ -231,8 +231,13 @@ async fn real_same_host_provider_failure_still_uses_drive_standalone_route() {
     .await
     .unwrap();
     let target_store = Arc::new(MemoryStore::new());
-    set_fips_peer_configs(
+    set_drive_fips_peer_configs(
         source_native.as_ref(),
+        &source_device.pubkey_bech32(),
+        &[FipsPeerConfig {
+            npub: target_device.pubkey_bech32(),
+            udp_addresses: vec![target_udp_addr.to_string()],
+        }],
         vec![FipsPeerConfig {
             npub: target_device.pubkey_bech32(),
             udp_addresses: vec![target_udp_addr.to_string()],
