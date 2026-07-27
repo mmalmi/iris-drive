@@ -58,6 +58,8 @@ require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "repairFileProvide
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "Opening FileProvider roots as plain file URLs"
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "Iris Drive mounted drive folder revealed"
 require_not_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "Iris Drive mounted drive folder opened"
+require_contains "$ROOT/scripts/macos-smoke.sh" "scripts/macos-smoke.sh" "wait_for_finder_target_path"
+require_contains "$ROOT/scripts/macos-smoke.sh" "scripts/macos-smoke.sh" "Finder did not show the revealed Iris Drive folder"
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" 'let irisDriveFileProviderDomainDisplayName = ""'
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "irisDriveUserFacingDriveName"
 require_not_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "selectFile(nil, inFileViewerRootedAtPath:"

@@ -14,6 +14,8 @@ WORK_DIR=""
 DMG_MOUNT=""
 LAUNCHED_PIDS=()
 RELAUNCH_APP_PATHS=()
+REGISTERED_APP_PATHS=()
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 usage() {
   cat <<'USAGE'
@@ -67,6 +69,11 @@ fail() {
 
 cleanup() {
   stop_launched_apps
+  if [[ -x "$LSREGISTER" ]]; then
+    for app in "${REGISTERED_APP_PATHS[@]:-}"; do
+      "$LSREGISTER" -u "$app" >/dev/null 2>&1 || true
+    done
+  fi
   if [[ -n "$DMG_MOUNT" ]]; then
     hdiutil detach "$DMG_MOUNT" -quiet >/dev/null 2>&1 || true
   fi
@@ -198,6 +205,48 @@ stop_conflicting_apps() {
   done
 }
 
+signature_team_identifier() {
+  codesign -dv --verbose=4 "$1" 2>&1 \
+    | sed -n 's/^TeamIdentifier=//p' \
+    | head -n 1
+}
+
+entitlement_value() {
+  local bundle="$1"
+  local key_path="$2"
+  codesign -d --entitlements :- "$bundle" 2>/dev/null \
+    | plutil -extract "$key_path" raw -o - - 2>/dev/null
+}
+
+verify_file_provider_contract() {
+  local app="$1"
+  local extension="$app/Contents/PlugIns/IrisDriveFileProvider.appex"
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist" 2>/dev/null)" == "to.iris.drive.macos" ]] \
+    || fail "macOS app has the wrong bundle identifier"
+  [[ -d "$extension" ]] || fail "macOS app is missing its File Provider extension"
+  [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$extension/Contents/Info.plist" 2>/dev/null)" == "to.iris.drive.macos.FileProvider" ]] \
+    || fail "macOS File Provider has the wrong bundle identifier"
+
+  local app_team
+  local extension_team
+  app_team="$(signature_team_identifier "$app")"
+  extension_team="$(signature_team_identifier "$extension")"
+  [[ -n "$app_team" && "$app_team" != "not set" ]] \
+    || fail "macOS app is ad-hoc signed"
+  [[ "$extension_team" == "$app_team" ]] \
+    || fail "macOS app and File Provider signing teams differ"
+
+  local expected_group="$app_team.to.iris.drive"
+  [[ "$(entitlement_value "$app" 'com\.apple\.security\.app-sandbox')" == "true" ]] \
+    || fail "macOS app is missing its sandbox entitlement"
+  [[ "$(entitlement_value "$extension" 'com\.apple\.security\.app-sandbox')" == "true" ]] \
+    || fail "macOS File Provider is missing its sandbox entitlement"
+  [[ "$(entitlement_value "$app" 'com\.apple\.security\.application-groups.0')" == "$expected_group" ]] \
+    || fail "macOS app is missing its File Provider app group"
+  [[ "$(entitlement_value "$extension" 'com\.apple\.security\.application-groups.0')" == "$expected_group" ]] \
+    || fail "macOS File Provider is missing its app group"
+}
+
 verify_app_bundle() {
   local app="$1"
   local executable
@@ -205,6 +254,7 @@ verify_app_bundle() {
   [[ -x "$app/Contents/MacOS/$executable" ]] \
     || fail "app executable is missing or not executable: $app/Contents/MacOS/$executable"
   run codesign --verify --deep --strict --verbose=2 "$app"
+  verify_file_provider_contract "$app"
   run xcrun stapler validate "$app"
   run spctl --assess --type execute --verbose=2 "$app"
 }
@@ -299,8 +349,10 @@ launch_app() {
   : >"$stderr_log"
 
   touch "$app"
-  /System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister \
-    -f -R -trusted "$app" >/dev/null 2>&1 || true
+  if [[ -x "$LSREGISTER" ]]; then
+    "$LSREGISTER" -f -R -trusted "$app" >/dev/null 2>&1 || true
+    REGISTERED_APP_PATHS+=("$app")
+  fi
 
   log "Launching $label through LaunchServices: $app"
   if ! open --stdout "$stdout_log" --stderr "$stderr_log" \

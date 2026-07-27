@@ -105,6 +105,10 @@ require_contains scripts/local-release.mjs "Missing Zapstore signing key"
 require_contains scripts/local-release.mjs "notarytool"
 require_contains scripts/local-release.mjs "stapler"
 require_contains scripts/local-release.mjs "macos-release-smoke.sh"
+require_contains scripts/macos-release-smoke.sh "verify_file_provider_contract"
+require_contains scripts/macos-release-smoke.sh 'com\.apple\.security\.application-groups.0'
+require_contains scripts/macos-release-smoke.sh 'REGISTERED_APP_PATHS'
+require_contains scripts/macos-release-smoke.sh '"$LSREGISTER" -u "$app"'
 require_contains scripts/local-release.mjs "IRIS_DRIVE_RELEASE_RESOLVER_REFRESH_BASE_URLS"
 require_contains scripts/local-release.mjs "api/resolve"
 require_contains scripts/local-release.mjs "IRIS_DRIVE_MACOS_KEEP_PROVISIONED_ENTITLEMENTS"

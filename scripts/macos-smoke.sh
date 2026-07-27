@@ -602,6 +602,45 @@ RunLoop.current.run(until: Date().addingTimeInterval(0.2))
 SWIFT
 }
 
+latest_revealed_drive_path() {
+  grep -F "Iris Drive mounted drive folder revealed: " "$APP_DEBUG_LOG" 2>/dev/null \
+    | tail -n 1 \
+    | sed 's/^.*Iris Drive mounted drive folder revealed: //'
+}
+
+wait_for_finder_target_path() {
+  local expected_path="$1"
+  local seconds="$2"
+  [[ -n "$expected_path" ]] || return 1
+
+  /usr/bin/osascript - "$expected_path" "$seconds" >/dev/null <<'APPLESCRIPT'
+on run argv
+  set expectedPath to item 1 of argv
+  set expectedDirectoryPath to expectedPath & "/"
+  set timeoutSeconds to item 2 of argv as integer
+  set deadline to (current date) + timeoutSeconds
+  repeat while (current date) is less than deadline
+    tell application "Finder"
+      repeat with finderWindow in windows
+        try
+          set targetPath to POSIX path of (target of finderWindow as alias)
+          if targetPath is expectedPath or targetPath is expectedDirectoryPath then return
+        end try
+      end repeat
+    end tell
+    delay 0.2
+  end repeat
+  error "Timed out waiting for Finder to show " & expectedPath
+end run
+APPLESCRIPT
+}
+
+finder_shows_latest_revealed_drive() {
+  local opened_drive_path
+  opened_drive_path="$(latest_revealed_drive_path)"
+  wait_for_finder_target_path "$opened_drive_path" 10
+}
+
 request_sidebar_open_button() {
   /usr/bin/swift - "$APP_BUNDLE_ID" "$APP_PROCESS_NAME" >/dev/null <<'SWIFT'
 import AppKit
@@ -958,6 +997,10 @@ run_user_journey() {
   if wait_for_log "Iris Drive mounted drive folder opened" 10 ||
     wait_for_log "Iris Drive mounted drive folder revealed" 1; then
     USER_JOURNEY_OPENED_DRIVE_FOLDER=1
+    if ! finder_shows_latest_revealed_drive; then
+      echo "FAIL: Finder did not show the revealed Iris Drive folder." >&2
+      return 1
+    fi
     if require_drive_folder_open &&
       ! wait_for_log "Iris Drive FileProvider domain state userEnabled=true" 10; then
       echo "FAIL: FileProvider domain did not report userEnabled=true." >&2
@@ -1184,6 +1227,11 @@ if run_ui_smoke && ! run_user_journey_smoke; then
   if ! wait_for_log "Iris Drive mounted drive folder opened" 10 &&
     ! wait_for_log "Iris Drive mounted drive folder revealed" 1; then
     echo "FAIL: Show Drive Folder did not open the drive folder." >&2
+    show_recent_logs >&2
+    exit 1
+  fi
+  if ! finder_shows_latest_revealed_drive; then
+    echo "FAIL: Finder did not show the revealed Iris Drive folder." >&2
     show_recent_logs >&2
     exit 1
   fi
