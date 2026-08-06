@@ -46,6 +46,10 @@ Environment:
   IRIS_DRIVE_E2E_SIDELOAD_APPKEYS
                                   Copy the owner profile roster snapshot into temp peer configs after approval
                                   so VM file-sync tests do not depend on public relay timing (default: 1).
+  IRIS_DRIVE_E2E_DESKTOP_GUI_LINKING
+                                  Exercise bidirectional Windows WPF/Linux GTK linking (default: 0;
+                                  enabled by the five-platform gate).
+  IRIS_DRIVE_E2E_LINK_TIMEOUT_SECS  Real-daemon link + durable ACK bound (default: 15).
   IRIS_DRIVE_E2E_PROFILE          Build/use idrive from target/debug or target/release (default: debug).
   CARGO_TARGET_DIR                Optional Cargo target directory forwarded to POSIX idrive builds.
   IRIS_DRIVE_E2E_REBUILD_IDRIVE   Rebuild repo idrive before each host run unless an explicit
@@ -66,6 +70,7 @@ USAGE
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib/parallel-gate.sh"
 source "$ROOT/scripts/lib/cross-vm-parallel-setup.sh"
+source "$ROOT/scripts/lib/cross-vm-device-link.sh"
 RUN_ID="run-$(date +%Y%m%d%H%M%S)-$$"
 TIMEOUT_SECS="${IRIS_DRIVE_E2E_TIMEOUT_SECS:-60}"
 REMOTE_TIMEOUT_SECS="${IRIS_DRIVE_E2E_REMOTE_TIMEOUT_SECS:-60}"
@@ -76,6 +81,8 @@ LARGE_BYTES="${IRIS_DRIVE_E2E_LARGE_BYTES:-262144}"
 KEEP="${IRIS_DRIVE_E2E_KEEP:-0}"
 MOUNT_LABELS="${IRIS_DRIVE_E2E_MOUNT_LABELS:-}"
 SIDELOAD_APPKEYS="${IRIS_DRIVE_E2E_SIDELOAD_APPKEYS:-1}"
+DESKTOP_GUI_LINKING="${IRIS_DRIVE_E2E_DESKTOP_GUI_LINKING:-0}"
+LINK_TIMEOUT_SECS="${IRIS_DRIVE_E2E_LINK_TIMEOUT_SECS:-15}"
 PROVIDER_MUTATIONS="${IRIS_DRIVE_E2E_PROVIDER_MUTATIONS:-0}"
 IDLE_CPU_GATE="${IRIS_DRIVE_E2E_IDLE_CPU_GATE:-1}"
 STATIC_FIPS_HINTS="${IRIS_DRIVE_E2E_STATIC_FIPS_HINTS:-1}"
@@ -86,6 +93,8 @@ case "$E2E_PROFILE" in
   debug | release) ;;
   *) echo "IRIS_DRIVE_E2E_PROFILE must be 'debug' or 'release'." >&2; exit 2 ;;
 esac
+[[ "$LINK_TIMEOUT_SECS" =~ ^[1-9][0-9]*$ ]] \
+  || { echo "IRIS_DRIVE_E2E_LINK_TIMEOUT_SECS must be a positive integer." >&2; exit 2; }
 
 declare -a LABELS=()
 declare -a KINDS=()
@@ -955,6 +964,7 @@ cleanup() {
     echo "keeping remote temp dirs because IRIS_DRIVE_E2E_KEEP=1"
     return
   fi
+  stop_desktop_gui_aux_daemon
   local label kind base script
   for label in "${LABELS[@]}"; do
     stop_daemon "$label"
@@ -1404,26 +1414,6 @@ print_statuses() {
         fi
       fi
     fi
-  done
-}
-
-wait_until() {
-  local label="$1"
-  local check="$2"
-  local start now
-  start="$(date +%s)"
-  while true; do
-    if "$check"; then
-      echo "ok: $label"
-      return 0
-    fi
-    now="$(date +%s)"
-    if (( now - start >= TIMEOUT_SECS )); then
-      echo "timed out waiting for $label" >&2
-      print_statuses
-      return 1
-    fi
-    sleep "$POLL_SECS"
   done
 }
 
@@ -1972,6 +1962,8 @@ done
 source_label="${windows_label:-${LABELS[0]}}"
 target_label="${ubuntu_label:-${LABELS[1]}}"
 
+validate_desktop_gui_linking
+
 if [[ -z "${IRIS_DRIVE_E2E_MOUNT_LABELS+x}" ]]; then
   MOUNT_LABELS=""
   for label in "${LABELS[@]}"; do
@@ -2000,6 +1992,7 @@ set_host_value "$owner_label" app_key_npub "$admin_app_key_npub"
 invite_json="$(idrive_cmd "$owner_label" app-keys invite)"
 invite_url="$(jq -r '.url' <<<"$invite_json")"
 invite_admin_app_key_npub="$(jq -r '.admin_app_key_npub' <<<"$invite_json")"
+desktop_gui_primary_request_url=""
 if [[ "$invite_url" != https://drive.iris.to/invite/* ]]; then
   echo "owner invite did not use canonical https://drive.iris.to/invite/ URL: $invite_url" >&2
   exit 1
@@ -2014,12 +2007,21 @@ for label in "${LABELS[@]}"; do
     continue
   fi
   echo "requesting invite-based link for $label"
-  link_json="$(idrive_cmd "$label" app-keys request "$invite_url" --label "$label")"
-  linked_app_key_npub="$(jq -r '.current_app_key_npub' <<<"$link_json")"
+  if bool_true "$DESKTOP_GUI_LINKING" && [[ "$label" == "$windows_label" ]]; then
+    run_desktop_gui_link_action "$label" "$invite_url" awaiting_approval
+    link_json="$(idrive_cmd "$label" status)"
+    linked_app_key_npub="$(jq -r '.profile.current_app_key_npub' <<<"$link_json")"
+    request_url="$(jq -r '.profile.app_key_link_request.url' <<<"$link_json")"
+    request_profile_id="$(jq -r '.profile.app_key_link_request.profile_id' <<<"$link_json")"
+    request_admin_app_key_npub="$(jq -r '.profile.app_key_link_request.admin_app_key_npub' <<<"$link_json")"
+  else
+    link_json="$(idrive_cmd "$label" app-keys request "$invite_url" --label "$label")"
+    linked_app_key_npub="$(jq -r '.current_app_key_npub' <<<"$link_json")"
+    request_url="$(jq -r '.app_key_link_request.url' <<<"$link_json")"
+    request_profile_id="$(jq -r '.app_key_link_request.profile_id' <<<"$link_json")"
+    request_admin_app_key_npub="$(jq -r '.app_key_link_request.admin_app_key_npub' <<<"$link_json")"
+  fi
   set_host_value "$label" app_key_npub "$linked_app_key_npub"
-  request_url="$(jq -r '.app_key_link_request.url' <<<"$link_json")"
-  request_profile_id="$(jq -r '.app_key_link_request.profile_id' <<<"$link_json")"
-  request_admin_app_key_npub="$(jq -r '.app_key_link_request.admin_app_key_npub' <<<"$link_json")"
   if ! is_app_key_request_url "$request_url"; then
     echo "$label did not create an app-key request URL: $request_url" >&2
     exit 1
@@ -2040,7 +2042,11 @@ for label in "${LABELS[@]}"; do
     echo "$label request URL leaked placeholder ids: $request_url" >&2
     exit 1
   fi
-  idrive_cmd "$owner_label" app-keys approve "$request_url" --label "$label" >/dev/null
+  if bool_true "$DESKTOP_GUI_LINKING" && [[ "$label" == "$windows_label" ]]; then
+    desktop_gui_primary_request_url="$request_url"
+  else
+    idrive_cmd "$owner_label" app-keys approve "$request_url" --label "$label" >/dev/null
+  fi
 done
 
 if [[ "$SIDELOAD_APPKEYS" == "1" ]]; then
@@ -2060,9 +2066,23 @@ for label in "${LABELS[@]}"; do
   start_daemon "$label"
 done
 
-run_step "authorization" wait_until "all devices authorized" all_authorized
+if bool_true "$DESKTOP_GUI_LINKING"; then
+  [[ -n "$desktop_gui_primary_request_url" ]] || {
+    echo "desktop GUI linking did not produce a Windows approval request" >&2
+    exit 1
+  }
+  run_timed_desktop_gui_primary_approval "$desktop_gui_primary_request_url"
+fi
+
+if [[ "$SIDELOAD_APPKEYS" == "0" ]]; then
+  run_step "authorization and durable approval ACK" \
+    wait_for_all_linking_complete
+else
+  run_step "authorization" wait_until "all devices authorized" all_authorized
+fi
 run_step "fresh daemons" wait_until "all daemon statuses fresh" all_fresh
 run_step "FIPS roster readiness" wait_until "every device has the full roster" all_have_roster_peers
+run_step "bidirectional desktop GUI linking" run_bidirectional_desktop_gui_linking
 
 run_step "initial seed writes" run_for_all_labels_parallel write_initial_seed_files
 

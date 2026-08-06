@@ -228,10 +228,7 @@ impl ksni::Tray for IrisDriveTray {
                 "folder-open",
             ),
             ksni::MenuItem::Separator,
-            tray_sync_menu_item(
-                &self.sender,
-                self.sync_running.load(Ordering::Relaxed),
-            ),
+            tray_sync_menu_item(&self.sender, self.sync_running.load(Ordering::Relaxed)),
             ksni::MenuItem::Separator,
             tray_menu_item(&self.sender, TrayCommand::Quit, "Quit", "application-exit"),
         ]

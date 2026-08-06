@@ -1,16 +1,20 @@
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 
 use iris_drive_core::paths::config_path_in;
 use iris_drive_core::{AppConfig, AppKeyAuthorizationState};
 use nostr_sdk::{Event, JsonUtil};
 
 use super::mobile_fips_status::{
-    NATIVE_FIPS_STATUS_STABLE_WRITE_MIN_SECS, native_app_key_link_exchange_should_run,
-    native_fips_status_write_is_due, write_native_fips_status_value,
+    AppKeyLinkTick, NATIVE_FIPS_STATUS_STABLE_WRITE_MIN_SECS,
+    native_app_key_link_exchange_should_run, native_fips_status_write_is_due,
+    wait_for_app_key_link_exchange_tick, write_native_fips_status_value,
 };
 use super::{
     APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS, APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS, FfiApp,
     NATIVE_FIPS_STATUS_FRESH_SECS, NativeAppConfigCache, app_key_link_exchange_tick_millis,
+    native_action_uses_short_config_transaction,
 };
 use crate::NativeAppAction;
 
@@ -134,7 +138,70 @@ fn native_app_key_link_config_cache_reports_only_real_changes() {
 }
 
 #[test]
+fn approving_a_device_wakes_an_idle_app_key_link_exchange() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let owner = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+    let invite = owner
+        .dispatch(crate::NativeAppAction::CreateProfile {
+            app_key_label: "Owner".to_owned(),
+        })
+        .ui
+        .profile
+        .unwrap()
+        .app_key_link_invite;
+    let linked_dir = tempfile::tempdir().unwrap();
+    let linked = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
+    let request = linked
+        .dispatch(crate::NativeAppAction::LinkDevice {
+            link_target: invite,
+            app_key_label: "Phone".to_owned(),
+        })
+        .ui
+        .profile
+        .unwrap()
+        .app_key_link_request;
+
+    let mut runtime = owner.runtime.lock().unwrap();
+    let wake = runtime.app_key_link_exchange_wake.subscribe();
+
+    runtime.dispatch(crate::NativeAppAction::Refresh);
+    assert!(!wake.has_changed().unwrap());
+
+    runtime.dispatch(crate::NativeAppAction::ApproveDevice {
+        request,
+        label: "Phone".to_owned(),
+    });
+    assert!(wake.has_changed().unwrap());
+}
+
+#[tokio::test]
+async fn wake_reschedules_the_production_exchange_tick_immediately() {
+    let (sender, mut wake) = tokio::sync::watch::channel(());
+    let stop = AtomicBool::new(false);
+    let mut tick = Box::pin(tokio::time::sleep(Duration::from_mins(1)));
+
+    sender.send_replace(());
+    assert_eq!(
+        wait_for_app_key_link_exchange_tick(tick.as_mut(), &mut wake, &stop).await,
+        AppKeyLinkTick::Wake
+    );
+    assert_eq!(
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            wait_for_app_key_link_exchange_tick(tick.as_mut(), &mut wake, &stop),
+        )
+        .await
+        .unwrap(),
+        AppKeyLinkTick::Due
+    );
+}
+
+#[test]
 fn app_key_link_exchange_uses_fast_ticks_only_while_approval_is_pending() {
+    assert_eq!(
+        APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS, 1_000,
+        "the exchange loop must honor the one-second startup retry deadline"
+    );
     let owner_dir = tempfile::tempdir().unwrap();
     let linked_dir = tempfile::tempdir().unwrap();
     let owner = iris_drive_core::Profile::create(owner_dir.path(), Some("Mac".into())).unwrap();
@@ -166,6 +233,13 @@ fn app_key_link_exchange_uses_fast_ticks_only_while_approval_is_pending() {
         app_key_link_exchange_tick_millis(Some(&linked.state)),
         APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS
     );
+    linked.state.authorization_state = AppKeyAuthorizationState::Authorized;
+    assert!(linked.state.outbound_app_key_link_request.is_some());
+    assert_eq!(
+        app_key_link_exchange_tick_millis(Some(&linked.state)),
+        APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS,
+        "a retained request must not keep an authorized device on the fast approval loop"
+    );
     assert_eq!(
         app_key_link_exchange_tick_millis(Some(&owner.state)),
         APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS
@@ -174,6 +248,24 @@ fn app_key_link_exchange_uses_fast_ticks_only_while_approval_is_pending() {
         app_key_link_exchange_tick_millis(None),
         APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS
     );
+}
+
+#[test]
+fn app_key_link_actions_serialize_only_short_config_transactions() {
+    assert!(native_action_uses_short_config_transaction(
+        &NativeAppAction::ApproveDevice {
+            request: "request".into(),
+            label: "Phone".into(),
+        }
+    ));
+    assert!(!native_action_uses_short_config_transaction(
+        &NativeAppAction::StartSync
+    ));
+    assert!(!native_action_uses_short_config_transaction(
+        &NativeAppAction::SyncBackups {
+            target: "backup".into(),
+        }
+    ));
 }
 
 #[test]

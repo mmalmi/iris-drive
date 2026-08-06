@@ -38,6 +38,17 @@ require_file_contains scripts/desktop-gui-smoke.sh "Wait-ShellReady"
 require_file_contains scripts/desktop-gui-smoke.sh "IRIS_DRIVE_WINDOWS_GUI_READY_TIMEOUT_SECS"
 require_file_contains scripts/desktop-gui-smoke.sh 'AddSeconds($ShellReadyTimeoutSeconds)'
 require_file_contains scripts/desktop-gui-smoke.sh "Windows GUI smoke requires a desktop session that exposes visible windows"
+require_file_contains scripts/desktop-gui-smoke.sh "IRIS_DRIVE_DESKTOP_GUI_LAUNCH_LINK"
+require_file_contains scripts/desktop-gui-smoke.sh "IRIS_DRIVE_DESKTOP_GUI_EXPECTED_STATE"
+require_file_contains scripts/desktop-gui-smoke.sh "approval_queued"
+require_file_contains scripts/desktop-gui-smoke.sh "python3 -c 'import pyatspi'"
+require_file_contains scripts/desktop-gui-smoke.sh 'scripts/lib/linux-approve-device.py'
+require_file_contains scripts/lib/linux-approve-device.py 'APPROVAL_DIALOG_TITLE = "Approve this device?"'
+require_file_contains scripts/lib/linux-approve-device.py 'pyatspi.ROLE_ALERT'
+require_file_contains scripts/lib/linux-approve-device.py 'pyatspi.ROLE_DIALOG'
+require_file_contains scripts/lib/linux-approve-device.py 'find_approve_button(dialog)'
+require_file_contains scripts/desktop-gui-smoke.sh 'Confirm-ApprovalDialog'
+require_file_contains scripts/desktop-gui-smoke.sh 'Invoke-Button $Dialog "Yes"'
 require_file_contains scripts/dev-vm-update-run.sh "building Linux GTK app"
 require_file_contains scripts/dev-vm-update-run.sh "skipping Windows app GUI launch"
 require_file_contains scripts/dev-vm-smoke.sh "run_linux_ui_smoke"
@@ -48,6 +59,26 @@ require_file_contains scripts/dev-vm-smoke.sh "windows-ui"
 require_file_contains scripts/e2e-everything-3vms.sh "linux-ui, windows-ui, desktop-ui"
 require_file_contains scripts/cross-vm-five-platform-e2e.sh "running Linux GTK GUI smoke"
 require_file_contains scripts/cross-vm-five-platform-e2e.sh "running Windows WPF GUI smoke"
+require_file_contains scripts/cross-vm-five-platform-e2e.sh 'IRIS_DRIVE_E2E_DESKTOP_GUI_LINKING="${IRIS_DRIVE_E2E_DESKTOP_GUI_LINKING:-1}"'
+require_file_contains scripts/cross-vm-e2e.sh 'source "$ROOT/scripts/lib/cross-vm-device-link.sh"'
+require_file_contains scripts/cross-vm-e2e.sh 'LINK_TIMEOUT_SECS="${IRIS_DRIVE_E2E_LINK_TIMEOUT_SECS:-15}"'
+require_file_contains scripts/cross-vm-e2e.sh 'run_step "bidirectional desktop GUI linking" run_bidirectional_desktop_gui_linking'
+require_file_contains scripts/cross-vm-e2e.sh 'desktop_gui_primary_request_url="$request_url"'
+require_file_contains scripts/cross-vm-e2e.sh 'run_timed_desktop_gui_primary_approval "$desktop_gui_primary_request_url"'
+require_file_contains scripts/lib/cross-vm-device-link.sh "pending_device_approval_receipt_count"
+require_file_absent scripts/lib/cross-vm-device-link.sh "pending_device_approval_receipt_count // 0"
+require_file_contains scripts/lib/cross-vm-device-link.sh '[[ -z "$DESKTOP_GUI_PRIMARY_LINK_STARTED_AT" ]] || return 0'
+require_file_contains scripts/lib/cross-vm-device-link.sh "late success after"
+require_file_contains scripts/lib/cross-vm-device-link.sh "Windows WPF join -> Linux GTK approval"
+require_file_contains scripts/lib/cross-vm-device-link.sh "Linux GTK join -> Windows WPF approval"
+require_file_contains scripts/lib/cross-vm-device-link.sh "run_bidirectional_desktop_gui_linking"
+require_file_contains scripts/lib/cross-vm-device-link.sh "monotonic_milliseconds"
+require_file_contains scripts/lib/cross-vm-device-link.sh ".fips_direct_online == true"
+require_file_contains scripts/lib/cross-vm-device-link.sh "run_timed_desktop_gui_primary_approval"
+require_file_contains scripts/lib/cross-vm-device-link.sh $'while ! grep -Fq '\''IRIS_DRIVE_DESKTOP_GUI_APPROVAL_SUBMITTED=1'\'' "$output"; do'
+require_file_contains scripts/lib/cross-vm-device-link.sh $'  mark_desktop_gui_primary_approval_submission\n  wait "$action_pid" || status=$?'
+require_file_contains scripts/desktop-gui-smoke.sh "IRIS_DRIVE_DESKTOP_GUI_APPROVAL_SUBMITTED=1"
+require_file_absent scripts/lib/cross-vm-device-link.sh 'date +%s'
 require_file_contains scripts/macos-smoke.sh "IRIS_DRIVE_DEBUG_LOG_DIR"
 require_file_contains windows/App.xaml.cs "using var writer = new StreamWriter(client, new UTF8Encoding(false));"
 require_file_contains windows/MainWindow.xaml.cs "if (launchArguments.Length == 0)"
@@ -64,7 +95,92 @@ require_file_contains macos/Sources/IrisDriveMacApp.swift "forceRestart: true"
 require_file_contains macos/Sources/IrisDriveControlPanel.swift "Request link or device ID"
 require_file_contains macos/Sources/IrisDriveControlPanel.swift "scanApprovalRequestQr"
 require_file_contains macos/Sources/IrisDriveControlPanel.swift "Approve this device?"
+require_file_contains macos/Sources/IrisDriveControlPanel.swift '.accessibilityIdentifier(tab == .peers ? "sidebarDevices"'
+require_file_contains macos/Sources/IrisDriveControlPanel.swift 'accessibilityIdentifier("manualDeviceApprovalInput")'
+require_file_contains macos/Sources/IrisDriveControlPanel.swift 'accessibilityIdentifier("deviceApprovalApprove")'
+require_file_contains macos/Sources/IrisDriveControlPanel.swift 'accessibilityIdentifier("deviceApprovalCancel")'
+require_file_contains macos/Sources/IrisDriveControlPanel.swift 'accessibilityIdentifier("welcomeSignIn")'
+require_file_contains macos/Sources/IrisDriveControlPanel.swift 'accessibilityIdentifier("driveTitle")'
+require_file_contains macos/Sources/IrisDriveControlPanel.swift 'accessibilityIdentifier("addDeviceToggle")'
 require_file_contains macos/Sources/IrisDriveMacApp.swift '"app_key_approval"'
+require_file_contains macos/Sources/IrisDriveMacApp.swift 'pendingDeviceApproval = IrisDriveDeviceApprovalRequest('
+require_file_absent macos/Sources/IrisDriveMacApp.swift 'approveDevice(url.absoluteString, label: "")'
+require_file_contains macos/Sources/IrisDriveControlPanel.swift '.onChange(of: status.pendingDeviceApproval?.id, initial: true)'
+require_file_contains macos/Sources/IrisDriveControlPanel.swift '(.peers, true, request.requestURL)'
+require_file_contains macos/Sources/IrisDriveControlPanel.swift 'confirmApproveDevice(request.requestURL, force: true)'
+require_file_contains scripts/macos-smoke.sh 'source "$ROOT/scripts/lib/macos-device-link-smoke.sh"'
+require_file_contains scripts/macos-smoke.sh 'run_macos_owner_device_link_journey'
+require_file_contains scripts/lib/macos-device-link-smoke.sh 'MACOS_OWNER_LINK_TIMEOUT_SECS:-15'
+require_file_contains scripts/lib/macos-device-link-smoke.sh 'pending_device_approval_receipt_count") == 0'
+require_file_contains scripts/lib/macos-device-link-smoke.sh 'macos-device-link-ax.swift" "$app_pid" Cancel'
+require_file_contains scripts/lib/macos-device-link-smoke.sh 'macos-device-link-ax.swift" "$app_pid" Approve'
+require_file_contains scripts/lib/macos-device-link-smoke.sh 'provider write'
+require_file_contains scripts/lib/macos-device-link-smoke.sh 'provider read'
+require_file_contains scripts/lib/macos-device-link-smoke.sh 'macos_owner_link_monotonic_milliseconds'
+require_file_absent scripts/lib/macos-device-link-smoke.sh 'date +%s'
+require_file_contains scripts/macos-device-link-ax.swift 'kAXPressAction'
+require_file_contains scripts/macos-device-link-ax.swift 'ManualPrepare'
+require_file_contains scripts/macos-device-link-ax.swift 'kAXIdentifierAttribute'
+require_file_contains scripts/macos-device-link-ax.swift 'kAXHiddenAttribute'
+require_file_contains scripts/macos-device-link-ax.swift 'AXUIElementCopyActionNames'
+require_file_contains scripts/macos-device-link-ax.swift 'AXUIElementGetPid'
+require_file_contains scripts/macos-device-link-ax.swift '.postToPid(pid)'
+require_file_contains scripts/macos-device-link-ax.swift 'text(field, kAXValueAttribute) == value'
+require_file_contains scripts/macos-device-link-ax.swift '"sidebarDevices"'
+require_file_contains scripts/macos-device-link-ax.swift '"manualDeviceApprovalInput"'
+require_file_contains scripts/macos-device-link-ax.swift '"deviceApprovalApprove"'
+require_file_contains scripts/macos-device-link-ax.swift '"deviceApprovalCancel"'
+require_file_absent scripts/macos-device-link-ax.swift 'dialogButton('
+require_file_absent scripts/macos-device-link-ax.swift 'kAXWindowsAttribute'
+require_file_absent scripts/macos-device-link-ax.swift '"AXDialog"'
+require_file_absent scripts/macos-device-link-ax.swift '.post(tap: .cghidEventTap)'
+require_file_contains scripts/macos-vm-smoke.sh 'macos-vm-git-sync.sh'
+require_file_contains scripts/macos-smoke.sh 'SMOKE_STATE_DIR="$(mktemp -d -t iris-drive-macos-smoke-state)"'
+require_file_contains scripts/macos-smoke.sh 'SMOKE_HOME="$SMOKE_STATE_DIR/home"'
+require_file_contains scripts/macos-smoke.sh 'APP_DEBUG_LOG_DIR="$SMOKE_STATE_DIR/logs"'
+require_file_contains scripts/macos-smoke.sh 'remove_smoke_path_best_effort "$SMOKE_STATE_DIR"'
+require_file_contains scripts/macos-smoke.sh 'trap bootstrap_cleanup EXIT'
+require_file_contains scripts/macos-smoke.sh 'assert_safe_smoke_root "$SMOKE_DIR"'
+require_file_contains scripts/macos-smoke.sh 'assert_safe_smoke_root "$SMOKE_STATE_DIR"'
+require_file_contains scripts/macos-smoke.sh 'assert_safe_app_data_root "$SMOKE_APP_DATA"'
+require_file_contains scripts/macos-smoke.sh 'artifacts=("$SMOKE_DIR"/*)'
+require_file_contains scripts/macos-smoke.sh '>"$SMOKE_DIR/result.json"'
+require_file_absent scripts/macos-smoke.sh 'SMOKE_HOME="$SMOKE_DIR/home"'
+require_file_absent scripts/macos-smoke.sh 'echo "$status_json"'
+
+python3 - "$ROOT/scripts/cross-vm-e2e.sh" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text()
+markers = [
+    'desktop_gui_primary_request_url="$request_url"',
+    'configure_fips_static_hints',
+    'start_daemon "$label"',
+    'run_timed_desktop_gui_primary_approval "$desktop_gui_primary_request_url"',
+    'wait_for_all_linking_complete',
+]
+positions = [source.rindex(marker) for marker in markers]
+if positions != sorted(positions):
+    raise SystemExit(
+        "desktop GUI link timing must start after peer setup/daemon startup and "
+        "immediately before owner approval"
+    )
+PY
+require_file_contains scripts/macos-vm-smoke.sh "runner.raw.log"
+require_file_contains scripts/macos-vm-smoke.sh 'state_dir=\$(mktemp -d -t iris-drive-macos-vm-smoke-state)'
+require_file_contains scripts/macos-vm-smoke.sh 'IRIS_DRIVE_MACOS_SMOKE_STATE_DIR=\"\$state_dir\"'
+require_file_contains scripts/macos-vm-smoke.sh 'rm -rf \"\$state_dir\"'
+require_file_contains scripts/macos-vm-smoke.sh 'smoke_exit=\$?'
+require_file_contains scripts/macos-vm-smoke.sh "rm -f '\$REMOTE_ARTIFACT_DIR/runner.raw.log'"
+require_file_contains scripts/macos-vm-smoke.sh '$REMOTE_ARTIFACT_DIR/result.json'
+require_file_absent scripts/macos-vm-smoke.sh 'scp -qr'
+require_file_absent scripts/macos-vm-smoke.sh 'xcode-build.log'
+require_file_absent scripts/macos-vm-smoke.sh 'tail -200'
+require_file_contains scripts/macos-vm-idle-cpu.sh 'macos-vm-git-sync.sh'
+require_file_contains scripts/release-gate.sh 'IRIS_DRIVE_MACOS_SSH_HOST'
+require_file_contains scripts/release-gate.sh './scripts/macos-vm-smoke.sh'
+require_file_contains scripts/release-gate.sh './scripts/macos-vm-idle-cpu.sh'
 require_file_absent macos/Sources/IrisDriveSetupViews.swift 'keyedValue("Device"'
 require_file_absent macos/Sources/IrisDriveControlPanel.swift "Device invite link"
 require_file_absent macos/Sources/IrisDriveControlPanel.swift "Copy invite link"
@@ -77,7 +193,10 @@ require_file_contains linux/src/setup.rs "open_secret_key_setup"
 require_file_contains linux/src/setup.rs "start_join_request()"
 require_file_contains linux/src/ui.rs "Request link or device ID"
 require_file_contains linux/src/actions.rs "Approve this device?"
+require_file_absent linux/src/actions.rs 'approve_device_values(model, request, String::new());'
 require_file_contains linux/src/main.rs "apply_app_key_approval_link"
+require_file_contains linux/src/main.rs "LaunchInputDelivery::Queue"
+require_file_contains linux/src/main.rs "launch_input_without_active_window_waits_for_ui"
 require_file_contains linux/src/render.rs "Copy device ID"
 require_file_absent linux/src/setup.rs 'field_title("Device"'
 require_file_absent linux/src/ui.rs "Name (optional)"
@@ -94,6 +213,8 @@ require_file_contains windows/IrisDriveNativeCore.cs "QrMatrixForText"
 require_file_contains windows/MainWindowDevices.cs "Request link or device ID"
 require_file_contains windows/MainWindowDevices.cs "Approve this device?"
 require_file_contains windows/MainWindow.xaml.cs '"app_key_approval"'
+require_file_contains windows/MainWindow.xaml.cs 'await ConfirmAndApproveDeviceAsync(argument, NoticeText, static () => { });'
+require_file_absent windows/MainWindow.xaml.cs 'await ApproveDeviceAsync(argument, "");'
 require_file_contains windows/MainWindow.xaml.cs "CopyPeerDevice_Click"
 require_file_absent windows/MainWindow.xaml "Device invite link"
 require_file_absent windows/MainWindow.xaml 'Text="Device"'
@@ -101,5 +222,17 @@ require_file_absent windows/MainWindowDevices.cs "Name (optional)"
 require_file_absent windows/MainWindow.xaml "Reset invite"
 require_file_absent windows/MainWindowDevices.cs "ResetInvite_Click"
 require_file_contains docs/PARITY.md "Linux GTK and Windows WPF GUI smokes"
+
+if bash -c '
+  source "$1"
+  POLL_SECS=0
+  print_statuses() { :; }
+  late_success() { sleep 0.05; }
+  started_at="$(monotonic_milliseconds)"
+  wait_until_before late-success "$((started_at + 20))" late_success "$started_at"
+' bash "$ROOT/scripts/lib/cross-vm-device-link.sh" >/dev/null 2>&1; then
+  echo "wait_until_before accepted success sampled after its deadline" >&2
+  exit 1
+fi
 
 echo "DESKTOP_GUI_E2E_KIT_OK"

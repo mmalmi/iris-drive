@@ -601,7 +601,7 @@ fn pending_app_key_link_admin_is_allowed_for_roster_app_messages() {
                 invite_pubkey: "ee".repeat(32),
                 request_url: String::new(),
                 request_key_secret: "ff".repeat(32),
-                approval_receipt_event: None,
+                approval_receipt_event: crate::profile::PersistedDeviceApprovalReceipts::default(),
                 requested_at: 42,
             }),
             inbound_app_key_link_requests: Vec::new(),

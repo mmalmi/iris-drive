@@ -34,6 +34,7 @@ require_file ios/project.yml
 require_file ios/Sources/IrisDriveIOSApp.swift
 require_file ios/Sources/IrisDriveClipboard.swift
 require_file ios/Sources/IrisDriveMobileModel.swift
+require_file ios/Sources/IrisDriveDeviceApproval.swift
 require_file ios/Sources/IrisDriveScreenshotFixture.swift
 require_file ios/Sources/IrisDriveNativeCore.swift
 require_file ios/Sources/IrisDriveTypes.swift
@@ -45,6 +46,7 @@ require_file ios/ShareExtension/PrivacyInfo.xcprivacy
 require_file ios/ShareSource/ShareSourceApp.swift
 require_file ios/UnitTests/ShareItemImporterTests.swift
 require_file ios/UITests/IrisDriveIOSUITests.swift
+require_file ios/UITests/IrisDriveDeviceApprovalUITests.swift
 require_file ios/UITests/IrisDriveAppStoreScreenshotTests.swift
 require_file ios/UITests/Fixtures/external-links.html
 require_file scripts/ios-app-store-screenshots.sh
@@ -115,7 +117,9 @@ require_contains ios/Sources/IrisDriveRootView.swift ".fullScreenCover(item: \$m
 require_absent ios/Sources/IrisDriveRootView.swift ".sheet(item: \$model.webRoute)"
 require_contains ios/Sources/IrisDriveRootView.swift "model.startJoinRequest()"
 require_contains ios/Sources/IrisDriveRootView.swift "copyRequestLink"
-require_contains ios/Sources/IrisDriveRootView.swift "confirmManualDevice(trimmed, force: true)"
+require_contains ios/Sources/IrisDriveRootView.swift "model.requestDeviceApprovalConfirmation(trimmed)"
+require_contains ios/Sources/IrisDriveDeviceApproval.swift '"Approve this device?"'
+require_contains ios/Sources/IrisDriveMobileModel.swift "requestDeviceApprovalConfirmation(url.absoluteString)"
 require_contains ios/Sources/IrisDriveRootView.swift "IrisDriveNativeLinkInput.isCompleteDeviceApproval(model.approveDeviceKey"
 require_contains ios/Sources/IrisDriveRootView.swift "device.isCurrentDevice"
 require_absent ios/Sources/IrisDriveRootView.swift "LabeledContent(\"Device\""
@@ -202,6 +206,14 @@ require_contains scripts/ios-simulator-smoke.sh "wait_for_simulator_boot"
 require_contains scripts/ios-simulator-smoke.sh "SIMCTL_CHILD_IRIS_DRIVE_DEBUG_ACTION"
 require_contains scripts/ios-gui-linking-smoke.sh "testLinkThisDeviceFromWelcome"
 require_contains scripts/ios-gui-linking-smoke.sh "testAddLinkedDeviceFromDevices"
+require_contains scripts/ios-gui-linking-smoke.sh "testDeviceApprovalUniversalLinkCancelDoesNotApprove"
+require_contains scripts/ios-gui-linking-smoke.sh "testDeviceApprovalUniversalLinkApprovesOnlyAfterTap"
+require_contains scripts/ios-gui-linking-smoke.sh 'assert_config_link_state "$SIM_APP_BASE_DIR" 1 0'
+require_contains scripts/ios-gui-linking-smoke.sh "ios_config_mutation_audit"
+require_contains scripts/ios-gui-linking-smoke.sh "sync_linked_device_before"
+require_contains scripts/ios-gui-linking-smoke.sh 'cli_owner_approval_deadline=$((cli_owner_approval_started + 15))'
+require_contains scripts/ios-gui-linking-smoke.sh 'wait_for_config_status_before'
+require_contains scripts/ios-gui-linking-smoke.sh 'wait_for_approval_ack "$OWNER_CONFIG" "CLI-owner-to-iOS" "$cli_owner_approval_deadline"'
 require_contains scripts/ios-gui-linking-smoke.sh "testOpenIrisAppsLoadsBrowserWithoutConnectionError"
 require_contains scripts/ios-gui-linking-smoke.sh "testMyDriveShowsSyncStatusWithoutMobilePauseControls"
 require_contains scripts/ios-gui-linking-smoke.sh "testShareSheetImportsFileFromExternalSender"

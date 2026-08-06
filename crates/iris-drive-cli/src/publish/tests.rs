@@ -381,21 +381,23 @@ fn direct_root_republish_skips_cached_files_root_events() {
 }
 
 #[test]
-fn direct_root_seen_drive_root_retries_after_interval_without_status_read() {
+fn direct_root_seen_drive_root_retries_until_blocks_are_synced() {
+    let config_dir = tempfile::tempdir().unwrap();
     let mut exchange = DirectRootExchange::default();
     let key = "drive-root:remote:main:8:root-hash:root-key:local,remote".to_string();
-    let now = std::time::Instant::now();
 
     exchange.seen_keys.insert(key.clone());
-    exchange.seen_frame_retry_times.insert(key.clone(), now);
 
-    assert!(
-        exchange.should_skip_seen_direct_root_frame(&key, now + std::time::Duration::from_secs(1))
+    assert!(!exchange.should_skip_seen_direct_root_frame(config_dir.path(), &key));
+
+    record_block_sync(
+        config_dir.path(),
+        "root-hash:root-key",
+        "fips",
+        &DownloadReport::default(),
     );
-    assert!(!exchange.should_skip_seen_direct_root_frame(
-        &key,
-        now + std::time::Duration::from_secs(DIRECT_ROOT_SEEN_FRAME_RETRY_INTERVAL_SECS)
-    ));
+
+    assert!(exchange.should_skip_seen_direct_root_frame(config_dir.path(), &key));
 }
 
 #[test]

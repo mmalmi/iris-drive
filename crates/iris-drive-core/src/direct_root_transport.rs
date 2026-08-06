@@ -128,7 +128,8 @@ impl DirectRootExchange {
         }
         let config = AppConfig::load_or_default(config_path_in(config_dir))
             .map_err(|error| format!("loading config: {error}"))?;
-        sync.refresh_authorized_peers(&config).await;
+        sync.refresh_authorized_peers_from_config_dir(config_dir)
+            .await;
         let Some(state) = config.profile.as_ref() else {
             return Ok(());
         };
@@ -310,6 +311,7 @@ impl DirectRootExchange {
     pub async fn handle_app_message(
         &mut self,
         config_dir: &Path,
+        config_mutation: &std::sync::Mutex<()>,
         sync: &FsFipsBlockSync,
         message: &crate::FipsAppMessage,
     ) -> Result<bool, String> {
@@ -319,9 +321,12 @@ impl DirectRootExchange {
         match decode_direct_root_wire_frame(&message.data)
             .map_err(|error| format!("parsing direct-root frame: {error}"))?
         {
-            DirectRootWireFrame::Full(frame) => self.apply_frame(config_dir, sync, frame).await,
+            DirectRootWireFrame::Full(frame) => {
+                self.apply_frame(config_dir, config_mutation, sync, frame)
+                    .await
+            }
             DirectRootWireFrame::Hint(frame) => {
-                self.apply_hint_frame(config_dir, sync, frame, &message.peer_id)
+                self.apply_hint_frame(config_dir, config_mutation, sync, frame, &message.peer_id)
                     .await
             }
             DirectRootWireFrame::Request(frame) => {
@@ -357,6 +362,7 @@ impl DirectRootExchange {
     async fn apply_frame(
         &mut self,
         config_dir: &Path,
+        config_mutation: &std::sync::Mutex<()>,
         sync: &FsFipsBlockSync,
         frame: DirectRootFrame,
     ) -> Result<bool, String> {
@@ -370,7 +376,14 @@ impl DirectRootExchange {
         }
         let direct_event = direct_root_event(frame.key.clone(), &event);
         self.remember_seen_key(frame.key.clone());
-        match apply_direct_root_event(config_dir, &event, Some(sync)).await {
+        match apply_direct_root_event_serialized(
+            config_dir,
+            &event,
+            Some(sync),
+            Some(config_mutation),
+        )
+        .await
+        {
             Ok(changed) => {
                 if changed {
                     self.cache_event(direct_event);
@@ -389,6 +402,7 @@ impl DirectRootExchange {
     async fn apply_hint_frame(
         &mut self,
         config_dir: &Path,
+        config_mutation: &std::sync::Mutex<()>,
         sync: &FsFipsBlockSync,
         frame: DirectRootHintFrame,
         source_peer: &str,
@@ -396,9 +410,15 @@ impl DirectRootExchange {
         if !frame.hint || !self.should_cache_event_as_latest(&frame.key) {
             return Ok(false);
         }
-        let changed = apply_direct_root_hint(config_dir, sync, &frame.key, source_peer)
-            .await
-            .map_err(|error| format!("{error:#}"))?;
+        let changed = apply_direct_root_hint_serialized(
+            config_dir,
+            sync,
+            &frame.key,
+            source_peer,
+            Some(config_mutation),
+        )
+        .await
+        .map_err(|error| format!("{error:#}"))?;
         Ok(changed)
     }
 
@@ -1000,6 +1020,19 @@ pub async fn apply_direct_root_event(
     event: &Event,
     sync: Option<&FsFipsBlockSync>,
 ) -> Result<bool> {
+    apply_direct_root_event_serialized(config_dir, event, sync, None).await
+}
+
+async fn apply_direct_root_event_serialized(
+    config_dir: &Path,
+    event: &Event,
+    sync: Option<&FsFipsBlockSync>,
+    config_mutation: Option<&std::sync::Mutex<()>>,
+) -> Result<bool> {
+    let config_mutation = config_mutation.map(|lock| {
+        lock.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    });
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     if crate::is_nostr_identity_roster_op_event_coordinate(event) {
         let outcome =
@@ -1009,8 +1042,10 @@ pub async fn apply_direct_root_event(
             crate::relay_sync::NostrIdentityRosterOpApply::Applied
         );
         config.save(config_path_in(config_dir))?;
+        drop(config_mutation);
         if let Some(sync) = sync {
-            sync.refresh_authorized_peers(&config).await;
+            sync.refresh_authorized_peers_from_config_dir(config_dir)
+                .await;
         }
         return Ok(changed);
     }
@@ -1022,8 +1057,10 @@ pub async fn apply_direct_root_event(
             crate::relay_sync::ShareAccessSnapshotApply::Applied
         );
         config.save(config_path_in(config_dir))?;
+        drop(config_mutation);
         if let Some(sync) = sync {
-            sync.refresh_authorized_peers(&config).await;
+            sync.refresh_authorized_peers_from_config_dir(config_dir)
+                .await;
         }
         return Ok(changed);
     }
@@ -1050,8 +1087,10 @@ pub async fn apply_direct_root_event(
             .is_some_and(|root_cid| root_cid_belongs_to_peer(&config, root_cid));
         let changed = matches!(outcome, crate::relay_sync::DriveRootApply::Applied);
         config.save(config_path_in(config_dir))?;
+        drop(config_mutation);
         if let Some(sync) = sync {
-            sync.refresh_authorized_peers(&config).await;
+            sync.refresh_authorized_peers_from_config_dir(config_dir)
+                .await;
             if let Some(root_cid) = root_cid {
                 download_direct_root(sync, &root_cid).await?;
             }
@@ -1069,6 +1108,7 @@ pub async fn apply_direct_root_event(
         };
         return Ok(changed || materialized);
     }
+    drop(config_mutation);
     Ok(false)
 }
 
@@ -1078,6 +1118,20 @@ pub async fn apply_direct_root_hint(
     key: &str,
     source_peer: &str,
 ) -> Result<bool> {
+    apply_direct_root_hint_serialized(config_dir, sync, key, source_peer, None).await
+}
+
+async fn apply_direct_root_hint_serialized(
+    config_dir: &Path,
+    sync: &FsFipsBlockSync,
+    key: &str,
+    source_peer: &str,
+    config_mutation: Option<&std::sync::Mutex<()>>,
+) -> Result<bool> {
+    let config_mutation = config_mutation.map(|lock| {
+        lock.lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    });
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let report = apply_direct_root_key_hint_to_config(
         &mut config,
@@ -1088,7 +1142,11 @@ pub async fn apply_direct_root_hint(
     let changed = matches!(report.outcome, DirectRootHintApply::Applied);
     if changed {
         config.save(config_path_in(config_dir))?;
-        sync.refresh_authorized_peers(&config).await;
+    }
+    drop(config_mutation);
+    if changed {
+        sync.refresh_authorized_peers_from_config_dir(config_dir)
+            .await;
     }
     let should_pull = matches!(
         report.outcome,

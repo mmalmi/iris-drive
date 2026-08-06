@@ -177,6 +177,19 @@ pub use app_key_approval_candidates::{
     nostr_identity_app_key_approval_candidates_from_events,
 };
 
+#[path = "relay_sync/approval_ack.rs"]
+mod approval_ack;
+pub use approval_ack::{
+    fetch_device_approval_applied_ack_events, pending_device_approval_applied_ack_filter,
+};
+
+#[path = "relay_sync/approval_roster_backfill.rs"]
+mod approval_roster_backfill;
+pub use approval_roster_backfill::{
+    DEVICE_APPROVAL_ROSTER_BACKFILL_TIMEOUT, apply_device_approval_roster_backfill_events,
+    backfill_device_approval_roster,
+};
+
 #[path = "relay_sync/restore_candidates.rs"]
 mod restore_candidates;
 pub use restore_candidates::{
@@ -378,13 +391,11 @@ fn pending_device_approval_receipt_is_valid(account: &crate::ProfileState) -> bo
     let Some(pending) = account.outbound_app_key_link_request.as_ref() else {
         return false;
     };
-    let Some(event_json) = pending.approval_receipt_event.as_deref() else {
-        return false;
-    };
-    let Ok(event) = Event::from_json(event_json) else {
-        return false;
-    };
-    parse_pending_app_key_approval_receipt_event(pending, &event).is_ok()
+    pending.approval_receipt_event.iter().any(|event_json| {
+        Event::from_json(event_json).is_ok_and(|event| {
+            parse_pending_app_key_approval_receipt_event(pending, &event).is_ok()
+        })
+    })
 }
 
 pub fn apply_remote_device_approval_receipt_event(
@@ -444,9 +455,9 @@ pub fn apply_remote_device_approval_receipt_event(
         .outbound_app_key_link_request
         .as_mut()
         .ok_or(RelayError::NoAccount)?;
-    pending.approval_receipt_event = Some(event.as_json());
+    let receipt_inserted = pending.approval_receipt_event.insert(event.as_json());
     let outcome = apply_remote_nostr_identity_roster_op_event(config, &roster_event)?;
-    let mut changed = matches!(outcome, NostrIdentityRosterOpApply::Applied);
+    let mut changed = receipt_inserted || matches!(outcome, NostrIdentityRosterOpApply::Applied);
     let root_scope_id = {
         let account = config.profile.as_mut().ok_or(RelayError::NoAccount)?;
         let before = account.authorization_state;
@@ -1098,6 +1109,7 @@ pub async fn fetch_device_approval_events(
         .await?
         .into_iter()
         .filter(is_device_approval_receipt_event)
+        .filter(|event| parse_pending_app_key_approval_receipt_event(pending, event).is_ok())
         .collect::<Vec<_>>();
     let profile_id = receipt_events.iter().find_map(|event| {
         parse_pending_app_key_approval_receipt_event(pending, event)
@@ -1255,6 +1267,10 @@ fn drive_root_preview_ms(preview: &crate::nostr_events::DriveRootEventPreview) -
 #[cfg(test)]
 #[path = "relay_sync/app_key_approval_candidate_tests.rs"]
 mod app_key_approval_candidate_tests;
+#[cfg(test)]
+mod approval_ack_tests;
+#[cfg(test)]
+mod approval_roster_backfill_tests;
 #[cfg(test)]
 mod calendar_tests;
 #[cfg(test)]

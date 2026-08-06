@@ -25,6 +25,26 @@ impl DaemonChild {
         )
     }
 
+    fn spawn_relay_only(
+        config_dir: &Path,
+        relay_url: &str,
+        log_path: PathBuf,
+        gateway_port: u16,
+    ) -> Self {
+        Self::spawn_inner(
+            config_dir,
+            relay_url,
+            log_path,
+            gateway_port,
+            FipsTestCarrier::WebSocket {
+                bind_port: None,
+                seed_port: None,
+            },
+            "",
+            Some(0),
+        )
+    }
+
     fn spawn_with_fips_peers(
         config_dir: &Path,
         relay_url: &str,

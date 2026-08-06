@@ -173,9 +173,7 @@ fn append_peer_actor_row(
     if !actor.state_label.is_empty() {
         metadata.push(actor.state_label.clone());
     }
-    if !(actor.detail.is_empty()
-        || actor.is_current_app_key && actor.detail == app_key_pubkey)
-    {
+    if !(actor.detail.is_empty() || actor.is_current_app_key && actor.detail == app_key_pubkey) {
         metadata.push(actor.detail.clone());
     }
     let connection = if actor.connection_label.is_empty() {

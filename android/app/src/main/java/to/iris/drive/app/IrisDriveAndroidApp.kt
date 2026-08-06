@@ -49,6 +49,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
@@ -60,8 +62,7 @@ import to.iris.drive.app.core.RecoverySecretExport
 import to.iris.drive.app.update.AndroidSelfUpdateState
 import to.iris.drive.app.update.SelfUpdateActions
 
-private val ProviderRoot: String
-    get() = "content://${BuildConfig.DOCUMENTS_PROVIDER_AUTHORITY}/document/root"
+private val ProviderRoot = "content://${BuildConfig.DOCUMENTS_PROVIDER_AUTHORITY}/document/root"
 internal const val RecoveryPhraseWordCount = 12
 
 private val IrisLightBackground = Color(0xFFF7FAF8)
@@ -456,7 +457,8 @@ private fun AwaitingApprovalContent(
                         QrCode(
                             value = profile.appKeyLinkRequest,
                             side = 220.dp,
-                            modifier = Modifier.align(Alignment.CenterHorizontally),
+                            modifier = Modifier.align(Alignment.CenterHorizontally)
+                                .semantics { contentDescription = "Device approval request QR" },
                         )
                         SetupPrimaryButton(
                             text = "Copy Request Link",
@@ -963,10 +965,7 @@ private fun SetupPrimaryButton(
     icon: Boolean = false,
     testTag: String? = null,
 ) {
-    val modifier = Modifier
-        .fillMaxWidth()
-        .height(48.dp)
-        .let { base -> if (testTag == null) base else base.testTag(testTag) }
+    val modifier = Modifier.setupButton(testTag)
 
     Button(
         onClick = onClick,
@@ -984,10 +983,7 @@ private fun SetupPrimaryButton(
 
 @Composable
 private fun SetupSecondaryButton(text: String, onClick: () -> Unit, testTag: String? = null) {
-    val modifier = Modifier
-        .fillMaxWidth()
-        .height(48.dp)
-        .let { base -> if (testTag == null) base else base.testTag(testTag) }
+    val modifier = Modifier.setupButton(testTag)
 
     OutlinedButton(
         onClick = onClick,
@@ -997,3 +993,6 @@ private fun SetupSecondaryButton(text: String, onClick: () -> Unit, testTag: Str
         Text(text)
     }
 }
+
+private fun Modifier.setupButton(testTag: String?) =
+    fillMaxWidth().height(48.dp).let { if (testTag == null) it else it.testTag(testTag) }

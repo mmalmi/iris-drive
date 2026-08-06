@@ -14,6 +14,7 @@ use nostr_identity::{
     parse_nostr_identity_device_approval_receipt_roster_op,
 };
 use nostr_sdk::nips::nip19::ToBech32;
+use nostr_sdk::nips::nip44;
 use nostr_sdk::{Event, JsonUtil, Keys, PublicKey, SecretKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -320,20 +321,75 @@ pub fn parse_pending_app_key_approval_receipt_event(
 
 /// Build the shared, device-AppKey-signed proof that an exact approval receipt
 /// has been durably applied locally.
+pub fn device_approval_applied_ack_is_ready(
+    state: &ProfileState,
+    device_app_key_keys: &Keys,
+    approval_event: &Event,
+) -> Result<bool> {
+    let pending = state
+        .outbound_app_key_link_request
+        .as_ref()
+        .context("device approval request is no longer pending")?;
+    let receipt_was_persisted = pending
+        .approval_receipt_event
+        .iter()
+        .map(|json| Event::from_json(json).context("parsing persisted approval receipt"))
+        .collect::<Result<Vec<_>>>()?
+        .iter()
+        .any(|persisted| persisted.id == approval_event.id);
+    if !receipt_was_persisted {
+        anyhow::bail!("approval receipt does not match the durably applied event");
+    }
+    let receipt = parse_pending_app_key_approval_receipt_event(pending, approval_event)?;
+    let device_app_key_pubkey = device_app_key_keys.public_key().to_hex();
+    if receipt.profile_id != state.profile_id
+        || receipt.device_app_key_pubkey != state.app_key_pubkey
+        || device_app_key_pubkey != state.app_key_pubkey
+    {
+        anyhow::bail!("approval receipt does not match the bound profile and device AppKey");
+    }
+    if state.authorization_state != AppKeyAuthorizationState::Authorized {
+        return Ok(false);
+    }
+    let receipt_roster_op = parse_nostr_identity_device_approval_receipt_roster_op(&receipt)
+        .context("parsing approval receipt roster op")?;
+    let projection = state.profile_projection();
+    if !projection
+        .accepted_op_ids
+        .contains(&receipt_roster_op.op_id)
+        || !projection.can_write_roots(&state.app_key_pubkey)
+        || !projection.can_admin_profile(&receipt.approved_by_pubkey)
+    {
+        return Ok(false);
+    }
+    let Some(epoch) = projection.secret_epochs.values().next_back() else {
+        return Ok(false);
+    };
+    let Some(wrap) = epoch.wrapped_secrets.get(&state.app_key_pubkey) else {
+        return Ok(false);
+    };
+    let signer = PublicKey::from_hex(&epoch.signed_by_pubkey)
+        .context("parsing approval key-epoch signer")?;
+    Ok(
+        nip44::decrypt_to_bytes(device_app_key_keys.secret_key(), &signer, wrap)
+            .is_ok_and(|dck| dck.len() == 32),
+    )
+}
+
 pub fn device_approval_applied_ack_event(
     state: &ProfileState,
     device_app_key_keys: &Keys,
     approval_event: &Event,
     applied_at: u64,
 ) -> Result<Event> {
+    if !device_approval_applied_ack_is_ready(state, device_app_key_keys, approval_event)? {
+        anyhow::bail!("device approval is not causally complete and decryptable");
+    }
     let pending = state
         .outbound_app_key_link_request
         .as_ref()
         .context("device approval request is no longer pending")?;
     let receipt = parse_pending_app_key_approval_receipt_event(pending, approval_event)?;
-    if state.authorization_state != AppKeyAuthorizationState::Authorized {
-        anyhow::bail!("device approval was not durably applied as authorized");
-    }
     build_nostr_identity_device_approval_applied_ack_event(
         device_app_key_keys,
         NostrIdentityDeviceApprovalAppliedAck {
@@ -346,6 +402,37 @@ pub fn device_approval_applied_ack_event(
         },
     )
     .context("building device approval applied ACK")
+}
+
+/// Build applied-ACKs for every retained receipt whose exact roster op and
+/// current DCK wrap are durably usable. Multiple admins may validly approve
+/// the same unbound request before their roster branches merge.
+pub fn device_approval_applied_ack_events(
+    state: &ProfileState,
+    device_app_key_keys: &Keys,
+    applied_at: u64,
+) -> Result<Vec<Event>> {
+    let pending = state
+        .outbound_app_key_link_request
+        .as_ref()
+        .context("device approval request is no longer pending")?;
+    let approval_events = pending
+        .approval_receipt_event
+        .iter()
+        .map(|json| Event::from_json(json).context("parsing persisted approval receipt"))
+        .collect::<Result<Vec<_>>>()?;
+    let mut acknowledgements = Vec::with_capacity(approval_events.len());
+    for approval in approval_events {
+        if device_approval_applied_ack_is_ready(state, device_app_key_keys, &approval)? {
+            acknowledgements.push(device_approval_applied_ack_event(
+                state,
+                device_app_key_keys,
+                &approval,
+                applied_at,
+            )?);
+        }
+    }
+    Ok(acknowledgements)
 }
 
 /// Remove a pending approval receipt only after validating the shared signed
@@ -377,28 +464,27 @@ pub fn pending_app_key_approval_receipt_authorizes_app_key(
     pending: &crate::profile::PendingAppKeyLinkRequest,
     app_key_pubkey: &str,
 ) -> bool {
-    let Some(event_json) = pending.approval_receipt_event.as_deref() else {
-        return false;
-    };
-    let Ok(event) = Event::from_json(event_json) else {
-        return false;
-    };
-    let Ok(receipt) = parse_pending_app_key_approval_receipt_event(pending, &event) else {
-        return false;
-    };
-    if receipt.device_app_key_pubkey != app_key_pubkey {
-        return false;
-    }
-    let Ok(roster_op) = parse_nostr_identity_device_approval_receipt_roster_op(&receipt) else {
-        return false;
-    };
-    matches!(
-        &roster_op.content.op,
-        NostrIdentityRosterOp::AddFacet { facet }
-            if facet.pubkey == app_key_pubkey
-                && facet.is_app_key()
-                && facet.capabilities.can_write_roots
-    )
+    pending.approval_receipt_event.iter().any(|event_json| {
+        let Ok(event) = Event::from_json(event_json) else {
+            return false;
+        };
+        let Ok(receipt) = parse_pending_app_key_approval_receipt_event(pending, &event) else {
+            return false;
+        };
+        if receipt.device_app_key_pubkey != app_key_pubkey {
+            return false;
+        }
+        let Ok(roster_op) = parse_nostr_identity_device_approval_receipt_roster_op(&receipt) else {
+            return false;
+        };
+        matches!(
+            &roster_op.content.op,
+            NostrIdentityRosterOp::AddFacet { facet }
+                if facet.pubkey == app_key_pubkey
+                    && facet.is_app_key()
+                    && facet.capabilities.can_write_roots
+        )
+    })
 }
 
 #[must_use]
@@ -434,399 +520,4 @@ fn normalize_approval_label(label: Option<&str>) -> Option<String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{AppConfig, Profile};
-    use nostr_sdk::ToBech32;
-    use tempfile::tempdir;
-
-    #[test]
-    fn roster_fingerprint_changes_with_profile_roster_ops() {
-        let dir = tempdir().unwrap();
-        let mut account = Profile::create(dir.path(), Some("Mac".into())).unwrap();
-        let app_actor = nostr_sdk::Keys::generate().public_key().to_hex();
-        let before = app_key_link_roster_fingerprint(
-            &app_actor,
-            account.state.profile_id,
-            &account.state.profile_roster_ops,
-        );
-
-        account
-            .approve_app_key(&app_actor, Some("Browser".into()))
-            .unwrap();
-        let after = app_key_link_roster_fingerprint(
-            &app_actor,
-            account.state.profile_id,
-            &account.state.profile_roster_ops,
-        );
-
-        assert_ne!(before, after);
-    }
-
-    #[test]
-    fn roster_ack_matches_current_profile_roster_fingerprint() {
-        let dir = tempdir().unwrap();
-        let mut account = Profile::create(dir.path(), Some("Mac".into())).unwrap();
-        let app_actor = nostr_sdk::Keys::generate().public_key().to_hex();
-        account
-            .approve_app_key(&app_actor, Some("Browser".into()))
-            .unwrap();
-
-        let recipients = app_key_link_roster_recipients(&account.state);
-        let recipient = recipients
-            .iter()
-            .find(|recipient| recipient.app_key_pubkey == app_actor)
-            .expect("approved app actor is a roster recipient");
-        let frame = AppKeyLinkRosterAckFrame {
-            schema: 1,
-            admin_app_key_pubkey: account.state.app_key_pubkey.clone(),
-            app_key_pubkey: app_actor,
-            roster_fingerprint: recipient.roster_fingerprint.clone(),
-            acknowledged_at: 123,
-        };
-
-        assert!(app_key_link_roster_ack_matches_state(
-            &account.state,
-            &frame
-        ));
-    }
-
-    #[test]
-    fn applied_ack_clears_only_the_exact_durably_applied_approval() {
-        let owner_dir = tempdir().unwrap();
-        let mut owner = Profile::create(owner_dir.path(), Some("iPhone".into())).unwrap();
-        let linked_dir = tempdir().unwrap();
-        let mut linked =
-            Profile::start_join_request(linked_dir.path(), Some("Mac".into())).unwrap();
-        let approval = create_app_key_approval_bootstrap(
-            linked.app_key.keys(),
-            linked.state.app_key_label.as_deref(),
-        )
-        .unwrap();
-        linked.state.queue_unbound_app_key_join_request(
-            10,
-            approval.url,
-            approval.request_keys.secret_key().to_secret_hex(),
-        );
-        owner
-            .approve_device_bootstrap(&approval.bootstrap, Some("Mac".into()))
-            .unwrap();
-        let receipt =
-            Event::from_json(&owner.state.pending_device_approval_receipts[0].event_json).unwrap();
-        let mut linked_config = AppConfig {
-            profile: Some(linked.state),
-            ..AppConfig::default()
-        };
-        assert_eq!(
-            crate::relay_sync::apply_remote_device_approval_receipt_event(
-                &mut linked_config,
-                &receipt,
-            )
-            .unwrap(),
-            crate::relay_sync::NostrIdentityRosterOpApply::Applied,
-        );
-        let linked_state = linked_config.profile.as_ref().unwrap();
-        let ack =
-            device_approval_applied_ack_event(linked_state, linked.app_key.keys(), &receipt, 11)
-                .unwrap();
-
-        assert!(apply_device_approval_applied_ack_event(&mut owner.state, &ack).unwrap());
-        assert!(owner.state.pending_device_approval_receipts.is_empty());
-        assert!(!apply_device_approval_applied_ack_event(&mut owner.state, &ack).unwrap());
-    }
-
-    #[test]
-    fn lost_applied_ack_is_rebuilt_after_full_roster_apply() {
-        let owner_dir = tempdir().unwrap();
-        let mut owner = Profile::create(owner_dir.path(), Some("iPhone".into())).unwrap();
-        let linked_dir = tempdir().unwrap();
-        let mut linked =
-            Profile::start_join_request(linked_dir.path(), Some("Mac".into())).unwrap();
-        let approval = create_app_key_approval_bootstrap(
-            linked.app_key.keys(),
-            linked.state.app_key_label.as_deref(),
-        )
-        .unwrap();
-        linked.state.queue_unbound_app_key_join_request(
-            10,
-            approval.url,
-            approval.request_keys.secret_key().to_secret_hex(),
-        );
-        owner
-            .approve_device_bootstrap(&approval.bootstrap, Some("Mac".into()))
-            .unwrap();
-        let receipt =
-            Event::from_json(&owner.state.pending_device_approval_receipts[0].event_json).unwrap();
-        let mut linked_config = AppConfig {
-            profile: Some(linked.state),
-            ..AppConfig::default()
-        };
-        assert_eq!(
-            crate::relay_sync::apply_remote_device_approval_receipt_event(
-                &mut linked_config,
-                &receipt,
-            )
-            .unwrap(),
-            crate::relay_sync::NostrIdentityRosterOpApply::Applied,
-        );
-        let first_ack = device_approval_applied_ack_event(
-            linked_config.profile.as_ref().unwrap(),
-            linked.app_key.keys(),
-            &receipt,
-            11,
-        )
-        .unwrap();
-
-        let roster = app_key_link_roster_frame(&owner.state, 12).unwrap();
-        assert!(matches!(
-            crate::relay_sync::apply_app_key_link_roster_frame(
-                &mut linked_config,
-                &roster,
-                &owner.state.app_key_pubkey,
-            )
-            .unwrap(),
-            crate::relay_sync::AppKeyLinkRosterApply::Applied(_)
-        ));
-        let linked_config_path = linked_dir.path().join("config.toml");
-        linked_config.save(&linked_config_path).unwrap();
-        let mut linked_config = AppConfig::load_or_default(&linked_config_path).unwrap();
-
-        // The first ACK is lost. The owner therefore resends the exact receipt
-        // after the linked device has restarted with the full roster applied.
-        assert_eq!(
-            crate::relay_sync::apply_remote_device_approval_receipt_event(
-                &mut linked_config,
-                &receipt,
-            )
-            .unwrap(),
-            crate::relay_sync::NostrIdentityRosterOpApply::Current,
-        );
-        let replayed_ack = device_approval_applied_ack_event(
-            linked_config.profile.as_ref().unwrap(),
-            linked.app_key.keys(),
-            &receipt,
-            13,
-        )
-        .unwrap();
-        let first = parse_nostr_identity_device_approval_applied_ack_event(&first_ack).unwrap();
-        let replayed =
-            parse_nostr_identity_device_approval_applied_ack_event(&replayed_ack).unwrap();
-        assert_eq!(replayed.request_pubkey, first.request_pubkey);
-        assert_eq!(replayed.device_app_key_pubkey, first.device_app_key_pubkey);
-        assert_eq!(replayed.approval_event_id, first.approval_event_id);
-        assert_eq!(replayed.approved_by_pubkey, first.approved_by_pubkey);
-
-        assert!(apply_device_approval_applied_ack_event(&mut owner.state, &replayed_ack).unwrap());
-        assert!(owner.state.pending_device_approval_receipts.is_empty());
-    }
-
-    #[test]
-    fn pending_request_frame_carries_only_compact_bootstrap_material() {
-        let owner_dir = tempdir().unwrap();
-        let owner = Profile::create(owner_dir.path(), Some("Mac".into())).unwrap();
-        let linked_dir = tempdir().unwrap();
-        let mut linked = Profile::link_to_profile(
-            linked_dir.path(),
-            owner.state.profile_id,
-            owner.state.app_key_pubkey.clone(),
-            Some("Phone".into()),
-        )
-        .unwrap();
-        let approval_request = create_app_key_approval_bootstrap(
-            linked.app_key.keys(),
-            linked.state.app_key_label.as_deref(),
-        )
-        .unwrap();
-        assert_ne!(
-            approval_request.bootstrap.request_secret,
-            approval_request.request_keys.secret_key().to_secret_hex(),
-            "the anti-spam request secret must be independent of the receipt key",
-        );
-        linked
-            .state
-            .queue_outbound_app_key_link_request(
-                owner.state.app_key_pubkey.clone(),
-                &crate::profile::app_key_link_invite_pubkey(&owner.state.app_key_link_secret)
-                    .unwrap(),
-                123,
-                approval_request.url.clone(),
-                approval_request.request_keys.secret_key().to_secret_hex(),
-            )
-            .unwrap();
-
-        let frame = pending_app_key_link_request_frame(&linked.state)
-            .expect("build pending frame")
-            .expect("pending frame");
-        let pending = linked
-            .state
-            .outbound_app_key_link_request
-            .as_ref()
-            .expect("persisted pending request");
-        let (persisted_bootstrap, persisted_request_keys) =
-            parse_pending_app_key_approval_bootstrap(pending)
-                .expect("persisted bootstrap material");
-        let frame_url = app_key_link_request_frame_url(&frame, &linked.state.app_key_pubkey)
-            .expect("frame URL");
-        let bootstrap = parse_app_key_approval_bootstrap(&frame_url)
-            .expect("parse bootstrap")
-            .expect("bootstrap");
-        assert_eq!(bootstrap, approval_request.bootstrap);
-        assert_eq!(bootstrap, persisted_bootstrap);
-        assert_eq!(
-            bootstrap.request_npub,
-            persisted_request_keys.public_key().to_bech32().unwrap()
-        );
-        assert_eq!(
-            bootstrap.device_app_key_npub,
-            linked.app_key.keys().public_key().to_bech32().unwrap()
-        );
-        assert_ne!(bootstrap.device_app_key_npub, bootstrap.request_npub);
-        assert_eq!(
-            serde_json::to_value(&frame)
-                .unwrap()
-                .as_object()
-                .unwrap()
-                .keys()
-                .cloned()
-                .collect::<std::collections::BTreeSet<_>>(),
-            ["i", "l", "r", "s", "v"]
-                .into_iter()
-                .map(str::to_string)
-                .collect()
-        );
-        assert!(frame_url.starts_with(APP_KEY_APPROVAL_REQUEST_PREFIX));
-        assert!(
-            frame_url.len()
-                <= nostr_identity::NOSTR_IDENTITY_DEVICE_APPROVAL_BOOTSTRAP_MAX_URI_LENGTH,
-            "bootstrap URL was {}",
-            frame_url.len()
-        );
-    }
-
-    #[test]
-    fn pending_request_frame_compacts_long_utf8_device_labels() {
-        let device_app_key = Keys::generate();
-        let request_keys = Keys::generate();
-        let frame = AppKeyLinkRequestFrame {
-            schema: 1,
-            invite_pubkey: Keys::generate().public_key().to_hex(),
-            label: Some("Iris Drive 🚀 Release iPhone".to_owned()),
-            request_npub: request_keys.public_key().to_bech32().unwrap(),
-            request_secret: URL_SAFE_NO_PAD.encode([7_u8; 32]),
-        };
-
-        let url = app_key_link_request_frame_url(&frame, &device_app_key.public_key().to_hex())
-            .expect("encode compact frame URL");
-        let bootstrap = parse_app_key_approval_bootstrap(&url)
-            .unwrap()
-            .expect("bootstrap");
-
-        assert_eq!(bootstrap.label.as_deref(), Some("Iris Drive 🚀"));
-    }
-
-    #[test]
-    fn approval_bootstrap_has_stable_app_npub_distinct_request_npub_and_32_byte_secret() {
-        let app_key = nostr_sdk::Keys::generate();
-        let local = create_app_key_approval_bootstrap(&app_key, Some("Web + Native"))
-            .expect("encode bootstrap");
-        let bootstrap = parse_app_key_approval_bootstrap(&local.url)
-            .unwrap()
-            .expect("bootstrap");
-        assert_eq!(bootstrap, local.bootstrap);
-        assert_eq!(bootstrap.label.as_deref(), Some("Web + Native"));
-        assert_eq!(
-            bootstrap.device_app_key_npub,
-            app_key.public_key().to_bech32().unwrap()
-        );
-        assert_eq!(
-            bootstrap.request_npub,
-            local.request_keys.public_key().to_bech32().unwrap()
-        );
-        assert_ne!(bootstrap.device_app_key_npub, bootstrap.request_npub);
-        assert_eq!(
-            URL_SAFE_NO_PAD
-                .decode(&bootstrap.request_secret)
-                .unwrap()
-                .len(),
-            32
-        );
-        let payload = &local.url[APP_KEY_APPROVAL_REQUEST_PREFIX.len()..];
-        let payload: serde_json::Value =
-            serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).unwrap()).unwrap();
-        assert_eq!(
-            payload
-                .as_object()
-                .unwrap()
-                .keys()
-                .cloned()
-                .collect::<std::collections::BTreeSet<_>>(),
-            ["deviceAppKeyNpub", "label", "requestNpub", "requestSecret"]
-                .into_iter()
-                .map(str::to_string)
-                .collect()
-        );
-        assert!(
-            local.url.len()
-                <= nostr_identity::NOSTR_IDENTITY_DEVICE_APPROVAL_BOOTSTRAP_MAX_URI_LENGTH,
-            "bootstrap URL was {}",
-            local.url.len()
-        );
-    }
-
-    #[test]
-    fn approval_parser_rejects_legacy_full_request_app_key_only_and_suffix_fallbacks() {
-        let app_key = nostr_sdk::Keys::generate();
-        let app_key_hex = app_key.public_key().to_hex();
-        let legacy = format!("iris-drive://app-key-link?app_key={app_key_hex}&ignored=yes");
-        assert!(!app_key_approval_input_has_prefix(&legacy));
-        assert!(parse_app_key_approval_bootstrap(&legacy).unwrap().is_none());
-
-        let local = create_app_key_approval_bootstrap(&app_key, Some("Phone")).unwrap();
-        assert!(
-            parse_app_key_approval_bootstrap(&format!("nostr:{}", local.url))
-                .unwrap()
-                .is_none()
-        );
-        assert!(
-            parse_app_key_approval_bootstrap(&format!("{}?relay=wss://example.test", local.url))
-                .is_err()
-        );
-        assert!(parse_app_key_approval_bootstrap(&format!("{}#scan", local.url)).is_err());
-
-        let mut payload = serde_json::to_value(&local.bootstrap).unwrap();
-        payload["requestedAt"] = 123.into();
-        let full_request_url = format!(
-            "{APP_KEY_APPROVAL_REQUEST_PREFIX}{}",
-            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).unwrap())
-        );
-        assert!(parse_app_key_approval_bootstrap(&full_request_url).is_err());
-
-        let mut same_key = serde_json::to_value(&local.bootstrap).unwrap();
-        same_key["requestNpub"] = same_key["deviceAppKeyNpub"].clone();
-        let same_key_url = format!(
-            "{APP_KEY_APPROVAL_REQUEST_PREFIX}{}",
-            URL_SAFE_NO_PAD.encode(serde_json::to_vec(&same_key).unwrap())
-        );
-        assert!(parse_app_key_approval_bootstrap(&same_key_url).is_err());
-        assert!(
-            parse_app_key_approval_bootstrap("https://drive.iris.to/app-key-linker?owner=x")
-                .unwrap()
-                .is_none()
-        );
-    }
-
-    #[test]
-    fn request_frame_rejects_legacy_fields_instead_of_falling_back() {
-        let local = create_app_key_approval_bootstrap(&Keys::generate(), Some("Phone")).unwrap();
-        let frame = AppKeyLinkRequestFrame {
-            schema: 1,
-            invite_pubkey: Keys::generate().public_key().to_hex(),
-            label: local.bootstrap.label.clone(),
-            request_npub: local.bootstrap.request_npub,
-            request_secret: local.bootstrap.request_secret,
-        };
-        let mut value = serde_json::to_value(frame).unwrap();
-        value["url"] = local.url.into();
-        assert!(serde_json::from_value::<AppKeyLinkRequestFrame>(value).is_err());
-    }
-}
+mod tests;

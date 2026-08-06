@@ -486,6 +486,39 @@ async fn app_key_link_roster_ack_marks_delivery_for_admin() {
     )));
 }
 
+#[tokio::test]
+async fn authorized_roster_delivery_bounds_direct_then_relay_fallback() {
+    let attempts = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let direct_attempts = attempts.clone();
+    let relay_attempts = attempts.clone();
+
+    let (direct, relay) = attempt_app_key_link_delivery(
+        Some(async move {
+            direct_attempts.lock().unwrap().push("direct");
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            Ok(())
+        }),
+        async move {
+            relay_attempts.lock().unwrap().push("relay");
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            Ok::<_, anyhow::Error>(())
+        },
+        std::time::Duration::from_millis(5),
+        std::time::Duration::from_millis(5),
+    )
+    .await;
+
+    assert_eq!(attempts.lock().unwrap().as_slice(), ["direct", "relay"]);
+    assert_eq!(
+        direct.unwrap().unwrap_err(),
+        "timed out sending approval over FIPS"
+    );
+    assert_eq!(
+        relay.unwrap_err(),
+        "timed out publishing approval over relays"
+    );
+}
+
 #[test]
 fn app_key_link_request_retry_uses_startup_burst_before_steady_interval() {
     let now = std::time::Instant::now();

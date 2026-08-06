@@ -105,6 +105,7 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var fileProviderError = ""
     @Published var authorizationState = "Not linked"
     @Published var pendingContentLink: PendingContentLink?
+    @Published var pendingDeviceApprovalRequest: String?
     @Published var authorizedDeviceCount = 0
     @Published var onlineDeviceCount = 0
     @Published var fileCount = 0
@@ -1154,10 +1155,6 @@ final class IrisDriveMobileModel: ObservableObject {
         }
     }
 
-    func approveDevice() {
-        approveDevice(request: approveDeviceKey, label: "")
-    }
-
     func approveDevice(request: String, label: String) {
         let before = configIdentitySnapshot()
         let state = dispatch([
@@ -1914,7 +1911,7 @@ final class IrisDriveMobileModel: ObservableObject {
         }
 
         if canAdminProfile, linkInput.isComplete {
-            approveDevice(request: url.absoluteString, label: "")
+            requestDeviceApprovalConfirmation(url.absoluteString)
             return
         }
 

@@ -211,16 +211,7 @@ PY
 }
 
 build_number_from_version() {
-  python3 - "$1" <<'PY'
-import re
-import sys
-
-match = re.match(r"^(\d+)\.(\d+)\.(\d+)", sys.argv[1])
-if not match:
-    raise SystemExit(f"Version is not semver-shaped: {sys.argv[1]}")
-major, minor, patch = map(int, match.groups())
-print(major * 1_000_000 + minor * 1_000 + patch)
-PY
+  node "$ROOT/scripts/release-build-number.mjs" "$1"
 }
 
 marketing_version() {

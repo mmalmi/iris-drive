@@ -38,6 +38,7 @@ require_file android/app/src/main/java/to/iris/drive/app/IrisWebActivity.kt
 require_file android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt
 require_file android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt
 require_file android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndroidGuiFlowTest.kt
+require_file android/app/src/androidTest/java/to/iris/drive/app/MainActivityApprovalDeepLinkTest.kt
 require_file android/app/src/androidTest/java/to/iris/drive/app/ShareActivityInstrumentedTest.kt
 require_file android/app/src/androidTest/java/to/iris/drive/app/provider/IrisDriveDocumentsProviderContractTest.kt
 require_file android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentsProvider.kt
@@ -86,6 +87,12 @@ require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "st
 require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "waitForIrisPortalUrl"
 require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "localGatewayResponds"
 require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "HttpURLConnection"
+require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "confirmDeviceApproval(uri.toString())"
+require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt '.setTitle("Approve this device?")'
+require_contains android/app/src/main/java/to/iris/drive/app/AndroidDebugSupport.kt "fun action(intent: Intent?): String?"
+require_contains android/app/src/main/java/to/iris/drive/app/AndroidDebugSupport.kt "if (!BuildConfig.DEBUG) return null"
+require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "when (AndroidDebugSupport.action(intent))"
+require_absent android/app/src/main/java/to/iris/drive/app/MainActivity.kt "when (intent?.getStringExtra(AndroidDebugSupport.ACTION_EXTRA))"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.kt "Opening Iris Apps"
 require_contains android/app/src/main/AndroidManifest.xml "android.intent.action.SEND"
 require_contains android/app/src/androidTest/java/to/iris/drive/app/ShareActivityInstrumentedTest.kt "Intent.ACTION_SEND"
@@ -125,11 +132,13 @@ require_contains android/app/build.gradle.kts "create(\"uiTest\")"
 require_contains scripts/android-gui-linking-smoke.sh "connectedUiTestAndroidTest"
 require_contains scripts/android-gui-linking-smoke.sh "to.iris.drive.uitest"
 require_contains scripts/android-gui-linking-smoke.sh "IrisDriveAndroidGuiFlowTest"
+require_contains scripts/android-gui-linking-smoke.sh "MainActivityApprovalDeepLinkTest"
 require_contains scripts/android-gui-linking-smoke.sh "signInStartsJoinRequest"
 require_contains scripts/android-gui-linking-smoke.sh "addDeviceSectionRequiresCompleteNativeLinkInput"
 require_contains scripts/android-gui-linking-smoke.sh "addDeviceSectionDispatchesManualDeviceApproval"
 require_contains scripts/android-gui-linking-smoke.sh "ShareActivityInstrumentedTest"
-require_contains scripts/android-gui-linking-smoke.sh 'filter+=",$native_state_class,$share_api_class"'
+require_contains scripts/android-gui-linking-smoke.sh 'filter+=",$approval_deep_link_class,$native_state_class,$share_api_class"'
+require_contains android/app/src/androidTest/java/to/iris/drive/app/MainActivityApprovalDeepLinkTest.kt "approvalDeepLinkRequiresExplicitConfirmation"
 require_absent scripts/android-gui-linking-smoke.sh "linkDeviceSubmitRequiresCompleteNativeLinkInput"
 require_absent scripts/android-gui-linking-smoke.sh "addDeviceDialogRequiresCompleteNativeLinkInput"
 require_absent android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndroidGuiFlowTest.kt "linkDeviceSubmit\").assertIsEnabled().performClick()"

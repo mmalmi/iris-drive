@@ -350,6 +350,10 @@ pub(crate) fn status_profile_block(config: &AppConfig) -> Option<Value> {
         };
         output.insert("roster_size".to_string(), json!(roster_size));
         output.insert(
+            "pending_device_approval_receipt_count".to_string(),
+            json!(state.pending_device_approval_receipts.len()),
+        );
+        output.insert(
             "user_profile".to_string(),
             config.user_profile.as_ref().map_or(Value::Null, |profile| {
                 json!({

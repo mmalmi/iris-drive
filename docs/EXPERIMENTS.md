@@ -4,6 +4,49 @@ Performance and integration experiments log. Omit identifying information
 (pubkeys, secrets, IPs, private hostnames, exact repo names, raw hashes)
 unless the user explicitly asks otherwise.
 
+## 2026-08-06 device-link and release-gate latency
+
+- A real two-daemon approval completed in about 0.64s; the complete
+  approval-plus-bidirectional-file scenario passed in 8.63s. The shared live
+  matrix now applies an eight-second approval ceiling to every newly linked
+  daemon instead of maintaining a second timing-only setup.
+- The one-shot CLI/relay regression completed receipt application, durable ACK
+  publication, owner restart, exact ACK consumption, and pending-receipt
+  cleanup in 3.07s.
+- A relay-and-Blossom-only regression linked an already-running unbound daemon,
+  rebound its drive-root subscription, and exposed a file created before
+  approval in 7.24s with zero direct FIPS connections.
+- The provider stale-root retry regression passed five consecutive contention
+  runs plus a clean follow-up. Approval in those runs completed in about
+  0.23-0.52s while concurrent local and incoming roots both remained visible.
+- The four-lane browser link matrix passed in about 1.4 minutes. Its two
+  browser/browser flows took 22.8s and 22.4s end to end; a restarted browser
+  joined a native owner with 24 prior key rotations in 36.5s, and the reverse
+  native-joiner flow took 1.3s. Both measured approval phases stayed below
+  ten seconds.
+- Stubbing the workflow-contract lane inside the release-gate scheduler test,
+  rather than recursively running that suite for each scheduler case, reduced
+  the harness from about 11.25s to 2.38s. Removing two redundant live-daemon
+  setups also shortens the real release gate while retaining the stronger
+  combined timing and post-link assertions.
+- The physical iOS/Android camera suite was structurally and build verified,
+  but its runtime correctly skipped because no paired iOS device was online;
+  no physical delivery timing is claimed.
+- The shipped macOS UI journey passed on a remote macOS runner. Its two direct
+  route preconditions took 2.74s and 2.20s; approval through authorization,
+  direct FIPS, and durable ACK drain took 2.22s and 2.81s. The post-link
+  provider write became visible in 4.00s.
+- A short remote idle sample passed: the macOS app averaged 0.38% CPU and
+  peaked at 0.97%; its daemon averaged 4.23% and peaked at 8.61%.
+- The physical macOS/Android manual-entry matrix is not release-green. The
+  earlier shipped confirmation submitted successfully, but a macOS-owner to
+  Android-joiner run exceeded the strict 15s ceiling. After the delivery fixes,
+  final reruns stopped before approval submission: first because the isolated
+  macOS runner exhausted its build volume, then because Accessibility trust
+  failed at harness preflight. Cleanup restored the Android device to direct
+  connectivity and removed both test packages and all ADB mappings. No
+  post-fix physical delivery timing is claimed.
+
 ## 2026-07-22 release-gate critical path
 
 - A warm serial `verify-fast` profile took about 142s. Rust tests accounted

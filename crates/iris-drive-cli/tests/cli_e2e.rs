@@ -1,7 +1,5 @@
-//! End-to-end tests for the `idrive` CLI.
-//!
-//! These exercise the actual compiled binary against a temp config dir,
-//! so they catch arg-parsing, exit-code, and IO surprises. No mocks.
+//! End-to-end tests for the real `idrive` binary against temporary configuration,
+//! covering argument parsing, exit codes, and I/O without mocks.
 
 use assert_cmd::Command;
 use hashtree_core::{Cid, HashTree, HashTreeConfig, Store, diff::collect_hashes, nhash_decode};
@@ -248,6 +246,8 @@ fn assert_tree_does_not_contain_bytes(path: &std::path::Path, needle: &[u8]) {
     }
 }
 
+#[path = "cli_e2e/approval_sync_tests.rs"]
+mod approval_sync_tests;
 #[path = "cli_e2e/profile_tests.rs"]
 mod profile_tests;
 

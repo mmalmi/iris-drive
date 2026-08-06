@@ -17,6 +17,11 @@ When the Windows VM is reachable only from a Linux jump host, set
 IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST to the Windows SSH alias.
 IRIS_DRIVE_WINDOWS_GUI_READY_TIMEOUT_SECS controls the Windows cold-start
 native refresh deadline and defaults to 60 seconds.
+IRIS_DRIVE_DESKTOP_GUI_LAUNCH_LINK optionally opens a production invite or
+approval deep link through the shipped shell. Set
+IRIS_DRIVE_DESKTOP_GUI_EXPECTED_STATE to awaiting_approval or approval_queued
+to validate that action; the default is authorized. Link actions must finish
+within IRIS_DRIVE_DESKTOP_GUI_ACTION_TIMEOUT_SECS (default: 20).
 USAGE
 }
 
@@ -53,6 +58,11 @@ linux_remote_shell() {
   if [[ -n "${IRIS_DRIVE_DEV_VM_LINUX_MOUNTPOINT:-}" ]]; then
     assignments+=("IRIS_DRIVE_DEV_VM_LINUX_MOUNTPOINT=$(sh_quote "$IRIS_DRIVE_DEV_VM_LINUX_MOUNTPOINT")")
   fi
+  if [[ -n "${IRIS_DRIVE_DESKTOP_GUI_LAUNCH_LINK:-}" ]]; then
+    assignments+=("IRIS_DRIVE_DESKTOP_GUI_LAUNCH_LINK=$(sh_quote "$IRIS_DRIVE_DESKTOP_GUI_LAUNCH_LINK")")
+  fi
+  assignments+=("IRIS_DRIVE_DESKTOP_GUI_EXPECTED_STATE=$(sh_quote "${IRIS_DRIVE_DESKTOP_GUI_EXPECTED_STATE:-authorized}")")
+  assignments+=("IRIS_DRIVE_DESKTOP_GUI_ACTION_TIMEOUT_SECS=$(sh_quote "${IRIS_DRIVE_DESKTOP_GUI_ACTION_TIMEOUT_SECS:-20}")")
   if [[ ${#assignments[@]} -eq 0 ]]; then
     printf 'bash -se'
   else
@@ -97,21 +107,41 @@ repo="${IRIS_DRIVE_REPO:-$HOME/src/iris-drive}"
 idrive="$repo/target/debug/idrive"
 app="$repo/linux/target/debug/iris-drive"
 config_dir="${IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR:-$HOME/.config/iris-drive}"
+launch_link="${IRIS_DRIVE_DESKTOP_GUI_LAUNCH_LINK:-}"
+expected_state="${IRIS_DRIVE_DESKTOP_GUI_EXPECTED_STATE:-authorized}"
+action_timeout_secs="${IRIS_DRIVE_DESKTOP_GUI_ACTION_TIMEOUT_SECS:-20}"
 xvfb_pid=""
 wm_pid=""
 app_pid=""
+dbus_pid=""
 use_xvfb=0
 
+case "$expected_state" in
+  authorized | awaiting_approval | approval_queued) ;;
+  *) die "unsupported expected GUI state: $expected_state" ;;
+esac
+[[ "$action_timeout_secs" =~ ^[1-9][0-9]*$ ]] \
+  || die "IRIS_DRIVE_DESKTOP_GUI_ACTION_TIMEOUT_SECS must be a positive integer"
+
 cleanup() {
-  if [[ -n "$app_pid" ]] && (( use_xvfb )); then
+  if [[ -n "$app_pid" ]] && { (( use_xvfb )) || [[ -n "$launch_link" ]]; }; then
     pkill -P "$app_pid" >/dev/null 2>&1 || true
     kill "$app_pid" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$launch_link" && -f "$config_dir/daemon.lock" ]]; then
+    daemon_pid="$(tr -dc '0-9' <"$config_dir/daemon.lock")"
+    if [[ -n "$daemon_pid" ]]; then
+      kill "$daemon_pid" >/dev/null 2>&1 || true
+    fi
   fi
   if [[ -n "$wm_pid" ]]; then
     kill "$wm_pid" >/dev/null 2>&1 || true
   fi
   if [[ -n "$xvfb_pid" ]]; then
     kill "$xvfb_pid" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$dbus_pid" ]]; then
+    kill "$dbus_pid" >/dev/null 2>&1 || true
   fi
 }
 trap cleanup EXIT
@@ -130,13 +160,18 @@ display_ready() {
   xdpyinfo -display "$DISPLAY" >/dev/null 2>&1
 }
 
-display="${IRIS_DRIVE_DEV_VM_LINUX_DISPLAY:-${DISPLAY:-}}"
+if [[ -n "$launch_link" ]]; then
+  display="${IRIS_DRIVE_DEV_VM_LINUX_XVFB_DISPLAY:-:98}"
+  use_xvfb=1
+else
+  display="${IRIS_DRIVE_DEV_VM_LINUX_DISPLAY:-${DISPLAY:-}}"
+fi
 if [[ -n "$display" ]]; then
   export DISPLAY="$display"
 fi
-if [[ -z "${DISPLAY:-}" || ! display_ready ]]; then
+if (( use_xvfb )) || [[ -z "${DISPLAY:-}" ]] || ! display_ready; then
   command -v Xvfb >/dev/null 2>&1 || die "no usable X display and Xvfb is not installed"
-  export DISPLAY="${IRIS_DRIVE_DEV_VM_LINUX_XVFB_DISPLAY:-:98}"
+  export DISPLAY="${DISPLAY:-${IRIS_DRIVE_DEV_VM_LINUX_XVFB_DISPLAY:-:98}}"
   use_xvfb=1
   if ! display_ready; then
     log "starting disposable Xvfb display on DISPLAY=$DISPLAY"
@@ -162,6 +197,15 @@ find_window() {
 }
 
 window_id="$(find_window || true)"
+if [[ -n "$launch_link" && -n "$window_id" ]]; then
+  log "stopping the existing GTK shell before the isolated link action"
+  pkill -f -- "$app" >/dev/null 2>&1 || true
+  for _ in $(seq 1 20); do
+    window_id="$(find_window || true)"
+    [[ -z "$window_id" ]] && break
+    sleep 0.1
+  done
+fi
 if [[ -z "$window_id" ]]; then
   if pgrep -f -- "$app" >/dev/null 2>&1; then
     log "stopping stale Linux GTK shell process without a visible window"
@@ -171,9 +215,32 @@ if [[ -z "$window_id" ]]; then
   log "launching Linux GTK shell on DISPLAY=$DISPLAY"
   mkdir -p "$config_dir"
   if (( use_xvfb )); then
-    command -v dbus-run-session >/dev/null 2>&1 \
-      || die "dbus-run-session is required for Linux GUI smoke with Xvfb"
-    nohup dbus-run-session -- env \
+    if [[ -n "$launch_link" ]]; then
+      command -v dbus-launch >/dev/null 2>&1 \
+        || die "dbus-launch is required for Linux GUI link actions"
+      python3 -c 'import pyatspi' >/dev/null 2>&1 \
+        || die "python3-pyatspi is required for Linux GUI approval actions"
+      eval "$(dbus-launch --sh-syntax)"
+      dbus_pid="${DBUS_SESSION_BUS_PID:-}"
+      nohup env \
+        -u WAYLAND_DISPLAY \
+        "DISPLAY=$DISPLAY" \
+        "GDK_BACKEND=x11" \
+        "GSK_RENDERER=cairo" \
+        "LIBGL_ALWAYS_SOFTWARE=1" \
+        "GIO_USE_PORTALS=0" \
+        "GTK_USE_PORTAL=0" \
+        "IRIS_DRIVE_DISABLE_TRAY=1" \
+        "IRIS_DRIVE_CLI=$idrive" \
+        "IRIS_DRIVE_CONFIG_DIR=$config_dir" \
+        "$app" "$launch_link" \
+        > /tmp/iris-drive-linux-app.out.log \
+        2> /tmp/iris-drive-linux-app.err.log \
+        < /dev/null &
+    else
+      command -v dbus-run-session >/dev/null 2>&1 \
+        || die "dbus-run-session is required for Linux GUI smoke with Xvfb"
+      nohup dbus-run-session -- env \
       -u WAYLAND_DISPLAY \
       "DISPLAY=$DISPLAY" \
       "GDK_BACKEND=x11" \
@@ -189,13 +256,14 @@ if [[ -z "$window_id" ]]; then
       > /tmp/iris-drive-linux-app.out.log \
       2> /tmp/iris-drive-linux-app.err.log \
       < /dev/null &
+    fi
   else
     nohup env \
       "DISPLAY=$DISPLAY" \
       "IRIS_DRIVE_DISABLE_TRAY=1" \
       "IRIS_DRIVE_CLI=$idrive" \
       "IRIS_DRIVE_CONFIG_DIR=$config_dir" \
-      "$app" \
+      "$app" ${launch_link:+"$launch_link"} \
       > /tmp/iris-drive-linux-app.out.log \
       2> /tmp/iris-drive-linux-app.err.log \
       < /dev/null &
@@ -204,7 +272,50 @@ if [[ -z "$window_id" ]]; then
   disown "$app_pid" >/dev/null 2>&1 || true
 fi
 
-for _ in $(seq 1 40); do
+status_matches_expected() {
+  local status
+  status="$("$idrive" --config-dir "$config_dir" status 2>/dev/null)" || return 1
+  STATUS_JSON="$status" EXPECTED_STATE="$expected_state" python3 - <<'PY'
+import json
+import os
+
+status = json.loads(os.environ["STATUS_JSON"])
+expected = os.environ["EXPECTED_STATE"]
+profile = status.get("profile") or {}
+if not status.get("initialized"):
+    raise SystemExit(1)
+if expected == "awaiting_approval":
+    request = profile.get("app_key_link_request") or {}
+    if profile.get("authorization_state") != "awaiting_approval":
+        raise SystemExit(1)
+    if not str(request.get("url") or "").startswith("https://drive.iris.to/approve-device/"):
+        raise SystemExit(1)
+elif expected == "approval_queued":
+    if profile.get("authorization_state") != "authorized":
+        raise SystemExit(1)
+    if int(profile.get("pending_device_approval_receipt_count") or 0) < 1:
+        raise SystemExit(1)
+else:
+    summary = status.get("summary") or {}
+    network = status.get("network") or {}
+    authorized = int(
+        summary.get("authorized_app_key_count")
+        or summary.get("authorized_device_count")
+        or network.get("authorized_app_key_count")
+        or network.get("authorized_device_count")
+        or 0
+    )
+    if profile.get("authorization_state") != "authorized" or authorized < 1:
+        raise SystemExit(1)
+PY
+}
+
+activate_approval_button() {
+  python3 "$repo/scripts/lib/linux-approve-device.py"
+}
+
+approval_submitted=0
+for _ in $(seq 1 "$((action_timeout_secs * 2))"); do
   window_id="$(find_window || true)"
   if [[ -n "$window_id" ]]; then
     info="$(xwininfo -id "$window_id" 2>/dev/null || true)"
@@ -215,47 +326,41 @@ for _ in $(seq 1 40); do
       && (( width >= 640 && height >= 400 )); then
       xdotool windowactivate --sync "$window_id" >/dev/null 2>&1 || true
       xdotool windowfocus "$window_id" >/dev/null 2>&1 || true
-      status="$("$idrive" --config-dir "$config_dir" status)"
-      STATUS_JSON="$status" python3 - <<'PY'
-import json
-import os
-
-status = json.loads(os.environ["STATUS_JSON"])
-if not status.get("initialized"):
-    raise SystemExit("Linux GUI smoke expected an initialized app profile")
-summary = status.get("summary") or {}
-network = status.get("network") or {}
-if summary:
-    if int(summary.get("authorized_app_key_count") or summary.get("authorized_device_count") or 0) < 1:
-        raise SystemExit("Linux GUI summary has no authorized app keys")
-else:
-    if int(network.get("authorized_app_key_count") or network.get("authorized_device_count") or 0) < 1:
-        raise SystemExit("Linux status has no authorized app keys")
-PY
-      screenshot="/tmp/iris-drive-linux-gui-smoke.png"
-      rm -f "$screenshot"
-      if command -v gnome-screenshot >/dev/null 2>&1; then
-        gnome-screenshot -w -f "$screenshot" >/dev/null 2>&1 || true
-      elif command -v import >/dev/null 2>&1; then
-        import -window "$window_id" "$screenshot" >/dev/null 2>&1 || true
+      if [[ "$expected_state" == "approval_queued" && "$approval_submitted" == "0" ]]; then
+        if activate_approval_button; then
+          approval_submitted=1
+          printf 'IRIS_DRIVE_DESKTOP_GUI_APPROVAL_SUBMITTED=1\n'
+          log "activated the shipped GTK Approve button through accessibility"
+        fi
       fi
-      if [[ -f "$screenshot" && ! -s "$screenshot" ]]; then
-        die "Linux GUI screenshot was empty"
+      if status_matches_expected; then
+        screenshot="/tmp/iris-drive-linux-gui-smoke.png"
+        rm -f "$screenshot"
+        if command -v gnome-screenshot >/dev/null 2>&1; then
+          gnome-screenshot -w -f "$screenshot" >/dev/null 2>&1 || true
+        elif command -v import >/dev/null 2>&1; then
+          import -window "$window_id" "$screenshot" >/dev/null 2>&1 || true
+        fi
+        if [[ -f "$screenshot" && ! -s "$screenshot" ]]; then
+          die "Linux GUI screenshot was empty"
+        fi
+        echo "LINUX_GUI_SMOKE_OK state=$expected_state"
+        exit 0
       fi
-      echo "LINUX_GUI_SMOKE_OK"
-      exit 0
     fi
   fi
   sleep 0.5
 done
 
-die "Linux GTK shell did not expose a visible Iris Drive window"
+die "Linux GTK shell did not reach expected state $expected_state within ${action_timeout_secs}s"
 REMOTE_SH
 }
 
 run_windows_remote() {
   local remote="$1"
   local shell_ready_timeout_secs="${IRIS_DRIVE_WINDOWS_GUI_READY_TIMEOUT_SECS:-60}"
+  local action_timeout_secs="${IRIS_DRIVE_DESKTOP_GUI_ACTION_TIMEOUT_SECS:-20}"
+  local expected_state="${IRIS_DRIVE_DESKTOP_GUI_EXPECTED_STATE:-authorized}"
   [[ "$remote" != "local" ]] || {
     echo "windows GUI smoke requires a Windows SSH host" >&2
     exit 2
@@ -264,10 +369,21 @@ run_windows_remote() {
     echo "IRIS_DRIVE_WINDOWS_GUI_READY_TIMEOUT_SECS must be a positive integer" >&2
     exit 2
   }
+  [[ "$action_timeout_secs" =~ ^[1-9][0-9]*$ ]] || {
+    echo "IRIS_DRIVE_DESKTOP_GUI_ACTION_TIMEOUT_SECS must be a positive integer" >&2
+    exit 2
+  }
+  case "$expected_state" in
+    authorized | awaiting_approval | approval_queued) ;;
+    *) echo "unsupported expected GUI state: $expected_state" >&2; exit 2 ;;
+  esac
 
   {
     printf '$ConfigDirOverride = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_WINDOWS_CONFIG_DIR:-}")"
     printf '$ShellReadyTimeoutSeconds = %s\n' "$shell_ready_timeout_secs"
+    printf '$LinkActionTimeoutSeconds = %s\n' "$action_timeout_secs"
+    printf '$ExpectedState = %s\n' "$(ps_quote "$expected_state")"
+    printf '$LaunchLink = %s\n' "$(ps_quote "${IRIS_DRIVE_DESKTOP_GUI_LAUNCH_LINK:-}")"
     cat <<'REMOTE_PS'
 $ErrorActionPreference = "Stop"
 
@@ -494,7 +610,10 @@ param(
   [string]$ErrorFile,
   [string]$WorkerLog,
   [string]$Screenshot,
-  [int]$ShellReadyTimeoutSeconds
+  [int]$ShellReadyTimeoutSeconds,
+  [int]$LinkActionTimeoutSeconds,
+  [string]$ExpectedState,
+  [string]$LaunchLink
 )
 
 $ErrorActionPreference = "Stop"
@@ -534,6 +653,8 @@ Add-Type -Namespace IrisDriveSmoke -Name NativeMethods -MemberDefinition @"
   public static extern bool ShowWindow(System.IntPtr hWnd, int nCmdShow);
   [System.Runtime.InteropServices.DllImport("user32.dll")]
   public static extern bool SetForegroundWindow(System.IntPtr hWnd);
+  [System.Runtime.InteropServices.DllImport("user32.dll")]
+  public static extern System.IntPtr SendMessage(System.IntPtr hWnd, uint msg, System.IntPtr wParam, System.IntPtr lParam);
 "@
 
 function Current-IrisWindowProcess {
@@ -558,17 +679,17 @@ function Find-ElementByName([System.Windows.Automation.AutomationElement]$Window
 }
 
 function Find-ButtonByName([System.Windows.Automation.AutomationElement]$Window, [string]$Name) {
-  $Condition = [System.Windows.Automation.PropertyCondition]::new(
-    [System.Windows.Automation.AutomationElement]::NameProperty,
-    $Name
-  )
   $Matches = $Window.FindAll(
     [System.Windows.Automation.TreeScope]::Descendants,
-    $Condition
+    [System.Windows.Automation.Condition]::TrueCondition
   )
   for ($i = 0; $i -lt $Matches.Count; $i++) {
     $Element = $Matches.Item($i)
-    if ($Element.Current.ControlType -eq [System.Windows.Automation.ControlType]::Button) {
+    if ($Element.Current.Name.TrimStart("&") -eq $Name -and
+        $Element.Current.ControlType -in @(
+          [System.Windows.Automation.ControlType]::Button,
+          [System.Windows.Automation.ControlType]::Pane
+        )) {
       return $Element
     }
   }
@@ -584,16 +705,127 @@ function Require-Element([System.Windows.Automation.AutomationElement]$Window, [
 }
 
 function Invoke-Button([System.Windows.Automation.AutomationElement]$Window, [string]$Name) {
-  $Button = Find-ButtonByName $Window $Name
+  $Deadline = (Get-Date).AddSeconds($LinkActionTimeoutSeconds)
+  $Button = $null
+  while (-not $Button -and (Get-Date) -lt $Deadline) {
+    $Button = Find-ButtonByName $Window $Name
+    if (-not $Button) { Start-Sleep -Milliseconds 100 }
+  }
   if (-not $Button) {
+    $Visible = $Window.FindAll(
+      [System.Windows.Automation.TreeScope]::Subtree,
+      [System.Windows.Automation.Condition]::TrueCondition
+    ) | ForEach-Object {
+      "$($_.Current.ControlType.ProgrammaticName):$($_.Current.Name)"
+    }
+    Log "button search tree: $($Visible -join ', ')"
     Fail "missing button named '$Name'"
   }
   $Pattern = $null
-  if (-not $Button.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$Pattern)) {
-    Fail "button '$Name' does not expose InvokePattern"
+  if ($Button.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern, [ref]$Pattern)) {
+    $Pattern.Invoke()
+  } elseif ($Button.Current.NativeWindowHandle -ne 0) {
+    [void][IrisDriveSmoke.NativeMethods]::SendMessage(
+      [IntPtr]$Button.Current.NativeWindowHandle,
+      0x00F5,
+      [IntPtr]::Zero,
+      [IntPtr]::Zero
+    )
+  } else {
+    Fail "button '$Name' does not expose an activation pattern"
   }
-  $Pattern.Invoke()
   Start-Sleep -Milliseconds 500
+}
+
+function Confirm-ApprovalDialog {
+  $Deadline = (Get-Date).AddSeconds($LinkActionTimeoutSeconds)
+  $DialogCondition = [System.Windows.Automation.AndCondition]::new(
+    [System.Windows.Automation.PropertyCondition]::new(
+      [System.Windows.Automation.AutomationElement]::NameProperty,
+      "Approve this device?"
+    ),
+    [System.Windows.Automation.PropertyCondition]::new(
+      [System.Windows.Automation.AutomationElement]::ControlTypeProperty,
+      [System.Windows.Automation.ControlType]::Window
+    )
+  )
+  while ((Get-Date) -lt $Deadline) {
+    $Dialog = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
+      [System.Windows.Automation.TreeScope]::Descendants,
+      $DialogCondition
+    )
+    if ($Dialog) {
+      Invoke-Button $Dialog "Yes"
+      Log "confirmed the shipped WPF device approval dialog"
+      return
+    }
+    Start-Sleep -Milliseconds 100
+  }
+  Fail "WPF device approval confirmation did not appear within $LinkActionTimeoutSeconds seconds"
+}
+
+function Wait-ElementByName(
+  [System.Windows.Automation.AutomationElement]$Window,
+  [string]$Name
+) {
+  $Deadline = (Get-Date).AddSeconds($LinkActionTimeoutSeconds)
+  while ((Get-Date) -lt $Deadline) {
+    $Element = Find-ElementByName $Window $Name
+    if ($Element) {
+      return $Element
+    }
+    Start-Sleep -Milliseconds 250
+  }
+  Fail "missing UI Automation element named '$Name' after $LinkActionTimeoutSeconds seconds"
+}
+
+function Authorized-AppKeyCount($Status) {
+  if ($Status.summary -and $Status.summary.authorized_app_key_count) {
+    return [int]$Status.summary.authorized_app_key_count
+  }
+  if ($Status.summary -and $Status.summary.authorized_device_count) {
+    return [int]$Status.summary.authorized_device_count
+  }
+  if ($Status.network -and $Status.network.authorized_app_key_count) {
+    return [int]$Status.network.authorized_app_key_count
+  }
+  if ($Status.network -and $Status.network.authorized_device_count) {
+    return [int]$Status.network.authorized_device_count
+  }
+  return 0
+}
+
+function Test-ExpectedStatus($Status) {
+  if (-not $Status.initialized -or -not $Status.profile) {
+    return $false
+  }
+  switch ($ExpectedState) {
+    "awaiting_approval" {
+      return $Status.profile.authorization_state -eq "awaiting_approval" -and
+        $Status.profile.app_key_link_request -and
+        $Status.profile.app_key_link_request.url -like "https://drive.iris.to/approve-device/*"
+    }
+    "approval_queued" {
+      return $Status.profile.authorization_state -eq "authorized" -and
+        [int]$Status.profile.pending_device_approval_receipt_count -ge 1
+    }
+    default {
+      return $Status.profile.authorization_state -eq "authorized" -and
+        (Authorized-AppKeyCount $Status) -ge 1
+    }
+  }
+}
+
+function Wait-ExpectedStatus {
+  $Deadline = (Get-Date).AddSeconds($LinkActionTimeoutSeconds)
+  while ((Get-Date) -lt $Deadline) {
+    $Status = & $Idrive --config-dir $ConfigDir status | ConvertFrom-Json
+    if (Test-ExpectedStatus $Status) {
+      return $Status
+    }
+    Start-Sleep -Milliseconds 250
+  }
+  Fail "Windows shell did not reach expected state $ExpectedState within $LinkActionTimeoutSeconds seconds"
 }
 
 function Wait-ShellReady {
@@ -618,7 +850,15 @@ try {
   $env:IRIS_DRIVE_CONFIG_DIR = $ConfigDir
   $env:IRIS_DRIVE_EXTERNAL_DAEMON = "true"
   $env:IRIS_DRIVE_WINDOWS_SHELL_TRACE = $ShellTrace
-  $Started = Start-Process -FilePath $Exe -WorkingDirectory $PublishDir -PassThru
+  $StartArguments = @()
+  if (-not [string]::IsNullOrWhiteSpace($LaunchLink)) {
+    $StartArguments += $LaunchLink
+  }
+  if ($StartArguments.Count -gt 0) {
+    $Started = Start-Process -FilePath $Exe -ArgumentList $StartArguments -WorkingDirectory $PublishDir -PassThru
+  } else {
+    $Started = Start-Process -FilePath $Exe -WorkingDirectory $PublishDir -PassThru
+  }
   Log "launched IrisDrive pid=$($Started.Id)"
 
   $Process = $null
@@ -643,39 +883,29 @@ try {
     Fail "UI Automation could not attach to Iris Drive window"
   }
 
-  [void](Require-Element $Window "My Drive")
-  [void](Require-Element $Window "Open Drive Folder")
-  [void](Require-Element $Window "Files")
-  [void](Require-Element $Window "Storage")
-  [void](Require-Element $Window "Devices")
-  Invoke-Button $Window "Devices"
-  [void](Require-Element $Window "Linked Devices")
-  Invoke-Button $Window "Network"
-  [void](Require-Element $Window "FIPS")
-  [void](Require-Element $Window "Relays")
-  Invoke-Button $Window "My Drive"
-
-  $Status = & $Idrive --config-dir $ConfigDir status | ConvertFrom-Json
-  if (-not $Status.initialized) {
-    Fail "Windows GUI smoke expected an initialized app profile"
+  if ($ExpectedState -eq "approval_queued") {
+    Confirm-ApprovalDialog
   }
-  $Authorized = 0
-  if ($Status.summary -and $Status.summary.authorized_app_key_count) {
-    $Authorized = [int]$Status.summary.authorized_app_key_count
-  } elseif ($Status.summary -and $Status.summary.authorized_device_count) {
-    $Authorized = [int]$Status.summary.authorized_device_count
-  } elseif ($Status.network -and $Status.network.authorized_app_key_count) {
-    $Authorized = [int]$Status.network.authorized_app_key_count
-  } elseif ($Status.network -and $Status.network.authorized_device_count) {
-    $Authorized = [int]$Status.network.authorized_device_count
-  }
-  if ($Authorized -lt 1) {
-    Fail "Windows status has no authorized app keys"
+  $Status = Wait-ExpectedStatus
+  if ($ExpectedState -eq "awaiting_approval") {
+    [void](Wait-ElementByName $Window "Waiting for approval")
+  } else {
+    [void](Require-Element $Window "My Drive")
+    [void](Require-Element $Window "Open Drive Folder")
+    [void](Require-Element $Window "Files")
+    [void](Require-Element $Window "Storage")
+    [void](Require-Element $Window "Devices")
+    Invoke-Button $Window "Devices"
+    [void](Require-Element $Window "Linked Devices")
+    Invoke-Button $Window "Network"
+    [void](Require-Element $Window "FIPS")
+    [void](Require-Element $Window "Relays")
+    Invoke-Button $Window "My Drive"
   }
 
   Capture-Screenshot $Screenshot
-  "WINDOWS_GUI_SMOKE_OK" | Set-Content -Encoding ASCII $ResultFile
-  Log "WINDOWS_GUI_SMOKE_OK"
+  "WINDOWS_GUI_SMOKE_OK state=$ExpectedState" | Set-Content -Encoding ASCII $ResultFile
+  Log "WINDOWS_GUI_SMOKE_OK state=$ExpectedState"
 } catch {
   Fail (($_ | Out-String).Trim())
 } finally {
@@ -690,7 +920,7 @@ try {
 '@ | Set-Content -Encoding ASCII $WorkerScript
 
   try {
-    $ActionArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$WorkerScript`" -PublishDir `"$PublishDir`" -Exe `"$Exe`" -Idrive `"$Idrive`" -ConfigDir `"$ConfigDir`" -ShellTrace `"$ShellTrace`" -ResultFile `"$ResultFile`" -ErrorFile `"$ErrorFile`" -WorkerLog `"$WorkerLog`" -Screenshot `"$InteractiveScreenshot`" -ShellReadyTimeoutSeconds $ShellReadyTimeoutSeconds"
+    $ActionArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$WorkerScript`" -PublishDir `"$PublishDir`" -Exe `"$Exe`" -Idrive `"$Idrive`" -ConfigDir `"$ConfigDir`" -ShellTrace `"$ShellTrace`" -ResultFile `"$ResultFile`" -ErrorFile `"$ErrorFile`" -WorkerLog `"$WorkerLog`" -Screenshot `"$InteractiveScreenshot`" -ShellReadyTimeoutSeconds $ShellReadyTimeoutSeconds -LinkActionTimeoutSeconds $LinkActionTimeoutSeconds -ExpectedState `"$ExpectedState`" -LaunchLink `"$LaunchLink`""
     Write-SmokeLog "launching Windows WPF shell in interactive task"
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
     $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $ActionArgs -WorkingDirectory $PublishDir
@@ -699,7 +929,7 @@ try {
     Register-ScheduledTask -TaskName $TaskName -Action $Action -Trigger $Trigger -Principal $Principal -Force | Out-Null
     Start-ScheduledTask -TaskName $TaskName
 
-    $TaskDeadline = (Get-Date).AddSeconds($ShellReadyTimeoutSeconds + 45)
+    $TaskDeadline = (Get-Date).AddSeconds($ShellReadyTimeoutSeconds + $LinkActionTimeoutSeconds + 45)
     while ((Get-Date) -lt $TaskDeadline) {
       if ((Test-Path $ResultFile) -or (Test-Path $ErrorFile)) {
         break

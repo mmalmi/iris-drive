@@ -7,6 +7,8 @@ import { basename, dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
+import { buildNumberFromVersion } from './local-release-lib.mjs'
+
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(__dirname, '..')
 loadEnvFileDefaults(join(repoRoot, '.env.release.local'))
@@ -73,7 +75,7 @@ const bundleId = envValue(['IRIS_DRIVE_IOS_BUNDLE_ID'], 'fi.siriusbusiness.drive
 const appSku = envValue(['IRIS_DRIVE_ASC_APP_SKU'], bundleId)
 const appPrimaryLocale = envValue(['IRIS_DRIVE_ASC_APP_PRIMARY_LOCALE'], 'en-US')
 const versionName = envValue(['IRIS_DRIVE_IOS_MARKETING_VERSION'], workspaceVersion())
-const buildNumber = envValue(['IRIS_DRIVE_IOS_BUILD_NUMBER'], semanticVersionCode(versionName))
+const buildNumber = envValue(['IRIS_DRIVE_IOS_BUILD_NUMBER'], buildNumberFromVersion(versionName))
 const waitAttempts = intEnv('IRIS_DRIVE_TESTFLIGHT_WAIT_ATTEMPTS', 40)
 const waitSeconds = intEnv('IRIS_DRIVE_TESTFLIGHT_WAIT_SECONDS', 30)
 const usesNonExemptEncryption = boolEnv('IRIS_DRIVE_TESTFLIGHT_USES_NONEXEMPT_ENCRYPTION', false)
@@ -228,15 +230,6 @@ function workspaceVersion() {
   const cargoToml = readFileSync(join(repoRoot, 'Cargo.toml'), 'utf8')
   const workspace = cargoToml.match(/\[workspace\.package\][\s\S]*?version\s*=\s*"([^"]+)"/)
   return workspace?.[1] ?? '0.1.0'
-}
-
-function semanticVersionCode(version) {
-  const match = version.match(/^(\d+)\.(\d+)\.(\d+)/)
-  if (!match) {
-    fail(`Version is not semver-shaped: ${version}`)
-  }
-  const [, major, minor, patch] = match
-  return String(Number(major) * 1_000_000 + Number(minor) * 1_000 + Number(patch))
 }
 
 function resolveAscAuth() {

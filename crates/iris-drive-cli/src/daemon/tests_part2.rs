@@ -593,27 +593,16 @@ async fn root_apply_followup_skips_refresh_when_blocks_are_missing() {
 }
 
 #[test]
-fn stale_drive_root_followup_refreshes_projection_after_blocks_sync() {
+fn applied_or_stale_current_drive_root_schedules_followup() {
+    let expected = DriveRootFollowupPlan {
+        pull_blocks: true,
+        refresh_projection: true,
+    };
+
+    assert_eq!(drive_root_followup_plan(false, true), expected);
     assert_eq!(
-        drive_root_followup_plan(false, true, false),
-        DriveRootFollowupPlan {
-            pull_blocks: true,
-            refresh_projection: true,
-        }
-    );
-    assert_eq!(
-        drive_root_followup_plan(false, true, true),
-        DriveRootFollowupPlan {
-            pull_blocks: true,
-            refresh_projection: true,
-        }
-    );
-    assert_eq!(
-        drive_root_followup_plan(true, false, false),
-        DriveRootFollowupPlan {
-            pull_blocks: true,
-            refresh_projection: true,
-        }
+        drive_root_followup_plan(true, false),
+        expected
     );
 }
 

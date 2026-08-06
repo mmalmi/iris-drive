@@ -57,6 +57,7 @@ class MainActivity : ComponentActivity() {
     }
     private val nativeCoreDispatcher = nativeCoreExecutor.asCoroutineDispatcher()
     private var nativeHandle: Long = 0
+    private var pendingLaunchIntent: Intent? = null
     private var refreshJob: Job? = null
     private var nativeStateObserver: FileObserver? = null
     private var nativeRefreshInFlight = false
@@ -287,7 +288,11 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         AndroidDebugSupport.applyEnvironment(this, intent)
-        handleLaunchIntent(intent)
+        if (nativeHandle == 0L) {
+            pendingLaunchIntent = intent
+        } else {
+            handleLaunchIntent(intent)
+        }
     }
 
     override fun onDestroy() {
@@ -310,6 +315,9 @@ class MainActivity : ComponentActivity() {
 
     private fun startNativeCore(launchIntent: Intent?) {
         lifecycleScope.launch(nativeCoreDispatcher) {
+            if (BuildConfig.DEBUG) {
+                delay(launchIntent?.getLongExtra(DEBUG_NATIVE_START_DELAY_MS, 0L) ?: 0L)
+            }
             NativeCore.initializeAndroidContext(applicationContext)
             val handle = NativeCore.appNew(filesDir.absolutePath, BuildConfig.VERSION_NAME)
             var installed = false
@@ -342,7 +350,9 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
-                    handleLaunchIntent(launchIntent)
+                    val intentToHandle = pendingLaunchIntent ?: launchIntent
+                    pendingLaunchIntent = null
+                    handleLaunchIntent(intentToHandle)
                     selfUpdateManager.startAutomaticChecks()
                 }
             } finally {
@@ -884,7 +894,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 "app_key_approval" -> {
-                    dispatch(NativeActions.approveDevice(uri.toString(), defaultDeviceLabel()))
+                    confirmDeviceApproval(uri.toString())
                 }
 
                 "invite" -> {
@@ -896,18 +906,18 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
-        when (intent?.getStringExtra(AndroidDebugSupport.ACTION_EXTRA)) {
+        when (AndroidDebugSupport.action(intent)) {
             "create-profile" -> dispatch(NativeActions.createProfile("Android smoke"))
             "link-device" -> {
-                val owner = intent.getStringExtra(AndroidDebugSupport.OWNER_EXTRA).orEmpty()
+                val owner = intent?.getStringExtra(AndroidDebugSupport.OWNER_EXTRA).orEmpty()
                 dispatch(NativeActions.linkDevice(owner, "Android smoke"))
             }
             "approve-device" -> {
-                val request = intent.getStringExtra(AndroidDebugSupport.REQUEST_EXTRA).orEmpty()
+                val request = intent?.getStringExtra(AndroidDebugSupport.REQUEST_EXTRA).orEmpty()
                 dispatch(NativeActions.approveDevice(request, "Android smoke"))
             }
             "add-relay" -> {
-                val relay = intent.getStringExtra(AndroidDebugSupport.RELAY_EXTRA).orEmpty()
+                val relay = intent?.getStringExtra(AndroidDebugSupport.RELAY_EXTRA).orEmpty()
                 dispatch(NativeActions.addRelay(relay))
             }
             "add-root" -> dispatch(
@@ -921,6 +931,24 @@ class MainActivity : ComponentActivity() {
             "probe-network" -> AndroidDebugSupport.writeNetworkProbe(this, lifecycleScope, intent)
             "refresh" -> refresh()
         }
+    }
+
+    private fun confirmDeviceApproval(request: String) {
+        if (!NativeCore.isCompleteDeviceApprovalInput(request)) {
+            Toast.makeText(this, "Invalid device request", Toast.LENGTH_SHORT).show()
+            return
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Approve this device?")
+            .setMessage("This will add the joining device to Iris Drive.")
+            .setPositiveButton("Approve") { _, _ ->
+                dispatch(
+                    NativeActions.approveDevice(request, ""),
+                    ::autoStartSyncIfNeeded,
+                )
+            }
+            .setNegativeButton("Cancel", null)
+            .show()
     }
 
     private fun providerRootDocumentUri(): String =
@@ -953,6 +981,8 @@ class MainActivity : ComponentActivity() {
     }
 
     companion object {
+        internal const val DEBUG_NATIVE_START_DELAY_MS =
+            "to.iris.drive.DEBUG_NATIVE_START_DELAY_MS"
         private const val DOCUMENTS_ROOT_DOCUMENT_ID = "root"
         private const val ANDROID_CALENDAR_SYNC_CHECK_INTERVAL_MS = 60_000L
     }

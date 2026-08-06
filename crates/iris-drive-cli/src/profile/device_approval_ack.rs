@@ -68,25 +68,49 @@ pub(super) async fn handle_device_approval_receipt_app_message(
     }
     config.save(config_path_in(config_dir))?;
     drop(config_lock);
+    if let Some(sync) = fips_blocks {
+        sync.refresh_authorized_peers_from_config_dir(config_dir)
+            .await;
+    }
+    send_device_approval_applied_ack_if_ready(config_dir, &config, fips_blocks).await?;
+    Ok(true)
+}
+
+pub(super) async fn send_device_approval_applied_ack_if_ready(
+    config_dir: &Path,
+    config: &AppConfig,
+    fips_blocks: Option<&FsFipsBlockSync>,
+) -> Result<bool> {
+    let Some(state) = config.profile.as_ref() else {
+        return Ok(false);
+    };
+    let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
+        return Ok(false);
+    };
+    let receipt_count = pending.approval_receipt_event.len();
+    if receipt_count == 0 {
+        return Ok(false);
+    }
     let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
         .context("loading app key for approval ACK")?;
-    let ack = iris_drive_core::app_key_link_transport::device_approval_applied_ack_event(
-        config
-            .profile
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("profile disappeared"))?,
-        device.keys(),
-        &event,
-        unix_now_seconds(),
-    )?;
-    if let Some(sync) = fips_blocks {
-        let parsed = iris_drive_core::nostr_identity::parse_nostr_identity_device_approval_applied_ack_event(&ack)?;
+    let acknowledgements =
+        iris_drive_core::app_key_link_transport::device_approval_applied_ack_events(
+            state,
+            device.keys(),
+            unix_now_seconds(),
+        )?;
+    let all_receipts_ready = acknowledgements.len() == receipt_count;
+    let Some(sync) = fips_blocks else {
+        return Ok(false);
+    };
+    for acknowledgement in acknowledgements {
+        let parsed = iris_drive_core::nostr_identity::parse_nostr_identity_device_approval_applied_ack_event(&acknowledgement)?;
         sync.send_app_message(
             &pubkey_npub(&parsed.approved_by_pubkey),
             APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC,
-            ack.as_json().into_bytes(),
+            acknowledgement.as_json().into_bytes(),
         )
         .await?;
     }
-    Ok(true)
+    Ok(all_receipts_ready)
 }

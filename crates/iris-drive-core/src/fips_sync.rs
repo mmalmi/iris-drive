@@ -6,7 +6,7 @@
 //! but the local app should first ask peer instances over FIPS.
 
 use std::collections::{BTreeMap, BTreeSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -27,6 +27,7 @@ use crate::blossom_sync::DownloadReport;
 use crate::config::AppConfig;
 use crate::fips_bootstrap::{DEFAULT_FIPS_BOOTSTRAP_PEERS, DEFAULT_FIPS_WEBSOCKET_SEED_URLS};
 use crate::identity::AppKey;
+use crate::paths::config_path_in;
 
 mod blob_runtime;
 mod control_runtime;
@@ -34,6 +35,7 @@ mod download;
 mod endpoint_config;
 mod nostr_runtime;
 mod peer_config;
+mod peer_refresh;
 mod recent_peer_cache;
 mod settings_runtime;
 use blob_runtime::{DriveBlobRuntime, configured_shared_lmdb_route};
@@ -46,6 +48,7 @@ pub use nostr_runtime::FipsNostrPubsubEvent;
 #[cfg(test)]
 use peer_config::drive_core_peer_configs;
 use peer_config::{peer_ids, set_drive_fips_peer_configs};
+use peer_refresh::PeerConfigRefresh;
 use recent_peer_cache::{DriveRecentPeers, recent_peers_file_path, unix_time_ms};
 use settings_runtime::fips_endpoint_options;
 pub use settings_runtime::{FipsTransportSettings, IRIS_DRIVE_FIPS_DISCOVERY_SCOPE};
@@ -80,7 +83,7 @@ pub struct FipsBlockSync<L: Store + Send + Sync + 'static> {
     endpoint_npub: String,
     discovery_scope: String,
     transport_settings: FipsTransportSettings,
-    last_peer_config: Mutex<Option<FipsPeerConfigSnapshot>>,
+    peer_config_refresh: PeerConfigRefresh,
     recent_peers: Option<Mutex<DriveRecentPeers>>,
 }
 
@@ -216,7 +219,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             endpoint_npub: local_peer_id,
             discovery_scope,
             transport_settings,
-            last_peer_config: Mutex::new(Some(peer_snapshot)),
+            peer_config_refresh: PeerConfigRefresh::new(Some(peer_snapshot)),
             recent_peers: recent_peers.map(Mutex::new),
         })
     }
@@ -241,7 +244,41 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         &self.transport_settings
     }
 
-    pub async fn refresh_authorized_peers(&self, config: &AppConfig) {
+    /// Refresh the live peer ACL from the newest config persisted on disk.
+    /// Loading happens after refresh serialization so a delayed caller cannot
+    /// apply an older in-memory config after a newer mutation has completed.
+    pub async fn refresh_authorized_peers_from_config_dir(&self, config_dir: &Path) {
+        let config_path = config_path_in(config_dir);
+        let (refresh, config) = self
+            .peer_config_refresh
+            .load_serialized(|| {
+                if !config_path.is_file() {
+                    return Err("persisted config is missing".to_string());
+                }
+                AppConfig::load_or_default(&config_path).map_err(|error| error.to_string())
+            })
+            .await;
+        let config = match config {
+            Ok(config) => config,
+            Err(error) => {
+                tracing::warn!(%error, path = %config_path.display(), "failed to load Drive config for FIPS peer refresh");
+                return;
+            }
+        };
+        self.refresh_authorized_peers_locked(&config, refresh).await;
+    }
+
+    #[cfg(test)]
+    async fn refresh_authorized_peers(&self, config: &AppConfig) {
+        let (refresh, ()) = self.peer_config_refresh.load_serialized(|| ()).await;
+        self.refresh_authorized_peers_locked(config, refresh).await;
+    }
+
+    async fn refresh_authorized_peers_locked(
+        &self,
+        config: &AppConfig,
+        refresh: peer_refresh::PeerConfigRefreshGuard<'_>,
+    ) {
         let application_peers = authorized_device_fips_peers(config, &self.transport_settings);
         let routing_peers = routing_fips_peers(config, &self.transport_settings);
         let blob_peers = authorized_blob_fips_peers(config, &self.transport_settings);
@@ -251,7 +288,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             &routing_peers,
             &blob_peers,
         );
-        if !self.update_peer_config_snapshot(snapshot) {
+        if refresh.is_current(&snapshot) {
             return;
         }
         let mut endpoint_peers =
@@ -266,6 +303,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         .await
         {
             tracing::warn!(%error, "failed to refresh Drive FIPS peers");
+            return;
         }
         if let Some(runtime) = self.control_runtime.as_ref()
             && let Err(error) = runtime
@@ -273,10 +311,12 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
                 .await
         {
             tracing::warn!(%error, "failed to refresh Drive control policy");
+            return;
         }
         if let Some(runtime) = self.blob_runtime.as_ref() {
             runtime.set_authorized_peers(&blob_peers);
         }
+        refresh.commit(snapshot);
     }
 
     pub async fn peer_ids(&self) -> Vec<String> {
@@ -288,9 +328,8 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     }
 
     pub fn authorized_peer_ids(&self) -> Vec<String> {
-        self.last_peer_config
-            .lock()
-            .expect("FIPS peer config snapshot lock poisoned")
+        self.peer_config_refresh
+            .applied()
             .as_ref()
             .map(|snapshot| snapshot.blob.iter().map(|peer| peer.npub.clone()).collect())
             .unwrap_or_default()
@@ -489,18 +528,6 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             .shutdown()
             .await
             .map_err(|error| FipsSyncError::Endpoint(error.to_string()))
-    }
-
-    fn update_peer_config_snapshot(&self, snapshot: FipsPeerConfigSnapshot) -> bool {
-        let mut last = self
-            .last_peer_config
-            .lock()
-            .expect("FIPS peer config snapshot lock poisoned");
-        if last.as_ref() == Some(&snapshot) {
-            return false;
-        }
-        *last = Some(snapshot);
-        true
     }
 
     fn merge_recent_peer_routes(&self, peer_configs: &mut [FipsPeerConfig]) {

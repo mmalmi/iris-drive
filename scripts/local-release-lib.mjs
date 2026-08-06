@@ -53,13 +53,26 @@ export function semverFromTag(tag) {
   return stripped
 }
 
+// v0.1.32 already shipped as build 1033. This epoch offset keeps every later
+// semver-derived build ahead of the original numbering sequence.
+const BUILD_NUMBER_EPOCH = 1
+
 export function buildNumberFromVersion(version) {
-  const match = semverFromTag(version).match(/^(\d+)\.(\d+)\.(\d+)/)
+  const semver = semverFromTag(version)
+  const match = semver.match(/^(\d+)\.(\d+)\.(\d+)$/)
   if (!match) {
-    throw new Error(`Version is not semver-shaped: ${version}`)
+    throw new Error(`Build numbers require a stable release version, got "${version}"`)
   }
-  const [, major, minor, patch] = match
-  return String(Number(major) * 1_000_000 + Number(minor) * 1_000 + Number(patch))
+  const [, majorText, minorText, patchText] = match
+  const [major, minor, patch] = [majorText, minorText, patchText].map(Number)
+  if (minor > 999 || patch > 999) {
+    throw new Error('Build-number minor and patch components must each be at most 999')
+  }
+  const build = major * 1_000_000 + minor * 1_000 + patch + BUILD_NUMBER_EPOCH
+  if (!Number.isSafeInteger(build) || build > 2_147_483_647) {
+    throw new Error(`Build number is outside the supported Android integer range: ${build}`)
+  }
+  return String(build)
 }
 
 export function bumpPbxprojReleaseVersions(pbxprojText, version) {

@@ -40,6 +40,8 @@ import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.window.Dialog
@@ -241,7 +243,9 @@ private fun QrScannerCamera(
     Box(modifier = modifier.background(Color.Black)) {
         AndroidView(
             factory = { previewView },
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .semantics { contentDescription = "QR scanner camera" },
         )
         QrScannerCrosshair(modifier = Modifier.fillMaxSize())
         Row(

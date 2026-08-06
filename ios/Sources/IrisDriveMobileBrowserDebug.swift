@@ -1,5 +1,6 @@
 import Foundation
 import Network
+import os
 
 #if DEBUG
 extension IrisDriveMobileModel {
@@ -68,11 +69,14 @@ extension IrisDriveMobileModel {
         await withCheckedContinuation { continuation in
             let monitor = NWPathMonitor()
             let queue = DispatchQueue(label: "to.iris.drive.debug.network-path")
-            var didResume = false
+            let didResume = OSAllocatedUnfairLock(initialState: false)
 
-            func finish(_ path: NWPath) {
-                guard !didResume else { return }
-                didResume = true
+            @Sendable func finish(_ path: NWPath) {
+                let isFirst = didResume.withLock { resumed in
+                    defer { resumed = true }
+                    return !resumed
+                }
+                guard isFirst else { return }
                 monitor.cancel()
                 continuation.resume(returning: debugNetworkPathResult(from: path))
             }

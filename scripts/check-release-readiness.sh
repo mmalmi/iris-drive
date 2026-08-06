@@ -69,8 +69,15 @@ require_file scripts/remove_fileprovider_domain.swift
 require_executable scripts/idle-cpu-gate.sh
 require_file scripts/idle-cpu-gate-windows.ps1
 require_executable scripts/macos-release-smoke.sh
+require_executable scripts/macos-vm-git-sync.sh
+require_executable scripts/macos-vm-smoke.sh
+require_executable scripts/macos-vm-idle-cpu.sh
+require_executable scripts/macos-idle-cpu-smoke.sh
+require_executable scripts/macos-vm-android-manual-link-e2e.sh
+require_executable scripts/macos-android-manual-link-remote.sh
 require_executable scripts/macos-profiles
 require_executable scripts/ios-build
+require_executable scripts/release-build-number.mjs
 require_executable scripts/ios-profiles
 require_executable scripts/testflight-internal
 require_executable scripts/testflight-public
@@ -92,6 +99,7 @@ require_contains scripts/local-release.mjs "--build"
 require_contains scripts/local-release.mjs "--skip-zapstore"
 require_contains scripts/local-release.mjs "publishZapstore"
 require_contains scripts/local-release.mjs "scripts', 'ios-build'"
+require_contains scripts/local-release-lib.mjs "BUILD_NUMBER_EPOCH"
 require_contains scripts/local-release.mjs "IRIS_DRIVE_IOS_TESTFLIGHT_CHANNELS"
 require_contains scripts/local-release.mjs "IRIS_DRIVE_IOS_MARKETING_VERSION"
 require_contains scripts/local-release.mjs "App Store Connect API key file"
@@ -118,6 +126,7 @@ require_contains scripts/local-release.mjs "-PirisDriveVersionName="
 require_contains android/app/build.gradle.kts "irisDriveVersionName"
 require_contains scripts/ios-build "ios-testflight-public"
 require_contains scripts/ios-build "scripts/ios-profiles"
+require_contains scripts/ios-build 'node "$ROOT/scripts/release-build-number.mjs" "$1"'
 require_contains scripts/ios-build "testflight-internal"
 require_contains scripts/ios-build 'FILE_PROVIDER_BUNDLE_ID="${IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID:-$BUNDLE_ID.FileProvider}"'
 require_contains scripts/ios-build "IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER"
@@ -177,11 +186,17 @@ require_contains scripts/release-gate.sh "IRIS_DRIVE_RELEASE_GATE_FULL"
 require_contains scripts/release-gate.sh "IRIS_DRIVE_RELEASE_GATE_FAST_PRECHECKED"
 require_contains scripts/release-gate.sh "IRIS_DRIVE_RELEASE_GATE_IDLE_CPU"
 require_contains scripts/release-gate.sh "just smoke-macos"
-require_contains scripts/release-gate.sh "macos-dev-app.sh run-existing"
+require_contains scripts/release-gate.sh "scripts/macos-vm-smoke.sh"
+require_contains scripts/release-gate.sh "scripts/macos-vm-idle-cpu.sh"
+require_contains scripts/release-gate.sh "IRIS_DRIVE_MACOS_SSH_HOST"
+require_contains scripts/release-gate.sh "macos_vm_gate_enabled"
+require_contains scripts/release-gate.sh "IRIS_DRIVE_RELEASE_GATE_MACOS_VM"
+require_contains scripts/release-gate.sh "scripts/local-release-version.test.mjs"
+require_contains scripts/macos-idle-cpu-smoke.sh "macos-dev-app.sh"
 require_absent scripts/release-gate.sh "just macos-build"
 require_contains scripts/release-gate.sh "run_macos_idle_cpu_gate"
-require_contains scripts/release-gate.sh "macOS idle CPU gate"
-require_contains scripts/release-gate.sh "idle-cpu-gate.sh --platform macos"
+require_contains scripts/macos-idle-cpu-smoke.sh "macOS idle CPU gate"
+require_contains scripts/macos-idle-cpu-smoke.sh "idle-cpu-gate.sh\" --platform macos"
 require_contains scripts/release-gate.sh "terminate_booted_ios_simulator_instances"
 require_contains scripts/release-gate.sh "IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID"
 require_contains scripts/release-gate.sh "just ios-smoke --no-build"
@@ -214,6 +229,8 @@ require_contains scripts/cross-vm-five-platform-e2e.sh "desktop-gui-smoke.sh\" w
 require_contains scripts/cross-vm-five-platform-e2e.sh "scripts/ios-gui-linking-smoke.sh"
 require_contains scripts/cross-vm-five-platform-e2e.sh "scripts/android-gui-linking-smoke.sh"
 require_contains scripts/cross-vm-five-platform-e2e.sh "scripts/mobile-android-smoke.sh --no-build"
+require_contains scripts/cross-vm-five-platform-e2e.sh "scripts/macos-vm-android-manual-link-e2e.sh"
+require_contains scripts/cross-vm-five-platform-e2e.sh "IRIS_DRIVE_MOBILE_REUSE_ANDROID_ARTIFACTS=1"
 require_contains scripts/cross-vm-e2e.sh "IRIS_DRIVE_E2E_IDLE_CPU_GATE"
 require_contains scripts/cross-vm-e2e.sh 'SETUP_REMOTE_TIMEOUT_SECS="${IRIS_DRIVE_E2E_SETUP_REMOTE_TIMEOUT_SECS:-300}"'
 require_contains scripts/cross-vm-e2e.sh "idle daemon CPU gate"

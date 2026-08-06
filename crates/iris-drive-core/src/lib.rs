@@ -107,7 +107,7 @@ pub use merge::{
 };
 pub use network_sync::{
     DriveRootEventApplyReport, NetworkSyncOptions, NetworkSyncReport, apply_drive_root_events,
-    authorized_app_key_pubkeys, drive_root_app_key_can_write_roots,
+    authorized_app_key_pubkeys, download_applied_drive_roots, drive_root_app_key_can_write_roots,
     drive_root_recipient_app_key_pubkeys, drive_root_writer_app_key_pubkeys,
     sync_once as network_sync_once, sync_once_with_fips, sync_once_with_options,
 };

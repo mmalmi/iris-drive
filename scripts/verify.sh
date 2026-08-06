@@ -38,7 +38,8 @@ run_fast() {
   parallel_group_start fmt cargo fmt --all --check
   parallel_group_start structure just structure
   parallel_group_start local-release-tests node --test \
-    scripts/local-release.test.mjs scripts/local-release-windows-signing.test.mjs
+    scripts/local-release.test.mjs scripts/local-release-version.test.mjs \
+    scripts/local-release-windows-signing.test.mjs
   parallel_group_start clippy cargo clippy --workspace --all-targets -- -D warnings
   parallel_group_start workspace-tests cargo test --workspace --exclude idrive
   parallel_group_start idrive-tests cargo test -p idrive --bin idrive --test link_input_e2e

@@ -39,15 +39,16 @@ fn receipt_authorized_linked_device_keeps_admin_fips_peer_until_roster_arrives()
         .outbound_app_key_link_request
         .as_mut()
         .unwrap()
-        .approval_receipt_event = Some(
-        admin
-            .state
-            .pending_device_approval_receipts
-            .last()
-            .unwrap()
-            .event_json
-            .clone(),
-    );
+        .approval_receipt_event
+        .insert(
+            admin
+                .state
+                .pending_device_approval_receipts
+                .last()
+                .unwrap()
+                .event_json
+                .clone(),
+        );
     let config = AppConfig {
         profile: Some(linked.state),
         ..Default::default()

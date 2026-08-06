@@ -25,12 +25,25 @@ pub(crate) fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
         file.write_all(bytes)?;
         file.sync_all()?;
         drop(file);
-        fs::rename(&tmp_path, path)
+        fs::rename(&tmp_path, path)?;
+        sync_containing_directory(path)
     })();
     if result.is_err() {
         let _ = fs::remove_file(&tmp_path);
     }
     result
+}
+
+#[cfg(unix)]
+fn sync_containing_directory(path: &Path) -> std::io::Result<()> {
+    fs::File::open(path.parent().unwrap_or_else(|| Path::new(".")))?.sync_all()
+}
+
+// The Rust standard library has no portable directory-sync operation on
+// Windows. The file itself is still flushed before the atomic rename.
+#[cfg(not(unix))]
+fn sync_containing_directory(_path: &Path) -> std::io::Result<()> {
+    Ok(())
 }
 
 #[cfg(test)]
@@ -56,5 +69,12 @@ mod tests {
             .filter(|entry| entry.file_name().to_string_lossy().ends_with(".tmp"))
             .count();
         assert_eq!(temp_files, 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn containing_directory_can_be_synced_after_atomic_rename() {
+        let dir = tempdir().unwrap();
+        sync_containing_directory(&dir.path().join("config.toml")).unwrap();
     }
 }

@@ -165,7 +165,7 @@ public partial class MainWindow : Window
                         : classification.Error.Trim();
                     return;
                 }
-                await ApproveDeviceAsync(argument, "");
+                await ConfirmAndApproveDeviceAsync(argument, NoticeText, static () => { });
             }
         }
         catch (Exception error)

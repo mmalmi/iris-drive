@@ -109,59 +109,14 @@ pub enum AppKeyAuthorizationState {
     Revoked,
 }
 
-pub const MAX_INBOUND_APP_KEY_LINK_REQUESTS: usize = 32;
-pub const MAX_HANDLED_APP_KEY_LINK_REQUESTS: usize = 128;
-pub const MAX_PENDING_DEVICE_APPROVAL_RECEIPTS: usize = 32;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PendingAppKeyLinkRequest {
-    #[serde(alias = "admin_device_pubkey")]
-    pub admin_app_key_pubkey: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub invite_pubkey: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub request_url: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub request_key_secret: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub approval_receipt_event: Option<String>,
-    pub requested_at: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct InboundAppKeyLinkRequest {
-    #[serde(alias = "device_pubkey")]
-    pub app_key_pubkey: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub invite_pubkey: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub request_url: String,
-    pub requested_at: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct HandledAppKeyLinkRequest {
-    #[serde(alias = "device_pubkey")]
-    pub app_key_pubkey: String,
-    pub requested_at: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct PendingDeviceApprovalReceipt {
-    pub request_pubkey: String,
-    pub device_app_key_pubkey: String,
-    #[serde(
-        default,
-        alias = "request_relay",
-        skip_serializing_if = "String::is_empty"
-    )]
-    pub relay_url: String,
-    pub event_json: String,
-}
+#[path = "profile/app_key_link_state.rs"]
+mod app_key_link_state;
+pub use app_key_link_state::{
+    HandledAppKeyLinkRequest, InboundAppKeyLinkRequest, MAX_HANDLED_APP_KEY_LINK_REQUESTS,
+    MAX_INBOUND_APP_KEY_LINK_REQUESTS, MAX_PENDING_DEVICE_APPROVAL_RECEIPTS,
+    MAX_PERSISTED_DEVICE_APPROVAL_RECEIPTS, PendingAppKeyLinkRequest, PendingDeviceApprovalReceipt,
+    PersistedDeviceApprovalReceipts,
+};
 
 /// Persisted local profile state. Lives inside `AppConfig`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -522,7 +477,7 @@ impl ProfileState {
             invite_pubkey,
             request_url,
             request_key_secret,
-            approval_receipt_event: None,
+            approval_receipt_event: PersistedDeviceApprovalReceipts::default(),
             requested_at,
         };
         let changed = self.outbound_app_key_link_request.as_ref() != Some(&next);
@@ -541,7 +496,7 @@ impl ProfileState {
             invite_pubkey: String::new(),
             request_url,
             request_key_secret,
-            approval_receipt_event: None,
+            approval_receipt_event: PersistedDeviceApprovalReceipts::default(),
             requested_at,
         };
         let changed = self.outbound_app_key_link_request.as_ref() != Some(&next);
@@ -2680,5 +2635,7 @@ fn remove_file_if_present(path: &Path) -> Result<bool, std::io::Error> {
     }
 }
 
+#[cfg(test)]
+mod approval_receipt_tests;
 #[cfg(test)]
 mod tests;

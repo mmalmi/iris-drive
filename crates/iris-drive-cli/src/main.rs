@@ -12,9 +12,11 @@ use hashtree_core::{
 use hashtree_fs::FsBlobStore;
 use hashtree_lmdb::LmdbBlobStore;
 use hashtree_provider::{HashTreeProviderFs, ItemKind, ProviderFs};
+#[cfg(test)]
+use iris_drive_core::DriveRole;
 use iris_drive_core::{
     AppKeyRootRef, BackupTarget, BackupTargetCheck, BackupTargetKind, BackupTargetSync, Drive,
-    DriveRole, FsFipsBlockSync, PRIMARY_DRIVE_ID, Profile, ProfileState, UserProfile,
+    FsFipsBlockSync, PRIMARY_DRIVE_ID, Profile, ProfileState, UserProfile,
     blossom_sync::{DownloadReport, UploadReport},
     config::AppConfig,
     config_lock::ConfigMutationLock,

@@ -18,23 +18,29 @@ arguments="$*"
 lane=""
 group=""
 case "$command_name:$arguments" in
-  "just:smoke-macos")
-    touch "$IRIS_DRIVE_GATE_TEST_EVENTS/native-apple.started"
+  "macos-vm-smoke-stub:")
+    printf '%s\n' "\${IRIS_DRIVE_MACOS_SMOKE_LINK_JOURNEY-unset}" \
+      >"$IRIS_DRIVE_GATE_TEST_EVENTS/macos-link-journey"
+    touch "$IRIS_DRIVE_GATE_TEST_EVENTS/native-macos.started"
     for _ in $(seq 1 500); do
-      [[ -f "$IRIS_DRIVE_GATE_TEST_EVENTS/native-android.started" ]] && break
+      [[ -f "$IRIS_DRIVE_GATE_TEST_EVENTS/native-android.started" \
+        && -f "$IRIS_DRIVE_GATE_TEST_EVENTS/native-ios.started" ]] && break
       sleep 0.01
     done
-    [[ -f "$IRIS_DRIVE_GATE_TEST_EVENTS/native-android.started" ]] || exit 98
+    [[ -f "$IRIS_DRIVE_GATE_TEST_EVENTS/native-android.started" \
+      && -f "$IRIS_DRIVE_GATE_TEST_EVENTS/native-ios.started" ]] || exit 98
     touch "$IRIS_DRIVE_GATE_TEST_EVENTS/macos-smoke.finished"
     exit 0
     ;;
   "just:android-gui-smoke")
     touch "$IRIS_DRIVE_GATE_TEST_EVENTS/native-android.started"
     for _ in $(seq 1 500); do
-      [[ -f "$IRIS_DRIVE_GATE_TEST_EVENTS/native-apple.started" ]] && break
+      [[ -f "$IRIS_DRIVE_GATE_TEST_EVENTS/native-macos.started" \
+        && -f "$IRIS_DRIVE_GATE_TEST_EVENTS/native-ios.started" ]] && break
       sleep 0.01
     done
-    [[ -f "$IRIS_DRIVE_GATE_TEST_EVENTS/native-apple.started" ]] || exit 98
+    [[ -f "$IRIS_DRIVE_GATE_TEST_EVENTS/native-macos.started" \
+      && -f "$IRIS_DRIVE_GATE_TEST_EVENTS/native-ios.started" ]] || exit 98
     touch "$IRIS_DRIVE_GATE_TEST_EVENTS/android-gui-smoke.finished"
     exit 0
     ;;
@@ -44,10 +50,20 @@ case "$command_name:$arguments" in
     exit 0
     ;;
   "just:ios-gui-smoke")
-    [[ -f "$IRIS_DRIVE_GATE_TEST_EVENTS/macos-smoke.finished" ]] || exit 96
+    touch "$IRIS_DRIVE_GATE_TEST_EVENTS/native-ios.started"
+    for _ in $(seq 1 500); do
+      [[ -f "$IRIS_DRIVE_GATE_TEST_EVENTS/native-macos.started" \
+        && -f "$IRIS_DRIVE_GATE_TEST_EVENTS/native-android.started" ]] && break
+      sleep 0.01
+    done
+    [[ -f "$IRIS_DRIVE_GATE_TEST_EVENTS/native-macos.started" \
+      && -f "$IRIS_DRIVE_GATE_TEST_EVENTS/native-android.started" ]] || exit 98
     touch "$IRIS_DRIVE_GATE_TEST_EVENTS/ios-gui-smoke.finished"
     exit 0
     ;;
+  "just:e2e-5devices") touch "$IRIS_DRIVE_GATE_TEST_EVENTS/e2e-5devices.finished"; exit 0 ;;
+  "git:remote get-url macos") printf '%s\n' 'configured-macos:/repo'; exit 0 ;;
+  "python3:scripts/test_release_workflows.py") lane=release-workflow-tests ;;
   node:*) lane=local-release-tests ;;
   "cargo:fmt --check") lane=fmt ;;
   "cargo:test --workspace --exclude idrive") lane=workspace-tests ;;
@@ -55,7 +71,7 @@ case "$command_name:$arguments" in
   cargo:*"--test daemon_sync_matrix"*) lane=daemon-tests; group=rust ;;
   cargo:"test -p idrive"*) lane=cli-tests; group=rust ;;
   "cargo:build --workspace --release")
-    for expected in local-release-tests fmt structure workspace-tests cli-tests daemon-tests; do
+    for expected in release-workflow-tests local-release-tests fmt structure workspace-tests cli-tests daemon-tests; do
       [[ -f "$IRIS_DRIVE_GATE_TEST_EVENTS/$expected.finished" ]] || exit 95
     done
     touch "$IRIS_DRIVE_GATE_TEST_EVENTS/workspace-release-build.finished"
@@ -74,7 +90,7 @@ for _ in $(seq 1 500); do
     [[ "$lane" == cli-tests ]] && expected=daemon-tests
     [[ -f "$IRIS_DRIVE_GATE_TEST_EVENTS/$expected.started" ]] || ready=0
   else
-  for expected in local-release-tests fmt structure workspace-tests idrive-compile; do
+  for expected in release-workflow-tests local-release-tests fmt structure workspace-tests idrive-compile; do
     if [[ ! -f "$IRIS_DRIVE_GATE_TEST_EVENTS/$expected.started" ]]; then
       ready=0
       break
@@ -103,7 +119,7 @@ async function makeHarness() {
     mkdir(bin),
     mkdir(events),
   ])
-  for (const command of ['cargo', 'just', 'node', 'uname']) {
+  for (const command of ['cargo', 'git', 'just', 'macos-vm-smoke-stub', 'node', 'python3', 'uname']) {
     const path = join(bin, command)
     await writeFile(path, laneStub)
     await chmod(path, 0o755)
@@ -111,7 +127,7 @@ async function makeHarness() {
   return { root, bin, events }
 }
 
-async function runGate({ failLane = '', system = 'TestOS' } = {}) {
+async function runGate({ failLane = '', full = false, macosHost = 'test-macos-vm', system = 'TestOS' } = {}) {
   const harness = await makeHarness()
   const env = {
     ...process.env,
@@ -120,10 +136,14 @@ async function runGate({ failLane = '', system = 'TestOS' } = {}) {
     IRIS_DRIVE_GATE_TEST_EVENTS: harness.events,
     IRIS_DRIVE_GATE_TEST_FAIL_LANE: failLane,
     IRIS_DRIVE_GATE_TEST_SYSTEM: system,
+    IRIS_DRIVE_DEV_LAB_ENV: join(harness.root, 'missing-dev-lab.env'),
+    IRIS_DRIVE_DEV_VM_MACOS_REMOTE: 'macos',
     IRIS_DRIVE_RELEASE_GATE_IDLE_CPU: '0',
+    IRIS_DRIVE_MACOS_SSH_HOST: macosHost,
+    IRIS_DRIVE_RELEASE_GATE_MACOS_SMOKE_COMMAND: 'macos-vm-smoke-stub',
   }
   try {
-    const result = await execFileAsync(releaseGate, [], {
+    const result = await execFileAsync(releaseGate, full ? ['--full'] : [], {
       cwd: repoRoot,
       env,
       timeout: 15_000,
@@ -144,6 +164,7 @@ test('release gate starts independent checks before joining', async () => {
   try {
     result = await runGate()
     for (const lane of [
+      'release-workflow-tests',
       'local-release-tests',
       'fmt',
       'structure',
@@ -176,18 +197,20 @@ test('release gate drains parallel checks and labels a failed lane', async () =>
   }
 })
 
-test('release gate overlaps Android and Apple functional checks without racing iOS', async () => {
+test('release gate auto-routes macOS to the configured VM and overlaps native checks', async () => {
   let result
   try {
-    result = await runGate({ system: 'Darwin' })
+    result = await runGate({ full: true, macosHost: '', system: 'Darwin' })
     for (const marker of [
       'macos-smoke.finished',
       'ios-smoke.finished',
       'ios-gui-smoke.finished',
       'android-gui-smoke.finished',
+      'e2e-5devices.finished',
     ]) {
       await readFile(join(result.events, marker))
     }
+    assert.equal(await readFile(join(result.events, 'macos-link-journey'), 'utf8'), '1\n')
   } finally {
     if (result?.root) await cleanup(result.root)
   }

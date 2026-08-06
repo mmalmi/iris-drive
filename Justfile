@@ -41,6 +41,7 @@ info:
     @echo "  just dev-vms"
     @echo "  just smoke"
     @echo "  just smoke-macos"
+    @echo "  just e2e-macos-android-manual"
     @echo "  just docker-cli-e2e"
     @echo
     @echo "Checks"
@@ -171,6 +172,9 @@ e2e-4devices *args:
 e2e-5devices *args:
     ./scripts/cross-vm-five-platform-e2e.sh {{args}}
 
+e2e-macos-android-manual:
+    ./scripts/macos-vm-android-manual-link-e2e.sh
+
 release *args:
     node scripts/local-release.mjs --build {{args}}
 
@@ -206,6 +210,7 @@ verify-health:
 
 structure:
     ./scripts/check-platform-parity-matrix.sh
+    ./scripts/check-mobile-physical-linking-e2e.sh
     ./scripts/check-android-e2e-kit.sh
     ./scripts/check-ios-e2e-kit.sh
     ./scripts/check-desktop-gui-e2e-kit.sh

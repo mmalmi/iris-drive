@@ -37,18 +37,10 @@ private func irisDriveUserFacingDriveName(_ value: Any?) -> String {
 @main
 struct IrisDriveMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @Environment(\.openWindow) private var openWindow
-    @ObservedObject private var status = IrisDriveStatus.shared
 
     var body: some Scene {
-        WindowGroup(irisDriveDisplayName, id: irisDriveControlPanelWindowID) {
-            IrisDriveControlPanel(status: status, controller: appDelegate)
-                .frame(minWidth: 780, minHeight: 520)
-                .onAppear {
-                    appDelegate.configureOpenControlPanelWindow {
-                        openWindow(id: irisDriveControlPanelWindowID)
-                    }
-                }
+        Settings {
+            EmptyView()
         }
     }
 }
@@ -66,9 +58,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var fileProviderRegistrationInFlight = false
     private var fileProviderDomainState = FileProviderDomainState.unknown
     private var windowObserver: NSObjectProtocol?
-    private var openControlPanelWindow: (() -> Void)?
     private var controlPanelWindow: NSWindow?
-    var hiddenLaunchWindowSuppressed = false
     var launchOnStartupSynced: Bool?
     private var peerStatusRefreshWorkItem: DispatchWorkItem?
     private var lastPeerStatusRefreshAt = Date.distantPast
@@ -113,8 +103,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if screenshotFixtureMode {
             IrisDriveScreenshotFixtures.apply()
             installWindowObserver()
-            observeWindows()
-            NSApp.activate(ignoringOtherApps: true)
+            showControlPanel()
             return
         }
         if !singleInstanceHandoffDisabled, handOffToExistingInstanceIfNeeded() {
@@ -124,8 +113,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         installE2ENotificationObserverIfEnabled()
         installStatusItem()
         installWindowObserver()
-        observeWindows()
-        suppressHiddenLaunchWindowIfNeeded()
+        if !launchedHidden {
+            showControlPanel()
+        }
         nativeCoreQueue.async { [weak self] in
             NSLog("Iris Drive launching daemon bootstrap")
             self?.bootstrapAndStartDaemon()
@@ -319,27 +309,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.unhide(nil)
         NSApp.activate(ignoringOtherApps: true)
         observeWindows()
-        if let window = mainWindow() {
-            window.makeKeyAndOrderFront(nil)
-            return
-        }
-        openControlPanelWindow?()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.observeWindows()
-            if let window = self?.mainWindow() {
-                window.makeKeyAndOrderFront(nil)
-            } else {
-                self?.fallbackControlPanelWindow().makeKeyAndOrderFront(nil)
-            }
-        }
-    }
-
-    func configureOpenControlPanelWindow(_ openWindow: @escaping () -> Void) {
-        openControlPanelWindow = openWindow
+        (mainWindow() ?? fallbackControlPanelWindow()).makeKeyAndOrderFront(nil)
     }
 
     @objc private func handleShowControlPanelNotification(_ notification: Notification) {
-        showControlPanel()
+        DispatchQueue.main.async { [weak self] in
+            self?.showControlPanel()
+        }
     }
 
     @objc private func handleShowDriveFolderNotification(_ notification: Notification) {
@@ -400,7 +376,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 updateStatus(error.isEmpty ? "Invalid device request" : error)
                 return true
             }
-            approveDevice(url.absoluteString, label: "")
+            IrisDriveStatus.shared.pendingDeviceApproval = IrisDriveDeviceApprovalRequest(
+                requestURL: url.absoluteString
+            )
             return true
         }
         guard isIrisWebURL(url) else {
@@ -1281,11 +1259,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func observeWindows() {
         for window in NSApp.windows where window.title == irisDriveDisplayName {
             window.delegate = self
+            if window.isVisible && controlPanelWindow == nil {
+                controlPanelWindow = window
+            }
         }
     }
 
     private func mainWindow() -> NSWindow? {
-        NSApp.windows.first(where: { $0.title == irisDriveDisplayName }) ?? NSApp.windows.first
+        if let controlPanelWindow {
+            return controlPanelWindow
+        }
+        let window = NSApp.windows.first(where: {
+            $0.isVisible && (
+            $0.title == irisDriveDisplayName
+                || $0.identifier?.rawValue == irisDriveControlPanelWindowID
+            )
+        })
+        controlPanelWindow = window
+        return window
     }
 
     private func fallbackControlPanelWindow() -> NSWindow {

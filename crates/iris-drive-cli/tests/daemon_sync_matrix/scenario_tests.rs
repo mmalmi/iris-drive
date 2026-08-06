@@ -4,7 +4,7 @@ use super::*;
 use serde_json::json;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn live_daemons_newly_approved_pair_exchange_post_approval_edits() {
+async fn live_daemons_link_in_eight_seconds_and_exchange_post_approval_edits() {
     let _guard = live_daemon_test_guard().await;
     let cluster = SyncCluster::start(Duration::ZERO).await;
     cluster.wait_until_authorized().await;
@@ -64,76 +64,6 @@ async fn live_daemons_newly_approved_pair_exchange_post_approval_edits() {
         Client::Ubuntu,
         "post-approval/from-linked.txt",
         b"from linked",
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn live_daemons_running_app_key_link_approval_clears_waiting_quickly() {
-    let _guard = live_daemon_test_guard().await;
-    let relay = LocalNostrRelay::spawn().await;
-    let approval_relay = LocalNostrRelay::spawn().await;
-    let blossom = LocalBlossomServer::spawn_with_upload_delay(Duration::ZERO).await;
-    let owner_cfg = tempdir().unwrap();
-    let linked_cfg = tempdir().unwrap();
-    configure_local_blossom(owner_cfg.path(), &blossom.url);
-    configure_local_blossom(linked_cfg.path(), &blossom.url);
-
-    let owner = run_json(owner_cfg.path(), &["init", "--label", "admin"]);
-    let owner_npub = owner["current_app_key_npub"].as_str().unwrap().to_string();
-    let owner_invite = owner["app_key_link_invite"]["url"].as_str().unwrap();
-    let linked = run_json(
-        linked_cfg.path(),
-        &["link", owner_invite, "--label", "iphone"],
-    );
-    let linked_npub = linked["current_app_key_npub"].as_str().unwrap().to_string();
-    let request = approval_relay
-        .pending_approval_request_url(linked_cfg.path())
-        .await;
-    add_config_relay(owner_cfg.path(), &approval_relay.url);
-    let owner_fips_port = unused_udp_loopback_port();
-    let linked_fips_port = unused_udp_loopback_port();
-    let owner_log = owner_cfg.path().join("owner.log");
-    let linked_log = linked_cfg.path().join("linked.log");
-    let owner_daemon = DaemonChild::spawn_with_fips_peers(
-        owner_cfg.path(),
-        &relay.url,
-        owner_log,
-        unused_loopback_port(),
-        owner_fips_port,
-        &format!("{linked_npub}=127.0.0.1:{linked_fips_port}"),
-    );
-    let linked_daemon = DaemonChild::spawn_with_fips_peers(
-        linked_cfg.path(),
-        &relay.url,
-        linked_log,
-        unused_loopback_port(),
-        linked_fips_port,
-        &format!("{owner_npub}=127.0.0.1:{owner_fips_port}"),
-    );
-
-    tokio::time::sleep(Duration::from_secs(2)).await;
-    let approved_at = Instant::now();
-    run_json(
-        owner_cfg.path(),
-        &["approve", &request, "--label", "iphone"],
-    );
-
-    let fast_window = Duration::from_secs(20);
-    while approved_at.elapsed() < fast_window {
-        let status = run_json(linked_cfg.path(), &["status"]);
-        if status["profile"]["authorization_state"] == "authorized" {
-            return;
-        }
-        tokio::time::sleep(POLL_INTERVAL).await;
-    }
-
-    panic!(
-        "linked device stayed awaiting_approval for {:?}\nowner status: {}\nlinked status: {}\nowner log:\n{}\nlinked log:\n{}",
-        approved_at.elapsed(),
-        serde_json::to_string_pretty(&run_json(owner_cfg.path(), &["status"])).unwrap(),
-        serde_json::to_string_pretty(&run_json(linked_cfg.path(), &["status"])).unwrap(),
-        owner_daemon.log(),
-        linked_daemon.log(),
     );
 }
 

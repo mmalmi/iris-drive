@@ -22,8 +22,8 @@ mod provider_retry;
 pub(crate) use commands::*;
 pub(crate) use provider_retry::import_provider_root_with_retry;
 use provider_retry::{
-    ensure_provider_root_locally_available, primary_merged_root_from_view_with_retry,
-    primary_merged_root_with_retry, primary_merged_view_with_retry,
+    ensure_provider_root_locally_available, primary_merged_root_with_retry,
+    primary_merged_view_and_root_with_retry,
 };
 
 pub(crate) fn cmd_drives(config_dir: &std::path::Path) -> Result<()> {
@@ -248,19 +248,20 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
         let staged_root =
             read_provider_staging(config_dir).context("reading staged provider root")?;
         let supplied_base_root_cid = provider_command_base_root_cid(&command)?;
-        let visible_view = if provider_command_needs_merged_view(&command) {
+        let merged_view_and_root = if provider_command_needs_merged_view(&command) {
             let phase = std::time::Instant::now();
-            let view = primary_merged_view_with_retry(&daemon)
+            let merged = primary_merged_view_and_root_with_retry(&mut daemon)
                 .await
                 .context("building virtual provider timestamp index")?;
             tracing::debug!(
                 elapsed_ms = phase.elapsed().as_millis(),
                 "provider command built merged view"
             );
-            Some(view)
+            Some(merged)
         } else {
             None
         };
+        let visible_view = merged_view_and_root.as_ref().map(|(view, _)| view);
         let phase = std::time::Instant::now();
         let visible = if let Some(staged) = staged_root.as_ref() {
             tracing::debug!("provider command using staged visible root anchor");
@@ -276,12 +277,10 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                 file_count: 0,
                 top_level_entries: 0,
             }
-        } else if let Some(visible_view) = visible_view.as_ref() {
-            primary_merged_root_from_view_with_retry(&daemon, visible_view)
-                .await
-                .context("building virtual provider root")?
+        } else if let Some((_, visible_root)) = merged_view_and_root.as_ref() {
+            visible_root.clone()
         } else {
-            primary_merged_root_with_retry(&daemon)
+            primary_merged_root_with_retry(&mut daemon)
                 .await
                 .context("building virtual provider root")?
         };
@@ -292,7 +291,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
         if provider_command_is_mutation(&command) {
             if staged_root.is_none() && supplied_base_root_cid.is_none() {
                 let phase = std::time::Instant::now();
-                ensure_provider_root_locally_available(&daemon, &visible.root_cid).await?;
+                ensure_provider_root_locally_available(&mut daemon, &visible.root_cid).await?;
                 tracing::debug!(
                     elapsed_ms = phase.elapsed().as_millis(),
                     "provider command checked provider root availability"
@@ -322,9 +321,8 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
         match command {
             ProviderCmd::List => {
                 let phase = std::time::Instant::now();
-                let visible_view = visible_view
-                    .as_ref()
-                    .expect("list command should have prebuilt merged view");
+                let visible_view =
+                    visible_view.expect("list command should have prebuilt merged view");
                 let modified_at_by_path = provider_modified_at_index(visible_view);
                 let entries =
                     provider_entries(daemon.tree(), &visible.root_cid, &modified_at_by_path)
@@ -361,7 +359,6 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     .map(normalize_provider_path)
                     .transpose()?;
                 let modified_at_by_path = visible_view
-                    .as_ref()
                     .map(provider_modified_at_index)
                     .unwrap_or_default();
                 let entries =

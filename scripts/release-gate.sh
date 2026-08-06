@@ -4,6 +4,13 @@ set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT"
+DEV_LAB_ENV="${IRIS_DRIVE_DEV_LAB_ENV:-$HOME/.config/iris-drive/dev-lab.env}"
+if [[ -f "$DEV_LAB_ENV" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$DEV_LAB_ENV"
+  set +a
+fi
 
 usage() {
   cat <<'USAGE'
@@ -20,7 +27,10 @@ Environment:
                                         this same invocation.
   IRIS_DRIVE_RELEASE_GATE_ANDROID=0    Skip local Android build/smoke.
   IRIS_DRIVE_RELEASE_GATE_IOS=0        Skip local iOS build/smoke.
-  IRIS_DRIVE_RELEASE_GATE_MACOS=0      Skip local macOS build/smoke.
+  IRIS_DRIVE_RELEASE_GATE_MACOS=0      Skip the macOS build/smoke lane.
+  IRIS_DRIVE_MACOS_SSH_HOST=<ssh-host> Route every macOS UI/idle lane to this VM.
+  IRIS_DRIVE_RELEASE_GATE_MACOS_VM=0   Explicitly run macOS UI/idle locally;
+                                        otherwise a configured VM is preferred.
   IRIS_DRIVE_RELEASE_GATE_IDLE_CPU=0   Skip idle CPU sampling gates.
   IRIS_DRIVE_RELEASE_GATE_ANDROID_IDLE_CPU_WARMUP_SECS=90
                                         Override Android idle CPU warmup.
@@ -51,7 +61,8 @@ run_parallel_checks() {
   parallel_group_begin release-gate
   parallel_group_start release-workflow-tests python3 scripts/test_release_workflows.py
   parallel_group_start local-release-tests node --test \
-    scripts/local-release.test.mjs scripts/local-release-windows-signing.test.mjs
+    scripts/local-release.test.mjs scripts/local-release-version.test.mjs \
+    scripts/local-release-windows-signing.test.mjs
   parallel_group_start fmt cargo fmt --check
   parallel_group_start structure just structure
   parallel_group_start workspace-tests cargo test --workspace --exclude idrive
@@ -96,6 +107,20 @@ macos_gate_enabled() {
     && [[ "${IRIS_DRIVE_RELEASE_GATE_MACOS:-1}" != "0" ]]
 }
 
+macos_vm_gate_enabled() {
+  case "${IRIS_DRIVE_RELEASE_GATE_MACOS_VM:-auto}" in
+    0 | false | FALSE | False | no | NO | No | off | OFF | Off) return 1 ;;
+    1 | true | TRUE | True | yes | YES | Yes | on | ON | On) return 0 ;;
+    auto | AUTO | Auto | "") ;;
+    *)
+      echo "unsupported IRIS_DRIVE_RELEASE_GATE_MACOS_VM=${IRIS_DRIVE_RELEASE_GATE_MACOS_VM}" >&2
+      exit 2
+      ;;
+  esac
+  [[ -n "${IRIS_DRIVE_MACOS_SSH_HOST:-}" ]] \
+    || git remote get-url "${IRIS_DRIVE_DEV_VM_MACOS_REMOTE:-macos}" >/dev/null 2>&1
+}
+
 ios_gate_enabled() {
   ! bool_true "${IRIS_DRIVE_RELEASE_GATE_IOS_SKIP:-0}" \
     && [[ "${IRIS_DRIVE_RELEASE_GATE_IOS:-1}" != "0" ]]
@@ -108,10 +133,19 @@ android_gate_enabled() {
 
 run_macos_functional_gate() {
   macos_gate_enabled || return 0
+  local link_journey_default=0
+  bool_true "$full" && link_journey_default=1
+  if macos_vm_gate_enabled; then
+    run env \
+      IRIS_DRIVE_MACOS_SMOKE_LINK_JOURNEY="${IRIS_DRIVE_MACOS_SMOKE_LINK_JOURNEY:-$link_journey_default}" \
+      "${IRIS_DRIVE_RELEASE_GATE_MACOS_SMOKE_COMMAND:-./scripts/macos-vm-smoke.sh}"
+    return
+  fi
   run env \
     CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}" \
     IRIS_DRIVE_MACOS_SIGNING="${IRIS_DRIVE_MACOS_SIGNING:-none}" \
     IRIS_DRIVE_DISABLE_DAEMON_SERVICE="${IRIS_DRIVE_RELEASE_GATE_MACOS_DAEMON_SERVICE:-true}" \
+    IRIS_DRIVE_MACOS_SMOKE_LINK_JOURNEY="${IRIS_DRIVE_MACOS_SMOKE_LINK_JOURNEY:-$link_journey_default}" \
     just smoke-macos
 }
 
@@ -132,12 +166,17 @@ run_android_functional_gate() {
   run env IRIS_DRIVE_ANDROID_KEEP_TEST_APP=true just android-gui-smoke
 }
 
+run_ios_idle_cpu_gate() {
+  ios_gate_enabled || return 0
+  run env \
+    IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="${IRIS_DRIVE_RELEASE_GATE_IOS_IDLE_CPU_ROLES:-app}" \
+    IRIS_DRIVE_IDLE_CPU_IOS_DEVICE="${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-${IRIS_DRIVE_IOS_DEVICE:-}}" \
+    ./scripts/idle-cpu-gate.sh --platform ios
+}
+
 run_apple_idle_cpu_gates() {
   if ios_gate_enabled; then
-    run env \
-      IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="${IRIS_DRIVE_RELEASE_GATE_IOS_IDLE_CPU_ROLES:-app}" \
-      IRIS_DRIVE_IDLE_CPU_IOS_DEVICE="${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-${IRIS_DRIVE_IOS_DEVICE:-}}" \
-      ./scripts/idle-cpu-gate.sh --platform ios
+    run_ios_idle_cpu_gate
   fi
   if macos_gate_enabled; then
     # This gate terminates simulator processes to isolate the macOS sample, so
@@ -178,58 +217,17 @@ terminate_booted_ios_simulator_instances() {
 }
 
 run_macos_idle_cpu_gate() {
-  local app_base_dir
-  local config_dir
-  local idrive
-  local output
-  local app_path
-  local status=0
+  macos_gate_enabled || return 0
+  if macos_vm_gate_enabled; then
+    run "${IRIS_DRIVE_RELEASE_GATE_MACOS_IDLE_COMMAND:-./scripts/macos-vm-idle-cpu.sh}"
+    return
+  fi
 
   # A prior iOS gate can leave its simulator process owning FIPS's shared
   # loopback rendezvous. That unrelated process must not drive the isolated
   # macOS idle sample into peer-routing work.
   terminate_booted_ios_simulator_instances
-
-  app_base_dir="$(mktemp -d -t iris-drive-macos-idle.XXXXXX)"
-  config_dir="$app_base_dir/Config"
-  idrive="${CARGO_TARGET_DIR:-$ROOT/target}/debug/idrive"
-  if [[ ! -x "$idrive" ]]; then
-    idrive="$ROOT/target/debug/idrive"
-  fi
-  if [[ ! -x "$idrive" ]]; then
-    echo "macOS idle CPU gate needs a debug idrive binary; run cargo build -p idrive --bin idrive first." >&2
-    rm -rf "$app_base_dir"
-    return 1
-  fi
-  mkdir -p "$config_dir"
-  "$idrive" --config-dir "$config_dir" init --force --label "macOS idle CPU gate" >/dev/null
-
-  output="$(
-    CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target}" \
-      IRIS_DRIVE_MACOS_SIGNING="${IRIS_DRIVE_MACOS_SIGNING:-none}" \
-      IRIS_DRIVE_APP_BASE_DIR="$app_base_dir" \
-      ./scripts/macos-dev-app.sh run-existing
-  )"
-  printf '%s\n' "$output"
-  app_path="$(printf '%s\n' "$output" | sed -n 's/^macOS app launched: //p' | tail -n 1)"
-  if [[ -z "$app_path" || ! -d "$app_path" ]]; then
-    echo "macOS idle CPU gate could not determine launched app path." >&2
-    rm -rf "$app_base_dir"
-    return 1
-  fi
-
-  IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="${IRIS_DRIVE_RELEASE_GATE_MACOS_IDLE_CPU_ROLES:-app,daemon}" \
-    IRIS_DRIVE_IDLE_CPU_WARMUP_SECS="${IRIS_DRIVE_RELEASE_GATE_MACOS_IDLE_CPU_WARMUP_SECS:-60}" \
-    IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH="$app_path" \
-    ./scripts/idle-cpu-gate.sh --platform macos || status=$?
-
-  "$app_path/Contents/MacOS/idrive" \
-    --config-dir "$config_dir" \
-    service uninstall --json >/dev/null 2>&1 || true
-  pkill -f "$app_path/Contents/MacOS/idrive.*daemon" >/dev/null 2>&1 || true
-  osascript -e 'tell application "Iris Drive" to quit' >/dev/null 2>&1 || true
-  rm -rf "$app_base_dir"
-  return "$status"
+  run ./scripts/macos-idle-cpu-smoke.sh
 }
 
 full="${IRIS_DRIVE_RELEASE_GATE_FULL:-0}"
@@ -268,21 +266,38 @@ run cargo build --workspace --release
 
 case "$(uname -s)" in
   Darwin)
-    run_parallel_functions native-functional \
-      apple run_apple_functional_gates \
-      android run_android_functional_gate
+    if macos_vm_gate_enabled; then
+      run_parallel_functions native-functional \
+        macos-vm run_macos_functional_gate \
+        ios run_ios_functional_gate \
+        android run_android_functional_gate
+    else
+      run_parallel_functions native-functional \
+        apple run_apple_functional_gates \
+        android run_android_functional_gate
+    fi
     if ios_gate_enabled; then
       export IRIS_DRIVE_E2E_LOCAL_IOS_FUNCTIONAL_PRECHECKED=1
     fi
     if android_gate_enabled; then
       export IRIS_DRIVE_E2E_LOCAL_ANDROID_FUNCTIONAL_PRECHECKED=1
     fi
+    if macos_gate_enabled && macos_vm_gate_enabled; then
+      export IRIS_DRIVE_MACOS_VM_FUNCTIONAL_PRECHECKED=1
+    fi
     if idle_cpu_gate_enabled; then
-      # Finish CPU-heavy builds before sampling, but overlap independent Apple
-      # and Android device waits. macOS and iOS remain serial in the Apple lane.
-      run_parallel_functions native-idle-cpu \
-        apple-idle-cpu run_apple_idle_cpu_gates \
-        android-idle-cpu run_android_idle_cpu_gate
+      # A VM-routed macOS sample is isolated from the local iOS simulator and
+      # can overlap both mobile samples. Keep local Apple sampling serial.
+      if macos_vm_gate_enabled; then
+        run_parallel_functions native-idle-cpu \
+          macos-vm-idle-cpu run_macos_idle_cpu_gate \
+          ios-idle-cpu run_ios_idle_cpu_gate \
+          android-idle-cpu run_android_idle_cpu_gate
+      else
+        run_parallel_functions native-idle-cpu \
+          apple-idle-cpu run_apple_idle_cpu_gates \
+          android-idle-cpu run_android_idle_cpu_gate
+      fi
     fi
     ;;
   Linux)

@@ -739,6 +739,7 @@ fn daemon_status_profile_block_uses_cached_app_keys_without_reprojecting_roster(
     assert_eq!(profile["can_write_roots"], true);
     assert_eq!(profile["can_admin_profile"], true);
     assert_eq!(profile["current_app_key_label"], "Mac");
+    assert_eq!(profile["pending_device_approval_receipt_count"], 0);
     assert_eq!(profile["profile"]["active_app_key_count"], 1);
     assert_eq!(profile["profile"]["profile_roster_op_count"], 0);
 }

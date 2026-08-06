@@ -1,5 +1,59 @@
 # Changelog
 
+## 0.1.33 - 2026-08-07
+
+### Changed
+
+- Exercise device approval, durable receipt cleanup, restarts, and post-link
+  Drive sync through the shipped iOS, Android, Linux, Windows, macOS, and CLI
+  paths. The optional two-phone gate additionally exercises QR and manual
+  entry in both directions through the shipped UI, both physical cameras, and
+  system file providers, and reports an explicit skip when hardware is not
+  available.
+- Consolidate redundant live-daemon scenarios while enforcing an eight-second
+  approval ceiling throughout the production-like sync matrix, and avoid
+  recursively rerunning workflow tests in the release-gate scheduler tests.
+- Send approval receipts and roster events over FIPS first, then make one
+  bounded relay attempt, so linking stays fast without losing relay durability.
+- Prefer the configured remote macOS runner for release UI journeys, keeping
+  native dialogs off the developer workstation while retaining the same
+  shipped-app assertions.
+
+### Fixed
+
+- Require explicit user confirmation before iOS, Android, Linux, macOS, or
+  Windows approval links can add a device.
+- Wake the mobile app-key exchange immediately after an owner approves a
+  device, avoiding the idle maintenance delay before receipt delivery.
+- Backfill profile roster events when an awaiting device becomes authorized,
+  and acknowledge only after the roster contains both the approving and
+  joining devices, so events published just before its encrypted receipt are
+  not missed or mistaken for an unrelated actor.
+- Make one-shot native sync persist an applied approval before publishing its
+  exact acknowledgment, and let the owner consume that acknowledgment and
+  clear the matching pending receipt after either side restarts.
+- Preserve and acknowledge multiple concurrent approvals for the same profile,
+  while rejecting receipts from a different profile and durably syncing the
+  config directory after atomic writes.
+- Filter bound approval receipts by their expected signer without trusting
+  either device's wall clock, and query acknowledgments only from pending
+  device signers for their receipt event IDs, preventing clock skew, malformed
+  events, or unrelated relay traffic from crowding out valid handshakes.
+- Serialize short config mutations across native actions and background FIPS
+  delivery so a stale refresh cannot overwrite a newly applied device roster.
+- Serialize FIPS peer reconfiguration, cache it only after every ACL update
+  succeeds, and refresh immediately after receipt backfill so concurrent device
+  approvals cannot leave one device on an older peer allowlist.
+- Refresh the drive-root subscription after an unbound request adopts its
+  profile, then download pre-existing roots after the durable approval ACK so
+  an already-running linked device exposes existing files immediately.
+- Retry provider writes from the latest on-disk root after a concurrent block
+  arrival, preventing a stale provider snapshot from dropping either edit.
+- Ignore Android-only test actions in release builds and queue approval links
+  received before the app finishes starting.
+- Advance version-derived native build numbers beyond the existing TestFlight
+  sequence so a new app version cannot reuse an already accepted Apple build.
+
 ## 0.1.32 - 2026-07-27
 
 ### Changed

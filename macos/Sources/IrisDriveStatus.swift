@@ -71,6 +71,7 @@ final class IrisDriveStatus: ObservableObject {
     @Published var lastShareInviteURL: String?
     @Published var lastShareRecipientEvidence: String?
     @Published var pendingShareDialog: IrisDriveShareDialogRequest?
+    @Published var pendingDeviceApproval: IrisDriveDeviceApprovalRequest?
     @Published var fips = IrisDriveFipsStatus()
     @Published var peers: [IrisDrivePeerStatus] = []
     @Published var lastUpload: IrisDriveUploadStatus?
@@ -153,6 +154,11 @@ struct IrisDriveShareDialogRequest: Identifiable, Equatable {
     let recipientNpubHint: String
     let recipientDisplayName: String
     let recipientProfileId: String
+}
+
+struct IrisDriveDeviceApprovalRequest: Identifiable, Equatable {
+    let id = UUID()
+    let requestURL: String
 }
 
 struct IrisDriveAppKeyLinkRequestStatus: Identifiable, Equatable {

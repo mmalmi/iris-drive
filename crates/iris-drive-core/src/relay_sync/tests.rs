@@ -6,9 +6,7 @@ use crate::nostr_events::{
     build_private_hashtree_root_event, drive_root_d_tag,
 };
 use crate::nostr_identity::{
-    NOSTR_IDENTITY_DEVICE_APPROVAL_APPLIED_ACK_SCHEMA, NostrIdentityCapabilities,
-    NostrIdentityDeviceApprovalAppliedAck, NostrIdentityFacet, NostrIdentityId,
-    NostrIdentityRosterOp, build_nostr_identity_device_approval_applied_ack_event,
+    NostrIdentityCapabilities, NostrIdentityFacet, NostrIdentityId, NostrIdentityRosterOp,
     build_nostr_identity_roster_op_event,
 };
 use crate::profile::{AppKeyAuthorizationState, Profile};
@@ -21,7 +19,7 @@ use nostr_sdk::filter::MatchEventOptions;
 use nostr_sdk::{EventBuilder, Kind, Tag};
 use tempfile::tempdir;
 
-fn config_with_owner_account(dir: &std::path::Path) -> (AppConfig, Profile) {
+pub(super) fn config_with_owner_account(dir: &std::path::Path) -> (AppConfig, Profile) {
     let acct = Profile::create(dir, None).unwrap();
     let mut cfg = AppConfig {
         profile: Some(acct.state.clone()),
@@ -31,15 +29,15 @@ fn config_with_owner_account(dir: &std::path::Path) -> (AppConfig, Profile) {
     (cfg, acct)
 }
 
-fn profile_event(op: &crate::SignedNostrIdentityRosterOp) -> Event {
+pub(super) fn profile_event(op: &crate::SignedNostrIdentityRosterOp) -> Event {
     Event::from_json(&op.event_json).unwrap()
 }
 
-fn filter_matches(filter: &Filter, event: &Event) -> bool {
+pub(super) fn filter_matches(filter: &Filter, event: &Event) -> bool {
     filter.match_event(event, MatchEventOptions::default())
 }
 
-fn queue_link_request(linked: &mut Profile, admin: &Profile, requested_at: u64) {
+pub(super) fn queue_link_request(linked: &mut Profile, admin: &Profile, requested_at: u64) {
     let approval_request = crate::app_key_link_transport::create_app_key_approval_bootstrap(
         linked.app_key.keys(),
         linked.state.app_key_label.as_deref(),
@@ -70,7 +68,7 @@ fn queue_unbound_join_request(linked: &mut Profile, requested_at: u64) {
     );
 }
 
-fn approve_pending_request(admin: &mut Profile, linked: &Profile) -> Event {
+pub(super) fn approve_pending_request(admin: &mut Profile, linked: &Profile) -> Event {
     let pending = linked
         .state
         .outbound_app_key_link_request
@@ -131,36 +129,6 @@ fn relay_event_retention_policy_accepts_subscription_events() {
     assert_eq!(policy.max_events, RELAY_SYNC_EVENT_CACHE_LIMIT);
     assert!(relay_event_matches_policy(&policy, &profile_op));
     assert!(!relay_event_matches_policy(&policy, &unrelated));
-}
-
-#[test]
-fn relay_event_retention_policy_accepts_device_approval_applied_ack_for_admin() {
-    let dir = tempdir().unwrap();
-    let (_cfg, admin) = config_with_owner_account(dir.path());
-    let device = Keys::generate();
-    let request = Keys::generate();
-    let approval_event_id = profile_event(&admin.state.profile_roster_ops[0])
-        .id
-        .to_hex();
-    let ack = build_nostr_identity_device_approval_applied_ack_event(
-        &device,
-        NostrIdentityDeviceApprovalAppliedAck {
-            schema: NOSTR_IDENTITY_DEVICE_APPROVAL_APPLIED_ACK_SCHEMA,
-            request_pubkey: request.public_key().to_hex(),
-            device_app_key_pubkey: device.public_key().to_hex(),
-            approval_event_id,
-            approved_by_pubkey: admin.state.app_key_pubkey.clone(),
-            applied_at: 1,
-        },
-    )
-    .unwrap();
-    let policy = event_retention_policy(subscription_filters(
-        &admin.state.app_key_pubkey,
-        &admin.state.root_scope_id(),
-        crate::PRIMARY_DRIVE_ID,
-    ));
-
-    assert!(relay_event_matches_policy(&policy, &ack));
 }
 
 fn encrypted_root(seed: u8, published_at: i64, dck_generation: u64) -> AppKeyRootRef {
@@ -243,53 +211,6 @@ fn linked_config_after_initial_roster() -> (Profile, AppConfig) {
         admin.state.profile_id.to_string()
     );
     (admin, cfg)
-}
-
-#[test]
-fn device_approval_receipt_clears_awaiting_approval_before_full_roster_frame() {
-    let admin_dir = tempdir().unwrap();
-    let linked_dir = tempdir().unwrap();
-    let mut admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
-    let mut linked = Profile::link_to_profile(
-        linked_dir.path(),
-        admin.state.profile_id,
-        admin.state.app_key_pubkey.clone(),
-        Some("phone".into()),
-    )
-    .unwrap();
-    queue_link_request(&mut linked, &admin, 123);
-    let receipt_event = approve_pending_request(&mut admin, &linked);
-    let mut cfg = AppConfig {
-        profile: Some(linked.state.clone()),
-        ..AppConfig::default()
-    };
-    cfg.upsert_drive(Drive::primary(admin.state.root_scope_id()));
-
-    let outcome = apply_remote_device_approval_receipt_event(&mut cfg, &receipt_event).unwrap();
-
-    assert_eq!(outcome, NostrIdentityRosterOpApply::Applied);
-    let linked_state = cfg.profile.as_ref().unwrap();
-    assert_eq!(
-        linked_state.authorization_state,
-        AppKeyAuthorizationState::Authorized
-    );
-    assert!(linked_state.can_write_roots());
-    assert!(linked_state.can_write_roots_for_app_key(&linked_state.app_key_pubkey));
-    assert!(linked_state.outbound_app_key_link_request.is_some());
-    assert!(!linked_state.profile_roster_ops.is_empty());
-    assert!(linked_state.app_keys.is_none());
-
-    let path = linked_dir.path().join("config.toml");
-    cfg.save(&path).unwrap();
-    let loaded = AppConfig::load_or_default(&path).unwrap();
-    let loaded_state = loaded.profile.as_ref().unwrap();
-    assert_eq!(
-        loaded_state.authorization_state,
-        AppKeyAuthorizationState::Authorized
-    );
-    assert!(loaded_state.can_write_roots());
-    assert!(loaded_state.can_write_roots_for_app_key(&loaded_state.app_key_pubkey));
-    assert!(loaded_state.outbound_app_key_link_request.is_some());
 }
 
 #[test]

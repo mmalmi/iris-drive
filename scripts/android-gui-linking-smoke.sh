@@ -25,7 +25,9 @@ LOCAL_RELAY_URL=""
 USE_DIRECT_STATIC_PEER="${IRIS_DRIVE_ANDROID_USE_DIRECT_STATIC_PEER:-true}"
 OWNER_FIPS_OPEN_DISCOVERY_MAX_PENDING="${IRIS_DRIVE_ANDROID_FIPS_OPEN_DISCOVERY_MAX_PENDING:-8}"
 ANDROID_FIPS_PORT="${IRIS_DRIVE_ANDROID_FIPS_PORT:-59011}"
-LINK_TIMEOUT_SECS="${IRIS_DRIVE_ANDROID_LINK_TIMEOUT_SECS:-90}"
+LINK_REQUEST_TIMEOUT_SECS="${IRIS_DRIVE_ANDROID_LINK_REQUEST_TIMEOUT_SECS:-${IRIS_DRIVE_ANDROID_LINK_TIMEOUT_SECS:-90}}"
+AUTHORIZATION_TIMEOUT_SECS="${IRIS_DRIVE_ANDROID_AUTHORIZATION_TIMEOUT_SECS:-15}"
+PROVIDER_SYNC_TIMEOUT_SECS="${IRIS_DRIVE_ANDROID_PROVIDER_SYNC_TIMEOUT_SECS:-${IRIS_DRIVE_ANDROID_LINK_TIMEOUT_SECS:-90}}"
 PUBLISH_TIMEOUT_SECS="${IRIS_DRIVE_ANDROID_PUBLISH_TIMEOUT_SECS:-3}"
 NETWORK_PROBE_HOST="${IRIS_DRIVE_ANDROID_NETWORK_PROBE_HOST:-1.1.1.1}"
 NETWORK_PROBE_PORT="${IRIS_DRIVE_ANDROID_NETWORK_PROBE_PORT:-443}"
@@ -49,6 +51,20 @@ cleanup() {
   rm -f "$OWNER_DAEMON_LOG" "$LOCAL_RELAY_READY" "$LOCAL_RELAY_LOG"
 }
 trap cleanup EXIT
+
+for timeout_name in \
+  LINK_REQUEST_TIMEOUT_SECS \
+  AUTHORIZATION_TIMEOUT_SECS \
+  PROVIDER_SYNC_TIMEOUT_SECS \
+  PUBLISH_TIMEOUT_SECS
+do
+  [[ "${!timeout_name}" =~ ^[1-9][0-9]*$ ]] \
+    || { echo "FAIL: $timeout_name must be a positive integer" >&2; exit 2; }
+done
+if ((AUTHORIZATION_TIMEOUT_SECS > 15)); then
+  echo "FAIL: IRIS_DRIVE_ANDROID_AUTHORIZATION_TIMEOUT_SECS must be at most 15" >&2
+  exit 2
+fi
 
 sdk_from_local_properties() {
   local file="$ROOT/android/local.properties"
@@ -103,6 +119,11 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
     sock.bind(("127.0.0.1", 0))
     print(sock.getsockname()[1])
 PY
+}
+
+monotonic_milliseconds() {
+  perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC \
+    -e 'printf "%.0f\n", clock_gettime(CLOCK_MONOTONIC) * 1000'
 }
 
 bool_true() {
@@ -238,10 +259,10 @@ owner_inbound_request_url() {
     | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; prefix="https://drive.iris.to/approve-device/"; reqs=((s.get("profile") or {}).get("inbound_app_key_link_requests") or []); print(next(r["url"] for r in reqs if r.get("app_key_npub") == expected and str(r.get("url") or "").startswith(prefix)))' "$expected_device"
 }
 
-wait_for_android_authorized() {
+wait_for_android_authorized_until() {
   local expected_device="$1"
-  local seconds="$2"
-  for _ in $(seq 1 "$((seconds * 5))"); do
+  local deadline_ms="$2"
+  while (( $(monotonic_milliseconds) <= deadline_ms )); do
     adb_am_start -n "$MAIN_ACTIVITY" \
       --es "$DEBUG_ACTION_EXTRA" refresh >/dev/null
     if "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-state.json 2>/dev/null \
@@ -348,6 +369,7 @@ require_android_app_network_permission() {
 
 run_android_gui_tests() {
   local class="to.iris.drive.app.IrisDriveAndroidGuiFlowTest"
+  local approval_deep_link_class="to.iris.drive.app.MainActivityApprovalDeepLinkTest"
   local native_state_class="to.iris.drive.app.IrisDriveAndroidNativeStateTest"
   local share_api_class="to.iris.drive.app.ShareActivityInstrumentedTest"
   local mode="${IRIS_DRIVE_ANDROID_GUI_TEST_MODE:-smoke}"
@@ -378,7 +400,7 @@ run_android_gui_tests() {
   local filter=""
   case "$mode" in
     class)
-      filter="$class,$native_state_class,$share_api_class"
+      filter="$class,$approval_deep_link_class,$native_state_class,$share_api_class"
       ;;
     serial)
       for test in "${tests[@]}"; do
@@ -388,13 +410,13 @@ run_android_gui_tests() {
             "-Pandroid.testInstrumentationRunnerArguments.class=$class#$test"
         )
       done
-      filter="$native_state_class,$share_api_class"
+      filter="$approval_deep_link_class,$native_state_class,$share_api_class"
       ;;
     smoke)
       for test in "${smoke_tests[@]}"; do
         filter+="${filter:+,}$class#$test"
       done
-      filter+=",$native_state_class,$share_api_class"
+      filter+=",$approval_deep_link_class,$native_state_class,$share_api_class"
       ;;
     *)
       echo "FAIL: unknown IRIS_DRIVE_ANDROID_GUI_TEST_MODE=$mode (expected smoke, serial, or class)" >&2
@@ -528,7 +550,7 @@ if ! wait_for_owner_fips 20; then
   exit 1
 fi
 
-if ! wait_for_owner_inbound_request "$linked_device" "$LINK_TIMEOUT_SECS"; then
+if ! wait_for_owner_inbound_request "$linked_device" "$LINK_REQUEST_TIMEOUT_SECS"; then
   echo "FAIL: owner did not receive the Android GUI app-key-link request over FIPS." >&2
   dump_android_debug_files
   "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
@@ -537,11 +559,27 @@ if ! wait_for_owner_inbound_request "$linked_device" "$LINK_TIMEOUT_SECS"; then
 fi
 
 request_url="$(owner_inbound_request_url "$linked_device")"
+authorization_started_ms="$(monotonic_milliseconds)"
+authorization_deadline_ms=$((authorization_started_ms + AUTHORIZATION_TIMEOUT_SECS * 1000))
 approved_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" approve "$request_url" --label "Android GUI")"
 roster_size="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["roster_size"])' <<<"$approved_json")"
 if [[ "$roster_size" != "2" ]]; then
   echo "FAIL: CLI owner did not approve the inbound Android GUI request." >&2
   echo "$approved_json" >&2
+  exit 1
+fi
+
+if ! wait_for_android_authorized_until "$linked_device" "$authorization_deadline_ms"; then
+  echo "FAIL: Android did not become authorized within ${AUTHORIZATION_TIMEOUT_SECS}s of starting approval submission." >&2
+  dump_android_debug_files
+  "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
+  cat "$OWNER_DAEMON_LOG" >&2 || true
+  exit 1
+fi
+authorization_finished_ms="$(monotonic_milliseconds)"
+authorization_delivery_ms=$((authorization_finished_ms - authorization_started_ms))
+if ((authorization_finished_ms > authorization_deadline_ms)); then
+  echo "FAIL: Android authorization was observed after the strict ${AUTHORIZATION_TIMEOUT_SECS}s deadline (${authorization_delivery_ms}ms)." >&2
   exit 1
 fi
 
@@ -551,19 +589,11 @@ if ! python3 -c 'import json,sys; s=json.load(sys.stdin); raise SystemExit(0 if 
   echo "$publish_json" >&2
 fi
 
-if ! wait_for_android_authorized "$linked_device" "$LINK_TIMEOUT_SECS"; then
-  echo "FAIL: Android did not leave Waiting for approval after the owner approved its request." >&2
-  dump_android_debug_files
-  "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
-  cat "$OWNER_DAEMON_LOG" >&2 || true
-  exit 1
-fi
-
 adb_am_start -n "$MAIN_ACTIVITY" \
   --es "$DEBUG_ACTION_EXTRA" start-sync \
   "${android_fips_args[@]}" >/dev/null
 
-if ! wait_for_android_provider_entry "android-smoke.txt" "$LINK_TIMEOUT_SECS"; then
+if ! wait_for_android_provider_entry "android-smoke.txt" "$PROVIDER_SYNC_TIMEOUT_SECS"; then
   echo "FAIL: Android provider did not expose the owner file after approval and sync." >&2
   dump_android_debug_files
   "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
@@ -574,6 +604,7 @@ if ! wait_for_android_provider_entry "android-smoke.txt" "$LINK_TIMEOUT_SECS"; t
 fi
 
 echo "ANDROID_GUI_LINKING_AND_SYNC_SMOKE_OK"
+echo "authorization_delivery_ms=$authorization_delivery_ms clock=host_monotonic_ms start=before_approval_command finish=host_observed_authorization ceiling_ms=$((AUTHORIZATION_TIMEOUT_SECS * 1000))"
 echo "serial=$serial"
 echo "owner_config=$OWNER_CONFIG"
 echo "owner_fips_addr=$owner_fips_addr"

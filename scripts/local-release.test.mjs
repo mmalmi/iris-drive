@@ -9,57 +9,15 @@ import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
 
 import {
-  buildNumberFromVersion,
-  bumpCargoPackageVersion,
-  bumpPbxprojReleaseVersions,
-  bumpXcodegenProjectVersions,
   buildReleaseManifest,
   buildReleaseManifestFiles,
   buildZapstorePublishPlan,
   describeAsset,
   parseNotarytoolSubmitOutput,
   plannedReleaseAssetNames,
-  readWorkspaceVersionTag,
   renderReleaseNotes,
   validateReleaseAssetSet,
 } from './local-release-lib.mjs'
-
-test('readWorkspaceVersionTag reads the workspace package version', () => {
-  const tag = readWorkspaceVersionTag(`
-[workspace]
-members = []
-
-[workspace.package]
-version = "0.2.27"
-`)
-
-  assert.equal(tag, 'v0.2.27')
-})
-
-test('release version helpers sync native platform metadata', () => {
-  assert.equal(buildNumberFromVersion('v0.1.5'), '1005')
-
-  assert.equal(
-    bumpCargoPackageVersion('[package]\nname = "iris-drive-linux"\nversion = "0.1.4"\n\n[dependencies]\n', 'v0.1.5'),
-    '[package]\nname = "iris-drive-linux"\nversion = "0.1.5"\n\n[dependencies]\n',
-  )
-
-  assert.equal(
-    bumpXcodegenProjectVersions(
-      'settings:\n  base:\n    MARKETING_VERSION: "0.1.4"\n    CURRENT_PROJECT_VERSION: "1004"\n',
-      'v0.1.5',
-    ),
-    'settings:\n  base:\n    MARKETING_VERSION: "0.1.5"\n    CURRENT_PROJECT_VERSION: "1005"\n',
-  )
-
-  assert.equal(
-    bumpPbxprojReleaseVersions(
-      'MARKETING_VERSION = 0.1.4;\nCURRENT_PROJECT_VERSION = 1004;\n',
-      'v0.1.5',
-    ),
-    'MARKETING_VERSION = 0.1.5;\nCURRENT_PROJECT_VERSION = 1005;\n',
-  )
-})
 
 test('buildReleaseManifest marks idrive archives as binary archives', () => {
   const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-test-'))
@@ -619,12 +577,12 @@ test('local-release dry-run passes release versions to macOS and Android builder
 
   assert.equal(result.status, 0, result.stderr)
   assert.match(result.stdout, /MARKETING_VERSION=9\.9\.9/)
-  assert.match(result.stdout, /CURRENT_PROJECT_VERSION=9009009/)
+  assert.match(result.stdout, /CURRENT_PROJECT_VERSION=9009010/)
   assert.match(result.stdout, /--timestamp/)
   assert.match(result.stdout, /codesign --force --timestamp --options runtime --sign/)
   assert.match(result.stdout, /iris-drive-v9\.9\.9-macos-arm64\.app\.tar\.gz/)
   assert.match(result.stdout, /-PirisDriveVersionName=9\.9\.9/)
-  assert.match(result.stdout, /-PirisDriveVersionCode=9009009/)
+  assert.match(result.stdout, /-PirisDriveVersionCode=9009010/)
   assert.match(result.stdout, /tools\/run-android .* clean :app:assembleRelease :app:bundleRelease/)
 })
 
@@ -855,7 +813,7 @@ test('local-release dry-run passes release versions to the iOS TestFlight builde
   )
 
   assert.equal(result.status, 0, result.stderr)
-  assert.match(result.stdout, /iOS TestFlight version: 9\.9\.9 \(9009009\)/)
+  assert.match(result.stdout, /iOS TestFlight version: 9\.9\.9 \(9009010\)/)
 })
 
 test('local-release dry-run uses a public-capable iOS upload for internal plus public TestFlight', () => {

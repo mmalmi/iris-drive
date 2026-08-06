@@ -1,5 +1,7 @@
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 use std::path::Path;
+#[cfg(any(test, target_os = "ios", target_os = "android"))]
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 use iris_drive_core::fips_status::normalize_fips_status_value;
@@ -18,9 +20,48 @@ use super::NativeAppRuntime;
 // writes and UI recomposition while an otherwise idle mobile link is stable.
 pub(super) const NATIVE_FIPS_STATUS_STABLE_WRITE_MIN_SECS: u64 = 60;
 
+#[cfg(any(test, target_os = "ios", target_os = "android"))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum AppKeyLinkTick {
+    Due,
+    Wake,
+    Stop,
+}
+
+#[cfg(any(test, target_os = "ios", target_os = "android"))]
+pub(super) async fn wait_for_app_key_link_exchange_tick(
+    mut tick: std::pin::Pin<&mut tokio::time::Sleep>,
+    wake: &mut tokio::sync::watch::Receiver<()>,
+    stop: &AtomicBool,
+) -> AppKeyLinkTick {
+    tokio::select! {
+        changed = wake.changed() => {
+            if changed.is_err() || stop.load(Ordering::Acquire) {
+                AppKeyLinkTick::Stop
+            } else {
+                tick.as_mut().reset(tokio::time::Instant::now());
+                AppKeyLinkTick::Wake
+            }
+        }
+        () = tick.as_mut() => {
+            if stop.load(Ordering::Acquire) {
+                AppKeyLinkTick::Stop
+            } else {
+                AppKeyLinkTick::Due
+            }
+        }
+    }
+}
+
 impl NativeAppRuntime {
     #[allow(clippy::unused_self)]
-    pub(super) fn reconcile_app_key_link_exchange(&mut self) {
+    pub(super) fn reconcile_app_key_link_exchange(&mut self, wake: bool) {
+        #[cfg(not(any(test, target_os = "ios", target_os = "android")))]
+        let _ = wake;
+        #[cfg(any(test, target_os = "ios", target_os = "android"))]
+        if wake {
+            self.app_key_link_exchange_wake.send_replace(());
+        }
         #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
         {
             let Ok(config) = self.load_config() else {
@@ -52,8 +93,12 @@ impl NativeAppRuntime {
             let data_dir = self.data_dir.clone();
             let running = self.app_key_link_exchange_running.clone();
             let stop = self.app_key_link_exchange_stop.clone();
+            let wake = self.app_key_link_exchange_wake.subscribe();
+            let config_mutation = self.config_mutation.clone();
             self.app_key_link_exchange_thread = Some(std::thread::spawn(move || {
-                if let Err(error) = super::run_app_key_link_exchange(&data_dir, stop) {
+                if let Err(error) =
+                    super::run_app_key_link_exchange(&data_dir, stop, wake, config_mutation)
+                {
                     tracing::warn!(error = %error, "native app-key-link FIPS exchange stopped");
                 }
                 running.store(false, std::sync::atomic::Ordering::Release);
@@ -67,6 +112,7 @@ impl NativeAppRuntime {
         {
             self.app_key_link_exchange_stop
                 .store(true, std::sync::atomic::Ordering::Release);
+            self.app_key_link_exchange_wake.send_replace(());
         }
     }
 }

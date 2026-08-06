@@ -80,6 +80,22 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.install_parallel_lane("android-gui-linking-smoke.sh", "android", barrier=True)
         self.install_parallel_lane("mobile-android-smoke.sh", "android-provider")
         self.write_executable(
+            self.scripts / "mobile-ios-android-linking-e2e.sh",
+            'printf "mobile-physical-link\n" >>"$RELEASE_WORKFLOW_TEST_STATE/events"\n'
+            'printf "%s\n" "${IRIS_DRIVE_MOBILE_REUSE_ANDROID_ARTIFACTS-unset}" '
+            '>"$RELEASE_WORKFLOW_TEST_STATE/mobile-android-artifact-reuse"\n',
+        )
+        self.write_executable(
+            self.scripts / "macos-vm-android-manual-link-e2e.sh",
+            'printf "macos-android-manual-link\n" >>"$RELEASE_WORKFLOW_TEST_STATE/events"\n'
+            'printf "%s\n" "${IRIS_DRIVE_MACOS_SSH_HOST-unset}" '
+            '>"$RELEASE_WORKFLOW_TEST_STATE/macos-android-host"\n'
+            'printf "%s\n" "${IRIS_DRIVE_MACOS_SKIP_GIT_SYNC-unset}" '
+            '>"$RELEASE_WORKFLOW_TEST_STATE/macos-android-skip-sync"\n'
+            'printf "%s\n" "${IRIS_DRIVE_MOBILE_REUSE_ANDROID_ARTIFACTS-unset}" '
+            '>"$RELEASE_WORKFLOW_TEST_STATE/macos-android-reuse"\n',
+        )
+        self.write_executable(
             self.scripts / "desktop-gui-smoke.sh",
             textwrap.dedent(
                 """
@@ -98,8 +114,30 @@ class ReleaseWorkflowTests(unittest.TestCase):
         )
         self.write_executable(
             self.scripts / "cross-vm-e2e.sh",
-            'printf "sync\n" >>"$RELEASE_WORKFLOW_TEST_STATE/events"\n',
+            'printf "sync\n" >>"$RELEASE_WORKFLOW_TEST_STATE/events"\n'
+            'printf "%s\n" "${IRIS_DRIVE_E2E_SIDELOAD_APPKEYS-unset}" '
+            '>"$RELEASE_WORKFLOW_TEST_STATE/sideload-appkeys"\n'
+            'printf "%s\n" "${IRIS_DRIVE_E2E_DESKTOP_GUI_LINKING-unset}" '
+            '>"$RELEASE_WORKFLOW_TEST_STATE/desktop-gui-linking"\n',
         )
+        return script
+
+    def install_five_platform_routing_fixture(self) -> Path:
+        script = self.install_five_platform_fixture()
+        for name in (
+            "desktop-gui-smoke.sh",
+            "ios-simulator-smoke.sh",
+            "ios-gui-linking-smoke.sh",
+            "ios-device-iris-apps-smoke.sh",
+            "android-gui-linking-smoke.sh",
+            "mobile-android-smoke.sh",
+            "macos-vm-android-manual-link-e2e.sh",
+        ):
+            self.write_executable(
+                self.scripts / name,
+                'touch "$RELEASE_WORKFLOW_TEST_STATE/smoke-ran"\n',
+            )
+        self.write_executable(self.bin / "ssh", "exit 0\n")
         return script
 
     def five_platform_environment(self) -> dict[str, str]:
@@ -125,6 +163,12 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 0, completed.stderr)
         events = (self.state / "events").read_text(encoding="utf-8").splitlines()
         self.assertIn("sync", events)
+        self.assertIn("mobile-physical-link", events)
+        self.assertEqual((self.state / "sideload-appkeys").read_text().strip(), "0")
+        self.assertEqual((self.state / "desktop-gui-linking").read_text().strip(), "1")
+        self.assertEqual(
+            (self.state / "mobile-android-artifact-reuse").read_text().strip(), "0"
+        )
         first_end = next(index for index, event in enumerate(events) if event.startswith("end "))
         self.assertEqual(set(events[:first_end]), {"start linux", "start windows", "start ios", "start android"})
 
@@ -167,6 +211,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             | {
                 "IRIS_DRIVE_E2E_LOCAL_IOS_FUNCTIONAL_PRECHECKED": "1",
                 "IRIS_DRIVE_E2E_LOCAL_ANDROID_FUNCTIONAL_PRECHECKED": "1",
+                "IRIS_DRIVE_E2E_SIDELOAD_APPKEYS": "1",
             },
             timeout=5,
         )
@@ -178,11 +223,93 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("start android", events)
         self.assertIn("ios-device-iris-apps-smoke.sh", events)
         self.assertIn("mobile-android-smoke.sh", events)
+        self.assertIn("mobile-physical-link", events)
         self.assertIn("sync", events)
+        self.assertEqual((self.state / "sideload-appkeys").read_text().strip(), "1")
+        self.assertEqual((self.state / "desktop-gui-linking").read_text().strip(), "1")
+        self.assertEqual(
+            (self.state / "mobile-android-artifact-reuse").read_text().strip(), "1"
+        )
+
+    def test_five_platform_records_physical_skip_when_device_hosts_differ(self) -> None:
+        script = self.install_five_platform_routing_fixture()
+        completed = subprocess.run(
+            [str(script)],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=self.five_platform_environment()
+            | {"IRIS_DRIVE_E2E_ANDROID_HOST": "separate-android-host"},
+            timeout=5,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertIn("reason=devices_not_colocated", completed.stdout)
+        events = (self.state / "events").read_text(encoding="utf-8")
+        self.assertNotIn("mobile-physical-link", events)
+        self.assertIn("sync", events)
+
+    def test_five_platform_requires_explicit_shared_physical_host(self) -> None:
+        script = self.install_five_platform_routing_fixture()
+        completed = subprocess.run(
+            [str(script)],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=self.five_platform_environment()
+            | {
+                "IRIS_DRIVE_E2E_ANDROID_HOST": "separate-android-host",
+                "IRIS_DRIVE_MOBILE_PHYSICAL_LINKING": "required",
+            },
+            timeout=5,
+        )
+
+        self.assertEqual(completed.returncode, 1, completed.stderr)
+        self.assertIn("IRIS_DRIVE_MOBILE_PHYSICAL_LINK_HOST", completed.stderr)
+        self.assertFalse((self.state / "smoke-ran").exists())
+        self.assertFalse((self.state / "events").exists())
+
+    def test_five_platform_routes_manual_android_linking_to_macos_vm(self) -> None:
+        script = self.install_five_platform_fixture()
+        completed = subprocess.run(
+            [str(script)],
+            check=False,
+            capture_output=True,
+            text=True,
+            env=self.five_platform_environment()
+            | {
+                "IRIS_DRIVE_MACOS_SSH_HOST": "test-macos-vm",
+                "IRIS_DRIVE_MACOS_VM_FUNCTIONAL_PRECHECKED": "1",
+            },
+            timeout=5,
+        )
+
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        events = (self.state / "events").read_text(encoding="utf-8")
+        self.assertIn("macos-android-manual-link", events)
+        self.assertEqual((self.state / "macos-android-host").read_text().strip(), "test-macos-vm")
+        self.assertEqual((self.state / "macos-android-skip-sync").read_text().strip(), "1")
+        self.assertEqual((self.state / "macos-android-reuse").read_text().strip(), "1")
 
     def test_android_default_smoke_uses_one_gradle_instrumentation_graph(self) -> None:
         source = (ROOT / "scripts/android-gui-linking-smoke.sh").read_text(encoding="utf-8")
         self.assertIn(":app:assembleDebug :app:connectedUiTestAndroidTest", source)
+
+    def test_android_link_delivery_has_one_strict_clock_and_separate_sync_timeout(self) -> None:
+        source = (ROOT / "scripts/android-gui-linking-smoke.sh").read_text(encoding="utf-8")
+        self.assertIn(
+            'AUTHORIZATION_TIMEOUT_SECS="${IRIS_DRIVE_ANDROID_AUTHORIZATION_TIMEOUT_SECS:-15}"',
+            source,
+        )
+        self.assertIn("wait_for_android_authorized_until", source)
+        self.assertIn("PROVIDER_SYNC_TIMEOUT_SECS", source)
+        started = source.index('authorization_started_ms="$(monotonic_milliseconds)"')
+        approved = source.index('approve "$request_url"', started)
+        authorized = source.index("wait_for_android_authorized_until", approved)
+        provider = source.index('wait_for_android_provider_entry "android-smoke.txt"', authorized)
+        self.assertLess(started, approved)
+        self.assertLess(approved, authorized)
+        self.assertLess(authorized, provider)
 
     def test_android_rust_build_declares_gradle_inputs_and_output(self) -> None:
         source = (ROOT / "android/app/build.gradle.kts").read_text(encoding="utf-8")
@@ -221,7 +348,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
         source = (ROOT / "scripts/release-gate.sh").read_text(encoding="utf-8")
         idle_group = source.split("run_apple_idle_cpu_gates() {", 1)[1].split("\n}", 1)[0]
         self.assertLess(
-            idle_group.index("idle-cpu-gate.sh --platform ios"),
+            idle_group.index("run_ios_idle_cpu_gate"),
             idle_group.index("run run_macos_idle_cpu_gate"),
         )
 

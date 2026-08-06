@@ -1,13 +1,3 @@
-const DIRECT_APP_MESSAGE_DRAIN_LIMIT: usize = 4096;
-const DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS: u64 = 750;
-const DIRECT_ROOT_PEER_REFRESH_INTERVAL_SECS: u64 = 30;
-const DIRECT_ROOT_REPAIR_INTERVAL_SECS: u64 = 300;
-const FIPS_STATUS_PROBE_INTERVAL_SECS: u64 = 2;
-const RELAY_STATUS_PROBE_INTERVAL_SECS: u64 = 120;
-const FIPS_STATUS_PROBE_TASK_KEY: &str = "fips_status_probe";
-const STATUS_PROBE_TASK_KEY: &str = "status_probe";
-const DAEMON_TOKIO_WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
-
 #[allow(
     clippy::needless_pass_by_value,
     clippy::too_many_arguments,
@@ -192,6 +182,13 @@ pub(crate) fn cmd_daemon(
             .context("subscribing to device approval events")?;
         let mut app_key_link_relay_subscriptions =
             relay_sync::AppKeyLinkRelaySubscriptionState::from_profile(&state);
+        relay_sync::refresh_app_key_link_relay_subscriptions(
+            &client,
+            &state,
+            &mut app_key_link_relay_subscriptions,
+        )
+        .await
+        .context("subscribing to device approval acknowledgements")?;
         let mut direct_roots = DirectRootExchange::default();
         let mut update_announcements =
             iris_drive_core::UpdateAnnouncementExchange::load(config_dir)
@@ -928,13 +925,13 @@ pub(crate) fn cmd_daemon(
                             json!({"event": "app_key_link_request_send_error", "error": format!("{error:#}")})
                         ),
                     }
-                    match send_authorized_app_key_link_rosters(
+                    match Box::pin(send_authorized_app_key_link_rosters(
                         config_dir,
                         &client,
                         fips_blocks.as_deref(),
                         &mut sent_app_key_link_rosters,
                         &acked_app_key_link_rosters,
-                    )
+                    ))
                     .await
                     {
                         Ok(Some(payload)) => println!("{payload}"),

@@ -12,14 +12,18 @@ async fn refresh_app_key_link_relay_subscriptions_for_config(
         .iter()
         .map(|folder| folder.share_id)
         .collect::<Vec<_>>();
-    let policy = iris_drive_core::relay_sync::event_retention_policy(
-        iris_drive_core::relay_sync::subscription_filters_for_shared_roots(
-            &state.app_key_pubkey,
-            &state.root_scope_id(),
-            iris_drive_core::PRIMARY_DRIVE_ID,
-            &share_ids,
-        ),
+    let mut filters = iris_drive_core::relay_sync::subscription_filters_for_shared_roots(
+        &state.app_key_pubkey,
+        &state.root_scope_id(),
+        iris_drive_core::PRIMARY_DRIVE_ID,
+        &share_ids,
     );
+    if let Some(filter) =
+        iris_drive_core::relay_sync::pending_device_approval_applied_ack_filter(state)?
+    {
+        filters.push(filter);
+    }
+    let policy = iris_drive_core::relay_sync::event_retention_policy(filters);
     iris_drive_core::relay_sync::refresh_app_key_link_relay_subscriptions(
         client,
         state,

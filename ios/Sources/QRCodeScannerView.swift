@@ -52,6 +52,9 @@ private struct QRCodeScannerView: UIViewRepresentable {
 
     func makeUIView(context: Context) -> ScannerPreviewView {
         let view = ScannerPreviewView()
+        view.isAccessibilityElement = true
+        view.accessibilityLabel = "QR scanner camera"
+        view.accessibilityIdentifier = "qrScannerCamera"
         context.coordinator.configure(in: view)
         return view
     }
