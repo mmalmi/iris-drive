@@ -40,7 +40,10 @@ powershell -ExecutionPolicy Bypass -File .\scripts\windows-publish.ps1 -Configur
 
 The installer path requires Inno Setup 6 (`iscc` / `ISCC.exe`) on the Windows
 builder and writes `iris-drive-v...-windows-x64-setup.exe` into the output
-directory.
+directory. Windows artifacts are intentionally unsigned, as recorded in
+[`release-policy.json`](../release-policy.json). Final releases still require
+both the CLI archive and installer, and htree publication content-addresses
+their exact bytes.
 
 The app looks for `idrive.exe` next to the app, under `target\debug`, under
 `target\release`, or at `IRIS_DRIVE_CLI`. It starts the daemon with the shared

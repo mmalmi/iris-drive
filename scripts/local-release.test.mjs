@@ -86,7 +86,7 @@ test('buildReleaseManifestFiles writes both updater manifest names', () => {
 test('describeAsset labels idrive release assets', () => {
   assert.equal(
     describeAsset('idrive-v0.2.27-x86_64-pc-windows-msvc.zip'),
-    'Windows x64 idrive CLI',
+    'Windows x64 idrive CLI (unsigned)',
   )
   assert.equal(
     describeAsset('idrive-v0.2.27-x86_64-unknown-linux-gnu.tar.gz'),
@@ -168,7 +168,7 @@ test('validateReleaseAssetSet requires complete public app artifacts for final r
     () => validateReleaseAssetSet(['idrive-v0.2.27-aarch64-apple-darwin.tar.gz'], {
       requireCompleteAppRelease: true,
     }),
-    /macOS DMG.*macOS updater archive.*Linux x64 desktop package.*Windows x64 installer.*signed Android APK/,
+    /macOS DMG.*macOS updater archive.*Linux x64 desktop package.*Windows x64 CLI archive.*Windows x64 installer.*signed Android APK/,
   )
 })
 
@@ -225,12 +225,12 @@ test('renderReleaseNotes groups common app downloads before advanced files', () 
   assert.match(notes, /### Most People Will Want/)
   assert.match(notes, /Iris Drive for macOS/)
   assert.match(notes, /Iris Drive for Debian\/Ubuntu \(\.deb\)/)
-  assert.match(notes, /Iris Drive for Windows/)
+  assert.match(notes, /Iris Drive for Windows \(unsigned\)/)
   assert.match(notes, /Iris Drive for Android/)
   assert.match(notes, /### Command Line/)
   assert.match(notes, /macOS Apple Silicon idrive CLI/)
   assert.match(notes, /Linux x64 idrive CLI/)
-  assert.match(notes, /Windows x64 idrive CLI/)
+  assert.match(notes, /Windows x64 idrive CLI \(unsigned\)/)
   assert.match(notes, /### Other Files/)
   assert.match(notes, /Iris Drive macOS updater archive/)
   assert.match(notes, /Iris Drive Android app bundle/)
@@ -280,7 +280,6 @@ test('local-release dry-run validates planned build assets over partial existing
         ANDROID_KEY_ALIAS: 'iris',
         ANDROID_KEY_PASSWORD: 'password',
         IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: 'iris-drive-notary',
-        IRIS_DRIVE_WINDOWS_SIGNTOOL_CERT_SHA1: '00FAKECERT',
       },
     },
   )
@@ -318,7 +317,6 @@ test('local-release final dry-run refreshes public release resolver after htree 
         ...process.env,
         IRIS_DRIVE_RELEASE_NPUB: 'npub1example',
         IRIS_DRIVE_RELEASE_RESOLVER_REFRESH_BASE_URLS: 'https://cdn.iris.to',
-        IRIS_DRIVE_ALLOW_UNSIGNED_WINDOWS: '1',
       },
     },
   )
@@ -504,13 +502,11 @@ test('local-release final dry-run can plan Zapstore publish from signed Android 
         PATH: `${binDir}:${process.env.PATH}`,
         SIGN_WITH: 'nsec1test',
         IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: 'iris-drive-notary',
-        IRIS_DRIVE_WINDOWS_SIGNTOOL_CERT_SHA1: '00FAKECERT',
       },
     },
   )
 
   assert.equal(result.status, 0, result.stderr)
-  assert.match(result.stdout, /-RequireSigning/)
   assert.match(result.stdout, /Would publish iris-drive-v9\.9\.9-android-arm64\.apk to Zapstore/)
 })
 
@@ -532,7 +528,6 @@ test('local-release dry-run builds the Windows installer in dist', () => {
   assert.equal(result.status, 0, result.stderr)
   assert.match(result.stdout, /scripts\/windows-publish\.ps1/)
   assert.match(result.stdout, /-Installer/)
-  assert.doesNotMatch(result.stdout, /-RequireSigning/)
   assert.match(result.stdout, /-Tag/)
   assert.match(result.stdout, /v9\.9\.9/)
 })

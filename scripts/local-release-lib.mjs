@@ -132,10 +132,10 @@ export function describeAsset(name) {
     return 'Linux ARM64 idrive CLI'
   }
   if (/^idrive-v.*-x86_64-pc-windows-msvc\.zip$/.test(name)) {
-    return 'Windows x64 idrive CLI'
+    return 'Windows x64 idrive CLI (unsigned)'
   }
   if (/^idrive-v.*-aarch64-pc-windows-msvc\.zip$/.test(name)) {
-    return 'Windows ARM64 idrive CLI'
+    return 'Windows ARM64 idrive CLI (unsigned)'
   }
   if (/^iris-drive-v.*-macos-arm64\.dmg$/.test(name)) {
     return 'Iris Drive for macOS'
@@ -150,7 +150,7 @@ export function describeAsset(name) {
     return 'Iris Drive for Debian/Ubuntu (.deb)'
   }
   if (/^iris-drive-v.*-windows-x64-setup\.exe$/.test(name)) {
-    return 'Iris Drive for Windows'
+    return 'Iris Drive for Windows (unsigned)'
   }
   if (/^iris-drive-v.*-android-arm64\.apk$/.test(name)) {
     return 'Iris Drive for Android'
@@ -172,6 +172,9 @@ export function validateReleaseAssetSet(
   )
   const hasLinuxX64Desktop = names.some((name) =>
     /^iris-drive-v.*-linux-x64\.(AppImage|deb)$/.test(name),
+  )
+  const hasWindowsX64Cli = names.some((name) =>
+    /^idrive-v.*-x86_64-pc-windows-msvc\.zip$/.test(name),
   )
   const hasWindowsX64Setup = names.some((name) =>
     /^iris-drive-v.*-windows-x64-setup\.exe$/.test(name),
@@ -206,6 +209,9 @@ export function validateReleaseAssetSet(
     if (!hasLinuxX64Desktop) {
       missing.push('Linux x64 desktop package')
     }
+    if (!hasWindowsX64Cli) {
+      missing.push('Windows x64 CLI archive')
+    }
     if (!hasWindowsX64Setup) {
       missing.push('Windows x64 installer')
     }
@@ -216,43 +222,6 @@ export function validateReleaseAssetSet(
       throw new Error(`Release is missing required app artifact(s): ${missing.join(', ')}.`)
     }
   }
-}
-
-export function windowsPeHasAuthenticodeSignature(bytes) {
-  if (!Buffer.isBuffer(bytes)) {
-    bytes = Buffer.from(bytes)
-  }
-  if (bytes.length < 0x40 || bytes.toString('ascii', 0, 2) !== 'MZ') {
-    return false
-  }
-  const peOffset = bytes.readUInt32LE(0x3c)
-  if (peOffset + 24 > bytes.length || bytes.toString('ascii', peOffset, peOffset + 4) !== 'PE\0\0') {
-    return false
-  }
-  const optionalHeaderOffset = peOffset + 24
-  const optionalHeaderSize = bytes.readUInt16LE(peOffset + 20)
-  const optionalHeaderEnd = optionalHeaderOffset + optionalHeaderSize
-  if (optionalHeaderEnd > bytes.length) {
-    return false
-  }
-  const magic = bytes.readUInt16LE(optionalHeaderOffset)
-  let dataDirectoryOffset = -1
-  if (magic === 0x10b) {
-    dataDirectoryOffset = optionalHeaderOffset + 96
-  } else if (magic === 0x20b) {
-    dataDirectoryOffset = optionalHeaderOffset + 112
-  }
-  if (dataDirectoryOffset < 0 || dataDirectoryOffset + 40 > optionalHeaderEnd) {
-    return false
-  }
-  const certificateDirectoryOffset = dataDirectoryOffset + 8 * 4
-  const certificateTableFileOffset = bytes.readUInt32LE(certificateDirectoryOffset)
-  const certificateTableSize = bytes.readUInt32LE(certificateDirectoryOffset + 4)
-  return (
-    certificateTableFileOffset > 0 &&
-    certificateTableSize > 0 &&
-    certificateTableFileOffset + certificateTableSize <= bytes.length
-  )
 }
 
 export function plannedReleaseAssetNames(tag, steps, { signedAndroid = true } = {}) {
@@ -423,13 +392,13 @@ function firstMatchingAsset(assetNames, patterns) {
   return assetNames.find((name) => patterns.some((pattern) => pattern.test(name))) ?? null
 }
 
-function pushAssetLine(lines, usedAssets, assetNames, label, patterns) {
+function pushAssetLine(lines, usedAssets, assetNames, patterns) {
   const name = firstMatchingAsset(assetNames, patterns)
   if (!name) {
     return null
   }
   usedAssets.add(name)
-  lines.push(`- ${label}: ${assetReference(name)}`)
+  lines.push(`- ${describeAsset(name)}: ${assetReference(name)}`)
   return name
 }
 
@@ -447,50 +416,50 @@ function pushDownloadSections(lines, assetNames) {
 
   lines.push('## Downloads', '', '### Most People Will Want', '')
 
-  pushAssetLine(lines, usedAssets, sortedNames, 'Iris Drive for macOS', [
+  pushAssetLine(lines, usedAssets, sortedNames, [
     /^iris-drive-v.*-macos-arm64\.dmg$/,
   ])
-  pushAssetLine(lines, usedAssets, sortedNames, 'Iris Drive for Linux AppImage', [
+  pushAssetLine(lines, usedAssets, sortedNames, [
     /^iris-drive-v.*-linux-x64\.AppImage$/,
   ])
-  pushAssetLine(lines, usedAssets, sortedNames, 'Iris Drive for Debian/Ubuntu (.deb)', [
+  pushAssetLine(lines, usedAssets, sortedNames, [
     /^iris-drive-v.*-linux-x64\.deb$/,
   ])
-  pushAssetLine(lines, usedAssets, sortedNames, 'Iris Drive for Windows', [
+  pushAssetLine(lines, usedAssets, sortedNames, [
     /^iris-drive-v.*-windows-x64-setup\.exe$/,
   ])
-  pushAssetLine(lines, usedAssets, sortedNames, 'Iris Drive for Android', [
+  pushAssetLine(lines, usedAssets, sortedNames, [
     /^iris-drive-v.*-android-arm64\.apk$/,
   ])
 
   const cliLines = []
-  const addCliAsset = (label, preferredPatterns, duplicatePatterns = preferredPatterns) => {
+  const addCliAsset = (preferredPatterns, duplicatePatterns = preferredPatterns) => {
     const name = firstMatchingAsset(sortedNames, preferredPatterns)
     if (!name) {
       return
     }
     usedAssets.add(name)
     markMatchingAssetsUsed(usedAssets, sortedNames, duplicatePatterns)
-    cliLines.push(`- ${label}: ${assetReference(name)}`)
+    cliLines.push(`- ${describeAsset(name)}: ${assetReference(name)}`)
   }
 
-  addCliAsset('macOS Apple Silicon idrive CLI', [
+  addCliAsset([
     /^idrive-v.*-aarch64-apple-darwin\.tar\.gz$/,
   ])
-  addCliAsset('macOS Intel idrive CLI', [
+  addCliAsset([
     /^idrive-v.*-x86_64-apple-darwin\.tar\.gz$/,
   ])
-  addCliAsset('Linux x64 idrive CLI', [
+  addCliAsset([
     /^idrive-v.*-x86_64-unknown-linux-gnu\.tar\.gz$/,
     /^idrive-v.*-x86_64-unknown-linux-musl\.tar\.gz$/,
   ], [/^idrive-v.*-x86_64-unknown-linux-(gnu|musl)\.tar\.gz$/])
-  addCliAsset('Linux ARM64 idrive CLI', [
+  addCliAsset([
     /^idrive-v.*-aarch64-unknown-linux-musl\.tar\.gz$/,
   ])
-  addCliAsset('Windows x64 idrive CLI', [
+  addCliAsset([
     /^idrive-v.*-x86_64-pc-windows-msvc\.zip$/,
   ])
-  addCliAsset('Windows ARM64 idrive CLI', [
+  addCliAsset([
     /^idrive-v.*-aarch64-pc-windows-msvc\.zip$/,
   ])
 

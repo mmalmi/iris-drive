@@ -18,6 +18,9 @@
 - Prefer the configured remote macOS runner for release UI journeys, keeping
   native dialogs off the developer workstation while retaining the same
   shipped-app assertions.
+- Record unsigned Windows artifacts as the project release policy while still
+  requiring the expected CLI archive and installer in content-addressed final
+  releases.
 
 ### Fixed
 

@@ -35,7 +35,6 @@ import {
   semverFromTag,
   splitCsv,
   validateReleaseAssetSet,
-  windowsPeHasAuthenticodeSignature,
 } from './local-release-lib.mjs'
 import {
   macosRestrictedProfileEntitlementKeys,
@@ -45,6 +44,7 @@ import {
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(__dirname, '..')
 const rootCargoToml = join(repoRoot, 'Cargo.toml')
+const releasePolicyPath = join(repoRoot, 'release-policy.json')
 const distDir = join(repoRoot, 'dist')
 const defaultEnvFiles = [
   join(repoRoot, 'dist', 'macos', 'provisioning.env'),
@@ -939,44 +939,17 @@ function validateFinalReleaseBuildInputs({ env, steps }) {
       missing.push('App Store Connect issuer ID is required for iOS TestFlight')
     }
   }
-  if (
-    steps.includes('windows') &&
-    !windowsSigningIsConfigured(env) &&
-    !boolEnv(env.IRIS_DRIVE_ALLOW_UNSIGNED_WINDOWS)
-  ) {
-    missing.push(
-      'Windows Authenticode signing inputs: IRIS_DRIVE_WINDOWS_SIGNTOOL_CERT_SHA1 or IRIS_DRIVE_WINDOWS_SIGNTOOL_PFX_PATH',
-    )
-  }
   if (missing.length > 0) {
     throw new Error(`Missing final release input(s): ${missing.join('; ')}`)
   }
 }
 
-function boolEnv(value) {
-  return /^(1|true|yes|on)$/i.test(String(value ?? '').trim())
-}
-
-function windowsSigningIsConfigured(env) {
-  const certSha1 = String(env.IRIS_DRIVE_WINDOWS_SIGNTOOL_CERT_SHA1 ?? '').trim()
-  const pfxPath = String(env.IRIS_DRIVE_WINDOWS_SIGNTOOL_PFX_PATH ?? '').trim()
-  return Boolean(certSha1 || pfxPath)
-}
-
-function validateWindowsInstallerSignatures({ assetPaths, env, requireCompleteAppRelease }) {
-  if (!requireCompleteAppRelease || boolEnv(env.IRIS_DRIVE_ALLOW_UNSIGNED_WINDOWS)) {
-    return
+function readProjectReleasePolicy() {
+  const policy = JSON.parse(readFileSync(releasePolicyPath, 'utf8'))
+  if (policy?.windows?.signing !== 'unsigned') {
+    throw new Error('release-policy.json must set windows.signing to "unsigned"')
   }
-  const installers = assetPaths.filter((assetPath) =>
-    /^iris-drive-v.*-windows-x64-setup\.exe$/.test(basename(assetPath)),
-  )
-  for (const installer of installers) {
-    if (!windowsPeHasAuthenticodeSignature(readFileSync(installer))) {
-      throw new Error(
-        `Windows installer is not Authenticode signed: ${installer}. Set IRIS_DRIVE_ALLOW_UNSIGNED_WINDOWS=1 only for non-production testing.`,
-      )
-    }
-  }
+  return policy
 }
 
 function validateFinalPublishInputs({ env, skipZapstore }) {
@@ -1043,7 +1016,7 @@ function buildAndroidArtifacts({ env, tag, dryRun }) {
   }
 }
 
-function buildWindowsArtifacts({ env, tag, dryRun, requireSigning }) {
+function buildWindowsArtifacts({ env, tag, dryRun }) {
   if (!dryRun && process.platform !== 'win32') {
     throw new SkipStepError('Windows release artifacts must be built on Windows.')
   }
@@ -1061,9 +1034,6 @@ function buildWindowsArtifacts({ env, tag, dryRun, requireSigning }) {
     '-OutputDir',
     distDir,
   ]
-  if (requireSigning) {
-    args.push('-RequireSigning')
-  }
   run('powershell.exe', args, { dryRun, env })
   const cliPath = join(repoRoot, 'target', 'release', 'idrive.exe')
   const cliZipPath = join(distDir, `idrive-${tag}-x86_64-pc-windows-msvc.zip`)
@@ -1131,7 +1101,6 @@ function resolveIosTestFlightChannels(env) {
 function buildReleaseArtifacts({ env, tag, options }) {
   const steps = selectedBuildSteps(options)
   const signedAndroid = androidSigningIsComplete(env)
-  const requireWindowsSigning = options.publish && !options.draft && !boolEnv(env.IRIS_DRIVE_ALLOW_UNSIGNED_WINDOWS)
   console.log(`Release build steps: ${steps.join(', ') || '(none)'}`)
   console.log(
     `Planned dist artifacts: ${plannedReleaseAssetNames(tag, steps, { signedAndroid }).join(', ') || '(none)'}`,
@@ -1147,7 +1116,6 @@ function buildReleaseArtifacts({ env, tag, options }) {
           env,
           tag,
           dryRun: options.dryRun,
-          requireSigning: requireWindowsSigning,
         }),
     ],
     ['android', () => buildAndroidArtifacts({ env, tag, dryRun: options.dryRun })],
@@ -1243,7 +1211,6 @@ function stageRelease({
   stageDir,
   draft,
   dryRun,
-  env,
   plannedAssetNames = [],
   requireCompleteAppRelease = false,
 }) {
@@ -1256,11 +1223,6 @@ function stageRelease({
       ? assetNames
       : plannedAssetNames
   validateReleaseAssetSet(validationNames, {
-    requireCompleteAppRelease,
-  })
-  validateWindowsInstallerSignatures({
-    assetPaths,
-    env,
     requireCompleteAppRelease,
   })
   if (hasPlannedDryRunAssets) {
@@ -1427,6 +1389,7 @@ function publishZapstore({ env, tag, assetDir, dryRun, plannedAssetNames = [] })
 function main() {
   const options = parseArgs(process.argv.slice(2))
   const env = { ...readOptionalEnvFiles([...defaultEnvFiles, ...options.envFiles]), ...process.env }
+  const releasePolicy = readProjectReleasePolicy()
   const tag = options.tag || readWorkspaceVersionTag(readFileSync(rootCargoToml, 'utf8'))
   const releaseTree = options.releaseTree || env.IRIS_DRIVE_RELEASE_TREE || 'releases/iris-drive'
   const assetDir = options.assetDir || join(repoRoot, 'dist')
@@ -1443,6 +1406,7 @@ function main() {
   console.log(`Release tree: ${releaseTree}`)
   console.log(`Asset dir: ${assetDir}`)
   console.log(`Stage dir: ${stageDir}`)
+  console.log(`Windows release signing: ${releasePolicy.windows.signing}`)
 
   if (options.build && options.publish && !options.draft) {
     validateFinalReleaseBuildInputs({ env, steps: buildSteps })
@@ -1467,7 +1431,6 @@ function main() {
     dryRun: options.dryRun,
     plannedAssetNames,
     requireCompleteAppRelease: options.publish && !options.draft,
-    env,
   })
 
   if (options.publish) {
