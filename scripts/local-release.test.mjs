@@ -296,10 +296,6 @@ test('local-release final dry-run refreshes public release resolver after htree 
   for (const assetName of plannedReleaseAssetNames('v9.9.9', ['macos', 'linux', 'windows', 'android'])) {
     writeFileSync(join(assetDir, assetName), assetName)
   }
-  writeFileSync(
-    join(assetDir, 'iris-drive-v9.9.9-macos-arm64.unsigned-intermediate.app.tar.gz'),
-    'must not be published',
-  )
 
   const result = spawnSync(
     process.execPath,

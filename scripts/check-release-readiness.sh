@@ -80,6 +80,7 @@ require_executable scripts/ios-build
 require_executable scripts/release-build-number.mjs
 require_file scripts/release-build-hygiene.mjs
 require_file scripts/release-build-hygiene.test.mjs
+require_file scripts/local-release-assets.test.mjs
 require_executable scripts/ios-profiles
 require_executable scripts/testflight-internal
 require_executable scripts/testflight-public
@@ -108,6 +109,7 @@ require_contains scripts/local-release.mjs "IRIS_DRIVE_IOS_MARKETING_VERSION"
 require_contains scripts/local-release.mjs "App Store Connect API key file"
 require_contains scripts/local-release.mjs ".env.zapstore.local"
 require_contains scripts/local-release.mjs "requireCompleteAppRelease"
+require_contains scripts/local-release-lib.mjs "validateCanonicalReleaseAssetSet"
 require_contains scripts/local-release.mjs "validateFinalReleaseBuildInputs"
 require_contains scripts/local-release.mjs "validateFinalPublishInputs"
 require_contains scripts/local-release.mjs "readProjectReleasePolicy"
@@ -196,7 +198,7 @@ require_contains scripts/release-gate.sh "scripts/macos-vm-idle-cpu.sh"
 require_contains scripts/release-gate.sh "IRIS_DRIVE_MACOS_SSH_HOST"
 require_contains scripts/release-gate.sh "macos_vm_gate_enabled"
 require_contains scripts/release-gate.sh "IRIS_DRIVE_RELEASE_GATE_MACOS_VM"
-require_contains scripts/release-gate.sh "scripts/local-release-version.test.mjs"
+require_contains scripts/release-gate.sh "scripts/local-release*.test.mjs"
 require_contains scripts/release-gate.sh "scripts/release-build-hygiene.test.mjs"
 require_contains scripts/macos-idle-cpu-smoke.sh "macos-dev-app.sh"
 require_absent scripts/release-gate.sh "just macos-build"

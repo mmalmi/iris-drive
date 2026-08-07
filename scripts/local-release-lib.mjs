@@ -249,6 +249,34 @@ export function plannedReleaseAssetNames(tag, steps, { signedAndroid = true } = 
   return names
 }
 
+export function canonicalReleaseAssetNames(tag) {
+  return plannedReleaseAssetNames(tag, ['macos', 'linux', 'windows', 'android'])
+}
+
+export function validateCanonicalReleaseAssetSet(
+  tag,
+  assetNames,
+  directoryEntryNames = assetNames,
+) {
+  const expected = canonicalReleaseAssetNames(tag)
+  const normalizedTag = normalizeTag(tag).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const tagPattern = new RegExp(`(?:^|[-_])${normalizedTag}(?=$|[-_.])`)
+  const actual = [...assetNames].sort()
+  const discovered = [...directoryEntryNames].filter((name) => tagPattern.test(name)).sort()
+  const missing = expected.filter((name) => !actual.includes(name))
+  const unexpected = discovered.filter((name) => !expected.includes(name))
+  const errors = []
+  if (missing.length > 0) {
+    errors.push(`Missing canonical release asset(s): ${missing.join(', ')}`)
+  }
+  if (unexpected.length > 0) {
+    errors.push(`Unexpected tag-matching release asset(s): ${unexpected.join(', ')}`)
+  }
+  if (errors.length > 0) {
+    throw new Error(errors.join('; '))
+  }
+}
+
 export function parseNotarytoolSubmitOutput(text) {
   const idMatches = [...String(text).matchAll(/^\s*id:\s*([0-9a-f-]+)/gim)]
   const statusMatches = [

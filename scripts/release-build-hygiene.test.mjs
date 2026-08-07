@@ -79,6 +79,17 @@ test('direct iOS and Windows release entry points remap Rust paths', () => {
   assert.match(ios, /release-build-hygiene\.mjs/)
 })
 
+test('Linux release lookup keeps checkout paths out of production code', () => {
+  const source = readFileSync(new URL('../linux/src/daemon_control.rs', import.meta.url), 'utf8')
+  assert.equal([...source.matchAll(/env!\("CARGO_MANIFEST_DIR"\)/g)].length, 1)
+  assert.match(
+    source,
+    /#\[cfg\(debug_assertions\)\]\s*fn debug_checkout_idrive_path[\s\S]*?env!\("CARGO_MANIFEST_DIR"\)/,
+  )
+  assert.match(source, /std::env::current_exe\(\)/)
+  assert.match(source, /with_file_name\("idrive"\)/)
+})
+
 test('Unix CLI packaging produces normalized tar metadata', { skip: process.platform === 'win32' }, () => {
   const distDir = mkdtempSync(join(tmpdir(), 'iris-drive-release-tar-'))
   const run = (command, args) => {

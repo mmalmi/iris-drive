@@ -5,11 +5,11 @@ import {
   chmodSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   rmSync,
-  statSync,
   symlinkSync,
   writeFileSync,
 } from 'node:fs'
@@ -26,6 +26,7 @@ import {
   buildReleaseManifest,
   buildReleaseManifestFiles,
   buildZapstorePublishPlan,
+  canonicalReleaseAssetNames,
   normalizeTag,
   parseNotarytoolSubmitOutput,
   parseEnvFile,
@@ -34,6 +35,7 @@ import {
   renderReleaseNotes,
   semverFromTag,
   splitCsv,
+  validateCanonicalReleaseAssetSet,
   validateReleaseAssetSet,
 } from './local-release-lib.mjs'
 import {
@@ -1189,14 +1191,12 @@ function collectReleaseAssetPaths(assetDir, tag) {
   if (!existsSync(assetDir)) {
     return []
   }
-  const allowed = new Set(
-    plannedReleaseAssetNames(tag, ['macos', 'linux', 'windows', 'android']),
-  )
+  const allowed = new Set(canonicalReleaseAssetNames(tag))
   return readdirSync(assetDir)
     .sort()
     .filter((entry) => allowed.has(entry))
     .map((entry) => join(assetDir, entry))
-    .filter((path) => statSync(path).isFile())
+    .filter((path) => lstatSync(path).isFile())
 }
 
 function resolveReleaseCommit(tag, dryRun) {
@@ -1216,9 +1216,13 @@ function stageRelease({
   plannedAssetNames = [],
   requireCompleteAppRelease = false,
 }) {
+  const assetDirNames = existsSync(assetDir) ? readdirSync(assetDir) : []
   const assetPaths = collectReleaseAssetPaths(assetDir, tag)
   const assetNames = assetPaths.map((assetPath) => basename(assetPath))
   const hasPlannedDryRunAssets = dryRun && plannedAssetNames.length > 0
+  if (requireCompleteAppRelease && !hasPlannedDryRunAssets) {
+    validateCanonicalReleaseAssetSet(tag, assetNames, assetDirNames)
+  }
   const validationNames = hasPlannedDryRunAssets
     ? plannedAssetNames
     : assetNames.length > 0

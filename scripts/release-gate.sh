@@ -61,8 +61,7 @@ run_parallel_checks() {
   parallel_group_begin release-gate
   parallel_group_start release-workflow-tests python3 scripts/test_release_workflows.py
   parallel_group_start local-release-tests node --test \
-    scripts/local-release.test.mjs scripts/local-release-version.test.mjs \
-    scripts/local-release-windows-policy.test.mjs scripts/release-build-hygiene.test.mjs
+    scripts/local-release*.test.mjs scripts/release-build-hygiene.test.mjs
   parallel_group_start fmt cargo fmt --check
   parallel_group_start structure just structure
   parallel_group_start workspace-tests cargo test --workspace --exclude idrive

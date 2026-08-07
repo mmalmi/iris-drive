@@ -58,8 +58,12 @@
   sequence so a new app version cannot reuse an already accepted Apple build.
 - Remap private builder paths in every Rust release target and normalize Unix
   archive ownership and timestamps.
-- Stage only the canonical release assets, excluding unsigned intermediates
-  and other tag-matching build residue.
+- Resolve the installed Linux CLI beside the desktop app or from `PATH`, while
+  keeping checkout probing debug-only so release binaries cannot embed the
+  builder's source directory.
+- Require all nine canonical release assets to be regular files before final
+  publication, rejecting missing CLI or Android bundle artifacts, symlinks,
+  directories, unsigned intermediates, and other tag-matching build residue.
 
 ## 0.1.32 - 2026-07-27
 
