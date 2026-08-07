@@ -135,6 +135,20 @@ require_var() {
   fi
 }
 
+ensure_release_rust_path_remap() {
+  local current="${CARGO_ENCODED_RUSTFLAGS:-}${RUSTFLAGS:-}"
+  [[ "$current" == *"--remap-path-prefix=$ROOT="* ]] && return
+  local workspace="--remap-path-prefix=$ROOT=/usr/src/iris-drive"
+  local home="--remap-path-prefix=$HOME=/usr/src/home"
+  if [[ -n "${CARGO_ENCODED_RUSTFLAGS:-}" ]]; then
+    export CARGO_ENCODED_RUSTFLAGS+=$'\037'"$workspace"$'\037'"$home"
+  elif [[ -n "${RUSTFLAGS:-}" ]]; then
+    export RUSTFLAGS+=" $workspace $home"
+  else
+    export CARGO_ENCODED_RUSTFLAGS="$workspace"$'\037'"$home"
+  fi
+}
+
 asc_issuer_id() {
   local explicit issuer_file
   explicit="${IRIS_DRIVE_ASC_AUTH_KEY_ISSUER_ID:-${IRIS_DRIVE_ASC_ISSUER_ID:-}}"
@@ -226,6 +240,7 @@ build_number() {
 
 run_ios_rust() {
   require_darwin
+  ensure_release_rust_path_remap
   CARGO_TARGET_DIR="$TARGET_DIR" \
     IPHONEOS_DEPLOYMENT_TARGET="$RUST_IOS_DEPLOYMENT_TARGET" \
     cargo build -p iris-drive-app-core --release --target "$RUST_IOS_TARGET"
@@ -233,6 +248,7 @@ run_ios_rust() {
     echo "Static app-core library not found at $RUST_STATIC_LIB" >&2
     exit 1
   fi
+  node "$ROOT/scripts/release-build-hygiene.mjs" "$RUST_STATIC_LIB"
 }
 
 run_ios_project() {

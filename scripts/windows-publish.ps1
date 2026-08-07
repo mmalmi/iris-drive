@@ -25,6 +25,32 @@ $Root = Split-Path -Parent $PSScriptRoot
 $Project = Join-Path $Root "windows\IrisDrive.Windows.csproj"
 $WorkspaceCargoToml = Join-Path $Root "Cargo.toml"
 
+function Set-ReleaseRustPathRemapping {
+  $Current = "$($env:CARGO_ENCODED_RUSTFLAGS)$($env:RUSTFLAGS)"
+  if ($Current.Contains("--remap-path-prefix=$Root=")) {
+    return
+  }
+  $HomeDirectory = [Environment]::GetFolderPath("UserProfile")
+  $Flags = @(
+    "--remap-path-prefix=$Root=/usr/src/iris-drive",
+    "--remap-path-prefix=$HomeDirectory=/usr/src/home"
+  )
+  if ($env:CARGO_ENCODED_RUSTFLAGS) {
+    $env:CARGO_ENCODED_RUSTFLAGS = [string]::Join(
+      [char]0x1f,
+      @($env:CARGO_ENCODED_RUSTFLAGS) + $Flags
+    )
+  } elseif ($env:RUSTFLAGS) {
+    $env:RUSTFLAGS = "$($env:RUSTFLAGS) $($Flags -join ' ')"
+  } else {
+    $env:CARGO_ENCODED_RUSTFLAGS = [string]::Join([char]0x1f, $Flags)
+  }
+}
+
+if ($Configuration -eq "Release") {
+  Set-ReleaseRustPathRemapping
+}
+
 function Invoke-Checked {
   param(
     [string]$FilePath,

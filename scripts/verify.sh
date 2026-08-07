@@ -39,7 +39,7 @@ run_fast() {
   parallel_group_start structure just structure
   parallel_group_start local-release-tests node --test \
     scripts/local-release.test.mjs scripts/local-release-version.test.mjs \
-    scripts/local-release-windows-policy.test.mjs
+    scripts/local-release-windows-policy.test.mjs scripts/release-build-hygiene.test.mjs
   parallel_group_start clippy cargo clippy --workspace --all-targets -- -D warnings
   parallel_group_start workspace-tests cargo test --workspace --exclude idrive
   parallel_group_start idrive-tests cargo test -p idrive --bin idrive --test link_input_e2e

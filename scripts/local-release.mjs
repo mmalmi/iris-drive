@@ -40,6 +40,12 @@ import {
   macosRestrictedProfileEntitlementKeys,
   prepareMacosEntitlementsData,
 } from './macos-entitlements.mjs'
+import {
+  assertNoPrivateBuildMetadata,
+  normalizedTarOwnerArgs,
+  packageUnixCliTarball,
+  releaseRustBuildEnvironment,
+} from './release-build-hygiene.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(__dirname, '..')
@@ -269,61 +275,6 @@ function releaseVersionInfo(tag) {
 function selectedBuildSteps(options) {
   const steps = options.only ? [...options.only] : defaultBuildSteps
   return steps.filter((step) => !options.skip.has(step))
-}
-
-function writeUnixInstallScript(path, executable) {
-  writeFileSync(
-    path,
-    `#!/bin/bash
-set -e
-
-INSTALL_DIR="\${1:-/usr/local/bin}"
-install -d "\${INSTALL_DIR}"
-install -m 755 ${executable} "\${INSTALL_DIR}/"
-`,
-  )
-  chmodSync(path, 0o755)
-}
-
-function writeUnixReadme(path) {
-  writeFileSync(
-    path,
-    `idrive - Iris Drive CLI
-==========================
-
-Binary included:
-  idrive  - CLI and daemon helper
-
-Quick install:
-  ./install.sh
-  ./install.sh ~/.local/bin
-`,
-  )
-}
-
-function packageUnixCliTarball({ binaryPath, targetTriple, tag, dryRun }) {
-  const bundleDir = join(distDir, 'idrive')
-  const tarPath = join(distDir, `idrive-${targetTriple}.tar`)
-  const unversioned = `${tarPath}.gz`
-  const versioned = join(distDir, `idrive-${tag}-${targetTriple}.tar.gz`)
-  if (!dryRun) {
-    if (!existsSync(binaryPath)) {
-      throw new Error(`Missing idrive binary for ${targetTriple}: ${binaryPath}`)
-    }
-    rmSync(bundleDir, { recursive: true, force: true })
-    mkdirSync(bundleDir, { recursive: true })
-    copyFileSync(binaryPath, join(bundleDir, 'idrive'))
-    chmodSync(join(bundleDir, 'idrive'), 0o755)
-    writeUnixInstallScript(join(bundleDir, 'install.sh'), 'idrive')
-    writeUnixReadme(join(bundleDir, 'README.txt'))
-  }
-  run('tar', ['-cf', tarPath, '-C', distDir, 'idrive/README.txt', 'idrive/install.sh', 'idrive/idrive'], {
-    dryRun,
-  })
-  run('gzip', ['-n', '-f', tarPath], { dryRun })
-  if (!dryRun) {
-    copyFileSync(unversioned, versioned)
-  }
 }
 
 function stageLinuxDebCliBinary({ env, targetTriple, dryRun }) {
@@ -642,6 +593,8 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
     throw new Error(`Invalid MACOSX_DEPLOYMENT_TARGET: ${deploymentTarget}`)
   }
   env = { ...env, MACOSX_DEPLOYMENT_TARGET: deploymentTarget }
+  const rustLibDir = join(cargoTargetDir(env), 'aarch64-apple-darwin', 'release')
+  const idrivePath = join(rustLibDir, 'idrive')
   console.log(`macOS deployment target: ${deploymentTarget}`)
   run('cargo', ['build', '--release', '-p', 'idrive', '--target', 'aarch64-apple-darwin'], {
     env,
@@ -655,8 +608,18 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
       dryRun,
     },
   )
+  if (!dryRun) {
+    assertNoPrivateBuildMetadata(
+      [idrivePath, join(rustLibDir, 'libiris_drive_app_core.a')],
+      env,
+      { repoRoot },
+    )
+  }
   packageUnixCliTarball({
-    binaryPath: join(cargoTargetDir(env), 'aarch64-apple-darwin', 'release', 'idrive'),
+    binaryPath: idrivePath,
+    distDir,
+    env,
+    run,
     targetTriple: 'aarch64-apple-darwin',
     tag,
     dryRun,
@@ -667,7 +630,6 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
   }
   const derivedData = join(repoRoot, 'macos', '.build', 'ReleaseDerivedData')
   const releaseVersion = releaseVersionInfo(tag)
-  const rustLibDir = join(cargoTargetDir(env), 'aarch64-apple-darwin', 'release')
   run(
     'xcodebuild',
     [
@@ -690,7 +652,6 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
   )
   const appPath = join(derivedData, 'Build', 'Products', 'Release', 'Iris Drive.app')
   const appexPath = join(appPath, 'Contents', 'PlugIns', 'IrisDriveFileProvider.appex')
-  const idrivePath = join(cargoTargetDir(env), 'aarch64-apple-darwin', 'release', 'idrive')
   const identity = macosDeveloperIdIdentity(env, dryRun)
   if (!identity) {
     throw new Error('Missing Developer ID Application identity for macOS release signing.')
@@ -817,9 +778,18 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
   if (!dryRun) {
     rmSync(updaterArchivePath, { force: true })
   }
-  run('tar', ['-czf', updaterArchivePath, '-C', dirname(appPath), basename(appPath)], {
-    dryRun,
-  })
+  run(
+    'tar',
+    [
+      ...normalizedTarOwnerArgs(),
+      '-czf',
+      updaterArchivePath,
+      '-C',
+      dirname(appPath),
+      basename(appPath),
+    ],
+    { dryRun },
+  )
   run(
     join(repoRoot, 'scripts', 'macos-release-smoke.sh'),
     ['--app', appPath, '--archive', updaterArchivePath, '--dmg', dmgPath],
@@ -835,12 +805,19 @@ function buildLinuxArtifacts({ env, tag, dryRun }) {
     throw new Error('Missing cargo-deb; install it before building Linux release artifacts.')
   }
   const targetTriple = 'x86_64-unknown-linux-gnu'
+  const cliPath = join(cargoTargetDir(env), targetTriple, 'release', 'idrive')
   run('cargo', ['build', '--release', '--target', targetTriple, '-p', 'idrive'], {
     dryRun,
     env,
   })
+  if (!dryRun) {
+    assertNoPrivateBuildMetadata([cliPath], env, { repoRoot })
+  }
   packageUnixCliTarball({
-    binaryPath: join(cargoTargetDir(env), targetTriple, 'release', 'idrive'),
+    binaryPath: cliPath,
+    distDir,
+    env,
+    run,
     targetTriple,
     tag,
     dryRun,
@@ -850,6 +827,13 @@ function buildLinuxArtifacts({ env, tag, dryRun }) {
     dryRun,
     env,
   })
+  if (!dryRun) {
+    assertNoPrivateBuildMetadata(
+      [join(repoRoot, 'linux', 'target', 'release', 'iris-drive')],
+      env,
+      { repoRoot },
+    )
+  }
   run('cargo', ['deb', '--no-build'], { cwd: join(repoRoot, 'linux'), dryRun, env })
   const debPath = findFirstFile(join(repoRoot, 'linux', 'target', 'debian'), (entry) =>
     entry.endsWith('.deb'),
@@ -997,6 +981,13 @@ function buildAndroidArtifacts({ env, tag, dryRun }) {
       dryRun,
     },
   )
+  if (!dryRun) {
+    assertNoPrivateBuildMetadata(
+      [join(repoRoot, 'android/app/src/main/jniLibs/arm64-v8a/libiris_drive_app_core.so')],
+      env,
+      { repoRoot },
+    )
+  }
   const apkPath = findFirstFile(
     join(repoRoot, 'android', 'app', 'build', 'outputs', 'apk', 'release'),
     (entry) => entry.endsWith('.apk'),
@@ -1036,6 +1027,13 @@ function buildWindowsArtifacts({ env, tag, dryRun }) {
   ]
   run('powershell.exe', args, { dryRun, env })
   const cliPath = join(repoRoot, 'target', 'release', 'idrive.exe')
+  if (!dryRun) {
+    assertNoPrivateBuildMetadata(
+      [cliPath, join(repoRoot, 'target', 'release', 'iris_drive_app_core.dll')],
+      env,
+      { repoRoot },
+    )
+  }
   const cliZipPath = join(distDir, `idrive-${tag}-x86_64-pc-windows-msvc.zip`)
   if (!dryRun) {
     if (!existsSync(cliPath)) {
@@ -1099,6 +1097,7 @@ function resolveIosTestFlightChannels(env) {
 }
 
 function buildReleaseArtifacts({ env, tag, options }) {
+  env = releaseRustBuildEnvironment(env, { repoRoot })
   const steps = selectedBuildSteps(options)
   const signedAndroid = androidSigningIsComplete(env)
   console.log(`Release build steps: ${steps.join(', ') || '(none)'}`)
@@ -1190,9 +1189,12 @@ function collectReleaseAssetPaths(assetDir, tag) {
   if (!existsSync(assetDir)) {
     return []
   }
+  const allowed = new Set(
+    plannedReleaseAssetNames(tag, ['macos', 'linux', 'windows', 'android']),
+  )
   return readdirSync(assetDir)
     .sort()
-    .filter((entry) => entry.includes(tag))
+    .filter((entry) => allowed.has(entry))
     .map((entry) => join(assetDir, entry))
     .filter((path) => statSync(path).isFile())
 }

@@ -78,6 +78,8 @@ require_executable scripts/macos-android-manual-link-remote.sh
 require_executable scripts/macos-profiles
 require_executable scripts/ios-build
 require_executable scripts/release-build-number.mjs
+require_file scripts/release-build-hygiene.mjs
+require_file scripts/release-build-hygiene.test.mjs
 require_executable scripts/ios-profiles
 require_executable scripts/testflight-internal
 require_executable scripts/testflight-public
@@ -195,6 +197,7 @@ require_contains scripts/release-gate.sh "IRIS_DRIVE_MACOS_SSH_HOST"
 require_contains scripts/release-gate.sh "macos_vm_gate_enabled"
 require_contains scripts/release-gate.sh "IRIS_DRIVE_RELEASE_GATE_MACOS_VM"
 require_contains scripts/release-gate.sh "scripts/local-release-version.test.mjs"
+require_contains scripts/release-gate.sh "scripts/release-build-hygiene.test.mjs"
 require_contains scripts/macos-idle-cpu-smoke.sh "macos-dev-app.sh"
 require_absent scripts/release-gate.sh "just macos-build"
 require_contains scripts/release-gate.sh "run_macos_idle_cpu_gate"

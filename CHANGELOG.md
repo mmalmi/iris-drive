@@ -56,6 +56,10 @@
   received before the app finishes starting.
 - Advance version-derived native build numbers beyond the existing TestFlight
   sequence so a new app version cannot reuse an already accepted Apple build.
+- Remap private builder paths in every Rust release target and normalize Unix
+  archive ownership and timestamps.
+- Stage only the canonical release assets, excluding unsigned intermediates
+  and other tag-matching build residue.
 
 ## 0.1.32 - 2026-07-27
 

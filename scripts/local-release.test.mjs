@@ -296,6 +296,10 @@ test('local-release final dry-run refreshes public release resolver after htree 
   for (const assetName of plannedReleaseAssetNames('v9.9.9', ['macos', 'linux', 'windows', 'android'])) {
     writeFileSync(join(assetDir, assetName), assetName)
   }
+  writeFileSync(
+    join(assetDir, 'iris-drive-v9.9.9-macos-arm64.unsigned-intermediate.app.tar.gz'),
+    'must not be published',
+  )
 
   const result = spawnSync(
     process.execPath,
@@ -322,6 +326,7 @@ test('local-release final dry-run refreshes public release resolver after htree 
   )
 
   assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /Would stage 9 asset\(s\)/)
   assert.match(result.stdout, /api\/resolve\/npub1example\/releases%2Firis-drive\?refresh=1/)
   assert.match(
     result.stdout,
