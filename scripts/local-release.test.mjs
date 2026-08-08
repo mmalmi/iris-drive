@@ -667,6 +667,9 @@ test('local-release dry-run wires restricted entitlement scrubbing and macOS rel
     result.stdout,
     /Would prepare entitlements .*Release\.entitlements.*strip.*com\.apple\.developer\.associated-domains/s,
   )
+  assert.match(result.stdout, /\$ strip -S .*Iris Drive[\s\S]*\$ codesign/)
+  assert.match(result.stdout, /\$ strip -S .*IrisDriveFileProvider[\s\S]*\$ codesign/)
+  assert.match(result.stdout, /codesign .*IrisDriveFileProvider\.appex/)
   assert.match(result.stdout, /scripts\/macos-release-smoke\.sh/)
   assert.match(result.stdout, /--app .*Iris Drive\.app/)
   assert.match(result.stdout, /--archive .*iris-drive-v9\.9\.9-macos-arm64\.app\.tar\.gz/)

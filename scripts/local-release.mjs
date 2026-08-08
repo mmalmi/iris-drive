@@ -42,6 +42,7 @@ import {
   macosRestrictedProfileEntitlementKeys,
   prepareMacosEntitlementsData,
 } from './macos-entitlements.mjs'
+import { prepareMacosReleaseBinaries } from './macos-release-binaries.mjs'
 import {
   assertNoPrivateBuildMetadata,
   normalizedTarOwnerArgs,
@@ -653,7 +654,14 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
     { dryRun, env },
   )
   const appPath = join(derivedData, 'Build', 'Products', 'Release', 'Iris Drive.app')
-  const appexPath = join(appPath, 'Contents', 'PlugIns', 'IrisDriveFileProvider.appex')
+  const { appCliPath, appexCliPath, appexPath } = prepareMacosReleaseBinaries({
+    appPath,
+    cliPath: idrivePath,
+    dryRun,
+    env,
+    repoRoot,
+    run,
+  })
   const identity = macosDeveloperIdIdentity(env, dryRun)
   if (!identity) {
     throw new Error('Missing Developer ID Application identity for macOS release signing.')
@@ -683,9 +691,6 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
       ? readMacosProvisioningProfileEntitlements(appexProvisioningProfile)
       : {}
   if (!dryRun) {
-    if (!existsSync(appPath)) {
-      throw new Error(`Missing built macOS app: ${appPath}`)
-    }
     mkdirSync(signingDir, { recursive: true })
   }
   prepareMacosEntitlements(join(repoRoot, 'macos', 'Release.entitlements'), appEntitlements, teamId, {
@@ -701,21 +706,11 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
   )
   if (keepProvisionedEntitlements) {
     copyMacosProvisioningProfile({ profilePath: appProvisioningProfile, bundlePath: appPath, dryRun })
-    if (dryRun || existsSync(appexPath)) {
-      copyMacosProvisioningProfile({
-        profilePath: appexProvisioningProfile,
-        bundlePath: appexPath,
-        dryRun,
-      })
-    }
-  }
-  if (!dryRun) {
-    copyFileSync(idrivePath, join(appPath, 'Contents', 'MacOS', 'idrive'))
-    chmodSync(join(appPath, 'Contents', 'MacOS', 'idrive'), 0o755)
-    if (existsSync(appexPath)) {
-      copyFileSync(idrivePath, join(appexPath, 'Contents', 'MacOS', 'idrive'))
-      chmodSync(join(appexPath, 'Contents', 'MacOS', 'idrive'), 0o755)
-    }
+    copyMacosProvisioningProfile({
+      profilePath: appexProvisioningProfile,
+      bundlePath: appexPath,
+      dryRun,
+    })
   }
   const timestampArgs = macosCodesignTimestampArgs(env)
   const runtimeArgs = macosHardenedRuntimeArgs()
@@ -726,20 +721,16 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
       ...runtimeArgs,
       '--sign',
       identity,
-      join(appPath, 'Contents', 'MacOS', 'idrive'),
+      appCliPath,
     ],
     { dryRun, env },
   )
-  if (!dryRun && existsSync(appexPath)) {
-    runCodesign([
-      '--force',
-      ...timestampArgs,
-      ...runtimeArgs,
-      '--sign',
-      identity,
-      join(appexPath, 'Contents', 'MacOS', 'idrive'),
-    ], { env })
-    runCodesign([
+  runCodesign(
+    ['--force', ...timestampArgs, ...runtimeArgs, '--sign', identity, appexCliPath],
+    { dryRun, env },
+  )
+  runCodesign(
+    [
       '--force',
       ...timestampArgs,
       ...runtimeArgs,
@@ -748,8 +739,9 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
       '--entitlements',
       appexEntitlements,
       appexPath,
-    ], { env })
-  }
+    ],
+    { dryRun, env },
+  )
   runCodesign(
     [
       '--force',

@@ -58,6 +58,8 @@
   sequence so a new app version cannot reuse an already accepted Apple build.
 - Remap private builder paths in every Rust release target and in bundled
   Clang/GCC dependencies, and normalize Unix archive ownership and timestamps.
+- Strip Xcode debug paths from shipped macOS executables and audit every
+  bundled file before signing.
 - Resolve the installed Linux CLI beside the desktop app or from `PATH`, while
   keeping checkout probing debug-only so release binaries cannot embed the
   builder's source directory.
