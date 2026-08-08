@@ -56,8 +56,8 @@
   received before the app finishes starting.
 - Advance version-derived native build numbers beyond the existing TestFlight
   sequence so a new app version cannot reuse an already accepted Apple build.
-- Remap private builder paths in every Rust release target and normalize Unix
-  archive ownership and timestamps.
+- Remap private builder paths in every Rust release target and in bundled
+  Clang/GCC dependencies, and normalize Unix archive ownership and timestamps.
 - Resolve the installed Linux CLI beside the desktop app or from `PATH`, while
   keeping checkout probing debug-only so release binaries cannot embed the
   builder's source directory.

@@ -33,6 +33,43 @@ test('release Rust builds preserve encoded flags', () => {
   assert.match(env.CARGO_ENCODED_RUSTFLAGS, /--remap-path-prefix=\/home\/private=\/usr\/src\/home/)
 })
 
+test('release native builds safely remap workspace and home paths', () => {
+  const repoRoot = '/Users/private person/src/iris drive'
+  const homeDir = '/Users/private person'
+  const flags = [
+    `'-ffile-prefix-map=${repoRoot}=/usr/src/iris-drive'`,
+    `'-fdebug-prefix-map=${repoRoot}=/usr/src/iris-drive'`,
+    `'-ffile-prefix-map=${homeDir}=/usr/src/home'`,
+    `'-fdebug-prefix-map=${homeDir}=/usr/src/home'`,
+  ].join(' ')
+
+  for (const platform of ['darwin', 'linux']) {
+    const env = releaseRustBuildEnvironment(
+      { CFLAGS: '-O2', CXXFLAGS: '-stdlib=libc++' },
+      { repoRoot, homeDir, platform },
+    )
+    assert.equal(env.CFLAGS, `-O2 ${flags}`)
+    assert.equal(env.CXXFLAGS, `-stdlib=libc++ ${flags}`)
+    assert.equal(env.CC_SHELL_ESCAPED_FLAGS, '1')
+  }
+})
+
+test('release native path remapping is not applied to MSVC builds', () => {
+  const env = releaseRustBuildEnvironment(
+    { CFLAGS: '/O2', CXXFLAGS: '/EHsc' },
+    {
+      repoRoot: 'C:\\private\\iris-drive',
+      homeDir: 'C:\\private',
+      platform: 'win32',
+    },
+  )
+
+  assert.equal(env.CFLAGS, '/O2')
+  assert.equal(env.CXXFLAGS, '/EHsc')
+  assert.match(env.CARGO_ENCODED_RUSTFLAGS, /--remap-path-prefix=C:\\private\\iris-drive=/)
+  assert.equal(env.CC_SHELL_ESCAPED_FLAGS, undefined)
+})
+
 test('release binary audit rejects private build paths without echoing them', () => {
   const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-hygiene-'))
   const binary = join(root, 'idrive')

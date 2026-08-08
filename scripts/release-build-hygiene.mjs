@@ -22,23 +22,53 @@ function remapFlag(source, destination) {
   return `--remap-path-prefix=${source}=${destination}`
 }
 
+function nativeRemapFlags(source, destination) {
+  return [
+    `-ffile-prefix-map=${source}=${destination}`,
+    `-fdebug-prefix-map=${source}=${destination}`,
+  ]
+}
+
+function shellQuote(value) {
+  return `'${value.replaceAll("'", `'"'"'`)}'`
+}
+
+function appendFlags(existing, flags) {
+  return [String(existing ?? '').trim(), ...flags.map(shellQuote)]
+    .filter(Boolean)
+    .join(' ')
+}
+
 export function releaseRustBuildEnvironment(
   env,
-  { repoRoot, homeDir = os.homedir() } = {},
+  { repoRoot, homeDir = os.homedir(), platform = process.platform } = {},
 ) {
   const flags = [
     remapFlag(repoRoot, RUST_PATH_DESTINATIONS.workspace),
     remapFlag(homeDir, RUST_PATH_DESTINATIONS.home),
   ]
+  const result = { ...env }
   const encoded = String(env.CARGO_ENCODED_RUSTFLAGS ?? '').trim()
   if (encoded) {
-    return { ...env, CARGO_ENCODED_RUSTFLAGS: [encoded, ...flags].join('\u001f') }
+    result.CARGO_ENCODED_RUSTFLAGS = [encoded, ...flags].join('\u001f')
+  } else {
+    const rustFlags = String(env.RUSTFLAGS ?? '').trim()
+    if (rustFlags) {
+      result.RUSTFLAGS = [rustFlags, ...flags].join(' ')
+    } else {
+      result.CARGO_ENCODED_RUSTFLAGS = flags.join('\u001f')
+    }
   }
-  const rustFlags = String(env.RUSTFLAGS ?? '').trim()
-  if (rustFlags) {
-    return { ...env, RUSTFLAGS: [rustFlags, ...flags].join(' ') }
+  if (platform !== 'win32') {
+    const nativeFlags = [
+      ...nativeRemapFlags(repoRoot, RUST_PATH_DESTINATIONS.workspace),
+      ...nativeRemapFlags(homeDir, RUST_PATH_DESTINATIONS.home),
+    ]
+    result.CFLAGS = appendFlags(env.CFLAGS, nativeFlags)
+    result.CXXFLAGS = appendFlags(env.CXXFLAGS, nativeFlags)
+    result.CC_SHELL_ESCAPED_FLAGS = '1'
   }
-  return { ...env, CARGO_ENCODED_RUSTFLAGS: flags.join('\u001f') }
+  return result
 }
 
 function privateBuildMetadataNeedles(env, { repoRoot, homeDir, hostname }) {
