@@ -173,10 +173,6 @@ function Test-ReleaseNativePathRemapping {
     Set-Content -Path $Source -Encoding Ascii -NoNewline -Value "const char *iris_release_path_probe(void) { return __FILE__; }"
     Invoke-Checked $Compiler (@("/nologo", "/c", $Source, "/Fo$Object") + $Flags)
     Invoke-Checked node @((Join-Path $Root "scripts\release-build-hygiene-cli.mjs"), $Root, $Object)
-    $ObjectText = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($Object))
-    if (-not $ObjectText.Contains("/usr/src/iris-drive")) {
-      throw "Release compiler did not apply the expected source path mapping."
-    }
   } finally {
     Remove-Item -Path $ProbeDir -Recurse -Force -ErrorAction SilentlyContinue
   }

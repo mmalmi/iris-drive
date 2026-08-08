@@ -65,6 +65,11 @@ test('native path mapping is probed before the expensive Cargo build', () => {
   const cargo = position(/Invoke-Checked\s+cargo\s+\$CargoArgs/i, 'run Cargo after the probe')
 
   assertBefore(probe, cargo, 'Native path mapping must be proven before Cargo starts')
+  assert.doesNotMatch(
+    source,
+    /\$ObjectText[\s\S]{0,240}expected source path mapping/i,
+    'basename-only no-debug objects must not require a synthetic path marker',
+  )
 })
 
 test('both native artifacts are required before dotnet publish and explicitly staged', () => {
