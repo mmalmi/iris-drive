@@ -77,6 +77,40 @@ function privateBuildMetadataNeedles(env, { repoRoot, homeDir, hostname }) {
     .filter((value, index, values) => value.length >= 6 && values.indexOf(value) === index)
 }
 
+function asciiLowercase(bytes) {
+  for (let index = 0; index < bytes.length; index += 1) {
+    if (bytes[index] >= 0x41 && bytes[index] <= 0x5a) {
+      bytes[index] += 0x20
+    }
+  }
+  return bytes
+}
+
+function metadataNeedleVariants(needle, platform) {
+  const variants = new Set([needle])
+  if (platform === 'win32') {
+    variants.add(needle.replaceAll('\\', '/'))
+    variants.add(needle.replaceAll('/', '\\'))
+  }
+  return variants
+}
+
+function containsPrivateBuildMetadata(bytes, needles, platform) {
+  const haystack = platform === 'win32' ? asciiLowercase(bytes) : bytes
+  for (const needle of needles) {
+    for (let variant of metadataNeedleVariants(needle, platform)) {
+      if (platform === 'win32') {
+        variant = variant.toLowerCase()
+      }
+      const encodings = platform === 'win32' ? ['utf8', 'utf16le'] : ['utf8']
+      if (encodings.some((encoding) => haystack.includes(Buffer.from(variant, encoding)))) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
 export function assertNoPrivateBuildMetadata(
   paths,
   env,
@@ -84,6 +118,7 @@ export function assertNoPrivateBuildMetadata(
     repoRoot,
     homeDir = os.homedir(),
     hostname = os.hostname(),
+    platform = process.platform,
   } = {},
 ) {
   const needles = privateBuildMetadataNeedles(env, { repoRoot, homeDir, hostname })
@@ -92,7 +127,7 @@ export function assertNoPrivateBuildMetadata(
       throw new Error(`Missing release binary for privacy audit: ${basename(path)}`)
     }
     const bytes = readFileSync(path)
-    if (needles.some((needle) => bytes.includes(Buffer.from(needle)))) {
+    if (containsPrivateBuildMetadata(bytes, needles, platform)) {
       throw new Error(
         `Release binary ${basename(path)} contains private build metadata; rebuild with remapped Rust paths.`,
       )

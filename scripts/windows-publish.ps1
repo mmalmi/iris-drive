@@ -2,6 +2,7 @@ param(
   [ValidateSet("Debug", "Release")]
   [string]$Configuration = "Debug",
 
+  [ValidateSet("win-x64")]
   [string]$Runtime = "win-x64",
 
   [switch]$DesktopShortcut,
@@ -27,28 +28,83 @@ $WorkspaceCargoToml = Join-Path $Root "Cargo.toml"
 
 function Set-ReleaseRustPathRemapping {
   $Current = "$($env:CARGO_ENCODED_RUSTFLAGS)$($env:RUSTFLAGS)"
-  if ($Current.Contains("--remap-path-prefix=$Root=")) {
-    return
-  }
-  $HomeDirectory = [Environment]::GetFolderPath("UserProfile")
-  $Flags = @(
-    "--remap-path-prefix=$Root=/usr/src/iris-drive",
-    "--remap-path-prefix=$HomeDirectory=/usr/src/home"
-  )
-  if ($env:CARGO_ENCODED_RUSTFLAGS) {
-    $env:CARGO_ENCODED_RUSTFLAGS = [string]::Join(
-      [char]0x1f,
-      @($env:CARGO_ENCODED_RUSTFLAGS) + $Flags
+  if (-not $Current.Contains("--remap-path-prefix=$Root=")) {
+    $HomeDirectory = [Environment]::GetFolderPath("UserProfile")
+    $Flags = @(
+      "--remap-path-prefix=$Root=/usr/src/iris-drive",
+      "--remap-path-prefix=$HomeDirectory=/usr/src/home"
     )
-  } elseif ($env:RUSTFLAGS) {
-    $env:RUSTFLAGS = "$($env:RUSTFLAGS) $($Flags -join ' ')"
-  } else {
-    $env:CARGO_ENCODED_RUSTFLAGS = [string]::Join([char]0x1f, $Flags)
+    if ($env:CARGO_ENCODED_RUSTFLAGS) {
+      $env:CARGO_ENCODED_RUSTFLAGS = [string]::Join(
+        [char]0x1f,
+        @($env:CARGO_ENCODED_RUSTFLAGS) + $Flags
+      )
+    } elseif ($env:RUSTFLAGS) {
+      $env:RUSTFLAGS = "$($env:RUSTFLAGS) $($Flags -join ' ')"
+    } else {
+      $env:CARGO_ENCODED_RUSTFLAGS = [string]::Join([char]0x1f, $Flags)
+    }
   }
 }
 
-if ($Configuration -eq "Release") {
-  Set-ReleaseRustPathRemapping
+function Resolve-ClangCl {
+  $Command = Get-Command clang-cl.exe -ErrorAction SilentlyContinue
+  if ($Command) {
+    return $Command.Source
+  }
+
+  $VsWhereCommand = Get-Command vswhere.exe -ErrorAction SilentlyContinue
+  $VsWhere = if ($VsWhereCommand) {
+    $VsWhereCommand.Source
+  } else {
+    "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+  }
+  if ($VsWhere -and (Test-Path $VsWhere)) {
+    $Installations = @(& $VsWhere -all -products * -property installationPath 2>$null)
+    foreach ($Installation in $Installations) {
+      $Candidate = Join-Path $Installation "VC\Tools\Llvm\x64\bin\clang-cl.exe"
+      if (Test-Path $Candidate) {
+        return $Candidate
+      }
+    }
+  }
+
+  throw "Release builds require the Visual Studio C++ Clang compiler component."
+}
+
+function Add-QuotedCompilerFlags {
+  param(
+    [string]$Current,
+    [string[]]$Flags
+  )
+
+  $Values = @()
+  if ($Current) {
+    $Values += $Current.Trim()
+  }
+  foreach ($Flag in $Flags) {
+    if ($Flag.Contains('"')) {
+      throw "Release compiler path contains an unsupported character."
+    }
+    $Values += '"' + $Flag + '"'
+  }
+  return $Values -join " "
+}
+
+function Set-ReleaseNativePathRemapping {
+  $Compiler = Resolve-ClangCl
+  $HomeDirectory = [Environment]::GetFolderPath("UserProfile")
+  $Flags = @(
+    "/clang:-Werror=unknown-argument",
+    "/clang:-ffile-prefix-map=$HomeDirectory=/usr/src/home",
+    "/clang:-ffile-prefix-map=$Root=/usr/src/iris-drive"
+  )
+  $env:CC_x86_64_pc_windows_msvc = $Compiler
+  $env:CXX_x86_64_pc_windows_msvc = $Compiler
+  $env:CFLAGS_x86_64_pc_windows_msvc = Add-QuotedCompilerFlags $env:CFLAGS_x86_64_pc_windows_msvc $Flags
+  $env:CXXFLAGS_x86_64_pc_windows_msvc = Add-QuotedCompilerFlags $env:CXXFLAGS_x86_64_pc_windows_msvc $Flags
+  $env:CC_SHELL_ESCAPED_FLAGS = "1"
+  return [pscustomobject]@{ Compiler = $Compiler; Flags = $Flags }
 }
 
 function Invoke-Checked {
@@ -100,23 +156,79 @@ function Resolve-OutputPath {
   return [System.IO.Path]::GetFullPath((Join-Path (Get-Location) $Path))
 }
 
+function Test-ReleaseNativePathRemapping {
+  param(
+    [string]$Compiler,
+    [string[]]$Flags
+  )
+
+  $ProbeDir = Join-Path $Root "target\release-path-probe"
+  $Source = Join-Path $ProbeDir "path_probe.c"
+  $Object = Join-Path $ProbeDir "path_probe.obj"
+  if (Test-Path $ProbeDir) {
+    Remove-Item -Path $ProbeDir -Recurse -Force
+  }
+  New-Item -ItemType Directory -Force -Path $ProbeDir | Out-Null
+  try {
+    Set-Content -Path $Source -Encoding Ascii -NoNewline -Value "const char *iris_release_path_probe(void) { return __FILE__; }"
+    Invoke-Checked $Compiler (@("/nologo", "/c", $Source, "/Fo$Object") + $Flags)
+    Invoke-Checked node @((Join-Path $Root "scripts\release-build-hygiene-cli.mjs"), $Root, $Object)
+    $ObjectText = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes($Object))
+    if (-not $ObjectText.Contains("/usr/src/iris-drive")) {
+      throw "Release compiler did not apply the expected source path mapping."
+    }
+  } finally {
+    Remove-Item -Path $ProbeDir -Recurse -Force -ErrorAction SilentlyContinue
+  }
+}
+
+if ($Configuration -eq "Release") {
+  Set-ReleaseRustPathRemapping
+  $ReleaseNative = Set-ReleaseNativePathRemapping
+  $env:CARGO_TARGET_DIR = Join-Path $Root "target"
+  Test-ReleaseNativePathRemapping -Compiler $ReleaseNative.Compiler -Flags $ReleaseNative.Flags
+}
+
 if ($StopRunningApp) {
   Get-Process IrisDrive -ErrorAction SilentlyContinue | Stop-Process -Force
   Get-Process idrive -ErrorAction SilentlyContinue | Stop-Process -Force
 }
 
+$CargoProfile = if ($Configuration -eq "Release") { "release" } else { "debug" }
+$CargoOutputDir = Join-Path $Root "target\$CargoProfile"
+$Idrive = Join-Path $CargoOutputDir "idrive.exe"
+$AppCore = Join-Path $CargoOutputDir "iris_drive_app_core.dll"
+$PublishDir = Join-Path $Root "windows\bin\$Configuration\net8.0-windows\$Runtime\publish"
+
+if (-not $SkipCliBuild -and (Test-Path $Idrive)) {
+  Remove-Item -Path $Idrive -Force
+}
+if (Test-Path $AppCore) {
+  Remove-Item -Path $AppCore -Force
+}
+$CargoArgs = @("build", "-p", "iris-drive-app-core")
 if (-not $SkipCliBuild) {
-  $CargoArgs = @("build", "-p", "idrive")
-  if ($Configuration -eq "Release") {
-    $CargoArgs += "--release"
-  }
-  if (-not $AllowLockfileUpdate) {
-    $CargoArgs += "--locked"
-  }
-  Invoke-Checked cargo $CargoArgs
+  $CargoArgs += @("-p", "idrive")
+}
+if ($Configuration -eq "Release") {
+  $CargoArgs += "--release"
+}
+if (-not $AllowLockfileUpdate) {
+  $CargoArgs += "--locked"
+}
+Invoke-Checked cargo $CargoArgs
+
+if (-not (Test-Path $Idrive)) {
+  throw "Missing required Rust artifact: idrive.exe"
+}
+if (-not (Test-Path $AppCore)) {
+  throw "Missing required Rust artifact: iris_drive_app_core.dll"
+}
+if (Test-Path $PublishDir) {
+  Remove-Item -Path $PublishDir -Recurse -Force
 }
 
-Invoke-Checked dotnet @(
+$DotnetArgs = @(
   "publish",
   $Project,
   "-c",
@@ -127,12 +239,26 @@ Invoke-Checked dotnet @(
   "true",
   "-p:WindowsPackageType=None"
 )
+if ($Configuration -eq "Release") {
+  $DotnetArgs += @("-p:DebugType=None", "-p:DebugSymbols=false")
+}
+Invoke-Checked dotnet $DotnetArgs
 
-$PublishDir = Join-Path $Root "windows\bin\$Configuration\net8.0-windows\$Runtime\publish"
-$CargoProfile = if ($Configuration -eq "Release") { "release" } else { "debug" }
-$Idrive = Join-Path $Root "target\$CargoProfile\idrive.exe"
-if (Test-Path $Idrive) {
-  Copy-Item $Idrive (Join-Path $PublishDir "idrive.exe") -Force
+Copy-Item $Idrive (Join-Path $PublishDir "idrive.exe") -Force
+Copy-Item $AppCore (Join-Path $PublishDir "iris_drive_app_core.dll") -Force
+
+foreach ($RequiredName in @("IrisDrive.exe", "IrisDrive.ico", "IrisDrive.png", "idrive.exe", "iris_drive_app_core.dll")) {
+  if (-not (Test-Path (Join-Path $PublishDir $RequiredName))) {
+    throw "Missing required Windows payload file: $RequiredName"
+  }
+}
+
+if ($Configuration -eq "Release") {
+  $DebugArtifacts = @(Get-ChildItem -Path $PublishDir -Recurse -File -Include "*.pdb", "*.dbg")
+  if ($DebugArtifacts.Count -ne 0) {
+    throw "Release payload contains debug artifacts."
+  }
+  Invoke-Checked node @((Join-Path $Root "scripts\release-build-hygiene-cli.mjs"), $Root, $PublishDir)
 }
 
 if ($DesktopShortcut) {
@@ -167,10 +293,6 @@ Write-Output "Published Iris Drive to $PublishDir"
 Write-Output "Self-contained publish: no .NET Desktop Runtime install required."
 
 if ($Installer) {
-  if ($Runtime -ne "win-x64") {
-    throw "The installer script currently supports win-x64 only, got $Runtime"
-  }
-
   $VersionTag = if ($Tag) { $Tag } else { "v$(Get-WorkspaceVersion)" }
   if (!$VersionTag.StartsWith("v")) {
     $VersionTag = "v$VersionTag"
@@ -195,6 +317,9 @@ if ($Installer) {
   $InstallerPath = Join-Path $InstallerOutputDir "$($env:IRIS_DRIVE_WINDOWS_INSTALLER_BASENAME).exe"
   if (!(Test-Path $InstallerPath)) {
     throw "Expected Windows installer was not produced: $InstallerPath"
+  }
+  if ($Configuration -eq "Release") {
+    Invoke-Checked node @((Join-Path $Root "scripts\release-build-hygiene-cli.mjs"), $Root, $InstallerPath)
   }
   Write-Output "Built Iris Drive installer: $InstallerPath"
 }

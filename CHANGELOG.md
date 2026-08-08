@@ -66,6 +66,9 @@
 - Require all nine canonical release assets to be regular files before final
   publication, rejecting missing CLI or Android bundle artifacts, symlinks,
   directories, unsigned intermediates, and other tag-matching build residue.
+- Build and require both Windows Rust payloads, omit managed debug symbols,
+  and remap native dependency paths before auditing the complete unsigned
+  installer payload.
 
 ## 0.1.32 - 2026-07-27
 

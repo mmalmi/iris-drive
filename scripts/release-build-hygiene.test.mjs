@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import {
   assertNoPrivateBuildMetadata,
@@ -54,7 +55,7 @@ test('release native builds safely remap workspace and home paths', () => {
   }
 })
 
-test('release native path remapping is not applied to MSVC builds', () => {
+test('release Rust path remapping is preserved for Windows builds', () => {
   const env = releaseRustBuildEnvironment(
     { CFLAGS: '/O2', CXXFLAGS: '/EHsc' },
     {
@@ -68,6 +69,19 @@ test('release native path remapping is not applied to MSVC builds', () => {
   assert.equal(env.CXXFLAGS, '/EHsc')
   assert.match(env.CARGO_ENCODED_RUSTFLAGS, /--remap-path-prefix=C:\\private\\iris-drive=/)
   assert.equal(env.CC_SHELL_ESCAPED_FLAGS, undefined)
+})
+
+test('Windows publisher maps native paths with clang-cl', () => {
+  const windows = readFileSync(new URL('./windows-publish.ps1', import.meta.url), 'utf8')
+
+  assert.match(windows, /Resolve-ClangCl/)
+  assert.match(windows, /CC_x86_64_pc_windows_msvc/)
+  assert.match(windows, /CXX_x86_64_pc_windows_msvc/)
+  assert.match(windows, /CFLAGS_x86_64_pc_windows_msvc/)
+  assert.match(windows, /CXXFLAGS_x86_64_pc_windows_msvc/)
+  assert.match(windows, /CC_SHELL_ESCAPED_FLAGS/)
+  assert.match(windows, /\/clang:-Werror=unknown-argument/)
+  assert.match(windows, /\/clang:-ffile-prefix-map=/)
 })
 
 test('release binary audit rejects private build paths without echoing them', () => {
@@ -84,6 +98,43 @@ test('release binary audit rejects private build paths without echoing them', ()
       return true
     },
   )
+})
+
+test('Windows binary audit catches case, slash, and UTF-16 path variants', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-hygiene-windows-'))
+  const binary = join(root, 'idrive.exe')
+  const privateRoot = String.raw`C:\Users\Private Builder\src\Iris Drive`
+  writeFileSync(binary, Buffer.from('c:/users/private builder/src/iris drive/native.c', 'utf16le'))
+
+  assert.throws(
+    () => assertNoPrivateBuildMetadata([binary], {}, {
+      repoRoot: privateRoot,
+      homeDir: String.raw`C:\Users\Private Builder`,
+      hostname: 'PRIVATE-BUILDER',
+      platform: 'win32',
+    }),
+    (error) => {
+      assert.match(error.message, /private build metadata/)
+      assert.doesNotMatch(error.message, /private builder/i)
+      return true
+    },
+  )
+})
+
+test('payload audit scans nested files without disclosing private paths', () => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-payload-'))
+  const payload = join(root, 'payload', 'nested')
+  mkdirSync(payload, { recursive: true })
+  writeFileSync(join(payload, 'library.bin'), `embedded ${root} metadata`)
+
+  const result = spawnSync(
+    process.execPath,
+    [fileURLToPath(new URL('./release-build-hygiene-cli.mjs', import.meta.url)), root, join(root, 'payload')],
+    { encoding: 'utf8' },
+  )
+  assert.notEqual(result.status, 0)
+  assert.match(result.stderr, /privacy audit failed/)
+  assert.doesNotMatch(result.stderr, new RegExp(root.replaceAll(/[.*+?^${}()|[\]\\]/g, '\\$&')))
 })
 
 test('release tar ownership is generic on GNU and BSD tar', () => {

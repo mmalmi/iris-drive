@@ -28,9 +28,9 @@ Publish a runnable Windows app without requiring the .NET Desktop Runtime:
 powershell -ExecutionPolicy Bypass -File .\scripts\windows-publish.ps1 -Configuration Debug -DesktopShortcut -StopRunningApp
 ```
 
-The publish script builds `idrive.exe`, publishes the WPF shell self-contained
-for `win-x64`, copies `idrive.exe` next to `IrisDrive.exe`, and can recreate the
-desktop shortcut with the packaged Iris Drive icon.
+The publish script builds both Rust payloads, publishes the WPF shell
+self-contained for `win-x64`, and can recreate the desktop shortcut with the
+packaged Iris Drive icon.
 
 Build the release installer used by `scripts/local-release.mjs`:
 
@@ -38,9 +38,11 @@ Build the release installer used by `scripts/local-release.mjs`:
 powershell -ExecutionPolicy Bypass -File .\scripts\windows-publish.ps1 -Configuration Release -Installer -Tag v0.1.0 -OutputDir dist
 ```
 
-The installer path requires Inno Setup 6 (`iscc` / `ISCC.exe`) on the Windows
-builder and writes `iris-drive-v...-windows-x64-setup.exe` into the output
-directory. Windows artifacts are intentionally unsigned, as recorded in
+The installer path requires Inno Setup 6 (`iscc` / `ISCC.exe`) and the Visual
+Studio C++ Clang compiler component. It writes
+`iris-drive-v...-windows-x64-setup.exe` into the output directory after
+rejecting debug files and private build paths. Windows artifacts are
+intentionally unsigned, as recorded in
 [`release-policy.json`](../release-policy.json). Final releases still require
 both the CLI archive and installer, and htree publication content-addresses
 their exact bytes.
