@@ -11,6 +11,7 @@
 		14A423B4189C5896341F2183 /* IrisDriveRuntimeSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0ED7FE6EA3AB4EF496D170C /* IrisDriveRuntimeSupport.swift */; };
 		1727D10ED3515B8FA1CEB36D /* IrisDriveRuntimeSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = D0ED7FE6EA3AB4EF496D170C /* IrisDriveRuntimeSupport.swift */; };
 		1946F492B9D541AFBE1D41B7 /* IrisDriveMacNativeCoreQueue.swift in Sources */ = {isa = PBXBuildFile; fileRef = 42A2A6653C5E98E68878263D /* IrisDriveMacNativeCoreQueue.swift */; };
+		2876390B6778266A91CCF9A5 /* LICENSE in Resources */ = {isa = PBXBuildFile; fileRef = D23138540B06D960DACA4C01 /* LICENSE */; };
 		299FD436F79DE19CD1813197 /* FileProviderEnumerator.swift in Sources */ = {isa = PBXBuildFile; fileRef = BBBC9BA07276008E6A4D645E /* FileProviderEnumerator.swift */; };
 		3228305565066E406C893E54 /* StartupLoadingPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1C507F4B5642AA3FB4C10D17 /* StartupLoadingPanelView.swift */; };
 		396C5A1BC6FAD34CF982AE37 /* IrisDriveStartup.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E96589580A4A6F8C0C61784 /* IrisDriveStartup.swift */; };
@@ -81,6 +82,7 @@
 		BBBC9BA07276008E6A4D645E /* FileProviderEnumerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderEnumerator.swift; sourceTree = "<group>"; };
 		D0ED7FE6EA3AB4EF496D170C /* IrisDriveRuntimeSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveRuntimeSupport.swift; sourceTree = "<group>"; };
 		D172DF1452ABFE84E7BFE079 /* iris-drive-install-update.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = "iris-drive-install-update.sh"; sourceTree = "<group>"; };
+		D23138540B06D960DACA4C01 /* LICENSE */ = {isa = PBXFileReference; path = LICENSE; sourceTree = "<group>"; };
 		D5D3EC3900BAF6B43532C7E9 /* FileProvider.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FileProvider.entitlements; sourceTree = "<group>"; };
 		D620F321F3428AE4300B2277 /* IrisDriveFileProvider.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = IrisDriveFileProvider.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		DABEA3F9DC2A990742681F74 /* IrisDriveStatus.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveStatus.swift; sourceTree = "<group>"; };
@@ -107,6 +109,15 @@
 				D0ED7FE6EA3AB4EF496D170C /* IrisDriveRuntimeSupport.swift */,
 			);
 			path = Shared;
+			sourceTree = "<group>";
+		};
+		41F848F892FD0F15CBA4014B /* iris-drive */ = {
+			isa = PBXGroup;
+			children = (
+				D23138540B06D960DACA4C01 /* LICENSE */,
+			);
+			name = "iris-drive";
+			path = ..;
 			sourceTree = "<group>";
 		};
 		44A4BFF93CB5B602E66EE85E /* Sources */ = {
@@ -145,6 +156,7 @@
 			isa = PBXGroup;
 			children = (
 				06BA351AC01CF53A09FC07CC /* FileProvider */,
+				41F848F892FD0F15CBA4014B /* iris-drive */,
 				F3E40C32E685454A897E7EDB /* Resources */,
 				2A9622AB59298D567D3508AD /* Shared */,
 				44A4BFF93CB5B602E66EE85E /* Sources */,
@@ -244,6 +256,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				BFEF0810E6B3A8092A1F89D2 /* Assets.xcassets in Resources */,
+				2876390B6778266A91CCF9A5 /* LICENSE in Resources */,
 				F6C0A4DD321036E887EA72C8 /* iris-drive-install-update.sh in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;

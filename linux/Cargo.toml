@@ -3,6 +3,9 @@ name = "iris-drive-linux"
 version = "0.1.33"
 description = "Linux desktop shell for Iris Drive."
 edition = "2024"
+license = "MIT"
+authors = ["Iris Drive contributors"]
+repository = "htree://self/iris-drive"
 publish = false
 
 [[bin]]
@@ -24,7 +27,8 @@ ksni = { version = "0.3.4", features = ["blocking"] }
 [package.metadata.deb]
 name = "iris-drive"
 maintainer = "Iris Drive"
-copyright = "Iris Drive"
+copyright = "2026 Iris Drive contributors"
+license-file = ["../LICENSE", "0"]
 extended-description = "End-user file sync built on hashtree."
 section = "net"
 priority = "optional"

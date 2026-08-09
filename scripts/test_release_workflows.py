@@ -10,6 +10,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
+WORKFLOW_TIMEOUT_SECONDS = 15
 
 
 class ReleaseWorkflowTests(unittest.TestCase):
@@ -157,7 +158,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             capture_output=True,
             text=True,
             env=self.five_platform_environment(),
-            timeout=5,
+            timeout=WORKFLOW_TIMEOUT_SECONDS,
         )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -189,7 +190,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             capture_output=True,
             text=True,
             env=self.five_platform_environment(),
-            timeout=5,
+            timeout=WORKFLOW_TIMEOUT_SECONDS,
         )
 
         self.assertEqual(completed.returncode, 75, completed.stderr)
@@ -213,7 +214,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 "IRIS_DRIVE_E2E_LOCAL_ANDROID_FUNCTIONAL_PRECHECKED": "1",
                 "IRIS_DRIVE_E2E_SIDELOAD_APPKEYS": "1",
             },
-            timeout=5,
+            timeout=WORKFLOW_TIMEOUT_SECONDS,
         )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -240,7 +241,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             text=True,
             env=self.five_platform_environment()
             | {"IRIS_DRIVE_E2E_ANDROID_HOST": "separate-android-host"},
-            timeout=5,
+            timeout=WORKFLOW_TIMEOUT_SECONDS,
         )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -261,7 +262,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 "IRIS_DRIVE_E2E_ANDROID_HOST": "separate-android-host",
                 "IRIS_DRIVE_MOBILE_PHYSICAL_LINKING": "required",
             },
-            timeout=5,
+            timeout=WORKFLOW_TIMEOUT_SECONDS,
         )
 
         self.assertEqual(completed.returncode, 1, completed.stderr)
@@ -281,7 +282,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 "IRIS_DRIVE_MACOS_SSH_HOST": "test-macos-vm",
                 "IRIS_DRIVE_MACOS_VM_FUNCTIONAL_PRECHECKED": "1",
             },
-            timeout=5,
+            timeout=WORKFLOW_TIMEOUT_SECONDS,
         )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -338,7 +339,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             check=False,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=WORKFLOW_TIMEOUT_SECONDS,
         )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)
@@ -369,7 +370,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             capture_output=True,
             text=True,
             env=self.environment(IRIS_DRIVE_RELEASE_GATE_FAST_PRECHECKED="1"),
-            timeout=5,
+            timeout=WORKFLOW_TIMEOUT_SECONDS,
         )
 
         self.assertEqual(completed.returncode, 0, completed.stderr)

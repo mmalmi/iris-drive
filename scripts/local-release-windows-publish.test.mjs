@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 
 const source = readFileSync(new URL('./windows-publish.ps1', import.meta.url), 'utf8')
+const localReleaseSource = readFileSync(new URL('./local-release.mjs', import.meta.url), 'utf8')
 
 function position(pattern, description) {
   const match = source.match(pattern)
@@ -149,6 +150,59 @@ test('the complete uncompressed payload is privacy-audited before Inno Setup', (
   )
 
   assertBefore(audit, inno, 'Payload privacy audit must finish before Inno Setup')
+})
+
+test('the mixed Windows payload carries the project MIT notice', () => {
+  const rootLicense = position(
+    /\$\w*License\w*\s*=\s*Join-Path\s+\$Root\s+["']LICENSE["']/i,
+    'resolve the repository license',
+  )
+  const destination = position(
+    /Join-Path\s+\$PublishDir\s+["']LICENSE["']/i,
+    'place the project license in the publish directory',
+  )
+  const copy = position(
+    /Copy-Item\s+(?:-Path\s+)?\$\w*License\w*\s+(?:-Destination\s+)?\$\w*License\w*\s+-Force/i,
+    'copy the repository license bytes into the payload',
+  )
+  const required = position(
+    /foreach\s*\(\s*\$RequiredName\s+in\s+@\([\s\S]{0,500}?["']LICENSE["'][\s\S]{0,80}?\)\s*\)/i,
+    'include the staged project license in the required payload set',
+  )
+  const audit = position(
+    /release-build-hygiene-cli\.mjs[\s\S]{0,240}\$PublishDir/i,
+    'privacy-audit the complete publish directory',
+  )
+  const inno = position(
+    /\$InnoSetupCompiler\s*=\s*Resolve-InnoSetupCompiler/i,
+    'resolve Inno Setup after the payload gates',
+  )
+
+  assertBefore(rootLicense, destination, 'The repository license must be resolved before staging')
+  assertBefore(destination, copy, 'The license destination must be resolved before copying')
+  assertBefore(copy, audit, 'The license must be present for the payload privacy audit')
+  assertBefore(required, audit, 'The license must be required before the payload privacy audit')
+  assertBefore(audit, inno, 'The notice-bearing payload must be audited before Inno Setup')
+})
+
+test('the standalone Windows CLI archive contains only idrive.exe and the root license', () => {
+  const packageBlock = source.match(/\$CliArchivePath\s*=[\s\S]+?Write-Output\s+["']Built Iris Drive CLI archive:/i)
+  assert.ok(packageBlock, 'Windows publisher must have a bounded CLI archive block')
+  assert.match(packageBlock[0], /Copy-Item[\s\S]{0,240}\$Idrive[\s\S]{0,160}["']idrive\.exe["']/i)
+  assert.match(packageBlock[0], /Copy-Item[\s\S]{0,240}\$RootLicense[\s\S]{0,160}["']LICENSE["']/i)
+  assert.match(
+    packageBlock[0],
+    /Compress-Archive\s+-Path\s+@\([\s\S]{0,240}["']idrive\.exe["'][\s\S]{0,240}["']LICENSE["'][\s\S]{0,120}\)/i,
+  )
+  assert.doesNotMatch(packageBlock[0], /Compress-Archive\s+-Path\s+[^\r\n]*[\\/]\*/i)
+  assert.match(packageBlock[0], /\[DateTime\]["']2000-01-01T00:00:00["']/i)
+  assert.match(packageBlock[0], /\.LastWriteTime\s*=\s*\$timestamp/i)
+  assert.doesNotMatch(packageBlock[0], /LastWriteTimeUtc|1980-01-01/i)
+
+  const acceptance = localReleaseSource.match(
+    /assertZipEntriesEqualFiles\(\s*\[[\s\S]{0,500}?["']idrive\.exe["'][\s\S]{0,300}?["']LICENSE["'][\s\S]{0,200}?Windows CLI archive validation failed\./i,
+  )
+  assert.ok(acceptance, 'The release orchestrator must byte-verify both CLI archive entries')
 })
 
 test('the final installer is privacy-audited after Inno Setup', () => {

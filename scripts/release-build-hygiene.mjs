@@ -17,6 +17,7 @@ const RUST_PATH_DESTINATIONS = {
   home: '/usr/src/home',
   workspace: '/usr/src/iris-drive',
 }
+const PROJECT_LICENSE_PATH = fileURLToPath(new URL('../LICENSE', import.meta.url))
 
 function remapFlag(source, destination) {
   return `--remap-path-prefix=${source}=${destination}`
@@ -205,6 +206,7 @@ Quick install:
   ./install.sh ~/.local/bin
 `,
   )
+  chmodSync(path, 0o644)
 }
 
 export function packageUnixCliTarball({
@@ -221,13 +223,18 @@ export function packageUnixCliTarball({
   const unversioned = `${tarPath}.gz`
   const versioned = join(distDir, `idrive-${tag}-${targetTriple}.tar.gz`)
   const mtime = Number.parseInt(String(env.SOURCE_DATE_EPOCH ?? '0'), 10) || 0
-  const members = ['idrive/README.txt', 'idrive/install.sh', 'idrive/idrive']
+  const members = ['idrive/LICENSE', 'idrive/README.txt', 'idrive/install.sh', 'idrive/idrive']
   if (!dryRun) {
     if (!existsSync(binaryPath)) {
       throw new Error(`Missing idrive binary for ${targetTriple}: ${binaryPath}`)
     }
+    if (!existsSync(PROJECT_LICENSE_PATH)) {
+      throw new Error('Missing project LICENSE for CLI archive.')
+    }
     rmSync(bundleDir, { recursive: true, force: true })
     mkdirSync(bundleDir, { recursive: true })
+    copyFileSync(PROJECT_LICENSE_PATH, join(bundleDir, 'LICENSE'))
+    chmodSync(join(bundleDir, 'LICENSE'), 0o644)
     copyFileSync(binaryPath, join(bundleDir, 'idrive'))
     chmodSync(join(bundleDir, 'idrive'), 0o755)
     writeUnixInstallScript(join(bundleDir, 'install.sh'))

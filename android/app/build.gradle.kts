@@ -5,9 +5,16 @@ plugins {
 }
 
 import org.gradle.api.tasks.Exec
+import org.gradle.api.tasks.Sync
 
 val repoRoot = layout.projectDirectory.dir("../..")
 val rustOutputDir = layout.projectDirectory.dir("src/main/jniLibs")
+val rootLicenseFile = repoRoot.file("LICENSE")
+val generatedLicenseAssetsDir = layout.buildDirectory.dir("generated/irisDriveLicenseAssets")
+val stageProjectLicenseAssets by tasks.registering(Sync::class) {
+    from(rootLicenseFile)
+    into(generatedLicenseAssetsDir)
+}
 val releaseKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
 val releaseKeystorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
 val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")?.takeIf { it.isNotBlank() }
@@ -26,6 +33,10 @@ android {
     namespace = "to.iris.drive.app"
     compileSdk = 36
     testBuildType = "uiTest"
+
+    sourceSets.named("main") {
+        assets.srcDir(generatedLicenseAssetsDir)
+    }
 
     defaultConfig {
         applicationId = "to.iris.drive"
@@ -109,6 +120,10 @@ android {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
+}
+
+tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
+    dependsOn(stageProjectLicenseAssets)
 }
 
 kotlin {

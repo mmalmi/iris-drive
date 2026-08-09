@@ -25,6 +25,11 @@ $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 $Project = Join-Path $Root "windows\IrisDrive.Windows.csproj"
 $WorkspaceCargoToml = Join-Path $Root "Cargo.toml"
+$RootLicense = Join-Path $Root "LICENSE"
+
+if (-not (Test-Path $RootLicense)) {
+  throw "Missing required repository license: LICENSE"
+}
 
 function Set-ReleaseRustPathRemapping {
   $Current = "$($env:CARGO_ENCODED_RUSTFLAGS)$($env:RUSTFLAGS)"
@@ -242,8 +247,10 @@ Invoke-Checked dotnet $DotnetArgs
 
 Copy-Item $Idrive (Join-Path $PublishDir "idrive.exe") -Force
 Copy-Item $AppCore (Join-Path $PublishDir "iris_drive_app_core.dll") -Force
+$PublishedLicense = Join-Path $PublishDir "LICENSE"
+Copy-Item $RootLicense $PublishedLicense -Force
 
-foreach ($RequiredName in @("IrisDrive.exe", "IrisDrive.ico", "IrisDrive.png", "idrive.exe", "iris_drive_app_core.dll")) {
+foreach ($RequiredName in @("IrisDrive.exe", "IrisDrive.ico", "IrisDrive.png", "idrive.exe", "iris_drive_app_core.dll", "LICENSE")) {
   if (-not (Test-Path (Join-Path $PublishDir $RequiredName))) {
     throw "Missing required Windows payload file: $RequiredName"
   }
@@ -317,5 +324,27 @@ if ($Installer) {
   if ($Configuration -eq "Release") {
     Invoke-Checked node @((Join-Path $Root "scripts\release-build-hygiene-cli.mjs"), $Root, $InstallerPath)
   }
+
+  $CliArchivePath = Join-Path $InstallerOutputDir "idrive-$VersionTag-x86_64-pc-windows-msvc.zip"
+  $CliStage = Join-Path $Root "target\release\windows-cli-package"
+  if (Test-Path $CliStage) {
+    Remove-Item -Path $CliStage -Recurse -Force
+  }
+  New-Item -ItemType Directory -Path $CliStage -Force | Out-Null
+  try {
+    Copy-Item $Idrive (Join-Path $CliStage "idrive.exe") -Force
+    Copy-Item $RootLicense (Join-Path $CliStage "LICENSE") -Force
+    $Timestamp = [DateTime]"2000-01-01T00:00:00"
+    foreach ($File in @((Join-Path $CliStage "idrive.exe"), (Join-Path $CliStage "LICENSE"))) {
+      (Get-Item -LiteralPath $File).LastWriteTime = $Timestamp
+    }
+    Compress-Archive -Path @((Join-Path $CliStage "idrive.exe"), (Join-Path $CliStage "LICENSE")) -DestinationPath $CliArchivePath -Force
+  } finally {
+    Remove-Item -Path $CliStage -Recurse -Force -ErrorAction SilentlyContinue
+  }
+  if (!(Test-Path $CliArchivePath)) {
+    throw "Expected Windows CLI archive was not produced: $CliArchivePath"
+  }
   Write-Output "Built Iris Drive installer: $InstallerPath"
+  Write-Output "Built Iris Drive CLI archive: $CliArchivePath"
 }

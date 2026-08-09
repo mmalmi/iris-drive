@@ -247,9 +247,20 @@ verify_file_provider_contract() {
     || fail "macOS File Provider is missing its app group"
 }
 
+verify_embedded_license() {
+  local app="$1"
+  local embedded_license="$app/Contents/Resources/LICENSE"
+  [[ -f "$ROOT/LICENSE" ]] || fail "project license is missing"
+  [[ -f "$embedded_license" ]] \
+    || fail "macOS app is missing its embedded license"
+  /usr/bin/cmp -s "$ROOT/LICENSE" "$embedded_license" \
+    || fail "macOS app embedded license does not match the project license"
+}
+
 verify_app_bundle() {
   local app="$1"
   local executable
+  verify_embedded_license "$app"
   executable="$(bundle_executable "$app")"
   [[ -x "$app/Contents/MacOS/$executable" ]] \
     || fail "app executable is missing or not executable: $app/Contents/MacOS/$executable"

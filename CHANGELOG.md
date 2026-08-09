@@ -69,6 +69,10 @@
 - Build and require both Windows Rust payloads, omit managed debug symbols,
   and remap native dependency paths before auditing the complete unsigned
   installer payload.
+- Include the project's existing MIT terms in native release packages and
+  correct the excluded Linux crate's incomplete license metadata.
+- Avoid false fast-gate failures when workflow contract tests share a busy
+  builder with the parallel Rust checks.
 
 ## 0.1.32 - 2026-07-27
 

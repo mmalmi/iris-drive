@@ -43,6 +43,7 @@ import {
   prepareMacosEntitlementsData,
 } from './macos-entitlements.mjs'
 import { prepareMacosReleaseBinaries } from './macos-release-binaries.mjs'
+import { assertZipEntriesEqualFiles } from './release-zip.mjs'
 import {
   assertNoPrivateBuildMetadata,
   normalizedTarOwnerArgs,
@@ -180,10 +181,6 @@ function envFlag(env, name) {
 function quote(arg) {
   const value = String(arg)
   return /[^\w./:-]/.test(value) ? JSON.stringify(value) : value
-}
-
-function psSingleQuote(value) {
-  return `'${String(value).replace(/'/g, "''")}'`
 }
 
 function run(command, args, {
@@ -836,6 +833,11 @@ function buildLinuxArtifacts({ env, tag, dryRun }) {
     if (!debPath) {
       throw new Error('Expected Linux .deb output was not produced.')
     }
+    run(
+      'node',
+      [join(repoRoot, 'scripts', 'verify-linux-deb-license.mjs'), debPath, join(repoRoot, 'LICENSE')],
+      { env },
+    )
     mkdirSync(distDir, { recursive: true })
     copyFileSync(debPath, join(distDir, `iris-drive-${tag}-linux-x64.deb`))
   }
@@ -994,6 +996,13 @@ function buildAndroidArtifacts({ env, tag, dryRun }) {
     if (!apkPath || !aabPath) {
       throw new Error('Expected Android APK/AAB outputs were not produced.')
     }
+    assertZipEntriesEqualFiles(
+      [
+        [join(repoRoot, 'LICENSE'), apkPath, 'assets/LICENSE'],
+        [join(repoRoot, 'LICENSE'), aabPath, 'base/assets/LICENSE'],
+      ],
+      'Android release license validation failed.',
+    )
     const suffix = signed ? '' : '-unsigned'
     mkdirSync(distDir, { recursive: true })
     copyFileSync(apkPath, join(distDir, `iris-drive-${tag}-android-arm64${suffix}.apk`))
@@ -1021,31 +1030,22 @@ function buildWindowsArtifacts({ env, tag, dryRun }) {
   ]
   run('powershell.exe', args, { dryRun, env })
   const cliPath = join(repoRoot, 'target', 'release', 'idrive.exe')
+  const windowsLicensePath = join(repoRoot, 'LICENSE')
+  const cliZipPath = join(distDir, `idrive-${tag}-x86_64-pc-windows-msvc.zip`)
+  const expectedInstallerPath = join(distDir, `iris-drive-${tag}-windows-x64-setup.exe`)
   if (!dryRun) {
+    if (!existsSync(windowsLicensePath)) {
+      throw new Error('Missing Windows CLI license: LICENSE')
+    }
     assertNoPrivateBuildMetadata(
-      [cliPath, join(repoRoot, 'target', 'release', 'iris_drive_app_core.dll')],
+      [cliPath, join(repoRoot, 'target', 'release', 'iris_drive_app_core.dll'), windowsLicensePath],
       env,
       { repoRoot },
     )
-  }
-  const cliZipPath = join(distDir, `idrive-${tag}-x86_64-pc-windows-msvc.zip`)
-  if (!dryRun) {
-    if (!existsSync(cliPath)) {
-      throw new Error(`Missing Windows idrive.exe: ${cliPath}`)
-    }
-    mkdirSync(distDir, { recursive: true })
-  }
-  run(
-    'powershell.exe',
-    [
-      '-NoProfile',
-      '-Command',
-      `Compress-Archive -Path ${psSingleQuote(cliPath)} -DestinationPath ${psSingleQuote(cliZipPath)} -Force`,
-    ],
-    { dryRun, env },
-  )
-  const expectedInstallerPath = join(distDir, `iris-drive-${tag}-windows-x64-setup.exe`)
-  if (!dryRun) {
+    assertZipEntriesEqualFiles(
+      [[cliPath, cliZipPath, 'idrive.exe'], [windowsLicensePath, cliZipPath, 'LICENSE']],
+      'Windows CLI archive validation failed.',
+    )
     if (!existsSync(expectedInstallerPath)) {
       throw new Error(`Missing Windows installer: ${expectedInstallerPath}`)
     }

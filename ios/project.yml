@@ -31,6 +31,8 @@ targets:
       - path: Sources
       - path: Resources
         optional: true
+      - path: ../LICENSE
+        buildPhase: resources
     settings:
       base:
         PRODUCT_NAME: Iris Drive

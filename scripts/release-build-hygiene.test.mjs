@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
+import { gunzipSync } from 'node:zlib'
 
 import {
   assertNoPrivateBuildMetadata,
@@ -178,8 +179,116 @@ test('Linux release lookup keeps checkout paths out of production code', () => {
   assert.match(source, /with_file_name\("idrive"\)/)
 })
 
-test('Unix CLI packaging produces normalized tar metadata', { skip: process.platform === 'win32' }, () => {
+test('Linux Debian metadata carries the project MIT license', () => {
+  const licensePath = new URL('../LICENSE', import.meta.url)
+  const manifestPath = fileURLToPath(new URL('../linux/Cargo.toml', import.meta.url))
+  const manifest = readFileSync(manifestPath, 'utf8')
+  const metadata = spawnSync(
+    'cargo',
+    ['metadata', '--manifest-path', manifestPath, '--no-deps', '--format-version', '1'],
+    { encoding: 'utf8' },
+  )
+
+  assert.equal(metadata.status, 0, metadata.stderr)
+  const [packageMetadata] = JSON.parse(metadata.stdout).packages
+  assert.equal(packageMetadata.license, 'MIT')
+  assert.deepEqual(packageMetadata.authors, ['Iris Drive contributors'])
+  assert.equal(packageMetadata.repository, 'htree://self/iris-drive')
+  assert.equal(existsSync(licensePath), true)
+
+  const license = readFileSync(licensePath, 'utf8')
+  assert.match(license, /Permission is hereby granted, free of charge/)
+  assert.match(license, /THE SOFTWARE IS PROVIDED "AS IS"/)
+  assert.match(
+    manifest,
+    /copyright = "2026 Iris Drive contributors"/,
+  )
+  assert.match(manifest, /license-file = \["\.\.\/LICENSE", "0"\]/)
+})
+
+test('Linux Debian acceptance requires the exact project license', { skip: process.platform === 'win32' }, (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-deb-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const dataRoot = join(root, 'data')
+  const copyrightDir = join(dataRoot, 'usr/share/doc/iris-drive')
+  const licensePath = fileURLToPath(new URL('../LICENSE', import.meta.url))
+  const verifier = fileURLToPath(new URL('./verify-linux-deb-license.mjs', import.meta.url))
+
+  const arMember = (name, contents) => {
+    const bytes = Buffer.from(contents)
+    const header = Buffer.alloc(60, ' ')
+    header.write(`${name}/`, 0, 16, 'ascii')
+    header.write('0', 16, 12, 'ascii')
+    header.write('0', 28, 6, 'ascii')
+    header.write('0', 34, 6, 'ascii')
+    header.write('100644', 40, 8, 'ascii')
+    header.write(String(bytes.length), 48, 10, 'ascii')
+    header.write('`\n', 58, 2, 'ascii')
+    return Buffer.concat([header, bytes, bytes.length % 2 ? Buffer.from('\n') : Buffer.alloc(0)])
+  }
+
+  const buildDeb = (name, copyright) => {
+    rmSync(dataRoot, { recursive: true, force: true })
+    mkdirSync(copyrightDir, { recursive: true })
+    writeFileSync(join(copyrightDir, 'copyright'), copyright)
+    writeFileSync(join(root, 'debian-binary'), '2.0\n')
+    const controlRoot = join(root, 'control')
+    mkdirSync(controlRoot, { recursive: true })
+    writeFileSync(join(controlRoot, 'control'), 'Package: iris-drive\n')
+    for (const [archive, source, member] of [
+      ['control.tar.xz', controlRoot, 'control'],
+      ['data.tar.xz', dataRoot, '.'],
+    ]) {
+      const tar = spawnSync('tar', ['-cJf', join(root, archive), '-C', source, member], { encoding: 'utf8' })
+      assert.equal(tar.status, 0, tar.stderr)
+    }
+    const deb = join(root, name)
+    writeFileSync(deb, Buffer.concat([
+      Buffer.from('!<arch>\n'),
+      ...['debian-binary', 'control.tar.xz', 'data.tar.xz']
+        .map((member) => arMember(member, readFileSync(join(root, member)))),
+    ]))
+    return deb
+  }
+
+  const license = readFileSync(licensePath, 'utf8')
+  const metadata = [
+    'Format: https://www.debian.org/doc/packaging-manuals/copyright-format/1.0/',
+    'Upstream-Name: iris-drive-linux',
+    'Source: htree://self/iris-drive',
+    'Copyright: 2026 Iris Drive contributors',
+    'License: MIT',
+    '',
+  ].join('\n')
+  const accepted = spawnSync(verifier, [buildDeb('accepted.deb', metadata + license), licensePath], {
+    encoding: 'utf8',
+  })
+  assert.equal(accepted.status, 0, accepted.stderr)
+
+  for (const [name, copyright] of [
+    ['unlicensed.deb', metadata.replace('License: MIT', 'License: UNLICENSED') + license],
+    ['mismatch.deb', `${metadata}different terms\n`],
+  ]) {
+    const rejected = spawnSync(verifier, [buildDeb(name, copyright), licensePath], { encoding: 'utf8' })
+    assert.notEqual(rejected.status, 0)
+    assert.match(rejected.stderr, /Linux package license validation failed\./)
+    assert.equal(rejected.stderr.includes(root), false)
+  }
+
+  const release = readFileSync(new URL('./local-release.mjs', import.meta.url), 'utf8')
+  const block = release.match(/function buildLinuxArtifacts[\s\S]*?\nfunction androidSigningIsComplete/)?.[0] ?? ''
+  const verification = block.indexOf('verify-linux-deb-license.mjs')
+  const staging = block.indexOf('copyFileSync(debPath')
+  assert.ok(verification >= 0 && verification < staging)
+})
+
+test('Unix CLI packaging produces normalized tar metadata', { skip: process.platform === 'win32' }, (t) => {
   const distDir = mkdtempSync(join(tmpdir(), 'iris-drive-release-tar-'))
+  const extractDir = mkdtempSync(join(tmpdir(), 'iris-drive-release-tar-extract-'))
+  t.after(() => {
+    rmSync(distDir, { recursive: true, force: true })
+    rmSync(extractDir, { recursive: true, force: true })
+  })
   const run = (command, args) => {
     const result = spawnSync(command, args, { encoding: 'utf8' })
     assert.equal(result.status, 0, result.stderr)
@@ -188,10 +297,38 @@ test('Unix CLI packaging produces normalized tar metadata', { skip: process.plat
     binaryPath: '/bin/echo',
     distDir,
     dryRun: false,
-    env: {},
+    env: { SOURCE_DATE_EPOCH: '123456789' },
     run,
     tag: 'v0.0.0',
     targetTriple: 'test-target',
   })
-  assert.equal(existsSync(join(distDir, 'idrive-v0.0.0-test-target.tar.gz')), true)
+  const archivePath = join(distDir, 'idrive-v0.0.0-test-target.tar.gz')
+  assert.equal(existsSync(archivePath), true)
+
+  const listing = spawnSync('tar', ['-tzf', archivePath], { encoding: 'utf8' })
+  assert.equal(listing.status, 0, listing.stderr)
+  assert.deepEqual(listing.stdout.trim().split('\n'), [
+    'idrive/LICENSE',
+    'idrive/README.txt',
+    'idrive/install.sh',
+    'idrive/idrive',
+  ])
+
+  const archivedLicense = spawnSync('tar', ['-xOzf', archivePath, 'idrive/LICENSE'])
+  assert.equal(archivedLicense.status, 0, archivedLicense.stderr?.toString())
+  assert.deepEqual(archivedLicense.stdout, readFileSync(new URL('../LICENSE', import.meta.url)))
+
+  const extraction = spawnSync('tar', ['-xzf', archivePath, '-C', extractDir], { encoding: 'utf8' })
+  assert.equal(extraction.status, 0, extraction.stderr)
+  for (const [member, expectedMode] of [
+    ['LICENSE', 0o644],
+    ['README.txt', 0o644],
+    ['install.sh', 0o755],
+    ['idrive', 0o755],
+  ]) {
+    assert.equal(statSync(join(extractDir, 'idrive', member)).mode & 0o777, expectedMode)
+  }
+
+  const repoRoot = fileURLToPath(new URL('..', import.meta.url))
+  assert.equal(gunzipSync(readFileSync(archivePath)).includes(Buffer.from(repoRoot)), false)
 })

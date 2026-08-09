@@ -313,6 +313,73 @@ build_settings_args() {
   printf '%s\n' "${args[@]}"
 }
 
+verify_ios_app_license() {
+  local app="$1"
+  local embedded_license="$app/LICENSE"
+  [[ -f "$ROOT/LICENSE" ]] || {
+    echo "Project license is missing." >&2
+    return 1
+  }
+  [[ -f "$embedded_license" ]] || {
+    echo "iOS app is missing its embedded license." >&2
+    return 1
+  }
+  /usr/bin/cmp -s "$ROOT/LICENSE" "$embedded_license" || {
+    echo "iOS app embedded license does not match the project license." >&2
+    return 1
+  }
+}
+
+verify_ios_archive_license() {
+  local applications="$ARCHIVE_PATH/Products/Applications"
+  local app=""
+  local candidate
+  local app_count=0
+  [[ -d "$applications" ]] || {
+    echo "iOS archive does not contain an applications directory." >&2
+    return 1
+  }
+  while IFS= read -r -d '' candidate; do
+    app="$candidate"
+    app_count=$((app_count + 1))
+  done < <(find "$applications" -mindepth 1 -maxdepth 1 -type d -name '*.app' -print0)
+  [[ "$app_count" -eq 1 ]] || {
+    echo "iOS archive must contain exactly one main app." >&2
+    return 1
+  }
+  verify_ios_app_license "$app"
+}
+
+verify_ios_export_license() {
+  local ipa
+  local entry
+  local license_entry=""
+  local entry_count=0
+  [[ -f "$ROOT/LICENSE" ]] || {
+    echo "Project license is missing." >&2
+    return 1
+  }
+  ipa="$(ipa_path)"
+  [[ -n "$ipa" ]] || {
+    echo "Export does not contain an IPA." >&2
+    return 1
+  }
+  while IFS= read -r entry; do
+    [[ "$entry" =~ ^Payload/[^/]+\.app/LICENSE$ ]] || continue
+    license_entry="$entry"
+    entry_count=$((entry_count + 1))
+  done < <(/usr/bin/unzip -Z1 "$ipa" 2>/dev/null)
+  [[ "$entry_count" -eq 1 ]] || {
+    echo "Exported iOS app must contain exactly one embedded license." >&2
+    return 1
+  }
+  /usr/bin/cmp -s "$ROOT/LICENSE" \
+    <(/usr/bin/unzip -p "$ipa" "$license_entry" 2>/dev/null) || {
+    echo "Exported iOS app embedded license does not match the project license." >&2
+    return 1
+  }
+}
+
 run_ios_archive() {
   require_darwin
   ensure_dir "$DIST_DIR"
@@ -339,35 +406,35 @@ run_ios_archive() {
       PROVISIONING_PROFILE_SPECIFIER= \
       "${build_args[@]}" \
       archive
-    return
+  else
+    ensure_profiles
+    load_profiles_env
+
+    xcodebuild \
+      -project "$PROJECT" \
+      -scheme "$SCHEME" \
+      -configuration "$CONFIGURATION" \
+      -destination "generic/platform=iOS" \
+      -archivePath "$ARCHIVE_PATH" \
+      CODE_SIGN_STYLE=Manual \
+      DEVELOPMENT_TEAM="$TEAM_ID" \
+      IRIS_DRIVE_IOS_BUNDLE_ID="$BUNDLE_ID" \
+      IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID="$FILE_PROVIDER_BUNDLE_ID" \
+      IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID="$SHARE_EXTENSION_BUNDLE_ID" \
+      IRIS_DRIVE_IOS_SHARE_SOURCE_BUNDLE_ID="$SHARE_SOURCE_BUNDLE_ID" \
+      IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER="$APP_GROUP_IDENTIFIER" \
+      IRIS_DRIVE_IOS_BACKGROUND_SYNC_TASK_IDENTIFIER="$BACKGROUND_SYNC_TASK_IDENTIFIER" \
+      IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY="$IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY" \
+      IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID="$IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID" \
+      IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID="$IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID" \
+      IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID="$IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID" \
+      MARKETING_VERSION="$(marketing_version)" \
+      CURRENT_PROJECT_VERSION="$(build_number)" \
+      LIBRARY_SEARCH_PATHS="$RUST_LIB_DIR" \
+      OTHER_LDFLAGS="$RUST_STATIC_LIB" \
+      archive
   fi
-
-  ensure_profiles
-  load_profiles_env
-
-  xcodebuild \
-    -project "$PROJECT" \
-    -scheme "$SCHEME" \
-    -configuration "$CONFIGURATION" \
-    -destination "generic/platform=iOS" \
-    -archivePath "$ARCHIVE_PATH" \
-    CODE_SIGN_STYLE=Manual \
-    DEVELOPMENT_TEAM="$TEAM_ID" \
-    IRIS_DRIVE_IOS_BUNDLE_ID="$BUNDLE_ID" \
-    IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID="$FILE_PROVIDER_BUNDLE_ID" \
-    IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID="$SHARE_EXTENSION_BUNDLE_ID" \
-    IRIS_DRIVE_IOS_SHARE_SOURCE_BUNDLE_ID="$SHARE_SOURCE_BUNDLE_ID" \
-    IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER="$APP_GROUP_IDENTIFIER" \
-    IRIS_DRIVE_IOS_BACKGROUND_SYNC_TASK_IDENTIFIER="$BACKGROUND_SYNC_TASK_IDENTIFIER" \
-    IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY="$IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY" \
-    IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID="$IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID" \
-    IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID="$IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID" \
-    IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID="$IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID" \
-    MARKETING_VERSION="$(marketing_version)" \
-    CURRENT_PROJECT_VERSION="$(build_number)" \
-    LIBRARY_SEARCH_PATHS="$RUST_LIB_DIR" \
-    OTHER_LDFLAGS="$RUST_STATIC_LIB" \
-    archive
+  verify_ios_archive_license
 }
 
 write_export_options() {
@@ -432,6 +499,7 @@ EOF
 run_ios_export() {
   require_darwin
   [[ -d "$ARCHIVE_PATH" ]] || { echo "Archive not found: $ARCHIVE_PATH" >&2; exit 1; }
+  verify_ios_archive_license
   rm -rf "$EXPORT_DIR"
   ensure_dir "$EXPORT_DIR"
   if [[ "$IOS_SIGNING_STYLE" == "automatic" ]]; then
@@ -457,6 +525,7 @@ run_ios_export() {
       -exportPath "$EXPORT_DIR" \
       -exportOptionsPlist "$EXPORT_OPTIONS"
   fi
+  verify_ios_export_license
 }
 
 ipa_path() {
@@ -466,6 +535,7 @@ ipa_path() {
 run_ios_upload() {
   local ipa key_id issuer_id
   require_darwin
+  verify_ios_export_license
   ipa="$(ipa_path)"
   [[ -n "$ipa" ]] || { echo "No IPA found in $EXPORT_DIR; run ios-export first." >&2; exit 1; }
   key_id="$(asc_key_id)"

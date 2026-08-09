@@ -80,7 +80,11 @@ require_executable scripts/ios-build
 require_executable scripts/release-build-number.mjs
 require_file scripts/release-build-hygiene.mjs
 require_file scripts/release-build-hygiene.test.mjs
+require_file scripts/release-zip.mjs
+require_executable scripts/verify-linux-deb-license.mjs
+require_file scripts/local-release-android-license.test.mjs
 require_file scripts/local-release-assets.test.mjs
+require_file scripts/local-release-platform-license.test.mjs
 require_executable scripts/ios-profiles
 require_executable scripts/testflight-internal
 require_executable scripts/testflight-public
@@ -89,6 +93,7 @@ require_file .env.release.example
 require_file release-policy.json
 require_file .env.zapstore.example
 require_file zapstore.yaml
+require_file LICENSE
 
 require_contains Justfile "release-gate *args:"
 require_contains Justfile "verify-fast:"
@@ -113,6 +118,8 @@ require_contains scripts/local-release-lib.mjs "validateCanonicalReleaseAssetSet
 require_contains scripts/local-release.mjs "validateFinalReleaseBuildInputs"
 require_contains scripts/local-release.mjs "validateFinalPublishInputs"
 require_contains scripts/local-release.mjs "readProjectReleasePolicy"
+require_contains scripts/local-release.mjs "assertZipEntriesEqualFiles"
+require_contains scripts/local-release.mjs "verify-linux-deb-license.mjs"
 require_contains release-policy.json '"signing": "unsigned"'
 require_absent scripts/local-release.mjs "IRIS_DRIVE_WINDOWS_SIGNTOOL"
 require_absent scripts/local-release.mjs "IRIS_DRIVE_ALLOW_UNSIGNED_WINDOWS"
@@ -121,6 +128,7 @@ require_contains scripts/local-release.mjs "notarytool"
 require_contains scripts/local-release.mjs "stapler"
 require_contains scripts/local-release.mjs "macos-release-smoke.sh"
 require_contains scripts/macos-release-smoke.sh "verify_file_provider_contract"
+require_contains scripts/macos-release-smoke.sh "verify_embedded_license"
 require_contains scripts/macos-release-smoke.sh 'com\.apple\.security\.application-groups.0'
 require_contains scripts/macos-release-smoke.sh 'REGISTERED_APP_PATHS'
 require_contains scripts/macos-release-smoke.sh '"$LSREGISTER" -u "$app"'
@@ -135,6 +143,7 @@ require_contains scripts/ios-build "ios-testflight-public"
 require_contains scripts/ios-build "scripts/ios-profiles"
 require_contains scripts/ios-build 'node "$ROOT/scripts/release-build-number.mjs" "$1"'
 require_contains scripts/ios-build "testflight-internal"
+require_contains scripts/ios-build "verify_ios_export_license"
 require_contains scripts/ios-build 'FILE_PROVIDER_BUNDLE_ID="${IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID:-$BUNDLE_ID.FileProvider}"'
 require_contains scripts/ios-build "IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER"
 require_contains scripts/ios-build "IRIS_DRIVE_IOS_SIGNING_STYLE"
@@ -169,6 +178,13 @@ require_absent Cargo.toml "git = "
 require_absent Cargo.toml 'path = "crates/hashtree-fips-transport"'
 require_absent Cargo.toml 'path = "../nostr-social-graph'
 require_absent linux/Cargo.toml "[patch.crates-io]"
+require_contains linux/Cargo.toml 'license = "MIT"'
+require_contains linux/Cargo.toml 'authors = ["Iris Drive contributors"]'
+require_contains linux/Cargo.toml 'repository = "htree://self/iris-drive"'
+require_contains linux/Cargo.toml 'copyright = "2026 Iris Drive contributors"'
+require_contains linux/Cargo.toml 'license-file = ["../LICENSE", "0"]'
+require_contains LICENSE "Permission is hereby granted, free of charge"
+require_contains LICENSE 'THE SOFTWARE IS PROVIDED "AS IS"'
 for lock in Cargo.lock linux/Cargo.lock; do
   require_registry_package "$lock" fips-core 0.4.44 ae571d70c20955e762008dcf124bc81e424f2775b9f51f330be55621b9c3dffb
   require_registry_package "$lock" fips-endpoint 0.4.44 b159d611b4e36a81b00d12af72b1ea94771be0e93e96d9f2e31badbd30d3ffc2
