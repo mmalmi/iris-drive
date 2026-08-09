@@ -122,7 +122,11 @@ android {
     }
 }
 
-tasks.matching { it.name.startsWith("merge") && it.name.endsWith("Assets") }.configureEach {
+tasks.matching { task ->
+    (task.name.startsWith("merge") && task.name.endsWith("Assets")) ||
+        (task.name.contains("lint", ignoreCase = true) &&
+            (task.name.endsWith("Model") || task.name.contains("Analyze")))
+}.configureEach {
     dependsOn(stageProjectLicenseAssets)
 }
 

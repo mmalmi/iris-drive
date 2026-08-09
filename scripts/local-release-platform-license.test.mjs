@@ -22,13 +22,23 @@ test('Apple main apps embed the project license as a bundle resource', () => {
   }
 })
 
-test('Android stages the project license as a generated app asset', () => {
+test('Android wires every project-license asset consumer to its staging task', () => {
   const gradle = read('android/app/build.gradle.kts')
 
   assert.match(gradle, /repoRoot\.file\("LICENSE"\)/)
   assert.match(gradle, /generated\/irisDriveLicenseAssets/)
   assert.match(gradle, /assets\.srcDir\(generatedLicenseAssetsDir\)/)
-  assert.match(gradle, /dependsOn\(stageProjectLicenseAssets\)/)
+
+  const consumerTasks = gradle.match(
+    /tasks\.matching \{ task ->([\s\S]*?)\}\.configureEach \{\s*dependsOn\(stageProjectLicenseAssets\)\s*\}/,
+  )?.[1]
+  assert.ok(consumerTasks)
+  assert.match(consumerTasks, /startsWith\("merge"\)/)
+  assert.match(consumerTasks, /endsWith\("Assets"\)/)
+  assert.match(consumerTasks, /contains\("lint", ignoreCase = true\)/)
+  assert.match(consumerTasks, /endsWith\("Model"\)/)
+  assert.match(consumerTasks, /contains\("Analyze"\)/)
+  assert.doesNotMatch(consumerTasks, /generateReleaseLintVitalReportModel/)
 })
 
 test('macOS release smoke checks every accepted app license before signature acceptance', () => {

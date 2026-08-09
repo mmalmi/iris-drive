@@ -71,6 +71,8 @@
   installer payload.
 - Include the project's existing MIT terms in native release packages and
   correct the excluded Linux crate's incomplete license metadata.
+- Declare generated Android license assets as inputs to release lint and
+  packaging tasks so clean signed builds pass Gradle validation.
 - Avoid false fast-gate failures when workflow contract tests share a busy
   builder with the parallel Rust checks.
 
