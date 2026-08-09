@@ -65,6 +65,7 @@ RUST_STATIC_LIB="$RUST_LIB_DIR/libiris_drive_app_core.a"
 IOS_UPLOAD_TRANSPORT="${IRIS_DRIVE_IOS_UPLOAD_TRANSPORT:-HTTP}"
 IOS_INTERNAL_ONLY="${IRIS_DRIVE_IOS_INTERNAL_ONLY:-true}"
 IOS_SIGNING_STYLE="${IRIS_DRIVE_IOS_SIGNING_STYLE:-manual}"
+IOS_ARCHIVE_PRIVACY_VERIFIED=false
 TRANSPORTER="${IRIS_DRIVE_ITMS_TRANSPORTER:-/Applications/Transporter.app/Contents/itms/bin/iTMSTransporter}"
 
 usage() {
@@ -136,17 +137,49 @@ require_var() {
 }
 
 ensure_release_rust_path_remap() {
-  local current="${CARGO_ENCODED_RUSTFLAGS:-}${RUSTFLAGS:-}"
-  [[ "$current" == *"--remap-path-prefix=$ROOT="* ]] && return
-  local workspace="--remap-path-prefix=$ROOT=/usr/src/iris-drive"
-  local home="--remap-path-prefix=$HOME=/usr/src/home"
-  if [[ -n "${CARGO_ENCODED_RUSTFLAGS:-}" ]]; then
-    export CARGO_ENCODED_RUSTFLAGS+=$'\037'"$workspace"$'\037'"$home"
-  elif [[ -n "${RUSTFLAGS:-}" ]]; then
-    export RUSTFLAGS+=" $workspace $home"
+  local current flag mode
+  if [[ -n "${CARGO_ENCODED_RUSTFLAGS:-}" || -z "${RUSTFLAGS:-}" ]]; then
+    current="${CARGO_ENCODED_RUSTFLAGS:-}"
+    mode=encoded
   else
-    export CARGO_ENCODED_RUSTFLAGS="$workspace"$'\037'"$home"
+    current="$RUSTFLAGS"
+    mode=plain
   fi
+  for flag in \
+    "--remap-path-prefix=$ROOT=/usr/src/iris-drive" \
+    "--remap-path-prefix=$HOME=/usr/src/home"; do
+    [[ "$current" == *"$flag"* ]] && continue
+    if [[ "$mode" == encoded ]]; then
+      current+="${current:+$'\037'}$flag"
+    else
+      current+="${current:+ }$flag"
+    fi
+  done
+  if [[ "$mode" == encoded ]]; then
+    export CARGO_ENCODED_RUSTFLAGS="$current"
+  else
+    export RUSTFLAGS="$current"
+  fi
+}
+
+ensure_release_native_path_remap() {
+  local current flag name quoted
+  local flags=(
+    "-ffile-prefix-map=$ROOT=/usr/src/iris-drive"
+    "-fdebug-prefix-map=$ROOT=/usr/src/iris-drive"
+    "-ffile-prefix-map=$HOME=/usr/src/home"
+    "-fdebug-prefix-map=$HOME=/usr/src/home"
+  )
+  for name in CFLAGS CXXFLAGS; do
+    current="${!name-}"
+    for flag in "${flags[@]}"; do
+      printf -v quoted '%q' "$flag"
+      [[ "$current" == *"$flag"* || "$current" == *"$quoted"* ]] && continue
+      current+="${current:+ }$quoted"
+    done
+    export "$name=$current"
+  done
+  export CC_SHELL_ESCAPED_FLAGS=1
 }
 
 asc_issuer_id() {
@@ -241,6 +274,7 @@ build_number() {
 run_ios_rust() {
   require_darwin
   ensure_release_rust_path_remap
+  ensure_release_native_path_remap
   CARGO_TARGET_DIR="$TARGET_DIR" \
     IPHONEOS_DEPLOYMENT_TARGET="$RUST_IOS_DEPLOYMENT_TARGET" \
     cargo build -p iris-drive-app-core --release --target "$RUST_IOS_TARGET"
@@ -292,6 +326,13 @@ load_profiles_env() {
 }
 
 build_settings_args() {
+  local swift_path_maps clang_path_maps
+  swift_path_maps="-debug-prefix-map \"$ROOT=/usr/src/iris-drive\""
+  swift_path_maps+=" -debug-prefix-map \"$HOME=/usr/src/home\""
+  clang_path_maps="\"-ffile-prefix-map=$ROOT=/usr/src/iris-drive\""
+  clang_path_maps+=" \"-fdebug-prefix-map=$ROOT=/usr/src/iris-drive\""
+  clang_path_maps+=" \"-ffile-prefix-map=$HOME=/usr/src/home\""
+  clang_path_maps+=" \"-fdebug-prefix-map=$HOME=/usr/src/home\""
   local args=(
     "DEVELOPMENT_TEAM=$TEAM_ID" \
     "IRIS_DRIVE_IOS_BUNDLE_ID=$BUNDLE_ID" \
@@ -303,7 +344,10 @@ build_settings_args() {
     "MARKETING_VERSION=$(marketing_version)" \
     "CURRENT_PROJECT_VERSION=$(build_number)" \
     "LIBRARY_SEARCH_PATHS=$RUST_LIB_DIR" \
-    "OTHER_LDFLAGS=$RUST_STATIC_LIB"
+    "OTHER_LDFLAGS=$RUST_STATIC_LIB" \
+    "OTHER_SWIFT_FLAGS=\$(inherited) $swift_path_maps" \
+    "OTHER_CFLAGS=\$(inherited) $clang_path_maps" \
+    "OTHER_CPLUSPLUSFLAGS=\$(inherited) $clang_path_maps"
   )
   if [[ "$IOS_SIGNING_STYLE" == "automatic" ]]; then
     args+=("IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY=${IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY:-Apple Development}")
@@ -328,6 +372,12 @@ verify_ios_app_license() {
     echo "iOS app embedded license does not match the project license." >&2
     return 1
   }
+}
+
+verify_ios_archive_privacy() {
+  [[ "$IOS_ARCHIVE_PRIVACY_VERIFIED" == true ]] && return
+  node "$ROOT/scripts/release-build-hygiene-cli.mjs" "$ROOT" "$ARCHIVE_PATH"
+  IOS_ARCHIVE_PRIVACY_VERIFIED=true
 }
 
 verify_ios_archive_license() {
@@ -381,17 +431,22 @@ verify_ios_export_license() {
 }
 
 run_ios_archive() {
+  local auth_args=() build_args=()
   require_darwin
   ensure_dir "$DIST_DIR"
+  IOS_ARCHIVE_PRIVACY_VERIFIED=false
   rm -rf "$ARCHIVE_PATH"
   run_ios_rust
   run_ios_project
 
+  if [[ "$IOS_SIGNING_STYLE" != "automatic" ]]; then
+    ensure_profiles
+    load_profiles_env
+  fi
+  while IFS= read -r arg; do build_args+=("$arg"); done < <(build_settings_args)
+
   if [[ "$IOS_SIGNING_STYLE" == "automatic" ]]; then
-    auth_args=()
     while IFS= read -r arg; do auth_args+=("$arg"); done < <(xcode_auth_args)
-    build_args=()
-    while IFS= read -r arg; do build_args+=("$arg"); done < <(build_settings_args)
     xcodebuild \
       -project "$PROJECT" \
       -scheme "$SCHEME" \
@@ -407,9 +462,6 @@ run_ios_archive() {
       "${build_args[@]}" \
       archive
   else
-    ensure_profiles
-    load_profiles_env
-
     xcodebuild \
       -project "$PROJECT" \
       -scheme "$SCHEME" \
@@ -417,24 +469,14 @@ run_ios_archive() {
       -destination "generic/platform=iOS" \
       -archivePath "$ARCHIVE_PATH" \
       CODE_SIGN_STYLE=Manual \
-      DEVELOPMENT_TEAM="$TEAM_ID" \
-      IRIS_DRIVE_IOS_BUNDLE_ID="$BUNDLE_ID" \
-      IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID="$FILE_PROVIDER_BUNDLE_ID" \
-      IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID="$SHARE_EXTENSION_BUNDLE_ID" \
-      IRIS_DRIVE_IOS_SHARE_SOURCE_BUNDLE_ID="$SHARE_SOURCE_BUNDLE_ID" \
-      IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER="$APP_GROUP_IDENTIFIER" \
-      IRIS_DRIVE_IOS_BACKGROUND_SYNC_TASK_IDENTIFIER="$BACKGROUND_SYNC_TASK_IDENTIFIER" \
-      IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY="$IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY" \
       IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID="$IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID" \
       IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID="$IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID" \
       IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID="$IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID" \
-      MARKETING_VERSION="$(marketing_version)" \
-      CURRENT_PROJECT_VERSION="$(build_number)" \
-      LIBRARY_SEARCH_PATHS="$RUST_LIB_DIR" \
-      OTHER_LDFLAGS="$RUST_STATIC_LIB" \
+      "${build_args[@]}" \
       archive
   fi
   verify_ios_archive_license
+  verify_ios_archive_privacy
 }
 
 write_export_options() {
@@ -498,8 +540,9 @@ EOF
 
 run_ios_export() {
   require_darwin
-  [[ -d "$ARCHIVE_PATH" ]] || { echo "Archive not found: $ARCHIVE_PATH" >&2; exit 1; }
+  [[ -d "$ARCHIVE_PATH" ]] || { echo "iOS release archive not found." >&2; exit 1; }
   verify_ios_archive_license
+  verify_ios_archive_privacy
   rm -rf "$EXPORT_DIR"
   ensure_dir "$EXPORT_DIR"
   if [[ "$IOS_SIGNING_STYLE" == "automatic" ]]; then
@@ -535,6 +578,8 @@ ipa_path() {
 run_ios_upload() {
   local ipa key_id issuer_id
   require_darwin
+  verify_ios_archive_license
+  verify_ios_archive_privacy
   verify_ios_export_license
   ipa="$(ipa_path)"
   [[ -n "$ipa" ]] || { echo "No IPA found in $EXPORT_DIR; run ios-export first." >&2; exit 1; }

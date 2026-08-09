@@ -53,7 +53,7 @@ test('macOS release smoke checks every accepted app license before signature acc
   assert.equal((smoke.match(/verify_app_bundle "\$/g) ?? []).length, 3)
 })
 
-test('iOS archive and IPA licenses are accepted before any upload', () => {
+test('iOS archive privacy and IPA licenses are accepted before any upload', () => {
   const build = read('scripts/ios-build')
   const archive = functionBody(build, 'run_ios_archive', 'write_export_options')
   const exportIpa = functionBody(build, 'run_ios_export', 'ipa_path')
@@ -64,7 +64,27 @@ test('iOS archive and IPA licenses are accepted before any upload', () => {
   assert.match(build, /verify_ios_export_license\(\)/)
   assert.match(build, /Payload\/\[\^\/\]\+\\\.app\/LICENSE/)
   assert.match(build, /\/usr\/bin\/cmp -s "\$ROOT\/LICENSE"/)
+  const privacyReset = archive.indexOf('IOS_ARCHIVE_PRIVACY_VERIFIED=false')
+  assert.ok(privacyReset >= 0 && privacyReset < archive.indexOf('rm -rf "$ARCHIVE_PATH"'))
+  assert.match(exportIpa, /iOS release archive not found\./)
+  assert.doesNotMatch(exportIpa, /Archive not found: \$ARCHIVE_PATH/)
   assert.ok(archive.lastIndexOf('xcodebuild') < archive.lastIndexOf('verify_ios_archive_license'))
+  assert.match(build, /release-build-hygiene-cli\.mjs" "\$ROOT" "\$ARCHIVE_PATH"/)
+  assert.ok(
+    archive.lastIndexOf('verify_ios_archive_license') <
+      archive.lastIndexOf('verify_ios_archive_privacy'),
+  )
+  assert.ok(
+    exportIpa.lastIndexOf('verify_ios_archive_license') <
+      exportIpa.lastIndexOf('verify_ios_archive_privacy'),
+  )
+  assert.ok(
+    exportIpa.lastIndexOf('verify_ios_archive_privacy') < exportIpa.lastIndexOf('xcodebuild'),
+  )
   assert.ok(exportIpa.lastIndexOf('xcodebuild') < exportIpa.lastIndexOf('verify_ios_export_license'))
+  assert.ok(
+    upload.indexOf('verify_ios_archive_license') < upload.indexOf('verify_ios_archive_privacy'),
+  )
+  assert.ok(upload.indexOf('verify_ios_archive_privacy') < upload.indexOf('"$TRANSPORTER"'))
   assert.ok(upload.indexOf('verify_ios_export_license') < upload.indexOf('"$TRANSPORTER"'))
 })

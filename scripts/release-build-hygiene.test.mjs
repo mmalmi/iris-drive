@@ -1,6 +1,14 @@
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -156,7 +164,7 @@ test('release tar ownership is generic on GNU and BSD tar', () => {
   ])
 })
 
-test('direct iOS and Windows release entry points remap Rust paths', () => {
+test('direct iOS and Windows release entry points remap compiler paths', () => {
   const ios = readFileSync(new URL('./ios-build', import.meta.url), 'utf8')
   const windows = readFileSync(new URL('./windows-publish.ps1', import.meta.url), 'utf8')
 
@@ -166,6 +174,77 @@ test('direct iOS and Windows release entry points remap Rust paths', () => {
     assert.match(script, /\/usr\/src\/home/)
   }
   assert.match(ios, /release-build-hygiene\.mjs/)
+  assert.match(ios, /CC_SHELL_ESCAPED_FLAGS/)
+  assert.match(ios, /-ffile-prefix-map=/)
+  assert.match(ios, /-fdebug-prefix-map=/)
+  const settings = ios.match(/build_settings_args\(\) \{([\s\S]*?)\n\}/)?.[1] ?? ''
+  assert.equal([...settings.matchAll(/swift_path_maps\+?=.*-debug-prefix-map/g)].length, 2)
+  assert.equal([...settings.matchAll(/clang_path_maps\+?=.*-ffile-prefix-map/g)].length, 2)
+  assert.equal([...settings.matchAll(/clang_path_maps\+?=.*-fdebug-prefix-map/g)].length, 2)
+  assert.match(settings, /OTHER_SWIFT_FLAGS=.*\$swift_path_maps/)
+  assert.match(settings, /OTHER_CFLAGS=.*\$clang_path_maps/)
+  assert.match(settings, /OTHER_CPLUSPLUSFLAGS=.*\$clang_path_maps/)
+  assert.match(
+    ios,
+    /run_ios_rust\(\)[\s\S]*ensure_release_native_path_remap[\s\S]*cargo build/,
+  )
+
+  const archive = ios.match(/run_ios_archive\(\) \{([\s\S]*?)\n\}/)?.[1] ?? ''
+  assert.equal(
+    [...archive.matchAll(/"\$\{build_args\[@\]\}"/g)].length,
+    2,
+    'automatic and manual archives must use the same common build settings',
+  )
+})
+
+test('direct iOS remaps complete partial environments idempotently', {
+  skip: process.platform === 'win32',
+}, () => {
+  const ios = readFileSync(new URL('./ios-build', import.meta.url), 'utf8')
+  const helpers = ios.slice(
+    ios.indexOf('ensure_release_rust_path_remap()'),
+    ios.indexOf('asc_issuer_id()'),
+  )
+  const repoRoot = '/workspace/iris-drive'
+  const home = '/home/release-builder'
+  const expected = [
+    `--remap-path-prefix=${repoRoot}=/usr/src/iris-drive`,
+    `--remap-path-prefix=${home}=/usr/src/home`,
+    `-ffile-prefix-map=${repoRoot}=/usr/src/iris-drive`,
+    `-fdebug-prefix-map=${repoRoot}=/usr/src/iris-drive`,
+    `-ffile-prefix-map=${home}=/usr/src/home`,
+    `-fdebug-prefix-map=${home}=/usr/src/home`,
+  ]
+  const result = spawnSync('bash', ['-c', `${helpers}
+ensure_release_rust_path_remap
+ensure_release_native_path_remap
+ensure_release_rust_path_remap
+ensure_release_native_path_remap
+printf '%s\\n%s\\n%s\\n%s\\n' "$CARGO_ENCODED_RUSTFLAGS" "$CFLAGS" "$CXXFLAGS" "$CC_SHELL_ESCAPED_FLAGS"
+`], {
+    encoding: 'utf8',
+    env: {
+      ...process.env,
+      ROOT: repoRoot,
+      HOME: home,
+      CARGO_ENCODED_RUSTFLAGS: ['-C', 'target-cpu=generic'].join('\u001f'),
+      RUSTFLAGS: expected[0],
+      CFLAGS: `-O2 '${expected[2]}'`,
+      CXXFLAGS: `-stdlib=libc++ '${expected[3]}'`,
+    },
+  })
+
+  assert.equal(result.status, 0, result.stderr)
+  const [rustFlags, cFlags, cxxFlags, shellEscaped] = result.stdout.trimEnd().split('\n')
+  for (const flag of expected.slice(0, 2)) {
+    assert.equal(rustFlags.split(flag).length - 1, 1)
+  }
+  for (const flags of [cFlags, cxxFlags]) {
+    for (const flag of expected.slice(2)) {
+      assert.equal(flags.split(flag).length - 1, 1)
+    }
+  }
+  assert.equal(shellEscaped, '1')
 })
 
 test('Linux release lookup keeps checkout paths out of production code', () => {
