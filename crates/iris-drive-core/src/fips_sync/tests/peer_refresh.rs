@@ -6,6 +6,7 @@ fn snapshot(peer: &str) -> FipsPeerConfigSnapshot {
         udp_addresses: Vec::new(),
     };
     FipsPeerConfigSnapshot {
+        local_inbound_capability: LocalInboundCapability::InboundRoutable,
         application: vec![peer.clone()],
         routing: Vec::new(),
         blob: vec![peer],

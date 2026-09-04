@@ -30,10 +30,26 @@ require_absent() {
   fi
 }
 
+require_before() {
+  local path="$1"
+  local first="$2"
+  local second="$3"
+  local first_line second_line
+  first_line="$(grep -nF "$first" "$ROOT/$path" | head -n 1 | cut -d: -f1)"
+  second_line="$(grep -nF "$second" "$ROOT/$path" | head -n 1 | cut -d: -f1)"
+  if [[ -z "$first_line" || -z "$second_line" || "$first_line" -ge "$second_line" ]]; then
+    echo "expected '$first' before '$second' in $path" >&2
+    exit 1
+  fi
+}
+
 require_file android/settings.gradle.kts
 require_file android/app/build.gradle.kts
 require_file android/app/src/main/AndroidManifest.xml
 require_file android/app/src/main/java/to/iris/drive/app/MainActivity.kt
+require_file android/app/src/main/java/to/iris/drive/app/DeviceApprovalLaunchController.kt
+require_file android/app/src/main/java/to/iris/drive/app/NativeStateGenerationGate.kt
+require_file android/app/src/test/java/to/iris/drive/app/NativeStateGenerationGateTest.kt
 require_file android/app/src/main/java/to/iris/drive/app/IrisWebActivity.kt
 require_file android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt
 require_file android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt
@@ -44,6 +60,7 @@ require_file android/app/src/androidTest/java/to/iris/drive/app/provider/IrisDri
 require_file android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentsProvider.kt
 require_file scripts/mobile-android-smoke.sh
 require_file scripts/android-gui-linking-smoke.sh
+require_file scripts/local-blossom-server.py
 require_file scripts/cross-vm-five-platform-e2e.sh
 require_file tools/run-android
 
@@ -87,8 +104,41 @@ require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "st
 require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "waitForIrisPortalUrl"
 require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "localGatewayResponds"
 require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "HttpURLConnection"
-require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "confirmDeviceApproval(uri.toString())"
-require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt '.setTitle("Approve this device?")'
+require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt \
+  "deviceApprovalLaunchController.handleApprovalRequest(uri.toString())"
+require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt \
+  "promptForApprovalBeforeNativeStart(launchIntent)"
+require_contains android/app/src/main/java/to/iris/drive/app/DeviceApprovalLaunchController.kt \
+  '.setTitle("Approve this device?")'
+require_contains android/app/src/main/java/to/iris/drive/app/DeviceApprovalLaunchController.kt \
+  "pendingApproval = request to"
+require_contains android/app/src/main/java/to/iris/drive/app/DeviceApprovalLaunchController.kt \
+  "if (!nativeReady()) return"
+require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt \
+  "deviceApprovalLaunchController.confirmationPending ||"
+require_before android/app/src/main/java/to/iris/drive/app/MainActivity.kt \
+  "promptForApprovalBeforeNativeStart(launchIntent)" \
+  "delay(launchIntent?.getLongExtra(DEBUG_NATIVE_START_DELAY_MS"
+require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "nativeStateGenerationGate.request()"
+require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt 'logNativeStateTransition("complete"'
+require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt 'logNativeStateTransition("skip"'
+require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt 'origin = "approve-device"'
+require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "refresh(includeProvider = false)"
+require_contains android/app/src/main/java/to/iris/drive/app/NativeStateGenerationGate.kt \
+  "generation == latestRequested"
+require_contains android/app/src/test/java/to/iris/drive/app/NativeStateGenerationGateTest.kt \
+  "reorderedCompletionsStayMonotonicUnderLoad"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/MainActivityApprovalDeepLinkTest.kt \
+  "DEBUG_FIRST_REFRESH_APPLY_DELAY_MS"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/MainActivityApprovalDeepLinkTest.kt \
+  ".inRoot(isDialog())"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/MainActivityApprovalDeepLinkTest.kt \
+  "view.performClick()"
+require_absent android/app/src/androidTest/java/to/iris/drive/app/MainActivityApprovalDeepLinkTest.kt \
+  "ViewActions.click"
+require_before android/app/src/main/java/to/iris/drive/app/MainActivity.kt \
+  "handleLaunchIntent(intentToHandle)" \
+  "refreshJob = lifecycleScope.launch"
 require_contains android/app/src/main/java/to/iris/drive/app/AndroidDebugSupport.kt "fun action(intent: Intent?): String?"
 require_contains android/app/src/main/java/to/iris/drive/app/AndroidDebugSupport.kt "if (!BuildConfig.DEBUG) return null"
 require_contains android/app/src/main/java/to/iris/drive/app/MainActivity.kt "when (AndroidDebugSupport.action(intent))"
@@ -139,6 +189,31 @@ require_contains scripts/android-gui-linking-smoke.sh "addDeviceSectionDispatche
 require_contains scripts/android-gui-linking-smoke.sh "ShareActivityInstrumentedTest"
 require_contains scripts/android-gui-linking-smoke.sh 'filter+=",$approval_deep_link_class,$native_state_class,$share_api_class"'
 require_contains android/app/src/androidTest/java/to/iris/drive/app/MainActivityApprovalDeepLinkTest.kt "approvalDeepLinkRequiresExplicitConfirmation"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/MainActivityApprovalDeepLinkTest.kt \
+  "approvalPromptIsNotBlockedByNativeStartup"
+require_contains android/app/src/androidTest/java/to/iris/drive/app/MainActivityApprovalDeepLinkTest.kt \
+  "observedAt in launchedAt until launchedAt + 1_000"
+require_contains scripts/android-gui-linking-smoke.sh 'start_local_blossom'
+require_contains scripts/android-gui-linking-smoke.sh '"$ADB" -s "$serial" reverse'
+require_contains scripts/android-gui-linking-smoke.sh '"tcp:$LOCAL_BLOSSOM_PORT" "tcp:$LOCAL_BLOSSOM_PORT"'
+require_contains scripts/android-gui-linking-smoke.sh 'android.testInstrumentationRunnerArguments.blossom_server'
+require_contains scripts/android-gui-linking-smoke.sh 'verify_local_blossom_uploads'
+require_contains scripts/android-gui-linking-smoke.sh 'configure_owner_local_blossom'
+require_contains scripts/android-gui-linking-smoke.sh 'blossom-servers remove https://upload.iris.to'
+require_contains scripts/android-gui-linking-smoke.sh 'assert_local_blossom_approval_handoff'
+require_contains scripts/android-gui-linking-smoke.sh 'uploaded + already_present == total'
+require_contains scripts/android-gui-linking-smoke.sh 'local status=$?'
+require_contains scripts/android-gui-linking-smoke.sh 'trap - EXIT'
+require_contains scripts/android-gui-linking-smoke.sh 'exit "$status"'
+require_contains android/app/src/androidTest/java/to/iris/drive/app/MainActivityApprovalDeepLinkTest.kt 'requireBlossomServerArgument'
+require_contains android/app/src/androidTest/java/to/iris/drive/app/MainActivityApprovalDeepLinkTest.kt 'assertEquals(setOf(blossomServer), configuredBlossomServers)'
+require_contains android/app/src/androidTest/java/to/iris/drive/app/MainActivityApprovalDeepLinkTest.kt 'uiAutomation.rootInActiveWindow'
+require_contains android/app/src/androidTest/java/to/iris/drive/app/MainActivityApprovalDeepLinkTest.kt 'findAccessibilityNodeInfosByText(APPROVAL_DIALOG_TITLE)'
+require_absent android/app/src/androidTest/java/to/iris/drive/app/MainActivityApprovalDeepLinkTest.kt 'catch (error: NoMatchingViewException)'
+if [[ "$(grep -Fc 'waitForApprovalDialog()' "$ROOT/android/app/src/androidTest/java/to/iris/drive/app/MainActivityApprovalDeepLinkTest.kt")" -lt 3 ]]; then
+  echo "approval deep-link tests must await all three confirmation dialogs" >&2
+  exit 1
+fi
 require_absent scripts/android-gui-linking-smoke.sh "linkDeviceSubmitRequiresCompleteNativeLinkInput"
 require_absent scripts/android-gui-linking-smoke.sh "addDeviceDialogRequiresCompleteNativeLinkInput"
 require_absent android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndroidGuiFlowTest.kt "linkDeviceSubmit\").assertIsEnabled().performClick()"
@@ -152,5 +227,23 @@ require_contains Justfile "android-build"
 require_contains Justfile "android-smoke"
 require_contains Justfile "android-gui-smoke"
 require_contains Justfile "e2e-5devices"
+
+set +e
+cleanup_failure_output="$(
+  IRIS_DRIVE_ANDROID_LINK_REQUEST_TIMEOUT_SECS=0 \
+    "$ROOT/scripts/android-gui-linking-smoke.sh" 2>&1
+)"
+cleanup_failure_status=$?
+set -e
+if [[ "$cleanup_failure_status" != "2" ]]; then
+  echo "Android GUI harness cleanup masked forced failure status 2 as $cleanup_failure_status" >&2
+  echo "$cleanup_failure_output" >&2
+  exit 1
+fi
+if [[ "$cleanup_failure_output" != *"LINK_REQUEST_TIMEOUT_SECS must be a positive integer"* ]]; then
+  echo "Android GUI harness forced-failure regression did not reach the intended body check" >&2
+  echo "$cleanup_failure_output" >&2
+  exit 1
+fi
 
 echo "ANDROID_E2E_KIT_OK"

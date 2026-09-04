@@ -25,10 +25,9 @@ use iris_drive_core::app_key_summary::{
     setup_state_flags, sync_status_label,
 };
 use iris_drive_core::backup_ops::{
-    add_backup_target as core_add_backup_target, add_blossom_server as core_add_blossom_server,
-    check_backups as core_check_backups, default_backup_check_sample_size,
-    effective_backup_targets, remove_backup_target as core_remove_backup_target,
-    remove_blossom_server as core_remove_blossom_server, sync_backups as core_sync_backups,
+    add_backup_target as core_add_backup_target, check_backups as core_check_backups,
+    default_backup_check_sample_size, effective_backup_targets,
+    remove_backup_target as core_remove_backup_target, sync_backups as core_sync_backups,
 };
 use iris_drive_core::backup_summary::{backup_target_summary, blossom_backup_target};
 use iris_drive_core::config::{DEFAULT_BLOSSOM_SERVERS, DEFAULT_RELAYS};
@@ -47,8 +46,6 @@ use iris_drive_core::{AppConfig, AppKeyAuthorizationState, BackupTarget, Drive, 
 use iris_drive_core::{Daemon, GatewayBind, GatewayProxyServer, GatewayServer};
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 use nostr_sdk::Event;
-#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
-use nostr_sdk::JsonUtil;
 use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::ToBech32;
 use serde::{Deserialize, Serialize};
@@ -165,20 +162,35 @@ enum NativeAppKeyLinkRelayEventApply {
     Current,
     AppliedRoster,
     AppliedApprovalAck,
+    AppliedDriveRoot,
 }
 
+#[path = "ffi/action_inputs.rs"]
+mod action_inputs;
 #[path = "ffi/app_config_cache.rs"]
 mod app_config_cache;
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
+#[path = "ffi/app_key_link_audit.rs"]
+mod app_key_link_audit;
 #[path = "ffi/app_key_link_schedule.rs"]
 mod app_key_link_schedule;
 #[path = "ffi/app_key_link_urls.rs"]
 mod app_key_link_urls;
+#[path = "ffi/approval_ack_sync.rs"]
+mod approval_ack_sync;
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 #[path = "ffi/device_approval_ack.rs"]
 mod device_approval_ack;
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
+#[path = "ffi/mobile_relay_interop.rs"]
+mod mobile_relay_interop;
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 #[path = "ffi/post_link_sync.rs"]
 mod post_link_sync;
+use action_inputs::{
+    decode_app_key_approval_bootstrap, inbound_app_key_link_requests, optional_trimmed,
+    parse_share_role, resolve_app_key_link_target, share_now_seconds,
+};
 #[cfg(test)]
 use app_config_cache::NATIVE_RUNTIME_CONFIG_CACHE;
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
@@ -186,15 +198,15 @@ use app_config_cache::NativeAppConfigCache;
 #[cfg(all(not(test), target_os = "android"))]
 pub(crate) use app_config_cache::invalidate_native_runtime_config_cache;
 pub(crate) use app_config_cache::load_native_runtime_config_cached;
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+use app_key_link_audit::{AppKeyLinkAuditEvent, append_app_key_link_audit};
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+use app_key_link_schedule::APP_KEY_LINK_ROSTER_RETRY_SECS;
 use app_key_link_schedule::native_action_uses_short_config_transaction;
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 use app_key_link_schedule::{
     APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS, APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS,
     SentAppKeyLinkRequest, app_key_link_exchange_tick_millis, app_key_link_request_send_due,
-};
-#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
-use app_key_link_schedule::{
-    APP_KEY_LINK_RELAY_PUBLISH_TIMEOUT_SECS, APP_KEY_LINK_ROSTER_RETRY_SECS,
 };
 #[cfg(test)]
 use app_key_link_schedule::{
@@ -207,7 +219,20 @@ use app_key_link_urls::{
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 use device_approval_ack::{
     handle_native_device_approval_applied_ack, handle_native_device_approval_receipt,
-    native_device_approval_ack_is_ready, send_native_device_approval_applied_ack,
+    send_native_device_approval_applied_ack,
+};
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
+use mobile_relay_interop::apply_and_persist_native_relay_event;
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+use mobile_relay_interop::{
+    ApprovalReceiptRelayStep, PersistedNativeRelayEventApply, approval_receipt_relay_steps,
+    backfill_native_device_approval_roster, download_live_native_drive_root,
+    native_device_approval_ack_is_ready, publish_native_profile_roster_ops,
+};
+#[cfg(test)]
+use mobile_relay_interop::{
+    ApprovalReceiptRelayStep, apply_native_drive_root_relay_event_to_config,
+    approval_receipt_relay_steps, drive_root_event_download_target,
 };
 use snapshot_link::{drive_link_for_cid_value, update_snapshot_link};
 
@@ -353,6 +378,17 @@ enum ProviderSummaryMode {
     Refresh,
 }
 
+fn provider_summary_mode_for_action(action: &NativeAppAction) -> ProviderSummaryMode {
+    if matches!(
+        action,
+        NativeAppAction::RefreshProfile | NativeAppAction::ApproveDevice { .. }
+    ) {
+        ProviderSummaryMode::Skip
+    } else {
+        ProviderSummaryMode::Refresh
+    }
+}
+
 fn ui_sync_status(running: bool, status: &str) -> UiSyncStatus {
     UiSyncStatus {
         running,
@@ -408,21 +444,42 @@ impl NativeAppRuntime {
 
     #[allow(clippy::too_many_lines)]
     fn dispatch(&mut self, action: NativeAppAction) {
-        let config_mutation = Arc::clone(&self.config_mutation);
-        let _config_mutation = native_action_uses_short_config_transaction(&action).then(|| {
-            config_mutation
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner)
-        });
         self.state.error.clear();
+        let disk_mutation = if matches!(
+            &action,
+            NativeAppAction::ApproveDevice { .. }
+                | NativeAppAction::AddRelay { .. }
+                | NativeAppAction::RemoveRelay { .. }
+                | NativeAppAction::ReplaceRelays { .. }
+                | NativeAppAction::ResetRelays
+                | NativeAppAction::AddBlossomServer { .. }
+                | NativeAppAction::RemoveBlossomServer { .. }
+                | NativeAppAction::ReplaceBlossomServers { .. }
+        ) {
+            match iris_drive_core::config_lock::ConfigMutationLock::acquire_blocking(Path::new(
+                &self.data_dir,
+            )) {
+                Ok(lock) => Some(lock),
+                Err(error) => {
+                    self.state.error = format!("locking config mutation: {error}");
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        let config_mutation = Arc::clone(&self.config_mutation);
+        let config_mutation_guard =
+            native_action_uses_short_config_transaction(&action).then(|| {
+                config_mutation
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+            });
         let wake_app_key_link_exchange = !matches!(
             &action,
             NativeAppAction::Refresh | NativeAppAction::RefreshProfile
         );
-        let provider_summary = match action {
-            NativeAppAction::RefreshProfile => ProviderSummaryMode::Skip,
-            _ => ProviderSummaryMode::Refresh,
-        };
+        let provider_summary = provider_summary_mode_for_action(&action);
         match action {
             NativeAppAction::Refresh | NativeAppAction::RefreshProfile => {}
             NativeAppAction::CreateProfile { app_key_label } => {
@@ -477,6 +534,7 @@ impl NativeAppRuntime {
             }
             NativeAppAction::AddRelay { url } => self.add_relay(&url),
             NativeAppAction::RemoveRelay { url } => self.remove_relay(&url),
+            NativeAppAction::ReplaceRelays { urls } => self.replace_relays(&urls),
             NativeAppAction::ResetRelays => self.reset_relays(),
             NativeAppAction::AddBackupTarget { target, label } => {
                 self.add_backup_target(&target, &label);
@@ -490,6 +548,9 @@ impl NativeAppRuntime {
             NativeAppAction::RemoveBlossomServer { url } => {
                 self.remove_blossom_server(&url);
             }
+            NativeAppAction::ReplaceBlossomServers { urls } => {
+                self.replace_blossom_servers(&urls);
+            }
             NativeAppAction::SetLaunchOnStartup { enabled } => {
                 self.set_launch_on_startup(enabled);
             }
@@ -500,6 +561,7 @@ impl NativeAppRuntime {
                 self.check_backups(&target);
             }
             NativeAppAction::StartSync | NativeAppAction::RestartSync => self.start_sync(),
+            NativeAppAction::SyncApprovalAcks => self.sync_approval_acks(),
             NativeAppAction::StopSync => self.stop_sync(),
             NativeAppAction::AddRoot { name, local_path } => self.add_root(&name, &local_path),
             NativeAppAction::RemoveRoot { name } => self.remove_root(&name),
@@ -526,6 +588,8 @@ impl NativeAppRuntime {
                 self.import_content_link(&link);
             }
         }
+        drop(config_mutation_guard);
+        drop(disk_mutation);
         self.reload_from_disk_preserving_error(provider_summary);
         self.reconcile_app_key_link_exchange(wake_app_key_link_exchange);
         self.start_browser_gateway_if_needed();
@@ -1193,6 +1257,27 @@ impl NativeAppRuntime {
         }
     }
 
+    fn replace_relays(&mut self, urls: &[String]) {
+        let relays = match normalized_config_relays(urls) {
+            Ok(relays) => relays,
+            Err(error) => {
+                self.state.error = format!("normalizing relays: {error}");
+                return;
+            }
+        };
+        let mut config = match self.load_config() {
+            Ok(config) => config,
+            Err(error) => {
+                self.state.error = error;
+                return;
+            }
+        };
+        config.relays = relays;
+        if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
+            self.state.error = format!("saving config: {error}");
+        }
+    }
+
     fn reset_relays(&mut self) {
         let mut config = match self.load_config() {
             Ok(config) => config,
@@ -1232,18 +1317,6 @@ impl NativeAppRuntime {
     fn remove_backup_target(&mut self, target: &str) {
         if let Err(error) = core_remove_backup_target(Path::new(&self.data_dir), target) {
             self.state.error = format!("removing backup target: {error:#}");
-        }
-    }
-
-    fn add_blossom_server(&mut self, url: &str) {
-        if let Err(error) = core_add_blossom_server(Path::new(&self.data_dir), url) {
-            self.state.error = format!("adding Blossom endpoint: {error:#}");
-        }
-    }
-
-    fn remove_blossom_server(&mut self, url: &str) {
-        if let Err(error) = core_remove_blossom_server(Path::new(&self.data_dir), url) {
-            self.state.error = format!("removing Blossom endpoint: {error:#}");
         }
     }
 
@@ -1557,6 +1630,8 @@ impl NativeAppRuntime {
             app_key_link_request: app_key_link_request_url(&account, Path::new(&self.data_dir)),
             app_key_link_invite: app_key_link_invite_url(&account),
             inbound_app_key_link_requests: inbound_app_key_link_requests(&account),
+            pending_device_approval_receipt_count: account.pending_device_approval_receipts.len()
+                as u64,
         });
         self.state.ui.shares = ui_shares_for_config(&config, &account.app_key_pubkey);
         let ui_fips_status = ui_fips_status_for_config_dir(Path::new(&self.data_dir));
@@ -1823,6 +1898,8 @@ fn run_app_key_link_exchange(
     wake: tokio::sync::watch::Receiver<()>,
     config_mutation: Arc<Mutex<()>>,
 ) -> Result<(), String> {
+    let config_dir = Path::new(data_dir);
+    let _ = append_app_key_link_audit(config_dir, AppKeyLinkAuditEvent::new("exchange_started"));
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(2)
         .enable_all()
@@ -1835,7 +1912,15 @@ fn run_app_key_link_exchange(
         config_mutation,
     ));
     if let Err(error) = &result {
+        let mut audit = AppKeyLinkAuditEvent::new("exchange_stopped");
+        audit.success = Some(false);
+        audit.error_class = Some("runtime_error".to_owned());
+        let _ = append_app_key_link_audit(config_dir, audit);
         mobile_fips_status::write_native_fips_error(Path::new(data_dir), error);
+    } else {
+        let mut audit = AppKeyLinkAuditEvent::new("exchange_stopped");
+        audit.success = Some(true);
+        let _ = append_app_key_link_audit(config_dir, audit);
     }
     result
 }
@@ -2035,7 +2120,7 @@ fn write_native_browser_gateway_status(config_dir: &Path, value: &Value) {
 }
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
-#[allow(clippy::too_many_lines)]
+#[allow(clippy::similar_names, clippy::too_many_lines)]
 async fn run_app_key_link_exchange_async(
     data_dir: &str,
     stop: Arc<AtomicBool>,
@@ -2152,7 +2237,7 @@ async fn run_app_key_link_exchange_async(
                 stop.as_ref(),
             ) => match tick {
                 mobile_fips_status::AppKeyLinkTick::Stop => break,
-                mobile_fips_status::AppKeyLinkTick::Wake => continue,
+                mobile_fips_status::AppKeyLinkTick::Wake => {}
                 mobile_fips_status::AppKeyLinkTick::Due => {
                 let tick_millis = match drive_app_key_link_exchange_tick(
                     config_dir,
@@ -2167,6 +2252,10 @@ async fn run_app_key_link_exchange_async(
                 ).await {
                     Ok(tick_millis) => tick_millis,
                     Err(error) => {
+                        let mut audit = AppKeyLinkAuditEvent::new("exchange_tick");
+                        audit.success = Some(false);
+                        audit.error_class = Some("tick_failed".to_owned());
+                        let _ = append_app_key_link_audit(config_dir, audit);
                         tracing::warn!(error = %error, "native app-key-link FIPS tick failed");
                         APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS
                     }
@@ -2362,6 +2451,9 @@ async fn drive_app_key_link_exchange_tick(
             .await;
     }
     send_native_pending_app_key_link_request(sync, state, sent_requests).await?;
+    // Publish the uploaded, newly wrapped root before any relay or FIPS approval receipt.
+    publish_native_profile_roster_ops(config_dir, relay_client, state, published_roster_op_ids)
+        .await?;
     let roster_result = send_native_authorized_app_key_link_rosters(
         config_dir,
         sync,
@@ -2372,20 +2464,15 @@ async fn drive_app_key_link_exchange_tick(
     .await;
     let approval_ack_result =
         send_native_device_approval_applied_ack(config_dir, relay_client, sync).await;
-    let relay_result = tokio::time::timeout(
-        std::time::Duration::from_secs(APP_KEY_LINK_RELAY_PUBLISH_TIMEOUT_SECS),
-        publish_native_profile_roster_ops(relay_client, state, published_roster_op_ids),
-    )
-    .await
-    .map_err(|_| "publishing native app-key-link events timed out".to_string())
-    .and_then(std::convert::identity);
     if let Err(error) = write_native_fips_status(config_dir, sync, None).await {
         tracing::warn!(error = %error, "writing native FIPS status failed");
     }
     roster_result?;
-    approval_ack_result?;
-    relay_result?;
-    Ok(app_key_link_exchange_tick_millis(Some(state)))
+    let approval_ack_delivered = approval_ack_result?;
+    Ok(app_key_link_exchange_tick_millis(
+        Some(state),
+        approval_ack_delivered,
+    ))
 }
 
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
@@ -2402,61 +2489,6 @@ fn native_profile_roster_ops_pending_publish(
         .filter(|op| !published_roster_op_ids.contains(&op.op_id))
         .cloned()
         .collect()
-}
-
-#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
-async fn publish_native_profile_roster_ops(
-    relay_client: &nostr_sdk::Client,
-    state: &iris_drive_core::ProfileState,
-    published_roster_op_ids: &mut BTreeSet<String>,
-) -> Result<(), String> {
-    let pending_ops = native_profile_roster_ops_pending_publish(state, published_roster_op_ids);
-    let pending_receipts = state
-        .pending_device_approval_receipts
-        .iter()
-        .filter_map(|pending| Event::from_json(&pending.event_json).ok())
-        .filter(|event| !published_roster_op_ids.contains(&event.id.to_hex()))
-        .collect::<Vec<_>>();
-    if pending_ops.is_empty() && pending_receipts.is_empty() {
-        return Ok(());
-    }
-
-    if !pending_ops.is_empty() {
-        tokio::time::timeout(
-            std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS),
-            iris_drive_core::relay_sync::publish_nostr_identity_roster_ops(
-                relay_client,
-                &pending_ops,
-            ),
-        )
-        .await
-        .map_err(|_| "publishing native profile roster ops timed out".to_string())?
-        .map_err(|error| format!("publishing native profile roster ops: {error}"))?;
-    }
-
-    for op in pending_ops {
-        published_roster_op_ids.insert(op.op_id);
-    }
-    for event in pending_receipts {
-        let pending = state
-            .pending_device_approval_receipts
-            .iter()
-            .find(|pending| pending.event_json == event.as_json())
-            .ok_or_else(|| "pending native device approval receipt disappeared".to_string())?;
-        tokio::time::timeout(
-            std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS),
-            iris_drive_core::relay_sync::publish_device_approval_receipt(
-                relay_client,
-                state,
-                pending,
-            ),
-        )
-        .await
-        .map_err(|_| "publishing native device approval receipt timed out".to_string())?
-        .map_err(|error| format!("publishing native device approval receipt: {error}"))?;
-        published_roster_op_ids.insert(event.id.to_hex());
-    }
-    Ok(())
 }
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
@@ -2620,7 +2652,7 @@ async fn handle_native_app_key_link_app_message(
 ) -> Result<bool, String> {
     match message.topic.as_str() {
         APP_KEY_LINK_REQUEST_APP_TOPIC => {
-            handle_native_app_key_link_request(config_dir, config_mutation, message)
+            handle_native_app_key_link_request(config_dir, config_mutation, message).await
         }
         APP_KEY_APPROVAL_RECEIPT_APP_TOPIC => {
             handle_native_device_approval_receipt(
@@ -2633,7 +2665,7 @@ async fn handle_native_app_key_link_app_message(
             .await
         }
         APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC => {
-            handle_native_device_approval_applied_ack(config_dir, config_mutation, message)
+            handle_native_device_approval_applied_ack(config_dir, config_mutation, message).await
         }
         APP_KEY_LINK_ROSTER_APP_TOPIC => {
             handle_native_app_key_link_roster(
@@ -2653,7 +2685,7 @@ async fn handle_native_app_key_link_app_message(
 }
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
-fn handle_native_app_key_link_request(
+async fn handle_native_app_key_link_request(
     config_dir: &Path,
     config_mutation: &Mutex<()>,
     message: &iris_drive_core::FipsAppMessage,
@@ -2672,6 +2704,9 @@ fn handle_native_app_key_link_request(
     }
     let invite_pubkey = frame.invite_pubkey.clone();
 
+    let _disk_mutation = iris_drive_core::config_lock::ConfigMutationLock::acquire(config_dir)
+        .await
+        .map_err(|error| format!("locking app-key link request: {error}"))?;
     let _config_mutation = config_mutation
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -2720,29 +2755,43 @@ async fn handle_native_app_key_link_relay_event(
     event: &nostr_sdk::Event,
 ) -> Result<bool, String> {
     let is_approval_receipt = iris_drive_core::relay_sync::is_device_approval_receipt_event(event);
-    let (outcome, profile_id, approval_was_ready) = {
-        let _config_mutation = config_mutation
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut config = AppConfig::load_or_default(config_path_in(config_dir))
-            .map_err(|error| format!("loading config: {error}"))?;
-        let approval_was_ready = native_device_approval_ack_is_ready(config_dir, &config)?;
-        let outcome = apply_native_app_key_link_relay_event_to_config(&mut config, event)?;
-        if matches!(
-            outcome,
-            NativeAppKeyLinkRelayEventApply::AppliedRoster
-                | NativeAppKeyLinkRelayEventApply::AppliedApprovalAck
-        ) {
-            config
-                .save(config_path_in(config_dir))
-                .map_err(|error| format!("saving app-key-link relay event: {error}"))?;
-        }
-        (
-            outcome,
-            config.profile.as_ref().map(|state| state.profile_id),
-            approval_was_ready,
-        )
-    };
+    if is_approval_receipt {
+        let mut audit = AppKeyLinkAuditEvent::new("approval_receipt_received");
+        audit.source = Some("relay".to_owned());
+        audit.event_id = Some(event.id.to_hex());
+        let _ = append_app_key_link_audit(config_dir, audit);
+    }
+    let PersistedNativeRelayEventApply {
+        outcome,
+        profile_id,
+        approval_was_ready,
+        mut approval_is_ready,
+        drive_root_to_download,
+    } = apply_and_persist_native_relay_event(config_dir, config_mutation, event).await?;
+    if is_approval_receipt {
+        let config = AppConfig::load_or_default(config_path_in(config_dir))
+            .map_err(|error| format!("loading persisted approval audit state: {error}"))?;
+        let mut audit = AppKeyLinkAuditEvent::new("approval_receipt_persisted");
+        audit.source = Some("relay".to_owned());
+        audit.event_id = Some(event.id.to_hex());
+        audit.outcome = Some(format!("{outcome:?}"));
+        audit.authorization_state = config
+            .profile
+            .as_ref()
+            .map(|state| format!("{:?}", state.authorization_state));
+        audit.receipt_count = config
+            .profile
+            .as_ref()
+            .and_then(|state| state.outbound_app_key_link_request.as_ref())
+            .map(|pending| pending.approval_receipt_event.len());
+        audit.ready = Some(approval_is_ready);
+        let _ = append_app_key_link_audit(config_dir, audit);
+    }
+
+    if let Some(root_cid) = drive_root_to_download {
+        download_live_native_drive_root(config_dir, sync, event, &root_cid).await?;
+        return Ok(true);
+    }
 
     if is_approval_receipt
         && matches!(
@@ -2753,41 +2802,50 @@ async fn handle_native_app_key_link_relay_event(
     {
         let profile_id = profile_id
             .ok_or_else(|| "profile disappeared while backfilling approval".to_string())?;
-        let events = iris_drive_core::relay_sync::fetch_nostr_identity_roster_ops(
-            relay_client,
-            profile_id,
-            iris_drive_core::relay_sync::DEVICE_APPROVAL_ROSTER_BACKFILL_TIMEOUT,
-        )
-        .await
-        .map_err(|error| format!("fetching approved device roster: {error}"))?;
-        {
-            let _config_mutation = config_mutation
-                .lock()
-                .unwrap_or_else(std::sync::PoisonError::into_inner);
-            let mut config = AppConfig::load_or_default(config_path_in(config_dir))
-                .map_err(|error| format!("reloading approval state: {error}"))?;
-            let mut changed = false;
-            for roster_event in &events {
-                changed |= matches!(
-                    iris_drive_core::relay_sync::apply_remote_nostr_identity_roster_op_event(
-                        &mut config,
-                        roster_event,
+        for step in approval_receipt_relay_steps(true, outcome, approval_is_ready) {
+            match step {
+                ApprovalReceiptRelayStep::SendAck if approval_is_ready => {
+                    sync.refresh_authorized_peers_from_config_dir(config_dir)
+                        .await;
+                    let approval_ack_sent =
+                        send_native_device_approval_applied_ack(config_dir, relay_client, sync)
+                            .await?;
+                    if !approval_was_ready && approval_ack_sent {
+                        post_link_sync::schedule_drive_root_sync_after_durable_approval(
+                            config_dir,
+                            config_mutation,
+                            relay_client,
+                        );
+                    }
+                }
+                ApprovalReceiptRelayStep::SendAck => {}
+                ApprovalReceiptRelayStep::BackfillRoster => {
+                    let mut started = AppKeyLinkAuditEvent::new("approval_roster_backfill");
+                    started.outcome = Some("started".to_owned());
+                    let _ = append_app_key_link_audit(config_dir, started);
+                    approval_is_ready = backfill_native_device_approval_roster(
+                        config_dir,
+                        config_mutation,
+                        relay_client,
+                        profile_id,
                     )
-                    .map_err(|error| format!("applying approved device roster: {error}"))?,
-                    iris_drive_core::relay_sync::NostrIdentityRosterOpApply::Applied
-                );
-            }
-            if changed {
-                config
-                    .save(config_path_in(config_dir))
-                    .map_err(|error| format!("saving approved device roster: {error}"))?;
+                    .await?;
+                    let mut completed = AppKeyLinkAuditEvent::new("approval_roster_backfill");
+                    completed.outcome = Some("completed".to_owned());
+                    completed.ready = Some(approval_is_ready);
+                    completed.success = Some(true);
+                    let _ = append_app_key_link_audit(config_dir, completed);
+                }
             }
         }
     }
-    if matches!(
-        outcome,
-        NativeAppKeyLinkRelayEventApply::AppliedRoster | NativeAppKeyLinkRelayEventApply::Current
-    ) {
+    if !is_approval_receipt
+        && matches!(
+            outcome,
+            NativeAppKeyLinkRelayEventApply::AppliedRoster
+                | NativeAppKeyLinkRelayEventApply::Current
+        )
+    {
         let approval_is_ready = {
             let _config_mutation = config_mutation
                 .lock()
@@ -2819,7 +2877,8 @@ async fn handle_native_app_key_link_relay_event(
             Ok(true)
         }
         NativeAppKeyLinkRelayEventApply::Current
-        | NativeAppKeyLinkRelayEventApply::AppliedApprovalAck => Ok(true),
+        | NativeAppKeyLinkRelayEventApply::AppliedApprovalAck
+        | NativeAppKeyLinkRelayEventApply::AppliedDriveRoot => Ok(true),
         NativeAppKeyLinkRelayEventApply::Ignored => Ok(false),
     }
 }
@@ -2844,6 +2903,9 @@ async fn handle_native_app_key_link_roster(
     let admin_app_key_hex = normalize_pubkey(&frame.admin_app_key_pubkey)?;
     let sender_hex = normalize_pubkey(&message.peer_id).ok();
 
+    let disk_mutation = iris_drive_core::config_lock::ConfigMutationLock::acquire(config_dir)
+        .await
+        .map_err(|error| format!("locking app-key-link roster: {error}"))?;
     let config_guard = config_mutation
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -2898,6 +2960,7 @@ async fn handle_native_app_key_link_roster(
         );
     }
     drop(config_guard);
+    drop(disk_mutation);
     if changed {
         sync.refresh_authorized_peers_from_config_dir(config_dir)
             .await;
@@ -3681,65 +3744,6 @@ fn app_key_connectivity_from_fips_status(fips_status: &UiFipsStatus) -> AppKeyCo
     }
 }
 
-fn inbound_app_key_link_requests(
-    state: &iris_drive_core::ProfileState,
-) -> Vec<UiAppKeyLinkRequest> {
-    if !state.can_admin_profile() {
-        return Vec::new();
-    }
-    state
-        .inbound_app_key_link_requests
-        .iter()
-        .map(|request| UiAppKeyLinkRequest {
-            app_key_pubkey: pubkey_npub(&request.app_key_pubkey),
-            label: request.label.clone().unwrap_or_default(),
-            requested_at: request.requested_at,
-            request_link: request.request_url.clone(),
-        })
-        .collect()
-}
-
-fn resolve_app_key_link_target(input: &str) -> Result<iris_drive_core::AppKeyLinkTarget, String> {
-    iris_drive_core::resolve_app_key_link_target(input, None).map_err(|error| {
-        if error.to_string().contains("NostrIdentity UUID") {
-            "paste an NostrIdentity invite URL to link this device".to_owned()
-        } else {
-            error.to_string()
-        }
-    })
-}
-
-fn decode_app_key_approval_bootstrap(
-    config: &AppConfig,
-    request: &str,
-) -> Result<AppKeyApprovalBootstrap, String> {
-    config
-        .profile
-        .as_ref()
-        .ok_or_else(|| "profile admin is required to approve devices".to_string())?;
-    iris_drive_core::app_key_link_transport::parse_app_key_approval_bootstrap(request)
-        .map_err(|error| error.to_string())?
-        .ok_or_else(|| "app-key approval bootstrap is missing or invalid".to_string())
-}
-
-fn optional_trimmed(value: &str) -> Option<String> {
-    let value = value.trim();
-    (!value.is_empty()).then(|| value.to_owned())
-}
-
-fn parse_share_role(value: &str) -> anyhow::Result<iris_drive_core::ShareRole> {
-    iris_drive_core::ShareRole::parse_user_input(value).ok_or_else(|| {
-        anyhow::anyhow!(
-            "invalid share role {}; expected reader, editor, or admin",
-            value.trim()
-        )
-    })
-}
-
-fn share_now_seconds() -> i64 {
-    i64::try_from(unix_now_seconds()).unwrap_or(i64::MAX)
-}
-
 fn unix_now_seconds() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -3758,8 +3762,11 @@ mod idle_tests;
 mod mobile_fips_status;
 #[cfg(test)]
 mod mobile_idle_tests;
+mod network_config_actions;
 #[cfg(test)]
 mod provider_tests;
+#[cfg(test)]
+mod relay_tests;
 mod snapshot_link;
 #[cfg(test)]
 mod tests;

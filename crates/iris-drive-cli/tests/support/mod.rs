@@ -26,6 +26,7 @@ struct LocalRelayState {
     events: Arc<Mutex<Vec<Value>>>,
     broadcasts: broadcast::Sender<Value>,
     drop_kinds: Arc<StdMutex<BTreeSet<u64>>>,
+    suppress_live_kinds: Arc<StdMutex<BTreeSet<u64>>>,
     reject_kinds: Arc<StdMutex<BTreeSet<u64>>>,
 }
 
@@ -34,6 +35,8 @@ pub(crate) struct LocalNostrRelay {
     task: tokio::task::JoinHandle<()>,
     #[allow(dead_code)]
     drop_kinds: Arc<StdMutex<BTreeSet<u64>>>,
+    #[allow(dead_code)]
+    suppress_live_kinds: Arc<StdMutex<BTreeSet<u64>>>,
     #[allow(dead_code)]
     reject_kinds: Arc<StdMutex<BTreeSet<u64>>>,
     #[allow(dead_code)]
@@ -47,9 +50,11 @@ impl LocalNostrRelay {
             events: Arc::new(Mutex::new(Vec::new())),
             broadcasts,
             drop_kinds: Arc::new(StdMutex::new(BTreeSet::new())),
+            suppress_live_kinds: Arc::new(StdMutex::new(BTreeSet::new())),
             reject_kinds: Arc::new(StdMutex::new(BTreeSet::new())),
         };
         let drop_kinds = state.drop_kinds.clone();
+        let suppress_live_kinds = state.suppress_live_kinds.clone();
         let reject_kinds = state.reject_kinds.clone();
         let events = state.events.clone();
         let app = Router::new().route("/", get(relay_ws)).with_state(state);
@@ -64,6 +69,7 @@ impl LocalNostrRelay {
             url: format!("ws://{addr}"),
             task,
             drop_kinds,
+            suppress_live_kinds,
             reject_kinds,
             events,
         }
@@ -80,6 +86,14 @@ impl LocalNostrRelay {
     #[allow(dead_code)]
     pub(crate) fn reject_kinds(&self, kinds: &[u16]) {
         self.reject_kinds
+            .lock()
+            .unwrap()
+            .extend(kinds.iter().map(|kind| u64::from(*kind)));
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn suppress_live_kinds(&self, kinds: &[u16]) {
+        self.suppress_live_kinds
             .lock()
             .unwrap()
             .extend(kinds.iter().map(|kind| u64::from(*kind)));
@@ -175,7 +189,9 @@ async fn relay_socket(socket: WebSocket, state: LocalRelayState) {
                             continue;
                         }
                         state.events.lock().await.push(event.clone());
-                        let _ = state.broadcasts.send(event);
+                        if !state.suppress_live_kinds.lock().unwrap().contains(&kind) {
+                            let _ = state.broadcasts.send(event);
+                        }
                         let _ = sender
                             .send(WsMessage::Text(json!(["OK", event_id, true, ""]).to_string()))
                             .await;
@@ -237,6 +253,14 @@ pub(crate) fn add_config_relay(config_dir: &std::path::Path, relay_url: &str) {
     let config_path = config_path_in(config_dir);
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
     config.relays = vec![relay_url.to_owned()];
+    config.save(config_path).unwrap();
+}
+
+#[allow(dead_code)]
+pub(crate) fn configure_local_blossom(config_dir: &std::path::Path, blossom_url: &str) {
+    let config_path = config_path_in(config_dir);
+    let mut config = AppConfig::load_or_default(&config_path).unwrap();
+    config.blossom_servers = vec![blossom_url.to_owned()];
     config.save(config_path).unwrap();
 }
 

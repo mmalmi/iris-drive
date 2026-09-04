@@ -1,13 +1,14 @@
 use super::{
     APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC, AppConfig, ConfigMutationLock, Context,
     FsFipsBlockSync, JsonUtil, Path, Result, config_path_in, key_path_in, normalize_pubkey,
-    pubkey_npub, unix_now_seconds,
+    pubkey_npub, unix_now_millis, unix_now_seconds,
 };
 
 pub(super) async fn handle_device_approval_applied_ack_app_message(
     config_dir: &Path,
     message: &iris_drive_core::FipsAppMessage,
 ) -> Result<bool> {
+    let received_at_ms = unix_now_millis();
     let event_json =
         std::str::from_utf8(&message.data).context("device approval applied ACK is not UTF-8")?;
     let event = nostr_sdk::Event::from_json(event_json)
@@ -23,8 +24,14 @@ pub(super) async fn handle_device_approval_applied_ack_app_message(
             "FIPS device approval applied ACK peer does not match signer"
         ));
     }
+    let lock_started_at = std::time::Instant::now();
     let _config_lock = ConfigMutationLock::acquire(config_dir).await?;
+    let config_lock_wait_ms = lock_started_at.elapsed().as_millis();
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let pending_before = config
+        .profile
+        .as_ref()
+        .map_or(0, |state| state.pending_device_approval_receipts.len());
     let changed = match config.profile.as_mut() {
         Some(state) => {
             iris_drive_core::app_key_link_transport::apply_device_approval_applied_ack_event(
@@ -36,6 +43,24 @@ pub(super) async fn handle_device_approval_applied_ack_app_message(
     if changed {
         config.save(config_path_in(config_dir))?;
     }
+    let pending_after = config
+        .profile
+        .as_ref()
+        .map_or(0, |state| state.pending_device_approval_receipts.len());
+    println!(
+        "{}",
+        serde_json::json!({
+            "event": "fips_device_approval_applied_ack",
+            "event_id": event.id.to_hex(),
+            "event_created_at": event.created_at.as_secs(),
+            "received_at_ms": received_at_ms,
+            "config_lock_wait_ms": config_lock_wait_ms,
+            "persisted_at_ms": unix_now_millis(),
+            "pending_before": pending_before,
+            "pending_after": pending_after,
+            "outcome": if changed { "applied" } else { "ignored" },
+        })
+    );
     Ok(true)
 }
 

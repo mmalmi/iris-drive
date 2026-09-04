@@ -8,6 +8,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use futures::stream::{FuturesUnordered, StreamExt};
 use hashtree_core::Cid;
 use nostr_sdk::{Event, Timestamp};
 
@@ -122,6 +123,138 @@ pub async fn sync_once_with_fips(
     .await
 }
 
+/// Apply a pending device-approval ACK without waiting for the general
+/// roster/root/files sync. Each configured relay is queried independently so
+/// one responsive relay can satisfy the durable approval handshake while
+/// unrelated relays are slow or unreachable.
+pub async fn sync_pending_device_approval_acks(
+    config_dir: &Path,
+    relay_override: &[String],
+    timeout: Duration,
+) -> Result<NetworkSyncReport> {
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let state = config
+        .profile
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("not initialized; create or link a profile first"))?;
+    let relays = pick_relays(&config, relay_override);
+    let mut report = NetworkSyncReport {
+        relays: relays.clone(),
+        blossom_servers: config.blossom_servers.clone(),
+        files_root_event_outcome: "none".to_string(),
+        ..NetworkSyncReport::default()
+    };
+    if state.pending_device_approval_receipts.is_empty() {
+        return Ok(report);
+    }
+
+    let events = fetch_pending_device_approval_acks_first_available(&relays, &state, timeout)
+        .await
+        .context("fetching pending device approval ACK from responsive relay")?;
+    let _config_lock = crate::config_lock::ConfigMutationLock::acquire(config_dir)
+        .await
+        .context("locking pending device approval ACK persistence")?;
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    apply_device_approval_ack_events(config_dir, &mut config, &events, &mut report)?;
+    Ok(report)
+}
+
+async fn fetch_pending_device_approval_acks_first_available(
+    relays: &[String],
+    state: &ProfileState,
+    timeout: Duration,
+) -> Result<Vec<Event>> {
+    let mut clients = Vec::with_capacity(relays.len());
+    for relay in relays {
+        clients.push(
+            relay_sync::connect(std::slice::from_ref(relay))
+                .await
+                .with_context(|| format!("connecting to approval ACK relay {relay}"))?,
+        );
+    }
+    let mut fetches = FuturesUnordered::new();
+    for client in &clients {
+        fetches.push(fetch_pending_device_approval_acks_until(
+            client, state, timeout,
+        ));
+    }
+    let mut last_error = None;
+    let mut successful_fetch = false;
+    let mut selected = Vec::new();
+    while let Some(result) = fetches.next().await {
+        match result {
+            Ok(events) => {
+                successful_fetch = true;
+                if !events.is_empty() {
+                    selected = events;
+                    break;
+                }
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    drop(fetches);
+    for client in &clients {
+        relay_sync::shutdown_client(client).await;
+    }
+    if selected.is_empty()
+        && !successful_fetch
+        && let Some(error) = last_error
+    {
+        return Err(anyhow::anyhow!(error));
+    }
+    Ok(selected)
+}
+
+async fn fetch_pending_device_approval_acks_until(
+    client: &nostr_sdk::Client,
+    state: &ProfileState,
+    timeout: Duration,
+) -> Result<Vec<Event>, crate::relay_sync::RelayError> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Ok(Vec::new());
+        }
+        let events =
+            relay_sync::fetch_device_approval_applied_ack_events(client, state, remaining).await?;
+        if !events.is_empty() {
+            return Ok(events);
+        }
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Ok(Vec::new());
+        }
+        tokio::time::sleep(remaining.min(Duration::from_millis(100))).await;
+    }
+}
+
+fn apply_device_approval_ack_events(
+    config_dir: &Path,
+    config: &mut AppConfig,
+    events: &[Event],
+    report: &mut NetworkSyncReport,
+) -> Result<()> {
+    report.device_approval_applied_acks_seen += events.len();
+    for event in events {
+        let Some(state) = config.profile.as_mut() else {
+            continue;
+        };
+        if crate::app_key_link_transport::apply_device_approval_applied_ack_event(state, event)
+            .context("applying device approval applied ACK")?
+        {
+            report.device_approval_applied_acks_applied += 1;
+        }
+    }
+    if report.device_approval_applied_acks_applied > 0 {
+        config
+            .save(config_path_in(config_dir))
+            .context("persisting device approval applied ACK")?;
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_lines)]
 async fn sync_once_inner(
     config_dir: &Path,
@@ -150,22 +283,7 @@ async fn sync_once_inner(
         relay_sync::fetch_device_approval_applied_ack_events(&client, &initial_state, timeout)
             .await
             .context("fetching device approval applied ACK events")?;
-    report.device_approval_applied_acks_seen = approval_ack_events.len();
-    for event in &approval_ack_events {
-        let Some(state) = config.profile.as_mut() else {
-            continue;
-        };
-        if crate::app_key_link_transport::apply_device_approval_applied_ack_event(state, event)
-            .context("applying device approval applied ACK")?
-        {
-            report.device_approval_applied_acks_applied += 1;
-        }
-    }
-    if report.device_approval_applied_acks_applied > 0 {
-        config
-            .save(config_path_in(config_dir))
-            .context("persisting device approval applied ACK")?;
-    }
+    apply_device_approval_ack_events(config_dir, &mut config, &approval_ack_events, &mut report)?;
 
     let approval_events =
         relay_sync::fetch_device_approval_events(&client, &initial_state, timeout)

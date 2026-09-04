@@ -88,9 +88,11 @@ pub fn validate_device_invite_input(input: String) -> LinkInputClassification {
 pub fn validate_device_approval_input(input: String) -> LinkInputClassification {
     let mut classification: LinkInputClassification =
         iris_drive_core::classify_link_input(&input).into();
-    if classification.kind != "app_key_approval" {
+    if classification.kind != "app_key_approval" || !classification.is_valid {
         classification.is_complete = false;
-        classification.is_valid = false;
+        if classification.kind != "app_key_approval" {
+            classification.is_valid = false;
+        }
     }
     classification
 }
@@ -207,5 +209,19 @@ mod tests {
             assert!(!approval.is_complete, "accepted approval prefix {input}");
             assert!(!approval.is_valid, "accepted approval prefix {input}");
         }
+    }
+
+    #[test]
+    fn validate_device_approval_input_never_marks_invalid_payload_complete() {
+        let approval = validate_device_approval_input(
+            DEVICE_APPROVAL_BOOTSTRAP[..DEVICE_APPROVAL_BOOTSTRAP.len() - 1].to_owned(),
+        );
+
+        assert_eq!(approval.kind, "app_key_approval");
+        assert!(!approval.is_valid);
+        assert!(
+            !approval.is_complete,
+            "an invalid or truncated approval payload must never enable Approve"
+        );
     }
 }

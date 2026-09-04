@@ -898,9 +898,11 @@ pub(crate) fn cmd_daemon(
                     }
                 }
                 _ = app_key_link_timer.tick() => {
+                    spawn_pending_device_approval_ack_replay(config_dir, &relays, &daemon_tasks);
                     match refresh_app_key_link_relay_subscriptions_for_config(
                         &client,
                         config_dir,
+                        &mut app_key_link_request_config_cache,
                         &mut app_key_link_relay_subscriptions,
                     ).await {
                         Ok(Some(policy)) => subscription_policy = policy,
@@ -941,6 +943,7 @@ pub(crate) fn cmd_daemon(
                             json!({"event": "app_key_link_roster_send_error", "error": format!("{error:#}")})
                         ),
                     }
+                    spawn_pending_device_approval_ack_replay(config_dir, &relays, &daemon_tasks);
                 }
                 recv = async {
                     if let Some(rx) = direct_app_message_rx.as_mut() {

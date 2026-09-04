@@ -95,12 +95,18 @@ APP_STDOUT="$SMOKE_STATE_DIR/app.stdout.log"
 APP_STDERR="$SMOKE_STATE_DIR/app.stderr.log"
 APP_DEBUG_LOG_DIR="$SMOKE_STATE_DIR/logs"
 APP_DEBUG_LOG="$APP_DEBUG_LOG_DIR/macos-app-debug.log"
+MACOS_SMOKE_APPROVE_JSON="$SMOKE_STATE_DIR/owner-approve.json"
+MACOS_SMOKE_APPROVAL_TIMING="$SMOKE_STATE_DIR/owner-approve-timing.json"
 USER_JOURNEY_OPENED_DRIVE_FOLDER=0
 OWNER_DAEMON_PID=""
 
 source "$ROOT/scripts/macos-smoke-processes.sh"
 source "$ROOT/scripts/macos-finder-smoke.sh"
 source "$ROOT/scripts/lib/macos-device-link-smoke.sh"
+source "$ROOT/scripts/lib/macos-blossom-smoke.sh"
+source "$ROOT/scripts/lib/macos-relay-smoke.sh"
+source "$ROOT/scripts/lib/macos-app-launch-smoke.sh"
+source "$ROOT/scripts/lib/macos-smoke-diagnostics.sh"
 
 run_ui_smoke() {
   truthy "${IRIS_DRIVE_MACOS_SMOKE_UI:-0}"
@@ -172,10 +178,11 @@ import sys
 
 data = json.load(sys.stdin)
 reports = data.get("reports", [])
-if len(reports) != 1:
+matching = [report for report in reports if report.get("kind") == sys.argv[1]]
+if len(matching) != 1:
     sys.exit(1)
-report = reports[0]
-if report.get("kind") != sys.argv[1] or report.get("state") != "synced":
+report = matching[0]
+if report.get("state") != "synced":
     sys.exit(1)
 upload = report.get("upload", {})
 if int(upload.get("total_hashes") or 0) <= 0:
@@ -191,11 +198,10 @@ import sys
 
 data = json.load(sys.stdin)
 reports = data.get("reports", [])
-if len(reports) != 1:
+matching = [report for report in reports if report.get("kind") == sys.argv[1]]
+if len(matching) != 1:
     sys.exit(1)
-report = reports[0]
-if report.get("kind") != sys.argv[1]:
-    sys.exit(1)
+report = matching[0]
 if not report.get("root_cid"):
     sys.exit(1)
 if report.get("state") not in {"verified", "pending"}:
@@ -240,9 +246,9 @@ uninstall_smoke_daemon_service() {
 
 cleanup() {
   local status=$? artifact
-  local -a artifacts=()
   trap - EXIT
   set +e
+  capture_macos_smoke_failure_diagnostics "$status"
   stop_macos_forward_link_joiner_daemon
   stop_macos_owner_link_joiner_daemon
   if [[ -n "$OWNER_DAEMON_PID" ]]; then
@@ -269,15 +275,17 @@ end run
 APPLESCRIPT
   fi
   uninstall_smoke_daemon_service
+  stop_macos_smoke_relay
+  stop_macos_smoke_blossom
   remove_smoke_path_best_effort "$SMOKE_APP_DATA"
   remove_smoke_path_best_effort "$SMOKE_STATE_DIR"
   if truthy "${IRIS_DRIVE_MACOS_SMOKE_PRESERVE_ARTIFACTS:-0}"; then
     shopt -s nullglob dotglob
-    artifacts=("$SMOKE_DIR"/*)
-    shopt -u dotglob nullglob
-    for artifact in "${artifacts[@]}"; do
+    for artifact in "$SMOKE_DIR"/*; do
+      [[ "$artifact" == "$SMOKE_DIR/private-diagnostics" ]] && continue
       remove_smoke_path_best_effort "$artifact"
     done
+    shopt -u dotglob nullglob
     local ok=false journey=false create_profile=false
     ((status == 0)) && ok=true
     [[ "$RUN_USER_JOURNEY_SMOKE" == 1 ]] && journey=true
@@ -837,10 +845,12 @@ run_user_journey() {
   local backup_dir="$SMOKE_STATE_DIR/filesystem-backup"
   local owner_json admin_app_key_npub invite_json invite_url linked_json linked_app_key_npub
   local authorization_state request_url request_admin approve_json roster_size import_json list_json
-  local sync_json check_json approval_started approval_deadline
+  local sync_json check_json approval_started approval_finished approval_deadline
 
   validate_macos_owner_link_timeout || return 1
   mkdir_p_or_fail "$owner_config_dir"
+  configure_macos_smoke_blossom "$owner_config_dir" || return 1
+  configure_macos_smoke_relay "$owner_config_dir" || return 1
   owner_json="$("$idrive" --config-dir "$owner_config_dir" init --force --label "macOS owner")" || {
     echo "FAIL: could not initialize owner profile for link journey." >&2
     return 1
@@ -907,6 +917,18 @@ run_user_journey() {
     echo "FAIL: owner could not approve linked GUI device." >&2
     return 1
   }
+  approval_finished="$(macos_owner_link_monotonic_milliseconds)"
+  printf '%s\n' "$approve_json" >"$MACOS_SMOKE_APPROVE_JSON"
+  python3 - "$approval_started" "$approval_finished" \
+    >"$MACOS_SMOKE_APPROVAL_TIMING" <<'PY'
+import json, sys
+started, finished = map(int, sys.argv[1:])
+print(json.dumps({
+    "started_monotonic_ms": started,
+    "finished_monotonic_ms": finished,
+    "elapsed_ms": finished - started,
+}, sort_keys=True))
+PY
   roster_size="$(printf '%s' "$approve_json" | json_get roster_size)" || {
     echo "FAIL: approve did not return roster_size." >&2
     return 1
@@ -934,6 +956,7 @@ raise SystemExit(0 if r.get("approval_publish_error") is None
     return 1
   fi
 
+  configure_macos_smoke_blossom "$SMOKE_DIR/macos-owner-link-joiner/Config" || return 1
   run_macos_owner_device_link_journey "$owner_config_dir" "$admin_app_key_npub" || return 1
 
   if ! request_sidebar_open_button; then
@@ -1027,6 +1050,10 @@ if [[ -z "$IDRIVE_CLI" || ! -x "$IDRIVE_CLI" ]]; then
   echo "FAIL: idrive CLI was not built." >&2
   exit 1
 fi
+if run_user_journey_smoke; then
+  start_macos_smoke_blossom
+  start_macos_smoke_relay
+fi
 
 terminate_app_process
 uninstall_smoke_daemon_service
@@ -1034,6 +1061,10 @@ terminate_smoke_daemon_processes
 rm -rf "$SMOKE_APP_DATA"
 if run_create_profile_smoke || run_user_journey_smoke; then
   mkdir_p_or_fail "$SMOKE_HOME"
+  if run_user_journey_smoke; then
+    configure_macos_smoke_blossom "$SMOKE_CONFIG_DIR"
+    configure_macos_smoke_relay "$SMOKE_CONFIG_DIR"
+  fi
 else
   mkdir_p_or_fail "$SMOKE_CONFIG_DIR"
   "$IDRIVE_CLI" \
@@ -1074,17 +1105,8 @@ if run_create_profile_smoke || run_user_journey_smoke; then
 else
   open_args+=(--env "IRIS_DRIVE_APP_BASE_DIR=$SMOKE_APP_DATA")
 fi
-open "${open_args[@]}" "$APP_PATH"
-
-if ! wait_for_app_process 10; then
-  echo "FAIL: Iris Drive did not launch." >&2
-  show_recent_logs >&2
-  exit 1
-fi
-assert_app_running "immediately after launch"
-
-if ! wait_for_log "Iris Drive menu bar item installed" 10; then
-  echo "FAIL: Iris Drive menu bar item was not installed." >&2
+if ! launch_macos_smoke_app_with_targeted_recovery; then
+  echo "FAIL: Iris Drive launch readiness failed: $MACOS_SMOKE_APP_LAUNCH_FAILURE." >&2
   show_recent_logs >&2
   exit 1
 fi

@@ -194,6 +194,92 @@ fn app_keys_rename_command_updates_device_label() {
     );
 }
 
+#[test]
+fn cli_device_approval_preserves_file_provider_root_and_releases_lock_before_publish() {
+    let dir = tempdir().unwrap();
+    let profile = Profile::create(dir.path(), Some("native".into())).unwrap();
+    let mut config = AppConfig {
+        profile: Some(profile.state.clone()),
+        ..AppConfig::default()
+    };
+    config.upsert_drive(Drive::primary(profile.state.root_scope_id()));
+    config.save(config_path_in(dir.path())).unwrap();
+    let joining_app_key = nostr_sdk::Keys::generate();
+    let request = iris_drive_core::app_key_link_transport::create_app_key_approval_bootstrap(
+        &joining_app_key,
+        Some("phone"),
+    )
+    .unwrap();
+
+    let file_provider_transaction = ConfigMutationLock::acquire_blocking(dir.path()).unwrap();
+    let mut file_provider_config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+    let local_app_key = file_provider_config
+        .profile
+        .as_ref()
+        .unwrap()
+        .app_key_pubkey
+        .clone();
+    let local_root_cid = hashtree_core::Cid::encrypted([0xbb; 32], [0xcc; 32]).to_string();
+    file_provider_config
+        .drives
+        .iter_mut()
+        .find(|drive| drive.drive_id == PRIMARY_DRIVE_ID)
+        .unwrap()
+        .app_key_roots
+        .insert(
+            local_app_key.clone(),
+            AppKeyRootRef::legacy(local_root_cid.clone(), 101, 0),
+        );
+    let config_dir = dir.path().to_path_buf();
+    let (approved_tx, approved_rx) = std::sync::mpsc::channel();
+    let approval = std::thread::spawn(move || {
+        let result = persist_device_approval(&config_dir, &request.url, Some("phone".to_owned()));
+        approved_tx.send(result).unwrap();
+    });
+
+    let early_approval = approved_rx
+        .recv_timeout(std::time::Duration::from_millis(250))
+        .ok();
+    file_provider_config
+        .save(config_path_in(dir.path()))
+        .unwrap();
+    drop(file_provider_transaction);
+    let approved = early_approval
+        .unwrap_or_else(|| {
+            approved_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap()
+        })
+        .unwrap();
+    approval.join().unwrap();
+
+    assert!(!approved.state.pending_device_approval_receipts.is_empty());
+    let saved = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+    assert!(
+        !saved
+            .profile
+            .as_ref()
+            .unwrap()
+            .pending_device_approval_receipts
+            .is_empty()
+    );
+    assert_eq!(
+        saved
+            .drive(PRIMARY_DRIVE_ID)
+            .unwrap()
+            .app_key_roots
+            .get(&local_app_key)
+            .unwrap()
+            .root_cid,
+        local_root_cid
+    );
+
+    // The caller performs Blossom and relay publication next. Reacquiring here
+    // proves the local persistence helper did not leak its transaction into
+    // that network phase.
+    drop(ConfigMutationLock::acquire_blocking(dir.path()).unwrap());
+}
+
 #[tokio::test]
 async fn app_key_link_app_message_records_inbound_request_for_owner_admin() {
     let config_dir = tempdir().unwrap();

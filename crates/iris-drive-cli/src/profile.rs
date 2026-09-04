@@ -4,6 +4,7 @@ use std::hash::{Hash, Hasher};
 
 mod app_key_link_urls;
 mod device_approval_ack;
+mod device_approval_command;
 mod device_approval_publish;
 mod labels;
 mod link_delivery;
@@ -12,7 +13,9 @@ use device_approval_ack::{
     handle_device_approval_applied_ack_app_message, handle_device_approval_receipt_app_message,
     send_device_approval_applied_ack_if_ready,
 };
-use device_approval_publish::publish_device_approval;
+pub(crate) use device_approval_command::cmd_approve;
+#[cfg(test)]
+use device_approval_command::persist_device_approval;
 #[cfg(test)]
 pub(crate) use iris_drive_core::app_key_link_transport::app_key_link_roster_fingerprint;
 pub(crate) use iris_drive_core::app_key_link_transport::{
@@ -207,62 +210,6 @@ pub(crate) fn cmd_logout(config_dir: &std::path::Path) -> Result<()> {
             "cleared_user_profile": report.cleared_user_profile,
             "cleared_drives": report.cleared_drives,
             "cleared_backup_targets": report.cleared_backup_targets,
-        })
-    );
-    Ok(())
-}
-
-pub(crate) fn cmd_approve(
-    config_dir: &std::path::Path,
-    device: &str,
-    label: Option<String>,
-) -> Result<()> {
-    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let state = config
-        .profile
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    let bootstrap = decode_app_key_approval_bootstrap(&config, device)?;
-    let app_key_hex = PublicKey::parse(&bootstrap.device_app_key_npub)
-        .context("parsing approval device AppKey")?
-        .to_hex();
-    let request_pubkey = PublicKey::parse(&bootstrap.request_npub)
-        .context("parsing approval request key")?
-        .to_hex();
-    let label = label.or_else(|| bootstrap.label.clone()).or_else(|| {
-        state
-            .inbound_app_key_link_requests
-            .iter()
-            .find(|pending| pending.app_key_pubkey == app_key_hex)
-            .and_then(|pending| pending.label.clone())
-    });
-    let approved_app_key_npub = pubkey_npub(&app_key_hex);
-    let mut profile = Profile::load(state, config_dir).context("loading profile")?;
-    let snap = profile
-        .approve_device_bootstrap(&bootstrap, label)
-        .context("approving AppKey")?;
-    let device_count = snap.app_actors.len();
-    let pending = profile
-        .state
-        .pending_device_approval_receipts
-        .iter()
-        .find(|pending| pending.request_pubkey == request_pubkey)
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("approval did not retain its encrypted receipt"))?;
-    config.profile = Some(profile.state.clone());
-    config.save(config_path_in(config_dir))?;
-    let (published_events, approval_publish_error) =
-        publish_device_approval(&config, &profile.state, &pending).map_or_else(
-            |error| (0, Some(format!("{error:#}"))),
-            |events| (events, None),
-        );
-    println!(
-        "{}",
-        json!({
-            "approved_app_key_npub": approved_app_key_npub,
-            "roster_size": device_count,
-            "published_approval_events": published_events,
-            "approval_publish_error": approval_publish_error,
         })
     );
     Ok(())
@@ -575,6 +522,12 @@ fn unix_now_seconds() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| duration.as_secs())
+}
+
+fn unix_now_millis() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis())
 }
 
 pub(crate) fn profile_identity_json_map(state: &ProfileState) -> serde_json::Map<String, Value> {

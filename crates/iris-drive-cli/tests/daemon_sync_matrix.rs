@@ -96,6 +96,9 @@ struct SyncLatency {
     root_cid: String,
     local_edit_to_remote_visible: Duration,
     source_viewer_done_to_remote_visible: Duration,
+    source_publish_finished: Option<Duration>,
+    target_root_received: Option<Duration>,
+    target_blocks_downloaded: Option<Duration>,
 }
 
 #[derive(Clone)]
@@ -271,14 +274,18 @@ async fn live_daemons_provider_write_viewer_to_viewer_latency_probe() {
                 "root_cid": &latency.root_cid,
                 "local_edit_to_remote_visible_ms": latency.local_edit_to_remote_visible.as_millis(),
                 "source_viewer_done_to_remote_visible_ms": latency.source_viewer_done_to_remote_visible.as_millis(),
+                "source_publish_finished_ms": latency.source_publish_finished.map(|elapsed| elapsed.as_millis()),
+                "target_root_received_ms": latency.target_root_received.map(|elapsed| elapsed.as_millis()),
+                "target_blocks_downloaded_ms": latency.target_blocks_downloaded.map(|elapsed| elapsed.as_millis()),
             })
         );
         assert!(
             latency.source_viewer_done_to_remote_visible < Duration::from_secs(10),
-            "{} to {} viewer latency was {:?}, expected under 10s",
+            "{} to {} viewer latency was {:?}, expected under 10s\n{}",
             source.label(),
             target.label(),
             latency.source_viewer_done_to_remote_visible,
+            cluster.debug_state_with_rerun_hint(),
         );
     }
 }

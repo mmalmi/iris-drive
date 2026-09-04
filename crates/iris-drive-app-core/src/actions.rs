@@ -55,6 +55,9 @@ pub enum NativeAppAction {
     RemoveRelay {
         url: String,
     },
+    ReplaceRelays {
+        urls: Vec<String>,
+    },
     ResetRelays,
     AddBackupTarget {
         target: String,
@@ -69,6 +72,9 @@ pub enum NativeAppAction {
     RemoveBlossomServer {
         url: String,
     },
+    ReplaceBlossomServers {
+        urls: Vec<String>,
+    },
     SetLaunchOnStartup {
         enabled: bool,
     },
@@ -80,6 +86,7 @@ pub enum NativeAppAction {
     },
     StartSync,
     StopSync,
+    SyncApprovalAcks,
     RestartSync,
     AddRoot {
         name: String,

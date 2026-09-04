@@ -16,7 +16,7 @@ use tempfile::tempdir;
 
 mod support;
 
-use support::{LocalBlossomServer, LocalNostrRelay, add_config_relay};
+use support::{LocalBlossomServer, LocalNostrRelay, add_config_relay, configure_local_blossom};
 
 fn idrive(dir: &std::path::Path) -> Command {
     let mut cmd = Command::cargo_bin("idrive").unwrap();
@@ -65,6 +65,8 @@ fn approve_with_local_relay(
         .build()
         .unwrap();
     let relay = runtime.block_on(LocalNostrRelay::spawn());
+    let blossom = runtime.block_on(LocalBlossomServer::spawn());
+    configure_local_blossom(owner_dir, &blossom.url);
     let request = runtime.block_on(relay.pending_approval_request_url(linked_dir));
     add_config_relay(owner_dir, &relay.url);
     let mut args = vec!["approve", request.as_str()];
@@ -84,6 +86,8 @@ fn app_keys_approve_with_local_relay(
         .build()
         .unwrap();
     let relay = runtime.block_on(LocalNostrRelay::spawn());
+    let blossom = runtime.block_on(LocalBlossomServer::spawn());
+    configure_local_blossom(owner_dir, &blossom.url);
     let request = runtime.block_on(relay.pending_approval_request_url(linked_dir));
     add_config_relay(owner_dir, &relay.url);
     run_json(owner_dir, &["app-keys", "approve", &request])
@@ -184,17 +188,6 @@ fn stats_prints_gui_summary_counts() {
     assert_eq!(value["authorized_app_keys"], 1);
     assert_eq!(value["backup_targets"], 0);
     assert_eq!(value["unresolved_conflicts"], 0);
-}
-
-fn configure_local_blossom(config_dir: &std::path::Path, url: &str) {
-    idrive(config_dir)
-        .args(["blossom-servers", "remove", "https://upload.iris.to"])
-        .assert()
-        .success();
-    idrive(config_dir)
-        .args(["blossom-servers", "add", url])
-        .assert()
-        .success();
 }
 
 fn import_one_file(

@@ -1,12 +1,13 @@
 use super::*;
 
-use fips_core::config::ConnectPolicy;
-
 use super::super::settings_runtime::{
     bounded_webrtc_max_connections, fips_endpoint_options, parse_bool_env_value,
     parse_list_env_value, parse_static_peer_hints, target_allows_default_desktop_fips,
     target_allows_default_lan_discovery,
 };
+use fips_core::config::ConnectPolicy;
+
+mod connector_policy;
 
 #[test]
 fn discovery_scope_is_profile_scoped() {
@@ -353,6 +354,7 @@ fn explicit_bootstrap_hints_add_fips_routing_peers() {
 fn fips_peer_config_snapshot_matches_endpoint_peer_sanitizing() {
     let snapshot = fips_peer_config_snapshot(
         Some("local"),
+        LocalInboundCapability::InboundRoutable,
         &[
             FipsPeerConfig {
                 npub: " remote ".to_string(),
@@ -402,6 +404,33 @@ fn fips_peer_config_snapshot_matches_endpoint_peer_sanitizing() {
         }]
     );
     assert_eq!(
+        snapshot.local_inbound_capability,
+        LocalInboundCapability::InboundRoutable
+    );
+    assert_ne!(
+        snapshot,
+        fips_peer_config_snapshot(
+            Some("local"),
+            LocalInboundCapability::OutboundOnly,
+            &[FipsPeerConfig {
+                npub: "remote".to_string(),
+                udp_addresses: vec![
+                    " 10.44.1.2:22121 ".to_string(),
+                    "udp:10.44.1.3:22121".to_string(),
+                ],
+            }],
+            &[FipsPeerConfig {
+                npub: "bootstrap".to_string(),
+                udp_addresses: vec!["udp:203.0.113.7:2121".to_string()],
+            }],
+            &[FipsPeerConfig {
+                npub: "remote".to_string(),
+                udp_addresses: vec![" 10.44.1.8:22121 ".to_string()],
+            }],
+        ),
+        "an endpoint that loses inbound reachability must not skip peer policy refresh"
+    );
+    assert_eq!(
         snapshot.routing,
         vec![FipsPeerConfig {
             npub: "bootstrap".to_string(),
@@ -430,11 +459,24 @@ fn authorized_drive_pair_elects_one_bounded_auto_connector() {
         udp_addresses: vec!["udp:127.0.0.1:2122".to_string()],
     };
     let application_peer_ids = BTreeSet::from([lower.to_string(), higher.to_string()]);
+    let outbound_connect_peer_ids = BTreeSet::new();
 
-    let lower_config =
-        drive_core_peer_configs(lower, &application_peer_ids, vec![lower_peer]).remove(0);
-    let higher_config =
-        drive_core_peer_configs(higher, &application_peer_ids, vec![higher_peer]).remove(0);
+    let lower_config = drive_core_peer_configs(
+        lower,
+        LocalInboundCapability::InboundRoutable,
+        &application_peer_ids,
+        &outbound_connect_peer_ids,
+        vec![lower_peer],
+    )
+    .remove(0);
+    let higher_config = drive_core_peer_configs(
+        higher,
+        LocalInboundCapability::InboundRoutable,
+        &application_peer_ids,
+        &outbound_connect_peer_ids,
+        vec![higher_peer],
+    )
+    .remove(0);
 
     assert_eq!(lower_config.connect_policy, ConnectPolicy::AutoConnect);
     assert_eq!(higher_config.connect_policy, ConnectPolicy::Manual);
@@ -443,6 +485,33 @@ fn authorized_drive_pair_elects_one_bounded_auto_connector() {
         "the authenticated control runtime owns application-peer reconnects"
     );
     assert!(!higher_config.auto_reconnect);
+}
+
+#[test]
+fn outbound_pending_admin_bypasses_authorized_identity_tie_break() {
+    let pending_joiner = "npub1zzz";
+    let admin = "npub1aaa";
+    let admin_peer = FipsPeerConfig {
+        npub: admin.to_string(),
+        udp_addresses: vec!["udp:127.0.0.1:2121".to_string()],
+    };
+    let application_peer_ids = BTreeSet::from([admin.to_string()]);
+    let outbound_connect_peer_ids = BTreeSet::from([admin.to_string()]);
+
+    let config = drive_core_peer_configs(
+        pending_joiner,
+        LocalInboundCapability::InboundRoutable,
+        &application_peer_ids,
+        &outbound_connect_peer_ids,
+        vec![admin_peer],
+    )
+    .remove(0);
+
+    assert_eq!(config.connect_policy, ConnectPolicy::AutoConnect);
+    assert!(
+        !config.auto_reconnect,
+        "the authenticated control runtime still owns pending application-peer reconnects"
+    );
 }
 
 #[test]
@@ -455,7 +524,13 @@ fn routing_peer_remains_auto_connect_and_address_schemes_are_preserved() {
             "nostr_relay:npub1ignored".to_string(),
         ],
     };
-    let peers = drive_core_peer_configs("npub1local", &BTreeSet::new(), vec![config]);
+    let peers = drive_core_peer_configs(
+        "npub1local",
+        LocalInboundCapability::InboundRoutable,
+        &BTreeSet::new(),
+        &BTreeSet::new(),
+        vec![config],
+    );
 
     assert_eq!(peers[0].connect_policy, ConnectPolicy::AutoConnect);
     assert!(peers[0].auto_reconnect);

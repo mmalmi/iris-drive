@@ -76,6 +76,7 @@ fn snap<'a>(
         root,
         files,
         tombstones,
+        path_kind_replacements: None,
     }
 }
 
@@ -199,6 +200,29 @@ fn observed_same_sequence_with_different_root_is_not_descendant() {
         "legacy timestamp ordering should win when ancestry is unknown"
     );
     assert_eq!(view.conflicts, vec!["x".to_string()]);
+}
+
+#[test]
+fn hash_only_observation_at_same_sequence_establishes_ancestry() {
+    let full_root = Cid::encrypted([0x31; 32], [0x77; 32]).to_string();
+    let hash_only_root = hashtree_core::to_hex(&[0x31; 32]);
+    let r_a = causal_root(&full_root, 300, 1, &[]);
+    let r_b = causal_root(
+        &Cid::encrypted([0x32; 32], [0x78; 32]).to_string(),
+        100,
+        1,
+        &[("dev-a", 1, &hash_only_root)],
+    );
+    let view = merge_drives(
+        &["dev-a", "dev-b"],
+        &[
+            snap("dev-a", &r_a, vec![file("x", 1, 1)], vec![]),
+            snap("dev-b", &r_b, vec![file("x", 2, 1)], vec![]),
+        ],
+    );
+
+    assert_eq!(view.files[0].source_app_key_pubkey, "dev-b");
+    assert!(view.conflicts.is_empty());
 }
 
 #[test]
@@ -395,6 +419,24 @@ fn same_timestamp_tombstone_wins_over_write() {
     );
     assert!(view.files.is_empty());
     assert_eq!(view.suppressed_by_tombstone, vec!["x".to_string()]);
+}
+
+#[test]
+fn visible_entry_wins_over_barrier_authored_by_the_same_root() {
+    let root = dev_root(100);
+    let view = merge_drives(
+        &["dev-a"],
+        &[snap(
+            "dev-a",
+            &root,
+            vec![file("x", 1, 1)],
+            vec![tomb("x", 100)],
+        )],
+    );
+
+    assert_eq!(view.files.len(), 1);
+    assert_eq!(view.files[0].path, "x");
+    assert!(view.suppressed_files.is_empty());
 }
 
 #[test]

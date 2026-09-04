@@ -1,17 +1,14 @@
-# Iris Drive 0.1.33
+# Iris Drive 0.1.34
 
-- Require an explicit confirmation before approval links add a device on iOS,
-  Android, Linux, macOS, or Windows.
-- Wake mobile device linking immediately after approval.
-- Backfill the complete device roster as soon as a joining device becomes
-  authorized.
-- Persist and acknowledge relay-based approvals across app restarts, then
-  remove the exact pending receipt from the owner's device.
-- Preserve concurrent approvals and prevent background refreshes from
-  overwriting a newly linked device.
-- Keep every newly authorized device on the current FIPS peer allowlist when
-  several approvals overlap.
-- Show files that existed before linking without waiting for an app restart or
-  a direct FIPS connection.
-- Preserve provider writes that overlap an incoming remote root.
-- Ignore malformed or unrelated relay events during the linking handshake.
+- Show files that existed before device linking on the newly approved device.
+- Sync files created on Web back to native and mobile provider views through
+  the durable relay and Blossom path.
+- Preserve native and browser device names in the Devices list.
+- Complete approval only after the current Drive root and all of its blocks
+  are available to the joining device.
+- Accept Web-created key epochs while keeping existing native profiles
+  compatible.
+- Preserve every file and nested directory when a path changes between file
+  and folder kinds, with deterministic conflict copies instead of data loss.
+- Keep those replacements and conflict copies stable when another linked
+  device later saves an unrelated file.

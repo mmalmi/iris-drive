@@ -112,7 +112,12 @@ pub(crate) async fn apply_one_event(
     daemon_tasks: &DaemonTaskSet,
 ) -> Result<EventApplyOutcome> {
     use iris_drive_core::relay_sync;
+    let event_received_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis());
+    let config_lock_started_at = std::time::Instant::now();
     let config_lock = ConfigMutationLock::acquire(config_dir).await?;
+    let config_lock_wait_ms = config_lock_started_at.elapsed().as_millis();
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let kind = event.kind.as_u16();
     if relay_sync::is_device_approval_applied_ack_event(event) {
@@ -133,6 +138,12 @@ pub(crate) async fn apply_one_event(
                 "event": "nostr_identity_device_approval_applied_ack",
                 "event_id": event.id.to_hex(),
                 "author": pubkey_npub(&event.pubkey.to_hex()),
+                "event_created_at": event.created_at.as_secs(),
+                "received_at_ms": event_received_at,
+                "config_lock_wait_ms": config_lock_wait_ms,
+                "persisted_at_ms": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |duration| duration.as_millis()),
                 "outcome": if changed { "applied" } else { "ignored" },
             }),
         );
@@ -846,102 +857,77 @@ pub(crate) async fn pull_blocks_for_root(
 ) -> Result<()> {
     let cid =
         Cid::parse(root_cid_str).with_context(|| format!("parsing root cid {root_cid_str}"))?;
-    let mut attempted = false;
-    let mut fips_had_peers = false;
-    let mut errors = Vec::new();
-    if let Some(sync) = fips_blocks {
-        let connected_peers = sync.connected_peer_ids().await;
-        fips_had_peers = !connected_peers.is_empty();
-        if connected_peers.is_empty() {
-            println!(
-                "{}",
-                json!({
-                    "event": "fips_download_skipped",
-                    "root_cid": root_cid_str,
-                    "reason": "no_connected_peers",
-                })
-            );
-        } else {
-            attempted = true;
-            match download_tree_over_fips_with_retry(sync, &cid, fips_download_policy(config)).await
-            {
-                Ok(report) => {
-                    record_block_sync(config_dir, root_cid_str, "fips", &report);
-                    println!(
-                        "{}",
-                        json!({
-                            "event": "fips_downloaded",
-                            "root_cid": root_cid_str,
-                            "report": download_report_json(&report),
-                        })
-                    );
-                    return Ok(());
-                }
-                Err(error) => {
-                    let error = format!("{error:#}");
-                    errors.push(format!("fips: {error}"));
-                    println!(
-                        "{}",
-                        json!({
-                            "event": "fips_download_error",
-                            "root_cid": root_cid_str,
-                            "error": error,
-                            "connected_peers": connected_peers,
-                        })
-                    );
-                }
-            }
-        }
-    }
-
-    if should_try_blossom_download(config, attempted, fips_had_peers) {
-        attempted = true;
-        match download_roots_over_blossom(config_dir, config, &[root_cid_str.to_string()]).await {
-            Ok(report) => {
-                record_block_sync(config_dir, root_cid_str, "blossom", &report);
-                println!(
-                    "{}",
-                    json!({
-                        "event": "blossom_downloaded",
-                        "root_cid": root_cid_str,
-                        "report": download_report_json(&report),
-                    })
-                );
-                return Ok(());
-            }
-            Err(error) => {
-                let error = error.to_string();
-                errors.push(format!("blossom: {error}"));
-                println!(
-                    "{}",
-                    json!({
-                        "event": "blossom_download_error",
-                        "root_cid": root_cid_str,
-                        "error": error,
-                    })
-                );
-            }
-        }
-    } else if !config.blossom_servers.is_empty() && attempted && fips_had_peers {
+    let connected_peers = if let Some(sync) = fips_blocks {
+        sync.connected_peer_ids().await
+    } else {
+        Vec::new()
+    };
+    if fips_blocks.is_some() && connected_peers.is_empty() {
         println!(
             "{}",
             json!({
-                "event": "blossom_download_skipped",
+                "event": "fips_download_skipped",
                 "root_cid": root_cid_str,
-                "reason": "fips_peers_available",
+                "reason": "no_connected_peers",
             })
         );
     }
 
-    if attempted {
-        Err(anyhow::anyhow!(
-            "all block download transports failed for {root_cid_str}: {}",
-            errors.join("; ")
-        ))
-    } else {
-        Err(anyhow::anyhow!(
+    let fips_download = fips_blocks
+        .filter(|_| !connected_peers.is_empty())
+        .map(|sync| {
+            Box::pin(async move {
+                download_tree_over_fips_with_retry(sync, &cid, fips_download_policy(config))
+                    .await
+                    .map_err(|error| format!("{error:#}"))
+            }) as BlockDownloadFuture<'_>
+        });
+    let fips_attempted = fips_download.is_some();
+    let blossom_download = should_try_blossom_download(
+        config,
+        fips_attempted,
+        !connected_peers.is_empty(),
+    )
+    .then(|| {
+        Box::pin(async move {
+            download_roots_over_blossom(config_dir, config, &[root_cid_str.to_string()])
+                .await
+                .map_err(|error| error.to_string())
+        }) as BlockDownloadFuture<'_>
+    });
+
+    match first_successful_block_download(fips_download, blossom_download).await {
+        Ok(outcome) => {
+            log_block_download_errors(root_cid_str, &connected_peers, &outcome.prior_errors);
+            let (transport, event) = match outcome.transport {
+                BlockDownloadTransport::Fips => ("fips", "fips_downloaded"),
+                BlockDownloadTransport::Blossom => ("blossom", "blossom_downloaded"),
+            };
+            record_block_sync(config_dir, root_cid_str, transport, &outcome.report);
+            println!(
+                "{}",
+                json!({
+                    "event": event,
+                    "root_cid": root_cid_str,
+                    "report": download_report_json(&outcome.report),
+                })
+            );
+            Ok(())
+        }
+        Err(errors) if errors.is_empty() => Err(anyhow::anyhow!(
             "no block download transport available for {root_cid_str}"
-        ))
+        )),
+        Err(errors) => {
+            log_block_download_errors(root_cid_str, &connected_peers, &errors);
+            Err(anyhow::anyhow!(
+                "all block download transports failed for {root_cid_str}: {}",
+                errors
+                    .iter()
+                    .map(BlockDownloadError::summary)
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ))
+        }
     }
 }
 

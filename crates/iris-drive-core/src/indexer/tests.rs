@@ -702,7 +702,7 @@ async fn tombstone_carries_forward_when_file_stays_absent() {
 }
 
 #[tokio::test]
-async fn tombstone_drops_when_file_returns() {
+async fn tombstone_barrier_remains_when_file_returns() {
     let dir = tempdir().unwrap();
     std::fs::write(dir.path().join("back.txt"), b"v1").unwrap();
     let tree = new_tree();
@@ -722,7 +722,54 @@ async fn tombstone_drops_when_file_returns() {
         .unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].path, "back.txt");
-    assert!(tombstones.is_empty(), "tombstone should be gone");
+    assert_eq!(tombstones.len(), 1, "causal barrier should remain");
+    assert_eq!(tombstones[0].path, "back.txt");
+    assert_eq!(tombstones[0].tombstoned_at, 1000);
+    assert_eq!(
+        read_path_kind_replacements(&tree, &third).await.unwrap(),
+        Some(BTreeMap::new()),
+        "ordinary delete/recreate is explicitly role-aware without claiming a replacement"
+    );
+}
+
+#[tokio::test]
+async fn plain_directory_import_authors_and_retains_path_kind_role() {
+    let dir = tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("draft")).unwrap();
+    std::fs::write(dir.path().join("draft/old.txt"), b"old bytes").unwrap();
+    let tree = new_tree();
+    let first = index_dir(&tree, dir.path()).await.unwrap();
+
+    std::fs::remove_dir_all(dir.path().join("draft")).unwrap();
+    std::fs::write(dir.path().join("draft"), b"replacement").unwrap();
+    let second = index_dir_with_history(&tree, dir.path(), Some(&first), 2000)
+        .await
+        .unwrap();
+    assert_eq!(
+        read_path_kind_replacements(&tree, &second).await.unwrap(),
+        Some(BTreeMap::from([("draft".to_string(), 2000)]))
+    );
+    let (_, tombstones) = crate::merge::walk_app_key_tree(&tree, &second)
+        .await
+        .unwrap();
+    assert_eq!(
+        tombstones,
+        vec![crate::merge::AppKeyTombstone {
+            path: "draft".to_string(),
+            tombstoned_at: 2000,
+        }],
+        "new format uses one exact barrier rather than deleting descendants"
+    );
+
+    std::fs::write(dir.path().join("unrelated.txt"), b"later").unwrap();
+    let third = index_dir_with_history(&tree, dir.path(), Some(&second), 3000)
+        .await
+        .unwrap();
+    assert_eq!(
+        read_path_kind_replacements(&tree, &third).await.unwrap(),
+        Some(BTreeMap::from([("draft".to_string(), 2000)])),
+        "unrelated and same-kind edits preserve the original role generation"
+    );
 }
 
 #[tokio::test]
@@ -766,4 +813,94 @@ async fn surviving_files_unaffected_by_unrelated_removal() {
     let tomb_paths: Vec<&str> = tombstones.iter().map(|t| t.path.as_str()).collect();
     assert_eq!(live_paths, vec!["keep.txt"]);
     assert_eq!(tomb_paths, vec!["drop.txt"]);
+}
+
+#[tokio::test]
+async fn path_kind_replacements_have_deterministic_cross_language_json() {
+    let tree = new_tree();
+    let root = tree.put_directory(Vec::new()).await.unwrap();
+    let replacements = BTreeMap::from([
+        ("zeta".to_string(), 9),
+        ("alpha/nested".to_string(), 7),
+        ("unicode/\u{10000}".to_string(), 11),
+        ("unicode/\u{e000}".to_string(), 10),
+    ]);
+    let root = layer_path_kind_replacements(&tree, root, &replacements)
+        .await
+        .unwrap();
+    let cid = tree
+        .resolve(&root, PATH_KIND_REPLACEMENTS_PATH)
+        .await
+        .unwrap()
+        .unwrap();
+    let raw = tree.get(&cid, None).await.unwrap().unwrap();
+    assert_eq!(
+        raw,
+        r#"{"schema":1,"replacements":[{"path":"alpha/nested","generation":7},{"path":"unicode/","generation":10},{"path":"unicode/𐀀","generation":11},{"path":"zeta","generation":9}]}"#.as_bytes()
+    );
+    assert_eq!(
+        read_path_kind_replacements(&tree, &root).await.unwrap(),
+        Some(replacements)
+    );
+}
+
+#[tokio::test]
+async fn path_kind_replacements_distinguish_absent_empty_and_reject_invalid_documents() {
+    let tree = new_tree();
+    let empty_root = tree.put_directory(Vec::new()).await.unwrap();
+    assert_eq!(
+        read_path_kind_replacements(&tree, &empty_root)
+            .await
+            .unwrap(),
+        None
+    );
+    let aware_root = layer_path_kind_replacements(&tree, empty_root, &BTreeMap::new())
+        .await
+        .unwrap();
+    assert_eq!(
+        read_path_kind_replacements(&tree, &aware_root)
+            .await
+            .unwrap(),
+        Some(BTreeMap::new())
+    );
+
+    let invalid_documents = [
+        r#"{"schema":2,"replacements":[]}"#,
+        r#"{"schema":1,"replacements":[{"path":"draft","generation":1},{"path":"draft","generation":2}]}"#,
+        r#"{"schema":1,"replacements":[{"path":"zeta","generation":1},{"path":"alpha","generation":2}]}"#,
+        r#"{"schema":1,"replacements":[{"path":"/draft","generation":1}]}"#,
+        r#"{"schema":1,"replacements":[{"path":"draft//child","generation":1}]}"#,
+        r#"{"schema":1,"replacements":[{"path":"draft/../child","generation":1}]}"#,
+        r#"{"schema":1,"replacements":[{"path":"draft/.hashtree/child","generation":1}]}"#,
+        r#"{"schema":1,"replacements":[{"path":"draft","generation":0}]}"#,
+        r#"{"schema":1,"replacements":[{"path":"draft","generation":9007199254740992}]}"#,
+        r#"{"schema":1,"replacements":[],"extra":true}"#,
+    ];
+    for document in invalid_documents {
+        let root = root_with_path_kind_document(&tree, document.as_bytes()).await;
+        assert!(
+            matches!(
+                read_path_kind_replacements(&tree, &root).await,
+                Err(IndexError::PathKindReplacements(_))
+            ),
+            "invalid document was accepted: {document}"
+        );
+    }
+}
+
+async fn root_with_path_kind_document(tree: &HashTree<MemoryStore>, document: &[u8]) -> Cid {
+    let (blob, size) = tree.put(document).await.unwrap();
+    let metadata = tree
+        .put_directory(vec![
+            DirEntry::from_cid("path-kind-replacements", &blob)
+                .with_size(size)
+                .with_link_type(LinkType::Blob),
+        ])
+        .await
+        .unwrap();
+    tree.put_directory(vec![
+        DirEntry::from_cid(META_DIR, &metadata).with_link_type(LinkType::Dir),
+    ])
+    .await
+    .unwrap()
 }

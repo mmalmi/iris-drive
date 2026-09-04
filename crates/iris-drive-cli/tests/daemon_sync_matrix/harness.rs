@@ -383,14 +383,59 @@ impl SyncCluster {
         label: &str,
     ) -> SyncLatency {
         let edit_started = Instant::now();
+        let target_log_start = self.daemon_log(target).lines().count();
         let root_cid = self.provider_write(source, path, bytes).await;
         let source_viewer_done = Instant::now();
-        self.wait_for_file_latency(target, path, bytes, label).await;
-        SyncLatency {
-            root_cid,
-            local_edit_to_remote_visible: edit_started.elapsed(),
-            source_viewer_done_to_remote_visible: source_viewer_done.elapsed(),
+        let local_path = self.path(target).join(path);
+        let mut source_publish_finished = None;
+        let mut target_root_received = None;
+        let mut target_blocks_downloaded = None;
+        while source_viewer_done.elapsed() < WAIT_TIMEOUT {
+            let source_log = self.daemon_log(source);
+            let target_log = self.daemon_log(target);
+            source_publish_finished.get_or_insert_with(|| source_viewer_done.elapsed());
+            if !source_log.lines().any(|line| {
+                line.contains("provider_root_publish_finished") && line.contains(&root_cid)
+            }) {
+                source_publish_finished = None;
+            }
+            if target_root_received.is_none()
+                && target_log.lines().skip(target_log_start).any(|line| {
+                    line.contains(&root_cid)
+                        && (line.contains("direct_root_app_event")
+                            || line.contains("drive_root_hint"))
+                })
+            {
+                target_root_received = Some(source_viewer_done.elapsed());
+            }
+            if target_blocks_downloaded.is_none()
+                && target_log.lines().skip(target_log_start).any(|line| {
+                    line.contains(&root_cid)
+                        && (line.contains("fips_downloaded")
+                            || line.contains("blossom_downloaded"))
+                })
+            {
+                target_blocks_downloaded = Some(source_viewer_done.elapsed());
+            }
+            self.refresh_view(target).await;
+            if matches!(std::fs::read(&local_path), Ok(actual) if actual == bytes) {
+                return SyncLatency {
+                    root_cid,
+                    local_edit_to_remote_visible: edit_started.elapsed(),
+                    source_viewer_done_to_remote_visible: source_viewer_done.elapsed(),
+                    source_publish_finished,
+                    target_root_received,
+                    target_blocks_downloaded,
+                };
+            }
+            tokio::time::sleep(POLL_INTERVAL).await;
         }
+        panic!(
+            "timed out waiting for {} file {path} during {label}; last_read={:?}\n{}",
+            target.label(),
+            std::fs::read(&local_path).map(|actual| format!("{} bytes", actual.len())),
+            self.debug_state_with_rerun_hint()
+        );
     }
 
     fn assert_missing(&self, client: Client, path: &str) {

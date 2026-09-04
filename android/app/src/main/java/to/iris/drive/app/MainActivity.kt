@@ -56,6 +56,15 @@ class MainActivity : ComponentActivity() {
         Thread(runnable, "IrisDriveNativeCore")
     }
     private val nativeCoreDispatcher = nativeCoreExecutor.asCoroutineDispatcher()
+    private val backupCheckCoordinator by lazy {
+        BackupCheckCoordinator(
+            applicationContext,
+            lifecycleScope,
+            nativeCoreDispatcher,
+            backupCheckProgressFlow,
+            stateFlow,
+        )
+    }
     private var nativeHandle: Long = 0
     private var pendingLaunchIntent: Intent? = null
     private var refreshJob: Job? = null
@@ -63,6 +72,12 @@ class MainActivity : ComponentActivity() {
     private var nativeRefreshInFlight = false
     private var nativeRefreshPending = false
     private var nativeProviderRefreshPending = false
+    private val nativeStateGenerationGate = NativeStateGenerationGate()
+    private var didDelayFirstNativeRefreshCompletion = false
+    private var debugFirstNativeRefreshApplyDelayMs = 0L
+    private val deviceApprovalLaunchController by lazy {
+        DeviceApprovalLaunchController(this, { nativeHandle != 0L }, ::approveDevice)
+    }
     private var androidCalendarAutoSyncJob: Job? = null
     private var lastAndroidCalendarAutoSyncCheckMs = 0L
     private val nativeRefreshCallbacks = mutableListOf<(AppState) -> Unit>()
@@ -163,7 +178,7 @@ class MainActivity : ComponentActivity() {
                 onOpenIrisApps = ::openIrisWebWhenReady,
                 onOpenDriveFolder = ::openDriveFolder,
                 onApproveDevice = { request, label ->
-                    dispatch(NativeActions.approveDevice(request, label), ::autoStartSyncIfNeeded)
+                    approveDevice(request, label)
                 },
                 onRejectDevice = { request ->
                     dispatch(NativeActions.rejectDevice(request))
@@ -207,7 +222,7 @@ class MainActivity : ComponentActivity() {
                     dispatch(NativeActions.syncBackups(target))
                 },
                 onCheckBackups = { target ->
-                    checkBackupsWithProgress(target)
+                    backupCheckCoordinator.check(target, nativeHandle)
                 },
                 onCreateShare = { sourcePath, displayName ->
                     createShareFromProviderPath(sourcePath, displayName)
@@ -314,6 +329,11 @@ class MainActivity : ComponentActivity() {
     }
 
     private fun startNativeCore(launchIntent: Intent?) {
+        promptForApprovalBeforeNativeStart(launchIntent)
+        if (BuildConfig.DEBUG) {
+            debugFirstNativeRefreshApplyDelayMs =
+                launchIntent?.getLongExtra(DEBUG_FIRST_REFRESH_APPLY_DELAY_MS, 0L) ?: 0L
+        }
         lifecycleScope.launch(nativeCoreDispatcher) {
             if (BuildConfig.DEBUG) {
                 delay(launchIntent?.getLongExtra(DEBUG_NATIVE_START_DELAY_MS, 0L) ?: 0L)
@@ -333,6 +353,10 @@ class MainActivity : ComponentActivity() {
                     stateFlow.value = initialState
                     AndroidDebugSupport.writeState(this@MainActivity, initialJson)
                     IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, initialState)
+                    val intentToHandle = pendingLaunchIntent ?: launchIntent
+                    pendingLaunchIntent = null
+                    handleLaunchIntent(intentToHandle)
+                    deviceApprovalLaunchController.drainPendingApproval()
                     refreshJob = lifecycleScope.launch {
                         var shouldAutoStartSync = true
                         repeatOnLifecycle(Lifecycle.State.STARTED) {
@@ -350,9 +374,6 @@ class MainActivity : ComponentActivity() {
                             }
                         }
                     }
-                    val intentToHandle = pendingLaunchIntent ?: launchIntent
-                    pendingLaunchIntent = null
-                    handleLaunchIntent(intentToHandle)
                     selfUpdateManager.startAutomaticChecks()
                 }
             } finally {
@@ -362,7 +383,6 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
-
     private fun refresh(
         includeProvider: Boolean = true,
         onState: ((AppState) -> Unit)? = null,
@@ -378,8 +398,18 @@ class MainActivity : ComponentActivity() {
             return
         }
         nativeRefreshInFlight = true
+        val generation = nativeStateGenerationGate.request()
+        val completionDelayMs =
+            if (BuildConfig.DEBUG && !didDelayFirstNativeRefreshCompletion) {
+                didDelayFirstNativeRefreshCompletion = true
+                debugFirstNativeRefreshApplyDelayMs
+            } else {
+                0L
+            }
+        logNativeStateTransition("request", generation, "refresh", null)
         lifecycleScope.launch(nativeCoreDispatcher) {
-            val action = if (!includeProvider ||
+            val action = if (deviceApprovalLaunchController.confirmationPending ||
+                !includeProvider ||
                 stateFlow.value.isAwaitingApproval ||
                 stateFlow.value.isRevoked
             ) {
@@ -387,24 +417,34 @@ class MainActivity : ComponentActivity() {
             } else {
                 NativeActions.refresh()
             }
+            logNativeStateTransition("start", generation, "refresh", null)
             val json = NativeCore.dispatchJson(handle, action)
             val state = stateFromJson(json)
+            logNativeStateTransition("complete", generation, "refresh", state)
+            if (completionDelayMs > 0) {
+                delay(completionDelayMs)
+            }
             withContext(Dispatchers.Main) {
-                val pendingCallbacks = nativeRefreshCallbacks.toList()
-                nativeRefreshCallbacks.clear()
                 nativeRefreshInFlight = false
-                applyNativeState(
+                val applied = applyNativeState(
                     state,
                     onState,
                     json,
                     updateBackgroundSchedule = false,
+                    generation = generation,
+                    origin = "refresh",
                 )
-                pendingCallbacks.forEach { it(state) }
                 if (nativeRefreshPending) {
                     nativeRefreshPending = false
                     val refreshProvider = nativeProviderRefreshPending
                     nativeProviderRefreshPending = false
-                    refresh(includeProvider = refreshProvider)
+                    val pendingCallbacks = nativeRefreshCallbacks.toList()
+                    nativeRefreshCallbacks.clear()
+                    refresh(includeProvider = refreshProvider) { refreshedState ->
+                        pendingCallbacks.forEach { it(refreshedState) }
+                    }
+                } else if (!applied) {
+                    nativeRefreshCallbacks.clear()
                 }
             }
         }
@@ -441,7 +481,13 @@ class MainActivity : ComponentActivity() {
         onState: ((AppState) -> Unit)? = null,
         debugJson: String? = null,
         updateBackgroundSchedule: Boolean = true,
-    ) {
+        generation: Long? = null,
+        origin: String = "initial",
+    ): Boolean {
+        if (generation != null && !nativeStateGenerationGate.shouldApply(generation)) {
+            logNativeStateTransition("skip", generation, origin, state)
+            return false
+        }
         stateFlow.value = state
         AndroidDebugSupport.writeState(this, debugJson)
         if (updateBackgroundSchedule) {
@@ -449,69 +495,60 @@ class MainActivity : ComponentActivity() {
         }
         maybeRunAndroidCalendarAutoSync(state)
         onState?.invoke(state)
+        if (generation != null) {
+            logNativeStateTransition("apply", generation, origin, state)
+        }
+        return true
     }
 
-    private fun dispatch(actionJson: String, onState: ((AppState) -> Unit)? = null) {
+    private fun dispatch(
+        actionJson: String,
+        onState: ((AppState) -> Unit)? = null,
+    ) = dispatch(actionJson, "action", onState, null)
+
+    private fun dispatch(
+        actionJson: String,
+        origin: String,
+        onState: ((AppState) -> Unit)? = null,
+        onCompletion: ((AppState) -> Unit)? = null,
+    ) {
         val handle = nativeHandle
         if (handle == 0L) return
+        val generation = nativeStateGenerationGate.request()
+        logNativeStateTransition("request", generation, origin, null)
         lifecycleScope.launch(nativeCoreDispatcher) {
+            logNativeStateTransition("start", generation, origin, null)
             val json = NativeCore.dispatchJson(handle, actionJson)
             val state = stateFromJson(json)
+            logNativeStateTransition("complete", generation, origin, state)
             withContext(Dispatchers.Main) {
-                applyNativeState(state, onState, json)
+                applyNativeState(
+                    state,
+                    onState,
+                    json,
+                    generation = generation,
+                    origin = origin,
+                )
+                onCompletion?.invoke(state)
             }
         }
     }
 
-    private fun checkBackupsWithProgress(target: String) {
-        if (backupCheckProgressFlow.value.isRunning) return
-        val targets =
-            if (target.isBlank()) {
-                stateFlow.value.backups
-                    .map { it.target.trim() }
-                    .filter { it.isNotEmpty() }
-            } else {
-                listOf(target.trim()).filter { it.isNotEmpty() }
-            }
-        if (targets.isEmpty()) return
-
-        val handle = nativeHandle
-        if (handle == 0L) return
-        backupCheckProgressFlow.value = BackupCheckProgress(
-            checked = 0,
-            total = targets.size,
-            activeTarget = targets.first(),
+    private fun approveDevice(request: String, label: String) {
+        dispatch(
+            NativeActions.approveDevice(request, label),
+            origin = "approve-device",
+            onCompletion = { approvedState ->
+                if (approvedState.error.isNotEmpty()) {
+                    deviceApprovalLaunchController.markApprovalComplete()
+                } else {
+                    refresh(includeProvider = false) { refreshedState ->
+                        deviceApprovalLaunchController.markApprovalComplete()
+                        autoStartSyncIfNeeded(refreshedState)
+                    }
+                }
+            },
         )
-        lifecycleScope.launch(nativeCoreDispatcher) {
-            try {
-                for ((index, currentTarget) in targets.withIndex()) {
-                    withContext(Dispatchers.Main) {
-                        backupCheckProgressFlow.value = BackupCheckProgress(
-                            checked = index,
-                            total = targets.size,
-                            activeTarget = currentTarget,
-                        )
-                    }
-                    val json = NativeCore.dispatchJson(handle, NativeActions.checkBackups(currentTarget))
-                    val state = stateFromJson(json)
-                    withContext(Dispatchers.Main) {
-                        stateFlow.value = state
-                        AndroidDebugSupport.writeState(this@MainActivity, json)
-                        IrisDriveBackgroundSync.scheduleIfNeeded(applicationContext, state)
-                        backupCheckProgressFlow.value = BackupCheckProgress(
-                            checked = index + 1,
-                            total = targets.size,
-                            activeTarget = targets.getOrNull(index + 1).orEmpty(),
-                        )
-                    }
-                }
-                delay(350)
-            } finally {
-                withContext(Dispatchers.Main) {
-                    backupCheckProgressFlow.value = BackupCheckProgress()
-                }
-            }
-        }
     }
 
     private fun autoStartSyncIfNeeded(state: AppState) {
@@ -812,28 +849,6 @@ class MainActivity : ComponentActivity() {
             "Shared/$sourcePath"
         }
 
-    private fun normalizeProviderPath(path: String): String =
-        NativeCore.normalizedProviderPath(path).orEmpty()
-
-    private fun stateFromJson(json: String): AppState =
-        AppState.fromJson(json)
-
-    private fun resolveDeviceLabel(label: String): String =
-        label.trim().ifBlank { defaultDeviceLabel() }
-
-    private fun defaultDeviceLabel(): String {
-        val model = Build.MODEL.orEmpty().trim()
-        val manufacturer = Build.MANUFACTURER.orEmpty().trim()
-        val label = when {
-            model.isBlank() -> "Android"
-            manufacturer.isBlank() -> model
-            model.startsWith(manufacturer, ignoreCase = true) -> model
-            model.contains("Pixel", ignoreCase = true) -> model
-            else -> "$manufacturer $model"
-        }
-        return label.replace(Regex("\\s+"), " ").takeIf { it.isNotBlank() } ?: "Android"
-    }
-
     private fun refreshAndroidCalendarSyncEnabled() {
         androidCalendarSyncEnabledFlow.value = AndroidCalendarAutoSync.isActive(this)
     }
@@ -894,7 +909,7 @@ class MainActivity : ComponentActivity() {
                 }
 
                 "app_key_approval" -> {
-                    confirmDeviceApproval(uri.toString())
+                    deviceApprovalLaunchController.handleApprovalRequest(uri.toString())
                 }
 
                 "invite" -> {
@@ -916,10 +931,10 @@ class MainActivity : ComponentActivity() {
                 val request = intent?.getStringExtra(AndroidDebugSupport.REQUEST_EXTRA).orEmpty()
                 dispatch(NativeActions.approveDevice(request, "Android smoke"))
             }
-            "add-relay" -> {
-                val relay = intent?.getStringExtra(AndroidDebugSupport.RELAY_EXTRA).orEmpty()
-                dispatch(NativeActions.addRelay(relay))
-            }
+            "add-relay" -> dispatch(NativeActions.addRelay(intent?.getStringExtra(AndroidDebugSupport.RELAY_EXTRA).orEmpty()))
+            "remove-relay" -> dispatch(NativeActions.removeRelay(intent?.getStringExtra(AndroidDebugSupport.RELAY_EXTRA).orEmpty()))
+            "replace-relays" -> dispatch(NativeActions.replaceRelays(listOf(intent?.getStringExtra(AndroidDebugSupport.RELAY_EXTRA).orEmpty())))
+            "replace-blossom" -> dispatch(NativeActions.replaceBlossomServers(listOf(intent?.getStringExtra(AndroidDebugSupport.RELAY_EXTRA).orEmpty())))
             "add-root" -> dispatch(
                 NativeActions.addRoot(
                     "Android smoke",
@@ -933,22 +948,8 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun confirmDeviceApproval(request: String) {
-        if (!NativeCore.isCompleteDeviceApprovalInput(request)) {
-            Toast.makeText(this, "Invalid device request", Toast.LENGTH_SHORT).show()
-            return
-        }
-        AlertDialog.Builder(this)
-            .setTitle("Approve this device?")
-            .setMessage("This will add the joining device to Iris Drive.")
-            .setPositiveButton("Approve") { _, _ ->
-                dispatch(
-                    NativeActions.approveDevice(request, ""),
-                    ::autoStartSyncIfNeeded,
-                )
-            }
-            .setNegativeButton("Cancel", null)
-            .show()
+    private fun promptForApprovalBeforeNativeStart(intent: Intent?) {
+        deviceApprovalLaunchController.promptBeforeNativeStart(intent)
     }
 
     private fun providerRootDocumentUri(): String =
@@ -983,6 +984,8 @@ class MainActivity : ComponentActivity() {
     companion object {
         internal const val DEBUG_NATIVE_START_DELAY_MS =
             "to.iris.drive.DEBUG_NATIVE_START_DELAY_MS"
+        internal const val DEBUG_FIRST_REFRESH_APPLY_DELAY_MS =
+            "to.iris.drive.DEBUG_FIRST_REFRESH_APPLY_DELAY_MS"
         private const val DOCUMENTS_ROOT_DOCUMENT_ID = "root"
         private const val ANDROID_CALENDAR_SYNC_CHECK_INTERVAL_MS = 60_000L
     }

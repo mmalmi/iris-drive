@@ -148,6 +148,7 @@ pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
                 root,
                 files: files.clone(),
                 tombstones: tombs.clone(),
+                path_kind_replacements: None,
             })
             .collect();
 

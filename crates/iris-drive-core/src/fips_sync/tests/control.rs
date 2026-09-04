@@ -17,8 +17,8 @@ use super::mesh_fallback::{bind_test_endpoint, reserve_udp_address, wait_for_pee
 #[test]
 fn control_poll_interval_is_idle_safe() {
     assert!(
-        CONTROL_POLL_INTERVAL >= Duration::from_millis(100),
-        "TCP/FIPS control polling below 100 ms keeps mobile runtimes busy while idle"
+        CONTROL_POLL_INTERVAL >= Duration::from_millis(250),
+        "TCP/FIPS control polling below 250 ms keeps mobile runtimes busy while idle"
     );
 }
 
@@ -479,6 +479,7 @@ async fn configure_application_peer(
         endpoint.native_endpoint.as_ref(),
         local_npub,
         std::slice::from_ref(&peer),
+        &[],
         vec![peer.clone()],
     )
     .await

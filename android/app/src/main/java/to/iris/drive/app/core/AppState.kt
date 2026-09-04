@@ -325,6 +325,12 @@ internal object NativeActions {
             .put("url", url)
             .toString()
 
+    fun replaceRelays(urls: List<String>): String =
+        JSONObject()
+            .put("type", "replace_relays")
+            .put("urls", org.json.JSONArray(urls))
+            .toString()
+
     fun resetRelays(): String = JSONObject().put("type", "reset_relays").toString()
 
     fun addBackupTarget(target: String, label: String): String =
@@ -350,6 +356,12 @@ internal object NativeActions {
         JSONObject()
             .put("type", "remove_blossom_server")
             .put("url", url)
+            .toString()
+
+    fun replaceBlossomServers(urls: List<String>): String =
+        JSONObject()
+            .put("type", "replace_blossom_servers")
+            .put("urls", org.json.JSONArray(urls))
             .toString()
 
     fun syncBackups(target: String = ""): String =

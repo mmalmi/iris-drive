@@ -34,6 +34,34 @@ impl ConfigMutationLock {
         Self::acquire_with_timeout(config_dir, Self::WAIT_TIMEOUT).await
     }
 
+    /// Acquire the cross-process config transaction lock from a synchronous
+    /// caller. Keep the returned guard scoped to local load/mutate/save work;
+    /// callers must release it before relay, FIPS, or Blossom I/O.
+    pub fn acquire_blocking(config_dir: &Path) -> anyhow::Result<Self> {
+        std::fs::create_dir_all(config_dir)
+            .with_context(|| format!("creating config dir {}", config_dir.display()))?;
+        let path = config_dir.join("config-mutation.lock");
+        let started = std::time::Instant::now();
+
+        loop {
+            match Self::try_create(&path) {
+                Ok(lock) => return Ok(lock),
+                Err(error) if Self::lock_create_error_is_contention(&path, &error) => {
+                    Self::remove_stale_lock(&path);
+                    if started.elapsed() >= Self::WAIT_TIMEOUT {
+                        return Err(ConfigMutationLockTimeout { path }.into());
+                    }
+                    std::thread::sleep(Self::POLL_INTERVAL);
+                }
+                Err(error) => {
+                    return Err(error).with_context(|| {
+                        format!("creating config mutation lock {}", path.display())
+                    });
+                }
+            }
+        }
+    }
+
     pub async fn acquire_for_background<F>(
         config_dir: &Path,
         is_stale: F,
@@ -166,5 +194,35 @@ impl ConfigMutationLock {
 impl Drop for ConfigMutationLock {
     fn drop(&mut self) {
         let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ConfigMutationLock;
+
+    #[test]
+    fn blocking_acquire_waits_for_existing_transaction() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = ConfigMutationLock::acquire_blocking(dir.path()).unwrap();
+        let contender_dir = dir.path().to_path_buf();
+        let (acquired_tx, acquired_rx) = std::sync::mpsc::channel();
+        let contender = std::thread::spawn(move || {
+            let lock = ConfigMutationLock::acquire_blocking(&contender_dir).unwrap();
+            acquired_tx.send(()).unwrap();
+            lock
+        });
+
+        assert!(
+            acquired_rx
+                .recv_timeout(std::time::Duration::from_millis(100))
+                .is_err(),
+            "the blocking contender acquired a live transaction"
+        );
+        drop(first);
+        acquired_rx
+            .recv_timeout(std::time::Duration::from_secs(2))
+            .unwrap();
+        drop(contender.join().unwrap());
     }
 }

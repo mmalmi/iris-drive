@@ -25,6 +25,7 @@ fi
 GUEST_SRC_ROOT="${IRIS_DRIVE_MACOS_GUEST_SRC_ROOT:-src}"
 GUEST_REPO="$GUEST_SRC_ROOT/iris-drive-release-gate"
 REMOTE_ARTIFACT_DIR="artifacts/macos-smoke"
+REMOTE_PRIVATE_LOG="artifacts/macos-smoke-runner.private.log"
 LOCAL_ARTIFACT_DIR="${IRIS_DRIVE_MACOS_ARTIFACT_DIR:-$ROOT/artifacts/macos-smoke}"
 
 case "${IRIS_DRIVE_MACOS_SKIP_GIT_SYNC:-0}" in
@@ -33,15 +34,15 @@ case "${IRIS_DRIVE_MACOS_SKIP_GIT_SYNC:-0}" in
 esac
 
 link_journey="${IRIS_DRIVE_MACOS_SMOKE_LINK_JOURNEY:-1}"
-remote_command="cd '$GUEST_REPO' && rm -rf '$REMOTE_ARTIFACT_DIR' && mkdir -p '$REMOTE_ARTIFACT_DIR' && { set +e; state_dir=\$(mktemp -d -t iris-drive-macos-vm-smoke-state) || exit 1; env"
+remote_command="cd '$GUEST_REPO' && rm -rf '$REMOTE_ARTIFACT_DIR' && rm -f '$REMOTE_PRIVATE_LOG' && mkdir -p '$REMOTE_ARTIFACT_DIR' && { set +e; state_dir=\$(mktemp -d -t iris-drive-macos-vm-smoke-state) || exit 1; env"
 remote_command+=" IRIS_DRIVE_MACOS_SMOKE_ARTIFACT_DIR='$REMOTE_ARTIFACT_DIR'"
 remote_command+=" IRIS_DRIVE_MACOS_SMOKE_STATE_DIR=\"\$state_dir\""
 remote_command+=" IRIS_DRIVE_MACOS_SMOKE_PRESERVE_ARTIFACTS=1"
 remote_command+=" IRIS_DRIVE_MACOS_SMOKE_LINK_JOURNEY='$link_journey'"
 remote_command+=" IRIS_DRIVE_MACOS_SMOKE_SURVIVAL_SECONDS=0"
 remote_command+=" IRIS_DRIVE_MACOS_SIGNING='${IRIS_DRIVE_MACOS_SIGNING:-none}'"
-remote_command+=" ./scripts/macos-smoke.sh >'$REMOTE_ARTIFACT_DIR/runner.raw.log' 2>&1"
-remote_command+="; smoke_exit=\$?; rm -rf \"\$state_dir\"; rm -f '$REMOTE_ARTIFACT_DIR/runner.raw.log'; exit \$smoke_exit; }"
+remote_command+=" ./scripts/macos-smoke.sh >'$REMOTE_PRIVATE_LOG' 2>&1"
+remote_command+="; smoke_exit=\$?; rm -rf \"\$state_dir\"; if (( smoke_exit == 0 )); then rm -f '$REMOTE_PRIVATE_LOG'; fi; exit \$smoke_exit; }"
 
 status=0
 ssh -o BatchMode=yes "$SSH_HOST" "$remote_command" || status=$?
@@ -51,6 +52,8 @@ scp "$SSH_HOST:$GUEST_REPO/$REMOTE_ARTIFACT_DIR/result.json" \
   "$LOCAL_ARTIFACT_DIR/result.json" >/dev/null 2>&1 || true
 if (( status != 0 )); then
   echo "macOS VM smoke failed; sanitized result copied to $LOCAL_ARTIFACT_DIR/result.json" >&2
+  echo "private raw log retained on the VM at $GUEST_REPO/$REMOTE_PRIVATE_LOG" >&2
+  echo "private phase diagnostics retained on the VM at $GUEST_REPO/$REMOTE_ARTIFACT_DIR/private-diagnostics" >&2
   exit "$status"
 fi
 echo "MACOS_VM_SMOKE_OK"

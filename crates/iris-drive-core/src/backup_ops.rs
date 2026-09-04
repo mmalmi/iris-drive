@@ -74,6 +74,28 @@ pub fn remove_blossom_server(config_dir: &Path, url: &str) -> Result<()> {
     Ok(())
 }
 
+pub fn replace_blossom_servers_in_config(config: &mut AppConfig, urls: &[String]) -> Result<()> {
+    let mut targets = Vec::with_capacity(urls.len());
+    for url in urls {
+        let target = parse_backup_target(url, None)?;
+        ensure_blossom_target(&target)?;
+        if !targets
+            .iter()
+            .any(|existing: &BackupTarget| existing.target == target.target)
+        {
+            targets.push(target);
+        }
+    }
+    config
+        .backup_targets
+        .retain(|target| target.kind != BackupTargetKind::Blossom);
+    config.blossom_servers.clear();
+    for target in targets {
+        upsert_blossom_target(config, target);
+    }
+    Ok(())
+}
+
 pub fn add_backup_target(config_dir: &Path, target: &str, label: Option<String>) -> Result<()> {
     let target = parse_backup_target(target, label)?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
@@ -725,5 +747,27 @@ mod tests {
             BACKUP_CHECK_REQUEST_TIMEOUT,
             std::time::Duration::from_secs(2)
         );
+    }
+
+    #[test]
+    fn replace_blossom_servers_is_exact_normalized_and_deduped() {
+        let mut config = AppConfig::default();
+        replace_blossom_servers_in_config(
+            &mut config,
+            &[
+                "http://127.0.0.1:49152/".to_owned(),
+                "http://127.0.0.1:49152".to_owned(),
+            ],
+        )
+        .unwrap();
+
+        assert_eq!(config.blossom_servers, ["http://127.0.0.1:49152"]);
+        let blossom_targets = config
+            .backup_targets
+            .iter()
+            .filter(|target| target.kind == BackupTargetKind::Blossom)
+            .collect::<Vec<_>>();
+        assert_eq!(blossom_targets.len(), 1);
+        assert_eq!(blossom_targets[0].target, "http://127.0.0.1:49152");
     }
 }

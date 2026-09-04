@@ -6,16 +6,19 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 python3 - \
   "$ROOT/scripts/mobile-ios-android-linking-e2e.sh" \
   "$ROOT/scripts/lib/mobile-ios-android-manual-linking.sh" \
+  "$ROOT/scripts/lib/mobile-physical-ios-xctest.sh" \
   "$ROOT/ios/UITests/IrisDrivePhysicalLinkingUITests.swift" \
   "$ROOT/android/app/src/androidTest/java/to/iris/drive/app/provider/IrisDrivePhysicalLinkingProviderTest.kt" \
   "$ROOT/android/app/src/androidTest/java/to/iris/drive/app/provider/IrisDriveDocumentsProviderContractTest.kt" \
   "$ROOT/ios/Sources/IrisDriveRootView.swift" \
   "$ROOT/ios/Sources/QRCodeScannerView.swift" \
   "$ROOT/android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt" \
+  "$ROOT/android/app/src/main/java/to/iris/drive/app/MainActivity.kt" \
   "$ROOT/android/app/src/main/java/to/iris/drive/app/IrisDriveDevicesPanel.kt" \
   "$ROOT/android/app/src/main/java/to/iris/drive/app/QrScannerDialog.kt" \
   "$ROOT/scripts/cross-vm-five-platform-e2e.sh" \
   "$ROOT/scripts/macos-vm-android-manual-link-e2e.sh" \
+  "$ROOT/scripts/lib/macos-android-physical-evidence.sh" \
   "$ROOT/scripts/lib/android-ui-point.py" \
   "$ROOT/scripts/macos-android-manual-link-remote.sh" \
   "$ROOT/scripts/macos-device-link-ax.swift" \
@@ -37,16 +40,19 @@ def read(path: str) -> str:
 (
     gate,
     manual_gate,
+    ios_xctest_helpers,
     ios_test,
     android_provider_test,
     android_provider_contract_test,
     ios_root,
     ios_scanner,
     android_root,
+    android_activity,
     android_devices,
     android_scanner,
     full_gate,
     macos_android_gate,
+    macos_android_evidence,
     android_ui_point,
     macos_android_remote,
     macos_ax,
@@ -55,7 +61,9 @@ def read(path: str) -> str:
     xcode_project,
 ) = (read(path) for path in sys.argv[1:])
 
-physical_gate = gate + manual_gate
+macos_android_contract = macos_android_gate + macos_android_evidence
+
+physical_gate = gate + manual_gate + ios_xctest_helpers
 
 for forbidden in (
     "IRIS_DRIVE_DEBUG_OWNER",
@@ -111,7 +119,43 @@ for required_reuse in (
     if required_reuse not in physical_gate + full_gate:
         raise SystemExit(f"physical Android artifact reuse is missing {required_reuse}")
 
+for required_xctestrun in (
+    'mktemp "$(dirname "$XCTESTRUN")/IrisDriveIOS-physical-$test_name.XXXXXX"',
+    'verify_xctestrun_products "$run_file"',
+    'value.replace("__TESTROOT__", str(test_root))',
+    'value.replace("__TESTHOST__", str(test_host))',
+    'IOS_TEST_RUN_FILE="$run_file"',
+    'rm -f "$IOS_TEST_RUN_FILE"',
+):
+    if required_xctestrun not in gate:
+        raise SystemExit(
+            f"physical iOS XCTest relocation safety is missing {required_xctestrun}"
+        )
+if 'local run_file="$TMP/$test_name.xctestrun"' in gate:
+    raise SystemExit("physical xctestrun must remain beside its __TESTROOT__ products")
+
+for required_bridge in (
+    'source "$ROOT/scripts/lib/ios-xcuitest-accessibility-session.sh"',
+    'IRIS_DRIVE_IOS_PHYSICAL_RUNNER_START_WAIT_SECS:-60',
+    'IRIS_DRIVE_IOS_PHYSICAL_BRIDGE_READY_WAIT_SECS:-65',
+    'if ((IOS_BRIDGE_READY_WAIT_SECS > 65))',
+    'wait_for_ios_runner_or_marker',
+    'endswith("/IrisDriveIOSUITests-Runner")',
+    '-resultBundlePath "$IOS_TEST_RESULT_BUNDLE"',
+    'ios_xcuitest_accessibility_session_disabled_after "$IOS_TEST_LOG" 0',
+    'ios_xcuitest_automation_mode_timed_out_after "$IOS_TEST_LOG" 0',
+):
+    if required_bridge not in physical_gate:
+        raise SystemExit(f"physical iOS bridge classification is missing {required_bridge}")
+runner_wait = gate.rindex("wait_for_ios_runner_or_marker")
+bridge_wait = gate.rindex(
+    'if ! wait_for_ios_marker "IRIS_XCUITEST_ENVIRONMENT_READY=1"'
+)
+if runner_wait >= bridge_wait:
+    raise SystemExit("physical iOS bridge must classify runner launch before automation readiness")
+
 for required in (
+    'source "$ROOT/scripts/lib/mobile-physical-ios-xctest.sh"',
     "select_physical_android",
     "select_physical_ios",
     "ro.kernel.qemu",
@@ -398,6 +442,7 @@ for required in (
     "pending_device_approval_receipts",
     "native-fips-status.json",
     "write_android_evidence",
+    "write_android_root_sync_evidence",
     "capture_remote_evidence",
     'fips.get("authorized_peers")',
     'fips.get("online_devices")',
@@ -405,10 +450,79 @@ for required in (
     "tap_android_until_ui",
     "writePostLinkFileThroughDocumentsProvider",
     "readPostLinkFileThroughDocumentsProvider",
+    'grep -Fq "INSTRUMENTATION_STATUS: test=$method" "$log"',
     "MACOS_VM_PHYSICAL_ANDROID_BIDIRECTIONAL_MANUAL_LINK_E2E_OK",
+    "start_deterministic_relay",
+    "restart_deterministic_relay",
+    "start_deterministic_blossom",
+    "local-blossom-server.py",
+    'local-nostr-relay.py" --ready-file',
+    '--event-log "$LOCAL_RELAY_EVENT_LOG"',
+    'reverse "tcp:$LOCAL_RELAY_PORT" "tcp:$LOCAL_RELAY_PORT"',
+    'ExitOnForwardFailure=yes',
+    'IRIS_DRIVE_MACOS_ANDROID_RELAY_URL',
+    "configure_android_singleton_relay",
+    'android_relay_action replace-relays "$LOCAL_RELAY_URL"',
+    'android_relay_action replace-blossom "$LOCAL_BLOSSOM_URL"',
+    "android_blossom_is_singleton",
+    "write_blossom_summary",
+    "android_type_text_in_chunks",
+    'chunk="${remaining:0:32}"',
+    "write_android_relay_evidence",
+    'copy_android_file config.toml "$TMP/android-config.toml"',
+    "ast.literal_eval",
+    "write_relay_summary",
+    '"$RESULT_DIR/android-owner-root-sync-evidence.json"',
+):
+    if required not in macos_android_contract:
+        raise SystemExit(f"physical macOS/Android manual-link gate is missing {required}")
+reverse_direction = macos_android_gate.split(
+    "# Physical Android owner -> macOS joiner.", 1
+)[1]
+read_provider_branch = macos_android_gate.split(
+    'if [[ "$method" == readPostLinkFileThroughDocumentsProvider ]]', 1
+)[1].split("elif !", 1)[0]
+if read_provider_branch.index("am instrument") \
+        > read_provider_branch.index("start_android_app"):
+    raise SystemExit("Android live-read instrumentation must start before the app sync runtime")
+if "restart_deterministic_relay" not in reverse_direction.split(
+    "create_android_owner", 1
+)[0]:
+    raise SystemExit(
+        "physical macOS/Android reverse direction must discard stale first-direction relay discovery"
+    )
+for required in (
+    "stop_first_direction_actors",
+    "prepare_android_actor",
+    "wait_android_process_stopped",
+    "wait_actor_adverts \"$ANDROID_OWNER_NPUB\" \"$MAC_JOINER_NPUB\"",
+    "assert_relay_epoch_adverts \"$ANDROID_OWNER_NPUB\" \"$MAC_JOINER_NPUB\"",
+    "online and (direct or mesh)",
 ):
     if required not in macos_android_gate:
-        raise SystemExit(f"physical macOS/Android manual-link gate is missing {required}")
+        raise SystemExit(
+            f"physical macOS/Android epoch lifecycle is missing {required}"
+        )
+if "authenticated_transport=any(" not in macos_android_remote:
+    raise SystemExit("macOS exact peer readiness must require direct or mesh transport")
+if reverse_direction.index("stop_first_direction_actors") \
+        > reverse_direction.index("restart_deterministic_relay"):
+    raise SystemExit("first-direction actors must stop before the relay epoch changes")
+prepare_android_actor = macos_android_gate.split(
+    "prepare_android_actor() {", 1
+)[1].split("\n}", 1)[0]
+if prepare_android_actor.index("configure_android_singleton_relay") \
+        > prepare_android_actor.rindex('am force-stop "$PACKAGE"'):
+    raise SystemExit("Android singleton relay must persist before the actor is stopped for launch")
+if prepare_android_actor.rindex('am force-stop "$PACKAGE"') \
+        > prepare_android_actor.index("wait_android_process_stopped"):
+    raise SystemExit("Android config bootstrap must be fully stopped before actor launch")
+for forbidden in (
+    "int(f.get(\"connected_peer_count\") or 0) > 0",
+    "status_fips_ready",
+):
+    if forbidden in macos_android_gate + macos_android_remote:
+        raise SystemExit(f"delivery readiness may not use anonymous peer counts via {forbidden}")
 for forbidden in (
     'copy_android_file config.toml "$RESULT_DIR',
     'copy_android_file native-fips-status.json "$RESULT_DIR',
@@ -423,9 +537,30 @@ for forbidden in (
     if forbidden in macos_android_gate:
         raise SystemExit(f"physical macOS/Android artifacts retain private state via {forbidden}")
 cleanup_branch = macos_android_gate.split("cleanup() {", 1)[1].split("trap cleanup EXIT", 1)[0]
-for required in ("trap - EXIT", "set +e", "capture_remote_evidence owner || true", "remote cleanup"):
+for required in (
+    "trap - EXIT",
+    "set +e",
+    "capture_remote_evidence owner || true",
+    "capture_remote_root_sync_evidence owner || true",
+    "capture_remote_root_sync_evidence joiner || true",
+    "remote cleanup",
+):
     if required not in cleanup_branch:
         raise SystemExit(f"physical macOS/Android failure cleanup is missing {required}")
+if cleanup_branch.index("capture_remote_root_sync_evidence owner || true") \
+        > cleanup_branch.index("remote cleanup"):
+    raise SystemExit("macOS root-sync failure evidence must be retained before remote cleanup")
+for required in (
+    '"drive_root_events"',
+    '"requests"',
+    "transport_phase_counts",
+    "write_provider_publish_phase",
+    '"$RESULT_DIR/android-provider-publish-phase.json"',
+    "Android provider mutation did not publish a Drive-root event",
+    "Android provider mutation did not attempt a singleton Blossom upload",
+):
+    if required not in macos_android_gate:
+        raise SystemExit(f"physical macOS/Android transport phase evidence is missing {required}")
 prepare_index = macos_android_gate.index('owner_fixture="$(remote prepare)"')
 if macos_android_gate.rfind("REMOTE_DIRTY=1", 0, prepare_index) < 0:
     raise SystemExit("physical macOS/Android cleanup is not armed before remote prepare")
@@ -445,12 +580,15 @@ for required in (
     "start-joiner",
     "manual-prepare",
     "manual-submit",
-    "fips-ready",
     "link-ready",
+    "peer-evidence",
     "evidence",
+    "root-sync-evidence",
     "run_ax_action",
     '/usr/bin/swift "$ROOT/scripts/macos-device-link-ax.swift" "$@"',
     "assert-joined-ui",
+    "configure_singleton_relay",
+    'IRIS_DRIVE_MACOS_ANDROID_RELAY_URL',
     "fips_online",
     'rm -rf "$ARTIFACT_DIR"',
     'return "$status"',
@@ -485,9 +623,31 @@ for required in (
     "AXUIElementGetPid",
     ".postToPid(pid)",
     "text(field, kAXValueAttribute) == value",
+    "case actionOutcomeUnknown(String, AXError)",
+    "error == .cannotComplete || error == .attributeUnsupported",
+    "exit(76)",
 ):
     if required not in macos_ax:
         raise SystemExit(f"macOS shipped UI driver is missing {required}")
+for required in (
+    "profile_roster_size",
+    "approval_roster_advanced",
+    '[[ "$status" == 76 ]]',
+    "MACOS_DEVICE_LINK_CONFIRMATION_APPROVE_STATE_ADVANCED_OK",
+):
+    if required not in macos_android_remote:
+        raise SystemExit(
+            f"macOS VM manual-link driver does not classify an AX-invalidated successful approval: {required}"
+        )
+manual_submit = macos_android_remote.split("  manual-submit)", 1)[1].split("    ;;", 1)[0]
+if manual_submit.count('run_ax_action "macOS shipped approval submission"') != 1:
+    raise SystemExit("macOS approval recovery must never press Approve more than once")
+if 'if run_ax_action "macOS shipped approval submission"' not in manual_submit:
+    raise SystemExit("macOS approval recovery must capture ambiguous AX status without errexit")
+if '"replace-relays" ->' not in android_activity:
+    raise SystemExit("physical Android harness cannot atomically replace public relay fallback through production actions")
+if '"replace-blossom" ->' not in android_activity:
+    raise SystemExit("physical Android harness cannot atomically replace public Blossom fallback through production actions")
 for required in (
     "IRIS_MACOS_AX_STAGE=",
     '"manual_devices"',

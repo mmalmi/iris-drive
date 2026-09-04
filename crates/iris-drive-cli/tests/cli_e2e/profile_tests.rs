@@ -606,10 +606,12 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rejected_configured_relay_reports_publish_error_without_rollback() {
     let relay = LocalNostrRelay::spawn().await;
+    let blossom = LocalBlossomServer::spawn().await;
     relay.reject_kinds(&[iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP]);
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
     let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    configure_local_blossom(owner_dir.path(), &blossom.url);
     run_json(
         linked_dir.path(),
         &[

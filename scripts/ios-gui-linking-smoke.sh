@@ -12,6 +12,8 @@ esac
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/ios-simulator-signing.sh"
+source "$ROOT/scripts/lib/ios-linking-observer.sh"
+source "$ROOT/scripts/lib/ios-xcuitest-accessibility-session.sh"
 PROJECT="$ROOT/ios/IrisDriveIOS.xcodeproj"
 SCHEME="IrisDriveIOS"
 CONFIGURATION="${IRIS_DRIVE_IOS_XCODE_CONFIGURATION:-Debug}"
@@ -39,10 +41,23 @@ OWNER_FIPS_OPEN_DISCOVERY_MAX_PENDING="${IRIS_DRIVE_IOS_FIPS_OPEN_DISCOVERY_MAX_
 SIM_APP_BASE_DIR=""
 LOCAL_RELAY_READY="$(mktemp -t iris-drive-ios-ui-relay.XXXXXX)"
 LOCAL_RELAY_LOG="$(mktemp -t iris-drive-ios-ui-relay.XXXXXX.log)"
+LOCAL_RELAY_EVENT_LOG="$(mktemp -t iris-drive-ios-ui-relay-events.XXXXXX.jsonl)"
 LOCAL_RELAY_PID=""
 LOCAL_RELAY_URL=""
+LINKED_SYNC_OBSERVER_PID=""
+LINKED_SYNC_OBSERVATION_FILE=""
+LINKED_ACK_OBSERVATION_FILE=""
+MANUAL_LINKED_SYNC_OBSERVER_PID=""
+MANUAL_LINKED_SYNC_OBSERVATION_FILE=""
+MANUAL_LINKED_ACK_OBSERVATION_FILE=""
 
 cleanup() {
+  for observer_pid in "$LINKED_SYNC_OBSERVER_PID" "$MANUAL_LINKED_SYNC_OBSERVER_PID"; do
+    if [[ -n "$observer_pid" ]]; then
+      kill "$observer_pid" >/dev/null 2>&1 || true
+      wait "$observer_pid" >/dev/null 2>&1 || true
+    fi
+  done
   if [[ -n "$OWNER_DAEMON_PID" ]]; then
     kill "$OWNER_DAEMON_PID" >/dev/null 2>&1 || true
     wait "$OWNER_DAEMON_PID" >/dev/null 2>&1 || true
@@ -52,7 +67,10 @@ cleanup() {
     wait "$LOCAL_RELAY_PID" >/dev/null 2>&1 || true
   fi
   rm -rf "$OWNER_CONFIG" "$LINKED_CONFIG" "$MANUAL_LINKED_CONFIG"
-  rm -f "$OWNER_DAEMON_LOG" "$LOCAL_RELAY_READY" "$LOCAL_RELAY_LOG"
+  rm -f "$OWNER_DAEMON_LOG" "$LOCAL_RELAY_READY" "$LOCAL_RELAY_LOG" \
+    "$LOCAL_RELAY_EVENT_LOG" \
+    "$LINKED_SYNC_OBSERVATION_FILE" "$LINKED_ACK_OBSERVATION_FILE" \
+    "$MANUAL_LINKED_SYNC_OBSERVATION_FILE" "$MANUAL_LINKED_ACK_OBSERVATION_FILE"
 }
 trap cleanup EXIT
 
@@ -209,69 +227,12 @@ assert_config_link_state() {
   local status
 
   status="$("$IDRIVE" --config-dir "$config_dir" status)"
-  if ! python3 -c 'import json,sys; s=json.load(sys.stdin); p=s.get("profile") or {}; expected=(int(sys.argv[1]), int(sys.argv[2])); actual=(int(p.get("roster_size") or 0), int(p.get("pending_device_approval_receipt_count") or 0)); raise SystemExit(0 if actual == expected else 1)' \
+  if ! python3 -c 'import json,sys; s=json.load(sys.stdin); p=s.get("profile") or {}; expected_roster=int(sys.argv[1]); expected_pending=sys.argv[2]; actual_roster=int(p.get("roster_size") or 0); actual_pending=int(p.get("pending_device_approval_receipt_count") or 0); ok=actual_roster == expected_roster and (expected_pending == "any" or actual_pending == int(expected_pending)); raise SystemExit(0 if ok else 1)' \
     "$expected_roster" "$expected_pending" <<<"$status"; then
     echo "FAIL: $phase changed the owner link state unexpectedly." >&2
     echo "$status" >&2
     exit 1
   fi
-}
-
-approval_deadline() {
-  local state_file="$1"
-  python3 - "$state_file" <<'PY'
-import datetime
-import json
-import sys
-
-with open(sys.argv[1], encoding="utf-8") as handle:
-    state = json.load(handle)
-events = [
-    event for event in state.get("ios_config_mutation_audit", [])
-    if event.get("action") == "approve_device" and not event.get("error")
-]
-if not events:
-    raise SystemExit("approval audit marker is missing")
-timestamp = events[-1]["timestamp"].replace("Z", "+00:00")
-print(datetime.datetime.fromisoformat(timestamp).timestamp() + 15)
-PY
-}
-
-before_deadline() {
-  python3 -c 'import sys,time; raise SystemExit(0 if time.time() <= float(sys.argv[1]) else 1)' "$1"
-}
-
-sync_linked_device_before() {
-  local config_dir="$1"
-  local deadline="$2"
-  launch_sim_app
-  while before_deadline "$deadline"; do
-    "$IDRIVE" --config-dir "$config_dir" sync --timeout 2 >/dev/null 2>&1 || true
-    if "$IDRIVE" --config-dir "$config_dir" status 2>/dev/null \
-      | python3 -c 'import json,sys; p=(json.load(sys.stdin).get("profile") or {}); raise SystemExit(0 if p.get("authorization_state") == "authorized" else 1)' >/dev/null 2>&1; then
-      before_deadline "$deadline" && return 0
-      return 1
-    fi
-    sleep 0.2
-  done
-  return 1
-}
-
-wait_for_approval_ack() {
-  local config_dir="$1"
-  local phase="$2"
-  local deadline="$3"
-  while before_deadline "$deadline"; do
-    if "$IDRIVE" --config-dir "$config_dir" status 2>/dev/null \
-      | python3 -c 'import json,sys; p=json.load(sys.stdin).get("profile") or {}; raise SystemExit(0 if p.get("pending_device_approval_receipt_count") == 0 else 1)' >/dev/null 2>&1; then
-      before_deadline "$deadline" && return 0
-      break
-    fi
-    sleep 0.2
-  done
-  echo "FAIL: approval owner did not consume the $phase ACK within 15 seconds of approval." >&2
-  "$IDRIVE" --config-dir "$config_dir" status >&2 || true
-  exit 1
 }
 
 unused_loopback_port() {
@@ -305,6 +266,7 @@ start_local_relay() {
     return 0
   fi
   python3 "$ROOT/scripts/local-nostr-relay.py" --ready-file "$LOCAL_RELAY_READY" \
+    --event-log "$LOCAL_RELAY_EVENT_LOG" \
     >"$LOCAL_RELAY_LOG" 2>&1 &
   LOCAL_RELAY_PID="$!"
   for _ in $(seq 1 100); do
@@ -404,6 +366,7 @@ run_ui_test() {
   local run_file
   local env_updates=()
   local -a python_args
+  local -a test_command
   while [[ $# -gt 0 ]]; do
     env_updates+=("$1")
     shift
@@ -455,12 +418,21 @@ with open(path, "wb") as handle:
     plistlib.dump(data, handle)
 PY
 
-  local status=0
-  xcodebuild \
+  local status=0 build_log_offset=0
+  [[ ! -f "$BUILD_LOG" ]] || build_log_offset="$(wc -c <"$BUILD_LOG" | tr -d ' ')"
+  test_command=(xcodebuild \
     -xctestrun "$run_file" \
     -destination "$DESTINATION" \
     -only-testing:"$only_testing" \
-    test-without-building >>"$BUILD_LOG" || status=$?
+    test-without-building)
+  "${test_command[@]}" >>"$BUILD_LOG" || status=$?
+  if [[ "$status" != 0 ]] \
+    && ios_xcuitest_accessibility_session_disabled_after "$BUILD_LOG" "$build_log_offset"; then
+    echo "[ios-gui-smoke] resetting disabled simulator accessibility session once" >&2
+    restart_ios_simulator_accessibility_session "$DEVICE_UDID"
+    status=0
+    "${test_command[@]}" >>"$BUILD_LOG" || status=$?
+  fi
   rm -f "$run_file"
   return "$status"
 }
@@ -647,6 +619,7 @@ if ! wait_for_config_status \
   [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2
   exit 1
 fi
+"$IDRIVE" --config-dir "$SIM_APP_BASE_DIR" relays add "$LOCAL_RELAY_URL" >/dev/null
 run_ui_test \
   "IrisDriveIOSUITests/IrisDriveIOSUITests/testAwaitingApprovalViewVisible" \
   "IRIS_DRIVE_FIPS_STATIC_PEERS=$owner_fips_peer" \
@@ -711,6 +684,10 @@ if ! wait_for_config_status_before \
   exit 1
 fi
 wait_for_approval_ack "$OWNER_CONFIG" "CLI-owner-to-iOS" "$cli_owner_approval_deadline"
+if [[ "${IRIS_DRIVE_IOS_CLI_OWNER_ACK_ONLY:-0}" == "1" ]]; then
+  echo "IOS_CLI_OWNER_ACK_SMOKE_OK"
+  exit 0
+fi
 
 run_ui_test \
   "IrisDriveIOSUITests/IrisDriveIOSUITests/testApprovedLinkedDeviceLeavesWaiting" \
@@ -764,39 +741,75 @@ run_ui_test \
   "IRIS_DRIVE_UI_TEST_LINKED_DEVICE_LABEL=iOS UI linked"
 assert_config_link_state "$SIM_APP_BASE_DIR" 1 0 "canceling the universal-link confirmation"
 
+LINKED_SYNC_OBSERVATION_FILE="$(mktemp -t iris-drive-ios-ui-linked-observed.XXXXXX)"
+LINKED_ACK_OBSERVATION_FILE="$(mktemp -t iris-drive-ios-ui-linked-ack-observed.XXXXXX)"
+start_linked_device_sync_observer \
+  "$LINKED_CONFIG" \
+  "$SIM_APP_BASE_DIR" \
+  2 \
+  "$LINKED_SYNC_OBSERVATION_FILE" \
+  "$LINKED_ACK_OBSERVATION_FILE" \
+  LINKED_SYNC_OBSERVER_PID
 run_ui_test \
   "IrisDriveIOSUITests/IrisDriveDeviceApprovalUITests/testDeviceApprovalUniversalLinkApprovesOnlyAfterTap" \
   "IRIS_DRIVE_UI_TEST_DEEP_LINK_REQUEST_B64=$linked_request_b64" \
   "IRIS_DRIVE_UI_TEST_LINKED_DEVICE_LABEL=iOS UI linked"
-assert_config_link_state "$SIM_APP_BASE_DIR" 2 1 "explicit universal-link approval"
+assert_config_link_state "$SIM_APP_BASE_DIR" 2 any "explicit universal-link approval"
 linked_deadline="$(approval_deadline "$STATE_FILE")"
 
-if ! sync_linked_device_before "$LINKED_CONFIG" "$linked_deadline"; then
-  echo "FAIL: linked CLI device did not apply the iOS approval within 15 seconds." >&2
+if ! assert_linked_device_exchange_observed_before \
+  "$LINKED_SYNC_OBSERVER_PID" \
+  "$LINKED_SYNC_OBSERVATION_FILE" \
+  "$LINKED_ACK_OBSERVATION_FILE" \
+  "$STATE_FILE" \
+  "$linked_deadline" \
+  "universal-link"; then
   "$IDRIVE" --config-dir "$LINKED_CONFIG" status >&2 || true
+  "$IDRIVE" --config-dir "$SIM_APP_BASE_DIR" status >&2 || true
   exit 1
 fi
-wait_for_approval_ack "$SIM_APP_BASE_DIR" "universal-link" "$linked_deadline"
+LINKED_SYNC_OBSERVER_PID=""
+rm -f "$LINKED_SYNC_OBSERVATION_FILE" "$LINKED_ACK_OBSERVATION_FILE"
+LINKED_SYNC_OBSERVATION_FILE=""
+LINKED_ACK_OBSERVATION_FILE=""
 
 manual_linked_json="$("$IDRIVE" --config-dir "$MANUAL_LINKED_CONFIG" link "$app_invite" --label "iOS UI manual")"
 manual_linked_device="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["current_app_key_npub"])' <<<"$manual_linked_json")"
 manual_linked_request="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["app_key_link_request"]["url"])' <<<"$manual_linked_json")"
 "$IDRIVE" --config-dir "$MANUAL_LINKED_CONFIG" relays add "$LOCAL_RELAY_URL" >/dev/null
 manual_linked_request_b64="$(printf '%s' "$manual_linked_request" | base64_value)"
+MANUAL_LINKED_SYNC_OBSERVATION_FILE="$(mktemp -t iris-drive-ios-ui-manual-linked-observed.XXXXXX)"
+MANUAL_LINKED_ACK_OBSERVATION_FILE="$(mktemp -t iris-drive-ios-ui-manual-linked-ack-observed.XXXXXX)"
+start_linked_device_sync_observer \
+  "$MANUAL_LINKED_CONFIG" \
+  "$SIM_APP_BASE_DIR" \
+  3 \
+  "$MANUAL_LINKED_SYNC_OBSERVATION_FILE" \
+  "$MANUAL_LINKED_ACK_OBSERVATION_FILE" \
+  MANUAL_LINKED_SYNC_OBSERVER_PID
 run_ui_test \
   "IrisDriveIOSUITests/IrisDriveIOSUITests/testAddLinkedDeviceFromDevices" \
   "IRIS_DRIVE_UI_TEST_LINKED_DEVICE=$manual_linked_device" \
   "IRIS_DRIVE_UI_TEST_LINKED_DEVICE_REQUEST_B64=$manual_linked_request_b64" \
   "IRIS_DRIVE_UI_TEST_LINKED_DEVICE_LABEL=iOS UI manual"
-assert_config_link_state "$SIM_APP_BASE_DIR" 3 1 "explicit manual approval"
+assert_config_link_state "$SIM_APP_BASE_DIR" 3 any "explicit manual approval"
 manual_linked_deadline="$(approval_deadline "$STATE_FILE")"
 
-if ! sync_linked_device_before "$MANUAL_LINKED_CONFIG" "$manual_linked_deadline"; then
-  echo "FAIL: manually linked CLI device did not apply the iOS approval within 15 seconds." >&2
+if ! assert_linked_device_exchange_observed_before \
+  "$MANUAL_LINKED_SYNC_OBSERVER_PID" \
+  "$MANUAL_LINKED_SYNC_OBSERVATION_FILE" \
+  "$MANUAL_LINKED_ACK_OBSERVATION_FILE" \
+  "$STATE_FILE" \
+  "$manual_linked_deadline" \
+  "manual-link"; then
   "$IDRIVE" --config-dir "$MANUAL_LINKED_CONFIG" status >&2 || true
+  "$IDRIVE" --config-dir "$SIM_APP_BASE_DIR" status >&2 || true
   exit 1
 fi
-wait_for_approval_ack "$SIM_APP_BASE_DIR" "manual-link" "$manual_linked_deadline"
+MANUAL_LINKED_SYNC_OBSERVER_PID=""
+rm -f "$MANUAL_LINKED_SYNC_OBSERVATION_FILE" "$MANUAL_LINKED_ACK_OBSERVATION_FILE"
+MANUAL_LINKED_SYNC_OBSERVATION_FILE=""
+MANUAL_LINKED_ACK_OBSERVATION_FILE=""
 
 STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
 if ! wait_for_debug_state \

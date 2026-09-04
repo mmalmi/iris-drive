@@ -2,10 +2,16 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# shellcheck source=scripts/lib/ios-xcuitest-accessibility-session.sh
+source "$ROOT/scripts/lib/ios-xcuitest-accessibility-session.sh"
+# shellcheck source=scripts/lib/mobile-physical-ios-xctest.sh
+source "$ROOT/scripts/lib/mobile-physical-ios-xctest.sh"
 MODE="${IRIS_DRIVE_MOBILE_PHYSICAL_LINKING:-auto}"
 WAIT_SECS="${IRIS_DRIVE_MOBILE_LINK_WAIT_SECS:-15}"
 CAMERA_WAIT_SECS="${IRIS_DRIVE_MOBILE_CAMERA_WAIT_SECS:-30}"
 POST_LINK_WAIT_SECS="${IRIS_DRIVE_MOBILE_POST_LINK_WAIT_SECS:-45}"
+IOS_RUNNER_START_WAIT_SECS="${IRIS_DRIVE_IOS_PHYSICAL_RUNNER_START_WAIT_SECS:-60}"
+IOS_BRIDGE_READY_WAIT_SECS="${IRIS_DRIVE_IOS_PHYSICAL_BRIDGE_READY_WAIT_SECS:-65}"
 REUSE_ANDROID_ARTIFACTS="${IRIS_DRIVE_MOBILE_REUSE_ANDROID_ARTIFACTS:-0}"
 ISOLATED_DEVICE="${IRIS_DRIVE_MOBILE_LINK_ISOLATED_DEVICE:-0}"
 ANDROID_PACKAGE="${IRIS_DRIVE_ANDROID_PHYSICAL_LINK_PACKAGE:-to.iris.drive.uitest}"
@@ -33,6 +39,8 @@ IOS_MARKER_NAME="iris-drive-physical-link-markers.log"
 IOS_MARKERS=""
 IOS_TEST_PID=""
 IOS_TEST_LOG=""
+IOS_TEST_RUN_FILE=""
+IOS_TEST_RESULT_BUNDLE=""
 IOS_SIGNAL_PREFIX=""
 ANDROID_SERIAL_SELECTED=""
 IOS_DEVICE_SELECTED=""
@@ -120,6 +128,9 @@ cleanup() {
     kill "$IOS_TEST_PID" >/dev/null 2>&1 || true
     wait "$IOS_TEST_PID" >/dev/null 2>&1 || true
   fi
+  if [[ -n "$IOS_TEST_RUN_FILE" && -f "$IOS_TEST_RUN_FILE" ]]; then
+    rm -f "$IOS_TEST_RUN_FILE"
+  fi
   if [[ -n "$ADB" && -n "$ANDROID_SERIAL_SELECTED" ]]; then
     "$ADB" -s "$ANDROID_SERIAL_SELECTED" shell am force-stop "$ANDROID_PACKAGE" >/dev/null 2>&1 || true
     if [[ "${IRIS_DRIVE_MOBILE_LINK_KEEP_ANDROID_APP:-0}" != "1" ]]; then
@@ -144,12 +155,24 @@ case "$MODE" in
   *) fail "unsupported IRIS_DRIVE_MOBILE_PHYSICAL_LINKING=$MODE" ;;
 esac
 
-for timeout_name in WAIT_SECS CAMERA_WAIT_SECS POST_LINK_WAIT_SECS; do
+for timeout_name in \
+  WAIT_SECS \
+  CAMERA_WAIT_SECS \
+  POST_LINK_WAIT_SECS \
+  IOS_RUNNER_START_WAIT_SECS \
+  IOS_BRIDGE_READY_WAIT_SECS
+do
   [[ "${!timeout_name}" =~ ^[1-9][0-9]*$ ]] \
     || fail "$timeout_name must be a positive integer"
 done
 if ((WAIT_SECS > 15)); then
   fail "IRIS_DRIVE_MOBILE_LINK_WAIT_SECS must be at most 15"
+fi
+if ((IOS_RUNNER_START_WAIT_SECS > 60)); then
+  fail "IRIS_DRIVE_IOS_PHYSICAL_RUNNER_START_WAIT_SECS must be at most 60"
+fi
+if ((IOS_BRIDGE_READY_WAIT_SECS > 65)); then
+  fail "IRIS_DRIVE_IOS_PHYSICAL_BRIDGE_READY_WAIT_SECS must be at most 65"
 fi
 
 resolve_adb() {
@@ -412,38 +435,61 @@ build_apps() {
   [[ -n "$XCTESTRUN" && -f "$XCTESTRUN" ]] || fail "iOS physical-link xctestrun was not built"
 }
 
-copy_ios_markers() {
-  rm -f "$IOS_MARKERS"
-  xcrun devicectl device copy from \
-    --device "$IOS_DEVICE_SELECTED" \
-    --domain-type appDataContainer \
-    --domain-identifier "$IOS_RUNNER_BUNDLE_ID" \
-    --source "Documents/$IOS_MARKER_NAME" \
-    --destination "$IOS_MARKERS" >/dev/null 2>&1
-}
-
-wait_for_ios_marker() {
-  local marker="$1"
-  local seconds="$2"
-  local deadline=$((SECONDS + seconds))
-  while (( SECONDS < deadline )); do
-    if copy_ios_markers \
-      && grep -Fxq "IRIS_XCUITEST_RUN_ID=$RUN_ID" "$IOS_MARKERS" \
-      && grep -Fq "$marker" "$IOS_MARKERS"; then
-      return 0
-    fi
-    if [[ -n "$IOS_TEST_PID" ]] && ! kill -0 "$IOS_TEST_PID" >/dev/null 2>&1; then
-      return 1
-    fi
-    sleep 0.25
-  done
-  return 1
-}
-
 assert_ios_provider_write_marker() {
   local expected
   expected="$(printf '%s' "$1" | sha256_text)"
   wait_for_ios_marker "IRIS_IOS_PROVIDER_WRITE_SHA256=$expected" 10
+}
+
+verify_xctestrun_products() {
+  local run_file="$1"
+  python3 - "$run_file" <<'PY'
+from pathlib import Path
+import plistlib
+import sys
+
+run_file = Path(sys.argv[1]).resolve()
+test_root = run_file.parent
+with run_file.open("rb") as handle:
+    data = plistlib.load(handle)
+
+targets = [
+    target
+    for target in data.values()
+    if isinstance(target, dict) and target.get("IsUITestBundle")
+]
+if len(targets) != 1:
+    raise SystemExit(f"expected one UI test target, found {len(targets)}")
+target = targets[0]
+
+def required_string(key):
+    value = target.get(key)
+    if not isinstance(value, str) or not value:
+        raise SystemExit(f"UI test target has invalid {key}")
+    return value
+
+test_host = Path(required_string("TestHostPath").replace("__TESTROOT__", str(test_root)))
+
+def resolve(value):
+    if not isinstance(value, str) or not value:
+        raise SystemExit("UI test target contains an invalid product path")
+    value = value.replace("__TESTROOT__", str(test_root))
+    value = value.replace("__TESTHOST__", str(test_host))
+    return Path(value)
+
+products = [
+    test_host,
+    resolve(required_string("TestBundlePath")),
+    resolve(required_string("UITargetAppPath")),
+]
+dependencies = target.get("DependentProductPaths")
+if not isinstance(dependencies, list):
+    raise SystemExit("UI test target has invalid DependentProductPaths")
+products.extend(resolve(value) for value in dependencies)
+missing = [str(path) for path in products if not path.exists()]
+if missing:
+    raise SystemExit("physical xctestrun product is missing: " + ", ".join(missing))
+PY
 }
 
 start_ios_test() {
@@ -452,7 +498,11 @@ start_ios_test() {
   local post_content="$3"
   local peer_file="$4"
   local manual_request="${5:-}"
-  local run_file="$TMP/$test_name.xctestrun"
+  local run_stem run_file
+  run_stem="$(mktemp "$(dirname "$XCTESTRUN")/IrisDriveIOS-physical-$test_name.XXXXXX")"
+  run_file="$run_stem.xctestrun"
+  mv "$run_stem" "$run_file"
+  IOS_TEST_RUN_FILE="$run_file"
   IOS_SIGNAL_PREFIX="$test_name"
   cp "$XCTESTRUN" "$run_file"
   python3 - "$run_file" \
@@ -490,13 +540,16 @@ if matched != 1:
 with open(path, "wb") as handle:
     plistlib.dump(data, handle)
 PY
+  verify_xctestrun_products "$run_file"
 
   IOS_TEST_LOG="$RESULT_DIR/ios-$test_name.log"
+  IOS_TEST_RESULT_BUNDLE="$RESULT_DIR/ios-$test_name-$RUN_ID.xcresult"
   rm -f "$IOS_MARKERS"
   xcodebuild \
     -xctestrun "$run_file" \
     -destination "platform=iOS,id=$IOS_DEVICE_SELECTED" \
     -only-testing:"IrisDriveIOSUITests/IrisDrivePhysicalLinkingUITests/$test_name" \
+    -resultBundlePath "$IOS_TEST_RESULT_BUNDLE" \
     test-without-building >"$IOS_TEST_LOG" 2>&1 &
   IOS_TEST_PID="$!"
 }
@@ -521,6 +574,8 @@ finish_ios_test() {
   wait "$IOS_TEST_PID" || status=$?
   IOS_TEST_PID=""
   IOS_SIGNAL_PREFIX=""
+  rm -f "$IOS_TEST_RUN_FILE"
+  IOS_TEST_RUN_FILE=""
   if [[ "$status" -ne 0 ]]; then
     tail -n 120 "$IOS_TEST_LOG" >&2 || true
     fail "iOS physical XCTest $test_name failed"
@@ -898,8 +953,18 @@ build_apps
 "$ADB" -s "$ANDROID_SERIAL_SELECTED" install -r -t "$ANDROID_TEST_APK" >/dev/null
 
 start_ios_test testPhysicalEnvironmentBridgeIsReady preflight.txt preflight none
-wait_for_ios_marker "IRIS_XCUITEST_ENVIRONMENT_READY=1" 30 \
-  || fail "enable UI Automation on the unlocked physical iOS device"
+wait_for_ios_runner_or_marker \
+  "IRIS_XCUITEST_ENVIRONMENT_READY=1" "$IOS_RUNNER_START_WAIT_SECS" \
+  || fail "physical iOS XCTest runner did not launch within ${IOS_RUNNER_START_WAIT_SECS}s"
+if ! wait_for_ios_marker "IRIS_XCUITEST_ENVIRONMENT_READY=1" "$IOS_BRIDGE_READY_WAIT_SECS"; then
+  if ios_xcuitest_accessibility_session_disabled_after "$IOS_TEST_LOG" 0; then
+    fail "physical iOS XCTest runner launched but UI Automation denied the accessibility session"
+  fi
+  if ios_xcuitest_automation_mode_timed_out_after "$IOS_TEST_LOG" 0; then
+    fail "physical iOS XCTest runner launched but iOS timed out enabling UI Automation"
+  fi
+  fail "physical iOS XCTest runner launched but the bridge test did not enter within ${IOS_BRIDGE_READY_WAIT_SECS}s"
+fi
 finish_ios_test testPhysicalEnvironmentBridgeIsReady
 
 run_ios_owner_android_joiner

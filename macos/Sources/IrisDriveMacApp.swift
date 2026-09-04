@@ -1798,7 +1798,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
             if self.externalDaemonMode || self.daemonServiceActive {
-                self.refreshExternalDaemonStatusFile(paths: paths)
+                // A config mutation can change authorization/profile state
+                // without changing every field in daemon-status.json. Always
+                // reload the authoritative CLI projection for filesystem
+                // events so an external approval cannot leave the UI stale.
+                self.refreshExternalDaemonStatus(paths: paths)
             } else {
                 let now = Date()
                 guard now.timeIntervalSince(self.lastAppManagedDaemonStatusRefreshAt)
@@ -2230,7 +2234,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self.updateStatus(success)
                     if restartSyncAfterSuccess {
                         if self.externalDaemonMode {
-                            self.refreshStatus()
+                            // The app can enter external-daemon mode before a
+                            // profile exists. Start supervision now that setup
+                            // created one so later daemon/config mutations are
+                            // observed and projected into the window.
+                            self.userRequestedSyncStop = false
+                            self.startDaemon(self.idriveExecutableURL(), paths: paths)
                         } else if self.daemonServiceSupervisionEnabled && self.daemon == nil {
                             self.userRequestedSyncStop = false
                             self.startDaemonService(
@@ -2579,22 +2588,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 } catch {
                     NSLog("Iris Drive external daemon status refresh failed: \(error)")
                 }
-            }
-        }
-    }
-
-    private func refreshExternalDaemonStatusFile(paths: IrisDriveRuntimePaths) {
-        DispatchQueue.global(qos: .utility).async {
-            let statusURL = paths.configDirectory.appendingPathComponent("daemon-status.json")
-            do {
-                let data = try Data(contentsOf: statusURL)
-                guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-                else {
-                    return
-                }
-                self.applyExternalDaemonStatusPayload(json)
-            } catch {
-                NSLog("Iris Drive external daemon status file refresh failed: \(error)")
             }
         }
     }

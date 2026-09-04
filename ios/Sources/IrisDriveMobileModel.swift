@@ -13,9 +13,6 @@ private let irisDriveFileProviderDisplayName = "Iris Drive"
 private let defaultRelay = "wss://relay.damus.io"
 private let defaultRelays = [defaultRelay]
 private let defaultBlossomServers = ["https://upload.iris.to"]
-private let iosDebugStateFileName = "debug-state.json"
-private let configMutationAuditDefaultsKey = "configMutationAuditV1"
-private let configMutationAuditMaxEvents = 20
 private let fileProviderPathIdentifierPrefix = "path:"
 private let fileProviderRegistrationIdentityKey = "fileProviderRegistrationIdentity"
 private let fileProviderRegistrationVersion = 5
@@ -39,23 +36,6 @@ private let fileProviderDebugRegistrationVersionKey = "fileProviderDebugRegistra
 private struct IrisWebPublisherProfileNameCacheEntry: Codable {
     var name: String
     var fetchedAt: TimeInterval
-}
-
-private struct ConfigIdentitySnapshot: Codable {
-    var hasProfile: Bool
-    var setupState: String
-    var profileId: String
-    var currentAppKeyNpub: String
-    var currentAppKeyLabel: String
-}
-
-private struct ConfigMutationAuditEvent: Codable {
-    var timestamp: String
-    var action: String
-    var debugAction: String
-    var before: ConfigIdentitySnapshot
-    var after: ConfigIdentitySnapshot
-    var error: String
 }
 
 struct IrisWebRoute: Identifiable {
@@ -118,12 +98,12 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var appleCalendarSyncStatus = "Off"
     @Published private var irisWebPublisherProfileNameCache: [String: IrisWebPublisherProfileNameCacheEntry] = [:]
 
-    private let defaults = UserDefaults.standard
+    let defaults = UserDefaults.standard
     private let nativeCore: IrisDriveNativeCore
     private let appleCalendarSync = IrisDriveAppleCalendarSync.shared
     private let nativeCoreQueue = DispatchQueue(label: "fi.siriusbusiness.drive.native-core", qos: .utility)
-    private var lastAppliedStateJson = ""
-    private var lastState: NativeAppState?
+    var lastAppliedStateJson = ""
+    var lastState: NativeAppState?
     private var fileProviderOpenAttempt = 0
     private var currentProviderSignalKey = ""
     private var lastProviderSignalKey = ""
@@ -1038,11 +1018,54 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private func syncOnceIfRunning() async {
+        let pendingBefore = lastState?.ui.profile?.pendingDeviceApprovalReceiptCount
+        recordForegroundSyncAudit(
+            phase: "cycle_start",
+            pendingBefore: pendingBefore,
+            pendingAfter: pendingBefore
+        )
         if !isRevoked, isSetupComplete {
+            if irisDriveShouldRunApprovalAckSync(
+                pendingApprovalReceiptCount: pendingBefore ?? 0
+            ) {
+                recordForegroundSyncAudit(
+                    phase: "approval_ack_sync_start",
+                    pendingBefore: pendingBefore,
+                    pendingAfter: pendingBefore
+                )
+                await dispatchInBackground(["type": "sync_approval_acks"])
+                recordForegroundSyncAudit(
+                    phase: "approval_ack_sync_end",
+                    pendingBefore: pendingBefore,
+                    pendingAfter: lastState?.ui.profile?.pendingDeviceApprovalReceiptCount
+                )
+                await runAppleCalendarSyncIfEnabled()
+                return
+            }
             if syncRunning, foregroundDriveSyncIsDue() {
+                recordForegroundSyncAudit(
+                    phase: "restart_sync_start",
+                    pendingBefore: pendingBefore,
+                    pendingAfter: pendingBefore
+                )
                 await dispatchInBackground(["type": "restart_sync"])
+                recordForegroundSyncAudit(
+                    phase: "restart_sync_end",
+                    pendingBefore: pendingBefore,
+                    pendingAfter: lastState?.ui.profile?.pendingDeviceApprovalReceiptCount
+                )
             } else {
+                recordForegroundSyncAudit(
+                    phase: "refresh_start",
+                    pendingBefore: pendingBefore,
+                    pendingAfter: pendingBefore
+                )
                 await refreshInBackground()
+                recordForegroundSyncAudit(
+                    phase: "refresh_end",
+                    pendingBefore: pendingBefore,
+                    pendingAfter: lastState?.ui.profile?.pendingDeviceApprovalReceiptCount
+                )
                 return
             }
         } else if !isRevoked, isAwaitingApproval {
@@ -1053,7 +1076,10 @@ final class IrisDriveMobileModel: ObservableObject {
 
     private func foregroundDriveSyncIsDue(now: Date = Date()) -> Bool {
         let elapsed = now.timeIntervalSince(lastForegroundDriveSyncStartedAt)
-        guard elapsed < 0 || elapsed >= foregroundDriveSyncMinimumIntervalSeconds else {
+        guard irisDriveForegroundSyncIsDue(
+            elapsed: elapsed,
+            pendingApprovalReceiptCount: lastState?.ui.profile?.pendingDeviceApprovalReceiptCount ?? 0
+        ) else {
             return false
         }
         lastForegroundDriveSyncStartedAt = now
@@ -1061,10 +1087,10 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private var foregroundSyncDelayNanoseconds: UInt64 {
-        if isAwaitingApproval && !isSetupComplete {
-            return awaitingApprovalForegroundSyncIntervalNanoseconds
-        }
-        return foregroundSyncIntervalNanoseconds
+        irisDriveForegroundSyncIntervalNanoseconds(
+            isAwaitingApproval: isAwaitingApproval && !isSetupComplete,
+            pendingApprovalReceiptCount: lastState?.ui.profile?.pendingDeviceApprovalReceiptCount ?? 0
+        )
     }
 
     func createProfile(username: String = "", profilePhotoName: String = "") {
@@ -2239,6 +2265,10 @@ final class IrisDriveMobileModel: ObservableObject {
         }
     }
 
+    func nativeStateJsonForAudit() -> String {
+        runNative { $0.stateJson() }
+    }
+
     private func runNative<T>(_ operation: (IrisDriveNativeCore) -> T) -> T {
         nativeCoreQueue.sync { operation(nativeCore) }
     }
@@ -2260,6 +2290,8 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private func applyStateJson(_ json: String) {
+        let previousPendingReceiptCount =
+            lastState?.ui.profile?.pendingDeviceApprovalReceiptCount
         guard let data = json.data(using: .utf8),
               let state = try? JSONDecoder().decode(NativeAppState.self, from: data)
         else {
@@ -2278,6 +2310,18 @@ final class IrisDriveMobileModel: ObservableObject {
         lastAppliedStateJson = json
         stateLoaded = true
         lastState = state
+        let currentPendingReceiptCount =
+            state.ui.profile?.pendingDeviceApprovalReceiptCount
+        if irisDriveShouldAuditPendingReceiptTransition(
+            from: previousPendingReceiptCount,
+            to: currentPendingReceiptCount
+        ) {
+            appendForegroundSyncAudit(
+                phase: "pending_receipt_transition",
+                pendingBefore: previousPendingReceiptCount,
+                pendingAfter: currentPendingReceiptCount
+            )
+        }
         rebuildDerivedState()
         writeDebugState(json)
         reconcileForegroundWorkIfAppActive()
@@ -2286,90 +2330,6 @@ final class IrisDriveMobileModel: ObservableObject {
     private func reconcileForegroundWorkIfAppActive() {
         guard UIApplication.shared.applicationState == .active else { return }
         startForegroundSyncLoop()
-    }
-
-    private func writeDebugState(_ json: String) {
-        #if DEBUG
-        writeDebugState(
-            json,
-            to: IrisDriveSharedContainer.baseDirectory
-                .appendingPathComponent(iosDebugStateFileName, isDirectory: false)
-        )
-        if let documents = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first {
-            writeDebugState(
-                json,
-                to: documents.appendingPathComponent(iosDebugStateFileName, isDirectory: false)
-            )
-        }
-        #endif
-    }
-
-    private func writeDebugState(_ json: String, to url: URL) {
-        #if DEBUG
-        try? FileManager.default.createDirectory(
-            at: url.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        let debugJson = jsonWithConfigMutationAudit(json)
-        try? debugJson.write(to: url, atomically: true, encoding: .utf8)
-        #endif
-    }
-
-    private func configIdentitySnapshot() -> ConfigIdentitySnapshot {
-        let profile = lastState?.ui.profile
-        return ConfigIdentitySnapshot(
-            hasProfile: profile != nil,
-            setupState: lastState?.ui.setupState ?? "",
-            profileId: profile?.profileId ?? "",
-            currentAppKeyNpub: profile?.currentAppKeyNpub ?? "",
-            currentAppKeyLabel: profile?.appKeyLabel ?? ""
-        )
-    }
-
-    private func recordConfigMutation(action: String, before: ConfigIdentitySnapshot) {
-        let event = ConfigMutationAuditEvent(
-            timestamp: ISO8601DateFormatter().string(from: Date()),
-            action: action,
-            debugAction: ProcessInfo.processInfo.environment["IRIS_DRIVE_DEBUG_ACTION"] ?? "",
-            before: before,
-            after: configIdentitySnapshot(),
-            error: lastState?.error ?? ""
-        )
-        var events = configMutationAuditEvents()
-        events.append(event)
-        if events.count > configMutationAuditMaxEvents {
-            events.removeFirst(events.count - configMutationAuditMaxEvents)
-        }
-        guard let data = try? JSONEncoder().encode(events) else { return }
-        defaults.set(data, forKey: configMutationAuditDefaultsKey)
-        writeDebugState(runNative { $0.stateJson() })
-    }
-
-    private func configMutationAuditEvents() -> [ConfigMutationAuditEvent] {
-        guard let data = defaults.data(forKey: configMutationAuditDefaultsKey),
-              let events = try? JSONDecoder().decode([ConfigMutationAuditEvent].self, from: data)
-        else {
-            return []
-        }
-        return events
-    }
-
-    private func jsonWithConfigMutationAudit(_ json: String) -> String {
-        guard let data = json.data(using: .utf8),
-              var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
-              let auditData = try? JSONEncoder().encode(configMutationAuditEvents()),
-              let audit = try? JSONSerialization.jsonObject(with: auditData)
-        else {
-            return json
-        }
-        object["ios_config_mutation_audit"] = audit
-        guard let output = try? JSONSerialization.data(
-            withJSONObject: object,
-            options: [.prettyPrinted, .sortedKeys]
-        ) else {
-            return json
-        }
-        return String(data: output, encoding: .utf8) ?? json
     }
 
     private func signalFileProviderIfNeeded() {

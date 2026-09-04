@@ -76,13 +76,46 @@ fn drive_root_event_roundtrip_preserves_causal_fields() {
         &root_scope_id,
         "main",
         &root,
-        &[device.public_key().to_hex(), observed_device],
+        &[device.public_key().to_hex(), observed_device.clone()],
     )
     .unwrap();
     let (_, _, _, parsed_root) = parse_drive_root_event_for_device(&event, &device).unwrap();
     assert_eq!(parsed_root.app_key_seq, 3);
-    assert_eq!(parsed_root.parents, vec![parent]);
-    assert_eq!(parsed_root.observed, observed);
+    assert_eq!(
+        parsed_root.parents,
+        vec![RootParent {
+            root_cid: hashtree_core::to_hex(&Cid::parse(&parent.root_cid).unwrap().hash),
+            ..parent.clone()
+        }]
+    );
+    assert_eq!(
+        parsed_root.observed.get(&observed_device).unwrap().root_cid,
+        hashtree_core::to_hex(
+            &Cid::parse(&observed[&observed_device].root_cid)
+                .unwrap()
+                .hash
+        )
+    );
+    assert!(
+        !event.content.contains(
+            &Cid::parse(&parent.root_cid)
+                .unwrap()
+                .key
+                .map(hex::encode)
+                .unwrap()
+        ),
+        "causal metadata must not disclose parent root capabilities"
+    );
+    assert!(
+        !event.content.contains(
+            &Cid::parse(&observed[&observed_device].root_cid)
+                .unwrap()
+                .key
+                .map(hex::encode)
+                .unwrap()
+        ),
+        "causal metadata must not disclose observed root capabilities"
+    );
 }
 
 #[test]

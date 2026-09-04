@@ -13,6 +13,8 @@
 		0E0EA5ABF3A312874452F666 /* IrisDriveMobileBackups.swift in Sources */ = {isa = PBXBuildFile; fileRef = 31FD6FE77F71CF8F6241C514 /* IrisDriveMobileBackups.swift */; };
 		173851D5484917DAD3A219FE /* IrisDriveClipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = 78AFFB8E68F8FF140C442B9C /* IrisDriveClipboard.swift */; };
 		1AD14AA0F5B7D9B4C1124FC7 /* IrisDriveMobileModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = D087872557C2BC55EDB84930 /* IrisDriveMobileModel.swift */; };
+		1F2E01B263322F0FABB999B0 /* ApprovalReceiptForegroundSyncTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB4F84F93BE16A87E321C9B7 /* ApprovalReceiptForegroundSyncTests.swift */; };
+		2616C240B1322322EAF0C007 /* IrisDriveMobileModel+Audit.swift in Sources */ = {isa = PBXBuildFile; fileRef = E557F08ED7154F5CEFEE24FB /* IrisDriveMobileModel+Audit.swift */; };
 		2676BB10C5BF12BE68411FE0 /* FileProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = C789203391687925DEAB3576 /* FileProviderItem.swift */; };
 		2B7BF5F5C0309E423C967CC9 /* back-hit-test.html in Resources */ = {isa = PBXBuildFile; fileRef = 7CA3DF1C0E66C469EE9CCFB8 /* back-hit-test.html */; };
 		317C357A9221DCC0CE22A6E0 /* IrisDriveShareExtension.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = D4FC18243848BE0ED14785D0 /* IrisDriveShareExtension.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
@@ -154,6 +156,7 @@
 		B2B2A54EBAE0804BBCC2964E /* FileProviderEnumerator.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderEnumerator.swift; sourceTree = "<group>"; };
 		B2C21C908DBB23960AAC56A6 /* IrisDriveMobileBrowser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveMobileBrowser.swift; sourceTree = "<group>"; };
 		B7C58D499ABF89689689DEBD /* IrisDriveCalendarModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveCalendarModels.swift; sourceTree = "<group>"; };
+		BB4F84F93BE16A87E321C9B7 /* ApprovalReceiptForegroundSyncTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ApprovalReceiptForegroundSyncTests.swift; sourceTree = "<group>"; };
 		C490A3FFF0BAED4EB2A1E5F9 /* FileProviderExtension.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderExtension.swift; sourceTree = "<group>"; };
 		C5776131C4E7DA77C3A533FB /* IrisDriveContentLinks.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveContentLinks.swift; sourceTree = "<group>"; };
 		C789203391687925DEAB3576 /* FileProviderItem.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileProviderItem.swift; sourceTree = "<group>"; };
@@ -165,6 +168,7 @@
 		DBC171DD1C2DE89B561ADE85 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		DFFCB22B1FE65968BC0862BE /* ShareItemImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareItemImporter.swift; sourceTree = "<group>"; };
 		E41F97CC4C0E1F6DFCF75979 /* keyboard-viewport.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "keyboard-viewport.html"; sourceTree = "<group>"; };
+		E557F08ED7154F5CEFEE24FB /* IrisDriveMobileModel+Audit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IrisDriveMobileModel+Audit.swift"; sourceTree = "<group>"; };
 		F5DF48D5DED6EBB1E1A738ED /* IrisDriveAppleCalendarSync.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveAppleCalendarSync.swift; sourceTree = "<group>"; };
 		FCFC0E0CEE626FB9B8A4F1D3 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		FE91FC48A66D089D44B648C1 /* IrisDriveIOSUITests.xctest */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.cfbundle; path = IrisDriveIOSUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -175,6 +179,7 @@
 		14B10359D2E3EF761CCD5D9E /* UnitTests */ = {
 			isa = PBXGroup;
 			children = (
+				BB4F84F93BE16A87E321C9B7 /* ApprovalReceiptForegroundSyncTests.swift */,
 				9E4B164F4746113107B49D91 /* IrisWebGatewayRetryTests.swift */,
 				CE2C4253593D33F7F23D75FE /* ShareItemImporterTests.swift */,
 			);
@@ -245,6 +250,7 @@
 				B2C21C908DBB23960AAC56A6 /* IrisDriveMobileBrowser.swift */,
 				27F50A528A1A7D8F67198F84 /* IrisDriveMobileBrowserDebug.swift */,
 				D087872557C2BC55EDB84930 /* IrisDriveMobileModel.swift */,
+				E557F08ED7154F5CEFEE24FB /* IrisDriveMobileModel+Audit.swift */,
 				51A215568D3B9E51946DE326 /* IrisDriveNativeCore.swift */,
 				ABD444DC604210414F3FDE54 /* IrisDriveNativeFipsStatus.swift */,
 				050F38C17BF67B7645C1572B /* IrisDriveRootView.swift */,
@@ -547,6 +553,7 @@
 				0E0EA5ABF3A312874452F666 /* IrisDriveMobileBackups.swift in Sources */,
 				46FB7CC3A4BBDB15C3882988 /* IrisDriveMobileBrowser.swift in Sources */,
 				67EC48DA8DFCEC820707F50B /* IrisDriveMobileBrowserDebug.swift in Sources */,
+				2616C240B1322322EAF0C007 /* IrisDriveMobileModel+Audit.swift in Sources */,
 				1AD14AA0F5B7D9B4C1124FC7 /* IrisDriveMobileModel.swift in Sources */,
 				6D070FE16A7563F4606BA7A6 /* IrisDriveNativeCore.swift in Sources */,
 				F41146F818216FEFA22D08D4 /* IrisDriveNativeFipsStatus.swift in Sources */,
@@ -583,6 +590,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				1F2E01B263322F0FABB999B0 /* ApprovalReceiptForegroundSyncTests.swift in Sources */,
 				475352EA0C4DBE384F2485B0 /* IrisWebGatewayRetryTests.swift in Sources */,
 				DF01644D115BD8E0B2580704 /* ShareItemImporter.swift in Sources */,
 				0BCF72504B29C05F66B5CC1B /* ShareItemImporterTests.swift in Sources */,
@@ -679,7 +687,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1034;
+				CURRENT_PROJECT_VERSION = 1035;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 8G9P8AN75D;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -707,7 +715,7 @@
 				IRIS_DRIVE_IOS_SHARE_EXTENSION_TESTS_BUNDLE_ID = fi.siriusbusiness.drive.ShareExtensionTests;
 				IRIS_DRIVE_IOS_SHARE_SOURCE_BUNDLE_ID = fi.siriusbusiness.drive.ShareSource;
 				IRIS_DRIVE_IOS_UI_TESTS_BUNDLE_ID = fi.siriusbusiness.drive.UITests;
-				MARKETING_VERSION = 0.1.33;
+				MARKETING_VERSION = 0.1.34;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -835,7 +843,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1034;
+				CURRENT_PROJECT_VERSION = 1035;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 8G9P8AN75D;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -857,7 +865,7 @@
 				IRIS_DRIVE_IOS_SHARE_EXTENSION_TESTS_BUNDLE_ID = fi.siriusbusiness.drive.ShareExtensionTests;
 				IRIS_DRIVE_IOS_SHARE_SOURCE_BUNDLE_ID = fi.siriusbusiness.drive.ShareSource;
 				IRIS_DRIVE_IOS_UI_TESTS_BUNDLE_ID = fi.siriusbusiness.drive.UITests;
-				MARKETING_VERSION = 0.1.33;
+				MARKETING_VERSION = 0.1.34;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

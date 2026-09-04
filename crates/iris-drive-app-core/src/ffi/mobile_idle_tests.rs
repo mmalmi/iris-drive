@@ -13,8 +13,9 @@ use super::mobile_fips_status::{
 };
 use super::{
     APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS, APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS, FfiApp,
-    NATIVE_FIPS_STATUS_FRESH_SECS, NativeAppConfigCache, app_key_link_exchange_tick_millis,
-    native_action_uses_short_config_transaction,
+    NATIVE_FIPS_STATUS_FRESH_SECS, NativeAppConfigCache, ProviderSummaryMode,
+    app_key_link_exchange_tick_millis, native_action_uses_short_config_transaction,
+    provider_summary_mode_for_action,
 };
 use crate::NativeAppAction;
 
@@ -230,22 +231,39 @@ fn app_key_link_exchange_uses_fast_ticks_only_while_approval_is_pending() {
         .unwrap();
 
     assert_eq!(
-        app_key_link_exchange_tick_millis(Some(&linked.state)),
+        app_key_link_exchange_tick_millis(Some(&linked.state), false),
         APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS
     );
     linked.state.authorization_state = AppKeyAuthorizationState::Authorized;
     assert!(linked.state.outbound_app_key_link_request.is_some());
     assert_eq!(
-        app_key_link_exchange_tick_millis(Some(&linked.state)),
+        app_key_link_exchange_tick_millis(Some(&linked.state), false),
         APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS,
-        "a retained request must not keep an authorized device on the fast approval loop"
+        "a retained request without a receipt must not keep an authorized device on the fast approval loop"
+    );
+    linked
+        .state
+        .outbound_app_key_link_request
+        .as_mut()
+        .unwrap()
+        .approval_receipt_event
+        .insert("signed approval receipt".to_owned());
+    assert_eq!(
+        app_key_link_exchange_tick_millis(Some(&linked.state), false),
+        APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS,
+        "an applied receipt must retry its ACK within the approval SLA"
     );
     assert_eq!(
-        app_key_link_exchange_tick_millis(Some(&owner.state)),
+        app_key_link_exchange_tick_millis(Some(&linked.state), true),
+        APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS,
+        "a successfully delivered approval ACK must leave the one-second retry loop"
+    );
+    assert_eq!(
+        app_key_link_exchange_tick_millis(Some(&owner.state), true),
         APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS
     );
     assert_eq!(
-        app_key_link_exchange_tick_millis(None),
+        app_key_link_exchange_tick_millis(None, false),
         APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS
     );
 }
@@ -266,6 +284,22 @@ fn app_key_link_actions_serialize_only_short_config_transactions() {
             target: "backup".into(),
         }
     ));
+}
+
+#[test]
+fn device_approval_reloads_roster_without_scanning_provider_contents() {
+    assert_eq!(
+        provider_summary_mode_for_action(&NativeAppAction::ApproveDevice {
+            request: "request".into(),
+            label: "Phone".into(),
+        }),
+        ProviderSummaryMode::Skip,
+        "the confirmed roster must reach mobile UI before provider projection work"
+    );
+    assert_eq!(
+        provider_summary_mode_for_action(&NativeAppAction::Refresh),
+        ProviderSummaryMode::Refresh,
+    );
 }
 
 #[test]

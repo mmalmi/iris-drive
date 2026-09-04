@@ -5,6 +5,10 @@ use iris_drive_core::AppConfig;
 use iris_drive_core::paths::config_path_in;
 use nostr_sdk::{Event, JsonUtil};
 use std::path::Path;
+use std::sync::{Arc, Mutex};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+mod root_publish_tests;
 
 fn apply_owner_profile_roster_to_linked_config(owner_dir: &Path, linked_dir: &Path) {
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir)).unwrap();

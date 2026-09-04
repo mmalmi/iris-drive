@@ -26,7 +26,7 @@ use iris_drive_core::{
     merge::{AppKeyFileEntry, AppKeySnapshot, AppKeyTombstone, merge_drives},
     paths::{config_path_in, default_config_dir, default_mountpoint_in, key_path_in},
 };
-use nostr_sdk::{Event, JsonUtil, PublicKey, RelayStatus};
+use nostr_sdk::{Event, JsonUtil, RelayStatus};
 use serde::Serialize;
 use serde_json::{Value, json};
 

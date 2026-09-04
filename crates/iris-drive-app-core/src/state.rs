@@ -117,6 +117,7 @@ pub struct UiProfile {
     pub app_key_link_request: String,
     pub app_key_link_invite: String,
     pub inbound_app_key_link_requests: Vec<UiAppKeyLinkRequest>,
+    pub pending_device_approval_receipt_count: u64,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

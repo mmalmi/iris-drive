@@ -216,6 +216,8 @@ if xcrun devicectl device copy from \
   echo "webview_screenshot=$probe_screenshot"
 else
   rm -f "$probe_screenshot"
+  echo "FAIL: device Iris Apps WebView screenshot was not copied." >&2
+  exit 1
 fi
 
 python3 - "$probe_json" "$MAX_OPEN_MS" <<'PY'
@@ -230,6 +232,29 @@ if not data.get("opened"):
     raise SystemExit(f"FAIL: device Iris Apps probe did not open: {data}")
 if not data.get("webview_loaded"):
     raise SystemExit(f"FAIL: device Iris Apps WebView did not load: {data}")
+if data.get("webview_ready_state") != "complete":
+    raise SystemExit(f"FAIL: device Iris Apps WebView document is not complete: {data}")
+if data.get("webview_title") != "Iris: The Freedom Toolkit":
+    raise SystemExit(f"FAIL: device Iris Apps WebView title is not the launcher: {data}")
+if (data.get("webview_error") or "") or (data.get("webview_error_domain") or "") or int(data.get("webview_error_code") or 0):
+    raise SystemExit(f"FAIL: device Iris Apps WebView retained a navigation error: {data}")
+if not (data.get("webview_screenshot_path") or "") or (data.get("webview_screenshot_error") or ""):
+    raise SystemExit(f"FAIL: device Iris Apps WebView did not persist a clean screenshot: {data}")
+required_http_200 = [
+    ("route_http_ok", "route_http_status_code", "route_http"),
+    ("route_proxy_http_ok", "route_proxy_http_status_code", "route_proxy_http"),
+    ("embedded_route_http_ok", "embedded_route_http_status_code", "embedded_route_http"),
+    ("embedded_resolve_http_ok", "embedded_resolve_http_status_code", "embedded_resolve_http"),
+    ("embedded_cached_resolve_http_ok", "embedded_cached_resolve_http_status_code", "embedded_cached_resolve_http"),
+    ("hashtree_status_ok", "hashtree_status_code", "hashtree_status"),
+]
+for ok_key, status_key, label in required_http_200:
+    if not data.get(ok_key) or int(data.get(status_key) or 0) != 200:
+        raise SystemExit(f"FAIL: device Iris Apps {label} probe was not HTTP 200: {data}")
+if not data.get("gateway_status_present") or not data.get("gateway_status_running"):
+    raise SystemExit(f"FAIL: device Iris Apps gateway status is not running: {data}")
+if data.get("gateway_status_state") != "running" or (data.get("gateway_status_error") or ""):
+    raise SystemExit(f"FAIL: device Iris Apps gateway retained an error state: {data}")
 body_text = (data.get("webview_body_text") or "").strip()
 body_lower = body_text.lower()
 failure_markers = [
@@ -261,6 +286,9 @@ webview_elapsed = int(data.get("webview_elapsed_ms") or 0)
 html_length = int(data.get("webview_html_length") or 0)
 if html_length < 1000:
     raise SystemExit(f"FAIL: device Iris Apps WebView rendered too little HTML to be the launcher: {data}")
+html_prefix = (data.get("webview_html_prefix") or "").lower()
+if 'id="app"' not in html_prefix and "id='app'" not in html_prefix:
+    raise SystemExit(f"FAIL: device Iris Apps WebView did not materialize the app root: {data}")
 launcher_markers = ["drive", "chat", "contacts"]
 missing_markers = [marker for marker in launcher_markers if marker not in body_lower]
 if missing_markers:

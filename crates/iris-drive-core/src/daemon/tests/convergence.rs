@@ -1,6 +1,37 @@
 use super::*;
 
 #[tokio::test]
+async fn device_approval_handoff_creates_a_publishable_empty_main_root() {
+    let cfg_dir = tempdir().unwrap();
+    let account = init_config_with_account(cfg_dir.path());
+    let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+
+    let report = daemon
+        .materialize_primary_merged_root_for_device_approval()
+        .await
+        .unwrap()
+        .expect("empty profiles still need an explicit root handoff");
+
+    assert_eq!(report.file_count, 0);
+    let root = daemon
+        .config()
+        .drive(PRIMARY_DRIVE_ID)
+        .unwrap()
+        .app_key_roots
+        .get(&account.state.app_key_pubkey)
+        .unwrap();
+    assert!(!root.local_only);
+    assert!(Cid::parse(&root.root_cid).unwrap().is_encrypted());
+    assert!(
+        daemon
+            .materialize_primary_merged_root_for_device_approval()
+            .await
+            .unwrap()
+            .is_none()
+    );
+}
+
+#[tokio::test]
 #[allow(clippy::too_many_lines)]
 async fn materialize_primary_merged_root_converges_accepted_remote_files() {
     let cfg_dir = tempdir().unwrap();
@@ -112,5 +143,96 @@ async fn materialize_primary_merged_root_converges_accepted_remote_files() {
             .map(|entry| entry.path.as_str())
             .collect::<Vec<_>>(),
         vec!["mac.txt", "pixel.txt"]
+    );
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn device_approval_handoff_materializes_complete_publishable_view_once() {
+    let cfg_dir = tempdir().unwrap();
+    let mut account = init_config_with_account(cfg_dir.path());
+    let remote = Identity::generate(cfg_dir.path().join("remote-approval.key")).pubkey_hex();
+    let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+
+    let local_dir = tempdir().unwrap();
+    std::fs::write(local_dir.path().join("ios.txt"), b"from ios").unwrap();
+    daemon.import_source_dir(local_dir.path()).await.unwrap();
+    let remote_dir = tempdir().unwrap();
+    std::fs::write(remote_dir.path().join("web.txt"), b"from web").unwrap();
+    let remote_meta = DriveRootMeta {
+        schema: DriveRootMeta::SCHEMA,
+        drive_id: PRIMARY_DRIVE_ID.into(),
+        app_key_pubkey: remote.clone(),
+        app_key_seq: 1,
+        dck_generation: 1,
+        local_only: false,
+        parents: Vec::new(),
+        observed: BTreeMap::new(),
+        created_at: 100,
+    };
+    let remote_root = crate::indexer::index_dir_with_history_and_meta(
+        daemon.tree(),
+        remote_dir.path(),
+        None,
+        100,
+        Some(&remote_meta),
+    )
+    .await
+    .unwrap();
+    drop(daemon);
+
+    account
+        .approve_app_key(&remote, Some("Web".into()))
+        .unwrap();
+    let mut config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
+    config.profile = Some(account.state.clone());
+    let mut drive = config.drive(PRIMARY_DRIVE_ID).unwrap().clone();
+    drive.app_key_roots.insert(
+        remote.clone(),
+        AppKeyRootRef::from_meta(remote_root.to_string(), 100, &remote_meta),
+    );
+    config.upsert_drive(drive);
+    config.save(config_path_in(cfg_dir.path())).unwrap();
+
+    let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let report = daemon
+        .materialize_primary_merged_root_for_device_approval()
+        .await
+        .unwrap()
+        .expect("two-AppKey view needs a handoff snapshot");
+    assert_eq!(report.file_count, 2);
+    let root = daemon
+        .config()
+        .drive(PRIMARY_DRIVE_ID)
+        .unwrap()
+        .app_key_roots
+        .get(&account.state.app_key_pubkey)
+        .unwrap();
+    assert!(!root.local_only);
+    let remote_root_string = remote_root.to_string();
+    assert_eq!(
+        root.observed
+            .get(&remote)
+            .map(|seen| seen.root_cid.as_str()),
+        Some(remote_root_string.as_str())
+    );
+    let cid = Cid::parse(&root.root_cid).unwrap();
+    let (files, _) = crate::merge::walk_app_key_tree(daemon.tree(), &cid)
+        .await
+        .unwrap();
+    assert_eq!(
+        files
+            .iter()
+            .map(|file| file.path.as_str())
+            .collect::<Vec<_>>(),
+        vec!["ios.txt", "web.txt"]
+    );
+    assert!(
+        daemon
+            .materialize_primary_merged_root_for_device_approval()
+            .await
+            .unwrap()
+            .is_none(),
+        "approval publish retries must reuse the already complete root"
     );
 }

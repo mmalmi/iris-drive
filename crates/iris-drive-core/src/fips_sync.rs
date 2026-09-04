@@ -45,9 +45,14 @@ use download::download_tree_with_router;
 use endpoint_config::bind_drive_fips_endpoint;
 use nostr_runtime::DriveNostrPubsubRuntime;
 pub use nostr_runtime::FipsNostrPubsubEvent;
+use peer_config::{
+    FipsPeerConfigSnapshot, authenticated_local_inbound_capability, fips_peer_config_snapshot,
+    peer_ids, set_drive_fips_peer_configs,
+};
 #[cfg(test)]
-use peer_config::drive_core_peer_configs;
-use peer_config::{peer_ids, set_drive_fips_peer_configs};
+use peer_config::{
+    LocalInboundCapability, drive_core_peer_configs, local_inbound_capability_from_event,
+};
 use peer_refresh::PeerConfigRefresh;
 use recent_peer_cache::{DriveRecentPeers, recent_peers_file_path, unix_time_ms};
 use settings_runtime::fips_endpoint_options;
@@ -161,6 +166,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         } = endpoint;
 
         let application_peers = authorized_device_fips_peers(config, &transport_settings);
+        let outbound_connect_peers = pending_app_key_link_fips_peers(config, &transport_settings);
         let routing_peers = routing_fips_peers(config, &transport_settings);
         let blob_peers = authorized_blob_fips_peers(config, &transport_settings);
         let recent_peers = recent_peers_path.and_then(|path| {
@@ -175,6 +181,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             native_endpoint.as_ref(),
             &local_peer_id,
             &application_peers,
+            &outbound_connect_peers,
             endpoint_peers,
         )
         .await
@@ -201,8 +208,11 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         let nostr_receiver = nostr_runtime
             .as_ref()
             .map(|runtime| tokio::sync::Mutex::new(runtime.subscribe()));
+        let local_inbound_capability =
+            authenticated_local_inbound_capability(native_endpoint.as_ref(), &local_peer_id).await;
         let peer_snapshot = fips_peer_config_snapshot(
             Some(local_peer_id.as_str()),
+            local_inbound_capability,
             &application_peers,
             &routing_peers,
             &blob_peers,
@@ -280,10 +290,16 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         refresh: peer_refresh::PeerConfigRefreshGuard<'_>,
     ) {
         let application_peers = authorized_device_fips_peers(config, &self.transport_settings);
+        let outbound_connect_peers =
+            pending_app_key_link_fips_peers(config, &self.transport_settings);
         let routing_peers = routing_fips_peers(config, &self.transport_settings);
         let blob_peers = authorized_blob_fips_peers(config, &self.transport_settings);
+        let local_inbound_capability =
+            authenticated_local_inbound_capability(self.endpoint.as_ref(), &self.endpoint_npub)
+                .await;
         let snapshot = fips_peer_config_snapshot(
             Some(self.endpoint_npub.as_str()),
+            local_inbound_capability,
             &application_peers,
             &routing_peers,
             &blob_peers,
@@ -298,6 +314,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             self.endpoint.as_ref(),
             &self.endpoint_npub,
             &application_peers,
+            &outbound_connect_peers,
             endpoint_peers,
         )
         .await
@@ -631,53 +648,6 @@ fn control_bootstrap_topics() -> BTreeSet<&'static str> {
         APP_KEY_LINK_ROSTER_APP_TOPIC,
         APP_KEY_LINK_ROSTER_ACK_APP_TOPIC,
     ])
-}
-
-#[derive(Debug, Clone, Eq, PartialEq)]
-struct FipsPeerConfigSnapshot {
-    application: Vec<FipsPeerConfig>,
-    routing: Vec<FipsPeerConfig>,
-    blob: Vec<FipsPeerConfig>,
-}
-
-fn fips_peer_config_snapshot(
-    local: Option<&str>,
-    application_peers: &[FipsPeerConfig],
-    routing_peers: &[FipsPeerConfig],
-    blob_peers: &[FipsPeerConfig],
-) -> FipsPeerConfigSnapshot {
-    let mut seen = std::collections::HashSet::new();
-    let mut blob_seen = std::collections::HashSet::new();
-    FipsPeerConfigSnapshot {
-        application: normalize_fips_peer_configs(local, application_peers, &mut seen),
-        routing: normalize_fips_peer_configs(local, routing_peers, &mut seen),
-        blob: normalize_fips_peer_configs(local, blob_peers, &mut blob_seen),
-    }
-}
-
-fn normalize_fips_peer_configs(
-    local: Option<&str>,
-    peers: &[FipsPeerConfig],
-    seen: &mut std::collections::HashSet<String>,
-) -> Vec<FipsPeerConfig> {
-    let mut out = Vec::new();
-    for peer in peers {
-        let npub = peer.npub.trim().to_string();
-        if npub.is_empty() || Some(npub.as_str()) == local || !seen.insert(npub.clone()) {
-            continue;
-        }
-        let udp_addresses = peer
-            .udp_addresses
-            .iter()
-            .map(|addr| addr.trim().to_string())
-            .filter(|addr| !addr.is_empty())
-            .collect();
-        out.push(FipsPeerConfig {
-            npub,
-            udp_addresses,
-        });
-    }
-    out
 }
 
 #[must_use]

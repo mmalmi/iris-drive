@@ -10,6 +10,7 @@ enum LinkDriverError: Error, CustomStringConvertible {
     case missingDialog(String)
     case missingElement(String)
     case pressFailed(String, AXError)
+    case actionOutcomeUnknown(String, AXError)
     case setValueFailed(String, AXError)
 
     var description: String {
@@ -26,6 +27,8 @@ enum LinkDriverError: Error, CustomStringConvertible {
             return "stage=\(stage) category=missing_element"
         case .pressFailed(let stage, let error):
             return "stage=\(stage) category=press_failed code=\(error.rawValue)"
+        case .actionOutcomeUnknown(let stage, let error):
+            return "stage=\(stage) category=action_outcome_unknown code=\(error.rawValue)"
         case .setValueFailed(let stage, let error):
             return "stage=\(stage) category=value_failed code=\(error.rawValue)"
         }
@@ -115,8 +118,21 @@ func press(
                     if error == .success {
                         return
                     }
+                    // SwiftUI may tear down an Alert action during AXPress.
+                    // These two errors can be returned after dispatch, so a
+                    // second press could duplicate the product action. The
+                    // caller must resolve the outcome from authoritative app
+                    // state instead.
+                    if error == .cannotComplete || error == .attributeUnsupported {
+                        var pid = pid_t()
+                        if AXUIElementGetPid(application, &pid) == .success,
+                           kill(pid, 0) == 0
+                        {
+                            throw LinkDriverError.actionOutcomeUnknown(stage, error)
+                        }
+                    }
                     lastError = error
-                    break
+                    throw LinkDriverError.pressFailed(stage, lastError)
                 }
                 guard let parent = attribute(element, kAXParentAttribute) else { break }
                 element = parent as! AXUIElement
@@ -287,6 +303,12 @@ do {
 } catch LinkDriverError.accessibilityPermission {
     fputs("macOS device-link UI driver failed: \(LinkDriverError.accessibilityPermission)\n", stderr)
     exit(75)
+} catch let error as LinkDriverError {
+    fputs("macOS device-link UI driver failed: \(error)\n", stderr)
+    if case .actionOutcomeUnknown = error {
+        exit(76)
+    }
+    exit(1)
 } catch {
     fputs("macOS device-link UI driver failed: \(error)\n", stderr)
     exit(1)

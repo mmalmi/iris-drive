@@ -1016,6 +1016,7 @@ pub(crate) async fn parent_exit_signal(service_mode: bool) {
 }
 
 include!("daemon/direct_root_state_request.rs");
+include!("daemon/block_download_race.rs");
 include!("daemon/apply_and_blocks.rs");
 
 pub(crate) fn record_block_sync(

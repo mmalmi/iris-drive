@@ -592,6 +592,45 @@ async fn root_apply_followup_skips_refresh_when_blocks_are_missing() {
     let _ = task.await;
 }
 
+#[tokio::test]
+async fn blossom_can_complete_while_fips_block_search_is_still_pending() {
+    let fips = Box::pin(std::future::pending::<Result<DownloadReport, String>>());
+    let blossom = Box::pin(std::future::ready(Ok(DownloadReport {
+        total_hashes: 1,
+        fetched: 1,
+        already_local: 0,
+    })));
+
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        first_successful_block_download(Some(fips), Some(blossom)),
+    )
+    .await
+    .expect("Blossom must not wait behind the FIPS timeout")
+    .expect("Blossom download should succeed");
+
+    assert_eq!(outcome.transport, BlockDownloadTransport::Blossom);
+    assert_eq!(outcome.report.fetched, 1);
+}
+
+#[tokio::test]
+async fn concurrent_block_download_preserves_an_earlier_transport_error() {
+    let fips = Box::pin(std::future::ready(Err("fips unavailable".to_string())));
+    let blossom = Box::pin(async {
+        tokio::task::yield_now().await;
+        Ok(DownloadReport::default())
+    });
+
+    let outcome = first_successful_block_download(Some(fips), Some(blossom))
+        .await
+        .expect("Blossom download should succeed after FIPS failure");
+
+    assert_eq!(outcome.transport, BlockDownloadTransport::Blossom);
+    assert_eq!(outcome.prior_errors.len(), 1);
+    assert_eq!(outcome.prior_errors[0].transport, BlockDownloadTransport::Fips);
+    assert_eq!(outcome.prior_errors[0].message, "fips unavailable");
+}
+
 #[test]
 fn applied_or_stale_current_drive_root_schedules_followup() {
     let expected = DriveRootFollowupPlan {

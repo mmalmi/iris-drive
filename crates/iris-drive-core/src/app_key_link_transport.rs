@@ -372,7 +372,9 @@ pub fn device_approval_applied_ack_is_ready(
         .context("parsing approval key-epoch signer")?;
     Ok(
         nip44::decrypt_to_bytes(device_app_key_keys.secret_key(), &signer, wrap)
-            .is_ok_and(|dck| dck.len() == 32),
+            .ok()
+            .and_then(|plaintext| crate::profile::decode_dck_plaintext(&plaintext).ok())
+            .is_some(),
     )
 }
 

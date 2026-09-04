@@ -15,8 +15,9 @@ use thiserror::Error;
 
 use crate::conflict::ConflictRecord;
 use crate::merge::{
-    CONFLICTS_PREFIX, META_DIR, MODIFIED_AT_META_KEY, PREV_LINK_PATH, ROOT_META_PATH,
-    WHOLE_FILE_HASH_META_KEY, walk_app_key_tree,
+    CONFLICTS_PREFIX, MAX_PATH_KIND_REPLACEMENT_GENERATION, META_DIR, MODIFIED_AT_META_KEY,
+    PATH_KIND_REPLACEMENTS_PATH, PREV_LINK_PATH, PathKindReplacement, PathKindReplacementDocument,
+    ROOT_META_PATH, WHOLE_FILE_HASH_META_KEY, walk_app_key_tree,
 };
 use crate::root_meta::DriveRootMeta;
 
@@ -43,6 +44,8 @@ pub enum IndexError {
     RootMeta(String),
     #[error("conflict record: {0}")]
     ConflictRecord(String),
+    #[error("path-kind replacements: {0}")]
+    PathKindReplacements(String),
 }
 
 #[must_use]
@@ -81,8 +84,9 @@ pub async fn index_dir<S: Store>(tree: &HashTree<S>, dir: &Path) -> Result<Cid, 
 /// tombstones for files that have been removed since the last import.
 /// Tombstones that already exist in the previous root carry forward
 /// (preserving their original removal time) so long as the file remains
-/// absent. Tombstones whose original path is now present on disk are
-/// silently dropped — the file "came back."
+/// absent. A visible recreation can coexist with its retained tombstone: the
+/// marker remains a causal barrier against older roots, while merge always
+/// lets the root's own visible entry win over its own marker.
 ///
 /// First-time imports (`previous_root = None`) behave exactly like
 /// `index_dir`; the tombstone subtree is only added when there's a
@@ -105,21 +109,21 @@ pub async fn index_dir_with_history_and_meta<S: Store>(
     now_unix_seconds: i64,
     root_meta: Option<&DriveRootMeta>,
 ) -> Result<Cid, IndexError> {
-    let mut root = index_dir(tree, dir).await?;
-    if let Some(prev) = previous_root {
-        let mut current_paths: BTreeSet<String> = BTreeSet::new();
-        collect_local_file_paths(dir, "", &mut current_paths)?;
-        root = attach_history_for_current_paths(
+    let root = index_dir(tree, dir).await?;
+    if previous_root.is_some() {
+        return layer_history_and_meta_on_root_with_tombstone_base_paths_and_replacements(
             tree,
             root,
-            Some(prev),
-            Some(prev),
+            previous_root,
+            previous_root,
             now_unix_seconds,
-            &current_paths,
+            root_meta,
+            None,
             None,
         )
-        .await?;
+        .await;
     }
+    let mut root = root;
     if let Some(meta) = root_meta {
         root = layer_root_meta(tree, root, meta).await?;
     }
@@ -176,12 +180,38 @@ pub async fn layer_history_and_meta_on_root_with_tombstone_base<S: Store>(
 /// temporarily missing unrelated remote files.
 pub async fn layer_history_and_meta_on_root_with_tombstone_base_and_paths<S: Store>(
     tree: &HashTree<S>,
+    root: Cid,
+    previous_root: Option<&Cid>,
+    tombstone_base_root: Option<&Cid>,
+    now_unix_seconds: i64,
+    root_meta: Option<&DriveRootMeta>,
+    tombstone_paths: Option<&BTreeSet<String>>,
+) -> Result<Cid, IndexError> {
+    layer_history_and_meta_on_root_with_tombstone_base_paths_and_replacements(
+        tree,
+        root,
+        previous_root,
+        tombstone_base_root,
+        now_unix_seconds,
+        root_meta,
+        tombstone_paths,
+        None,
+    )
+    .await
+}
+
+/// Role-aware variant for providers that can distinguish a path-kind
+/// replacement from an ordinary deletion. `Some(empty)` deliberately writes
+/// an empty metadata document, preventing legacy recovery heuristics.
+pub async fn layer_history_and_meta_on_root_with_tombstone_base_paths_and_replacements<S: Store>(
+    tree: &HashTree<S>,
     mut root: Cid,
     previous_root: Option<&Cid>,
     tombstone_base_root: Option<&Cid>,
     now_unix_seconds: i64,
     root_meta: Option<&DriveRootMeta>,
     tombstone_paths: Option<&BTreeSet<String>>,
+    kind_replacement_paths: Option<&BTreeSet<String>>,
 ) -> Result<Cid, IndexError> {
     let phase = std::time::Instant::now();
     root = filter_ignored_entries_from_root(tree, &root).await?;
@@ -191,15 +221,55 @@ pub async fn layer_history_and_meta_on_root_with_tombstone_base_and_paths<S: Sto
     );
     if previous_root.is_some() || tombstone_base_root.is_some() {
         let phase = std::time::Instant::now();
-        let (current_files, _) = walk_app_key_tree(tree, &root)
-            .await
-            .map_err(IndexError::Tree)?;
-        let current_paths: BTreeSet<String> =
-            current_files.into_iter().map(|file| file.path).collect();
+        let mut current_files = BTreeMap::new();
+        collect_visible_files(tree, &root, "", &mut current_files).await?;
+        let mut current_dirs = BTreeMap::new();
+        collect_visible_dirs(tree, &root, "", &mut current_dirs).await?;
+        let current_paths = current_files.keys().cloned().collect::<BTreeSet<_>>();
         tracing::debug!(
             elapsed_ms = phase.elapsed().as_millis(),
             "history layer walked current root"
         );
+        let mut derived_tombstone_paths = None;
+        let mut derived_kind_replacement_paths = None;
+        if (tombstone_paths.is_none() || kind_replacement_paths.is_none())
+            && let Some(base_root) = tombstone_base_root.or(previous_root)
+        {
+            let mut base_files = BTreeMap::new();
+            collect_visible_files(tree, base_root, "", &mut base_files).await?;
+            let mut base_dirs = BTreeMap::new();
+            collect_visible_dirs(tree, base_root, "", &mut base_dirs).await?;
+            let replacements = base_dirs
+                .keys()
+                .filter(|path| current_files.contains_key(*path))
+                .chain(
+                    base_files
+                        .keys()
+                        .filter(|path| current_dirs.contains_key(*path)),
+                )
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            let mut deletions = base_files
+                .keys()
+                .filter(|path| !current_files.contains_key(*path))
+                .chain(
+                    base_dirs
+                        .keys()
+                        .filter(|path| !current_dirs.contains_key(*path)),
+                )
+                .cloned()
+                .collect::<BTreeSet<_>>();
+            deletions.retain(|path| {
+                !replacements.iter().any(|replacement| {
+                    path != replacement && path_is_at_or_below(path, replacement)
+                })
+            });
+            derived_tombstone_paths = Some(deletions);
+            derived_kind_replacement_paths = Some(replacements);
+        }
+        let tombstone_paths = tombstone_paths.or(derived_tombstone_paths.as_ref());
+        let kind_replacement_paths =
+            kind_replacement_paths.or(derived_kind_replacement_paths.as_ref());
         let phase = std::time::Instant::now();
         root = attach_history_for_current_paths(
             tree,
@@ -209,6 +279,7 @@ pub async fn layer_history_and_meta_on_root_with_tombstone_base_and_paths<S: Sto
             now_unix_seconds,
             &current_paths,
             tombstone_paths,
+            kind_replacement_paths,
         )
         .await?;
         tracing::debug!(
@@ -231,6 +302,7 @@ pub async fn layer_history_and_meta_on_root_with_tombstone_base_and_paths<S: Sto
 pub struct VisibleImportDelta {
     pub root: Cid,
     pub tombstone_paths: BTreeSet<String>,
+    pub kind_replacement_paths: BTreeSet<String>,
 }
 
 /// Build this device's local contribution from an edited merged-visible root.
@@ -342,10 +414,19 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
         .collect::<BTreeSet<_>>();
     for path in changed_dirs {
         match (base_dirs.contains_key(&path), edited_dirs.get(&path)) {
+            (true, Some(edited))
+                if base_dirs
+                    .get(&path)
+                    .is_some_and(|base| visible_entry_matches(base, edited)) =>
+            {
+                // Do not re-author an unchanged remote directory locally. Its
+                // children are merged independently, and copying only the
+                // directory shell creates an empty duplicate conflict root.
+            }
             (_, Some(edited)) => {
                 root = set_visible_dir_entry(tree, root, &path, edited).await?;
             }
-            (true, None) => {
+            (true, None) if !edited_files.contains_key(&path) => {
                 if tombstone_path_allowed(tombstone_paths, &path) {
                     deleted_paths.insert(path.clone());
                 }
@@ -355,9 +436,35 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
         }
     }
 
+    // A kind replacement needs one exact-path causal barrier, not fresh
+    // markers for every former descendant. The old subtree remains available
+    // to conflict projection, while carried descendant markers continue to
+    // hide children that had already been deleted before the replacement.
+    let kind_replacement_paths = base_dirs
+        .keys()
+        .filter(|path| edited_files.contains_key(*path))
+        .chain(
+            base_files
+                .keys()
+                .filter(|path| edited_dirs.contains_key(*path)),
+        )
+        .filter(|path| tombstone_path_allowed(tombstone_paths, path))
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    deleted_paths.retain(|path| {
+        !kind_replacement_paths.iter().any(|replacement| {
+            path != replacement
+                && path
+                    .strip_prefix(replacement)
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+        })
+    });
+    deleted_paths.extend(kind_replacement_paths.iter().cloned());
+
     Ok(VisibleImportDelta {
         root,
         tombstone_paths: deleted_paths,
+        kind_replacement_paths,
     })
 }
 
@@ -424,13 +531,12 @@ async fn attach_history_for_current_paths<S: Store>(
     now_unix_seconds: i64,
     current_paths: &BTreeSet<String>,
     tombstone_paths: Option<&BTreeSet<String>>,
+    kind_replacement_paths: Option<&BTreeSet<String>>,
 ) -> Result<Cid, IndexError> {
     let mut tombstones: BTreeMap<String, i64> = BTreeMap::new();
     if let Some(paths) = tombstone_paths {
         for path in paths {
-            if !current_paths.contains(path) {
-                tombstones.insert(path.clone(), now_unix_seconds);
-            }
+            tombstones.insert(path.clone(), now_unix_seconds);
         }
     }
 
@@ -447,7 +553,9 @@ async fn attach_history_for_current_paths<S: Store>(
             "history attach walked tombstone base"
         );
         for f in base_files {
-            if !current_paths.contains(&f.path) && tombstone_path_allowed(tombstone_paths, &f.path)
+            if !current_paths.contains(&f.path)
+                && tombstone_path_allowed(tombstone_paths, &f.path)
+                && !path_is_below_visible_selected_barrier(&f.path, current_paths, tombstone_paths)
             {
                 tombstones.insert(f.path, now_unix_seconds);
             }
@@ -466,18 +574,18 @@ async fn attach_history_for_current_paths<S: Store>(
             "history attach walked previous root"
         );
         for f in prev_files {
-            if !current_paths.contains(&f.path) && tombstone_path_allowed(tombstone_paths, &f.path)
+            if !current_paths.contains(&f.path)
+                && tombstone_path_allowed(tombstone_paths, &f.path)
+                && !path_is_below_visible_selected_barrier(&f.path, current_paths, tombstone_paths)
             {
                 tombstones.entry(f.path).or_insert(now_unix_seconds);
             }
         }
-        // Tombstones from the previous root carry forward when the file is
-        // still absent (preserves original removal time). When the file is
-        // present again, the tombstone silently drops.
+        // Retain previous barriers even after a visible recreation. Merge lets
+        // this root's own entry win, while the marker still prevents older
+        // roots from resurrecting through a later kind conflict.
         for t in prev_tombstones {
-            if !current_paths.contains(&t.path) {
-                tombstones.entry(t.path).or_insert(t.tombstoned_at);
-            }
+            tombstones.entry(t.path).or_insert(t.tombstoned_at);
         }
     }
 
@@ -489,6 +597,28 @@ async fn attach_history_for_current_paths<S: Store>(
             tombstone_count = tombstones.len(),
             "history attach layered tombstones"
         );
+    }
+
+    if let Some(replacement_paths) = kind_replacement_paths {
+        let mut replacements = match previous_root {
+            Some(previous_root) => read_path_kind_replacements(tree, previous_root)
+                .await?
+                .unwrap_or_default(),
+            None => BTreeMap::new(),
+        };
+        if let Some(paths) = tombstone_paths {
+            for path in paths {
+                if replacement_paths.contains(path) {
+                    continue;
+                }
+                replacements.retain(|active, _| !path_is_at_or_below(active, path));
+            }
+        }
+        for path in replacement_paths {
+            validate_path_kind_replacement(path, now_unix_seconds)?;
+            replacements.insert(path.clone(), now_unix_seconds);
+        }
+        root = layer_path_kind_replacements(tree, root, &replacements).await?;
     }
 
     // Add the revision back-link: a `._prev` entry at the root pointing
@@ -507,6 +637,13 @@ async fn attach_history_for_current_paths<S: Store>(
     Ok(root)
 }
 
+fn path_is_at_or_below(path: &str, ancestor: &str) -> bool {
+    path == ancestor
+        || path
+            .strip_prefix(ancestor)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
 fn tombstone_path_allowed(tombstone_paths: Option<&BTreeSet<String>>, path: &str) -> bool {
     match tombstone_paths {
         Some(paths) => paths.iter().any(|allowed| {
@@ -521,6 +658,22 @@ fn tombstone_path_allowed(tombstone_paths: Option<&BTreeSet<String>>, path: &str
 
 fn tombstone_path_selected(tombstone_paths: Option<&BTreeSet<String>>, path: &str) -> bool {
     tombstone_paths.is_some_and(|paths| tombstone_path_allowed(Some(paths), path))
+}
+
+fn path_is_below_visible_selected_barrier(
+    path: &str,
+    current_paths: &BTreeSet<String>,
+    tombstone_paths: Option<&BTreeSet<String>>,
+) -> bool {
+    tombstone_paths.is_some_and(|paths| {
+        paths.iter().any(|barrier| {
+            current_paths.contains(barrier)
+                && path != barrier
+                && path
+                    .strip_prefix(barrier)
+                    .is_some_and(|suffix| suffix.starts_with('/'))
+        })
+    })
 }
 
 fn collect_visible_files<'a, S: Store>(

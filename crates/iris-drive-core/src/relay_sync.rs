@@ -857,31 +857,6 @@ pub async fn publish_nostr_identity_roster_ops(
             .send_event(&event)
             .await
             .map_err(|e| RelayError::Client(e.to_string()))?;
-        event_ids.push(*output.id());
-    }
-    Ok(event_ids)
-}
-
-pub async fn publish_device_approval_receipt(
-    client: &Client,
-    state: &crate::ProfileState,
-    pending: &PendingDeviceApprovalReceipt,
-) -> Result<Vec<nostr_sdk::EventId>, RelayError> {
-    let mut event_ids = Vec::with_capacity(state.profile_roster_ops.len() + 1);
-    for op in &state.profile_roster_ops {
-        let event = Event::from_json(&op.event_json)
-            .map_err(|error| RelayError::Client(format!("profile roster op JSON: {error}")))?;
-        let parsed = parse_nostr_identity_roster_op_event(&event)?;
-        if parsed.op_id != op.op_id {
-            return Err(RelayError::Client(format!(
-                "profile roster op id mismatch: stored {}, parsed {}",
-                op.op_id, parsed.op_id
-            )));
-        }
-        let output = client
-            .send_event(&event)
-            .await
-            .map_err(|error| RelayError::Client(error.to_string()))?;
         if output.success.is_empty() {
             let failed = output
                 .failed
@@ -900,7 +875,30 @@ pub async fn publish_device_approval_receipt(
         }
         event_ids.push(*output.id());
     }
+    Ok(event_ids)
+}
 
+pub async fn publish_device_approval_receipt(
+    client: &Client,
+    state: &crate::ProfileState,
+    pending: &PendingDeviceApprovalReceipt,
+) -> Result<Vec<nostr_sdk::EventId>, RelayError> {
+    let mut event_ids =
+        publish_nostr_identity_roster_ops(client, &state.profile_roster_ops).await?;
+    event_ids.push(publish_pending_device_approval_receipt(client, pending).await?);
+    Ok(event_ids)
+}
+
+/// Publish only the encrypted approval receipt event.
+///
+/// Callers using this lower-level operation must first publish the roster op
+/// that authorizes the device and any current Drive-root envelope the newly
+/// approved `AppKey` needs. [`publish_device_approval_receipt`] remains the
+/// convenient roster-plus-receipt operation for flows without a root handoff.
+pub async fn publish_pending_device_approval_receipt(
+    client: &Client,
+    pending: &PendingDeviceApprovalReceipt,
+) -> Result<nostr_sdk::EventId, RelayError> {
     let receipt = Event::from_json(&pending.event_json)
         .map_err(|error| RelayError::Client(format!("device approval receipt JSON: {error}")))?;
     if !is_device_approval_receipt_event(&receipt) {
@@ -928,8 +926,7 @@ pub async fn publish_device_approval_receipt(
             }
         )));
     }
-    event_ids.push(*output.id());
-    Ok(event_ids)
+    Ok(*output.id())
 }
 
 pub async fn publish_device_approval_applied_ack(
@@ -997,10 +994,38 @@ pub async fn publish_drive_root(
         root,
         authorized_app_key_pubkeys,
     )?;
+    publish_prebuilt_drive_root(client, &event).await
+}
+
+/// Publish an already signed Drive-root event.
+///
+/// Preparing the event separately lets a local config transaction serialize
+/// replaceable-event timestamps without holding its lock across relay I/O.
+pub async fn publish_prebuilt_drive_root(
+    client: &Client,
+    event: &Event,
+) -> Result<nostr_sdk::EventId, RelayError> {
+    parse_drive_root_event_preview(event)?;
     let output = client
-        .send_event(&event)
+        .send_event(event)
         .await
         .map_err(|e| RelayError::Client(e.to_string()))?;
+    if output.success.is_empty() {
+        let failed = output
+            .failed
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(RelayError::Client(format!(
+            "publishing Drive root was not accepted by any relay{}",
+            if failed.is_empty() {
+                String::new()
+            } else {
+                format!(": {failed}")
+            }
+        )));
+    }
     Ok(*output.id())
 }
 

@@ -155,7 +155,11 @@ async fn authenticated_same_host_blob_provider_never_enters_drive_data_acl() {
 async fn pending_link_peer_can_bootstrap_but_cannot_access_drive_roots() {
     let admin_dir = tempfile::tempdir().unwrap();
     let mut admin = crate::Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
-    let pending = AppKey::generate("pending-link-peer");
+    let admin_npub = admin.app_key.pubkey_bech32();
+    let pending = (0..256)
+        .map(|_| AppKey::generate("pending-link-peer"))
+        .find(|candidate| admin_npub < candidate.pubkey_bech32())
+        .expect("generating pending identity above admin tie-break ordering");
     admin
         .state
         .inbound_app_key_link_requests
@@ -197,20 +201,25 @@ async fn pending_link_peer_can_bootstrap_but_cannot_access_drive_roots() {
         npub: admin.app_key.pubkey_bech32(),
         udp_addresses: vec![admin_addr.to_string()],
     };
-    set_drive_fips_peer_configs(
-        pending_endpoint.as_ref(),
-        &pending.pubkey_bech32(),
-        std::slice::from_ref(&admin_peer),
-        vec![admin_peer.clone()],
-    )
-    .await
-    .unwrap();
     let sync = FipsBlockSync::start_with_bound_endpoint(
         admin_bound,
         Arc::new(MemoryStore::new()),
         &config,
         local_only_settings(&pending, pending_addr, admin_addr),
         None,
+    )
+    .await
+    .unwrap();
+    // Bring up the accepting control runtime before the raw pending endpoint
+    // makes its one-shot application-peer dial. Configuring both sides at the
+    // same instant creates a transport-level crossed-dial race unrelated to
+    // the ACL behavior this test exercises.
+    set_drive_fips_peer_configs(
+        pending_endpoint.as_ref(),
+        &pending.pubkey_bech32(),
+        std::slice::from_ref(&admin_peer),
+        std::slice::from_ref(&admin_peer),
+        vec![admin_peer.clone()],
     )
     .await
     .unwrap();

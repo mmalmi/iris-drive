@@ -57,6 +57,34 @@ func irisWebIsTransientGatewayNotFound(_ bodyText: String, url: URL?) -> Bool {
         || message == "Resolution failed through configured event provider and peers"
 }
 
+func irisDebugWebViewIsMaterialized(
+    title: String,
+    bodyText: String,
+    readyState: String,
+    htmlLength: Int,
+    htmlPrefix: String,
+    screenshotPath: String,
+    screenshotError: String
+) -> Bool {
+    let body = bodyText.lowercased()
+    let html = htmlPrefix.lowercased()
+    let failureMarkers = [
+        "resolution timeout",
+        "not found",
+        "failed to load",
+        "iris apps failed",
+        "no connection to server",
+    ]
+    return readyState == "complete"
+        && title == "Iris: The Freedom Toolkit"
+        && htmlLength >= 1_000
+        && (html.contains("id=\"app\"") || html.contains("id='app'"))
+        && ["iris: the freedom toolkit", "drive", "chat", "contacts"].allSatisfy(body.contains)
+        && !failureMarkers.contains(where: body.contains)
+        && !screenshotPath.isEmpty
+        && screenshotError.isEmpty
+}
+
 extension IrisDriveMobileModel {
     func openIrisBrowserWhenReady(_ value: String) {
         guard !isOpeningIrisApps else { return }
@@ -399,8 +427,20 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
             """
         )
         let screenshot = await writeSnapshot(webView)
+        let materializedWithoutDelegate = !loaded
+            && error == "Timed out waiting for WKWebView to finish loading"
+            && nsError == nil
+            && irisDebugWebViewIsMaterialized(
+                title: title,
+                bodyText: bodyText,
+                readyState: readyState,
+                htmlLength: htmlLength,
+                htmlPrefix: htmlPrefix,
+                screenshotPath: screenshot.path,
+                screenshotError: screenshot.error
+            )
         finish(
-            loaded: loaded,
+            loaded: loaded || materializedWithoutDelegate,
             title: title,
             bodyText: bodyText,
             readyState: readyState,
@@ -410,7 +450,7 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
             screenshotPath: screenshot.path,
             screenshotError: screenshot.error,
             finalURL: webView.url?.absoluteString ?? "",
-            error: error,
+            error: materializedWithoutDelegate ? "" : error,
             nsError: nsError
         )
     }

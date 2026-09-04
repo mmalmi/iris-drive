@@ -89,7 +89,7 @@ pub enum ProfileError {
     Wrap(String),
     #[error("failed to unwrap DCK: {0}")]
     Unwrap(String),
-    #[error("decrypted DCK has wrong length: expected 32 bytes, got {0}")]
+    #[error("decrypted DCK has wrong length: expected 32 raw bytes or 64 hex characters, got {0}")]
     InvalidDckLength(usize),
     #[error("config: {0}")]
     Config(#[from] ConfigError),
@@ -2165,11 +2165,7 @@ impl Profile {
             .map_err(|e| ProfileError::InvalidAppKeyPubkey(e.to_string()))?;
         let bytes = nip44::decrypt_to_bytes(self.app_key.keys().secret_key(), &signer_pk, wrap)
             .map_err(|e| ProfileError::Unwrap(e.to_string()))?;
-        let arr: [u8; 32] = bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| ProfileError::InvalidDckLength(bytes.len()))?;
-        Ok(arr)
+        decode_dck_plaintext(&bytes)
     }
 
     pub fn current_dck_from_recovery_phrase(
@@ -2214,11 +2210,7 @@ impl Profile {
             .map_err(|e| ProfileError::InvalidAppKeyPubkey(e.to_string()))?;
         let bytes = nip44::decrypt_to_bytes(authority_keys.secret_key(), &signer_pk, wrap)
             .map_err(|e| ProfileError::Unwrap(e.to_string()))?;
-        let arr: [u8; 32] = bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| ProfileError::InvalidDckLength(bytes.len()))?;
-        Ok(arr)
+        decode_dck_plaintext(&bytes)
     }
 }
 
@@ -2228,6 +2220,26 @@ fn generate_dck() -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(keys.secret_key().as_secret_bytes());
     out
+}
+
+/// Decode the NIP-44 plaintext used for a profile DCK wrap.
+///
+/// The shared Web protocol represents the key as 64 lowercase hex characters
+/// because the NIP-44 browser API encrypts strings. Earlier native releases
+/// encrypted the 32 raw bytes, so readers continue to accept that form while
+/// every new wrap is emitted in the interoperable text form.
+pub(crate) fn decode_dck_plaintext(plaintext: &[u8]) -> Result<[u8; 32], ProfileError> {
+    if let Ok(raw) = <[u8; 32]>::try_from(plaintext) {
+        return Ok(raw);
+    }
+    if plaintext.len() != 64 {
+        return Err(ProfileError::InvalidDckLength(plaintext.len()));
+    }
+    let decoded = hex::decode(plaintext)
+        .map_err(|error| ProfileError::Unwrap(format!("invalid hex-encoded DCK: {error}")))?;
+    decoded
+        .try_into()
+        .map_err(|bytes: Vec<u8>| ProfileError::InvalidDckLength(bytes.len()))
 }
 
 pub fn app_key_link_invite_keys(invite_secret_key: &str) -> Result<Keys, ProfileError> {
@@ -2273,11 +2285,17 @@ where
     I: IntoIterator<Item = &'a str>,
 {
     let mut wraps = BTreeMap::new();
+    let dck_plaintext = hex::encode(dck);
     for pubkey in pubkeys {
         let pk = PublicKey::from_hex(pubkey)
             .map_err(|e| ProfileError::InvalidAppKeyPubkey(e.to_string()))?;
-        let ct = nip44::encrypt(owner_secret, &pk, dck.as_slice(), Nip44Version::V2)
-            .map_err(|e| ProfileError::Wrap(e.to_string()))?;
+        let ct = nip44::encrypt(
+            owner_secret,
+            &pk,
+            dck_plaintext.as_bytes(),
+            Nip44Version::V2,
+        )
+        .map_err(|e| ProfileError::Wrap(e.to_string()))?;
         wraps.insert(pubkey.to_string(), ct);
     }
     Ok(wraps)
@@ -2637,5 +2655,7 @@ fn remove_file_if_present(path: &Path) -> Result<bool, std::io::Error> {
 
 #[cfg(test)]
 mod approval_receipt_tests;
+#[cfg(test)]
+mod dck_interop_tests;
 #[cfg(test)]
 mod tests;

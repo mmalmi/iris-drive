@@ -298,6 +298,7 @@ run_macos_owner_device_link_journey() {
   }
   MACOS_OWNER_LINK_JOINER_CONFIG="$SMOKE_DIR/macos-owner-link-joiner/Config"
   mkdir_p_or_fail "$MACOS_OWNER_LINK_JOINER_CONFIG"
+  configure_macos_smoke_relay "$MACOS_OWNER_LINK_JOINER_CONFIG" || return 1
   request_json="$("$IDRIVE_CLI" --config-dir "$MACOS_OWNER_LINK_JOINER_CONFIG" \
     app-keys request "$invite_url" --label "macOS owner GUI joiner")"
   MACOS_OWNER_LINK_JOINER_NPUB="$(printf '%s' "$request_json" | json_get current_app_key_npub)"

@@ -1,5 +1,97 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
+use nostr_sdk::JsonUtil as _;
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn running_owner_replays_durable_approval_ack_after_live_fanout_is_lost() {
+    let _guard = live_daemon_test_guard().await;
+    let relay = LocalNostrRelay::spawn().await;
+    let owner_cfg = tempdir().unwrap();
+    let linked_cfg = tempdir().unwrap();
+
+    let owner = run_json(owner_cfg.path(), &["init", "--label", "admin"]);
+    add_config_relay(owner_cfg.path(), &relay.url);
+    let linked = run_json(
+        linked_cfg.path(),
+        &[
+            "link",
+            owner["app_key_link_invite"]["url"].as_str().unwrap(),
+            "--label",
+            "phone",
+        ],
+    );
+    add_config_relay(linked_cfg.path(), &relay.url);
+    let request_url = linked["app_key_link_request"]["url"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let owner_daemon = DaemonChild::spawn_relay_only(
+        owner_cfg.path(),
+        &relay.url,
+        owner_cfg.path().join("owner.log"),
+        unused_loopback_port(),
+    );
+    let startup_deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < startup_deadline && !owner_daemon.log().contains("subscribed") {
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    assert!(owner_daemon.log().contains("subscribed"));
+
+    let approval = run_json(
+        owner_cfg.path(),
+        &["app-keys", "approve", &request_url, "--label", "Phone"],
+    );
+    assert_eq!(approval["roster_size"], 2);
+    let subscription_deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < subscription_deadline
+        && !owner_daemon.log().contains("app_key_link_roster_sent")
+    {
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    assert!(
+        owner_daemon.log().contains("app_key_link_roster_sent"),
+        "owner did not activate its post-approval exchange:\n{}",
+        owner_daemon.log()
+    );
+
+    // Model a lost notification on an otherwise durable relay. A new bounded
+    // fetch can replay the ACK, but the daemon's existing live stream cannot.
+    relay.suppress_live_kinds(&[iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP]);
+    let linked_sync = run_json(
+        linked_cfg.path(),
+        &["sync", "--relay", &relay.url, "--timeout", "2"],
+    );
+    assert!(
+        relay.events().await.iter().any(|event| {
+            nostr_sdk::Event::from_json(event.to_string()).is_ok_and(|event| {
+                iris_drive_core::relay_sync::is_device_approval_applied_ack_event(&event)
+            })
+        }),
+        "linked sync did not durably publish an approval ACK: {linked_sync}"
+    );
+
+    let ack_deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < ack_deadline {
+        let status = run_json(owner_cfg.path(), &["status"]);
+        if status["profile"]["pending_device_approval_receipt_count"] == 0 {
+            assert!(
+                owner_daemon
+                    .log()
+                    .contains("\"event\":\"nostr_identity_device_approval_applied_ack_replay\""),
+                "durable ACK was applied without daemon audit evidence:\n{}",
+                owner_daemon.log()
+            );
+            return;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    panic!(
+        "running owner did not replay the durable approval ACK after live fanout loss\nowner status: {}\nowner log:\n{}",
+        serde_json::to_string_pretty(&run_json(owner_cfg.path(), &["status"])).unwrap(),
+        owner_daemon.log(),
+    );
+}
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn relay_only_running_daemon_receives_preexisting_root_after_unbound_approval() {

@@ -172,6 +172,24 @@ mod tests {
     }
 
     #[test]
+    fn drive_device_label_plaintext_matches_web_wire_schema() {
+        let profile_id = NostrIdentityId::from_uuid(
+            uuid::Uuid::parse_str("89f3d04f-41fb-437b-9339-75df537bf291").unwrap(),
+        );
+        let payload = drive_device_label_payload(
+            profile_id,
+            7,
+            BTreeMap::from([("aa".to_string(), "Native owner".to_string())]),
+            1_787_063_758,
+        );
+
+        assert_eq!(
+            serde_json::to_string(&payload).unwrap(),
+            r#"{"schema":1,"profileId":"89f3d04f-41fb-437b-9339-75df537bf291","secretEpoch":7,"labels":{"aa":"Native owner"},"updatedAt":1787063758}"#
+        );
+    }
+
+    #[test]
     fn drive_device_label_decrypt_rejects_wrong_dck() {
         let payload = drive_device_label_payload(NostrIdentityId::new_v4(), 1, BTreeMap::new(), 1);
         let encrypted = encrypt_drive_device_labels_with_dck(&payload, &[1_u8; 32]).unwrap();

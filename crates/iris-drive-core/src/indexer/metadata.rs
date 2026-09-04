@@ -64,6 +64,138 @@ pub async fn read_root_meta<S: Store>(
     Ok(Some(meta))
 }
 
+/// Write the deterministic encrypted path-kind replacement role document.
+/// The file is written even when `replacements` is empty so readers can
+/// distinguish role-aware roots from legacy roots.
+pub async fn layer_path_kind_replacements<S: Store>(
+    tree: &HashTree<S>,
+    mut root: Cid,
+    replacements: &BTreeMap<String, i64>,
+) -> Result<Cid, IndexError> {
+    let mut records = Vec::with_capacity(replacements.len());
+    for (path, generation) in replacements {
+        validate_path_kind_replacement(path, *generation)?;
+        records.push(PathKindReplacement {
+            path: path.clone(),
+            generation: *generation,
+        });
+    }
+    let document = PathKindReplacementDocument {
+        schema: PathKindReplacementDocument::SCHEMA,
+        replacements: records,
+    };
+    let bytes = serde_json::to_vec(&document)
+        .map_err(|error| IndexError::PathKindReplacements(error.to_string()))?;
+    let (cid, size) = tree.put(&bytes).await?;
+
+    root = ensure_dir(tree, &root, &[META_DIR.to_string()]).await?;
+    let name = PATH_KIND_REPLACEMENTS_PATH
+        .rsplit_once('/')
+        .map_or(PATH_KIND_REPLACEMENTS_PATH, |(_, name)| name);
+    tree.set_entry(&root, &[META_DIR], name, &cid, size, LinkType::Blob)
+        .await
+        .map_err(Into::into)
+}
+
+/// Read and strictly validate the encrypted path-kind role document. Absence
+/// is the only legacy signal; malformed metadata fails the root rather than
+/// silently weakening deletion semantics.
+pub async fn read_path_kind_replacements<S: Store>(
+    tree: &HashTree<S>,
+    root: &Cid,
+) -> Result<Option<BTreeMap<String, i64>>, IndexError> {
+    let entries = tree.list_directory(root).await?;
+    let Some(meta_entry) = entries
+        .iter()
+        .find(|entry| entry.name == META_DIR && entry.link_type == LinkType::Dir)
+    else {
+        return Ok(None);
+    };
+    let meta_cid = Cid {
+        hash: meta_entry.hash,
+        key: meta_entry.key,
+    };
+    let meta_entries = tree.list_directory(&meta_cid).await?;
+    let name = PATH_KIND_REPLACEMENTS_PATH
+        .rsplit_once('/')
+        .map_or(PATH_KIND_REPLACEMENTS_PATH, |(_, name)| name);
+    let Some(entry) = meta_entries.iter().find(|entry| entry.name == name) else {
+        return Ok(None);
+    };
+    if entry.link_type == LinkType::Dir {
+        return Err(IndexError::PathKindReplacements(format!(
+            "{PATH_KIND_REPLACEMENTS_PATH} must be a file"
+        )));
+    }
+    let cid = Cid {
+        hash: entry.hash,
+        key: entry.key,
+    };
+    let raw = tree
+        .get(&cid, None)
+        .await?
+        .ok_or_else(|| HashTreeError::MissingChunk(to_hex(&entry.hash)))?;
+    let document: PathKindReplacementDocument = serde_json::from_slice(&raw)
+        .map_err(|error| IndexError::PathKindReplacements(error.to_string()))?;
+    if document.schema != PathKindReplacementDocument::SCHEMA {
+        return Err(IndexError::PathKindReplacements(format!(
+            "unsupported schema {}",
+            document.schema
+        )));
+    }
+
+    let mut replacements = BTreeMap::new();
+    let mut previous_path: Option<String> = None;
+    for record in document.replacements {
+        validate_path_kind_replacement(&record.path, record.generation)?;
+        if previous_path.as_ref() == Some(&record.path) {
+            return Err(IndexError::PathKindReplacements(format!(
+                "duplicate path {}",
+                record.path
+            )));
+        }
+        if previous_path
+            .as_ref()
+            .is_some_and(|previous| previous > &record.path)
+        {
+            return Err(IndexError::PathKindReplacements(format!(
+                "paths are not in strictly increasing UTF-8 byte order: {:?} before {:?}",
+                previous_path.as_deref().unwrap_or_default(),
+                record.path
+            )));
+        }
+        previous_path = Some(record.path.clone());
+        replacements.insert(record.path, record.generation);
+    }
+    Ok(Some(replacements))
+}
+
+fn validate_path_kind_replacement(path: &str, generation: i64) -> Result<(), IndexError> {
+    let invalid_segment = path.split('/').any(|segment| {
+        segment.is_empty()
+            || segment == "."
+            || segment == ".."
+            || segment == META_DIR
+            || segment.contains('\0')
+    });
+    if path.is_empty()
+        || path.starts_with('/')
+        || path.ends_with('/')
+        || path.contains('\\')
+        || invalid_segment
+    {
+        return Err(IndexError::PathKindReplacements(format!(
+            "invalid normalized logical path {path:?}"
+        )));
+    }
+    if !(1..=MAX_PATH_KIND_REPLACEMENT_GENERATION).contains(&generation) {
+        return Err(IndexError::PathKindReplacements(format!(
+            "generation {generation} is outside the lossless JSON integer range"
+        )));
+    }
+    Ok(())
+}
+
 /// Add or replace durable conflict provenance records under
 /// `.hashtree/conflicts/<conflict_id>.json`.
 pub async fn layer_conflict_records<S: Store>(
@@ -216,43 +348,6 @@ pub async fn layer_prev_link<S: Store>(
     Ok(new_root)
 }
 
-fn collect_local_file_paths(
-    dir: &Path,
-    prefix: &str,
-    out: &mut BTreeSet<String>,
-) -> Result<(), IndexError> {
-    let mut entries: Vec<(String, std::path::PathBuf)> = Vec::new();
-    for entry in std::fs::read_dir(dir)? {
-        let entry = entry?;
-        let name = entry
-            .file_name()
-            .into_string()
-            .map_err(|s| IndexError::NonUtf8(s.to_string_lossy().into_owned()))?;
-        entries.push((name, entry.path()));
-    }
-    entries.sort_by(|a, b| a.0.cmp(&b.0));
-    for (name, path) in entries {
-        if should_ignore_name(&name) {
-            continue;
-        }
-        let metadata = std::fs::symlink_metadata(&path)?;
-        if metadata.file_type().is_symlink() {
-            continue;
-        }
-        let logical_path = if prefix.is_empty() {
-            name.clone()
-        } else {
-            format!("{prefix}/{name}")
-        };
-        if metadata.is_dir() {
-            collect_local_file_paths(&path, &logical_path, out)?;
-        } else if metadata.is_file() {
-            out.insert(logical_path);
-        }
-    }
-    Ok(())
-}
-
 async fn layer_tombstones<S: Store>(
     tree: &HashTree<S>,
     mut root: Cid,
@@ -336,7 +431,9 @@ async fn ensure_dir<S: Store>(
 ) -> Result<Cid, IndexError> {
     let segs: Vec<&str> = dir_path.iter().map(String::as_str).collect();
     let Some((name, parent_segs)) = segs.split_last() else {
-        return Err(IndexError::RootMeta("metadata directory path is empty".into()));
+        return Err(IndexError::RootMeta(
+            "metadata directory path is empty".into(),
+        ));
     };
     let parent_cid = resolve_dir(tree, root, parent_segs).await?;
     let entries = tree.list_directory(&parent_cid).await?;

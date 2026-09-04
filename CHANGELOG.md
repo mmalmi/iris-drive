@@ -1,5 +1,49 @@
 # Changelog
 
+## 0.1.34 - 2026-08-18
+
+### Changed
+
+- Apply authorized Drive-root events received from relays to the native
+  provider view and fetch their Hashtree blocks from configured Blossom
+  servers, so Web, iOS, Android, desktop, and CLI devices converge through the
+  same durable protocol path.
+- Make device approval hand off a complete logical `main` root: materialize an
+  explicit empty root when necessary, upload every live block, publish the
+  full roster, and publish a root newly wrapped for every active AppKey before
+  emitting the encrypted approval receipt.
+- Project file/directory path conflicts losslessly across native and Web
+  clients. Causal replacements own the canonical path, concurrent conflicts
+  keep the directory canonical and expose the file as a conflict copy, and a
+  newer file relocates the complete replaced directory subtree.
+
+### Fixed
+
+- Encode new profile content-key wraps as interoperable hexadecimal NIP-44
+  plaintext while continuing to read legacy native raw-byte wraps. This keeps
+  encrypted device names visible across native and Web clients and lets native
+  devices acknowledge approvals created by Web.
+- Preserve the native owner's device name and the joining device's requested
+  name in approval roster facts instead of showing a generic linked-device
+  label.
+- Delay authorization publication when Blossom upload fails, preventing an
+  approval receipt from activating a device whose current Drive root cannot be
+  resolved.
+- Treat encrypted and hash-only references to the same Hashtree root as the
+  same causal identity, allowing Web observations at an equal sequence to
+  establish ancestry without disclosing a root key.
+- Preserve file bytes, whole-file hashes, modification metadata, nested empty
+  directories, and accurate top-level counts when file and directory kinds
+  replace one another.
+- Keep an explicit file/directory replacement canonical when another device
+  later publishes an unrelated edit, without duplicating or hiding the losing
+  subtree's conflict copy.
+- Serialize approval, live relay-root, and native-provider config mutations
+  across app processes, while releasing the config lock before Blossom and
+  relay network I/O.
+- Let an outbound pending device initiate its one-shot FIPS link regardless of
+  public-key ordering, without widening authorized-peer or block access.
+
 ## 0.1.33 - 2026-08-07
 
 ### Changed

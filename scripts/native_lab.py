@@ -38,6 +38,17 @@ def run_probe(command: List[str], timeout: int = 15) -> Tuple[bool, str]:
     return completed.returncode == 0, output
 
 
+def run_json_output_probe(command: List[str], timeout: int = 15) -> Tuple[bool, str]:
+    with tempfile.NamedTemporaryFile(prefix="iris-native-lab-", suffix=".json") as result:
+        ok, detail = run_probe([*command, "--json-output", result.name], timeout=timeout)
+        if not ok:
+            return False, detail
+        try:
+            return True, Path(result.name).read_text(encoding="utf-8")
+        except OSError as error:
+            return False, str(error)
+
+
 def check_health(spec: str) -> Dict[str, Any]:
     kind, separator, value = spec.partition(":")
     if not separator or not value:
@@ -141,14 +152,52 @@ def check_health(spec: str) -> Dict[str, Any]:
     if kind == "ios-device":
         if platform.system() != "Darwin" or not shutil.which("xcrun"):
             return {"spec": spec, "available": False, "detail": "devicectl requires macOS"}
-        ok, output = run_probe(["xcrun", "devicectl", "list", "devices"], timeout=20)
+        ok, output = run_json_output_probe(
+            ["xcrun", "devicectl", "list", "devices"], timeout=20
+        )
         if not ok:
             return {"spec": spec, "available": False, "detail": output}
-        devices = []
-        for line in output.splitlines()[2:]:
-            columns = [column.strip() for column in line.split("  ") if column.strip()]
-            if len(columns) >= 4 and columns[3].startswith("available"):
-                devices.append({"name": columns[0], "identifier": columns[2], "state": columns[3]})
+        xctrace_ok, xctrace = run_probe(["xcrun", "xctrace", "list", "devices"], timeout=20)
+        if not xctrace_ok:
+            return {"spec": spec, "available": False, "detail": xctrace}
+        try:
+            payload = json.loads(output)
+            candidates = payload["result"]["devices"]
+            if not isinstance(candidates, list):
+                raise TypeError("result.devices is not a list")
+            if "== Devices ==" not in xctrace or "== Devices Offline ==" not in xctrace:
+                raise ValueError("xctrace device sections are missing")
+            online = xctrace.split("== Devices ==", 1)[1].split("== Devices Offline ==", 1)[0]
+            devices = []
+            for device in candidates:
+                if not isinstance(device, dict):
+                    raise TypeError("device entry is not an object")
+                properties = device.get("deviceProperties")
+                hardware = device.get("hardwareProperties")
+                connection = device.get("connectionProperties")
+                if not all(isinstance(section, dict) for section in (properties, hardware, connection)):
+                    raise TypeError("device properties are malformed")
+                name = properties.get("name")
+                identifier = device.get("identifier")
+                product_type = hardware.get("productType")
+                pairing = connection.get("pairingState")
+                tunnel = connection.get("tunnelState")
+                if not all(isinstance(field, str) for field in (name, identifier, product_type)):
+                    raise TypeError("device identity is malformed")
+                if not product_type.startswith(("iPhone", "iPad")):
+                    continue
+                if pairing != "paired" or tunnel not in {"connected", "available"}:
+                    continue
+                if name not in online:
+                    continue
+                devices.append({"name": name, "identifier": identifier, "state": tunnel})
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as error:
+            return {
+                "spec": spec,
+                "available": False,
+                "detail": f"invalid devicectl/xctrace JSON: {error}",
+            }
+        devices.sort(key=lambda device: (device["name"], device["identifier"]))
         matches = (
             devices
             if value == "auto"

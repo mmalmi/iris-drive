@@ -25,6 +25,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::AppKeyRootRef;
 use crate::indexer::{path_has_ignored_component, should_ignore_name};
+use crate::root_meta::root_cid_identity_matches;
 
 /// Reserved top-level subdirectory inside any hashtree directory for
 /// htree-format metadata. Everything iris-drive (and future htree
@@ -35,6 +36,7 @@ use crate::indexer::{path_has_ignored_component, should_ignore_name};
 /// - `.hashtree/root.json` — causal metadata for this root snapshot
 /// - `.hashtree/tombstones/<path>` — deletion markers
 /// - `.hashtree/conflicts/<id>.json` — conflict provenance records
+/// - `.hashtree/path-kind-replacements` — durable per-path replacement roles
 pub const META_DIR: &str = ".hashtree";
 
 /// Reserved entry path for the root-level causal metadata record.
@@ -48,6 +50,14 @@ pub const TOMBSTONE_PREFIX: &str = ".hashtree/tombstones";
 /// Reserved path prefix for durable conflict provenance records. These
 /// records are snapshot metadata and must not appear as user files.
 pub const CONFLICTS_PREFIX: &str = ".hashtree/conflicts";
+
+/// Encrypted, durable per-path kind-replacement roles. Presence (including an
+/// empty document) marks a root as role-aware; absence identifies legacy
+/// roots that require conservative compatibility handling.
+pub const PATH_KIND_REPLACEMENTS_PATH: &str = ".hashtree/path-kind-replacements";
+
+/// Largest integer that round-trips losslessly through JavaScript JSON.
+pub const MAX_PATH_KIND_REPLACEMENT_GENERATION: i64 = 9_007_199_254_740_991;
 
 /// Directory-entry metadata key carrying SHA-256 of the whole file
 /// plaintext. This is distinct from `hash`, which may be a chunk-tree
@@ -95,6 +105,27 @@ pub struct AppKeyTombstone {
     pub tombstoned_at: i64,
 }
 
+/// One active logical path-kind replacement authored by an `AppKey` root.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PathKindReplacement {
+    pub path: String,
+    pub generation: i64,
+}
+
+/// Deterministic encrypted wire representation stored at
+/// `.hashtree/path-kind-replacements`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PathKindReplacementDocument {
+    pub schema: u16,
+    pub replacements: Vec<PathKindReplacement>,
+}
+
+impl PathKindReplacementDocument {
+    pub const SCHEMA: u16 = 1;
+}
+
 /// What a single `AppKey` contributes to a merge.
 #[derive(Debug, Clone)]
 pub struct AppKeySnapshot<'a> {
@@ -102,6 +133,9 @@ pub struct AppKeySnapshot<'a> {
     pub root: &'a AppKeyRootRef,
     pub files: Vec<AppKeyFileEntry>,
     pub tombstones: Vec<AppKeyTombstone>,
+    /// `None` means the encrypted role document is absent (legacy root).
+    /// `Some([])` is a role-aware root with no active replacements.
+    pub path_kind_replacements: Option<Vec<PathKindReplacement>>,
 }
 
 /// One file in the merged view. `source_app_key_pubkey` is the `AppKey` whose
@@ -119,6 +153,43 @@ pub struct MergedEntry {
     pub modified_at: Option<i64>,
     pub source_app_key_pubkey: String,
     pub published_at: i64,
+}
+
+/// A winning file candidate hidden by a tombstone, together with the exact
+/// root that supplied that tombstone. Projection needs both sides to
+/// distinguish an intentional file/directory replacement from an unrelated
+/// delete that happens to collide with a stale opposite-kind candidate.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SuppressedMergedEntry {
+    pub entry: MergedEntry,
+    pub tombstone_app_key_pubkey: String,
+    pub tombstone_root: AppKeyRootRef,
+    pub tombstoned_at: i64,
+}
+
+/// The winning tombstone for one logical path, including its snapshot
+/// provenance. Directory projection needs markers that do not suppress a file
+/// candidate too, because empty-directory deletions have no file side.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergedTombstone {
+    pub path: String,
+    pub tombstoned_at: i64,
+    pub source_app_key_pubkey: String,
+    pub source_root: AppKeyRootRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergedPathKindReplacement {
+    pub path: String,
+    pub generation: i64,
+    pub source_app_key_pubkey: String,
+    pub source_root: AppKeyRootRef,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MergedPathKindRoleRoot {
+    pub source_app_key_pubkey: String,
+    pub source_root: AppKeyRootRef,
 }
 
 /// Why a path is conflicted.
@@ -169,6 +240,17 @@ pub struct MergedConflict {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct MergedView {
     pub files: Vec<MergedEntry>,
+    /// Winning file candidates hidden by tombstones. Projection keeps this
+    /// provenance so a file/directory kind replacement can expose the replaced
+    /// content as a conflict copy instead of losing it before kind resolution.
+    pub suppressed_files: Vec<SuppressedMergedEntry>,
+    /// Winning tombstones with source-root provenance, including path-only
+    /// markers for deleted empty directories.
+    pub tombstones: Vec<MergedTombstone>,
+    /// Active durable replacement roles from every authorized current root.
+    pub path_kind_replacements: Vec<MergedPathKindReplacement>,
+    /// Roots for which the encrypted role document was present, even if empty.
+    pub path_kind_role_roots: Vec<MergedPathKindRoleRoot>,
     /// Paths suppressed by tombstones (would have been files but a
     /// tombstone is newer than the newest write). Useful in test and
     /// debug output.
@@ -196,7 +278,7 @@ struct TombstoneCandidate {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum RootRelation {
+pub(crate) enum RootRelation {
     Same,
     LeftDescends,
     RightDescends,
@@ -225,10 +307,26 @@ pub fn merge_drives(authorized_app_keys: &[&str], snapshots: &[AppKeySnapshot<'_
     let mut local_only_tombstones: BTreeMap<String, TombstoneCandidate> = BTreeMap::new();
     let mut conflicts: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut conflict_details: BTreeMap<String, MergedConflict> = BTreeMap::new();
+    let mut path_kind_replacements = Vec::new();
+    let mut path_kind_role_roots = Vec::new();
 
     for snap in snapshots {
         if !allow.contains(snap.app_key_pubkey) {
             continue;
+        }
+        if let Some(replacements) = &snap.path_kind_replacements {
+            path_kind_role_roots.push(MergedPathKindRoleRoot {
+                source_app_key_pubkey: snap.app_key_pubkey.to_string(),
+                source_root: snap.root.clone(),
+            });
+            path_kind_replacements.extend(replacements.iter().map(|replacement| {
+                MergedPathKindReplacement {
+                    path: replacement.path.clone(),
+                    generation: replacement.generation,
+                    source_app_key_pubkey: snap.app_key_pubkey.to_string(),
+                    source_root: snap.root.clone(),
+                }
+            }));
         }
         for f in &snap.files {
             if path_has_ignored_component(&f.path) {
@@ -297,8 +395,13 @@ pub fn merge_drives(authorized_app_keys: &[&str], snapshots: &[AppKeySnapshot<'_
             conflicts.insert(path.clone());
             record_write_delete_conflict(&mut conflict_details, path.as_str(), write, tombstone);
         }
-        let suppressed = tombstone.is_some_and(|t| tombstone_suppresses_write(t, write));
-        if suppressed {
+        if let Some(tombstone) = tombstone.filter(|t| tombstone_suppresses_write(t, write)) {
+            view.suppressed_files.push(SuppressedMergedEntry {
+                entry: write.entry.clone(),
+                tombstone_app_key_pubkey: tombstone.app_key_pubkey.clone(),
+                tombstone_root: tombstone.root.clone(),
+                tombstoned_at: tombstone.tombstoned_at,
+            });
             view.suppressed_by_tombstone.push(path.clone());
         } else {
             view.files.push(write.entry.clone());
@@ -308,16 +411,37 @@ pub fn merge_drives(authorized_app_keys: &[&str], snapshots: &[AppKeySnapshot<'_
     // show up as evidence the path was deleted. Without this, a
     // single-AppKey delete (no concurrent write to suppress) would
     // silently vanish from both lists.
-    for path in tombstones.keys() {
+    for (path, tombstone) in &tombstones {
+        view.tombstones.push(MergedTombstone {
+            path: path.clone(),
+            tombstoned_at: tombstone.tombstoned_at,
+            source_app_key_pubkey: tombstone.app_key_pubkey.clone(),
+            source_root: tombstone.root.clone(),
+        });
         if !writes.contains_key(path) {
             view.suppressed_by_tombstone.push(path.clone());
         }
     }
     view.files.sort_by(|a, b| a.path.cmp(&b.path));
+    view.suppressed_files
+        .sort_by(|left, right| left.entry.path.cmp(&right.entry.path));
     view.suppressed_by_tombstone.sort();
     view.suppressed_by_tombstone.dedup();
     view.conflicts = conflicts.into_iter().collect();
     view.conflict_details = conflict_details.into_values().collect();
+    path_kind_replacements.sort_by(|left, right| {
+        left.path
+            .cmp(&right.path)
+            .then(left.source_app_key_pubkey.cmp(&right.source_app_key_pubkey))
+            .then(left.generation.cmp(&right.generation))
+    });
+    path_kind_role_roots.sort_by(|left, right| {
+        left.source_app_key_pubkey
+            .cmp(&right.source_app_key_pubkey)
+            .then(left.source_root.root_cid.cmp(&right.source_root.root_cid))
+    });
+    view.path_kind_replacements = path_kind_replacements;
+    view.path_kind_role_roots = path_kind_role_roots;
     view
 }
 
@@ -390,6 +514,17 @@ fn record_write_delete_conflict(
             files: Vec::new(),
             tombstone: None,
         });
+    // A tombstone that comes from one of the conflicting write roots is that
+    // root's durable path-kind barrier, not a deletion competing with the
+    // other write. Preserve the write/write versions and let kind projection
+    // use the exact-root barrier provenance.
+    let tombstone_belongs_to_conflicting_write = detail.files.iter().any(|file| {
+        file.app_key_pubkey == tombstone.app_key_pubkey
+            && root_cid_identity_matches(&file.root_cid, &tombstone.root.root_cid)
+    });
+    if tombstone_belongs_to_conflicting_write {
+        return;
+    }
     detail.kind = MergedConflictKind::WriteDelete;
     insert_conflict_file(&mut detail.files, conflict_file_side(write));
     detail.tombstone = Some(MergedConflictTombstone {
@@ -468,6 +603,14 @@ fn tombstone_candidate_wins(candidate: &TombstoneCandidate, existing: &Tombstone
 }
 
 fn tombstone_suppresses_write(tombstone: &TombstoneCandidate, write: &WriteCandidate) -> bool {
+    // A path-kind barrier intentionally coexists with the replacement entry in
+    // the exact root that authored it. It suppresses older roots, never its own
+    // visible entry.
+    if tombstone.app_key_pubkey == write.app_key_pubkey
+        && root_cid_identity_matches(&tombstone.root.root_cid, &write.root.root_cid)
+    {
+        return false;
+    }
     match root_relation(
         &tombstone.app_key_pubkey,
         &tombstone.root,
@@ -522,13 +665,13 @@ fn should_mark_write_delete_conflict(
         )
 }
 
-fn root_relation(
+pub(crate) fn root_relation(
     left_app_key: &str,
     left: &AppKeyRootRef,
     right_app_key: &str,
     right: &AppKeyRootRef,
 ) -> RootRelation {
-    if left.root_cid == right.root_cid {
+    if root_cid_identity_matches(&left.root_cid, &right.root_cid) {
         return RootRelation::Same;
     }
     let left_descends = root_observes(left_app_key, left, right_app_key, right);
@@ -546,7 +689,7 @@ fn root_observes(
     candidate_app_key_pubkey: &str,
     candidate_root: &AppKeyRootRef,
 ) -> bool {
-    if newer_root.root_cid == candidate_root.root_cid {
+    if root_cid_identity_matches(&newer_root.root_cid, &candidate_root.root_cid) {
         return true;
     }
     if newer_app_key_pubkey == candidate_app_key_pubkey
@@ -558,7 +701,7 @@ fn root_observes(
     }
     if newer_root.parents.iter().any(|parent| {
         parent.app_key_pubkey == candidate_app_key_pubkey
-            && (parent.root_cid == candidate_root.root_cid
+            && (root_cid_identity_matches(&parent.root_cid, &candidate_root.root_cid)
                 || (candidate_root.app_key_seq > 0
                     && parent.app_key_seq > candidate_root.app_key_seq))
     }) {
@@ -568,7 +711,7 @@ fn root_observes(
         .observed
         .get(candidate_app_key_pubkey)
         .is_some_and(|o| {
-            o.root_cid == candidate_root.root_cid
+            root_cid_identity_matches(&o.root_cid, &candidate_root.root_cid)
                 || (candidate_root.app_key_seq > 0 && o.app_key_seq > candidate_root.app_key_seq)
         })
 }
@@ -633,7 +776,11 @@ fn walk_meta_dir<'a, S: Store>(
             let path = format!("{prefix}/{}", entry.name);
             // Structural metadata is not user-visible content. Only
             // the tombstone subtree is intentionally traversed.
-            if path == PREV_LINK_PATH || path == ROOT_META_PATH || path == CONFLICTS_PREFIX {
+            if path == PREV_LINK_PATH
+                || path == ROOT_META_PATH
+                || path == CONFLICTS_PREFIX
+                || path == PATH_KIND_REPLACEMENTS_PATH
+            {
                 continue;
             }
             let child_cid = Cid {

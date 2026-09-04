@@ -105,10 +105,23 @@ require_file_contains macos/Sources/IrisDriveControlPanel.swift 'accessibilityId
 require_file_contains macos/Sources/IrisDriveMacApp.swift '"app_key_approval"'
 require_file_contains macos/Sources/IrisDriveMacApp.swift 'pendingDeviceApproval = IrisDriveDeviceApprovalRequest('
 require_file_absent macos/Sources/IrisDriveMacApp.swift 'approveDevice(url.absoluteString, label: "")'
+require_file_contains macos/Sources/IrisDriveMacApp.swift 'self.refreshExternalDaemonStatus(paths: paths)'
+require_file_absent macos/Sources/IrisDriveMacApp.swift 'self.refreshExternalDaemonStatusFile(paths: paths)'
+python3 - "$ROOT/macos/Sources/IrisDriveMacApp.swift" <<'PY'
+import sys
+source=open(sys.argv[1], encoding="utf-8").read()
+restart=source.split("if restartSyncAfterSuccess {", 1)[1].split("completion?()", 1)[0]
+external=restart.split("if self.externalDaemonMode {", 1)[1].split("} else if", 1)[0]
+if "self.startDaemon(" not in external:
+    raise SystemExit("external-daemon profile setup does not start its status watcher")
+PY
 require_file_contains macos/Sources/IrisDriveControlPanel.swift '.onChange(of: status.pendingDeviceApproval?.id, initial: true)'
 require_file_contains macos/Sources/IrisDriveControlPanel.swift '(.peers, true, request.requestURL)'
 require_file_contains macos/Sources/IrisDriveControlPanel.swift 'confirmApproveDevice(request.requestURL, force: true)'
 require_file_contains scripts/macos-smoke.sh 'source "$ROOT/scripts/lib/macos-device-link-smoke.sh"'
+require_file_contains scripts/macos-smoke.sh 'source "$ROOT/scripts/lib/macos-smoke-diagnostics.sh"'
+require_file_contains scripts/macos-smoke.sh 'source "$ROOT/scripts/lib/macos-app-launch-smoke.sh"'
+require_file_contains scripts/macos-smoke.sh 'launch_macos_smoke_app_with_targeted_recovery'
 require_file_contains scripts/macos-smoke.sh 'run_macos_owner_device_link_journey'
 require_file_contains scripts/lib/macos-device-link-smoke.sh 'MACOS_OWNER_LINK_TIMEOUT_SECS:-15'
 require_file_contains scripts/lib/macos-device-link-smoke.sh 'pending_device_approval_receipt_count") == 0'
@@ -143,10 +156,50 @@ require_file_contains scripts/macos-smoke.sh 'trap bootstrap_cleanup EXIT'
 require_file_contains scripts/macos-smoke.sh 'assert_safe_smoke_root "$SMOKE_DIR"'
 require_file_contains scripts/macos-smoke.sh 'assert_safe_smoke_root "$SMOKE_STATE_DIR"'
 require_file_contains scripts/macos-smoke.sh 'assert_safe_app_data_root "$SMOKE_APP_DATA"'
-require_file_contains scripts/macos-smoke.sh 'artifacts=("$SMOKE_DIR"/*)'
+require_file_contains scripts/macos-smoke.sh 'for artifact in "$SMOKE_DIR"/*; do'
 require_file_contains scripts/macos-smoke.sh '>"$SMOKE_DIR/result.json"'
 require_file_absent scripts/macos-smoke.sh 'SMOKE_HOME="$SMOKE_DIR/home"'
 require_file_absent scripts/macos-smoke.sh 'echo "$status_json"'
+
+LAUNCH_LIFECYCLE="$ROOT/scripts/lib/macos-app-launch-smoke.sh"
+require_file_contains scripts/lib/macos-app-launch-smoke.sh 'macos_launch_stall_is_retryable'
+require_file_contains scripts/lib/macos-app-launch-smoke.sh 'linkd.autoShortcut'
+require_file_contains scripts/lib/macos-app-launch-smoke.sh 'MACOS_SMOKE_APP_READY_TIMEOUT_SECS=10'
+require_file_contains scripts/lib/macos-app-launch-smoke.sh 'terminate_app_process'
+require_file_absent scripts/lib/macos-app-launch-smoke.sh 'rm -rf'
+
+bash - "$LAUNCH_LIFECYCLE" <<'BASH'
+set -Eeuo pipefail
+source "$1"
+app_is_running() { return 0; }
+app_process_pids() { printf '123\n'; }
+macos_app_has_product_log() { return 1; }
+macos_appintents_linkd_stall_for_pid() { [[ "$1" == 123 ]]; }
+macos_launch_stall_is_retryable
+macos_app_has_product_log() { return 0; }
+if macos_launch_stall_is_retryable; then
+  echo "product startup output must forbid AppIntents relaunch" >&2
+  exit 1
+fi
+macos_app_has_product_log() { return 1; }
+app_is_running() { return 1; }
+if macos_launch_stall_is_retryable; then
+  echo "app crash must forbid AppIntents relaunch" >&2
+  exit 1
+fi
+BASH
+
+python3 - "$LAUNCH_LIFECYCLE" <<'PY'
+from pathlib import Path
+import sys
+
+source = Path(sys.argv[1]).read_text()
+body = source.split("launch_macos_smoke_app_with_targeted_recovery() {", 1)[1]
+if body.count("launch_macos_smoke_app_once") != 2:
+    raise SystemExit("targeted launch recovery must allow exactly one relaunch")
+if body.index("macos_launch_stall_is_retryable") > body.index("terminate_app_process"):
+    raise SystemExit("launch recovery must prove the AppIntents stall before termination")
+PY
 
 python3 - "$ROOT/scripts/cross-vm-e2e.sh" <<'PY'
 from pathlib import Path
@@ -167,12 +220,14 @@ if positions != sorted(positions):
         "immediately before owner approval"
     )
 PY
-require_file_contains scripts/macos-vm-smoke.sh "runner.raw.log"
+require_file_contains scripts/macos-vm-smoke.sh 'REMOTE_PRIVATE_LOG="artifacts/macos-smoke-runner.private.log"'
 require_file_contains scripts/macos-vm-smoke.sh 'state_dir=\$(mktemp -d -t iris-drive-macos-vm-smoke-state)'
 require_file_contains scripts/macos-vm-smoke.sh 'IRIS_DRIVE_MACOS_SMOKE_STATE_DIR=\"\$state_dir\"'
 require_file_contains scripts/macos-vm-smoke.sh 'rm -rf \"\$state_dir\"'
 require_file_contains scripts/macos-vm-smoke.sh 'smoke_exit=\$?'
-require_file_contains scripts/macos-vm-smoke.sh "rm -f '\$REMOTE_ARTIFACT_DIR/runner.raw.log'"
+require_file_contains scripts/macos-vm-smoke.sh 'if (( smoke_exit == 0 )); then rm -f '\''$REMOTE_PRIVATE_LOG'\''; fi'
+require_file_contains scripts/macos-vm-smoke.sh 'private raw log retained on the VM'
+require_file_contains scripts/macos-vm-smoke.sh 'private phase diagnostics retained on the VM'
 require_file_contains scripts/macos-vm-smoke.sh '$REMOTE_ARTIFACT_DIR/result.json'
 require_file_absent scripts/macos-vm-smoke.sh 'scp -qr'
 require_file_absent scripts/macos-vm-smoke.sh 'xcode-build.log'

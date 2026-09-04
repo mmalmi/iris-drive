@@ -238,6 +238,7 @@ async fn real_same_host_provider_failure_still_uses_drive_standalone_route() {
             npub: target_device.pubkey_bech32(),
             udp_addresses: vec![target_udp_addr.to_string()],
         }],
+        &[],
         vec![FipsPeerConfig {
             npub: target_device.pubkey_bech32(),
             udp_addresses: vec![target_udp_addr.to_string()],
