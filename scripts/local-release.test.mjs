@@ -533,7 +533,7 @@ test('local-release dry-run builds the Windows installer in dist', () => {
   assert.match(result.stdout, /v9\.9\.9/)
 })
 
-test('local-release dry-run stages Linux CLI binary for cargo-deb', () => {
+test('local-release dry-run stages Linux CLI and selects the exact Debian output', () => {
   const result = spawnSync(
     process.execPath,
     [
@@ -553,6 +553,10 @@ test('local-release dry-run stages Linux CLI binary for cargo-deb', () => {
   assert.match(
     result.stdout,
     /\$ cp .*\/x86_64-unknown-linux-gnu\/release\/idrive .*linux\/target\/release\/idrive[\s\S]*\$ cargo deb --no-build/,
+  )
+  assert.match(
+    result.stdout,
+    /\$ cargo deb --no-build --output .*\/linux\/target\/debian\/iris-drive-v9\.9\.9-linux-x64\.deb(?:\n|$)/,
   )
 })
 

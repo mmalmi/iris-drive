@@ -825,12 +825,13 @@ function buildLinuxArtifacts({ env, tag, dryRun }) {
       { repoRoot },
     )
   }
-  run('cargo', ['deb', '--no-build'], { cwd: join(repoRoot, 'linux'), dryRun, env })
-  const debPath = findFirstFile(join(repoRoot, 'linux', 'target', 'debian'), (entry) =>
-    entry.endsWith('.deb'),
-  )
+  const debPath = join(repoRoot, 'linux', 'target', 'debian', `iris-drive-${tag}-linux-x64.deb`)
   if (!dryRun) {
-    if (!debPath) {
+    mkdirSync(dirname(debPath), { recursive: true })
+  }
+  run('cargo', ['deb', '--no-build', '--output', debPath], { cwd: join(repoRoot, 'linux'), dryRun, env })
+  if (!dryRun) {
+    if (!existsSync(debPath)) {
       throw new Error('Expected Linux .deb output was not produced.')
     }
     run(
@@ -839,7 +840,7 @@ function buildLinuxArtifacts({ env, tag, dryRun }) {
       { env },
     )
     mkdirSync(distDir, { recursive: true })
-    copyFileSync(debPath, join(distDir, `iris-drive-${tag}-linux-x64.deb`))
+    copyFileSync(debPath, join(distDir, basename(debPath)))
   }
 }
 
