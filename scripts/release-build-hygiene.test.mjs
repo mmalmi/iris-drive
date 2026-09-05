@@ -287,7 +287,12 @@ run_ios_archive
     const derivedData = args[args.indexOf('-derivedDataPath') + 1]
     assert.match(derivedData, /^\/(?:private\/)?tmp\/iris-drive-ios-build\.[A-Za-z0-9]+$/)
     assert.equal(existsSync(derivedData), false, 'successful archives clean their own build directory')
-    assert.match(args.find((arg) => arg.startsWith('OTHER_SWIFT_FLAGS=')), /-prefix-serialized-debugging-options/)
+    assert.ok(args.includes('SWIFT_SERIALIZE_DEBUGGING_OPTIONS=NO'))
+    const swiftFlags = args.find((arg) => arg.startsWith('OTHER_SWIFT_FLAGS='))
+    assert.match(swiftFlags, /-debug-prefix-map/)
+    assert.match(swiftFlags, /\/usr\/src\/iris-drive/)
+    assert.match(swiftFlags, /\/usr\/src\/home/)
+    assert.doesNotMatch(swiftFlags, /-prefix-serialized-debugging-options/)
   }
 })
 
