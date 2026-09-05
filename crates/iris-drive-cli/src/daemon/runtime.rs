@@ -569,11 +569,13 @@ pub(crate) fn cmd_daemon(
                             json!({"event": "provider_root_publish_error", "trigger": "config_root_watch", "error": format!("{error:#}")})
                         ),
                     }
-                    provider_root_event_recheck_pending = true;
-                    provider_root_event_recheck_timer.as_mut().reset(
-                        tokio::time::Instant::now()
-                            + provider_root_event_recheck_delay(root_update_debounce),
-                    );
+                    if !provider_root_event_recheck_pending {
+                        provider_root_event_recheck_pending = true;
+                        provider_root_event_recheck_timer.as_mut().reset(
+                            tokio::time::Instant::now()
+                                + provider_root_event_recheck_delay(root_update_debounce),
+                        );
+                    }
                 }
                 Some(wake_payload) = async {
                     if let Some(rx) = provider_root_wake_rx.as_mut() {
@@ -617,11 +619,13 @@ pub(crate) fn cmd_daemon(
                             json!({"event": "provider_root_publish_error", "trigger": "provider_root_wake", "error": format!("{error:#}")})
                         ),
                     }
-                    provider_root_event_recheck_pending = true;
-                    provider_root_event_recheck_timer.as_mut().reset(
-                        tokio::time::Instant::now()
-                            + provider_root_event_recheck_delay(root_update_debounce),
-                    );
+                    if !provider_root_event_recheck_pending {
+                        provider_root_event_recheck_pending = true;
+                        provider_root_event_recheck_timer.as_mut().reset(
+                            tokio::time::Instant::now()
+                                + provider_root_event_recheck_delay(root_update_debounce),
+                        );
+                    }
                 }
                 Some(reason) = async {
                     if let Some(rx) = mount_refresh_rx.as_mut() {
