@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.34 - 2026-08-18
+## 0.1.34 - 2026-09-05
 
 ### Changed
 
@@ -19,6 +19,8 @@
 
 ### Fixed
 
+- Package the exact newly built Linux Debian artifact so older build outputs
+  cannot be published under a new release version.
 - Reject unavailable directory blocks during merge and preserve the last
   accepted sync cache when a replacement tree cannot be read completely.
 - Recognize shared NostrIdentity device-link URLs and `nostr:` wrappers, and
