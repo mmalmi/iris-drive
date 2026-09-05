@@ -247,6 +247,50 @@ printf '%s\\n%s\\n%s\\n%s\\n' "$CARGO_ENCODED_RUSTFLAGS" "$CFLAGS" "$CXXFLAGS" "
   assert.equal(shellEscaped, '1')
 })
 
+test('both iOS signing modes preserve private-free symbol generation', {
+  skip: process.platform === 'win32',
+}, (t) => {
+  const root = mkdtempSync(join(tmpdir(), 'iris-drive-ios-symbols-'))
+  t.after(() => rmSync(root, { recursive: true, force: true }))
+  const ios = readFileSync(new URL('./ios-build', import.meta.url), 'utf8')
+  const functions = ['build_settings_args', 'run_ios_archive'].map((name) =>
+    ios.match(new RegExp(`${name}\\(\\) \\{[\\s\\S]*?\\n\\}`))?.[0],
+  ).join('\n')
+  for (const mode of ['manual', 'automatic']) {
+    const capture = join(root, `${mode}.args`)
+    const result = spawnSync('bash', ['-c', `set -euo pipefail
+${functions}
+require_darwin() { :; }
+ensure_dir() { mkdir -p "$1"; }
+run_ios_rust() { :; }
+run_ios_project() { :; }
+ensure_profiles() { :; }
+load_profiles_env() { :; }
+xcode_auth_args() { echo -allowProvisioningUpdates; }
+verify_ios_archive_license() { :; }
+verify_ios_archive_privacy() { :; }
+marketing_version() { echo 0.1.0; }
+build_number() { echo 1; }
+xcodebuild() { printf '%s\\0' "$@" > "$CAPTURE"; }
+for key in TEAM_ID BUNDLE_ID FILE_PROVIDER_BUNDLE_ID SHARE_EXTENSION_BUNDLE_ID SHARE_SOURCE_BUNDLE_ID APP_GROUP_IDENTIFIER BACKGROUND_SYNC_TASK_IDENTIFIER RUST_LIB_DIR RUST_STATIC_LIB PROJECT SCHEME CONFIGURATION IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID IRIS_DRIVE_IOS_FILE_PROVIDER_PROVISIONING_PROFILE_UUID IRIS_DRIVE_IOS_SHARE_EXTENSION_PROVISIONING_PROFILE_UUID; do
+  export "$key=fixture"
+done
+DIST_DIR="$ROOT/dist"
+ARCHIVE_PATH="$DIST_DIR/Fixture.xcarchive"
+run_ios_archive
+`], {
+      encoding: 'utf8',
+      env: { ...process.env, ROOT: root, TMPDIR: root, CAPTURE: capture, IOS_SIGNING_STYLE: mode },
+    })
+    assert.equal(result.status, 0, result.stderr)
+    const args = readFileSync(capture, 'utf8').split('\0').filter(Boolean)
+    const derivedData = args[args.indexOf('-derivedDataPath') + 1]
+    assert.match(derivedData, /^\/(?:private\/)?tmp\/iris-drive-ios-build\.[A-Za-z0-9]+$/)
+    assert.equal(existsSync(derivedData), false, 'successful archives clean their own build directory')
+    assert.match(args.find((arg) => arg.startsWith('OTHER_SWIFT_FLAGS=')), /-prefix-serialized-debugging-options/)
+  }
+})
+
 test('Linux release lookup keeps checkout paths out of production code', () => {
   const source = readFileSync(new URL('../linux/src/daemon_control.rs', import.meta.url), 'utf8')
   assert.equal([...source.matchAll(/env!\("CARGO_MANIFEST_DIR"\)/g)].length, 1)

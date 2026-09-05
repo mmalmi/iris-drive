@@ -327,7 +327,7 @@ load_profiles_env() {
 
 build_settings_args() {
   local swift_path_maps clang_path_maps
-  swift_path_maps="-debug-prefix-map \"$ROOT=/usr/src/iris-drive\""
+  swift_path_maps="-prefix-serialized-debugging-options -debug-prefix-map \"$ROOT=/usr/src/iris-drive\""
   swift_path_maps+=" -debug-prefix-map \"$HOME=/usr/src/home\""
   clang_path_maps="\"-ffile-prefix-map=$ROOT=/usr/src/iris-drive\""
   clang_path_maps+=" \"-fdebug-prefix-map=$ROOT=/usr/src/iris-drive\""
@@ -432,6 +432,7 @@ verify_ios_export_license() {
 
 run_ios_archive() {
   local auth_args=() build_args=()
+  local derived_data
   require_darwin
   ensure_dir "$DIST_DIR"
   IOS_ARCHIVE_PRIVACY_VERIFIED=false
@@ -444,6 +445,8 @@ run_ios_archive() {
     load_profiles_env
   fi
   while IFS= read -r arg; do build_args+=("$arg"); done < <(build_settings_args)
+  # dsymutil records its binary input path, independently of compiler prefix maps.
+  derived_data="$(mktemp -d /tmp/iris-drive-ios-build.XXXXXX)"
 
   if [[ "$IOS_SIGNING_STYLE" == "automatic" ]]; then
     while IFS= read -r arg; do auth_args+=("$arg"); done < <(xcode_auth_args)
@@ -452,6 +455,7 @@ run_ios_archive() {
       -scheme "$SCHEME" \
       -configuration "$CONFIGURATION" \
       -destination "generic/platform=iOS" \
+      -derivedDataPath "$derived_data" \
       -archivePath "$ARCHIVE_PATH" \
       "${auth_args[@]}" \
       CODE_SIGN_STYLE=Automatic \
@@ -467,6 +471,7 @@ run_ios_archive() {
       -scheme "$SCHEME" \
       -configuration "$CONFIGURATION" \
       -destination "generic/platform=iOS" \
+      -derivedDataPath "$derived_data" \
       -archivePath "$ARCHIVE_PATH" \
       CODE_SIGN_STYLE=Manual \
       IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID="$IRIS_DRIVE_IOS_PROVISIONING_PROFILE_UUID" \
@@ -477,6 +482,7 @@ run_ios_archive() {
   fi
   verify_ios_archive_license
   verify_ios_archive_privacy
+  rm -rf -- "$derived_data"
 }
 
 write_export_options() {
