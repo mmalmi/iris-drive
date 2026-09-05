@@ -10,7 +10,6 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
-  symlinkSync,
   writeFileSync,
 } from 'node:fs'
 import os from 'node:os'
@@ -43,6 +42,7 @@ import {
   prepareMacosEntitlementsData,
 } from './macos-entitlements.mjs'
 import { prepareMacosReleaseBinaries } from './macos-release-binaries.mjs'
+import { createMacosDmg } from './macos-release-dmg.mjs'
 import { assertZipEntriesEqualFiles } from './release-zip.mjs'
 import {
   assertNoPrivateBuildMetadata,
@@ -454,27 +454,6 @@ function notarizeMacosApp({ appPath, signingDir, env, dryRun }) {
   stapleMacosArtifact({ artifactPath: appPath, dryRun })
 }
 
-function createMacosDmg({ appPath, dmgPath, dryRun, env }) {
-  const dmgRoot = join(repoRoot, 'macos', '.build', 'ReleaseDmgRoot')
-  const dmgAppPath = join(dmgRoot, basename(appPath))
-  const applicationsLink = join(dmgRoot, 'Applications')
-  if (!dryRun) {
-    rmSync(dmgRoot, { recursive: true, force: true })
-    mkdirSync(dmgRoot, { recursive: true })
-  }
-  run('ditto', [appPath, dmgAppPath], { dryRun, env })
-  if (dryRun) {
-    console.log(`Would link /Applications -> ${applicationsLink}`)
-  } else {
-    symlinkSync('/Applications', applicationsLink)
-  }
-  run(
-    'hdiutil',
-    ['create', '-volname', 'Iris Drive', '-srcfolder', dmgRoot, '-ov', '-format', 'UDZO', dmgPath],
-    { dryRun, env },
-  )
-}
-
 function macosProvisionedEntitlementsEnabled(env) {
   return envFlag(env, 'IRIS_DRIVE_MACOS_KEEP_PROVISIONED_ENTITLEMENTS')
 }
@@ -760,7 +739,7 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
     mkdirSync(distDir, { recursive: true })
     rmSync(dmgPath, { force: true })
   }
-  createMacosDmg({ appPath, dmgPath, dryRun, env })
+  createMacosDmg({ appPath, dmgPath, dryRun, env, repoRoot, run })
   runCodesign(['--force', ...timestampArgs, '--sign', identity, dmgPath], { dryRun, env })
   run('codesign', ['--verify', '--strict', dmgPath], { dryRun })
   submitMacosNotarization({ artifactPath: dmgPath, env, dryRun })

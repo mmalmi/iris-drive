@@ -609,6 +609,7 @@ test('local-release dry-run notarizes macOS artifacts and adds Applications shor
   assert.match(result.stdout, /ditto .*ReleaseDmgRoot\/Iris Drive\.app/)
   assert.match(result.stdout, /Would link \/Applications -> .*ReleaseDmgRoot\/Applications/)
   assert.match(result.stdout, /hdiutil create .* -srcfolder .*ReleaseDmgRoot .*iris-drive-v9\.9\.9-macos-arm64\.dmg/)
+  assert.match(result.stdout, /hdiutil create .* -megabytes /)
   assert.match(result.stdout, /codesign .*iris-drive-v9\.9\.9-macos-arm64\.dmg/)
   assert.match(result.stdout, /xcrun notarytool submit .*iris-drive-v9\.9\.9-macos-arm64\.dmg .*--keychain-profile/)
   assert.match(result.stdout, /xcrun stapler staple .*iris-drive-v9\.9\.9-macos-arm64\.dmg/)
