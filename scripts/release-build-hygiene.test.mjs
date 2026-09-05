@@ -397,7 +397,8 @@ test('Unix CLI packaging produces normalized tar metadata', { skip: process.plat
   assert.equal(archivedLicense.status, 0, archivedLicense.stderr?.toString())
   assert.deepEqual(archivedLicense.stdout, readFileSync(new URL('../LICENSE', import.meta.url)))
 
-  const extraction = spawnSync('tar', ['-xzf', archivePath, '-C', extractDir], { encoding: 'utf8' })
+  // Inspect archived permissions independently of the caller's umask.
+  const extraction = spawnSync('tar', ['-xpzf', archivePath, '-C', extractDir], { encoding: 'utf8' })
   assert.equal(extraction.status, 0, extraction.stderr)
   for (const [member, expectedMode] of [
     ['LICENSE', 0o644],
