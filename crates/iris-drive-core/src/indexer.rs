@@ -481,7 +481,7 @@ fn filter_ignored_entries_from_dir<'a, S: Store>(
     dir: &'a Cid,
 ) -> futures::future::BoxFuture<'a, Result<(Cid, bool), IndexError>> {
     Box::pin(async move {
-        let entries = tree.list_directory(dir).await?;
+        let entries = tree.list_directory_required(dir).await?;
         let mut changed = false;
         let mut filtered = Vec::with_capacity(entries.len());
 

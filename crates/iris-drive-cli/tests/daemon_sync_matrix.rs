@@ -476,3 +476,5 @@ mod app_key_link_tests;
 mod provider_visibility_tests;
 #[path = "daemon_sync_matrix/scenario_tests.rs"]
 mod scenario_tests;
+#[path = "daemon_sync_matrix/staged_recovery_tests.rs"]
+mod staged_recovery_tests;

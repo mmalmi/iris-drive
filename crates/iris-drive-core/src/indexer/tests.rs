@@ -13,6 +13,34 @@ fn new_tree() -> HashTree<MemoryStore> {
 }
 
 #[tokio::test]
+async fn filtering_requires_directory_blocks_but_accepts_real_empty_directories() {
+    let tree = new_tree();
+    let missing = Cid {
+        hash: [9; 32],
+        key: None,
+    };
+    let nested = tree
+        .put_directory(vec![
+            DirEntry::from_cid("pending", &missing).with_link_type(LinkType::Dir),
+        ])
+        .await
+        .unwrap();
+    for root in [missing, nested] {
+        assert!(matches!(
+            filter_ignored_entries_from_root(&tree, &root).await,
+            Err(IndexError::Tree(HashTreeError::MissingChunk(_)))
+        ));
+    }
+    let empty = tree.put_directory(Vec::new()).await.unwrap();
+    assert_eq!(
+        filter_ignored_entries_from_root(&tree, &empty)
+            .await
+            .unwrap(),
+        empty
+    );
+}
+
+#[tokio::test]
 async fn empty_dir_indexes_to_empty_htree_dir() {
     let dir = tempdir().unwrap();
     let tree = new_tree();

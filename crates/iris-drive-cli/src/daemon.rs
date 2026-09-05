@@ -261,6 +261,7 @@ impl ProviderRootPublishKey {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn publish_provider_root_if_changed(
     client: &nostr_sdk::Client,
     config_dir: &Path,
@@ -269,7 +270,22 @@ async fn publish_provider_root_if_changed(
     direct_roots: &mut DirectRootExchange,
     fips_blocks: Option<&FsFipsBlockSync>,
     daemon_tasks: &DaemonTaskSet,
+    trigger: &str,
 ) -> Result<Option<AppConfig>> {
+    if iris_drive_core::paths::provider_root_staging_path_in(config_dir).exists() {
+        match import_staged_provider_root(config_dir).await {
+            Ok(Some(report)) => emit_daemon_status_event(
+                config_dir,
+                provider_root_import_status_payload("provider_root_staged_imported", &report),
+            ),
+            Ok(None) => {}
+            Err(error) => println!(
+                "{}",
+                json!({"event": "provider_root_staged_import_error", "trigger": trigger, "error": format!("{error:#}")})
+            ),
+        }
+    }
+    // Pending file data must not delay roster publication or peer revocation.
     let config_path = config_path_in(config_dir);
     let config_fingerprint = config_file_fingerprint(&config_path)?;
     if cache.fingerprint_matches(&config_fingerprint) {
@@ -368,13 +384,15 @@ async fn import_staged_provider_root(
     let tombstone_paths = staged.tombstone_paths;
     let mut daemon = Daemon::open(config_dir)
         .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
-    let report = crate::drive::import_provider_root_with_retry(
-        &mut daemon,
-        root,
-        tombstone_base_root,
-        Some(&tombstone_paths),
-    )
-    .await?;
+    // Yield the event loop and config lock on a missing block so peer sync can
+    // make progress. The provider recheck timer retries the retained staging.
+    let report = daemon
+        .import_visible_root_with_tombstone_base_and_paths(
+            root,
+            tombstone_base_root,
+            Some(&tombstone_paths),
+        )
+        .await?;
     clear_provider_staging(config_dir)?;
     Ok(Some(report))
 }
@@ -392,24 +410,6 @@ fn provider_root_import_status_payload(
             "top_level_entries": report.top_level_entries,
         },
     })
-}
-
-async fn handle_provider_root_wake_payload(config_dir: &Path, wake_payload: &Value, trigger: &str) {
-    if provider_root_wake_payload_is_staged(wake_payload) {
-        match import_staged_provider_root(config_dir).await {
-            Ok(Some(report)) => emit_daemon_status_event(
-                config_dir,
-                provider_root_import_status_payload("provider_root_staged_imported", &report),
-            ),
-            Ok(None) => {}
-            Err(error) => println!(
-                "{}",
-                json!({"event": "provider_root_staged_import_error", "trigger": trigger, "error": format!("{error:#}")})
-            ),
-        }
-    } else if let Some(status_payload) = provider_root_wake_status_payload(wake_payload) {
-        emit_daemon_status_event(config_dir, status_payload);
-    }
 }
 
 const PROVIDER_ROOT_SAFETY_POLL_MIN_SECS: u64 = 30;

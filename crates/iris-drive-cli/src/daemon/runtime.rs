@@ -345,9 +345,10 @@ pub(crate) fn cmd_daemon(
         let mut direct_root_change_announce_pending = false;
         let mut direct_root_change_announce_timer =
             Box::pin(tokio::time::sleep(std::time::Duration::from_hours(24)));
-        let mut provider_root_event_recheck_pending = false;
+        let provider_staging_path = iris_drive_core::paths::provider_root_staging_path_in(config_dir);
+        let mut provider_root_event_recheck_pending = provider_staging_path.exists();
         let mut provider_root_event_recheck_timer =
-            Box::pin(tokio::time::sleep(std::time::Duration::from_hours(24)));
+            Box::pin(tokio::time::sleep(provider_root_event_recheck_delay(root_update_debounce)));
         let config_root_watch_active = config_root_change_rx.is_some();
         let mut provider_root_poll_timer =
             tokio::time::interval(provider_root_poll_period(watch_interval));
@@ -545,21 +546,9 @@ pub(crate) fn cmd_daemon(
                     if let Some(rx) = provider_root_wake_rx.as_mut()
                         && let Some(wake_payload) =
                             drain_latest_provider_root_wake_payload(rx, None)
+                        && let Some(status_payload) = provider_root_wake_status_payload(&wake_payload)
                     {
-                        handle_provider_root_wake_payload(
-                            config_dir,
-                            &wake_payload,
-                            "config_root_watch",
-                        )
-                        .await;
-                    }
-                    if iris_drive_core::paths::provider_root_staging_path_in(config_dir).exists() {
-                        handle_provider_root_wake_payload(
-                            config_dir,
-                            &json!({"staged": true}),
-                            "config_root_watch_signal",
-                        )
-                        .await;
+                        emit_daemon_status_event(config_dir, status_payload);
                     }
                     match publish_provider_root_if_changed(
                         &client,
@@ -569,6 +558,7 @@ pub(crate) fn cmd_daemon(
                         &mut direct_roots,
                         fips_blocks.as_deref(),
                         &daemon_tasks,
+                        "config_root_watch",
                     )
                     .await
                     {
@@ -602,13 +592,11 @@ pub(crate) fn cmd_daemon(
                             )
                             .await;
                     }
-                    if let Some(wake_payload) = latest_wake_payload.as_ref() {
-                        handle_provider_root_wake_payload(
-                            config_dir,
-                            wake_payload,
-                            "provider_root_wake",
-                        )
-                        .await;
+                    if let Some(status_payload) = latest_wake_payload
+                        .as_ref()
+                        .and_then(provider_root_wake_status_payload)
+                    {
+                        emit_daemon_status_event(config_dir, status_payload);
                     }
                     match publish_provider_root_if_changed(
                         &client,
@@ -618,6 +606,7 @@ pub(crate) fn cmd_daemon(
                         &mut direct_roots,
                         fips_blocks.as_deref(),
                         &daemon_tasks,
+                        "provider_root_wake",
                     )
                     .await
                     {
@@ -857,7 +846,6 @@ pub(crate) fn cmd_daemon(
                     }
                 }
                 () = &mut provider_root_event_recheck_timer, if provider_root_event_recheck_pending => {
-                    provider_root_event_recheck_pending = false;
                     match publish_provider_root_if_changed(
                         &client,
                         config_dir,
@@ -866,6 +854,7 @@ pub(crate) fn cmd_daemon(
                         &mut direct_roots,
                         fips_blocks.as_deref(),
                         &daemon_tasks,
+                        "provider_root_event_recheck",
                     )
                     .await
                     {
@@ -875,6 +864,13 @@ pub(crate) fn cmd_daemon(
                             "{}",
                             json!({"event": "provider_root_publish_error", "trigger": "provider_root_event_recheck", "error": format!("{error:#}")})
                         ),
+                    }
+                    provider_root_event_recheck_pending = provider_staging_path.exists();
+                    if provider_root_event_recheck_pending {
+                        provider_root_event_recheck_timer.as_mut().reset(
+                            tokio::time::Instant::now()
+                                + provider_root_event_recheck_delay(root_update_debounce),
+                        );
                     }
                 }
                 _ = provider_root_poll_timer.tick(), if provider_root_poll_enabled(config_root_watch_active) => {
@@ -886,6 +882,7 @@ pub(crate) fn cmd_daemon(
 	                        &mut direct_roots,
 	                        fips_blocks.as_deref(),
 	                        &daemon_tasks,
+	                        "config_root_poll",
 	                    )
                     .await
                     {

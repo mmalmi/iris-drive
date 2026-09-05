@@ -19,6 +19,9 @@
 
 ### Fixed
 
+- Retry staged provider writes after missing sync blocks arrive, releasing the
+  daemon event loop and config lock between attempts so sync can recover.
+- Reject incomplete provider directories instead of importing them as empty.
 - Package the exact newly built Linux Debian artifact so older build outputs
   cannot be published under a new release version.
 - Reject unavailable directory blocks during merge and preserve the last
