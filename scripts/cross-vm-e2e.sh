@@ -416,6 +416,7 @@ detect_host_fips_addr() {
     return 0
   fi
   if [[ "$kind" == "windows" ]]; then
+    # PowerShell -Command - needs a trailing blank line to finish multiline input.
     ip="$(ssh "$ssh_host" "$(windows_powershell_command_for "$ssh_host")" <<'REMOTE_PS' 2>/dev/null || true
 $TunnelIp = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -eq 'nvpn' -and $_.IPAddress -like '10.44.*' } | Select-Object -First 1 -ExpandProperty IPAddress)
 if ($TunnelIp) { Write-Output $TunnelIp; exit 0 }
@@ -424,6 +425,7 @@ $FallbackIp = (Get-NetIPAddress -AddressFamily IPv4 |
   Select-Object -First 1 -ExpandProperty IPAddress)
 if ($FallbackIp) { Write-Output $FallbackIp; exit 0 }
 exit 1
+
 REMOTE_PS
 )"
   else
@@ -441,7 +443,11 @@ do
   [[ -n "$ip" ]] && break
 done
 if [[ -z "$ip" ]]; then
-  ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    ip="$(ipconfig getifaddr en0 2>/dev/null || true)"
+  else
+    ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  fi
 fi
 printf '%s\n' "$ip"
 REMOTE_SH
