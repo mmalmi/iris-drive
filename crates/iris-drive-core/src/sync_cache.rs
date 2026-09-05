@@ -139,36 +139,11 @@ impl SyncCache {
         let mut cache = Self::empty();
         for drive in &config.drives {
             for (app_key_pubkey, root) in roots_for_drive(config, drive) {
-                let root_cid =
-                    Cid::parse(&root.root_cid).map_err(|source| SyncCacheError::RootCid {
-                        drive_id: drive.drive_id.clone(),
-                        app_key_pubkey: app_key_pubkey.clone(),
-                        root_cid: root.root_cid.clone(),
-                        source,
-                    })?;
-                cache.roots.push(CachedRoot {
-                    drive_id: drive.drive_id.clone(),
-                    app_key_pubkey: app_key_pubkey.clone(),
-                    app_key_seq: root.app_key_seq,
-                    root_cid: root.root_cid.clone(),
-                    dck_generation: root.dck_generation,
-                    seen_at,
-                    observed_json: serde_json::to_value(&root.observed)?,
-                });
-
-                let (files, _tombstones) = walk_app_key_tree(tree, &root_cid).await?;
-                for file in files {
-                    cache.path_state.push(CachedPathState {
-                        drive_id: drive.drive_id.clone(),
-                        app_key_pubkey: app_key_pubkey.clone(),
-                        path: file.path,
-                        root_cid: root.root_cid.clone(),
-                        whole_file_hash: file.whole_file_hash.map(|hash| to_hex(&hash)),
-                        content_cid_hash: to_hex(&file.hash),
-                        size: file.size,
-                        metadata_json: json!({}),
-                    });
-                }
+                let (root, paths) =
+                    cache_app_key_root(tree, &drive.drive_id, &app_key_pubkey, &root, seen_at)
+                        .await?;
+                cache.roots.push(root);
+                cache.path_state.extend(paths);
             }
         }
         cache.sort_rows();
@@ -222,40 +197,17 @@ impl SyncCache {
                 app_key_pubkey: app_key_pubkey.to_string(),
             }
         })?;
-        let root_cid = Cid::parse(&root.root_cid).map_err(|source| SyncCacheError::RootCid {
-            drive_id: drive_id.to_string(),
-            app_key_pubkey: app_key_pubkey.to_string(),
-            root_cid: root.root_cid.clone(),
-            source,
-        })?;
+        // Do not replace accepted state until every directory has been read.
+        let (root, paths) =
+            cache_app_key_root(tree, drive_id, app_key_pubkey, root, seen_at).await?;
 
         self.roots
             .retain(|row| row.drive_id != drive_id || row.app_key_pubkey != app_key_pubkey);
         self.path_state
             .retain(|row| row.drive_id != drive_id || row.app_key_pubkey != app_key_pubkey);
 
-        self.roots.push(CachedRoot {
-            drive_id: drive_id.to_string(),
-            app_key_pubkey: app_key_pubkey.to_string(),
-            app_key_seq: root.app_key_seq,
-            root_cid: root.root_cid.clone(),
-            dck_generation: root.dck_generation,
-            seen_at,
-            observed_json: serde_json::to_value(&root.observed)?,
-        });
-
-        let (files, _tombstones) = walk_app_key_tree(tree, &root_cid).await?;
-        self.path_state
-            .extend(files.into_iter().map(|file| CachedPathState {
-                drive_id: drive_id.to_string(),
-                app_key_pubkey: app_key_pubkey.to_string(),
-                path: file.path,
-                root_cid: root.root_cid.clone(),
-                whole_file_hash: file.whole_file_hash.map(|hash| to_hex(&hash)),
-                content_cid_hash: to_hex(&file.hash),
-                size: file.size,
-                metadata_json: json!({}),
-            }));
+        self.roots.push(root);
+        self.path_state.extend(paths);
         self.set_current_device_base(drive_id, app_key_pubkey);
         Ok(())
     }
@@ -572,6 +524,45 @@ pub struct SourceAvailability {
     pub updated_at: i64,
 }
 
+async fn cache_app_key_root<S: Store>(
+    tree: &HashTree<S>,
+    drive_id: &str,
+    app_key_pubkey: &str,
+    root: &AppKeyRootRef,
+    seen_at: i64,
+) -> Result<(CachedRoot, Vec<CachedPathState>), SyncCacheError> {
+    let root_cid = Cid::parse(&root.root_cid).map_err(|source| SyncCacheError::RootCid {
+        drive_id: drive_id.to_string(),
+        app_key_pubkey: app_key_pubkey.to_string(),
+        root_cid: root.root_cid.clone(),
+        source,
+    })?;
+    let (files, _tombstones) = walk_app_key_tree(tree, &root_cid).await?;
+    let paths = files
+        .into_iter()
+        .map(|file| CachedPathState {
+            drive_id: drive_id.to_string(),
+            app_key_pubkey: app_key_pubkey.to_string(),
+            path: file.path,
+            root_cid: root.root_cid.clone(),
+            whole_file_hash: file.whole_file_hash.map(|hash| to_hex(&hash)),
+            content_cid_hash: to_hex(&file.hash),
+            size: file.size,
+            metadata_json: json!({}),
+        })
+        .collect();
+    let root = CachedRoot {
+        drive_id: drive_id.to_string(),
+        app_key_pubkey: app_key_pubkey.to_string(),
+        app_key_seq: root.app_key_seq,
+        root_cid: root.root_cid.clone(),
+        dck_generation: root.dck_generation,
+        seen_at,
+        observed_json: serde_json::to_value(&root.observed)?,
+    };
+    Ok((root, paths))
+}
+
 fn roots_for_drive(
     config: &AppConfig,
     drive: &crate::config::Drive,
@@ -702,7 +693,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn replace_app_key_root_updates_one_app_key_without_walking_others() {
+    async fn replace_app_key_root_is_atomic_and_does_not_walk_other_app_keys() {
         let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())).public());
         let source = tempfile::tempdir().unwrap();
         std::fs::write(source.path().join("local.txt"), b"local").unwrap();
@@ -757,6 +748,53 @@ mod tests {
             cache.base_anchor_for_drive("main"),
             Some(local_root_string.as_str())
         );
+
+        let before = cache.clone();
+        let missing = Cid {
+            hash: [9; 32],
+            key: None,
+        };
+        let mut unavailable_roots = vec![missing.clone()];
+        for name in ["unavailable", crate::merge::META_DIR] {
+            unavailable_roots.push(
+                tree.put_directory(vec![hashtree_core::DirEntry {
+                    name: name.into(),
+                    hash: missing.hash,
+                    key: missing.key,
+                    link_type: hashtree_core::LinkType::Dir,
+                    size: 0,
+                    meta: None,
+                }])
+                .await
+                .unwrap(),
+            );
+        }
+        for root in unavailable_roots {
+            config.drives[0].app_key_roots.insert(
+                "device-a".into(),
+                AppKeyRootRef::legacy(root.to_string(), 13, 2),
+            );
+            assert!(matches!(
+                cache
+                    .replace_app_key_root_from_config(&tree, &config, "main", "device-a", 14)
+                    .await,
+                Err(SyncCacheError::Tree(_))
+            ));
+            assert_eq!(cache, before, "failed retrieval must preserve the cache");
+        }
+
+        let empty = tree.put_directory(vec![]).await.unwrap().to_string();
+        config.drives[0].app_key_roots.insert(
+            "device-a".into(),
+            AppKeyRootRef::legacy(empty.clone(), 15, 2),
+        );
+        cache
+            .replace_app_key_root_from_config(&tree, &config, "main", "device-a", 16)
+            .await
+            .unwrap();
+        assert!(cache.path_state.is_empty());
+        assert!(cache.base_state.is_empty());
+        assert_eq!(cache.base_anchor_for_drive("main"), Some(empty.as_str()));
     }
 
     #[test]

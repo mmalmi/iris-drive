@@ -548,16 +548,13 @@ async fn pending_mount_update_drain_keeps_latest_after_debounce() {
 async fn config_mutation_lock_serializes_same_config_dir() {
     let dir = tempfile::tempdir().unwrap();
     let first = ConfigMutationLock::acquire(dir.path()).await.unwrap();
-    let contender_dir = dir.path().to_path_buf();
-    let contender =
-        tokio::spawn(async move { ConfigMutationLock::acquire(&contender_dir).await });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    assert!(!contender.is_finished());
+    let contender = ConfigMutationLock::acquire(dir.path());
+    tokio::pin!(contender);
+    assert!(futures::poll!(&mut contender).is_pending());
     drop(first);
 
     let second = tokio::time::timeout(std::time::Duration::from_secs(2), contender)
         .await
-        .unwrap()
         .unwrap()
         .unwrap();
     drop(second);
@@ -662,16 +659,14 @@ async fn daemon_task_set_coalesces_active_keyed_tasks() {
         }),
     ));
 
+    let completion = tasks.tasks.lock().unwrap().pop().unwrap().join;
     release_tx.send(()).unwrap();
-    for _ in 0..20 {
-        if tasks.push_keyed("root:one".to_string(), tokio::spawn(async {})) {
-            tasks.abort_all().await;
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
+    tokio::time::timeout(std::time::Duration::from_secs(1), completion)
+        .await
+        .expect("keyed task should finish after release")
+        .unwrap();
+    assert!(tasks.push_keyed("root:one".to_string(), tokio::spawn(async {})));
     tasks.abort_all().await;
-    panic!("keyed task was not released after completion");
 }
 
 #[test]

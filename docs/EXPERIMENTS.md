@@ -4,6 +4,19 @@ Performance and integration experiments log. Omit identifying information
 (pubkeys, secrets, IPs, private hostnames, exact repo names, raw hashes)
 unless the user explicitly asks otherwise.
 
+## 2026-09-05 deterministic fixture waits
+
+- Replaced fixed sleeps in the config-lock, keyed-task completion, and
+  recursive file-rescan tests with explicit pending/completion checks and
+  controlled filesystem modification times. No tests were removed.
+- Five interleaved runs of the old and new CLI test binaries, running those
+  three tests serially, reduced median wall time from 0.1212s to 0.0394s
+  (67.5%). Median test-body time fell from 0.11s to 0.03s; these figures do not
+  include compilation or claim a whole-suite speedup.
+- Consolidated the release-workflow barrier fixture and replaced repeated
+  `find`/`wc`/`tr`/`seq` processes with shell builtins. All 12 workflow tests
+  pass; interleaved measurements did not establish a wall-time improvement.
+
 ## 2026-08-06 device-link and release-gate latency
 
 - A real two-daemon approval completed in about 0.64s; the complete

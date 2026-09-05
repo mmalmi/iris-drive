@@ -771,7 +771,7 @@ fn walk_meta_dir<'a, S: Store>(
     tombstones: &'a mut Vec<AppKeyTombstone>,
 ) -> futures::future::BoxFuture<'a, Result<(), HashTreeError>> {
     Box::pin(async move {
-        let entries = tree.list_directory(dir_cid).await?;
+        let entries = tree.list_directory_required(dir_cid).await?;
         for entry in entries {
             let path = format!("{prefix}/{}", entry.name);
             // Structural metadata is not user-visible content. Only
@@ -805,7 +805,7 @@ fn walk_dir_recursive<'a, S: Store>(
     tombstones: &'a mut Vec<AppKeyTombstone>,
 ) -> futures::future::BoxFuture<'a, Result<(), HashTreeError>> {
     Box::pin(async move {
-        let entries = tree.list_directory(dir_cid).await?;
+        let entries = tree.list_directory_required(dir_cid).await?;
         for entry in entries {
             let path = if prefix.is_empty() {
                 entry.name.clone()

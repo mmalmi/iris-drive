@@ -36,12 +36,11 @@ fn windows_cloud_recursive_recent_rescan_finds_nested_file_edit_under_old_parent
     let sync_root = tempfile::tempdir().unwrap();
     let nested_dir = sync_root.path().join("e2e").join("run").join("ops");
     std::fs::create_dir_all(&nested_dir).unwrap();
-    let file = nested_dir.join("create-edit.txt");
-    std::fs::write(&file, b"version 1").unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    let cutoff = std::time::SystemTime::now();
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    std::fs::write(&file, b"version 2").unwrap();
+    let file = std::fs::File::create(nested_dir.join("create-edit.txt")).unwrap();
+    // Keep timestamps distinct even on filesystems with coarse resolution.
+    let cutoff = std::time::SystemTime::now() + std::time::Duration::from_secs(2);
+    file.set_modified(cutoff + std::time::Duration::from_secs(2))
+        .unwrap();
 
     let shallow =
         windows_cloud_local_projected_paths_since(sync_root.path(), Some(cutoff), false).unwrap();

@@ -19,6 +19,10 @@
 
 ### Fixed
 
+- Reject unavailable directory blocks during merge and preserve the last
+  accepted sync cache when a replacement tree cannot be read completely.
+- Recognize shared NostrIdentity device-link URLs and `nostr:` wrappers, and
+  ignore query/fragment hints when checking whether an invite is complete.
 - Encode new profile content-key wraps as interoperable hexadecimal NIP-44
   plaintext while continuing to read legacy native raw-byte wraps. This keeps
   encrypted device names visible across native and Web clients and lets native

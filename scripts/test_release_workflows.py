@@ -1,12 +1,14 @@
 #!/usr/bin/env python3
 
 import os
+import shlex
 import shutil
 import subprocess
 import tempfile
 import textwrap
 import unittest
 from pathlib import Path
+from typing import Optional
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -52,25 +54,26 @@ class ReleaseWorkflowTests(unittest.TestCase):
         environment.update(overrides)
         return environment
 
-    def install_parallel_lane(self, name: str, lane: str, *, barrier: bool = False) -> None:
+    def install_parallel_lane(self, name: str, lane: Optional[str] = None, *, barrier: bool = False) -> None:
         barrier_body = ""
         if barrier:
             barrier_body = textwrap.dedent(
-                f"""
-                touch "$RELEASE_WORKFLOW_TEST_STATE/started-{lane}"
-                for _attempt in $(seq 1 100); do
-                  count=$(find "$RELEASE_WORKFLOW_TEST_STATE" -name 'started-*' -type f | wc -l | tr -d ' ')
-                  [[ "$count" -ge 4 ]] && break
+                """
+                touch "$RELEASE_WORKFLOW_TEST_STATE/started-$lane"
+                for ((attempt = 0; attempt < 100; attempt++)); do
+                  started=("$RELEASE_WORKFLOW_TEST_STATE"/started-*)
+                  [[ "${#started[@]}" -ge 4 ]] && break
                   sleep 0.02
                 done
-                [[ "$count" -ge 4 ]] || exit 91
+                [[ "${#started[@]}" -ge 4 ]] || exit 91
                 """
             )
         self.write_executable(
             self.scripts / name,
-            f'printf "start {lane}\\n" >>"$RELEASE_WORKFLOW_TEST_STATE/events"\n'
+            (f"lane={shlex.quote(lane)}\n" if lane is not None else 'lane="$1"\n')
+            + 'printf "start %s\\n" "$lane" >>"$RELEASE_WORKFLOW_TEST_STATE/events"\n'
             + barrier_body
-            + f'printf "end {lane}\\n" >>"$RELEASE_WORKFLOW_TEST_STATE/events"\n',
+            + 'printf "end %s\\n" "$lane" >>"$RELEASE_WORKFLOW_TEST_STATE/events"\n',
         )
 
     def install_five_platform_fixture(self) -> Path:
@@ -96,23 +99,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             'printf "%s\n" "${IRIS_DRIVE_MOBILE_REUSE_ANDROID_ARTIFACTS-unset}" '
             '>"$RELEASE_WORKFLOW_TEST_STATE/macos-android-reuse"\n',
         )
-        self.write_executable(
-            self.scripts / "desktop-gui-smoke.sh",
-            textwrap.dedent(
-                """
-                lane="$1"
-                printf "start %s\n" "$lane" >>"$RELEASE_WORKFLOW_TEST_STATE/events"
-                touch "$RELEASE_WORKFLOW_TEST_STATE/started-$lane"
-                for _attempt in $(seq 1 100); do
-                  count=$(find "$RELEASE_WORKFLOW_TEST_STATE" -name 'started-*' -type f | wc -l | tr -d ' ')
-                  [[ "$count" -ge 4 ]] && break
-                  sleep 0.02
-                done
-                [[ "$count" -ge 4 ]] || exit 91
-                printf "end %s\n" "$lane" >>"$RELEASE_WORKFLOW_TEST_STATE/events"
-                """
-            ),
-        )
+        self.install_parallel_lane("desktop-gui-smoke.sh", barrier=True)
         self.write_executable(
             self.scripts / "cross-vm-e2e.sh",
             'printf "sync\n" >>"$RELEASE_WORKFLOW_TEST_STATE/events"\n'
