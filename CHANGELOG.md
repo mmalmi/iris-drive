@@ -25,6 +25,7 @@
 - Package the exact newly built Linux Debian artifact so older build outputs
   cannot be published under a new release version.
 - Reserve enough filesystem capacity when creating the macOS installer image.
+- Remove private build paths from iOS debug symbols while retaining symbolication.
 - Reject unavailable directory blocks during merge and preserve the last
   accepted sync cache when a replacement tree cannot be read completely.
 - Recognize shared NostrIdentity device-link URLs and `nostr:` wrappers, and
