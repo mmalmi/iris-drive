@@ -7,8 +7,7 @@ use hashtree_updater::{
     SecureNostrBlossomUpdater, UpdateEventCache, UpdateRef,
     build_secure_nostr_blossom_updater_with_events, current_archive_target, dedupe_nonempty,
     download_product_selection, env_csv, platform_app_asset_suffixes, preferred_product_asset,
-    product_result_from_selection, select_product_update,
-    selected_download_path as shared_selected_download_path, update_ref_from_override,
+    product_result_from_selection, select_product_update, update_ref_from_override,
 };
 pub use hashtree_updater::{
     ProductUpdateMode, ProductUpdateResult, SECURE_SOURCE_NAME, UpdateAsset, UpdateAutoCheckPolicy,
@@ -20,10 +19,7 @@ use crate::paths::config_path_in;
 use crate::update_announcement::{load_update_event_cache, persist_update_event_cache};
 
 pub const HTREE_UPDATE_REF: &str = "htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-drive/latest";
-pub const HTREE_MANIFEST_URL: &str = "https://cdn.iris.to/npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-drive/latest/release.json";
-pub const LEGACY_HTREE_SOURCE_NAME: &str = "legacy-htree-url";
 
-const UPDATE_CONNECT_TIMEOUT_SECS: u64 = 4;
 const UPDATE_MANIFEST_TIMEOUT_SECS: u64 = 8;
 const UPDATE_DOWNLOAD_TIMEOUT_SECS: u64 = 180;
 const DEFAULT_UPDATE_BLOSSOM_READ_SERVERS: &[&str] = &[
@@ -39,18 +35,6 @@ pub struct ProductUpdateConfig {
     pub embedded_hashtree_base_url: Option<String>,
     pub update_ref: Option<String>,
     pub config_dir: Option<PathBuf>,
-}
-
-struct LegacySelection {
-    manifest: UpdateManifest,
-    asset: UpdateAsset,
-    asset_url: String,
-    update_available: bool,
-}
-
-enum UpdateSelection {
-    Secure(Box<SecureNostrBlossomSelection>),
-    Legacy(Box<LegacySelection>),
 }
 
 #[must_use]
@@ -125,66 +109,22 @@ async fn select_update(
     current_version: &str,
     mode: ProductUpdateMode,
     config: ProductUpdateConfig,
-) -> Result<UpdateSelection> {
-    let secure = tokio::time::timeout(
+) -> Result<SecureNostrBlossomSelection> {
+    tokio::time::timeout(
         Duration::from_secs(UPDATE_MANIFEST_TIMEOUT_SECS),
         secure_selection(current_version, mode, config),
     )
-    .await;
-
-    let selection = match secure {
-        Ok(Ok(selection)) => selection,
-        Ok(Err(error)) => {
-            return legacy_selection(current_version, mode)
-                .await
-                .map(Box::new)
-                .map(UpdateSelection::Legacy)
-                .with_context(|| format!("secure hashtree update check failed: {error}"));
-        }
-        Err(_) => {
-            return legacy_selection(current_version, mode)
-                .await
-                .map(Box::new)
-                .map(UpdateSelection::Legacy)
-                .context("secure hashtree update check timed out");
-        }
-    };
-
-    if !selection.update_available
-        && let Ok(legacy) = legacy_selection(current_version, mode).await
-        && legacy.update_available
-    {
-        return Ok(UpdateSelection::Legacy(Box::new(legacy)));
-    }
-
-    Ok(UpdateSelection::Secure(Box::new(selection)))
+    .await
+    .context("signed hashtree update check timed out")?
+    .context("signed hashtree update check failed")
 }
 
 fn result_from_selection(
     current_version: &str,
-    selection: &UpdateSelection,
+    selection: &SecureNostrBlossomSelection,
     path: Option<&Path>,
 ) -> ProductUpdateResult {
-    match selection {
-        UpdateSelection::Secure(selection) => product_result_from_selection(
-            current_version,
-            selection.as_ref(),
-            SECURE_SOURCE_NAME,
-            true,
-            path,
-        ),
-        UpdateSelection::Legacy(selection) => ProductUpdateResult {
-            available: selection.update_available,
-            current_version: current_version.to_string(),
-            latest_version: selection.manifest.effective_version(),
-            tag: manifest_display_tag(&selection.manifest),
-            asset: selection.asset.name.clone(),
-            source: LEGACY_HTREE_SOURCE_NAME.to_string(),
-            verified: false,
-            path: path.map(|value| value.display().to_string()),
-            ..ProductUpdateResult::default()
-        },
-    }
+    product_result_from_selection(current_version, selection, SECURE_SOURCE_NAME, true, path)
 }
 
 async fn secure_selection(
@@ -202,29 +142,6 @@ async fn secure_selection(
                 asset_policy().noun(mode)
             )
         })
-}
-
-async fn legacy_selection(
-    current_version: &str,
-    mode: ProductUpdateMode,
-) -> Result<LegacySelection> {
-    let manifest = fetch_manifest(HTREE_MANIFEST_URL).await?;
-    let asset = preferred_product_asset(&manifest, mode, &asset_policy()).ok_or_else(|| {
-        anyhow::anyhow!(
-            "release {} has no {} asset for {}",
-            manifest_display_tag(&manifest),
-            asset_policy().noun(mode),
-            current_target()
-        )
-    })?;
-    let update_available = version_is_newer(&manifest_display_tag(&manifest), current_version);
-    let asset_url = manifest_asset_url(HTREE_MANIFEST_URL, &asset.path);
-    Ok(LegacySelection {
-        manifest,
-        asset,
-        asset_url,
-        update_available,
-    })
 }
 
 pub(crate) fn product_update_reference(override_ref: Option<&str>) -> Result<UpdateRef> {
@@ -335,36 +252,40 @@ fn blossom_read_servers(config: &ProductUpdateConfig) -> Vec<String> {
 }
 
 async fn download_selection(
-    selection: &UpdateSelection,
+    selection: &SecureNostrBlossomSelection,
     download_dir: Option<&Path>,
 ) -> Result<PathBuf> {
-    match selection {
-        UpdateSelection::Secure(selection) => {
-            download_product_selection(selection.as_ref(), download_dir, &asset_policy())
-                .await
-                .with_context(|| {
-                    format!(
-                        "failed to download verified hashtree asset {}",
-                        selection.asset.name
-                    )
-                })
-        }
-        UpdateSelection::Legacy(selection) => {
-            let destination = shared_selected_download_path(
-                download_dir,
-                &selection.asset.name,
-                asset_policy().download_file_name_fallback(),
-            )
+    let workspace = create_update_workspace(download_dir)?;
+    let destination =
+        download_product_selection(selection, Some(workspace.path()), &asset_policy())
+            .await
             .with_context(|| {
                 format!(
-                    "failed to choose update download path for {}",
+                    "failed to download verified hashtree asset {}",
                     selection.asset.name
                 )
             })?;
-            download_asset(&selection.asset_url, &destination).await?;
-            Ok(destination)
-        }
+    let _ = workspace.keep();
+    Ok(destination)
+}
+
+/// Create a unique, private directory for verified update files.
+pub fn create_update_workspace(parent: Option<&Path>) -> Result<tempfile::TempDir> {
+    let mut builder = tempfile::Builder::new();
+    builder.prefix("iris-drive-update-");
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        builder.permissions(std::fs::Permissions::from_mode(0o700));
     }
+    match parent {
+        Some(parent) => {
+            std::fs::create_dir_all(parent).context("creating update download directory")?;
+            builder.tempdir_in(parent)
+        }
+        None => builder.tempdir(),
+    }
+    .context("creating private update workspace")
 }
 
 #[must_use]
@@ -386,81 +307,6 @@ fn asset_policy() -> ProductAssetPolicy {
     ProductAssetPolicy::new("idrive", "idrive CLI", "Iris Drive app")
         .with_app_asset_suffixes(platform_app_asset_suffixes().iter().copied())
         .with_download_file_name_fallback("iris-drive-update")
-}
-
-async fn fetch_manifest(url: &str) -> Result<UpdateManifest> {
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(UPDATE_CONNECT_TIMEOUT_SECS))
-        .timeout(Duration::from_secs(UPDATE_MANIFEST_TIMEOUT_SECS))
-        .build()
-        .context("building update HTTP client")?;
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .with_context(|| format!("fetching update manifest {url}"))?
-        .error_for_status()
-        .with_context(|| format!("fetching update manifest {url}"))?;
-    let bytes = response
-        .bytes()
-        .await
-        .with_context(|| format!("reading update manifest {url}"))?;
-    serde_json::from_slice(&bytes).context("parsing update manifest")
-}
-
-async fn download_asset(url: &str, destination: &Path) -> Result<()> {
-    if let Some(parent) = destination.parent() {
-        tokio::fs::create_dir_all(parent)
-            .await
-            .with_context(|| format!("creating {}", parent.display()))?;
-    }
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(UPDATE_CONNECT_TIMEOUT_SECS))
-        .timeout(Duration::from_secs(UPDATE_DOWNLOAD_TIMEOUT_SECS))
-        .build()
-        .context("building update HTTP client")?;
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .with_context(|| format!("downloading update asset {url}"))?
-        .error_for_status()
-        .with_context(|| format!("downloading update asset {url}"))?;
-    let bytes = response
-        .bytes()
-        .await
-        .with_context(|| format!("reading update asset {url}"))?;
-    tokio::fs::write(destination, bytes)
-        .await
-        .with_context(|| format!("writing {}", destination.display()))?;
-    Ok(())
-}
-
-fn manifest_display_tag(manifest: &UpdateManifest) -> String {
-    if let Some(tag) = manifest
-        .tag
-        .as_deref()
-        .map(str::trim)
-        .filter(|tag| !tag.is_empty())
-    {
-        return tag.to_string();
-    }
-    let version = manifest.effective_version();
-    if version.is_empty() {
-        String::new()
-    } else {
-        format!("v{version}")
-    }
-}
-
-fn manifest_asset_url(manifest_url: &str, path: &str) -> String {
-    if path.starts_with("http://") || path.starts_with("https://") || path.starts_with("file://") {
-        return path.to_string();
-    }
-    let base = manifest_url
-        .rsplit_once('/')
-        .map_or(manifest_url, |(base, _)| base);
-    format!("{}/{}", base, path.trim_start_matches('/'))
 }
 
 #[must_use]
@@ -489,6 +335,32 @@ fn version_parts(value: &str) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn invalid_signed_reference_fails_without_starting_an_unsigned_update() {
+        use futures::FutureExt;
+
+        let config = ProductUpdateConfig {
+            update_ref: Some("not-a-signed-update-reference".to_string()),
+            ..ProductUpdateConfig::default()
+        };
+        let check = check_product_update("0.0.0", ProductUpdateMode::Cli, config.clone())
+            .now_or_never()
+            .expect("an invalid signed reference must fail before any network request");
+        assert!(check.is_err());
+
+        let destination = tempfile::tempdir().unwrap();
+        let download = download_product_update(
+            "0.0.0",
+            ProductUpdateMode::Cli,
+            config,
+            Some(destination.path()),
+        )
+        .now_or_never()
+        .expect("downloads must also reject an invalid signed reference immediately");
+        assert!(download.is_err());
+        assert_eq!(std::fs::read_dir(destination.path()).unwrap().count(), 0);
+    }
 
     #[test]
     fn preferred_cli_asset_ignores_desktop_artifacts_for_same_target() {
@@ -552,24 +424,5 @@ mod tests {
         assert!(version_is_newer("v0.2.28", "0.2.27"));
         assert!(!version_is_newer("v0.2.27", "0.2.27"));
         assert!(!version_is_newer("v0.2.26", "0.2.27"));
-    }
-
-    #[test]
-    fn resolves_relative_legacy_manifest_asset_urls() {
-        assert_eq!(
-            manifest_asset_url(
-                "https://example.invalid/releases/iris-drive/latest/release.json",
-                "assets/iris-drive.dmg",
-            ),
-            "https://example.invalid/releases/iris-drive/latest/assets/iris-drive.dmg"
-        );
-    }
-
-    #[test]
-    fn legacy_manifest_uses_cdn_gateway() {
-        assert!(
-            HTREE_MANIFEST_URL.starts_with("https://cdn.iris.to/"),
-            "legacy fallback should use a gateway that serves hashtree directory paths",
-        );
     }
 }

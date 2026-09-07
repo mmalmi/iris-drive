@@ -13,6 +13,9 @@ use crate::paths::config_path_in;
 use crate::profile::Profile;
 use tempfile::tempdir;
 
+#[path = "security_tests.rs"]
+mod security;
+
 fn init_account_config(dir: &Path) {
     let account = Profile::create(dir, Some("gateway-test".into())).unwrap();
     let mut cfg = AppConfig {

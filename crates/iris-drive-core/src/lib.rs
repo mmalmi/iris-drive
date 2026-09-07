@@ -68,6 +68,7 @@ pub mod update_announcement;
 pub mod updater;
 
 pub use app_keys::{AppActorEntry, AppActorRole, AppKeysProjection, ApplyDecision};
+pub use atomic_file::atomic_write;
 pub use config::{
     AppConfig, AppKeyRootRef, BackupTarget, BackupTargetCheck, BackupTargetKind, BackupTargetSync,
     ConfigError, Drive, DriveRole, UserProfile,

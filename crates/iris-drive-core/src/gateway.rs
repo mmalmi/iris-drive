@@ -40,6 +40,7 @@ mod caldav;
 mod paths;
 mod proxy;
 mod response;
+mod security;
 
 #[allow(clippy::wildcard_imports)]
 use self::caldav::*;
@@ -50,6 +51,8 @@ use self::paths::*;
 use self::proxy::*;
 #[allow(clippy::wildcard_imports)]
 use self::response::*;
+#[allow(clippy::wildcard_imports)]
+use self::security::*;
 
 pub const LOCAL_PORTAL_HOST: &str = "iris.localhost";
 pub const LOCAL_NHASH_RESOLVER_HOST: &str = "nhash.iris.localhost";
@@ -472,10 +475,19 @@ async fn gateway_handler(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    match handle_gateway_request(state, ws, method, uri, headers, body).await {
+    let sandbox = private_api_host_allowed(&headers);
+    let mut response = match handle_gateway_request(state, ws, method, uri, headers, body).await {
         Ok(response) => response,
         Err((status, message)) => text_response(status, &message),
+    };
+    if sandbox {
+        // A local drive file must not gain the privileges of the local account APIs.
+        response.headers_mut().append(
+            "content-security-policy",
+            HeaderValue::from_static("sandbox"),
+        );
     }
+    response
 }
 
 async fn handle_gateway_request(
@@ -495,6 +507,7 @@ async fn handle_gateway_request(
     }
 
     if is_htree_runtime_ws_path(uri.path()) && htree_runtime_host_allowed(&headers) {
+        require_same_origin(&headers)?;
         let Some(ws) = ws else {
             return Err((StatusCode::BAD_REQUEST, "websocket upgrade required".into()));
         };
@@ -502,6 +515,7 @@ async fn handle_gateway_request(
     }
 
     if let Some(request) = runtime_htree_daemon_request(&uri, &headers) {
+        require_same_origin(&headers)?;
         return proxy_htree_daemon_request(&state, &method, &headers, request, body).await;
     }
 
@@ -568,7 +582,7 @@ fn handle_share_action_api(
     body: &[u8],
 ) -> Result<Response, (StatusCode, String)> {
     let cors_origin = share_action_cors_origin(headers)?;
-    if !share_action_host_allowed(headers) {
+    if !private_api_host_allowed(headers) {
         return Err((StatusCode::BAD_REQUEST, "invalid share action host".into()));
     }
     if method == Method::OPTIONS {
@@ -620,65 +634,6 @@ fn share_action_response_builder(
     builder
 }
 
-fn share_action_host_allowed(headers: &HeaderMap) -> bool {
-    let Some(host) = headers
-        .get(HOST)
-        .and_then(|value| value.to_str().ok())
-        .map(normalize_host)
-    else {
-        return false;
-    };
-    is_loopback_host(&host)
-        || host == LOCAL_PORTAL_HOST
-        || host.ends_with(DRIVE_HOST_SUFFIX)
-        || host.ends_with(IRIS_LOCALHOST_SUFFIX)
-        || host.ends_with(IRIS_LOCAL_SUFFIX)
-}
-
-fn share_action_cors_origin(
-    headers: &HeaderMap,
-) -> Result<Option<HeaderValue>, (StatusCode, String)> {
-    let Some(origin) = headers.get(ORIGIN) else {
-        return Ok(None);
-    };
-    let origin_str = origin
-        .to_str()
-        .map_err(|_| (StatusCode::FORBIDDEN, "invalid origin".to_string()))?;
-    let Some(host) = origin_host(origin_str) else {
-        return Err((StatusCode::FORBIDDEN, "invalid origin".into()));
-    };
-    if share_action_origin_host_allowed(&host) {
-        return Ok(Some(origin.clone()));
-    }
-    Err((StatusCode::FORBIDDEN, "origin is not allowed".into()))
-}
-
-fn share_action_origin_host_allowed(host: &str) -> bool {
-    let host = normalize_host(host);
-    is_loopback_host(&host)
-        || host == "drive.iris.to"
-        || host == LOCAL_PORTAL_HOST
-        || host.ends_with(DRIVE_HOST_SUFFIX)
-        || host.ends_with(IRIS_LOCALHOST_SUFFIX)
-        || host.ends_with(IRIS_LOCAL_SUFFIX)
-        || host.ends_with(".htree.localhost")
-}
-
-fn origin_host(origin: &str) -> Option<String> {
-    let rest = origin
-        .strip_prefix("http://")
-        .or_else(|| origin.strip_prefix("https://"))?;
-    let authority = rest.split('/').next().unwrap_or_default();
-    if authority.starts_with('[') {
-        return authority.split(']').next().map(|value| format!("{value}]"));
-    }
-    authority
-        .split(':')
-        .next()
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-}
-
 fn gateway_now_seconds() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -699,6 +654,11 @@ fn resolve_gateway_request(uri: &Uri, headers: &HeaderMap) -> Result<GatewayRequ
 
     let (path_segments, route_from_path) = parse_gateway_path(uri.path())?;
     if let Some(route) = route_from_path {
+        if !private_api_host_allowed(headers) {
+            return Err(GatewayError::InvalidRequest(
+                "path routes require a local gateway host".into(),
+            ));
+        }
         return request_from_path_route(uri, headers, route, path_segments);
     }
 

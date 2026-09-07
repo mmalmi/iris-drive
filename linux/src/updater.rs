@@ -94,7 +94,7 @@ fn download_blocking(
         current_version,
         ProductUpdateMode::App,
         product_update_config_for_dir(config_dir),
-        Some(&download_dir),
+        download_dir.as_deref(),
     )
     .map_err(|error| error.to_string())?;
     if result.asset != asset.name {
@@ -127,10 +127,9 @@ fn maybe_make_executable_and_open(destination: &Path, asset_name: &str) -> Resul
     Ok(())
 }
 
-fn update_download_dir() -> PathBuf {
+fn update_download_dir() -> Option<PathBuf> {
     std::env::var("IRIS_DRIVE_UPDATE_DOWNLOAD_DIR")
         .ok()
         .filter(|value| !value.trim().is_empty())
         .map(PathBuf::from)
-        .unwrap_or_else(|| std::env::temp_dir().join("IrisDriveDownloads"))
 }

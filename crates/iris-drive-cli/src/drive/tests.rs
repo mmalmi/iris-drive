@@ -1,6 +1,7 @@
 use super::*;
 use iris_drive_core::root_meta::DriveRootMeta;
 
+mod cache_security_tests;
 mod provider_retry_tests;
 
 fn init_config(config_dir: &Path) -> Profile {

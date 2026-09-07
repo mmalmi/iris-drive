@@ -265,6 +265,7 @@ pub fn apply_app_key_link_roster_frame(
     let ops_changed = account.profile_id != frame.profile_id
         || !same_profile_ops(&account.profile_roster_ops, &merged_ops);
     let merged_projection = project_nostr_identity_roster(frame.profile_id, merged_ops.clone());
+    ensure_profile_roster_bootstrap_unchanged(account, &merged_projection)?;
     let merged_app_keys = app_keys_from_profile_projection(&merged_projection)
         .ok_or_else(|| RelayError::AppKeyLinkRoster("profile roster has no AppKey epoch".into()))?;
 
@@ -343,6 +344,8 @@ fn app_key_link_roster_apply_decision(
 /// projection rejects them. That keeps out-of-order delivery mergeable: once a
 /// missing parent/add op arrives, deterministic projection can accept the
 /// previously rejected op without needing the network to resend it.
+/// Incoming material that changes the established bootstrap is rejected before
+/// it can enter the log.
 pub fn apply_remote_nostr_identity_roster_op_event(
     config: &mut AppConfig,
     event: &Event,
@@ -364,6 +367,7 @@ pub fn apply_remote_nostr_identity_roster_op_event(
             merge_profile_roster_ops(&account.profile_roster_ops, std::slice::from_ref(&op));
         let merged_projection =
             project_nostr_identity_roster(account.profile_id, merged_ops.clone());
+        ensure_profile_roster_bootstrap_unchanged(account, &merged_projection)?;
         if account.authorization_state == crate::AppKeyAuthorizationState::AwaitingApproval
             && merged_projection.can_write_roots(&account.app_key_pubkey)
             && !pending_device_approval_receipt_is_valid(account)
@@ -387,16 +391,10 @@ pub fn apply_remote_nostr_identity_roster_op_event(
     Ok(NostrIdentityRosterOpApply::NotOurProfile)
 }
 
-fn pending_device_approval_receipt_is_valid(account: &crate::ProfileState) -> bool {
-    let Some(pending) = account.outbound_app_key_link_request.as_ref() else {
-        return false;
-    };
-    pending.approval_receipt_event.iter().any(|event_json| {
-        Event::from_json(event_json).is_ok_and(|event| {
-            parse_pending_app_key_approval_receipt_event(pending, &event).is_ok()
-        })
-    })
-}
+mod roster_trust;
+use roster_trust::{
+    ensure_profile_roster_bootstrap_unchanged, pending_device_approval_receipt_is_valid,
+};
 
 pub fn apply_remote_device_approval_receipt_event(
     config: &mut AppConfig,
@@ -1300,5 +1298,7 @@ mod approval_roster_backfill_tests;
 mod calendar_tests;
 #[cfg(test)]
 mod restore_candidate_tests;
+#[cfg(test)]
+mod roster_trust_tests;
 #[cfg(test)]
 mod tests;

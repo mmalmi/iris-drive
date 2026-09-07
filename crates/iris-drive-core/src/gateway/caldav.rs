@@ -43,9 +43,11 @@ pub(crate) async fn handle_caldav_request(
     headers: &HeaderMap,
     body: &[u8],
 ) -> Result<Response, (StatusCode, String)> {
-    if !caldav_host_allowed(headers) {
+    if !private_api_host_allowed(headers) {
         return Err((StatusCode::BAD_REQUEST, "invalid CalDAV host".into()));
     }
+
+    require_same_origin(headers)?;
 
     if uri.path() == WELL_KNOWN_CALDAV {
         return Ok(redirect_response(CALDAV_ROOT));
@@ -360,20 +362,6 @@ fn normalized_caldav_path(path: &str) -> String {
         }
         _ => path.to_string(),
     }
-}
-
-fn caldav_host_allowed(headers: &HeaderMap) -> bool {
-    let Some(host) = headers
-        .get(HOST)
-        .and_then(|value| value.to_str().ok())
-        .map(normalize_host)
-    else {
-        return false;
-    };
-    is_loopback_host(&host)
-        || host == LOCAL_PORTAL_HOST
-        || host.ends_with(IRIS_LOCALHOST_SUFFIX)
-        || host.ends_with(IRIS_LOCAL_SUFFIX)
 }
 
 fn caldav_empty_response(status: StatusCode) -> Result<Response, (StatusCode, String)> {

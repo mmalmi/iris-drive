@@ -3,7 +3,7 @@ use super::*;
 use iris_drive_core::provider::rename_provider_path as shared_rename_provider_path;
 use iris_drive_core::provider::{
     ProviderListEntry, compose_provider_path, normalize_provider_document_path,
-    normalize_provider_parent_path, normalize_provider_path, provider_cache_destination,
+    normalize_provider_parent_path, normalize_provider_path,
     provider_entry_is_probable_os_placeholder, provider_file_probable_os_placeholder_family,
     provider_list_summary, provider_write_is_probable_os_placeholder, sanitized_provider_file_name,
     split_provider_path, unique_provider_path,
@@ -18,8 +18,10 @@ use crate::provider_staging::{
 };
 
 mod commands;
+mod provider_cache;
 mod provider_retry;
 pub(crate) use commands::*;
+use provider_cache::hydrate_provider_cache;
 pub(crate) use provider_retry::import_provider_root_with_retry;
 use provider_retry::{
     ensure_provider_root_locally_available, primary_merged_root_with_retry,
@@ -666,88 +668,6 @@ fn provider_mutation_tombstone_paths(
         .unwrap_or_default();
     tombstone_paths.extend(changed_paths);
     tombstone_paths
-}
-
-#[derive(Default)]
-struct ProviderCacheReport {
-    file_count: usize,
-    directory_count: usize,
-    written: usize,
-    updated: usize,
-    unchanged: usize,
-    skipped: usize,
-}
-
-async fn hydrate_provider_cache(
-    provider: &HashTreeProviderFs<FsBlobStore>,
-    entries: &[ProviderListEntry],
-    target_dir: &Path,
-) -> Result<ProviderCacheReport> {
-    std::fs::create_dir_all(target_dir)
-        .with_context(|| format!("creating {}", target_dir.display()))?;
-    let mut report = ProviderCacheReport::default();
-    for entry in entries {
-        let Some(destination) = provider_cache_destination(target_dir, &entry.path) else {
-            report.skipped += 1;
-            continue;
-        };
-        if entry.kind == "directory" {
-            report.directory_count += 1;
-            if destination.is_dir() {
-                report.unchanged += 1;
-                continue;
-            }
-            let existed = destination.exists();
-            remove_provider_cache_destination(&destination)?;
-            std::fs::create_dir_all(&destination)
-                .with_context(|| format!("creating {}", destination.display()))?;
-            if existed {
-                report.updated += 1;
-            } else {
-                report.written += 1;
-            }
-            continue;
-        }
-
-        report.file_count += 1;
-        if let Some(parent) = destination.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating {}", parent.display()))?;
-        }
-        let bytes = provider.read(&entry.path, 0, entry.size).await?;
-        if destination.is_file() {
-            let existing = std::fs::read(&destination)
-                .with_context(|| format!("reading {}", destination.display()))?;
-            if existing == bytes {
-                report.unchanged += 1;
-                continue;
-            }
-            std::fs::write(&destination, bytes)
-                .with_context(|| format!("writing {}", destination.display()))?;
-            report.updated += 1;
-            continue;
-        }
-
-        let existed = destination.exists();
-        remove_provider_cache_destination(&destination)?;
-        std::fs::write(&destination, bytes)
-            .with_context(|| format!("writing {}", destination.display()))?;
-        if existed {
-            report.updated += 1;
-        } else {
-            report.written += 1;
-        }
-    }
-    Ok(report)
-}
-
-fn remove_provider_cache_destination(path: &Path) -> Result<()> {
-    if path.is_dir() {
-        std::fs::remove_dir_all(path).with_context(|| format!("removing {}", path.display()))?;
-    } else if path.exists() {
-        std::fs::remove_file(path).with_context(|| format!("removing {}", path.display()))?;
-    }
-    Ok(())
 }
 
 async fn provider_delete_tombstone_paths(
