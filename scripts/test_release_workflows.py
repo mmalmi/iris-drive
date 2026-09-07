@@ -54,6 +54,53 @@ class ReleaseWorkflowTests(unittest.TestCase):
         environment.update(overrides)
         return environment
 
+    def test_ios_approval_observes_the_running_receiver_without_restarting_it(self) -> None:
+        source = (ROOT / "scripts/ios-gui-linking-smoke.sh").read_text(encoding="utf-8")
+        # Execute the production approval phase with an already-running receiver.
+        # Only its external CLI and simulator boundaries are fixture commands.
+        start = source.index("approve_status=0\n", source.index('request_url="$(owner_inbound_request_url'))
+        end = source.index('if [[ "${IRIS_DRIVE_IOS_CLI_OWNER_ACK_ONLY', start)
+        wait_start = source.index("wait_for_config_status_before() {")
+        wait_end = source.index("assert_config_link_state() {", wait_start)
+        self.write_executable(
+            self.bin / "idrive",
+            'printf "%s\\n" "$3" >>"$RELEASE_WORKFLOW_TEST_STATE/events"\n'
+            'case "$3" in\n'
+            '  approve) printf \'{"roster_size":2,"published_approval_events":1,"approval_publish_error":null}\\n\' ;;\n'
+            '  status) printf \'{"profile":{"authorization_state":"authorized"}}\\n\' ;;\n'
+            '  *) exit 92 ;;\n'
+            'esac\n',
+        )
+        script = self.scripts / "ios-approval-phase.sh"
+        self.write_executable(
+            script,
+            f"source {shlex.quote(str(ROOT / 'scripts/lib/ios-linking-observer.sh'))}\n"
+            + source[wait_start:wait_end]
+            + 'launch_sim_app() { echo "receiver restarted during approval" >&2; exit 91; }\n'
+            + 'wait_for_approval_ack() {\n'
+            + '  [[ "$1" == "$OWNER_CONFIG" && "$3" == "$cli_owner_approval_deadline" ]]\n'
+            + '  before_deadline "$3"\n'
+            + '  printf "ack\\n" >>"$RELEASE_WORKFLOW_TEST_STATE/events"\n'
+            + '}\n'
+            + source[start:end],
+        )
+        completed = subprocess.run(
+            [str(script)],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=WORKFLOW_TIMEOUT_SECONDS,
+            env=self.environment(
+                IDRIVE=str(self.bin / "idrive"),
+                OWNER_CONFIG=str(self.state / "owner"),
+                SIM_APP_BASE_DIR=str(self.state / "receiver"),
+                request_url="fixture-request",
+                owner_fips_peer="fixture-peer",
+            ),
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+        self.assertEqual((self.state / "events").read_text().splitlines(), ["approve", "status", "ack"])
+
     def install_parallel_lane(self, name: str, lane: Optional[str] = None, *, barrier: bool = False) -> None:
         barrier_body = ""
         if barrier:

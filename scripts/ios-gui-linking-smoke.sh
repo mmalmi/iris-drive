@@ -646,6 +646,21 @@ approve_status=0
 cli_owner_approval_started="$(date +%s)"
 cli_owner_approval_deadline=$((cli_owner_approval_started + 15))
 approved_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" approve "$request_url" --label "iOS UI linked")" || approve_status="$?"
+python3 - "$cli_owner_approval_started" "$cli_owner_approval_deadline" "$approved_json" <<'PY'
+import json, sys, time
+try:
+    result = json.loads(sys.argv[3])
+except json.JSONDecodeError:
+    result = {}
+if not isinstance(result, dict):
+    result = {}
+print("IOS_CLI_OWNER_APPROVAL_COMMAND " + json.dumps({
+    "started_at": int(sys.argv[1]), "deadline": int(sys.argv[2]),
+    "command_finished_at": time.time(), "clock": "unix_seconds",
+    "published_approval_events": result.get("published_approval_events"),
+    "approval_publish_error": result.get("approval_publish_error"),
+}, separators=(",", ":"), sort_keys=True))
+PY
 if [[ "$approve_status" != "0" ]]; then
   echo "FAIL: CLI owner could not approve the inbound iOS UI request." >&2
   echo "request_url_length=${#request_url}" >&2
@@ -665,24 +680,21 @@ if ! before_deadline "$cli_owner_approval_deadline"; then
   exit 1
 fi
 
-launch_sim_app \
-  "IRIS_DRIVE_FIPS_STATIC_PEERS=$owner_fips_peer" \
-  "IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=false" \
-  "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=false" \
-  "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=127.0.0.1:0" \
-  "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR="
-
+# The receiver is already running with these FIPS settings. Restarting it here
+# interrupts the exchange and spends the delivery budget on simulator lifecycle.
 STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
 if ! wait_for_config_status_before \
   "$SIM_APP_BASE_DIR" \
   'import json,sys; s=json.load(sys.stdin); a=s.get("profile") or {}; raise SystemExit(0 if a.get("authorization_state") == "authorized" else 1)' \
   "$cli_owner_approval_deadline"; then
-  echo "FAIL: iOS GUI device did not ingest owner approval within 15 seconds of starting the approval command." >&2
+  echo "FAIL: iOS GUI authorization was not observed within 15 seconds of starting the approval command." >&2
+  print_cli_owner_ack_diagnostics "CLI-owner-to-iOS-ingestion" >&2 || true
   [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2
   "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
   cat "$OWNER_DAEMON_LOG" >&2 || true
   exit 1
 fi
+echo "IOS_CLI_OWNER_AUTHORIZATION_OBSERVED host_observed_at=$(python3 -c 'import time; print(time.time())') deadline=$cli_owner_approval_deadline"
 wait_for_approval_ack "$OWNER_CONFIG" "CLI-owner-to-iOS" "$cli_owner_approval_deadline"
 if [[ "${IRIS_DRIVE_IOS_CLI_OWNER_ACK_ONLY:-0}" == "1" ]]; then
   echo "IOS_CLI_OWNER_ACK_SMOKE_OK"
