@@ -53,7 +53,7 @@ nostr-pubsub-relay = "=0.1.11"
 nostr-identity = "=0.3.1"
 # Iris Drive's provider abstraction and FIPS adapter remain local workspace
 # crates; the shared Hashtree stack is consumed from its published release.
-hashtree-core = "=0.2.86"
+hashtree-core = "=0.2.89"
 hashtree-blossom = { version = "=0.2.82", features = ["store"] }
 hashtree-config = "=0.2.83"
 hashtree-embedded = "=0.2.87"
@@ -63,8 +63,8 @@ hashtree-fuse = { version = "=0.2.82", features = ["fuse"] }
 hashtree-lmdb = "=0.2.85"
 hashtree-nostr = "=0.2.83"
 hashtree-network = "=0.2.87"
-hashtree-resolver = { version = "=0.2.82", features = ["nostr"] }
-hashtree-updater = "=0.2.82"
+hashtree-resolver = { version = "=0.2.83", features = ["nostr"] }
+hashtree-updater = "=0.2.83"
 hashtree-provider = { path = "crates/hashtree-provider" }
 nostr = { version = "0.44", features = ["nip44"] }
 tempfile = "3"

@@ -2376,9 +2376,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-core"
-version = "0.2.86"
+version = "0.2.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "574476b1fe122bddc7783ba0346dca42ec673a241128b0edf9e38166c1bb800f"
+checksum = "5fab53a9c7a45beaed44a2c35343b3228bd65c65601041b1338bdbdc71b283b2"
 dependencies = [
  "aes-gcm",
  "async-trait",
@@ -2541,9 +2541,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-resolver"
-version = "0.2.82"
+version = "0.2.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8b1411d150664b875dbf9d7204565bb4e85f073a123486c4d75bc7469b251832"
+checksum = "a49500940585ae01292152740e5d4282138a6d6806fe0e012f2b15205694c430"
 dependencies = [
  "async-trait",
  "hashtree-core",
@@ -2556,9 +2556,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-updater"
-version = "0.2.82"
+version = "0.2.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5d39eba883217a73aad51697204f42e6c3161326fe4ccf2c298d3aa4980e9984"
+checksum = "e0153f9c43ba08f3e66531fc91113f54974bd20f559d90528414ab17ce2eb951"
 dependencies = [
  "flate2",
  "hashtree-blossom",
@@ -2569,6 +2569,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tar",
+ "tempfile",
  "thiserror 1.0.69",
 ]
 
