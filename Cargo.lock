@@ -2027,9 +2027,9 @@ dependencies = [
 
 [[package]]
 name = "git-remote-htree"
-version = "0.2.82"
+version = "0.2.88"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1618521a34b820da7ae08f4fd0b10979bd55a61dc4dc2e65c2a3037a0aaf47d3"
+checksum = "26372711c5befff2dbc1677a69d34eaded8f21c93fc971f5f1eb1c7a054f8d80"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2284,9 +2284,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-cli"
-version = "0.2.101"
+version = "0.2.142"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "039d4fc44f50ca195c92c7e87f663c9a3a3329c62fc798875682921b42c2a034"
+checksum = "64438e88efa88badb898d9de225d26e90b128437caa4b15abfa70c12631bfec0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2303,14 +2303,15 @@ dependencies = [
  "hashtree-core",
  "hashtree-fips-transport",
  "hashtree-fs",
+ "hashtree-heed",
  "hashtree-index",
  "hashtree-lmdb",
  "hashtree-network",
  "hashtree-nostr",
  "hashtree-nostr-pubsub",
+ "hashtree-nostr-social-graph-heed",
  "hashtree-resolver",
  "hashtree-updater",
- "heed",
  "hex",
  "hyper",
  "hyper-util",
@@ -2323,7 +2324,6 @@ dependencies = [
  "nostr-pubsub-relay",
  "nostr-sdk",
  "nostr-social-graph",
- "nostr-social-graph-heed",
  "page_size",
  "rand 0.8.7",
  "reqwest",
@@ -2349,9 +2349,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-collection"
-version = "0.2.82"
+version = "0.2.84"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "75d2629054b6ef8d2cc2415f2f2c9d56a394a5a1648ea79423e95976b74134bd"
+checksum = "9195affb58cddc4312f7ef5de4e5dbe58b4ec8c62876a1f4b4bf8d1192b72294"
 dependencies = [
  "futures",
  "hashtree-core",
@@ -2411,9 +2411,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-fips-transport"
-version = "0.4.12"
+version = "0.4.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3da546ac718481ae970a62892d3b8637530bba04f753a36d40b4d01e6554cb2f"
+checksum = "5271016d91840d331e72c3b4fd2f8fb18925f4f944aa0e9eb61e1d9047678eb6"
 dependencies = [
  "async-trait",
  "hashtree-core",
@@ -2455,10 +2455,29 @@ dependencies = [
 ]
 
 [[package]]
-name = "hashtree-index"
-version = "0.2.82"
+name = "hashtree-heed"
+version = "0.20.5-hashtree.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3c3a9fa768fe573e8d605e1a12ada8d98ea4418339e9aaa8db9829f8dc94bed"
+checksum = "04e0db030f0534ddb1be26efd215964c6278730ab60dbb1e3d82216bc4205ace"
+dependencies = [
+ "bitflags 2.13.0",
+ "byteorder",
+ "hashtree-lmdb-master-sys",
+ "heed-traits",
+ "heed-types",
+ "libc",
+ "once_cell",
+ "page_size",
+ "serde",
+ "synchronoise",
+ "url",
+]
+
+[[package]]
+name = "hashtree-index"
+version = "0.2.84"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "267e76a258ae8500cd917e502f105d2fcd884265a3116e17cee4dd159e8539f7"
 dependencies = [
  "futures",
  "hashtree-core",
@@ -2468,18 +2487,31 @@ dependencies = [
 
 [[package]]
 name = "hashtree-lmdb"
-version = "0.2.85"
+version = "0.2.88"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e61f72986fce9c84f9fd03c72c581af092e25ea698e8b7bc54ddc18fe821286b"
+checksum = "c2d572a31703499c00549d4b6e71ed148a6d9e8b51e9c0c1f0049c7782092318"
 dependencies = [
  "async-trait",
  "hashtree-core",
- "heed",
+ "hashtree-heed",
+ "libc",
  "page_size",
  "rmp-serde",
  "serde",
+ "serde_json",
  "sha2",
  "uuid",
+]
+
+[[package]]
+name = "hashtree-lmdb-master-sys"
+version = "0.2.6-hashtree.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bf4acb630436a6f827310715fb8b7932f16663c51dcf8762d46488ff1039d3d3"
+dependencies = [
+ "cc",
+ "doxygen-rs",
+ "libc",
 ]
 
 [[package]]
@@ -2496,15 +2528,16 @@ dependencies = [
 
 [[package]]
 name = "hashtree-nostr"
-version = "0.2.83"
+version = "0.2.87"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "489b2bf6d5e57921409aeee0a199a0f82512d473d290143306fc053d815c6973"
+checksum = "b7b7cbe929862e8089e74bd551a3d57adf45581d23d1e1b44c7da8a82798e1a2"
 dependencies = [
  "futures",
  "hashtree-collection",
  "hashtree-core",
  "hashtree-index",
  "hex",
+ "libc",
  "nostr-sdk",
  "nostr-social-graph",
  "rmp-serde",
@@ -2525,6 +2558,17 @@ dependencies = [
  "hashtree-nostr",
  "nostr-pubsub",
  "tokio",
+]
+
+[[package]]
+name = "hashtree-nostr-social-graph-heed"
+version = "0.1.3-hashtree.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5359f0f56fc7d1ef9e4309e9a08872ed4d7178f145fa872b7a6d1ed6006de9e1"
+dependencies = [
+ "hashtree-heed",
+ "nostr-social-graph",
+ "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -2584,25 +2628,6 @@ name = "heck"
 version = "0.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2304e00983f87ffb38b55b444b5e3b60a884b5d30c0fca7d82fe33449bbe55ea"
-
-[[package]]
-name = "heed"
-version = "0.20.5"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7d4f449bab7320c56003d37732a917e18798e2f1709d80263face2b4f9436ddb"
-dependencies = [
- "bitflags 2.13.0",
- "byteorder",
- "heed-traits",
- "heed-types",
- "libc",
- "lmdb-master-sys",
- "once_cell",
- "page_size",
- "serde",
- "synchronoise",
- "url",
-]
 
 [[package]]
 name = "heed-traits"
@@ -3377,17 +3402,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 
 [[package]]
-name = "lmdb-master-sys"
-version = "0.2.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "aaeb9bd22e73bd1babffff614994b341e9b2008de7bb73bf1f7e9154f1978f8b"
-dependencies = [
- "cc",
- "doxygen-rs",
- "libc",
-]
-
-[[package]]
 name = "lock_api"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3854,9 +3868,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.4.8"
+version = "0.4.17"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1c0b8fea747cecf9f9c584059460aeaa1181e185e6a60d47fb9788fb050163ff"
+checksum = "52ca75398f05280369036f0c9e496b4e535a9c48f68e1a934e1f5c18d552d686"
 dependencies = [
  "async-trait",
  "nostr",
@@ -3939,17 +3953,6 @@ dependencies = [
  "serde",
  "thiserror 2.0.18",
  "uuid",
-]
-
-[[package]]
-name = "nostr-social-graph-heed"
-version = "0.1.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fb101c0f07fd53e9812f9e2d45fb96964ddecb8bdbbad8d59d8ba7ae277352a5"
-dependencies = [
- "heed",
- "nostr-social-graph",
- "thiserror 2.0.18",
 ]
 
 [[package]]
@@ -4077,9 +4080,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-core"
-version = "0.4.65"
+version = "0.4.74"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "045fecbc8d2e746d526a5ddaef46e351cd0a4e1e9e4ea90cf3b490f181163677"
+checksum = "216c0132229957f0340c71dcc47f11634976d211df5c3643a8cc9c588f645a3b"
 dependencies = [
  "base64",
  "bluer",
@@ -4122,9 +4125,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-endpoint"
-version = "0.4.65"
+version = "0.4.74"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "96c1fe7e8a27468d0a0e90c75c9fc4327d36c7a4a82511421ec741bfb64fee2c"
+checksum = "c026e32c1ca18a272f424578ff49600dedea8512076e46d3747d51ee62c97116"
 dependencies = [
  "nvpn-fips-core",
 ]
@@ -4152,9 +4155,9 @@ checksum = "511e85644bc05a28503a09a1fe150a6fcc736aab0d67fab2784bf4a531ab332d"
 
 [[package]]
 name = "nvpn-fips-tcp-endpoint"
-version = "0.2.1"
+version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ae87a247b3dc9cee6b9c2cc3d6a2b24ef3d10e799f65f28ca03497b6cf416b8c"
+checksum = "f76d4278507a3d6215dc8bdb4ff3a9d8eb52c1f214f3ee8f502a40a559d3f858"
 dependencies = [
  "nvpn-fips-core",
  "nvpn-fips-tcp",
