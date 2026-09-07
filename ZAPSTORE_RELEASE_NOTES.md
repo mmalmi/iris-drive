@@ -1,14 +1,6 @@
-# Iris Drive 0.1.34
+# Iris Drive 0.1.35
 
-- Show files that existed before device linking on the newly approved device.
-- Sync files created on Web back to native and mobile provider views through
-  the durable relay and Blossom path.
-- Preserve native and browser device names in the Devices list.
-- Complete approval only after the current Drive root and all of its blocks
-  are available to the joining device.
-- Accept Web-created key epochs while keeping existing native profiles
-  compatible.
-- Preserve every file and nested directory when a path changes between file
-  and folder kinds, with deterministic conflict copies instead of data loss.
-- Keep those replacements and conflict copies stable when another linked
-  device later saves an unrelated file.
+- Update embedded Hashtree components and networking dependencies with security
+  fixes.
+- Complete slow peer downloads when backup storage has no copy, while preserving
+  the last complete file view until every required block is available.

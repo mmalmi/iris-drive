@@ -1123,6 +1123,7 @@ pub(crate) fn files_root_apply_label(
 
 #[cfg(test)]
 mod tests {
+    mod delayed_blob;
     include!("daemon/tests_part1.rs");
     include!("daemon/tests_part2.rs");
     include!("daemon/tests_part3.rs");

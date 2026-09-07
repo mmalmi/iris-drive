@@ -693,8 +693,7 @@ fn event_block_pull_timeout_allows_blossom_retry_window() {
     assert_eq!(event_block_pull_retry_delays(&config), &[0, 1]);
     assert!(
         event_block_pull_timeout_secs(&config)
-            > FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS
-                + BLOSSOM_DOWNLOAD_RETRY_DELAYS.iter().sum::<u64>()
+            > BLOSSOM_DOWNLOAD_RETRY_DELAYS.iter().sum::<u64>()
     );
     assert!(event_block_pull_timeout_secs(&config) >= 45);
     assert!(attempts * event_block_pull_timeout_secs(&config) + retry_sleep <= 95);

@@ -970,8 +970,6 @@ fn event_block_pull_timeout_secs(config: &AppConfig) -> u64 {
     if config.blossom_servers.is_empty() {
         EVENT_BLOCK_PULL_TIMEOUT_SECS
     } else {
-        FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS
-            + BLOSSOM_DOWNLOAD_RETRY_DELAYS.iter().sum::<u64>()
-            + EVENT_BLOCK_PULL_WITH_BLOSSOM_HEADROOM_SECS
+        EVENT_BLOCK_PULL_WITH_BLOSSOM_TIMEOUT_SECS
     }
 }

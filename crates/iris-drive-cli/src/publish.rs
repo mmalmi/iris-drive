@@ -177,15 +177,21 @@ pub(crate) async fn download_tree_over_fips_with_retry(
         if delay > 0 {
             tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
         }
-        match tokio::time::timeout(policy.attempt_timeout, fips.download_tree(root)).await {
-            Ok(Ok(report)) => return Ok(report),
-            Ok(Err(error)) => last_error = Some(anyhow::Error::from(error)),
-            Err(_) => {
-                last_error = Some(anyhow::anyhow!(
+        let download = fips.download_tree(root);
+        let result = if let Some(timeout) = policy.attempt_timeout {
+            match tokio::time::timeout(timeout, download).await {
+                Ok(result) => result.map_err(anyhow::Error::from),
+                Err(_) => Err(anyhow::anyhow!(
                     "FIPS download timed out after {}s",
-                    policy.attempt_timeout.as_secs()
-                ));
+                    timeout.as_secs()
+                )),
             }
+        } else {
+            download.await.map_err(anyhow::Error::from)
+        };
+        match result {
+            Ok(report) => return Ok(report),
+            Err(error) => last_error = Some(error),
         }
     }
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("FIPS download failed")))
@@ -194,21 +200,25 @@ pub(crate) async fn download_tree_over_fips_with_retry(
 #[derive(Clone, Copy)]
 pub(crate) struct FipsDownloadPolicy {
     retry_delays: &'static [u64],
-    attempt_timeout: std::time::Duration,
+    attempt_timeout: Option<std::time::Duration>,
 }
 
 pub(crate) fn fips_download_policy(config: &AppConfig) -> FipsDownloadPolicy {
     if config.blossom_servers.is_empty() {
         FipsDownloadPolicy {
             retry_delays: FIPS_DOWNLOAD_RETRY_DELAYS,
-            attempt_timeout: std::time::Duration::from_secs(FIPS_DOWNLOAD_ATTEMPT_TIMEOUT_SECS),
+            attempt_timeout: Some(std::time::Duration::from_secs(
+                FIPS_DOWNLOAD_ATTEMPT_TIMEOUT_SECS,
+            )),
         }
     } else {
         FipsDownloadPolicy {
-            retry_delays: FIPS_DOWNLOAD_BEFORE_BLOSSOM_RETRY_DELAYS,
-            attempt_timeout: std::time::Duration::from_secs(
-                FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS,
-            ),
+            retry_delays: &[],
+            // Blossom already runs concurrently. Let FIPS finish within its
+            // per-blob search/reply-idle bounds instead of canceling valid
+            // progress to "fall back". The root-apply caller still bounds the
+            // complete race, and a successful Blossom result cancels this read.
+            attempt_timeout: None,
         }
     }
 }

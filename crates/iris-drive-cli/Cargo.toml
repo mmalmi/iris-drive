@@ -41,6 +41,7 @@ rustls.workspace = true
 hashtree-fuse.workspace = true
 
 [dev-dependencies]
+async-trait.workspace = true
 assert_cmd = "2"
 axum = { workspace = true, features = ["ws"] }
 predicates = "3"

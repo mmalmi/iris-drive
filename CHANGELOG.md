@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.1.35 - 2026-09-08
+
+### Fixed
+
+- Update embedded Hashtree components and networking dependencies with security
+  fixes.
+- Let slow valid peer downloads finish when backup storage has no copy, while
+  retaining bounded reads and rejecting incomplete roots.
+
 ## 0.1.34 - 2026-09-05
 
 ### Changed
