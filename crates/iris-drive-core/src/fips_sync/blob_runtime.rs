@@ -14,7 +14,7 @@ use hashtree_fips_transport::{
     FipsBlobRoute, FipsPeerConfig, InboundBlobPolicy, TcpBlobTransport, TcpBlobTransportConfig,
 };
 use hashtree_lmdb::open_shared_lmdb_blob_store;
-use hashtree_network::{BlobRouteEntry, BlobRouter, BlobRouterConfig};
+use hashtree_network::{BlobRouteEntry, BlobRouter, BlobRouterConfig, MeshForwardingRoute};
 
 use super::{DRIVE_BLOB_SEARCH_TIMEOUT, FipsSyncError};
 
@@ -87,7 +87,13 @@ impl<L: Store + Send + Sync + 'static> DriveBlobRuntime<L> {
             )
             .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?,
         );
-        route_entries.push(BlobRouteEntry::new(FIPS_ROUTE_ID, fips.clone()));
+        // The inbound service uses this same router. Spend the mesh hop here
+        // so a local miss cannot circulate between peers with an unchanged
+        // budget; local and shared-store reads remain terminal routes.
+        route_entries.push(BlobRouteEntry::new(
+            FIPS_ROUTE_ID,
+            Arc::new(MeshForwardingRoute::new(fips.clone())),
+        ));
         router
             .set_routes(route_entries)
             .await

@@ -4,6 +4,29 @@ Performance and integration experiments log. Omit identifying information
 (pubkeys, secrets, IPs, private hostnames, exact repo names, raw hashes)
 unless the user explicitly asks otherwise.
 
+## 2026-09-08 blob forwarding hop limits
+
+- A bounded source review found that Drive's inbound blob service used its
+  full read router, including a peer route that preserved the received hop
+  budget. A local miss could therefore circulate between peers without
+  consuming a hop. The existing mesh-forwarding adapter now wraps only that
+  peer route; local and shared-store routes remain terminal, and authorization,
+  provider limits and download deadlines remain unchanged.
+- A regression uses two real Drive blob services and a real TCP/FIPS reader
+  over isolated local endpoints. Before the fix, a zero-hop request returned
+  remote data instead of a miss; this valid failing run took 5.92 seconds.
+  An earlier invocation failed the peer-connection setup before reaching the
+  assertions and is not evidence of the security defect.
+- The corrected regression passed in 0.41 seconds: zero-hop local reads work,
+  zero-hop misses do not query another peer, one-hop reads return and cache
+  valid remote bytes, and a missing child takes a finite two-hop path without
+  repeated fan-out. A subsequent valid read still succeeds. Existing real
+  provider-failure fallback and inbound authorization tests also passed in
+  0.50 and 0.09 seconds. Each run cleaned up its owned transports and endpoints.
+- This establishes the forwarding boundary, not a CPU or saturation result.
+  It does not establish that forwarding loops caused the separately observed
+  multi-peer download timeout for a common missing child.
+
 ## 2026-09-08 missed desktop root update recovery
 
 - A five-peer run passed both desktop approval directions and the earlier

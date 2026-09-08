@@ -14,6 +14,8 @@
   native startup, while still requiring explicit confirmation.
 - Recover missed desktop updates after a peer reconnects, while preserving the
   last complete file view until the newer signed root is available.
+- Enforce mesh hop limits when forwarding missing blocks between peers,
+  preventing repeated requests from circulating without consuming their budget.
 
 ## 0.1.34 - 2026-09-05
 
