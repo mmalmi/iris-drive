@@ -103,7 +103,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -114,7 +114,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1268,7 +1268,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1423,7 +1423,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -1801,9 +1801,9 @@ dependencies = [
 
 [[package]]
 name = "git-remote-htree"
-version = "0.2.88"
+version = "0.2.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "26372711c5befff2dbc1677a69d34eaded8f21c93fc971f5f1eb1c7a054f8d80"
+checksum = "3b299127ddac88837c326487391579291f0086a7f611dfdb65b0400d5cad0030"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1819,6 +1819,7 @@ dependencies = [
  "hex",
  "libc",
  "nostr",
+ "nostr-relay-pool",
  "nostr-sdk",
  "reqwest",
  "rustls",
@@ -2087,9 +2088,9 @@ checksum = "ed5909b6e89a2db4456e54cd5f673791d7eca6732202bbf2a9cc504fe2f9b84a"
 
 [[package]]
 name = "hashtree-blossom"
-version = "0.2.82"
+version = "0.2.83"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f8e651580b2d77e746ddf48d206f2159229d942dc879a95ca9431a11e3a30f42"
+checksum = "35f2ec87a4d192bffac052446501578cc0187e051b01b089e0b08af1d6ccc900"
 dependencies = [
  "async-trait",
  "base64",
@@ -2109,9 +2110,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-cli"
-version = "0.2.142"
+version = "0.2.145"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "64438e88efa88badb898d9de225d26e90b128437caa4b15abfa70c12631bfec0"
+checksum = "e65e8122ff0e059c0a354823702884c3bda4547a4df3cccc949fdee86c7e65a3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2147,6 +2148,7 @@ dependencies = [
  "nostr-pubsub",
  "nostr-pubsub-fips",
  "nostr-pubsub-relay",
+ "nostr-relay-pool",
  "nostr-sdk",
  "nostr-social-graph",
  "page_size",
@@ -2222,9 +2224,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-embedded"
-version = "0.2.87"
+version = "0.2.88"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b0fb583de515f7b55bf7d7f33de8d44bb8f0b662eff2d65196f9cacecb33ca9d"
+checksum = "118cc6cce71911c88e7c9e83e6171a967421f51fbf124d53732c8044e700c368"
 dependencies = [
  "anyhow",
  "hashtree-cli",
@@ -2236,9 +2238,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-fips-transport"
-version = "0.4.13"
+version = "0.4.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5271016d91840d331e72c3b4fd2f8fb18925f4f944aa0e9eb61e1d9047678eb6"
+checksum = "bc5f94c9b52578d48e26e59b8eb897364d0146547c44f6c72584c19fd3a0d012"
 dependencies = [
  "async-trait",
  "hashtree-core",
@@ -2339,9 +2341,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-nostr"
-version = "0.2.87"
+version = "0.2.88"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b7b7cbe929862e8089e74bd551a3d57adf45581d23d1e1b44c7da8a82798e1a2"
+checksum = "bd941c6b56fded4be867db3e3da2da7fdb4b0b8cb266e0e68b1476f1caaf8afa"
 dependencies = [
  "futures",
  "hashtree-collection",
@@ -2349,6 +2351,8 @@ dependencies = [
  "hashtree-index",
  "hex",
  "libc",
+ "nostr",
+ "nostr-relay-pool",
  "nostr-sdk",
  "nostr-social-graph",
  "rmp-serde",
@@ -2360,9 +2364,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-nostr-pubsub"
-version = "0.2.83"
+version = "0.2.84"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6fbf53cd18ddd9caf53dab8483db6a36011c11e3dc62233e0343ff5147c5672b"
+checksum = "ef6b07860b7e1aa8e76d68eb215ab78d63f6958ba12b5b2e34286cf40a371065"
 dependencies = [
  "async-trait",
  "hashtree-core",
@@ -2396,13 +2400,15 @@ dependencies = [
 
 [[package]]
 name = "hashtree-resolver"
-version = "0.2.83"
+version = "0.2.84"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a49500940585ae01292152740e5d4282138a6d6806fe0e012f2b15205694c430"
+checksum = "6c5eee72ee968599917b30d151f68ca31634c93dba8910516de0d4fcfc86ff2e"
 dependencies = [
  "async-trait",
  "hashtree-core",
  "hex",
+ "nostr",
+ "nostr-relay-pool",
  "nostr-sdk",
  "serde_json",
  "thiserror 1.0.69",
@@ -2411,9 +2417,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-updater"
-version = "0.2.83"
+version = "0.2.84"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e0153f9c43ba08f3e66531fc91113f54974bd20f559d90528414ab17ce2eb951"
+checksum = "63b56544b40dd22148a499824335adb8aa5d94f11518bf0945270a98a8815e82"
 dependencies = [
  "flate2",
  "hashtree-blossom",
@@ -2601,7 +2607,7 @@ dependencies = [
  "libc",
  "percent-encoding",
  "pin-project-lite",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "tokio",
  "tower-service",
  "tracing",
@@ -3497,9 +3503,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.4.17"
+version = "0.4.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52ca75398f05280369036f0c9e496b4e535a9c48f68e1a934e1f5c18d552d686"
+checksum = "d215c655ca2695b66f89ee7f8e579169b5a32b232e2ed8d23b6d16610a2c3987"
 dependencies = [
  "async-trait",
  "nostr",
@@ -3607,7 +3613,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3657,9 +3663,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-core"
-version = "0.4.74"
+version = "0.4.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "216c0132229957f0340c71dcc47f11634976d211df5c3643a8cc9c588f645a3b"
+checksum = "7f0c82256c52e2dba27747cb366273b7a66dabdee06648486625d81da883ef98"
 dependencies = [
  "base64",
  "bluer",
@@ -3702,9 +3708,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-endpoint"
-version = "0.4.74"
+version = "0.4.76"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c026e32c1ca18a272f424578ff49600dedea8512076e46d3747d51ee62c97116"
+checksum = "3ee6219fd15f63eed10ed2a30eaf74b8f5adf3bc05c9c6609fe22d1555e2630d"
 dependencies = [
  "nvpn-fips-core",
 ]
@@ -3732,9 +3738,9 @@ checksum = "511e85644bc05a28503a09a1fe150a6fcc736aab0d67fab2784bf4a531ab332d"
 
 [[package]]
 name = "nvpn-fips-tcp-endpoint"
-version = "0.2.10"
+version = "0.2.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f76d4278507a3d6215dc8bdb4ff3a9d8eb52c1f214f3ee8f502a40a559d3f858"
+checksum = "36d78cbd17d72b2fee7c55f5b247cb5d09d0a536f0b4d653efee2e30e69a50ae"
 dependencies = [
  "nvpn-fips-core",
  "nvpn-fips-tcp",
@@ -4198,7 +4204,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash",
  "rustls",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "thiserror 2.0.18",
  "tokio",
  "tracing",
@@ -4236,9 +4242,9 @@ dependencies = [
  "cfg_aliases",
  "libc",
  "once_cell",
- "socket2 0.5.10",
+ "socket2 0.6.5",
  "tracing",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -4660,7 +4666,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5105,7 +5111,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3d1e2c7f27f8d4cb10542a02c49005dbd6e93095799d6f3be745fae9f8fedd4"
 dependencies = [
  "libc",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5292,7 +5298,7 @@ dependencies = [
  "getrandom 0.4.3",
  "once_cell",
  "rustix",
- "windows-sys 0.59.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -5854,7 +5860,7 @@ checksum = "f2f6fb2847f6742cd76af783a2a2c49e9375d0a111c7bef6f71cd9e738c72d6e"
 dependencies = [
  "memoffset 0.9.1",
  "tempfile",
- "windows-sys 0.60.2",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -6416,7 +6422,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
