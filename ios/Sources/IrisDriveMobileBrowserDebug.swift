@@ -3,6 +3,42 @@ import Network
 import os
 
 #if DEBUG
+@MainActor
+final class IrisDebugProbeCompletion {
+    private var timeoutTask: Task<Void, Never>?
+    private var onTimeout: (() -> Void)?
+    private(set) var completed = false
+
+    func start(timeoutMilliseconds: UInt64, onTimeout: @escaping () -> Void) {
+        precondition(timeoutTask == nil && !completed)
+        self.onTimeout = onTimeout
+        timeoutTask = Task { @MainActor [weak self] in
+            do {
+                try await Task.sleep(nanoseconds: timeoutMilliseconds * 1_000_000)
+            } catch {
+                return
+            }
+            self?.deadlineExpired()
+        }
+    }
+
+    func deadlineExpired() {
+        guard let onTimeout else { return }
+        complete(onTimeout)
+    }
+
+    @discardableResult
+    func complete(_ publish: () -> Void) -> Bool {
+        guard !completed else { return false }
+        completed = true
+        timeoutTask?.cancel()
+        timeoutTask = nil
+        onTimeout = nil
+        publish()
+        return true
+    }
+}
+
 extension IrisDriveMobileModel {
     func debugEmbeddedHashtreeRouteURL(
         gatewayStatus: IrisNativeBrowserGatewayStatus?,

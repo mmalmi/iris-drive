@@ -86,4 +86,55 @@ final class IrisWebGatewayRetryTests: XCTestCase {
             )
         )
     }
+
+    @MainActor
+    func testProbeDeadlineCompletesWhenCaptureCallbackNeverArrives() {
+        let completion = IrisDebugProbeCompletion()
+        var results: [String] = []
+        var teardownCount = 0
+        completion.start(timeoutMilliseconds: 30_000) {
+            teardownCount += 1
+            results.append("timeout")
+        }
+        let pendingCaptureCallback = { completion.complete { results.append("success") } }
+        completion.deadlineExpired()
+        XCTAssertEqual(results, ["timeout"])
+        XCTAssertEqual(teardownCount, 1)
+        XCTAssertTrue(completion.completed)
+        _ = pendingCaptureCallback
+        completion.complete {}
+    }
+
+    @MainActor
+    func testProbeDeadlineIgnoresLateCaptureAndRepeatedExpiry() {
+        let completion = IrisDebugProbeCompletion()
+        var results: [String] = []
+        completion.start(timeoutMilliseconds: 30_000) { results.append("timeout") }
+        completion.deadlineExpired()
+        completion.deadlineExpired()
+        XCTAssertFalse(completion.complete { results.append("late success") })
+        XCTAssertEqual(results, ["timeout"])
+    }
+
+    @MainActor
+    func testProbeSuccessfulCaptureWinsBeforeDeadline() {
+        let completion = IrisDebugProbeCompletion()
+        var results: [String] = []
+        completion.start(timeoutMilliseconds: 30_000) { results.append("timeout") }
+        XCTAssertTrue(completion.complete { results.append("validated complete result") })
+        completion.deadlineExpired()
+        XCTAssertFalse(completion.complete { results.append("duplicate") })
+        XCTAssertEqual(results, ["validated complete result"])
+    }
+
+
+    @MainActor
+    func testProbeConfiguredDeadlineDoesNotWaitForCapture() async {
+        let completion = IrisDebugProbeCompletion()
+        let expired = expectation(description: "overall probe deadline")
+        completion.start(timeoutMilliseconds: 1) { expired.fulfill() }
+        await fulfillment(of: [expired], timeout: 1)
+        completion.complete {}
+    }
+
 }
