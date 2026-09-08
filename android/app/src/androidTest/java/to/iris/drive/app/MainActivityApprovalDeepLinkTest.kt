@@ -73,24 +73,38 @@ class MainActivityApprovalDeepLinkTest {
         val request = createOwnerAndJoinRequest()
         val scenario = ActivityScenario.launch<MainActivity>(
             Intent(context, MainActivity::class.java)
-                .putExtra(MainActivity.DEBUG_NATIVE_START_DELAY_MS, 1_500L)
+                .putExtra(MainActivity.DEBUG_NATIVE_START_DELAY_MS, 3_000L)
                 .putExtra(MainActivity.DEBUG_FIRST_REFRESH_APPLY_DELAY_MS, 1_000L),
         )
         lateinit var launchIntent: Intent
+        lateinit var observer: Thread
+        val promptObservedAt = AtomicLong()
+        var requestReceivedAt = 0L
 
         scenario.use {
             it.onActivity { activity ->
                 launchIntent = activity.intent
+                requestReceivedAt = System.currentTimeMillis()
+                observer = observeApprovalDialog(promptObservedAt)
                 InstrumentationRegistry.getInstrumentation().callActivityOnNewIntent(
                     activity,
                     Intent(Intent.ACTION_VIEW, Uri.parse(request), context, MainActivity::class.java)
                         .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
                 )
             }
-            waitForApprovalDialog()
-            clickApprovalDialogButton("Approve")
-            assertEquals(setOf("Android owner", "Phone"), waitForDeviceLabels(2))
-            it.onActivity { activity -> activity.intent = launchIntent }
+            try {
+                observer.join(3_000)
+                val observedAt = promptObservedAt.get()
+                assertTrue(
+                    "Approval prompt received during startup waited for native initialization",
+                    observedAt in requestReceivedAt until requestReceivedAt + 1_000,
+                )
+                waitForApprovalDialog()
+                clickApprovalDialogButton("Approve")
+                assertEquals(setOf("Android owner", "Phone"), waitForDeviceLabels(2))
+            } finally {
+                it.onActivity { activity -> activity.intent = launchIntent }
+            }
         }
     }
 

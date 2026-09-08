@@ -6,3 +6,5 @@
   the last complete file view until every required block is available.
 - Reduce repeated background retries while a mobile device is offline, while
   keeping pending device approvals responsive.
+- Show Android device approval prompts immediately when a request arrives during
+  native startup, while still requiring explicit confirmation.

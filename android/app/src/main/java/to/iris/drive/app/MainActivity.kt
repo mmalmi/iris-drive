@@ -305,6 +305,7 @@ class MainActivity : ComponentActivity() {
         AndroidDebugSupport.applyEnvironment(this, intent)
         if (nativeHandle == 0L) {
             pendingLaunchIntent = intent
+            promptForApprovalBeforeNativeStart(intent)
         } else {
             handleLaunchIntent(intent)
         }

@@ -10,6 +10,8 @@
   retaining bounded reads and rejecting incomplete roots.
 - Reduce repeated background retries while a mobile device is offline, while
   keeping pending device approvals responsive.
+- Show Android device approval prompts immediately when a request arrives during
+  native startup, while still requiring explicit confirmation.
 
 ## 0.1.34 - 2026-09-05
 
