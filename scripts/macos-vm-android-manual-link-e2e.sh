@@ -87,8 +87,14 @@ PY
 }
 
 remote() {
-  local command arg
-  command="cd '$MAC_GUEST_REPO' && env IRIS_DRIVE_MACOS_ANDROID_RELAY_URL=$(printf '%q' "$LOCAL_RELAY_URL") IRIS_DRIVE_MACOS_ANDROID_BLOSSOM_URL=$(printf '%q' "$LOCAL_BLOSSOM_URL") '$REMOTE_SCRIPT'"
+  local command arg name
+  command="cd '$MAC_GUEST_REPO' && env"
+  for name in CARGO_BUILD_JOBS CARGO_INCREMENTAL CARGO_PROFILE_DEV_DEBUG CARGO_PROFILE_TEST_DEBUG; do
+    if [[ -n "${!name+x}" ]]; then
+      command+=" $(printf '%q' "$name=${!name}")"
+    fi
+  done
+  command+=" IRIS_DRIVE_MACOS_ANDROID_RELAY_URL=$(printf '%q' "$LOCAL_RELAY_URL") IRIS_DRIVE_MACOS_ANDROID_BLOSSOM_URL=$(printf '%q' "$LOCAL_BLOSSOM_URL") '$REMOTE_SCRIPT'"
   shift 0
   for arg in "$@"; do
     command+=" $(printf '%q' "$arg")"

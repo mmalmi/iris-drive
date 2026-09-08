@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 
+import ast
+import contextlib
+import io
+import json
 import os
 import shlex
 import shutil
 import subprocess
 import tempfile
 import textwrap
+import time
 import unittest
 from pathlib import Path
 from typing import Optional
@@ -53,6 +58,181 @@ class ReleaseWorkflowTests(unittest.TestCase):
         )
         environment.update(overrides)
         return environment
+
+    def test_linux_gui_cleanup_stops_children_but_preserves_unowned_lock_holder(self) -> None:
+        source = (ROOT / "scripts/desktop-gui-smoke.sh").read_text()
+        cleanup = source[source.index("cleanup() {"):source.index("trap cleanup EXIT")]
+        for lock_state in ("pre-existing", "replacement"):
+            with self.subTest(lock_state=lock_state):
+                holder = subprocess.Popen(["sleep", "60"])
+                child_file = self.state / f"{lock_state}.child"
+                gui = subprocess.Popen(["bash", "-c",
+                    'sleep 60 & child=$!; printf "%s\\n" "$child" >"$1"; wait "$child"',
+                    "fixture-gui", str(child_file)])
+                try:
+                    deadline = time.monotonic() + 2
+                    while not child_file.exists() and time.monotonic() < deadline:
+                        time.sleep(0.01)
+                    self.assertTrue(child_file.exists(), "Owned GUI child did not start")
+                    child_pid = int(child_file.read_text())
+                    config = self.state / lock_state
+                    config.mkdir()
+                    lock = config / "daemon.lock"
+                    lock.write_text(str(holder.pid if lock_state == "pre-existing" else child_pid))
+                    if lock_state == "replacement":
+                        lock.write_text(str(holder.pid))
+                    script = self.scripts / "gui-cleanup.sh"
+                    self.write_executable(script,
+                        f"config_dir={shlex.quote(str(config))}\napp_pid={gui.pid}\n"
+                        + "launch_link=fixture-link\nuse_xvfb=1\nwm_pid=\nxvfb_pid=\ndbus_pid=\n"
+                        + cleanup + "cleanup\n")
+                    result = subprocess.run(["bash", str(script)], capture_output=True, text=True,
+                        timeout=WORKFLOW_TIMEOUT_SECONDS)
+                    self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                    self.assertIsNone(holder.poll(), "GUI cleanup killed an unowned lock holder")
+                    gui.wait(timeout=2)
+                    deadline = time.monotonic() + 2
+                    while time.monotonic() < deadline:
+                        try:
+                            os.kill(child_pid, 0)
+                        except ProcessLookupError:
+                            break
+                        time.sleep(0.01)
+                    else:
+                        self.fail("Owned GUI child survived cleanup")
+                finally:
+                    for process in (gui, holder):
+                        if process.poll() is None:
+                            process.terminate()
+                        process.wait(timeout=2)
+
+    def test_primary_gui_approval_restores_owner_before_original_deadline(self) -> None:
+        activation_source = (ROOT / "scripts/lib/linux-approve-device.py").read_text()
+        activation = next(node for node in ast.parse(activation_source).body
+            if isinstance(node, ast.FunctionDef) and node.name == "activate")
+        namespace = {"ACTIVATE_ACTIONS": {"activate", "click", "press"}}
+        exec(compile(ast.Module(body=[activation], type_ignores=[]), "activate", "exec"), namespace)
+        for activation_succeeds in (True, False):
+            with self.subTest(activation_succeeds=activation_succeeds):
+                flushed = []
+                class Output(io.StringIO):
+                    def flush(self) -> None:
+                        flushed.append(True)
+                output = Output()
+                class Actions:
+                    nActions = 1
+                    def getName(self, index):
+                        return "click"
+                    def doAction(inner, index):
+                        self.assertIn("IRIS_DRIVE_DESKTOP_GUI_APPROVAL_STARTED=1", output.getvalue())
+                        self.assertTrue(flushed, "Activation marker was buffered until after the action")
+                        return activation_succeeds
+                class Button:
+                    def queryAction(self):
+                        return Actions()
+                with contextlib.redirect_stdout(output):
+                    self.assertEqual(namespace["activate"](Button()), activation_succeeds)
+        helper = ROOT / "scripts/lib/cross-vm-device-link.sh"
+        for gui_status, restore_status, submitted in ((0, 0, True), (23, 0, False), (0, 24, True), (0, 0, False)):
+            with self.subTest(gui_status=gui_status, restore_status=restore_status, submitted=submitted):
+                events = self.state / "events"
+                events.write_text("")
+                restored = self.state / "owner-restored"
+                restored.unlink(missing_ok=True)
+                script = self.scripts / "primary-approval.sh"
+                self.write_executable(script,
+                    "source " + shlex.quote(str(helper)) + "\n"
+                    + "DESKTOP_GUI_LINKING=1\nowner_label=ubuntu\nLINK_TIMEOUT_SECS=15\n"
+                    + "bool_true() { [[ \"$1\" == 1 ]]; }\n"
+                    + "monotonic_milliseconds() { echo 1000; }\n"
+                    + textwrap.dedent('''\
+                        run_desktop_gui_link_action() {
+                          echo submit >>"$RELEASE_WORKFLOW_TEST_STATE/events"
+                          echo IRIS_DRIVE_DESKTOP_GUI_APPROVAL_STARTED=1
+                          if [[ "$FIXTURE_SUBMITTED" == 1 ]]; then
+                            echo IRIS_DRIVE_DESKTOP_GUI_APPROVAL_SUBMITTED=1
+                          fi
+                          return "$FIXTURE_GUI_STATUS"
+                        }
+                        start_daemon() {
+                          [[ "$1" == ubuntu ]] || return 90
+                          echo restore >>"$RELEASE_WORKFLOW_TEST_STATE/events"
+                          [[ "$FIXTURE_RESTORE_STATUS" == 0 ]] || return "$FIXTURE_RESTORE_STATUS"
+                          touch "$RELEASE_WORKFLOW_TEST_STATE/owner-restored"
+                        }
+                        wait_until_before() {
+                          [[ "$2" == 16000 && "$3" == all_linking_complete && "$4" == 1000 ]] || return 92
+                          [[ -f "$RELEASE_WORKFLOW_TEST_STATE/owner-restored" ]] || return 91
+                          echo barrier >>"$RELEASE_WORKFLOW_TEST_STATE/events"
+                        }
+                        status=0
+                        run_timed_desktop_gui_primary_approval fixture-request || status=$?
+                        if [[ "$status" == 0 ]]; then wait_for_all_linking_complete || status=$?; fi
+                        exit "$status"
+                        '''))
+                result = subprocess.run(["bash", str(script)], capture_output=True, text=True,
+                    timeout=WORKFLOW_TIMEOUT_SECONDS,
+                    env=self.environment(FIXTURE_GUI_STATUS=str(gui_status),
+                        FIXTURE_RESTORE_STATUS=str(restore_status), FIXTURE_SUBMITTED=str(int(submitted))))
+                self.assertEqual(result.returncode, gui_status or (1 if not submitted else restore_status),
+                    result.stdout + result.stderr)
+                expected = ["submit"]
+                if not gui_status and submitted:
+                    expected.append("restore")
+                    if not restore_status:
+                        expected.append("barrier")
+                self.assertEqual(events.read_text().splitlines(), expected)
+
+    def test_macos_manual_link_forwards_only_explicit_build_environment(self) -> None:
+        source = (ROOT / "scripts/macos-vm-android-manual-link-e2e.sh").read_text()
+        remote = source[source.index("remote() {"):source.index("\nwrite_blossom_summary() {")]
+        names = ("CARGO_BUILD_JOBS", "CARGO_INCREMENTAL", "CARGO_PROFILE_DEV_DEBUG", "CARGO_PROFILE_TEST_DEBUG")
+        defaults = {name: "guest-default" for name in names}
+        probe = self.repo / "remote-probe"
+        self.write_executable(probe, textwrap.dedent("""\
+            exec python3 - "$@" <<'PY'
+            import json, os, sys
+            names = ['CARGO_BUILD_JOBS', 'CARGO_INCREMENTAL', 'CARGO_PROFILE_DEV_DEBUG', 'CARGO_PROFILE_TEST_DEBUG', 'CARGO_TARGET_DIR']
+            print(json.dumps({'environment': {name: os.environ.get(name) for name in names}, 'arguments': sys.argv[1:]}))
+            PY
+            """))
+        argument = "request with 'quotes' and $dollars"
+        script = self.scripts / "remote-environment.sh"
+        self.write_executable(script,
+            "MAC_GUEST_REPO=" + shlex.quote(str(self.repo)) + "\n"
+            + "MAC_HOST=fixture-host\nREMOTE_SCRIPT=./remote-probe\n"
+            + "LOCAL_RELAY_URL=ws://127.0.0.1:1\nLOCAL_BLOSSOM_URL=http://127.0.0.1:2\n"
+            + remote + textwrap.dedent("""\
+                ssh() {
+                  [[ "$#" == 4 && "$1" == -o && "$2" == BatchMode=yes && "$3" == fixture-host ]]
+                  env -i "PATH=$PATH" CARGO_BUILD_JOBS=guest-default CARGO_INCREMENTAL=guest-default \
+                    CARGO_PROFILE_DEV_DEBUG=guest-default CARGO_PROFILE_TEST_DEBUG=guest-default \
+                    CARGO_TARGET_DIR=guest-target /bin/bash -c "$4"
+                }
+                """)
+            + "remote prepare " + shlex.quote(argument) + "\n")
+        unexpected = self.state / "unexpected-expansion"
+        cases = {
+            "absent": {},
+            "provided": dict(zip(names, ("2", "0", "0", "0"))),
+            "quoted-and-empty": {
+                "CARGO_BUILD_JOBS": "2; touch " + shlex.quote(str(unexpected)) + "; $(printf unsafe) ' \"",
+                "CARGO_PROFILE_TEST_DEBUG": "",
+            },
+        }
+        for label, supplied in cases.items():
+            with self.subTest(label=label):
+                environment = self.environment(CARGO_TARGET_DIR="caller-target")
+                for name in names:
+                    environment.pop(name, None)
+                environment.update(supplied)
+                result = subprocess.run(["/bin/bash", str(script)], cwd=self.repo,
+                    text=True, capture_output=True, timeout=WORKFLOW_TIMEOUT_SECONDS, env=environment)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                output = json.loads(result.stdout)
+                self.assertEqual(output["environment"], {**defaults, **supplied, "CARGO_TARGET_DIR": "guest-target"})
+                self.assertEqual(output["arguments"], ["prepare", argument])
+                self.assertFalse(unexpected.exists(), "Forwarded values executed as remote shell syntax")
 
     def run_ios_build_fixture(self, script_name: str, configuration: str, *,
                               mode: str = "--build-only", failure: str = "",

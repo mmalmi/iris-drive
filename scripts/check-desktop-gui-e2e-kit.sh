@@ -75,7 +75,7 @@ require_file_contains scripts/lib/cross-vm-device-link.sh "run_bidirectional_des
 require_file_contains scripts/lib/cross-vm-device-link.sh "monotonic_milliseconds"
 require_file_contains scripts/lib/cross-vm-device-link.sh ".fips_direct_online == true"
 require_file_contains scripts/lib/cross-vm-device-link.sh "run_timed_desktop_gui_primary_approval"
-require_file_contains scripts/lib/cross-vm-device-link.sh $'while ! grep -Fq '\''IRIS_DRIVE_DESKTOP_GUI_APPROVAL_SUBMITTED=1'\'' "$output"; do'
+require_file_contains scripts/lib/cross-vm-device-link.sh $'while ! grep -Fq '\''IRIS_DRIVE_DESKTOP_GUI_APPROVAL_STARTED=1'\'' "$output"; do'
 require_file_contains scripts/lib/cross-vm-device-link.sh $'  mark_desktop_gui_primary_approval_submission\n  wait "$action_pid" || status=$?'
 require_file_contains scripts/desktop-gui-smoke.sh "IRIS_DRIVE_DESKTOP_GUI_APPROVAL_SUBMITTED=1"
 require_file_absent scripts/lib/cross-vm-device-link.sh 'date +%s'

@@ -136,13 +136,13 @@ run_timed_desktop_gui_primary_approval() {
     "$owner_label" "$request_url" approval_queued >"$output" 2>&1 &
   action_pid=$!
 
-  while ! grep -Fq 'IRIS_DRIVE_DESKTOP_GUI_APPROVAL_SUBMITTED=1' "$output"; do
+  while ! grep -Fq 'IRIS_DRIVE_DESKTOP_GUI_APPROVAL_STARTED=1' "$output"; do
     if ! kill -0 "$action_pid" >/dev/null 2>&1; then
       wait "$action_pid" || status=$?
       cat "$output" >&2
       rm -f "$output"
       ((status != 0)) || status=1
-      echo "desktop GUI approval exited before submitting" >&2
+      echo "desktop GUI approval exited before activation" >&2
       return "$status"
     fi
     sleep 0.02
@@ -151,7 +151,16 @@ run_timed_desktop_gui_primary_approval() {
   mark_desktop_gui_primary_approval_submission
   wait "$action_pid" || status=$?
   cat "$output"
+  if ((status == 0)) && ! grep -Fq 'IRIS_DRIVE_DESKTOP_GUI_APPROVAL_SUBMITTED=1' "$output"; then
+    echo "desktop GUI approval exited without successful submission" >&2
+    status=1
+  fi
   rm -f "$output"
+  if ((status == 0)); then
+    # GTK approval restarts its daemon, which exits with the smoke GUI. Restore
+    # the harness's mount and transport settings within the original deadline.
+    start_daemon "$owner_label" || return $?
+  fi
   return "$status"
 }
 

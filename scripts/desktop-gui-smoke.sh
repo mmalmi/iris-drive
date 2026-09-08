@@ -128,12 +128,8 @@ cleanup() {
     pkill -P "$app_pid" >/dev/null 2>&1 || true
     kill "$app_pid" >/dev/null 2>&1 || true
   fi
-  if [[ -n "$launch_link" && -f "$config_dir/daemon.lock" ]]; then
-    daemon_pid="$(tr -dc '0-9' <"$config_dir/daemon.lock")"
-    if [[ -n "$daemon_pid" ]]; then
-      kill "$daemon_pid" >/dev/null 2>&1 || true
-    fi
-  fi
+  # A config lock may belong to the caller or a replacement process. The GUI's
+  # actual child processes are cleaned up above; the lock grants no ownership.
   if [[ -n "$wm_pid" ]]; then
     kill "$wm_pid" >/dev/null 2>&1 || true
   fi

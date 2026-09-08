@@ -59,6 +59,7 @@ def activate(button):
         actions = button.queryAction()
         for index in range(actions.nActions):
             if actions.getName(index) in ACTIVATE_ACTIONS:
+                print("IRIS_DRIVE_DESKTOP_GUI_APPROVAL_STARTED=1", flush=True)
                 return bool(actions.doAction(index))
     except (LookupError, RuntimeError):
         pass

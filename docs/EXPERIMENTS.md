@@ -4,6 +4,61 @@ Performance and integration experiments log. Omit identifying information
 (pubkeys, secrets, IPs, private hostnames, exact repo names, raw hashes)
 unless the user explicitly asks otherwise.
 
+## 2026-09-08 desktop approval daemon handoff
+
+- A five-daemon run reached GTK approval submission, then failed the existing
+  15-second authorization/ACK barrier. The owner daemon was stopped and the
+  Windows joiner had no roster. The smoke exited after observing a queued
+  receipt and killed the process named by the config lock.
+- Cleanup now stops the GUI and its children without treating a config lock
+  as process ownership. The primary approval flow restores its configured
+  harness daemon after the shipped GTK action restarts its own daemon. This
+  handoff counts against the same 15-second limit. The timer marker is now
+  flushed immediately before accessibility activation, with successful action
+  acknowledgment still separate, so synchronous approval work is included.
+- Focused process regressions reproduced termination of unrelated lock holders
+  and the missing daemon handoff, then passed for existing/replacement lock
+  holders, GUI children, action/start failures, missing successful submission, marker ordering, and unchanged
+  deadline binding.
+  The three focused workflow tests, including explicit remote Cargo settings,
+  passed in 0.876 seconds. This does not measure a full native gate speedup.
+
+## 2026-09-08: Deterministic iOS approval release check
+
+The iOS release check retains a 15-second budget from starting the owner approval command through receiver authorization and the owner consuming its acknowledgement. Its receiver was already running before approval; restarting it inside that budget interrupted the exchange and could prevent timely observation. The harness now observes the running receiver.
+
+A subsequent native run failed because the approval command took 33.14 seconds. The receiver had persisted its approval within one second, but command completion still violated the gate. That long command was not reproduced in the controlled follow-up. With the existing application binary, isolated real owner/receiver daemons, and public Blossom storage, approval took 6.574 seconds with default plus local relays and 6.172 seconds with only the local relay. Three sequential public-storage uploads dominated both runs; after the final upload, publication and shutdown together took approximately 0.706 seconds with default plus local relays and 0.013 seconds with only the local relay. The owner persisted acknowledgement at 1.809 and 1.112 seconds, with no measured configuration-lock wait.
+
+The Files-app scenario also resets native state, restoring public network defaults. The harness reapplies its local fixture settings at the subsequent stopped-app boundary, preserving the owner profile and roster, before testing reverse approval.
+
+The iOS integration harness now uses the existing real local Blossom protocol fixture and local relay for fresh test-owned profiles, configured before their app or daemon starts. An actual CLI approval through these fixtures completed in 0.1611 seconds, publishing all six approval events and the root, and uploading all three reported blocks. HTTP reads verified the exact announced root ciphertext and fixture block bytes against their SHA-256 hashes. The corrected CLI-owner-to-iOS GUI flow completed the command, observed authorization, and observed the owner's persisted acknowledgement in less than one second under the unchanged 15-second budget. The reverse universal-link and manual approval flows also satisfied that budget; manual receiver authorization was observed in approximately 4.82 seconds, with acknowledgement verified by the owner's durable audit. These directions were measured separately.
+
+These measurements establish a deterministic local integration check; they do not establish a production latency percentile or a production upload speedup. The normal upload-before-publication barrier, event/root/upload-report checks, real native UI, and acknowledgement requirement remain. The fixture tests HTTP storage behavior and bytes, not TLS or upload-auth signature validation; public release checks remain separate. Root completeness is reported by the production upload traversal, while the fixture checks bind the announced root to actual readable storage; aggregate blob counts are not an independent closure proof.
+
+### Native idle CPU investigation (release candidate 0.1.35)
+
+The iOS simulator's ordinary idle gate failed at 6.53% average CPU, then failed at 6.33% after a controlled fresh-process launch with the same retained profile. Both used the original 30-second warmup, 60-second measurement, twelve samples and 5% limit. A separate short profiling observation of 3.69% was diagnostic only and did not authorize release.
+
+The retained authorized owner had no pending approval receipts or outbound approval acknowledgment work. Its stopped test relay and storage fixtures caused a background roster-publication failure about once per second. A complete-window profile captured 80 such failures over 79.104 seconds. The profiled CPU result was 5.29%; it is attribution evidence rather than a release gate.
+
+Restoring the same real local services at their original addresses, without changing the profile or network settings, allowed all six original roster events to publish and eliminated failed ticks throughout warmup and measurement. The unprofiled normal gate nevertheless failed at 5.84% average CPU (10.86% peak). This establishes the fixture lifetime issue but does not establish it as the cause of the CPU threshold failure. The profiled and unprofiled trials do not quantify CPU savings from removing retries.
+
+The complete trace showed distributed mesh session, dataplane, discovery and scheduler work. No UDP hard-error busy loop was established. Status snapshots were not time aligned with the measurement windows; the offline snapshot predates its measurement. They cannot establish measured traffic rates or a traffic difference between trials. Unchanged settings alone do not prove identical live network activity. The one-second retry of unchanged offline background work is independently inconsistent with the existing fifteen-second idle schedule, but any correction must preserve fast pending approval/ACK work and immediate user-action wakeups.
+
+The background error schedule was corrected to preserve the existing pending-work classification: an idle authorized owner retries after fifteen seconds, while awaiting approval, pending receipts, an undelivered acknowledgment or unknown state keeps the fast one-second cadence. User actions still wake the exchange immediately, and publication barriers and durable tracking are unchanged. A production-outcome regression failed at 1,000 ms versus the expected 15,000 ms before the fix; all eight focused idle scheduling tests passed afterward.
+
+The gate also exposed a build mismatch: the functional simulator app used Swift Debug and Rust Debug. The release gate now builds and installs matching optimized Swift and Rust profiles, with the simulator architecture aligned, before any CPU sampler starts. Debug functional tests retain their required hooks. With the unchanged retained profile and network settings, the optimized simulator app passed at 1.17% average CPU and 1.78% peak over twelve samples. The 30-second warmup, 60-second window and 5% limit are unchanged. The installed binary matches the build; production audit writes bind the run to the retained shared profile and show the corrected fifteen-second error cadence. The optimized build and retry fix were both present, so this experiment does not isolate their individual CPU effects. The simulator build is distinct from the signed device IPA.
+
+Local fixtures exercise real relay/storage protocol and content hashes; they do not validate public TLS or upload-auth signatures.
+
+### Android approval during native startup (release candidate 0.1.35)
+
+The existing test for a device-approval link arriving during native startup exposed a path that queued the request until native initialization completed. The ordinary cold-start link path already displayed its confirmation before native initialization. The same early-prompt helper now handles a new link while startup is pending, preserving validation, explicit approval, cancellation, deduplication and deferred native dispatch.
+
+The existing test was strengthened rather than duplicated: with a three-second injected native-start delay, it requires the prompt within one second of the actual new-intent callback, then verifies explicit approval and the resulting device roster. The old path failed the immediate-prompt assertion; the corrected path passed. Restoring the original ActivityScenario intent in a finally block also removed an unrelated forty-five-second failure-time teardown caused by the injected intent.
+
+The final Android link and provider-sync check passed its unchanged fifteen-second authorization budget. The normal Android idle gate then passed at 2.94% average CPU with the original ninety-second warmup, sixty-second measurement, five-second interval and 5% limit. It collected eleven samples because polling takes time. The unsupported exact-count assertion was rejected; the successful production measurement and original failed private-wrapper evidence were retained without a repeat. This checks the instrumented Kotlin test shell with optimized Rust. The native library bytes matched the signed APK and app bundle, but this does not make the test shell identical to the signed production application.
+
 ## 2026-09-05 deterministic fixture waits
 
 - Replaced fixed sleeps in the config-lock, keyed-task completion, and
