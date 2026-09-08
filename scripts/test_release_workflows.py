@@ -55,7 +55,8 @@ class ReleaseWorkflowTests(unittest.TestCase):
         return environment
 
     def run_ios_build_fixture(self, script_name: str, configuration: str, *,
-                              mode: str = "--build-only", failure: str = "") -> tuple[subprocess.CompletedProcess, str]:
+                              mode: str = "--build-only", failure: str = "",
+                              target: str = "aarch64-apple-ios-sim") -> tuple[subprocess.CompletedProcess, str]:
         source = (ROOT / "scripts" / script_name).read_text(encoding="utf-8")
         settings = source[source.index('source "$ROOT/scripts/ios-simulator-signing.sh"'):source.index('OWNER_CONFIG=')]
         resolution = source[source.index("resolve_app_path() {"):source.index("assert_static_app_core_linkage() {")]
@@ -68,7 +69,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             phase = source[source.index("cargo build -p idrive\n"):source.index('XCTESTRUN="$(resolve_xctestrun)"')]
         # Existing archives and apps must not hide a failed fresh build.
         for profile in ("debug", "release"):
-            archive = self.state / "target/aarch64-apple-ios-sim" / profile / "libiris_drive_app_core.a"
+            archive = self.state / "target" / target / profile / "libiris_drive_app_core.a"
             archive.parent.mkdir(parents=True, exist_ok=True)
             archive.write_text("older archive")
         for config in ("Debug", "Release"):
@@ -115,23 +116,31 @@ class ReleaseWorkflowTests(unittest.TestCase):
         events.unlink(missing_ok=True)
         completed = subprocess.run(["/bin/bash", str(script), mode], capture_output=True, text=True,
             timeout=WORKFLOW_TIMEOUT_SECONDS, env=self.environment(
-                IRIS_DRIVE_IOS_XCODE_CONFIGURATION=configuration, CARGO_TARGET_DIR=str(self.state / "target"),
+                IRIS_DRIVE_IOS_XCODE_CONFIGURATION=configuration, IRIS_DRIVE_IOS_RUST_TARGET=target,
+                CARGO_TARGET_DIR=str(self.state / "target"),
                 IRIS_DRIVE_IDRIVE_BIN="/usr/bin/true", FIXTURE_FAILURE=failure,
                 OWNER_CONFIG=str(owner), LOCAL_RELAY_PID="", LOCAL_RELAY_READY="", LOCAL_RELAY_LOG=""))
         return completed, events.read_text() if events.exists() else ""
 
     def test_ios_simulator_builds_align_rust_and_xcode_profiles(self) -> None:
         for script in ("ios-simulator-smoke.sh", "ios-gui-linking-smoke.sh"):
-            for configuration, profile in (("Debug", "debug"), ("Release", "release")):
-                with self.subTest(script=script, configuration=configuration):
-                    completed, events = self.run_ios_build_fixture(script, configuration)
+            for configuration, profile, target, architecture in (
+                ("Debug", "debug", "aarch64-apple-ios-sim", "arm64"),
+                ("Release", "release", "aarch64-apple-ios-sim", "arm64"),
+                ("Release", "release", "x86_64-apple-ios", "x86_64"),
+            ):
+                with self.subTest(script=script, configuration=configuration, target=target):
+                    completed, events = self.run_ios_build_fixture(script, configuration, target=target)
                     self.assertEqual(completed.returncode, 0, completed.stderr)
                     cargo = next(line for line in events.splitlines() if line.startswith("<cargo>") and "<iris-drive-app-core>" in line)
                     self.assertEqual("<--release>" in cargo, configuration == "Release", cargo)
                     self.assertIn("<--locked>", cargo)
+                    self.assertIn(f"<--target><{target}>", cargo)
                     xcode = next(line for line in events.splitlines() if line.startswith("<xcodebuild>"))
-                    library = self.state / "target/aarch64-apple-ios-sim" / profile
+                    library = self.state / "target" / target / profile
                     self.assertIn(f"<-configuration><{configuration}>", xcode)
+                    self.assertIn(f"<ARCHS={architecture}>", xcode)
+                    self.assertIn("<ONLY_ACTIVE_ARCH=YES>", xcode)
                     self.assertIn(f"<LIBRARY_SEARCH_PATHS={library}>", xcode)
                     self.assertIn(f"<OTHER_LDFLAGS={library}/libiris_drive_app_core.a>", xcode)
                     self.assertNotIn("SWIFT_ACTIVE_COMPILATION_CONDITIONS", xcode)
@@ -140,6 +149,10 @@ class ReleaseWorkflowTests(unittest.TestCase):
                     completed, events = self.run_ios_build_fixture(script, "Release", failure=failure)
                     self.assertEqual(completed.returncode, status, completed.stderr)
                     self.assertNotIn("<linkage>", events)
+            completed, events = self.run_ios_build_fixture(script, "Release", target="aarch64-apple-ios")
+            self.assertEqual(completed.returncode, 2, completed.stderr)
+            self.assertIn("unsupported Rust iOS simulator target", completed.stderr)
+            self.assertEqual(events, "", "device-target archive must be rejected before building")
 
     def test_ios_install_only_preserves_profile_and_propagates_failures(self) -> None:
         for failure, expected in (("", 0), ("cargo", 23), ("xcode", 24), ("install", 25), ("cleanup", 26)):
