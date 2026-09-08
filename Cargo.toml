@@ -25,10 +25,10 @@ base64 = "0.22"
 bip39 = { version = "2.2", features = ["rand"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-core = { package = "nvpn-fips-core", version = "=0.4.74" }
-fips-endpoint = { package = "nvpn-fips-endpoint", version = "=0.4.74" }
+fips-core = { package = "nvpn-fips-core", version = "=0.4.76" }
+fips-endpoint = { package = "nvpn-fips-endpoint", version = "=0.4.76" }
 fips-tcp = { package = "nvpn-fips-tcp", version = "=0.2.1" }
-fips-tcp-endpoint = { package = "nvpn-fips-tcp-endpoint", version = "=0.2.10" }
+fips-tcp-endpoint = { package = "nvpn-fips-tcp-endpoint", version = "=0.2.12" }
 futures = "0.3"
 hex = "0.4"
 http = "1"
@@ -48,23 +48,23 @@ uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.44", default-features = false, features = ["nip06", "nip44", "nip59"] }
 nostr-pubsub = "=0.1.13"
-nostr-pubsub-fips = "=0.4.17"
+nostr-pubsub-fips = "=0.4.19"
 nostr-pubsub-relay = "=0.1.11"
 nostr-identity = "=0.3.1"
 # Iris Drive's provider abstraction and FIPS adapter remain local workspace
 # crates; the shared Hashtree stack is consumed from its published release.
 hashtree-core = "=0.2.89"
-hashtree-blossom = { version = "=0.2.82", features = ["store"] }
+hashtree-blossom = { version = "=0.2.83", features = ["store"] }
 hashtree-config = "=0.2.83"
-hashtree-embedded = "=0.2.87"
-hashtree-fips-transport = { version = "=0.4.13", features = ["webrtc-endpoint"] }
+hashtree-embedded = "=0.2.88"
+hashtree-fips-transport = { version = "=0.4.15", features = ["webrtc-endpoint"] }
 hashtree-fs = "=0.2.82"
-hashtree-fuse = { version = "=0.2.82", features = ["fuse"] }
+hashtree-fuse = { version = "=0.2.83", features = ["fuse"] }
 hashtree-lmdb = "=0.2.88"
-hashtree-nostr = "=0.2.87"
+hashtree-nostr = "=0.2.88"
 hashtree-network = "=0.2.87"
-hashtree-resolver = { version = "=0.2.83", features = ["nostr"] }
-hashtree-updater = "=0.2.83"
+hashtree-resolver = { version = "=0.2.84", features = ["nostr"] }
+hashtree-updater = "=0.2.84"
 hashtree-provider = { path = "crates/hashtree-provider" }
 nostr = { version = "0.44", features = ["nip44"] }
 tempfile = "3"

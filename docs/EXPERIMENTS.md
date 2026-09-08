@@ -4,6 +4,28 @@ Performance and integration experiments log. Omit identifying information
 (pubkeys, secrets, IPs, private hostnames, exact repo names, raw hashes)
 unless the user explicitly asks otherwise.
 
+## 2026-09-08 published mesh dependency integration
+
+- Drive now consumes the published transport retry-fairness correction and
+  embedded CLI security fixes. Required companion dependency floors were
+  aligned together, preserving the existing transport and storage features.
+  Linux's direct FUSE dependency selects the published compatibility carrier,
+  which retains checked Finder timestamps and backports initialized libfuse3
+  session callbacks. The old FUSE package is absent from the resolved graph.
+- On that exact graph, the real Drive hop-limit, provider-failure fallback and
+  inbound authorization tests passed in 0.41, 0.46 and 0.09 seconds. All 213 CLI
+  binary unit tests passed in 4.44 seconds, including missed-root recovery.
+  Strict Clippy checks passed for the shared core, app core and CLI.
+- An initial command sequence passed the three integrations, then stopped
+  because its CLI command selected a nonexistent library target. That failed
+  invocation is retained as harness evidence. The corrected command selected
+  the actual binary target and ran only the remaining unit and lint checks;
+  this continuation took 85.207 seconds including compilation. Source and lock
+  bytes were unchanged across both runs.
+- These checks validate the combined published dependency graph and existing
+  security boundaries. They do not identify the original cause of the earlier
+  multi-peer missing-child timeout or establish a CPU or throughput improvement.
+
 ## 2026-09-08 blob forwarding hop limits
 
 - A bounded source review found that Drive's inbound blob service used its

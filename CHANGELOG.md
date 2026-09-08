@@ -16,6 +16,10 @@
   last complete file view until the newer signed root is available.
 - Enforce mesh hop limits when forwarding missing blocks between peers,
   preventing repeated requests from circulating without consuming their budget.
+- Reach additional available peers when retrying missing blocks, while keeping
+  each read's concurrency and time limits bounded.
+- Fix unsafe initialization in optional FUSE mounts while preserving Finder
+  write compatibility.
 
 ## 0.1.34 - 2026-09-05
 
