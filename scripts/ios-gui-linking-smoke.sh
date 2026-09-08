@@ -13,6 +13,7 @@ esac
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/ios-simulator-signing.sh"
 source "$ROOT/scripts/lib/ios-linking-observer.sh"
+source "$ROOT/scripts/lib/ios-blossom-smoke.sh"
 source "$ROOT/scripts/lib/ios-xcuitest-accessibility-session.sh"
 PROJECT="$ROOT/ios/IrisDriveIOS.xcodeproj"
 SCHEME="IrisDriveIOS"
@@ -71,6 +72,7 @@ cleanup() {
     "$LOCAL_RELAY_EVENT_LOG" \
     "$LINKED_SYNC_OBSERVATION_FILE" "$LINKED_ACK_OBSERVATION_FILE" \
     "$MANUAL_LINKED_SYNC_OBSERVATION_FILE" "$MANUAL_LINKED_ACK_OBSERVATION_FILE"
+  stop_ios_smoke_blossom
 }
 trap cleanup EXIT
 
@@ -142,6 +144,8 @@ reset_sim_app_state() {
   SIM_APP_BASE_DIR="$group_container/IrisDrive"
   safe_remove_sim_container "$SIM_APP_BASE_DIR"
   mkdir -p "$SIM_APP_BASE_DIR"
+  configure_ios_smoke_blossom "$SIM_APP_BASE_DIR"
+  configure_ios_smoke_relay "$SIM_APP_BASE_DIR"
   clear_sim_env \
     IRIS_DRIVE_DEBUG_ACTION \
     IRIS_DRIVE_DEBUG_OWNER \
@@ -288,7 +292,7 @@ start_local_relay() {
 
 configure_owner_local_relay() {
   start_local_relay
-  "$IDRIVE" --config-dir "$OWNER_CONFIG" relays add "$LOCAL_RELAY_URL" >/dev/null
+  configure_ios_smoke_relay "$OWNER_CONFIG"
 }
 
 wait_for_owner_inbound_request() {
@@ -460,6 +464,8 @@ reset_sim_app_group_state() {
   safe_remove_sim_container "$group_container/IrisDrive"
   SIM_APP_BASE_DIR="$group_container/IrisDrive"
   mkdir -p "$SIM_APP_BASE_DIR"
+  configure_ios_smoke_blossom "$SIM_APP_BASE_DIR"
+  configure_ios_smoke_relay "$SIM_APP_BASE_DIR"
   clear_sim_env IRIS_DRIVE_DEBUG_ACTION IRIS_DRIVE_DEBUG_OWNER IRIS_DRIVE_UI_TEST_BASE_DIR
 }
 
@@ -565,6 +571,8 @@ xcrun simctl bootstatus "$DEVICE_UDID" -b >/dev/null
 
 run_ui_test "IrisDriveIOSShareExtensionTests"
 
+start_local_relay
+start_ios_smoke_blossom
 reset_sim_app_state
 run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testWelcomeRoutesWithoutSetupTitle"
 
@@ -579,6 +587,7 @@ run_ui_test \
   "IRIS_DRIVE_UI_TEST_SHARE_SHEET_CONTENT=$SHARE_SHEET_SMOKE_CONTENT"
 verify_share_sheet_import
 
+configure_ios_smoke_blossom "$OWNER_CONFIG"
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
 configure_owner_local_relay
 owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["app_key_link_invite"]["url"])' <<<"$owner_json")"
@@ -619,7 +628,6 @@ if ! wait_for_config_status \
   [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2
   exit 1
 fi
-"$IDRIVE" --config-dir "$SIM_APP_BASE_DIR" relays add "$LOCAL_RELAY_URL" >/dev/null
 run_ui_test \
   "IrisDriveIOSUITests/IrisDriveIOSUITests/testAwaitingApprovalViewVisible" \
   "IRIS_DRIVE_FIPS_STATIC_PEERS=$owner_fips_peer" \
@@ -696,6 +704,7 @@ if ! wait_for_config_status_before \
 fi
 echo "IOS_CLI_OWNER_AUTHORIZATION_OBSERVED host_observed_at=$(python3 -c 'import time; print(time.time())') deadline=$cli_owner_approval_deadline"
 wait_for_approval_ack "$OWNER_CONFIG" "CLI-owner-to-iOS" "$cli_owner_approval_deadline"
+assert_ios_smoke_blossom_handoff "$approved_json"
 if [[ "${IRIS_DRIVE_IOS_CLI_OWNER_ACK_ONLY:-0}" == "1" ]]; then
   echo "IOS_CLI_OWNER_ACK_SMOKE_OK"
   exit 0
@@ -740,10 +749,10 @@ if ! wait_for_debug_state \
 fi
 app_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["profile"]["app_key_link_invite"])' <"$STATE_FILE")"
 xcrun simctl terminate "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
-"$IDRIVE" --config-dir "$SIM_APP_BASE_DIR" relays add "$LOCAL_RELAY_URL" >/dev/null
+configure_ios_smoke_blossom "$LINKED_CONFIG"
+configure_ios_smoke_relay "$LINKED_CONFIG"
 linked_json="$("$IDRIVE" --config-dir "$LINKED_CONFIG" link "$app_invite" --label "iOS UI linked")"
 linked_request="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["app_key_link_request"]["url"])' <<<"$linked_json")"
-"$IDRIVE" --config-dir "$LINKED_CONFIG" relays add "$LOCAL_RELAY_URL" >/dev/null
 linked_request_b64="$(printf '%s' "$linked_request" | base64_value)"
 
 assert_config_link_state "$SIM_APP_BASE_DIR" 1 0 "link request setup"
@@ -785,10 +794,11 @@ rm -f "$LINKED_SYNC_OBSERVATION_FILE" "$LINKED_ACK_OBSERVATION_FILE"
 LINKED_SYNC_OBSERVATION_FILE=""
 LINKED_ACK_OBSERVATION_FILE=""
 
+configure_ios_smoke_blossom "$MANUAL_LINKED_CONFIG"
+configure_ios_smoke_relay "$MANUAL_LINKED_CONFIG"
 manual_linked_json="$("$IDRIVE" --config-dir "$MANUAL_LINKED_CONFIG" link "$app_invite" --label "iOS UI manual")"
 manual_linked_device="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["current_app_key_npub"])' <<<"$manual_linked_json")"
 manual_linked_request="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["app_key_link_request"]["url"])' <<<"$manual_linked_json")"
-"$IDRIVE" --config-dir "$MANUAL_LINKED_CONFIG" relays add "$LOCAL_RELAY_URL" >/dev/null
 manual_linked_request_b64="$(printf '%s' "$manual_linked_request" | base64_value)"
 MANUAL_LINKED_SYNC_OBSERVATION_FILE="$(mktemp -t iris-drive-ios-ui-manual-linked-observed.XXXXXX)"
 MANUAL_LINKED_ACK_OBSERVATION_FILE="$(mktemp -t iris-drive-ios-ui-manual-linked-ack-observed.XXXXXX)"

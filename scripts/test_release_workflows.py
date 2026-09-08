@@ -76,6 +76,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
             script,
             f"source {shlex.quote(str(ROOT / 'scripts/lib/ios-linking-observer.sh'))}\n"
             + source[wait_start:wait_end]
+            + 'assert_ios_smoke_blossom_handoff() { :; }\n'
             + 'launch_sim_app() { echo "receiver restarted during approval" >&2; exit 91; }\n'
             + 'wait_for_approval_ack() {\n'
             + '  [[ "$1" == "$OWNER_CONFIG" && "$3" == "$cli_owner_approval_deadline" ]]\n'
@@ -100,6 +101,35 @@ class ReleaseWorkflowTests(unittest.TestCase):
         )
         self.assertEqual(completed.returncode, 0, completed.stderr)
         self.assertEqual((self.state / "events").read_text().splitlines(), ["approve", "status", "ack"])
+
+    def test_ios_resets_route_fresh_profiles_to_local_blossom_before_launch(self) -> None:
+        source = (ROOT / "scripts/ios-gui-linking-smoke.sh").read_text(encoding="utf-8")
+        for function, following in [
+            ("reset_sim_app_state", "clear_sim_env"),
+            ("reset_sim_app_group_state", "verify_share_sheet_import"),
+        ]:
+            with self.subTest(function=function):
+                body = source[source.index(function + "() {"):source.index(following + "() {")]
+                script = self.scripts / "ios-reset.sh"
+                self.write_executable(
+                    script,
+                    'xcrun() {\n'
+                    '  if [[ "$2" == get_app_container ]]; then printf "%s/container\\n" "$RELEASE_WORKFLOW_TEST_STATE"; fi\n'
+                    '  if [[ "$2" == spawn && "$4" == launchctl ]]; then [[ -f "$SIM_APP_BASE_DIR/local-blossom-configured" && -f "$SIM_APP_BASE_DIR/local-relay-configured" ]] || exit 93; fi\n'
+                    '}\n'
+                    'safe_remove_sim_container() { rm -rf "$1"; }\n'
+                    'clear_sim_env() { [[ -f "$SIM_APP_BASE_DIR/local-blossom-configured" && -f "$SIM_APP_BASE_DIR/local-relay-configured" ]] || exit 93; }\n'
+                    'configure_ios_smoke_relay() { touch \"$1/local-relay-configured\"; }\n'
+                    'configure_ios_smoke_blossom() { touch "$1/local-blossom-configured"; }\n'
+                    + body + function + '\n'
+                    + '[[ -f "$SIM_APP_BASE_DIR/local-blossom-configured" && -f "$SIM_APP_BASE_DIR/local-relay-configured" ]]\n',
+                )
+                completed = subprocess.run(
+                    [str(script)], capture_output=True, text=True, timeout=WORKFLOW_TIMEOUT_SECONDS,
+                    env=self.environment(DEVICE_UDID="fixture", BUNDLE_ID="fixture", APP_PATH="fixture",
+                                         APP_GROUP_ID="fixture", SHARE_SOURCE_BUNDLE_ID="fixture", SHARE_SOURCE_APP_PATH="fixture"),
+                )
+                self.assertEqual(completed.returncode, 0, completed.stderr)
 
     def install_parallel_lane(self, name: str, lane: Optional[str] = None, *, barrier: bool = False) -> None:
         barrier_body = ""
