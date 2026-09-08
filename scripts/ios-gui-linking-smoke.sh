@@ -749,6 +749,10 @@ if ! wait_for_debug_state \
 fi
 app_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["profile"]["app_key_link_invite"])' <"$STATE_FILE")"
 xcrun simctl terminate "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+# The Files-app test resets and seeds native state, including network defaults.
+# Restore fixture routes while its owner is stopped, preserving its profile.
+configure_ios_smoke_blossom "$SIM_APP_BASE_DIR"
+configure_ios_smoke_relay "$SIM_APP_BASE_DIR"
 configure_ios_smoke_blossom "$LINKED_CONFIG"
 configure_ios_smoke_relay "$LINKED_CONFIG"
 linked_json="$("$IDRIVE" --config-dir "$LINKED_CONFIG" link "$app_invite" --label "iOS UI linked")"

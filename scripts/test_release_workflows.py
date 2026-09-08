@@ -131,6 +131,46 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 )
                 self.assertEqual(completed.returncode, 0, completed.stderr)
 
+    def test_ios_reverse_approval_restores_fixtures_after_files_reset(self) -> None:
+        source = (ROOT / "scripts/ios-gui-linking-smoke.sh").read_text(encoding="utf-8")
+        start = source.index('xcrun simctl terminate', source.index('app_invite="$(python3'))
+        end = source.index('linked_json="$(', start)
+        script = self.scripts / "ios-reverse-approval-setup.sh"
+        self.write_executable(
+            script,
+            'mkdir -p "$SIM_APP_BASE_DIR" "$LINKED_CONFIG"\n'
+            'xcrun() { [[ "$2" == terminate ]]; touch "$SIM_APP_BASE_DIR/stopped"; }\n'
+            'configure_ios_smoke_blossom() { [[ -f "$SIM_APP_BASE_DIR/stopped" ]]; touch "$1/blossom"; }\n'
+            'configure_ios_smoke_relay() { [[ -f "$SIM_APP_BASE_DIR/stopped" ]]; touch "$1/relay"; }\n'
+            + source[start:end]
+            + '[[ -f "$SIM_APP_BASE_DIR/blossom" && -f "$SIM_APP_BASE_DIR/relay" ]]\n',
+        )
+        completed = subprocess.run(
+            [str(script)], capture_output=True, text=True, timeout=WORKFLOW_TIMEOUT_SECONDS,
+            env=self.environment(DEVICE_UDID="fixture", BUNDLE_ID="fixture",
+                                 SIM_APP_BASE_DIR=str(self.state / "owner"), LINKED_CONFIG=str(self.state / "receiver")),
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
+    def test_ios_standalone_routes_fresh_link_profile_to_fixtures(self) -> None:
+        source = (ROOT / "scripts/ios-simulator-smoke.sh").read_text(encoding="utf-8")
+        end = source.index('SIMCTL_CHILD_IRIS_DRIVE_DEBUG_ACTION=link-device')
+        start = source.rindex('safe_remove_sim_container "$SIM_APP_BASE_DIR"', 0, end)
+        script = self.scripts / "ios-standalone-link-setup.sh"
+        self.write_executable(
+            script,
+            'safe_remove_sim_container() { rm -rf "$1"; }\n'
+            'configure_ios_smoke_blossom() { touch "$1/blossom"; }\n'
+            'configure_ios_smoke_relay() { touch "$1/relay"; }\n'
+            + source[start:end]
+            + '[[ -f "$SIM_APP_BASE_DIR/blossom" && -f "$SIM_APP_BASE_DIR/relay" ]]\n',
+        )
+        completed = subprocess.run(
+            [str(script)], capture_output=True, text=True, timeout=WORKFLOW_TIMEOUT_SECONDS,
+            env=self.environment(SIM_APP_BASE_DIR=str(self.state / "receiver")),
+        )
+        self.assertEqual(completed.returncode, 0, completed.stderr)
+
     def install_parallel_lane(self, name: str, lane: Optional[str] = None, *, barrier: bool = False) -> None:
         barrier_body = ""
         if barrier:

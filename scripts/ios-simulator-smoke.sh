@@ -12,6 +12,7 @@ esac
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/ios-simulator-signing.sh"
+source "$ROOT/scripts/lib/ios-blossom-smoke.sh"
 PROJECT="$ROOT/ios/IrisDriveIOS.xcodeproj"
 SCHEME="IrisDriveIOS"
 CONFIGURATION="${IRIS_DRIVE_IOS_XCODE_CONFIGURATION:-Debug}"
@@ -55,6 +56,7 @@ cleanup() {
   fi
   rm -rf "$OWNER_CONFIG"
   rm -f "$LOCAL_RELAY_READY" "$LOCAL_RELAY_LOG"
+  stop_ios_smoke_blossom
 }
 trap cleanup EXIT
 
@@ -306,7 +308,7 @@ start_local_relay() {
 
 configure_owner_local_relay() {
   start_local_relay
-  "$IDRIVE" --config-dir "$OWNER_CONFIG" relays add "$LOCAL_RELAY_URL" >/dev/null
+  configure_ios_smoke_relay "$OWNER_CONFIG"
 }
 
 DEVICE_UDID="$(select_simulator)"
@@ -362,6 +364,8 @@ fi
 wait_for_simulator_boot "$DEVICE_UDID" "$SIMULATOR_BOOT_TIMEOUT_SECONDS"
 
 xcrun simctl uninstall "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+start_ios_smoke_blossom
+configure_ios_smoke_blossom "$OWNER_CONFIG"
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
 configure_owner_local_relay
 owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["app_key_link_invite"]["url"])' <<<"$owner_json")"
@@ -428,8 +432,12 @@ PY
   exit 1
 fi
 
+xcrun simctl terminate "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 safe_remove_sim_container "$SIM_APP_BASE_DIR"
 mkdir -p "$SIM_APP_BASE_DIR"
+
+configure_ios_smoke_blossom "$SIM_APP_BASE_DIR"
+configure_ios_smoke_relay "$SIM_APP_BASE_DIR"
 
 SIMCTL_CHILD_IRIS_DRIVE_DEBUG_ACTION=link-device \
   SIMCTL_CHILD_IRIS_DRIVE_DEBUG_OWNER="$owner_invite" \
@@ -454,6 +462,8 @@ if [[ "$roster_size" != "2" ]]; then
   echo "$approved_json" >&2
   exit 1
 fi
+
+assert_ios_smoke_blossom_handoff "$approved_json"
 
 echo "IOS_SIMULATOR_SMOKE_OK"
 echo "device=$DEVICE_UDID"
