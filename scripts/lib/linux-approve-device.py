@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import pyatspi
+import sys
 
 APPROVAL_DIALOG_TITLE = "Approve this device?"
 APPROVAL_BUTTON_NAME = "Approve"
@@ -31,11 +32,24 @@ def enclosing_dialog(node):
     return None
 
 
-def find_approval_dialog():
+def app_windows(app_pid):
+    desktop = pyatspi.Registry.getDesktop(0)
+    for node in descendants(desktop):
+        if (node.name == "Iris Drive" and node.getRole() == pyatspi.ROLE_FRAME
+                and node.get_process_id() == app_pid):
+            yield node
+
+
+def approval_completed(app_pid):
+    return any(node.name == "Device approved"
+               for window in app_windows(app_pid) for node in descendants(window))
+
+
+def find_approval_dialog(app_pid):
     desktop = pyatspi.Registry.getDesktop(0)
     for node in descendants(desktop):
         try:
-            if node.name == APPROVAL_DIALOG_TITLE:
+            if node.name == APPROVAL_DIALOG_TITLE and node.get_process_id() == app_pid:
                 dialog = enclosing_dialog(node)
                 if dialog is not None:
                     return dialog
@@ -66,6 +80,13 @@ def activate(button):
     return False
 
 
-dialog = find_approval_dialog()
+if len(sys.argv) != 3 or sys.argv[1] not in ("--activate", "--completed"):
+    raise SystemExit("expected --activate or --completed followed by the GTK process id")
+app_pid = int(sys.argv[2])
+if app_pid <= 0:
+    raise SystemExit(1)
+if sys.argv[1] == "--completed":
+    raise SystemExit(0 if approval_completed(app_pid) else 1)
+dialog = find_approval_dialog(app_pid)
 button = find_approve_button(dialog) if dialog is not None else None
 raise SystemExit(0 if button is not None and activate(button) else 1)

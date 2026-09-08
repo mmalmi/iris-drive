@@ -142,11 +142,13 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 script = self.scripts / "primary-approval.sh"
                 self.write_executable(script,
                     "source " + shlex.quote(str(helper)) + "\n"
-                    + "DESKTOP_GUI_LINKING=1\nowner_label=ubuntu\nLINK_TIMEOUT_SECS=15\n"
+                    + "DESKTOP_GUI_LINKING=1\nowner_label=ubuntu\nwindows_label=windows\nLINK_TIMEOUT_SECS=15\n"
+                    + "host_value() { echo expected; }\n"
                     + "bool_true() { [[ \"$1\" == 1 ]]; }\n"
                     + "monotonic_milliseconds() { echo 1000; }\n"
                     + textwrap.dedent('''\
                         run_desktop_gui_link_action() {
+                          [[ "$4" == expected ]] || return 89
                           echo submit >>"$RELEASE_WORKFLOW_TEST_STATE/events"
                           echo IRIS_DRIVE_DESKTOP_GUI_APPROVAL_STARTED=1
                           if [[ "$FIXTURE_SUBMITTED" == 1 ]]; then
@@ -233,6 +235,58 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 self.assertEqual(output["environment"], {**defaults, **supplied, "CARGO_TARGET_DIR": "guest-target"})
                 self.assertEqual(output["arguments"], ["prepare", argument])
                 self.assertFalse(unexpected.exists(), "Forwarded values executed as remote shell syntax")
+
+    def test_linux_approval_waits_for_target_and_fresh_gui_completion(self) -> None:
+        helper = ROOT / "scripts/lib/linux-gui-status.sh"
+        source = (ROOT / "scripts/desktop-gui-smoke.sh").read_text()
+        predicate = helper.read_text() if helper.exists() else source[
+            source.index("status_matches_expected() {"):source.index("\nactivate_approval_button() {")]
+        # Exercise the real status command and accessibility probe with a controlled
+        # AT-SPI boundary; no display, actual GUI action, or native build is needed.
+        (self.bin / "pyatspi.py").write_text(textwrap.dedent('''\
+            import os
+            ROLE_ALERT, ROLE_DIALOG, ROLE_PUSH_BUTTON, ROLE_FRAME = range(4)
+            class Node:
+                def __init__(self, name, children=()): self.name, self.children = name, children
+                def __iter__(self): return iter(self.children)
+                def getRole(self): return ROLE_FRAME
+                def get_process_id(self): return int(os.environ['NOTICE_PID'])
+            class Registry:
+                @staticmethod
+                def getDesktop(index):
+                    notice = Node('Device approved' if os.environ['NOTICE_READY'] == '1' else '')
+                    return Node('desktop', [Node('Iris Drive', [notice])])
+            '''))
+        cli = self.bin / "idrive"
+        self.write_executable(cli, 'case "$*" in\n'
+            '*"app-keys list") cat "$RELEASE_WORKFLOW_TEST_STATE/roster";;\n'
+            '*status) cat "$RELEASE_WORKFLOW_TEST_STATE/status";;\n*) exit 90;;\nesac\n')
+        script = self.scripts / "approval-status.sh"
+        self.write_executable(script, f"repo={shlex.quote(str(ROOT))}\nidrive={shlex.quote(str(cli))}\n"
+            + 'config_dir=fixture\nexpected_state=approval_queued\napp_pid=123\n'
+            + 'expected_app_key_npub="$TARGET"\napproval_submitted="$SUBMITTED"\n'
+            + predicate + '\nif status_matches_expected; then echo cleanup; else exit 1; fi\n')
+        cases = [
+            ("stale", "other", True, 3, "expected", 1, 0, 123, False),
+            ("persisted", "expected", True, 0, "expected", 1, 0, 123, False),
+            ("complete-fast-ack", "expected", True, 0, "expected", 1, 1, 123, True),
+            ("missing-target", "expected", True, 3, "", 1, 1, 123, False),
+            ("wrong-target", "other", True, 3, "expected", 1, 1, 123, False),
+            ("missing-wrap", "expected", False, 3, "expected", 1, 1, 123, False),
+            ("failed-activation", "expected", True, 3, "expected", 0, 1, 123, False),
+            ("other-gui", "expected", True, 3, "expected", 1, 1, 999, False),
+        ]
+        for label, actor, wrap, pending, target, submitted, notice, pid, succeeds in cases:
+            with self.subTest(phase=label):
+                (self.state / "status").write_text(json.dumps({"initialized": True, "profile": {
+                    "authorization_state": "authorized", "pending_device_approval_receipt_count": pending}}))
+                (self.state / "roster").write_text(json.dumps({"app_keys": {"app_actors": [
+                    {"npub": actor, "has_dck_wrap": wrap}]}}))
+                result = subprocess.run(["bash", str(script)], capture_output=True, text=True,
+                    timeout=WORKFLOW_TIMEOUT_SECONDS, env=self.environment(PYTHONPATH=str(self.bin),
+                        TARGET=target, SUBMITTED=str(submitted), NOTICE_READY=str(notice), NOTICE_PID=str(pid)))
+                self.assertEqual(result.returncode, 0 if succeeds else 1, result.stdout + result.stderr)
+                self.assertEqual("cleanup" in result.stdout, succeeds)
 
     def run_ios_build_fixture(self, script_name: str, configuration: str, *,
                               mode: str = "--build-only", failure: str = "",

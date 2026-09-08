@@ -22,6 +22,15 @@ unless the user explicitly asks otherwise.
   deadline binding.
   The three focused workflow tests, including explicit remote Cargo settings,
   passed in 0.876 seconds. This does not measure a full native gate speedup.
+- A later synchronized run kept all five daemons alive but still missed the
+  same authorization deadline. The GTK smoke accepted a receipt queued for an
+  earlier device before its selected approval callback had completed. The
+  check now requires the selected AppKey and key wrap in the durable roster,
+  plus the completion notice from its newly launched GUI process, before
+  cleanup. Acknowledgment may already have drained the selected receipt.
+  Three focused tests passed in 0.740 seconds, including stale receipts,
+  missing or wrong targets, incomplete actions and another GUI's notice.
+  The native authorization/ACK and direct-mesh gates remain unchanged.
 
 ## 2026-09-08: Deterministic iOS approval release check
 

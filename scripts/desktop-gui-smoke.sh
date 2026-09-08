@@ -22,6 +22,8 @@ approval deep link through the shipped shell. Set
 IRIS_DRIVE_DESKTOP_GUI_EXPECTED_STATE to awaiting_approval or approval_queued
 to validate that action; the default is authorized. Link actions must finish
 within IRIS_DRIVE_DESKTOP_GUI_ACTION_TIMEOUT_SECS (default: 20).
+Approval checks also require IRIS_DRIVE_DESKTOP_GUI_EXPECTED_APP_KEY, the
+selected joining AppKey from the harness's structured request metadata.
 USAGE
 }
 
@@ -61,6 +63,7 @@ linux_remote_shell() {
   if [[ -n "${IRIS_DRIVE_DESKTOP_GUI_LAUNCH_LINK:-}" ]]; then
     assignments+=("IRIS_DRIVE_DESKTOP_GUI_LAUNCH_LINK=$(sh_quote "$IRIS_DRIVE_DESKTOP_GUI_LAUNCH_LINK")")
   fi
+  assignments+=("IRIS_DRIVE_DESKTOP_GUI_EXPECTED_APP_KEY=$(sh_quote "${IRIS_DRIVE_DESKTOP_GUI_EXPECTED_APP_KEY:-}")")
   assignments+=("IRIS_DRIVE_DESKTOP_GUI_EXPECTED_STATE=$(sh_quote "${IRIS_DRIVE_DESKTOP_GUI_EXPECTED_STATE:-authorized}")")
   assignments+=("IRIS_DRIVE_DESKTOP_GUI_ACTION_TIMEOUT_SECS=$(sh_quote "${IRIS_DRIVE_DESKTOP_GUI_ACTION_TIMEOUT_SECS:-20}")")
   if [[ ${#assignments[@]} -eq 0 ]]; then
@@ -109,12 +112,16 @@ app="$repo/linux/target/debug/iris-drive"
 config_dir="${IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR:-$HOME/.config/iris-drive}"
 launch_link="${IRIS_DRIVE_DESKTOP_GUI_LAUNCH_LINK:-}"
 expected_state="${IRIS_DRIVE_DESKTOP_GUI_EXPECTED_STATE:-authorized}"
+expected_app_key_npub="${IRIS_DRIVE_DESKTOP_GUI_EXPECTED_APP_KEY:-}"
 action_timeout_secs="${IRIS_DRIVE_DESKTOP_GUI_ACTION_TIMEOUT_SECS:-20}"
 xvfb_pid=""
 wm_pid=""
 app_pid=""
 dbus_pid=""
 use_xvfb=0
+
+[[ "$expected_state" != approval_queued || ( -n "$expected_app_key_npub" && -n "$launch_link" ) ]] \
+  || die "approval requires a fresh launch link and the expected target AppKey"
 
 case "$expected_state" in
   authorized | awaiting_approval | approval_queued) ;;
@@ -268,46 +275,10 @@ if [[ -z "$window_id" ]]; then
   disown "$app_pid" >/dev/null 2>&1 || true
 fi
 
-status_matches_expected() {
-  local status
-  status="$("$idrive" --config-dir "$config_dir" status 2>/dev/null)" || return 1
-  STATUS_JSON="$status" EXPECTED_STATE="$expected_state" python3 - <<'PY'
-import json
-import os
-
-status = json.loads(os.environ["STATUS_JSON"])
-expected = os.environ["EXPECTED_STATE"]
-profile = status.get("profile") or {}
-if not status.get("initialized"):
-    raise SystemExit(1)
-if expected == "awaiting_approval":
-    request = profile.get("app_key_link_request") or {}
-    if profile.get("authorization_state") != "awaiting_approval":
-        raise SystemExit(1)
-    if not str(request.get("url") or "").startswith("https://drive.iris.to/approve-device/"):
-        raise SystemExit(1)
-elif expected == "approval_queued":
-    if profile.get("authorization_state") != "authorized":
-        raise SystemExit(1)
-    if int(profile.get("pending_device_approval_receipt_count") or 0) < 1:
-        raise SystemExit(1)
-else:
-    summary = status.get("summary") or {}
-    network = status.get("network") or {}
-    authorized = int(
-        summary.get("authorized_app_key_count")
-        or summary.get("authorized_device_count")
-        or network.get("authorized_app_key_count")
-        or network.get("authorized_device_count")
-        or 0
-    )
-    if profile.get("authorization_state") != "authorized" or authorized < 1:
-        raise SystemExit(1)
-PY
-}
+source "$repo/scripts/lib/linux-gui-status.sh"
 
 activate_approval_button() {
-  python3 "$repo/scripts/lib/linux-approve-device.py"
+  python3 "$repo/scripts/lib/linux-approve-device.py" --activate "$app_pid"
 }
 
 approval_submitted=0
@@ -330,6 +301,9 @@ for _ in $(seq 1 "$((action_timeout_secs * 2))"); do
         fi
       fi
       if status_matches_expected; then
+        if [[ "$expected_state" == approval_queued ]]; then
+          printf 'IRIS_DRIVE_DESKTOP_GUI_APPROVAL_COMPLETED=1\n'
+        fi
         screenshot="/tmp/iris-drive-linux-gui-smoke.png"
         rm -f "$screenshot"
         if command -v gnome-screenshot >/dev/null 2>&1; then
@@ -357,6 +331,10 @@ run_windows_remote() {
   local shell_ready_timeout_secs="${IRIS_DRIVE_WINDOWS_GUI_READY_TIMEOUT_SECS:-60}"
   local action_timeout_secs="${IRIS_DRIVE_DESKTOP_GUI_ACTION_TIMEOUT_SECS:-20}"
   local expected_state="${IRIS_DRIVE_DESKTOP_GUI_EXPECTED_STATE:-authorized}"
+  local expected_app_key_npub="${IRIS_DRIVE_DESKTOP_GUI_EXPECTED_APP_KEY:-}"
+  [[ "$expected_state" != approval_queued || ( -n "$expected_app_key_npub" && -n "${IRIS_DRIVE_DESKTOP_GUI_LAUNCH_LINK:-}" ) ]] || {
+    echo "approval requires a fresh launch link and the expected target AppKey" >&2; return 2;
+  }
   [[ "$remote" != "local" ]] || {
     echo "windows GUI smoke requires a Windows SSH host" >&2
     exit 2
@@ -378,6 +356,7 @@ run_windows_remote() {
     printf '$ConfigDirOverride = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_WINDOWS_CONFIG_DIR:-}")"
     printf '$ShellReadyTimeoutSeconds = %s\n' "$shell_ready_timeout_secs"
     printf '$LinkActionTimeoutSeconds = %s\n' "$action_timeout_secs"
+    printf '$ExpectedAppKey = %s\n' "$(ps_quote "$expected_app_key_npub")"
     printf '$ExpectedState = %s\n' "$(ps_quote "$expected_state")"
     printf '$LaunchLink = %s\n' "$(ps_quote "${IRIS_DRIVE_DESKTOP_GUI_LAUNCH_LINK:-}")"
     cat <<'REMOTE_PS'
@@ -609,6 +588,7 @@ param(
   [int]$ShellReadyTimeoutSeconds,
   [int]$LinkActionTimeoutSeconds,
   [string]$ExpectedState,
+  [string]$ExpectedAppKey,
   [string]$LaunchLink
 )
 
@@ -654,7 +634,7 @@ Add-Type -Namespace IrisDriveSmoke -Name NativeMethods -MemberDefinition @"
 "@
 
 function Current-IrisWindowProcess {
-  Get-Process -Name "IrisDrive" -ErrorAction SilentlyContinue |
+  Get-Process -Id $Started.Id -ErrorAction SilentlyContinue |
     Where-Object {
       $_.MainWindowHandle -ne [IntPtr]::Zero -and
       [IrisDriveSmoke.NativeMethods]::IsWindowVisible($_.MainWindowHandle)
@@ -745,6 +725,9 @@ function Confirm-ApprovalDialog {
       [System.Windows.Automation.ControlType]::Window
     )
   )
+  $DialogCondition = [System.Windows.Automation.AndCondition]::new($DialogCondition,
+    [System.Windows.Automation.PropertyCondition]::new(
+      [System.Windows.Automation.AutomationElement]::ProcessIdProperty, [int]$Process.Id))
   while ((Get-Date) -lt $Deadline) {
     $Dialog = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
       [System.Windows.Automation.TreeScope]::Descendants,
@@ -802,8 +785,14 @@ function Test-ExpectedStatus($Status) {
         $Status.profile.app_key_link_request.url -like "https://drive.iris.to/approve-device/*"
     }
     "approval_queued" {
-      return $Status.profile.authorization_state -eq "authorized" -and
-        [int]$Status.profile.pending_device_approval_receipt_count -ge 1
+      if (-not $ApprovalSubmitted -or [string]::IsNullOrWhiteSpace($ExpectedAppKey) -or
+          $Status.profile.authorization_state -ne "authorized") { return $false }
+      # External-daemon mode leaves delivery to the harness after durable approval.
+      $Roster = & $Idrive --config-dir $ConfigDir app-keys list | ConvertFrom-Json
+      if ($LASTEXITCODE -ne 0) { return $false }
+      return @($Roster.app_keys.app_actors | Where-Object {
+        $_.npub -eq $ExpectedAppKey -and $_.has_dck_wrap -eq $true
+      }).Count -eq 1
     }
     default {
       return $Status.profile.authorization_state -eq "authorized" -and
@@ -879,10 +868,13 @@ try {
     Fail "UI Automation could not attach to Iris Drive window"
   }
 
+  $ApprovalSubmitted = $false
   if ($ExpectedState -eq "approval_queued") {
     Confirm-ApprovalDialog
+    $ApprovalSubmitted = $true
   }
   $Status = Wait-ExpectedStatus
+  if ($ExpectedState -eq "approval_queued") { Log "IRIS_DRIVE_DESKTOP_GUI_APPROVAL_COMPLETED=1" }
   if ($ExpectedState -eq "awaiting_approval") {
     [void](Wait-ElementByName $Window "Waiting for approval")
   } else {
@@ -916,7 +908,7 @@ try {
 '@ | Set-Content -Encoding ASCII $WorkerScript
 
   try {
-    $ActionArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$WorkerScript`" -PublishDir `"$PublishDir`" -Exe `"$Exe`" -Idrive `"$Idrive`" -ConfigDir `"$ConfigDir`" -ShellTrace `"$ShellTrace`" -ResultFile `"$ResultFile`" -ErrorFile `"$ErrorFile`" -WorkerLog `"$WorkerLog`" -Screenshot `"$InteractiveScreenshot`" -ShellReadyTimeoutSeconds $ShellReadyTimeoutSeconds -LinkActionTimeoutSeconds $LinkActionTimeoutSeconds -ExpectedState `"$ExpectedState`" -LaunchLink `"$LaunchLink`""
+    $ActionArgs = "-NoProfile -ExecutionPolicy Bypass -File `"$WorkerScript`" -PublishDir `"$PublishDir`" -Exe `"$Exe`" -Idrive `"$Idrive`" -ConfigDir `"$ConfigDir`" -ShellTrace `"$ShellTrace`" -ResultFile `"$ResultFile`" -ErrorFile `"$ErrorFile`" -WorkerLog `"$WorkerLog`" -Screenshot `"$InteractiveScreenshot`" -ShellReadyTimeoutSeconds $ShellReadyTimeoutSeconds -LinkActionTimeoutSeconds $LinkActionTimeoutSeconds -ExpectedState `"$ExpectedState`" -ExpectedAppKey `"$ExpectedAppKey`" -LaunchLink `"$LaunchLink`""
     Write-SmokeLog "launching Windows WPF shell in interactive task"
     Unregister-ScheduledTask -TaskName $TaskName -Confirm:$false -ErrorAction SilentlyContinue
     $Action = New-ScheduledTaskAction -Execute "powershell.exe" -Argument $ActionArgs -WorkingDirectory $PublishDir

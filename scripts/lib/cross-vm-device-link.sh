@@ -101,7 +101,7 @@ wait_for_all_linking_complete() {
 }
 
 run_desktop_gui_link_action_at() {
-  local label="$1" config="$2" launch_link="$3" expected_state="$4"
+  local label="$1" config="$2" launch_link="$3" expected_state="$4" expected_app_key="${5:-}"
   local target host
   target="$(desktop_gui_target "$label")" || {
     echo "desktop GUI link action does not support host label $label" >&2
@@ -113,12 +113,14 @@ run_desktop_gui_link_action_at() {
     IRIS_DRIVE_DEV_VM_WINDOWS_CONFIG_DIR="$config" \
       IRIS_DRIVE_DESKTOP_GUI_LAUNCH_LINK="$launch_link" \
       IRIS_DRIVE_DESKTOP_GUI_EXPECTED_STATE="$expected_state" \
+      IRIS_DRIVE_DESKTOP_GUI_EXPECTED_APP_KEY="$expected_app_key" \
       IRIS_DRIVE_DESKTOP_GUI_ACTION_TIMEOUT_SECS="$LINK_TIMEOUT_SECS" \
       "$ROOT/scripts/desktop-gui-smoke.sh" windows "$host"
   else
     IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR="$config" \
       IRIS_DRIVE_DESKTOP_GUI_LAUNCH_LINK="$launch_link" \
       IRIS_DRIVE_DESKTOP_GUI_EXPECTED_STATE="$expected_state" \
+      IRIS_DRIVE_DESKTOP_GUI_EXPECTED_APP_KEY="$expected_app_key" \
       IRIS_DRIVE_DESKTOP_GUI_ACTION_TIMEOUT_SECS="$LINK_TIMEOUT_SECS" \
       "$ROOT/scripts/desktop-gui-smoke.sh" linux "$host"
   fi
@@ -126,14 +128,15 @@ run_desktop_gui_link_action_at() {
 
 run_desktop_gui_link_action() {
   run_desktop_gui_link_action_at \
-    "$1" "$(host_value "$1" config)" "$2" "$3"
+    "$1" "$(host_value "$1" config)" "$2" "$3" "${4:-}"
 }
 
 run_timed_desktop_gui_primary_approval() {
   local request_url="$1" output action_pid status=0
   output="$(mktemp -t iris-drive-desktop-gui-approval.XXXXXX)"
   run_desktop_gui_link_action \
-    "$owner_label" "$request_url" approval_queued >"$output" 2>&1 &
+    "$owner_label" "$request_url" approval_queued \
+    "$(host_value "$windows_label" app_key_npub)" >"$output" 2>&1 &
   action_pid=$!
 
   while ! grep -Fq 'IRIS_DRIVE_DESKTOP_GUI_APPROVAL_STARTED=1' "$output"; do
@@ -358,7 +361,7 @@ run_bidirectional_desktop_gui_linking() {
   stop_daemon "$windows_label"
   reverse_started_at="$(monotonic_milliseconds)"
   reverse_deadline=$((reverse_started_at + LINK_TIMEOUT_SECS * 1000))
-  run_desktop_gui_link_action "$windows_label" "$request_url" approval_queued
+  run_desktop_gui_link_action "$windows_label" "$request_url" approval_queued "$DESKTOP_GUI_AUX_NPUB"
   start_daemon "$windows_label"
   start_desktop_gui_aux_daemon
   wait_until_before \

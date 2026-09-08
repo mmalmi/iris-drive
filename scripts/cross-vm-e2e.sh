@@ -1333,12 +1333,18 @@ union_snapshots() {
 print_statuses() {
   local label
   for label in "${LABELS[@]}"; do
+    echo "status_observed_monotonic_ms=$(monotonic_milliseconds)" >&2
     echo "---- $label status ----" >&2
     idrive_cmd "$label" status |
       jq '{
         daemon: {
           running: .daemon.running,
           fresh: .daemon.fresh
+        },
+        profile: {
+          authorization_state: .profile.authorization_state,
+          pending_device_approval_receipt_count: .profile.pending_device_approval_receipt_count,
+          roster_size: .profile.roster_size
         },
         summary: {
           file_count: .summary.file_count,
