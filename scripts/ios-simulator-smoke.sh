@@ -49,14 +49,22 @@ DerivedData directory.
 USAGE
 }
 
+SMOKE_COMPLETED=0
 cleanup() {
+  local status=$? cleanup_status=0
+  trap - EXIT
+  set +e
   if [[ -n "$LOCAL_RELAY_PID" ]]; then
     kill "$LOCAL_RELAY_PID" >/dev/null 2>&1 || true
     wait "$LOCAL_RELAY_PID" 2>/dev/null || true
   fi
-  rm -rf "$OWNER_CONFIG"
-  rm -f "$LOCAL_RELAY_READY" "$LOCAL_RELAY_LOG"
-  stop_ios_smoke_blossom
+  rm -rf "$OWNER_CONFIG" || cleanup_status=$?
+  rm -f "$LOCAL_RELAY_READY" "$LOCAL_RELAY_LOG" || cleanup_status=$?
+  stop_ios_smoke_blossom || cleanup_status=$?
+  if [[ "$status" == 0 && "$cleanup_status" != 0 ]]; then status="$cleanup_status"; fi
+  # Bash 3.2 can report zero to EXIT after a nounset inside a function.
+  if [[ "$SMOKE_COMPLETED" != 1 && "$status" == 0 ]]; then status=1; fi
+  exit "$status"
 }
 trap cleanup EXIT
 
@@ -73,6 +81,7 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     -h|--help)
+      SMOKE_COMPLETED=1
       usage
       exit 0
       ;;
@@ -356,6 +365,7 @@ assert_static_app_core_linkage "$APP_PATH"
 iris_drive_ios_assert_simulator_entitlements "$DERIVED_DATA" "$CONFIGURATION"
 
 if [[ "$BUILD_ONLY" == "1" ]]; then
+  SMOKE_COMPLETED=1
   echo "IOS_BUILD_OK"
   echo "$APP_PATH"
   exit 0
@@ -465,6 +475,7 @@ fi
 
 assert_ios_smoke_blossom_handoff "$approved_json"
 
+SMOKE_COMPLETED=1
 echo "IOS_SIMULATOR_SMOKE_OK"
 echo "device=$DEVICE_UDID"
 echo "app=$APP_PATH"

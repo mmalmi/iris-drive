@@ -52,7 +52,11 @@ MANUAL_LINKED_SYNC_OBSERVER_PID=""
 MANUAL_LINKED_SYNC_OBSERVATION_FILE=""
 MANUAL_LINKED_ACK_OBSERVATION_FILE=""
 
+SMOKE_COMPLETED=0
 cleanup() {
+  local status=$? cleanup_status=0
+  trap - EXIT
+  set +e
   for observer_pid in "$LINKED_SYNC_OBSERVER_PID" "$MANUAL_LINKED_SYNC_OBSERVER_PID"; do
     if [[ -n "$observer_pid" ]]; then
       kill "$observer_pid" >/dev/null 2>&1 || true
@@ -67,12 +71,17 @@ cleanup() {
     kill "$LOCAL_RELAY_PID" >/dev/null 2>&1 || true
     wait "$LOCAL_RELAY_PID" >/dev/null 2>&1 || true
   fi
-  rm -rf "$OWNER_CONFIG" "$LINKED_CONFIG" "$MANUAL_LINKED_CONFIG"
+  rm -rf "$OWNER_CONFIG" "$LINKED_CONFIG" "$MANUAL_LINKED_CONFIG" || cleanup_status=$?
   rm -f "$OWNER_DAEMON_LOG" "$LOCAL_RELAY_READY" "$LOCAL_RELAY_LOG" \
     "$LOCAL_RELAY_EVENT_LOG" \
     "$LINKED_SYNC_OBSERVATION_FILE" "$LINKED_ACK_OBSERVATION_FILE" \
-    "$MANUAL_LINKED_SYNC_OBSERVATION_FILE" "$MANUAL_LINKED_ACK_OBSERVATION_FILE"
-  stop_ios_smoke_blossom
+    "$MANUAL_LINKED_SYNC_OBSERVATION_FILE" "$MANUAL_LINKED_ACK_OBSERVATION_FILE" || cleanup_status=$?
+  stop_ios_smoke_blossom || cleanup_status=$?
+  if [[ "$status" == 0 && "$cleanup_status" != 0 ]]; then status="$cleanup_status"; fi
+  # Bash 3.2 can report zero to EXIT after a nounset inside a function.
+  # Only a completed selected journey may turn successful cleanup into a pass.
+  if [[ "$SMOKE_COMPLETED" != 1 && "$status" == 0 ]]; then status=1; fi
+  exit "$status"
 }
 trap cleanup EXIT
 
@@ -706,6 +715,7 @@ echo "IOS_CLI_OWNER_AUTHORIZATION_OBSERVED host_observed_at=$(python3 -c 'import
 wait_for_approval_ack "$OWNER_CONFIG" "CLI-owner-to-iOS" "$cli_owner_approval_deadline"
 assert_ios_smoke_blossom_handoff "$approved_json"
 if [[ "${IRIS_DRIVE_IOS_CLI_OWNER_ACK_ONLY:-0}" == "1" ]]; then
+  SMOKE_COMPLETED=1
   echo "IOS_CLI_OWNER_ACK_SMOKE_OK"
   exit 0
 fi
@@ -847,6 +857,7 @@ if ! wait_for_debug_state \
   exit 1
 fi
 
+SMOKE_COMPLETED=1
 echo "IOS_GUI_LINKING_SMOKE_OK"
 echo "device=$DEVICE_UDID"
 echo "build_log=$BUILD_LOG"

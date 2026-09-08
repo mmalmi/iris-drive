@@ -54,6 +54,90 @@ class ReleaseWorkflowTests(unittest.TestCase):
         environment.update(overrides)
         return environment
 
+    def test_ios_gui_cleanup_preserves_incomplete_and_failed_journeys(self) -> None:
+        source = (ROOT / "scripts/ios-gui-linking-smoke.sh").read_text(encoding="utf-8")
+        cleanup = source[source.index("cleanup() {"):source.index("select_simulator() {")]
+        run_ui = source[source.index("run_ui_test() {"):source.index("reset_sim_app_group_state() {")]
+        completion = source[source.rindex("\nfi\n") + len("\nfi\n"):]
+        products = self.state / "Build/Products"
+        products.mkdir(parents=True)
+        xctestrun = products / "fixture.xctestrun"
+        xctestrun.write_text('<?xml version="1.0"?><plist version="1.0"><dict/></plist>')
+        # Run the actual function, temporary xctestrun mutation, cleanup and
+        # completion tail. Only the external Xcode process is replaced.
+        for case, destination, xcode_status, cleanup_failure, expected in [
+            ("nounset", False, 0, False, 1),
+            ("failed_xcode", True, 23, False, 23),
+            ("failed_cleanup", True, 0, True, 19),
+            ("product_and_cleanup_failure", True, 23, True, 23),
+            ("completed", True, 0, False, 0),
+        ]:
+            with self.subTest(case=case):
+                owner = self.state / case
+                owner.mkdir()
+                script = self.scripts / (case + ".sh")
+                self.write_executable(
+                    script,
+                    "SMOKE_COMPLETED=0\n"
+                    + f"source {shlex.quote(str(ROOT / 'scripts/lib/ios-blossom-smoke.sh'))}\n"
+                    + cleanup + run_ui
+                    + f"xcodebuild() {{ return {xcode_status}; }}\n"
+                    + "ios_xcuitest_accessibility_session_disabled_after() { return 1; }\n"
+                    + ('rm() { if [[ "$1" == -rf ]]; then return 19; fi; command rm "$@"; }\n' if cleanup_failure else "")
+                    + ("DESTINATION=fixture\n" if destination else "unset DESTINATION\n")
+                    + "run_ui_test fixture/test\n" + completion,
+                )
+                environment = self.environment(
+                    DERIVED_DATA=str(self.state), XCTESTRUN=str(xctestrun),
+                    BUILD_LOG=str(self.state / "xcode.log"), SIM_APP_BASE_DIR=str(self.state),
+                    DEVICE_UDID="fixture", OWNER_CONFIG=str(owner), LINKED_CONFIG="", MANUAL_LINKED_CONFIG="",
+                    OWNER_DAEMON_PID="", LOCAL_RELAY_PID="", LINKED_SYNC_OBSERVER_PID="",
+                    MANUAL_LINKED_SYNC_OBSERVER_PID="", OWNER_DAEMON_LOG="", LOCAL_RELAY_READY="",
+                    LOCAL_RELAY_LOG="", LOCAL_RELAY_EVENT_LOG="", LINKED_SYNC_OBSERVATION_FILE="",
+                    LINKED_ACK_OBSERVATION_FILE="", MANUAL_LINKED_SYNC_OBSERVATION_FILE="",
+                    MANUAL_LINKED_ACK_OBSERVATION_FILE="",
+                )
+                completed = subprocess.run(
+                    ["/bin/bash", str(script)], capture_output=True, text=True,
+                    timeout=WORKFLOW_TIMEOUT_SECONDS, env=environment,
+                )
+                self.assertEqual(completed.returncode, expected, completed.stderr)
+                self.assertEqual("IOS_GUI_LINKING_SMOKE_OK" in completed.stdout, destination and xcode_status == 0)
+                self.assertEqual(owner.exists(), cleanup_failure, "owned fixture cleanup result differed")
+
+    def test_ios_standalone_cleanup_preserves_incomplete_and_selected_success(self) -> None:
+        source = (ROOT / "scripts/ios-simulator-smoke.sh").read_text(encoding="utf-8")
+        cleanup = source[source.index("cleanup() {"):source.index("BUILD_ONLY=0")]
+        removal = source[source.index("safe_remove_sim_container() {"):source.index("simulator_state() {")]
+        completion = source[source.rindex("\nfi\n") + len("\nfi\n"):]
+        parser = source[source.index("BUILD_ONLY=0"):source.index("select_simulator() {")]
+        build_tail = source[source.index('if [[ "$BUILD_ONLY" == "1" ]]; then'):source.index('wait_for_simulator_boot "$DEVICE_UDID"')]
+        for case, body, expected in [
+            ("nounset", 'unset DEVICE_UDID; safe_remove_sim_container /fixture', 1),
+            ("failed_command", 'false', 1),
+            ("full", completion, 0),
+            ("build_only", 'BUILD_ONLY=1\n' + build_tail, 0),
+            ("help", 'usage() { :; }; set -- --help\n' + parser, 0),
+        ]:
+            with self.subTest(case=case):
+                owner = self.state / case
+                owner.mkdir()
+                script = self.scripts / (case + ".sh")
+                self.write_executable(script, "SMOKE_COMPLETED=0\n"
+                    + f"source {shlex.quote(str(ROOT / 'scripts/lib/ios-blossom-smoke.sh'))}\n"
+                    + cleanup + removal
+                    + 'assert_ios_smoke_blossom_handoff() { :; }; approved_json="fixture"\n'
+                    + body + "\n")
+                completed = subprocess.run(["/bin/bash", str(script)], capture_output=True, text=True,
+                    timeout=WORKFLOW_TIMEOUT_SECONDS, env=self.environment(OWNER_CONFIG=str(owner),
+                        LOCAL_RELAY_PID="", LOCAL_RELAY_READY="", LOCAL_RELAY_LOG="", DEVICE_UDID="fixture", APP_PATH="fixture"))
+                self.assertEqual(completed.returncode, expected, completed.stderr)
+                if case == "full":
+                    self.assertIn("IOS_SIMULATOR_SMOKE_OK", completed.stdout)
+                elif case == "build_only":
+                    self.assertIn("IOS_BUILD_OK", completed.stdout)
+                self.assertFalse(owner.exists(), "production cleanup did not remove the owned fixture")
+
     def test_ios_approval_observes_the_running_receiver_without_restarting_it(self) -> None:
         source = (ROOT / "scripts/ios-gui-linking-smoke.sh").read_text(encoding="utf-8")
         # Execute the production approval phase with an already-running receiver.
