@@ -62,6 +62,40 @@ pub(super) fn app_key_link_exchange_tick_millis(
     }
 }
 
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
+#[derive(Debug)]
+pub(super) struct AppKeyLinkExchangeTickError {
+    pub(super) message: String,
+    pub(super) retry_millis: u64,
+}
+
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
+impl AppKeyLinkExchangeTickError {
+    pub(super) fn unknown_state(message: String) -> Self {
+        Self {
+            message,
+            retry_millis: APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS,
+        }
+    }
+}
+
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
+pub(super) fn app_key_link_exchange_tick_result(
+    state: Option<&iris_drive_core::ProfileState>,
+    result: Result<bool, String>,
+) -> Result<u64, AppKeyLinkExchangeTickError> {
+    result
+        .map(|approval_ack_delivered| {
+            app_key_link_exchange_tick_millis(state, approval_ack_delivered)
+        })
+        .map_err(|message| AppKeyLinkExchangeTickError {
+            message,
+            // A failed publication does not create approval work. Keep genuine
+            // pending approvals and undelivered ACKs on their fast retry path.
+            retry_millis: app_key_link_exchange_tick_millis(state, false),
+        })
+}
+
 pub(super) fn native_action_uses_short_config_transaction(action: &NativeAppAction) -> bool {
     !matches!(
         action,

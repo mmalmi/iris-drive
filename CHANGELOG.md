@@ -8,6 +8,8 @@
   fixes.
 - Let slow valid peer downloads finish when backup storage has no copy, while
   retaining bounded reads and rejecting incomplete roots.
+- Reduce repeated background retries while a mobile device is offline, while
+  keeping pending device approvals responsive.
 
 ## 0.1.34 - 2026-09-05
 

@@ -14,8 +14,8 @@ use super::mobile_fips_status::{
 use super::{
     APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS, APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS, FfiApp,
     NATIVE_FIPS_STATUS_FRESH_SECS, NativeAppConfigCache, ProviderSummaryMode,
-    app_key_link_exchange_tick_millis, native_action_uses_short_config_transaction,
-    provider_summary_mode_for_action,
+    app_key_link_exchange_tick_millis, app_key_link_exchange_tick_result,
+    native_action_uses_short_config_transaction, provider_summary_mode_for_action,
 };
 use crate::NativeAppAction;
 
@@ -205,7 +205,22 @@ fn app_key_link_exchange_uses_fast_ticks_only_while_approval_is_pending() {
     );
     let owner_dir = tempfile::tempdir().unwrap();
     let linked_dir = tempfile::tempdir().unwrap();
-    let owner = iris_drive_core::Profile::create(owner_dir.path(), Some("Mac".into())).unwrap();
+    let mut owner = iris_drive_core::Profile::create(owner_dir.path(), Some("Mac".into())).unwrap();
+    let assert_failed_tick = |state: &iris_drive_core::ProfileState, expected_millis| {
+        let error = app_key_link_exchange_tick_result(
+            Some(state),
+            Err("roster relay is unavailable".to_owned()),
+        )
+        .unwrap_err();
+        assert_eq!(error.message, "roster relay is unavailable");
+        assert_eq!(error.retry_millis, expected_millis);
+    };
+    assert_failed_tick(&owner.state, APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS);
+    let unknown = super::AppKeyLinkExchangeTickError::unknown_state("config unavailable".into());
+    assert_eq!(
+        unknown.retry_millis,
+        APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS
+    );
     let mut linked = iris_drive_core::Profile::link_to_profile(
         linked_dir.path(),
         owner.state.profile_id,
@@ -234,6 +249,7 @@ fn app_key_link_exchange_uses_fast_ticks_only_while_approval_is_pending() {
         app_key_link_exchange_tick_millis(Some(&linked.state), false),
         APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS
     );
+    assert_failed_tick(&linked.state, APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS);
     linked.state.authorization_state = AppKeyAuthorizationState::Authorized;
     assert!(linked.state.outbound_app_key_link_request.is_some());
     assert_eq!(
@@ -241,6 +257,7 @@ fn app_key_link_exchange_uses_fast_ticks_only_while_approval_is_pending() {
         APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS,
         "a retained request without a receipt must not keep an authorized device on the fast approval loop"
     );
+    assert_failed_tick(&linked.state, APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS);
     linked
         .state
         .outbound_app_key_link_request
@@ -253,6 +270,7 @@ fn app_key_link_exchange_uses_fast_ticks_only_while_approval_is_pending() {
         APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS,
         "an applied receipt must retry its ACK within the approval SLA"
     );
+    assert_failed_tick(&linked.state, APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS);
     assert_eq!(
         app_key_link_exchange_tick_millis(Some(&linked.state), true),
         APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS,
@@ -266,6 +284,21 @@ fn app_key_link_exchange_uses_fast_ticks_only_while_approval_is_pending() {
         app_key_link_exchange_tick_millis(None, false),
         APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS
     );
+    assert_eq!(
+        app_key_link_exchange_tick_result(Some(&linked.state), Ok(true)).unwrap(),
+        APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS
+    );
+    let bootstrap =
+        iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_bootstrap(
+            linked.state.outbound_app_key_link_request.as_ref().unwrap(),
+        )
+        .unwrap()
+        .0;
+    owner
+        .approve_device_bootstrap(&bootstrap, Some("Phone".to_owned()))
+        .unwrap();
+    assert!(!owner.state.pending_device_approval_receipts.is_empty());
+    assert_failed_tick(&owner.state, APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS);
 }
 
 #[test]

@@ -12,6 +12,7 @@ esac
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/ios-simulator-signing.sh"
+source "$ROOT/scripts/lib/ios-simulator-build-profile.sh"
 source "$ROOT/scripts/lib/ios-linking-observer.sh"
 source "$ROOT/scripts/lib/ios-blossom-smoke.sh"
 source "$ROOT/scripts/lib/ios-xcuitest-accessibility-session.sh"
@@ -29,8 +30,7 @@ DEVICE_NAME="${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-}"
 TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
 IDRIVE="${IRIS_DRIVE_IDRIVE_BIN:-$TARGET_DIR/debug/idrive}"
 RUST_IOS_TARGET="${IRIS_DRIVE_IOS_RUST_TARGET:-aarch64-apple-ios-sim}"
-RUST_LIB_DIR="$TARGET_DIR/$RUST_IOS_TARGET/debug"
-RUST_STATIC_LIB="$RUST_LIB_DIR/libiris_drive_app_core.a"
+iris_drive_ios_select_build_profile
 OWNER_CONFIG="$(mktemp -d -t iris-drive-ios-ui-owner)"
 LINKED_CONFIG="$(mktemp -d -t iris-drive-ios-ui-linked)"
 MANUAL_LINKED_CONFIG="$(mktemp -d -t iris-drive-ios-ui-manual-linked)"
@@ -526,11 +526,7 @@ PY
 
 cargo build -p idrive
 
-cargo build -p iris-drive-app-core --target "$RUST_IOS_TARGET"
-if [[ ! -f "$RUST_STATIC_LIB" ]]; then
-  echo "FAIL: static app-core library not found at $RUST_STATIC_LIB" >&2
-  exit 1
-fi
+iris_drive_ios_build_app_core
 
 if command -v xcodegen >/dev/null 2>&1; then
   (cd "$ROOT/ios" && xcodegen generate)
@@ -566,6 +562,7 @@ if [[ -z "$SHARE_SOURCE_APP_PATH" || ! -d "$SHARE_SOURCE_APP_PATH" ]]; then
   echo "FAIL: built iOS share source app not found. Build log: $BUILD_LOG" >&2
   exit 1
 fi
+iris_drive_ios_assert_build_configuration "$APP_PATH"
 assert_static_app_core_linkage "$APP_PATH"
 iris_drive_ios_assert_simulator_entitlements "$DERIVED_DATA" "$CONFIGURATION"
 

@@ -165,11 +165,40 @@ run_android_functional_gate() {
   run env IRIS_DRIVE_ANDROID_KEEP_TEST_APP=true just android-gui-smoke
 }
 
+IOS_IDLE_CPU_PREPARED_DEVICE=""
+
+prepare_ios_idle_cpu_gate() {
+  IOS_IDLE_CPU_PREPARED_DEVICE=""
+  ios_gate_enabled || return 0
+  local device
+  # Functional journeys need Debug hooks. Measure the same source with optimized
+  # Rust and Swift, installed over its retained profile on the reserved simulator.
+  # A simulator Release build is not the signed device IPA.
+  device="$(xcrun simctl list devices booted --json | python3 -c '
+import json, sys
+preferred = sys.argv[1]
+devices = [d for runtime, entries in json.load(sys.stdin).get("devices", {}).items()
+           if "iOS" in runtime for d in entries if d.get("state") == "Booted"
+           and (not preferred or preferred in (d.get("udid"), d.get("name")))]
+if len(devices) != 1:
+    raise SystemExit("iOS idle gate requires one matching already-booted simulator; select its reserved UDID explicitly")
+print(devices[0]["udid"])
+' "${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-${IRIS_DRIVE_IOS_DEVICE:-}}")" || return $?
+  run env IRIS_DRIVE_IOS_XCODE_CONFIGURATION=Release \
+    IRIS_DRIVE_IOS_SIMULATOR_DEVICE="$device" \
+    ./scripts/ios-simulator-smoke.sh --install-only || return $?
+  IOS_IDLE_CPU_PREPARED_DEVICE="$device"
+}
+
 run_ios_idle_cpu_gate() {
   ios_gate_enabled || return 0
+  if [[ -z "$IOS_IDLE_CPU_PREPARED_DEVICE" ]]; then
+    echo "FAIL: iOS idle simulator has not been prepared in this invocation" >&2
+    return 1
+  fi
   run env \
     IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="${IRIS_DRIVE_RELEASE_GATE_IOS_IDLE_CPU_ROLES:-app}" \
-    IRIS_DRIVE_IDLE_CPU_IOS_DEVICE="${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-${IRIS_DRIVE_IOS_DEVICE:-}}" \
+    IRIS_DRIVE_IDLE_CPU_IOS_DEVICE="$IOS_IDLE_CPU_PREPARED_DEVICE" \
     ./scripts/idle-cpu-gate.sh --platform ios
 }
 
@@ -285,6 +314,8 @@ case "$(uname -s)" in
       export IRIS_DRIVE_MACOS_VM_FUNCTIONAL_PRECHECKED=1
     fi
     if idle_cpu_gate_enabled; then
+      # Finish compilation and installation before any idle sampler starts.
+      prepare_ios_idle_cpu_gate
       # A VM-routed macOS sample is isolated from the local iOS simulator and
       # can overlap both mobile samples. Keep local Apple sampling serial.
       if macos_vm_gate_enabled; then

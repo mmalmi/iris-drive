@@ -54,6 +54,164 @@ class ReleaseWorkflowTests(unittest.TestCase):
         environment.update(overrides)
         return environment
 
+    def run_ios_build_fixture(self, script_name: str, configuration: str, *,
+                              mode: str = "--build-only", failure: str = "") -> tuple[subprocess.CompletedProcess, str]:
+        source = (ROOT / "scripts" / script_name).read_text(encoding="utf-8")
+        settings = source[source.index('source "$ROOT/scripts/ios-simulator-signing.sh"'):source.index('OWNER_CONFIG=')]
+        resolution = source[source.index("resolve_app_path() {"):source.index("assert_static_app_core_linkage() {")]
+        if script_name == "ios-simulator-smoke.sh":
+            parser = source[source.index("BUILD_ONLY=0"):source.index("select_simulator() {")]
+            cleanup = source[source.index("cleanup() {"):source.index("BUILD_ONLY=0")]
+            phase = source[source.index('DEVICE_UDID="$(select_simulator)"'):source.index('xcrun simctl uninstall "$DEVICE_UDID"')]
+        else:
+            parser = cleanup = ""
+            phase = source[source.index("cargo build -p idrive\n"):source.index('XCTESTRUN="$(resolve_xctestrun)"')]
+        # Existing archives and apps must not hide a failed fresh build.
+        for profile in ("debug", "release"):
+            archive = self.state / "target/aarch64-apple-ios-sim" / profile / "libiris_drive_app_core.a"
+            archive.parent.mkdir(parents=True, exist_ok=True)
+            archive.write_text("older archive")
+        for config in ("Debug", "Release"):
+            (self.state / f"derived/Build/Products/{config}-iphonesimulator/Iris Drive.app").mkdir(parents=True, exist_ok=True)
+        owner = self.state / "owner"
+        owner.mkdir(exist_ok=True)
+        script = self.scripts / "build-phase.sh"
+        self.write_executable(script,
+            f"ROOT={shlex.quote(str(ROOT))}\n" + settings + resolution
+            + 'DERIVED_DATA="$RELEASE_WORKFLOW_TEST_STATE/derived"\n'
+            + 'PROJECT="$RELEASE_WORKFLOW_TEST_STATE/project"\n'
+            + 'BUILD_LOG="$RELEASE_WORKFLOW_TEST_STATE/build.log"\n'
+            + 'SMOKE_COMPLETED=0\n' + cleanup
+            + 'usage() { :; }\n' + parser
+            + textwrap.dedent('''\
+                record() { printf '<%s>' "$@" >>"$RELEASE_WORKFLOW_TEST_STATE/events"; printf '\\n' >>"$RELEASE_WORKFLOW_TEST_STATE/events"; }
+                cargo() {
+                  record cargo "$@"
+                  [[ "$FIXTURE_FAILURE" != cargo ]] || return 23
+                  if [[ "$*" == *iris-drive-app-core* ]]; then
+                    printf 'current archive' >"$RUST_STATIC_LIB"
+                  fi
+                }
+                xcodegen() { :; }
+                xcodebuild() {
+                  record xcodebuild "$@"
+                  [[ "$FIXTURE_FAILURE" != xcode ]] || return 24
+                  [[ "$(cat "$RUST_STATIC_LIB")" == 'current archive' ]]
+                }
+                select_simulator() { echo fixture-device; }
+                resolve_share_source_app_path() { echo "$DERIVED_DATA"; }
+                assert_static_app_core_linkage() { record linkage "$@"; }
+                iris_drive_ios_assert_simulator_entitlements() { record entitlements "$@"; }
+                wait_for_simulator_boot() { record boot "$@"; }
+                xcrun() {
+                  record xcrun "$@"
+                  [[ "$2" == install ]] || return 94
+                  [[ "$FIXTURE_FAILURE" != install ]] || return 25
+                }
+                stop_ios_smoke_blossom() { [[ "$FIXTURE_FAILURE" != cleanup ]] || return 26; }
+                start_ios_smoke_blossom() { echo 'unexpected fixture startup' >&2; exit 95; }
+            ''') + phase + '\nSMOKE_COMPLETED=1\n')
+        events = self.state / "events"
+        events.unlink(missing_ok=True)
+        completed = subprocess.run(["/bin/bash", str(script), mode], capture_output=True, text=True,
+            timeout=WORKFLOW_TIMEOUT_SECONDS, env=self.environment(
+                IRIS_DRIVE_IOS_XCODE_CONFIGURATION=configuration, CARGO_TARGET_DIR=str(self.state / "target"),
+                IRIS_DRIVE_IDRIVE_BIN="/usr/bin/true", FIXTURE_FAILURE=failure,
+                OWNER_CONFIG=str(owner), LOCAL_RELAY_PID="", LOCAL_RELAY_READY="", LOCAL_RELAY_LOG=""))
+        return completed, events.read_text() if events.exists() else ""
+
+    def test_ios_simulator_builds_align_rust_and_xcode_profiles(self) -> None:
+        for script in ("ios-simulator-smoke.sh", "ios-gui-linking-smoke.sh"):
+            for configuration, profile in (("Debug", "debug"), ("Release", "release")):
+                with self.subTest(script=script, configuration=configuration):
+                    completed, events = self.run_ios_build_fixture(script, configuration)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    cargo = next(line for line in events.splitlines() if line.startswith("<cargo>") and "<iris-drive-app-core>" in line)
+                    self.assertEqual("<--release>" in cargo, configuration == "Release", cargo)
+                    self.assertIn("<--locked>", cargo)
+                    xcode = next(line for line in events.splitlines() if line.startswith("<xcodebuild>"))
+                    library = self.state / "target/aarch64-apple-ios-sim" / profile
+                    self.assertIn(f"<-configuration><{configuration}>", xcode)
+                    self.assertIn(f"<LIBRARY_SEARCH_PATHS={library}>", xcode)
+                    self.assertIn(f"<OTHER_LDFLAGS={library}/libiris_drive_app_core.a>", xcode)
+                    self.assertNotIn("SWIFT_ACTIVE_COMPILATION_CONDITIONS", xcode)
+            for failure, status in (("cargo", 23), ("xcode", 24)):
+                with self.subTest(script=script, failure=failure):
+                    completed, events = self.run_ios_build_fixture(script, "Release", failure=failure)
+                    self.assertEqual(completed.returncode, status, completed.stderr)
+                    self.assertNotIn("<linkage>", events)
+
+    def test_ios_install_only_preserves_profile_and_propagates_failures(self) -> None:
+        for failure, expected in (("", 0), ("cargo", 23), ("xcode", 24), ("install", 25), ("cleanup", 26)):
+            with self.subTest(failure=failure):
+                completed, events = self.run_ios_build_fixture("ios-simulator-smoke.sh", "Release", mode="--install-only", failure=failure)
+                self.assertEqual(completed.returncode, expected, completed.stderr)
+                self.assertNotIn("<idrive>", events, "install-only does not need the host CLI")
+                self.assertNotIn("<uninstall>", events)
+                self.assertNotIn("<launch>", events)
+                self.assertNotIn("IOS_SIMULATOR_SMOKE_OK", completed.stdout)
+                self.assertEqual("IOS_INSTALL_OK" in completed.stdout, failure in ("", "cleanup"))
+                if failure in ("", "install", "cleanup"):
+                    app = self.state / "derived/Build/Products/Release-iphonesimulator/Iris Drive.app"
+                    self.assertIn(f"<xcrun><simctl><install><fixture-device><{app}>", events)
+                    self.assertLess(events.index("<entitlements>"), events.index("<xcrun>"))
+
+    def test_ios_idle_installs_release_on_the_same_unique_booted_simulator(self) -> None:
+        source = (ROOT / "scripts/release-gate.sh").read_text(encoding="utf-8")
+        phase = source[source.index('IOS_IDLE_CPU_PREPARED_DEVICE=""'):source.index("run_apple_idle_cpu_gates() {")]
+        dispatch_start = source.index("    if idle_cpu_gate_enabled; then")
+        dispatch = source[dispatch_start:source.index("    ;;\n  Linux)", dispatch_start)]
+        self.write_executable(self.scripts / "ios-simulator-smoke.sh",
+            'printf "install %s %s %s\\n" "$IRIS_DRIVE_IOS_XCODE_CONFIGURATION" "$IRIS_DRIVE_IOS_SIMULATOR_DEVICE" "$*" >>"$RELEASE_WORKFLOW_TEST_STATE/events"\n'
+            'exit "$FIXTURE_INSTALL_STATUS"\n')
+        self.write_executable(self.scripts / "idle-cpu-gate.sh",
+            'printf "idle %s %s\\n" "$IRIS_DRIVE_IDLE_CPU_IOS_DEVICE" "$*" >>"$RELEASE_WORKFLOW_TEST_STATE/events"\n')
+        self.write_executable(self.bin / "xcrun", 'printf "%s\\n" "$FIXTURE_DEVICES"\n')
+        script = self.scripts / "idle-phase.sh"
+        self.write_executable(script,
+            'run() { "$@"; }; ios_gate_enabled() { return 0; }\n'
+            'idle_cpu_gate_enabled() { return 0; }; macos_vm_gate_enabled() { return 0; }\n'
+            'run_parallel_functions() {\n'
+            '  printf "parallel %s\\n" "$1" >>"$RELEASE_WORKFLOW_TEST_STATE/events"\n'
+            '  shift; while [[ $# -gt 0 ]]; do\n'
+            '    if [[ "$2" == run_ios_idle_cpu_gate ]]; then "$2"; fi; shift 2\n'
+            '  done\n'
+            '}\n' + phase
+            + 'if [[ "${1:-}" == --measurement-only ]]; then run_ios_idle_cpu_gate; exit; fi\n'
+            + dispatch)
+        import json
+        for preferred, names, install_status, expected in (
+            ("", ["Only"], 0, 0), ("Only", ["Other", "Only"], 0, 0),
+            ("id-1", ["Same", "Same"], 0, 0), ("", ["A", "B"], 0, 1),
+            ("Same", ["Same", "Same"], 0, 1), ("Missing", ["Other"], 0, 1),
+            ("", [], 0, 1), ("Only", ["Only"], 27, 27),
+        ):
+            with self.subTest(preferred=preferred, names=names, install_status=install_status):
+                events = self.state / "events"
+                events.unlink(missing_ok=True)
+                completed = subprocess.run(["/bin/bash", str(script)], cwd=self.repo, capture_output=True, text=True,
+                    timeout=WORKFLOW_TIMEOUT_SECONDS, env=self.environment(
+                        IRIS_DRIVE_IOS_SIMULATOR_DEVICE=preferred, IRIS_DRIVE_IOS_DEVICE="",
+                        FIXTURE_INSTALL_STATUS=str(install_status), FIXTURE_DEVICES=json.dumps({"devices": {"iOS-fixture": [
+                            {"name": name, "udid": f"id-{i}", "state": "Booted"} for i, name in enumerate(names)
+                        ]}})))
+                self.assertEqual(completed.returncode, expected, completed.stderr)
+                calls = events.read_text().splitlines() if events.exists() else []
+                if expected == 0:
+                    udid = "id-1" if preferred in ("Only", "id-1") and len(names) == 2 else "id-0"
+                    self.assertEqual(calls, [f"install Release {udid} --install-only", "parallel native-idle-cpu", f"idle {udid} --platform ios"])
+                elif install_status:
+                    self.assertEqual(len(calls), 1)
+                else:
+                    self.assertEqual(calls, [])
+        events.unlink(missing_ok=True)
+        completed = subprocess.run(["/bin/bash", str(script), "--measurement-only"], cwd=self.repo,
+            capture_output=True, text=True, timeout=WORKFLOW_TIMEOUT_SECONDS,
+            env=self.environment(IOS_IDLE_CPU_PREPARED_DEVICE="unverified-environment-value"))
+        self.assertEqual(completed.returncode, 1, completed.stderr)
+        self.assertIn("has not been prepared", completed.stderr)
+        self.assertFalse(events.exists(), "measurement must not build or sample without preparation")
+
     def test_ios_gui_cleanup_preserves_incomplete_and_failed_journeys(self) -> None:
         source = (ROOT / "scripts/ios-gui-linking-smoke.sh").read_text(encoding="utf-8")
         cleanup = source[source.index("cleanup() {"):source.index("select_simulator() {")]

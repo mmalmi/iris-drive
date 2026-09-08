@@ -203,15 +203,16 @@ use app_key_link_audit::{AppKeyLinkAuditEvent, append_app_key_link_audit};
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
 use app_key_link_schedule::APP_KEY_LINK_ROSTER_RETRY_SECS;
 use app_key_link_schedule::native_action_uses_short_config_transaction;
-#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
-use app_key_link_schedule::{
-    APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS, APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS,
-    SentAppKeyLinkRequest, app_key_link_exchange_tick_millis, app_key_link_request_send_due,
-};
 #[cfg(test)]
 use app_key_link_schedule::{
-    APP_KEY_LINK_REQUEST_RETRY_SECS, APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS,
-    APP_KEY_LINK_REQUEST_STARTUP_RETRY_MILLIS,
+    APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS, APP_KEY_LINK_REQUEST_RETRY_SECS,
+    APP_KEY_LINK_REQUEST_STARTUP_BURST_ATTEMPTS, APP_KEY_LINK_REQUEST_STARTUP_RETRY_MILLIS,
+    app_key_link_exchange_tick_millis,
+};
+#[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
+use app_key_link_schedule::{
+    APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS, AppKeyLinkExchangeTickError, SentAppKeyLinkRequest,
+    app_key_link_exchange_tick_result, app_key_link_request_send_due,
 };
 use app_key_link_urls::{
     app_key_link_invite_url, app_key_link_request_url, ensure_cached_app_key_link_request_url,
@@ -2209,8 +2210,8 @@ async fn run_app_key_link_exchange_async(
     {
         Ok(tick_millis) => tick_millis,
         Err(error) => {
-            tracing::warn!(error = %error, "native app-key-link FIPS startup tick failed");
-            APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS
+            tracing::warn!(error = %error.message, "native app-key-link FIPS startup tick failed");
+            error.retry_millis
         }
     };
     let app_key_link_tick =
@@ -2256,8 +2257,8 @@ async fn run_app_key_link_exchange_async(
                         audit.success = Some(false);
                         audit.error_class = Some("tick_failed".to_owned());
                         let _ = append_app_key_link_audit(config_dir, audit);
-                        tracing::warn!(error = %error, "native app-key-link FIPS tick failed");
-                        APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS
+                        tracing::warn!(error = %error.message, "native app-key-link FIPS tick failed");
+                        error.retry_millis
                     }
                 };
                 app_key_link_tick.as_mut().reset(
@@ -2433,46 +2434,49 @@ async fn drive_app_key_link_exchange_tick(
     acked_rosters: &BTreeSet<String>,
     config_cache: &mut NativeAppConfigCache,
     relay_subscriptions: &mut iris_drive_core::relay_sync::AppKeyLinkRelaySubscriptionState,
-) -> Result<u64, String> {
-    let (config, config_changed) = config_cache.load_with_change(config_dir)?;
+) -> Result<u64, AppKeyLinkExchangeTickError> {
+    let (config, config_changed) = config_cache
+        .load_with_change(config_dir)
+        .map_err(AppKeyLinkExchangeTickError::unknown_state)?;
     let Some(state) = config.profile.as_ref() else {
         return Ok(APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS);
     };
 
-    if config_changed {
-        iris_drive_core::relay_sync::refresh_app_key_link_relay_subscriptions(
-            relay_client,
+    let result = async {
+        if config_changed {
+            iris_drive_core::relay_sync::refresh_app_key_link_relay_subscriptions(
+                relay_client,
+                state,
+                relay_subscriptions,
+            )
+            .await
+            .map_err(|error| format!("refreshing app-key-link relay subscriptions: {error}"))?;
+            sync.refresh_authorized_peers_from_config_dir(config_dir)
+                .await;
+        }
+        send_native_pending_app_key_link_request(sync, state, sent_requests).await?;
+        // Publish the uploaded, newly wrapped root before any relay or FIPS approval receipt.
+        publish_native_profile_roster_ops(config_dir, relay_client, state, published_roster_op_ids)
+            .await?;
+        let roster_result = send_native_authorized_app_key_link_rosters(
+            config_dir,
+            sync,
             state,
-            relay_subscriptions,
+            sent_rosters,
+            acked_rosters,
         )
-        .await
-        .map_err(|error| format!("refreshing app-key-link relay subscriptions: {error}"))?;
-        sync.refresh_authorized_peers_from_config_dir(config_dir)
-            .await;
+        .await;
+        let approval_ack_result =
+            send_native_device_approval_applied_ack(config_dir, relay_client, sync).await;
+        if let Err(error) = write_native_fips_status(config_dir, sync, None).await {
+            tracing::warn!(error = %error, "writing native FIPS status failed");
+        }
+        roster_result?;
+        let approval_ack_delivered = approval_ack_result?;
+        Ok(approval_ack_delivered)
     }
-    send_native_pending_app_key_link_request(sync, state, sent_requests).await?;
-    // Publish the uploaded, newly wrapped root before any relay or FIPS approval receipt.
-    publish_native_profile_roster_ops(config_dir, relay_client, state, published_roster_op_ids)
-        .await?;
-    let roster_result = send_native_authorized_app_key_link_rosters(
-        config_dir,
-        sync,
-        state,
-        sent_rosters,
-        acked_rosters,
-    )
     .await;
-    let approval_ack_result =
-        send_native_device_approval_applied_ack(config_dir, relay_client, sync).await;
-    if let Err(error) = write_native_fips_status(config_dir, sync, None).await {
-        tracing::warn!(error = %error, "writing native FIPS status failed");
-    }
-    roster_result?;
-    let approval_ack_delivered = approval_ack_result?;
-    Ok(app_key_link_exchange_tick_millis(
-        Some(state),
-        approval_ack_delivered,
-    ))
+    app_key_link_exchange_tick_result(Some(state), result)
 }
 
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
