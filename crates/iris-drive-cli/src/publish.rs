@@ -82,6 +82,7 @@ pub(crate) struct PublishStateReport {
 }
 
 include!("publish/direct_root.rs");
+include!("publish/direct_root_recovery.rs");
 
 pub(crate) async fn announce_current_state_direct(
     direct_roots: &mut DirectRootExchange,

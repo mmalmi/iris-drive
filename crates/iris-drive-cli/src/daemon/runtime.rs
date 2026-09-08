@@ -805,16 +805,15 @@ pub(crate) fn cmd_daemon(
                     };
                     let pending_remote_root_count =
                         remote_root_blocks_pending_count(config_dir, &latest_config);
-                    if (missing_online_root_count > 0 || pending_remote_root_count > 0)
-                        && let Err(error) = direct_roots
+                    let trigger = periodic_direct_root_repair_trigger(
+                        missing_online_root_count,
+                        pending_remote_root_count,
+                    );
+                    if let Err(error) = direct_roots
                             .request_current_state_from_peers(
                                 config_dir,
                                 fips_blocks.as_deref(),
-                                if pending_remote_root_count > 0 {
-                                    "pending_remote_root"
-                                } else {
-                                    "missing_online_root"
-                                },
+                                trigger,
                             )
                             .await
                         {

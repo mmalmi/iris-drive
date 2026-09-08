@@ -60,6 +60,7 @@ pub(crate) struct DirectRootExchange {
     seen_keys: BTreeSet<String>,
     known_publish_peers: BTreeSet<String>,
     known_visible_publish_peers: BTreeSet<String>,
+    pending_state_request_peers: BTreeSet<String>,
     profile_stream_cache: Option<CachedDirectRootProfileStream>,
     current_sync_events_cache: Option<CachedCurrentSyncEvents>,
     hint_config_cache: AppConfigLoadCache,
@@ -556,12 +557,12 @@ impl DirectRootExchange {
         let Ok(root_scope_id) = self.cached_profile_stream_root_scope_id(config_dir) else {
             return Ok(false);
         };
-        if let Some(root_scope_id) = root_scope_id
-            && self
-                .subscribe_profile_stream(&root_scope_id, Some(sync))
-                .await
-                .has_new_publish_peer
-        {
+        if let Some(root_scope_id) = root_scope_id {
+            self.subscribe_profile_stream(&root_scope_id, Some(sync))
+                .await;
+            if !self.peer_state_request_pending() {
+                return Ok(false);
+            }
             let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
             if let Some(state) = config.profile.as_ref() {
                 self.announce_current_state(config_dir, &config, state, Some(sync))
@@ -611,6 +612,7 @@ impl DirectRootExchange {
         let bytes = iris_drive_core::encode_direct_root_state_request_frame(&root_scope_id)
             .context("encoding direct-root state request")?;
         let send_stats = send_direct_root_app_message_to_authorized_peers(sync, bytes.clone()).await;
+        self.record_state_request_send(send_stats);
         println!(
             "{}",
             json!({
@@ -944,6 +946,16 @@ impl DirectRootExchange {
         let has_new_visible_publish_peer = visible_publish_peers
             .iter()
             .any(|peer| !self.known_visible_publish_peers.contains(peer));
+        // Announcements and replies also refresh visibility. Keep their newly
+        // observed peers pending until a state request is actually sent.
+        self.pending_state_request_peers.extend(
+            publish_peers
+                .difference(&self.known_publish_peers)
+                .chain(visible_publish_peers.difference(&self.known_visible_publish_peers))
+                .cloned(),
+        );
+        self.pending_state_request_peers
+            .retain(|peer| publish_peers.contains(peer));
         if has_new_publish_peer || has_new_visible_publish_peer {
             self.published_keys.clear();
             self.invalidate_current_sync_events_cache();

@@ -12,6 +12,8 @@
   keeping pending device approvals responsive.
 - Show Android device approval prompts immediately when a request arrives during
   native startup, while still requiring explicit confirmation.
+- Recover missed desktop updates after a peer reconnects, while preserving the
+  last complete file view until the newer signed root is available.
 
 ## 0.1.34 - 2026-09-05
 

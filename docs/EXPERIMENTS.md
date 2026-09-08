@@ -4,6 +4,33 @@ Performance and integration experiments log. Omit identifying information
 (pubkeys, secrets, IPs, private hostnames, exact repo names, raw hashes)
 unless the user explicitly asks otherwise.
 
+## 2026-09-08 missed desktop root update recovery
+
+- A five-peer run passed both desktop approval directions and the earlier
+  file and restart checks, then failed its unchanged 300-second baseline
+  convergence limit. Three peers had the new file; two retained the previous
+  source root. The actual concurrent writes had not started. Retained logs
+  showed the newer signed announcement on a healthy peer and no corresponding
+  received frame on a stale peer. The initial delivery loss was not isolated.
+- An incidental announcement could consume the reconnect signal before the
+  peer-refresh task requested current state. Also, the existing five-minute
+  repair task skipped peers whose older known roots were already complete.
+  Recovery now stays pending until a successful request send, and the same
+  five-minute task reconciles complete known roots too. The 30-second peer
+  refresh, 10-second request throttle and valid older data remain unchanged.
+- Three focused regressions failed before the correction and passed afterward.
+  The data-path fixture retains a hash-verified old tree, deliberately withholds
+  the next announcement, then exercises the production request codec, fresh
+  signed reply, recipient-key unwrap and newer-sequence selection. It reads the
+  new bytes, retains the old bytes and rejects replay of the older root.
+  Transport delivery and the approved roster are supplied by the fixture.
+- All 213 CLI unit tests and strict CLI Clippy checks passed. A separate real
+  daemon reconnect test executed both sender and receiver restarts with its
+  default 4/8/8 file counts and passed in 41.27 seconds. This complements the
+  deterministic recovery regression; it does not inject packet loss or measure
+  a CPU or throughput improvement. A prior invocation selected zero tests and
+  was rejected as validation evidence.
+
 ## 2026-09-08 desktop approval daemon handoff
 
 - A five-daemon run reached GTK approval submission, then failed the existing
