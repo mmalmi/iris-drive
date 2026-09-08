@@ -31,6 +31,13 @@ unless the user explicitly asks otherwise.
   Three focused tests passed in 0.740 seconds, including stale receipts,
   missing or wrong targets, incomplete actions and another GUI's notice.
   The native authorization/ACK and direct-mesh gates remain unchanged.
+- The corrected primary approval passed in 6.497 seconds. Reverse approval
+  satisfied its checks at 16.132 seconds and correctly failed the unchanged
+  15-second deadline. The approval-only Windows check now omits the full
+  navigation journey already covered by the general GUI smoke, removing its
+  three fixed 500 ms waits. Reverse readiness reuses the successful Windows
+  status from the same poll for its direct-peer assertion. Fifteen focused
+  status cases passed; these changes do not yet establish a native gate pass.
 
 ## 2026-09-08: Deterministic iOS approval release check
 

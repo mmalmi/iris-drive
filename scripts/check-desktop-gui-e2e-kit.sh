@@ -48,6 +48,7 @@ require_file_contains scripts/lib/linux-approve-device.py 'pyatspi.ROLE_ALERT'
 require_file_contains scripts/lib/linux-approve-device.py 'pyatspi.ROLE_DIALOG'
 require_file_contains scripts/lib/linux-approve-device.py 'find_approve_button(dialog)'
 require_file_contains scripts/desktop-gui-smoke.sh 'Confirm-ApprovalDialog'
+require_file_contains scripts/desktop-gui-smoke.sh 'if ($ExpectedState -eq "authorized") {'
 require_file_contains scripts/desktop-gui-smoke.sh 'Invoke-Button $Dialog "Yes"'
 require_file_contains scripts/dev-vm-update-run.sh "building Linux GTK app"
 require_file_contains scripts/dev-vm-update-run.sh "skipping Windows app GUI launch"
@@ -289,5 +290,71 @@ if bash -c '
   echo "wait_until_before accepted success sampled after its deadline" >&2
   exit 1
 fi
+
+python3 - "$ROOT/scripts/lib/cross-vm-device-link.sh" <<'PY'
+import copy
+import json
+from pathlib import Path
+import shlex
+import subprocess
+import sys
+import tempfile
+
+with tempfile.TemporaryDirectory() as directory:
+    root = Path(directory)
+    labels = ["owner", "windows", "macos", "ios", "android"]
+    authorized = {"profile": {"authorization_state": "authorized", "pending_device_approval_receipt_count": 0}}
+    direct = lambda peer: {"app_key_npub": peer, "fips_online": True, "fips_direct_online": True}
+    baseline = {label: copy.deepcopy(authorized) for label in labels}
+    baseline["windows"]["peers"] = [direct("aux-key")]
+    baseline["aux"] = {**copy.deepcopy(authorized), "network": {"fips": {"running": True, "fresh": True}},
+                       "peers": [direct("windows-key")]}
+    cases = [("ready", None, None), ("missing-windows", None, None), ("failed-windows-query", None, None)]
+    for label, path, value in [
+        ("owner", ("profile", "authorization_state"), "awaiting_approval"),
+        ("android", ("profile", "pending_device_approval_receipt_count"), 1),
+        ("aux", ("profile", "authorization_state"), "awaiting_approval"),
+        ("aux", ("profile", "pending_device_approval_receipt_count"), 1),
+        ("aux", ("network", "fips", "running"), False),
+        ("aux", ("network", "fips", "fresh"), False),
+        ("aux", ("peers", 0, "fips_online"), False),
+        ("aux", ("peers", 0, "fips_direct_online"), False),
+        ("aux", ("peers", 0, "app_key_npub"), "wrong"),
+        ("windows", ("peers", 0, "fips_online"), False),
+        ("windows", ("peers", 0, "fips_direct_online"), False),
+        ("windows", ("peers", 0, "app_key_npub"), "wrong"),
+    ]:
+        cases.append((f"{label}-{path[-1]}", (label, path), value))
+    for name, mutation, value in cases:
+        snapshots = copy.deepcopy(baseline)
+        if mutation:
+            label, path = mutation
+            item = snapshots[label]
+            for key in path[:-1]:
+                item = item[key]
+            item[path[-1]] = value
+        for label, snapshot in snapshots.items():
+            (root / label).write_text(json.dumps(snapshot))
+        (root / "calls").write_text("")
+        selected = [label for label in labels if name != "missing-windows" or label != "windows"]
+        script = f'''source {shlex.quote(sys.argv[1])}
+cd {shlex.quote(directory)}
+LABELS=({' '.join(selected)})
+windows_label=windows
+DESKTOP_GUI_AUX_NPUB=aux-key
+host_value() {{ echo windows-key; }}
+desktop_gui_aux_idrive() {{ cat aux; }}
+idrive_cmd() {{ echo "$1" >>calls; cat "$1"; [[ "$1" != windows || {shlex.quote(name)} != failed-windows-query ]]; }}
+desktop_gui_reverse_link_complete
+'''
+        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=5)
+        expected = 0 if name == "ready" else 1
+        assert result.returncode == expected, (name, result.returncode, result.stderr)
+        calls = (root / "calls").read_text().splitlines()
+        assert calls.count("windows") <= 1, (name, "duplicate Windows status query", calls)
+        if name == "ready":
+            assert calls == labels, ("missing readiness check", calls)
+print(f"REVERSE_APPROVAL_STATUS_CASES_OK count={len(cases)}")
+PY
 
 echo "DESKTOP_GUI_E2E_KIT_OK"

@@ -268,7 +268,7 @@ fi
 }
 
 desktop_gui_reverse_link_complete() {
-  local label status windows_npub
+  local label status windows_npub windows_status=""
   windows_npub="$(host_value "$windows_label" app_key_npub)"
   status="$(desktop_gui_aux_idrive status 2>/dev/null || true)"
   jq -e --arg peer "$windows_npub" '
@@ -279,16 +279,19 @@ desktop_gui_reverse_link_complete() {
     any(.peers[]?; .app_key_npub == $peer and .fips_online == true and .fips_direct_online == true)
   ' >/dev/null 2>&1 <<<"$status" || return 1
   for label in "${LABELS[@]}"; do
-    status="$(idrive_cmd "$label" status 2>/dev/null || true)"
+    status="$(idrive_cmd "$label" status 2>/dev/null)" || return 1
     jq -e '
       .profile.authorization_state == "authorized" and
       .profile.pending_device_approval_receipt_count == 0
     ' >/dev/null 2>&1 <<<"$status" || return 1
+    if [[ "$label" == "$windows_label" ]]; then
+      windows_status="$status"
+    fi
   done
-  status="$(idrive_cmd "$windows_label" status 2>/dev/null || true)"
+  [[ -n "$windows_status" ]] || return 1
   jq -e --arg peer "$DESKTOP_GUI_AUX_NPUB" \
     'any(.peers[]?; .app_key_npub == $peer and .fips_online == true and .fips_direct_online == true)' \
-    >/dev/null 2>&1 <<<"$status"
+    >/dev/null 2>&1 <<<"$windows_status"
 }
 
 desktop_gui_reverse_file_visible() {

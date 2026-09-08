@@ -879,16 +879,18 @@ try {
     [void](Wait-ElementByName $Window "Waiting for approval")
   } else {
     [void](Require-Element $Window "My Drive")
-    [void](Require-Element $Window "Open Drive Folder")
-    [void](Require-Element $Window "Files")
-    [void](Require-Element $Window "Storage")
-    [void](Require-Element $Window "Devices")
-    Invoke-Button $Window "Devices"
-    [void](Require-Element $Window "Linked Devices")
-    Invoke-Button $Window "Network"
-    [void](Require-Element $Window "FIPS")
-    [void](Require-Element $Window "Relays")
-    Invoke-Button $Window "My Drive"
+    if ($ExpectedState -eq "authorized") {
+      [void](Require-Element $Window "Open Drive Folder")
+      [void](Require-Element $Window "Files")
+      [void](Require-Element $Window "Storage")
+      [void](Require-Element $Window "Devices")
+      Invoke-Button $Window "Devices"
+      [void](Require-Element $Window "Linked Devices")
+      Invoke-Button $Window "Network"
+      [void](Require-Element $Window "FIPS")
+      [void](Require-Element $Window "Relays")
+      Invoke-Button $Window "My Drive"
+    }
   }
 
   Capture-Screenshot $Screenshot
