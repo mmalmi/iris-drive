@@ -70,6 +70,7 @@ USAGE
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib/parallel-gate.sh"
 source "$ROOT/scripts/lib/cross-vm-parallel-setup.sh"
+source "$ROOT/scripts/lib/cross-vm-local-store.sh"
 source "$ROOT/scripts/lib/cross-vm-device-link.sh"
 RUN_ID="run-$(date +%Y%m%d%H%M%S)-$$"
 TIMEOUT_SECS="${IRIS_DRIVE_E2E_TIMEOUT_SECS:-60}"
@@ -331,7 +332,7 @@ run_remote_exec() {
   ssh_host="$(host_value "$label" ssh)"
   if [[ "$kind" == "windows" ]]; then
     printf "%s\n" "$script" | ssh "$ssh_host" "$(windows_powershell_command_for "$ssh_host")"
-  elif [[ "$ssh_host" == "local" ]]; then printf "%s\n" "$script" | bash -se
+  elif [[ "$ssh_host" == "local" ]]; then run_local_e2e_script "$script"
   else
     printf "%s\n" "$script" | ssh "$ssh_host" 'bash -se'
   fi
@@ -357,16 +358,30 @@ remote_exec_with_timeout() {
   run_remote_exec "$label" "$script" &
   pid="$!"
   (
+    cleanup_watchdog_timers() {
+      local timer
+      trap '' TERM INT HUP
+      # This subshell owns only its timers. Include a just-spawned timer even
+      # when a signal arrives before wait starts, and reap it before exiting.
+      for timer in $(jobs -pr); do
+        kill "$timer" 2>/dev/null || true
+        wait "$timer" 2>/dev/null || true
+      done
+    }
+    trap cleanup_watchdog_timers EXIT
+    trap 'exit 0' TERM INT HUP
     deadline=$((SECONDS + timeout_secs))
     while kill -0 "$pid" 2>/dev/null; do
       if (( SECONDS >= deadline )); then
         echo "remote command timed out after ${timeout_secs}s on $label" >&2
         kill "$pid" 2>/dev/null || true
-        sleep 1
+        sleep 1 &
+        wait "$!"
         kill -9 "$pid" 2>/dev/null || true
         exit 0
       fi
-      sleep 1
+      sleep 1 &
+      wait "$!"
     done
   ) >/dev/null &
   watchdog="$!"
@@ -989,6 +1004,7 @@ if (Test-Path -LiteralPath \$base) { Remove-Item -LiteralPath \$base -Recurse -F
     fi
     remote_exec "$label" "$script" || true
   done
+  assert_local_shared_store_removed
 }
 trap cleanup EXIT
 
@@ -1995,6 +2011,7 @@ else
 fi
 
 setup_hosts_parallel
+prepare_local_shared_store
 
 echo "initializing owner on $owner_label"
 owner_json="$(idrive_cmd "$owner_label" init --label "$owner_label")"
