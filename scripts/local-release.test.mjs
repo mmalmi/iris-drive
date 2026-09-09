@@ -234,6 +234,7 @@ test('renderReleaseNotes groups common app downloads before advanced files', () 
   assert.match(notes, /### Other Files/)
   assert.match(notes, /Iris Drive macOS updater archive/)
   assert.match(notes, /Iris Drive Android app bundle/)
+  assert.match(notes, /Release source commit: `abc123`/)
   assert(
     notes.indexOf('### Most People Will Want') < notes.indexOf('### Command Line'),
     'common downloads should appear before CLI archives',

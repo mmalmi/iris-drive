@@ -512,7 +512,7 @@ export function renderReleaseNotes({ tag, commit, assetNames }) {
   const lines = [`# Iris Drive ${normalizeTag(tag)}`, '']
   pushDownloadSections(lines, assetNames)
   if (commit) {
-    lines.push('', '## Release Build', '', `- Built from commit \`${commit}\`.`)
+    lines.push('', '## Release Source', '', `- Release source commit: \`${commit}\`.`)
   }
   return `${lines.join('\n')}\n`
 }
