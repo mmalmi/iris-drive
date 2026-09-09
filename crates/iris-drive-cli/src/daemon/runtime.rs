@@ -39,7 +39,7 @@ pub(crate) fn cmd_daemon(
         let (fips_blocks, fips_block_sync_error) =
             match start_fips_block_sync(config_dir, &block_config).await {
                 Ok(sync) => (Some(Arc::new(sync)), None),
-                Err(error) => (None, Some(error.to_string())),
+                Err(error) => (None, Some(format!("{error:#}"))),
             };
         let mut direct_app_message_rx = fips_blocks
             .as_ref()
@@ -169,17 +169,19 @@ pub(crate) fn cmd_daemon(
             .await
             .context("connecting to relays")?;
         let relay_statuses = relay_status_payload(&client).await;
-        for filter in filters {
-            client
-                .subscribe(filter, None)
+        let mut relay_notifications_open = !relay_statuses.is_empty();
+        if relay_notifications_open {
+            for filter in filters {
+                client
+                    .subscribe(filter, None)
+                    .await
+                    .context("opening subscription")?;
+            }
+            relay_sync::subscribe_device_approval_events(&client, &state)
                 .await
-                .context("opening subscription")?;
+                .context("subscribing to device approval events")?;
         }
         let mut notifications = client.notifications();
-        let mut relay_notifications_open = true;
-        relay_sync::subscribe_device_approval_events(&client, &state)
-            .await
-            .context("subscribing to device approval events")?;
         let mut app_key_link_relay_subscriptions =
             relay_sync::AppKeyLinkRelaySubscriptionState::from_profile(&state);
         relay_sync::refresh_app_key_link_relay_subscriptions(

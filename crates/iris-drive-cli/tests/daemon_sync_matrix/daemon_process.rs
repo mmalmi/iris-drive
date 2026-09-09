@@ -154,7 +154,7 @@ impl DaemonChild {
             .env("IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP", "false")
             .env(
                 "IRIS_DRIVE_FIPS_ENABLE_LOCAL_RENDEZVOUS",
-                matches!(carrier, FipsTestCarrier::Udp { .. }).to_string(),
+                (matches!(carrier, FipsTestCarrier::Udp { .. }) && !relay_url.is_empty()).to_string(),
             )
             // Keep carrier-specific daemon tests deterministic now that
             // production defaults include public WebSocket entry points.
@@ -170,7 +170,7 @@ impl DaemonChild {
             )
             .env(
                 "IRIS_DRIVE_FIPS_ENABLE_LAN_DISCOVERY",
-                matches!(carrier, FipsTestCarrier::Udp { .. }).to_string(),
+                (matches!(carrier, FipsTestCarrier::Udp { .. }) && !relay_url.is_empty()).to_string(),
             )
             .env(
                 "IRIS_DRIVE_FIPS_ENABLE_NOSTR_DISCOVERY",
@@ -189,11 +189,16 @@ impl DaemonChild {
             .env("IRIS_DRIVE_FIPS_UDP_BIND_ADDR", fips_bind)
             .env("IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR", fips_external)
             .env("IRIS_DRIVE_FIPS_UDP_PUBLIC", "false");
+        command.arg("daemon");
+        if !relay_url.is_empty() {
+            command.args(["--relay", relay_url]);
+        } else {
+            command
+                .args(["--config-dir", config_dir.to_str().unwrap()])
+                .env("HTREE_DATA_DIR", config_dir.join("shared-hashtree"));
+        }
         let child = command
             .args([
-                "daemon",
-                "--relay",
-                relay_url,
                 "--watch-debounce-ms",
                 "100",
                 "--gateway-port",

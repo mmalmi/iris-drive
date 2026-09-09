@@ -61,6 +61,9 @@ pub async fn refresh_app_key_link_relay_subscriptions(
     state: &crate::ProfileState,
     subscriptions: &mut AppKeyLinkRelaySubscriptionState,
 ) -> Result<bool, RelayError> {
+    if client.relays().await.is_empty() {
+        return Ok(false);
+    }
     let mut changed = false;
     let approval = device_approval_receipt_subscription(state);
     let approval_request_pubkey = approval
@@ -138,6 +141,22 @@ mod tests {
     use super::*;
     use crate::Profile;
     use tempfile::tempdir;
+
+    #[tokio::test]
+    async fn empty_relay_pool_keeps_subscription_state_pending() {
+        let config_dir = tempdir().unwrap();
+        let profile = Profile::create(config_dir.path(), None).unwrap();
+        let client = super::super::connect(&[]).await.unwrap();
+        let mut subscriptions = AppKeyLinkRelaySubscriptionState::default();
+        let before = subscriptions.clone();
+        assert!(
+            !refresh_app_key_link_relay_subscriptions(&client, &profile.state, &mut subscriptions)
+                .await
+                .unwrap()
+        );
+        assert_eq!(subscriptions, before);
+        super::super::shutdown_client(&client).await;
+    }
 
     #[test]
     fn approval_completion_requires_roster_backfill_subscription() {

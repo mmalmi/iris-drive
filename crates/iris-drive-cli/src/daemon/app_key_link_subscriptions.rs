@@ -40,6 +40,9 @@ fn spawn_pending_device_approval_ack_replay(
     daemon_tasks: &DaemonTaskSet,
 ) {
     const TASK_KEY: &str = "pending_device_approval_ack_replay";
+    if relays.is_empty() {
+        return;
+    }
     let Ok(config) = AppConfig::load_or_default_cached_profile(config_path_in(config_dir)) else {
         return;
     };

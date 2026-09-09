@@ -931,8 +931,11 @@ fn embedded_browser_relays_include_hashtree_resolver_bootstrap_relays() {
 
     config.relays.clear();
     let relays = embedded_browser_nostr_relays(&config);
-    assert!(relays.iter().any(|relay| relay == "wss://relay.damus.io"));
-    assert!(relays.iter().any(|relay| relay == "wss://relay.primal.net"));
+    assert!(relays.is_empty());
+    assert_eq!(
+        embedded_browser_settings(&config)["nostrRelays"],
+        serde_json::json!([])
+    );
 }
 
 #[test]
