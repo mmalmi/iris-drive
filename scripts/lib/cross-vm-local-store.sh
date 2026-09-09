@@ -38,3 +38,19 @@ assert_local_shared_store_removed() {
     }
   }
 }
+
+# Setup precedes discovery of the remote base. Later commands, including the
+# foreground Windows daemon SSH session, must use the same run-owned pool.
+remote_shared_store_script() {
+  local label="$1" script="$2" base kind
+  base="$(host_value "$label" base)"
+  kind="$(host_value "$label" kind)"
+  if [[ -n "$base" && "$(host_value "$label" ssh)" != local ]]; then
+    if [[ "$kind" == windows ]]; then
+      printf '$env:HTREE_DATA_DIR = %s\n' "$(ps_quote "$base\shared-hashtree")"
+    else
+      printf 'export HTREE_DATA_DIR=%s\n' "$(sh_quote "$base/shared-hashtree")"
+    fi
+  fi
+  printf '%s\n' "$script"
+}

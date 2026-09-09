@@ -313,7 +313,8 @@ host_idrive_override() {
 
 run_remote_exec() {
   local label="$1"
-  local script="$2"
+  local script
+  script="$(remote_shared_store_script "$1" "$2")"
   local kind
   local ssh_host
   kind="$(host_value "$label" kind)"
@@ -526,6 +527,7 @@ setup_host() {
 New-Item -ItemType Directory -Path \$base | Out-Null
 \$config = Join-Path \$base 'config'; \$work = Join-Path \$base 'work'
 New-Item -ItemType Directory -Path \$config,\$work | Out-Null
+\$env:HTREE_DATA_DIR = Join-Path \$base 'shared-hashtree'
 \$repo = Join-Path \$HOME 'src\iris-drive'
 \$profile = $(ps_quote "$E2E_PROFILE")
 \$overrideIdrive = $(ps_quote "$idrive_override")
@@ -547,6 +549,7 @@ run=$(sh_quote "$RUN_ID")
 base=\"\${TMPDIR:-/tmp}/iris-drive-e2e-\${run}-\${label}\"
 mkdir \"\$base\"
 mkdir \"\$base/config\" \"\$base/work\"
+$(if [[ "$(host_value "$label" ssh)" != local ]]; then printf '%s\n' 'export HTREE_DATA_DIR="$base/shared-hashtree"'; fi)
 repo=\"\$HOME/src/iris-drive\"
 profile=$(sh_quote "$E2E_PROFILE")
 idrive=$(sh_quote "$idrive_override")
@@ -815,6 +818,7 @@ Set-Content -LiteralPath \$pidFile -Value \$PID
 \$ErrorActionPreference = 'Continue'
 & \$idrive @daemonArgs > \$log 2> \$err
 "
+    script="$(remote_shared_store_script "$label" "$script")"
     printf "%s\n" "$script" | ssh "$ssh_host" "$(windows_powershell_command_for "$ssh_host")" >/dev/null 2>&1 &
     set_host_value "$label" daemon_ssh_pid "$!"
     sleep 1

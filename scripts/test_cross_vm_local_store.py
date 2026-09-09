@@ -74,5 +74,102 @@ if prepare_local_shared_store; then exit 1; fi
 ''', labels=('last',), local=('last',))
 
 
+
+class CrossVmRemoteStoreTests(unittest.TestCase):
+    source = (HELPER.parent.parent / 'cross-vm-e2e.sh').read_text()
+
+    def run_command(self, kind, mode, base):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            executable = root / 'idrive'
+            executable.write_text('#!/bin/sh\nprintf "%s\\n" "$HTREE_DATA_DIR" "$HTREE_CONFIG_DIR"\n')
+            executable.chmod(0o755)
+            sections = [('sh_quote() {', 'windows_guest_host_for() {'),
+                        ('run_remote_exec() {', '\nremote_exec() {'),
+                        ('setup_host() {', '\nidrive_cmd() {'),
+                        ('idrive_cmd() {', '\nowner_profile_roster_ops_b64() {'),
+                        ('start_daemon() {', '\nstop_daemon() {')]
+            bodies = '\n'.join(self.source[self.source.index(start):self.source.index(end)]
+                               for start, end in sections)
+            script = 'set -Eeuo pipefail\nsource ' + shlex.quote(str(HELPER)) + '\n' + bodies + r'''
+host_value() {
+  case $2 in
+    kind) printf %s "$TEST_KIND" ;;
+    ssh) printf %s fixture-remote ;;
+    base) [[ "$TEST_MODE" == setup ]] || printf %s "$TEST_BASE" ;;
+    config) printf %s "$TEST_BASE/config" ;;
+    idrive) printf %s "$TEST_IDRIVE" ;;
+    daemon_ssh_pid) printf %s "$TEST_DAEMON_SSH_PID" ;;
+    *) printf %s '' ;;
+  esac
+}
+set_host_value() { [[ "$2" != daemon_ssh_pid ]] || TEST_DAEMON_SSH_PID="$3"; }
+windows_powershell_command_for() { printf %s powershell; }
+host_idrive_override() { printf %s "$TEST_IDRIVE"; }
+daemon_relay_args_windows() { :; }
+daemon_relay_args_posix() { :; }
+# Replace transport, not production command generation. Only the CLI case
+# executes, and its executable is our two-line environment observer.
+ssh() {
+  cat > "$TEST_CAPTURE"
+  if [[ "$TEST_KIND:$TEST_MODE" == posix:cli ]]; then bash -se < "$TEST_CAPTURE"; fi
+}
+remote_exec() { run_remote_exec "$@"; }
+remote_exec_with_timeout() { printf %s "$2" > "$TEST_CAPTURE"; }
+# The daemon branch's startup liveness probes concern the mock transport only.
+sleep() { :; }
+kill() { [[ "$1" == -0 ]]; }
+TEST_DAEMON_SSH_PID=''
+RUN_ID=fixture
+E2E_PROFILE=debug
+REBUILD_IDRIVE=0
+SETUP_REMOTE_TIMEOUT_SECS=1
+MOUNT_LABELS=''
+case "$TEST_MODE" in
+  cli) idrive_cmd fixture status ;;
+  daemon) start_daemon fixture; [[ -z "$TEST_DAEMON_SSH_PID" ]] || wait "$TEST_DAEMON_SSH_PID" ;;
+  setup) setup_host fixture ;;
+esac
+'''
+            result = subprocess.run(['bash'], input=script, text=True, capture_output=True,
+                                    env=dict(os.environ, TEST_KIND=kind, TEST_MODE=mode,
+                                             TEST_BASE=base, TEST_IDRIVE=str(executable),
+                                             TEST_CAPTURE=str(root / 'command'),
+                                             HTREE_DATA_DIR='/ambient-data',
+                                             HTREE_CONFIG_DIR='/preserved-config'), timeout=5)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+            return result.stdout, (root / 'command').read_text()
+
+    def test_remote_posix_cli_and_daemon_share_owned_store(self):
+        base = "/tmp/iris-drive-e2e-fixture-owner's data"
+        output, cli = self.run_command('posix', 'cli', base)
+        self.assertEqual(output.splitlines(), [base + '/shared-hashtree', '/preserved-config'])
+        _, daemon = self.run_command('posix', 'daemon', base)
+        assignment = cli.splitlines()[0]
+        self.assertTrue(assignment.startswith('export HTREE_DATA_DIR='))
+        self.assertTrue(daemon.startswith(assignment + '\n'))
+
+    def test_remote_windows_cli_and_special_daemon_share_owned_store(self):
+        base = r"C:\owned temp\iris-drive-e2e-fixture-owner's data"
+        _, cli = self.run_command('windows', 'cli', base)
+        _, daemon = self.run_command('windows', 'daemon', base)
+        assignment = "$env:HTREE_DATA_DIR = '" + (base + r'\shared-hashtree').replace("'", "''") + "'"
+        for command in (cli, daemon):
+            self.assertTrue(command.startswith(assignment + '\n'), command[:200])
+            self.assertLess(command.index(assignment), command.index('$idrive ='))
+        self.assertIn('& $idrive @daemonArgs', daemon)
+
+    def test_setup_scopes_help_probe_after_creating_owned_base(self):
+        for kind in ('posix', 'windows'):
+            with self.subTest(kind=kind):
+                _, command = self.run_command(kind, 'setup', '')
+                marker = ('$env:HTREE_DATA_DIR = Join-Path $base \'shared-hashtree\''
+                          if kind == 'windows' else 'export HTREE_DATA_DIR="$base/shared-hashtree"')
+                self.assertIn(marker, command)
+                create = 'New-Item -ItemType Directory -Path $base' if kind == 'windows' else 'mkdir "$base"'
+                self.assertLess(command.index(create), command.index(marker))
+                self.assertLess(command.index(marker), command.index('build-idrive-for-e2e'))
+
+
 if __name__ == '__main__':
     unittest.main()
