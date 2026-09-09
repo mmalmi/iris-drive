@@ -15,6 +15,8 @@ import unittest
 from pathlib import Path
 from typing import Optional
 
+from test_idle_cpu_gate import DesktopIdleCpuTests
+
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOW_TIMEOUT_SECONDS = 15

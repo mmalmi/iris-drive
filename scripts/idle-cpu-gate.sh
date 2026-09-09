@@ -6,8 +6,8 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/idle-cpu-gate.sh [--platform auto|macos|linux|windows|android|ios]
 
-Samples idle CPU for Iris Drive process roles and fails when any required role
-stays above its budget. One full core is 100%.
+Samples idle CPU for Iris Drive process roles. Required desktop processes must
+remain present throughout the sample and within budget. One full core is 100%.
 
 Environment:
   IRIS_DRIVE_IDLE_CPU_WARMUP_SECS=30
@@ -174,12 +174,18 @@ seen = {role: set() for role in thresholds}
 deadline = time.monotonic() + duration
 previous_time = time.monotonic()
 previous = snapshot()
-for process in previous.values():
-    seen.setdefault(process["role"], set())
+required_pids = {role: {pid for pid, process in previous.items() if process["role"] == role}
+                 for role in required}
+failures = []
 while time.monotonic() < deadline:
     time.sleep(interval)
     now = time.monotonic()
     current = snapshot()
+    for role, pids in required_pids.items():
+        if not pids or pids != {pid for pid, process in current.items() if process["role"] == role}:
+            failures.append(f"{role}: required process set changed or missing during idle sample")
+    if failures:
+        break
     elapsed = max(now - previous_time, 0.001)
     totals = {role: 0.0 for role in thresholds}
     observed_roles = set()
@@ -189,17 +195,18 @@ while time.monotonic() < deadline:
         seen.setdefault(role, set()).add(pid)
         previous_process = previous.get(pid)
         if previous_process and previous_process["role"] == role:
-            delta = max(process["cpu_seconds"] - previous_process["cpu_seconds"], 0.0)
-            totals[role] = totals.get(role, 0.0) + (delta / elapsed * 100.0)
+            delta = process["cpu_seconds"] - previous_process["cpu_seconds"]
+            if delta < 0 and role in required:
+                failures.append(f"{role}: cumulative CPU counter decreased during idle sample")
+            totals[role] = totals.get(role, 0.0) + (max(delta, 0.0) / elapsed * 100.0)
     for role in observed_roles:
         samples.setdefault(role, []).append(totals.get(role, 0.0))
-    if time.monotonic() >= deadline:
+    if failures or time.monotonic() >= deadline:
         break
     previous = current
     previous_time = now
 
 summary = {}
-failures = []
 for role in sorted(required | set(samples)):
     values = samples.get(role, [])
     if not values:
