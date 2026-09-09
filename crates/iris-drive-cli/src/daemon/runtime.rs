@@ -215,9 +215,7 @@ pub(crate) fn cmd_daemon(
             ),
         }
         let mut mounted_drive = if mount_drive {
-            let mountpoint = mountpoint
-                .clone()
-                .unwrap_or_else(|| default_mountpoint_in(config_dir));
+            let mountpoint = mountpoint.unwrap_or_else(|| default_mountpoint_in(config_dir));
             let mounted = mount::start_iris_drive_mount(config_dir, mountpoint).await?;
             config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
             Some(mounted)

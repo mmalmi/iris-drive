@@ -190,12 +190,12 @@ impl DaemonChild {
             .env("IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR", fips_external)
             .env("IRIS_DRIVE_FIPS_UDP_PUBLIC", "false");
         command.arg("daemon");
-        if !relay_url.is_empty() {
-            command.args(["--relay", relay_url]);
-        } else {
+        if relay_url.is_empty() {
             command
                 .args(["--config-dir", config_dir.to_str().unwrap()])
                 .env("HTREE_DATA_DIR", config_dir.join("shared-hashtree"));
+        } else {
+            command.args(["--relay", relay_url]);
         }
         let child = command
             .args([

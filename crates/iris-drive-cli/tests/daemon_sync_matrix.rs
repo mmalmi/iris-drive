@@ -474,9 +474,9 @@ async fn live_daemons_three_vm_macos_provider_changes_catch_up_without_source_on
 mod app_key_link_tests;
 #[path = "daemon_sync_matrix/provider_visibility_tests.rs"]
 mod provider_visibility_tests;
+#[path = "daemon_sync_matrix/relayless_tests.rs"]
+mod relayless_tests;
 #[path = "daemon_sync_matrix/scenario_tests.rs"]
 mod scenario_tests;
 #[path = "daemon_sync_matrix/staged_recovery_tests.rs"]
 mod staged_recovery_tests;
-#[path = "daemon_sync_matrix/relayless_tests.rs"]
-mod relayless_tests;
