@@ -3,33 +3,32 @@ import FileProvider
 import Foundation
 
 final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, NSFileProviderThumbnailing {
-    private let domain: NSFileProviderDomain
+    private let storage: FileProviderStorage
 
     required init(domain: NSFileProviderDomain) {
-        self.domain = domain
+        storage = FileProviderStorage(domain: domain)
         super.init()
-        FileProviderStorage.configure(domain: domain)
-        FileProviderStorage.debugLog("extension init domain=\(domain.identifier.rawValue)")
+        storage.debugLog("extension init domain=\(domain.identifier.rawValue)")
     }
 
     func invalidate() {
-        FileProviderStorage.debugLog("extension invalidate")
+        storage.debugLog("extension invalidate")
     }
 
     func enumerator(
         for containerItemIdentifier: NSFileProviderItemIdentifier,
         request: NSFileProviderRequest
     ) throws -> NSFileProviderEnumerator {
-        FileProviderStorage.debugLog("enumerator requested container=\(containerItemIdentifier.rawValue)")
+        storage.debugLog("enumerator requested container=\(containerItemIdentifier.rawValue)")
         guard containerItemIdentifier == .rootContainer
             || containerItemIdentifier == .workingSet
             || containerItemIdentifier == .trashContainer
-            || FileProviderStorage.item(for: containerItemIdentifier)?.contentType == .folder
+            || storage.item(for: containerItemIdentifier)?.contentType == .folder
         else {
-            FileProviderStorage.debugLog("enumerator missing container=\(containerItemIdentifier.rawValue)")
+            storage.debugLog("enumerator missing container=\(containerItemIdentifier.rawValue)")
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: containerItemIdentifier)
         }
-        return FileProviderEnumerator(containerIdentifier: containerItemIdentifier)
+        return FileProviderEnumerator(containerIdentifier: containerItemIdentifier, storage: storage)
     }
 
     func item(
@@ -38,11 +37,11 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
         completionHandler: @escaping (NSFileProviderItem?, Error?) -> Void
     ) -> Progress {
         let progress = Progress(totalUnitCount: 1)
-        if let item = FileProviderStorage.item(for: identifier) {
-            FileProviderStorage.debugLog("item resolved identifier=\(identifier.rawValue)")
+        if let item = storage.item(for: identifier) {
+            storage.debugLog("item resolved identifier=\(identifier.rawValue)")
             completionHandler(item, nil)
         } else {
-            FileProviderStorage.debugLog("item missing identifier=\(identifier.rawValue)")
+            storage.debugLog("item missing identifier=\(identifier.rawValue)")
             completionHandler(nil, NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier))
         }
         progress.completedUnitCount = 1
@@ -57,14 +56,14 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
     ) -> Progress {
         let progress = Progress(totalUnitCount: 1)
         do {
-            FileProviderStorage.debugLog("fetch contents identifier=\(itemIdentifier.rawValue)")
-            let url = try FileProviderStorage.contentsURL(for: itemIdentifier)
-            guard let item = FileProviderStorage.item(for: itemIdentifier) else {
+            storage.debugLog("fetch contents identifier=\(itemIdentifier.rawValue)")
+            let url = try storage.contentsURL(for: itemIdentifier)
+            guard let item = storage.item(for: itemIdentifier) else {
                 throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: itemIdentifier)
             }
             completionHandler(url, item, nil)
         } catch {
-            FileProviderStorage.debugLog("fetch contents failed identifier=\(itemIdentifier.rawValue) error=\(error)")
+            storage.debugLog("fetch contents failed identifier=\(itemIdentifier.rawValue) error=\(error)")
             completionHandler(nil, nil, error)
         }
         progress.completedUnitCount = 1
@@ -82,24 +81,24 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
         completionHandler: @escaping (Error?) -> Void
     ) -> Progress {
         let progress = Progress(totalUnitCount: Int64(itemIdentifiers.count))
-        progress.cancellationHandler = {
-            FileProviderStorage.debugLog("fetch thumbnails cancelled")
+        progress.cancellationHandler = { [storage] in
+            storage.debugLog("fetch thumbnails cancelled")
         }
 
-        DispatchQueue.global(qos: .utility).async {
-            FileProviderStorage.debugLog(
+        DispatchQueue.global(qos: .utility).async { [storage] in
+            storage.debugLog(
                 "fetch thumbnails count=\(itemIdentifiers.count) size=\(Int(size.width))x\(Int(size.height))"
             )
             for identifier in itemIdentifiers {
                 guard !progress.isCancelled else { break }
                 do {
-                    let thumbnail = try FileProviderStorage.thumbnailData(
+                    let thumbnail = try storage.thumbnailData(
                         for: identifier,
                         requestedSize: size
                     )
                     perThumbnailCompletionHandler(identifier, thumbnail, nil)
                 } catch {
-                    FileProviderStorage.debugLog(
+                    storage.debugLog(
                         "fetch thumbnail failed identifier=\(identifier.rawValue) error=\(error)"
                     )
                     perThumbnailCompletionHandler(identifier, nil, error)
@@ -126,15 +125,15 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
     ) -> Progress {
         let progress = Progress(totalUnitCount: 1)
         do {
-            FileProviderStorage.debugLog("create item name=\(itemTemplate.filename)")
-            let item = try FileProviderStorage.createItem(
+            storage.debugLog("create item name=\(itemTemplate.filename)")
+            let item = try storage.createItem(
                 template: itemTemplate,
                 contents: url,
                 mayAlreadyExist: options.contains(.mayAlreadyExist)
             )
             completionHandler(item, [], false, nil)
         } catch {
-            FileProviderStorage.debugLog("create item failed name=\(itemTemplate.filename) error=\(error)")
+            storage.debugLog("create item failed name=\(itemTemplate.filename) error=\(error)")
             completionHandler(nil, [], false, error)
         }
         progress.completedUnitCount = 1
@@ -157,15 +156,15 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
     ) -> Progress {
         let progress = Progress(totalUnitCount: 1)
         do {
-            FileProviderStorage.debugLog("modify item identifier=\(item.itemIdentifier.rawValue)")
-            let updated = try FileProviderStorage.modifyItem(
+            storage.debugLog("modify item identifier=\(item.itemIdentifier.rawValue)")
+            let updated = try storage.modifyItem(
                 item,
                 changedFields: changedFields,
                 contents: newContents
             )
             completionHandler(updated, [], false, nil)
         } catch {
-            FileProviderStorage.debugLog("modify item failed identifier=\(item.itemIdentifier.rawValue) error=\(error)")
+            storage.debugLog("modify item failed identifier=\(item.itemIdentifier.rawValue) error=\(error)")
             completionHandler(nil, [], false, error)
         }
         progress.completedUnitCount = 1
@@ -181,11 +180,11 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
     ) -> Progress {
         let progress = Progress(totalUnitCount: 1)
         do {
-            FileProviderStorage.debugLog("delete item identifier=\(identifier.rawValue)")
-            try FileProviderStorage.deleteItem(identifier: identifier)
+            storage.debugLog("delete item identifier=\(identifier.rawValue)")
+            try storage.deleteItem(identifier: identifier)
             completionHandler(nil)
         } catch {
-            FileProviderStorage.debugLog("delete item failed identifier=\(identifier.rawValue) error=\(error)")
+            storage.debugLog("delete item failed identifier=\(identifier.rawValue) error=\(error)")
             completionHandler(error)
         }
         progress.completedUnitCount = 1

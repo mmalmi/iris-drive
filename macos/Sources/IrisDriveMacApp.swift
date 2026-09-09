@@ -4,7 +4,12 @@ import FileProvider
 import Security
 import SwiftUI
 
-let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier("main")
+let irisDriveFileProviderProfile = IrisDriveFileProviderProfile(
+    appBaseDirectory: ProcessInfo.processInfo.environment["IRIS_DRIVE_APP_BASE_DIR"]
+)
+let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier(
+    irisDriveFileProviderProfile.domainIdentifier
+)
 let irisDriveDisplayName = "Iris Drive"
 let irisDriveHiddenLaunchArgument = "--hidden"
 // Keep the domain display empty so macOS names the CloudStorage root IrisDrive,
@@ -13,7 +18,7 @@ let irisDriveFileProviderDomainDisplayName = ""
 private let irisDriveControlPanelWindowID = "control-panel"
 private let irisDriveFileProviderRuntimeFileName = "fileprovider-runtime.json"
 private let irisDriveFileProviderPathIdentifierPrefix = "path:"
-let irisDriveFileProviderRegistrationIdentityKey = "fileProviderRegistrationIdentity"
+let irisDriveFileProviderRegistrationIdentityKey = irisDriveFileProviderProfile.registrationIdentityKey
 let irisDriveAppManagedDaemonStatusRefreshMinimumInterval: TimeInterval = 60
 let irisDriveProviderSignalRepeatInterval: TimeInterval = 60
 private let irisDriveShowControlPanelNotification =
@@ -172,7 +177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     finish(state)
                 }
                 if resetDomain {
-                    resetAllFileProviderDomains(
+                    resetFileProviderDomain(
                         reason: "startup reset requested",
                         runtime: runtime,
                         completion
@@ -2044,8 +2049,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func persistedFileProviderRuntime() -> FileProviderRuntimeConfig? {
-        let url = fileProviderApplicationSupportDirectory()
-            .appendingPathComponent(irisDriveFileProviderRuntimeFileName)
+        let url = irisDriveFileProviderProfile.storageDirectory(
+            in: fileProviderApplicationSupportDirectory()
+        ).appendingPathComponent(irisDriveFileProviderRuntimeFileName)
         guard let data = try? Data(contentsOf: url) else {
             return nil
         }
@@ -2660,16 +2666,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let existing = try? Data(contentsOf: url), existing == data {
                 continue
             }
-            try data.write(to: url)
+            try data.write(to: url, options: .atomic)
         }
     }
 
     private func fileProviderRuntimeDirectories(paths: IrisDriveRuntimePaths) -> [URL] {
         var directories = [URL]()
         directories.append(paths.configDirectory.deletingLastPathComponent())
-        if ProcessInfo.processInfo.environment["IRIS_DRIVE_APP_BASE_DIR"] == nil {
-            directories.append(fileProviderApplicationSupportDirectory())
-        }
+        directories.append(irisDriveFileProviderProfile.storageDirectory(
+            in: fileProviderApplicationSupportDirectory()
+        ))
 
         var seen = Set<String>()
         return directories.filter { directory in

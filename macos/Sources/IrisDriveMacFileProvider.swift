@@ -95,6 +95,10 @@ func ensureFileProviderDomainRegistered(
     runtime: FileProviderRuntimeConfig,
     _ completion: @escaping (FileProviderDomainState) -> Void
 ) {
+    guard irisDriveFileProviderProfile.accepts(configDirectory: runtime.configDirectory) else {
+        completion(.unavailable)
+        return
+    }
     addFileProviderDomain(attempt: attempt, runtime: runtime, completion)
 }
 
@@ -124,36 +128,14 @@ func resetFileProviderDomain(
     let finish: (Error?) -> Void = { error in
         if let error {
             irisDriveDebugLog("Iris Drive FileProvider domain remove during reset failed: \(error)")
+            completion(.unavailable)
+            return
         } else {
             irisDriveDebugLog("Iris Drive FileProvider domain removed during reset")
         }
         ensureFileProviderDomainRegistered(runtime: runtime, completion)
     }
     removeFileProviderDomain(domain, reason: reason, finish)
-}
-
-func resetAllFileProviderDomains(
-    reason: String,
-    runtime: FileProviderRuntimeConfig,
-    _ completion: @escaping (FileProviderDomainState) -> Void
-) {
-    let domain = irisDriveFileProviderDomain(runtime: runtime)
-    let registrationIdentity = currentFileProviderRegistrationIdentity()
-    clearFileProviderRegistrationIdentity()
-    irisDriveDebugLog("Iris Drive FileProvider all-domain reset: \(reason)")
-    NSFileProviderManager.removeAllDomains { error in
-        if let error {
-            irisDriveDebugLog("Iris Drive FileProvider all-domain reset failed: \(error)")
-            completion(.unavailable)
-            return
-        }
-        addFreshFileProviderDomain(
-            domain,
-            currentIdentity: registrationIdentity,
-            reason: reason,
-            completion
-        )
-    }
 }
 
 func removeFileProviderDomainRegistration(
@@ -178,34 +160,22 @@ private func removeFileProviderDomain(
     reason: String,
     _ completion: @escaping (Error?) -> Void
 ) {
-    let finish: (Error?) -> Void = { error in
-        guard let error, shouldRepairFileProviderDomain(after: error) else {
-            completion(error)
-            return
-        }
-        irisDriveDebugLog(
-            "Iris Drive FileProvider domain remove failed; removing all domains for repair: \(reason): \(error)"
-        )
-        NSFileProviderManager.removeAllDomains { removeAllError in
-            if let removeAllError {
-                irisDriveDebugLog(
-                    "Iris Drive FileProvider remove all domains for repair failed: \(removeAllError)"
-                )
-                completion(removeAllError)
-            } else {
-                irisDriveDebugLog("Iris Drive FileProvider all domains removed for repair")
-                completion(nil)
-            }
-        }
+    guard irisDriveFileProviderProfile.owns(domain.identifier.rawValue) else {
+        completion(NSError(
+            domain: NSFileProviderErrorDomain,
+            code: NSFileProviderError.serverUnreachable.rawValue,
+            userInfo: [NSLocalizedDescriptionKey: "Refusing to remove a different profile's domain"]
+        ))
+        return
     }
     if #available(macOS 13.0, *) {
         NSFileProviderManager.remove(domain, mode: .removeAll) { _, error in
-            finish(error)
+            completion(error)
         }
         return
     }
     NSFileProviderManager.remove(domain) { error in
-        finish(error)
+        completion(error)
     }
 }
 
@@ -227,8 +197,8 @@ private func addFileProviderDomain(
                 if let queryError {
                     irisDriveDebugLog("Iris Drive FileProvider domain query failed: \(queryError)")
                     if shouldRepairFileProviderDomain(after: queryError) {
-                        repairAllFileProviderRegistrations(
-                            reason: "domain query failed after add error",
+                        repairFileProviderRegistration(
+                            existingDomain: domain,
                             runtime: runtime,
                             currentIdentity: registrationIdentity,
                             completion
@@ -285,8 +255,8 @@ private func addFileProviderDomain(
             markFileProviderRegistrationCurrent(registrationIdentity)
             queryFileProviderDomainStateWithError { state, queryError in
                 if let queryError, shouldRepairFileProviderDomain(after: queryError) {
-                    repairAllFileProviderRegistrations(
-                        reason: "domain query failed after add",
+                    repairFileProviderRegistration(
+                        existingDomain: domain,
                         runtime: runtime,
                         currentIdentity: registrationIdentity,
                         completion
@@ -331,6 +301,8 @@ private func repairFileProviderRegistration(
             irisDriveDebugLog(
                 "Iris Drive FileProvider domain removal before repair failed: \(removeError)"
             )
+            completion(.unavailable)
+            return
         }
         addFreshFileProviderDomain(
             freshDomain,
@@ -345,30 +317,6 @@ private func repairFileProviderRegistration(
         reason: "stale registration repair",
         addFreshDomain
     )
-}
-
-private func repairAllFileProviderRegistrations(
-    reason: String,
-    runtime: FileProviderRuntimeConfig,
-    currentIdentity: String,
-    _ completion: @escaping (FileProviderDomainState) -> Void
-) {
-    let freshDomain = irisDriveFileProviderDomain(runtime: runtime)
-    clearFileProviderRegistrationIdentity()
-    irisDriveDebugLog("Iris Drive repairing orphaned FileProvider domains: \(reason)")
-    NSFileProviderManager.removeAllDomains { error in
-        if let error {
-            irisDriveDebugLog("Iris Drive FileProvider remove all domains failed: \(error)")
-            completion(.unavailable)
-            return
-        }
-        addFreshFileProviderDomain(
-            freshDomain,
-            currentIdentity: currentIdentity,
-            reason: "orphaned domain repair",
-            completion
-        )
-    }
 }
 
 private func addFreshFileProviderDomain(

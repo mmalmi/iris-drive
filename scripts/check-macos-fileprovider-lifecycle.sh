@@ -93,14 +93,9 @@ require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "CF
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "markFileProviderRegistrationCurrent"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "fileProviderRegistrationIdentityIsCurrent"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "queryFileProviderDomainStateWithError"
-require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "domain query failed after add"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "shouldRepairFileProviderRegistration"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "repairFileProviderRegistration"
-require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "removeAllDomains"
-require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "resetAllFileProviderDomains"
-require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "repairAllFileProviderRegistrations"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "addFreshFileProviderDomain"
-require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "Iris Drive repairing orphaned FileProvider domains"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "Iris Drive repairing stale FileProvider domain registration"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "Iris Drive FileProvider domain removed without re-add"
 require_contains "$RUNTIME_SUPPORT" "macos/Shared/IrisDriveRuntimeSupport.swift" "existingAppGroupApplicationSupportDirectory"
@@ -164,5 +159,14 @@ require_contains "$ROOT/macos/Sources/IrisDriveControlPanel.swift" "macos/Source
 require_not_contains "$ROOT/macos/Sources/IrisDriveControlPanel.swift" "macos/Sources/IrisDriveControlPanel.swift" "return shareLocalGatewayLink(share, status: status)"
 require_contains "$DAEMON_RUNTIME" "crates/iris-drive-cli/src/daemon/runtime.rs" "embedded_hashtree_requested"
 require_contains "$DAEMON_GATEWAY_RUNTIME" "crates/iris-drive-cli/src/daemon/gateway_runtime.rs" '"requested": embedded_hashtree_requested'
+
+# Repair must never remove another explicit profile or the normal installation.
+require_not_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "NSFileProviderManager.removeAllDomains"
+require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "irisDriveFileProviderProfile.owns(domain.identifier.rawValue)"
+require_contains "$FILEPROVIDER_ITEM" "macos/FileProvider/FileProviderItem.swift" "final class FileProviderStorage"
+require_not_contains "$FILEPROVIDER_ITEM" "macos/FileProvider/FileProviderItem.swift" "static var configuredRuntime"
+if [[ $(uname -s) == Darwin ]]; then
+    "$ROOT/scripts/check-macos-profile-isolation.sh"
+fi
 
 echo "MACOS_FILEPROVIDER_LIFECYCLE_OK"

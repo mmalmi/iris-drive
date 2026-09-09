@@ -1,9 +1,11 @@
 import FileProvider
 
 final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
+    private let storage: FileProviderStorage
     private let containerIdentifier: NSFileProviderItemIdentifier
 
-    init(containerIdentifier: NSFileProviderItemIdentifier) {
+    init(containerIdentifier: NSFileProviderItemIdentifier, storage: FileProviderStorage) {
+        self.storage = storage
         self.containerIdentifier = containerIdentifier
         super.init()
     }
@@ -14,8 +16,8 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         for observer: NSFileProviderEnumerationObserver,
         startingAt page: NSFileProviderPage
     ) {
-        let items = FileProviderStorage.children(of: containerIdentifier)
-        FileProviderStorage.debugLog(
+        let items = storage.children(of: containerIdentifier)
+        storage.debugLog(
             "enumerate items container=\(containerIdentifier.rawValue) count=\(items.count)"
         )
         observer.didEnumerate(items)
@@ -26,9 +28,9 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
         for observer: NSFileProviderChangeObserver,
         from syncAnchor: NSFileProviderSyncAnchor
     ) {
-        let hasSnapshot = FileProviderStorage.hasStoredSnapshot()
-        let previousIdentifiers = FileProviderStorage.storedSnapshotIdentifiers()
-        let (items, currentAnchor) = FileProviderStorage.allItemsAndAnchor()
+        let hasSnapshot = storage.hasStoredSnapshot()
+        let previousIdentifiers = storage.storedSnapshotIdentifiers()
+        let (items, currentAnchor) = storage.allItemsAndAnchor()
         let currentIdentifiers = Set(items.map(\.itemIdentifier.rawValue))
         let deletedIdentifiers = previousIdentifiers.subtracting(currentIdentifiers)
         let shouldPublishChanges = !hasSnapshot
@@ -39,22 +41,22 @@ final class FileProviderEnumerator: NSObject, NSFileProviderEnumerator {
             if !deleted.isEmpty {
                 observer.didDeleteItems(withIdentifiers: deleted)
             }
-            FileProviderStorage.debugLog(
+            storage.debugLog(
                 "enumerate changes update=\(items.count) delete=\(deleted.count) bootstrap=\(!hasSnapshot) anchor=\(String(data: currentAnchor.rawValue, encoding: .utf8) ?? "unreadable")"
             )
             if !items.isEmpty {
                 observer.didUpdate(items)
             }
         } else {
-            FileProviderStorage.debugLog("enumerate changes noop")
+            storage.debugLog("enumerate changes noop")
         }
-        FileProviderStorage.recordSnapshot(items: items, anchor: currentAnchor)
+        storage.recordSnapshot(items: items, anchor: currentAnchor)
         observer.finishEnumeratingChanges(upTo: currentAnchor, moreComing: false)
     }
 
     func currentSyncAnchor(completionHandler: @escaping (NSFileProviderSyncAnchor?) -> Void) {
-        let anchor = FileProviderStorage.currentProviderAnchor()
-        FileProviderStorage.debugLog(
+        let anchor = storage.currentProviderAnchor()
+        storage.debugLog(
             "current sync anchor \(String(data: anchor.rawValue, encoding: .utf8) ?? "unreadable")"
         )
         completionHandler(anchor)
