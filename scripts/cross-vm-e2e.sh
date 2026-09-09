@@ -523,20 +523,9 @@ setup_host() {
 \$label = $(ps_quote "$label")
 \$run = $(ps_quote "$RUN_ID")
 \$base = Join-Path \$env:TEMP (\"iris-drive-e2e-\$run-\$label\")
-if (Test-Path -LiteralPath \$base) { Remove-Item -LiteralPath \$base -Recurse -Force }
-\$stale = Get-CimInstance Win32_Process | Where-Object {
-  \$_.CommandLine -like '*idrive*' -and
-  \$_.CommandLine -like '*--config-dir*' -and
-  \$_.CommandLine -like '*iris-drive-e2e-run-*' -and
-  \$_.CommandLine -like '* daemon*'
-}
-foreach (\$proc in \$stale) {
-  Stop-Process -Id \$proc.ProcessId -Force -ErrorAction SilentlyContinue
-}
-\$projectionE2e = Join-Path (Join-Path \$HOME 'Iris Drive') 'e2e'
-if (Test-Path -LiteralPath \$projectionE2e) { Remove-Item -LiteralPath \$projectionE2e -Recurse -Force }
+New-Item -ItemType Directory -Path \$base | Out-Null
 \$config = Join-Path \$base 'config'; \$work = Join-Path \$base 'work'
-New-Item -ItemType Directory -Force -Path \$config,\$work | Out-Null
+New-Item -ItemType Directory -Path \$config,\$work | Out-Null
 \$repo = Join-Path \$HOME 'src\iris-drive'
 \$profile = $(ps_quote "$E2E_PROFILE")
 \$overrideIdrive = $(ps_quote "$idrive_override")
@@ -556,15 +545,8 @@ set -Eeuo pipefail
 label=$(sh_quote "$label")
 run=$(sh_quote "$RUN_ID")
 base=\"\${TMPDIR:-/tmp}/iris-drive-e2e-\${run}-\${label}\"
-while IFS= read -r stale_pid; do
-  [[ -n \"\$stale_pid\" && \"\$stale_pid\" != \"\$\$\" ]] || continue
-  kill \"\$stale_pid\" >/dev/null 2>&1 || true
-done < <(
-  ps -eo pid=,args= |
-    awk -v self=\"\$\$\" '\$1 != self && \$0 ~ /\\/idrive[[:space:]]+--config-dir/ && \$0 ~ /iris-drive-e2e-run-/ && \$0 ~ /[[:space:]]daemon([[:space:]]|\$)/ { print \$1 }'
-)
-rm -rf \"\$base\"
-mkdir -p \"\$base/config\" \"\$base/work\"
+mkdir \"\$base\"
+mkdir \"\$base/config\" \"\$base/work\"
 repo=\"\$HOME/src/iris-drive\"
 profile=$(sh_quote "$E2E_PROFILE")
 idrive=$(sh_quote "$idrive_override")

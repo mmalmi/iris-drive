@@ -61,6 +61,66 @@ class ReleaseWorkflowTests(unittest.TestCase):
         environment.update(overrides)
         return environment
 
+    def emitted_cross_vm_setup(self, kind: str) -> str:
+        source = (ROOT / "scripts/cross-vm-e2e.sh").read_text()
+        quotes = source[source.index("sh_quote() {"):source.index("windows_guest_host_for() {")]
+        setup = source[source.index("setup_host() {"):source.index("idrive_cmd() {")]
+        command_path = self.state / "setup-command"
+        script = ("set -Eeuo pipefail\n" + quotes + setup
+            + '\nhost_value() { printf %s "$KIND"; }\n'
+            + "host_idrive_override() { printf %s /fixture/idrive; }\n"
+            + 'remote_exec_with_timeout() { printf %s "$2" >"$COMMAND_PATH"; }\n'
+            + "set_host_value() { :; }\nsetup_host fixture\n")
+        result = subprocess.run(["bash", "-c", script], capture_output=True, text=True,
+            env=self.environment(KIND=kind, COMMAND_PATH=str(command_path),
+                RUN_ID="run-fixture", E2E_PROFILE="debug", REBUILD_IDRIVE="0",
+                SETUP_REMOTE_TIMEOUT_SECS="5"), timeout=WORKFLOW_TIMEOUT_SECONDS)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return command_path.read_text()
+
+    def run_posix_cross_vm_setup(self) -> subprocess.CompletedProcess:
+        self.write_executable(self.repo / "src/iris-drive/scripts/build-idrive-for-e2e.sh",
+            "printf %s /fixture/idrive\n")
+        return subprocess.run(["bash", "-c", self.emitted_cross_vm_setup("posix")],
+            env=self.environment(HOME=str(self.repo), TMPDIR=str(self.state)),
+            capture_output=True, text=True, timeout=WORKFLOW_TIMEOUT_SECONDS)
+
+    def test_cross_vm_setup_preserves_foreign_daemon_and_projection(self) -> None:
+        foreign = subprocess.Popen(["sleep", "60"])
+        try:
+            self.write_executable(self.bin / "ps",
+                f"printf '%s\\n' '{foreign.pid} /fixture/idrive --config-dir /tmp/iris-drive-e2e-run-foreign/config daemon'\n")
+            sentinel = self.repo / "Iris Drive/e2e/foreign/sentinel"
+            sentinel.parent.mkdir(parents=True)
+            sentinel.write_text("preserve foreign work")
+            result = self.run_posix_cross_vm_setup()
+            self.assertEqual(result.returncode, 0, result.stderr)
+            time.sleep(0.05)
+            self.assertIsNone(foreign.poll(), "Setup stopped another run's daemon")
+            self.assertEqual(sentinel.read_text(), "preserve foreign work")
+            self.assertTrue((self.state / "iris-drive-e2e-run-fixture-fixture/config").is_dir())
+        finally:
+            if foreign.poll() is None:
+                foreign.terminate()
+            foreign.wait(timeout=2)
+
+    def test_cross_vm_setup_refuses_existing_run_directory(self) -> None:
+        base = self.state / "iris-drive-e2e-run-fixture-fixture"
+        base.mkdir()
+        sentinel = base / "sentinel"
+        sentinel.write_text("preserve existing run")
+        result = self.run_posix_cross_vm_setup()
+        self.assertNotEqual(result.returncode, 0, "Setup reused an existing run directory")
+        self.assertEqual(sentinel.read_text(), "preserve existing run")
+        self.assertFalse((base / "config").exists())
+
+    def test_windows_cross_vm_setup_only_creates_fresh_run_directories(self) -> None:
+        command = self.emitted_cross_vm_setup("windows")
+        for operation in ("Get-CimInstance", "Stop-Process", "Remove-Item", "-Force"):
+            self.assertNotIn(operation, command)
+        self.assertIn("New-Item -ItemType Directory -Path $base", command)
+        self.assertIn("$ErrorActionPreference = 'Stop'", command)
+
     def test_linux_gui_cleanup_stops_children_but_preserves_unowned_lock_holder(self) -> None:
         source = (ROOT / "scripts/desktop-gui-smoke.sh").read_text()
         cleanup = source[source.index("cleanup() {"):source.index("trap cleanup EXIT")]
