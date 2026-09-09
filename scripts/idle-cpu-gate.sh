@@ -417,7 +417,9 @@ PY
     }
     trap cleanup_ios_idle_cpu EXIT
     launch_ios_app() {
-      if xcrun simctl launch "$ios_device" "$bundle_id" >/dev/null 2>&1; then
+      # CoreSimulator can retain a Debug profile path after reinstalling the app.
+      if SIMCTL_CHILD_IRIS_DRIVE_UI_TEST_BASE_DIR="${SIMCTL_CHILD_IRIS_DRIVE_UI_TEST_BASE_DIR:-}" \
+        xcrun simctl launch "$ios_device" "$bundle_id" >/dev/null 2>&1; then
         ios_launch_kind="simulator"
         return 0
       fi

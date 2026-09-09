@@ -93,6 +93,26 @@ class CrossVmIdleGateTests(unittest.TestCase):
 
 
 class ProcessIdleCpuTests(unittest.TestCase):
+    def test_ios_launch_clears_stale_profile_but_preserves_explicit_override(self):
+        source = (SCRIPTS / "idle-cpu-gate.sh").read_text()
+        helper = source[source.index("    launch_ios_app() {"):
+                        source.index("    run_ios_host_process_sampler() {")]
+        for override in (None, "/owned/explicit profile"):
+            with self.subTest(override=override), tempfile.TemporaryDirectory() as directory:
+                observed = Path(directory) / "profile"
+                environment = dict(os.environ, OBSERVED_PROFILE=str(observed))
+                environment.pop("SIMCTL_CHILD_IRIS_DRIVE_UI_TEST_BASE_DIR", None)
+                if override is not None:
+                    environment["SIMCTL_CHILD_IRIS_DRIVE_UI_TEST_BASE_DIR"] = override
+                script = ("set -euo pipefail\n"
+                          + 'xcrun() { printf %s "${SIMCTL_CHILD_IRIS_DRIVE_UI_TEST_BASE_DIR-stale-deleted-container}" > "$OBSERVED_PROFILE"; }\n'
+                          + "ios_device=owned; bundle_id=fixture; ios_launch_kind=\n"
+                          + helper + "\nlaunch_ios_app\n")
+                result = subprocess.run(["bash", "-c", script], env=environment,
+                                        text=True, capture_output=True, timeout=5)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                self.assertEqual(observed.read_text(), override or "")
+
     def run_sampler(self, platform, scenario):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
