@@ -461,28 +461,6 @@ function Write-ShellTrace {
   }
 }
 
-function Current-IrisWindowProcess {
-  Get-Process -Name "IrisDrive" -ErrorAction SilentlyContinue |
-    Where-Object {
-      $_.MainWindowHandle -ne [IntPtr]::Zero -and
-      [IrisDriveSmoke.NativeMethods]::IsWindowVisible($_.MainWindowHandle)
-    } |
-    Sort-Object StartTime -Descending |
-    Select-Object -First 1
-}
-
-function Stop-HiddenIrisWindowProcesses {
-  Get-Process -Name "IrisDrive" -ErrorAction SilentlyContinue |
-    Where-Object {
-      $_.MainWindowHandle -eq [IntPtr]::Zero -or
-      -not [IrisDriveSmoke.NativeMethods]::IsWindowVisible($_.MainWindowHandle)
-    } |
-    ForEach-Object {
-      Write-SmokeLog "stopping hidden Windows WPF shell process $($_.Id)"
-      Stop-Process -Id $_.Id -Force -ErrorAction SilentlyContinue
-    }
-}
-
 function Test-InteractiveDesktop {
   $Computer = Get-CimInstance Win32_ComputerSystem
   if (-not [string]::IsNullOrWhiteSpace($Computer.UserName)) {
@@ -641,8 +619,28 @@ Add-Type -Namespace IrisDriveSmoke -Name NativeMethods -MemberDefinition @"
   public static extern System.IntPtr SendMessage(System.IntPtr hWnd, uint msg, System.IntPtr wParam, System.IntPtr lParam);
 "@
 
+function Get-SmokeIrisDriveProcesses([int]$ProcessId = 0) {
+  $ExpectedExe = [System.IO.Path]::GetFullPath($Exe)
+  Get-Process -Name "IrisDrive" -ErrorAction SilentlyContinue |
+    Where-Object {
+      if ($ProcessId -and $_.Id -ne $ProcessId) { return $false }
+      try {
+        $ProcessPath = $_.Path
+        return $ProcessPath -and [string]::Equals(
+          [System.IO.Path]::GetFullPath($ProcessPath), $ExpectedExe,
+          [System.StringComparison]::OrdinalIgnoreCase)
+      } catch { return $false }
+    }
+}
+
+function Stop-SmokeIrisDriveProcesses([int]$ProcessId = 0) {
+  Get-SmokeIrisDriveProcesses -ProcessId $ProcessId |
+    Stop-Process -Force -ErrorAction SilentlyContinue
+}
+
 function Current-IrisWindowProcess {
-  Get-Process -Id $Started.Id -ErrorAction SilentlyContinue |
+  if (-not $Started) { return }
+  Get-SmokeIrisDriveProcesses -ProcessId $Started.Id |
     Where-Object {
       $_.MainWindowHandle -ne [IntPtr]::Zero -and
       [IrisDriveSmoke.NativeMethods]::IsWindowVisible($_.MainWindowHandle)
@@ -836,7 +834,7 @@ function Wait-ShellReady {
 
 try {
   Log "interactive GUI smoke worker started user=$env:USERNAME session=$([System.Diagnostics.Process]::GetCurrentProcess().SessionId)"
-  Get-Process -Name "IrisDrive" -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+  Stop-SmokeIrisDriveProcesses
   Start-Sleep -Milliseconds 500
 
   $env:IRIS_DRIVE_CLI = $Idrive
@@ -909,10 +907,10 @@ try {
 } finally {
   if ($Process -and -not $Process.HasExited) {
     Log "stopping IrisDrive pid=$($Process.Id)"
-    Stop-Process -Id $Process.Id -Force -ErrorAction SilentlyContinue
+    Stop-SmokeIrisDriveProcesses -ProcessId $Process.Id
   } elseif ($Started -and -not $Started.HasExited) {
     Log "stopping IrisDrive pid=$($Started.Id)"
-    Stop-Process -Id $Started.Id -Force -ErrorAction SilentlyContinue
+    Stop-SmokeIrisDriveProcesses -ProcessId $Started.Id
   }
 }
 '@ | Set-Content -Encoding ASCII $WorkerScript
