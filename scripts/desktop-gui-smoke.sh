@@ -12,6 +12,7 @@ Runs a native desktop GUI smoke against the selected platform shell. Linux uses
 the real GTK window on the user's X11 session, or a disposable Xvfb display
 when the VM has no active desktop session. Windows uses WPF UI Automation
 against the real IrisDrive.exe window.
+IRIS_DRIVE_REPO optionally selects an isolated checkout on the target host.
 
 When the Windows VM is reachable only from a Linux jump host, set
 IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST to the Windows SSH alias.
@@ -54,6 +55,9 @@ windows_powershell_command_for() {
 
 linux_remote_shell() {
   local assignments=()
+  if [[ -n "${IRIS_DRIVE_REPO:-}" ]]; then
+    assignments+=("IRIS_DRIVE_REPO=$(sh_quote "$IRIS_DRIVE_REPO")")
+  fi
   if [[ -n "${IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR:-}" ]]; then
     assignments+=("IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR=$(sh_quote "$IRIS_DRIVE_DEV_VM_LINUX_CONFIG_DIR")")
   fi
@@ -353,6 +357,7 @@ run_windows_remote() {
   esac
 
   {
+    printf '$RepoOverride = %s\n' "$(ps_quote "${IRIS_DRIVE_REPO:-}")"
     printf '$ConfigDirOverride = %s\n' "$(ps_quote "${IRIS_DRIVE_DEV_VM_WINDOWS_CONFIG_DIR:-}")"
     printf '$ShellReadyTimeoutSeconds = %s\n' "$shell_ready_timeout_secs"
     printf '$LinkActionTimeoutSeconds = %s\n' "$action_timeout_secs"
@@ -391,6 +396,9 @@ function Expand-RemotePath([string]$Path) {
 }
 
 $IrisRepo = Join-Path $HOME "src\iris-drive"
+if (-not [string]::IsNullOrWhiteSpace($RepoOverride)) {
+  $IrisRepo = Expand-RemotePath $RepoOverride
+}
 $PublishDir = Join-Path $IrisRepo "windows\bin\Debug\net8.0-windows\win-x64\publish"
 $Exe = Join-Path $PublishDir "IrisDrive.exe"
 $Idrive = Join-Path $PublishDir "idrive.exe"

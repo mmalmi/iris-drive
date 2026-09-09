@@ -106,6 +106,30 @@ class ReleaseWorkflowTests(unittest.TestCase):
                             process.terminate()
                         process.wait(timeout=2)
 
+    def test_desktop_gui_forwards_isolated_checkout_without_shell_expansion(self) -> None:
+        script = self.copy_script("desktop-gui-smoke.sh")
+        unexpected = self.state / "unexpected"
+        checkout = f"/isolated/Drive's files; $(touch {unexpected})"
+        self.write_executable(self.bin / "ssh", textwrap.dedent('''\
+            cat >"$RELEASE_WORKFLOW_TEST_STATE/remote-input"
+            if [[ "$2" == *'bash -se' ]]; then
+              printf 'printf %s "$IRIS_DRIVE_REPO"\\n' | /bin/bash -c "$2"
+            fi
+            '''))
+        for platform in ("linux", "windows"):
+            with self.subTest(platform=platform):
+                result = subprocess.run([str(script), platform, "fixture-host"],
+                    env=self.environment(IRIS_DRIVE_REPO=checkout), capture_output=True,
+                    text=True, timeout=WORKFLOW_TIMEOUT_SECONDS)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                if platform == "linux":
+                    self.assertEqual(result.stdout, checkout)
+                else:
+                    remote = (self.state / "remote-input").read_text()
+                    self.assertIn("$RepoOverride = '" + checkout.replace("'", "''") + "'\n", remote)
+                    self.assertIn("$IrisRepo = Expand-RemotePath $RepoOverride", remote)
+                self.assertFalse(unexpected.exists())
+
     def test_primary_gui_approval_restores_owner_before_original_deadline(self) -> None:
         activation_source = (ROOT / "scripts/lib/linux-approve-device.py").read_text()
         activation = next(node for node in ast.parse(activation_source).body
