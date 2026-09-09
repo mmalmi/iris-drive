@@ -11,8 +11,8 @@ namespace IrisDrive.WindowsShell;
 
 public partial class App : System.Windows.Application
 {
-    private const string MutexName = "IrisDrive.WindowsShell";
-    private const string LaunchPipeName = "IrisDrive.WindowsShell.LaunchArgs";
+    private static string MutexName => WindowsProfileEnvironment.MutexName;
+    private static string LaunchPipeName => WindowsProfileEnvironment.LaunchPipeName;
     private Mutex? appMutex;
     private bool ownsAppMutex;
     private CancellationTokenSource? launchPipeCancellation;
