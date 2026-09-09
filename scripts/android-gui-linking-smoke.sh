@@ -13,6 +13,7 @@ APK_PATH="${IRIS_DRIVE_ANDROID_APK:-$ROOT/android/app/build/outputs/apk/uiTest/a
 TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
 IDRIVE="${IRIS_DRIVE_IDRIVE_BIN:-$TARGET_DIR/debug/idrive}"
 OWNER_CONFIG="$(mktemp -d -t iris-drive-android-gui-owner)"
+export HTREE_DATA_DIR="$OWNER_CONFIG/hashtree-data"
 OWNER_SOURCE_DIR="$(mktemp -d -t iris-drive-android-gui-owner-files)"
 OWNER_DAEMON_LOG="$(mktemp -t iris-drive-android-gui-owner-daemon.XXXXXX)"
 OWNER_DAEMON_PID=""

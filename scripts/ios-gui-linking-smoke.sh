@@ -32,6 +32,7 @@ IDRIVE="${IRIS_DRIVE_IDRIVE_BIN:-$TARGET_DIR/debug/idrive}"
 RUST_IOS_TARGET="${IRIS_DRIVE_IOS_RUST_TARGET:-aarch64-apple-ios-sim}"
 iris_drive_ios_select_build_profile
 OWNER_CONFIG="$(mktemp -d -t iris-drive-ios-ui-owner)"
+export HTREE_DATA_DIR="$OWNER_CONFIG/hashtree-data"
 LINKED_CONFIG="$(mktemp -d -t iris-drive-ios-ui-linked)"
 MANUAL_LINKED_CONFIG="$(mktemp -d -t iris-drive-ios-ui-manual-linked)"
 XCTESTRUN=""

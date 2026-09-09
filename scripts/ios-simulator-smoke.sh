@@ -28,6 +28,7 @@ IDRIVE="${IRIS_DRIVE_IDRIVE_BIN:-$TARGET_DIR/debug/idrive}"
 RUST_IOS_TARGET="${IRIS_DRIVE_IOS_RUST_TARGET:-aarch64-apple-ios-sim}"
 iris_drive_ios_select_build_profile
 OWNER_CONFIG="$(mktemp -d -t iris-drive-ios-gui-owner)"
+export HTREE_DATA_DIR="$OWNER_CONFIG/hashtree-data"
 LOCAL_RELAY_READY="$(mktemp -t iris-drive-ios-smoke-relay.XXXXXX)"
 LOCAL_RELAY_LOG="$(mktemp -t iris-drive-ios-smoke-relay.XXXXXX.log)"
 LOCAL_RELAY_PID=""
