@@ -241,9 +241,8 @@ async fn shared_pubsub_carries_only_verified_nostr_events() {
     let bob_bound = bind_test_endpoint(&bob, "drive-pubsub-test", rendezvous, bob_addr, false)
         .await
         .unwrap();
-    connect_endpoint_pair(&alice_bound, &alice, alice_addr, &bob_bound, &bob, bob_addr).await;
-    let alice_endpoint = alice_bound.native_endpoint;
-    let bob_endpoint = bob_bound.native_endpoint;
+    let alice_endpoint = alice_bound.native_endpoint.clone();
+    let bob_endpoint = bob_bound.native_endpoint.clone();
 
     let mut alice_runtime = DriveNostrPubsubRuntime::bind(alice_endpoint.clone())
         .await
@@ -270,19 +269,18 @@ async fn shared_pubsub_carries_only_verified_nostr_events() {
         ])
         .sign_with_keys(&release_keys)
         .unwrap();
+    assert_eq!(alice_runtime.publish(event.clone()).await.unwrap(), 0);
+    connect_endpoint_pair(&alice_bound, &alice, alice_addr, &bob_bound, &bob, bob_addr).await;
     let delivery = tokio::time::timeout(Duration::from_secs(8), async {
         loop {
-            if alice_runtime.publish(event.clone()).await.is_ok()
-                && let Ok(Ok(delivery)) =
-                    tokio::time::timeout(Duration::from_millis(300), received.recv()).await
-                && delivery.event.id == event.id
-            {
+            let delivery = received.recv().await.unwrap();
+            if delivery.event.id == event.id {
                 break delivery;
             }
         }
     })
     .await
-    .expect("verified update event was not delivered over shared FIPS pubsub");
+    .expect("cached update was not replayed to a late FIPS peer");
     assert_eq!(delivery.event.id, event.id);
     assert_eq!(delivery.origin_peer_id, alice.pubkey_bech32());
     let target_dir = tempfile::tempdir().unwrap();
