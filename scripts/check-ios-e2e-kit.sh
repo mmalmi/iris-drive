@@ -54,6 +54,7 @@ require_file scripts/ios-app-store-screenshots.sh
 require_file scripts/ios-simulator-smoke.sh
 require_file scripts/ios-gui-linking-smoke.sh
 require_file scripts/lib/ios-linking-observer.sh
+require_file scripts/lib/ios-blossom-smoke.sh
 require_file scripts/lib/ios-xcuitest-accessibility-session.sh
 require_file scripts/cross-vm-four-platform-e2e.sh
 
@@ -250,6 +251,7 @@ require_contains scripts/lib/ios-linking-observer.sh 'IOS_CLI_OWNER_ACK_OBSERVED
 require_contains scripts/ios-gui-linking-smoke.sh 'IRIS_DRIVE_IOS_CLI_OWNER_ACK_ONLY'
 require_contains scripts/ios-gui-linking-smoke.sh "testOpenIrisAppsLoadsBrowserWithoutConnectionError"
 require_contains scripts/ios-gui-linking-smoke.sh "testMyDriveShowsSyncStatusWithoutMobilePauseControls"
+require_contains scripts/lib/ios-blossom-smoke.sh '"$IDRIVE" --config-dir "$config_dir" relays add "$LOCAL_RELAY_URL"'
 require_contains scripts/ios-gui-linking-smoke.sh "testShareSheetImportsFileFromExternalSender"
 require_contains scripts/ios-gui-linking-smoke.sh "Iris Drive Share Source.app"
 require_contains scripts/ios-gui-linking-smoke.sh "--app-group"
@@ -266,7 +268,7 @@ observer_source = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
 source = observer_source + "\n" + main_source
 
 initial_mobile_local_relay = source.index(
-    '"$IDRIVE" --config-dir "$SIM_APP_BASE_DIR" relays add "$LOCAL_RELAY_URL"'
+    'configure_ios_smoke_relay "$SIM_APP_BASE_DIR"'
 )
 awaiting_approval_ui = source.index(
     '"IrisDriveIOSUITests/IrisDriveIOSUITests/testAwaitingApprovalViewVisible"'

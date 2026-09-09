@@ -33,20 +33,29 @@ pub(super) struct DriveNostrPubsubRuntime {
 }
 
 impl DriveNostrPubsubRuntime {
-    pub(super) async fn bind(endpoint: Arc<FipsEndpoint>) -> Result<Self, FipsSyncError> {
+    pub(super) async fn bind(
+        endpoint: Arc<FipsEndpoint>,
+        routed_peers: Vec<String>,
+    ) -> Result<Self, FipsSyncError> {
+        #[cfg(feature = "stack-fixture")]
+        let max_connected_peers = std::env::var("IRIS_STACK_FIXTURE_PUBSUB_MAX_PEERS")
+            .map_or(64, |value| value.parse().unwrap_or(0));
+        #[cfg(not(feature = "stack-fixture"))]
+        let max_connected_peers = 64;
         let client = Arc::new(
             FipsPubsubClient::start(
                 endpoint,
                 FipsPubsubClientOptions {
                     query_timeout: Duration::from_millis(500),
                     max_frame_bytes: FIPS_NOSTR_PUBSUB_MAX_FRAME_BYTES,
-                    max_connected_peers: 64,
-                    fanout: nostr_pubsub::DEFAULT_INV_WANT_FANOUT,
+                    max_connected_peers,
+                    fanout: nostr_pubsub::DEFAULT_INV_WANT_FANOUT.min(max_connected_peers),
                     max_active_subscriptions: 4,
                     max_filters_per_subscription: 4,
                     max_replay_events: 32,
                     receive_batch_size: 64,
                     max_hops: FIPS_NOSTR_PUBSUB_DEFAULT_MAX_HOPS,
+                    routed_peers: bounded_routed_peers(routed_peers, max_connected_peers),
                 },
             )
             .await
@@ -96,11 +105,29 @@ impl DriveNostrPubsubRuntime {
         self.deliveries.subscribe()
     }
 
+    pub(super) fn max_connected_peers(&self) -> Option<usize> {
+        self.client
+            .as_ref()
+            .map(|client| client.options().max_connected_peers)
+    }
+
     pub(super) fn connected_peer_count(&self) -> usize {
         match self.client.as_ref() {
             Some(client) => client.connected_peer_count().unwrap_or_default(),
             None => 0,
         }
+    }
+
+    pub(super) fn set_routed_peers(&self, peers: Vec<String>) -> Result<(), FipsSyncError> {
+        if let Some(client) = &self.client {
+            client
+                .set_routed_peers(bounded_routed_peers(
+                    peers,
+                    client.options().max_connected_peers,
+                ))
+                .map_err(|error| endpoint_error(error.to_string()))?;
+        }
+        Ok(())
     }
 
     pub(super) async fn publish(&self, event: Event) -> Result<usize, FipsSyncError> {
@@ -143,4 +170,13 @@ impl Drop for DriveNostrPubsubRuntime {
 
 fn endpoint_error(error: impl Into<String>) -> FipsSyncError {
     FipsSyncError::Endpoint(error.into())
+}
+
+fn bounded_routed_peers(peers: Vec<String>, max_connected_peers: usize) -> Vec<String> {
+    peers
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .take(max_connected_peers.min(63))
+        .collect()
 }

@@ -97,23 +97,11 @@ esac
 [[ "$LINK_TIMEOUT_SECS" =~ ^[1-9][0-9]*$ ]] \
   || { echo "IRIS_DRIVE_E2E_LINK_TIMEOUT_SECS must be a positive integer." >&2; exit 2; }
 
-declare -a LABELS=()
-declare -a KINDS=()
-declare -a SSH_HOSTS=()
-declare -a BASES=()
-declare -a CONFIGS=()
-declare -a WORKS=()
-declare -a IDRIVES=()
-declare -a LOGS=()
-declare -a ERRS=()
-declare -a PIDS=()
-declare -a DAEMON_SSH_PIDS=()
-declare -a FIPS_PORTS=()
-declare -a FIPS_ADDRS=()
-declare -a FIPS_STATIC_PEERS=()
-declare -a FIPS_BOOTSTRAP=()
-declare -a FIPS_OPEN_DISCOVERY=()
-declare -a APP_KEY_NPUBS=()
+declare -a LABELS=() KINDS=() SSH_HOSTS=()
+declare -a BASES=() CONFIGS=() WORKS=() IDRIVES=()
+declare -a LOGS=() ERRS=() PIDS=() DAEMON_SSH_PIDS=()
+declare -a FIPS_PORTS=() FIPS_ADDRS=() FIPS_STATIC_PEERS=()
+declare -a FIPS_BOOTSTRAP=() FIPS_OPEN_DISCOVERY=() APP_KEY_NPUBS=()
 
 find_label_index() {
   local needle="$1"

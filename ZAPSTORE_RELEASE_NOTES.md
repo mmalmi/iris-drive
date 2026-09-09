@@ -1,16 +1,7 @@
-# Iris Drive 0.1.35
+# Iris Drive 0.1.36
 
-- Update embedded Hashtree components and networking dependencies with security
-  fixes.
-- Complete slow peer downloads when backup storage has no copy, while preserving
-  the last complete file view until every required block is available.
-- Reduce repeated background retries while a mobile device is offline, while
-  keeping pending device approvals responsive.
-- Show Android device approval prompts immediately when a request arrives during
-  native startup, while still requiring explicit confirmation.
-- Recover missed desktop updates after a peer reconnects, while preserving the
-  last complete file view until the newer signed root is available.
-- Enforce mesh hop limits when forwarding missing blocks between peers,
-  preventing repeated requests from circulating without consuming their budget.
-- Reach additional available peers when retrying missing blocks, while keeping
-  each read's concurrency and time limits bounded.
+- Keep device connections and signed updates working across intermediate peers.
+- Recover subscriptions automatically after peers reconnect.
+- Improve shared file reads when a request is interrupted or a provider changes.
+
+Physical-device probes were not run for this release.

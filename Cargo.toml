@@ -10,7 +10,7 @@ exclude = ["linux"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.35"
+version = "0.1.36"
 edition = "2024"
 license = "MIT"
 authors = ["Iris Drive contributors"]
@@ -25,10 +25,10 @@ base64 = "0.22"
 bip39 = { version = "2.2", features = ["rand"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-fips-core = { package = "nvpn-fips-core", version = "=0.4.76" }
-fips-endpoint = { package = "nvpn-fips-endpoint", version = "=0.4.76" }
-fips-tcp = { package = "nvpn-fips-tcp", version = "=0.2.1" }
-fips-tcp-endpoint = { package = "nvpn-fips-tcp-endpoint", version = "=0.2.12" }
+fips-core = { package = "nvpn-fips-core", version = "=0.4.78" }
+fips-endpoint = { package = "nvpn-fips-endpoint", version = "=0.4.78" }
+fips-tcp = { package = "nvpn-fips-tcp", version = "=0.2.2" }
+fips-tcp-endpoint = { package = "nvpn-fips-tcp-endpoint", version = "=0.2.14" }
 futures = "0.3"
 hex = "0.4"
 http = "1"
@@ -48,7 +48,7 @@ uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.44", default-features = false, features = ["nip06", "nip44", "nip59"] }
 nostr-pubsub = "=0.1.13"
-nostr-pubsub-fips = "=0.4.19"
+nostr-pubsub-fips = "=0.5.1"
 nostr-pubsub-relay = "=0.1.11"
 nostr-identity = "=0.3.1"
 # Iris Drive's provider abstraction and FIPS adapter remain local workspace
@@ -56,13 +56,13 @@ nostr-identity = "=0.3.1"
 hashtree-core = "=0.2.89"
 hashtree-blossom = { version = "=0.2.83", features = ["store"] }
 hashtree-config = "=0.2.83"
-hashtree-embedded = "=0.2.88"
-hashtree-fips-transport = { version = "=0.4.15", features = ["webrtc-endpoint"] }
+hashtree-embedded = "=0.2.89"
+hashtree-fips-transport = { version = "=0.4.17", features = ["webrtc-endpoint"] }
 hashtree-fs = "=0.2.82"
 hashtree-fuse = { version = "=0.2.83", features = ["fuse"] }
 hashtree-lmdb = "=0.2.88"
 hashtree-nostr = "=0.2.88"
-hashtree-network = "=0.2.87"
+hashtree-network = "=0.2.88"
 hashtree-resolver = { version = "=0.2.84", features = ["nostr"] }
 hashtree-updater = "=0.2.84"
 hashtree-provider = { path = "crates/hashtree-provider" }
@@ -72,8 +72,8 @@ notify = "6"
 notify-debouncer-mini = "0.4"
 tao = "0.30"
 tray-icon = "0.21"
-iris-drive-core = { version = "0.1.35", path = "crates/iris-drive-core" }
-iris-drive-app-core = { version = "0.1.35", path = "crates/iris-drive-app-core" }
+iris-drive-core = { version = "0.1.36", path = "crates/iris-drive-core" }
+iris-drive-app-core = { version = "0.1.36", path = "crates/iris-drive-app-core" }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

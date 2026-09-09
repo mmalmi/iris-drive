@@ -4,6 +4,39 @@ Performance and integration experiments log. Omit identifying information
 (pubkeys, secrets, IPs, private hostnames, exact repo names, raw hashes)
 unless the user explicitly asks otherwise.
 
+## 2026-09-09 desktop idle measurement continuity
+
+Desktop idle samplers could accept a required process disappearing or restarting
+after an early observation. POSIX also clamped a decreasing CPU counter to zero,
+while Windows could treat absent or null counter data as zero. Controlled inputs
+against the actual script entry points reproduced six POSIX false passes (three
+cases on Linux and macOS) and four Windows false passes. The fixed samplers require
+the original required process set throughout the window and reject missing or
+reset readings. Stable idle still passes and excessive CPU still fails. Existing
+thresholds, sampling durations and optional-role semantics are unchanged.
+
+## 2026-09-09 routed native mesh
+
+- Drive's existing authorized peer roster now supplies bounded identity hints
+  to the shared Nostr pubsub client. A transport-only intermediary remains
+  outside the application roster. The fixture calls the production event and
+  immutable blob APIs; it adds no alternate protocol or authorization path.
+- A three-process candidate experiment connected Chat and Drive only through
+  a Hashtree intermediary with Nostr disabled. Public relays and LAN discovery
+  were disabled. Four signed events and two 192 KiB blobs arrived with exact
+  content hashes, including events queued while the intermediary was stopped.
+  Three repeated runs passed; median recovery of the original queued event
+  IDs was 12.943 seconds after restart. This measures known peers with an
+  explicit private bootstrap address, not unknown-peer discovery.
+- A controlled comparison used the same fixture binaries and changed only the
+  shared pubsub peer budget. A budget of one used 2,627/2,788 bytes per second
+  before/after the partition; the ordinary budget of 64 used 2,628/2,833.
+  CPU stayed between 0.47% and 1.13% per process. Both passed the experiment's
+  5% CPU and 4 KiB/s idle guards. There was no meaningful bandwidth benefit
+  from excluding the intermediary from pubsub connection attempts, so the
+  production peer budget remains unchanged. These are local debug-process
+  observations, not mobile battery measurements or production percentiles.
+
 ## 2026-09-08 published mesh dependency integration
 
 - Drive now consumes the published transport retry-fairness correction and

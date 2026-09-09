@@ -23,6 +23,29 @@ fn control_poll_interval_is_idle_safe() {
 }
 
 #[tokio::test]
+async fn pubsub_roster_refresh_accepts_more_contacts_than_connection_slots() {
+    let local = AppKey::generate("bounded-pubsub-roster");
+    let bound = bind_test_endpoint(
+        &local,
+        "drive-roster-test",
+        reserve_udp_address(),
+        reserve_udp_address(),
+        false,
+    )
+    .await
+    .unwrap();
+    let peers: Vec<_> = (0..70)
+        .map(|_| AppKey::generate("roster-contact").pubkey_bech32())
+        .collect();
+    let mut runtime = DriveNostrPubsubRuntime::bind(bound.native_endpoint.clone(), peers.clone())
+        .await
+        .unwrap();
+    runtime.set_routed_peers(peers).unwrap();
+    runtime.shutdown().await;
+    bound.native_endpoint.shutdown().await.unwrap();
+}
+
+#[tokio::test]
 async fn authorized_control_peers_connect_before_any_record_is_queued() {
     let alice = AppKey::generate("presence-alice");
     let bob = AppKey::generate("presence-bob");
@@ -244,10 +267,10 @@ async fn shared_pubsub_carries_only_verified_nostr_events() {
     let alice_endpoint = alice_bound.native_endpoint.clone();
     let bob_endpoint = bob_bound.native_endpoint.clone();
 
-    let mut alice_runtime = DriveNostrPubsubRuntime::bind(alice_endpoint.clone())
+    let mut alice_runtime = DriveNostrPubsubRuntime::bind(alice_endpoint.clone(), Vec::new())
         .await
         .unwrap();
-    let mut bob_runtime = DriveNostrPubsubRuntime::bind(bob_endpoint.clone())
+    let mut bob_runtime = DriveNostrPubsubRuntime::bind(bob_endpoint.clone(), Vec::new())
         .await
         .unwrap();
     let mut received = bob_runtime.subscribe();

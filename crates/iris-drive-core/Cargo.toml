@@ -8,6 +8,9 @@ description = "Shared Iris Drive configuration, sync state, htree client, and sh
 repository.workspace = true
 readme = "README.md"
 
+[features]
+stack-fixture = []
+
 [dependencies]
 anyhow.workspace = true
 aes-gcm.workspace = true

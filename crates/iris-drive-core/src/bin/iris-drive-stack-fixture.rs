@@ -10,14 +10,16 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
-use hashtree_core::{Cid, MemoryStore, Store};
+use hashtree_core::{Cid, MemoryStore, NHashData, Store, nhash_encode_full};
 use iris_drive_core::{
     AppActorEntry, AppConfig, AppKey, AppKeyAuthorizationState, AppKeysProjection, FipsBlockSync,
     NostrIdentityId, ProfileState,
 };
-use nostr_sdk::PublicKey;
 use nostr_sdk::nips::nip19::FromBech32;
+use nostr_sdk::{EventBuilder, EventId, Kind, PublicKey};
 use serde_json::json;
+use sha2::{Digest, Sha256};
+use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[tokio::main(flavor = "multi_thread")]
@@ -73,6 +75,65 @@ async fn main() -> Result<()> {
     while let Some(line) = lines.next_line().await? {
         let mut fields = line.split_whitespace();
         match fields.next() {
+            Some("put") => {
+                let path = line
+                    .strip_prefix("put ")
+                    .context("put requires a path")?
+                    .trim();
+                let bytes = tokio::fs::read(path).await.context("read fixture blob")?;
+                let hash: [u8; 32] = Sha256::digest(&bytes).into();
+                let length = bytes.len();
+                local.put(hash, bytes).await.context("store fixture blob")?;
+                emit(&json!({
+                    "event": "put",
+                    "cid": Cid::public(hash).to_string(),
+                    "nhash": nhash_encode_full(&NHashData { hash, decrypt_key: None })?,
+                    "sha256": hex::encode(hash),
+                    "bytes": length,
+                }))?;
+            }
+            Some("publish") => {
+                let mut parts = line.splitn(3, ' ');
+                parts.next();
+                let kind = parts
+                    .next()
+                    .context("publish requires a kind")?
+                    .parse::<u16>()?;
+                let content = parts.next().context("publish requires content")?;
+                let event = EventBuilder::new(Kind::from(kind), content)
+                    .sign_with_keys(device.keys())
+                    .context("sign fixture event")?;
+                let peers = sync.publish_nostr_event(event.clone()).await?;
+                emit(&json!({
+                    "event": "published", "id": event.id.to_string(),
+                    "pubkey": event.pubkey.to_hex(), "kind": kind,
+                    "content": event.content, "pubsub_peer_count": peers,
+                }))?;
+            }
+            Some("receive") => {
+                let id = EventId::parse(fields.next().context("receive requires an event id")?)?;
+                let received = tokio::time::timeout(Duration::from_secs(15), async {
+                    loop {
+                        let delivery = sync.recv_nostr_pubsub_event().await;
+                        if delivery.event.id == id {
+                            break delivery;
+                        }
+                    }
+                })
+                .await;
+                match received {
+                    Ok(delivery) => emit(&json!({
+                        "event": "received", "id": id.to_string(),
+                        "pubkey": delivery.event.pubkey.to_hex(),
+                        "kind": delivery.event.kind.as_u16(), "content": delivery.event.content,
+                        "verified": delivery.event.verify().is_ok(),
+                        "origin_peer_id": delivery.origin_peer_id,
+                    }))?,
+                    Err(error) => emit(&json!({
+                        "event": "received", "id": id.to_string(), "error": error.to_string(),
+                    }))?,
+                }
+            }
             Some("fetch") => {
                 let cid = Cid::parse(fields.next().context("fetch requires a CID")?)
                     .context("parse requested CID")?;
@@ -91,7 +152,7 @@ async fn main() -> Result<()> {
                 match result {
                     Ok(report) => {
                         let cached = local
-                            .has(&cid.hash)
+                            .get(&cid.hash)
                             .await
                             .context("check Drive root cache")?;
                         emit(&json!({
@@ -99,7 +160,8 @@ async fn main() -> Result<()> {
                             "cid": cid.to_string(),
                             "fetched": report.fetched,
                             "already_local": report.already_local,
-                            "root_cached": cached,
+                            "root_cached": cached.is_some(),
+                            "sha256": cached.as_ref().map(|bytes| hex::encode(Sha256::digest(bytes))),
                             "remote_connected": remote_connected,
                             "remote_transport": remote.as_ref().and_then(|peer| peer.transport_type.clone()),
                             "remote_addr": remote.as_ref().and_then(|peer| peer.transport_addr.clone()),
@@ -130,6 +192,12 @@ async fn main() -> Result<()> {
                     "remote_transport": remote.as_ref().and_then(|peer| peer.transport_type.clone()),
                     "remote_addr": remote.as_ref().and_then(|peer| peer.transport_addr.clone()),
                     "same_host_blob_providers": sync.same_host_blob_provider_ids(),
+                    "direct_peers": sync.fips_peer_statuses().await,
+                    "pubsub_peer_count": sync.mesh_peer_count(),
+                    "pubsub_max_peers": sync.mesh_peer_limit(),
+                    "authorized_peers": sync.authorized_peer_ids(),
+                    "relay_count": config.relays.len(),
+                    "lan_discovery_enabled": sync.transport_settings().enable_lan_discovery,
                 }))?;
             }
             Some("stop") | None => break,

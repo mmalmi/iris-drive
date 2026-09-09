@@ -201,7 +201,13 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         )
         .await?;
         let nostr_runtime = if transport_settings.enable_mesh_pubsub {
-            Some(DriveNostrPubsubRuntime::bind(native_endpoint.clone()).await?)
+            Some(
+                DriveNostrPubsubRuntime::bind(
+                    native_endpoint.clone(),
+                    peer_ids(&blob_peers).into_iter().collect(),
+                )
+                .await?,
+            )
         } else {
             None
         };
@@ -328,6 +334,13 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
                 .await
         {
             tracing::warn!(%error, "failed to refresh Drive control policy");
+            return;
+        }
+        if let Some(runtime) = self.nostr_runtime.as_ref()
+            && let Err(error) =
+                runtime.set_routed_peers(peer_ids(&blob_peers).into_iter().collect())
+        {
+            tracing::warn!(%error, "failed to refresh Drive pubsub peers");
             return;
         }
         if let Some(runtime) = self.blob_runtime.as_ref() {
@@ -515,6 +528,12 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
 
     pub async fn recv_nostr_pubsub_event(&self) -> FipsNostrPubsubEvent {
         recv_optional_nostr_pubsub_event(self.nostr_receiver.as_ref()).await
+    }
+
+    pub fn mesh_peer_limit(&self) -> Option<usize> {
+        self.nostr_runtime
+            .as_ref()
+            .and_then(DriveNostrPubsubRuntime::max_connected_peers)
     }
 
     pub fn mesh_peer_count(&self) -> usize {
