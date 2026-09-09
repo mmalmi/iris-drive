@@ -273,6 +273,13 @@ ps_quote() {
   printf "'%s'" "$(printf "%s" "$1" | sed "s/'/''/g")"
 }
 
+windows_script_stdin() {
+  # One ASCII statement lets PowerShell parse each UTF-8 script as a whole.
+  python3 -c 'import base64, sys
+encoded = base64.b64encode(sys.stdin.buffer.read()).decode("ascii")
+sys.stdout.write("& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(\"" + encoded + "\")))); if (!$?) { if ($LASTEXITCODE) { exit $LASTEXITCODE }; exit 1 }\n\n\n")'
+}
+
 windows_guest_host_for() {
   if [[ -n "${IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST:-}" ]]; then
     printf "%s" "$IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST"
@@ -320,7 +327,7 @@ run_remote_exec() {
   kind="$(host_value "$label" kind)"
   ssh_host="$(host_value "$label" ssh)"
   if [[ "$kind" == "windows" ]]; then
-    printf "%s\n" "$script" | ssh "$ssh_host" "$(windows_powershell_command_for "$ssh_host")"
+    printf "%s\n" "$script" | windows_script_stdin | ssh "$ssh_host" "$(windows_powershell_command_for "$ssh_host")"
   elif [[ "$ssh_host" == "local" ]]; then run_local_e2e_script "$script"
   else
     printf "%s\n" "$script" | ssh "$ssh_host" 'bash -se'
@@ -420,8 +427,7 @@ detect_host_fips_addr() {
     return 0
   fi
   if [[ "$kind" == "windows" ]]; then
-    # PowerShell -Command - needs a trailing blank line to finish multiline input.
-    ip="$(ssh "$ssh_host" "$(windows_powershell_command_for "$ssh_host")" <<'REMOTE_PS' 2>/dev/null || true
+    ip="$(windows_script_stdin <<'REMOTE_PS' | ssh "$ssh_host" "$(windows_powershell_command_for "$ssh_host")" 2>/dev/null || true
 $TunnelIp = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -eq 'nvpn' -and $_.IPAddress -like '10.44.*' } | Select-Object -First 1 -ExpandProperty IPAddress)
 if ($TunnelIp) { Write-Output $TunnelIp; exit 0 }
 $FallbackIp = (Get-NetIPAddress -AddressFamily IPv4 |
@@ -429,7 +435,6 @@ $FallbackIp = (Get-NetIPAddress -AddressFamily IPv4 |
   Select-Object -First 1 -ExpandProperty IPAddress)
 if ($FallbackIp) { Write-Output $FallbackIp; exit 0 }
 exit 1
-
 REMOTE_PS
 )"
   else
@@ -819,7 +824,7 @@ Set-Content -LiteralPath \$pidFile -Value \$PID
 & \$idrive @daemonArgs > \$log 2> \$err
 "
     script="$(remote_shared_store_script "$label" "$script")"
-    printf "%s\n" "$script" | ssh "$ssh_host" "$(windows_powershell_command_for "$ssh_host")" >/dev/null 2>&1 &
+    printf "%s\n" "$script" | windows_script_stdin | ssh "$ssh_host" "$(windows_powershell_command_for "$ssh_host")" >/dev/null 2>&1 &
     set_host_value "$label" daemon_ssh_pid "$!"
     sleep 1
     if ! kill -0 "$(host_value "$label" daemon_ssh_pid)" 2>/dev/null; then

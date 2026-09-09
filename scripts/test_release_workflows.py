@@ -15,6 +15,7 @@ import unittest
 from pathlib import Path
 from typing import Optional
 
+from test_cross_vm_powershell_transport import WindowsPowerShellTransportTests
 from test_idle_cpu_gate import DesktopIdleCpuTests
 from test_macos_app_registration import MacAppRegistrationTests
 

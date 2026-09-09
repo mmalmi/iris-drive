@@ -7,6 +7,8 @@ import subprocess
 import tempfile
 import unittest
 
+from test_cross_vm_powershell_transport import decoded_script
+
 HELPER = Path(__file__).resolve().parent / 'lib/cross-vm-local-store.sh'
 
 
@@ -138,7 +140,10 @@ esac
                                              HTREE_DATA_DIR='/ambient-data',
                                              HTREE_CONFIG_DIR='/preserved-config'), timeout=5)
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
-            return result.stdout, (root / 'command').read_text()
+            command = (root / 'command').read_text()
+            if kind == 'windows' and mode != 'setup':
+                command = decoded_script(command)
+            return result.stdout, command
 
     def test_remote_posix_cli_and_daemon_share_owned_store(self):
         base = "/tmp/iris-drive-e2e-fixture-owner's data"
