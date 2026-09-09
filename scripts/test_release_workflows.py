@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Optional
 
 from test_idle_cpu_gate import DesktopIdleCpuTests
+from test_macos_app_registration import MacAppRegistrationTests
 
 
 ROOT = Path(__file__).resolve().parents[1]

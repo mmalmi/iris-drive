@@ -273,40 +273,10 @@ register_app_bundle() {
   local app_path="$1"
   local built_app_path="$2"
   local lsregister
-  local candidate
-  local stale_root
 
   lsregister="$(launch_services_tool)"
   [[ -x "$lsregister" ]] || return 0
-
   "$lsregister" -u "$built_app_path" >/dev/null 2>&1 || true
-  if command -v mdfind >/dev/null 2>&1; then
-    mdfind "kMDItemCFBundleIdentifier == 'to.iris.drive.macos'" 2>/dev/null \
-      | while IFS= read -r candidate; do
-          [[ -n "$candidate" && "$candidate" != "$app_path" ]] || continue
-          "$lsregister" -u "$candidate" >/dev/null 2>&1 || true
-        done
-  fi
-  if [[ -d "$HOME/Library/Developer/Xcode/DerivedData" ]]; then
-    find "$HOME/Library/Developer/Xcode/DerivedData" \
-      -path "*/Build/Products/Debug/Iris Drive.app" \
-      -type d -prune -print 2>/dev/null \
-      | while IFS= read -r candidate; do
-          [[ -n "$candidate" && "$candidate" != "$app_path" ]] || continue
-          "$lsregister" -u "$candidate" >/dev/null 2>&1 || true
-          rm -rf "$candidate"
-        done
-  fi
-  for stale_root in /private/tmp/iris-drive-sign-tests /tmp/iris-drive-sign-tests; do
-    [[ -d "$stale_root" ]] || continue
-    find "$stale_root" \
-      -name "*.app" \
-      -type d -prune -print 2>/dev/null \
-      | while IFS= read -r candidate; do
-          "$lsregister" -u "$candidate" >/dev/null 2>&1 || true
-        done
-    rm -rf "$stale_root"
-  done
   "$lsregister" -f -R -trusted "$app_path" >/dev/null 2>&1 || true
 }
 
@@ -314,35 +284,16 @@ register_fileprovider_plugin() {
   local app_path="$1"
   local appex="$app_path/Contents/PlugIns/IrisDriveFileProvider.appex"
   local plugin_id="to.iris.drive.macos.FileProvider"
-  local plugin
-  local appex_registered=0
-  local registered_plugins=()
+  local registered_plugins
 
   [[ -d "$appex" ]] || return 0
   command -v pluginkit >/dev/null 2>&1 || return 0
-
-  while IFS= read -r plugin; do
-    [[ -n "$plugin" ]] || continue
-    registered_plugins+=("$plugin")
-  done < <(pluginkit -m -i "$plugin_id" -ADv 2>/dev/null | awk -F '\t' 'NF >= 4 { print $4 }')
-
-  if (( ${#registered_plugins[@]} > 0 )); then
-    for plugin in "${registered_plugins[@]}"; do
-      if [[ "$plugin" == "$appex" ]]; then
-        appex_registered=1
-      else
-        log "Removing stale macOS FileProvider pluginkit registration for $plugin"
-        pluginkit -r "$plugin" >/dev/null 2>&1 || true
-      fi
-    done
-  fi
-
-  if [[ "$appex_registered" == "1" ]]; then
+  registered_plugins="$(pluginkit -m -i "$plugin_id" -ADv 2>/dev/null | awk -F '\t' 'NF >= 4 { print $4 }')"
+  if grep -Fxq -- "$appex" <<<"$registered_plugins"; then
     log "Reusing existing macOS FileProvider pluginkit registration for $appex"
   else
     pluginkit -a "$appex" >/dev/null 2>&1 || true
   fi
-
   pluginkit -e use -i "$plugin_id" >/dev/null 2>&1 || true
 }
 
