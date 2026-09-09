@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Exercise the desktop samplers with controlled process observations."""
 
+import base64
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -13,6 +16,80 @@ from pathlib import Path
 
 SCRIPTS = Path(__file__).resolve().parent
 POWERSHELL = shutil.which("pwsh") or shutil.which("powershell")
+
+
+class CrossVmIdleGateTests(unittest.TestCase):
+    source = (SCRIPTS / "cross-vm-e2e.sh").read_text()
+
+    def emitted_command(self, kind, config):
+        quotes = self.source[self.source.index("sh_quote() {"):
+                             self.source.index("windows_guest_host_for() {")]
+        gate = self.source[self.source.index("idle_cpu_remote_timeout_secs() {"):
+                           self.source.index("write_initial_seed_files() {")]
+        script = ("set -euo pipefail\n" + quotes + gate + "\n"
+                  + 'host_value() { case $2 in kind) printf %s "$KIND";; '
+                  + 'config) printf %s "$CONFIG";; ssh) printf %s fixture;; esac; }\n'
+                  + "remote_exec_with_timeout() { printf %s \"$2\"; }\n"
+                  + "idle_cpu_gate_label fixture\n")
+        result = subprocess.run(["bash", "-c", script], text=True, capture_output=True,
+                                env=dict(os.environ, ROOT=str(SCRIPTS.parent),
+                                         KIND=kind, CONFIG=config), timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        return result.stdout
+
+    def test_posix_invokes_exact_checkout_sampler_in_owned_config(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            config = root / "owned config's data"
+            config.mkdir()
+            command = self.emitted_command("posix", str(config))
+            # Execute the generated transfer and environment setup. Replace only
+            # the sampler invocation, so no real processes or clocks are sampled.
+            wrapper = root / "bash"
+            wrapper.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
+                import json, os, sys
+                print(json.dumps({'path': sys.argv[1], 'args': sys.argv[2:],
+                    'match': os.environ['IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH'],
+                    'roles': os.environ['IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES']}))
+                """))
+            wrapper.chmod(0o755)
+            result = subprocess.run(["/bin/bash", "-c", command], text=True, capture_output=True,
+                                    env=dict(os.environ, PATH=f"{root}{os.pathsep}{os.environ['PATH']}"),
+                                    timeout=5)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            invocation = json.loads(result.stdout)
+            sampler = Path(invocation["path"])
+            self.assertEqual(sampler.parent, config)
+            self.assertEqual(sampler.read_bytes(), (SCRIPTS / "idle-cpu-gate.sh").read_bytes())
+            self.assertEqual(invocation["match"], str(config))
+            self.assertEqual(invocation["roles"], "daemon")
+            self.assertEqual(invocation["args"], ["--platform", "auto"])
+
+    def test_windows_transfers_exact_sampler_and_uses_owned_config_filter(self):
+        config = r"C:\fixtures\owned config's data"
+        command = self.emitted_command("windows", config)
+        payload = re.search(r"FromBase64String\('([A-Za-z0-9+/=]+)'\)", command)
+        self.assertIsNotNone(payload, "Sampler must come from the invoking checkout")
+        self.assertEqual(base64.b64decode(payload.group(1)),
+                         (SCRIPTS / "idle-cpu-gate-windows.ps1").read_bytes())
+        quoted_config = "'" + config.replace("'", "''") + "'"
+        self.assertIn("Join-Path " + quoted_config, command)
+        self.assertIn("IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH = " + quoted_config, command)
+        self.assertNotIn("$repo", command)
+
+    def test_final_idle_samples_run_serially(self):
+        gate = self.source[self.source.rindex("if idle_cpu_gate_enabled; then"):
+                           self.source.rindex('\necho\necho "cross-vm e2e passed')]
+        parallel = self.source[self.source.index("run_for_all_labels_parallel() {"):
+                               self.source.index("idle_cpu_gate_enabled() {")]
+        script = ("set -euo pipefail\n" + parallel
+                  + "\nLABELS=(one two); calls=0\n"
+                  + "idle_cpu_gate_enabled() { return 0; }\n"
+                  + "idle_cpu_gate_label() { calls=$((calls + 1)); }\n"
+                  + "run_step() { shift; \"$@\"; }\n" + gate
+                  + '\n[[ "$calls" == 2 ]]\n')
+        result = subprocess.run(["bash", "-c", script], text=True, capture_output=True, timeout=5)
+        self.assertEqual(result.returncode, 0, "Idle samples escaped into parallel subshells")
 
 
 class DesktopIdleCpuTests(unittest.TestCase):

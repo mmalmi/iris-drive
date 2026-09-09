@@ -1732,39 +1732,38 @@ idle_cpu_remote_timeout_secs() {
 
 idle_cpu_gate_label() {
   local label="$1"
-  local kind config timeout script repo_line
+  local kind config timeout script sampler_b64
   kind="$(host_value "$label" kind)"
   config="$(host_value "$label" config)"
   timeout="$(idle_cpu_remote_timeout_secs)"
   if [[ "$kind" == "windows" ]]; then
+    sampler_b64="$(base64 < "$ROOT/scripts/idle-cpu-gate-windows.ps1" | tr -d '\n')"
     script="
 \$ErrorActionPreference = 'Stop'
-\$repo = Join-Path \$HOME 'src\iris-drive'
+\$sampler = Join-Path $(ps_quote "$config") 'idle-cpu-gate-windows.ps1'
+[IO.File]::WriteAllBytes(\$sampler, [Convert]::FromBase64String($(ps_quote "$sampler_b64")))
 \$env:IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES = 'daemon'
-\$env:IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH = \$repo
+\$env:IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH = $(ps_quote "$config")
 \$env:IRIS_DRIVE_IDLE_CPU_WARMUP_SECS = $(ps_quote "${IRIS_DRIVE_IDLE_CPU_WARMUP_SECS:-180}")
 \$env:IRIS_DRIVE_IDLE_CPU_DURATION_SECS = $(ps_quote "${IRIS_DRIVE_IDLE_CPU_DURATION_SECS:-60}")
 \$env:IRIS_DRIVE_IDLE_CPU_INTERVAL_SECS = $(ps_quote "${IRIS_DRIVE_IDLE_CPU_INTERVAL_SECS:-5}")
 \$env:IRIS_DRIVE_IDLE_CPU_DAEMON_MAX = $(ps_quote "${IRIS_DRIVE_IDLE_CPU_DAEMON_MAX:-10}")
-& (Join-Path \$repo 'scripts\idle-cpu-gate-windows.ps1')
+& \$sampler
 exit \$LASTEXITCODE
 "
   else
-    if [[ "$(host_value "$label" ssh)" == "local" ]]; then
-      repo_line="repo=$(sh_quote "$ROOT")"
-    else
-      repo_line='repo="$HOME/src/iris-drive"'
-    fi
+    sampler_b64="$(base64 < "$ROOT/scripts/idle-cpu-gate.sh" | tr -d '\n')"
     script="
 set -Eeuo pipefail
-${repo_line}
+sampler=$(sh_quote "$config/idle-cpu-gate.sh")
+printf '%s' $(sh_quote "$sampler_b64") | base64 -d >\"\$sampler\"
 export IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES=daemon
 export IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH=$(sh_quote "$config")
 export IRIS_DRIVE_IDLE_CPU_WARMUP_SECS=$(sh_quote "${IRIS_DRIVE_IDLE_CPU_WARMUP_SECS:-180}")
 export IRIS_DRIVE_IDLE_CPU_DURATION_SECS=$(sh_quote "${IRIS_DRIVE_IDLE_CPU_DURATION_SECS:-60}")
 export IRIS_DRIVE_IDLE_CPU_INTERVAL_SECS=$(sh_quote "${IRIS_DRIVE_IDLE_CPU_INTERVAL_SECS:-5}")
 export IRIS_DRIVE_IDLE_CPU_DAEMON_MAX=$(sh_quote "${IRIS_DRIVE_IDLE_CPU_DAEMON_MAX:-10}")
-\"\$repo/scripts/idle-cpu-gate.sh\" --platform auto
+bash \"\$sampler\" --platform auto
 "
   fi
   remote_exec_with_timeout "$label" "$script" "$timeout"
@@ -2121,7 +2120,9 @@ run_step "final fresh daemons" wait_until "all daemon statuses fresh" all_fresh
 run_step "final LAN/local FIPS peer discovery" wait_until "required devices have a direct peer" all_required_devices_have_direct_peer
 run_step "final Devices list online roster" wait_until "every Devices list shows roster peers online" all_devices_list_roster_online
 if idle_cpu_gate_enabled; then
-  run_step "idle daemon CPU gate" run_for_all_labels_parallel idle_cpu_gate_label
+  for label in "${LABELS[@]}"; do
+    run_step "idle daemon CPU gate on $label" idle_cpu_gate_label "$label"
+  done
 fi
 
 echo
