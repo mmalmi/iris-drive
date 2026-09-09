@@ -824,7 +824,8 @@ public partial class MainWindow : Window
 
     private void ScheduleDriveFolderRefresh(IrisDriveStatusData status)
     {
-        if (!status.IsSetupComplete || string.IsNullOrWhiteSpace(status.ProviderRefreshKey))
+        if (!WindowsCloudFiles.IsEnabled || !status.IsSetupComplete ||
+            string.IsNullOrWhiteSpace(status.ProviderRefreshKey))
         {
             return;
         }

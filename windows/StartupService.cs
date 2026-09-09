@@ -8,9 +8,15 @@ public static class StartupService
     private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
     private const string AppName = "Iris Drive";
 
-    public static void SyncLaunchOnStartup(bool enabled)
+    public static void SyncLaunchOnStartup(bool enabled) =>
+        SyncLaunchOnStartup(enabled, SetLaunchOnStartup);
+
+    internal static void SyncLaunchOnStartup(bool enabled, Action<bool> update)
     {
-        SetLaunchOnStartup(enabled);
+        if (!WindowsProfileEnvironment.IsAlternateConfig)
+        {
+            update(enabled);
+        }
     }
 
     public static void SetLaunchOnStartup(bool enabled)
