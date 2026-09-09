@@ -120,7 +120,21 @@ class ProcessIdleCpuTests(unittest.TestCase):
             # process parsing/aggregation are the production implementations.
             wrapper = root / "python3"
             wrapper.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
-                import sys, time
+                import builtins, io, json, os, re, sys, time
+                from pathlib import Path
+                real_open = builtins.open
+                def open_fixture(path, *args, **kwargs):
+                    match = re.fullmatch(r'/proc/(\\d+)/stat', str(path))
+                    if os.environ['IDLE_TEST_PLATFORM'] == 'linux' and match:
+                        records = json.loads(Path(os.environ['IDLE_TEST_STATE'] + '.stat').read_text())
+                        record = records[match.group(1)]
+                        if record is None:
+                            raise PermissionError('fixture proc counter unreadable')
+                        return io.StringIO(record)
+                    return real_open(path, *args, **kwargs)
+                builtins.open = open_fixture
+                real_sysconf = os.sysconf
+                os.sysconf = lambda key: 100 if key == 'SC_CLK_TCK' else real_sysconf(key)
                 clock = [0.0]
                 time.monotonic = lambda: clock[0]
                 def sleep(seconds):
@@ -132,13 +146,16 @@ class ProcessIdleCpuTests(unittest.TestCase):
                 """))
             process_reader = root / "ps"
             process_reader.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
-                import os, sys
+                import json, os, sys
                 from pathlib import Path
                 state = Path(os.environ['IDLE_TEST_STATE'])
                 sample = int(state.read_text()) if state.exists() else 0
                 state.write_text(str(sample + 1))
                 scenario = os.environ['IDLE_TEST_SCENARIO']
                 roles = ('app', 'provider') if os.environ['IDLE_TEST_PLATFORM'] == 'ios' else ('daemon',)
+                if scenario.startswith('linux-'):
+                    roles = ('app',)
+                records = {}
                 for index, role in enumerate(roles):
                     affected = role == ('provider' if scenario.startswith('provider-') else roles[0])
                     change = scenario.removeprefix('provider-') if affected else 'stable'
@@ -150,13 +167,32 @@ class ProcessIdleCpuTests(unittest.TestCase):
                         cpu = sample * 0.2
                     if change == 'counter-reset' and sample >= 2:
                         cpu = 0.0
-                    command = '/fixture/idrive daemon'
-                    if role != 'daemon':
+                    if change == 'linux-low':
+                        cpu = sample * 0.01
+                    if change == 'linux-near-bound':
+                        cpu = (sample * 59 // 2) / 100
+                    ticks = round(cpu * 100)
+                    fields = ['R'] + ['0'] * 49
+                    fields[11:15] = [str(ticks // 2), str(ticks - ticks // 2), '90000', '90000']
+                    record = f'{pid} (ird ) (worker)) ' + ' '.join(fields)
+                    if scenario == 'linux-unreadable' and sample >= 2:
+                        record = None
+                    if scenario == 'linux-corrupt' and sample >= 2:
+                        record = f'{pid} malformed stat'
+                    if scenario == 'linux-invalid-ticks' and sample >= 2:
+                        fields[11] = 'NaN'
+                        record = f'{pid} (ird ) (worker)) ' + ' '.join(fields)
+                    records[str(pid)] = record
+                    if os.environ['IDLE_TEST_PLATFORM'] == 'linux':
+                        cpu = int(cpu)  # Linux ps time loses the subsecond tick data.
+                    command = '/fixture/iris-drive' if role == 'app' else '/fixture/idrive daemon'
+                    if os.environ['IDLE_TEST_PLATFORM'] == 'ios':
                         base = '/fixture/CoreSimulator/Devices/owned-simulator/data/Iris Drive.app/'
                         command = base + ('Iris Drive' if role == 'app' else 'PlugIns/IrisDriveFileProvider.appex/IrisDriveFileProvider')
                     parent = '1 ' if 'ppid=' in sys.argv[-1] else ''
                     print(f'{pid} {parent}{cpu:.2f} {command}')
-                if roles[0] == 'app':
+                state.with_suffix('.stat').write_text(json.dumps(records))
+                if os.environ['IDLE_TEST_PLATFORM'] == 'ios':
                     # Unrelated simulator activity must never enter this sample.
                     parent = '1 ' if 'ppid=' in sys.argv[-1] else ''
                     print(f'999 {parent}{sample * 100:.2f} /fixture/CoreSimulator/Devices/other/data/Iris Drive.app/Iris Drive')
@@ -175,6 +211,10 @@ class ProcessIdleCpuTests(unittest.TestCase):
                 IRIS_DRIVE_IDLE_CPU_INTERVAL_SECS="5",
                 IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="daemon",
             )
+            if scenario.startswith("linux-"):
+                environment.update(IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="app",
+                                   IRIS_DRIVE_IDLE_CPU_DURATION_SECS="60",
+                                   IRIS_DRIVE_IDLE_CPU_APP_MAX="5")
             if platform == "ios":
                 environment.pop("IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES")
                 environment.update(IRIS_DRIVE_IDLE_CPU_IOS_DEVICE="owned-simulator",
@@ -238,6 +278,21 @@ class ProcessIdleCpuTests(unittest.TestCase):
                                      result.stdout + result.stderr)
                     if scenario in ("disappear", "restart", "counter-reset"):
                         self.assertIn("during idle sample", result.stderr)
+
+    @unittest.skipIf(os.name == "nt", "POSIX shell sampler")
+    def test_linux_counts_subsecond_proc_ticks_and_rejects_bad_counters(self):
+        for scenario in ("linux-low", "linux-near-bound", "linux-unreadable",
+                         "linux-corrupt", "linux-invalid-ticks"):
+            with self.subTest(scenario=scenario):
+                result = self.run_sampler("linux", scenario)
+                self.assertEqual(result.returncode == 0, scenario == "linux-low",
+                                 result.stdout + result.stderr)
+                if scenario in ("linux-low", "linux-near-bound"):
+                    summary = json.loads(result.stdout)["roles"]["app"]
+                    self.assertAlmostEqual(summary["avg_cpu"], 0.2 if scenario == "linux-low" else 5.9)
+                    self.assertEqual(summary["limit"], 5)
+                else:
+                    self.assertIn("CPU counter unavailable or malformed", result.stderr)
 
     @unittest.skipIf(os.name == "nt", "POSIX shell sampler")
     def test_ios_fallback_required_processes_survive_entire_sample(self):

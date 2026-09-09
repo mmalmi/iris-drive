@@ -94,6 +94,7 @@ import time
 
 platform, warmup, duration, interval = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
 device_fragment = f"/CoreSimulator/Devices/{sys.argv[5]}/" if platform == "ios" else None
+clock_ticks = os.sysconf("SC_CLK_TCK") if platform == "linux" else None
 thresholds = {
     "app": float(os.environ.get("IRIS_DRIVE_IDLE_CPU_APP_MAX", "5")),
     "daemon": float(os.environ.get("IRIS_DRIVE_IDLE_CPU_DAEMON_MAX", "10")),
@@ -159,6 +160,25 @@ def parse_cpu_time(value: str) -> float:
         return float(value)
     return days * 86400 + int(hours) * 3600 + int(minutes) * 60 + float(seconds)
 
+def process_cpu_seconds(pid: str, ps_time: str) -> float:
+    if platform != "linux":
+        return parse_cpu_time(ps_time)
+    try:
+        with open(f"/proc/{pid}/stat") as counter:
+            prefix, closing, tail = counter.read().rpartition(")")
+        if not closing or not prefix.startswith(f"{pid} ("):
+            raise ValueError("invalid stat process header")
+        # comm may contain spaces and parentheses. Fields after its final ')'
+        # start at state (field 3); utime/stime are fields 14 and 15.
+        fields = tail.split()
+        user_ticks, system_ticks = int(fields[11]), int(fields[12])
+        if user_ticks < 0 or system_ticks < 0:
+            raise ValueError("negative CPU ticks")
+        return (user_ticks + system_ticks) / clock_ticks
+    except (OSError, ValueError, IndexError) as error:
+        print(f"[idle-cpu] FAIL: PID {pid} CPU counter unavailable or malformed during idle sample: {error}", file=sys.stderr)
+        sys.exit(1)
+
 def snapshot():
     output = subprocess.check_output(["ps", "-axo", "pid=,ppid=,time=,command="], text=True)
     processes = {}
@@ -173,7 +193,7 @@ def snapshot():
         if not role:
             continue
         try:
-            value = parse_cpu_time(cpu_time)
+            value = process_cpu_seconds(pid, cpu_time)
         except ValueError:
             continue
         processes[int(pid)] = {"role": role, "cpu_seconds": value, "command": command}
