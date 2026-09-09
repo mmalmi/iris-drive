@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Exercise the desktop samplers with controlled process observations."""
+"""Exercise process samplers through their shell entry point with controlled observations."""
 
 import base64
 import json
@@ -92,8 +92,8 @@ class CrossVmIdleGateTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, "Idle samples escaped into parallel subshells")
 
 
-class DesktopIdleCpuTests(unittest.TestCase):
-    def run_posix(self, platform, scenario):
+class ProcessIdleCpuTests(unittest.TestCase):
+    def run_sampler(self, platform, scenario):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             # Only the sampler's clock is virtual; its shell entry point and
@@ -107,22 +107,39 @@ class DesktopIdleCpuTests(unittest.TestCase):
                     clock[0] += seconds
                 time.sleep = sleep
                 sys.argv = sys.argv[1:]
-                exec(compile(sys.stdin.read(), '<idle-cpu-gate>', 'exec'))
+                source = sys.argv[1] if sys.argv[0] == '-c' else sys.stdin.read()
+                exec(compile(source, '<idle-cpu-gate>', 'exec'))
                 """))
             process_reader = root / "ps"
             process_reader.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
-                import os
+                import os, sys
                 from pathlib import Path
                 state = Path(os.environ['IDLE_TEST_STATE'])
                 sample = int(state.read_text()) if state.exists() else 0
                 state.write_text(str(sample + 1))
                 scenario = os.environ['IDLE_TEST_SCENARIO']
-                if scenario != 'disappear' or sample < 2:
-                    pid = 102 if scenario == 'restart' and sample >= 2 else 101
-                    cpu = sample if scenario == 'busy' else 1.0
-                    if scenario == 'counter-reset' and sample >= 2:
+                roles = ('app', 'provider') if os.environ['IDLE_TEST_PLATFORM'] == 'ios' else ('daemon',)
+                for index, role in enumerate(roles):
+                    affected = role == ('provider' if scenario.startswith('provider-') else roles[0])
+                    change = scenario.removeprefix('provider-') if affected else 'stable'
+                    if change == 'disappear' and sample >= 2:
+                        continue
+                    pid = 101 + index * 10 + (1 if change == 'restart' and sample >= 2 else 0)
+                    cpu = sample if change == 'busy' else 1.0
+                    if change == 'host-budget':
+                        cpu = sample * 0.2
+                    if change == 'counter-reset' and sample >= 2:
                         cpu = 0.0
-                    print(f'{pid} 1 {cpu:.2f} /fixture/idrive daemon')
+                    command = '/fixture/idrive daemon'
+                    if role != 'daemon':
+                        base = '/fixture/CoreSimulator/Devices/owned-simulator/data/Iris Drive.app/'
+                        command = base + ('Iris Drive' if role == 'app' else 'PlugIns/IrisDriveFileProvider.appex/IrisDriveFileProvider')
+                    parent = '1 ' if 'ppid=' in sys.argv[-1] else ''
+                    print(f'{pid} {parent}{cpu:.2f} {command}')
+                if roles[0] == 'app':
+                    # Unrelated simulator activity must never enter this sample.
+                    parent = '1 ' if 'ppid=' in sys.argv[-1] else ''
+                    print(f'999 {parent}{sample * 100:.2f} /fixture/CoreSimulator/Devices/other/data/Iris Drive.app/Iris Drive')
                 """))
             wrapper.chmod(0o755)
             process_reader.chmod(0o755)
@@ -132,26 +149,107 @@ class DesktopIdleCpuTests(unittest.TestCase):
                 PATH=f"{root}{os.pathsep}{os.environ['PATH']}",
                 IDLE_TEST_STATE=str(root / "samples"),
                 IDLE_TEST_SCENARIO=scenario,
+                IDLE_TEST_PLATFORM=platform,
                 IRIS_DRIVE_IDLE_CPU_WARMUP_SECS="0",
                 IRIS_DRIVE_IDLE_CPU_DURATION_SECS="20",
                 IRIS_DRIVE_IDLE_CPU_INTERVAL_SECS="5",
                 IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="daemon",
             )
-            return subprocess.run(
+            if platform == "ios":
+                environment.pop("IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES")
+                environment.update(IRIS_DRIVE_IDLE_CPU_IOS_DEVICE="owned-simulator",
+                                   IRIS_DRIVE_IDLE_CPU_IOS_LAUNCH="0",
+                                   IRIS_DRIVE_IDLE_CPU_APP_MAX="1",
+                                   IRIS_DRIVE_IDLE_CPU_IOS_HOST_APP_MAX="7")
+                for name, body in {"uname": "echo Darwin\n", "xcrun":
+                        'printf "%s\\n" "$*" >> "$IDLE_TEST_STATE.xcrun"\nexit 1\n'}.items():
+                    tool = root / name
+                    tool.write_text("#!/bin/sh\n" + body)
+                    tool.chmod(0o755)
+            if platform == "android":
+                adb = root / "sdk" / "platform-tools" / "adb"
+                adb.parent.mkdir(parents=True)
+                adb.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
+                    import os, sys
+                    from pathlib import Path
+                    assert sys.argv[1:4] == ['-s', 'owned-emulator', 'shell'], sys.argv
+                    if sys.argv[4:] == ['getconf', 'CLK_TCK']:
+                        print(100)
+                        sys.exit(0)
+                    assert len(sys.argv) == 5 and 'pidof owned.package' in sys.argv[4], sys.argv
+                    state = Path(os.environ['IDLE_TEST_STATE'])
+                    sample = int(state.read_text()) if state.exists() else 0
+                    state.write_text(str(sample + 1))
+                    scenario = os.environ['IDLE_TEST_SCENARIO']
+                    if scenario != 'disappear' or sample < 2:
+                        pid = 102 if scenario == 'restart' and sample >= 2 else 101
+                        ticks = sample * 100 if scenario == 'busy' else 100
+                        if scenario == 'counter-reset' and sample >= 2:
+                            ticks = 0
+                        print(pid, ticks)
+                    if scenario != 'missing-uptime' or sample < 2:
+                        uptime = 90 if scenario == 'uptime-reset' and sample >= 2 else 100 + sample * 5
+                        print('uptime', uptime)
+                    """))
+                adb.chmod(0o755)
+                environment.update(ANDROID_HOME=str(root / "sdk"),
+                                   IRIS_DRIVE_ANDROID_DEVICE="owned-emulator",
+                                   IRIS_DRIVE_IDLE_CPU_ANDROID_PACKAGE="owned.package",
+                                   IRIS_DRIVE_IDLE_CPU_ANDROID_LAUNCH="0",
+                                   IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="app")
+            result = subprocess.run(
                 ["bash", str(SCRIPTS / "idle-cpu-gate.sh"), "--platform", platform],
                 env=environment, capture_output=True, text=True, timeout=10,
             )
+            if platform == "ios":
+                calls = (root / "samples.xcrun").read_text().splitlines()
+                self.assertEqual(len(calls), 1, calls)
+                self.assertTrue(calls[0].startswith("xctrace record "), calls)
+                self.assertIn("trying host process sampler", result.stderr)
+            return result
 
     @unittest.skipIf(os.name == "nt", "POSIX shell sampler")
     def test_posix_required_process_survives_entire_sample(self):
         for platform in ("linux", "macos"):
             for scenario in ("stable", "busy", "disappear", "restart", "counter-reset"):
                 with self.subTest(platform=platform, scenario=scenario):
-                    result = self.run_posix(platform, scenario)
+                    result = self.run_sampler(platform, scenario)
                     self.assertEqual(result.returncode == 0, scenario == "stable",
                                      result.stdout + result.stderr)
                     if scenario in ("disappear", "restart", "counter-reset"):
                         self.assertIn("during idle sample", result.stderr)
+
+    @unittest.skipIf(os.name == "nt", "POSIX shell sampler")
+    def test_ios_fallback_required_processes_survive_entire_sample(self):
+        for scenario in ("stable", "host-budget", "busy", "disappear", "restart", "counter-reset",
+                         "provider-disappear", "provider-restart", "provider-counter-reset"):
+            with self.subTest(scenario=scenario):
+                result = self.run_sampler("ios", scenario)
+                self.assertEqual(result.returncode == 0, scenario in ("stable", "host-budget"),
+                                 result.stdout + result.stderr)
+                summary = json.loads(result.stdout)
+                self.assertEqual(summary["platform"], "ios")
+                self.assertEqual(summary["method"], "host-process-delta")
+                self.assertEqual(summary["required_roles"], ["app", "provider"])
+                if scenario in ("stable", "host-budget"):
+                    self.assertEqual(summary["roles"]["app"]["limit"], 7)
+                    self.assertEqual(summary["roles"]["provider"]["limit"], 3)
+                elif scenario != "busy":
+                    self.assertIn("during idle sample", result.stderr)
+
+    @unittest.skipIf(os.name == "nt", "POSIX shell sampler")
+    def test_android_required_process_survives_entire_sample(self):
+        for scenario in ("stable", "busy", "disappear", "restart", "counter-reset",
+                         "missing-uptime", "uptime-reset"):
+            with self.subTest(scenario=scenario):
+                result = self.run_sampler("android", scenario)
+                self.assertEqual(result.returncode == 0, scenario == "stable",
+                                 result.stdout + result.stderr)
+                if scenario == "stable":
+                    summary = json.loads(result.stdout)
+                    self.assertEqual(summary["roles"]["app"]["limit"], 5)
+                elif scenario != "busy":
+                    self.assertIn("during idle sample", result.stderr)
 
     @unittest.skipUnless(POWERSHELL, "PowerShell is required for the Windows sampler")
     def test_windows_required_process_survives_entire_sample(self):
