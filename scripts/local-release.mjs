@@ -44,6 +44,7 @@ import {
 import { prepareMacosReleaseBinaries } from './macos-release-binaries.mjs'
 import { createMacosDmg } from './macos-release-dmg.mjs'
 import { assertZipEntriesEqualFiles } from './release-zip.mjs'
+import { requireMeshRelease } from './mesh-release-gate.mjs'
 import {
   assertNoPrivateBuildMetadata,
   normalizedTarOwnerArgs,
@@ -85,7 +86,10 @@ Options:
   --allow-partial        With --build, continue after unavailable platform builders
   --skip-zapstore        With --final, skip publishing the Android APK to Zapstore
   --dry-run              Print actions without copying or publishing
-  --help                 Show this help`)
+  --help                 Show this help
+
+Final publication requires IRIS_STACK_GATE_RECEIPT for the exact annotated
+release commit, produced by the pinned Iris Stack release gate.`)
 }
 
 function parseArgs(argv) {
@@ -1374,6 +1378,7 @@ function main() {
   const stageDir =
     options.stageDir || join(os.tmpdir(), `iris-drive-release-${tag.replace(/[^\w.-]/g, '_')}`)
   const commit = resolveReleaseCommit(tag, options.dryRun)
+  const meshGate = { repoRoot, tag, commit, receiptPath: env.IRIS_STACK_GATE_RECEIPT }
   const buildSteps = selectedBuildSteps(options)
   const signedAndroid = androidSigningIsComplete(env)
   const plannedAssetNames = options.build
@@ -1391,6 +1396,7 @@ function main() {
   }
   if (options.publish && !options.draft) {
     validateFinalPublishInputs({ env, skipZapstore: options.skipZapstore })
+    if (!options.dryRun) requireMeshRelease(meshGate)
   }
 
   if (options.build) {
@@ -1415,6 +1421,7 @@ function main() {
     if (!commandExists('htree')) {
       throw new Error('Missing htree; cannot publish release')
     }
+    if (!options.draft && !options.dryRun) requireMeshRelease(meshGate)
     const published = publishRelease({
       stageDir,
       releaseTree,

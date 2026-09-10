@@ -359,6 +359,14 @@ node scripts/local-release.mjs --tag v0.1.0 --publish --draft
 node scripts/local-release.mjs --tag v0.1.0 --final
 ```
 
+Final publication requires a clean checkout at the exact annotated tag and
+`IRIS_STACK_GATE_RECEIPT` pointing to the successful [pinned Iris Stack process-gate receipt](https://github.com/irislib/iris-stack/blob/c6035a6343c569d480f407d7f47fc755cb825b64/docs/integration-lab.md).
+Publish the source commit first and run that gate with `IRIS_STACK_RELEASE_GATE=1`,
+the pinned `IRIS_STACK_LAB_REV`, and `IRIS_STACK_DRIVE_REV` set to the full candidate
+commit. Keep the other product defaults. The publisher checks the exact source
+tuple and passing CPU/bandwidth measurements before building and again before
+publication. Draft staging and dry-run planning do not require a receipt.
+
 The default release tree is `releases/iris-drive`. Copy
 `.env.release.example` and `.env.zapstore.example` to local `.env.*.local`
 files for machine-specific signing, htree release, and Zapstore settings.
