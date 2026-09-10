@@ -839,6 +839,7 @@ try {
 
   $env:IRIS_DRIVE_CLI = $Idrive
   $env:IRIS_DRIVE_CONFIG_DIR = $ConfigDir
+  $env:IRIS_DRIVE_WINDOWS_CLOUD_ROOT = Join-Path $ConfigDir 'cloud-root'
   $env:IRIS_DRIVE_EXTERNAL_DAEMON = "true"
   $env:IRIS_DRIVE_WINDOWS_SHELL_TRACE = $ShellTrace
   $StartArguments = @()
