@@ -793,7 +793,10 @@ fn idrive_bin() -> PathBuf {
 
 fn idrive(config_dir: &Path) -> Command {
     let mut command = Command::new(idrive_bin());
-    command.env("IRIS_DRIVE_CONFIG_DIR", config_dir);
+    command
+        .env("IRIS_DRIVE_CONFIG_DIR", config_dir)
+        .env("HTREE_CONFIG_DIR", config_dir.join("shared-hashtree-config"))
+        .env("HTREE_DATA_DIR", config_dir.join("shared-hashtree"));
     command
 }
 

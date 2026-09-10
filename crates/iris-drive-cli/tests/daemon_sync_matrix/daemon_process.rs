@@ -148,11 +148,8 @@ impl DaemonChild {
             |port| format!("127.0.0.1:{port}"),
         );
         let fips_external = fips_port.map_or_else(String::new, |port| format!("127.0.0.1:{port}"));
-        let mut command = Command::new(idrive_bin());
+        let mut command = idrive(config_dir);
         command
-            .env("IRIS_DRIVE_CONFIG_DIR", config_dir)
-            .env("HTREE_CONFIG_DIR", config_dir.join("shared-hashtree-config"))
-            .env("HTREE_DATA_DIR", config_dir.join("shared-hashtree"))
             .env("IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP", "false")
             .env(
                 "IRIS_DRIVE_FIPS_ENABLE_LOCAL_RENDEZVOUS",
