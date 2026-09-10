@@ -274,13 +274,23 @@ class ProcessIdleCpuTests(unittest.TestCase):
                     from pathlib import Path
                     assert sys.argv[1:4] == ['-s', 'owned-emulator', 'shell'], sys.argv
                     if sys.argv[4:] == ['getconf', 'CLK_TCK']:
-                        print(100)
+                        print(250 if os.environ['IDLE_TEST_SCENARIO'] == 'raw-intervals' else 100)
                         sys.exit(0)
                     assert len(sys.argv) == 5 and 'pidof owned.package' in sys.argv[4], sys.argv
                     state = Path(os.environ['IDLE_TEST_STATE'])
                     sample = int(state.read_text()) if state.exists() else 0
                     state.write_text(str(sample + 1))
                     scenario = os.environ['IDLE_TEST_SCENARIO']
+                    if scenario == 'raw-intervals':
+                        uptime, first, second = [
+                            (100, 1000, 2000), (105, 1100, 2050),
+                            (115, 1100, 2050), (120, 1150, 2150),
+                            (130, 1150, 2150),
+                        ][sample]
+                        print(101, first)
+                        print(202, second)
+                        print('uptime', uptime)
+                        sys.exit(0)
                     if scenario != 'disappear' or sample < 2:
                         pid = 102 if scenario == 'restart' and sample >= 2 else 101
                         ticks = sample * 100 if scenario == 'busy' else 100
@@ -351,6 +361,34 @@ class ProcessIdleCpuTests(unittest.TestCase):
                     self.assertEqual(summary["roles"]["provider"]["limit"], 3)
                 elif scenario != "busy":
                     self.assertIn("during idle sample", result.stderr)
+
+    @unittest.skipIf(os.name == "nt", "POSIX shell sampler")
+    def test_android_raw_intervals_preserve_unweighted_budget_failure(self):
+        result = self.run_sampler("android", "raw-intervals")
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        summary = json.loads(result.stdout)
+        # Two short 12% intervals and two longer idle intervals still use
+        # the established 6% interval mean, not the 4% duration-weighted mean.
+        self.assertEqual(summary["roles"]["app"],
+                         {"avg_cpu": 6, "peak_cpu": 12, "samples": 4, "limit": 5})
+        self.assertIn("avg CPU 6.00% > 5.00%", result.stderr)
+        sampling = summary["sampling"]
+        self.assertEqual(sampling["clk_tck"], 250)
+        self.assertEqual(sampling["pids"], [101, 202])
+        self.assertEqual(len(sampling["intervals"]), 4)
+        expected = [
+            (100, 105, 5, {"101": 1000, "202": 2000}, {"101": 1100, "202": 2050}, 12),
+            (105, 115, 10, {"101": 1100, "202": 2050}, {"101": 1100, "202": 2050}, 0),
+            (115, 120, 5, {"101": 1100, "202": 2050}, {"101": 1150, "202": 2150}, 12),
+            (120, 130, 10, {"101": 1150, "202": 2150}, {"101": 1150, "202": 2150}, 0),
+        ]
+        for actual, (before, after, elapsed, ticks_before, ticks_after, cpu) in zip(
+                sampling["intervals"], expected):
+            self.assertEqual(actual, {
+                "uptime_before_seconds": before, "uptime_after_seconds": after,
+                "elapsed_seconds": elapsed, "ticks_before": ticks_before,
+                "ticks_after": ticks_after, "cpu_percent": cpu,
+            })
 
     @unittest.skipIf(os.name == "nt", "POSIX shell sampler")
     def test_android_required_process_survives_entire_sample(self):

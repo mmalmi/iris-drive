@@ -372,6 +372,7 @@ def fail(message):
     sys.exit(1)
 
 values = []
+raw_intervals = []
 previous_ticks, previous_uptime = snapshot()
 required_pids = set(previous_ticks)
 if not required_pids:
@@ -389,12 +390,21 @@ while time.monotonic() < deadline:
     if any(delta < 0 for delta in deltas):
         fail("android cumulative CPU counter decreased")
     values.append(sum(deltas) / clk_tck / elapsed * 100.0)
+    raw_intervals.append({
+        "uptime_before_seconds": previous_uptime,
+        "uptime_after_seconds": current_uptime,
+        "elapsed_seconds": elapsed,
+        "ticks_before": previous_ticks,
+        "ticks_after": current_ticks,
+        "cpu_percent": values[-1],
+    })
     previous_ticks, previous_uptime = current_ticks, current_uptime
 
 if not values:
     fail("android app CPU samples were unavailable")
 avg = sum(values) / len(values)
 summary = {"platform": "android", "required_roles": ["app"], "roles": {"app": {"avg_cpu": round(avg, 2), "peak_cpu": round(max(values), 2), "samples": len(values), "limit": limit}}}
+summary["sampling"] = {"clk_tck": clk_tck, "pids": sorted(required_pids), "intervals": raw_intervals}
 print(json.dumps(summary, indent=2, sort_keys=True))
 if avg > limit:
     print(f"[idle-cpu] FAIL: android app avg CPU {avg:.2f}% > {limit:.2f}%", file=sys.stderr)
