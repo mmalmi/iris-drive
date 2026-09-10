@@ -13,6 +13,8 @@
 
 ### Fixed
 
+- Keep direct connections and own-store file transfers running when the optional
+  same-user shared blob store cannot open, while reporting its error.
 - Reduce idle networking work through updated shared FIPS transport components.
 - Require exact-source CPU and bandwidth receipts before final publication,
   including sampling across the shared reputation maintenance interval.

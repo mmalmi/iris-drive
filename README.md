@@ -210,7 +210,9 @@ See the platform READMEs for focused instructions:
   provider set over reliable TCP streams. Drive keeps its own configured
   outbound links, and Blossom remains a configured remote/cache path. Shared
   access covers immutable blob bytes only; Drive retains ownership of roots,
-  pins, garbage collection, and other mutable application metadata.
+  pins, garbage collection, and other mutable application metadata. An
+  unavailable shared store is reported and omitted from retrieval routes;
+  Drive's own store and direct networking remain available.
 - Owns and stops its Nostr relay carrier with the embedded FIPS endpoint, so
   authenticated WebRTC signaling works without replacing UDP or other direct
   links. Only roster members enter the Drive data ACL; explicit pending-link

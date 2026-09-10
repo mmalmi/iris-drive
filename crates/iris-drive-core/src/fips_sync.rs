@@ -108,7 +108,10 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             .map_err(|error| FipsSyncError::Identity(error.to_string()))?;
         let discovery_scope = discovery_scope(config);
         let transport_settings = FipsTransportSettings::from_env();
-        let shared_store = configured_shared_lmdb_route()?;
+        let shared_store = configured_shared_lmdb_route().unwrap_or_else(|error| {
+            tracing::warn!(%error, "continuing without optional shared blob route");
+            None
+        });
         let recent_peers_path = recent_peers_file_path(device.path());
         let endpoint = Box::pin(bind_drive_fips_endpoint(fips_endpoint_options(
             identity_nsec,

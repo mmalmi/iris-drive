@@ -3,8 +3,17 @@ use super::*;
 use iris_drive_core::{AppConfig, Drive, Profile, paths::config_path_in};
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-#[allow(clippy::too_many_lines)]
 async fn real_daemons_sync_signed_roots_and_blobs_without_relays_or_seeds() {
+    assert_relayless_daemons_sync(false).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn real_daemons_sync_signed_roots_and_blobs_with_unavailable_shared_store() {
+    assert_relayless_daemons_sync(true).await;
+}
+
+#[allow(clippy::too_many_lines)]
+async fn assert_relayless_daemons_sync(shared_store_unavailable: bool) {
     let _guard = live_daemon_test_guard().await;
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
@@ -45,6 +54,11 @@ async fn real_daemons_sync_signed_roots_and_blobs_without_relays_or_seeds() {
     ];
     let mut daemons = Vec::new();
     for (i, dir) in dirs.iter().enumerate() {
+        if shared_store_unavailable {
+            // The optional read route cannot use a file as its data directory.
+            // Drive's own store and the isolated Hashtree config remain valid.
+            std::fs::write(dir.join("shared-hashtree"), b"unavailable shared store").unwrap();
+        }
         daemons.push(DaemonChild::spawn_with_fips_peers(
             dir,
             "",
@@ -115,6 +129,21 @@ async fn real_daemons_sync_signed_roots_and_blobs_without_relays_or_seeds() {
             );
             tokio::time::sleep(POLL_INTERVAL).await;
         }
+    }
+    if shared_store_unavailable {
+        for (dir, daemon) in dirs.into_iter().zip(&daemons) {
+            let log = daemon.log();
+            assert!(
+                log.contains("continuing without optional shared blob route"),
+                "{log}"
+            );
+            assert!(log.contains("shared Hashtree LMDB:"), "{log}");
+            assert_eq!(
+                std::fs::read(dir.join("shared-hashtree")).unwrap(),
+                b"unavailable shared store"
+            );
+        }
+        return;
     }
     #[cfg(unix)]
     for dir in dirs {
