@@ -151,6 +151,8 @@ impl DaemonChild {
         let mut command = Command::new(idrive_bin());
         command
             .env("IRIS_DRIVE_CONFIG_DIR", config_dir)
+            .env("HTREE_CONFIG_DIR", config_dir.join("shared-hashtree-config"))
+            .env("HTREE_DATA_DIR", config_dir.join("shared-hashtree"))
             .env("IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP", "false")
             .env(
                 "IRIS_DRIVE_FIPS_ENABLE_LOCAL_RENDEZVOUS",
@@ -191,9 +193,7 @@ impl DaemonChild {
             .env("IRIS_DRIVE_FIPS_UDP_PUBLIC", "false");
         command.arg("daemon");
         if relay_url.is_empty() {
-            command
-                .args(["--config-dir", config_dir.to_str().unwrap()])
-                .env("HTREE_DATA_DIR", config_dir.join("shared-hashtree"));
+            command.args(["--config-dir", config_dir.to_str().unwrap()]);
         } else {
             command.args(["--relay", relay_url]);
         }
