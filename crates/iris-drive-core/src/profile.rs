@@ -392,10 +392,8 @@ impl ProfileState {
             .as_ref()
             .is_some_and(|keys| keys.contains(&self.app_key_pubkey))
             && projection.can_write_roots(&self.app_key_pubkey);
-        let pending_receipt_authorizes_current_app_key =
-            self.pending_device_approval_receipt_authorizes_current_app_key();
         self.authorization_state = if current_app_key_has_usable_profile
-            || (pending_receipt_authorizes_current_app_key
+            || (self.pending_device_approval_receipt_authorizes_current_app_key()
                 && !projection.tombstones.contains_key(&self.app_key_pubkey))
         {
             AppKeyAuthorizationState::Authorized
