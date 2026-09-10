@@ -4,6 +4,82 @@ Performance and integration experiments log. Omit identifying information
 (pubkeys, secrets, IPs, private hostnames, exact repo names, raw hashes)
 unless the user explicitly asks otherwise.
 
+## 2026-09-10 unavailable service retry cost
+
+The Android idle gate found excessive CPU with an authorized retained profile,
+two connected WebSocket mesh peers, and unavailable test-service settings. The
+Kotlin test shell used optimized Rust. Its original long-running process averaged
+15.19% CPU. Restarting the identical APK with the same configuration and identity
+still averaged 14.51%, above the unchanged 5% limit. Both measurements used the
+normal 90-second warmup and 60-second window. Stored settings alone were not used
+as proof of live connectivity: the control retained the same FIPS endpoint and
+connected peer set.
+
+A full-client transport fixture reproduced repeated connection attempts to a
+service that rejected or immediately closed connections while its authenticated
+FIPS link stayed stable. The original periodic path attempted seven connections
+in 1.3 seconds; publication activity produced 27 accepted-and-closed streams in
+the same interval. Healthy simultaneous connections remained stable, and retained
+subscriptions recovered after the service became available. This was a service
+retry defect; it did not establish that the peer was unsuitable for mesh transit.
+
+A first correction spaced service attempts by at least one second through both
+paths. It reduced each fixture to two attempts in 1.3 seconds. An in-place Android
+update preserved the identity, configuration, endpoint and connected peers, and
+reduced average CPU from the restarted control's 14.51% to 5.95%. That was a 58.99%
+reduction, but the ordinary gate still failed. The original APK, both controls and
+the failed candidate remained retained, and release stayed held.
+
+Short native profiles used user-CPU sampling only; their symbol shares do not
+account for kernel time in the total CPU gate. They identified connection work,
+peer selection, identity conversion and some repeated authorization projection,
+but did not establish that any one remaining helper alone explained the excess.
+A second combined candidate deferred identity validation until a service attempt
+was admitted, spaced repeated failed attempts by three seconds, and skipped
+pending-receipt verification when the current roster already supplied usable
+authorization. Tests kept first connections and established sends immediate,
+retained the existing five-second late-service recovery deadline, and verified
+that a retained approval receipt could not override a later signed revocation.
+
+The same in-place update and unchanged 90-second warmup / 60-second Android gate
+averaged 5.44% CPU, with the same stored identity/configuration and live endpoint
+and connected peers. This was a 62.51% reduction from the matched restarted
+control, but still exceeded 5%. The measurement supports only the combined
+change; no separate saving is attributed to either small simplification. Release
+remained held, and the prior artifacts and failed results were preserved.
+
+A later 30-second diagnostic requested total task-clock sampling without changing
+device permissions. Although its event attributes admitted kernel samples, all
+773 retained samples were marked user mode and kernel symbols were unavailable.
+It did not resolve kernel attribution. The separately reported
+device run was conservatively proven reaped more than 36 seconds before the
+profile began. The profile still is not an unprofiled CPU gate or evidence that
+the fixed budget has been met.
+
+
+
+A third combined candidate kept the prior changes, borrowed peer-selection
+lookup keys, and sized initial cryptographic-run allocations from the admitted
+batch. Production dispatch tests measured singleton reserved item storage falling
+from 101,376 to 792 bytes on the test host. Full 128-packet runs kept the same
+capacity, and a nine-packet fairness continuation grew safely while completing
+cryptography and retiring plaintext in order.
+
+The source-bound Android UiTest candidate passed the unchanged gate at 4.94%
+average CPU (unrounded 4.9444%), with a 9.98% peak across 11 intervals. The prior
+candidate's exact endpoint and peers matched before the update and after the
+sample; stored configuration and identity remained unchanged. The helper retained
+raw process ticks, clock frequency and device uptime, allowing the unchanged
+unweighted interval mean to be independently recomputed. Connectivity was checked
+before and after, rather than continuously traced.
+
+The pass has only about 0.056 CPU percentage points of headroom. It supports the
+combined candidate under this measured configuration, without attributing an
+individual CPU saving to either allocation change or guaranteeing wider
+headroom. All earlier failures remain retained. The candidate uses private
+normalized patches and is not a shipping release; final published dependency
+adoption and required product gates remain before distribution.
+
 ## 2026-09-09 desktop idle measurement continuity
 
 Desktop idle samplers could accept a required process disappearing or restarting

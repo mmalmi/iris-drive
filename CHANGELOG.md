@@ -15,7 +15,12 @@
 
 - Keep direct connections and own-store file transfers running when the optional
   same-user shared blob store cannot open, while reporting its error.
-- Reduce idle networking work through updated shared FIPS transport components.
+- Bound repeated connection attempts when a mesh peer does not provide the
+  requested service, while retaining late-service recovery.
+- Size shared FIPS cryptographic allocations for the admitted packet batch and
+  remove repeated peer-selection key copies.
+- Skip redundant approval-receipt verification when the signed roster already
+  supplies usable authorization, preserving revocation precedence.
 - Require exact-source CPU and bandwidth receipts before final publication,
   including sampling across the shared reputation maintenance interval.
 - Support exact eligible iOS builds and resumable App Store review through the
