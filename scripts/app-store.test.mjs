@@ -111,6 +111,29 @@ test('App Store status is read-only even for an internal build and does not requ
   assert.equal(f.writes().length, 0)
 })
 
+for (const [name, linkedBuild, itemVersion, buildMatches, reviewMatches] of [
+  ['a different attached build', 'OTHER_BUILD', 'VERSION', false, true],
+  ['an unrelated review version', 'BUILD', 'OTHER_VERSION', true, false],
+  ['the exact submitted build and version', 'BUILD', 'VERSION', true, true],
+]) test(`App Store status identifies ${name} without writes`, async t => {
+  const f = await fixture(t, {
+    version: { appStoreState: 'WAITING_FOR_REVIEW' }, linkedBuild,
+    review: { state: 'WAITING_FOR_REVIEW' },
+    items: [{ ...exactItem, relationships: { appStoreVersion: { data: { type: 'appStoreVersions', id: itemVersion } } } }],
+  })
+  const result = await f.run('status', { IRIS_DRIVE_APP_STORE_NOTES_PATH: '' })
+  assert.equal(result.status, 0, result.stderr)
+  const status = JSON.parse(result.stdout)
+  assert.deepEqual(status.requestedBuild, { version: '1038', id: 'BUILD' })
+  assert.equal(status.attachedBuildId, linkedBuild)
+  assert.equal(status.buildMatchesRequested, buildMatches)
+  assert.deepEqual(status.reviewSubmissions, [{
+    id: 'REVIEW', state: 'WAITING_FOR_REVIEW', appStoreVersionIds: [itemVersion],
+    matchesRequestedVersion: reviewMatches,
+  }])
+  assert.equal(f.writes().length, 0)
+})
+
 for (const [name, options, error] of [
   ['internal build', { build: { buildAudienceType: 'INTERNAL_ONLY' } }, /INTERNAL_ONLY/],
   ['unconfirmed audience', { build: { buildAudienceType: null } }, /eligibility/],

@@ -33,22 +33,30 @@ export async function runAppStore({ action, app, build, versionName, notes, requ
   let version = matches[0]
   const reviews = (await getAll(`apps/${app.id}/reviewSubmissions`)).filter(r =>
     (!r.attributes?.platform || r.attributes.platform === 'IOS') && r.attributes?.state !== 'COMPLETE')
+  let attached = version ? await call('GET', `appStoreVersions/${version.id}/relationships/build`) : null
+  for (const candidate of reviews) {
+    candidate.items = (await getAll(`reviewSubmissions/${candidate.id}/items`)).filter(i => i.attributes?.state !== 'REMOVED')
+  }
   let review = null
   const report = () => console.log(JSON.stringify({
-    version: versionName, build: build.attributes?.version, buildId: build.id,
+    version: versionName, requestedBuild: { version: build.attributes?.version, id: build.id },
+    attachedBuildId: attached?.id ?? null, buildMatchesRequested: attached?.id === build.id,
     buildAudienceType: build.attributes?.buildAudienceType, processingState: build.attributes?.processingState,
     appStoreVersionId: version?.id ?? null, appStoreState: versionState(version) ?? null,
-    reviewSubmissions: reviews.map(r => ({ id: r.id, state: r.attributes?.state })),
+    reviewSubmissions: reviews.map(r => ({
+      id: r.id, state: r.attributes?.state,
+      appStoreVersionIds: r.items.map(i => i.relationships?.appStoreVersion?.data?.id ?? null),
+      matchesRequestedVersion: Boolean(version && r.items.length === 1 && r.items[0].relationships?.appStoreVersion?.data?.id === version.id),
+    })),
   }, null, 2))
   if (action === 'status') return report()
   build = await ensurePublicBuild(build)
   if (build.attributes?.buildAudienceType !== 'APP_STORE_ELIGIBLE') throw new Error('Build App Store eligibility is not confirmed')
   if (build.attributes?.expired) throw new Error('App Store build is expired')
   if (typeof build.attributes?.usesNonExemptEncryption !== 'boolean') throw new Error('Build export compliance must be completed before App Store preparation')
-  let attached = version ? await call('GET', `appStoreVersions/${version.id}/relationships/build`) : null
   if (attached && attached.id !== build.id) throw new Error('App Store version already has a different build attached')
   for (const candidate of reviews) {
-    const items = (await getAll(`reviewSubmissions/${candidate.id}/items`)).filter(i => i.attributes?.state !== 'REMOVED')
+    const items = candidate.items
     if (items.some(i => !version || i.relationships?.appStoreVersion?.data?.id !== version.id)) {
       throw new Error('An active review submission contains unrelated items; resolve it in App Store Connect')
     }
