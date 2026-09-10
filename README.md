@@ -346,6 +346,34 @@ record manually with the documented bundle ID and SKU if the API key cannot
 create app records.
 `just release` runs the same build entrypoint.
 
+For App Store distribution, export the upload with
+`IRIS_DRIVE_IOS_INTERNAL_ONLY=false`; an internal-only TestFlight build cannot
+be submitted to the store. The same eligible upload can serve internal
+TestFlight and App Store review. Then set the exact
+`IRIS_DRIVE_IOS_MARKETING_VERSION` and `IRIS_DRIVE_IOS_BUILD_NUMBER` and use:
+
+```bash
+scripts/app-store status
+IRIS_DRIVE_APP_STORE_NOTES_PATH=/path/to/release-notes.json scripts/app-store prepare
+IRIS_DRIVE_APP_STORE_NOTES_PATH=/path/to/release-notes.json scripts/app-store submit
+```
+
+The notes file maps every existing store locale to its release notes, for
+example `{"en-US":"Improve local peer discovery and idle usage."}`. `prepare`
+creates or reuses the version, preserves its metadata and release policy,
+updates the notes, and attaches the exact eligible build. Apple
+[transfers the current version's metadata](https://developer.apple.com/help/app-store-connect/update-your-app/create-a-new-version)
+when creating a new version; this helper requires an existing store release.
+`submit` also creates or resumes the exact version's
+[App Review submission](https://developer.apple.com/documentation/appstoreconnectapi/review-submissions)
+and confirms Apple's returned state. Rerunning resumes partial preparation
+without creating another review. Missing metadata, an attached different build,
+or unrelated review items stop the operation for correction in App Store
+Connect. The existing release policy controls distribution after approval;
+manual releases still require release in App Store Connect. `status` is
+read-only and is the default action. Authentication uses the existing
+TestFlight App Store Connect settings.
+
 4. Stage the release tree:
 
 ```bash

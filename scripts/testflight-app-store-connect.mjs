@@ -8,6 +8,7 @@ import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
 import { buildNumberFromVersion } from './local-release-lib.mjs'
+import { appStoreInputs, runAppStore } from './app-store-submit.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(__dirname, '..')
@@ -22,6 +23,11 @@ const internalActions = new Set(['ensure-app', 'put', 'attach', 'wait', 'status'
 function usage() {
   console.log(`usage: scripts/testflight-internal <ensure-app|put|attach|wait|status|groups|compliance>
        scripts/testflight-public <put|submit|attach|status|groups>
+       scripts/app-store <status|prepare|submit>
+
+App Store: exact marketing version and build are required. Prepare/submit also
+require IRIS_DRIVE_APP_STORE_NOTES_PATH (JSON map of every store locale to notes).
+Existing store metadata and release policy are retained; status is read-only.
 
 Commands:
   ensure-app create the App Store Connect app record if it is missing
@@ -58,7 +64,7 @@ if (['-h', '--help', 'help'].includes(mode) || ['-h', '--help', 'help'].includes
   process.exit(0)
 }
 
-if (!['internal', 'public'].includes(mode)) {
+if (!['internal', 'public', 'app-store'].includes(mode)) {
   usage()
   process.exit(2)
 }
@@ -68,6 +74,10 @@ if (mode === 'internal' && !internalActions.has(action)) {
 }
 if (mode === 'public' && !publicActions.has(action)) {
   fail(`Unknown public TestFlight action: ${action}`, 2)
+}
+
+if (mode === 'app-store' && !['status', 'prepare', 'submit'].includes(action)) {
+  fail(`Unknown App Store action: ${action}`, 2)
 }
 
 const appName = envValue(['IRIS_DRIVE_ASC_APP_NAME'], 'Iris Drive')
@@ -98,6 +108,7 @@ try {
 }
 
 async function main() {
+  const storeNotes = mode === 'app-store' ? appStoreInputs(action) : null
   authToken = createToken(resolveAscAuth())
   if (action === 'ensure-app') {
     await ensureApp()
@@ -118,7 +129,9 @@ async function main() {
     ? await waitForValidBuild(appId)
     : await requireVisibleBuild(appId)
 
-  if (mode === 'internal') {
+  if (mode === 'app-store') {
+    await runAppStore({ action, app, build, versionName, notes: storeNotes, request, requireOk, getAll, ensurePublicBuild })
+  } else if (mode === 'internal') {
     await runInternal(appId, build)
   } else {
     await runPublic(appId, build)
@@ -301,6 +314,7 @@ async function request(method, pathOrUrl, params = {}, body = undefined) {
   }
   const response = await fetch(url, {
     method,
+    signal: AbortSignal.timeout(30_000),
     headers: {
       Authorization: `Bearer ${authToken}`,
       'Content-Type': 'application/json',
@@ -335,7 +349,7 @@ async function getAll(path, params = {}) {
 
 async function findApp() {
   const apps = await getAll('apps', { 'filter[bundleId]': bundleId, limit: '10' })
-  return apps.find((app) => app.attributes?.bundleId === bundleId) ?? apps[0] ?? null
+  return apps.find((app) => app.attributes?.bundleId === bundleId) ?? null
 }
 
 async function exactBundleId() {
@@ -429,7 +443,8 @@ async function findBuild(appId) {
     }
     const preReleaseRef = build.relationships?.preReleaseVersion?.data
     const preReleaseVersion = preReleaseRef ? preReleaseVersions.get(preReleaseRef.id) : null
-    return preReleaseVersion?.attributes?.version === versionName
+    return preReleaseVersion?.attributes?.version === versionName &&
+      (mode !== 'app-store' || preReleaseVersion.attributes.platform === 'IOS')
   }) ?? null
 }
 
