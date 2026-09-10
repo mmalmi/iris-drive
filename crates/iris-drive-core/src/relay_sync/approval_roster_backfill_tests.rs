@@ -6,6 +6,51 @@ use nostr_sdk::Keys;
 use tempfile::tempdir;
 
 #[test]
+fn retained_approval_receipt_cannot_override_later_roster_revocation() {
+    let admin_dir = tempdir().unwrap();
+    let linked_dir = tempdir().unwrap();
+    let mut admin = Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
+    let mut linked = Profile::link_to_profile(
+        linked_dir.path(),
+        admin.state.profile_id,
+        admin.state.app_key_pubkey.clone(),
+        Some("phone".into()),
+    )
+    .unwrap();
+    queue_link_request(&mut linked, &admin, 123);
+    let receipt = approve_pending_request(&mut admin, &linked);
+    let mut config = AppConfig {
+        profile: Some(linked.state),
+        ..AppConfig::default()
+    };
+    apply_remote_device_approval_receipt_event(&mut config, &receipt).unwrap();
+    let state = config.profile.as_mut().unwrap();
+
+    state.recompute_authorization();
+    assert!(state.is_authorized(), "the receipt enables roster backfill");
+    assert!(state.app_keys.is_none());
+
+    state.profile_roster_ops = admin.state.profile_roster_ops.clone();
+    state.recompute_authorization();
+    assert!(
+        state.is_authorized(),
+        "the complete roster authorizes the key"
+    );
+
+    admin.revoke_app_key(&state.app_key_pubkey).unwrap();
+    state.profile_roster_ops = admin.state.profile_roster_ops.clone();
+    state.recompute_authorization();
+    assert_eq!(state.authorization_state, AppKeyAuthorizationState::Revoked);
+    assert!(
+        crate::app_key_link_transport::pending_app_key_approval_receipt_authorizes_app_key(
+            state.outbound_app_key_link_request.as_ref().unwrap(),
+            &state.app_key_pubkey,
+        ),
+        "the still-valid bootstrap receipt cannot supersede a signed tombstone"
+    );
+}
+
+#[test]
 fn device_approval_receipt_clears_awaiting_approval_before_full_roster_frame() {
     let admin_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
