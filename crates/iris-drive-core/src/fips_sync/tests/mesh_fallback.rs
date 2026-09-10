@@ -409,6 +409,7 @@ pub(super) fn local_only_settings(
         share_local_candidates: false,
         static_peer_hints: vec![(source.pubkey_bech32(), vec![source_udp_addr.to_string()])],
         bootstrap_peer_hints: Vec::new(),
+        trusted_raters: Vec::new(),
         webrtc_max_connections: 1,
         open_discovery_max_pending: 0,
     }

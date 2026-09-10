@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.1.37 - 2026-09-10
+
+### Changed
+
+- Use shared FIPS peer reputation and local transport observations when selecting
+  mesh peers. External raters remain optional and are not trusted by default.
+- Add `IRIS_DRIVE_FIPS_TRUSTED_RATERS` for explicit trusted `npub` or hex public
+  keys, with invalid configuration rejected by the shared validator.
+- Use the shared pubsub shutdown API consistently and remove the redundant
+  ownership-unwrapping branch.
+
+### Fixed
+
+- Reduce idle networking work through updated shared FIPS transport components.
+- Require exact-source CPU and bandwidth receipts before final publication,
+  including sampling across the shared reputation maintenance interval.
+- Support exact eligible iOS builds and resumable App Store review through the
+  existing authenticated release helper.
+
 ## 0.1.35 - 2026-09-08
 
 ### Fixed

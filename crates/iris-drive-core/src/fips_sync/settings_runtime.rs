@@ -30,6 +30,8 @@ pub struct FipsTransportSettings {
     pub share_local_candidates: bool,
     pub static_peer_hints: Vec<(String, Vec<String>)>,
     pub bootstrap_peer_hints: Vec<(String, Vec<String>)>,
+    /// Additional initial raters; the shared reputation policy validates keys.
+    pub trusted_raters: Vec<String>,
     pub webrtc_max_connections: usize,
     pub open_discovery_max_pending: usize,
 }
@@ -54,6 +56,7 @@ impl Default for FipsTransportSettings {
             share_local_candidates: target_allows_default_desktop_fips(std::env::consts::OS),
             static_peer_hints: Vec::new(),
             bootstrap_peer_hints: Vec::new(),
+            trusted_raters: Vec::new(),
             webrtc_max_connections: FIPS_WEBRTC_MAX_CONNECTIONS,
             open_discovery_max_pending: FIPS_NOSTR_OPEN_DISCOVERY_MAX_PENDING,
         }
@@ -102,6 +105,10 @@ impl FipsTransportSettings {
                 &std::env::var("IRIS_DRIVE_FIPS_STATIC_PEERS").unwrap_or_default(),
             ),
             bootstrap_peer_hints,
+            trusted_raters: std::env::var_os("IRIS_DRIVE_FIPS_TRUSTED_RATERS")
+                .map_or_else(Vec::new, |value| {
+                    parse_trusted_raters(&value.to_string_lossy())
+                }),
             webrtc_max_connections: bounded_webrtc_max_connections(usize_env(
                 "IRIS_DRIVE_FIPS_WEBRTC_MAX_CONNECTIONS",
             )),
@@ -180,6 +187,10 @@ pub(super) fn parse_list_env_value(value: &str) -> Vec<String> {
         .filter(|value| !value.is_empty())
         .map(ToOwned::to_owned)
         .collect()
+}
+
+pub(super) fn parse_trusted_raters(value: &str) -> Vec<String> {
+    parse_list_env_value(&value.replace(';', ","))
 }
 
 pub(super) fn parse_static_peer_hints(value: &str) -> Vec<(String, Vec<String>)> {

@@ -62,6 +62,14 @@ on LNVPS (`wss://fips1.iris.to/fips`) and Osiris
 `wss://.../fips` URLs or an empty value. Normal Nostr relay settings remain
 event and discovery/signaling routes; they do not carry FIPS packets.
 
+Mesh peer selection uses the shared FIPS reputation policy and local transport
+observations. No external rater is trusted by default. Optionally set
+`IRIS_DRIVE_FIPS_TRUSTED_RATERS` to comma- or semicolon-separated `npub` or hex
+public keys. These identities supply additional initial trust; neither friends
+nor successful transport peers automatically gain rating authority. Invalid
+explicit keys fail mesh startup. The shared adapter owns bounded rating
+exchange and publication; Drive does not run a separate rating loop.
+
 Useful CLI probes:
 
 ```bash
@@ -388,12 +396,14 @@ node scripts/local-release.mjs --tag v0.1.0 --final
 ```
 
 Final publication requires a clean checkout at the exact annotated tag and
-`IRIS_STACK_GATE_RECEIPT` pointing to the successful [pinned Iris Stack process-gate receipt](https://github.com/irislib/iris-stack/blob/c6035a6343c569d480f407d7f47fc755cb825b64/docs/integration-lab.md).
+`IRIS_STACK_GATE_RECEIPT` pointing to the successful [pinned Iris Stack process-gate receipt](https://github.com/irislib/iris-stack/blob/cec9501659b9cf08f9600e3f14987cad6ca1e7d3/docs/integration-lab.md).
 Publish the source commit first and run that gate with `IRIS_STACK_RELEASE_GATE=1`,
 the pinned `IRIS_STACK_LAB_REV`, and `IRIS_STACK_DRIVE_REV` set to the full candidate
-commit. Keep the other product defaults. The publisher checks the exact source
+commit. Set `IRIS_STACK_CHAT_REV` and `IRIS_STACK_HTREE_VERSION` to the companion
+pins in `scripts/mesh-release-gate.mjs`. The publisher checks the exact source
 tuple and passing CPU/bandwidth measurements before building and again before
 publication. Draft staging and dry-run planning do not require a receipt.
+Receipts check locally supplied provenance; they are not signed attestations.
 
 The default release tree is `releases/iris-drive`. Copy
 `.env.release.example` and `.env.zapstore.example` to local `.env.*.local`

@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 
-export const labRevision = 'c6035a6343c569d480f407d7f47fc755cb825b64'
+export const labRevision = 'cec9501659b9cf08f9600e3f14987cad6ca1e7d3'
 
 export function validateMeshReceipt(receipt, commit) {
   if (!/^[0-9a-f]{40}$/.test(commit) || receipt?.schema_version !== 1
@@ -11,8 +11,8 @@ export function validateMeshReceipt(receipt, commit) {
   }
   const expected = {
     drive: { source: 'htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-drive', rev: commit },
-    chat: { source: 'https://github.com/irislib/iris-chat-rs', rev: 'a4cafb1bb382593c9886d0a4314cf80292ef7850' },
-    hashtree: { source: 'crates.io', version: '0.2.146' },
+    chat: { source: 'https://github.com/irislib/iris-chat-rs', rev: '2270f5778fecf1e2eea7d47a4c382aacad63d551' },
+    hashtree: { source: 'crates.io', version: '0.2.147' },
   }
   for (const [name, source] of Object.entries(expected)) {
     const product = receipt.products?.[name]
@@ -25,6 +25,7 @@ export function validateMeshReceipt(receipt, commit) {
   if (!Array.isArray(samples) || samples.length !== 2 || samples.some(sample =>
     sample?.cpu_required !== true || sample.cpu_budget_percent !== 5
       || sample.wire_budget_bytes_per_second !== 4096
+      || !Number.isFinite(sample.seconds) || sample.seconds < 65
       || !Array.isArray(sample.cpu_percent) || sample.cpu_percent.length !== 3
       || sample.cpu_percent.some(cpu => !Number.isFinite(cpu) || cpu < 0 || cpu > 5)
       || !Number.isFinite(sample.combined_bytes_per_second)

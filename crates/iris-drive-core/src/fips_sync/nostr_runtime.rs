@@ -8,7 +8,7 @@ use fips_core::FipsEndpoint;
 use nostr_pubsub::{EventBus, EventSource, Filter, VerifiedEvent};
 use nostr_pubsub_fips::{
     FIPS_NOSTR_PUBSUB_DEFAULT_MAX_HOPS, FIPS_NOSTR_PUBSUB_MAX_FRAME_BYTES, FipsPubsubClient,
-    FipsPubsubClientOptions,
+    FipsPubsubClientOptions, FipsPubsubPolicyOptions,
 };
 use nostr_sdk::Event;
 use tokio::sync::broadcast;
@@ -36,14 +36,17 @@ impl DriveNostrPubsubRuntime {
     pub(super) async fn bind(
         endpoint: Arc<FipsEndpoint>,
         routed_peers: Vec<String>,
+        trusted_raters: Vec<String>,
     ) -> Result<Self, FipsSyncError> {
         #[cfg(feature = "stack-fixture")]
         let max_connected_peers = std::env::var("IRIS_STACK_FIXTURE_PUBSUB_MAX_PEERS")
             .map_or(64, |value| value.parse().unwrap_or(0));
         #[cfg(not(feature = "stack-fixture"))]
         let max_connected_peers = 64;
+        let mut reputation = FipsPubsubPolicyOptions::default();
+        reputation.reputation.trusted_raters = trusted_raters.into_iter().collect();
         let client = Arc::new(
-            FipsPubsubClient::start(
+            FipsPubsubClient::start_with_reputation(
                 endpoint,
                 FipsPubsubClientOptions {
                     query_timeout: Duration::from_millis(500),
@@ -57,6 +60,7 @@ impl DriveNostrPubsubRuntime {
                     max_hops: FIPS_NOSTR_PUBSUB_DEFAULT_MAX_HOPS,
                     routed_peers: bounded_routed_peers(routed_peers, max_connected_peers),
                 },
+                reputation,
             )
             .await
             .map_err(|error| endpoint_error(error.to_string()))?,
@@ -152,10 +156,7 @@ impl DriveNostrPubsubRuntime {
             let _ = task.await;
         }
         if let Some(client) = self.client.take() {
-            match Arc::try_unwrap(client) {
-                Ok(client) => client.shutdown().await,
-                Err(client) => drop(client),
-            }
+            client.shutdown_shared().await;
         }
     }
 }

@@ -37,9 +37,23 @@ async fn pubsub_roster_refresh_accepts_more_contacts_than_connection_slots() {
     let peers: Vec<_> = (0..70)
         .map(|_| AppKey::generate("roster-contact").pubkey_bech32())
         .collect();
-    let mut runtime = DriveNostrPubsubRuntime::bind(bound.native_endpoint.clone(), peers.clone())
-        .await
-        .unwrap();
+    let error = DriveNostrPubsubRuntime::bind(
+        bound.native_endpoint.clone(),
+        Vec::new(),
+        vec!["invalid-explicit-key".to_string()],
+    )
+    .await
+    .err()
+    .expect("invalid configured rater must fail shared validation");
+    assert!(
+        error
+            .to_string()
+            .contains("invalid trusted peer reputation rater")
+    );
+    let mut runtime =
+        DriveNostrPubsubRuntime::bind(bound.native_endpoint.clone(), peers.clone(), Vec::new())
+            .await
+            .unwrap();
     runtime.set_routed_peers(peers).unwrap();
     runtime.shutdown().await;
     bound.native_endpoint.shutdown().await.unwrap();
@@ -267,12 +281,17 @@ async fn shared_pubsub_carries_only_verified_nostr_events() {
     let alice_endpoint = alice_bound.native_endpoint.clone();
     let bob_endpoint = bob_bound.native_endpoint.clone();
 
-    let mut alice_runtime = DriveNostrPubsubRuntime::bind(alice_endpoint.clone(), Vec::new())
-        .await
-        .unwrap();
-    let mut bob_runtime = DriveNostrPubsubRuntime::bind(bob_endpoint.clone(), Vec::new())
-        .await
-        .unwrap();
+    let mut alice_runtime = DriveNostrPubsubRuntime::bind(
+        alice_endpoint.clone(),
+        Vec::new(),
+        vec![bob.pubkey_bech32()],
+    )
+    .await
+    .unwrap();
+    let mut bob_runtime =
+        DriveNostrPubsubRuntime::bind(bob_endpoint.clone(), Vec::new(), Vec::new())
+            .await
+            .unwrap();
     let mut received = bob_runtime.subscribe();
     let release_keys = Keys::generate();
     let tree_name = "releases/iris-drive";

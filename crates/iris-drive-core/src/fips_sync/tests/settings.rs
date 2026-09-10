@@ -2,8 +2,8 @@ use super::*;
 
 use super::super::settings_runtime::{
     bounded_webrtc_max_connections, fips_endpoint_options, parse_bool_env_value,
-    parse_list_env_value, parse_static_peer_hints, target_allows_default_desktop_fips,
-    target_allows_default_lan_discovery,
+    parse_list_env_value, parse_static_peer_hints, parse_trusted_raters,
+    target_allows_default_desktop_fips, target_allows_default_lan_discovery,
 };
 use fips_core::config::ConnectPolicy;
 
@@ -58,6 +58,7 @@ fn endpoint_options_can_advertise_native_udp_without_disabling_webrtc() {
         share_local_candidates: true,
         static_peer_hints: Vec::new(),
         bootstrap_peer_hints: Vec::new(),
+        trusted_raters: Vec::new(),
         webrtc_max_connections: 12,
         open_discovery_max_pending: 8,
     };
@@ -95,6 +96,23 @@ fn websocket_seed_list_ignores_empty_entries_and_whitespace() {
             "wss://one.example/fips".to_string(),
             "wss://two.example/fips".to_string(),
         ]
+    );
+    assert_eq!(
+        parse_list_env_value("wss://seed.example/fips;route=one"),
+        vec!["wss://seed.example/fips;route=one".to_string()],
+    );
+}
+
+#[test]
+fn peer_reputation_has_no_default_external_rater_and_preserves_explicit_keys() {
+    assert!(FipsTransportSettings::default().trusted_raters.is_empty());
+    let identity = AppKey::generate("configured-rater");
+    let npub = identity.pubkey_bech32();
+    let hex = "ab".repeat(32);
+    assert_eq!(
+        parse_trusted_raters(&format!(" {npub}; {hex}, ; invalid-explicit-key ")),
+        vec![npub, hex, "invalid-explicit-key".to_string()],
+        "key validation belongs to the shared reputation constructor",
     );
 }
 

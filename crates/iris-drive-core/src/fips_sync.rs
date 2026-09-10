@@ -205,6 +205,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
                 DriveNostrPubsubRuntime::bind(
                     native_endpoint.clone(),
                     peer_ids(&blob_peers).into_iter().collect(),
+                    transport_settings.trusted_raters.clone(),
                 )
                 .await?,
             )

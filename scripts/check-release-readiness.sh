@@ -160,19 +160,19 @@ require_contains scripts/release-gate.sh "just structure"
 require_contains scripts/release-gate.sh "cargo test --workspace --exclude idrive"
 require_contains scripts/release-gate.sh "--test daemon_sync_matrix"
 require_contains scripts/release-gate.sh "cargo build --workspace --release"
-require_contains Cargo.toml 'fips-core = { package = "nvpn-fips-core", version = "=0.4.78" }'
-require_contains Cargo.toml 'fips-endpoint = { package = "nvpn-fips-endpoint", version = "=0.4.78" }'
+require_contains Cargo.toml 'fips-core = { package = "nvpn-fips-core", version = "=0.4.79" }'
+require_contains Cargo.toml 'fips-endpoint = { package = "nvpn-fips-endpoint", version = "=0.4.79" }'
 require_contains Cargo.toml 'fips-tcp = { package = "nvpn-fips-tcp", version = "=0.2.2" }'
-require_contains Cargo.toml 'fips-tcp-endpoint = { package = "nvpn-fips-tcp-endpoint", version = "=0.2.14" }'
+require_contains Cargo.toml 'fips-tcp-endpoint = { package = "nvpn-fips-tcp-endpoint", version = "=0.2.15" }'
 require_contains Cargo.toml 'hashtree-core = "=0.2.89"'
 require_contains Cargo.toml 'hashtree-config = "=0.2.83"'
-require_contains Cargo.toml 'hashtree-embedded = "=0.2.89"'
-require_contains Cargo.toml 'hashtree-fips-transport = { version = "=0.4.17", features = ["webrtc-endpoint"] }'
+require_contains Cargo.toml 'hashtree-embedded = "=0.2.90"'
+require_contains Cargo.toml 'hashtree-fips-transport = { version = "=0.4.18", features = ["webrtc-endpoint"] }'
 require_contains Cargo.toml 'hashtree-lmdb = "=0.2.88"'
 require_contains Cargo.toml 'hashtree-network = "=0.2.88"'
 require_contains Cargo.toml 'hashtree-nostr = "=0.2.88"'
 require_contains Cargo.toml 'nostr-identity = "=0.3.1"'
-require_contains Cargo.toml 'nostr-pubsub-fips = "=0.5.1"'
+require_contains Cargo.toml 'nostr-pubsub-fips = "=0.5.3"'
 require_contains crates/iris-drive-core/src/fips_bootstrap.rs '"wss://fips1.iris.to/fips"'
 require_contains crates/iris-drive-core/src/fips_bootstrap.rs '"wss://fips2.iris.to/fips"'
 require_contains crates/iris-drive-core/Cargo.toml "fips-core.workspace = true"
@@ -189,22 +189,23 @@ require_contains linux/Cargo.toml 'license-file = ["../LICENSE", "0"]'
 require_contains LICENSE "Permission is hereby granted, free of charge"
 require_contains LICENSE 'THE SOFTWARE IS PROVIDED "AS IS"'
 for lock in Cargo.lock linux/Cargo.lock; do
-  require_registry_package "$lock" nvpn-fips-core 0.4.78 29b492f41e8070067e125ad36b295795d9a133f1d9c7b7e6b0e1cb54348fa12b
-  require_registry_package "$lock" nvpn-fips-endpoint 0.4.78 f9ca4e8f57ddf480e647b24b9128591ea96377ebe540fda23524963a2285f27d
+  require_registry_package "$lock" nvpn-fips-core 0.4.79 917b9bb27f5ec44bbda837a2d94e174cec70815274bee1d64f317fbd3019430a
+  require_registry_package "$lock" nvpn-fips-endpoint 0.4.79 b21c1c1764b69801be16eaae62f36cefa700ceea92cad882be42a09949d1bc9c
   require_registry_package "$lock" nvpn-fips-tcp 0.2.2 7d5078996e38a6e568e2783b93601dc55eb96bb3df0fa1c4307cdab80b85ab97
-  require_registry_package "$lock" nvpn-fips-tcp-endpoint 0.2.14 52fa19ae9ec32e2b84463136e4718a12023322edff79ba030c76f0699d112796
-  require_registry_package "$lock" hashtree-cli 0.2.146 9a3a289376f1d46434546034a2513ae0ef7f01dd471102682c1049484d8b2d9b
-  require_registry_package "$lock" hashtree-updater 0.2.84 63b56544b40dd22148a499824335adb8aa5d94f11518bf0945270a98a8815e82
+  require_registry_package "$lock" nvpn-fips-tcp-endpoint 0.2.15 c5b402be9e8d7cc6b0b694ca885e2aa3f731abec50a6ff50638def75b06315de
+  require_registry_package "$lock" hashtree-cli 0.2.147 7dde703e9abc2965de67234fc8e706d5dd5ee83de81a3dc3b8d102d7443d1649
+  require_registry_package "$lock" hashtree-updater 0.2.85 1ae2f504cfb836f0e237d76a33195d8d6a0fe591932752ba599745d0cad4c0cc
   require_registry_package "$lock" hashtree-config 0.2.83 661c0bec57ba49999860fc418a7e656714cd79d82a3c3ee272794b90bb49db76
   require_registry_package "$lock" hashtree-core 0.2.89 5fab53a9c7a45beaed44a2c35343b3228bd65c65601041b1338bdbdc71b283b2
-  require_registry_package "$lock" hashtree-embedded 0.2.89 3a4c17f0212837808fe525dad7f7feaa0eaf2c05b24d98f2ced8c82d425d8cbd
-  require_registry_package "$lock" hashtree-fips-transport 0.4.17 a0afaf19011372eeb328da841c47d4272f0f9a31d2c5bf9f23d215bfcbb35dbc
+  require_registry_package "$lock" hashtree-embedded 0.2.90 4990d3fc23a368c1dd0f0b40ecda09981383a3a2f50a40df16a7435616800885
+  require_registry_package "$lock" hashtree-fips-transport 0.4.18 57186170e458ec43972a7645c0548d1d2f8ebf765409232b0dcfa8c18be4561a
   require_registry_package "$lock" hashtree-lmdb 0.2.88 c2d572a31703499c00549d4b6e71ed148a6d9e8b51e9c0c1f0049c7782092318
   require_registry_package "$lock" hashtree-network 0.2.88 4f8fdbb7f18e4ebd4b3887055ca3af7230fc7cbf06e49e21c2ff9122130fcfa5
   require_registry_package "$lock" hashtree-nostr 0.2.88 bd941c6b56fded4be867db3e3da2da7fdb4b0b8cb266e0e68b1476f1caaf8afa
-  require_registry_package "$lock" hashtree-nostr-pubsub 0.2.84 ef6b07860b7e1aa8e76d68eb215ab78d63f6958ba12b5b2e34286cf40a371065
-  require_registry_package "$lock" nostr-pubsub 0.1.13 84bfacf8bb4c535ad4c80dc14bdef1dfe94b2b7064f8bf83509a137f8068e0e1
-  require_registry_package "$lock" nostr-pubsub-fips 0.5.1 42ea69e41fdc70a77c23de7a9aeb76d82003bc536c2f2aaf203b28a8fabf6f7f
+  require_registry_package "$lock" hashtree-nostr-pubsub 0.2.85 923e4ef7e715622543e41b2214e0fcd8b6f501643cc42879b728e5c7836bc4f6
+  require_registry_package "$lock" nostr-pubsub 0.1.14 7c47632af5e40b508f36d79782251860fee9d8cbc3b9f337cdea30c96748536a
+  require_registry_package "$lock" nostr-pubsub-fips 0.5.3 cc240383948fe47300dc1e0f0ea064491142f46c436001c86707e96e00026536
+  require_registry_package "$lock" nostr-pubsub-social-graph 0.2.3 35325e59eea42ad99eb05fba75c85dd4882450c755d5b99be6582b45679e0a6f
   require_registry_package "$lock" nostr-pubsub-relay 0.1.11 8641200920d163b2d82c34e6f15605cff93a0546e3e0087fce8f3bddaa2329ca
 done
 require_absent scripts/docker-cli-e2e.sh "Missing required sibling checkout"

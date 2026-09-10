@@ -13,11 +13,11 @@ function receipt(revision = sha) {
     lab_worktree_clean: true,
     products: {
       drive: { source: 'htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-drive', rev: revision, sha256: 'b'.repeat(64) },
-      chat: { source: 'https://github.com/irislib/iris-chat-rs', rev: 'a4cafb1bb382593c9886d0a4314cf80292ef7850', sha256: 'b'.repeat(64) },
-      hashtree: { source: 'crates.io', version: '0.2.146', sha256: 'b'.repeat(64) },
+      chat: { source: 'https://github.com/irislib/iris-chat-rs', rev: '2270f5778fecf1e2eea7d47a4c382aacad63d551', sha256: 'b'.repeat(64) },
+      hashtree: { source: 'crates.io', version: '0.2.147', sha256: 'b'.repeat(64) },
     },
     metrics: { idle: Array.from({ length: 2 }, () => ({
-      cpu_required: true, cpu_budget_percent: 5, wire_budget_bytes_per_second: 4096,
+      seconds: 65, cpu_required: true, cpu_budget_percent: 5, wire_budget_bytes_per_second: 4096,
       cpu_percent: [0, 0.5, 5], combined_bytes_per_second: 3000,
     })) },
   }
@@ -35,6 +35,11 @@ test('mesh receipt binds candidate, lab, companions and measured budgets', () =>
     value => { value.products.drive.source = 'local-binary' },
     value => { value.products.drive.sha256 = '' },
     value => { value.metrics.idle[0].cpu_budget_percent = 100 },
+    value => { delete value.metrics.idle[0].seconds },
+    value => { value.metrics.idle[0].seconds = 64.99 },
+    value => { value.metrics.idle[1].seconds = 15 },
+    value => { value.metrics.idle[0].seconds = Number.POSITIVE_INFINITY },
+    value => { value.metrics.idle[0].seconds = '65' },
     value => { value.metrics.idle[0].cpu_percent[1] = null },
     value => { value.metrics.idle[0].cpu_percent[1] = true },
     value => { value.metrics.idle[0].cpu_percent[1] = 5.1 },
