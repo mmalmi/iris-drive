@@ -11,8 +11,8 @@ export function validateMeshReceipt(receipt, commit) {
   }
   const expected = {
     drive: { source: 'htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-drive', rev: commit },
-    chat: { source: 'https://github.com/irislib/iris-chat-rs', rev: '2270f5778fecf1e2eea7d47a4c382aacad63d551' },
-    hashtree: { source: 'crates.io', version: '0.2.147' },
+    chat: { source: 'https://github.com/irislib/iris-chat-rs', rev: 'dc524968bab6b93d770cc1d7e8e81414293c37ad' },
+    hashtree: { source: 'crates.io', version: '0.2.148' },
   }
   for (const [name, source] of Object.entries(expected)) {
     const product = receipt.products?.[name]

@@ -13,8 +13,8 @@ function receipt(revision = sha) {
     lab_worktree_clean: true,
     products: {
       drive: { source: 'htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-drive', rev: revision, sha256: 'b'.repeat(64) },
-      chat: { source: 'https://github.com/irislib/iris-chat-rs', rev: '2270f5778fecf1e2eea7d47a4c382aacad63d551', sha256: 'b'.repeat(64) },
-      hashtree: { source: 'crates.io', version: '0.2.147', sha256: 'b'.repeat(64) },
+      chat: { source: 'https://github.com/irislib/iris-chat-rs', rev: 'dc524968bab6b93d770cc1d7e8e81414293c37ad', sha256: 'b'.repeat(64) },
+      hashtree: { source: 'crates.io', version: '0.2.148', sha256: 'b'.repeat(64) },
     },
     metrics: { idle: Array.from({ length: 2 }, () => ({
       seconds: 65, cpu_required: true, cpu_budget_percent: 5, wire_budget_bytes_per_second: 4096,
