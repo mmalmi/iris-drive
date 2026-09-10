@@ -93,6 +93,46 @@ class CrossVmIdleGateTests(unittest.TestCase):
 
 
 class ProcessIdleCpuTests(unittest.TestCase):
+    @unittest.skipUnless(sys.platform == "darwin", "Requires the actual Darwin mktemp")
+    def test_macos_smoke_allocates_profile_inside_supplied_tmpdir(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            scripts = root / "scripts"
+            scripts.mkdir()
+            shutil.copyfile(SCRIPTS / "macos-idle-cpu-smoke.sh",
+                            scripts / "macos-idle-cpu-smoke.sh")
+            app = root / "Signed App.app"
+            helper = app / "Contents" / "MacOS" / "idrive"
+            helper.parent.mkdir(parents=True)
+            observed = root / "observed-config"
+            helper.write_text(f"#!{sys.executable}\n" + textwrap.dedent("""\
+                import os, sys
+                from pathlib import Path
+                if 'init' in sys.argv:
+                    Path(os.environ['OBSERVED_CONFIG']).write_text(sys.argv[2])
+                    sys.exit(73)  # Stop production setup before any app launch.
+                """))
+            helper.chmod(0o755)
+            mocks = root / "bin"
+            mocks.mkdir()
+            for command in ("pkill", "osascript"):
+                tool = mocks / command
+                tool.write_text("#!/bin/sh\nexit 0\n")
+                tool.chmod(0o755)
+            owned_tmp = root / "entitled group with spaces"
+            owned_tmp.mkdir()
+            result = subprocess.run(
+                ["/bin/bash", str(scripts / "macos-idle-cpu-smoke.sh")],
+                env=dict(os.environ, TMPDIR=str(owned_tmp),
+                         PATH=f"{mocks}:/usr/bin:/bin:/usr/sbin:/sbin",
+                         IRIS_DRIVE_MACOS_IDLE_APP_PATH=str(app),
+                         OBSERVED_CONFIG=str(observed)),
+                text=True, capture_output=True, timeout=5)
+            self.assertEqual(result.returncode, 73, result.stderr)
+            profile = Path(observed.read_text()).parent
+            self.assertEqual(profile.parent.resolve(), owned_tmp.resolve())
+            self.assertFalse(profile.exists(), "Stock cleanup must remove the task profile")
+
     def test_ios_launch_clears_stale_profile_but_preserves_explicit_override(self):
         source = (SCRIPTS / "idle-cpu-gate.sh").read_text()
         helper = source[source.index("    launch_ios_app() {"):

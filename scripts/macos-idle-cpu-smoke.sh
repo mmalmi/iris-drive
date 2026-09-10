@@ -32,7 +32,7 @@ IDRIVE="$APP_PATH/Contents/MacOS/idrive"
   exit 1
 }
 
-APP_BASE_DIR="$(mktemp -d -t iris-drive-macos-idle.XXXXXX)"
+APP_BASE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/iris-drive-macos-idle.XXXXXX")"
 mkdir -p "$APP_BASE_DIR/Config"
 "$IDRIVE" --config-dir "$APP_BASE_DIR/Config" init --force \
   --label "macOS idle CPU gate" >/dev/null
