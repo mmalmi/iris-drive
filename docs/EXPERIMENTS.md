@@ -33,6 +33,13 @@ a separately admitted 1 GiB allowance and the same free-space reserve. These
 are build-resource results, not app CPU or bandwidth improvements. Idle app
 acceptance must require the configured gateway to be healthy.
 
+An early idle check of the corrected native candidate required that configured
+gateway and at least one connected mesh peer throughout. After 90 seconds of
+warmup, two 60-second windows averaged 3.77% and 3.92% CPU, below the unchanged
+5% limit; their peaks were 6.93% and 5.97%. The app was stopped afterwards.
+These unprofiled windows establish acceptable idle behavior for this working
+candidate, not a causal CPU reduction or final shipping-artifact acceptance.
+
 ## 2026-09-11 Windows renderer compatibility
 
 A self-contained Windows release app in a VM responded to its native GUI
