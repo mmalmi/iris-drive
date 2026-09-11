@@ -201,6 +201,7 @@ impl DaemonTaskSet {
 }
 
 include!("daemon/app_key_link_subscriptions.rs");
+include!("daemon/app_key_link_sender.rs");
 include!("daemon/runtime_support.rs");
 include!("daemon/runtime.rs");
 include!("daemon/gateway_runtime.rs");

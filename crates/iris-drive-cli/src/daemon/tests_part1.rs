@@ -85,6 +85,26 @@ async fn grouped_keyed_daemon_tasks_replace_older_roots_but_coalesce_duplicates(
         .expect("new drop notification");
 }
 
+#[tokio::test]
+async fn roster_sender_owns_one_task_and_releases_its_receiver_on_shutdown() {
+    let dir = tempfile::tempdir().unwrap();
+    let tasks = DaemonTaskSet::default();
+    let client = nostr_sdk::Client::default();
+    let acked = spawn_app_key_link_roster_sender(dir.path(), &client, None, &tasks);
+    for index in 0..100 {
+        acked.send_replace(Arc::new(BTreeSet::from([index.to_string()])));
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(
+        APP_KEY_LINK_TICK_MILLIS + 20,
+    ))
+    .await;
+    assert_eq!(tasks.tasks.lock().unwrap().len(), 1);
+    assert_eq!(acked.receiver_count(), 1);
+    tasks.abort_all().await;
+    assert_eq!(acked.receiver_count(), 0);
+    assert!(tasks.tasks.lock().unwrap().is_empty());
+}
+
 #[test]
 fn config_root_watch_accepts_exact_file_and_parent_directory_events() {
     let dir = tempfile::tempdir().unwrap();

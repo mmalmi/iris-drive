@@ -28,6 +28,8 @@ struct LocalRelayState {
     drop_kinds: Arc<StdMutex<BTreeSet<u64>>>,
     suppress_live_kinds: Arc<StdMutex<BTreeSet<u64>>>,
     reject_kinds: Arc<StdMutex<BTreeSet<u64>>>,
+    stalled_kinds: Arc<StdMutex<BTreeSet<u64>>>,
+    stalled_publications: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 pub(crate) struct LocalNostrRelay {
@@ -41,6 +43,10 @@ pub(crate) struct LocalNostrRelay {
     reject_kinds: Arc<StdMutex<BTreeSet<u64>>>,
     #[allow(dead_code)]
     events: Arc<Mutex<Vec<Value>>>,
+    #[allow(dead_code)]
+    stalled_kinds: Arc<StdMutex<BTreeSet<u64>>>,
+    #[allow(dead_code)]
+    stalled_publications: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl LocalNostrRelay {
@@ -52,11 +58,15 @@ impl LocalNostrRelay {
             drop_kinds: Arc::new(StdMutex::new(BTreeSet::new())),
             suppress_live_kinds: Arc::new(StdMutex::new(BTreeSet::new())),
             reject_kinds: Arc::new(StdMutex::new(BTreeSet::new())),
+            stalled_kinds: Arc::new(StdMutex::new(BTreeSet::new())),
+            stalled_publications: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         };
         let drop_kinds = state.drop_kinds.clone();
         let suppress_live_kinds = state.suppress_live_kinds.clone();
         let reject_kinds = state.reject_kinds.clone();
         let events = state.events.clone();
+        let stalled_kinds = state.stalled_kinds.clone();
+        let stalled_publications = state.stalled_publications.clone();
         let app = Router::new().route("/", get(relay_ws)).with_state(state);
         let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
             .await
@@ -72,6 +82,8 @@ impl LocalNostrRelay {
             suppress_live_kinds,
             reject_kinds,
             events,
+            stalled_kinds,
+            stalled_publications,
         }
     }
 
@@ -102,6 +114,19 @@ impl LocalNostrRelay {
     #[allow(dead_code)]
     pub(crate) async fn events(&self) -> Vec<Value> {
         self.events.lock().await.clone()
+    }
+
+    // Keep the connection and subscriptions live, but neither retain nor ACK
+    // these publications. Passing an empty slice lets subsequent retries work.
+    #[allow(dead_code)]
+    pub(crate) fn stall_kinds(&self, kinds: &[u16]) {
+        *self.stalled_kinds.lock().unwrap() = kinds.iter().copied().map(u64::from).collect();
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn stalled_publications(&self) -> usize {
+        self.stalled_publications
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     // Relay fixtures expose a uniform async API even when this accessor is local-only.
@@ -173,6 +198,11 @@ async fn relay_socket(socket: WebSocket, state: LocalRelayState) {
                         };
                         let event_id = event["id"].as_str().unwrap_or_default().to_string();
                         let kind = event["kind"].as_u64().unwrap_or_default();
+                        if state.stalled_kinds.lock().unwrap().contains(&kind) {
+                            state.stalled_publications
+                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                            continue;
+                        }
                         if state.reject_kinds.lock().unwrap().contains(&kind) {
                             let _ = sender
                                 .send(WsMessage::Text(

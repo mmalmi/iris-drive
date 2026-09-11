@@ -724,4 +724,14 @@ fn authorized_roster_snapshot_cache_reuses_unchanged_config_and_invalidates_on_s
         .expect("changed config refreshes snapshot");
     assert_eq!(refreshed.recipients.len(), 2);
     assert_ne!(refreshed.frame_bytes, b"cached");
+
+    admin.revoke_app_key(&first_joiner).unwrap();
+    config.profile = Some(admin.state.clone());
+    config.save(config_path_in(admin_dir.path())).unwrap();
+    let revoked = load_authorized_app_key_link_roster_snapshot(admin_dir.path(), &mut cache)
+        .unwrap()
+        .expect("revocation refreshes the retained sender cache");
+    assert_eq!(revoked.recipients.len(), 1);
+    assert_eq!(revoked.recipients[0].app_key_pubkey, second_joiner);
+    assert_ne!(revoked.frame_bytes, refreshed.frame_bytes);
 }

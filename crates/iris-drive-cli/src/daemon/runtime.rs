@@ -360,8 +360,10 @@ pub(crate) fn cmd_daemon(
         app_key_link_timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         let mut sent_app_key_link_requests = BTreeMap::new();
         let mut app_key_link_request_config_cache = AppConfigLoadCache::default();
-        let mut sent_app_key_link_rosters = AuthorizedAppKeyLinkRosterSendCache::default();
         let mut acked_app_key_link_rosters = BTreeSet::new();
+        let acked_app_key_link_tx = spawn_app_key_link_roster_sender(
+            config_dir, &client, fips_blocks.clone(), &daemon_tasks,
+        );
         let mut last_provider_root_key = current_app_key_root_key(&config);
         let mut provider_root_publish_cache = ProviderRootPublishCache::default();
 
@@ -927,22 +929,6 @@ pub(crate) fn cmd_daemon(
                             json!({"event": "app_key_link_request_send_error", "error": format!("{error:#}")})
                         ),
                     }
-                    match Box::pin(send_authorized_app_key_link_rosters(
-                        config_dir,
-                        &client,
-                        fips_blocks.as_deref(),
-                        &mut sent_app_key_link_rosters,
-                        &acked_app_key_link_rosters,
-                    ))
-                    .await
-                    {
-                        Ok(Some(payload)) => println!("{payload}"),
-                        Ok(None) => {}
-                        Err(error) => println!(
-                            "{}",
-                            json!({"event": "app_key_link_roster_send_error", "error": format!("{error:#}")})
-                        ),
-                    }
                     spawn_pending_device_approval_ack_replay(config_dir, &relays, &daemon_tasks);
                 }
                 recv = async {
@@ -952,6 +938,7 @@ pub(crate) fn cmd_daemon(
                         std::future::pending().await
                     }
                 } => {
+                    let acked_count = acked_app_key_link_rosters.len();
                     if handle_direct_app_message_event(
                         recv,
                         &mut direct_app_message_rx,
@@ -972,6 +959,9 @@ pub(crate) fn cmd_daemon(
                                     DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS,
                                 ),
                         );
+                    }
+                    if acked_app_key_link_rosters.len() != acked_count {
+                        acked_app_key_link_tx.send_replace(Arc::new(acked_app_key_link_rosters.clone()));
                     }
                 }
                 message = async {

@@ -3,6 +3,140 @@ use super::*;
 use nostr_sdk::JsonUtil as _;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn stalled_roster_relay_keeps_daemon_fips_status_and_direct_ack_responsive() {
+    let _guard = live_daemon_test_guard().await;
+    let relay = LocalNostrRelay::spawn().await;
+    let owner_cfg = tempdir().unwrap();
+    let linked_cfg = tempdir().unwrap();
+    let owner = run_json(owner_cfg.path(), &["init", "--label", "admin"]);
+    let linked = run_json(
+        linked_cfg.path(),
+        &[
+            "link",
+            owner["app_key_link_invite"]["url"].as_str().unwrap(),
+            "--label",
+            "phone",
+        ],
+    );
+    add_config_relay(owner_cfg.path(), &relay.url);
+    add_config_relay(linked_cfg.path(), &relay.url);
+    let seed_port = unused_loopback_port();
+    let owner_daemon = DaemonChild::spawn_websocket_listener(
+        owner_cfg.path(),
+        &relay.url,
+        owner_cfg.path().join("owner.log"),
+        unused_loopback_port(),
+        seed_port,
+        8,
+    );
+    let linked_daemon = DaemonChild::spawn_websocket_client(
+        linked_cfg.path(),
+        &relay.url,
+        linked_cfg.path().join("linked.log"),
+        unused_loopback_port(),
+        seed_port,
+        8,
+    );
+    wait_until_websocket_fips_connected(
+        owner_cfg.path(),
+        linked_cfg.path(),
+        linked["current_app_key_npub"].as_str().unwrap(),
+        owner["current_app_key_npub"].as_str().unwrap(),
+        &owner_daemon,
+        &linked_daemon,
+    )
+    .await;
+
+    relay.stall_kinds(&[iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP]);
+    // Persist through the same locked core approval path as the UI, leaving
+    // delivery to the running daemon instead of the CLI's one-shot publisher.
+    {
+        let _lock = iris_drive_core::config_lock::ConfigMutationLock::acquire(owner_cfg.path())
+            .await
+            .unwrap();
+        let path = iris_drive_core::paths::config_path_in(owner_cfg.path());
+        let mut config = iris_drive_core::AppConfig::load_or_default(&path).unwrap();
+        let mut profile =
+            iris_drive_core::Profile::load(config.profile.take().unwrap(), owner_cfg.path())
+                .unwrap();
+        let bootstrap = iris_drive_core::app_key_link_transport::parse_app_key_approval_bootstrap(
+            linked["app_key_link_request"]["url"].as_str().unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+        profile
+            .approve_device_bootstrap(&bootstrap, Some("Phone".into()))
+            .unwrap();
+        config.profile = Some(profile.state);
+        config.save(path).unwrap();
+    }
+    let started = Instant::now();
+    while relay.stalled_publications() == 0 && started.elapsed() < Duration::from_secs(5) {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        relay.stalled_publications() > 0,
+        "daemon did not try the stalled relay"
+    );
+    let status_count = owner_daemon
+        .log()
+        .matches("\"event\":\"fips_status\"")
+        .count();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let log = owner_daemon.log();
+        let ack_applied = log
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .any(|event| {
+                event["event"] == "fips_device_approval_applied_ack"
+                    && event["outcome"] == "applied"
+                    && event["pending_after"] == 0
+            });
+        if ack_applied && log.matches("\"event\":\"fips_status\"").count() > status_count {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "stalled relay blocked the daemon's direct ACK or FIPS status\nowner:\n{log}\nlinked:\n{}",
+            linked_daemon.log()
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!(
+        run_json(owner_cfg.path(), &["status"])["profile"]["pending_device_approval_receipt_count"],
+        0
+    );
+    matrix_progress(format!(
+        "direct approval ACK and refreshed FIPS status while relay is stalled: {:?}",
+        started.elapsed()
+    ));
+
+    // A direct ACK must not discard the still-unpublished durable relay ops.
+    let recovery_log_start = owner_daemon.log().len();
+    relay.stall_kinds(&[]);
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        if owner_daemon.log()[recovery_log_start..]
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .any(|event| {
+                event["event"] == "app_key_link_roster_sent"
+                    && event["sent_over_relay"] == true
+                    && event["sent_over_fips"] == false
+            })
+        {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "daemon did not retry durable relay publication after its direct ACK"
+        );
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn running_owner_replays_durable_approval_ack_after_live_fanout_is_lost() {
     let _guard = live_daemon_test_guard().await;
     let relay = LocalNostrRelay::spawn().await;
