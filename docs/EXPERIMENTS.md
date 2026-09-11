@@ -4,6 +4,28 @@ Performance and integration experiments log. Omit identifying information
 (pubkeys, secrets, IPs, private hostnames, exact repo names, raw hashes)
 unless the user explicitly asks otherwise.
 
+## 2026-09-11 Slow approval relays and daemon responsiveness
+
+A native linking run established its authenticated direct FIPS connection while
+the daemon continued reporting an older peer snapshot. Roster publication awaited
+FIPS delivery and then relay publication inside the main event loop, with existing
+timeouts of two and five seconds. Repeated relay timeouts delayed status updates
+and incoming direct-message handling despite working peer connectivity.
+
+A regression uses two real daemons and a local relay that remains connected but
+withholds acknowledgements for roster publications. The unchanged daemon failed
+to process a direct approval acknowledgement and emit a fresh FIPS status within
+three seconds of the stalled publication. One owned background sender passes the
+same responsiveness check in 2.351 seconds. After the relay resumes, pending relay
+publication succeeds without a redundant direct resend after the peer's ACK.
+
+The sender retains its cache, retry schedule and transport timeouts, permits only
+one in-flight publication, and uses the existing daemon task cleanup. Shared
+immutable ACK snapshots avoid copying the whole set on each idle tick. Fifteen
+focused roster unit tests, the real daemon regression and strict lint pass. Final
+desktop packages and release mesh/resource checks still need verification; this
+experiment does not establish a CPU or bandwidth improvement.
+
 ## 2026-09-11 Android embedded gateway startup
 
 An authorized Android profile had connected FIPS peers while its embedded
