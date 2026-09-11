@@ -339,10 +339,9 @@ PY
   mounted_app="$(find "$DMG_MOUNT" -maxdepth 2 -name '*.app' -type d | head -n 1)"
   [[ -n "$mounted_app" ]] || fail "no .app bundle found in DMG"
   local copy_dir="$WORK_DIR/dmg-copy"
-  local copied_app="$copy_dir/$(basename "$mounted_app")"
+  dmg_app="$copy_dir/$(basename "$mounted_app")"
   mkdir -p "$copy_dir"
-  run ditto "$mounted_app" "$copied_app"
-  printf '%s\n' "$copied_app"
+  run ditto "$mounted_app" "$dmg_app"
 }
 
 launch_app() {
@@ -416,7 +415,7 @@ stop_conflicting_apps
 launch_app "archive-app" "$archive_app"
 stop_launched_apps
 
-dmg_app="$(copy_dmg_app)"
+copy_dmg_app
 verify_app_bundle "$dmg_app"
 launch_app "dmg-app" "$dmg_app"
 stop_launched_apps
