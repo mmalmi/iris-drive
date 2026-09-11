@@ -7,6 +7,9 @@ namespace IrisDrive.WindowsShell;
 
 internal static class WindowsProfileEnvironment
 {
+    public static bool IsTruthy(string? value) =>
+        value?.Trim().ToLowerInvariant() is "1" or "true" or "yes" or "on";
+
     private static string DefaultConfigDirectory => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData), "iris-drive");
 

@@ -52,6 +52,14 @@ The app looks for `idrive.exe` next to the app, under `target\debug`, under
 loopback gateway/resolver enabled by default and opens a native Windows drive
 folder instead of relying on the Windows WebClient redirector.
 
+If the window stays blank on an affected graphics driver or virtual desktop,
+set `IRIS_DRIVE_WINDOWS_SOFTWARE_RENDERING=1` before launching Iris Drive.
+The flag also accepts `true`, `yes`, or `on`, ignoring case and surrounding
+whitespace. It requests WPF software rendering for that Iris Drive process;
+it does not change Windows graphics settings or other running apps. The default
+renderer remains unchanged when the flag is unset or disabled. Software
+rendering may use more CPU, so enable it only where needed.
+
 The **Open Drive Folder** action registers `%USERPROFILE%\Iris Drive` as an
 Iris Drive Cloud Files sync root when the Windows Cloud Files API is available.
 It pre-populates the provider namespace as Cloud Files placeholders from

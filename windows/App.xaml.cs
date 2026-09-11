@@ -19,6 +19,7 @@ public partial class App : System.Windows.Application
 
     protected override void OnStartup(StartupEventArgs e)
     {
+        ConfigureRendering();
         WindowsShellTrace.Write($"OnStartup args={string.Join(" ", e.Args)}");
         appMutex = new Mutex(true, MutexName, out var created);
         WindowsShellTrace.Write($"app mutex created={created}");
@@ -48,6 +49,16 @@ public partial class App : System.Windows.Application
         {
             window.Hide();
             WindowsShellTrace.Write("window hidden for startup launch");
+        }
+    }
+
+    internal static void ConfigureRendering()
+    {
+        if (WindowsProfileEnvironment.IsTruthy(
+                Environment.GetEnvironmentVariable("IRIS_DRIVE_WINDOWS_SOFTWARE_RENDERING")))
+        {
+            System.Windows.Media.RenderOptions.ProcessRenderMode = System.Windows.Interop.RenderMode.SoftwareOnly;
+            WindowsShellTrace.Write($"WPF process render mode={System.Windows.Media.RenderOptions.ProcessRenderMode}");
         }
     }
 

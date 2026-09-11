@@ -3,14 +3,35 @@ using System.IO.Pipes;
 using System.Reflection;
 using System.Text;
 using System.Text.Json;
+using System.Windows.Interop;
+using System.Windows.Media;
 using IrisDrive.WindowsShell;
 
 var testRoot = Path.Combine(Path.GetTempPath(), "iris-drive-profile-test-" + Guid.NewGuid().ToString("N"));
-var envNames = new[] { "IRIS_DRIVE_CONFIG_DIR", "IRIS_DRIVE_DEV_VM_WINDOWS_CONFIG_DIR", "IRIS_DRIVE_WINDOWS_CLOUD_ROOT" };
+var envNames = new[] { "IRIS_DRIVE_CONFIG_DIR", "IRIS_DRIVE_DEV_VM_WINDOWS_CONFIG_DIR", "IRIS_DRIVE_WINDOWS_CLOUD_ROOT", "IRIS_DRIVE_WINDOWS_SOFTWARE_RENDERING", "IRIS_DRIVE_WINDOWS_SHELL_TRACE" };
 var saved = envNames.ToDictionary(name => name, Environment.GetEnvironmentVariable);
+var originalRenderMode = RenderOptions.ProcessRenderMode;
 try
 {
     foreach (var name in envNames) Environment.SetEnvironmentVariable(name, null);
+    foreach (var value in new string?[] { null, "", "0", "false", "OFF", "no" })
+    {
+        RenderOptions.ProcessRenderMode = RenderMode.Default;
+        Environment.SetEnvironmentVariable("IRIS_DRIVE_WINDOWS_SOFTWARE_RENDERING", value);
+        App.ConfigureRendering();
+        Require(RenderOptions.ProcessRenderMode == RenderMode.Default, "software rendering must be explicitly enabled");
+    }
+    foreach (var value in new[] { "1", "true", " YES ", "On" })
+    {
+        RenderOptions.ProcessRenderMode = RenderMode.Default;
+        Environment.SetEnvironmentVariable("IRIS_DRIVE_WINDOWS_SOFTWARE_RENDERING", value);
+        App.ConfigureRendering();
+        Require(RenderOptions.ProcessRenderMode == RenderMode.SoftwareOnly, "software rendering flag did not configure this process");
+    }
+    Environment.SetEnvironmentVariable("IRIS_DRIVE_WINDOWS_SOFTWARE_RENDERING", null);
+    App.ConfigureRendering();
+    Require(RenderOptions.ProcessRenderMode == RenderMode.SoftwareOnly, "unset flag must leave the process preference unchanged");
+    RenderOptions.ProcessRenderMode = originalRenderMode;
     Require(AppSetting("MutexName") == "IrisDrive.WindowsShell", "default mutex changed");
     Require(AppSetting("LaunchPipeName") == "IrisDrive.WindowsShell.LaunchArgs", "default pipe changed");
     var defaultRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Iris Drive");
@@ -76,10 +97,11 @@ try
     Require(!receiveB.IsCompleted, "secondary launch arguments reached another profile");
     deadline.Cancel();
     try { await receiveB; } catch (OperationCanceledException) { }
-    Console.WriteLine("WINDOWS_PROFILE_ISOLATION_OK defaults paths provider-disable metadata identity and real launch-pipe routing");
+    Console.WriteLine("WINDOWS_PROFILE_ISOLATION_OK rendering defaults paths provider-disable metadata identity and real launch-pipe routing");
 }
 finally
 {
+    RenderOptions.ProcessRenderMode = originalRenderMode;
     foreach (var pair in saved) Environment.SetEnvironmentVariable(pair.Key, pair.Value);
 }
 

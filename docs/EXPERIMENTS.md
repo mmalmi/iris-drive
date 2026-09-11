@@ -4,6 +4,39 @@ Performance and integration experiments log. Omit identifying information
 (pubkeys, secrets, IPs, private hostnames, exact repo names, raw hashes)
 unless the user explicitly asks otherwise.
 
+## 2026-09-11 Windows renderer compatibility
+
+A self-contained Windows release app in a VM responded to its native GUI
+assertions but displayed a blank white window. Captures verified the exact
+launched process and window, foreground ownership, visible controls and their
+accessibility bounds. Both screen-region and window captures were blank.
+
+A process-only WPF software-rendering intervention made the unchanged app's
+controls and layout visible. A matched startup-hook control performed the same
+early loading and readback while keeping the default renderer; it remained
+blank. The older running app and the release app used identical .NET 8.0.26
+rendering binaries, and the UI markup was unchanged. This supports a rendering
+path compatibility issue in this environment, without identifying a particular
+driver or establishing a source regression. No render tier or graphics-device
+error was recorded.
+
+`IRIS_DRIVE_WINDOWS_SOFTWARE_RENDERING` provides an explicit process-only
+compatibility option. It does not automatically change the renderer or global
+graphics settings. The default graphics path still failed in this VM; software
+rendering is a separate configuration, not a default-path pass. These short
+functional captures do not establish CPU, bandwidth, or battery performance.
+
+Validation built the WPF shell in Release mode and ran the existing Windows
+profile tests against the real WPF process API. Enabled and disabled flags,
+unchanged existing preferences, and profile pipe isolation passed. A fresh
+owned GUI profile then passed the production UI assertions and rendered with
+the product flag, with no startup hook. Its captured process matched the
+software-rendering startup trace. This used a verification-only shell assembly
+with the retained native core and runtime; it was not a packaged release test.
+The fixture disabled peer discovery and configured no relay or blob servers;
+the native provider was disabled. It does not establish mesh, provider, or
+resource acceptance.
+
 ## 2026-09-10 unavailable service retry cost
 
 The Android idle gate found excessive CPU with an authorized retained profile,
