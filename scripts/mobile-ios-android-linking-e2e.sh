@@ -43,6 +43,7 @@ IOS_TEST_RUN_FILE=""
 IOS_TEST_RESULT_BUNDLE=""
 IOS_SIGNAL_PREFIX=""
 ANDROID_SERIAL_SELECTED=""
+ANDROID_FIXTURE_OWNED=0
 IOS_DEVICE_SELECTED=""
 ADB=""
 XCTESTRUN=""
@@ -131,7 +132,7 @@ cleanup() {
   if [[ -n "$IOS_TEST_RUN_FILE" && -f "$IOS_TEST_RUN_FILE" ]]; then
     rm -f "$IOS_TEST_RUN_FILE"
   fi
-  if [[ -n "$ADB" && -n "$ANDROID_SERIAL_SELECTED" ]]; then
+  if [[ "$ANDROID_FIXTURE_OWNED" == "1" && -n "$ADB" && -n "$ANDROID_SERIAL_SELECTED" ]]; then
     "$ADB" -s "$ANDROID_SERIAL_SELECTED" shell am force-stop "$ANDROID_PACKAGE" >/dev/null 2>&1 || true
     if [[ "${IRIS_DRIVE_MOBILE_LINK_KEEP_ANDROID_APP:-0}" != "1" ]]; then
       "$ADB" -s "$ANDROID_SERIAL_SELECTED" shell pm clear "$ANDROID_PACKAGE" >/dev/null 2>&1 || true
@@ -653,6 +654,7 @@ android_debug_action() {
 }
 
 prepare_android_fresh() {
+  ANDROID_FIXTURE_OWNED=1
   "$ADB" -s "$ANDROID_SERIAL_SELECTED" shell am force-stop "$ANDROID_PACKAGE" >/dev/null 2>&1 || true
   "$ADB" -s "$ANDROID_SERIAL_SELECTED" shell pm clear "$ANDROID_PACKAGE" >/dev/null
   start_android_app

@@ -741,6 +741,87 @@ cleanup
 grep -Fq 'uninstall to.example.irisdrive.uitest.test' "$contract_tmp/adb.log"
 grep -Fq 'uninstall to.example.irisdrive.uitest' "$contract_tmp/adb.log"
 
+physical_functions="$(sed -n \
+  -e '/^ANDROID_FIXTURE_OWNED=/p' \
+  -e '/^cleanup() {/,/^}/p' \
+  -e '/^prepare_android_fresh() {/,/^}/p' \
+  -e '/^start_android_app() {/,/^}/p' \
+  -e '/^bool_true() {/,/^}/p' \
+  -e '/^emit_skip() {/,/^}/p' \
+  -e '/^reserve_physical_devices() {/,/^}/p' \
+  "$ROOT/scripts/mobile-ios-android-linking-e2e.sh")"
+for scenario in unowned auto-skip readiness-failure delegated-parent owned owned-keep; do
+  adb_log="$contract_tmp/$scenario-adb.log"
+  : >"$adb_log"
+  expected_status=0
+  case "$scenario" in
+    readiness-failure) expected_status=23 ;;
+    delegated-parent) expected_status=17 ;;
+  esac
+  if CONTRACT_ADB_LOG="$adb_log" bash -Eeuo pipefail -c '
+    eval "$1"
+    ROOT="$2"
+    TMP="$2/$4-private"
+    RESULT_DIR="$2/results"
+    RUN_ID="$4"
+    MODE=auto
+    IOS_TEST_PID=""
+    IOS_TEST_RUN_FILE=""
+    IOS_DEVICE_SELECTED=contract-ios
+    ADB="$3"
+    ANDROID_SERIAL_SELECTED=contract-android
+    ANDROID_PACKAGE=to.example.irisdrive.uitest
+    ANDROID_ACTIVITY="$ANDROID_PACKAGE/.MainActivity"
+    IRIS_DRIVE_MOBILE_LINK_KEEP_ANDROID_APP=0
+    mkdir -p "$TMP"
+    trap cleanup EXIT
+    case "$4" in
+      unowned) ;;
+      auto-skip) emit_skip isolated_device_opt_in_required ;;
+      readiness-failure) exit 23 ;;
+      delegated-parent)
+        IRIS_DRIVE_NATIVE_MOBILE_RESERVED=0
+        IRIS_DRIVE_LAB_ALLOCATED_ANDROID=""
+        IRIS_DRIVE_LAB_ALLOCATED_IOS=""
+        python3() { : >"$ROOT/delegated-child-ran"; return 17; }
+        redact_physical_identifiers() { cat; }
+        reserve_physical_devices
+        exit 99
+        ;;
+      owned) prepare_android_fresh ;;
+      owned-keep)
+        prepare_android_fresh
+        IRIS_DRIVE_MOBILE_LINK_KEEP_ANDROID_APP=1
+        ;;
+    esac
+  ' bash "$physical_functions" "$contract_tmp" "$mock_adb" "$scenario"; then
+    actual_status=0
+  else
+    actual_status=$?
+  fi
+  [[ "$actual_status" -eq "$expected_status" ]] || {
+    echo "physical cleanup changed $scenario exit status: $actual_status" >&2
+    exit 1
+  }
+  [[ ! -d "$contract_tmp/$scenario-private" ]]
+  expected_log="$contract_tmp/$scenario-expected.log"
+  : >"$expected_log"
+  if [[ "$scenario" == owned* ]]; then
+    for action in 'am force-stop' 'pm clear' 'am start -W -n' 'am force-stop'; do
+      target=to.example.irisdrive.uitest
+      [[ "$action" != 'am start -W -n' ]] || target+=/.MainActivity
+      printf '%s\n' "-s contract-android shell $action $target" >>"$expected_log"
+    done
+    if [[ "$scenario" == owned ]]; then
+      printf '%s\n' '-s contract-android shell pm clear to.example.irisdrive.uitest' >>"$expected_log"
+    fi
+  fi
+  diff -u "$expected_log" "$adb_log"
+done
+[[ -f "$contract_tmp/delegated-child-ran" ]]
+grep -Fq '"reason": "isolated_device_opt_in_required"' \
+  "$contract_tmp/results/mobile-linking-auto-skip-skipped.json"
+
 cleanup_contract_tmp
 trap - EXIT
 echo "MOBILE_PHYSICAL_LINKING_E2E_CONTRACT_OK"
