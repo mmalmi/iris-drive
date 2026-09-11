@@ -36,16 +36,8 @@ ps_quote() {
   printf "'%s'" "$(printf "%s" "$1" | sed "s/'/''/g")"
 }
 
-windows_guest_host_for() {
-  if [[ -n "${IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST:-}" ]]; then
-    printf "%s" "$IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST"
-  fi
-}
-
 windows_powershell_command_for() {
-  local remote="$1"
-  local guest
-  guest="$(windows_guest_host_for "$remote")"
+  local guest="${IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST:-}"
   if [[ -n "$guest" ]]; then
     printf 'ssh %s powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command -' "$(sh_quote "$guest")"
   else
@@ -70,11 +62,7 @@ linux_remote_shell() {
   assignments+=("IRIS_DRIVE_DESKTOP_GUI_EXPECTED_APP_KEY=$(sh_quote "${IRIS_DRIVE_DESKTOP_GUI_EXPECTED_APP_KEY:-}")")
   assignments+=("IRIS_DRIVE_DESKTOP_GUI_EXPECTED_STATE=$(sh_quote "${IRIS_DRIVE_DESKTOP_GUI_EXPECTED_STATE:-authorized}")")
   assignments+=("IRIS_DRIVE_DESKTOP_GUI_ACTION_TIMEOUT_SECS=$(sh_quote "${IRIS_DRIVE_DESKTOP_GUI_ACTION_TIMEOUT_SECS:-20}")")
-  if [[ ${#assignments[@]} -eq 0 ]]; then
-    printf 'bash -se'
-  else
-    printf '%s bash -se' "${assignments[*]}"
-  fi
+  printf '%s bash -se' "${assignments[*]}"
 }
 
 target="${1:-}"
