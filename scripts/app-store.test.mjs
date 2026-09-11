@@ -44,7 +44,10 @@ async function fixture(t, options = {}) {
       if (path === 'appStoreVersions/VERSION/appStoreVersionLocalizations') return send([{ type: 'appStoreVersionLocalizations', id: 'LOCALE', attributes: { locale: 'en-US', description: options.missingMetadata ? '' : 'Existing description', supportUrl: 'https://iris.to', whatsNew: notes } }])
       if (path === 'appStoreVersions/VERSION/appStoreReviewDetail') return send({ type: 'appStoreReviewDetails', id: 'DETAIL', attributes: { contactFirstName: 'Reviewer', contactLastName: 'Contact', contactPhone: '+10000000000', contactEmail: 'test@example.invalid', demoAccountRequired: false } })
       if (path === 'apps/APP/reviewSubmissions') return send(review ? [review] : [])
-      if (path === 'reviewSubmissions/REVIEW/items') return send(items)
+      if (path === 'reviewSubmissions/REVIEW/items') {
+        const includeVersion = url.searchParams.get('include')?.split(',').includes('appStoreVersion')
+        return send(items.map(item => includeVersion ? item : { ...item, relationships: undefined }))
+      }
       if (path === 'reviewSubmissions/REVIEW') return send(review)
     }
     if (method === 'POST' && path === 'appStoreVersions') {

@@ -35,7 +35,7 @@ export async function runAppStore({ action, app, build, versionName, notes, requ
     (!r.attributes?.platform || r.attributes.platform === 'IOS') && r.attributes?.state !== 'COMPLETE')
   let attached = version ? await call('GET', `appStoreVersions/${version.id}/relationships/build`) : null
   for (const candidate of reviews) {
-    candidate.items = (await getAll(`reviewSubmissions/${candidate.id}/items`)).filter(i => i.attributes?.state !== 'REMOVED')
+    candidate.items = (await getAll(`reviewSubmissions/${candidate.id}/items`, { include: 'appStoreVersion' })).filter(i => i.attributes?.state !== 'REMOVED')
   }
   let review = null
   const report = () => console.log(JSON.stringify({
@@ -121,7 +121,7 @@ export async function runAppStore({ action, app, build, versionName, notes, requ
   if (!review.items.length) await call('POST', 'reviewSubmissionItems', {
     type: 'reviewSubmissionItems', relationships: { reviewSubmission: link('reviewSubmissions', review.id), appStoreVersion: link('appStoreVersions', version.id) },
   })
-  const items = (await getAll(`reviewSubmissions/${review.id}/items`)).filter(i => i.attributes?.state !== 'REMOVED')
+  const items = (await getAll(`reviewSubmissions/${review.id}/items`, { include: 'appStoreVersion' })).filter(i => i.attributes?.state !== 'REMOVED')
   if (items.length !== 1 || items[0].relationships?.appStoreVersion?.data?.id !== version.id || items[0].attributes?.state !== 'READY_FOR_REVIEW') {
     throw new Error('Review must contain only the exact version, ready for review; submission stopped')
   }
