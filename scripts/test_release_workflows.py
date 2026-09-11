@@ -131,7 +131,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 holder = subprocess.Popen(["sleep", "60"])
                 child_file = self.state / f"{lock_state}.child"
                 gui = subprocess.Popen(["bash", "-c",
-                    'sleep 60 & child=$!; printf "%s\\n" "$child" >"$1"; wait "$child"',
+                    'sleep 60 & child=$!; printf "%s\\n" "$child" >"$1.tmp"; mv "$1.tmp" "$1"; wait "$child"',
                     "fixture-gui", str(child_file)])
                 try:
                     deadline = time.monotonic() + 2
