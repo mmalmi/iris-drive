@@ -468,7 +468,9 @@ trap - EXIT
 python3 - "$ROOT" <<'PY'
 import copy
 import json
+import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -485,6 +487,27 @@ phone = {
 }
 for name in ("ios-device-smoke.sh", "ios-device-iris-apps-smoke.sh"):
     source = (Path(sys.argv[1]) / "scripts" / name).read_text()
+    # Capture the actual build/test arguments without a compiler or connected device.
+    commands = re.findall(r"(?m)^ *(?:if ! )?(xcodebuild \\\n(?:.*\\\n)*.*)", source)
+    actions = []
+    for command in commands:
+        result = subprocess.run(
+            ["bash", "-eu", "-c", "xcodebuild() { printf '%s\\n' \"$@\"; }\n" + command.removesuffix("; then")],
+            env=dict(os.environ, PROJECT="fixture.xcodeproj", SCHEME="IrisDriveIOS",
+                     CONFIGURATION="Release", DERIVED_DATA="fixture-derived",
+                     DEVICE_UDID="hardware-device-udid", device_udid="hardware-device-udid",
+                     DEVELOPMENT_TEAM="fixture-team", CODE_SIGN_IDENTITY="Apple Development",
+                     RUST_LIB_DIR="fixture-lib", RUST_STATIC_LIB="fixture-lib/app-core.a",
+                     BUILD_LOG="/dev/stdout"),
+            text=True, capture_output=True, check=True, timeout=5,
+        )
+        args = result.stdout.splitlines()
+        action = args[-1]
+        actions.append(action)
+        assert args.count("-destination") == 1, (name, args)
+        expected = "generic/platform=iOS" if action == "build" else "platform=iOS,id=hardware-device-udid"
+        assert args[args.index("-destination") + 1] == expected, (name, action, args)
+    assert actions == (["test", "build"] if name == "ios-device-smoke.sh" else ["build"]), (name, actions)
     function = source.split("select_device() {\n", 1)[1].split("\n}", 1)[0]
     selector = function.split("<<'PY'\n", 1)[1].split("\nPY", 1)[0]
     with tempfile.TemporaryDirectory(prefix="iris-ios-device-selection-") as directory:

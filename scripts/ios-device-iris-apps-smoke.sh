@@ -172,7 +172,7 @@ if ! xcodebuild \
   -scheme "$SCHEME" \
   -configuration "$CONFIGURATION" \
   -derivedDataPath "$DERIVED_DATA" \
-  -destination "platform=iOS,id=$DEVICE_UDID" \
+  -destination "generic/platform=iOS" \
   DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
   CODE_SIGN_STYLE=Automatic \
   CODE_SIGN_IDENTITY="$CODE_SIGN_IDENTITY" \
