@@ -616,6 +616,8 @@ Add-Type -Namespace IrisDriveSmoke -Name NativeMethods -MemberDefinition @"
   [System.Runtime.InteropServices.DllImport("user32.dll")]
   public static extern bool SetForegroundWindow(System.IntPtr hWnd);
   [System.Runtime.InteropServices.DllImport("user32.dll")]
+  public static extern System.IntPtr GetForegroundWindow();
+  [System.Runtime.InteropServices.DllImport("user32.dll")]
   public static extern System.IntPtr SendMessage(System.IntPtr hWnd, uint msg, System.IntPtr wParam, System.IntPtr lParam);
 "@
 
@@ -686,8 +688,11 @@ function Require-Element([System.Windows.Automation.AutomationElement]$Window, [
   return $Element
 }
 
-function Invoke-Button([System.Windows.Automation.AutomationElement]$Window, [string]$Name) {
-  $Deadline = (Get-Date).AddSeconds($LinkActionTimeoutSeconds)
+function Invoke-Button(
+  [System.Windows.Automation.AutomationElement]$Window,
+  [string]$Name,
+  [DateTime]$Deadline = (Get-Date).AddSeconds($LinkActionTimeoutSeconds)
+) {
   $Button = $null
   while (-not $Button -and (Get-Date) -lt $Deadline) {
     $Button = Find-ButtonByName $Window $Name
@@ -719,8 +724,7 @@ function Invoke-Button([System.Windows.Automation.AutomationElement]$Window, [st
   Start-Sleep -Milliseconds 500
 }
 
-function Confirm-ApprovalDialog {
-  $Deadline = (Get-Date).AddSeconds($LinkActionTimeoutSeconds)
+function Confirm-ApprovalDialog([DateTime]$Deadline) {
   $DialogCondition = [System.Windows.Automation.AndCondition]::new(
     [System.Windows.Automation.PropertyCondition]::new(
       [System.Windows.Automation.AutomationElement]::NameProperty,
@@ -740,9 +744,32 @@ function Confirm-ApprovalDialog {
       $DialogCondition
     )
     if ($Dialog) {
-      Invoke-Button $Dialog "Yes"
-      Log "confirmed the shipped WPF device approval dialog"
-      return
+      # BM_CLICK can silently fail for an inactive Win32 dialog. Activate the
+      # owned dialog, not its disabled owner window, before invoking Yes once.
+      $DialogHandle = [IntPtr]$Dialog.Current.NativeWindowHandle
+      if ($DialogHandle -eq [IntPtr]::Zero) { Fail "approval dialog has no native window handle" }
+      $Activated = [IrisDriveSmoke.NativeMethods]::SetForegroundWindow($DialogHandle)
+      while ((Get-Date) -lt $Deadline -and
+          [IrisDriveSmoke.NativeMethods]::GetForegroundWindow() -ne $DialogHandle) {
+        Start-Sleep -Milliseconds 100
+      }
+      Log "approval dialog activation returned=$Activated foreground=$([IrisDriveSmoke.NativeMethods]::GetForegroundWindow()) target=$DialogHandle"
+      if ([IrisDriveSmoke.NativeMethods]::GetForegroundWindow() -ne $DialogHandle) {
+        Fail "owned approval dialog did not become foreground within $LinkActionTimeoutSeconds seconds"
+      }
+      Invoke-Button $Dialog "Yes" -Deadline $Deadline
+      while ((Get-Date) -lt $Deadline) {
+        $StillOpen = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst(
+          [System.Windows.Automation.TreeScope]::Descendants, $DialogCondition)
+        $Accepted = (Test-Path $ShellTrace) -and (Select-String -Path $ShellTrace -Quiet -Pattern (
+          " pid=$($Process.Id) thread=\d+ device approval confirmation accepted=True$"))
+        if (-not $StillOpen -and $Accepted) {
+          Log "confirmed the shipped WPF device approval dialog"
+          return
+        }
+        Start-Sleep -Milliseconds 100
+      }
+      Fail "WPF device approval dialog was not dismissed and accepted within $LinkActionTimeoutSeconds seconds"
     }
     Start-Sleep -Milliseconds 100
   }
@@ -807,8 +834,7 @@ function Test-ExpectedStatus($Status) {
   }
 }
 
-function Wait-ExpectedStatus {
-  $Deadline = (Get-Date).AddSeconds($LinkActionTimeoutSeconds)
+function Wait-ExpectedStatus([DateTime]$Deadline) {
   while ((Get-Date) -lt $Deadline) {
     $Status = & $Idrive --config-dir $ConfigDir status | ConvertFrom-Json
     if (Test-ExpectedStatus $Status) {
@@ -876,11 +902,12 @@ try {
   }
 
   $ApprovalSubmitted = $false
+  $ActionDeadline = (Get-Date).AddSeconds($LinkActionTimeoutSeconds)
   if ($ExpectedState -eq "approval_queued") {
-    Confirm-ApprovalDialog
+    Confirm-ApprovalDialog -Deadline $ActionDeadline
     $ApprovalSubmitted = $true
   }
-  $Status = Wait-ExpectedStatus
+  $Status = Wait-ExpectedStatus -Deadline $ActionDeadline
   if ($ExpectedState -eq "approval_queued") { Log "IRIS_DRIVE_DESKTOP_GUI_APPROVAL_COMPLETED=1" }
   if ($ExpectedState -eq "awaiting_approval") {
     [void](Wait-ElementByName $Window "Waiting for approval")
