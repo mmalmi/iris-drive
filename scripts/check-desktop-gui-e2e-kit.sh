@@ -279,17 +279,39 @@ require_file_absent windows/MainWindow.xaml "Reset invite"
 require_file_absent windows/MainWindowDevices.cs "ResetInvite_Click"
 require_file_contains docs/PARITY.md "Linux GTK and Windows WPF GUI smokes"
 
-if bash -c '
-  source "$1"
-  POLL_SECS=0
-  print_statuses() { :; }
-  late_success() { sleep 0.05; }
-  started_at="$(monotonic_milliseconds)"
-  wait_until_before late-success "$((started_at + 20))" late_success "$started_at"
-' bash "$ROOT/scripts/lib/cross-vm-device-link.sh" >/dev/null 2>&1; then
-  echo "wait_until_before accepted success sampled after its deadline" >&2
-  exit 1
-fi
+python3 - "$ROOT/scripts/lib/cross-vm-device-link.sh" <<'PY_POLL'
+import subprocess
+import sys
+
+prefix = r'''
+source "$1"
+POLL_SECS=3
+print_statuses() { :; }
+started_at="$(monotonic_milliseconds)"
+'''
+cases = [
+    ("ready-before-deadline", r'''
+ready_at=$((started_at + 300))
+ready() { (( $(monotonic_milliseconds) >= ready_at )); }
+wait_until_before ready-before-deadline "$((started_at + 1000))" ready "$started_at" 0.1
+''', 0, "ok: ready-before-deadline", 2),
+    ("false-check-crosses-deadline", r'''
+slow_false() { sleep 0.2; return 1; }
+wait_until_before false-check-crosses-deadline "$((started_at + 100))" slow_false "$started_at"
+''', 1, "timed out after 100ms", 1),
+    ("late-success", r'''
+late_success() { sleep 0.2; }
+wait_until_before late-success "$((started_at + 100))" late_success "$started_at" 0.1
+''', 1, "late success after", 1),
+]
+for name, body, status, marker, timeout in cases:
+    result = subprocess.run(["bash", "-c", prefix + body, "bash", sys.argv[1]],
+                            capture_output=True, text=True, timeout=timeout)
+    output = result.stdout + result.stderr
+    if result.returncode != status or marker not in output:
+        raise SystemExit(f"{name} failed: status={result.returncode} {output}")
+    print(f"deadline regression passed: {name}")
+PY_POLL
 
 python3 - "$ROOT/scripts/lib/cross-vm-device-link.sh" <<'PY'
 import copy

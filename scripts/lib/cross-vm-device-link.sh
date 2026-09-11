@@ -16,6 +16,7 @@ monotonic_milliseconds() {
 
 wait_until_before() {
   local label="$1" deadline="$2" check="$3" start="${4:-$(monotonic_milliseconds)}" now
+  local poll_secs="${5:-$POLL_SECS}"
   while true; do
     now="$(monotonic_milliseconds)"
     if (( now > deadline )); then
@@ -33,12 +34,13 @@ wait_until_before() {
       print_statuses
       return 1
     fi
+    now="$(monotonic_milliseconds)"
     if (( now >= deadline )); then
       echo "timed out after $((deadline - start))ms waiting for $label" >&2
       print_statuses
       return 1
     fi
-    sleep "$POLL_SECS"
+    sleep "$poll_secs"
   done
 }
 
@@ -371,7 +373,7 @@ run_bidirectional_desktop_gui_linking() {
     "Linux GTK join -> Windows WPF approval, direct FIPS, and durable ACK" \
     "$reverse_deadline" \
     desktop_gui_reverse_link_complete \
-    "$reverse_started_at"
+    "$reverse_started_at" 0.1
 
   DESKTOP_GUI_REVERSE_FILE="e2e/$RUN_ID/desktop-gui-reverse-link.txt"
   content="written after Linux GTK joined through Windows WPF in $RUN_ID"
