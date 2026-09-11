@@ -4,6 +4,35 @@ Performance and integration experiments log. Omit identifying information
 (pubkeys, secrets, IPs, private hostnames, exact repo names, raw hashes)
 unless the user explicitly asks otherwise.
 
+## 2026-09-11 Android embedded gateway startup
+
+An authorized Android profile had connected FIPS peers while its embedded
+gateway failed to start. The social-graph transaction lock returned
+`try_lock() not supported` with the pinned Rust toolchain. Healthy mesh status
+alone therefore did not establish that the configured app services worked.
+
+The existing Android native-state smoke class now creates a real authorized
+profile with its resolver enabled, requires an error-free running embedded
+gateway, and makes an actual loopback HTTP request. It checks the exact 307
+redirect and portal location. The unchanged test APK failed against the old
+native library in 1.217 seconds and passed against the Hashtree Android lock
+correction in 1.607 seconds. Both runs stopped the app and removed only the
+owned test package; the retained main profile's regular file contents matched
+before and after. The native library packaged in the candidate APK matched the
+compiled output exactly. This verifies startup and local HTTP, not WebView
+content loading or final release acceptance.
+
+The network policy also now permits the exact loopback address used by the
+gateway readiness request. The existing hostname exceptions do not cover that
+numeric address on older Android versions. The smoke test checks the effective
+policy, but the device run does not establish coverage of every Android API.
+
+The first candidate build exceeded its 512 MiB temporary-storage allowance and
+was stopped with source and lockfile restored. A warm continuation passed with
+a separately admitted 1 GiB allowance and the same free-space reserve. These
+are build-resource results, not app CPU or bandwidth improvements. Idle app
+acceptance must require the configured gateway to be healthy.
+
 ## 2026-09-11 Windows renderer compatibility
 
 A self-contained Windows release app in a VM responded to its native GUI

@@ -4,5 +4,6 @@
         <domain includeSubdomains="true">iris.localhost</domain>
         <domain includeSubdomains="true">hash.localhost</domain>
         <domain includeSubdomains="false">localhost</domain>
+        <domain includeSubdomains="false">127.0.0.1</domain>
     </domain-config>
 </network-security-config>
