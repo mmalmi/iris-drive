@@ -63,7 +63,7 @@ hashtree-fuse = { version = "=0.2.83", features = ["fuse"] }
 hashtree-lmdb = "=0.2.88"
 hashtree-nostr = "=0.2.88"
 hashtree-network = "=0.2.88"
-hashtree-resolver = { version = "=0.2.84", features = ["nostr"] }
+hashtree-resolver = { version = "=0.2.85", features = ["nostr"] }
 hashtree-updater = "=0.2.85"
 hashtree-provider = { path = "crates/hashtree-provider" }
 nostr = { version = "0.44", features = ["nip44"] }
