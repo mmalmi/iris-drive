@@ -53,24 +53,23 @@ def is_usable_iphone(device):
 def names(device):
     props = device.get("deviceProperties", {})
     connection = device.get("connectionProperties", {})
-    values = [device.get("identifier"), props.get("name")]
+    values = [device.get("identifier"), device.get("hardwareProperties", {}).get("udid"), props.get("name")]
     values.extend(connection.get("potentialHostnames", []))
     return {value for value in values if value}
 
-if preferred:
-    for device in devices:
-        if preferred in names(device):
-            if not is_usable_iphone(device):
-                raise SystemExit(f"selected iOS device is not usable for install: {preferred}")
-            print(device["identifier"])
-            raise SystemExit(0)
-    raise SystemExit(f"iOS device not found: {preferred}")
-
 for device in devices:
-    if is_usable_iphone(device):
-        print(device["identifier"])
-        raise SystemExit(0)
-raise SystemExit("no paired available iPhone found")
+    if preferred and preferred not in names(device):
+        continue
+    if not is_usable_iphone(device):
+        if preferred:
+            raise SystemExit(f"selected iOS device is not usable for install: {preferred}")
+        continue
+    udid = device.get("hardwareProperties", {}).get("udid")
+    if not isinstance(udid, str) or not udid.strip():
+        raise SystemExit("selected iOS device has no hardware UDID for Xcode")
+    print(udid.strip())
+    raise SystemExit(0)
+raise SystemExit(f"iOS device not found: {preferred}" if preferred else "no paired available iPhone found")
 PY
   status=$?
   rm -f "$devices_json"

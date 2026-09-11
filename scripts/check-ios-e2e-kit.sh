@@ -465,4 +465,62 @@ ios_xcuitest_automation_mode_timed_out_after "$accessibility_log" "$offset" \
 rm -f "$accessibility_log"
 trap - EXIT
 
+python3 - "$ROOT" <<'PY'
+import copy
+import json
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+phone = {
+    "identifier": "core-device-id",
+    "hardwareProperties": {"productType": "iPhone17,1", "udid": "hardware-device-udid"},
+    "deviceProperties": {"name": "Test iPhone"},
+    "connectionProperties": {
+        "pairingState": "paired",
+        "tunnelState": "connected",
+        "potentialHostnames": ["test-phone.local"],
+    },
+}
+for name in ("ios-device-smoke.sh", "ios-device-iris-apps-smoke.sh"):
+    source = (Path(sys.argv[1]) / "scripts" / name).read_text()
+    function = source.split("select_device() {\n", 1)[1].split("\n}", 1)[0]
+    selector = function.split("<<'PY'\n", 1)[1].split("\nPY", 1)[0]
+    with tempfile.TemporaryDirectory(prefix="iris-ios-device-selection-") as directory:
+        fixture = Path(directory) / "devices.json"
+
+        def check(devices, preferred, expected):
+            fixture.write_text(json.dumps({"result": {"devices": devices}}))
+            result = subprocess.run(
+                [sys.executable, "-", preferred, str(fixture)], input=selector,
+                text=True, capture_output=True, timeout=5,
+            )
+            if expected is None:
+                assert result.returncode != 0 and not result.stdout, (name, preferred, result)
+            else:
+                assert result.returncode == 0 and result.stdout == expected + "\n", (name, preferred, result)
+
+        for preferred in ("core-device-id", "hardware-device-udid", "Test iPhone", "test-phone.local", ""):
+            check([phone], preferred, "hardware-device-udid")
+        check([phone], "unknown-device", None)
+        check([], "", None)
+        for section, field, value in (
+            ("hardwareProperties", "productType", "iPad17,1"),
+            ("connectionProperties", "pairingState", "unpaired"),
+            ("connectionProperties", "tunnelState", "unavailable"),
+        ):
+            unusable = copy.deepcopy(phone)
+            unusable[section][field] = value
+            check([unusable], "core-device-id", None)
+            check([unusable, phone], "", "hardware-device-udid")
+        for missing in (None, "", "   "):
+            invalid = copy.deepcopy(phone)
+            invalid["hardwareProperties"]["udid"] = missing
+            for preferred in ("core-device-id", ""):
+                check([invalid, phone], preferred, None)
+        del invalid["hardwareProperties"]["udid"]
+        check([invalid, phone], "", None)
+PY
+
 echo "IOS_E2E_KIT_OK"
