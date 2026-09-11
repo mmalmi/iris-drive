@@ -8,6 +8,7 @@ DESKTOP_GUI_REVERSE_FILE=""
 DESKTOP_GUI_REVERSE_FILE_SHA=""
 DESKTOP_GUI_PRIMARY_LINK_STARTED_AT=""
 DESKTOP_GUI_PRIMARY_LINK_DEADLINE=""
+DESKTOP_GUI_REVERSE_ACTION_PID=""
 
 monotonic_milliseconds() {
   perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC \
@@ -325,12 +326,20 @@ sha256sum $(sh_quote "$source") | awk '{print \$1}'
   remote_exec "$owner_label" "$script"
 }
 
+join_desktop_gui_reverse_action() {
+  [[ -n "$DESKTOP_GUI_REVERSE_ACTION_PID" ]] || return 0
+  local status=0
+  wait "$DESKTOP_GUI_REVERSE_ACTION_PID" || status=$?
+  DESKTOP_GUI_REVERSE_ACTION_PID=""
+  return "$status"
+}
+
 run_bidirectional_desktop_gui_linking() {
   bool_true "$DESKTOP_GUI_LINKING" || return 0
   echo "ok: Windows WPF join -> Linux GTK approval used real daemons/FIPS and drained its durable ACK"
 
   local windows_npub invite_json reverse_invite request_status request_url request_profile request_admin
-  local content base reverse_started_at reverse_deadline
+  local content base reverse_started_at reverse_deadline link_status=0
   windows_npub="$(host_value "$windows_label" app_key_npub)"
   idrive_cmd "$owner_label" app-keys appoint-admin "$windows_npub" >/dev/null
   wait_until_for "Windows admin promotion" "$LINK_TIMEOUT_SECS" desktop_gui_windows_can_admin
@@ -363,17 +372,21 @@ run_bidirectional_desktop_gui_linking() {
       return 1
     }
 
-  stop_daemon "$windows_label"
   reverse_started_at="$(monotonic_milliseconds)"
   reverse_deadline=$((reverse_started_at + LINK_TIMEOUT_SECS * 1000))
-  run_desktop_gui_link_action "$windows_label" "$request_url" approval_queued "$DESKTOP_GUI_AUX_NPUB"
-  start_daemon "$windows_label"
   start_desktop_gui_aux_daemon
+  run_desktop_gui_link_action "$windows_label" "$request_url" approval_queued "$DESKTOP_GUI_AUX_NPUB" &
+  DESKTOP_GUI_REVERSE_ACTION_PID=$!
   wait_until_before \
     "Linux GTK join -> Windows WPF approval, direct FIPS, and durable ACK" \
     "$reverse_deadline" \
     desktop_gui_reverse_link_complete \
-    "$reverse_started_at" 0.1
+    "$reverse_started_at" 0.1 || link_status=$?
+  join_desktop_gui_reverse_action || return $?
+  ((link_status == 0)) || return "$link_status"
+  wait_until_before \
+    "Windows WPF approval action completed" \
+    "$reverse_deadline" true "$reverse_started_at"
 
   DESKTOP_GUI_REVERSE_FILE="e2e/$RUN_ID/desktop-gui-reverse-link.txt"
   content="written after Linux GTK joined through Windows WPF in $RUN_ID"

@@ -960,6 +960,7 @@ esac
 }
 
 cleanup() {
+  join_desktop_gui_reverse_action || echo "reverse desktop GUI action failed during cleanup" >&2
   if [[ "$KEEP" == "1" ]]; then
     echo "keeping remote temp dirs because IRIS_DRIVE_E2E_KEEP=1"
     return

@@ -379,4 +379,90 @@ desktop_gui_reverse_link_complete
 print(f"REVERSE_APPROVAL_STATUS_CASES_OK count={len(cases)}")
 PY
 
+python3 - "$ROOT/scripts/lib/cross-vm-device-link.sh" "$ROOT/scripts/cross-vm-e2e.sh" <<'PY_LIFECYCLE'
+from pathlib import Path
+import subprocess
+import sys
+import tempfile
+
+cleanup = "cleanup() {" + Path(sys.argv[2]).read_text().split("\ncleanup() {", 1)[1].split("\ntrap cleanup EXIT", 1)[0]
+prefix = r'''
+set -Eeuo pipefail
+source "$1"
+cd "$2"
+owner_label=owner windows_label=windows owner_profile_id=profile
+LABELS=(owner windows)
+DESKTOP_GUI_LINKING=1 LINK_TIMEOUT_SECS=1 POLL_SECS=0.02 TIMEOUT_SECS=1 RUN_ID=fixture KEEP=0
+bool_true() { return 0; }
+host_value() { case "$2" in app_key_npub) echo windows-key;; base) echo /unused-fixture;; *) echo posix;; esac; }
+idrive_cmd() { [[ "$2" != app-keys || "$3" != invite ]] || echo '{"url":"https://drive.iris.to/invite/fixture","admin_app_key_npub":"windows-key"}'; }
+wait_until_for() { :; }
+remote_exec() { :; }
+sh_quote() { printf '%q' "$1"; }
+run_desktop_gui_link_action_at() { :; }
+desktop_gui_aux_idrive() { echo '{"profile":{"current_app_key_npub":"aux-key","app_key_link_request":{"url":"fixture","profile_id":"profile","admin_app_key_npub":"windows-key"}}}'; }
+is_app_key_request_url() { return 0; }
+start_desktop_gui_aux_daemon() { :; }
+stop_desktop_gui_aux_daemon() { :; }
+print_statuses() { :; }
+write_desktop_gui_reverse_file() { [[ -f action-done ]]; touch file-reached; echo fixture-sha; }
+wait_until() { :; }
+stop_daemon() { [[ -f action-done ]]; touch cleanup-after-action; }
+assert_local_shared_store_removed() { :; }
+'''
+cases = [
+    ("observe-during-action", r'''
+run_desktop_gui_link_action() { sleep 0.3; touch action-done; }
+desktop_gui_reverse_link_complete() { [[ ! -f action-done ]] && touch observed-during-action; return 0; }
+run_bidirectional_desktop_gui_linking
+[[ -f observed-during-action ]] || { echo "predicate never ran while action was active" >&2; exit 1; }
+[[ -f file-reached && -z "$DESKTOP_GUI_REVERSE_ACTION_PID" ]]
+join_desktop_gui_reverse_action
+''', 0),
+    ("action-failure", r'''
+run_desktop_gui_link_action() { sleep 0.1; touch action-done; echo action-failed >&2; return 7; }
+desktop_gui_reverse_link_complete() { return 0; }
+trap 'cleanup; [[ ! -f file-reached && -f cleanup-after-action ]]' EXIT
+run_bidirectional_desktop_gui_linking
+''', 7),
+    ("predicate-timeout-joins-action", r'''
+run_desktop_gui_link_action() { sleep 1.15; touch action-done; }
+desktop_gui_reverse_link_complete() { return 1; }
+trap 'cleanup; [[ ! -f file-reached && -f cleanup-after-action ]]' EXIT
+run_bidirectional_desktop_gui_linking
+''', 1),
+    ("late-action-rejected", r'''
+run_desktop_gui_link_action() { sleep 1.15; touch action-done; }
+desktop_gui_reverse_link_complete() { return 0; }
+trap 'cleanup; [[ ! -f file-reached && -f cleanup-after-action ]]' EXIT
+run_bidirectional_desktop_gui_linking
+''', 1),
+    ("early-exit-joins-only-owned-action", r'''
+(sleep 3) & foreign_pid=$!
+run_desktop_gui_link_action() { sleep 0.15; touch action-done; }
+run_desktop_gui_link_action &
+DESKTOP_GUI_REVERSE_ACTION_PID=$!
+trap 'cleanup; cleanup; [[ -f cleanup-after-action && -z "$DESKTOP_GUI_REVERSE_ACTION_PID" ]]; kill -0 "$foreign_pid" && touch foreign-preserved; kill "$foreign_pid"; wait "$foreign_pid" || true' EXIT
+exit 9
+''', 9),
+]
+for name, body, expected in cases:
+    with tempfile.TemporaryDirectory() as directory:
+        result = subprocess.run(["bash", "-c", prefix + cleanup + "\n" + body,
+                                 "bash", sys.argv[1], directory],
+                                capture_output=True, text=True, timeout=4)
+        if result.returncode != expected:
+            raise SystemExit(f"{name}: expected={expected} actual={result.returncode}\n{result.stdout}{result.stderr}")
+        state = Path(directory)
+        assert (state / "action-done").exists(), (name, "action not joined")
+        assert (state / "file-reached").exists() == (expected == 0), (name, "invalid post-link file acceptance")
+        if expected:
+            assert (state / "cleanup-after-action").exists(), (name, "cleanup ran before action completed")
+        if name == "action-failure":
+            assert "action-failed" in result.stderr, "action error output was lost"
+        if name == "early-exit-joins-only-owned-action":
+            assert (state / "foreign-preserved").exists(), "cleanup affected unrelated child"
+        print(f"reverse action lifecycle passed: {name}")
+PY_LIFECYCLE
+
 echo "DESKTOP_GUI_E2E_KIT_OK"
