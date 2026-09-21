@@ -66,6 +66,20 @@ pub enum NativeAppAction {
     RemoveBackupTarget {
         target: String,
     },
+    SetFriendBackupCapacity {
+        capacity_bytes: u64,
+    },
+    AddBackupFriend {
+        contact: String,
+        label: String,
+        quota_bytes: u64,
+    },
+    RemoveBackupFriend {
+        npub: String,
+    },
+    ExportFriendBackupRecovery {
+        path: String,
+    },
     AddBlossomServer {
         url: String,
     },

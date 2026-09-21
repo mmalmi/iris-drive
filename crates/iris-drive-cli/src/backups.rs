@@ -34,6 +34,9 @@ pub(crate) fn cmd_blossom_servers(
 }
 
 pub(crate) fn cmd_backups(config_dir: &std::path::Path, sub: BackupsCmd) -> Result<()> {
+    if let BackupsCmd::Friends(command) = sub {
+        return friend_backups::run(config_dir, command);
+    }
     if let BackupsCmd::Sync { target } = sub {
         return cmd_backups_sync(config_dir, target.as_deref());
     }
@@ -48,7 +51,10 @@ pub(crate) fn cmd_backups(config_dir: &std::path::Path, sub: BackupsCmd) -> Resu
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let mut changed = ensure_configured_blossom_backup_targets(&mut config);
     match sub {
-        BackupsCmd::List | BackupsCmd::Sync { .. } | BackupsCmd::Check { .. } => {}
+        BackupsCmd::List
+        | BackupsCmd::Sync { .. }
+        | BackupsCmd::Check { .. }
+        | BackupsCmd::Friends(_) => {}
         BackupsCmd::Add { target, label } => {
             let target = parse_backup_target(&target, label).context("parsing backup target")?;
             if target.kind == BackupTargetKind::Blossom

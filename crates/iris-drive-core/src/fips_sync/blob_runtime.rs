@@ -30,6 +30,7 @@ pub(super) struct DriveBlobRuntime<L: Store + Send + Sync + 'static> {
     _transport: Arc<TcpBlobTransport<L>>,
     fips: Arc<FipsBlobRoute<L>>,
     authorized_inbound: Arc<RwLock<Vec<PeerIdentity>>>,
+    base_routes: Vec<BlobRouteEntry>,
 }
 
 impl<L: Store + Send + Sync + 'static> DriveBlobRuntime<L> {
@@ -95,7 +96,7 @@ impl<L: Store + Send + Sync + 'static> DriveBlobRuntime<L> {
             Arc::new(MeshForwardingRoute::new(fips.clone())),
         ));
         router
-            .set_routes(route_entries)
+            .set_routes(route_entries.clone())
             .await
             .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?;
 
@@ -104,9 +105,22 @@ impl<L: Store + Send + Sync + 'static> DriveBlobRuntime<L> {
             _transport: transport,
             fips,
             authorized_inbound,
+            base_routes: route_entries,
         };
         runtime.set_authorized_peers(peers);
         Ok(runtime)
+    }
+
+    pub(super) async fn set_friend_route(
+        &self,
+        route: Arc<dyn BlobRoute>,
+    ) -> Result<(), FipsSyncError> {
+        let mut routes = self.base_routes.clone();
+        routes.push(BlobRouteEntry::new("iris-drive.friend-backups", route));
+        self.router
+            .set_routes(routes)
+            .await
+            .map_err(|error| FipsSyncError::Endpoint(error.to_string()))
     }
 
     pub(super) fn set_authorized_peers(&self, peers: &[FipsPeerConfig]) {
@@ -139,7 +153,7 @@ fn peer_identities(peers: &[FipsPeerConfig]) -> Vec<PeerIdentity> {
 fn drive_blob_router_config() -> BlobRouterConfig {
     BlobRouterConfig {
         request_timeout: DRIVE_BLOB_SEARCH_TIMEOUT,
-        max_routes: 3,
+        max_routes: 4,
         max_route_attempts: MAX_PROVIDER_ATTEMPTS,
         route_attempt_budget: MAX_PROVIDER_ATTEMPTS,
         ..BlobRouterConfig::default()

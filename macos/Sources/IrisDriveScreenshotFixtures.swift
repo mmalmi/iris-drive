@@ -108,6 +108,26 @@ enum IrisDriveScreenshotFixtures {
                 ],
             ]),
         ]
+        status.friendBackups = IrisDriveFriendBackups(json: [
+            "backup_npub": fakeNpub("backup"),
+            "invite": "iris-drive://backup?npub=\(fakeNpub("backup"))",
+            "capacity_bytes": 100_000_000_000,
+            "used_bytes": 18_200_000_000,
+            "friends": [
+                [
+                    "npub": fakeNpub("backup-anna"), "label": "Anna",
+                    "quota_bytes": 50_000_000_000, "used_bytes": 18_200_000_000,
+                    "state": "verified", "state_label": "Verified",
+                    "detail": "Your encrypted backup was checked recently.",
+                ],
+                [
+                    "npub": fakeNpub("backup-sam"), "label": "Sam",
+                    "quota_bytes": 25_000_000_000, "used_bytes": 0,
+                    "state": "waiting", "state_label": "Waiting for friend",
+                    "detail": "Share your invite so you can add each other.",
+                ],
+            ],
+        ])
         status.fips = IrisDriveFipsStatus(
             enabled: true,
             running: true,

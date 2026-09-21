@@ -24,11 +24,7 @@ use iris_drive_core::app_key_summary::{
     primary_status_for_setup_state, primary_status_label, setup_label_for_setup_state,
     setup_state_flags, sync_status_label,
 };
-use iris_drive_core::backup_ops::{
-    add_backup_target as core_add_backup_target, check_backups as core_check_backups,
-    default_backup_check_sample_size, effective_backup_targets,
-    remove_backup_target as core_remove_backup_target, sync_backups as core_sync_backups,
-};
+use iris_drive_core::backup_ops::effective_backup_targets;
 use iris_drive_core::backup_summary::{backup_target_summary, blossom_backup_target};
 use iris_drive_core::config::{DEFAULT_BLOSSOM_SERVERS, DEFAULT_RELAYS};
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
@@ -236,6 +232,9 @@ use mobile_relay_interop::{
     approval_receipt_relay_steps, drive_root_event_download_target,
 };
 use snapshot_link::{drive_link_for_cid_value, update_snapshot_link};
+
+mod backup_actions;
+mod friend_backup_actions;
 
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 fn apply_native_app_key_link_relay_event_to_config(
@@ -542,6 +541,22 @@ impl NativeAppRuntime {
             }
             NativeAppAction::RemoveBackupTarget { target } => {
                 self.remove_backup_target(&target);
+            }
+            NativeAppAction::SetFriendBackupCapacity { capacity_bytes } => {
+                self.set_friend_backup_capacity(capacity_bytes);
+            }
+            NativeAppAction::AddBackupFriend {
+                contact,
+                label,
+                quota_bytes,
+            } => {
+                self.add_backup_friend(&contact, &label, quota_bytes);
+            }
+            NativeAppAction::RemoveBackupFriend { npub } => {
+                self.remove_backup_friend(&npub);
+            }
+            NativeAppAction::ExportFriendBackupRecovery { path } => {
+                self.export_friend_backup_recovery(&path);
             }
             NativeAppAction::AddBlossomServer { url } => {
                 self.add_blossom_server(&url);
@@ -1307,47 +1322,6 @@ impl NativeAppRuntime {
         }
     }
 
-    fn add_backup_target(&mut self, target: &str, label: &str) {
-        if let Err(error) =
-            core_add_backup_target(Path::new(&self.data_dir), target, label_option(label))
-        {
-            self.state.error = format!("adding backup target: {error:#}");
-        }
-    }
-
-    fn remove_backup_target(&mut self, target: &str) {
-        if let Err(error) = core_remove_backup_target(Path::new(&self.data_dir), target) {
-            self.state.error = format!("removing backup target: {error:#}");
-        }
-    }
-
-    fn sync_backups(&mut self, target: &str) {
-        let data_dir = self.data_dir.clone();
-        let target = label_option(target);
-        match block_on_backup_operation(async move {
-            core_sync_backups(Path::new(&data_dir), target.as_deref()).await
-        }) {
-            Ok(_) => {}
-            Err(error) => self.state.error = format!("syncing backups: {error:#}"),
-        }
-    }
-
-    fn check_backups(&mut self, target: &str) {
-        let data_dir = self.data_dir.clone();
-        let target = label_option(target);
-        match block_on_backup_operation(async move {
-            core_check_backups(
-                Path::new(&data_dir),
-                target.as_deref(),
-                default_backup_check_sample_size(),
-            )
-            .await
-        }) {
-            Ok(_) => {}
-            Err(error) => self.state.error = format!("checking backups: {error:#}"),
-        }
-    }
-
     fn initialized(&self) -> bool {
         key_path_in(Path::new(&self.data_dir)).exists()
             && self
@@ -1559,6 +1533,8 @@ impl NativeAppRuntime {
         };
         self.state.ui.relay_statuses = default_relay_statuses(&self.state.ui.relays);
         self.state.ui.backups = backup_ui_rows_for_config(&config);
+        self.state.ui.friend_backups =
+            friend_backup_actions::friend_backup_ui(Path::new(&self.data_dir));
         self.state.ui.roots = if config.drives.is_empty() {
             previous_roots
         } else {
@@ -1951,7 +1927,7 @@ fn run_native_calendar_export(
     );
     let daemon = iris_drive_core::Daemon::open_with_config(config_dir, config)
         .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
-    block_on_backup_operation(async {
+    backup_actions::block_on_backup_operation(async {
         iris_drive_core::calendar::load_calendar_data(daemon.tree(), daemon.config(), &owner_npub)
             .await
             .context("loading Iris calendar")
@@ -3478,16 +3454,6 @@ fn default_relay_statuses(relays: &[String]) -> Vec<UiRelayStatus> {
             health: relay.health,
         })
         .collect()
-}
-
-fn block_on_backup_operation<T>(
-    future: impl std::future::Future<Output = anyhow::Result<T>>,
-) -> anyhow::Result<T> {
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .context("building backup runtime")?;
-    runtime.block_on(future)
 }
 
 fn backup_ui_rows_for_config(config: &AppConfig) -> Vec<UiBackup> {

@@ -354,6 +354,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func handleLaunchURL(_ url: URL) -> Bool {
         let classification = IrisDriveDesktopCore.classifyLinkInput(url.absoluteString)
+        if classification["kind"] as? String == "backup_invite" {
+            showControlPanel()
+            guard classification["is_valid"] as? Bool == true else {
+                updateStatus(classification["error"] as? String ?? "Invalid backup invite")
+                return true
+            }
+            IrisDriveStatus.shared.pendingBackupInvite = classification["normalized_input"] as? String
+            return true
+        }
         if classification["kind"] as? String == "share_dialog" {
             openShareDialog(
                 sourcePath: classification["share_source_path"] as? String ?? "",
@@ -2181,6 +2190,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 (ui["relay_statuses"] as? [[String: Any]] ?? []).map(IrisDriveRelayStatus.init)
             status.backupTargets =
                 (ui["backups"] as? [[String: Any]] ?? []).map(IrisDriveBackupTarget.init)
+            status.friendBackups = IrisDriveFriendBackups(json: ui["friend_backups"] as? [String: Any] ?? [:])
             status.shares =
                 (ui["shares"] as? [[String: Any]] ?? []).map(IrisDriveShareStatus.init)
             let lastShareInvite = ui["last_share_invite"] as? String ?? ""
@@ -2361,6 +2371,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.backupTargets =
                     (network["backup_targets"] as? [[String: Any]])?.map(IrisDriveBackupTarget.init)
                     ?? []
+                status.friendBackups = IrisDriveFriendBackups(json: network["friend_backups"] as? [String: Any] ?? [:])
                 status.fips = IrisDriveFipsStatus(
                     json: network["fips"] as? [String: Any] ?? [:]
                 )

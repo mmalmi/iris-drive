@@ -168,6 +168,9 @@ struct IrisDriveControlPanel: View {
             applyPendingShareDialog()
         }
         .onChange(of: status.pendingDeviceApproval?.id, initial: true) { _, _ in applyPendingDeviceApproval() }
+        .onChange(of: status.pendingBackupInvite, initial: true) { _, invite in
+            if invite != nil { selectedTab = .backup }
+        }
         .task(id: status.stateLoaded) {
             await revealStartupLoadingIfNeeded()
         }
@@ -1437,18 +1440,18 @@ struct IrisDriveControlPanel: View {
     }
 
     private var checkingAllBackupsLabel: String {
-        if backupCheckTotal > 0 {
-            return "Checking \(checkedBackupCount) of \(backupCheckTotal)"
-        }
-        return "Checked \(checkedBackupCount)"
+        backupCheckTotal > 0
+            ? "Checking \(checkedBackupCount) of \(backupCheckTotal)" : "Checked \(checkedBackupCount)"
     }
 
     // MARK: Backup
-
     private var backup: some View {
         VStack(alignment: .leading, spacing: 14) {
+            SectionTitle("Backup")
+            FriendBackupsSection(status: status, controller: controller)
+            Divider().padding(.vertical, 6)
             HStack {
-                SectionTitle("Backup")
+                Text("Other backups").font(.title3.weight(.semibold))
                 Spacer()
                 Button {
                     guard !checkingAllBackups else { return }

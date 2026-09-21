@@ -69,6 +69,19 @@ pub fn classify_link_input(input: &str) -> LinkInputClassification {
         return classification;
     }
 
+    if trimmed.starts_with("iris-drive://backup") {
+        "backup_invite".clone_into(&mut classification.kind);
+        match crate::friend_backup::encode_backup_invite(trimmed) {
+            Ok(invite) => {
+                classification.normalized_input = invite;
+                classification.is_complete = true;
+                classification.is_valid = true;
+            }
+            Err(error) => classification.error = error.to_string(),
+        }
+        return classification;
+    }
+
     if let Some(result) = classify_app_key_approval_link_input(trimmed) {
         return result;
     }

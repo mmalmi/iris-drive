@@ -29,8 +29,8 @@ const IO_CHUNK_BYTES: usize = 16 * 1024;
 const COMMAND_CAPACITY: usize = 256;
 const DELIVERY_CAPACITY: usize = 1024;
 const SEEN_RECORD_CAPACITY: usize = 1024;
-pub(super) const CONTROL_POLL_INTERVAL: Duration = Duration::from_millis(250);
-pub(super) const BOOTSTRAP_STREAM_LIFETIME_MS: u64 = 5_000;
+pub(crate) const CONTROL_POLL_INTERVAL: Duration = Duration::from_millis(250);
+pub(crate) const BOOTSTRAP_STREAM_LIFETIME_MS: u64 = 5_000;
 const QUEUED_RECORD_LIFETIME_MS: u64 = 60_000;
 const RECONNECT_DELAY_MS: u64 = 1_000;
 
@@ -41,7 +41,7 @@ pub struct FipsAppMessage {
     pub data: Vec<u8>,
 }
 
-pub(super) struct DriveControlRuntime {
+pub(crate) struct DriveControlRuntime {
     commands: mpsc::Sender<Command>,
     deliveries: broadcast::Sender<FipsAppMessage>,
     presence_changes: watch::Sender<Vec<String>>,
@@ -49,7 +49,7 @@ pub(super) struct DriveControlRuntime {
 }
 
 impl DriveControlRuntime {
-    pub(super) async fn bind(
+    pub(crate) async fn bind(
         endpoint: Arc<FipsEndpoint>,
         authorized_peers: BTreeSet<String>,
         bootstrap_topics: BTreeSet<&'static str>,
@@ -96,15 +96,15 @@ impl DriveControlRuntime {
         })
     }
 
-    pub(super) fn subscribe(&self) -> broadcast::Receiver<FipsAppMessage> {
+    pub(crate) fn subscribe(&self) -> broadcast::Receiver<FipsAppMessage> {
         self.deliveries.subscribe()
     }
 
-    pub(super) fn subscribe_presence_changes(&self) -> watch::Receiver<Vec<String>> {
+    pub(crate) fn subscribe_presence_changes(&self) -> watch::Receiver<Vec<String>> {
         self.presence_changes.subscribe()
     }
 
-    pub(super) async fn set_policy(
+    pub(crate) async fn set_policy(
         &self,
         authorized_peers: BTreeSet<String>,
         bootstrap_topics: BTreeSet<&'static str>,
@@ -118,7 +118,7 @@ impl DriveControlRuntime {
         .await
     }
 
-    pub(super) async fn send(
+    pub(crate) async fn send(
         &self,
         peer_id: String,
         topic: String,
@@ -133,7 +133,7 @@ impl DriveControlRuntime {
         .await
     }
 
-    pub(super) async fn broadcast(
+    pub(crate) async fn broadcast(
         &self,
         topic: String,
         data: Vec<u8>,
@@ -146,7 +146,7 @@ impl DriveControlRuntime {
         response.await.map_err(|_| closed())?
     }
 
-    pub(super) async fn connected_peer_ids(&self) -> Result<Vec<String>, FipsSyncError> {
+    pub(crate) async fn connected_peer_ids(&self) -> Result<Vec<String>, FipsSyncError> {
         let (reply, response) = oneshot::channel();
         self.commands
             .send(Command::ConnectedPeers { reply })
@@ -155,7 +155,7 @@ impl DriveControlRuntime {
         response.await.map_err(|_| closed())
     }
 
-    pub(super) async fn shutdown(&mut self) -> Result<(), FipsSyncError> {
+    pub(crate) async fn shutdown(&mut self) -> Result<(), FipsSyncError> {
         let (reply, response) = oneshot::channel();
         if self
             .commands
@@ -866,7 +866,7 @@ impl ControlActor {
     }
 }
 
-pub(super) fn encode_record(topic: &str, data: &[u8]) -> Result<Vec<u8>, FipsSyncError> {
+pub(crate) fn encode_record(topic: &str, data: &[u8]) -> Result<Vec<u8>, FipsSyncError> {
     let topic = topic.trim();
     if topic.is_empty() || topic.len() > MAX_TOPIC_BYTES {
         return Err(endpoint_error("invalid Drive control topic length"));

@@ -17,6 +17,7 @@ pub mod direct_root_transport;
 mod fips_bootstrap;
 pub mod fips_status;
 pub mod fips_sync;
+pub mod friend_backup;
 pub mod profile;
 
 /// Convenience constructor: a `BlossomClient` wired with the given

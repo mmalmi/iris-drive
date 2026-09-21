@@ -10,6 +10,7 @@ pub struct UiState {
     pub relays: Vec<String>,
     pub relay_statuses: Vec<UiRelayStatus>,
     pub backups: Vec<UiBackup>,
+    pub friend_backups: UiFriendBackups,
     pub paths: UiPaths,
     pub sync: UiSyncStatus,
     pub fips: UiFipsStatus,
@@ -159,6 +160,27 @@ pub struct UiBackup {
     pub state: String,
     pub detail: String,
     pub enabled: bool,
+}
+
+#[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UiFriendBackups {
+    pub backup_npub: String,
+    pub invite: String,
+    pub capacity_bytes: u64,
+    pub used_bytes: u64,
+    pub friends: Vec<UiBackupFriend>,
+    pub error: String,
+}
+
+#[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UiBackupFriend {
+    pub npub: String,
+    pub label: String,
+    pub quota_bytes: u64,
+    pub used_bytes: u64,
+    pub state: String,
+    pub state_label: String,
+    pub detail: String,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

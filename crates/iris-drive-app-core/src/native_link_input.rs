@@ -111,6 +111,20 @@ mod tests {
     const DEVICE_APPROVAL_BOOTSTRAP: &str = "https://drive.iris.to/approve-device/eyJkZXZpY2VBcHBLZXlOcHViIjoibnB1YjFjY3o4bDl6cGE0N2s2dno5Z3BoZnRzcnVtcHc4MHJqdDNuaG5lZmF0NHN5bWpocnNubWpzMzhtbnlkIiwicmVxdWVzdE5wdWIiOiJucHViMWx5Y2c1cXZqdHJwM3FqZjVmN3psMzgyajl4Nm5yano5c2RoZW52eXhxOGMzODA4cXhtdXM2Z3EyNjYiLCJyZXF1ZXN0U2VjcmV0IjoiQUFFQ0F3UUZCZ2NJQ1FvTERBME9EeEFSRWhNVUZSWVhHQmthR3h3ZEhoOCIsImxhYmVsIjoiRml4dHVyZSBkZXZpY2UifQ";
 
     #[test]
+    fn friend_backup_invites_open_setup_without_device_admission() {
+        let invite = format!("iris-drive://backup?npub={DEVICE_APP_KEY_NPUB}");
+        let result = classify_link_input(invite.clone());
+        assert_eq!(result.kind, "backup_invite");
+        assert!(result.is_valid);
+        assert_eq!(result.normalized_input, invite);
+        assert!(!validate_device_invite_input(invite.clone()).is_valid);
+        assert!(!validate_device_approval_input(invite.clone()).is_valid);
+        let injected = classify_link_input(format!("{invite}&quota=9999"));
+        assert_eq!(injected.kind, "backup_invite");
+        assert!(!injected.is_valid);
+    }
+
+    #[test]
     fn classify_nhash_file_exposes_native_open_target() {
         let file = classify_link_input(
             "https://drive.iris.to/#/nhash1qqsyktrn6c5r444rhjt2qfv6a6uu5hcsrlcvk202whqhxyk3fwkl83s9yr8ngvg5489t2sqnpzqyk7um2ug688j42y57375qex7vgpc384vdv9mr60t/freenet.pdf?fullscreen=1".to_owned(),

@@ -30,14 +30,14 @@ use crate::identity::AppKey;
 use crate::paths::config_path_in;
 
 mod blob_runtime;
-mod control_runtime;
+pub(crate) mod control_runtime;
 mod download;
-mod endpoint_config;
+pub(crate) mod endpoint_config;
 mod nostr_runtime;
 mod peer_config;
 mod peer_refresh;
 mod recent_peer_cache;
-mod settings_runtime;
+pub(crate) mod settings_runtime;
 use blob_runtime::{DriveBlobRuntime, configured_shared_lmdb_route};
 use control_runtime::DriveControlRuntime;
 pub use control_runtime::FipsAppMessage;
@@ -90,6 +90,7 @@ pub struct FipsBlockSync<L: Store + Send + Sync + 'static> {
     transport_settings: FipsTransportSettings,
     peer_config_refresh: PeerConfigRefresh,
     recent_peers: Option<Mutex<DriveRecentPeers>>,
+    friend_backups: Option<crate::friend_backup::runtime::FriendBackupRuntime>,
 }
 
 pub type FsFipsBlockSync = FipsBlockSync<hashtree_fs::FsBlobStore>;
@@ -123,7 +124,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         .await
         .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?;
 
-        Self::start_with_bound_endpoint_and_recent_peers(
+        let mut sync = Self::start_with_bound_endpoint_and_recent_peers(
             endpoint,
             local_store,
             config,
@@ -131,7 +132,14 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             shared_store,
             Some(recent_peers_path),
         )
-        .await
+        .await?;
+        let friends = crate::friend_backup::runtime::FriendBackupRuntime::spawn(device)
+            .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?;
+        if let Some(runtime) = sync.blob_runtime.as_ref() {
+            runtime.set_friend_route(friends.read_route.clone()).await?;
+        }
+        sync.friend_backups = Some(friends);
+        Ok(sync)
     }
 
     #[cfg(test)]
@@ -241,6 +249,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             transport_settings,
             peer_config_refresh: PeerConfigRefresh::new(Some(peer_snapshot)),
             recent_peers: recent_peers.map(Mutex::new),
+            friend_backups: None,
         })
     }
 
@@ -552,6 +561,9 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     }
 
     pub async fn shutdown(mut self) -> Result<(), FipsSyncError> {
+        if let Some(mut friends) = self.friend_backups.take() {
+            friends.shutdown().await;
+        }
         if let Some(mut runtime) = self.control_runtime.take() {
             runtime.shutdown().await?;
         }

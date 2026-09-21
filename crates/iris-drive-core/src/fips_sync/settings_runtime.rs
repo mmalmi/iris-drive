@@ -126,7 +126,7 @@ pub(super) fn target_allows_default_lan_discovery(target_os: &str) -> bool {
     target_os != "android"
 }
 
-pub(super) fn fips_endpoint_options(
+pub(crate) fn fips_endpoint_options(
     identity_nsec: String,
     discovery_scope: String,
     relays: Vec<String>,

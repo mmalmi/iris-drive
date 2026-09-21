@@ -1,7 +1,58 @@
 import AppKit
 import Foundation
+import UniformTypeIdentifiers
 
 extension AppDelegate {
+    func exportFriendBackupRecovery(completion: @escaping (Result<Void, Error>) -> Void) {
+        let panel = NSSavePanel()
+        panel.title = "Save backup recovery file"
+        panel.message = "Keep this file somewhere safe. It unlocks your backups if you lose this device."
+        panel.nameFieldStringValue = "Iris Drive Backup Recovery.json"
+        panel.allowedContentTypes = [.json]
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        dispatchNativeAction(
+            ["type": "export_friend_backup_recovery", "path": url.path],
+            progress: "Saving backup recovery file",
+            success: "Backup recovery file saved",
+            completion: { completion(.success(())) },
+            failure: { completion(.failure($0)) }
+        )
+    }
+
+    func setFriendBackupCapacity(_ bytes: UInt64, completion: @escaping (Result<Void, Error>) -> Void) {
+        dispatchNativeAction(
+            ["type": "set_friend_backup_capacity", "capacity_bytes": bytes],
+            progress: "Updating shared space",
+            success: "Shared space updated",
+            completion: { completion(.success(())) },
+            failure: { completion(.failure($0)) }
+        )
+    }
+
+    func addBackupFriend(
+        contact: String, label: String, bytes: UInt64,
+        completion: @escaping (Result<Void, Error>) -> Void
+    ) {
+        dispatchNativeAction(
+            ["type": "add_backup_friend", "contact": contact, "label": label, "quota_bytes": bytes],
+            progress: "Saving backup friend",
+            success: "Backup friend saved",
+            completion: { completion(.success(())) },
+            failure: { completion(.failure($0)) }
+        )
+    }
+
+    func removeBackupFriend(_ npub: String, completion: @escaping (Result<Void, Error>) -> Void) {
+        dispatchNativeAction(
+            ["type": "remove_backup_friend", "npub": npub],
+            progress: "Removing backup friend",
+            success: "Backup friend removed",
+            completion: { completion(.success(())) },
+            failure: { completion(.failure($0)) }
+        )
+    }
+
     func addBackupTarget(_ value: String, label: String) {
         let target = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !target.isEmpty else { return }

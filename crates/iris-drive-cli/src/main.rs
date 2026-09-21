@@ -35,6 +35,7 @@ mod backups;
 mod commands;
 mod daemon;
 mod drive;
+mod friend_backups;
 mod mount;
 mod profile;
 mod provider_staging;
