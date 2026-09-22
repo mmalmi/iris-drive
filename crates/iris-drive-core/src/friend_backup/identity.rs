@@ -27,7 +27,7 @@ pub fn backup_npub(config_dir: &Path) -> Result<String> {
     backup_keys(&device)?
         .public_key()
         .to_bech32()
-        .context("encoding user ID")
+        .context("preparing backup link")
 }
 
 /// Accept an explicitly exchanged backup npub or its convenience link. Only
@@ -35,14 +35,14 @@ pub fn backup_npub(config_dir: &Path) -> Result<String> {
 pub fn parse_backup_contact(input: &str) -> Result<String> {
     let input = input.trim();
     if input.len() > 256 {
-        bail!("user ID or backup link is too long");
+        bail!("backup link is too long");
     }
     let raw = input.strip_prefix(BACKUP_INVITE_PREFIX).unwrap_or(input);
     if !raw.to_ascii_lowercase().starts_with("npub1") {
-        bail!("use a friend's user ID or backup link");
+        bail!("use a friend's backup link");
     }
-    let key = PublicKey::from_bech32(raw).context("invalid user ID")?;
-    key.to_bech32().context("encoding user ID")
+    let key = PublicKey::from_bech32(raw).context("invalid backup link")?;
+    key.to_bech32().context("preparing backup link")
 }
 
 pub fn encode_backup_invite(input: &str) -> Result<String> {

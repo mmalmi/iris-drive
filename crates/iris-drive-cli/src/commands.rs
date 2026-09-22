@@ -592,10 +592,10 @@ pub(crate) enum BackupFriendsCmd {
     Restore {
         #[arg(long)]
         recovery_file: PathBuf,
-        #[arg(long, value_name = "USER_ID_OR_LINK")]
+        #[arg(long, value_name = "BACKUP_LINK")]
         friend: String,
     },
-    /// Print your user ID and backup link for private backups.
+    /// Print your backup link for private backups.
     Identity,
     /// Print private friends, capacity, retained usage, and backup status.
     List,
@@ -604,9 +604,9 @@ pub(crate) enum BackupFriendsCmd {
         #[arg(long)]
         bytes: u64,
     },
-    /// Add or update a friend's user ID or backup link, choosing space locally.
+    /// Add or update a friend's backup link, choosing space locally.
     Add {
-        #[arg(value_name = "USER_ID_OR_LINK")]
+        #[arg(value_name = "BACKUP_LINK")]
         contact: String,
         /// Space offered to this friend. Zero only requests backup space from them.
         #[arg(long)]
@@ -616,7 +616,7 @@ pub(crate) enum BackupFriendsCmd {
     },
     /// Remove a friend only when none of their backup data remains locally.
     Remove {
-        #[arg(value_name = "USER_ID")]
+        #[arg(value_name = "BACKUP_LINK")]
         npub: String,
     },
 }

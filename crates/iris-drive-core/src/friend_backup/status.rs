@@ -102,7 +102,7 @@ pub fn friend_backup_status(config_dir: &Path) -> Result<FriendBackupStatus> {
                 (
                     "waiting",
                     "Waiting for friend",
-                    "Both people add each other's user ID or backup link".to_string(),
+                    "Both people add each other's backup link".to_string(),
                 )
             };
             FriendBackupPeerStatus {

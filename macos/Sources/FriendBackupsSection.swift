@@ -60,12 +60,8 @@ struct FriendBackupsSection: View {
                     irisDriveCopyToPasteboard(backups.invite)
                 }
                 .disabled(backups.invite.isEmpty)
-                IrisDriveCopyButton(title: "Copy user ID", systemImage: "doc.on.doc") {
-                    irisDriveCopyToPasteboard(backups.backupNpub)
-                }
-                .disabled(backups.backupNpub.isEmpty)
             }
-            Text("Back up privately with friends. Add each other's user ID or backup link.")
+            Text("Exchange backup links to back up privately with friends.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             HStack(spacing: 8) {
@@ -87,7 +83,7 @@ struct FriendBackupsSection: View {
                 }
             }
             if backups.friends.isEmpty {
-                Text("Add a friend's user ID or backup link to get started.")
+                Text("Add a friend's backup link to get started.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 6)
@@ -186,12 +182,13 @@ private struct BackupFriendEditor: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text(friend == nil ? "Add backup friend" : "Edit backup friend").font(.title2.weight(.semibold))
-            VStack(alignment: .leading, spacing: 5) {
-                Text("Friend's user ID or backup link").font(.callout)
-                TextField("User ID or backup link", text: $contact)
-                    .textFieldStyle(.roundedBorder)
-                    .disableAutocorrection(true)
-                    .disabled(friend != nil)
+            if friend == nil {
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Friend's backup link").font(.callout)
+                    TextField("Paste backup link", text: $contact)
+                        .textFieldStyle(.roundedBorder)
+                        .disableAutocorrection(true)
+                }
             }
             TextField("Name (optional, only visible to you)", text: $label).textFieldStyle(.roundedBorder)
             HStack {
@@ -202,7 +199,7 @@ private struct BackupFriendEditor: View {
             }
             Text("Choose the space yourself. 0 GB requests backup space without offering space on this device.")
                 .font(.callout).foregroundStyle(.secondary)
-            Text("Share your user ID or backup link too. These IDs are separate from your social profile.")
+            Text("Share your backup link too.")
                 .font(.callout).foregroundStyle(.secondary)
             if !error.isEmpty {
                 Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled)
