@@ -56,16 +56,16 @@ struct FriendBackupsSection: View {
             HStack {
                 Text("Friends").font(.title3.weight(.semibold))
                 Spacer()
-                IrisDriveCopyButton(title: "Copy invite", systemImage: "link") {
+                IrisDriveCopyButton(title: "Copy backup link", systemImage: "link") {
                     irisDriveCopyToPasteboard(backups.invite)
                 }
                 .disabled(backups.invite.isEmpty)
-                IrisDriveCopyButton(title: "Copy backup npub", systemImage: "doc.on.doc") {
+                IrisDriveCopyButton(title: "Copy user ID", systemImage: "doc.on.doc") {
                     irisDriveCopyToPasteboard(backups.backupNpub)
                 }
                 .disabled(backups.backupNpub.isEmpty)
             }
-            Text("Back up privately with friends. You both add each other using your backup identity.")
+            Text("Back up privately with friends. Add each other's user ID or backup link.")
                 .font(.callout)
                 .foregroundStyle(.secondary)
             HStack(spacing: 8) {
@@ -87,7 +87,7 @@ struct FriendBackupsSection: View {
                 }
             }
             if backups.friends.isEmpty {
-                Text("Add a friend's invite or backup npub to get started.")
+                Text("Add a friend's user ID or backup link to get started.")
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .padding(.vertical, 6)
@@ -187,8 +187,8 @@ private struct BackupFriendEditor: View {
         VStack(alignment: .leading, spacing: 16) {
             Text(friend == nil ? "Add backup friend" : "Edit backup friend").font(.title2.weight(.semibold))
             VStack(alignment: .leading, spacing: 5) {
-                Text("Friend's invite or backup npub").font(.callout)
-                TextField("iris-drive://backup?npub=…", text: $contact)
+                Text("Friend's user ID or backup link").font(.callout)
+                TextField("User ID or backup link", text: $contact)
                     .textFieldStyle(.roundedBorder)
                     .disableAutocorrection(true)
                     .disabled(friend != nil)
@@ -202,7 +202,7 @@ private struct BackupFriendEditor: View {
             }
             Text("Choose the space yourself. 0 GB requests backup space without offering space on this device.")
                 .font(.callout).foregroundStyle(.secondary)
-            Text("Share your own invite too. Backup identities are separate from social npubs.")
+            Text("Share your user ID or backup link too. These IDs are separate from your social profile.")
                 .font(.callout).foregroundStyle(.secondary)
             if !error.isEmpty {
                 Text(error).font(.callout).foregroundStyle(.red).textSelection(.enabled)

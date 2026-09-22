@@ -11,6 +11,45 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class MacAppRegistrationTests(unittest.TestCase):
+    @unittest.skipUnless(os.uname().sysname == "Darwin", "requires the macOS Swift SDK")
+    def test_incomplete_app_disables_login_registration(self):
+        app = (ROOT / "macos/Sources/IrisDriveMacApp.swift").read_text()
+        helper = app[app.index("    func idriveExecutableURL() -> URL? {"):
+                     app.index("    func runtimePaths() -> IrisDriveRuntimePaths {")]
+        startup = (ROOT / "macos/Sources/IrisDriveStartup.swift").read_text()
+        guard = startup[startup.index("    private var launchAgentSyncDisabled: Bool {"):
+                        startup.index("\n}\n\nprivate enum LaunchAgentError")]
+        support = (ROOT / "macos/Shared/IrisDriveRuntimeSupport.swift").read_text()
+        environment = support[:support.index("enum IrisDriveAppGroup {")]
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            source = base / "main.swift"
+            source.write_text(environment + "\nclass AppDelegate {\n" + helper + guard + """
+                func disabled() -> Bool { launchAgentSyncDisabled }
+            }
+            let app = AppDelegate()
+            let helper = Bundle.main.executableURL!.deletingLastPathComponent()
+                .appendingPathComponent("idrive")
+            precondition(app.disabled(), "an incomplete app could replace the login entry")
+            try Data("#!/bin/sh\\nexit 0\\n".utf8).write(to: helper)
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: helper.path)
+            precondition(app.disabled(), "a non-executable helper could replace the login entry")
+            try FileManager.default.setAttributes([.posixPermissions: 0o700], ofItemAtPath: helper.path)
+            precondition(!app.disabled(), "a complete app must retain normal login registration")
+            setenv("IRIS_DRIVE_DISABLE_LOGIN_AGENT_SYNC", "true", 1)
+            precondition(app.disabled(), "explicit login-registration disable was ignored")
+            """)
+            executable = base / "Fixture.app/Contents/MacOS/LoginRegistrationTest"
+            executable.parent.mkdir(parents=True)
+            build = subprocess.run(["xcrun", "swiftc", "-swift-version", "5", str(source),
+                                    "-o", str(executable)], text=True, capture_output=True, timeout=60)
+            self.assertEqual(build.returncode, 0, build.stdout + build.stderr)
+            environment = dict(os.environ)
+            environment.pop("IRIS_DRIVE_DISABLE_LOGIN_AGENT_SYNC", None)
+            result = subprocess.run([str(executable)], env=environment, text=True,
+                                    capture_output=True, timeout=10)
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
     def test_release_smoke_detaches_owned_dmg_after_copy_or_copy_failure(self):
         source = (ROOT / "scripts/macos-release-smoke.sh").read_text()
         setup = source[:source.index("\nusage() {")]

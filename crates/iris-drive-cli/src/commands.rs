@@ -588,14 +588,14 @@ pub(crate) enum BackupFriendsCmd {
         #[arg(long)]
         output: PathBuf,
     },
-    /// Restore a friend's encrypted backup into a new folder in this Drive.
+    /// Restore your encrypted backup from a friend into a new folder in this Drive.
     Restore {
         #[arg(long)]
         recovery_file: PathBuf,
-        #[arg(long)]
+        #[arg(long, value_name = "USER_ID_OR_LINK")]
         friend: String,
     },
-    /// Print this install's backup-only npub and invite. This is not your social identity.
+    /// Print your user ID and backup link for private backups.
     Identity,
     /// Print private friends, capacity, retained usage, and backup status.
     List,
@@ -604,8 +604,9 @@ pub(crate) enum BackupFriendsCmd {
         #[arg(long)]
         bytes: u64,
     },
-    /// Add or update a friend's backup npub or invite, choosing space locally.
+    /// Add or update a friend's user ID or backup link, choosing space locally.
     Add {
+        #[arg(value_name = "USER_ID_OR_LINK")]
         contact: String,
         /// Space offered to this friend. Zero only requests backup space from them.
         #[arg(long)]
@@ -614,7 +615,10 @@ pub(crate) enum BackupFriendsCmd {
         label: Option<String>,
     },
     /// Remove a friend only when none of their backup data remains locally.
-    Remove { npub: String },
+    Remove {
+        #[arg(value_name = "USER_ID")]
+        npub: String,
+    },
 }
 
 #[derive(Debug, Subcommand)]

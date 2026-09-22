@@ -75,6 +75,9 @@ extension AppDelegate {
     }
 
     private var launchAgentSyncDisabled: Bool {
+        guard idriveExecutableURL() != nil else {
+            return true
+        }
         if IrisDriveEnvironment.flag("IRIS_DRIVE_DISABLE_LOGIN_AGENT_SYNC") {
             return true
         }

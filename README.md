@@ -219,10 +219,10 @@ See the platform READMEs for focused instructions:
   identities are limited to bootstrap topics, and ambient same-host blob
   providers remain retrieval routes.
 - Supports encrypted backup targets for Blossom, filesystem, and LMDB endpoints.
-- Supports private friend backups: exchange backup links or backup npubs, add each
+- Supports private friend backups: exchange user IDs or backup links, add each
   other, and choose total and per-friend space in Backups. These contacts remain
-  local and do not create public Nostr follows. Backup identities are separate
-  from social identities and normal Drive AppKeys. The daemon transfers encrypted
+  local and do not create public follows. User IDs for backups are separate
+  from social profiles and other Drive identities. The daemon transfers encrypted
   snapshots over Hashtree/FIPS, checks random blocks, and uses friends as retrieval
   sources. Both apps must be running for a transfer or check.
 - Serves local browser views for `*.iris.localhost` and `nhash.iris.localhost`.
@@ -233,17 +233,17 @@ Friend backup controls are available in the macOS Backups panel and the CLI:
 ```bash
 idrive backups friends identity
 idrive backups friends capacity --bytes 107374182400
-idrive backups friends add '<friend-backup-npub-or-link>' --bytes 53687091200 --label 'Friend'
+idrive backups friends add '<friend-user-id-or-backup-link>' --bytes 53687091200 --label 'Friend'
 idrive backups friends list
 idrive backups friends export-recovery --output backup-recovery.json
-idrive backups friends restore --recovery-file backup-recovery.json --friend '<friend-backup-npub>'
+idrive backups friends restore --recovery-file backup-recovery.json --friend '<friend-user-id-or-backup-link>'
 ```
 
 Save the recovery file somewhere safe outside this device. It contains the private
 backup key and a list of friend addresses to help recover after losing the original
-install. You can also restore from a friend added later by supplying their backup
-npub. The normal profile recovery
-phrase does not recover that install's backup key. Recovery creates a new folder
+install. You can also restore from a friend added later by supplying their user ID
+or backup link. The normal profile recovery phrase does not recover that install's
+backup key. Recovery creates a new folder
 in Drive, preserving existing files. A zero-byte friend allocation requests space
 without offering space locally. Retained history and interrupted transfers count
 toward the allocation; removing friends or shrinking their allocation never
