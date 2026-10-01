@@ -207,7 +207,7 @@ for lock in Cargo.lock linux/Cargo.lock; do
   require_registry_package "$lock" nostr-pubsub 0.1.15 120d6c3ba6b099011edd0558b6ec257de09abf0917833428e2ff7a4cc542d8da
   require_registry_package "$lock" nostr-pubsub-fips 0.5.12 21f9d7634da0eafe91a4b0ec79721ccc943fd60c8fa1e1eab296bc0ac1e07c9d
   require_registry_package "$lock" nostr-pubsub-social-graph 0.2.3 35325e59eea42ad99eb05fba75c85dd4882450c755d5b99be6582b45679e0a6f
-  require_registry_package "$lock" nostr-pubsub-relay 0.1.11 8641200920d163b2d82c34e6f15605cff93a0546e3e0087fce8f3bddaa2329ca
+  require_registry_package "$lock" nostr-pubsub-relay 0.1.13 027e2ec1493bc6082e3279d7ad2bfa3cdd1717d0597cb724dd09ded904686f76
 done
 require_absent scripts/docker-cli-e2e.sh "Missing required sibling checkout"
 require_contains scripts/docker-cli-e2e.sh '-v "$ROOT:/work/iris-drive:ro"'
