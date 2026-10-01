@@ -8,11 +8,7 @@ use anyhow::{Context, Result, bail};
 use async_trait::async_trait;
 use fips_core::FipsEndpoint;
 use hashtree_fips_transport::{FipsPeerConfig, set_fips_peer_configs};
-use nostr_pubsub::{
-    EventPolicyContext, NostrEventHandler, NostrEventSubscriber, NostrEventSubscription,
-    NostrPubsubRouter, PolicyDecision, PubsubPolicy, RouterLiveSource, SourcePolicyContext,
-    SourceRoute,
-};
+use nostr_pubsub::{NostrEventHandler, NostrEventSubscriber, NostrEventSubscription};
 use nostr_pubsub_fips::{FipsPubsubClient, FipsPubsubClientOptions, FipsPubsubPolicyOptions};
 use nostr_pubsub_relay::RelayEventBus;
 use nostr_sdk::{Filter, Keys, PublicKey, ToBech32};
@@ -38,8 +34,8 @@ pub(crate) fn register(config_dir: &Path, client: &Arc<FipsPubsubClient>) {
 /// The existing provider owns its connections; only standalone checks own an
 /// endpoint. Dropping the resolver also releases a cancelled check's resources.
 pub(super) struct UpdatePubsub {
-    router: NostrPubsubRouter,
-    connections: UpdateConnections,
+    provider: Arc<dyn NostrEventSubscriber>,
+    _connections: UpdateConnections,
 }
 
 struct UpdateConnections {
@@ -49,14 +45,41 @@ struct UpdateConnections {
 
 impl UpdatePubsub {
     pub(super) async fn connect(config: &ProductUpdateConfig) -> Result<Arc<Self>> {
+        let settings = FipsTransportSettings::from_env();
+        let explicit_relays = std::env::var("IRIS_DRIVE_UPDATE_RELAYS")
+            .ok()
+            .map(|value| hashtree_updater::split_csv(&value));
+        // Mesh mode ignores the legacy relay defaults. Only an explicit nonempty
+        // override or disabling mesh selects relay transport for this check.
+        if !settings.enable_mesh_pubsub
+            || explicit_relays
+                .as_ref()
+                .is_some_and(|relays| !relays.is_empty())
+        {
+            let relays = explicit_relays.unwrap_or_else(|| config.relays.clone());
+            if relays.is_empty() {
+                bail!("update discovery requires an enabled pubsub transport");
+            }
+            let relay = RelayEventBus::new(
+                relays,
+                std::time::Duration::from_secs(UPDATE_MANIFEST_TIMEOUT_SECS),
+            )
+            .await?;
+            return Ok(Arc::new(Self {
+                provider: Arc::new(relay.clone()),
+                _connections: UpdateConnections {
+                    owned_fips: None,
+                    relay: Some(relay),
+                },
+            }));
+        }
         let shared = config
             .config_dir
             .as_ref()
             .and_then(|directory| SHARED_CLIENTS.get()?.lock().ok()?.get(directory)?.upgrade());
-        let settings = FipsTransportSettings::from_env();
         let (client, owned_fips) = if let Some(client) = shared {
-            (Some(client), None)
-        } else if settings.enable_mesh_pubsub {
+            (client, None)
+        } else {
             let settings = FipsTransportSettings {
                 // A check has its own ephemeral identity and must not claim the
                 // app's configured listening ports or change host networking.
@@ -102,45 +125,15 @@ impl UpdatePubsub {
                         return Err(error.into());
                     }
                 };
-            (Some(client.clone()), Some((client, endpoint)))
-        } else {
-            (None, None)
+            (client.clone(), Some((client, endpoint)))
         };
-        let mut runtime = Self {
-            router: NostrPubsubRouter::new(Arc::new(ReleasePolicy)),
-            connections: UpdateConnections {
+        Ok(Arc::new(Self {
+            provider: Arc::new(client.fresh_subscriber()),
+            _connections: UpdateConnections {
                 owned_fips,
                 relay: None,
             },
-        };
-        if let Some(client) = &client {
-            runtime.router = runtime.router.with_live_source(RouterLiveSource::new(
-                SourceRoute::fips_peer_default("iris-drive-updates"),
-                Arc::new(client.fresh_subscriber()),
-            ));
-        }
-        // Honor the application's configured sources. An empty list stays
-        // empty; the updater never substitutes a private default relay list.
-        let relays = std::env::var("IRIS_DRIVE_UPDATE_RELAYS")
-            .ok()
-            .map(|value| hashtree_updater::split_csv(&value))
-            .unwrap_or_else(|| config.relays.clone());
-        if client.is_none() && relays.is_empty() {
-            bail!("update discovery requires an enabled pubsub transport");
-        }
-        if !relays.is_empty() {
-            let relay = RelayEventBus::new(
-                relays,
-                std::time::Duration::from_secs(UPDATE_MANIFEST_TIMEOUT_SECS),
-            )
-            .await?;
-            runtime.router = runtime.router.with_live_source(RouterLiveSource::new(
-                SourceRoute::relay("iris-drive-updates"),
-                Arc::new(relay.clone()),
-            ));
-            runtime.connections.relay = Some(relay);
-        }
-        Ok(Arc::new(runtime))
+        }))
     }
 }
 
@@ -151,7 +144,7 @@ impl NostrEventSubscriber for UpdatePubsub {
         filters: Vec<Filter>,
         handler: NostrEventHandler,
     ) -> nostr_pubsub::Result<Box<dyn NostrEventSubscription>> {
-        self.router.subscribe(filters, handler).await
+        self.provider.subscribe(filters, handler).await
     }
 }
 
@@ -170,30 +163,6 @@ impl Drop for UpdateConnections {
                 }
             });
         }
-    }
-}
-
-// The shared resolver validates the pinned publisher/tree and signatures.
-// Source routing must not depend on personal follows or application ACLs.
-struct ReleasePolicy;
-
-#[async_trait]
-impl PubsubPolicy for ReleasePolicy {
-    async fn check_event(
-        &self,
-        context: EventPolicyContext<'_>,
-    ) -> nostr_pubsub::Result<PolicyDecision> {
-        Ok(PolicyDecision::allow_with_priority(
-            context.source.kind.default_priority(),
-        ))
-    }
-    async fn check_source(
-        &self,
-        context: SourcePolicyContext<'_>,
-    ) -> nostr_pubsub::Result<PolicyDecision> {
-        Ok(PolicyDecision::allow_with_priority(
-            context.candidate.priority,
-        ))
     }
 }
 

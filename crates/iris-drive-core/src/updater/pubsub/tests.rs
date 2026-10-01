@@ -105,19 +105,25 @@ async fn shared_fips_provider_refreshes_cached_release_and_fails_offline() {
 
     let directory = tempfile::tempdir().unwrap();
     register(directory.path(), &app_client);
+    let relays = AppConfig::default().relays;
+    assert!(
+        !relays.is_empty(),
+        "exercise legacy populated relay defaults"
+    );
     let provider = UpdatePubsub::connect(&ProductUpdateConfig {
+        relays,
         config_dir: Some(directory.path().to_path_buf()),
         ..Default::default()
     })
     .await
     .unwrap();
     assert!(
-        provider.connections.owned_fips.is_none(),
+        provider._connections.owned_fips.is_none(),
         "must reuse the app endpoint"
     );
     assert!(
-        provider.connections.relay.is_none(),
-        "empty relays must stay empty"
+        provider._connections.relay.is_none(),
+        "FIPS mode must ignore legacy configured relay defaults"
     );
     let resolver = PubsubRootResolver::new(provider, Duration::from_millis(500));
     let key = reference.resolver_key();
