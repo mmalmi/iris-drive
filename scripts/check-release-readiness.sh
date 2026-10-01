@@ -41,10 +41,6 @@ require_absent() {
 
 require_registry_package() {
   local path="$1" package="$2" version="$3" checksum="$4" block
-  if [[ "$checksum" == PENDING_PUBLICATION ]]; then
-    echo "release blocked: $package $version publication checksum is pending" >&2
-    exit 1
-  fi
   block="$(awk -v package="$package" \
     '/^\[\[package\]\]$/ { capture = 0 } $0 == "name = \"" package "\"" { capture = 1 } capture' \
     "$ROOT/$path")"
@@ -193,23 +189,23 @@ require_contains linux/Cargo.toml 'license-file = ["../LICENSE", "0"]'
 require_contains LICENSE "Permission is hereby granted, free of charge"
 require_contains LICENSE 'THE SOFTWARE IS PROVIDED "AS IS"'
 for lock in Cargo.lock linux/Cargo.lock; do
-  require_registry_package "$lock" hashtree-resolver 0.2.86 PENDING_PUBLICATION
+  require_registry_package "$lock" hashtree-resolver 0.2.86 b7d86c6cfd737a94475f33d082ce6f8401d58f88b866653076014a9225e960ae
   require_registry_package "$lock" nvpn-fips-core 0.4.89 e66122da4be57695b001566103e395fb4ea1a4ec8dfad1af1172eb820914d891
   require_registry_package "$lock" nvpn-fips-endpoint 0.4.89 ed30c9abbf9067422f9db55d80e6629670b178aba8674bb90f8d9a83eeef515f
   require_registry_package "$lock" nvpn-fips-tcp 0.2.2 7d5078996e38a6e568e2783b93601dc55eb96bb3df0fa1c4307cdab80b85ab97
   require_registry_package "$lock" nvpn-fips-tcp-endpoint 0.2.22 84a8f4faaed494d05c454cb5d51bb578457a33ea213f3096f7e1cd791a7a97ae
   require_registry_package "$lock" hashtree-cli 0.2.150 52c9e3811f5302eda3d35ab6f5db4514d023d211ba0dc3643b5e3fb1bf37a30d
-  require_registry_package "$lock" hashtree-updater 0.2.87 PENDING_PUBLICATION
+  require_registry_package "$lock" hashtree-updater 0.2.87 f8c0a192b9135976aa07e3b7be67ef0ab190e4b7decc0c2c9633fd36c49f11bf
   require_registry_package "$lock" hashtree-config 0.2.83 661c0bec57ba49999860fc418a7e656714cd79d82a3c3ee272794b90bb49db76
   require_registry_package "$lock" hashtree-core 0.2.89 5fab53a9c7a45beaed44a2c35343b3228bd65c65601041b1338bdbdc71b283b2
   require_registry_package "$lock" hashtree-embedded 0.2.92 8e61ef1a98b4aa9b23ef28729d32b13337423e68cd4d353fda4523af657c7b72
-  require_registry_package "$lock" hashtree-fips-transport 0.4.21 PENDING_PUBLICATION
+  require_registry_package "$lock" hashtree-fips-transport 0.4.21 36ba872a7e17aca9ace5247051c276de5b976c0e1fade2786fed2c85bbdb8579
   require_registry_package "$lock" hashtree-lmdb 0.2.88 c2d572a31703499c00549d4b6e71ed148a6d9e8b51e9c0c1f0049c7782092318
   require_registry_package "$lock" hashtree-network 0.2.88 4f8fdbb7f18e4ebd4b3887055ca3af7230fc7cbf06e49e21c2ff9122130fcfa5
   require_registry_package "$lock" hashtree-nostr 0.2.88 bd941c6b56fded4be867db3e3da2da7fdb4b0b8cb266e0e68b1476f1caaf8afa
   require_registry_package "$lock" hashtree-nostr-pubsub 0.2.85 923e4ef7e715622543e41b2214e0fcd8b6f501643cc42879b728e5c7836bc4f6
   require_registry_package "$lock" nostr-pubsub 0.1.15 120d6c3ba6b099011edd0558b6ec257de09abf0917833428e2ff7a4cc542d8da
-  require_registry_package "$lock" nostr-pubsub-fips 0.5.12 PENDING_PUBLICATION
+  require_registry_package "$lock" nostr-pubsub-fips 0.5.12 21f9d7634da0eafe91a4b0ec79721ccc943fd60c8fa1e1eab296bc0ac1e07c9d
   require_registry_package "$lock" nostr-pubsub-social-graph 0.2.3 35325e59eea42ad99eb05fba75c85dd4882450c755d5b99be6582b45679e0a6f
   require_registry_package "$lock" nostr-pubsub-relay 0.1.11 8641200920d163b2d82c34e6f15605cff93a0546e3e0087fce8f3bddaa2329ca
 done
