@@ -22,6 +22,7 @@ use crate::update_announcement::{load_update_event_cache, persist_update_event_c
 
 pub const HTREE_UPDATE_REF: &str = "htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-drive/latest";
 
+const UPDATE_CONNECT_TIMEOUT_SECS: u64 = 4;
 const UPDATE_MANIFEST_TIMEOUT_SECS: u64 = 8;
 const UPDATE_DOWNLOAD_TIMEOUT_SECS: u64 = 180;
 const DEFAULT_UPDATE_BLOSSOM_READ_SERVERS: &[&str] = &[
@@ -133,6 +134,7 @@ async fn secure_selection(
     let reference = product_update_reference(config.update_ref.as_deref())?;
     let updater = build_secure_updater(&config, &reference).await?;
     let key = reference.resolver_key();
+    let resolver = updater.resolver().clone();
     let selection = select_product_update(
         updater,
         reference.clone(),
@@ -140,21 +142,20 @@ async fn secure_selection(
         mode,
         &asset_policy(),
     )
-    .await
-    .with_context(|| {
-        format!(
-            "failed to resolve signed hashtree release for {}",
-            asset_policy().noun(mode)
-        )
-    })?;
+    .await;
     if let Some(directory) = config.config_dir.as_deref() {
-        if let Some(event) = selection.updater.resolver().latest_event(&key).await? {
+        if let Some(event) = resolver.latest_event(&key).await? {
             let mut cache = UpdateEventCache::new(&reference)?;
             cache.ingest_event(event)?;
             persist_update_event_cache(directory, &cache).map_err(anyhow::Error::msg)?;
         }
     }
-    Ok(selection)
+    selection.with_context(|| {
+        format!(
+            "failed to resolve signed hashtree release for {}",
+            asset_policy().noun(mode)
+        )
+    })
 }
 
 pub(crate) fn product_update_reference(override_ref: Option<&str>) -> Result<UpdateRef> {
@@ -170,7 +171,12 @@ async fn build_secure_updater(
     config: &ProductUpdateConfig,
     reference: &UpdateRef,
 ) -> Result<SecurePubsubBlossomUpdater> {
-    let provider = pubsub::UpdatePubsub::connect(config).await?;
+    let provider = tokio::time::timeout(
+        Duration::from_secs(UPDATE_CONNECT_TIMEOUT_SECS),
+        pubsub::UpdatePubsub::connect(config),
+    )
+    .await
+    .context("starting update pubsub transport timed out")??;
     let updater = build_secure_pubsub_blossom_updater(
         provider,
         SecurePubsubBlossomConfig {

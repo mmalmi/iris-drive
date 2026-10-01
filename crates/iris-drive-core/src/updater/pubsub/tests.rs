@@ -89,6 +89,7 @@ async fn shared_fips_provider_refreshes_cached_release_and_fails_offline() {
             .await
             .unwrap(),
     );
+    let baseline = app_client.active_subscription_count().unwrap();
     let filter = UpdateEventCache::new(&reference).unwrap().filter().clone();
     let mut app_subscription = app_client.subscribe(vec![filter.clone()]).await.unwrap();
     assert_eq!(
@@ -138,7 +139,10 @@ async fn shared_fips_provider_refreshes_cached_release_and_fails_offline() {
     );
     drop(resolver);
     // Dropping an updater must leave the app's ordinary subscription intact.
-    assert_eq!(app_client.active_subscription_count().unwrap(), 1);
+    assert_eq!(
+        app_client.active_subscription_count().unwrap(),
+        baseline + 1
+    );
     drop(app_subscription);
     app_client.shutdown_shared().await;
     app_endpoint.shutdown().await.unwrap();
