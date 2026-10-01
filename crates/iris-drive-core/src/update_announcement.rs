@@ -154,10 +154,28 @@ pub(crate) fn persist_update_event_cache(
     config_dir: &Path,
     cache: &UpdateEventCache,
 ) -> Result<(), String> {
-    let Some(event) = cache.latest() else {
+    if cache.latest().is_none() {
         return Ok(());
-    };
+    }
+    // Both app subscriptions and detached update checks can advance this file.
+    // Hold the existing cross-process lock only for the local merge/write.
+    let _guard = crate::config_lock::ConfigMutationLock::acquire_blocking(config_dir)
+        .map_err(|error| error.to_string())?;
     let path = update_announcement_path_in(config_dir);
+    let mut merged = cache.clone();
+    match std::fs::read(&path) {
+        Ok(bytes) => {
+            let event = Event::from_json(bytes).map_err(|error| error.to_string())?;
+            merged
+                .ingest_event(event)
+                .map_err(|error| error.to_string())?;
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.to_string()),
+    }
+    let event = merged
+        .latest()
+        .expect("input cache contains a signed announcement");
     atomic_write(&path, event.as_event().as_json().as_bytes())
         .map_err(|error| format!("writing {}: {error}", path.display()))
 }

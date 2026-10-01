@@ -109,6 +109,12 @@ impl DriveNostrPubsubRuntime {
         self.deliveries.subscribe()
     }
 
+    pub(super) fn register_updater(&self, config_dir: &std::path::Path) {
+        if let Some(client) = &self.client {
+            crate::updater::pubsub::register(config_dir, client);
+        }
+    }
+
     pub(super) fn max_connected_peers(&self) -> Option<usize> {
         self.client
             .as_ref()

@@ -3,18 +3,20 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use hashtree_updater::{
-    ProductAssetPolicy, SecureNostrBlossomConfig, SecureNostrBlossomSelection,
-    SecureNostrBlossomUpdater, UpdateEventCache, UpdateRef,
-    build_secure_nostr_blossom_updater_with_events, current_archive_target, dedupe_nonempty,
-    download_product_selection, env_csv, platform_app_asset_suffixes, preferred_product_asset,
-    product_result_from_selection, select_product_update, update_ref_from_override,
+    ProductAssetPolicy, SecurePubsubBlossomConfig, SecurePubsubBlossomSelection,
+    SecurePubsubBlossomUpdater, UpdateEventCache, UpdateRef, build_secure_pubsub_blossom_updater,
+    current_archive_target, dedupe_nonempty, download_product_selection, env_csv,
+    platform_app_asset_suffixes, preferred_product_asset, product_result_from_selection,
+    select_product_update, update_ref_from_override,
 };
 pub use hashtree_updater::{
     ProductUpdateMode, ProductUpdateResult, SECURE_SOURCE_NAME, UpdateAsset, UpdateAutoCheckPolicy,
     UpdateManifest,
 };
 
-use crate::config::{AppConfig, DEFAULT_BLOSSOM_SERVERS, DEFAULT_RELAYS};
+use crate::config::{AppConfig, DEFAULT_BLOSSOM_SERVERS};
+
+pub(crate) mod pubsub;
 use crate::paths::config_path_in;
 use crate::update_announcement::{load_update_event_cache, persist_update_event_cache};
 
@@ -109,19 +111,15 @@ async fn select_update(
     current_version: &str,
     mode: ProductUpdateMode,
     config: ProductUpdateConfig,
-) -> Result<SecureNostrBlossomSelection> {
-    tokio::time::timeout(
-        Duration::from_secs(UPDATE_MANIFEST_TIMEOUT_SECS),
-        secure_selection(current_version, mode, config),
-    )
-    .await
-    .context("signed hashtree update check timed out")?
-    .context("signed hashtree update check failed")
+) -> Result<SecurePubsubBlossomSelection> {
+    secure_selection(current_version, mode, config)
+        .await
+        .context("signed hashtree update check failed")
 }
 
 fn result_from_selection(
     current_version: &str,
-    selection: &SecureNostrBlossomSelection,
+    selection: &SecurePubsubBlossomSelection,
     path: Option<&Path>,
 ) -> ProductUpdateResult {
     product_result_from_selection(current_version, selection, SECURE_SOURCE_NAME, true, path)
@@ -131,17 +129,32 @@ async fn secure_selection(
     current_version: &str,
     mode: ProductUpdateMode,
     config: ProductUpdateConfig,
-) -> Result<SecureNostrBlossomSelection> {
+) -> Result<SecurePubsubBlossomSelection> {
     let reference = product_update_reference(config.update_ref.as_deref())?;
     let updater = build_secure_updater(&config, &reference).await?;
-    select_product_update(updater, reference, current_version, mode, &asset_policy())
-        .await
-        .with_context(|| {
-            format!(
-                "failed to resolve signed hashtree release for {}",
-                asset_policy().noun(mode)
-            )
-        })
+    let key = reference.resolver_key();
+    let selection = select_product_update(
+        updater,
+        reference.clone(),
+        current_version,
+        mode,
+        &asset_policy(),
+    )
+    .await
+    .with_context(|| {
+        format!(
+            "failed to resolve signed hashtree release for {}",
+            asset_policy().noun(mode)
+        )
+    })?;
+    if let Some(directory) = config.config_dir.as_deref() {
+        if let Some(event) = selection.updater.resolver().latest_event(&key).await? {
+            let mut cache = UpdateEventCache::new(&reference)?;
+            cache.ingest_event(event)?;
+            persist_update_event_cache(directory, &cache).map_err(anyhow::Error::msg)?;
+        }
+    }
+    Ok(selection)
 }
 
 pub(crate) fn product_update_reference(override_ref: Option<&str>) -> Result<UpdateRef> {
@@ -156,71 +169,24 @@ pub(crate) fn product_update_reference(override_ref: Option<&str>) -> Result<Upd
 async fn build_secure_updater(
     config: &ProductUpdateConfig,
     reference: &UpdateRef,
-) -> Result<SecureNostrBlossomUpdater> {
-    let relays = update_relays(&config.relays);
-    let mut event_cache = match config.config_dir.as_deref() {
-        Some(config_dir) => {
-            load_update_event_cache(config_dir, reference).unwrap_or_else(|error| {
-                tracing::warn!(error, "ignoring invalid cached update announcement");
-                UpdateEventCache::new(reference).expect("already validated update reference")
-            })
-        }
-        None => UpdateEventCache::new(reference).context("building update event filter")?,
-    };
-    let relay_refresh_succeeded = match nostr_pubsub_relay::RelayEventBus::new(
-        relays.clone(),
-        Duration::from_secs(UPDATE_MANIFEST_TIMEOUT_SECS),
-    )
-    .await
-    {
-        Ok(provider) => match event_cache.refresh(&provider).await {
-            Ok(advanced) => {
-                if advanced && let Some(config_dir) = config.config_dir.as_deref() {
-                    persist_update_event_cache(config_dir, &event_cache)
-                        .map_err(anyhow::Error::msg)?;
-                }
-                true
-            }
-            Err(error) => {
-                tracing::warn!(%error, "nostr-pubsub update query failed");
-                false
-            }
-        },
-        Err(error) => {
-            tracing::warn!(%error, "nostr-pubsub relay provider failed");
-            false
-        }
-    };
-    let resolver_relays = if relay_refresh_succeeded {
-        Vec::new()
-    } else {
-        relays
-    };
-    build_secure_nostr_blossom_updater_with_events(
-        SecureNostrBlossomConfig {
-            relays: resolver_relays,
+) -> Result<SecurePubsubBlossomUpdater> {
+    let provider = pubsub::UpdatePubsub::connect(config).await?;
+    let updater = build_secure_pubsub_blossom_updater(
+        provider,
+        SecurePubsubBlossomConfig {
             blossom_read_servers: blossom_read_servers(config),
             manifest_timeout: Duration::from_secs(UPDATE_MANIFEST_TIMEOUT_SECS),
             download_timeout: Duration::from_secs(UPDATE_DOWNLOAD_TIMEOUT_SECS),
         },
-        event_cache.resolver_events(),
     )
-    .await
-    .context("failed to connect to Nostr release relays")
-}
-
-fn update_relays(config_relays: &[String]) -> Vec<String> {
-    env_csv("IRIS_DRIVE_UPDATE_RELAYS").unwrap_or_else(|| {
-        let values = if config_relays.is_empty() {
-            DEFAULT_RELAYS
-                .iter()
-                .map(|value| (*value).to_string())
-                .collect()
-        } else {
-            config_relays.to_vec()
-        };
-        dedupe_nonempty(values)
-    })
+    .await?;
+    if let Some(directory) = config.config_dir.as_deref() {
+        let cache = load_update_event_cache(directory, reference).map_err(anyhow::Error::msg)?;
+        for event in cache.resolver_events() {
+            updater.resolver().ingest_event(event).await?;
+        }
+    }
+    Ok(updater)
 }
 
 fn blossom_read_servers(config: &ProductUpdateConfig) -> Vec<String> {
@@ -252,7 +218,7 @@ fn blossom_read_servers(config: &ProductUpdateConfig) -> Vec<String> {
 }
 
 async fn download_selection(
-    selection: &SecureNostrBlossomSelection,
+    selection: &SecurePubsubBlossomSelection,
     download_dir: Option<&Path>,
 ) -> Result<PathBuf> {
     let workspace = create_update_workspace(download_dir)?;

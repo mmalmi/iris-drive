@@ -139,6 +139,11 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             runtime.set_friend_route(friends.read_route.clone()).await?;
         }
         sync.friend_backups = Some(friends);
+        if let (Some(runtime), Some(directory)) =
+            (sync.nostr_runtime.as_ref(), device.path().parent())
+        {
+            runtime.register_updater(directory);
+        }
         Ok(sync)
     }
 
