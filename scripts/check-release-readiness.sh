@@ -160,10 +160,10 @@ require_contains scripts/release-gate.sh "just structure"
 require_contains scripts/release-gate.sh "cargo test --workspace --exclude idrive"
 require_contains scripts/release-gate.sh "--test daemon_sync_matrix"
 require_contains scripts/release-gate.sh "cargo build --workspace --release"
-require_contains Cargo.toml 'fips-core = { package = "nvpn-fips-core", version = "=0.4.89" }'
-require_contains Cargo.toml 'fips-endpoint = { package = "nvpn-fips-endpoint", version = "=0.4.89" }'
-require_contains Cargo.toml 'fips-tcp = { package = "nvpn-fips-tcp", version = "=0.2.2" }'
-require_contains Cargo.toml 'fips-tcp-endpoint = { package = "nvpn-fips-tcp-endpoint", version = "=0.2.22" }'
+require_contains Cargo.toml 'nvpn-fips-core = { version = "=0.4.89" }'
+require_contains Cargo.toml 'nvpn-fips-endpoint = { version = "=0.4.89" }'
+require_contains Cargo.toml 'nvpn-fips-tcp = { version = "=0.2.2" }'
+require_contains Cargo.toml 'nvpn-fips-tcp-endpoint = { version = "=0.2.22" }'
 require_contains Cargo.toml 'hashtree-core = "=0.2.89"'
 require_contains Cargo.toml 'hashtree-config = "=0.2.83"'
 require_contains Cargo.toml 'hashtree-embedded = "=0.2.92"'
@@ -175,7 +175,7 @@ require_contains Cargo.toml 'nostr-identity = "=0.3.1"'
 require_contains Cargo.toml 'nostr-pubsub-fips = "=0.5.12"'
 require_contains crates/iris-drive-core/src/fips_bootstrap.rs '"wss://fips1.iris.to/fips"'
 require_contains crates/iris-drive-core/src/fips_bootstrap.rs '"wss://fips2.iris.to/fips"'
-require_contains crates/iris-drive-core/Cargo.toml "fips-core.workspace = true"
+require_contains crates/iris-drive-core/Cargo.toml "nvpn-fips-core.workspace = true"
 require_absent Cargo.toml "[patch.crates-io]"
 require_absent Cargo.toml "git = "
 require_absent Cargo.toml 'path = "crates/hashtree-fips-transport"'
