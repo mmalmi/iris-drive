@@ -480,7 +480,7 @@ fn owner_rejects_device_request_link() {
         .build()
         .unwrap();
     let approval_relay = runtime.block_on(LocalNostrRelay::spawn());
-    let request_url = approval_relay.pending_approval_request_url(linked_dir.path());
+    let request_url = LocalNostrRelay::pending_approval_request_url(linked_dir.path());
     add_config_relay(owner_dir.path(), &approval_relay.url);
 
     {
@@ -621,7 +621,7 @@ async fn rejected_configured_relay_reports_publish_error_without_rollback() {
             "rejected-device",
         ],
     );
-    let request_url = relay.pending_approval_request_url(linked_dir.path());
+    let request_url = LocalNostrRelay::pending_approval_request_url(linked_dir.path());
     add_config_relay(owner_dir.path(), &relay.url);
     let before = AppConfig::load_or_default(config_path_in(owner_dir.path()))
         .unwrap()

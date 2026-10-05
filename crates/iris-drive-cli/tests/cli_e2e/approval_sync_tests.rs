@@ -73,7 +73,7 @@ async fn app_keys_approve_hands_current_root_to_new_device_before_receipt() {
             "Web browser",
         ],
     );
-    let request = relay.pending_approval_request_url(linked_dir.path());
+    let request = LocalNostrRelay::pending_approval_request_url(linked_dir.path());
     let approved = run_json(owner_dir.path(), &["app-keys", "approve", request.as_str()]);
     assert_eq!(
         approved["approved_app_key_npub"],
@@ -176,7 +176,7 @@ async fn approval_without_block_destination_publishes_no_authorization_or_receip
             "Web browser",
         ],
     );
-    let request = relay.pending_approval_request_url(linked_dir.path());
+    let request = LocalNostrRelay::pending_approval_request_url(linked_dir.path());
 
     let approved = run_json(owner_dir.path(), &["app-keys", "approve", &request]);
 
@@ -241,7 +241,7 @@ async fn approval_and_one_shot_sync_complete_the_durable_relay_handshake() {
         ],
     );
     configure_local_blossom(linked_dir.path(), &blossom.url);
-    let request_url = relay.pending_approval_request_url(linked_dir.path());
+    let request_url = LocalNostrRelay::pending_approval_request_url(linked_dir.path());
     let request = pending_request(linked_dir.path());
     assert_eq!(request.label.as_deref(), Some("relay-device"));
 

@@ -67,7 +67,7 @@ fn approve_with_local_relay(
     let relay = runtime.block_on(LocalNostrRelay::spawn());
     let blossom = runtime.block_on(LocalBlossomServer::spawn());
     configure_local_blossom(owner_dir, &blossom.url);
-    let request = relay.pending_approval_request_url(linked_dir);
+    let request = LocalNostrRelay::pending_approval_request_url(linked_dir);
     add_config_relay(owner_dir, &relay.url);
     let mut args = vec!["approve", request.as_str()];
     if let Some(label) = label {
@@ -88,7 +88,7 @@ fn app_keys_approve_with_local_relay(
     let relay = runtime.block_on(LocalNostrRelay::spawn());
     let blossom = runtime.block_on(LocalBlossomServer::spawn());
     configure_local_blossom(owner_dir, &blossom.url);
-    let request = relay.pending_approval_request_url(linked_dir);
+    let request = LocalNostrRelay::pending_approval_request_url(linked_dir);
     add_config_relay(owner_dir, &relay.url);
     run_json(owner_dir, &["app-keys", "approve", &request])
 }

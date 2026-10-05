@@ -370,7 +370,7 @@ async fn relay_publish_sends_profile_ops_without_legacy_app_keys_roster() {
     let owner_invite = init_a["app_key_link_invite"]["url"].as_str().unwrap();
 
     run_json(cfg_b.path(), &["link", owner_invite, "--label", "device-b"]);
-    let device_b_request = relay.pending_approval_request_url(cfg_b.path());
+    let device_b_request = LocalNostrRelay::pending_approval_request_url(cfg_b.path());
     add_config_relay(cfg_a.path(), &relay.url);
 
     let approved = run_json(cfg_a.path(), &["approve", &device_b_request]);

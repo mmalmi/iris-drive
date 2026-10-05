@@ -129,7 +129,7 @@ impl LocalNostrRelay {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    pub(crate) fn pending_approval_request_url(&self, config_dir: &std::path::Path) -> String {
+    pub(crate) fn pending_approval_request_url(config_dir: &std::path::Path) -> String {
         let config = AppConfig::load_or_default(config_path_in(config_dir)).unwrap();
         config
             .profile
