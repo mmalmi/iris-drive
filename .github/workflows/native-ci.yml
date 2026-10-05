@@ -1,0 +1,44 @@
+name: Native CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: native-ci-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      CARGO_BUILD_JOBS: '2'
+      RUST_TEST_THREADS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes just libdbus-1-dev libfuse3-dev libgtk-4-dev libadwaita-1-dev pkg-config protobuf-compiler
+      - name: Verify exact source
+        env:
+          EXPECTED_COMMIT: ${{ github.event.pull_request.head.sha }}
+        run: test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
+      - name: Run development checks and production Core tests
+        run: just verify-fast
+      - name: Check Linux desktop
+        run: cargo check --locked --manifest-path linux/Cargo.toml --all-targets
+      - name: Verify locks remain unchanged
+        run: git diff --exit-code -- Cargo.lock linux/Cargo.lock
