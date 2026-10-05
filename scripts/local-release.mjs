@@ -1418,7 +1418,7 @@ function main() {
   })
 
   if (options.publish) {
-    if (!commandExists('htree')) {
+    if (!options.dryRun && !commandExists('htree')) {
       throw new Error('Missing htree; cannot publish release')
     }
     if (!options.draft && !options.dryRun) requireMeshRelease(meshGate)
