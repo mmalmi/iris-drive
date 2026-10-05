@@ -47,7 +47,7 @@ fn create_yields_admin_authorized_account() {
         snap.signer_pubkey(),
         Some(acct.state.app_key_pubkey.as_str())
     );
-    assert!(!acct.state.profile_roster_ops.is_empty());
+    assert_ne!(acct.state.profile_roster_ops.len(), 0);
     assert!(
         acct.state
             .profile_roster_ops
@@ -631,12 +631,13 @@ fn epoch_signing_admin_can_repair_missing_app_key_wraps() {
     assert_eq!(repair.epoch, 1);
     assert_eq!(repair.repaired_pubkeys, vec![recovered_pubkey.clone()]);
     assert_eq!(owner.current_dck().unwrap(), owner_dck);
-    assert!(
+    assert_eq!(
         owner
             .state
             .profile_projection()
             .active_key_recipients_missing_wraps(1)
-            .is_empty()
+            .len(),
+        0
     );
 
     recovered.state.profile_roster_ops = owner.state.profile_roster_ops.clone();
@@ -751,7 +752,7 @@ fn inbound_app_key_link_request_requires_current_invite_pubkey() {
             )
             .unwrap()
     );
-    assert!(acct.state.inbound_app_key_link_requests.is_empty());
+    assert_eq!(acct.state.inbound_app_key_link_requests.len(), 0);
 }
 
 #[test]
@@ -776,7 +777,7 @@ fn reset_app_key_link_secret_rotates_invite_and_clears_pending_requests() {
 
     assert!(acct.state.reset_app_key_link_secret());
     assert_ne!(acct.state.app_key_link_secret, old_secret);
-    assert!(acct.state.inbound_app_key_link_requests.is_empty());
+    assert_eq!(acct.state.inbound_app_key_link_requests.len(), 0);
 
     let old_device = fresh_app_key_pubkey();
     assert!(
@@ -819,7 +820,7 @@ fn rejected_inbound_app_key_link_request_does_not_replay() {
             .reject_inbound_app_key_link_request(&device)
             .unwrap()
     );
-    assert!(acct.state.inbound_app_key_link_requests.is_empty());
+    assert_eq!(acct.state.inbound_app_key_link_requests.len(), 0);
 
     assert!(
         !acct
@@ -834,7 +835,7 @@ fn rejected_inbound_app_key_link_request_does_not_replay() {
             )
             .unwrap()
     );
-    assert!(acct.state.inbound_app_key_link_requests.is_empty());
+    assert_eq!(acct.state.inbound_app_key_link_requests.len(), 0);
 
     assert!(
         acct.state
@@ -1023,7 +1024,7 @@ fn approving_authorized_inbound_request_consumes_request_without_new_ops() {
 
     assert!(snap.contains(&target));
     assert_eq!(acct.state.profile_roster_ops.len(), before_op_count);
-    assert!(acct.state.inbound_app_key_link_requests.is_empty());
+    assert_eq!(acct.state.inbound_app_key_link_requests.len(), 0);
 }
 
 #[test]
@@ -1057,7 +1058,7 @@ fn approving_tombstoned_device_readds_and_consumes_request() {
     };
 
     assert_eq!(acct.state.profile_roster_ops.len(), before_op_count + 2);
-    assert!(acct.state.inbound_app_key_link_requests.is_empty());
+    assert_eq!(acct.state.inbound_app_key_link_requests.len(), 0);
     assert!(contains_target);
     assert_eq!(target_label.as_deref(), Some("phone again"));
     assert!(target_has_wrap);
@@ -1085,7 +1086,7 @@ fn sync_prunes_inbound_request_for_authorized_device() {
 
     assert!(acct.state.sync_app_keys_from_profile());
 
-    assert!(acct.state.inbound_app_key_link_requests.is_empty());
+    assert_eq!(acct.state.inbound_app_key_link_requests.len(), 0);
 }
 
 #[test]
@@ -1117,7 +1118,7 @@ fn recording_authorized_request_reports_cleanup_change() {
         .unwrap();
 
     assert!(changed);
-    assert!(acct.state.inbound_app_key_link_requests.is_empty());
+    assert_eq!(acct.state.inbound_app_key_link_requests.len(), 0);
 }
 
 #[test]
@@ -1141,7 +1142,7 @@ fn recording_authorized_request_without_app_keys_cache_stays_hidden() {
         .unwrap();
 
     assert!(!changed);
-    assert!(acct.state.inbound_app_key_link_requests.is_empty());
+    assert_eq!(acct.state.inbound_app_key_link_requests.len(), 0);
 }
 
 #[test]
@@ -1174,7 +1175,7 @@ fn recording_removed_request_ignores_stale_replay_but_allows_newer_rejoin() {
             )
             .unwrap()
     );
-    assert!(acct.state.inbound_app_key_link_requests.is_empty());
+    assert_eq!(acct.state.inbound_app_key_link_requests.len(), 0);
 
     assert!(
         acct.state

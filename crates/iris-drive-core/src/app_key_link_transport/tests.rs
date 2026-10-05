@@ -117,7 +117,7 @@ fn applied_ack_clears_only_the_exact_durably_applied_approval() {
         .unwrap();
 
     assert!(apply_device_approval_applied_ack_event(&mut owner, &ack).unwrap());
-    assert!(owner.pending_device_approval_receipts.is_empty());
+    assert_eq!(owner.pending_device_approval_receipts.len(), 0);
     assert!(!apply_device_approval_applied_ack_event(&mut owner, &ack).unwrap());
 }
 
@@ -180,7 +180,7 @@ fn lost_applied_ack_is_rebuilt_after_full_roster_apply() {
     assert_eq!(replayed.approved_by_pubkey, first.approved_by_pubkey);
 
     assert!(apply_device_approval_applied_ack_event(&mut owner, &replayed_ack).unwrap());
-    assert!(owner.pending_device_approval_receipts.is_empty());
+    assert_eq!(owner.pending_device_approval_receipts.len(), 0);
 }
 
 #[test]
@@ -316,18 +316,8 @@ fn concurrent_same_profile_approvals_ack_every_durably_applied_receipt() {
         apply_device_approval_applied_ack_event(&mut first_owner.state, acknowledgement).unwrap();
         apply_device_approval_applied_ack_event(&mut second_owner.state, acknowledgement).unwrap();
     }
-    assert!(
-        first_owner
-            .state
-            .pending_device_approval_receipts
-            .is_empty()
-    );
-    assert!(
-        second_owner
-            .state
-            .pending_device_approval_receipts
-            .is_empty()
-    );
+    assert_eq!(first_owner.state.pending_device_approval_receipts.len(), 0);
+    assert_eq!(second_owner.state.pending_device_approval_receipts.len(), 0);
 }
 
 #[test]

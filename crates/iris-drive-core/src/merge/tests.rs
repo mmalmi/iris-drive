@@ -83,8 +83,8 @@ fn snap<'a>(
 #[test]
 fn empty_merge_is_empty() {
     let view = merge_drives(&[], &[]);
-    assert!(view.files.is_empty());
-    assert!(view.suppressed_by_tombstone.is_empty());
+    assert_eq!(view.files.len(), 0);
+    assert_eq!(view.suppressed_by_tombstone.len(), 0);
 }
 
 #[test]
@@ -125,7 +125,7 @@ fn ignored_paths_are_not_merged_from_legacy_roots() {
 
     assert_eq!(view.files.len(), 1);
     assert_eq!(view.files[0].path, "keep.txt");
-    assert!(view.suppressed_by_tombstone.is_empty());
+    assert_eq!(view.suppressed_by_tombstone.len(), 0);
 }
 
 #[test]
@@ -180,7 +180,7 @@ fn causal_descendant_wins_even_with_older_wall_clock() {
     assert_eq!(view.files.len(), 1);
     assert_eq!(view.files[0].source_app_key_pubkey, "dev-b");
     assert_eq!(view.files[0].hash, [2u8; 32]);
-    assert!(view.conflicts.is_empty());
+    assert_eq!(view.conflicts.len(), 0);
 }
 
 #[test]
@@ -222,7 +222,7 @@ fn hash_only_observation_at_same_sequence_establishes_ancestry() {
     );
 
     assert_eq!(view.files[0].source_app_key_pubkey, "dev-b");
-    assert!(view.conflicts.is_empty());
+    assert_eq!(view.conflicts.len(), 0);
 }
 
 #[test]
@@ -266,7 +266,7 @@ fn concurrent_same_content_converges_without_conflict() {
         ],
     );
     assert_eq!(view.files.len(), 1);
-    assert!(view.conflicts.is_empty());
+    assert_eq!(view.conflicts.len(), 0);
 }
 
 #[test]
@@ -292,7 +292,7 @@ fn concurrent_same_whole_file_hash_converges_despite_different_content_cids() {
     );
     assert_eq!(view.files.len(), 1);
     assert_eq!(view.files[0].whole_file_hash, Some([9u8; 32]));
-    assert!(view.conflicts.is_empty());
+    assert_eq!(view.conflicts.len(), 0);
 }
 
 #[test]
@@ -330,9 +330,9 @@ fn causal_tombstone_suppresses_observed_write_even_with_older_clock() {
             snap("dev-b", &r_b, vec![], vec![tomb("x", 100)]),
         ],
     );
-    assert!(view.files.is_empty());
+    assert_eq!(view.files.len(), 0);
     assert_eq!(view.suppressed_by_tombstone, vec!["x".to_string()]);
-    assert!(view.conflicts.is_empty());
+    assert_eq!(view.conflicts.len(), 0);
 }
 
 #[test]
@@ -387,7 +387,7 @@ fn newer_tombstone_suppresses_older_write() {
             snap("dev-b", &r_b, vec![], vec![tomb("x", 200)]),
         ],
     );
-    assert!(view.files.is_empty());
+    assert_eq!(view.files.len(), 0);
     assert_eq!(view.suppressed_by_tombstone, vec!["x".to_string()]);
 }
 
@@ -417,7 +417,7 @@ fn same_timestamp_tombstone_wins_over_write() {
             snap("dev-b", &r, vec![], vec![tomb("x", 100)]),
         ],
     );
-    assert!(view.files.is_empty());
+    assert_eq!(view.files.len(), 0);
     assert_eq!(view.suppressed_by_tombstone, vec!["x".to_string()]);
 }
 
@@ -436,7 +436,7 @@ fn visible_entry_wins_over_barrier_authored_by_the_same_root() {
 
     assert_eq!(view.files.len(), 1);
     assert_eq!(view.files[0].path, "x");
-    assert!(view.suppressed_files.is_empty());
+    assert_eq!(view.suppressed_files.len(), 0);
 }
 
 #[test]
@@ -488,7 +488,7 @@ fn tombstone_in_one_device_wipes_across_others_when_newer() {
             snap("dev-c", &r_c, vec![], vec![tomb("shared", 200)]),
         ],
     );
-    assert!(view.files.is_empty());
+    assert_eq!(view.files.len(), 0);
     assert_eq!(view.suppressed_by_tombstone, vec!["shared".to_string()]);
 }
 
@@ -514,7 +514,7 @@ fn local_only_roots_do_not_compete_with_source_roots() {
     assert_eq!(view.files.len(), 1);
     assert_eq!(view.files[0].source_app_key_pubkey, "remote");
     assert_eq!(view.files[0].hash, [2; 32]);
-    assert!(view.conflicts.is_empty());
+    assert_eq!(view.conflicts.len(), 0);
 }
 
 #[test]
@@ -541,9 +541,9 @@ fn local_only_roots_do_not_block_source_tombstones() {
         ],
     );
 
-    assert!(view.files.is_empty());
+    assert_eq!(view.files.len(), 0);
     assert_eq!(view.suppressed_by_tombstone, vec!["note.txt"]);
-    assert!(view.conflicts.is_empty());
+    assert_eq!(view.conflicts.len(), 0);
 }
 
 #[test]
@@ -569,7 +569,7 @@ fn local_only_roots_fill_in_when_source_root_is_absent() {
         vec!["note.txt"]
     );
     assert_eq!(view.files[0].source_app_key_pubkey, "local");
-    assert!(view.conflicts.is_empty());
+    assert_eq!(view.conflicts.len(), 0);
 }
 
 #[test]

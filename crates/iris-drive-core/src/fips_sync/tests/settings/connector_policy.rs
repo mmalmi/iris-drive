@@ -90,8 +90,14 @@ fn revoked_app_key_is_absent_from_application_and_routing_acl() {
         ..AppConfig::default()
     };
 
-    assert!(authorized_device_fips_peers(&config, &FipsTransportSettings::default()).is_empty());
-    assert!(routing_fips_peers(&config, &FipsTransportSettings::default()).is_empty());
+    assert_eq!(
+        authorized_device_fips_peers(&config, &FipsTransportSettings::default()).len(),
+        0
+    );
+    assert_eq!(
+        routing_fips_peers(&config, &FipsTransportSettings::default()).len(),
+        0
+    );
 }
 
 #[test]

@@ -187,8 +187,8 @@ async fn local_only_uploads_to_remote() {
     write_file(&l, "hello.txt", b"hi there").await;
     let report = sync(&l, &r, "dev").await.unwrap();
     assert_eq!(report.uploaded, vec!["hello.txt".to_string()]);
-    assert!(report.downloaded.is_empty());
-    assert!(report.conflicts.is_empty());
+    assert_eq!(report.downloaded.len(), 0);
+    assert_eq!(report.conflicts.len(), 0);
     assert_eq!(read_file(&r, "hello.txt").await, b"hi there");
 }
 
@@ -209,9 +209,9 @@ async fn matching_files_are_noop() {
     write_file(&l, "hello.txt", b"identical").await;
     write_file(&r, "hello.txt", b"identical").await;
     let report = sync(&l, &r, "dev").await.unwrap();
-    assert!(report.uploaded.is_empty());
-    assert!(report.downloaded.is_empty());
-    assert!(report.conflicts.is_empty());
+    assert_eq!(report.uploaded.len(), 0);
+    assert_eq!(report.downloaded.len(), 0);
+    assert_eq!(report.conflicts.len(), 0);
 }
 
 #[tokio::test]
@@ -331,7 +331,7 @@ async fn base_state_local_delete_removes_unchanged_remote() {
 
     let report = sync_with_base(&l, &r, &base, "peer").await.unwrap();
     assert_eq!(report.deleted_remote, vec!["shared.txt".to_string()]);
-    assert!(report.downloaded.is_empty());
+    assert_eq!(report.downloaded.len(), 0);
     assert_eq!(paths(&l).await, Vec::<String>::new());
     assert_eq!(paths(&r).await, Vec::<String>::new());
 }

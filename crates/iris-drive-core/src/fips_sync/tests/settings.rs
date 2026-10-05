@@ -105,7 +105,7 @@ fn websocket_seed_list_ignores_empty_entries_and_whitespace() {
 
 #[test]
 fn peer_reputation_has_no_default_external_rater_and_preserves_explicit_keys() {
-    assert!(FipsTransportSettings::default().trusted_raters.is_empty());
+    assert_eq!(FipsTransportSettings::default().trusted_raters.len(), 0);
     let identity = AppKey::generate("configured-rater");
     let npub = identity.pubkey_bech32();
     let hex = "ab".repeat(32);
@@ -136,7 +136,7 @@ fn endpoint_options_can_bind_a_native_websocket_entry_point() {
 
     assert_eq!(websocket.bind_addr.as_deref(), Some("127.0.0.1:2121"));
     assert!(!options.enable_local_rendezvous);
-    assert!(websocket.seed_urls.is_empty());
+    assert_eq!(websocket.seed_urls.len(), 0);
 }
 
 #[test]
@@ -158,7 +158,7 @@ fn websocket_mesh_tests_can_disable_nostr_direct_upgrades() {
         &settings,
     );
 
-    assert!(options.relays.is_empty());
+    assert_eq!(options.relays.len(), 0);
     assert!(options.websocket.is_some());
 }
 
@@ -184,7 +184,7 @@ fn default_transport_settings_do_not_seed_fips_bootstrap_transit() {
             "wss://fips2.iris.to/fips".to_string(),
         ]
     );
-    assert!(settings.bootstrap_peer_hints.is_empty());
+    assert_eq!(settings.bootstrap_peer_hints.len(), 0);
     assert!(settings.enable_lan_discovery);
     assert!(settings.enable_nostr_discovery);
 }
@@ -223,8 +223,14 @@ fn single_device_profile_does_not_route_to_bootstrap_fips_peers() {
         ..Default::default()
     };
 
-    assert!(authorized_device_fips_peers(&config, &FipsTransportSettings::default()).is_empty());
-    assert!(routing_fips_peers(&config, &FipsTransportSettings::default()).is_empty());
+    assert_eq!(
+        authorized_device_fips_peers(&config, &FipsTransportSettings::default()).len(),
+        0
+    );
+    assert_eq!(
+        routing_fips_peers(&config, &FipsTransportSettings::default()).len(),
+        0
+    );
 }
 
 #[test]
@@ -278,13 +284,16 @@ fn admin_inbound_app_key_link_request_configures_pending_fips_peer() {
 
     assert_eq!(peers.len(), 1);
     assert_eq!(peers[0].npub, pending_npub);
-    assert!(peers[0].udp_addresses.is_empty());
-    assert!(authorized_blob_fips_peers(&config, &FipsTransportSettings::default()).is_empty());
+    assert_eq!(peers[0].udp_addresses.len(), 0);
+    assert_eq!(
+        authorized_blob_fips_peers(&config, &FipsTransportSettings::default()).len(),
+        0
+    );
     config.relays = vec!["wss://relay.example".to_string()];
     let peers = authorized_device_fips_peers(&config, &FipsTransportSettings::default());
     assert_eq!(peers.len(), 1);
     assert_eq!(peers[0].npub, pending_npub);
-    assert!(peers[0].udp_addresses.is_empty());
+    assert_eq!(peers[0].udp_addresses.len(), 0);
 }
 
 #[test]
@@ -321,7 +330,10 @@ fn remote_authorized_device_does_not_seed_bootstrap_fips_routing_peers() {
         ..Default::default()
     };
 
-    assert!(routing_fips_peers(&config, &FipsTransportSettings::default()).is_empty());
+    assert_eq!(
+        routing_fips_peers(&config, &FipsTransportSettings::default()).len(),
+        0
+    );
 }
 
 #[test]
@@ -603,7 +615,10 @@ fn legacy_drive_roots_do_not_seed_bootstrap_fips_routing_peers() {
         authorized_blob_fips_peers(&config, &FipsTransportSettings::default()),
         authorized,
     );
-    assert!(routing_fips_peers(&config, &FipsTransportSettings::default()).is_empty());
+    assert_eq!(
+        routing_fips_peers(&config, &FipsTransportSettings::default()).len(),
+        0
+    );
 }
 
 #[test]
@@ -710,7 +725,7 @@ fn pending_app_key_link_admin_is_allowed_for_roster_app_messages() {
     assert_eq!(authorized[0].npub, admin_npub);
     let expected_addresses = vec!["10.44.1.9:22121".to_string()];
     assert_eq!(authorized[0].udp_addresses, expected_addresses);
-    assert!(authorized_blob_fips_peers(&config, &settings).is_empty());
+    assert_eq!(authorized_blob_fips_peers(&config, &settings).len(), 0);
     let routing = routing_fips_peers(&config, &settings);
     assert_eq!(routing.len(), 1);
     assert_eq!(routing[0].npub, admin_npub);

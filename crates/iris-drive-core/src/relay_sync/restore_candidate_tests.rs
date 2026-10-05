@@ -134,9 +134,10 @@ fn restore_candidates_require_active_recovery_facet_projection() {
         .map(profile_event)
         .collect::<Vec<_>>();
 
-    assert!(
+    assert_eq!(
         nostr_identity_restore_candidates_from_events(&recovery_pubkey, &events)
             .unwrap()
-            .is_empty()
+            .len(),
+        0
     );
 }
