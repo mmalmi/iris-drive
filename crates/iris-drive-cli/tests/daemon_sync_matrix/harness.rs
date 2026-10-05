@@ -96,7 +96,7 @@ impl SyncCluster {
             .as_str()
             .unwrap()
             .to_string();
-        let request = relay.pending_approval_request_url(ubuntu_cfg.path()).await;
+        let request = relay.pending_approval_request_url(ubuntu_cfg.path());
         let mut linked_requests = vec![(Client::Ubuntu, request)];
         let mut fips_peers = vec![
             (Client::Windows, windows_npub, windows_fips_port),
@@ -111,7 +111,7 @@ impl SyncCluster {
                 .as_str()
                 .unwrap()
                 .to_string();
-            let request = relay.pending_approval_request_url(config.path()).await;
+            let request = relay.pending_approval_request_url(config.path());
             linked_requests.push((Client::MacOS, request));
             fips_peers.push((
                 Client::MacOS,

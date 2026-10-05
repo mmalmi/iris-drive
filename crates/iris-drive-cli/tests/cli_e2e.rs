@@ -67,7 +67,7 @@ fn approve_with_local_relay(
     let relay = runtime.block_on(LocalNostrRelay::spawn());
     let blossom = runtime.block_on(LocalBlossomServer::spawn());
     configure_local_blossom(owner_dir, &blossom.url);
-    let request = runtime.block_on(relay.pending_approval_request_url(linked_dir));
+    let request = relay.pending_approval_request_url(linked_dir);
     add_config_relay(owner_dir, &relay.url);
     let mut args = vec!["approve", request.as_str()];
     if let Some(label) = label {
@@ -88,7 +88,7 @@ fn app_keys_approve_with_local_relay(
     let relay = runtime.block_on(LocalNostrRelay::spawn());
     let blossom = runtime.block_on(LocalBlossomServer::spawn());
     configure_local_blossom(owner_dir, &blossom.url);
-    let request = runtime.block_on(relay.pending_approval_request_url(linked_dir));
+    let request = relay.pending_approval_request_url(linked_dir);
     add_config_relay(owner_dir, &relay.url);
     run_json(owner_dir, &["app-keys", "approve", &request])
 }
@@ -260,7 +260,7 @@ fn status_before_init_reports_uninitialized() {
     assert_eq!(v["initialized"], false);
     assert!(v.get("account").is_none());
     assert!(v["profile"].is_null());
-    assert!(v["drives"].as_array().unwrap().is_empty());
+    assert_eq!(v["drives"].as_array().unwrap().len(), 0);
     assert_eq!(v["hashtree"]["local_block_count"], 0);
     assert_eq!(v["hashtree"]["local_block_bytes"], 0);
     assert_eq!(
@@ -271,7 +271,7 @@ fn status_before_init_reports_uninitialized() {
     assert_eq!(v["network"]["fips"]["roster_peer_count"], 0);
     assert_eq!(v["network"]["fips"]["roster_connected_peer_count"], 0);
     assert_eq!(v["network"]["fips"]["other_peer_count"], 0);
-    assert!(v["peers"].as_array().unwrap().is_empty());
+    assert_eq!(v["peers"].as_array().unwrap().len(), 0);
     assert_eq!(v["conflicts"]["total_count"], 0);
     assert_eq!(v["conflicts"]["unresolved_count"], 0);
 }

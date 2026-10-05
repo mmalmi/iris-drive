@@ -85,11 +85,11 @@ fn logout_removes_local_account_and_key_material() {
     let config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
     assert!(config.profile.is_none());
     assert!(config.user_profile.is_none());
-    assert!(config.drives.is_empty());
+    assert_eq!(config.drives.len(), 0);
 
     let status = run_json(dir.path(), &["status"]);
     assert_eq!(status["initialized"], false);
-    assert!(status["drives"].as_array().unwrap().is_empty());
+    assert_eq!(status["drives"].as_array().unwrap().len(), 0);
 
     idrive(dir.path()).arg("whoami").assert().failure();
     idrive(dir.path()).arg("logout").assert().success();
@@ -235,7 +235,7 @@ fn link_creates_awaiting_device_with_no_owner_key() {
         request.device_app_key_npub,
         v["current_app_key_npub"].as_str().unwrap()
     );
-    assert!(!request.request_npub.is_empty());
+    assert_ne!(request.request_npub, "");
     assert_eq!(request.request_secret.len(), 43);
     assert_ne!(request.device_app_key_npub, request.request_npub);
     let bootstrap =
@@ -480,8 +480,7 @@ fn owner_rejects_device_request_link() {
         .build()
         .unwrap();
     let approval_relay = runtime.block_on(LocalNostrRelay::spawn());
-    let request_url =
-        runtime.block_on(approval_relay.pending_approval_request_url(linked_dir.path()));
+    let request_url = approval_relay.pending_approval_request_url(linked_dir.path());
     add_config_relay(owner_dir.path(), &approval_relay.url);
 
     {
@@ -513,11 +512,12 @@ fn owner_rejects_device_request_link() {
 
     let rejected = run_json(owner_dir.path(), &["app-keys", "reject", &request_url]);
     assert_eq!(rejected["rejected"], true);
-    assert!(
+    assert_eq!(
         rejected["inbound_app_key_link_requests"]
             .as_array()
             .unwrap()
-            .is_empty()
+            .len(),
+        0
     );
 
     let roster = run_json(owner_dir.path(), &["app-keys", "list"]);
@@ -559,7 +559,7 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
         request.device_app_key_npub,
         linked["current_app_key_npub"].as_str().unwrap()
     );
-    assert!(!request.request_npub.is_empty());
+    assert_ne!(request.request_npub, "");
     assert_eq!(request.request_secret.len(), 43);
     assert_ne!(request.device_app_key_npub, request.request_npub);
     let bootstrap =
@@ -587,7 +587,7 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
 
     let requests = run_json(linked_dir.path(), &["app-keys", "requests"]);
     assert!(requests["outbound"].is_object());
-    assert!(requests["inbound"].as_array().unwrap().is_empty());
+    assert_eq!(requests["inbound"].as_array().unwrap().len(), 0);
 
     let approved = app_keys_approve_with_local_relay(owner_dir.path(), linked_dir.path());
     assert_eq!(
@@ -621,7 +621,7 @@ async fn rejected_configured_relay_reports_publish_error_without_rollback() {
             "rejected-device",
         ],
     );
-    let request_url = relay.pending_approval_request_url(linked_dir.path()).await;
+    let request_url = relay.pending_approval_request_url(linked_dir.path());
     add_config_relay(owner_dir.path(), &relay.url);
     let before = AppConfig::load_or_default(config_path_in(owner_dir.path()))
         .unwrap()
@@ -653,17 +653,13 @@ fn app_keys_repair_wraps_reports_noop_when_epoch_is_complete() {
     let repaired = run_json(owner_dir.path(), &["app-keys", "repair-wraps"]);
 
     assert_eq!(repaired["repaired_key_wrap_count"], 0);
-    assert!(
-        repaired["repaired_key_wraps"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
-    assert!(
+    assert_eq!(repaired["repaired_key_wraps"].as_array().unwrap().len(), 0);
+    assert_eq!(
         repaired["remaining_missing_key_wraps"]
             .as_array()
             .unwrap()
-            .is_empty()
+            .len(),
+        0
     );
 }
 
@@ -715,11 +711,12 @@ fn app_keys_reset_invite_rotates_secret_and_clears_inbound_requests() {
     let reset = run_json(owner_dir.path(), &["app-keys", "reset-invite"]);
     let new_invite = reset["app_key_link_invite"]["url"].as_str().unwrap();
     assert_ne!(new_invite, old_invite);
-    assert!(
+    assert_eq!(
         reset["inbound_app_key_link_requests"]
             .as_array()
             .unwrap()
-            .is_empty()
+            .len(),
+        0
     );
 
     let mut config = AppConfig::load_or_default(&config_path).unwrap();
