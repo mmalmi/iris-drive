@@ -127,7 +127,7 @@ fn import_persists_to_blocks_dir_and_advances_root() {
     let root_cid = v["root_cid"].as_str().unwrap();
     assert_eq!(v["top_level_entries"], 1);
     assert!(cfg.path().join("blocks").is_dir());
-    assert!(!root_cid.is_empty());
+    assert_ne!(root_cid, "");
 
     // status now reports the recorded root CID on the primary drive.
     let status_out = idrive(cfg.path()).arg("status").output().unwrap();
@@ -277,7 +277,7 @@ fn provider_commands_operate_on_virtual_root() {
         .find(|entry| entry["path"] == "docs/note.txt")
         .and_then(|entry| entry["version"].as_str())
         .expect("provider list includes per-entry version");
-    assert!(!original_note_version.is_empty());
+    assert_ne!(original_note_version, "");
 
     let scratch = tempdir().unwrap();
     let original = scratch.path().join("note.txt");
@@ -328,7 +328,7 @@ fn provider_commands_operate_on_virtual_root() {
         .find(|entry| entry["path"] == "docs/new.txt")
         .and_then(|entry| entry["version"].as_str())
         .expect("new provider file includes per-entry version");
-    assert!(!new_note_version.is_empty());
+    assert_ne!(new_note_version, "");
     assert_ne!(original_note_version, new_note_version);
 
     idrive(cfg.path())
@@ -370,7 +370,7 @@ async fn relay_publish_sends_profile_ops_without_legacy_app_keys_roster() {
     let owner_invite = init_a["app_key_link_invite"]["url"].as_str().unwrap();
 
     run_json(cfg_b.path(), &["link", owner_invite, "--label", "device-b"]);
-    let device_b_request = relay.pending_approval_request_url(cfg_b.path()).await;
+    let device_b_request = LocalNostrRelay::pending_approval_request_url(cfg_b.path());
     add_config_relay(cfg_a.path(), &relay.url);
 
     let approved = run_json(cfg_a.path(), &["approve", &device_b_request]);
@@ -519,7 +519,7 @@ fn deleted_file_can_return_and_tombstone_drops() {
         .map(|f| f["path"].as_str().unwrap())
         .collect();
     assert_eq!(paths, vec!["file.txt"]);
-    assert!(v["suppressed_by_tombstone"].as_array().unwrap().is_empty());
+    assert_eq!(v["suppressed_by_tombstone"].as_array().unwrap().len(), 0);
 }
 
 #[test]

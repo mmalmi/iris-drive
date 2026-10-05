@@ -649,7 +649,7 @@ fn apply_nostr_identity_roster_op_event_keeps_out_of_order_valid_ops() {
     let facet = projection.active_facets.get(&new_app).unwrap();
     assert!(facet.capabilities.can_write_roots);
     assert!(!facet.capabilities.can_admin_profile);
-    assert!(projection.rejected_op_ids.is_empty());
+    assert_eq!(projection.rejected_op_ids.len(), 0);
 }
 
 #[test]

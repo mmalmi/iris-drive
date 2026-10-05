@@ -112,7 +112,7 @@ mod tests {
             label: "Friend".to_owned(),
             quota_bytes: 1024,
         });
-        assert!(!rejected.error.is_empty());
+        assert_ne!(rejected.error.len(), 0);
         assert_eq!(rejected.ui.friend_backups.friends[0].quota_bytes, 0);
 
         let capacity = local.dispatch(NativeAppAction::SetFriendBackupCapacity {
@@ -136,7 +136,7 @@ mod tests {
 
         let removed = local.dispatch(NativeAppAction::RemoveBackupFriend { npub: remote_npub });
         assert!(removed.error.is_empty(), "{}", removed.error);
-        assert!(removed.ui.friend_backups.friends.is_empty());
+        assert_eq!(removed.ui.friend_backups.friends.len(), 0);
     }
 
     #[test]
@@ -148,8 +148,8 @@ mod tests {
             label: String::new(),
             quota_bytes: 0,
         });
-        assert!(!result.error.is_empty());
-        assert!(result.ui.friend_backups.friends.is_empty());
+        assert_ne!(result.error.len(), 0);
+        assert_eq!(result.ui.friend_backups.friends.len(), 0);
         assert_eq!(result.ui.friend_backups.capacity_bytes, 0);
     }
 
@@ -166,14 +166,14 @@ mod tests {
         let saved: serde_json::Value =
             serde_json::from_slice(&std::fs::read(output).unwrap()).unwrap();
         let backup_secret = saved["backup_secret"].as_str().unwrap();
-        assert!(!backup_secret.is_empty());
+        assert_ne!(backup_secret.len(), 0);
         assert!(
             !serde_json::to_string(&state)
                 .unwrap()
                 .contains(backup_secret)
         );
         assert_eq!(state.ui.friend_backups.capacity_bytes, 0);
-        assert!(state.ui.friend_backups.friends.is_empty());
+        assert_eq!(state.ui.friend_backups.friends.len(), 0);
     }
 
     #[test]

@@ -53,9 +53,12 @@ fn release(keys: &Keys, created_at: u64, byte: u8) -> Event {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shared_fips_provider_refreshes_cached_release_and_fails_offline() {
     let publisher_endpoint = endpoint(Vec::new()).await;
-    let publisher = FipsPubsubClient::start(publisher_endpoint.clone(), Default::default())
-        .await
-        .unwrap();
+    let publisher = FipsPubsubClient::start(
+        publisher_endpoint.clone(),
+        FipsPubsubClientOptions::default(),
+    )
+    .await
+    .unwrap();
     let keys = Keys::generate();
     let reference = UpdateRef {
         npub: keys.public_key().to_bech32().unwrap(),
@@ -85,7 +88,7 @@ async fn shared_fips_provider_refreshes_cached_release_and_fails_offline() {
     )])
     .await;
     let app_client = Arc::new(
-        FipsPubsubClient::start(app_endpoint.clone(), Default::default())
+        FipsPubsubClient::start(app_endpoint.clone(), FipsPubsubClientOptions::default())
             .await
             .unwrap(),
     );
@@ -117,12 +120,16 @@ async fn shared_fips_provider_refreshes_cached_release_and_fails_offline() {
     })
     .await
     .unwrap();
+    let UpdatePubsub {
+        _connections: connections,
+        ..
+    } = provider.as_ref();
     assert!(
-        provider._connections.owned_fips.is_none(),
+        connections.owned_fips.is_none(),
         "must reuse the app endpoint"
     );
     assert!(
-        provider._connections.relay.is_none(),
+        connections.relay.is_none(),
         "FIPS mode must ignore legacy configured relay defaults"
     );
     let resolver = PubsubRootResolver::new(provider, Duration::from_millis(500));

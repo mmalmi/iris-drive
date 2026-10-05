@@ -734,8 +734,8 @@ mod tests {
         cmd_shares_delete(config_dir.path(), &share_id.to_string()).unwrap();
 
         let saved = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
-        assert!(saved.shared_folders.is_empty());
-        assert!(saved.share_shortcuts.is_empty());
+        assert_eq!(saved.shared_folders.len(), 0);
+        assert_eq!(saved.share_shortcuts.len(), 0);
     }
 
     #[test]
@@ -1280,9 +1280,9 @@ mod tests {
 
         let saved = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
         let repaired = saved.shared_folder(folder.share_id).unwrap();
-        assert!(
-            iris_drive_core::shared_folder_missing_key_wrap_pubkeys(repaired, current_epoch)
-                .is_empty()
+        assert_eq!(
+            iris_drive_core::shared_folder_missing_key_wrap_pubkeys(repaired, current_epoch).len(),
+            0
         );
         assert_eq!(
             iris_drive_core::current_shared_folder_key(repaired, &recipient_keys).unwrap(),

@@ -368,7 +368,7 @@ async fn primary_merged_root_hides_tombstoned_foreign_directory() {
     config.upsert_drive(drive);
 
     let view = primary_merged_view(&tree, &config).await.unwrap();
-    assert!(view.view.files.is_empty());
+    assert_eq!(view.view.files.len(), 0);
     assert_eq!(
         view.view.suppressed_by_tombstone,
         vec!["codex-lab".to_string(), "codex-lab/note.txt".to_string()]

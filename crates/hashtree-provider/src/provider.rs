@@ -57,6 +57,10 @@ pub struct DirItem<Id> {
 /// runtime even for "cheap" lookups, because adapters like NSFileProvider
 /// expect prompt completion of fetch/enumerate callbacks.
 #[async_trait]
+#[expect(
+    clippy::double_must_use,
+    reason = "async_trait adds must_use to its generated Future return types"
+)]
 pub trait ProviderFs: Send + Sync {
     /// Identifier type the implementation uses to refer to items. FUSE
     /// adapters typically pick `u64` inodes; NSFileProvider adapters pick

@@ -59,6 +59,7 @@ impl DriveNostrPubsubRuntime {
                     receive_batch_size: 64,
                     max_hops: FIPS_NOSTR_PUBSUB_DEFAULT_MAX_HOPS,
                     routed_peers: bounded_routed_peers(routed_peers, max_connected_peers),
+                    ..FipsPubsubClientOptions::default()
                 },
                 reputation,
             )

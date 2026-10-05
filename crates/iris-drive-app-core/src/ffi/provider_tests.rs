@@ -335,7 +335,7 @@ fn import_file_action_preserves_identical_collision_copy() {
 
     let occupied = dir.path().join("occupied.txt");
     std::fs::write(&occupied, b"different existing bytes").unwrap();
-    assert!(
+    assert_eq!(
         super::native_provider_write_json(
             &dir.path().display().to_string(),
             "Shared note.txt",
@@ -343,7 +343,8 @@ fn import_file_action_preserves_identical_collision_copy() {
         )["error"]
             .as_str()
             .unwrap_or_default()
-            .is_empty()
+            .len(),
+        0
     );
 
     let source = dir.path().join("share-source.txt");
@@ -423,13 +424,14 @@ fn provider_list_includes_summary_and_change_key() {
     let source = dir.path().join("nested.txt");
     std::fs::write(&source, b"nested bytes").unwrap();
 
-    assert!(
+    assert_eq!(
         super::native_provider_mkdir_json(&dir.path().display().to_string(), "Reports")["error"]
             .as_str()
             .unwrap_or_default()
-            .is_empty()
+            .len(),
+        0
     );
-    assert!(
+    assert_eq!(
         super::native_provider_write_json(
             &dir.path().display().to_string(),
             "Reports/nested.txt",
@@ -437,7 +439,8 @@ fn provider_list_includes_summary_and_change_key() {
         )["error"]
             .as_str()
             .unwrap_or_default()
-            .is_empty()
+            .len(),
+        0
     );
 
     let provider = super::native_provider_list_json(&dir.path().display().to_string());
@@ -483,11 +486,12 @@ fn provider_list_includes_modified_at_for_empty_directories() {
     });
     mark_daemon_live(dir.path());
 
-    assert!(
+    assert_eq!(
         super::native_provider_mkdir_json(&dir.path().display().to_string(), "Empty")["error"]
             .as_str()
             .unwrap_or_default()
-            .is_empty()
+            .len(),
+        0
     );
 
     let provider = super::native_provider_list_json(&dir.path().display().to_string());
@@ -517,7 +521,7 @@ fn provider_list_keeps_unchanged_entry_versions_stable_across_root_changes() {
     std::fs::write(&first, b"first bytes").unwrap();
     std::fs::write(&second, b"second bytes").unwrap();
 
-    assert!(
+    assert_eq!(
         super::native_provider_write_json(
             &dir.path().display().to_string(),
             "first.txt",
@@ -525,7 +529,8 @@ fn provider_list_keeps_unchanged_entry_versions_stable_across_root_changes() {
         )["error"]
             .as_str()
             .unwrap_or_default()
-            .is_empty()
+            .len(),
+        0
     );
     let before = super::native_provider_list_json(&dir.path().display().to_string());
     let before_version = before["entries"]
@@ -537,7 +542,7 @@ fn provider_list_keeps_unchanged_entry_versions_stable_across_root_changes() {
         .expect("provider list includes first file version")
         .to_owned();
 
-    assert!(
+    assert_eq!(
         super::native_provider_write_json(
             &dir.path().display().to_string(),
             "second.txt",
@@ -545,7 +550,8 @@ fn provider_list_keeps_unchanged_entry_versions_stable_across_root_changes() {
         )["error"]
             .as_str()
             .unwrap_or_default()
-            .is_empty()
+            .len(),
+        0
     );
     let after = super::native_provider_list_json(&dir.path().display().to_string());
     let after_version = after["entries"]
@@ -571,7 +577,7 @@ fn app_constructor_defers_provider_summary_until_refresh() {
     let source = dir.path().join("startup.txt");
     std::fs::write(&source, b"startup bytes").unwrap();
 
-    assert!(
+    assert_eq!(
         super::native_provider_write_json(
             &dir.path().display().to_string(),
             "startup.txt",
@@ -579,7 +585,8 @@ fn app_constructor_defers_provider_summary_until_refresh() {
         )["error"]
             .as_str()
             .unwrap_or_default()
-            .is_empty()
+            .len(),
+        0
     );
 
     drop(app);
@@ -589,7 +596,7 @@ fn app_constructor_defers_provider_summary_until_refresh() {
     assert!(initial.ui.profile.is_some());
     assert_eq!(initial.ui.file_count, 0);
     assert_eq!(initial.ui.visible_file_bytes, 0);
-    assert!(initial.ui.provider_change_key.is_empty());
+    assert_eq!(initial.ui.provider_change_key.len(), 0);
 
     let refreshed = restarted.refresh();
     assert_eq!(refreshed.ui.file_count, 1);
@@ -608,7 +615,7 @@ fn refresh_profile_skips_provider_summary_until_full_refresh() {
     let source = dir.path().join("approval-fast-path.txt");
     std::fs::write(&source, b"fast profile refresh").unwrap();
 
-    assert!(
+    assert_eq!(
         super::native_provider_write_json(
             &dir.path().display().to_string(),
             "approval-fast-path.txt",
@@ -616,7 +623,8 @@ fn refresh_profile_skips_provider_summary_until_full_refresh() {
         )["error"]
             .as_str()
             .unwrap_or_default()
-            .is_empty()
+            .len(),
+        0
     );
 
     let cached_provider_summary = app.state().ui;
@@ -665,13 +673,14 @@ fn provider_resolve_path_normalizes_name_and_avoids_collisions() {
     let source = dir.path().join("shared.txt");
     std::fs::write(&source, b"first").unwrap();
 
-    assert!(
+    assert_eq!(
         super::native_provider_mkdir_json(&dir.path().display().to_string(), "Reports")["error"]
             .as_str()
             .unwrap_or_default()
-            .is_empty()
+            .len(),
+        0
     );
-    assert!(
+    assert_eq!(
         super::native_provider_write_json(
             &dir.path().display().to_string(),
             "Reports/Shared_file.txt",
@@ -679,7 +688,8 @@ fn provider_resolve_path_normalizes_name_and_avoids_collisions() {
         )["error"]
             .as_str()
             .unwrap_or_default()
-            .is_empty()
+            .len(),
+        0
     );
 
     let resolved = super::native_provider_resolve_path_json(
@@ -692,7 +702,7 @@ fn provider_resolve_path_normalizes_name_and_avoids_collisions() {
     assert_eq!(resolved["parent_path"], "Reports");
     assert_eq!(resolved["display_name"], "Shared_file (2).txt");
     assert_eq!(resolved["path"], "Reports/Shared_file (2).txt");
-    assert!(resolved["error"].as_str().unwrap_or_default().is_empty());
+    assert_eq!(resolved["error"].as_str().unwrap_or_default().len(), 0);
 }
 
 #[test]

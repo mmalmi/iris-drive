@@ -253,7 +253,6 @@ test('local-release dry-run validates planned build assets over partial existing
   mkdirSync(assetDir)
   writeFileSync(join(assetDir, 'iris-drive-v9.9.9-macos-arm64.dmg'), 'partial')
   writeFileSync(keystorePath, 'test keystore placeholder')
-
   const result = spawnSync(
     process.execPath,
     [
@@ -276,6 +275,7 @@ test('local-release dry-run validates planned build assets over partial existing
       encoding: 'utf8',
       env: {
         ...process.env,
+        PATH: stageDir,
         ANDROID_KEYSTORE_PATH: keystorePath,
         ANDROID_KEYSTORE_PASSWORD: 'password',
         ANDROID_KEY_ALIAS: 'iris',

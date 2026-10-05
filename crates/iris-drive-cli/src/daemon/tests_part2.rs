@@ -154,7 +154,7 @@ fn windows_cloud_stale_cleanup_preserves_local_edit() {
         &BTreeSet::new(),
     );
 
-    assert!(removed.is_empty());
+    assert_eq!(removed.len(), 0);
     assert!(path.exists());
 }
 
@@ -190,7 +190,7 @@ fn windows_cloud_stale_cleanup_preserves_protected_local_mutation() {
         &protected,
     );
 
-    assert!(removed.is_empty());
+    assert_eq!(removed.len(), 0);
     assert!(dir.exists());
     assert!(file.exists());
 }
@@ -281,7 +281,7 @@ fn windows_cloud_local_state_omits_protected_local_mutation() {
 
     let state = snapshot_windows_cloud_local_state(sync_root.path(), &entries, &[], &protected);
 
-    assert!(state.is_empty());
+    assert_eq!(state.len(), 0);
 }
 
 #[test]
@@ -314,7 +314,7 @@ fn windows_cloud_local_state_does_not_retain_protected_previous_state() {
     let state =
         snapshot_windows_cloud_local_state(sync_root.path(), &[], &previous, &protected);
 
-    assert!(state.is_empty());
+    assert_eq!(state.len(), 0);
 }
 
 #[test]
@@ -358,7 +358,7 @@ fn windows_cloud_state_drops_stale_file_after_local_edit() {
         &BTreeSet::new(),
     );
 
-    assert!(retained.is_empty());
+    assert_eq!(retained.len(), 0);
 }
 
 #[tokio::test]
@@ -437,7 +437,7 @@ async fn windows_cloud_projection_preserves_local_edit_over_remote_change() {
     .await
     .unwrap();
 
-    assert!(removed.is_empty());
+    assert_eq!(removed.len(), 0);
     assert_eq!(
         std::fs::read(sync_root.path().join("remote.txt")).unwrap(),
         b"local edit"

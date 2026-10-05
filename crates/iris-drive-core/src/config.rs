@@ -600,7 +600,7 @@ mod tests {
     fn default_has_no_drives_and_current_schema() {
         let cfg = AppConfig::default();
         assert_eq!(cfg.schema_version, CONFIG_SCHEMA_VERSION);
-        assert!(cfg.drives.is_empty());
+        assert_eq!(cfg.drives.len(), 0);
     }
 
     #[test]
@@ -831,7 +831,7 @@ dck_generation = 1
         assert_eq!(root.published_at, 1234);
         assert_eq!(root.dck_generation, 1);
         assert_eq!(root.app_key_seq, 0);
-        assert!(root.parents.is_empty());
+        assert_eq!(root.parents.len(), 0);
         assert!(root.observed.is_empty());
         assert!(!root.local_only);
     }
@@ -1293,7 +1293,7 @@ dck_generation = 1
         let dir = tempdir().unwrap();
         let path = dir.path().join("does-not-exist.toml");
         let cfg = AppConfig::load_or_default(&path).unwrap();
-        assert!(cfg.drives.is_empty());
+        assert_eq!(cfg.drives.len(), 0);
     }
 
     #[test]
@@ -1315,7 +1315,7 @@ dck_generation = 1
         cfg.upsert_drive(Drive::primary(root_scope_id.clone()));
         let removed = cfg.remove_drive("main").unwrap();
         assert_eq!(removed.root_scope_id, root_scope_id);
-        assert!(cfg.drives.is_empty());
+        assert_eq!(cfg.drives.len(), 0);
         assert!(cfg.remove_drive("main").is_none());
     }
 

@@ -176,7 +176,7 @@ fn legacy_profile_id_from_owner_pubkey(value: &str) -> Option<NostrIdentityId> {
         return None;
     }
     let mut decoded = [0_u8; 32];
-    for (index, chunk) in value.as_bytes().chunks_exact(2).enumerate() {
+    for (index, chunk) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         let hex = std::str::from_utf8(chunk).ok()?;
         decoded[index] = u8::from_str_radix(hex, 16).ok()?;
     }
