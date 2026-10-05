@@ -99,7 +99,7 @@ require_contains Justfile "release-gate *args:"
 require_contains Justfile "verify-fast:"
 require_contains Justfile "verify-full:"
 require_contains Justfile "verify-health:"
-require_contains scripts/verify.sh 'cargo clippy --locked --workspace --all-targets -- -D warnings'
+require_contains scripts/verify.sh 'cargo clippy --locked --workspace --all-targets --keep-going -- -D warnings'
 require_contains scripts/native_lab.py 'infrastructure_unavailable'
 require_contains Justfile "node scripts/local-release.mjs --build"
 require_contains Justfile "release-publish:"

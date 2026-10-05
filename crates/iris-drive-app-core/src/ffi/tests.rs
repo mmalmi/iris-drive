@@ -202,7 +202,7 @@ fn dispatch_adds_updates_and_removes_roots() {
     });
     assert_eq!(state.ui.roots.len(), 1);
     assert_eq!(state.ui.roots[0].name, "My Drive");
-    assert!(state.error.is_empty());
+    assert_eq!(state.error.len(), 0);
 
     let state = app.dispatch(NativeAppAction::AddRoot {
         name: "My Drive".to_owned(),
@@ -214,8 +214,8 @@ fn dispatch_adds_updates_and_removes_roots() {
     let state = app.dispatch(NativeAppAction::RemoveRoot {
         name: "My Drive".to_owned(),
     });
-    assert!(state.ui.roots.is_empty());
-    assert!(state.error.is_empty());
+    assert_eq!(state.ui.roots.len(), 0);
+    assert_eq!(state.error.len(), 0);
 }
 
 #[test]
@@ -228,7 +228,7 @@ fn dispatch_rejects_empty_roots() {
         local_path: "/virtual/iris".to_owned(),
     });
 
-    assert!(state.ui.roots.is_empty());
+    assert_eq!(state.ui.roots.len(), 0);
     assert_eq!(state.error, "root name is required");
 }
 
@@ -255,8 +255,8 @@ fn profile_actions_populate_mobile_parity_state() {
     assert_eq!(account.recovery_phrase_facet_count, 0);
     assert_eq!(account.nip46_facet_count, 0);
     assert_eq!(account.social_profile_facet_count, 0);
-    assert!(account.missing_key_wraps.is_empty());
-    assert!(account.app_key_link_request.is_empty());
+    assert_eq!(account.missing_key_wraps.len(), 0);
+    assert_eq!(account.app_key_link_request.len(), 0);
     assert!(
         account
             .app_key_link_invite
@@ -273,15 +273,15 @@ fn profile_actions_populate_mobile_parity_state() {
     assert_eq!(state.ui.app_actors[0].state_label, "Linked");
     assert_eq!(state.ui.app_actors[0].connection_state, "local");
     assert_eq!(state.ui.app_actors[0].connection_label, "This Device");
-    assert!(state.ui.snapshot_link.is_empty());
+    assert_eq!(state.ui.snapshot_link.len(), 0);
     assert!(state.ui.sync.running);
     assert_eq!(state.ui.sync.status, "running");
     assert_eq!(state.ui.sync.status_label, "Sync on");
-    assert!(!state.ui.relays.is_empty());
+    assert_ne!(state.ui.relays.len(), 0);
     assert_eq!(state.ui.relay_statuses.len(), state.ui.relays.len());
     assert_eq!(state.ui.relay_statuses[0].status_label, "saved");
     assert_eq!(state.ui.relay_statuses[0].health, "configured");
-    assert!(!state.ui.backups.is_empty());
+    assert_ne!(state.ui.backups.len(), 0);
     assert_eq!(state.ui.backups[0].label, "upload.iris.to");
     assert_eq!(state.ui.paths.data_dir, dir.path().display().to_string());
     assert_eq!(state.ui.setup_state, "authorized");
@@ -293,11 +293,11 @@ fn profile_actions_populate_mobile_parity_state() {
     assert_eq!(state.ui.primary_status_label, "Ready");
     assert_eq!(state.ui.authorized_app_key_count, 1);
     assert_eq!(state.ui.online_app_key_count, 0);
-    assert!(state.ui.shares.is_empty());
+    assert_eq!(state.ui.shares.len(), 0);
     let export = super::export_recovery_secret(dir.path().display().to_string());
     assert!(!export.can_export);
-    assert!(export.words.is_empty());
-    assert!(export.recovery_phrase.is_empty());
+    assert_eq!(export.words.len(), 0);
+    assert_eq!(export.recovery_phrase.len(), 0);
     assert!(
         export.error.contains("loading recovery phrase"),
         "{}",
@@ -380,7 +380,7 @@ fn add_recovery_key_saves_only_generated_public_key_to_devices_view() {
 
     let export = super::export_recovery_secret(dir.path().display().to_string());
     assert!(!export.can_export);
-    assert!(export.recovery_phrase.is_empty());
+    assert_eq!(export.recovery_phrase.len(), 0);
     assert!(
         export.error.contains("loading recovery phrase"),
         "{}",
@@ -403,12 +403,12 @@ fn import_recovery_key_derives_public_key_without_returning_words() {
 
     assert!(imported.error.is_empty(), "{}", imported.error);
     assert!(imported.recovery_pubkey.starts_with("npub1"));
-    assert!(imported.words.is_empty());
+    assert_eq!(imported.words.len(), 0);
 
     let invalid = super::recovery_pubkey_for_phrase("not enough words".to_owned());
-    assert!(!invalid.error.is_empty());
-    assert!(invalid.recovery_pubkey.is_empty());
-    assert!(invalid.words.is_empty());
+    assert_ne!(invalid.error.len(), 0);
+    assert_eq!(invalid.recovery_pubkey.len(), 0);
+    assert_eq!(invalid.words.len(), 0);
 }
 
 #[test]
@@ -461,7 +461,7 @@ fn app_state_surfaces_shared_with_me_rows_and_shortcuts() {
     assert!(!share.key_unavailable);
     assert!(!share.repair_needed);
     assert_eq!(share.missing_key_wrap_count, 0);
-    assert!(share.missing_key_wraps.is_empty());
+    assert_eq!(share.missing_key_wraps.len(), 0);
     assert_eq!(share.participant_count, 1);
     assert_eq!(share.app_key_count, 1);
     assert_eq!(share.members.len(), 1);
@@ -672,11 +672,11 @@ fn app_action_delete_share_removes_share_and_shortcuts() {
 
     let deleted = app.dispatch(NativeAppAction::DeleteShare { share_id });
     assert!(deleted.error.is_empty(), "{}", deleted.error);
-    assert!(deleted.ui.shares.is_empty());
+    assert_eq!(deleted.ui.shares.len(), 0);
 
     let saved = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
-    assert!(saved.shared_folders.is_empty());
-    assert!(saved.share_shortcuts.is_empty());
+    assert_eq!(saved.shared_folders.len(), 0);
+    assert_eq!(saved.share_shortcuts.len(), 0);
 }
 
 #[test]
@@ -802,7 +802,7 @@ fn app_action_exports_share_recipient_evidence_for_core_invites() {
         display_name: "Alice".to_owned(),
     });
     assert!(exported.error.is_empty(), "{}", exported.error);
-    assert!(!exported.ui.last_share_recipient_evidence.is_empty());
+    assert_ne!(exported.ui.last_share_recipient_evidence.len(), 0);
     let evidence: iris_drive_core::ShareRecipientProfileEvidence =
         serde_json::from_str(&exported.ui.last_share_recipient_evidence).unwrap();
     let resolved = iris_drive_core::resolve_share_recipient_from_evidence(&evidence, None).unwrap();
@@ -967,9 +967,9 @@ fn raw_secret_key_restore_uses_fresh_app_key_without_phrase_export() {
 
     let raw_export = super::export_recovery_secret(restored_dir.path().display().to_string());
     assert!(!raw_export.can_export);
-    assert!(raw_export.words.is_empty());
-    assert!(raw_export.recovery_phrase.is_empty());
-    assert!(raw_export.secret_key.is_empty());
+    assert_eq!(raw_export.words.len(), 0);
+    assert_eq!(raw_export.recovery_phrase.len(), 0);
+    assert_eq!(raw_export.secret_key.len(), 0);
     assert!(
         raw_export.error.contains("loading recovery phrase"),
         "{}",
@@ -995,7 +995,7 @@ fn uninitialized_state_exposes_summary_defaults() {
     assert_eq!(state.ui.online_app_key_count, 0);
     assert_eq!(state.ui.file_count, 0);
     assert_eq!(state.ui.visible_file_bytes, 0);
-    assert!(state.ui.sites_portal_url.is_empty());
+    assert_eq!(state.ui.sites_portal_url.len(), 0);
 }
 
 #[test]
@@ -1012,7 +1012,7 @@ fn classify_link_input_uses_core_invite_and_key_parsing() {
     assert!(invite.is_complete);
     assert!(invite.is_valid);
     let admin_app_key_npub = invite.admin_app_key_pubkey.clone();
-    assert!(!admin_app_key_npub.is_empty());
+    assert_ne!(admin_app_key_npub.len(), 0);
     assert!(invite.has_invite_pubkey);
 
     let npub = super::classify_link_input(admin_app_key_npub.clone());
@@ -1176,8 +1176,8 @@ fn app_state_surfaces_local_resolver_and_portal_settings() {
 
     assert!(!refreshed.ui.local_nhash_resolver_enabled);
     assert!(!refreshed.ui.launch_on_startup);
-    assert!(refreshed.ui.sites_portal_url.is_empty());
-    assert!(refreshed.ui.caldav_url.is_empty());
+    assert_eq!(refreshed.ui.sites_portal_url.len(), 0);
+    assert_eq!(refreshed.ui.caldav_url.len(), 0);
 }
 
 #[test]
@@ -1206,7 +1206,7 @@ fn drive_link_for_cid_uses_drive_iris_nhash_route() {
 
     let link = super::drive_link_for_cid_value(&root_cid);
 
-    assert!(link.error.is_empty());
+    assert_eq!(link.error.len(), 0);
     assert!(link.url.starts_with("https://drive.iris.to/#/nhash1"));
 }
 
@@ -1223,17 +1223,17 @@ fn logout_clears_local_profile_state_and_key_material() {
 
     let state = app.dispatch(NativeAppAction::Logout);
 
-    assert!(state.error.is_empty());
+    assert_eq!(state.error.len(), 0);
     assert!(state.ui.profile.is_none());
-    assert!(state.ui.app_actors.is_empty());
-    assert!(state.ui.roots.is_empty());
+    assert_eq!(state.ui.app_actors.len(), 0);
+    assert_eq!(state.ui.roots.len(), 0);
     assert!(!state.ui.sync.running);
     assert_eq!(state.ui.sync.status, "ready");
     assert_eq!(state.ui.sync.status_label, "Ready");
     assert!(!dir.path().join("key").exists());
     let config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
     assert!(config.profile.is_none());
-    assert!(config.drives.is_empty());
+    assert_eq!(config.drives.len(), 0);
 }
 
 #[test]
@@ -1302,7 +1302,7 @@ fn link_action_tracks_pending_approval() {
     assert!(!state.ui.revoked);
     assert_eq!(state.ui.primary_status, "awaiting_approval");
     assert_eq!(state.ui.authorized_app_key_count, 0);
-    assert!(state.ui.sites_portal_url.is_empty());
+    assert_eq!(state.ui.sites_portal_url.len(), 0);
 }
 
 #[test]
@@ -1421,7 +1421,7 @@ fn owner_can_approve_and_revoke_linked_app_keys() {
             .iter()
             .any(|device| device.pubkey == linked_device)
     );
-    assert!(state.error.is_empty());
+    assert_eq!(state.error.len(), 0);
 }
 
 #[test]
@@ -1495,7 +1495,7 @@ fn approving_tombstoned_inbound_request_readds_device() {
 
     assert!(readded.error.is_empty(), "{}", readded.error);
     let account = readded.ui.profile.as_ref().unwrap();
-    assert!(account.inbound_app_key_link_requests.is_empty());
+    assert_eq!(account.inbound_app_key_link_requests.len(), 0);
     assert!(readded.ui.app_actors.iter().any(|device| {
         device.pubkey == linked_device && device.label == "Phone again" && device.role == "member"
     }));
@@ -1553,7 +1553,7 @@ fn delete_device_json_action_revokes_linked_device() {
             .iter()
             .all(|device| device.label != "Phone")
     );
-    assert!(state.error.is_empty());
+    assert_eq!(state.error.len(), 0);
 }
 
 #[test]
@@ -1582,7 +1582,7 @@ fn daemon_fips_status_drives_device_online_presence() {
         request: linked_account.app_key_link_request,
         label: "Phone".to_owned(),
     });
-    assert!(approved.error.is_empty());
+    assert_eq!(approved.error.len(), 0);
     assert!(
         approved
             .ui
@@ -1728,7 +1728,7 @@ fn daemon_fips_status_overrides_stale_native_fips_status_for_desktop_refresh() {
         request: linked_account.app_key_link_request,
         label: "Phone".to_owned(),
     });
-    assert!(approved.error.is_empty());
+    assert_eq!(approved.error.len(), 0);
 
     let now = super::unix_now_seconds();
     write_native_fips_status_fixture(owner_dir.path(), &current_device, &[], &[], now);
@@ -1779,7 +1779,7 @@ fn desktop_refresh_ignores_native_fips_status_without_daemon_status() {
         request: linked_account.app_key_link_request,
         label: "Phone".to_owned(),
     });
-    assert!(approved.error.is_empty());
+    assert_eq!(approved.error.len(), 0);
 
     write_native_fips_status_fixture(
         owner_dir.path(),
@@ -1854,7 +1854,7 @@ fn owner_state_surfaces_inbound_requests_for_accept_flow() {
         request: request.request_link.clone(),
         label: String::new(),
     });
-    assert!(approved.error.is_empty());
+    assert_eq!(approved.error.len(), 0);
     assert!(approved.ui.app_actors.iter().any(|device| {
         device.pubkey == linked_device && device.label == "Phone" && device.role == "member"
     }));
@@ -1904,13 +1904,14 @@ fn owner_can_reject_inbound_app_key_link_request() {
     let rejected = app.dispatch(NativeAppAction::RejectDevice { request });
 
     assert!(rejected.error.is_empty(), "{}", rejected.error);
-    assert!(
+    assert_eq!(
         rejected
             .ui
             .profile
             .unwrap()
             .inbound_app_key_link_requests
-            .is_empty()
+            .len(),
+        0
     );
     assert!(
         rejected
@@ -1920,12 +1921,9 @@ fn owner_can_reject_inbound_app_key_link_request() {
             .all(|device| device.pubkey != linked_device)
     );
     let saved = AppConfig::load_or_default(&config_path).unwrap();
-    assert!(
-        saved
-            .profile
-            .unwrap()
-            .inbound_app_key_link_requests
-            .is_empty()
+    assert_eq!(
+        saved.profile.unwrap().inbound_app_key_link_requests.len(),
+        0
     );
 }
 
@@ -2087,10 +2085,10 @@ fn reset_invite_action_rotates_invite_and_clears_requests() {
     config.save(&config_path).unwrap();
 
     let reset = app.dispatch(NativeAppAction::ResetInvite);
-    assert!(reset.error.is_empty());
+    assert_eq!(reset.error.len(), 0);
     let account = reset.ui.profile.unwrap();
     assert_ne!(account.app_key_link_invite, old_invite);
-    assert!(account.inbound_app_key_link_requests.is_empty());
+    assert_eq!(account.inbound_app_key_link_requests.len(), 0);
 }
 
 #[test]
