@@ -1,7 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { generateKeyPairSync } from 'node:crypto'
+import { createHash, generateKeyPairSync } from 'node:crypto'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
@@ -31,6 +31,7 @@ test('buildReleaseManifest marks idrive archives as binary archives', () => {
     assetPaths: [cli],
   })
 
+  assert.equal(manifest.assets[0].sha256, createHash('sha256').update('archive').digest('hex'))
   assert.equal(manifest.app, 'iris-drive')
   assert.equal(manifest.version, '0.2.27')
   assert.equal(manifest.assets[0].kind, 'binary-archive')

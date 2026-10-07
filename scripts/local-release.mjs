@@ -1422,6 +1422,8 @@ function main() {
       throw new Error('Missing htree; cannot publish release')
     }
     if (!options.draft && !options.dryRun) requireMeshRelease(meshGate)
+    const hapsArgs = ['import-release', stageDir, '--config', join(repoRoot, 'haps-release.json'), '--tag', tag]
+    if (!options.draft) run('haps', [...hapsArgs, '--check'], { env, dryRun: options.dryRun })
     const published = publishRelease({
       stageDir,
       releaseTree,
@@ -1442,6 +1444,7 @@ function main() {
         dryRun: options.dryRun,
       })
     }
+    if (!options.draft) run('haps', [...hapsArgs, '--publish'], { env, dryRun: options.dryRun })
     if (!options.draft && !options.skipZapstore) {
       publishZapstore({ env, tag, assetDir, dryRun: options.dryRun, plannedAssetNames })
     }
