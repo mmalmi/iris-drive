@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.38 - 2026-10-17
+
+### Security
+
+- Update Negentropy to 0.5.2 to reject malformed synchronization messages before
+  allocating memory (GHSA-jcg8-qg98-373g / RUSTSEC-2026-0365).
+
 ## 0.1.37 - 2026-09-10
 
 ### Changed

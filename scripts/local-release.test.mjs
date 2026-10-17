@@ -7,7 +7,6 @@ import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-
 import {
   buildReleaseManifest,
   buildReleaseManifestFiles,
