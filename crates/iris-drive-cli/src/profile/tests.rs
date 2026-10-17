@@ -253,15 +253,16 @@ fn cli_device_approval_preserves_file_provider_root_and_releases_lock_before_pub
         .unwrap();
     approval.join().unwrap();
 
-    assert!(!approved.state.pending_device_approval_receipts.is_empty());
+    assert_ne!(approved.state.pending_device_approval_receipts.len(), 0);
     let saved = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
-    assert!(
-        !saved
+    assert_ne!(
+        saved
             .profile
             .as_ref()
             .unwrap()
             .pending_device_approval_receipts
-            .is_empty()
+            .len(),
+        0
     );
     assert_eq!(
         saved
@@ -368,12 +369,9 @@ async fn app_key_link_app_message_ignores_wrong_link_secret() {
     );
 
     let saved = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
-    assert!(
-        saved
-            .profile
-            .unwrap()
-            .inbound_app_key_link_requests
-            .is_empty()
+    assert_eq!(
+        saved.profile.unwrap().inbound_app_key_link_requests.len(),
+        0
     );
 }
 

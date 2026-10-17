@@ -6,7 +6,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SERVER="$ROOT/scripts/local-nostr-relay.py"
 SMOKE="$ROOT/scripts/macos-smoke.sh"
 LIFECYCLE="$ROOT/scripts/lib/macos-relay-smoke.sh"
-TEST_DIR="$(mktemp -d -t iris-drive-local-relay-check)"
+TEST_DIR="$(mktemp -d "${TMPDIR:-/tmp}/iris-drive-local-relay-check.XXXXXX")"
 SERVER_PID=""
 
 cleanup() {

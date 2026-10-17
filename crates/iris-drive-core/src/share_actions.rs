@@ -799,10 +799,10 @@ mod tests {
             dispatch_share_action(owner_dir.path(), ShareAction::DeleteShare { share_id }, 20)
                 .unwrap();
 
-        assert!(deleted.shares.is_empty());
+        assert_eq!(deleted.shares.len(), 0);
         let saved = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
-        assert!(saved.shared_folders.is_empty());
-        assert!(saved.share_shortcuts.is_empty());
+        assert_eq!(saved.shared_folders.len(), 0);
+        assert_eq!(saved.share_shortcuts.len(), 0);
     }
 
     #[test]
@@ -849,7 +849,7 @@ mod tests {
                 .starts_with(SHARE_INVITE_PREFIX)
         );
         assert_eq!(invited.epoch, Some(2));
-        assert!(invited.revoked_app_pubkeys.is_empty());
+        assert_eq!(invited.revoked_app_pubkeys.len(), 0);
 
         let role_changed = dispatch_share_action(
             owner_dir.path(),
@@ -970,7 +970,7 @@ mod tests {
             .iter()
             .find(|share| share.share_id == share_id)
             .unwrap();
-        assert!(view.pending_invites.is_empty());
+        assert_eq!(view.pending_invites.len(), 0);
         assert!(
             view.members
                 .iter()
@@ -1051,7 +1051,7 @@ mod tests {
         assert_eq!(repaired.epoch, Some(current_epoch));
         assert_eq!(repaired.repaired_key_wrap_count, Some(1));
         assert_eq!(repaired.repaired_key_wrap_pubkeys, vec![recipient_pubkey]);
-        assert!(repaired.remaining_missing_key_wrap_pubkeys.is_empty());
+        assert_eq!(repaired.remaining_missing_key_wrap_pubkeys.len(), 0);
         let saved = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
         let folder = saved.shared_folder(share_id).unwrap();
         assert_eq!(

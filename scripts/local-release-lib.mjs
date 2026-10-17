@@ -1,4 +1,21 @@
-import { statSync } from 'node:fs'
+import { closeSync, openSync, readSync, statSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+
+function sha256File(path) {
+  const file = openSync(path, 'r')
+  const hash = createHash('sha256')
+  const buffer = Buffer.alloc(1024 * 1024)
+  try {
+    let size
+    while ((size = readSync(file, buffer, 0, buffer.length, null)) > 0) {
+      hash.update(buffer.subarray(0, size))
+    }
+    return hash.digest('hex')
+  } finally {
+    closeSync(file)
+  }
+}
+
 import { basename, join } from 'node:path'
 
 export function parseEnvFile(text) {
@@ -382,6 +399,7 @@ export function buildReleaseManifest({ tag, commit, createdAt, assetPaths, draft
         name,
         path: `assets/${name}`,
         size: statSync(assetPath).size,
+        sha256: sha256File(assetPath),
         ...inferAssetMetadata(name),
       }
     })

@@ -792,8 +792,8 @@ mod tests {
             .replace_app_key_root_from_config(&tree, &config, "main", "device-a", 16)
             .await
             .unwrap();
-        assert!(cache.path_state.is_empty());
-        assert!(cache.base_state.is_empty());
+        assert_eq!(cache.path_state.len(), 0);
+        assert_eq!(cache.base_state.len(), 0);
         assert_eq!(cache.base_anchor_for_drive("main"), Some(empty.as_str()));
     }
 
@@ -810,7 +810,7 @@ mod tests {
 
         let cache: SyncCache = serde_json::from_str(raw).unwrap();
 
-        assert!(cache.base_anchors.is_empty());
+        assert_eq!(cache.base_anchors.len(), 0);
         assert!(cache.base_anchor_for_drive("main").is_none());
     }
 
@@ -838,7 +838,7 @@ mod tests {
 
         cache.record_retrieval_outcome("hash-a", "peer-a", RetrievalOutcome::Verified, 110);
 
-        assert!(cache.needs.is_empty());
+        assert_eq!(cache.needs.len(), 0);
         assert_eq!(cache.source_availability.len(), 1);
         assert_eq!(cache.source_availability[0].state, SOURCE_STATE_AVAILABLE);
         assert_eq!(cache.source_availability[0].updated_at, 110);
@@ -870,7 +870,7 @@ mod tests {
 
         assert!(cache.record_hash_response(&expected, "peer-b", b"good bytes", 120));
 
-        assert!(cache.needs.is_empty());
+        assert_eq!(cache.needs.len(), 0);
         assert_eq!(
             cache
                 .source_availability

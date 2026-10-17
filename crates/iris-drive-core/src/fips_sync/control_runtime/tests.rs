@@ -7,7 +7,7 @@ fn control_record_roundtrip_and_limit() {
     let decoded = decode_record(&mut input).unwrap().unwrap();
     assert_eq!(decoded.topic, "iris-drive/test");
     assert_eq!(decoded.data, vec![1, 2, 3]);
-    assert!(input.is_empty());
+    assert_eq!(input.len(), 0);
     let oversized = vec![0; DRIVE_CONTROL_MAX_PAYLOAD_BYTES + 1];
     assert!(encode_record("test", &oversized).is_err());
 }

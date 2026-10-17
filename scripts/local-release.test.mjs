@@ -1,13 +1,12 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { generateKeyPairSync } from 'node:crypto'
+import { createHash, generateKeyPairSync } from 'node:crypto'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-
 import {
   buildReleaseManifest,
   buildReleaseManifestFiles,
@@ -31,6 +30,7 @@ test('buildReleaseManifest marks idrive archives as binary archives', () => {
     assetPaths: [cli],
   })
 
+  assert.equal(manifest.assets[0].sha256, createHash('sha256').update('archive').digest('hex'))
   assert.equal(manifest.app, 'iris-drive')
   assert.equal(manifest.version, '0.2.27')
   assert.equal(manifest.assets[0].kind, 'binary-archive')
@@ -253,7 +253,6 @@ test('local-release dry-run validates planned build assets over partial existing
   mkdirSync(assetDir)
   writeFileSync(join(assetDir, 'iris-drive-v9.9.9-macos-arm64.dmg'), 'partial')
   writeFileSync(keystorePath, 'test keystore placeholder')
-
   const result = spawnSync(
     process.execPath,
     [
@@ -276,6 +275,7 @@ test('local-release dry-run validates planned build assets over partial existing
       encoding: 'utf8',
       env: {
         ...process.env,
+        PATH: stageDir,
         ANDROID_KEYSTORE_PATH: keystorePath,
         ANDROID_KEYSTORE_PASSWORD: 'password',
         ANDROID_KEY_ALIAS: 'iris',

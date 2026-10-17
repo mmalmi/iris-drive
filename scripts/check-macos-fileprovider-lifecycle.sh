@@ -44,7 +44,14 @@ require_plist_raw_value() {
   local key="$2"
   local expected="$3"
   local actual
-  actual="$(plutil -extract "$key" raw "$file" 2>/dev/null || true)"
+  actual="$(python3 - "$file" "$key" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as source:
+    print(plistlib.load(source).get(sys.argv[2], ""))
+PY
+)"
   if [[ "$actual" != "$expected" ]]; then
     echo "expected plist $key in $file to be '$expected', got '${actual:-<missing>}'" >&2
     exit 1

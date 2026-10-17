@@ -12,7 +12,7 @@ fn relay_actions_normalize_and_dedupe_urls() {
         url: " relay.example/ ".to_owned(),
     });
 
-    assert!(state.error.is_empty());
+    assert_eq!(state.error.len(), 0);
     assert!(state.ui.relays.contains(&"wss://relay.example".to_owned()));
     assert!(!state.ui.relays.contains(&"relay.example/".to_owned()));
     assert_eq!(
@@ -50,7 +50,7 @@ fn relay_actions_normalize_and_dedupe_urls() {
     let state = app.dispatch(NativeAppAction::RemoveRelay {
         url: "relay.example/".to_owned(),
     });
-    assert!(state.error.is_empty());
+    assert_eq!(state.error.len(), 0);
     assert!(!state.ui.relays.contains(&"wss://relay.example".to_owned()));
 }
 

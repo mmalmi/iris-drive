@@ -118,7 +118,7 @@ async fn mounted_visible_import_ignores_previous_local_only_projection_files() {
             .collect::<Vec<_>>(),
         vec!["local.txt"]
     );
-    assert!(tombstones.is_empty());
+    assert_eq!(tombstones.len(), 0);
 
     let merged = crate::primary_merged_view(daemon.tree(), daemon.config())
         .await

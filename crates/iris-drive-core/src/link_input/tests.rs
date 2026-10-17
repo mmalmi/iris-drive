@@ -122,7 +122,7 @@ fn partial_device_invite_completion_ignores_query_and_fragment() {
             assert_eq!(classification.kind, "invite");
             assert!(!classification.is_complete);
             assert!(!classification.is_valid);
-            assert!(classification.error.is_empty());
+            assert_eq!(classification.error.len(), 0);
         }
     }
 }
@@ -152,7 +152,7 @@ fn classify_share_dialog_links_returns_folder_and_name() {
     assert!(web_link.is_complete);
     assert!(web_link.is_valid);
     assert_eq!(web_link.share_source_path, "/Shared Source");
-    assert!(web_link.share_display_name.is_empty());
+    assert_eq!(web_link.share_display_name.len(), 0);
 
     let missing_path = classify_link_input("iris-drive://share?name=Nope");
     assert_eq!(missing_path.kind, "share_dialog");
@@ -262,7 +262,7 @@ fn classify_public_iris_app_link_rejects_non_isolated_host_labels() {
     assert_eq!(nested.kind, "iris_web");
     assert!(nested.is_complete);
     assert!(!nested.is_valid);
-    assert!(nested.local_open_url.is_empty());
+    assert_eq!(nested.local_open_url.len(), 0);
     assert!(
         nested
             .error
@@ -287,7 +287,7 @@ fn resolve_app_key_link_target_accepts_invite_or_manual_profile_with_admin() {
         .expect("manual target");
     assert_eq!(from_manual.profile_id, profile_id);
     assert_eq!(from_manual.admin_app_key_hex, admin.to_hex());
-    assert!(from_manual.invite_pubkey.is_empty());
+    assert_eq!(from_manual.invite_pubkey.len(), 0);
 }
 
 #[test]

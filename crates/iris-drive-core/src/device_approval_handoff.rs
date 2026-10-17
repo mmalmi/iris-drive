@@ -142,7 +142,7 @@ mod tests {
         drop(file_provider_transaction);
 
         let snapshot = snapshot.await.unwrap();
-        assert!(!snapshot.root.root_cid.is_empty());
+        assert_ne!(snapshot.root.root_cid.len(), 0);
         assert_eq!(snapshot.drive_id, crate::PRIMARY_DRIVE_ID);
     }
 }

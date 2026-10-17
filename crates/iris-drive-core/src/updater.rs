@@ -143,12 +143,12 @@ async fn secure_selection(
         &asset_policy(),
     )
     .await;
-    if let Some(directory) = config.config_dir.as_deref() {
-        if let Some(event) = resolver.latest_event(&key).await? {
-            let mut cache = UpdateEventCache::new(&reference)?;
-            cache.ingest_event(event)?;
-            persist_update_event_cache(directory, &cache).map_err(anyhow::Error::msg)?;
-        }
+    if let Some(directory) = config.config_dir.as_deref()
+        && let Some(event) = resolver.latest_event(&key).await?
+    {
+        let mut cache = UpdateEventCache::new(&reference)?;
+        cache.ingest_event(event)?;
+        persist_update_event_cache(directory, &cache).map_err(anyhow::Error::msg)?;
     }
     selection.with_context(|| {
         format!(

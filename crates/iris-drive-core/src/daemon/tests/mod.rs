@@ -190,7 +190,7 @@ async fn import_visible_root_tombstones_deleted_foreign_visible_files() {
     let (files, tombstones) = crate::merge::walk_app_key_tree(daemon.tree(), &root_cid)
         .await
         .unwrap();
-    assert!(files.is_empty());
+    assert_eq!(files.len(), 0);
     assert_eq!(tombstones.len(), 1);
     assert_eq!(tombstones[0].path, "foreign.txt");
 
@@ -279,7 +279,7 @@ async fn scoped_visible_root_import_only_tombstones_changed_paths() {
     let (files, tombstones) = crate::merge::walk_app_key_tree(daemon.tree(), &root_cid)
         .await
         .unwrap();
-    assert!(files.is_empty());
+    assert_eq!(files.len(), 0);
     assert_eq!(tombstones.len(), 1);
     assert_eq!(tombstones[0].path, "explicit-delete.txt");
 
@@ -393,7 +393,7 @@ async fn mounted_visible_import_does_not_claim_unchanged_foreign_files() {
             .collect::<Vec<_>>(),
         vec!["local.txt"]
     );
-    assert!(tombstones.is_empty());
+    assert_eq!(tombstones.len(), 0);
 }
 
 #[allow(clippy::too_many_lines)]
@@ -497,7 +497,7 @@ async fn mounted_visible_import_does_not_claim_foreign_files_projected_after_bas
             .collect::<Vec<_>>(),
         vec!["local.txt"]
     );
-    assert!(tombstones.is_empty());
+    assert_eq!(tombstones.len(), 0);
 }
 
 #[tokio::test]
@@ -558,7 +558,7 @@ async fn corrupt_sync_cache_rebuilds_from_signed_roots() {
     assert_eq!(rebuilt.path_state.len(), 1);
     assert_eq!(rebuilt.path_state[0].path, "note.txt");
     assert_eq!(rebuilt.path_state[0].root_cid, report.root_cid);
-    assert!(rebuilt.base_state.is_empty());
+    assert_eq!(rebuilt.base_state.len(), 0);
 
     let loaded = crate::sync_cache::SyncCache::load(cache_path).unwrap();
     assert_eq!(loaded.path_state, rebuilt.path_state);
@@ -584,7 +584,7 @@ async fn import_records_per_app_key_root_when_account_present() {
     assert!(entry.published_at > 0);
     assert_eq!(entry.dck_generation, 1); // create-flow seeds DCK gen 1
     assert_eq!(entry.app_key_seq, 1);
-    assert!(entry.parents.is_empty());
+    assert_eq!(entry.parents.len(), 0);
 }
 
 #[tokio::test]
@@ -605,7 +605,7 @@ async fn import_embeds_root_meta_and_advances_app_key_sequence() {
     assert_eq!(first_meta.drive_id, PRIMARY_DRIVE_ID);
     assert_eq!(first_meta.app_key_pubkey, account.state.app_key_pubkey);
     assert_eq!(first_meta.app_key_seq, 1);
-    assert!(first_meta.parents.is_empty());
+    assert_eq!(first_meta.parents.len(), 0);
 
     std::fs::write(work.path().join("note.txt"), b"two").unwrap();
     let second = daemon.import_source_dir(work.path()).await.unwrap();
@@ -812,7 +812,7 @@ async fn import_persists_root_cid_to_config() {
     std::fs::write(work.path().join("hello.txt"), b"hi there").unwrap();
     let report = daemon.import_source_dir(work.path()).await.unwrap();
     assert_eq!(report.top_level_entries, 1);
-    assert!(!report.root_cid.is_empty());
+    assert_ne!(report.root_cid.len(), 0);
 
     // primary drive's last_root_cid is set.
     let recorded = daemon.primary_root().unwrap();
@@ -931,7 +931,7 @@ fn embedded_browser_relays_include_hashtree_resolver_bootstrap_relays() {
 
     config.relays.clear();
     let relays = embedded_browser_nostr_relays(&config);
-    assert!(relays.is_empty());
+    assert_eq!(relays.len(), 0);
     assert_eq!(
         embedded_browser_settings(&config)["nostrRelays"],
         serde_json::json!([])
