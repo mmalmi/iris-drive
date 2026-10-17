@@ -1,3 +1,7 @@
+mod content;
+pub use content::{
+    dispatch_share_action_with_content, dispatch_share_action_with_content_blocking,
+};
 use std::path::Path;
 
 use anyhow::{Context, Result};
@@ -449,8 +453,21 @@ fn accept_share_invite(
         .as_ref()
         .context("profile is required before accepting share invites")?
         .profile_id;
-    let folder = shared_folder_from_invite_for_profile(invite, local_profile_id)?;
+    let mut folder = shared_folder_from_invite_for_profile(invite, local_profile_id)?;
+    // Invite metadata is not a signed writer announcement. Only verified relay
+    // or direct-root events may supply file roots.
+    folder.app_key_roots.clear();
     let share_id = folder.share_id;
+    if let Some(existing) = config.shared_folder(share_id) {
+        anyhow::ensure!(
+            existing.owner_profile_id == folder.owner_profile_id,
+            "Share owner changed"
+        );
+        folder.app_key_roots = existing.app_key_roots.clone();
+        if existing.access.updated_at >= folder.access.updated_at {
+            folder = existing.clone();
+        }
+    }
     let display_name = folder.display_name.clone();
     config.upsert_shared_folder(folder);
     let shortcut = ensure_default_share_shortcut(config, share_id, &display_name)?;
@@ -726,10 +743,21 @@ mod tests {
         )
         .unwrap();
 
+        let invite = invited.last_share_invite.unwrap();
+        let mut bundle = crate::parse_share_invite(&invite).unwrap();
+        bundle.shared_folder.app_key_roots.insert(
+            owner.state.app_key_pubkey.clone(),
+            crate::AppKeyRootRef::legacy(
+                hashtree_core::Cid::encrypted([1; 32], [2; 32]).to_string(),
+                21,
+                1,
+            ),
+        );
+        let invite = crate::encode_share_invite(&bundle).unwrap();
         let accepted = dispatch_share_action(
             recipient_dir.path(),
             ShareAction::AcceptShareInvite {
-                invite: invited.last_share_invite.unwrap(),
+                invite: invite.clone(),
             },
             30,
         )
@@ -738,7 +766,32 @@ mod tests {
         assert_eq!(accepted.shares.len(), 1);
         assert_eq!(accepted.shares[0].display_name, "Alpha");
         assert_eq!(accepted.shares[0].shortcut_paths, vec!["Alpha"]);
+        let mut saved = AppConfig::load_or_default(config_path_in(recipient_dir.path())).unwrap();
+        assert!(
+            saved.shared_folders[0].app_key_roots.is_empty(),
+            "unsigned invite roots are not trusted"
+        );
+        crate::revoke_shared_folder_member(
+            &mut saved.shared_folders[0],
+            owner.app_key.keys(),
+            recipient.state.profile_id,
+            None,
+            100,
+        )
+        .unwrap();
+        let latest_access = saved.shared_folders[0].access.clone();
+        saved.save(config_path_in(recipient_dir.path())).unwrap();
+        dispatch_share_action(
+            recipient_dir.path(),
+            ShareAction::AcceptShareInvite { invite },
+            101,
+        )
+        .unwrap();
         let saved = AppConfig::load_or_default(config_path_in(recipient_dir.path())).unwrap();
+        assert_eq!(
+            saved.shared_folders[0].access, latest_access,
+            "old invite cannot restore access"
+        );
         assert_eq!(saved.share_shortcuts.len(), 1);
         assert_eq!(saved.share_shortcuts[0].path, "Alpha");
     }

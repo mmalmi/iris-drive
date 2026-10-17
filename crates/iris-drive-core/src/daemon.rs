@@ -197,6 +197,14 @@ impl Daemon {
         )
         .await?;
 
+        crate::shared_content::import_owned_shared_folders(
+            &self.tree,
+            &mut self.config,
+            &root_cid,
+            previous_root.as_ref(),
+        )
+        .await
+        .map_err(|error| DaemonError::Store(error.to_string()))?;
         self.report_and_record_root(
             root_cid,
             Some(source_dir.to_path_buf()),
@@ -396,6 +404,19 @@ impl Daemon {
     ) -> Result<ImportReport, DaemonError> {
         self.load_full_profile_for_mutation()?;
         self.ensure_drive_for_import(drive_id)?;
+        let (root, tombstone_base_root) = if drive_id == PRIMARY_DRIVE_ID {
+            crate::shared_content::route_shared_edits(
+                &self.tree,
+                &mut self.config,
+                root,
+                tombstone_base_root,
+                local_only,
+            )
+            .await
+            .map_err(|error| DaemonError::Store(error.to_string()))?
+        } else {
+            (root, tombstone_base_root)
+        };
         let previous_root_ref = self.config.profile.as_ref().and_then(|account| {
             self.config
                 .drive(drive_id)

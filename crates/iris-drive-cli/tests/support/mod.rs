@@ -467,3 +467,55 @@ fn text_response(status: StatusCode, text: &str) -> Response {
         .body(Body::from(text.to_string()))
         .unwrap()
 }
+
+#[allow(dead_code)]
+pub(crate) struct SharingTestServices {
+    relay: LocalNostrRelay,
+    blossom: LocalBlossomServer,
+    runtime: tokio::runtime::Runtime,
+}
+
+impl SharingTestServices {
+    pub(crate) fn new() -> Self {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        let relay = runtime.block_on(LocalNostrRelay::spawn());
+        let blossom = runtime.block_on(LocalBlossomServer::spawn());
+        Self {
+            relay,
+            blossom,
+            runtime,
+        }
+    }
+
+    pub(crate) fn prepare(&self, config_dir: &std::path::Path) {
+        let mut config = AppConfig::load_or_default(config_path_in(config_dir)).unwrap();
+        config.relays = vec![self.relay.url.clone()];
+        config.blossom_servers = vec![self.blossom.url.clone()];
+        let shares = std::mem::take(&mut config.shared_folders);
+        let shortcuts = std::mem::take(&mut config.share_shortcuts);
+        if config.drives.is_empty() {
+            config.drives.push(iris_drive_core::Drive::primary(
+                config.profile.as_ref().unwrap().root_scope_id(),
+            ));
+        }
+        config.save(config_path_in(config_dir)).unwrap();
+        let source = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(source.path().join("Projects/Alpha")).unwrap();
+        std::fs::write(source.path().join("Projects/Alpha/Plan.txt"), "Shared plan").unwrap();
+        self.runtime.block_on(async {
+            iris_drive_core::Daemon::open(config_dir)
+                .unwrap()
+                .import_source_dir(source.path())
+                .await
+                .unwrap();
+        });
+        let mut config = AppConfig::load_or_default(config_path_in(config_dir)).unwrap();
+        config.shared_folders = shares;
+        config.share_shortcuts = shortcuts;
+        config.save(config_path_in(config_dir)).unwrap();
+    }
+}

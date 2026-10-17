@@ -749,7 +749,7 @@ impl NativeAppRuntime {
             }
             _ => unreachable!("non-share action dispatched to share action handler"),
         };
-        iris_drive_core::dispatch_share_action(
+        iris_drive_core::share_actions::dispatch_share_action_with_content_blocking(
             Path::new(&self.data_dir),
             action,
             share_now_seconds(),

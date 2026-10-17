@@ -503,7 +503,7 @@ async fn handle_gateway_request(
     }
 
     if uri.path() == SHARE_ACTION_API_PATH {
-        return handle_share_action_api(&state, &method, &headers, body.as_ref());
+        return handle_share_action_api(&state, &method, &headers, body.as_ref()).await;
     }
 
     if is_htree_runtime_ws_path(uri.path()) && htree_runtime_host_allowed(&headers) {
@@ -575,7 +575,7 @@ async fn handle_gateway_request(
     }
 }
 
-fn handle_share_action_api(
+async fn handle_share_action_api(
     state: &GatewayState,
     method: &Method,
     headers: &HeaderMap,
@@ -594,23 +594,45 @@ fn handle_share_action_api(
     if method == Method::GET {
         let result = crate::share_action_state(&state.config_dir)
             .map_err(|e| (StatusCode::BAD_REQUEST, format!("{e:#}")))?;
-        return share_action_json_response(&result, cors_origin.as_ref());
+        return share_action_json_response(&state.config_dir, &result, cors_origin.as_ref());
     }
     if method != Method::POST {
         return Err((StatusCode::METHOD_NOT_ALLOWED, "method not allowed".into()));
     }
     let action = serde_json::from_slice::<crate::ShareAction>(body)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("share action json: {e}")))?;
-    let result = crate::dispatch_share_action(&state.config_dir, action, gateway_now_seconds())
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("{e:#}")))?;
-    share_action_json_response(&result, cors_origin.as_ref())
+    let result = crate::share_actions::dispatch_share_action_with_content(
+        &state.config_dir,
+        action,
+        gateway_now_seconds(),
+    )
+    .await
+    .map_err(|e| (StatusCode::BAD_REQUEST, format!("{e:#}")))?;
+    share_action_json_response(&state.config_dir, &result, cors_origin.as_ref())
 }
 
 fn share_action_json_response(
+    config_dir: &std::path::Path,
     result: &crate::ShareActionResult,
     cors_origin: Option<&HeaderValue>,
 ) -> Result<Response, (StatusCode, String)> {
-    let body = serde_json::to_vec(result)
+    let mut value = serde_json::to_value(result)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let config = crate::AppConfig::load_or_default(crate::paths::config_path_in(config_dir))
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    value["local_profile_id"] =
+        serde_json::json!(config.profile.as_ref().map(|profile| profile.profile_id));
+    let folders = config
+        .shared_folders
+        .into_iter()
+        .map(|mut folder| {
+            // Browser consumers obtain roots only from verified writer events.
+            folder.app_key_roots.clear();
+            folder
+        })
+        .collect::<Vec<_>>();
+    value["shared_folders"] = serde_json::json!(folders);
+    let body = serde_json::to_vec(&value)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     try_finish_response(
         share_action_response_builder(StatusCode::OK, cors_origin)

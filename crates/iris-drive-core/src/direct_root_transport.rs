@@ -126,8 +126,9 @@ impl DirectRootExchange {
         if !periodic_direct_root_exchange_has_peer(sync).await {
             return Ok(());
         }
-        let config = AppConfig::load_or_default(config_path_in(config_dir))
-            .map_err(|error| format!("loading config: {error}"))?;
+        let config = crate::shared_content::prepare_shared_folder_roots(config_dir)
+            .await
+            .map_err(|error| format!("preparing shared folders: {error}"))?;
         sync.refresh_authorized_peers_from_config_dir(config_dir)
             .await;
         let Some(state) = config.profile.as_ref() else {
@@ -991,6 +992,45 @@ pub fn build_current_direct_root_events(
                     root.app_key_seq,
                     root.root_cid,
                     authorized_app_keys.join(",")
+                ),
+                &event,
+            ));
+        }
+    }
+    let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
+    for folder in &config.shared_folders {
+        if crate::shared_folder_app_key_can_write_roots(folder, &state.app_key_pubkey)
+            && let Some(root) = folder.app_key_roots.get(&state.app_key_pubkey)
+            && !root.local_only
+        {
+            let recipients = crate::shared_folder_key_recipient_pubkeys(folder);
+            let event = crate::nostr_events::build_drive_root_publish_event(
+                device.keys(),
+                &folder.share_id.to_string(),
+                PRIMARY_DRIVE_ID,
+                &crate::shared_content::share_root_for_publish(folder, root),
+                &recipients,
+            )?;
+            events.push(direct_root_event(
+                format!(
+                    "share-root:{}:{}:{}:{}:{}",
+                    folder.share_id,
+                    state.app_key_pubkey,
+                    root.app_key_seq,
+                    root.root_cid,
+                    recipients.join(",")
+                ),
+                &event,
+            ));
+        }
+        if crate::shared_folder_app_key_can_admin(folder, &state.app_key_pubkey) {
+            let snapshot =
+                crate::sign_share_access_snapshot(device.keys(), folder, folder.access.updated_at)?;
+            let event = Event::from_json(&snapshot.event_json)?;
+            events.push(direct_root_event(
+                format!(
+                    "share-access:{}:{}:{}",
+                    folder.share_id, snapshot.snapshot_id, snapshot.content.updated_at
                 ),
                 &event,
             ));

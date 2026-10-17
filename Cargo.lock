@@ -3271,6 +3271,8 @@ name = "iris-drive-app-core"
 version = "0.1.38"
 dependencies = [
  "anyhow",
+ "axum",
+ "futures",
  "hashtree-core",
  "hashtree-fs",
  "hashtree-provider",

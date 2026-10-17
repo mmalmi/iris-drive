@@ -1,3 +1,9 @@
+#[path = "../../../iris-drive-cli/tests/support/mod.rs"]
+#[allow(dead_code)]
+mod sharing_network;
+
+use sharing_network::SharingTestServices;
+
 use super::{
     FfiApp, NATIVE_RUNTIME_CONFIG_CACHE, NativeAppConfigCache, SentAppKeyLinkRequest,
     app_key_link_request_send_due, load_native_runtime_config_cached, native_calendar_export_json,
@@ -544,6 +550,8 @@ fn app_actions_manage_share_invite_accept_shortcut_and_revoke() {
     });
     assert!(owner_created.error.is_empty(), "{}", owner_created.error);
     let owner_profile = owner_created.ui.profile.clone().unwrap();
+    let services = SharingTestServices::new();
+    services.prepare(owner_dir.path());
     let created_share = owner_app.dispatch(NativeAppAction::CreateShare {
         source_path: "Projects/Alpha".to_owned(),
         display_name: "Alpha".to_owned(),
@@ -566,6 +574,7 @@ fn app_actions_manage_share_invite_accept_shortcut_and_revoke() {
         "{}",
         recipient_created.error
     );
+    services.prepare(recipient_dir.path());
     let recipient_profile = recipient_created.ui.profile.clone().unwrap();
 
     let invited = owner_app.dispatch(NativeAppAction::InviteShareMember {
@@ -589,7 +598,7 @@ fn app_actions_manage_share_invite_accept_shortcut_and_revoke() {
         invited
             .ui
             .last_share_invite
-            .starts_with(iris_drive_core::SHARE_INVITE_PREFIX)
+            .starts_with(iris_drive_core::share_links::SHARE_INVITE_WEB_PREFIX)
     );
 
     let accepted = recipient_app.dispatch(NativeAppAction::AcceptShareInvite {
@@ -626,7 +635,7 @@ fn app_actions_manage_share_invite_accept_shortcut_and_revoke() {
     assert!(shortcut.error.is_empty(), "{}", shortcut.error);
     assert_eq!(
         shortcut.ui.shares[0].shortcut_paths,
-        vec!["Alpha", "Projects/Alpha"]
+        vec!["Alpha", "Projects/Alpha (shared)"]
     );
 
     let revoked = owner_app.dispatch(NativeAppAction::RevokeShareMember {
@@ -651,6 +660,8 @@ fn app_action_delete_share_removes_share_and_shortcuts() {
     });
     assert!(created.error.is_empty(), "{}", created.error);
 
+    let services = SharingTestServices::new();
+    services.prepare(dir.path());
     let shared = app.dispatch(NativeAppAction::CreateShare {
         source_path: "Projects/Alpha".to_owned(),
         display_name: "Alpha".to_owned(),
@@ -687,6 +698,8 @@ fn app_action_records_pending_share_invite_hint() {
         app_key_label: "Owner".to_owned(),
     });
     assert!(owner_created.error.is_empty(), "{}", owner_created.error);
+    let services = SharingTestServices::new();
+    services.prepare(owner_dir.path());
     let created_share = owner_app.dispatch(NativeAppAction::CreateShare {
         source_path: "Projects/Alpha".to_owned(),
         display_name: "Alpha".to_owned(),
@@ -722,6 +735,8 @@ fn app_action_invites_share_member_from_recipient_evidence() {
         app_key_label: "Owner".to_owned(),
     });
     assert!(owner_created.error.is_empty(), "{}", owner_created.error);
+    let services = SharingTestServices::new();
+    services.prepare(owner_dir.path());
     let created_share = owner_app.dispatch(NativeAppAction::CreateShare {
         source_path: "Projects/Alpha".to_owned(),
         display_name: "Alpha".to_owned(),
@@ -742,6 +757,7 @@ fn app_action_invites_share_member_from_recipient_evidence() {
         "{}",
         recipient_created.error
     );
+    services.prepare(recipient_dir.path());
     let recipient_profile = recipient_created.ui.profile.clone().unwrap();
     let invited = owner_app.dispatch(NativeAppAction::InviteShareMemberFromEvidence {
         share_id,
@@ -755,7 +771,7 @@ fn app_action_invites_share_member_from_recipient_evidence() {
         invited
             .ui
             .last_share_invite
-            .starts_with(iris_drive_core::SHARE_INVITE_PREFIX)
+            .starts_with(iris_drive_core::share_links::SHARE_INVITE_WEB_PREFIX)
     );
     let share = invited.ui.shares.first().unwrap();
     let alice = share
@@ -776,6 +792,8 @@ fn app_action_exports_share_recipient_evidence_for_core_invites() {
         app_key_label: "Owner".to_owned(),
     });
     assert!(owner_created.error.is_empty(), "{}", owner_created.error);
+    let services = SharingTestServices::new();
+    services.prepare(owner_dir.path());
     let created_share = owner_app.dispatch(NativeAppAction::CreateShare {
         source_path: "Projects/Alpha".to_owned(),
         display_name: "Alpha".to_owned(),
@@ -796,6 +814,7 @@ fn app_action_exports_share_recipient_evidence_for_core_invites() {
         "{}",
         recipient_created.error
     );
+    services.prepare(recipient_dir.path());
     let recipient_profile = recipient_created.ui.profile.clone().unwrap();
 
     let exported = recipient_app.dispatch(NativeAppAction::ExportShareRecipientEvidence {

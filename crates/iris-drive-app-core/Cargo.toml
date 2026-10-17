@@ -32,6 +32,8 @@ uniffi.workspace = true
 jni = "0.21"
 
 [dev-dependencies]
+axum = { workspace = true, features = ["ws"] }
+futures.workspace = true
 tempfile.workspace = true
 
 [lints.clippy]

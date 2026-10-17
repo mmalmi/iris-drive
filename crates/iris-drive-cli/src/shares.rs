@@ -579,7 +579,11 @@ fn dispatch_cli_share_action(
     config_dir: &Path,
     action: iris_drive_core::ShareAction,
 ) -> Result<iris_drive_core::ShareActionResult> {
-    iris_drive_core::dispatch_share_action(config_dir, action, share_timestamp())
+    iris_drive_core::share_actions::dispatch_share_action_with_content_blocking(
+        config_dir,
+        action,
+        share_timestamp(),
+    )
 }
 
 fn share_timestamp() -> i64 {
@@ -589,6 +593,11 @@ fn share_timestamp() -> i64 {
             i64::try_from(duration.as_secs()).unwrap_or(i64::MAX)
         })
 }
+
+#[cfg(test)]
+#[path = "../tests/support/mod.rs"]
+#[allow(dead_code)]
+mod sharing_test_network;
 
 #[cfg(test)]
 mod tests {
@@ -648,6 +657,9 @@ mod tests {
         );
         config.save(config_path_in(config_dir.path())).unwrap();
 
+        let services = super::sharing_test_network::SharingTestServices::new();
+        services.prepare(config_dir.path());
+
         cmd_shares_shortcut(
             config_dir.path(),
             &folder.share_id.to_string(),
@@ -675,6 +687,9 @@ mod tests {
             ..AppConfig::default()
         };
         config.save(config_path_in(config_dir.path())).unwrap();
+
+        let services = super::sharing_test_network::SharingTestServices::new();
+        services.prepare(config_dir.path());
 
         cmd_shares_create(config_dir.path(), "Projects/Alpha", None).unwrap();
 
@@ -731,6 +746,9 @@ mod tests {
         );
         config.save(config_path_in(config_dir.path())).unwrap();
 
+        let services = super::sharing_test_network::SharingTestServices::new();
+        services.prepare(config_dir.path());
+
         cmd_shares_delete(config_dir.path(), &share_id.to_string()).unwrap();
 
         let saved = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
@@ -762,6 +780,9 @@ mod tests {
         let representative_pubkey = nostr_sdk::Keys::generate().public_key().to_hex();
         let representative_npub =
             iris_drive_core::app_key_summary::pubkey_npub(&representative_pubkey);
+
+        let services = super::sharing_test_network::SharingTestServices::new();
+        services.prepare(config_dir.path());
 
         cmd_shares_invite(
             config_dir.path(),
@@ -936,6 +957,9 @@ mod tests {
         config.upsert_shared_folder(folder.clone());
         config.save(config_path_in(config_dir.path())).unwrap();
 
+        let services = super::sharing_test_network::SharingTestServices::new();
+        services.prepare(config_dir.path());
+
         cmd_shares_revoke(
             config_dir.path(),
             &folder.share_id.to_string(),
@@ -1005,6 +1029,8 @@ mod tests {
         config.upsert_shared_folder(folder.clone());
         config.save(config_path_in(config_dir.path())).unwrap();
 
+        let services = super::sharing_test_network::SharingTestServices::new();
+        services.prepare(config_dir.path());
         let result = dispatch_cli_share_action(
             config_dir.path(),
             iris_drive_core::ShareAction::RevokeShareMember {
@@ -1060,6 +1086,9 @@ mod tests {
         config.upsert_shared_folder(folder.clone());
         config.save(config_path_in(config_dir.path())).unwrap();
 
+        let services = super::sharing_test_network::SharingTestServices::new();
+        services.prepare(config_dir.path());
+
         cmd_shares_role(
             config_dir.path(),
             &folder.share_id.to_string(),
@@ -1114,6 +1143,9 @@ mod tests {
             .save(config_path_in(recipient_dir.path()))
             .unwrap();
 
+        let services = super::sharing_test_network::SharingTestServices::new();
+        services.prepare(owner_dir.path());
+
         cmd_shares_invite(
             owner_dir.path(),
             &folder.share_id.to_string(),
@@ -1139,6 +1171,9 @@ mod tests {
             created_at: 20,
         };
         let invite = iris_drive_core::encode_share_invite(&bundle).unwrap();
+
+        let services = super::sharing_test_network::SharingTestServices::new();
+        services.prepare(recipient_dir.path());
 
         cmd_shares_accept(recipient_dir.path(), &invite).unwrap();
 
@@ -1184,6 +1219,9 @@ mod tests {
         let recipient_dir = tempdir().unwrap();
         let recipient = Profile::create(recipient_dir.path(), Some("Recipient".into())).unwrap();
         let evidence_path = recipient_evidence_file(recipient_dir.path(), &recipient, "Alice");
+
+        let services = super::sharing_test_network::SharingTestServices::new();
+        services.prepare(owner_dir.path());
 
         cmd_shares_invite(
             owner_dir.path(),
@@ -1275,6 +1313,9 @@ mod tests {
         };
         config.upsert_shared_folder(folder.clone());
         config.save(config_path_in(config_dir.path())).unwrap();
+
+        let services = super::sharing_test_network::SharingTestServices::new();
+        services.prepare(config_dir.path());
 
         cmd_shares_repair_wraps(config_dir.path(), &folder.share_id.to_string(), false).unwrap();
 

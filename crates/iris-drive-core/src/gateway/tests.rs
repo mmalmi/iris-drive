@@ -910,7 +910,11 @@ async fn gateway_rejects_unknown_hosts() {
 async fn gateway_share_action_creates_share_with_core_projection() {
     let cfg_dir = tempdir().unwrap();
     init_account_config(cfg_dir.path());
-    let daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let source = tempdir().unwrap();
+    std::fs::create_dir_all(source.path().join("Projects/Alpha")).unwrap();
+    std::fs::write(source.path().join("Projects/Alpha/Plan.txt"), "Plan").unwrap();
+    daemon.import_source_dir(source.path()).await.unwrap();
     let server = GatewayServer::bind_with_tree(
         cfg_dir.path(),
         daemon.tree_handle(),
@@ -957,7 +961,11 @@ async fn gateway_share_action_creates_share_with_core_projection() {
 async fn gateway_share_action_get_returns_current_core_projection() {
     let cfg_dir = tempdir().unwrap();
     init_account_config(cfg_dir.path());
-    let daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let mut daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let source = tempdir().unwrap();
+    std::fs::create_dir_all(source.path().join("Projects/Alpha")).unwrap();
+    std::fs::write(source.path().join("Projects/Alpha/Plan.txt"), "Plan").unwrap();
+    daemon.import_source_dir(source.path()).await.unwrap();
     let server = GatewayServer::bind_with_tree(
         cfg_dir.path(),
         daemon.tree_handle(),
