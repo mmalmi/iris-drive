@@ -61,7 +61,8 @@ if (platform.startsWith('macos') || platform.startsWith('ios')) {
   // Match the established iOS archive build's anonymous temporary directory.
   const derived = !mac && !simulator
     ? mkdtempSync('/tmp/iris-drive-ios-build-') : join(output, 'DerivedData')
-  const swift = `$(inherited) -debug-prefix-map "${root}=/usr/src/iris-drive" -debug-prefix-map "${homedir()}=/usr/src/home"`
+  // Swift assertion filenames are runtime strings, separate from DWARF paths.
+  const swift = `$(inherited) -file-prefix-map "${root}=/usr/src/iris-drive" -file-prefix-map "${homedir()}=/usr/src/home" -debug-prefix-map "${root}=/usr/src/iris-drive" -debug-prefix-map "${homedir()}=/usr/src/home"`
   const clang = `$(inherited) "-ffile-prefix-map=${root}=/usr/src/iris-drive" "-fdebug-prefix-map=${root}=/usr/src/iris-drive" "-ffile-prefix-map=${homedir()}=/usr/src/home" "-fdebug-prefix-map=${homedir()}=/usr/src/home"`
   const xcode = ['-project', join(root, project, `${name}.xcodeproj`), '-scheme', name,
     '-configuration', configuration, '-derivedDataPath', derived, '-jobs', '2',
