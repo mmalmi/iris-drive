@@ -2,6 +2,7 @@ name: Unsigned native products
 
 on:
   pull_request:
+    types: [opened, reopened]
     paths:
       - '.github/workflows/release-products.yml'
       - 'scripts/build-hosted-products.mjs'
@@ -12,30 +13,27 @@ on:
         description: Exact source commit to build
         required: true
         default: 0f76a0b1f8a8f3f01d712cc6f1b7f76fe75b8075
+      platform:
+        description: One product platform, or all
+        required: true
+        default: all
 
 permissions:
   contents: read
 
 concurrency:
-  group: unsigned-products-${{ github.ref }}
+  group: unsigned-products-${{ github.ref }}-${{ inputs.platform || 'all' }}
   cancel-in-progress: false
 
 jobs:
   products:
     name: ${{ matrix.platform }}
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ (startsWith(matrix.platform, 'macos') || startsWith(matrix.platform, 'ios')) && 'macos-15' || 'ubuntu-24.04' }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - { platform: macos-release, runner: macos-15 }
-          - { platform: macos-debug, runner: macos-15 }
-          - { platform: ios-release, runner: macos-15 }
-          - { platform: ios-sim-debug, runner: macos-15 }
-          - { platform: ios-sim-release, runner: macos-15 }
-          - { platform: android, runner: ubuntu-24.04 }
-          - { platform: linux, runner: ubuntu-24.04 }
+        platform: ${{ fromJSON(inputs.platform && inputs.platform != 'all' && format('["{0}"]', inputs.platform) || '["macos-release","macos-debug","ios-release","ios-sim-debug","ios-sim-release","android","linux"]') }}
     env:
       SOURCE_COMMIT: ${{ inputs.commit || '0f76a0b1f8a8f3f01d712cc6f1b7f76fe75b8075' }}
       SOURCE_ROOT: ${{ github.workspace }}/source
@@ -76,7 +74,7 @@ jobs:
       - name: Install Android NDK
         if: matrix.platform == 'android'
         run: |
-          sdkmanager 'ndk;28.2.13676358' 'platforms;android-36' 'build-tools;36.0.0'
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'ndk;28.2.13676358' 'platforms;android-36' 'build-tools;36.0.0'
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
           cargo install --locked cargo-ndk
       - name: Install Debian packager
