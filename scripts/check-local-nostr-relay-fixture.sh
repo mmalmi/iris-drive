@@ -182,3 +182,4 @@ SERVER_PID=""
 }
 
 echo "LOCAL_NOSTR_RELAY_FIXTURE_OK"
+python3 "$ROOT/scripts/test_local_nostr_relay_shutdown.py"

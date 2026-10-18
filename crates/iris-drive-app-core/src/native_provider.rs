@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+#[cfg(test)]
+use std::sync::Mutex;
 
 use anyhow::Context;
 use hashtree_provider::{HashTreeProviderFs, ItemKind, ProviderFs};

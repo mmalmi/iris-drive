@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.1.38 - 2026-10-17
+## 0.1.38 - 2026-10-19
 
 ### Security
 
@@ -14,6 +14,8 @@
 
 ### Fixed
 
+- Keep reopened device approval screens responsive during background sync and
+  provider scans, and preserve new approvals when an older sync finishes.
 - Keep device approval exchanges open long enough to deliver large rosters and
   acknowledgements, with bounded connection time, records and memory.
 - Run native update checks and downloads on an owned thread with enough stack
