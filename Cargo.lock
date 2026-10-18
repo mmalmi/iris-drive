@@ -2745,14 +2745,15 @@ dependencies = [
 
 [[package]]
 name = "hashtree-updater"
-version = "0.2.88"
+version = "0.2.89"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c28eeb4748b1620ef2079bdb3f476a77ac12632f55c329dc8eab0eed339ed5eb"
+checksum = "84c1c9809282fb6428f25ff473252937e6b8627e8d15c4f436d083f0b2ddb0df"
 dependencies = [
  "async-trait",
  "flate2",
  "hashtree-blossom",
  "hashtree-core",
+ "hashtree-network",
  "hashtree-resolver",
  "nostr-pubsub",
  "semver",

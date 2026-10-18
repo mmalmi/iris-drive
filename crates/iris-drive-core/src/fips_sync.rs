@@ -139,6 +139,13 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             runtime.set_friend_route(friends.read_route.clone()).await?;
         }
         sync.friend_backups = Some(friends);
+        if let Some(directory) = device.path().parent() {
+            crate::updater::pubsub::register_storage(
+                directory,
+                sync.local_store.clone(),
+                sync.blob_router.clone(),
+            );
+        }
         if let (Some(runtime), Some(directory)) =
             (sync.nostr_runtime.as_ref(), device.path().parent())
         {

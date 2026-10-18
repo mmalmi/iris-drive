@@ -183,3 +183,36 @@ fn older_check_does_not_overwrite_newer_persisted_release() {
         newer.latest()
     );
 }
+
+#[tokio::test]
+async fn update_reads_fill_the_running_store_without_retaining_a_closed_profile() {
+    use hashtree_core::{MemoryStore, Store, StoreBlobRoute, sha256};
+    use hashtree_network::{BlobRouteEntry, BlobRouter, BlobRouterConfig};
+    let directory = tempfile::tempdir().unwrap();
+    let primary = Arc::new(MemoryStore::new());
+    let peer = Arc::new(MemoryStore::new());
+    let bytes = b"public software update block".to_vec();
+    let hash = sha256(&bytes);
+    peer.put(hash, bytes.clone()).await.unwrap();
+    let route = Arc::new(
+        BlobRouter::new(
+            vec![BlobRouteEntry::new(
+                "peer",
+                Arc::new(StoreBlobRoute::new(peer)),
+            )],
+            Some(primary.clone()),
+            BlobRouterConfig::default(),
+        )
+        .unwrap(),
+    );
+    register_storage(directory.path(), primary.clone(), route.clone());
+    let (cache, peers) = storage(Some(directory.path())).unwrap();
+    let updates =
+        hashtree_updater::build_update_store(cache, Some(peers), Default::default()).unwrap();
+    assert_eq!(updates.get(&hash).await.unwrap(), Some(bytes.clone()));
+    assert_eq!(primary.get(&hash).await.unwrap(), Some(bytes));
+    drop(updates);
+    drop(route);
+    drop(primary);
+    assert!(storage(Some(directory.path())).is_none());
+}

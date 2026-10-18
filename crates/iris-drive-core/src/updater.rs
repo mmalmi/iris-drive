@@ -3,11 +3,11 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use hashtree_updater::{
-    ProductAssetPolicy, SecurePubsubBlossomConfig, SecurePubsubBlossomSelection,
-    SecurePubsubBlossomUpdater, UpdateEventCache, UpdateRef, build_secure_pubsub_blossom_updater,
-    current_archive_target, dedupe_nonempty, download_product_selection, env_csv,
-    platform_app_asset_suffixes, preferred_product_asset, product_result_from_selection,
-    select_product_update, update_ref_from_override,
+    HashtreeUpdater, ProductAssetPolicy, ProductUpdateSelection, PubsubRootResolver,
+    SecurePubsubBlossomConfig, UpdateEventCache, UpdateRef, UpdateStore,
+    build_secure_pubsub_store_updater, build_update_store, current_archive_target, dedupe_nonempty,
+    download_product_selection, env_csv, platform_app_asset_suffixes, preferred_product_asset,
+    product_result_from_selection, select_product_update, update_ref_from_override,
 };
 pub use hashtree_updater::{
     ProductUpdateMode, ProductUpdateResult, SECURE_SOURCE_NAME, UpdateAsset, UpdateAutoCheckPolicy,
@@ -15,6 +15,9 @@ pub use hashtree_updater::{
 };
 
 use crate::config::{AppConfig, DEFAULT_BLOSSOM_SERVERS};
+
+type PeerUpdateSelection = ProductUpdateSelection<PubsubRootResolver, UpdateStore>;
+type PeerUpdateUpdater = HashtreeUpdater<PubsubRootResolver, UpdateStore>;
 
 pub(crate) mod pubsub;
 use crate::paths::config_path_in;
@@ -112,7 +115,7 @@ async fn select_update(
     current_version: &str,
     mode: ProductUpdateMode,
     config: ProductUpdateConfig,
-) -> Result<SecurePubsubBlossomSelection> {
+) -> Result<PeerUpdateSelection> {
     secure_selection(current_version, mode, config)
         .await
         .context("signed hashtree update check failed")
@@ -120,7 +123,7 @@ async fn select_update(
 
 fn result_from_selection(
     current_version: &str,
-    selection: &SecurePubsubBlossomSelection,
+    selection: &PeerUpdateSelection,
     path: Option<&Path>,
 ) -> ProductUpdateResult {
     product_result_from_selection(current_version, selection, SECURE_SOURCE_NAME, true, path)
@@ -130,7 +133,7 @@ async fn secure_selection(
     current_version: &str,
     mode: ProductUpdateMode,
     config: ProductUpdateConfig,
-) -> Result<SecurePubsubBlossomSelection> {
+) -> Result<PeerUpdateSelection> {
     let reference = product_update_reference(config.update_ref.as_deref())?;
     let updater = build_secure_updater(&config, &reference).await?;
     let key = reference.resolver_key();
@@ -170,22 +173,35 @@ pub(crate) fn product_update_reference(override_ref: Option<&str>) -> Result<Upd
 async fn build_secure_updater(
     config: &ProductUpdateConfig,
     reference: &UpdateRef,
-) -> Result<SecurePubsubBlossomUpdater> {
+) -> Result<PeerUpdateUpdater> {
     let provider = tokio::time::timeout(
         Duration::from_secs(UPDATE_CONNECT_TIMEOUT_SECS),
         pubsub::UpdatePubsub::connect(config),
     )
     .await
     .context("starting update pubsub transport timed out")??;
-    let updater = build_secure_pubsub_blossom_updater(
-        provider,
+    let (primary, peers) = match pubsub::storage(config.config_dir.as_deref()) {
+        Some((store, route)) => (store, Some(route)),
+        None => (
+            std::sync::Arc::new(hashtree_core::MemoryStore::new())
+                as std::sync::Arc<dyn hashtree_core::Store>,
+            None,
+        ),
+    };
+    let store = build_update_store(
+        primary,
+        peers,
         SecurePubsubBlossomConfig {
             blossom_read_servers: blossom_read_servers(config),
             manifest_timeout: Duration::from_secs(UPDATE_MANIFEST_TIMEOUT_SECS),
             download_timeout: Duration::from_secs(UPDATE_DOWNLOAD_TIMEOUT_SECS),
         },
-    )
-    .await?;
+    )?;
+    let updater = build_secure_pubsub_store_updater(
+        provider,
+        store,
+        Duration::from_secs(UPDATE_MANIFEST_TIMEOUT_SECS),
+    );
     if let Some(directory) = config.config_dir.as_deref() {
         let cache = load_update_event_cache(directory, reference).map_err(anyhow::Error::msg)?;
         for event in cache.resolver_events() {
@@ -224,7 +240,7 @@ fn blossom_read_servers(config: &ProductUpdateConfig) -> Vec<String> {
 }
 
 async fn download_selection(
-    selection: &SecurePubsubBlossomSelection,
+    selection: &PeerUpdateSelection,
     download_dir: Option<&Path>,
 ) -> Result<PathBuf> {
     let workspace = create_update_workspace(download_dir)?;

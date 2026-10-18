@@ -22,6 +22,39 @@ use crate::fips_sync::settings_runtime::fips_endpoint_options;
 type SharedClients = HashMap<PathBuf, Weak<FipsPubsubClient>>;
 static SHARED_CLIENTS: OnceLock<Mutex<SharedClients>> = OnceLock::new();
 
+type SharedStorage = (
+    Weak<dyn hashtree_core::Store>,
+    Weak<dyn hashtree_core::BlobRoute>,
+);
+static SHARED_STORAGE: OnceLock<Mutex<HashMap<PathBuf, SharedStorage>>> = OnceLock::new();
+
+pub(crate) fn register_storage(
+    config_dir: &Path,
+    store: Arc<dyn hashtree_core::Store>,
+    route: Arc<dyn hashtree_core::BlobRoute>,
+) {
+    let mut stores = SHARED_STORAGE
+        .get_or_init(Mutex::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    stores.retain(|_, (store, route)| store.strong_count() > 0 && route.strong_count() > 0);
+    stores.insert(
+        config_dir.to_path_buf(),
+        (Arc::downgrade(&store), Arc::downgrade(&route)),
+    );
+}
+
+pub(super) fn storage(
+    config_dir: Option<&Path>,
+) -> Option<(
+    Arc<dyn hashtree_core::Store>,
+    Arc<dyn hashtree_core::BlobRoute>,
+)> {
+    let stores = SHARED_STORAGE.get()?.lock().ok()?;
+    let (store, route) = stores.get(config_dir?)?;
+    Some((store.upgrade()?, route.upgrade()?))
+}
+
 pub(crate) fn register(config_dir: &Path, client: &Arc<FipsPubsubClient>) {
     let mut clients = SHARED_CLIENTS
         .get_or_init(Mutex::default)
