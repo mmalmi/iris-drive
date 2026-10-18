@@ -1,0 +1,57 @@
+name: Verify prepared Linux product
+on:
+  workflow_call:
+    inputs:
+      commit:
+        required: true
+        type: string
+      product_run:
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 12
+    env:
+      SOURCE_ROOT: ${{ github.workspace }}/source
+      SOURCE_COMMIT: ${{ inputs.commit }}
+      PRODUCT_INPUTS: ${{ github.workspace }}/products
+      CHECK_OUTPUT: ${{ github.workspace }}/linux-check
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tooling
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Install desktop runtime and test tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libfuse3-3 libgtk-4-1 libadwaita-1-0 libxdo3 xvfb xdotool x11-utils openbox imagemagick dbus-x11 python3-pyatspi
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.product_run }}
+          name: drive-linux-${{ inputs.commit }}
+          path: products
+      - name: Run canonical GUI and optimized idle assertions
+        run: node tooling/scripts/check-hosted-linux.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-check-${{ inputs.commit }}
+          path: |
+            linux-check/receipt.json
+            linux-check/daemon.log
+            linux-check/gui.png
+          if-no-files-found: ignore
+          retention-days: 7

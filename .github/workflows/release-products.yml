@@ -41,6 +41,12 @@ jobs:
     uses: ./.github/workflows/release-native-check.yml
     with:
       commit: ${{ inputs.commit }}
+  linux-check:
+    if: inputs.platform == 'linux-check'
+    uses: ./.github/workflows/release-linux-check.yml
+    with:
+      commit: ${{ inputs.commit }}
+      product_run: ${{ inputs.release_run }}
   ios-check:
     if: inputs.platform == 'ios-check'
     uses: ./.github/workflows/release-ios-check.yml
@@ -50,7 +56,7 @@ jobs:
       release_run: ${{ inputs.release_run }}
       mac_run: ${{ inputs.mac_run }}
   products:
-    if: inputs.platform != 'ios-check' && inputs.platform != 'native-check'
+    if: inputs.platform != 'ios-check' && inputs.platform != 'native-check' && inputs.platform != 'linux-check'
     name: ${{ matrix.platform }}
     runs-on: ${{ matrix.platform == 'windows' && 'windows-2025' || (startsWith(matrix.platform, 'macos') || startsWith(matrix.platform, 'ios')) && 'macos-15' || 'ubuntu-24.04' }}
     timeout-minutes: 60
