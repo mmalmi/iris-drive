@@ -95,6 +95,9 @@ if (platform.startsWith('macos') || platform.startsWith('ios')) {
       cpSync(appPath, join(payload, 'Iris Drive.app'), { recursive: true })
       cpSync(cliPath, join(payload, 'idrive'))
     } else {
+      run('bash', ['-c',
+        'source "$1"; iris_drive_ios_assert_simulator_entitlements "$2" "$3"',
+        'bash', join(root, 'scripts/ios-simulator-signing.sh'), derived, configuration])
       cpSync(products, join(payload, 'Products'), { recursive: true })
       // Simulator app groups need ad-hoc entitlements. Retain only the small
       // entitlement records used by the existing native smoke assertions.
