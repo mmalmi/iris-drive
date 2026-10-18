@@ -56,6 +56,12 @@ jobs:
       - name: Install Apple build tools
         if: runner.os == 'macOS'
         run: brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+      - name: Select submission-compatible iOS SDK
+        if: startsWith(matrix.platform, 'ios')
+        run: |
+          test -d /Applications/Xcode_26.2.app/Contents/Developer
+          echo 'DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer' >> "$GITHUB_ENV"
+          /Applications/Xcode_26.2.app/Contents/Developer/usr/bin/xcodebuild -version
       - name: Install Linux build tools
         if: runner.os == 'Linux'
         run: |
