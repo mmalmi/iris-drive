@@ -9,7 +9,7 @@ import { archiveDigest } from './hosted-product-receipt.mjs'
 const root = resolve(process.env.SOURCE_ROOT)
 const platform = process.env.PRODUCT_PLATFORM
 const commit = process.env.SOURCE_COMMIT
-const allowed = ['macos-release', 'macos-debug', 'ios-release', 'ios-sim-debug',
+const allowed = ['macos-release', 'macos-debug', 'ios-release', 'ios-device-debug', 'ios-sim-debug',
   'ios-sim-release', 'android', 'linux']
 if (!allowed.includes(platform) || !/^[0-9a-f]{40}$/.test(commit)) throw new Error('Invalid build input')
 const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
