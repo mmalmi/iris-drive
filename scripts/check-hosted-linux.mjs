@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawn, spawnSync, execFileSync } from 'node:child_process'
-import { accessSync, constants, copyFileSync, existsSync, linkSync, mkdirSync, openSync, closeSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { accessSync, constants, copyFileSync, existsSync, linkSync, mkdirSync, openSync, closeSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { setTimeout as delay } from 'node:timers/promises'
@@ -29,12 +29,18 @@ const cliDir = join(fixture, 'target/debug')
 const appDir = join(fixture, 'linux/target/debug')
 mkdirSync(cliDir, { recursive: true })
 mkdirSync(appDir, { recursive: true })
-run('python3', [join(scripts, 'unpack-hosted-product.py'), join(product, archives[0]), cliDir])
+const cliPayload = join(output, 'cli-payload')
+mkdirSync(cliPayload)
+run('python3', [join(scripts, 'unpack-hosted-product.py'), join(product, archives[0]), cliPayload])
 run('dpkg-deb', ['-x', join(product, debs[0]), join(output, 'unpacked')])
 const cli = join(cliDir, 'idrive')
 const app = join(appDir, 'iris-drive')
+linkSync(join(cliPayload, 'idrive/idrive'), cli)
 linkSync(join(output, 'unpacked/usr/bin/iris-drive'), app)
-for (const file of [cli, app]) accessSync(file, constants.X_OK)
+for (const file of [cli, app]) {
+  if (!statSync(file).isFile()) throw new Error('Prepared executable is not a regular file')
+  accessSync(file, constants.X_OK)
+}
 for (const relative of ['scripts/lib/linux-gui-status.sh', 'scripts/lib/linux-approve-device.py', 'scripts/idle-cpu-gate.sh']) {
   mkdirSync(dirname(join(fixture, relative)), { recursive: true })
   copyFileSync(join(root, relative), join(fixture, relative))
