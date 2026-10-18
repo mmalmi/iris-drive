@@ -47,7 +47,7 @@ use nostr_runtime::DriveNostrPubsubRuntime;
 pub use nostr_runtime::FipsNostrPubsubEvent;
 use peer_config::{
     FipsPeerConfigSnapshot, authenticated_local_inbound_capability, fips_peer_config_snapshot,
-    peer_ids, set_drive_fips_peer_configs,
+    normalize_fips_peer_npub, peer_ids, set_drive_fips_peer_configs,
 };
 #[cfg(test)]
 use peer_config::{
@@ -142,8 +142,8 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         if let Some(directory) = device.path().parent() {
             crate::updater::pubsub::register_storage(
                 directory,
-                sync.local_store.clone(),
-                sync.blob_router.clone(),
+                &sync.local_store,
+                &sync.blob_router,
             );
         }
         if let (Some(runtime), Some(directory)) =
@@ -899,17 +899,6 @@ fn default_fips_bootstrap_peer_hints() -> Vec<(String, Vec<String>)> {
             )
         })
         .collect()
-}
-
-fn normalize_fips_peer_npub(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    PublicKey::from_hex(trimmed)
-        .ok()
-        .and_then(|pubkey| pubkey.to_bech32().ok())
-        .or_else(|| Some(trimmed.to_string()))
 }
 
 fn static_peer_addresses_for_device(

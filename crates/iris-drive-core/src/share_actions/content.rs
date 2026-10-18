@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    AppConfig, Context, NostrIdentityId, Path, Result, ShareAction, ShareActionResult,
+    config_path_in, dispatch_share_action, key_path_in, share_action_state, shared_folder_views,
+};
 use crate::{AppKeyRootRef, Daemon};
 
 /// Production share actions prepare folder content and return short,
@@ -108,14 +111,13 @@ pub async fn dispatch_share_action_with_content(
                 .context("Profile required")?
                 .app_key_pubkey,
         );
-        if let Some(shortcut) = result.shortcut.as_mut() {
-            if let Some(updated) = saved
+        if let Some(shortcut) = result.shortcut.as_mut()
+            && let Some(updated) = saved
                 .share_shortcuts
                 .iter()
                 .find(|item| item.share_id == shortcut.share_id)
-            {
-                *shortcut = updated.clone();
-            }
+        {
+            *shortcut = updated.clone();
         }
     }
     drop(transaction);

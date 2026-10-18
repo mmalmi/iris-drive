@@ -99,7 +99,7 @@ async fn drive_blob_service_accepts_roster_peer_and_rejects_unrelated_identity()
     let updates = hashtree_updater::build_update_store(
         drive_local,
         Some(Arc::new(StoreBlobRoute::new(origin))),
-        Default::default(),
+        hashtree_updater::SecurePubsubBlossomConfig::default(),
     )
     .unwrap();
     assert_eq!(

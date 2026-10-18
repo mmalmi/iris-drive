@@ -165,9 +165,11 @@ def check_health(spec: str) -> Dict[str, Any]:
             candidates = payload["result"]["devices"]
             if not isinstance(candidates, list):
                 raise TypeError("result.devices is not a list")
-            if "== Devices ==" not in xctrace or "== Devices Offline ==" not in xctrace:
+            if "== Devices ==" not in xctrace:
                 raise ValueError("xctrace device sections are missing")
-            online = xctrace.split("== Devices ==", 1)[1].split("== Devices Offline ==", 1)[0]
+            # Xcode omits the offline section when every device is online.
+            # End at any following section so simulators cannot count as phones.
+            online = xctrace.split("== Devices ==", 1)[1].split("\n==", 1)[0]
             devices = []
             for device in candidates:
                 if not isinstance(device, dict):

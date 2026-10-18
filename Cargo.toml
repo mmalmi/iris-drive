@@ -25,10 +25,10 @@ base64 = "0.22"
 bip39 = { version = "2.2", features = ["rand"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-nvpn-fips-core = { version = "=0.4.94" }
-nvpn-fips-endpoint = { version = "=0.4.94" }
-nvpn-fips-tcp = { version = "=0.2.4" }
-nvpn-fips-tcp-endpoint = { version = "=0.2.29" }
+nvpn-fips-core = { version = "=0.4.95" }
+nvpn-fips-endpoint = { version = "=0.4.95" }
+nvpn-fips-tcp = { version = "=0.2.5" }
+nvpn-fips-tcp-endpoint = { version = "=0.2.30" }
 futures = "0.3"
 hex = "0.4"
 http = "1"
@@ -47,21 +47,21 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.44", default-features = false, features = ["nip06", "nip44", "nip59"] }
-nostr-pubsub = "=0.1.16"
-nostr-pubsub-fips = "=0.5.21"
-nostr-pubsub-relay = "=0.1.13"
+nostr-pubsub = "=0.1.17"
+nostr-pubsub-fips = "=0.5.22"
+nostr-pubsub-relay = "=0.1.14"
 nostr-identity = "=0.3.1"
 # Iris Drive's provider abstraction and FIPS adapter remain local workspace
 # crates; the shared Hashtree stack is consumed from its published release.
 hashtree-core = "=0.2.91"
 hashtree-blossom = { version = "=0.2.83", features = ["store"] }
 hashtree-config = "=0.2.83"
-hashtree-embedded = "=0.2.92"
-hashtree-fips-transport = { version = "=0.4.27", features = ["webrtc-endpoint"] }
-hashtree-fs = "=0.2.82"
+hashtree-embedded = "=0.2.93"
+hashtree-fips-transport = { version = "=0.4.29", features = ["webrtc-endpoint"] }
+hashtree-fs = "=0.2.83"
 hashtree-fuse = { version = "=0.2.83", features = ["fuse"] }
-hashtree-lmdb = "=0.2.88"
-hashtree-nostr = "=0.2.88"
+hashtree-lmdb = "=0.2.89"
+hashtree-nostr = "=0.2.90"
 hashtree-network = "=0.2.88"
 hashtree-resolver = { version = "=0.2.86", features = ["nostr"] }
 hashtree-updater = "=0.2.89"

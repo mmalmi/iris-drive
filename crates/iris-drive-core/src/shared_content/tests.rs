@@ -120,11 +120,16 @@ async fn editor_changes_and_deletions_merge_while_reader_writes_are_rejected() {
         .unwrap(),
         crate::relay_sync::DriveRootApply::Applied
     );
-    let received = crate::projection::shared_folder_merged_root(&tree, &receiver.shared_folders[0])
+    let reader_root =
+        crate::projection::shared_folder_merged_root(&tree, &receiver.shared_folders[0])
+            .await
+            .unwrap()
+            .root_cid;
+    let file = tree
+        .resolve(&reader_root, "Plan.txt")
         .await
         .unwrap()
-        .root_cid;
-    let file = tree.resolve(&received, "Plan.txt").await.unwrap().unwrap();
+        .unwrap();
     assert_eq!(
         tree.get(&file, None).await.unwrap().unwrap(),
         b"Updated by editor"
@@ -168,7 +173,7 @@ async fn editor_changes_and_deletions_merge_while_reader_writes_are_rejected() {
     .await
     .unwrap();
     let saved = AppConfig::load_or_default(config_path_in(alice_dir.path())).unwrap();
-    assert!(saved.shared_folders.is_empty());
+    assert_eq!(saved.shared_folders, []);
     let personal = crate::primary_merged_root(&tree, &saved).await.unwrap();
     let file = tree
         .resolve(&personal.root_cid, "Picnic/Plan.txt")
@@ -213,7 +218,7 @@ fn membership_updates_advance_root_announcement_even_without_file_changes() {
         &[keys.public_key().to_hex()],
     )
     .unwrap();
-    folder.access.updated_at = first.created_at.as_secs() as i64 + 1;
+    folder.access.updated_at = i64::try_from(first.created_at.as_secs()).unwrap() + 1;
     let second = crate::nostr_events::build_drive_root_publish_event(
         &keys,
         &folder.share_id.to_string(),

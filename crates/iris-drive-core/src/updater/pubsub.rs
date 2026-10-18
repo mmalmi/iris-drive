@@ -28,10 +28,13 @@ type SharedStorage = (
 );
 static SHARED_STORAGE: OnceLock<Mutex<HashMap<PathBuf, SharedStorage>>> = OnceLock::new();
 
-pub(crate) fn register_storage(
+pub(crate) fn register_storage<
+    S: hashtree_core::Store + 'static,
+    R: hashtree_core::BlobRoute + 'static,
+>(
     config_dir: &Path,
-    store: Arc<dyn hashtree_core::Store>,
-    route: Arc<dyn hashtree_core::BlobRoute>,
+    store: &Arc<S>,
+    route: &Arc<R>,
 ) {
     let mut stores = SHARED_STORAGE
         .get_or_init(Mutex::default)
@@ -40,7 +43,7 @@ pub(crate) fn register_storage(
     stores.retain(|_, (store, route)| store.strong_count() > 0 && route.strong_count() > 0);
     stores.insert(
         config_dir.to_path_buf(),
-        (Arc::downgrade(&store), Arc::downgrade(&route)),
+        (Arc::<S>::downgrade(store), Arc::<R>::downgrade(route)),
     );
 }
 

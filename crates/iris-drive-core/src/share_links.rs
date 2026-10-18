@@ -29,6 +29,7 @@ pub fn encode_compact_invite(bundle: &ShareInviteBundle) -> Result<(String, Vec<
     Ok((format!("{SHARE_INVITE_WEB_PREFIX}{reference}"), ciphertext))
 }
 
+#[must_use]
 pub fn compact_invite_reference(input: &str) -> Option<&str> {
     let input = input.trim();
     let reference = input

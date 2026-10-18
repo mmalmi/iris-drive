@@ -157,6 +157,46 @@ async fn relay_ws(ws: WebSocketUpgrade, State(state): State<LocalRelayState>) ->
     ws.on_upgrade(move |socket| relay_socket(socket, state))
 }
 
+async fn relay_publish(
+    sender: &mut futures::stream::SplitSink<WebSocket, WsMessage>,
+    state: &LocalRelayState,
+    event: Value,
+) {
+    let event_id = event["id"].as_str().unwrap_or_default().to_string();
+    let kind = event["kind"].as_u64().unwrap_or_default();
+    if state.stalled_kinds.lock().unwrap().contains(&kind) {
+        state
+            .stalled_publications
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        return;
+    }
+    if state.reject_kinds.lock().unwrap().contains(&kind) {
+        let _ = sender
+            .send(WsMessage::Text(
+                json!(["OK", event_id, false, "rejected by test relay"]).to_string(),
+            ))
+            .await;
+        return;
+    }
+    if state.drop_kinds.lock().unwrap().contains(&kind) {
+        let _ = sender
+            .send(WsMessage::Text(
+                json!(["OK", event_id, true, ""]).to_string(),
+            ))
+            .await;
+        return;
+    }
+    state.events.lock().await.push(event.clone());
+    if !state.suppress_live_kinds.lock().unwrap().contains(&kind) {
+        let _ = state.broadcasts.send(event);
+    }
+    let _ = sender
+        .send(WsMessage::Text(
+            json!(["OK", event_id, true, ""]).to_string(),
+        ))
+        .await;
+}
+
 async fn relay_socket(socket: WebSocket, state: LocalRelayState) {
     let (mut sender, mut receiver) = socket.split();
     let mut broadcasts = state.broadcasts.subscribe();
@@ -191,35 +231,7 @@ async fn relay_socket(socket: WebSocket, state: LocalRelayState) {
                         let Some(event) = items.get(1).cloned() else {
                             continue;
                         };
-                        let event_id = event["id"].as_str().unwrap_or_default().to_string();
-                        let kind = event["kind"].as_u64().unwrap_or_default();
-                        if state.stalled_kinds.lock().unwrap().contains(&kind) {
-                            state.stalled_publications
-                                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                            continue;
-                        }
-                        if state.reject_kinds.lock().unwrap().contains(&kind) {
-                            let _ = sender
-                                .send(WsMessage::Text(
-                                    json!(["OK", event_id, false, "rejected by test relay"])
-                                        .to_string(),
-                                ))
-                                .await;
-                            continue;
-                        }
-                        if state.drop_kinds.lock().unwrap().contains(&kind) {
-                            let _ = sender
-                                .send(WsMessage::Text(json!(["OK", event_id, true, ""]).to_string()))
-                                .await;
-                            continue;
-                        }
-                        state.events.lock().await.push(event.clone());
-                        if !state.suppress_live_kinds.lock().unwrap().contains(&kind) {
-                            let _ = state.broadcasts.send(event);
-                        }
-                        let _ = sender
-                            .send(WsMessage::Text(json!(["OK", event_id, true, ""]).to_string()))
-                            .await;
+                        relay_publish(&mut sender, &state, event).await;
                     }
                     "REQ" => {
                         let Some(subscription_id) = items.get(1).and_then(Value::as_str) else {
@@ -475,6 +487,10 @@ pub(crate) struct SharingTestServices {
     runtime: tokio::runtime::Runtime,
 }
 
+#[allow(
+    dead_code,
+    reason = "Shared fixture is included by test binaries that do not use sharing"
+)]
 impl SharingTestServices {
     pub(crate) fn new() -> Self {
         let runtime = tokio::runtime::Builder::new_multi_thread()

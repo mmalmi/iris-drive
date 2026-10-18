@@ -205,10 +205,14 @@ async fn update_reads_fill_the_running_store_without_retaining_a_closed_profile(
         )
         .unwrap(),
     );
-    register_storage(directory.path(), primary.clone(), route.clone());
+    register_storage(directory.path(), &primary, &route);
     let (cache, peers) = storage(Some(directory.path())).unwrap();
-    let updates =
-        hashtree_updater::build_update_store(cache, Some(peers), Default::default()).unwrap();
+    let updates = hashtree_updater::build_update_store(
+        cache,
+        Some(peers),
+        hashtree_updater::SecurePubsubBlossomConfig::default(),
+    )
+    .unwrap();
     assert_eq!(updates.get(&hash).await.unwrap(), Some(bytes.clone()));
     assert_eq!(primary.get(&hash).await.unwrap(), Some(bytes));
     drop(updates);

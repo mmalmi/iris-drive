@@ -46,6 +46,7 @@ pub fn ensure_shared_path_writable(config: &AppConfig, path: &str) -> Result<()>
 
 /// A membership update changes the root's recipient wraps even when its
 /// bytes and causal sequence stay unchanged. Relays must retain that update.
+#[must_use]
 pub fn share_root_for_publish(folder: &SharedFolder, root: &AppKeyRootRef) -> AppKeyRootRef {
     let mut root = root.clone();
     root.published_at = root.published_at.max(folder.access.updated_at);
@@ -126,8 +127,9 @@ pub(crate) fn share_root_meta(folder: &SharedFolder, app_key: &str) -> DriveRoot
     let previous = folder.app_key_roots.get(app_key);
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs() as i64;
+        .map_or(0, |duration| {
+            i64::try_from(duration.as_secs()).unwrap_or(i64::MAX)
+        });
     let writers = crate::shared_folder_authorized_writer_pubkeys(folder);
     DriveRootMeta {
         schema: DriveRootMeta::SCHEMA,
@@ -300,7 +302,7 @@ pub(crate) async fn route_shared_edits<S: Store>(
             let full = crate::projection::shared_folder_merged_root(tree, folder)
                 .await?
                 .root_cid;
-            let changed = if mount.target_path.is_empty() {
+            let edited_root = if mount.target_path.is_empty() {
                 after
             } else {
                 let parts: Vec<_> = mount.target_path.split('/').collect();
@@ -308,17 +310,17 @@ pub(crate) async fn route_shared_edits<S: Store>(
                 tree.set_entry(&full, parent, name, &after, 0, LinkType::Dir)
                     .await?
             };
-            if let Some((existing, _)) = changes.get(&mount.share_id) {
-                if existing != &changed {
-                    bail!("Conflicting edits through shared folder shortcuts");
-                }
+            if let Some((existing, _)) = changes.get(&mount.share_id)
+                && existing != &edited_root
+            {
+                bail!("Conflicting edits through shared folder shortcuts");
             }
             let before = if mount.target_path.is_empty() {
                 before.unwrap_or(full)
             } else {
                 full
             };
-            changes.insert(mount.share_id, (changed, before));
+            changes.insert(mount.share_id, (edited_root, before));
         }
     }
     // Validate every permission before committing any shared contribution.

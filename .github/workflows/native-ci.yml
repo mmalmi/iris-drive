@@ -39,6 +39,8 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
       - name: Run development checks and production Core tests
         run: just verify-fast
+      - name: Run CLI and daemon sync journeys
+        run: cargo test --locked -p idrive --test cli_e2e --test daemon_sync_matrix -- --test-threads=1
       - name: Check Linux desktop
         run: cargo check --locked --manifest-path linux/Cargo.toml --all-targets
       - name: Verify locks remain unchanged

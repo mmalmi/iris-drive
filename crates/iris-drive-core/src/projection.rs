@@ -110,7 +110,7 @@ async fn drive_merged_view<S: Store>(
         let Some(root) = drive.app_key_roots.get(app_key_pubkey) else {
             continue;
         };
-        let Some(root) = merge_root_for_device(tree, app_key_pubkey, root, &merge_app_keys).await?
+        let Some(root) = merge_root_for_device(tree, app_key_pubkey, root, merge_app_keys).await?
         else {
             continue;
         };
@@ -410,10 +410,10 @@ async fn drive_merged_root_from_view<S: Store>(
     merge_app_keys: &[String],
     merged: &PrimaryMergedView,
 ) -> Result<PrimaryMergedRoot, ProjectionError> {
-    let source_roots = merge_source_roots(tree, drive, &merge_app_keys).await?;
+    let source_roots = merge_source_roots(tree, drive, merge_app_keys).await?;
     let mut root = tree.put_directory(Vec::new()).await?;
 
-    let mut target_dirs = merged_user_directory_paths(tree, drive, &merge_app_keys).await?;
+    let mut target_dirs = merged_user_directory_paths(tree, drive, merge_app_keys).await?;
     target_dirs.retain(|path, _| {
         !merged
             .shared_mounts
