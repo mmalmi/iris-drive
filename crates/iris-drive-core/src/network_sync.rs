@@ -283,12 +283,17 @@ async fn sync_once_inner(
         relay_sync::fetch_device_approval_applied_ack_events(&client, &initial_state, timeout)
             .await
             .context("fetching device approval applied ACK events")?;
+    let mutation = crate::config_lock::ConfigMutationLock::acquire(config_dir).await?;
+    config = reload_sync_config(config_dir, &initial_state)?;
     apply_device_approval_ack_events(config_dir, &mut config, &approval_ack_events, &mut report)?;
+    drop(mutation);
 
     let approval_events =
         relay_sync::fetch_device_approval_events(&client, &initial_state, timeout)
             .await
             .context("fetching device approval events")?;
+    let mutation = crate::config_lock::ConfigMutationLock::acquire(config_dir).await?;
+    config = reload_sync_config(config_dir, &initial_state)?;
     report.device_approval_receipts_seen = approval_events.receipt_events.len();
     for event in &approval_events.receipt_events {
         if matches!(
@@ -314,24 +319,29 @@ async fn sync_once_inner(
         && config.profile.as_ref().is_some_and(|state| {
             state.authorization_state == crate::AppKeyAuthorizationState::AwaitingApproval
         });
-    if !approval_events.receipt_events.is_empty() {
+    if report.device_approval_receipts_applied > 0 || report.profile_roster_ops_applied > 0 {
         config
             .save(config_path_in(config_dir))
             .context("persisting device approval before acknowledging it")?;
+    }
+    let acknowledgements = if approval_events.receipt_events.is_empty() {
+        Vec::new()
+    } else {
         let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
         let state = config.profile.as_ref().context("profile disappeared")?;
-        let acknowledgements = crate::app_key_link_transport::device_approval_applied_ack_events(
+        let events = crate::app_key_link_transport::device_approval_applied_ack_events(
             state,
             device.keys(),
             Timestamp::now().as_secs(),
         )?;
-        approval_still_pending = acknowledgements.is_empty();
+        approval_still_pending = events.is_empty();
         if approval_still_pending {
             anyhow::bail!("configured relay returned an incomplete device approval roster");
         }
-        publish_device_approval_applied_acks(&client, &acknowledgements, timeout, &mut report)
-            .await;
-    }
+        events
+    };
+    drop(mutation);
+    publish_device_approval_applied_acks(&client, &acknowledgements, timeout, &mut report).await;
 
     let profile_id = config
         .profile
@@ -345,6 +355,9 @@ async fn sync_once_inner(
             .await
             .context("fetching NostrIdentity roster ops")?
     };
+    let mutation = crate::config_lock::ConfigMutationLock::acquire(config_dir).await?;
+    config = reload_sync_config(config_dir, &initial_state)?;
+    let previously_applied = report.profile_roster_ops_applied;
     report.profile_roster_ops_seen += profile_events.len();
     for event in &profile_events {
         if matches!(
@@ -355,6 +368,10 @@ async fn sync_once_inner(
             report.profile_roster_ops_applied += 1;
         }
     }
+    if report.profile_roster_ops_applied > previously_applied {
+        config.save(config_path_in(config_dir))?;
+    }
+    drop(mutation);
     let share_ids = config
         .shared_folders
         .iter()
@@ -364,6 +381,9 @@ async fn sync_once_inner(
         let share_events = relay_sync::fetch_share_access_snapshots(&client, share_id, timeout)
             .await
             .with_context(|| format!("fetching share access snapshots for {share_id}"))?;
+        let mutation = crate::config_lock::ConfigMutationLock::acquire(config_dir).await?;
+        config = reload_sync_config(config_dir, &initial_state)?;
+        let previously_applied = report.share_access_snapshots_applied;
         report.share_access_snapshots_seen += share_events.len();
         for event in &share_events {
             if matches!(
@@ -374,6 +394,10 @@ async fn sync_once_inner(
                 report.share_access_snapshots_applied += 1;
             }
         }
+        if report.share_access_snapshots_applied > previously_applied {
+            config.save(config_path_in(config_dir))?;
+        }
+        drop(mutation);
     }
 
     let state = config
@@ -409,12 +433,18 @@ async fn sync_once_inner(
         .with_context(|| format!("fetching share roots for {}", folder.share_id))?;
         drive_root_events.append(&mut share_events);
     }
+    let mutation = crate::config_lock::ConfigMutationLock::acquire(config_dir).await?;
+    config = reload_sync_config(config_dir, &initial_state)?;
     let drive_roots = apply_drive_root_events(config_dir, &mut config, &drive_root_events)
         .context("applying drive-root events")?;
     report.drive_root_events_seen = drive_roots.seen;
     report.drive_root_events_applied = drive_roots.applied;
     report.drive_root_events_skipped = drive_roots.skipped;
     let mut root_cids_to_download = drive_roots.root_cids_to_download;
+    if drive_roots.applied > 0 {
+        config.save(config_path_in(config_dir))?;
+    }
+    drop(mutation);
 
     if let Some(account_state) = config.profile.clone().filter(ProfileState::can_write_roots) {
         match relay_sync::fetch_latest_files_root(
@@ -427,8 +457,11 @@ async fn sync_once_inner(
         {
             Ok(Some(ev)) => {
                 report.files_root_event_seen = true;
+                let mutation = crate::config_lock::ConfigMutationLock::acquire(config_dir).await?;
+                config = reload_sync_config(config_dir, &initial_state)?;
+                let current_state = config.profile.clone().context("profile disappeared")?;
                 let account =
-                    crate::Profile::load(account_state, config_dir).context("loading profile")?;
+                    crate::Profile::load(current_state, config_dir).context("loading profile")?;
                 let outcome = relay_sync::apply_remote_files_root_event(
                     &mut config,
                     &ev,
@@ -436,6 +469,10 @@ async fn sync_once_inner(
                 )
                 .context("applying files-root event")?;
                 report.files_root_event_outcome = files_root_apply_label(&outcome).to_string();
+                if matches!(outcome, relay_sync::FilesRootApply::Applied) {
+                    config.save(config_path_in(config_dir))?;
+                }
+                drop(mutation);
                 if matches!(outcome, relay_sync::FilesRootApply::Applied)
                     && let Some(root_ref) = config
                         .drive(PRIMARY_DRIVE_ID)
@@ -452,7 +489,9 @@ async fn sync_once_inner(
         }
     }
 
-    config.save(config_path_in(config_dir))?;
+    // A UI action may have changed settings or authorization during the fetch.
+    // Never write the earlier snapshot over that newer local transaction.
+    config = reload_sync_config(config_dir, &initial_state)?;
     download_roots(
         config_dir,
         &config,
@@ -481,6 +520,21 @@ async fn sync_once_inner(
 
     relay_sync::shutdown_client(&client).await;
     Ok(report)
+}
+
+fn reload_sync_config(config_dir: &Path, initial: &ProfileState) -> Result<AppConfig> {
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let current = config
+        .profile
+        .as_ref()
+        .context("profile disappeared during sync")?;
+    anyhow::ensure!(
+        current.app_key_pubkey == initial.app_key_pubkey
+            && (initial.authorization_state == crate::AppKeyAuthorizationState::AwaitingApproval
+                || current.profile_id == initial.profile_id),
+        "profile changed during sync",
+    );
+    Ok(config)
 }
 
 async fn publish_device_approval_applied_acks(
