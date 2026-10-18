@@ -348,6 +348,8 @@ fn run_native_provider_resolve_path(
 }
 
 pub(crate) fn run_native_provider_list(data_dir: &str) -> anyhow::Result<serde_json::Value> {
+    #[cfg(test)]
+    work_pause::wait(data_dir, "provider");
     let runtime = native_provider_runtime()?;
     runtime.block_on(async {
         let config_dir = Path::new(data_dir);
@@ -817,6 +819,8 @@ pub(crate) async fn upload_current_app_key_root_to_blossom(
 pub(crate) fn run_native_sync_once(
     data_dir: &str,
 ) -> anyhow::Result<iris_drive_core::NetworkSyncReport> {
+    #[cfg(test)]
+    work_pause::wait(data_dir, "sync");
     let runtime = native_provider_runtime()?;
     runtime.block_on(iris_drive_core::sync_once_with_options(
         Path::new(data_dir),
@@ -995,3 +999,7 @@ async fn provider_publish_lock_probe_result_for_test(
         "prepared_root_cid": event_root.root_cid,
     }))
 }
+
+#[cfg(test)]
+#[path = "native_provider_work_pause.rs"]
+pub(crate) mod work_pause;

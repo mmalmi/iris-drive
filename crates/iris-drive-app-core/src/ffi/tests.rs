@@ -1,6 +1,6 @@
 #[path = "../../../iris-drive-cli/tests/support/mod.rs"]
 #[allow(dead_code)]
-mod sharing_network;
+pub(super) mod sharing_network;
 
 use sharing_network::SharingTestServices;
 

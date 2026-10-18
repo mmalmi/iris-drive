@@ -1,0 +1,54 @@
+name: Native shared-state regression
+
+on:
+  workflow_call:
+    inputs:
+      commit:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  state:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    env:
+      CARGO_BUILD_JOBS: '2'
+      RUST_TEST_THREADS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libdbus-1-dev libfuse3-dev libxdo-dev pkg-config protobuf-compiler
+      - uses: actions/cache/restore@v4
+        id: cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            source/target
+          key: drive-state-check-${{ runner.arch }}-${{ hashFiles('source/Cargo.lock') }}-${{ inputs.commit }}
+          restore-keys: |
+            drive-state-check-${{ runner.arch }}-${{ hashFiles('source/Cargo.lock') }}-
+            drive-products-linux-${{ runner.arch }}-
+      - name: Run shared-state regressions
+        working-directory: source
+        run: cargo test --locked -p iris-drive-app-core --lib ffi::concurrency_tests -- --nocapture
+      - uses: actions/cache/save@v4
+        if: always() && steps.cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            source/target
+          key: ${{ steps.cache.outputs.cache-primary-key }}
