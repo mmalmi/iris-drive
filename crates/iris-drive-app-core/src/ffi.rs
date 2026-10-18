@@ -56,8 +56,7 @@ pub use crate::native_link_input::{
 pub(crate) use crate::native_provider::run_native_sync_once_with_drive_root_events_for_test;
 use crate::native_provider::{
     install_rustls_crypto_provider, native_provider_import_content_link,
-    native_provider_import_shared_file, native_sync_status_label, run_native_provider_list,
-    run_native_sync_once,
+    native_provider_import_shared_file, run_native_provider_list, run_native_sync_once,
 };
 pub(crate) use crate::native_provider::{
     native_provider_compose_path_json, native_provider_delete_json,
@@ -327,7 +326,25 @@ impl FfiApp {
 
     #[must_use]
     pub fn dispatch(&self, action: NativeAppAction) -> NativeAppState {
+        if matches!(
+            action,
+            NativeAppAction::Refresh | NativeAppAction::StartSync | NativeAppAction::RestartSync
+        ) {
+            return self.dispatch_concurrent_work(action);
+        }
+        let work = self.with_runtime(|runtime| runtime.background_work.clone());
+        let _work = (!matches!(
+            action,
+            NativeAppAction::RefreshProfile | NativeAppAction::ApproveDevice { .. }
+        ))
+        .then(|| {
+            work.lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        });
         self.with_runtime(|runtime| {
+            if !matches!(action, NativeAppAction::RefreshProfile) {
+                runtime.state_revision = runtime.state_revision.wrapping_add(1);
+            }
             runtime.dispatch(action);
             runtime.state()
         })
@@ -335,10 +352,7 @@ impl FfiApp {
 }
 
 impl FfiApp {
-    fn with_runtime(
-        &self,
-        f: impl FnOnce(&mut NativeAppRuntime) -> NativeAppState,
-    ) -> NativeAppState {
+    fn with_runtime<T>(&self, f: impl FnOnce(&mut NativeAppRuntime) -> T) -> T {
         match self.runtime.lock() {
             Ok(mut runtime) => f(&mut runtime),
             Err(poisoned) => {
@@ -353,6 +367,8 @@ impl FfiApp {
 #[derive(Debug)]
 struct NativeAppRuntime {
     state: NativeAppState,
+    state_revision: u64,
+    background_work: Arc<Mutex<()>>,
     data_dir: String,
     app_version: String,
     config_mutation: Arc<Mutex<()>>,
@@ -412,6 +428,8 @@ impl NativeAppRuntime {
 
         let mut runtime = Self {
             state,
+            state_revision: 0,
+            background_work: Arc::new(Mutex::new(())),
             data_dir,
             app_version,
             config_mutation: Arc::new(Mutex::new(())),
@@ -1656,6 +1674,10 @@ impl NativeAppRuntime {
         let Ok(value) = run_native_provider_list(&self.data_dir) else {
             return;
         };
+        self.apply_provider_summary(&value);
+    }
+
+    fn apply_provider_summary(&mut self, value: &Value) {
         self.state.ui.file_count = value
             .get("file_count")
             .and_then(serde_json::Value::as_u64)
@@ -1738,17 +1760,7 @@ impl NativeAppRuntime {
             return;
         }
         self.set_sync_running(true);
-        match run_native_sync_once(&self.data_dir) {
-            Ok(report) => {
-                native_sync_status_label(&report).clone_into(&mut self.state.ui.sync.status);
-                self.refresh_sync_status_label();
-            }
-            Err(error) => {
-                "sync error".clone_into(&mut self.state.ui.sync.status);
-                self.refresh_sync_status_label();
-                self.state.error = format!("syncing drive: {error:#}");
-            }
-        }
+        self.apply_sync_result(run_native_sync_once(&self.data_dir));
     }
 
     fn stop_sync(&mut self) {
@@ -3726,6 +3738,7 @@ mod app_key_link_flow_tests;
 mod backup_tests;
 #[cfg(test)]
 mod browser_gateway_tests;
+mod concurrent_work;
 mod device_actions;
 #[cfg(test)]
 mod idle_tests;

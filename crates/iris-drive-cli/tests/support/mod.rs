@@ -30,6 +30,8 @@ struct LocalRelayState {
     reject_kinds: Arc<StdMutex<BTreeSet<u64>>>,
     stalled_kinds: Arc<StdMutex<BTreeSet<u64>>>,
     stalled_publications: Arc<std::sync::atomic::AtomicUsize>,
+    query_gate: Arc<tokio::sync::Semaphore>,
+    query_started: Arc<StdMutex<Option<std::sync::mpsc::Sender<()>>>>,
 }
 
 pub(crate) struct LocalNostrRelay {
@@ -47,6 +49,8 @@ pub(crate) struct LocalNostrRelay {
     stalled_kinds: Arc<StdMutex<BTreeSet<u64>>>,
     #[allow(dead_code)]
     stalled_publications: Arc<std::sync::atomic::AtomicUsize>,
+    query_gate: Arc<tokio::sync::Semaphore>,
+    query_started: Arc<StdMutex<Option<std::sync::mpsc::Sender<()>>>>,
 }
 
 impl LocalNostrRelay {
@@ -60,6 +64,8 @@ impl LocalNostrRelay {
             reject_kinds: Arc::new(StdMutex::new(BTreeSet::new())),
             stalled_kinds: Arc::new(StdMutex::new(BTreeSet::new())),
             stalled_publications: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+            query_gate: Arc::new(tokio::sync::Semaphore::new(1)),
+            query_started: Arc::new(StdMutex::new(None)),
         };
         let drop_kinds = state.drop_kinds.clone();
         let suppress_live_kinds = state.suppress_live_kinds.clone();
@@ -67,6 +73,8 @@ impl LocalNostrRelay {
         let events = state.events.clone();
         let stalled_kinds = state.stalled_kinds.clone();
         let stalled_publications = state.stalled_publications.clone();
+        let query_gate = state.query_gate.clone();
+        let query_started = state.query_started.clone();
         let app = Router::new().route("/", get(relay_ws)).with_state(state);
         let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))
             .await
@@ -84,6 +92,8 @@ impl LocalNostrRelay {
             events,
             stalled_kinds,
             stalled_publications,
+            query_gate,
+            query_started,
         }
     }
 
@@ -234,6 +244,11 @@ async fn relay_socket(socket: WebSocket, state: LocalRelayState) {
                         relay_publish(&mut sender, &state, event).await;
                     }
                     "REQ" => {
+                        if let Some(started) = state.query_started.lock().unwrap().take() {
+                            let _ = started.send(());
+                        }
+                        let permission = state.query_gate.acquire().await.unwrap();
+                        drop(permission);
                         let Some(subscription_id) = items.get(1).and_then(Value::as_str) else {
                             continue;
                         };
@@ -507,6 +522,16 @@ impl SharingTestServices {
         }
     }
 
+    pub(crate) fn pause_relay_queries(&self) -> PausedRelayQueries {
+        let permit = self.relay.query_gate.clone().try_acquire_owned().unwrap();
+        let (started, entered) = std::sync::mpsc::channel();
+        *self.relay.query_started.lock().unwrap() = Some(started);
+        PausedRelayQueries {
+            _permit: permit,
+            entered,
+        }
+    }
+
     pub(crate) fn prepare(&self, config_dir: &std::path::Path) {
         let mut config = AppConfig::load_or_default(config_path_in(config_dir)).unwrap();
         config.relays = vec![self.relay.url.clone()];
@@ -533,5 +558,18 @@ impl SharingTestServices {
         config.shared_folders = shares;
         config.share_shortcuts = shortcuts;
         config.save(config_path_in(config_dir)).unwrap();
+    }
+}
+
+#[allow(dead_code)]
+pub(crate) struct PausedRelayQueries {
+    _permit: tokio::sync::OwnedSemaphorePermit,
+    entered: std::sync::mpsc::Receiver<()>,
+}
+
+#[allow(dead_code)]
+impl PausedRelayQueries {
+    pub(crate) fn await_query(&self) {
+        self.entered.recv_timeout(Duration::from_secs(5)).unwrap();
     }
 }
