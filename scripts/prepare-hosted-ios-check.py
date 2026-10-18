@@ -14,11 +14,13 @@ def replace_once(text, old, new):
     return text.replace(old, new)
 
 
-# Keep fixture-startup failures diagnostic on fresh hosted machines.
+# Reuse the fixed fixture while retaining the candidate's functional assertions.
 blossom = (root / 'scripts/lib/ios-blossom-smoke.sh').read_text()
 blossom = replace_once(blossom, 'python3 "$ROOT/scripts/local-blossom-server.py"',
-    "python3 -c 'import faulthandler,runpy,sys; faulthandler.dump_traceback_later(4,repeat=True); sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name=\"__main__\")' \"$ROOT/scripts/local-blossom-server.py\"")
+                       'python3 "${CHECK_OUTPUT:?}/local-blossom-server.py"')
 (output / 'ios-blossom-smoke.sh').write_text(blossom)
+(output / 'local-blossom-server.py').write_bytes(
+    Path(__file__).with_name('local-blossom-server.py').read_bytes())
 
 for name in ['ios-gui-linking-smoke.sh', 'ios-simulator-smoke.sh']:
     text = (root / 'scripts' / name).read_text()

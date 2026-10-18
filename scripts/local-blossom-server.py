@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import signal
+from socketserver import TCPServer
 import threading
 from typing import Optional
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -22,6 +23,12 @@ BLOB_PATH = re.compile(r"/([0-9a-f]{64})\.bin")
 
 class BlossomFixtureServer(ThreadingHTTPServer):
     daemon_threads = True
+
+    def server_bind(self) -> None:
+        # This byte-storage fixture needs its bound address, not a reverse-DNS
+        # name. HTTPServer's getfqdn call can stall readiness on hosted Macs.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
 
     def __init__(
         self,
