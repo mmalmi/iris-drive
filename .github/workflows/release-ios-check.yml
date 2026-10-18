@@ -40,6 +40,7 @@ jobs:
       SOURCE_ROOT: ${{ github.workspace }}/source
       SOURCE_COMMIT: ${{ inputs.commit }}
       PRODUCT_INPUTS: ${{ github.workspace }}/products
+      CHECK_OUTPUT: ${{ github.workspace }}/ios-check
     steps:
       - uses: actions/checkout@v4
         with:
@@ -78,8 +79,8 @@ jobs:
         with:
           name: ios-check-${{ inputs.commit }}
           path: |
-            source/work/hosted-ios-check/receipt.json
-            source/work/hosted-ios-check/xcode-tests.log
-            source/work/hosted-ios-check/gui.png
+            ios-check/receipt.json
+            ios-check/xcode-tests.log
+            ios-check/gui.png
           if-no-files-found: ignore
           retention-days: 7

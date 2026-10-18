@@ -8,7 +8,7 @@ import { stageHostedProduct } from './stage-hosted-product.mjs'
 const root = resolve(process.env.SOURCE_ROOT)
 const inputs = resolve(process.env.PRODUCT_INPUTS)
 const scripts = dirname(fileURLToPath(import.meta.url))
-const output = join(root, 'work/hosted-ios-check')
+const output = resolve(process.env.CHECK_OUTPUT)
 mkdirSync(output, { recursive: true })
 let env = { ...process.env, CARGO_TARGET_DIR: join(root, 'target') }
 function run(command, args, options = {}) {
@@ -18,7 +18,7 @@ function run(command, args, options = {}) {
 const commit = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: root, encoding: 'utf8' }).trim()
 if (commit !== env.SOURCE_COMMIT) throw new Error('Source candidate mismatch')
 function stage(name, platform) {
-  return stageHostedProduct({ repoRoot: root, productDirectory: join(inputs, name), platform, run, env })
+  return stageHostedProduct({ repoRoot: root, productDirectory: join(inputs, name), platform, run, env, destinationParent: output })
 }
 function derived(name, payload) {
   const path = join(output, name)
