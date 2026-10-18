@@ -529,6 +529,8 @@ impl SyncCluster {
                     && event["publish"]["published_drive_root"]
                         .as_bool()
                         .unwrap_or(false)
+                    && event["publish"]["blossom_upload"].is_object()
+                    && event["publish"]["blossom_upload_error"].is_null()
             })
         })
         .await;

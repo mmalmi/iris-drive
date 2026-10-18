@@ -412,6 +412,18 @@ async fn live_daemons_three_vm_macos_provider_changes_catch_up_without_source_on
     let mut cluster = SyncCluster::start_three(Duration::ZERO).await;
     cluster.wait_until_authorized().await;
 
+    // Authorization can finish before the initial roots and their blocks arrive.
+    // Establish the source's complete base before taking the receivers offline.
+    cluster
+        .wait_until("macos discovered all initial roots", || {
+            let status = run_json(cluster.config_path(Client::MacOS), &["status"]);
+            status["drives"][0]["app_key_root_count"] == 3
+        })
+        .await;
+    cluster
+        .refresh_view_until_available(Client::MacOS, "macos initial roots downloaded")
+        .await;
+
     cluster.stop_daemon(Client::Windows);
     cluster.stop_daemon(Client::Ubuntu);
 
