@@ -52,12 +52,12 @@ jobs:
   products:
     if: inputs.platform != 'ios-check' && inputs.platform != 'native-check'
     name: ${{ matrix.platform }}
-    runs-on: ${{ (startsWith(matrix.platform, 'macos') || startsWith(matrix.platform, 'ios')) && 'macos-15' || 'ubuntu-24.04' }}
+    runs-on: ${{ matrix.platform == 'windows' && 'windows-2025' || (startsWith(matrix.platform, 'macos') || startsWith(matrix.platform, 'ios')) && 'macos-15' || 'ubuntu-24.04' }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        platform: ${{ fromJSON(inputs.platform && inputs.platform != 'all' && format('["{0}"]', inputs.platform) || '["macos-release","macos-debug","ios-release","ios-sim-debug","ios-sim-release","android","linux"]') }}
+        platform: ${{ fromJSON(inputs.platform && inputs.platform != 'all' && format('["{0}"]', inputs.platform) || '["macos-release","macos-debug","ios-release","ios-sim-debug","ios-sim-release","android","linux","windows"]') }}
     env:
       SOURCE_COMMIT: ${{ inputs.commit || github.event.pull_request.head.sha || github.sha }}
       SOURCE_ROOT: ${{ github.workspace }}/source
@@ -78,6 +78,14 @@ jobs:
         with:
           node-version: '24'
       - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+      - uses: actions/setup-dotnet@v4
+        if: runner.os == 'Windows'
+        with:
+          dotnet-version: '8.0.x'
       - name: Install Apple build tools
         if: runner.os == 'macOS'
         run: brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
