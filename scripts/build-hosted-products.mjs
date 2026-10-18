@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawnSync, execFileSync } from 'node:child_process'
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { join, resolve } from 'node:path'
+import { join, relative, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
 import { archiveDigest } from './hosted-product-receipt.mjs'
@@ -66,8 +66,10 @@ if (platform.startsWith('macos') || platform.startsWith('ios')) {
   const xcode = ['-project', join(root, project, `${name}.xcodeproj`), '-scheme', name,
     '-configuration', configuration, '-derivedDataPath', derived, '-jobs', '2',
     '-destination', mac ? 'generic/platform=macOS' : simulator ? 'generic/platform=iOS Simulator' : 'generic/platform=iOS',
-    'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=YES', 'CODE_SIGNING_ALLOWED=NO', 'CODE_SIGNING_REQUIRED=NO',
-    'CODE_SIGN_IDENTITY=', 'PROVISIONING_PROFILE_SPECIFIER=',
+    'ARCHS=arm64', 'ONLY_ACTIVE_ARCH=YES',
+    `CODE_SIGNING_ALLOWED=${simulator ? 'YES' : 'NO'}`,
+    `CODE_SIGNING_REQUIRED=${simulator ? 'YES' : 'NO'}`,
+    `CODE_SIGN_IDENTITY=${simulator ? '-' : ''}`, 'PROVISIONING_PROFILE_SPECIFIER=',
     `LIBRARY_SEARCH_PATHS=${rust}`, `OTHER_LDFLAGS=${library}`,
     `MARKETING_VERSION=${version}`, `CURRENT_PROJECT_VERSION=${release.buildNumberFromVersion(version)}`,
     `OTHER_SWIFT_FLAGS=${swift}`, `OTHER_CFLAGS=${clang}`, `OTHER_CPLUSPLUSFLAGS=${clang}`,
@@ -94,6 +96,14 @@ if (platform.startsWith('macos') || platform.startsWith('ios')) {
       cpSync(cliPath, join(payload, 'idrive'))
     } else {
       cpSync(products, join(payload, 'Products'), { recursive: true })
+      // Simulator app groups need ad-hoc entitlements. Retain only the small
+      // entitlement records used by the existing native smoke assertions.
+      const intermediates = join(derived, 'Build/Intermediates.noindex')
+      for (const path of files(intermediates).filter(path => path.endsWith('-Simulated.xcent'))) {
+        const destination = join(payload, 'Intermediates.noindex', relative(intermediates, path))
+        mkdirSync(join(destination, '..'), { recursive: true })
+        cpSync(path, destination)
+      }
     }
   }
 } else if (platform === 'linux') {
