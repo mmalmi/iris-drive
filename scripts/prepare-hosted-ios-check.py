@@ -14,8 +14,16 @@ def replace_once(text, old, new):
     return text.replace(old, new)
 
 
+# Keep fixture-startup failures diagnostic on fresh hosted machines.
+blossom = (root / 'scripts/lib/ios-blossom-smoke.sh').read_text()
+blossom = replace_once(blossom, 'python3 "$ROOT/scripts/local-blossom-server.py"',
+    "python3 -c 'import faulthandler,runpy,sys; faulthandler.dump_traceback_later(4,repeat=True); sys.argv=sys.argv[1:]; runpy.run_path(sys.argv[0],run_name=\"__main__\")' \"$ROOT/scripts/local-blossom-server.py\"")
+(output / 'ios-blossom-smoke.sh').write_text(blossom)
+
 for name in ['ios-gui-linking-smoke.sh', 'ios-simulator-smoke.sh']:
     text = (root / 'scripts' / name).read_text()
+    text = replace_once(text, 'source "$ROOT/scripts/lib/ios-blossom-smoke.sh"',
+                        'source "${CHECK_OUTPUT:?Required output directory}/ios-blossom-smoke.sh"')
     text = replace_once(text, 'ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"',
                         'ROOT="${SOURCE_ROOT:?Required verified source checkout}"')
     text = replace_once(text, 'DERIVED_DATA="$ROOT/ios/.build/DerivedData"',
