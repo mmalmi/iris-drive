@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import { spawnSync } from 'node:child_process'
 import {
   existsSync,
   mkdirSync,
@@ -9,8 +10,20 @@ import {
 } from 'node:fs'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
+import { fileURLToPath } from 'node:url'
 
 import { prepareMacosReleaseBinaries } from './macos-release-binaries.mjs'
+
+test('macOS release smoke can run on a reserved host with all signed artifacts', () => {
+  const result = spawnSync(process.execPath, [
+    fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+    '--build', '--dry-run', '--tag', 'v9.9.9', '--only', 'macos',
+  ], { encoding: 'utf8', env: { ...process.env,
+    IRIS_DRIVE_MACOS_RELEASE_SMOKE_COMMAND: '/test/reserved-macos-smoke',
+  } })
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /\/test\/reserved-macos-smoke --app .* --archive .* --dmg /)
+})
 
 function fixture({ extension = true, leakedResource = false } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'iris-drive-macos-binaries-'))

@@ -330,7 +330,7 @@ impl FfiApp {
             action,
             NativeAppAction::Refresh | NativeAppAction::StartSync | NativeAppAction::RestartSync
         ) {
-            return self.dispatch_concurrent_work(action);
+            return self.dispatch_concurrent_work(&action);
         }
         let work = self.with_runtime(|runtime| runtime.background_work.clone());
         let _work = (!matches!(
@@ -1760,7 +1760,7 @@ impl NativeAppRuntime {
             return;
         }
         self.set_sync_running(true);
-        self.apply_sync_result(run_native_sync_once(&self.data_dir));
+        self.apply_sync_result(&run_native_sync_once(&self.data_dir));
     }
 
     fn stop_sync(&mut self) {

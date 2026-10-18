@@ -1298,14 +1298,3 @@ function pngHasAlpha(path) {
   }
   return false
 }
-
-test('macOS release smoke can run on a reserved host with all signed artifacts', () => {
-  const result = spawnSync(process.execPath, [
-    fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
-    '--build', '--dry-run', '--tag', 'v9.9.9', '--only', 'macos',
-  ], { encoding: 'utf8', env: { ...process.env,
-    IRIS_DRIVE_MACOS_RELEASE_SMOKE_COMMAND: '/test/reserved-macos-smoke',
-  } })
-  assert.equal(result.status, 0, result.stderr)
-  assert.match(result.stdout, /\/test\/reserved-macos-smoke --app .* --archive .* --dmg /)
-})

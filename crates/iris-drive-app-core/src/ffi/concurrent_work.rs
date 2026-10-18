@@ -8,7 +8,7 @@ use crate::state::NativeAppState;
 impl FfiApp {
     /// Provider scans and network sync can wait on peers. Keep those waits out
     /// of the shared state lock used by a new screen and explicit approvals.
-    pub(super) fn dispatch_concurrent_work(&self, action: NativeAppAction) -> NativeAppState {
+    pub(super) fn dispatch_concurrent_work(&self, action: &NativeAppAction) -> NativeAppState {
         let work = self.with_runtime(|runtime| runtime.background_work.clone());
         let _work = work
             .lock()
@@ -43,7 +43,7 @@ impl FfiApp {
                 return runtime.state();
             }
             if let Some(result) = sync_result {
-                runtime.apply_sync_result(result);
+                runtime.apply_sync_result(&result);
             }
             runtime.reload_from_disk_preserving_error(ProviderSummaryMode::Skip);
             if let Ok(value) = provider {
@@ -59,11 +59,11 @@ impl FfiApp {
 impl NativeAppRuntime {
     pub(super) fn apply_sync_result(
         &mut self,
-        result: anyhow::Result<iris_drive_core::NetworkSyncReport>,
+        result: &anyhow::Result<iris_drive_core::NetworkSyncReport>,
     ) {
         match result {
             Ok(report) => {
-                native_sync_status_label(&report).clone_into(&mut self.state.ui.sync.status);
+                native_sync_status_label(report).clone_into(&mut self.state.ui.sync.status);
             }
             Err(error) => {
                 "sync error".clone_into(&mut self.state.ui.sync.status);
