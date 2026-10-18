@@ -57,6 +57,10 @@ tracing.workspace = true
 uuid.workspace = true
 hex.workspace = true
 
+[target.'cfg(target_os = "ios")'.dependencies]
+# nix 0.26 (via WebRTC) still uses Apple symbols removed from newer libc.
+libc = "=0.2.186"
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "macros", "rt-multi-thread"] }
 

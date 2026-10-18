@@ -3337,6 +3337,7 @@ dependencies = [
  "hashtree-updater",
  "hex",
  "http",
+ "libc",
  "mime_guess",
  "nostr-identity 0.3.1",
  "nostr-pubsub",
@@ -3525,9 +3526,9 @@ dependencies = [
 
 [[package]]
 name = "libc"
-version = "0.2.191"
+version = "0.2.186"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "65cd87c9a6d60536580b316ad985726104730a5151c99845f2490428ef91240a"
+checksum = "68ab91017fe16c622486840e4c83c9a37afeff978bd239b5293d61ece587de66"
 
 [[package]]
 name = "libdbus-sys"
@@ -6683,9 +6684,9 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 
 [[package]]
 name = "tun"
-version = "0.8.14"
+version = "0.8.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8bb55e468c585e02ef89ba7a1a9848871ac942dfc64547ad4d1166b0f61a98be"
+checksum = "2f5b5535b5fb263435229075e5ccc1cb74ccc01f288650b642b28e0b27869fcd"
 dependencies = [
  "bytes",
  "cfg-if",

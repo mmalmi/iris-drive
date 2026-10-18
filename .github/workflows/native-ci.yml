@@ -26,6 +26,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+          targets: aarch64-apple-ios
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
@@ -39,6 +40,8 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
       - name: Run development checks and production Core tests
         run: just verify-fast
+      - name: Check iOS WebRTC platform dependencies
+        run: cargo check --locked --target aarch64-apple-ios -p nix@0.26.4
       - name: Run CLI and daemon sync journeys
         run: cargo test --locked -p idrive --test cli_e2e --test daemon_sync_matrix -- --test-threads=1
       - name: Check Linux desktop
