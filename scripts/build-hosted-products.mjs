@@ -78,6 +78,16 @@ if (platform.startsWith('macos') || platform.startsWith('ios')) {
   if (!mac && !simulator) {
     const archive = join(payload, 'IrisDriveIOS.xcarchive')
     run('xcodebuild', [...xcode, '-archivePath', archive, 'archive'])
+    if (debug) {
+      // As with macOS packaging, remove linker debug-map entries containing
+      // static-library input paths. This preserves DEBUG hooks and executable code.
+      const app = join(archive, 'Products/Applications/Iris Drive.app')
+      for (const executable of ['Iris Drive',
+        'PlugIns/IrisDriveFileProvider.appex/IrisDriveFileProvider',
+        'PlugIns/IrisDriveShareExtension.appex/IrisDriveShareExtension']) {
+        run('strip', ['-S', join(app, executable)])
+      }
+    }
     helper.assertNoPrivateBuildMetadata(files(archive), env, { repoRoot: root })
     rmSync(derived, { recursive: true })
   } else {
