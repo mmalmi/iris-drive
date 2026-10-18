@@ -1,0 +1,113 @@
+name: Unsigned native products
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/release-products.yml'
+      - 'scripts/build-hosted-products.mjs'
+      - 'scripts/hosted-product-receipt*'
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Exact source commit to build
+        required: true
+        default: 0f76a0b1f8a8f3f01d712cc6f1b7f76fe75b8075
+
+permissions:
+  contents: read
+
+concurrency:
+  group: unsigned-products-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  products:
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { platform: macos-release, runner: macos-15 }
+          - { platform: macos-debug, runner: macos-15 }
+          - { platform: ios-release, runner: macos-15 }
+          - { platform: ios-sim-debug, runner: macos-15 }
+          - { platform: ios-sim-release, runner: macos-15 }
+          - { platform: android, runner: ubuntu-24.04 }
+          - { platform: linux, runner: ubuntu-24.04 }
+    env:
+      SOURCE_COMMIT: ${{ inputs.commit || '0f76a0b1f8a8f3f01d712cc6f1b7f76fe75b8075' }}
+      SOURCE_ROOT: ${{ github.workspace }}/source
+      PRODUCT_OUTPUT: ${{ github.workspace }}/products
+      PRODUCT_PLATFORM: ${{ matrix.platform }}
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tooling
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          ref: ${{ env.SOURCE_COMMIT }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install Apple build tools
+        if: runner.os == 'macOS'
+        run: brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libdbus-1-dev libfuse3-dev libgtk-4-dev libadwaita-1-dev libxdo-dev pkg-config protobuf-compiler
+      - uses: actions/setup-java@v4
+        if: matrix.platform == 'android'
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        if: matrix.platform == 'android'
+        with:
+          gradle-version: '8.13'
+      - name: Install Android NDK
+        if: matrix.platform == 'android'
+        run: |
+          sdkmanager 'ndk;28.2.13676358' 'platforms;android-36' 'build-tools;36.0.0'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          cargo install --locked cargo-ndk
+      - name: Install Debian packager
+        if: matrix.platform == 'linux'
+        run: cargo install --locked cargo-deb
+      - uses: actions/cache/restore@v4
+        id: cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            source/target
+            source/linux/target
+          key: drive-products-${{ matrix.platform }}-${{ runner.arch }}-${{ hashFiles('source/Cargo.lock', 'source/linux/Cargo.lock') }}
+          restore-keys: drive-products-${{ matrix.platform }}-${{ runner.arch }}-
+      - name: Build source-bound unsigned products
+        run: node tooling/scripts/build-hosted-products.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drive-${{ matrix.platform }}-${{ env.SOURCE_COMMIT }}
+          path: |
+            products/*-products.tar.gz
+            products/build-receipt.json
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/cache/save@v4
+        if: success() && steps.cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            source/target
+            source/linux/target
+          key: ${{ steps.cache.outputs.cache-primary-key }}
