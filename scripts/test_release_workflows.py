@@ -1037,7 +1037,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_release_gate_skips_only_prechecks_proven_by_fast_tier(self) -> None:
         script = self.copy_script("release-gate.sh")
         call_log = self.state / "calls"
-        for command in ("cargo", "node", "just"):
+        for command in ("cargo", "node", "just", "python3"):
             self.write_executable(
                 self.bin / command,
                 f'printf "{command} %s\\n" "$*" >>"$RELEASE_WORKFLOW_TEST_STATE/calls"\n',
@@ -1045,25 +1045,71 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.write_executable(self.bin / "git", 'printf "0\n"\n')
         self.write_executable(self.bin / "uname", 'printf "TestOS\n"\n')
 
-        completed = subprocess.run(
-            [str(script)],
-            check=False,
-            capture_output=True,
-            text=True,
-            env=self.environment(IRIS_DRIVE_RELEASE_GATE_FAST_PRECHECKED="1"),
-            timeout=WORKFLOW_TIMEOUT_SECONDS,
-        )
+        for prechecked in ("0", "1"):
+            with self.subTest(prechecked=prechecked):
+                call_log.write_text("", encoding="utf-8")
+                completed = subprocess.run(
+                    [str(script)],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=self.environment(
+                        IRIS_DRIVE_RELEASE_GATE_FAST_PRECHECKED=prechecked,
+                        IRIS_DRIVE_DEV_LAB_ENV=str(self.state / "no-lab-env"),
+                    ),
+                    timeout=WORKFLOW_TIMEOUT_SECONDS,
+                )
 
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        calls = call_log.read_text(encoding="utf-8")
-        self.assertNotIn("node --test", calls)
-        self.assertNotIn("cargo fmt --check", calls)
-        self.assertNotIn("just structure", calls)
-        self.assertNotIn("cargo test --workspace --exclude idrive", calls)
-        self.assertNotIn("--test link_input_e2e", calls)
-        self.assertIn("cargo test -p idrive --bin idrive --test cli_e2e", calls)
-        self.assertIn("cargo test -p idrive --test daemon_sync_matrix", calls)
-        self.assertIn("cargo build --workspace --release", calls)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                calls = call_log.read_text(encoding="utf-8")
+                for fast_check in (
+                    "node --test", "cargo fmt --check", "just structure",
+                    "cargo test --workspace --exclude idrive",
+                    "--bin idrive", "--test link_input_e2e",
+                ):
+                    if prechecked == "1":
+                        self.assertNotIn(fast_check, calls)
+                    else:
+                        self.assertIn(fast_check, calls)
+                self.assertIn("cargo test -p idrive --test cli_e2e", calls)
+                self.assertIn("cargo test -p idrive --test daemon_sync_matrix", calls)
+                self.assertIn("cargo build --workspace --release", calls)
+
+    def test_verify_full_reuses_fast_checks_only_after_success(self) -> None:
+        script = self.copy_script("verify.sh")
+        call_log = self.state / "calls"
+        for command in ("cargo", "node", "just", "python3"):
+            self.write_executable(
+                self.bin / command,
+                f'printf "{command} prechecked=%s %s\\n" '
+                '"${IRIS_DRIVE_RELEASE_GATE_FAST_PRECHECKED:-0}" "$*" '
+                '>>"$RELEASE_WORKFLOW_TEST_STATE/calls"\n'
+                + ('if [[ "$*" == *"--bin idrive"* ]]; then '
+                   'exit "$TEST_FAST_EXIT"; fi\n' if command == "cargo" else ""),
+            )
+        self.write_executable(self.bin / "uname", 'printf "TestOS\\n"\n')
+
+        for fast_exit in ("0", "42"):
+            with self.subTest(fast_exit=fast_exit):
+                call_log.write_text("", encoding="utf-8")
+                completed = subprocess.run(
+                    [str(script), "full"],
+                    check=False, capture_output=True, text=True,
+                    env=self.environment(
+                        TEST_FAST_EXIT=fast_exit, IRIS_VERIFY_SKIP_FAST="0",
+                        IRIS_DRIVE_RELEASE_GATE_FAST_PRECHECKED="0",
+                        IRIS_DRIVE_E2E_IOS_HOST="local",
+                    ),
+                    timeout=WORKFLOW_TIMEOUT_SECONDS,
+                )
+                calls = call_log.read_text(encoding="utf-8")
+                self.assertIn("--bin idrive --test link_input_e2e", calls)
+                if fast_exit == "0":
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    self.assertIn("python3 prechecked=1 scripts/native_lab.py run", calls)
+                else:
+                    self.assertNotEqual(completed.returncode, 0)
+                    self.assertNotIn("scripts/native_lab.py run", calls)
 
 
 if __name__ == "__main__":
