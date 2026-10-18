@@ -62,11 +62,32 @@ pub fn check_product_update_blocking(
     mode: ProductUpdateMode,
     config: ProductUpdateConfig,
 ) -> Result<ProductUpdateResult> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
+    on_update_thread(move || {
+        let runtime = update_runtime()?;
+        runtime.block_on(check_product_update(current_version, mode, config))
+    })
+}
+
+// Native dispatch queues can have only 512 KiB of stack. Construct and poll
+// network startup futures on an owned thread instead of the FFI caller's stack.
+fn on_update_thread<T: Send>(operation: impl FnOnce() -> Result<T> + Send) -> Result<T> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("iris-drive-update".to_owned())
+            .stack_size(8 * 1024 * 1024)
+            .spawn_scoped(scope, operation)
+            .context("failed to start update thread")?
+            .join()
+            .map_err(|_| anyhow::anyhow!("update thread panicked"))?
+    })
+}
+
+fn update_runtime() -> Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
         .enable_all()
         .build()
-        .context("failed to start update runtime")?;
-    runtime.block_on(check_product_update(current_version, mode, config))
+        .context("failed to start update runtime")
 }
 
 pub async fn check_product_update(
@@ -84,16 +105,15 @@ pub fn download_product_update_blocking(
     config: ProductUpdateConfig,
     download_dir: Option<&Path>,
 ) -> Result<ProductUpdateResult> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .context("failed to start update runtime")?;
-    runtime.block_on(download_product_update(
-        current_version,
-        mode,
-        config,
-        download_dir,
-    ))
+    on_update_thread(move || {
+        let runtime = update_runtime()?;
+        runtime.block_on(download_product_update(
+            current_version,
+            mode,
+            config,
+            download_dir,
+        ))
+    })
 }
 
 pub async fn download_product_update(
@@ -323,6 +343,69 @@ fn version_parts(value: &str) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blocking_updates_fit_native_dispatch_stack() {
+        const CHILD: &str = "IRIS_DRIVE_TEST_UPDATE_SMALL_STACK";
+        if let Ok(operation) = std::env::var(CHILD) {
+            std::thread::Builder::new()
+                .stack_size(512 * 1024)
+                .spawn(move || {
+                    let directory = tempfile::tempdir().unwrap();
+                    let config = ProductUpdateConfig {
+                        config_dir: Some(directory.path().to_owned()),
+                        ..ProductUpdateConfig::default()
+                    };
+                    let result = if operation == "check" {
+                        check_product_update_blocking("0.1.38", ProductUpdateMode::App, config)
+                    } else {
+                        download_product_update_blocking(
+                            "0.1.38",
+                            ProductUpdateMode::App,
+                            config,
+                            Some(directory.path()),
+                        )
+                    };
+                    assert!(
+                        result.is_err(),
+                        "isolated transport has no signed update root"
+                    );
+                })
+                .unwrap()
+                .join()
+                .unwrap();
+            return;
+        }
+        for operation in ["check", "download"] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+            child.args([
+                "--exact",
+                "updater::tests::blocking_updates_fit_native_dispatch_stack",
+                "--nocapture",
+            ]);
+            child.env(CHILD, operation);
+            for feature in [
+                "BOOTSTRAP",
+                "LAN_DISCOVERY",
+                "NOSTR_DISCOVERY",
+                "WEBRTC",
+                "LOCAL_RENDEZVOUS",
+            ] {
+                child.env(format!("IRIS_DRIVE_FIPS_ENABLE_{feature}"), "false");
+            }
+            child.env("IRIS_DRIVE_FIPS_ENABLE_MESH_PUBSUB", "true");
+            child.env("IRIS_DRIVE_FIPS_ENABLE_UDP", "true");
+            child.env("IRIS_DRIVE_FIPS_STATIC_PEERS", "");
+            child.env("IRIS_DRIVE_UPDATE_RELAYS", "");
+            child.env("IRIS_FIPS_WEBSOCKET_SEED_URLS", "");
+            let result = child.output().unwrap();
+            assert!(
+                result.status.success(),
+                "{operation} on a native-sized stack failed: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        }
+    }
 
     #[tokio::test]
     async fn invalid_signed_reference_fails_without_starting_an_unsigned_update() {

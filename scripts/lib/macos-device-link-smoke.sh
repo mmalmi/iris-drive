@@ -290,17 +290,17 @@ run_macos_owner_device_link_journey() {
   }
   MACOS_OWNER_LINK_EXPECTED_ROSTER=$((MACOS_OWNER_LINK_EXPECTED_ROSTER + 1))
 
-  invite_json="$("$IDRIVE_CLI" --config-dir "$owner_config" app-keys invite)"
+  invite_json="$("$IDRIVE_CLI" --config-dir "$owner_config" app-keys invite)" || return 1
   invite_url="$(printf '%s' "$invite_json" | json_get url)"
   [[ "$invite_url" == https://drive.iris.to/invite/* ]] || {
     echo "FAIL: macOS owner did not create a canonical invite" >&2
     return 1
   }
   MACOS_OWNER_LINK_JOINER_CONFIG="$SMOKE_DIR/macos-owner-link-joiner/Config"
-  mkdir_p_or_fail "$MACOS_OWNER_LINK_JOINER_CONFIG"
+  mkdir_p_or_fail "$MACOS_OWNER_LINK_JOINER_CONFIG" || return 1
   configure_macos_smoke_relay "$MACOS_OWNER_LINK_JOINER_CONFIG" || return 1
   request_json="$("$IDRIVE_CLI" --config-dir "$MACOS_OWNER_LINK_JOINER_CONFIG" \
-    app-keys request "$invite_url" --label "macOS owner GUI joiner")"
+    app-keys request "$invite_url" --label "macOS owner GUI joiner")" || return 1
   MACOS_OWNER_LINK_JOINER_NPUB="$(printf '%s' "$request_json" | json_get current_app_key_npub)"
   request_url="$(printf '%s' "$request_json" | json_get app_key_link_request.url)"
   request_admin="$(printf '%s' "$request_json" | json_get app_key_link_request.admin_app_key_npub)"
@@ -319,18 +319,19 @@ run_macos_owner_device_link_journey() {
   joiner_port=$((owner_port + 1))
   start_macos_owner_link_daemon \
     "$MACOS_OWNER_LINK_JOINER_CONFIG" "$joiner_port" "$owner_npub" "$owner_port" \
-    "$SMOKE_DIR/macos-owner-link-joiner.daemon" MACOS_OWNER_LINK_JOINER_DAEMON_PID
+    "$SMOKE_DIR/macos-owner-link-joiner.daemon" MACOS_OWNER_LINK_JOINER_DAEMON_PID || return 1
   start_macos_owner_link_daemon \
     "$owner_config" "$owner_port" "$MACOS_OWNER_LINK_JOINER_NPUB" "$joiner_port" \
-    "$SMOKE_DIR/macos-owner-link-owner.daemon" OWNER_DAEMON_PID
+    "$SMOKE_DIR/macos-owner-link-owner.daemon" OWNER_DAEMON_PID || return 1
   macos_owner_link_wait_for \
     "macOS owner-role joiner established its direct owner route" 10 \
     macos_owner_link_joiner_direct || return 1
-  launch_macos_owner_link_shell
+  launch_macos_owner_link_shell || return 1
   app_pid="$(app_process_pids | head -n 1)"
+  [[ "$app_pid" =~ ^[1-9][0-9]*$ ]] || return 1
 
-  open -a "$APP_PATH" "$request_url"
-  /usr/bin/swift "$ROOT/scripts/macos-device-link-ax.swift" "$app_pid" Cancel 10
+  open -a "$APP_PATH" "$request_url" || return 1
+  /usr/bin/swift "$ROOT/scripts/macos-device-link-ax.swift" "$app_pid" Cancel 10 || return 1
   sleep 1
   macos_owner_link_cancel_preserved_request || {
     echo "FAIL: Cancel changed the macOS owner roster or queued an approval" >&2
@@ -339,21 +340,21 @@ run_macos_owner_device_link_journey() {
 
   approval_started="$(macos_owner_link_monotonic_milliseconds)"
   approval_deadline=$((approval_started + MACOS_OWNER_LINK_TIMEOUT_SECS * 1000))
-  open -a "$APP_PATH" "$request_url"
-  /usr/bin/swift "$ROOT/scripts/macos-device-link-ax.swift" "$app_pid" Approve 10
+  open -a "$APP_PATH" "$request_url" || return 1
+  /usr/bin/swift "$ROOT/scripts/macos-device-link-ax.swift" "$app_pid" Approve 10 || return 1
   macos_owner_link_wait_before \
     "macOS GUI approval reached the external joiner and drained its ACK" \
-    "$approval_deadline" macos_owner_link_complete "$approval_started"
+    "$approval_deadline" macos_owner_link_complete "$approval_started" || return 1
 
   MACOS_OWNER_LINK_PATH="e2e/macos-owner-link-$$.txt"
   MACOS_OWNER_LINK_SOURCE="$SMOKE_DIR/macos-owner-link-source.txt"
   MACOS_OWNER_LINK_OUTPUT="$SMOKE_DIR/macos-owner-link-output.txt"
   source_content="written by a device linked through the macOS owner shell"
-  printf '%s\n' "$source_content" >"$MACOS_OWNER_LINK_SOURCE"
+  printf '%s\n' "$source_content" >"$MACOS_OWNER_LINK_SOURCE" || return 1
   "$IDRIVE_CLI" --config-dir "$MACOS_OWNER_LINK_JOINER_CONFIG" \
-    provider write "$MACOS_OWNER_LINK_PATH" "$MACOS_OWNER_LINK_SOURCE" >/dev/null
+    provider write "$MACOS_OWNER_LINK_PATH" "$MACOS_OWNER_LINK_SOURCE" >/dev/null || return 1
   macos_owner_link_wait_for \
     "post-link provider write visible on the macOS owner" \
-    "$MACOS_OWNER_LINK_TIMEOUT_SECS" macos_owner_link_file_visible
+    "$MACOS_OWNER_LINK_TIMEOUT_SECS" macos_owner_link_file_visible || return 1
   echo "MACOS_OWNER_DEVICE_LINK_JOURNEY_OK"
 }
