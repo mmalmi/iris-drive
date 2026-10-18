@@ -121,6 +121,18 @@ if (platform.startsWith('macos') || platform.startsWith('ios')) {
     }
   }
 } else if (platform === 'windows') {
+  // The hosted MSVC setup exports Platform=x64; MSBuild then changes its
+  // publish directory. Keep the ordinary .NET project default used locally.
+  for (const name of Object.keys(env)) {
+    if (name.toLowerCase() === 'platform') delete env[name]
+  }
+  const publish = execFileSync('dotnet', ['msbuild', join(root, 'windows/IrisDrive.Windows.csproj'),
+    '-nologo', '-getProperty:PublishDir', '-property:Configuration=Release',
+    '-property:RuntimeIdentifier=win-x64'], { cwd: root, env, encoding: 'utf8' }).trim()
+  const expectedPublish = join(root, 'windows/bin/Release/net8.0-windows/win-x64/publish')
+  if (resolve(root, 'windows', publish).toLowerCase() !== expectedPublish.toLowerCase()) {
+    throw new Error('The Windows publish directory differs from the canonical package location')
+  }
   run('node', [join(root, 'scripts/local-release.mjs'), '--build', '--only', 'windows', '--tag', `v${version}`])
   for (const name of release.plannedReleaseAssetNames(`v${version}`, ['windows'])) {
     cpSync(join(root, 'dist', name), join(payload, name))
