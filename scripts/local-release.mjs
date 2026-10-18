@@ -783,7 +783,7 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
     { dryRun },
   )
   run(
-    join(repoRoot, 'scripts', 'macos-release-smoke.sh'),
+    env.IRIS_DRIVE_MACOS_RELEASE_SMOKE_COMMAND || join(repoRoot, 'scripts', 'macos-release-smoke.sh'),
     ['--app', appPath, '--archive', updaterArchivePath, '--dmg', dmgPath],
     { dryRun, env },
   )
