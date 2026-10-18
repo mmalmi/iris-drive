@@ -17,15 +17,35 @@ on:
         required: true
         default: all
 
+      debug_run:
+        description: Simulator Debug artifact run for ios-check
+        required: false
+      release_run:
+        description: Simulator Release artifact run for ios-check
+        required: false
+      mac_run:
+        description: macOS Release artifact run for ios-check
+        required: false
+
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: unsigned-products-${{ github.ref }}-${{ inputs.platform || 'all' }}
   cancel-in-progress: false
 
 jobs:
+  ios-check:
+    if: inputs.platform == 'ios-check'
+    uses: ./.github/workflows/release-ios-check.yml
+    with:
+      commit: ${{ inputs.commit }}
+      debug_run: ${{ inputs.debug_run }}
+      release_run: ${{ inputs.release_run }}
+      mac_run: ${{ inputs.mac_run }}
   products:
+    if: inputs.platform != 'ios-check'
     name: ${{ matrix.platform }}
     runs-on: ${{ (startsWith(matrix.platform, 'macos') || startsWith(matrix.platform, 'ios')) && 'macos-15' || 'ubuntu-24.04' }}
     timeout-minutes: 60

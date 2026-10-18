@@ -1,5 +1,19 @@
 name: Verify prepared iOS products
 on:
+  workflow_call:
+    inputs:
+      commit:
+        required: true
+        type: string
+      debug_run:
+        required: true
+        type: string
+      release_run:
+        required: true
+        type: string
+      mac_run:
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       commit:
