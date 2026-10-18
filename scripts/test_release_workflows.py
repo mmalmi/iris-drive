@@ -20,6 +20,7 @@ from test_idle_cpu_gate import CrossVmIdleGateTests, ProcessIdleCpuTests
 from test_macos_app_registration import MacAppRegistrationTests
 from test_macos_owner_link_failure import OwnerLinkFailureTests
 from test_local_blossom_server import BlossomStartupTests
+from test_ios_linking_observer import IosLinkingObserverTests
 
 
 ROOT = Path(__file__).resolve().parents[1]

@@ -21,6 +21,8 @@ blossom = replace_once(blossom, 'python3 "$ROOT/scripts/local-blossom-server.py"
 (output / 'ios-blossom-smoke.sh').write_text(blossom)
 (output / 'local-blossom-server.py').write_bytes(
     Path(__file__).with_name('local-blossom-server.py').read_bytes())
+(output / 'ios-linking-observer.sh').write_bytes(
+    Path(__file__).parent.joinpath('lib/ios-linking-observer.sh').read_bytes())
 
 for name in ['ios-gui-linking-smoke.sh', 'ios-simulator-smoke.sh']:
     text = (root / 'scripts' / name).read_text()
@@ -31,6 +33,8 @@ for name in ['ios-gui-linking-smoke.sh', 'ios-simulator-smoke.sh']:
     text = replace_once(text, 'DERIVED_DATA="$ROOT/ios/.build/DerivedData"',
                         'DERIVED_DATA="${IRIS_DRIVE_PREPARED_IOS_DERIVED_DATA:?Required verified products}"')
     if name == 'ios-gui-linking-smoke.sh':
+        text = replace_once(text, 'source "$ROOT/scripts/lib/ios-linking-observer.sh"',
+                            'source "${CHECK_OUTPUT:?}/ios-linking-observer.sh"')
         begin = text.index('cargo build -p idrive\n')
         end = text.index('APP_PATH="$(resolve_app_path)"', begin)
         text = text[:begin] + '''[[ -x "$IDRIVE" ]] || { echo 'Missing verified native CLI' >&2; exit 2; }

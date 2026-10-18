@@ -56,6 +56,22 @@ before_deadline() {
   python3 -c 'import sys,time; raise SystemExit(0 if time.time() <= float(sys.argv[1]) else 1)' "$1"
 }
 
+linked_device_observer_deadline() {
+  local started_at="$1" state_file="$2" approved_deadline
+  approved_deadline="$(approval_deadline "$state_file" 2>/dev/null || true)"
+  python3 - "$started_at" "$approved_deadline" <<'PY'
+import sys
+started_at = float(sys.argv[1])
+approved_deadline = float(sys.argv[2]) if sys.argv[2] else None
+# XCTest launch/automation setup can exceed a minute on hosted simulators.
+# Bound that setup separately; acceptance still ends 15 seconds after approval.
+if approved_deadline is not None and approved_deadline >= started_at + 15:
+    print(approved_deadline)
+else:
+    print(started_at + 180)
+PY
+}
+
 start_linked_device_sync_observer() {
   local linked_config_dir="$1"
   local owner_config_dir="$2"
@@ -63,12 +79,13 @@ start_linked_device_sync_observer() {
   local linked_observation_file="$4"
   local ack_observation_file="$5"
   local pid_variable="$6"
-  local observer_deadline
-  observer_deadline=$(( $(date +%s) + 60 ))
+  local observer_started_at
+  observer_started_at="$(date +%s)"
+  echo "IOS_APPROVAL_OBSERVER_STARTED at=$observer_started_at startup_deadline=$((observer_started_at + 180))"
   : >"$linked_observation_file"
   : >"$ack_observation_file"
   (
-    while before_deadline "$observer_deadline"; do
+    while before_deadline "$(linked_device_observer_deadline "$observer_started_at" "$STATE_FILE")"; do
       if [[ ! -s "$linked_observation_file" ]]; then
         "$IDRIVE" --config-dir "$linked_config_dir" sync \
           --relay "$LOCAL_RELAY_URL" --timeout 2 >/dev/null 2>&1 || true
@@ -134,6 +151,7 @@ assert_linked_device_exchange_observed_before() {
   if [[ -z "$linked_observed_at" ]] \
     || ! python3 -c 'import sys; raise SystemExit(0 if float(sys.argv[1]) <= float(sys.argv[2]) else 1)' \
       "$linked_observed_at" "$deadline"; then
+    print_cli_owner_ack_diagnostics "$phase"
     echo "FAIL: $phase linked CLI device did not apply the iOS approval within 15 seconds." >&2
     return 1
   fi
