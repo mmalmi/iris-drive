@@ -12,7 +12,6 @@ on:
       commit:
         description: Exact source commit to build
         required: true
-        default: 0f76a0b1f8a8f3f01d712cc6f1b7f76fe75b8075
       platform:
         description: One product platform, or all
         required: true
@@ -35,7 +34,7 @@ jobs:
       matrix:
         platform: ${{ fromJSON(inputs.platform && inputs.platform != 'all' && format('["{0}"]', inputs.platform) || '["macos-release","macos-debug","ios-release","ios-sim-debug","ios-sim-release","android","linux"]') }}
     env:
-      SOURCE_COMMIT: ${{ inputs.commit || '0f76a0b1f8a8f3f01d712cc6f1b7f76fe75b8075' }}
+      SOURCE_COMMIT: ${{ inputs.commit || github.event.pull_request.head.sha || github.sha }}
       SOURCE_ROOT: ${{ github.workspace }}/source
       PRODUCT_OUTPUT: ${{ github.workspace }}/products
       PRODUCT_PLATFORM: ${{ matrix.platform }}

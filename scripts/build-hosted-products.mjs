@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { spawnSync, execFileSync } from 'node:child_process'
-import { cpSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join, resolve } from 'node:path'
 import { homedir } from 'node:os'
 import { pathToFileURL } from 'node:url'
@@ -57,7 +57,10 @@ if (platform.startsWith('macos') || platform.startsWith('ios')) {
   const project = mac ? 'macos' : 'ios'
   const name = mac ? 'IrisDriveMac' : 'IrisDriveIOS'
   run('xcodegen', ['generate'], { cwd: join(root, project) })
-  const derived = join(output, 'DerivedData')
+  // dsymutil records its input binary path independently of compiler prefix maps.
+  // Match the established iOS archive build's anonymous temporary directory.
+  const derived = !mac && !simulator
+    ? mkdtempSync('/tmp/iris-drive-ios-build-') : join(output, 'DerivedData')
   const swift = `$(inherited) -debug-prefix-map "${root}=/usr/src/iris-drive" -debug-prefix-map "${homedir()}=/usr/src/home"`
   const clang = `$(inherited) "-ffile-prefix-map=${root}=/usr/src/iris-drive" "-fdebug-prefix-map=${root}=/usr/src/iris-drive" "-ffile-prefix-map=${homedir()}=/usr/src/home" "-fdebug-prefix-map=${homedir()}=/usr/src/home"`
   const xcode = ['-project', join(root, project, `${name}.xcodeproj`), '-scheme', name,
@@ -73,6 +76,7 @@ if (platform.startsWith('macos') || platform.startsWith('ios')) {
     const archive = join(payload, 'IrisDriveIOS.xcarchive')
     run('xcodebuild', [...xcode, '-archivePath', archive, 'archive'])
     helper.assertNoPrivateBuildMetadata(files(archive), env, { repoRoot: root })
+    rmSync(derived, { recursive: true })
   } else {
     run('xcodebuild', [...xcode, simulator && debug ? 'build-for-testing' : 'build'])
     const products = join(derived, 'Build/Products')
