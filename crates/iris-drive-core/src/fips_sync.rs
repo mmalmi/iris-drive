@@ -687,14 +687,16 @@ fn merged_endpoint_peers(
         .collect()
 }
 
+const CONTROL_BOOTSTRAP_TOPICS: [&str; 5] = [
+    APP_KEY_LINK_REQUEST_APP_TOPIC,
+    APP_KEY_APPROVAL_RECEIPT_APP_TOPIC,
+    APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC,
+    APP_KEY_LINK_ROSTER_APP_TOPIC,
+    APP_KEY_LINK_ROSTER_ACK_APP_TOPIC,
+];
+
 fn control_bootstrap_topics() -> BTreeSet<&'static str> {
-    BTreeSet::from([
-        APP_KEY_LINK_REQUEST_APP_TOPIC,
-        APP_KEY_APPROVAL_RECEIPT_APP_TOPIC,
-        APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC,
-        APP_KEY_LINK_ROSTER_APP_TOPIC,
-        APP_KEY_LINK_ROSTER_ACK_APP_TOPIC,
-    ])
+    BTreeSet::from(CONTROL_BOOTSTRAP_TOPICS)
 }
 
 #[must_use]

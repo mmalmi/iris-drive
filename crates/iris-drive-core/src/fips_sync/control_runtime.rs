@@ -13,6 +13,11 @@ use tokio::task::JoinHandle;
 
 use super::FipsSyncError;
 
+mod bootstrap;
+use bootstrap::BootstrapBudget;
+mod queue;
+use queue::{PeerQueue, QueuedRecord};
+
 pub const DRIVE_CONTROL_CAPABILITY: &str = "iris.drive.control/1";
 pub const DRIVE_CONTROL_SERVICE_PORT: u16 = 39_019;
 pub const DRIVE_CONTROL_MAX_PAYLOAD_BYTES: usize = 256 * 1024;
@@ -228,45 +233,7 @@ struct TrackedConnection {
     peer: String,
     direction: Direction,
     opened_at_ms: u64,
-}
-
-#[derive(Default)]
-struct PeerQueue {
-    records: VecDeque<QueuedRecord>,
-    bytes: usize,
-    next_attempt_ms: u64,
-}
-
-struct QueuedRecord {
-    bytes: Vec<u8>,
-    offset: usize,
-    ack_marker: Option<SendMarker>,
-    expires_at_ms: u64,
-}
-
-impl PeerQueue {
-    fn rewind_after_stream_change(&mut self) {
-        for record in &mut self.records {
-            record.offset = 0;
-            record.ack_marker = None;
-        }
-    }
-
-    fn pop_front(&mut self) {
-        if let Some(record) = self.records.pop_front() {
-            self.bytes = self.bytes.saturating_sub(record.bytes.len());
-        }
-    }
-
-    fn expire_unstarted(&mut self, now_ms: u64) {
-        while self
-            .records
-            .front()
-            .is_some_and(|record| record.offset == 0 && now_ms >= record.expires_at_ms)
-        {
-            self.pop_front();
-        }
-    }
+    bootstrap_budget: BootstrapBudget,
 }
 
 #[derive(Default)]
@@ -436,12 +403,12 @@ impl ControlActor {
         {
             return Err(endpoint_error("Drive control peer queue is full"));
         }
-        queue.bytes = queue.bytes.saturating_add(record.len());
-        queue.records.push_back(QueuedRecord {
+        queue.push(QueuedRecord {
             bytes: record,
             offset: 0,
             ack_marker: None,
             expires_at_ms: now_ms.saturating_add(QUEUED_RECORD_LIFETIME_MS),
+            bootstrap: super::CONTROL_BOOTSTRAP_TOPICS.contains(&topic),
         });
         queue.next_attempt_ms = queue.next_attempt_ms.min(now_ms);
         Ok(())
@@ -470,6 +437,7 @@ impl ControlActor {
                 peer: peer_id.to_string(),
                 direction: Direction::Outbound,
                 opened_at_ms: now_ms,
+                bootstrap_budget: BootstrapBudget::default(),
             },
         );
         Ok(())
@@ -570,6 +538,7 @@ impl ControlActor {
                 peer,
                 direction: Direction::Inbound,
                 opened_at_ms: now_ms,
+                bootstrap_budget: BootstrapBudget::default(),
             });
         }
         Ok(())
@@ -654,19 +623,25 @@ impl ControlActor {
                 };
                 if let Some(record) = decoded {
                     let authorized = self.authorized_peers.contains(&peer);
-                    if (authorized || self.bootstrap_topics.contains(record.topic.as_str()))
-                        && self.mark_record_seen(&peer, record.id)
-                    {
+                    let admitted = authorized
+                        || (self.bootstrap_topics.contains(record.topic.as_str())
+                            && self.connections.get_mut(&id).is_some_and(|connection| {
+                                connection.bootstrap_budget.admit(&record)
+                            }));
+                    if !admitted {
+                        self.abort_connection(id, &peer).await?;
+                        break;
+                    }
+                    if self.mark_record_seen(&peer, record.id) {
                         let _ = self.deliveries.send(FipsAppMessage {
                             peer_id: peer.clone(),
                             topic: record.topic,
                             data: record.data,
                         });
                     }
-                    if !authorized {
-                        self.abort_connection(id, &peer).await?;
-                        break;
-                    }
+                    // Keep the bounded bootstrap exchange open: an immediate
+                    // reset invalidates the sender's ACK marker and replays the
+                    // receipt forever, starving the roster queued behind it.
                     continue;
                 }
                 let bytes = self
@@ -712,6 +687,17 @@ impl ControlActor {
             .map(|(peer, id)| (peer.clone(), *id))
             .collect::<Vec<_>>();
         for (peer, id) in streams {
+            // Bootstrap records must overtake queued roots while the remote
+            // peer is awaiting approval. Restart before writing a new header
+            // if an ordinary record was already partially sent.
+            if self
+                .queues
+                .get(&peer)
+                .is_some_and(|queue| queue.restart_stream)
+            {
+                self.abort_connection(id, &peer).await?;
+                continue;
+            }
             loop {
                 let ack_status = self
                     .queues
