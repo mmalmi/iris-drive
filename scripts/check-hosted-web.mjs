@@ -36,8 +36,19 @@ if (execFileSync(htree, ['--version'], { encoding: 'utf8' }).trim() !== 'htree 0
 }
 const web = join(output, 'web')
 const publicWeb = 'htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-drive-web'
+const sourceConfig = join(output, 'source-config')
+const sourceData = join(output, 'source-data')
+mkdirSync(sourceConfig)
+writeFileSync(join(sourceConfig, 'config.toml'), [
+  '[storage]', `data_dir = ${JSON.stringify(sourceData)}`,
+  '[nostr]', 'relays = ["wss://temp.iris.to", "wss://nos.lol", "wss://relay.snort.social"]',
+  '[blossom]', 'servers = []',
+  'read_servers = ["https://upload.iris.to", "https://cdn.iris.to", "https://blossom.primal.net"]',
+  'write_servers = []', 'force_upload = false', '',
+].join('\n'))
 run('git', ['clone', publicWeb, web], { timeout: 600000, env: { ...env,
-  PATH: `${dirname(htree)}:${env.PATH}`, NOSTR_RELAYS: 'wss://relay.damus.io,wss://relay.primal.net' } })
+  PATH: `${dirname(htree)}:${env.PATH}`, HTREE_CONFIG_DIR: sourceConfig,
+  HTREE_DATA_DIR: sourceData, HTREE_PREFER_LOCAL_DAEMON: '0', NOSTR_PREFER_LOCAL: '0' } })
 run('git', ['checkout', '--detach', webCommit], { cwd: web })
 if (execFileSync('git', ['rev-parse', 'HEAD'], { cwd: web, encoding: 'utf8' }).trim() !== webCommit
     || execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: web, encoding: 'utf8' }).trim()) {

@@ -46,7 +46,8 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - name: Install native runtime requirements
         run: sudo apt-get update && sudo apt-get install --yes libfuse3-3 libdbus-1-dev libssl-dev pkg-config protobuf-compiler
-      - uses: actions/cache@v4
+      - uses: actions/cache/restore@v4
+        id: htree-cache
         with:
           path: |
             ~/.cargo/registry
@@ -55,6 +56,14 @@ jobs:
           key: drive-web-htree-0.2.142-linux-x64-v1
       - name: Install the exact public web-test storage server
         run: cargo install --locked --version '=0.2.142' --features fips-webrtc,git-remote-wrapper --bin htree --bin git-remote-htree --root "$GITHUB_WORKSPACE/htree-bin" hashtree-cli
+      - uses: actions/cache/save@v4
+        if: steps.htree-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            htree-target
+          key: ${{ steps.htree-cache.outputs.cache-primary-key }}
       - uses: actions/download-artifact@v4
         with:
           github-token: ${{ github.token }}
