@@ -77,7 +77,7 @@ async fn stalled_roster_relay_keeps_daemon_fips_status_and_direct_ack_responsive
         config.save(path).unwrap();
         expected
     };
-    assert!(!expected_roster_events.is_empty());
+    assert_ne!(expected_roster_events, [] as [serde_json::Value; 0]);
     let started = Instant::now();
     while relay.stalled_publications() == 0 && started.elapsed() < Duration::from_secs(5) {
         tokio::time::sleep(Duration::from_millis(25)).await;
