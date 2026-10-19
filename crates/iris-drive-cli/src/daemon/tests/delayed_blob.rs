@@ -66,30 +66,26 @@ fn blossom_miss_does_not_cancel_a_delayed_valid_peer_blob() {
 
 async fn delayed_peer_download() {
     let directory = tempfile::tempdir().unwrap();
-    let profile =
+    let mut profile =
         iris_drive_core::Profile::create(directory.path(), Some("reader".into())).unwrap();
     let source_key = AppKey::generate(directory.path().join("source-key"));
-    let mut config = AppConfig {
+    profile
+        .approve_app_key(&source_key.pubkey_hex(), Some("source".into()))
+        .unwrap();
+    let config = AppConfig {
         profile: Some(profile.state),
         relays: Vec::new(),
         blossom_servers: vec!["http://127.0.0.1:1".to_string()],
         ..AppConfig::default()
     };
-    config
-        .profile
-        .as_mut()
-        .unwrap()
-        .app_keys
-        .as_mut()
-        .unwrap()
-        .app_actors
-        .push(iris_drive_core::app_keys::AppActorEntry::member(
-            source_key.pubkey_hex(),
-            1,
-            None,
-        ));
     assert!(
-        config.profile.as_ref().unwrap().current_app_keys_projection().unwrap().contains(&source_key.pubkey_hex()),
+        config
+            .profile
+            .as_ref()
+            .unwrap()
+            .current_app_keys_projection()
+            .unwrap()
+            .contains(&source_key.pubkey_hex()),
         "delayed peer fixture must authorize its source in the signed profile roster"
     );
     let source_store = Arc::new(DelayedStore(MemoryStore::new()));
