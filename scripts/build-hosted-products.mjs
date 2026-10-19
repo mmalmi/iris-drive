@@ -88,6 +88,8 @@ if (platform.startsWith('macos') || platform.startsWith('ios')) {
         run('strip', ['-S', join(app, executable)])
       }
     }
+    run('python3', [join(root, 'scripts/check-ios-lmdb-locking.py'),
+      join(archive, 'Products/Applications/Iris Drive.app')])
     helper.assertNoPrivateBuildMetadata(files(archive), env, { repoRoot: root })
     rmSync(derived, { recursive: true })
   } else {
@@ -109,6 +111,8 @@ if (platform.startsWith('macos') || platform.startsWith('ios')) {
       run('bash', ['-c',
         'source "$1"; iris_drive_ios_assert_simulator_entitlements "$2" "$3"',
         'bash', join(root, 'scripts/ios-simulator-signing.sh'), derived, configuration])
+      run('python3', [join(root, 'scripts/check-ios-lmdb-locking.py'),
+        join(products, `${configuration}-iphonesimulator`, 'Iris Drive.app')])
       cpSync(products, join(payload, 'Products'), { recursive: true })
       // Simulator app groups need ad-hoc entitlements. Retain only the small
       // entitlement records used by the existing native smoke assertions.

@@ -3329,6 +3329,7 @@ dependencies = [
  "hashtree-embedded",
  "hashtree-fips-transport",
  "hashtree-fs",
+ "hashtree-heed",
  "hashtree-lmdb",
  "hashtree-network",
  "hashtree-nostr",

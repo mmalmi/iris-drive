@@ -60,6 +60,9 @@ hex.workspace = true
 [target.'cfg(target_os = "ios")'.dependencies]
 # nix 0.26 (via WebRTC) still uses Apple symbols removed from newer libc.
 libc = "=0.2.186"
+# iOS forbids System V semaphores. Enable the supported LMDB backend for all
+# embedded consumers, including the CLI's exactly pinned hashtree-lmdb version.
+heed = { package = "hashtree-heed", version = "=0.20.5-hashtree.2", default-features = false, features = ["posix-sem"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "macros", "rt-multi-thread"] }
