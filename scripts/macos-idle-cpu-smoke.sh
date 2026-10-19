@@ -3,12 +3,18 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/lib/macos-smoke-profile.sh"
 APP_PATH="${IRIS_DRIVE_MACOS_IDLE_APP_PATH:-$ROOT/macos/.build/Applications/Iris Drive.app}"
 APP_BASE_DIR=""
+ARTIFACT_DIR="${IRIS_DRIVE_MACOS_IDLE_ARTIFACT_DIR:-}"
 
 cleanup() {
   local status=$?
   if [[ -n "$APP_BASE_DIR" ]]; then
+    if [[ -n "$ARTIFACT_DIR" ]]; then
+      mkdir -p "$ARTIFACT_DIR"
+      cp "$APP_BASE_DIR"/app.*.log "$ARTIFACT_DIR/" 2>/dev/null || true
+    fi
     if [[ -x "$APP_PATH/Contents/MacOS/idrive" ]]; then
       "$APP_PATH/Contents/MacOS/idrive" --config-dir "$APP_BASE_DIR/Config" \
         service uninstall --json >/dev/null 2>&1 || true
@@ -32,22 +38,20 @@ IDRIVE="$APP_PATH/Contents/MacOS/idrive"
   exit 1
 }
 
-APP_BASE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/iris-drive-macos-idle.XXXXXX")"
+PROFILE_PARENT="$(macos_smoke_profile_parent "$APP_PATH")"
+mkdir -p "$PROFILE_PARENT"
+APP_BASE_DIR="$(mktemp -d "$PROFILE_PARENT/iris-drive-macos-idle.XXXXXX")"
 mkdir -p "$APP_BASE_DIR/Config"
 "$IDRIVE" --config-dir "$APP_BASE_DIR/Config" init --force \
   --label "macOS idle CPU gate" >/dev/null
 
-output="$(
-  IRIS_DRIVE_MACOS_SIGNING="${IRIS_DRIVE_MACOS_SIGNING:-none}" \
-    IRIS_DRIVE_APP_BASE_DIR="$APP_BASE_DIR" \
-    "$ROOT/scripts/macos-dev-app.sh" run-existing "$APP_PATH"
-)"
-printf '%s\n' "$output"
-launched_path="$(printf '%s\n' "$output" | sed -n 's/^macOS app launched: //p' | tail -n 1)"
-[[ "$launched_path" == "$APP_PATH" && -d "$launched_path" ]] || {
-  echo "macOS idle CPU smoke could not determine its launched app path" >&2
-  exit 1
-}
+open -n --stdout "$APP_BASE_DIR/app.stdout.log" --stderr "$APP_BASE_DIR/app.stderr.log" \
+  --env "IRIS_DRIVE_APP_BASE_DIR=$APP_BASE_DIR" \
+  --env "IRIS_DRIVE_DISABLE_DAEMON_SERVICE=true" \
+  --env "IRIS_DRIVE_DISABLE_LOGIN_AGENT_SYNC=true" \
+  --env "IRIS_DRIVE_DISABLE_SINGLE_INSTANCE=true" "$APP_PATH"
+echo "macOS app data: $APP_BASE_DIR"
+echo "macOS app launched: $APP_PATH"
 
 IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES="${IRIS_DRIVE_RELEASE_GATE_MACOS_IDLE_CPU_ROLES:-app,daemon}" \
   IRIS_DRIVE_IDLE_CPU_WARMUP_SECS="${IRIS_DRIVE_RELEASE_GATE_MACOS_IDLE_CPU_WARMUP_SECS:-60}" \

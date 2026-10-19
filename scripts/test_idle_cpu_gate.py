@@ -4,6 +4,7 @@
 import base64
 import json
 import os
+import plistlib
 import re
 import shutil
 import subprocess
@@ -113,12 +114,22 @@ class CrossVmIdleGateTests(unittest.TestCase):
 class ProcessIdleCpuTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == "darwin", "Requires the actual Darwin mktemp")
     def test_macos_smoke_allocates_profile_inside_supplied_tmpdir(self):
+        self.assert_macos_smoke_profile_parent(False)
+
+    @unittest.skipUnless(sys.platform == "darwin", "Requires the actual Darwin mktemp")
+    def test_signed_macos_smoke_allocates_profile_inside_entitled_group(self):
+        self.assert_macos_smoke_profile_parent(True)
+
+    def assert_macos_smoke_profile_parent(self, sandboxed):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             scripts = root / "scripts"
             scripts.mkdir()
             shutil.copyfile(SCRIPTS / "macos-idle-cpu-smoke.sh",
                             scripts / "macos-idle-cpu-smoke.sh")
+            (scripts / "lib").mkdir()
+            shutil.copyfile(SCRIPTS / "lib/macos-smoke-profile.sh",
+                            scripts / "lib/macos-smoke-profile.sh")
             app = root / "Signed App.app"
             helper = app / "Contents" / "MacOS" / "idrive"
             helper.parent.mkdir(parents=True)
@@ -133,6 +144,12 @@ class ProcessIdleCpuTests(unittest.TestCase):
             helper.chmod(0o755)
             mocks = root / "bin"
             mocks.mkdir()
+            entitlements = {"com.apple.security.app-sandbox": True,
+                            "com.apple.security.application-groups": ["TEST.to.iris.drive"]} if sandboxed else {}
+            (root / "entitlements.plist").write_bytes(plistlib.dumps(entitlements))
+            signer = mocks / "codesign"
+            signer.write_text('#!/bin/sh\ncat "$TEST_ENTITLEMENTS"\n')
+            signer.chmod(0o755)
             for command in ("pkill", "osascript"):
                 tool = mocks / command
                 tool.write_text("#!/bin/sh\nexit 0\n")
@@ -141,14 +158,16 @@ class ProcessIdleCpuTests(unittest.TestCase):
             owned_tmp.mkdir()
             result = subprocess.run(
                 ["/bin/bash", str(scripts / "macos-idle-cpu-smoke.sh")],
-                env=dict(os.environ, TMPDIR=str(owned_tmp),
+                env=dict(os.environ, TMPDIR=str(owned_tmp), HOME=str(root),
+                         TEST_ENTITLEMENTS=str(root / "entitlements.plist"),
                          PATH=f"{mocks}:/usr/bin:/bin:/usr/sbin:/sbin",
                          IRIS_DRIVE_MACOS_IDLE_APP_PATH=str(app),
                          OBSERVED_CONFIG=str(observed)),
                 text=True, capture_output=True, timeout=5)
             self.assertEqual(result.returncode, 73, result.stderr)
             profile = Path(observed.read_text()).parent
-            self.assertEqual(profile.parent.resolve(), owned_tmp.resolve())
+            expected = root / "Library/Group Containers/TEST.to.iris.drive/Iris Drive Smoke" if sandboxed else owned_tmp
+            self.assertEqual(profile.parent.resolve(), expected.resolve())
             self.assertFalse(profile.exists(), "Stock cleanup must remove the task profile")
 
     def test_ios_launch_clears_stale_profile_but_preserves_explicit_override(self):
