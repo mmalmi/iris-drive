@@ -2112,9 +2112,13 @@ run_step "final fresh daemons" wait_until "all daemon statuses fresh" all_fresh
 run_step "final LAN/local FIPS peer discovery" wait_until "required devices have a direct peer" all_required_devices_have_direct_peer
 run_step "final Devices list online roster" wait_until "every Devices list shows roster peers online" all_devices_list_roster_online
 if idle_cpu_gate_enabled; then
+  # Each sampler owns a distinct daemon/config. Start their full post-workload
+  # warmups together, retaining per-label logs and waiting for every outcome.
+  run_step "idle daemon CPU gates" parallel_group_begin "idle-daemon-cpu"
   for label in "${LABELS[@]}"; do
-    run_step "idle daemon CPU gate on $label" idle_cpu_gate_label "$label"
+    parallel_group_start "$label" idle_cpu_gate_label "$label"
   done
+  parallel_group_wait
 fi
 
 echo

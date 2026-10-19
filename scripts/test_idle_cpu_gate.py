@@ -77,19 +77,37 @@ class CrossVmIdleGateTests(unittest.TestCase):
         self.assertIn("IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH = " + quoted_config, command)
         self.assertNotIn("$repo", command)
 
-    def test_final_idle_samples_run_serially(self):
+    def test_final_idle_gates_overlap_without_losing_failures_or_cleanup(self):
         gate = self.source[self.source.rindex("if idle_cpu_gate_enabled; then"):
                            self.source.rindex('\necho\necho "cross-vm e2e passed')]
-        parallel = self.source[self.source.index("run_for_all_labels_parallel() {"):
-                               self.source.index("idle_cpu_gate_enabled() {")]
-        script = ("set -euo pipefail\n" + parallel
-                  + "\nLABELS=(one two); calls=0\n"
-                  + "idle_cpu_gate_enabled() { return 0; }\n"
-                  + "idle_cpu_gate_label() { calls=$((calls + 1)); }\n"
-                  + "run_step() { shift; \"$@\"; }\n" + gate
-                  + '\n[[ "$calls" == 2 ]]\n')
-        result = subprocess.run(["bash", "-c", script], text=True, capture_output=True, timeout=5)
-        self.assertEqual(result.returncode, 0, "Idle samples escaped into parallel subshells")
+        helper = (SCRIPTS / "lib/parallel-gate.sh").read_text()
+        for failing in ("", "windows"):
+            with self.subTest(failing=failing), tempfile.TemporaryDirectory() as directory:
+                script = ("set -Eeuo pipefail\n" + helper + "\n" + textwrap.dedent("""\
+                    LABELS=(ubuntu windows macos ios android)
+                    trap 'printf "cleanup\\n" >> "$STATE_DIR/cleanup"' EXIT
+                    idle_cpu_gate_enabled() { return 0; }
+                    run_step() { shift; "$@"; }
+                    idle_cpu_gate_label() {
+                      local label="$1" end=$((SECONDS+3))
+                      touch "$STATE_DIR/start-$label"
+                      while [[ "$(find "$STATE_DIR" -name 'start-*' | wc -l | tr -d ' ')" != 5 ]]; do
+                        [[ "$SECONDS" -lt "$end" ]] || return 8
+                        sleep .01
+                      done
+                      touch "$STATE_DIR/done-$label"
+                      [[ "$label" != "$FAIL_LABEL" ]]
+                    }
+                    """) + gate + "\n")
+                result = subprocess.run(["bash", "-c", script], text=True, capture_output=True,
+                    env=dict(os.environ, STATE_DIR=directory, FAIL_LABEL=failing), timeout=6)
+                self.assertEqual(result.returncode, 1 if failing else 0, result.stderr)
+                state = Path(directory)
+                self.assertEqual(len(list(state.glob("start-*"))), 5)
+                self.assertEqual(len(list(state.glob("done-*"))), 5,
+                                 "Every sampler must finish before cleanup, including after failure")
+                self.assertEqual((state / "cleanup").read_text().splitlines(), ["cleanup"],
+                                 "Only the owning parent may clean up the daemon fixtures")
 
 
 class ProcessIdleCpuTests(unittest.TestCase):
