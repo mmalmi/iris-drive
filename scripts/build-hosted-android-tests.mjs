@@ -26,7 +26,8 @@ const prepared = stageHostedProduct({ repoRoot: source, productDirectory: inputs
 const original = join(prepared, 'apk/uiTest/app-uiTest.apk')
 const testPath = 'android/app/src/androidTest/java/to/iris/drive/app/MainActivityApprovalDeepLinkTest.kt'
 cpSync(join(tooling, testPath), join(source, testPath))
-if (git(source, 'diff', '--name-only') !== testPath) throw new Error('Only the declared instrumentation test may differ')
+const changedPaths = git(source, 'diff', '--name-only')
+if (changedPaths && changedPaths !== testPath) throw new Error('Only the declared instrumentation test may differ')
 run('gradle', ['-p', join(source, 'android'), '--no-daemon', '--max-workers=2',
   '-Dorg.gradle.jvmargs=-Xmx2g', '-Pkotlin.compiler.execution.strategy=in-process',
   '-PirisDriveVersionName=0.1.38', '-PirisDriveVersionCode=1039',
