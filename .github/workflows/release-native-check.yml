@@ -44,6 +44,9 @@ jobs:
       - name: Run approval control batch ordering regression
         working-directory: source
         run: cargo test --locked -p iris-drive-core --lib direct_root_batch_keeps_approval_exchange_ahead_of_root_work -- --nocapture
+      - name: Run direct-root coalescing regressions
+        working-directory: source
+        run: cargo test --locked -p iris-drive-core --lib direct_root_app_message_coalescing -- --nocapture
       - name: Run shared-state regressions
         working-directory: source
         run: cargo test --locked -p iris-drive-app-core --lib ffi::concurrency_tests -- --nocapture
