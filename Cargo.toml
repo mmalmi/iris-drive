@@ -56,11 +56,11 @@ nostr-identity = "=0.3.1"
 hashtree-core = "=0.2.91"
 hashtree-blossom = { version = "=0.2.83", features = ["store"] }
 hashtree-config = "=0.2.83"
-hashtree-embedded = "=0.2.93"
+hashtree-embedded = "=0.2.95-drive-ios.1"
 hashtree-fips-transport = { version = "=0.4.29", features = ["webrtc-endpoint"] }
 hashtree-fs = "=0.2.83"
 hashtree-fuse = { version = "=0.2.83", features = ["fuse"] }
-hashtree-lmdb = "=0.2.89"
+hashtree-lmdb = "=0.2.91"
 hashtree-nostr = "=0.2.90"
 hashtree-network = "=0.2.88"
 hashtree-resolver = { version = "=0.2.86", features = ["nostr"] }
