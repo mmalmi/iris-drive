@@ -19,9 +19,10 @@ on run argv
   set deadline to (current date) + timeoutSeconds
   repeat while (current date) is less than deadline
     tell application "Finder"
-      repeat with finderWindow in windows
+      repeat with windowIndex from 1 to (count of windows)
         try
-          set targetPath to POSIX path of (target of finderWindow as alias)
+          set targetFolder to get target of window windowIndex
+          set targetPath to POSIX path of (targetFolder as alias)
           if targetPath is expectedPath or targetPath is expectedDirectoryPath then return
         end try
       end repeat
