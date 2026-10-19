@@ -283,8 +283,9 @@ class ReleaseWorkflowTests(unittest.TestCase):
                 script = self.scripts / "approval-exit-race.sh"
                 self.write_executable(script,
                     "source " + shlex.quote(str(helper)) + "\n"
-                    + "owner_label=ubuntu\nwindows_label=windows\nLINK_TIMEOUT_SECS=15\n"
+                    + "DESKTOP_GUI_LINKING=1\nowner_label=ubuntu\nwindows_label=windows\nLINK_TIMEOUT_SECS=15\n"
                     + "host_value() { echo expected; }\n"
+                    + 'bool_true() { [[ "$1" == 1 ]]; }\n'
                     + "monotonic_milliseconds() { echo 1000; }\n"
                     + textwrap.dedent('''\
                         first_marker_probe=1
