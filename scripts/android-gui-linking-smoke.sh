@@ -374,6 +374,7 @@ valid = (
 raise SystemExit(0 if valid else 1)
 ' <<<"$approval_json"; then
     echo "FAIL: CLI owner approval did not publish a complete local Blossom root handoff" >&2
+    printf '%s\n' "$approval_json" >&2
     return 1
   fi
 }
@@ -381,6 +382,14 @@ raise SystemExit(0 if valid else 1)
 configure_owner_local_relay() {
   start_local_relay
   "$IDRIVE" --config-dir "$OWNER_CONFIG" relays add "$LOCAL_RELAY_URL" >/dev/null
+  local relay
+  while IFS= read -r relay; do
+    [[ "$relay" == "$LOCAL_RELAY_URL" ]] && continue
+    "$IDRIVE" --config-dir "$OWNER_CONFIG" relays remove "$relay" >/dev/null
+  done < <("$IDRIVE" --config-dir "$OWNER_CONFIG" relays list \
+    | python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin)))')
+  "$IDRIVE" --config-dir "$OWNER_CONFIG" relays list \
+    | python3 -c 'import json,sys; assert json.load(sys.stdin) == [sys.argv[1]], "Owner fixture must use only its local relay"' "$LOCAL_RELAY_URL"
 }
 
 wait_for_owner_inbound_request() {
@@ -715,6 +724,10 @@ request_url="$(owner_inbound_request_url "$linked_device")"
 authorization_started_ms="$(monotonic_milliseconds)"
 authorization_deadline_ms=$((authorization_started_ms + AUTHORIZATION_TIMEOUT_SECS * 1000))
 approved_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" approve "$request_url" --label "Android GUI")"
+if [[ -n "${IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR:-}" ]]; then
+  mkdir -p "$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR"
+  printf '%s\n' "$approved_json" >"$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR/owner-approval.json"
+fi
 assert_local_blossom_approval_handoff "$approved_json"
 roster_size="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["roster_size"])' <<<"$approved_json")"
 if [[ "$roster_size" != "2" ]]; then
