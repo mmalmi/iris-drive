@@ -41,6 +41,11 @@ class BlossomFixtureServer(ThreadingHTTPServer):
         self.request_log = request_log
         self.request_log_lock = threading.Lock()
         self.request_sequence = 0
+        self.completed_blobs = {path.name for path in storage_dir.glob('*.bin')}
+
+    def stored_blob_count(self) -> int:
+        with self.request_log_lock:
+            return len(self.completed_blobs)
 
     def record_request(self, method: str, path: str, status: int) -> None:
         if self.request_log is None:
@@ -65,6 +70,10 @@ class BlossomFixtureHandler(BaseHTTPRequestHandler):
         return
 
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        if self._path() == '/_test/uploads':
+            body = json.dumps({'stored_blobs': self.server.stored_blob_count()}).encode()
+            self._respond(200, body, 'application/json')
+            return
         if self._path() == "/health":
             self._respond(200, b"ok\n", "text/plain")
             return
@@ -105,6 +114,8 @@ class BlossomFixtureHandler(BaseHTTPRequestHandler):
             return
         with os.fdopen(descriptor, "wb") as blob:
             blob.write(body)
+        with self.server.request_log_lock:
+            self.server.completed_blobs.add(blob_path.name)
         self._respond(201, b"created\n", "text/plain")
 
     def _path(self) -> str:

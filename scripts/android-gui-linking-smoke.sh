@@ -23,8 +23,11 @@ LOCAL_RELAY_READY="$(mktemp "${TMPDIR:-/tmp}/iris-drive-android-gui-relay.XXXXXX
 LOCAL_RELAY_LOG="$(mktemp "${TMPDIR:-/tmp}/iris-drive-android-gui-relay.log.XXXXXX")"
 LOCAL_RELAY_PID=""
 LOCAL_RELAY_URL=""
+LOCAL_RELAY_DEVICE_URL=""
+LOCAL_RELAY_PORT=""
 LOCAL_BLOSSOM_READY="$(mktemp "${TMPDIR:-/tmp}/iris-drive-android-gui-blossom.XXXXXX")"
 LOCAL_BLOSSOM_LOG="$(mktemp "${TMPDIR:-/tmp}/iris-drive-android-gui-blossom.log.XXXXXX")"
+LOCAL_BLOSSOM_REQUEST_LOG="$(mktemp "${TMPDIR:-/tmp}/iris-drive-android-gui-blossom.requests.XXXXXX")"
 LOCAL_BLOSSOM_STORAGE="$(mktemp -d "${TMPDIR:-/tmp}/iris-drive-android-gui-blossom-storage.XXXXXX")"
 LOCAL_BLOSSOM_PID=""
 LOCAL_BLOSSOM_PORT=""
@@ -44,6 +47,9 @@ cleanup() {
   local status=$?
   trap - EXIT
   set +e
+  if [[ -n "$LOCAL_RELAY_PORT" && -n "${ADB:-}" && -n "$serial" ]]; then
+    "$ADB" -s "$serial" reverse --remove "tcp:$LOCAL_RELAY_PORT" >/dev/null 2>&1 || true
+  fi
   if [[ -n "$LOCAL_BLOSSOM_PORT" && -n "${ADB:-}" && -n "$serial" ]]; then
     "$ADB" -s "$serial" reverse --remove "tcp:$LOCAL_BLOSSOM_PORT" >/dev/null 2>&1 || true
   fi
@@ -59,6 +65,13 @@ cleanup() {
     kill "$LOCAL_RELAY_PID" >/dev/null 2>&1 || true
     wait "$LOCAL_RELAY_PID" 2>/dev/null || true
   fi
+  if [[ -n "${IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR:-}" ]]; then
+    mkdir -p "$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR"
+    cp -n "$LOCAL_BLOSSOM_REQUEST_LOG" "$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR/blossom-requests.jsonl"
+    cp -n "$LOCAL_BLOSSOM_LOG" "$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR/blossom.log"
+    cp -n "$LOCAL_RELAY_LOG" "$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR/relay.log"
+    cp -n "$OWNER_DAEMON_LOG" "$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR/owner-daemon.log"
+  fi
   if [[ "${IRIS_DRIVE_ANDROID_KEEP_TEST_APP:-false}" != "true" && -n "${ADB:-}" && -n "$serial" ]]; then
     "$ADB" -s "$serial" uninstall "$PACKAGE_NAME" >/dev/null 2>&1 || true
     "$ADB" -s "$serial" uninstall "$PACKAGE_NAME.test" >/dev/null 2>&1 || true
@@ -71,6 +84,7 @@ cleanup() {
     "$LOCAL_RELAY_READY" \
     "$LOCAL_RELAY_LOG" \
     "$LOCAL_BLOSSOM_READY" \
+    "$LOCAL_BLOSSOM_REQUEST_LOG" \
     "$LOCAL_BLOSSOM_LOG"
   exit "$status"
 }
@@ -270,6 +284,7 @@ start_local_blossom() {
     --port 0 \
     --storage-dir "$LOCAL_BLOSSOM_STORAGE" \
     --ready-file "$LOCAL_BLOSSOM_READY" \
+    --request-log "$LOCAL_BLOSSOM_REQUEST_LOG" \
     >"$LOCAL_BLOSSOM_LOG" 2>&1 &
   LOCAL_BLOSSOM_PID="$!"
   for _ in $(seq 1 100); do
@@ -299,6 +314,14 @@ start_local_blossom() {
   echo "FAIL: local Blossom fixture did not become ready" >&2
   cat "$LOCAL_BLOSSOM_LOG" >&2 || true
   exit 1
+}
+
+start_local_android_relay() {
+  start_local_relay
+  LOCAL_RELAY_PORT="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.urlsplit(sys.argv[1]).port or "")' "$LOCAL_RELAY_URL")"
+  [[ "$LOCAL_RELAY_PORT" =~ ^[1-9][0-9]*$ ]] || return 1
+  "$ADB" -s "$serial" reverse "tcp:$LOCAL_RELAY_PORT" "tcp:$LOCAL_RELAY_PORT" >/dev/null
+  LOCAL_RELAY_DEVICE_URL="ws://127.0.0.1:$LOCAL_RELAY_PORT"
 }
 
 verify_local_blossom_uploads() {
@@ -494,6 +517,7 @@ run_android_gui_tests() {
   local share_api_class="to.iris.drive.app.ShareActivityInstrumentedTest"
   local mode="${IRIS_DRIVE_ANDROID_GUI_TEST_MODE:-smoke}"
   local blossom_argument="-Pandroid.testInstrumentationRunnerArguments.blossom_server=$LOCAL_BLOSSOM_DEVICE_URL"
+  local relay_argument="-Pandroid.testInstrumentationRunnerArguments.relay_server=$LOCAL_RELAY_DEVICE_URL"
   local smoke_tests=(
     createProfileFlowDoesNotRequireUsernameOrProfilePhoto
     linkThisDeviceFlowClicksThroughSignInUi
@@ -529,6 +553,7 @@ run_android_gui_tests() {
           cd "$ROOT"
           ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedUiTestAndroidTest \
             "$blossom_argument" \
+            "$relay_argument" \
             "-Pandroid.testInstrumentationRunnerArguments.class=$class#$test"
         )
       done
@@ -549,6 +574,7 @@ run_android_gui_tests() {
     cd "$ROOT"
     ANDROID_SERIAL="$serial" ./tools/run-android :app:assembleDebug :app:connectedUiTestAndroidTest \
       "$blossom_argument" \
+      "$relay_argument" \
       "-Pandroid.testInstrumentationRunnerArguments.class=$filter"
   )
 }
@@ -562,6 +588,7 @@ fi
 
 "$ADB" -s "$serial" wait-for-device
 start_local_blossom
+start_local_android_relay
 run_android_gui_tests
 verify_local_blossom_uploads
 

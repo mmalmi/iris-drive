@@ -1,0 +1,64 @@
+name: Prepare Android instrumentation for a verified native candidate
+on:
+  workflow_call:
+    inputs:
+      commit:
+        required: true
+        type: string
+      product_run:
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  android-tests:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      SOURCE_ROOT: ${{ github.workspace }}/source
+      SOURCE_COMMIT: ${{ inputs.commit }}
+      PRODUCT_INPUTS: ${{ github.workspace }}/products
+      PRODUCT_OUTPUT: ${{ github.workspace }}/android-tests
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tooling
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.13'
+      - name: Install exact Android build tools
+        run: '"$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-36" "build-tools;36.0.0"'
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.product_run }}
+          name: drive-android-${{ inputs.commit }}
+          path: products
+      - name: Verify fixture and immutable application payload tests
+        run: |
+          python3 tooling/scripts/test_local_blossom_server.py
+          python3 tooling/scripts/test_android_test_payload.py
+      - name: Build instrumentation without recompiling native application
+        run: node tooling/scripts/build-hosted-android-tests.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-tests-${{ inputs.commit }}
+          path: |
+            android-tests/android-tests-products.tar.gz
+            android-tests/test-build-receipt.json
+          if-no-files-found: error
+          retention-days: 7

@@ -1,6 +1,7 @@
 """Exercise the real storage fixture with unavailable reverse DNS."""
 import hashlib
 import importlib.util
+import json
 from pathlib import Path
 import socket
 from tempfile import TemporaryDirectory
@@ -26,6 +27,8 @@ class BlossomStartupTests(unittest.TestCase):
                     base = f'http://127.0.0.1:{server.server_port}'
                     with urlopen(base + '/health', timeout=2) as response:
                         self.assertEqual(response.read(), b'ok\n')
+                    with urlopen(base + '/_test/uploads', timeout=2) as response:
+                        self.assertEqual(json.load(response), {'stored_blobs': 0})
                     content = b'fixture works without reverse DNS'
                     digest = hashlib.sha256(content).hexdigest()
                     request = Request(base + '/upload', content, {'x-sha-256': digest}, method='PUT')
@@ -34,6 +37,8 @@ class BlossomStartupTests(unittest.TestCase):
                     with urlopen(base + '/' + digest + '.bin', timeout=2) as response:
                         self.assertEqual(response.read(), content)
                     self.assertEqual((Path(temporary) / (digest + '.bin')).read_bytes(), content)
+                    with urlopen(base + '/_test/uploads', timeout=2) as response:
+                        self.assertEqual(json.load(response), {'stored_blobs': 1})
                 finally:
                     server.shutdown()
                     worker.join(timeout=2)
