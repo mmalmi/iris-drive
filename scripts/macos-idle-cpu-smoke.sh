@@ -7,13 +7,14 @@ source "$ROOT/scripts/lib/macos-smoke-profile.sh"
 APP_PATH="${IRIS_DRIVE_MACOS_IDLE_APP_PATH:-$ROOT/macos/.build/Applications/Iris Drive.app}"
 APP_BASE_DIR=""
 ARTIFACT_DIR="${IRIS_DRIVE_MACOS_IDLE_ARTIFACT_DIR:-}"
+LOG_DIR=""
 
 cleanup() {
   local status=$?
   if [[ -n "$APP_BASE_DIR" ]]; then
     if [[ -n "$ARTIFACT_DIR" ]]; then
       mkdir -p "$ARTIFACT_DIR"
-      cp "$APP_BASE_DIR"/app.*.log "$ARTIFACT_DIR/" 2>/dev/null || true
+      cp "$LOG_DIR"/app.*.log "$ARTIFACT_DIR/" 2>/dev/null || true
     fi
     if [[ -x "$APP_PATH/Contents/MacOS/idrive" ]]; then
       "$APP_PATH/Contents/MacOS/idrive" --config-dir "$APP_BASE_DIR/Config" \
@@ -23,6 +24,7 @@ cleanup() {
     osascript -e 'tell application "Iris Drive" to quit' >/dev/null 2>&1 || true
     rm -rf "$APP_BASE_DIR"
   fi
+  [[ -z "$LOG_DIR" ]] || rm -rf "$LOG_DIR"
   return "$status"
 }
 trap cleanup EXIT
@@ -41,11 +43,14 @@ IDRIVE="$APP_PATH/Contents/MacOS/idrive"
 PROFILE_PARENT="$(macos_smoke_profile_parent "$APP_PATH")"
 mkdir -p "$PROFILE_PARENT"
 APP_BASE_DIR="$(mktemp -d "$PROFILE_PARENT/iris-drive-macos-idle.XXXXXX")"
+# LaunchServices opens these files before the app starts. Its launcher cannot
+# open paths protected by the signed app group's Data Vault.
+LOG_DIR="$(mktemp -d "${TMPDIR:-/tmp}/iris-drive-macos-idle-logs.XXXXXX")"
 mkdir -p "$APP_BASE_DIR/Config"
 "$IDRIVE" --config-dir "$APP_BASE_DIR/Config" init --force \
   --label "macOS idle CPU gate" >/dev/null
 
-open -n --stdout "$APP_BASE_DIR/app.stdout.log" --stderr "$APP_BASE_DIR/app.stderr.log" \
+open -n --stdout "$LOG_DIR/app.stdout.log" --stderr "$LOG_DIR/app.stderr.log" \
   --env "IRIS_DRIVE_APP_BASE_DIR=$APP_BASE_DIR" \
   --env "IRIS_DRIVE_DISABLE_DAEMON_SERVICE=true" \
   --env "IRIS_DRIVE_DISABLE_LOGIN_AGENT_SYNC=true" \
