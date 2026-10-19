@@ -2168,9 +2168,9 @@ dependencies = [
 
 [[package]]
 name = "git-remote-htree"
-version = "0.2.91"
+version = "0.2.92"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fa9c158b46c8875e14330e5c6404e96842489b32a8c32471cad3d526ade89488"
+checksum = "b6402f07ca6ab86a8c4ebbde9cad8ec33c4fcc774f4a3e426938f103f5a32929"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2179,13 +2179,18 @@ dependencies = [
  "futures",
  "getrandom 0.3.4",
  "hashtree-blossom",
+ "hashtree-client",
  "hashtree-config",
  "hashtree-core",
  "hashtree-fs",
  "hashtree-lmdb",
+ "hashtree-nostr",
+ "hashtree-nostr-pubsub",
  "hex",
  "libc",
  "nostr",
+ "nostr-pubsub",
+ "nostr-pubsub-relay",
  "nostr-relay-pool",
  "nostr-sdk",
  "reqwest",
@@ -2426,9 +2431,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-cli"
-version = "0.2.155-drive-ios.1"
+version = "0.2.155"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c8f270bfd70411715afad6de97a09b917993ccc4f5d3a7a8244735c291c4074"
+checksum = "d161bc50cf193aa81704a59bd7302cf98a78abaef7351fc038dafa2ef075df99"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2491,6 +2496,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "hashtree-client"
+version = "0.1.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f550d67b61aac1da2828818fa7c6f7f7bdd71eaa5b2d60b2365ff19d36ff05bd"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "futures",
+ "hashtree-config",
+ "hashtree-core",
+ "hashtree-fs",
+ "hashtree-resolver",
+ "hex",
+ "nostr",
+ "percent-encoding",
+ "reqwest",
+ "sha2 0.10.9",
+ "tokio",
+ "toml 0.8.2",
+]
+
+[[package]]
 name = "hashtree-collection"
 version = "0.2.84"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2540,9 +2567,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-embedded"
-version = "0.2.95-drive-ios.1"
+version = "0.2.94"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7b6a2ca94a78a4d1a1653bb9bebb7b4dfbdca8229c32ed077e598805c8e728e7"
+checksum = "39872e2351ec599d6b04c5ccb564470f34ea7769ebfeb8b8746a1d6d7064b3c2"
 dependencies = [
  "anyhow",
  "hashtree-cli",
@@ -3687,21 +3714,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mdns-sd"
-version = "0.19.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "18148fee27e99e76dbf6e137f27727113d31f766e578d1b93a93c3615fca7081"
-dependencies = [
- "fastrand",
- "flume",
- "if-addrs",
- "log",
- "mio 1.2.4",
- "socket-pktinfo",
- "socket2 0.6.5",
-]
-
-[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4107,9 +4119,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub-fips"
-version = "0.5.22"
+version = "0.5.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "12896c47ebdaab06c814d8727a8fe01c3c921d51ab4b2c17494e776856b17744"
+checksum = "835fe4d5cd9678a2daab5ac59a372b55bd403e67e90a16211bab343c24e4df7c"
 dependencies = [
  "async-trait",
  "nostr",
@@ -4319,10 +4331,11 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-core"
-version = "0.4.95"
+version = "0.4.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e30d94b3c6307f96f26283b1f401dd7b73742f19f4ded9a05f0be7345e72e1a"
+checksum = "87116dbf72331b27d4478b1a9b4c5a2e6718aadeb2faade810cbdbf2c09aac9e"
 dependencies = [
+ "async-wsocket",
  "base64 0.22.1",
  "bluer",
  "bytes",
@@ -4332,13 +4345,14 @@ dependencies = [
  "hkdf 0.12.4",
  "if-addrs",
  "libc",
- "mdns-sd",
  "netlink-packet-core",
  "netlink-packet-netfilter",
  "netlink-sys",
  "nostr",
  "nostr-sdk",
  "nvpn-fips-identity",
+ "nvpn-mdns-sd",
+ "nvpn-webrtc",
  "portable-atomic",
  "procfs",
  "rand 0.10.3",
@@ -4349,7 +4363,7 @@ dependencies = [
  "secp256k1 0.30.0",
  "serde",
  "serde_json",
- "serde_yaml",
+ "serde_norway",
  "sha2 0.10.9",
  "simple-dns",
  "socket2 0.6.5",
@@ -4360,7 +4374,6 @@ dependencies = [
  "tracing",
  "tun",
  "uuid",
- "webrtc",
  "windows-sys 0.61.2",
  "wintun",
  "zeroize",
@@ -4368,9 +4381,9 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-endpoint"
-version = "0.4.95"
+version = "0.4.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6e0a613ad61c4d2ef1cb81b320c38eb7bf16da8aae1209778de6b58fe1da9d7c"
+checksum = "4443ed00a7d04e46ec8abb805ebef0566e06198b0ebfc2bf519ce61120739c38"
 dependencies = [
  "nvpn-fips-core",
 ]
@@ -4392,18 +4405,132 @@ dependencies = [
 
 [[package]]
 name = "nvpn-fips-tcp"
-version = "0.2.5"
+version = "0.2.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "72bd33cbaff087f666ffdc42373ea8730912895b9e993a0ed9c1d0219005d6a2"
+checksum = "299df22559c4af63e7d276fcb90cf000f2f1cd5546c213f17d8860154c1383d7"
 
 [[package]]
 name = "nvpn-fips-tcp-endpoint"
-version = "0.2.30"
+version = "0.2.41"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bbdf1ed33ead31f2b8c2ca4b6706cd1e7d00e3d47bf4a5844f6bc49cffce9d7e"
+checksum = "a91989d7f4d8209069ada185e31b307cae15a6d8e6ebbe33613199af9273a885"
 dependencies = [
  "nvpn-fips-core",
  "nvpn-fips-tcp",
+ "secp256k1 0.30.0",
+]
+
+[[package]]
+name = "nvpn-mdns-sd"
+version = "0.19.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ef7dee74577b7e7dd764d4066ade92d3f348060f5c4a20802e74fca5cff866f2"
+dependencies = [
+ "fastrand",
+ "flume",
+ "if-addrs",
+ "log",
+ "mio 1.2.4",
+ "socket-pktinfo",
+ "socket2 0.6.5",
+]
+
+[[package]]
+name = "nvpn-turn"
+version = "0.17.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "89ddba47ff1843e5264d38739a2bc5d703f6bc05a5d476d62e667ad894f9e131"
+dependencies = [
+ "async-trait",
+ "base64 0.22.1",
+ "futures",
+ "log",
+ "md-5",
+ "nvpn-webrtc-util",
+ "portable-atomic",
+ "rand 0.9.5",
+ "ring",
+ "stun",
+ "thiserror 1.0.69",
+ "tokio",
+ "tokio-util",
+]
+
+[[package]]
+name = "nvpn-webrtc"
+version = "0.17.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ab32540b92169266b7d15aee3624dd5e46656c3afb7b8c9e7d568f5204fc156"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "bytes",
+ "dtls",
+ "hex",
+ "interceptor",
+ "lazy_static",
+ "log",
+ "nvpn-turn",
+ "nvpn-webrtc-ice",
+ "nvpn-webrtc-util",
+ "portable-atomic",
+ "rand 0.9.5",
+ "rcgen",
+ "regex",
+ "ring",
+ "rtcp",
+ "rtp",
+ "sdp",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "smol_str",
+ "stun",
+ "thiserror 1.0.69",
+ "tokio",
+ "unicase",
+ "url",
+ "waitgroup",
+ "webrtc-data",
+ "webrtc-mdns",
+ "webrtc-media",
+ "webrtc-sctp",
+ "webrtc-srtp",
+]
+
+[[package]]
+name = "nvpn-webrtc-ice"
+version = "0.17.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "95267a504a7516e22699364101a64f48cf733a41ca4f6a087bd7d39194073ebd"
+dependencies = [
+ "arc-swap",
+ "async-trait",
+ "crc",
+ "log",
+ "nvpn-turn",
+ "nvpn-webrtc-util",
+ "portable-atomic",
+ "rand 0.9.5",
+ "serde",
+ "serde_json",
+ "stun",
+ "thiserror 1.0.69",
+ "tokio",
+ "url",
+ "uuid",
+ "waitgroup",
+ "webrtc-mdns",
+]
+
+[[package]]
+name = "nvpn-webrtc-util"
+version = "0.17.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c92efe02fd58048335d7093131d09bed34870af36ba7011ba93b3e01878a349c"
+dependencies = [
+ "tokio",
+ "webrtc-util",
 ]
 
 [[package]]
@@ -5292,12 +5419,14 @@ dependencies = [
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "tower",
  "tower-http",
  "tower-service",
  "url",
  "wasm-bindgen",
  "wasm-bindgen-futures",
+ "wasm-streams",
  "web-sys",
  "webpki-roots 1.0.9",
 ]
@@ -5713,6 +5842,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_norway"
+version = "0.9.42"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e408f29489b5fd500fab51ff1484fc859bb655f32c671f307dcd733b72e8168c"
+dependencies = [
+ "indexmap",
+ "itoa",
+ "ryu",
+ "serde",
+ "unsafe-libyaml-norway",
+]
+
+[[package]]
 name = "serde_path_to_error"
 version = "0.1.20"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5751,19 +5893,6 @@ dependencies = [
  "itoa",
  "ryu",
  "serde",
-]
-
-[[package]]
-name = "serde_yaml"
-version = "0.9.34+deprecated"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a8b1a1a2ebf674015cc02edccce75287f1a0130d394307b36743c2f5d504b47"
-dependencies = [
- "indexmap",
- "itoa",
- "ryu",
- "serde",
- "unsafe-libyaml",
 ]
 
 [[package]]
@@ -6763,27 +6892,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "turn"
-version = "0.17.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d99249a493335eb44c4d7943a8751b22561a82c9903d8eb2d29780b3927880a7"
-dependencies = [
- "async-trait",
- "base64 0.22.1",
- "futures",
- "log",
- "md-5",
- "portable-atomic",
- "rand 0.9.5",
- "ring",
- "stun",
- "thiserror 1.0.69",
- "tokio",
- "tokio-util",
- "webrtc-util",
-]
-
-[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6962,10 +7070,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "unsafe-libyaml"
-version = "0.2.11"
+name = "unsafe-libyaml-norway"
+version = "0.2.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "673aac59facbab8a9007c7f6108d11f63b603f7cabff99fabf650fea5c32b861"
+checksum = "b39abd59bf32521c7f2301b52d05a6a2c975b6003521cbd0c6dc1582f0a22104"
 
 [[package]]
 name = "untrusted"
@@ -7143,6 +7251,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasm-streams"
+version = "0.4.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15053d8d85c7eccdbefef60f06769760a563c7f0a9d6902a13d35c7800b0ad65"
+dependencies = [
+ "futures-util",
+ "js-sys",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+]
+
+[[package]]
 name = "web-sys"
 version = "0.3.106"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7181,48 +7302,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "webrtc"
-version = "0.17.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "baaacdf9d96224d7b6e2872ba065578f38775f7634367e3ac2cc87c7271da433"
-dependencies = [
- "arc-swap",
- "async-trait",
- "bytes",
- "dtls",
- "hex",
- "interceptor",
- "lazy_static",
- "log",
- "portable-atomic",
- "rand 0.9.5",
- "rcgen",
- "regex",
- "ring",
- "rtcp",
- "rtp",
- "sdp",
- "serde",
- "serde_json",
- "sha2 0.10.9",
- "smol_str",
- "stun",
- "thiserror 1.0.69",
- "tokio",
- "turn",
- "unicase",
- "url",
- "waitgroup",
- "webrtc-data",
- "webrtc-ice",
- "webrtc-mdns",
- "webrtc-media",
- "webrtc-sctp",
- "webrtc-srtp",
- "webrtc-util",
-]
-
-[[package]]
 name = "webrtc-data"
 version = "0.17.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7234,31 +7313,6 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "webrtc-sctp",
- "webrtc-util",
-]
-
-[[package]]
-name = "webrtc-ice"
-version = "0.17.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "5b7fd30f52e6fda8664779b84b7904b2553b76fee24d9ca665e774ae32b13f53"
-dependencies = [
- "arc-swap",
- "async-trait",
- "crc",
- "log",
- "portable-atomic",
- "rand 0.9.5",
- "serde",
- "serde_json",
- "stun",
- "thiserror 1.0.69",
- "tokio",
- "turn",
- "url",
- "uuid",
- "waitgroup",
- "webrtc-mdns",
  "webrtc-util",
 ]
 
