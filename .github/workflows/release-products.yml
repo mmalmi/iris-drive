@@ -23,6 +23,12 @@ on:
         type: boolean
         default: false
 
+      fixture_readiness_only:
+        description: Run approval observer and delayed peer fixture regressions for native-check
+        required: false
+        type: boolean
+        default: false
+
       web_commit:
         description: Exact published web source for web-check
         required: false
@@ -58,6 +64,7 @@ jobs:
     with:
       commit: ${{ inputs.commit }}
       daemon_ack_only: ${{ inputs.daemon_ack_only || false }}
+      fixture_readiness_only: ${{ inputs.fixture_readiness_only || false }}
   web-check:
     if: inputs.platform == 'web-check'
     uses: ./.github/workflows/release-web-check.yml

@@ -11,6 +11,11 @@ on:
         required: false
         default: false
 
+      fixture_readiness_only:
+        type: boolean
+        required: false
+        default: false
+
 permissions:
   contents: read
 
@@ -46,21 +51,34 @@ jobs:
             drive-state-check-${{ runner.arch }}-${{ hashFiles('source/Cargo.lock') }}-
             drive-products-linux-${{ runner.arch }}-
       - name: Run approval control batch ordering regression
-        if: inputs.daemon_ack_only != true
+        if: inputs.daemon_ack_only != true && inputs.fixture_readiness_only != true
         working-directory: source
         run: cargo test --locked -p iris-drive-core --lib direct_root_batch_keeps_approval_exchange_ahead_of_root_work -- --nocapture
       - name: Run direct-root coalescing regressions
-        if: inputs.daemon_ack_only != true
+        if: inputs.daemon_ack_only != true && inputs.fixture_readiness_only != true
         working-directory: source
         run: cargo test --locked -p iris-drive-core --lib direct_root_app_message_coalescing -- --nocapture
       - name: Run shared-state regressions
-        if: inputs.daemon_ack_only != true
+        if: inputs.daemon_ack_only != true && inputs.fixture_readiness_only != true
         working-directory: source
         run: cargo test --locked -p iris-drive-app-core --lib ffi::concurrency_tests -- --nocapture
       - name: Run unchanged stalled-relay approval journey
-        if: inputs.daemon_ack_only
+        if: inputs.daemon_ack_only && inputs.fixture_readiness_only != true
         working-directory: source
         run: cargo test --locked -p idrive --test daemon_sync_matrix app_key_link_tests::stalled_roster_relay_keeps_daemon_fips_status_and_direct_ack_responsive -- --exact --nocapture
+      - name: Run deterministic approval observer and real delayed-peer fixture regressions
+        if: inputs.fixture_readiness_only
+        working-directory: source
+        run: |
+          python3 - <<'PYTHON'
+          import subprocess
+          checks = [
+              ['python3', 'scripts/test_release_workflows.py', 'ReleaseWorkflowTests.test_primary_gui_approval_observes_final_marker_after_process_exit'],
+              ['cargo', 'test', '--locked', '-p', 'idrive', '--bin', 'idrive', 'daemon::tests::delayed_blob::blossom_miss_does_not_cancel_a_delayed_valid_peer_blob', '--', '--exact', '--nocapture'],
+          ]
+          results = [subprocess.run(check).returncode for check in checks]
+          raise SystemExit(0 if all(result == 0 for result in results) else 1)
+          PYTHON
       - uses: actions/cache/save@v4
         if: always() && steps.cache.outputs.cache-hit != 'true'
         with:

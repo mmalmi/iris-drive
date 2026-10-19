@@ -88,6 +88,10 @@ async fn delayed_peer_download() {
             1,
             None,
         ));
+    assert!(
+        config.profile.as_ref().unwrap().current_app_keys_projection().unwrap().contains(&source_key.pubkey_hex()),
+        "delayed peer fixture must authorize its source in the signed profile roster"
+    );
     let source_store = Arc::new(DelayedStore(MemoryStore::new()));
     let source_tree = HashTree::new(HashTreeConfig::new(source_store.clone()));
     let bytes = b"a valid peer response that arrives after the old three-second cutoff";

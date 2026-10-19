@@ -276,6 +276,47 @@ class ReleaseWorkflowTests(unittest.TestCase):
                         expected.append("barrier")
                 self.assertEqual(events.read_text().splitlines(), expected)
 
+    def test_primary_gui_approval_observes_final_marker_after_process_exit(self) -> None:
+        helper = ROOT / "scripts/lib/cross-vm-device-link.sh"
+        for restore_status in (0, 24):
+            with self.subTest(restore_status=restore_status):
+                script = self.scripts / "approval-exit-race.sh"
+                self.write_executable(script,
+                    "source " + shlex.quote(str(helper)) + "\n"
+                    + "owner_label=ubuntu\nwindows_label=windows\nLINK_TIMEOUT_SECS=15\n"
+                    + "host_value() { echo expected; }\n"
+                    + "monotonic_milliseconds() { echo 1000; }\n"
+                    + textwrap.dedent('''\
+                        first_marker_probe=1
+                        grep() {
+                          if [[ "$*" == *IRIS_DRIVE_DESKTOP_GUI_APPROVAL_STARTED* && "$first_marker_probe" == 1 ]]; then
+                            first_marker_probe=0
+                            return 1
+                          fi
+                          command grep "$@"
+                        }
+                        kill() {
+                          if [[ "$1" == -0 ]]; then
+                            # Complete the real child after the first negative marker read.
+                            wait "$2" 2>/dev/null || true
+                            return 1
+                          fi
+                          command kill "$@"
+                        }
+                        run_desktop_gui_link_action() {
+                          echo IRIS_DRIVE_DESKTOP_GUI_APPROVAL_STARTED=1
+                          echo IRIS_DRIVE_DESKTOP_GUI_APPROVAL_SUBMITTED=1
+                        }
+                        start_daemon() { return "$FIXTURE_RESTORE_STATUS"; }
+                        status=0
+                        run_timed_desktop_gui_primary_approval fixture-request || status=$?
+                        exit "$status"
+                        '''))
+                result = subprocess.run(["bash", str(script)], capture_output=True, text=True,
+                    timeout=WORKFLOW_TIMEOUT_SECONDS,
+                    env=self.environment(FIXTURE_RESTORE_STATUS=str(restore_status)))
+                self.assertEqual(result.returncode, restore_status, result.stdout + result.stderr)
+
     def test_macos_manual_link_forwards_only_explicit_build_environment(self) -> None:
         source = (ROOT / "scripts/macos-vm-android-manual-link-e2e.sh").read_text()
         remote = source[source.index("remote() {"):source.index("\nwrite_blossom_summary() {")]
