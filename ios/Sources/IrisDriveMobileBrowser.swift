@@ -280,23 +280,6 @@ private struct IrisDebugWebViewProbeResult {
     var errorCode: Int
 }
 
-private struct IrisDebugHTTPProbeResult {
-    var ok: Bool
-    var statusCode: Int
-    var error: String
-    var errorDomain: String
-    var errorCode: Int
-}
-
-private struct IrisDebugTextHTTPProbeResult {
-    var ok: Bool
-    var statusCode: Int
-    var bodyText: String
-    var error: String
-    var errorDomain: String
-    var errorCode: Int
-}
-
 struct IrisDebugNetworkPathResult {
     var status: String
     var unsatisfiedReason: String
@@ -930,98 +913,6 @@ extension IrisDriveMobileModel {
         }
     }
 
-    private func debugProbeHTTP(_ url: URL, useIrisProxy: Bool) async -> IrisDebugHTTPProbeResult {
-        var request = URLRequest(url: url)
-        request.httpMethod = "HEAD"
-        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        request.timeoutInterval = 2
-        let session: URLSession
-        if useIrisProxy {
-            let configuration = URLSessionConfiguration.ephemeral
-            configuration.proxyConfigurations = irisWebProxyConfigurations()
-            session = URLSession(configuration: configuration)
-        } else {
-            session = URLSession.shared
-        }
-        do {
-            let (_, response) = try await session.data(for: request)
-            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-            return IrisDebugHTTPProbeResult(
-                ok: statusCode == 0 || (100..<600).contains(statusCode),
-                statusCode: statusCode,
-                error: "",
-                errorDomain: "",
-                errorCode: 0
-            )
-        } catch {
-            let nsError = error as NSError
-            return IrisDebugHTTPProbeResult(
-                ok: false,
-                statusCode: 0,
-                error: nsError.localizedDescription,
-                errorDomain: nsError.domain,
-                errorCode: nsError.code
-            )
-        }
-    }
 
-    private func debugProbeTextHTTP(_ value: String) async -> IrisDebugTextHTTPProbeResult {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed), !trimmed.isEmpty else {
-            return IrisDebugTextHTTPProbeResult(
-                ok: false,
-                statusCode: 0,
-                bodyText: "",
-                error: "URL missing",
-                errorDomain: "",
-                errorCode: 0
-            )
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        request.timeoutInterval = 3
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-            return IrisDebugTextHTTPProbeResult(
-                ok: statusCode == 0 || (100..<600).contains(statusCode),
-                statusCode: statusCode,
-                bodyText: String(data: data, encoding: .utf8) ?? "",
-                error: "",
-                errorDomain: "",
-                errorCode: 0
-            )
-        } catch {
-            let nsError = error as NSError
-            return IrisDebugTextHTTPProbeResult(
-                ok: false,
-                statusCode: 0,
-                bodyText: "",
-                error: nsError.localizedDescription,
-                errorDomain: nsError.domain,
-                errorCode: nsError.code
-            )
-        }
-    }
-
-    private func writeIrisAppsProbeResult(_ value: [String: Any]) {
-        guard JSONSerialization.isValidJSONObject(value),
-              let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys])
-        else { return }
-        let destinations = [
-            IrisDriveSharedContainer.baseDirectory
-                .appendingPathComponent("debug-iris-apps-probe.json", isDirectory: false),
-            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
-                .appendingPathComponent("debug-iris-apps-probe.json", isDirectory: false),
-        ].compactMap { $0 }
-        for url in destinations {
-            try? FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try? data.write(to: url, options: [.atomic])
-        }
-    }
 }
 #endif
