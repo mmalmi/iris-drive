@@ -6,6 +6,10 @@ on:
       commit:
         type: string
         required: true
+      daemon_ack_only:
+        type: boolean
+        required: false
+        default: false
 
 permissions:
   contents: read
@@ -42,14 +46,21 @@ jobs:
             drive-state-check-${{ runner.arch }}-${{ hashFiles('source/Cargo.lock') }}-
             drive-products-linux-${{ runner.arch }}-
       - name: Run approval control batch ordering regression
+        if: inputs.daemon_ack_only != true
         working-directory: source
         run: cargo test --locked -p iris-drive-core --lib direct_root_batch_keeps_approval_exchange_ahead_of_root_work -- --nocapture
       - name: Run direct-root coalescing regressions
+        if: inputs.daemon_ack_only != true
         working-directory: source
         run: cargo test --locked -p iris-drive-core --lib direct_root_app_message_coalescing -- --nocapture
       - name: Run shared-state regressions
+        if: inputs.daemon_ack_only != true
         working-directory: source
         run: cargo test --locked -p iris-drive-app-core --lib ffi::concurrency_tests -- --nocapture
+      - name: Run unchanged stalled-relay approval journey
+        if: inputs.daemon_ack_only
+        working-directory: source
+        run: cargo test --locked -p idrive --test daemon_sync_matrix app_key_link_tests::stalled_roster_relay_keeps_daemon_fips_status_and_direct_ack_responsive -- --exact --nocapture
       - uses: actions/cache/save@v4
         if: always() && steps.cache.outputs.cache-hit != 'true'
         with:

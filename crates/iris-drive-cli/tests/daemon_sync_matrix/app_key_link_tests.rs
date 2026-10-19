@@ -130,7 +130,9 @@ async fn stalled_roster_relay_keeps_daemon_fips_status_and_direct_ack_responsive
         }
         assert!(
             Instant::now() < deadline,
-            "daemon did not retry durable relay publication after its direct ACK"
+            "daemon did not retry durable relay publication after its direct ACK\nowner:\n{}\nlinked:\n{}",
+            owner_daemon.log(),
+            linked_daemon.log(),
         );
         tokio::time::sleep(POLL_INTERVAL).await;
     }
