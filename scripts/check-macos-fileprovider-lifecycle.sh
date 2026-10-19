@@ -69,7 +69,7 @@ require_not_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "Iris Drive mo
 require_contains "$ROOT/scripts/macos-smoke.sh" "scripts/macos-smoke.sh" "scripts/macos-finder-smoke.sh"
 require_contains "$FINDER_SMOKE" "scripts/macos-finder-smoke.sh" "wait_for_finder_target_path"
 require_contains "$ROOT/scripts/macos-smoke.sh" "scripts/macos-smoke.sh" "Finder did not show the revealed Iris Drive folder"
-require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" 'let irisDriveFileProviderDomainDisplayName = ""'
+require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" 'let irisDriveFileProviderDomainDisplayName = irisDriveFileProviderProfile.domainDisplayName'
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "irisDriveUserFacingDriveName"
 require_not_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "selectFile(nil, inFileViewerRootedAtPath:"
 require_contains "$MACOS_INFO" "macos/Info.plist" "NSLocalNetworkUsageDescription"
