@@ -17,6 +17,10 @@ on:
         required: true
         default: all
 
+      web_commit:
+        description: Exact published web source for web-check
+        required: false
+
       debug_run:
         description: Simulator Debug artifact run for ios-check
         required: false
@@ -36,11 +40,30 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  android-tests:
+    if: inputs.platform == 'android-tests'
+    uses: ./.github/workflows/release-android-tests.yml
+    with:
+      commit: ${{ inputs.commit }}
+      product_run: ${{ inputs.release_run }}
   native-check:
     if: inputs.platform == 'native-check'
     uses: ./.github/workflows/release-native-check.yml
     with:
       commit: ${{ inputs.commit }}
+  web-check:
+    if: inputs.platform == 'web-check'
+    uses: ./.github/workflows/release-web-check.yml
+    with:
+      commit: ${{ inputs.commit }}
+      web_commit: ${{ inputs.web_commit }}
+      product_run: ${{ inputs.release_run }}
+  linux-check:
+    if: inputs.platform == 'linux-check'
+    uses: ./.github/workflows/release-linux-check.yml
+    with:
+      commit: ${{ inputs.commit }}
+      product_run: ${{ inputs.release_run }}
   ios-check:
     if: inputs.platform == 'ios-check'
     uses: ./.github/workflows/release-ios-check.yml
@@ -50,14 +73,14 @@ jobs:
       release_run: ${{ inputs.release_run }}
       mac_run: ${{ inputs.mac_run }}
   products:
-    if: inputs.platform != 'ios-check' && inputs.platform != 'native-check'
+    if: inputs.platform != 'ios-check' && inputs.platform != 'native-check' && inputs.platform != 'linux-check' && inputs.platform != 'web-check' && inputs.platform != 'android-tests'
     name: ${{ matrix.platform }}
-    runs-on: ${{ (startsWith(matrix.platform, 'macos') || startsWith(matrix.platform, 'ios')) && 'macos-15' || 'ubuntu-24.04' }}
+    runs-on: ${{ matrix.platform == 'windows' && 'windows-2025' || (startsWith(matrix.platform, 'macos') || startsWith(matrix.platform, 'ios')) && 'macos-15' || 'ubuntu-24.04' }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
-        platform: ${{ fromJSON(inputs.platform && inputs.platform != 'all' && format('["{0}"]', inputs.platform) || '["macos-release","macos-debug","ios-release","ios-sim-debug","ios-sim-release","android","linux"]') }}
+        platform: ${{ fromJSON(inputs.platform && inputs.platform != 'all' && format('["{0}"]', inputs.platform) || '["macos-release","macos-debug","ios-release","ios-sim-debug","ios-sim-release","android","linux","windows"]') }}
     env:
       SOURCE_COMMIT: ${{ inputs.commit || github.event.pull_request.head.sha || github.sha }}
       SOURCE_ROOT: ${{ github.workspace }}/source
@@ -78,6 +101,14 @@ jobs:
         with:
           node-version: '24'
       - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+      - uses: actions/setup-dotnet@v4
+        if: runner.os == 'Windows'
+        with:
+          dotnet-version: '8.0.x'
       - name: Install Apple build tools
         if: runner.os == 'macOS'
         run: brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
@@ -131,7 +162,7 @@ jobs:
           if-no-files-found: error
           retention-days: 7
       - uses: actions/cache/save@v4
-        if: success() && steps.cache.outputs.cache-hit != 'true'
+        if: ${{ !cancelled() && steps.cache.outputs.cache-hit != 'true' }}
         with:
           path: |
             ~/.cargo/registry

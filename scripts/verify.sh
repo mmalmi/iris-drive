@@ -35,6 +35,7 @@ run_fast() {
   parallel_group_begin verify-fast
   parallel_group_start native-lab-tests python3 scripts/test_native_lab.py
   parallel_group_start release-workflow-tests python3 scripts/test_release_workflows.py
+  parallel_group_start ios-locking-tests python3 scripts/test_ios_lmdb_locking.py
   parallel_group_start fmt cargo fmt --all --check
   parallel_group_start structure just structure
   parallel_group_start local-release-tests node --test \

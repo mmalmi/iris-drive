@@ -3,14 +3,14 @@ import { spawnSync, execFileSync } from 'node:child_process'
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { homedir } from 'node:os'
-import { pathToFileURL } from 'node:url'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 import { archiveDigest } from './hosted-product-receipt.mjs'
 
 const root = resolve(process.env.SOURCE_ROOT)
 const platform = process.env.PRODUCT_PLATFORM
 const commit = process.env.SOURCE_COMMIT
 const allowed = ['macos-release', 'macos-debug', 'ios-release', 'ios-device-debug', 'ios-sim-debug',
-  'ios-sim-release', 'android', 'linux']
+  'ios-sim-release', 'android', 'linux', 'windows']
 if (!allowed.includes(platform) || !/^[0-9a-f]{40}$/.test(commit)) throw new Error('Invalid build input')
 const git = (...args) => execFileSync('git', args, { cwd: root, encoding: 'utf8' }).trim()
 if (git('rev-parse', 'HEAD') !== commit || git('status', '--porcelain', '--untracked-files=all')) {
@@ -88,7 +88,7 @@ if (platform.startsWith('macos') || platform.startsWith('ios')) {
         run('strip', ['-S', join(app, executable)])
       }
     }
-    run('python3', [join(root, 'scripts/check-ios-lmdb-locking.py'),
+    run('python3', [fileURLToPath(new URL('./check-ios-lmdb-locking.py', import.meta.url)),
       join(archive, 'Products/Applications/Iris Drive.app')])
     helper.assertNoPrivateBuildMetadata(files(archive), env, { repoRoot: root })
     rmSync(derived, { recursive: true })
@@ -111,7 +111,7 @@ if (platform.startsWith('macos') || platform.startsWith('ios')) {
       run('bash', ['-c',
         'source "$1"; iris_drive_ios_assert_simulator_entitlements "$2" "$3"',
         'bash', join(root, 'scripts/ios-simulator-signing.sh'), derived, configuration])
-      run('python3', [join(root, 'scripts/check-ios-lmdb-locking.py'),
+      run('python3', [fileURLToPath(new URL('./check-ios-lmdb-locking.py', import.meta.url)),
         join(products, `${configuration}-iphonesimulator`, 'Iris Drive.app')])
       cpSync(products, join(payload, 'Products'), { recursive: true })
       // Simulator app groups need ad-hoc entitlements. Retain only the small
@@ -124,6 +124,25 @@ if (platform.startsWith('macos') || platform.startsWith('ios')) {
       }
     }
   }
+} else if (platform === 'windows') {
+  // The hosted MSVC setup exports Platform=x64; MSBuild then changes its
+  // publish directory. Keep the ordinary .NET project default used locally.
+  for (const name of Object.keys(env)) {
+    if (name.toLowerCase() === 'platform') delete env[name]
+  }
+  const publish = execFileSync('dotnet', ['msbuild', join(root, 'windows/IrisDrive.Windows.csproj'),
+    '-nologo', '-getProperty:PublishDir', '-property:Configuration=Release',
+    '-property:RuntimeIdentifier=win-x64'], { cwd: root, env, encoding: 'utf8' }).trim()
+  const expectedPublish = join(root, 'windows/bin/Release/net8.0-windows/win-x64/publish')
+  if (resolve(root, 'windows', publish).toLowerCase() !== expectedPublish.toLowerCase()) {
+    throw new Error('The Windows publish directory differs from the canonical package location')
+  }
+  run('node', [join(root, 'scripts/local-release.mjs'), '--build', '--only', 'windows', '--tag', `v${version}`])
+  for (const name of release.plannedReleaseAssetNames(`v${version}`, ['windows'])) {
+    cpSync(join(root, 'dist', name), join(payload, name))
+  }
+  cpSync(join(root, 'windows/bin/Release/net8.0-windows/win-x64/publish'),
+    join(payload, 'publish'), { recursive: true })
 } else if (platform === 'linux') {
   delete env.CARGO_TARGET_DIR
   run('node', [join(root, 'scripts/local-release.mjs'), '--build', '--only', 'linux', '--tag', `v${version}`])
@@ -142,7 +161,10 @@ if (platform.startsWith('macos') || platform.startsWith('ios')) {
 }
 run('git', ['diff', '--exit-code', '--', 'Cargo.lock', 'linux/Cargo.lock'])
 const archive = join(output, `${platform}-products.tar.gz`)
-run('tar', [...helper.normalizedTarOwnerArgs(), '-czf', archive, '-C', payload, '.'])
+// Windows ships BSD tar; select it explicitly instead of a Git/MSYS tar on PATH.
+const tar = platform === 'windows' ? join(env.SystemRoot, 'System32/tar.exe') : 'tar'
+const tarOwnerArgs = helper.normalizedTarOwnerArgs(platform === 'windows' ? 'darwin' : process.platform)
+run(tar, [...tarOwnerArgs, '-czf', archive, '-C', payload, '.'])
 const receipt = { schema: 1, commit, tree, platform, version,
   sourceCleanBeforeBuild: true, signed: false, testsExecuted: false,
   archive: `${platform}-products.tar.gz`, ...await archiveDigest(archive) }

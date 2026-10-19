@@ -155,11 +155,16 @@ async fn authenticated_same_host_blob_provider_never_enters_drive_data_acl() {
 async fn pending_link_peer_can_bootstrap_but_cannot_access_drive_roots() {
     let admin_dir = tempfile::tempdir().unwrap();
     let mut admin = crate::Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
-    let admin_npub = admin.app_key.pubkey_bech32();
-    let pending = (0..256)
-        .map(|_| AppKey::generate("pending-link-peer"))
-        .find(|candidate| admin_npub < candidate.pubkey_bech32())
-        .expect("generating pending identity above admin tie-break ordering");
+    let pending_dir = tempfile::tempdir().unwrap();
+    let mut pending_profile =
+        crate::Profile::create(pending_dir.path(), Some("pending".into())).unwrap();
+    // Order two complete fixtures instead of searching randomly above an
+    // arbitrary administrator key, which can be near the end of the keyspace.
+    if admin.app_key.pubkey_bech32() > pending_profile.app_key.pubkey_bech32() {
+        std::mem::swap(&mut admin, &mut pending_profile);
+    }
+    let pending = pending_profile.app_key;
+    assert!(admin.app_key.pubkey_bech32() < pending.pubkey_bech32());
     admin
         .state
         .inbound_app_key_link_requests

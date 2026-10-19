@@ -1,0 +1,84 @@
+name: Verify prepared native and published web journeys
+on:
+  workflow_call:
+    inputs:
+      commit:
+        required: true
+        type: string
+      web_commit:
+        required: true
+        type: string
+      product_run:
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  web:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      SOURCE_ROOT: ${{ github.workspace }}/source
+      SOURCE_COMMIT: ${{ inputs.commit }}
+      WEB_COMMIT: ${{ inputs.web_commit }}
+      PRODUCT_INPUTS: ${{ github.workspace }}/products
+      CHECK_OUTPUT: ${{ github.workspace }}/web-check
+      CARGO_BUILD_JOBS: '2'
+      CARGO_TARGET_DIR: ${{ github.workspace }}/htree-target
+      HTREE_BIN: ${{ github.workspace }}/htree-bin/bin/htree
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tooling
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.23.0'
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install native runtime requirements
+        run: sudo apt-get update && sudo apt-get install --yes libfuse3-3 libdbus-1-dev libssl-dev pkg-config protobuf-compiler
+      - uses: actions/cache/restore@v4
+        id: htree-cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            htree-target
+          key: drive-web-htree-0.2.142-linux-x64-v1
+      - name: Install the exact public web-test storage server
+        run: cargo install --locked --version '=0.2.142' --features fips-webrtc,git-remote-wrapper --bin htree --bin git-remote-htree --root "$GITHUB_WORKSPACE/htree-bin" hashtree-cli
+      - uses: actions/cache/save@v4
+        if: steps.htree-cache.outputs.cache-hit != 'true'
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            htree-target
+          key: ${{ steps.htree-cache.outputs.cache-primary-key }}
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.product_run }}
+          name: drive-linux-${{ inputs.commit }}
+          path: products
+      - name: Verify and run four canonical browser/native journeys
+        run: node tooling/scripts/check-hosted-web.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-check-${{ inputs.commit }}
+          path: |
+            web-check/receipt.json
+            web-check/journeys.log
+            web-check/web/test-results/**/*.png
+          if-no-files-found: ignore
+          retention-days: 7
