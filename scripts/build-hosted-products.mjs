@@ -3,7 +3,7 @@ import { spawnSync, execFileSync } from 'node:child_process'
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { join, relative, resolve } from 'node:path'
 import { homedir } from 'node:os'
-import { pathToFileURL } from 'node:url'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 import { archiveDigest } from './hosted-product-receipt.mjs'
 
 const root = resolve(process.env.SOURCE_ROOT)
@@ -88,6 +88,8 @@ if (platform.startsWith('macos') || platform.startsWith('ios')) {
         run('strip', ['-S', join(app, executable)])
       }
     }
+    run('python3', [fileURLToPath(new URL('./check-ios-lmdb-locking.py', import.meta.url)),
+      join(archive, 'Products/Applications/Iris Drive.app')])
     helper.assertNoPrivateBuildMetadata(files(archive), env, { repoRoot: root })
     rmSync(derived, { recursive: true })
   } else {
@@ -109,6 +111,8 @@ if (platform.startsWith('macos') || platform.startsWith('ios')) {
       run('bash', ['-c',
         'source "$1"; iris_drive_ios_assert_simulator_entitlements "$2" "$3"',
         'bash', join(root, 'scripts/ios-simulator-signing.sh'), derived, configuration])
+      run('python3', [fileURLToPath(new URL('./check-ios-lmdb-locking.py', import.meta.url)),
+        join(products, `${configuration}-iphonesimulator`, 'Iris Drive.app')])
       cpSync(products, join(payload, 'Products'), { recursive: true })
       // Simulator app groups need ad-hoc entitlements. Retain only the small
       // entitlement records used by the existing native smoke assertions.

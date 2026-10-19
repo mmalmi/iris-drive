@@ -734,6 +734,7 @@ wait_link_before() {
 run_android_provider_test() {
   local method="$1" name="$2" content="$3" instrumentation_pid=""
   local log="$TMP/android-$method.log"
+  : > "$log"
   if [[ "$method" == readPostLinkFileThroughDocumentsProvider ]]; then
     # `am instrument` force-stops the target package. Start the provider poll
     # first, then relaunch the shipped app so its real relay/FIPS runtime stays

@@ -455,7 +455,7 @@ function profileBundleId(profile) {
   return profile.relationships?.bundleId?.data?.id ?? ''
 }
 
-async function findProfile(bundleId, name = '') {
+async function findProfile(bundleId, name, certificateId, devices) {
   let profiles = (await listProfiles())
     .filter((profile) => profileBundleId(profile) === bundleId.id && usableProfile(profile))
   if (name) {
@@ -464,17 +464,26 @@ async function findProfile(bundleId, name = '') {
       profiles = named
     }
   }
-  return profiles
-    .sort((left, right) => (
-      parseTime(
-        right.attributes?.createdDate ||
-          right.attributes?.expirationDate,
-      ).getTime() -
-      parseTime(
-        left.attributes?.createdDate ||
-          left.attributes?.expirationDate,
-      ).getTime()
-    ))[0] ?? null
+  profiles.sort((left, right) => (
+    parseTime(right.attributes?.createdDate || right.attributes?.expirationDate).getTime() -
+    parseTime(left.attributes?.createdDate || left.attributes?.expirationDate).getTime()
+  ))
+  for (const profile of profiles) {
+    const certificates = await getAll(`profiles/${profile.id}/certificates`)
+    if (!certificates.some((certificate) => certificate.id === certificateId)) {
+      continue
+    }
+    if (devices.length > 0) {
+      const registered = new Set(
+        (await getAll(`profiles/${profile.id}/devices`)).map((device) => device.id),
+      )
+      if (!devices.every((device) => registered.has(device.id))) {
+        continue
+      }
+    }
+    return profile
+  }
+  return null
 }
 
 async function fetchProfile(profileId) {
@@ -574,7 +583,7 @@ async function ensureProfiles() {
   for (const target of targets) {
     const bundleId = await exactBundleId(target.identifier)
     const profileName = profileNameSuffix ? `${target.profileName} ${profileNameSuffix}` : target.profileName
-    let profile = recreateProfiles ? null : await findProfile(bundleId, profileName)
+    let profile = recreateProfiles ? null : await findProfile(bundleId, profileName, certificateId, devices)
     if (!profile) {
       profile = await createProfile(target, bundleId, certificateId, devices)
     }
