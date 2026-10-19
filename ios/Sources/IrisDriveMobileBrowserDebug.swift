@@ -8,6 +8,12 @@ final class IrisDebugProbeCompletion {
     private var timeoutTask: Task<Void, Never>?
     private var onTimeout: (() -> Void)?
     private(set) var completed = false
+    private(set) var fields: [String: Any] = [:]
+
+    func record(_ fields: [String: Any]) {
+        guard !completed else { return }
+        self.fields.merge(fields) { _, current in current }
+    }
 
     func start(timeoutMilliseconds: UInt64, onTimeout: @escaping () -> Void) {
         precondition(timeoutTask == nil && !completed)
