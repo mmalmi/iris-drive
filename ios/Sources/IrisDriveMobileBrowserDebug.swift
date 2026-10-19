@@ -249,7 +249,10 @@ extension IrisDriveMobileModel {
         }
     }
 
-    func debugProbeTextHTTP(_ value: String) async -> IrisDebugTextHTTPProbeResult {
+    func debugProbeTextHTTP(
+        _ value: String,
+        timeout: TimeInterval = 3
+    ) async -> IrisDebugTextHTTPProbeResult {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard let url = URL(string: trimmed), !trimmed.isEmpty else {
             return IrisDebugTextHTTPProbeResult(
@@ -264,7 +267,7 @@ extension IrisDriveMobileModel {
         var request = URLRequest(url: url)
         request.httpMethod = "GET"
         request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        request.timeoutInterval = 3
+        request.timeoutInterval = timeout
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
             let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0

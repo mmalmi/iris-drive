@@ -797,7 +797,10 @@ extension IrisDriveMobileModel {
                     gatewayStatus: gatewayStatus,
                     routeURL: routeURL,
                     refresh: true
-                )
+                ),
+                // A forced refresh waits for the embedded resolver's 5.5s relay
+                // query budget. The overall probe deadline still applies.
+                timeout: 8
             )
             completion.record(["phase": "diagnostics.cached-resolve", "embedded_resolve_http_status_code": embeddedResolveResult.statusCode])
             let embeddedCachedResolveResult = await debugProbeTextHTTP(
