@@ -1661,6 +1661,40 @@ mod tests {
     }
 
     #[test]
+    fn direct_root_batch_keeps_approval_exchange_ahead_of_root_work() {
+        use crate::app_key_link_transport::{
+            APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC, APP_KEY_APPROVAL_RECEIPT_APP_TOPIC,
+            APP_KEY_LINK_ROSTER_APP_TOPIC,
+        };
+
+        let control = [
+            APP_KEY_APPROVAL_RECEIPT_APP_TOPIC,
+            APP_KEY_LINK_ROSTER_APP_TOPIC,
+            APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC,
+        ]
+        .map(|topic| crate::FipsAppMessage {
+            peer_id: "peer".to_string(),
+            topic: topic.to_string(),
+            data: topic.as_bytes().to_vec(),
+        });
+        let profile = direct_root_app_message("profile-op:profile:event");
+        let older =
+            direct_root_app_message("drive-root:remote:main:7:old-hash:old-key:local,remote");
+        let newer =
+            direct_root_app_message("drive-root:remote:main:8:new-hash:new-key:local,remote");
+        let mut batch = vec![profile.clone(), older];
+        batch.extend(control.clone());
+        batch.push(newer.clone());
+
+        let (messages, skipped) = coalesce_direct_root_app_messages(batch);
+
+        assert_eq!(skipped, 1);
+        assert_eq!(&messages[..control.len()], &control);
+        assert_eq!(messages[control.len()], newer);
+        assert_eq!(messages[control.len() + 1], profile);
+    }
+
+    #[test]
     fn direct_root_app_message_coalescing_preserves_unsequenced_messages() {
         let profile = direct_root_app_message("profile-op:profile:event");
         let broken = crate::FipsAppMessage {
