@@ -50,7 +50,7 @@ async fn stalled_roster_relay_keeps_daemon_fips_status_and_direct_ack_responsive
     relay.stall_kinds(&[iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP]);
     // Persist through the same locked core approval path as the UI, leaving
     // delivery to the running daemon instead of the CLI's one-shot publisher.
-    {
+    let expected_roster_events = {
         let _lock = iris_drive_core::config_lock::ConfigMutationLock::acquire(owner_cfg.path())
             .await
             .unwrap();
@@ -67,9 +67,17 @@ async fn stalled_roster_relay_keeps_daemon_fips_status_and_direct_ack_responsive
         profile
             .approve_device_bootstrap(&bootstrap, Some("Phone".into()))
             .unwrap();
+        let expected = profile
+            .state
+            .profile_roster_ops
+            .iter()
+            .map(|op| serde_json::from_str::<Value>(&op.event_json).unwrap())
+            .collect::<Vec<_>>();
         config.profile = Some(profile.state);
         config.save(path).unwrap();
-    }
+        expected
+    };
+    assert!(!expected_roster_events.is_empty());
     let started = Instant::now();
     while relay.stalled_publications() == 0 && started.elapsed() < Duration::from_secs(5) {
         tokio::time::sleep(Duration::from_millis(25)).await;
@@ -113,24 +121,24 @@ async fn stalled_roster_relay_keeps_daemon_fips_status_and_direct_ack_responsive
     ));
 
     // A direct ACK must not discard the still-unpublished durable relay ops.
-    let recovery_log_start = owner_daemon.log().len();
     relay.stall_kinds(&[]);
     let deadline = Instant::now() + Duration::from_secs(8);
     loop {
-        if owner_daemon.log()[recovery_log_start..]
-            .lines()
-            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
-            .any(|event| {
-                event["event"] == "app_key_link_roster_sent"
-                    && event["sent_over_relay"] == true
-                    && event["sent_over_fips"] == false
-            })
-        {
+        // A send started before the ACK can finish both transports after
+        // recovery. Check the relay's actual complete signed events instead
+        // of requiring a later relay-only completion log.
+        let stored = relay.events().await;
+        let missing = expected_roster_events
+            .iter()
+            .filter(|event| !stored.contains(event))
+            .map(|event| event["id"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        if missing.is_empty() {
             break;
         }
         assert!(
             Instant::now() < deadline,
-            "daemon did not retry durable relay publication after its direct ACK\nowner:\n{}\nlinked:\n{}",
+            "daemon did not retry durable relay publication after its direct ACK; missing signed events: {missing:?}\nowner:\n{}\nlinked:\n{}",
             owner_daemon.log(),
             linked_daemon.log(),
         );
