@@ -695,6 +695,10 @@ const CONTROL_BOOTSTRAP_TOPICS: [&str; 5] = [
     APP_KEY_LINK_ROSTER_ACK_APP_TOPIC,
 ];
 
+pub(crate) fn is_control_bootstrap_topic(topic: &str) -> bool {
+    CONTROL_BOOTSTRAP_TOPICS.contains(&topic)
+}
+
 fn control_bootstrap_topics() -> BTreeSet<&'static str> {
     BTreeSet::from(CONTROL_BOOTSTRAP_TOPICS)
 }

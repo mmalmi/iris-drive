@@ -668,6 +668,7 @@ fn has_connected_authorized_peer(authorized: &[String], connected: &[String]) ->
 pub fn coalesce_direct_root_app_messages(
     messages: Vec<crate::FipsAppMessage>,
 ) -> (Vec<crate::FipsAppMessage>, usize) {
+    let mut control = Vec::new();
     let mut passthrough = Vec::new();
     let mut latest_roots =
         BTreeMap::<String, (DirectRootCacheSlot, bool, crate::FipsAppMessage)>::new();
@@ -675,6 +676,12 @@ pub fn coalesce_direct_root_app_messages(
     let mut skipped = 0usize;
 
     for message in messages {
+        // Approval handshakes and durable ACKs must precede root application,
+        // which can wait on storage or network work in the same receive batch.
+        if crate::fips_sync::is_control_bootstrap_topic(&message.topic) {
+            control.push(message);
+            continue;
+        }
         let Some(frame) = direct_root_message_batch_frame(&message) else {
             passthrough.push(message);
             continue;
@@ -714,12 +721,9 @@ pub fn coalesce_direct_root_app_messages(
         }
     }
 
-    let mut coalesced = latest_roots
-        .into_values()
-        .map(|(_, _, message)| message)
-        .collect::<Vec<_>>();
-    coalesced.extend(passthrough);
-    (coalesced, skipped)
+    control.extend(latest_roots.into_values().map(|(_, _, message)| message));
+    control.extend(passthrough);
+    (control, skipped)
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
