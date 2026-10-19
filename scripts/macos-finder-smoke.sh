@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 latest_revealed_drive_path() {
-  grep -F "Iris Drive mounted drive folder revealed: " "$APP_DEBUG_LOG" 2>/dev/null \
+  grep -F "Iris Drive mounted drive folder revealed: " "$APP_STDERR" 2>/dev/null \
     | tail -n 1 \
     | sed 's/^.*Iris Drive mounted drive folder revealed: //'
 }

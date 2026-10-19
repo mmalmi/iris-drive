@@ -257,9 +257,11 @@ macos_owner_link_file_visible() {
 
 launch_macos_owner_link_shell() {
   local owner_base="${MACOS_OWNER_LINK_OWNER_CONFIG%/Config}"
+  APP_STDOUT="$SMOKE_DIR/owner-app.stdout.log"
+  APP_STDERR="$SMOKE_DIR/owner-app.stderr.log"
   open -n \
-    --stdout "$SMOKE_DIR/owner-app.stdout.log" \
-    --stderr "$SMOKE_DIR/owner-app.stderr.log" \
+    --stdout "$APP_STDOUT" \
+    --stderr "$APP_STDERR" \
     --env "HOME=$SMOKE_HOME" \
     --env "CFFIXED_USER_HOME=$SMOKE_HOME" \
     --env "IRIS_DRIVE_APP_BASE_DIR=$owner_base" \
