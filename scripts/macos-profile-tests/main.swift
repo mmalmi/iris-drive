@@ -33,8 +33,15 @@ check(first.accepts(configDirectory: firstBase.appendingPathComponent("Config").
 check(!first.accepts(configDirectory: secondBase.appendingPathComponent("Config").path), "foreign config accepted")
 
 func domain(_ profile: IrisDriveFileProviderProfile) -> NSFileProviderDomain {
-    NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(profile.domainIdentifier), displayName: "")
+    NSFileProviderDomain(identifier: NSFileProviderDomainIdentifier(profile.domainIdentifier),
+                         displayName: profile.domainDisplayName)
 }
+check(domain(main).displayName.isEmpty, "default CloudStorage root name changed")
+check(domain(first).displayName != domain(main).displayName, "explicit profile collides with default domain name")
+check(domain(first).displayName != domain(second).displayName, "explicit profiles collide in FileProvider registration")
+check(domain(first).displayName == domain(IrisDriveFileProviderProfile(appBaseDirectory: firstBase.path + "/../first/")).displayName,
+      "normalized profile display name changed")
+check(!domain(first).displayName.contains(firstBase.path), "display name leaks profile path")
 func writeRuntime(_ profile: IrisDriveFileProviderProfile, base: URL) throws -> Data {
     let data = try JSONSerialization.data(withJSONObject: ["config_dir": base.appendingPathComponent("Config").path])
     let directory = profile.storageDirectory(in: shared)

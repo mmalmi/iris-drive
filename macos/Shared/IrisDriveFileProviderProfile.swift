@@ -22,6 +22,12 @@ struct IrisDriveFileProviderProfile {
 
     var isDefault: Bool { domainIdentifier == "main" }
 
+    var domainDisplayName: String {
+        // Preserve the default IrisDrive root. macOS rejects a second domain
+        // with that same name, even when its identifier is different.
+        isDefault ? "" : domainIdentifier
+    }
+
     var registrationIdentityKey: String {
         isDefault ? "fileProviderRegistrationIdentity"
             : "fileProviderRegistrationIdentity.\(domainIdentifier)"
