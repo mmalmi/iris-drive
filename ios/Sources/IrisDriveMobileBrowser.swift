@@ -662,7 +662,7 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
 extension IrisDriveMobileModel {
     func debugProbeIrisApps() {
         var workTask: Task<Void, Never>?
-        workTask = Task { @MainActor [weak self] in
+        workTask = Task { @MainActor [weak self] () -> Void in
             guard let self else { return }
             let environment = ProcessInfo.processInfo.environment
             if environment["IRIS_DRIVE_DEBUG_RESET_LOCAL_STATE"] == "1" {
@@ -699,8 +699,8 @@ extension IrisDriveMobileModel {
                 workTask?.cancel()
                 activeWebViewProbe?.cancelForOverallDeadline()
                 let gatewayStatus = self?.nativeBrowserGatewayStatus()
-                var result = completion.fields
-                result.merge([
+                var result: [String: Any] = completion.fields
+                let timeoutFields: [String: Any] = [
                     "probe_id": environment["IRIS_DRIVE_DEBUG_PROBE_ID"] ?? "",
                     "elapsed_ms": Int(Date().timeIntervalSince(started) * 1000),
                     "probe_timed_out": true,
@@ -710,7 +710,8 @@ extension IrisDriveMobileModel {
                     "gateway_status_running": gatewayStatus?.running ?? false,
                     "gateway_status_state": gatewayStatus?.state ?? "",
                     "gateway_status_error": gatewayStatus?.error ?? "",
-                ]) { _, current in current }
+                ]
+                result.merge(timeoutFields) { _, current in current }
                 self?.writeIrisAppsProbeResult(result)
             }
             let openTask = Task { @MainActor in
