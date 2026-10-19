@@ -50,8 +50,8 @@ jobs:
           path: products
       - name: Verify fixture and immutable application payload tests
         run: |
-          python3 tooling/scripts/test_local_blossom_server.py
-          python3 tooling/scripts/test_android_test_payload.py
+          python3 -B tooling/scripts/test_local_blossom_server.py
+          python3 -B tooling/scripts/test_android_test_payload.py
       - name: Build instrumentation without recompiling native application
         run: node tooling/scripts/build-hosted-android-tests.mjs
       - uses: actions/upload-artifact@v4
