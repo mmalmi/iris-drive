@@ -17,6 +17,10 @@ on:
         required: true
         default: all
 
+      web_commit:
+        description: Exact published web source for web-check
+        required: false
+
       debug_run:
         description: Simulator Debug artifact run for ios-check
         required: false
@@ -41,6 +45,13 @@ jobs:
     uses: ./.github/workflows/release-native-check.yml
     with:
       commit: ${{ inputs.commit }}
+  web-check:
+    if: inputs.platform == 'web-check'
+    uses: ./.github/workflows/release-web-check.yml
+    with:
+      commit: ${{ inputs.commit }}
+      web_commit: ${{ inputs.web_commit }}
+      product_run: ${{ inputs.release_run }}
   linux-check:
     if: inputs.platform == 'linux-check'
     uses: ./.github/workflows/release-linux-check.yml
@@ -56,7 +67,7 @@ jobs:
       release_run: ${{ inputs.release_run }}
       mac_run: ${{ inputs.mac_run }}
   products:
-    if: inputs.platform != 'ios-check' && inputs.platform != 'native-check' && inputs.platform != 'linux-check'
+    if: inputs.platform != 'ios-check' && inputs.platform != 'native-check' && inputs.platform != 'linux-check' && inputs.platform != 'web-check'
     name: ${{ matrix.platform }}
     runs-on: ${{ matrix.platform == 'windows' && 'windows-2025' || (startsWith(matrix.platform, 'macos') || startsWith(matrix.platform, 'ios')) && 'macos-15' || 'ubuntu-24.04' }}
     timeout-minutes: 60
