@@ -166,9 +166,9 @@ require_contains Cargo.toml 'nvpn-fips-tcp = { version = "=0.2.5" }'
 require_contains Cargo.toml 'nvpn-fips-tcp-endpoint = { version = "=0.2.30" }'
 require_contains Cargo.toml 'hashtree-core = "=0.2.91"'
 require_contains Cargo.toml 'hashtree-config = "=0.2.83"'
-require_contains Cargo.toml 'hashtree-embedded = "=0.2.93"'
+require_contains Cargo.toml 'hashtree-embedded = "=0.2.95-drive-ios.1"'
 require_contains Cargo.toml 'hashtree-fips-transport = { version = "=0.4.29", features = ["webrtc-endpoint"] }'
-require_contains Cargo.toml 'hashtree-lmdb = "=0.2.89"'
+require_contains Cargo.toml 'hashtree-lmdb = "=0.2.91"'
 require_contains Cargo.toml 'hashtree-network = "=0.2.88"'
 require_contains Cargo.toml 'hashtree-nostr = "=0.2.90"'
 require_contains Cargo.toml 'nostr-identity = "=0.3.1"'
@@ -195,13 +195,14 @@ for lock in Cargo.lock linux/Cargo.lock; do
   require_registry_package "$lock" nvpn-fips-endpoint 0.4.95 6e0a613ad61c4d2ef1cb81b320c38eb7bf16da8aae1209778de6b58fe1da9d7c
   require_registry_package "$lock" nvpn-fips-tcp 0.2.5 72bd33cbaff087f666ffdc42373ea8730912895b9e993a0ed9c1d0219005d6a2
   require_registry_package "$lock" nvpn-fips-tcp-endpoint 0.2.30 bbdf1ed33ead31f2b8c2ca4b6706cd1e7d00e3d47bf4a5844f6bc49cffce9d7e
-  require_registry_package "$lock" hashtree-cli 0.2.153 658277f8adce89ea666e99204fc0e897d990386baccd66c04f9224e4230c854d
+  require_registry_package "$lock" git-remote-htree 0.2.91 fa9c158b46c8875e14330e5c6404e96842489b32a8c32471cad3d526ade89488
+  require_registry_package "$lock" hashtree-cli 0.2.155-drive-ios.1 6c8f270bfd70411715afad6de97a09b917993ccc4f5d3a7a8244735c291c4074
   require_registry_package "$lock" hashtree-updater 0.2.89 84c1c9809282fb6428f25ff473252937e6b8627e8d15c4f436d083f0b2ddb0df
   require_registry_package "$lock" hashtree-config 0.2.83 661c0bec57ba49999860fc418a7e656714cd79d82a3c3ee272794b90bb49db76
   require_registry_package "$lock" hashtree-core 0.2.91 76daf5b56bdf139dfa406c4c18eebd276b823d59e073bf1a81b1b0539f41fb4a
-  require_registry_package "$lock" hashtree-embedded 0.2.93 42fad9c04426703b4ab4f14ac06dac2363802209b814f9561879dd408a6b0138
+  require_registry_package "$lock" hashtree-embedded 0.2.95-drive-ios.1 7b6a2ca94a78a4d1a1653bb9bebb7b4dfbdca8229c32ed077e598805c8e728e7
   require_registry_package "$lock" hashtree-fips-transport 0.4.29 692a95f08fb680caf3ba02c96a8cc73a1e8add9bea50d4ab0298aefbc302ed71
-  require_registry_package "$lock" hashtree-lmdb 0.2.89 dc874eda0fb73a25af9ff9ddcbba569b2690c2a5ad4f8dd33230c16bc60730cd
+  require_registry_package "$lock" hashtree-lmdb 0.2.91 53db56d8d675711307c46d4d277dd8120902872fc03f5466f7ec42ebbcc69351
   require_registry_package "$lock" hashtree-network 0.2.88 4f8fdbb7f18e4ebd4b3887055ca3af7230fc7cbf06e49e21c2ff9122130fcfa5
   require_registry_package "$lock" hashtree-nostr 0.2.90 06bdf0a61b4dbcd0e96f8a347a98b91e8d37084d9fa72c3e27b01490a135d67a
   require_registry_package "$lock" hashtree-nostr-pubsub 0.2.86 8c6173956c8614689b08d40091311d32cf581472fceca88d246f720b60984eaf
