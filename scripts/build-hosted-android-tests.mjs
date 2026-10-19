@@ -38,8 +38,15 @@ const tests = join(payload, 'app-uiTest-androidTest.apk')
 cpSync(original, app)
 cpSync(join(source, 'android/app/build/outputs/apk/androidTest/uiTest/app-uiTest-androidTest.apk'), tests)
 const signer = join(env.ANDROID_HOME, 'build-tools/36.0.0/apksigner')
-run(signer, ['sign', '--ks', join(env.HOME, '.android/debug.keystore'),
-  '--ks-pass', 'pass:android', '--key-pass', 'pass:android', app])
+// Instrumentation-only Gradle builds need not create the conventional debug key.
+// Use one explicit disposable key for both installed test packages.
+const key = join(output, 'instrumentation-only.jks')
+run('keytool', ['-genkeypair', '-keystore', key, '-storepass', 'android',
+  '-keypass', 'android', '-alias', 'androiddebugkey', '-keyalg', 'RSA',
+  '-keysize', '2048', '-validity', '30', '-dname', 'CN=Android Test Fixture', '-noprompt'])
+for (const apk of [app, tests]) {
+  run(signer, ['sign', '--ks', key, '--ks-pass', 'pass:android', '--key-pass', 'pass:android', apk])
+}
 const certificate = path => {
   const result = run(signer, ['verify', '--print-certs', path], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] })
   const value = result.match(/Signer #1 certificate SHA-256 digest:\s*([a-fA-F0-9]{64})/)?.[1]?.toLowerCase()
