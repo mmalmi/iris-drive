@@ -234,6 +234,12 @@ extension IrisDriveMobileModel {
         dataStore.proxyConfigurations = irisWebProxyConfigurations()
     }
 
+#if DEBUG
+    func debugIrisWebProxyConfigurations() -> [ProxyConfiguration] {
+        irisWebProxyConfigurations()
+    }
+#endif
+
     private func irisWebProxyConfigurations() -> [ProxyConfiguration] {
         guard let status = nativeBrowserGatewayStatus(),
               status.running == true,

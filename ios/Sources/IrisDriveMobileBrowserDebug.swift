@@ -222,7 +222,7 @@ extension IrisDriveMobileModel {
         let session: URLSession
         if useIrisProxy {
             let configuration = URLSessionConfiguration.ephemeral
-            configuration.proxyConfigurations = irisWebProxyConfigurations()
+            configuration.proxyConfigurations = debugIrisWebProxyConfigurations()
             session = URLSession(configuration: configuration)
         } else {
             session = URLSession.shared
