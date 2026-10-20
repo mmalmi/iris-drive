@@ -57,6 +57,34 @@ func irisWebIsTransientGatewayNotFound(_ bodyText: String, url: URL?) -> Bool {
         || message == "Resolution failed through configured event provider and peers"
 }
 
+func irisDebugWebViewIsMaterialized(
+    title: String,
+    bodyText: String,
+    readyState: String,
+    htmlLength: Int,
+    htmlPrefix: String,
+    screenshotPath: String,
+    screenshotError: String
+) -> Bool {
+    let body = bodyText.lowercased()
+    let html = htmlPrefix.lowercased()
+    let failureMarkers = [
+        "resolution timeout",
+        "not found",
+        "failed to load",
+        "iris apps failed",
+        "no connection to server",
+    ]
+    return readyState == "complete"
+        && title == "Iris: The Freedom Toolkit"
+        && htmlLength >= 1_000
+        && (html.contains("id=\"app\"") || html.contains("id='app'"))
+        && ["iris: the freedom toolkit", "drive", "chat", "contacts"].allSatisfy(body.contains)
+        && !failureMarkers.contains(where: body.contains)
+        && !screenshotPath.isEmpty
+        && screenshotError.isEmpty
+}
+
 extension IrisDriveMobileModel {
     func openIrisBrowserWhenReady(_ value: String) {
         guard !isOpeningIrisApps else { return }
@@ -206,6 +234,12 @@ extension IrisDriveMobileModel {
         dataStore.proxyConfigurations = irisWebProxyConfigurations()
     }
 
+#if DEBUG
+    func debugIrisWebProxyConfigurations() -> [ProxyConfiguration] {
+        irisWebProxyConfigurations()
+    }
+#endif
+
     private func irisWebProxyConfigurations() -> [ProxyConfiguration] {
         guard let status = nativeBrowserGatewayStatus(),
               status.running == true,
@@ -252,23 +286,6 @@ private struct IrisDebugWebViewProbeResult {
     var errorCode: Int
 }
 
-private struct IrisDebugHTTPProbeResult {
-    var ok: Bool
-    var statusCode: Int
-    var error: String
-    var errorDomain: String
-    var errorCode: Int
-}
-
-private struct IrisDebugTextHTTPProbeResult {
-    var ok: Bool
-    var statusCode: Int
-    var bodyText: String
-    var error: String
-    var errorDomain: String
-    var errorCode: Int
-}
-
 struct IrisDebugNetworkPathResult {
     var status: String
     var unsatisfiedReason: String
@@ -288,6 +305,7 @@ struct IrisDebugNetworkPathResult {
 @MainActor
 private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
     private weak var model: IrisDriveMobileModel?
+    private let completion: IrisDebugProbeCompletion
     private var webView: WKWebView?
     private var window: UIWindow?
     private var continuation: CheckedContinuation<IrisDebugWebViewProbeResult, Never>?
@@ -296,11 +314,13 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
     private var transientNotFoundReloads = 0
     private var timeoutTask: Task<Void, Never>?
 
-    init(model: IrisDriveMobileModel) {
+    init(model: IrisDriveMobileModel, completion: IrisDebugProbeCompletion) {
         self.model = model
+        self.completion = completion
     }
 
     func load(_ url: URL, timeoutMs: UInt64) async -> IrisDebugWebViewProbeResult {
+        completion.record(["phase": "webview.navigation"])
         started = Date()
         finished = false
         transientNotFoundReloads = 0
@@ -344,19 +364,30 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        completion.record([
+            "phase": "webview.settling",
+            "webview_navigation_finished": true,
+            "webview_final_url": webView.url?.absoluteString ?? "",
+        ])
         Task { @MainActor [weak self, weak webView] in
             let settleMs = UInt64(
                 ProcessInfo.processInfo.environment["IRIS_DRIVE_DEBUG_WEBVIEW_SETTLE_MS"] ?? ""
             ) ?? 6_000
             try? await Task.sleep(nanoseconds: settleMs * 1_000_000)
-            guard let self, let webView else { return }
+            guard let self, let webView, !self.finished else { return }
             let bodyText = await self.evaluateString(
                 webView,
                 "document.body ? document.body.innerText : ''"
             )
+            guard !self.finished else { return }
+            self.completion.record(["webview_body_text": String(bodyText.prefix(8_000))])
             if irisWebIsTransientGatewayNotFound(bodyText, url: webView.url),
                self.transientNotFoundReloads < 8 {
                 self.transientNotFoundReloads += 1
+                self.completion.record([
+                    "phase": "webview.retry",
+                    "webview_transient_not_found_reloads": self.transientNotFoundReloads,
+                ])
                 webView.reload()
                 return
             }
@@ -366,20 +397,31 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
 
     private func finishFromCurrentPage(loaded: Bool, error: String, nsError: NSError?) async {
         guard !finished, let webView else { return }
+        completion.record(["phase": "webview.capture.title"])
         let title = await evaluateString(webView, "document.title")
+        guard !finished else { return }
+        completion.record(["phase": "webview.capture.body", "webview_title": title])
         let bodyText = await evaluateString(
             webView,
             "document.body ? document.body.innerText : ''"
         )
+        guard !finished else { return }
+        completion.record(["phase": "webview.capture.ready-state", "webview_body_text": String(bodyText.prefix(8_000))])
         let readyState = await evaluateString(webView, "document.readyState")
+        guard !finished else { return }
+        completion.record(["phase": "webview.capture.html", "webview_ready_state": readyState])
         let htmlLength = await evaluateInt(
             webView,
             "document.documentElement ? document.documentElement.outerHTML.length : 0"
         )
+        guard !finished else { return }
+        completion.record(["webview_html_length": htmlLength])
         let htmlPrefix = await evaluateString(
             webView,
             "document.documentElement ? document.documentElement.outerHTML.slice(0, 8000) : ''"
         )
+        guard !finished else { return }
+        completion.record(["phase": "webview.capture.resources", "webview_html_prefix": String(htmlPrefix.prefix(8_000))])
         let diagnosticsJson = await evaluateString(
             webView,
             """
@@ -398,9 +440,28 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
             })
             """
         )
+        guard !finished else { return }
+        completion.record(["phase": "webview.capture.screenshot", "webview_diagnostics_json": String(diagnosticsJson.prefix(8_000))])
         let screenshot = await writeSnapshot(webView)
+        guard !finished else { return }
+        completion.record([
+            "webview_screenshot_path": screenshot.path,
+            "webview_screenshot_error": screenshot.error,
+        ])
+        let materializedWithoutDelegate = !loaded
+            && error == "Timed out waiting for WKWebView to finish loading"
+            && nsError == nil
+            && irisDebugWebViewIsMaterialized(
+                title: title,
+                bodyText: bodyText,
+                readyState: readyState,
+                htmlLength: htmlLength,
+                htmlPrefix: htmlPrefix,
+                screenshotPath: screenshot.path,
+                screenshotError: screenshot.error
+            )
         finish(
-            loaded: loaded,
+            loaded: loaded || materializedWithoutDelegate,
             title: title,
             bodyText: bodyText,
             readyState: readyState,
@@ -410,7 +471,7 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
             screenshotPath: screenshot.path,
             screenshotError: screenshot.error,
             finalURL: webView.url?.absoluteString ?? "",
-            error: error,
+            error: materializedWithoutDelegate ? "" : error,
             nsError: nsError
         )
     }
@@ -433,7 +494,11 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
 
     private func writeSnapshot(_ webView: WKWebView) async -> (path: String, error: String) {
         await withCheckedContinuation { continuation in
-            webView.takeSnapshot(with: nil) { image, error in
+            webView.takeSnapshot(with: nil) { [weak self] image, error in
+                guard let self, !self.finished else {
+                    continuation.resume(returning: ("", "Probe already completed"))
+                    return
+                }
                 if let error {
                     continuation.resume(returning: ("", (error as NSError).localizedDescription))
                     return
@@ -444,7 +509,7 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
                 }
                 let url = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)
                     .first?
-                    .appendingPathComponent("debug-iris-apps-webview.png", isDirectory: false)
+                    .appendingPathComponent("debug-iris-apps-webview-\(UUID().uuidString).png", isDirectory: false)
                 guard let url else {
                     continuation.resume(returning: ("", "Documents directory unavailable"))
                     return
@@ -522,6 +587,12 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
         }
     }
 
+    func cancelForOverallDeadline() {
+        let loadingWebView = webView
+        finish(loaded: false, error: "Iris Apps probe exceeded its overall deadline", nsError: nil)
+        loadingWebView?.stopLoading()
+    }
+
     private func finish(_ error: Error) {
         let nsError = error as NSError
         if nsError.domain == NSURLErrorDomain,
@@ -579,7 +650,8 @@ private final class IrisDebugWebViewProbe: NSObject, WKNavigationDelegate {
 
 extension IrisDriveMobileModel {
     func debugProbeIrisApps() {
-        Task { @MainActor [weak self] in
+        var workTask: Task<Void, Never>?
+        workTask = Task { @MainActor [weak self] () -> Void in
             guard let self else { return }
             let environment = ProcessInfo.processInfo.environment
             if environment["IRIS_DRIVE_DEBUG_RESET_LOCAL_STATE"] == "1" {
@@ -609,6 +681,28 @@ extension IrisDriveMobileModel {
                 environment["IRIS_DRIVE_DEBUG_PROBE_TIMEOUT_MS"] ?? ""
             ) ?? 10_000
             let timeout = timeoutMilliseconds * 1_000_000
+            let completion = IrisDebugProbeCompletion()
+            completion.record(["phase": "gateway", "opened": false, "webview_loaded": false])
+            var activeWebViewProbe: IrisDebugWebViewProbe?
+            completion.start(timeoutMilliseconds: timeoutMilliseconds) { [weak self] in
+                workTask?.cancel()
+                activeWebViewProbe?.cancelForOverallDeadline()
+                let gatewayStatus = self?.nativeBrowserGatewayStatus()
+                var result: [String: Any] = completion.fields
+                let timeoutFields: [String: Any] = [
+                    "probe_id": environment["IRIS_DRIVE_DEBUG_PROBE_ID"] ?? "",
+                    "elapsed_ms": Int(Date().timeIntervalSince(started) * 1000),
+                    "probe_timed_out": true,
+                    "probe_timeout_ms": timeoutMilliseconds,
+                    "webview_error": "Iris Apps probe exceeded its overall deadline",
+                    "gateway_status_present": gatewayStatus != nil,
+                    "gateway_status_running": gatewayStatus?.running ?? false,
+                    "gateway_status_state": gatewayStatus?.state ?? "",
+                    "gateway_status_error": gatewayStatus?.error ?? "",
+                ]
+                result.merge(timeoutFields) { _, current in current }
+                self?.writeIrisAppsProbeResult(result)
+            }
             let openTask = Task { @MainActor in
                 await self.openIrisBrowserAfterGatewayReady(self.sitesPortalUrl)
                 return self.webRoute != nil
@@ -632,6 +726,11 @@ extension IrisDriveMobileModel {
             }
             let routeReadyMs = Int(Date().timeIntervalSince(started) * 1000)
             let routeURL = webRoute?.url
+            completion.record([
+                "opened": opened,
+                "route_ready_ms": routeReadyMs,
+                "route_url": routeURL?.absoluteString ?? "",
+            ])
             var routeHTTPResult = IrisDebugHTTPProbeResult(
                 ok: false,
                 statusCode: 0,
@@ -641,12 +740,24 @@ extension IrisDriveMobileModel {
             )
             var routeProxyHTTPResult = routeHTTPResult
             let webViewResult: IrisDebugWebViewProbeResult
-            if let routeURL {
-                webViewResult = await IrisDebugWebViewProbe(model: self)
-                    .load(routeURL, timeoutMs: timeoutMilliseconds)
+            if let routeURL, !completion.completed {
+                let probe = IrisDebugWebViewProbe(model: self, completion: completion)
+                activeWebViewProbe = probe
+                webViewResult = await probe.load(routeURL, timeoutMs: timeoutMilliseconds)
+                activeWebViewProbe = nil
+                guard !completion.completed else { return }
+                completion.record([
+                    "webview_loaded": webViewResult.loaded,
+                    "webview_elapsed_ms": webViewResult.elapsedMs,
+                    "webview_final_url": webViewResult.finalURL,
+                    "webview_error": webViewResult.error,
+                ])
                 if environment["IRIS_DRIVE_DEBUG_PROBE_HTTP"] == "1" {
+                    completion.record(["phase": "diagnostics.route-http"])
                     routeHTTPResult = await debugProbeHTTP(routeURL, useIrisProxy: false)
+                    completion.record(["phase": "diagnostics.route-proxy-http", "route_http_status_code": routeHTTPResult.statusCode])
                     routeProxyHTTPResult = await debugProbeHTTP(routeURL, useIrisProxy: true)
+                    completion.record(["route_proxy_http_status_code": routeProxyHTTPResult.statusCode])
                 }
             } else {
                 routeHTTPResult = IrisDebugHTTPProbeResult(
@@ -674,22 +785,30 @@ extension IrisDriveMobileModel {
                     errorCode: 0
                 )
             }
+            guard !completion.completed else { return }
             let elapsedMs = Int(Date().timeIntervalSince(started) * 1000)
             let userVisibleElapsedMs = routeReadyMs + webViewResult.elapsedMs
             let gatewayStatus = nativeBrowserGatewayStatus()
+            completion.record(["phase": "diagnostics.hashtree-status", "user_visible_elapsed_ms": userVisibleElapsedMs])
             let hashtreeStatusResult = await debugProbeTextHTTP(
                 gatewayStatus?.hashtreeBaseUrl.map { "\($0.trimmingCharacters(in: .whitespacesAndNewlines))/api/status" } ?? ""
             )
+            completion.record(["phase": "diagnostics.embedded-route", "hashtree_status_code": hashtreeStatusResult.statusCode])
             let embeddedRouteResult = await debugProbeTextHTTP(
                 debugEmbeddedHashtreeRouteURL(gatewayStatus: gatewayStatus, routeURL: routeURL)
             )
+            completion.record(["phase": "diagnostics.embedded-resolve", "embedded_route_http_status_code": embeddedRouteResult.statusCode])
             let embeddedResolveResult = await debugProbeTextHTTP(
                 debugEmbeddedHashtreeResolveURL(
                     gatewayStatus: gatewayStatus,
                     routeURL: routeURL,
                     refresh: true
-                )
+                ),
+                // A forced refresh waits for the embedded resolver's 5.5s relay
+                // query budget. The overall probe deadline still applies.
+                timeout: 8
             )
+            completion.record(["phase": "diagnostics.cached-resolve", "embedded_resolve_http_status_code": embeddedResolveResult.statusCode])
             let embeddedCachedResolveResult = await debugProbeTextHTTP(
                 debugEmbeddedHashtreeResolveURL(
                     gatewayStatus: gatewayStatus,
@@ -697,6 +816,7 @@ extension IrisDriveMobileModel {
                     refresh: false
                 )
             )
+            completion.record(["phase": "diagnostics.upload", "embedded_cached_resolve_http_status_code": embeddedCachedResolveResult.statusCode])
             let embeddedSettingsText = debugReadEmbeddedBrowserSettings(gatewayStatus)
             var uploadRootHTTPResult = IrisDebugHTTPProbeResult(
                 ok: false,
@@ -708,8 +828,9 @@ extension IrisDriveMobileModel {
             if let uploadRootURL = URL(string: "https://upload.iris.to/") {
                 uploadRootHTTPResult = await debugProbeHTTP(uploadRootURL, useIrisProxy: false)
             }
+            completion.record(["phase": "diagnostics.network-path"])
             let networkPathResult = await debugNetworkPathSnapshot()
-            writeIrisAppsProbeResult([
+            completion.complete { writeIrisAppsProbeResult([
                 "probe_id": environment["IRIS_DRIVE_DEBUG_PROBE_ID"] ?? "",
                 "opened": opened,
                 "elapsed_ms": elapsedMs,
@@ -797,102 +918,10 @@ extension IrisDriveMobileModel {
                 "network_path_supports_dns": networkPathResult.supportsDNS,
                 "network_path_supports_ipv4": networkPathResult.supportsIPv4,
                 "network_path_supports_ipv6": networkPathResult.supportsIPv6,
-            ])
+            ]) }
         }
     }
 
-    private func debugProbeHTTP(_ url: URL, useIrisProxy: Bool) async -> IrisDebugHTTPProbeResult {
-        var request = URLRequest(url: url)
-        request.httpMethod = "HEAD"
-        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        request.timeoutInterval = 2
-        let session: URLSession
-        if useIrisProxy {
-            let configuration = URLSessionConfiguration.ephemeral
-            configuration.proxyConfigurations = irisWebProxyConfigurations()
-            session = URLSession(configuration: configuration)
-        } else {
-            session = URLSession.shared
-        }
-        do {
-            let (_, response) = try await session.data(for: request)
-            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-            return IrisDebugHTTPProbeResult(
-                ok: statusCode == 0 || (100..<600).contains(statusCode),
-                statusCode: statusCode,
-                error: "",
-                errorDomain: "",
-                errorCode: 0
-            )
-        } catch {
-            let nsError = error as NSError
-            return IrisDebugHTTPProbeResult(
-                ok: false,
-                statusCode: 0,
-                error: nsError.localizedDescription,
-                errorDomain: nsError.domain,
-                errorCode: nsError.code
-            )
-        }
-    }
 
-    private func debugProbeTextHTTP(_ value: String) async -> IrisDebugTextHTTPProbeResult {
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: trimmed), !trimmed.isEmpty else {
-            return IrisDebugTextHTTPProbeResult(
-                ok: false,
-                statusCode: 0,
-                bodyText: "",
-                error: "URL missing",
-                errorDomain: "",
-                errorCode: 0
-            )
-        }
-        var request = URLRequest(url: url)
-        request.httpMethod = "GET"
-        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
-        request.timeoutInterval = 3
-        do {
-            let (data, response) = try await URLSession.shared.data(for: request)
-            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
-            return IrisDebugTextHTTPProbeResult(
-                ok: statusCode == 0 || (100..<600).contains(statusCode),
-                statusCode: statusCode,
-                bodyText: String(data: data, encoding: .utf8) ?? "",
-                error: "",
-                errorDomain: "",
-                errorCode: 0
-            )
-        } catch {
-            let nsError = error as NSError
-            return IrisDebugTextHTTPProbeResult(
-                ok: false,
-                statusCode: 0,
-                bodyText: "",
-                error: nsError.localizedDescription,
-                errorDomain: nsError.domain,
-                errorCode: nsError.code
-            )
-        }
-    }
-
-    private func writeIrisAppsProbeResult(_ value: [String: Any]) {
-        guard JSONSerialization.isValidJSONObject(value),
-              let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys])
-        else { return }
-        let destinations = [
-            IrisDriveSharedContainer.baseDirectory
-                .appendingPathComponent("debug-iris-apps-probe.json", isDirectory: false),
-            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
-                .appendingPathComponent("debug-iris-apps-probe.json", isDirectory: false),
-        ].compactMap { $0 }
-        for url in destinations {
-            try? FileManager.default.createDirectory(
-                at: url.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            try? data.write(to: url, options: [.atomic])
-        }
-    }
 }
 #endif

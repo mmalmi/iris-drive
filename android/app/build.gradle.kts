@@ -5,9 +5,16 @@ plugins {
 }
 
 import org.gradle.api.tasks.Exec
+import org.gradle.api.tasks.Sync
 
 val repoRoot = layout.projectDirectory.dir("../..")
 val rustOutputDir = layout.projectDirectory.dir("src/main/jniLibs")
+val rootLicenseFile = repoRoot.file("LICENSE")
+val generatedLicenseAssetsDir = layout.buildDirectory.dir("generated/irisDriveLicenseAssets")
+val stageProjectLicenseAssets by tasks.registering(Sync::class) {
+    from(rootLicenseFile)
+    into(generatedLicenseAssetsDir)
+}
 val releaseKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")?.takeIf { it.isNotBlank() }
 val releaseKeystorePassword = System.getenv("ANDROID_KEYSTORE_PASSWORD")?.takeIf { it.isNotBlank() }
 val releaseKeyAlias = System.getenv("ANDROID_KEY_ALIAS")?.takeIf { it.isNotBlank() }
@@ -26,6 +33,10 @@ android {
     namespace = "to.iris.drive.app"
     compileSdk = 36
     testBuildType = "uiTest"
+
+    sourceSets.named("main") {
+        assets.srcDir(generatedLicenseAssetsDir)
+    }
 
     defaultConfig {
         applicationId = "to.iris.drive"
@@ -111,11 +122,35 @@ android {
     }
 }
 
+tasks.matching { task ->
+    (task.name.startsWith("merge") && task.name.endsWith("Assets")) ||
+        (task.name.contains("lint", ignoreCase = true) &&
+            (task.name.endsWith("Model") || task.name.contains("Analyze")))
+}.configureEach {
+    dependsOn(stageProjectLicenseAssets)
+}
+
 kotlin {
     jvmToolchain(17)
 }
 
 tasks.register<Exec>("buildRustArm64") {
+    inputs.files(
+        fileTree(repoRoot) {
+            include("Cargo.toml", "Cargo.lock", ".cargo/**")
+            include("crates/**/Cargo.toml", "crates/**/build.rs", "crates/**/*.rs")
+        },
+    )
+    inputs.property("rustFlags", providers.environmentVariable("RUSTFLAGS").orElse(""))
+    inputs.property(
+        "encodedRustFlags",
+        providers.environmentVariable("CARGO_ENCODED_RUSTFLAGS").orElse(""),
+    )
+    inputs.property(
+        "rustcVersion",
+        providers.exec { commandLine("rustc", "-Vv") }.standardOutput.asText,
+    )
+    outputs.file(rustOutputDir.file("arm64-v8a/libiris_drive_app_core.so"))
     workingDir = repoRoot.asFile
     commandLine(
         "cargo",
@@ -134,7 +169,15 @@ tasks.register<Exec>("buildRustArm64") {
 }
 
 tasks.matching { task ->
-    task.name in listOf("mergeDebugNativeLibs", "mergeUiTestNativeLibs", "mergeReleaseNativeLibs")
+    task.name in
+        listOf(
+            "mergeDebugJniLibFolders",
+            "mergeUiTestJniLibFolders",
+            "mergeReleaseJniLibFolders",
+            "mergeDebugNativeLibs",
+            "mergeUiTestNativeLibs",
+            "mergeReleaseNativeLibs",
+        )
 }.configureEach {
     dependsOn("buildRustArm64")
 }

@@ -62,6 +62,14 @@ on LNVPS (`wss://fips1.iris.to/fips`) and Osiris
 `wss://.../fips` URLs or an empty value. Normal Nostr relay settings remain
 event and discovery/signaling routes; they do not carry FIPS packets.
 
+Mesh peer selection uses the shared FIPS reputation policy and local transport
+observations. No external rater is trusted by default. Optionally set
+`IRIS_DRIVE_FIPS_TRUSTED_RATERS` to comma- or semicolon-separated `npub` or hex
+public keys. These identities supply additional initial trust; neither friends
+nor successful transport peers automatically gain rating authority. Invalid
+explicit keys fail mesh startup. The shared adapter owns bounded rating
+exchange and publication; Drive does not run a separate rating loop.
+
 Useful CLI probes:
 
 ```bash
@@ -202,15 +210,45 @@ See the platform READMEs for focused instructions:
   provider set over reliable TCP streams. Drive keeps its own configured
   outbound links, and Blossom remains a configured remote/cache path. Shared
   access covers immutable blob bytes only; Drive retains ownership of roots,
-  pins, garbage collection, and other mutable application metadata.
+  pins, garbage collection, and other mutable application metadata. An
+  unavailable shared store is reported and omitted from retrieval routes;
+  Drive's own store and direct networking remain available.
 - Owns and stops its Nostr relay carrier with the embedded FIPS endpoint, so
   authenticated WebRTC signaling works without replacing UDP or other direct
   links. Only roster members enter the Drive data ACL; explicit pending-link
   identities are limited to bootstrap topics, and ambient same-host blob
   providers remain retrieval routes.
 - Supports encrypted backup targets for Blossom, filesystem, and LMDB endpoints.
+- Supports private friend backups: exchange backup links, add each
+  other, and choose total and per-friend space in Backups. These contacts remain
+  local and do not create public follows. Backups use identities separate
+  from social profiles and other Drive activity. The daemon transfers encrypted
+  snapshots over Hashtree/FIPS, checks random blocks, and uses friends as retrieval
+  sources. Both apps must be running for a transfer or check.
 - Serves local browser views for `*.iris.localhost` and `nhash.iris.localhost`.
 - Provides release-update plumbing through signed hashtree manifests.
+
+Friend backup controls are available in the macOS Backups panel and the CLI:
+
+```bash
+idrive backups friends identity
+idrive backups friends capacity --bytes 107374182400
+idrive backups friends add '<friend-backup-link>' --bytes 53687091200 --label 'Friend'
+idrive backups friends list
+idrive backups friends export-recovery --output backup-recovery.json
+idrive backups friends restore --recovery-file backup-recovery.json --friend '<friend-backup-link>'
+```
+
+Save the recovery file somewhere safe outside this device. It contains the private
+backup key and saved friend contacts to help recover after losing the original
+install. You can also restore from a friend added later by supplying their backup
+link. The normal profile recovery phrase does not recover that install's backup
+key. Recovery creates a new folder in Drive, preserving existing files.
+A zero-byte friend allocation requests space
+without offering space locally. Retained history and interrupted transfers count
+toward the allocation; removing friends or shrinking their allocation never
+silently deletes their backups. A successful sample check verifies the sampled
+bytes, not the entire backup or physically independent storage.
 
 ## Platform Status
 
@@ -346,6 +384,34 @@ record manually with the documented bundle ID and SKU if the API key cannot
 create app records.
 `just release` runs the same build entrypoint.
 
+For App Store distribution, export the upload with
+`IRIS_DRIVE_IOS_INTERNAL_ONLY=false`; an internal-only TestFlight build cannot
+be submitted to the store. The same eligible upload can serve internal
+TestFlight and App Store review. Then set the exact
+`IRIS_DRIVE_IOS_MARKETING_VERSION` and `IRIS_DRIVE_IOS_BUILD_NUMBER` and use:
+
+```bash
+scripts/app-store status
+IRIS_DRIVE_APP_STORE_NOTES_PATH=/path/to/release-notes.json scripts/app-store prepare
+IRIS_DRIVE_APP_STORE_NOTES_PATH=/path/to/release-notes.json scripts/app-store submit
+```
+
+The notes file maps every existing store locale to its release notes, for
+example `{"en-US":"Improve local peer discovery and idle usage."}`. `prepare`
+creates or reuses the version, preserves its metadata and release policy,
+updates the notes, and attaches the exact eligible build. Apple
+[transfers the current version's metadata](https://developer.apple.com/help/app-store-connect/update-your-app/create-a-new-version)
+when creating a new version; this helper requires an existing store release.
+`submit` also creates or resumes the exact version's
+[App Review submission](https://developer.apple.com/documentation/appstoreconnectapi/review-submissions)
+and confirms Apple's returned state. Rerunning resumes partial preparation
+without creating another review. Missing metadata, an attached different build,
+or unrelated review items stop the operation for correction in App Store
+Connect. The existing release policy controls distribution after approval;
+manual releases still require release in App Store Connect. `status` is
+read-only and is the default action. Authentication uses the existing
+TestFlight App Store Connect settings.
+
 4. Stage the release tree:
 
 ```bash
@@ -358,6 +424,16 @@ Publish a draft or final signed hashtree release:
 node scripts/local-release.mjs --tag v0.1.0 --publish --draft
 node scripts/local-release.mjs --tag v0.1.0 --final
 ```
+
+Final publication requires a clean checkout at the exact annotated tag and
+`IRIS_STACK_GATE_RECEIPT` pointing to the successful [pinned Iris Stack process-gate receipt](https://github.com/irislib/iris-stack/blob/cec9501659b9cf08f9600e3f14987cad6ca1e7d3/docs/integration-lab.md).
+Publish the source commit first and run that gate with `IRIS_STACK_RELEASE_GATE=1`,
+the pinned `IRIS_STACK_LAB_REV`, and `IRIS_STACK_DRIVE_REV` set to the full candidate
+commit. Set `IRIS_STACK_CHAT_REV` and `IRIS_STACK_HTREE_VERSION` to the companion
+pins in `scripts/mesh-release-gate.mjs`. The publisher checks the exact source
+tuple and passing CPU/bandwidth measurements before building and again before
+publication. Draft staging and dry-run planning do not require a receipt.
+Receipts check locally supplied provenance; they are not signed attestations.
 
 The default release tree is `releases/iris-drive`. Copy
 `.env.release.example` and `.env.zapstore.example` to local `.env.*.local`
@@ -382,3 +458,17 @@ files for machine-specific signing, htree release, and Zapstore settings.
 ## License
 
 MIT.
+
+
+### Haps distribution
+
+The final local release flow also publishes desktop/CLI packages using
+`haps-release.json` and the same verified `release.json` assets. Drafts do not
+publish Haps packages. Install Haps with the `import-release` subcommand and Python
+3.9+ on the publisher. Set `HAPS_KEY_FILE` to an existing secret-key file matching
+the public publisher pinned in the mapping (or provision the matching existing
+Haps identity). Never generate a new release identity. The flow verifies
+checksums and package layout before upload, then requires Nostr acknowledgement.
+A Haps failure fails the final release; byte-identical retries reuse the signed
+package versions. Iris Git, native updaters and Haps consume the same release
+artifacts; Android/iOS and native installer channels retain their existing gates.

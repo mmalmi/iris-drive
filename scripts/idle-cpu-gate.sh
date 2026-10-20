@@ -6,8 +6,8 @@ usage() {
   cat <<'USAGE'
 Usage: scripts/idle-cpu-gate.sh [--platform auto|macos|linux|windows|android|ios]
 
-Samples idle CPU for Iris Drive process roles and fails when any required role
-stays above its budget. One full core is 100%.
+Samples idle CPU for Iris Drive process roles. Required desktop processes must
+remain present throughout the sample and within budget. One full core is 100%.
 
 Environment:
   IRIS_DRIVE_IDLE_CPU_WARMUP_SECS=30
@@ -83,9 +83,8 @@ resolve_adb() {
   exit 1
 }
 
-case "$platform" in
-  macos | linux)
-    python3 - "$platform" "$warmup" "$duration" "$interval" <<'PY'
+run_posix_process_sampler() {
+  python3 - "$1" "$warmup" "$duration" "$interval" "${2:-}" <<'PY'
 import json
 import os
 import shlex
@@ -94,18 +93,24 @@ import sys
 import time
 
 platform, warmup, duration, interval = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
+device_fragment = f"/CoreSimulator/Devices/{sys.argv[5]}/" if platform == "ios" else None
+clock_ticks = os.sysconf("SC_CLK_TCK") if platform == "linux" else None
 thresholds = {
     "app": float(os.environ.get("IRIS_DRIVE_IDLE_CPU_APP_MAX", "5")),
     "daemon": float(os.environ.get("IRIS_DRIVE_IDLE_CPU_DAEMON_MAX", "10")),
     "provider": float(os.environ.get("IRIS_DRIVE_IDLE_CPU_PROVIDER_MAX", "3")),
 }
+if platform == "ios":
+    thresholds["app"] = float(os.environ.get("IRIS_DRIVE_IDLE_CPU_IOS_HOST_APP_MAX", thresholds["app"]))
+    del thresholds["daemon"]
 default_required = {
     "macos": {"app", "daemon", "provider"},
     "linux": {"app", "daemon"},
+    "ios": {"app", "provider"},
 }[platform]
 required_env = os.environ.get("IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES", "").strip()
 required = {item for item in required_env.replace(",", " ").split() if item} or default_required
-command_match = os.environ.get("IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH", "").strip()
+command_match = "" if platform == "ios" else os.environ.get("IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH", "").strip()
 
 def executable_basename(command: str) -> str:
     try:
@@ -115,6 +120,14 @@ def executable_basename(command: str) -> str:
     return os.path.basename(parts[0]) if parts else ""
 
 def classify(command: str):
+    if platform == "ios":
+        if device_fragment not in command:
+            return None
+        if "/IrisDriveFileProvider.appex/IrisDriveFileProvider" in command:
+            return "provider"
+        if "/Iris Drive.app/Iris Drive" in command and "/PlugIns/" not in command:
+            return "app"
+        return None
     executable = executable_basename(command)
     if platform == "macos":
         if "/Iris Drive.app/Contents/PlugIns/IrisDriveFileProvider.appex/Contents/MacOS/IrisDriveFileProvider" in command:
@@ -147,6 +160,25 @@ def parse_cpu_time(value: str) -> float:
         return float(value)
     return days * 86400 + int(hours) * 3600 + int(minutes) * 60 + float(seconds)
 
+def process_cpu_seconds(pid: str, ps_time: str) -> float:
+    if platform != "linux":
+        return parse_cpu_time(ps_time)
+    try:
+        with open(f"/proc/{pid}/stat") as counter:
+            prefix, closing, tail = counter.read().rpartition(")")
+        if not closing or not prefix.startswith(f"{pid} ("):
+            raise ValueError("invalid stat process header")
+        # comm may contain spaces and parentheses. Fields after its final ')'
+        # start at state (field 3); utime/stime are fields 14 and 15.
+        fields = tail.split()
+        user_ticks, system_ticks = int(fields[11]), int(fields[12])
+        if user_ticks < 0 or system_ticks < 0:
+            raise ValueError("negative CPU ticks")
+        return (user_ticks + system_ticks) / clock_ticks
+    except (OSError, ValueError, IndexError) as error:
+        print(f"[idle-cpu] FAIL: PID {pid} CPU counter unavailable or malformed during idle sample: {error}", file=sys.stderr)
+        sys.exit(1)
+
 def snapshot():
     output = subprocess.check_output(["ps", "-axo", "pid=,ppid=,time=,command="], text=True)
     processes = {}
@@ -161,7 +193,7 @@ def snapshot():
         if not role:
             continue
         try:
-            value = parse_cpu_time(cpu_time)
+            value = process_cpu_seconds(pid, cpu_time)
         except ValueError:
             continue
         processes[int(pid)] = {"role": role, "cpu_seconds": value, "command": command}
@@ -174,12 +206,18 @@ seen = {role: set() for role in thresholds}
 deadline = time.monotonic() + duration
 previous_time = time.monotonic()
 previous = snapshot()
-for process in previous.values():
-    seen.setdefault(process["role"], set())
+required_pids = {role: {pid for pid, process in previous.items() if process["role"] == role}
+                 for role in required}
+failures = []
 while time.monotonic() < deadline:
     time.sleep(interval)
     now = time.monotonic()
     current = snapshot()
+    for role, pids in required_pids.items():
+        if not pids or pids != {pid for pid, process in current.items() if process["role"] == role}:
+            failures.append(f"{role}: required process set changed or missing during idle sample")
+    if failures:
+        break
     elapsed = max(now - previous_time, 0.001)
     totals = {role: 0.0 for role in thresholds}
     observed_roles = set()
@@ -189,17 +227,18 @@ while time.monotonic() < deadline:
         seen.setdefault(role, set()).add(pid)
         previous_process = previous.get(pid)
         if previous_process and previous_process["role"] == role:
-            delta = max(process["cpu_seconds"] - previous_process["cpu_seconds"], 0.0)
-            totals[role] = totals.get(role, 0.0) + (delta / elapsed * 100.0)
+            delta = process["cpu_seconds"] - previous_process["cpu_seconds"]
+            if delta < 0 and role in required:
+                failures.append(f"{role}: cumulative CPU counter decreased during idle sample")
+            totals[role] = totals.get(role, 0.0) + (max(delta, 0.0) / elapsed * 100.0)
     for role in observed_roles:
         samples.setdefault(role, []).append(totals.get(role, 0.0))
-    if time.monotonic() >= deadline:
+    if failures or time.monotonic() >= deadline:
         break
     previous = current
     previous_time = now
 
 summary = {}
-failures = []
 for role in sorted(required | set(samples)):
     values = samples.get(role, [])
     if not values:
@@ -219,13 +258,21 @@ for role in sorted(required | set(samples)):
     if avg > limit:
         failures.append(f"{role}: avg CPU {avg:.2f}% > {limit:.2f}%")
 
-print(json.dumps({"platform": platform, "required_roles": sorted(required), "roles": summary}, indent=2, sort_keys=True))
+result = {"platform": platform, "required_roles": sorted(required), "roles": summary}
+if platform == "ios":
+    result["method"] = "host-process-delta"
+print(json.dumps(result, indent=2, sort_keys=True))
 if failures:
     for failure in failures:
         print(f"[idle-cpu] FAIL: {failure}", file=sys.stderr)
     sys.exit(1)
 print("[idle-cpu] OK", file=sys.stderr)
 PY
+}
+
+case "$platform" in
+  macos | linux)
+    run_posix_process_sampler "$platform"
     ;;
   windows)
     powershell_bin="${POWERSHELL:-}"
@@ -320,36 +367,44 @@ def snapshot():
             continue
     return ticks_by_pid, uptime
 
+def fail(message):
+    print(f"[idle-cpu] FAIL: {message} during idle sample", file=sys.stderr)
+    sys.exit(1)
+
 values = []
-seen_process = False
+raw_intervals = []
 previous_ticks, previous_uptime = snapshot()
-if previous_ticks:
-    seen_process = True
+required_pids = set(previous_ticks)
+if not required_pids:
+    fail("android app process was not observed")
 deadline = time.monotonic() + duration
 while time.monotonic() < deadline:
     time.sleep(interval)
     current_ticks, current_uptime = snapshot()
-    if current_ticks:
-        seen_process = True
-    if previous_uptime is not None and current_uptime is not None:
-        elapsed = max(current_uptime - previous_uptime, 0.001)
-    else:
-        elapsed = float(interval)
-    delta_ticks = 0.0
-    for pid, current in current_ticks.items():
-        previous = previous_ticks.get(pid)
-        if previous is not None:
-            delta_ticks += max(current - previous, 0.0)
-    if current_ticks or previous_ticks:
-        values.append(delta_ticks / clk_tck / elapsed * 100.0)
+    if set(current_ticks) != required_pids:
+        fail("android app process set changed or missing")
+    if previous_uptime is None or current_uptime is None or current_uptime <= previous_uptime:
+        fail("android uptime counter unavailable or did not advance")
+    elapsed = current_uptime - previous_uptime
+    deltas = [current_ticks[pid] - previous_ticks[pid] for pid in required_pids]
+    if any(delta < 0 for delta in deltas):
+        fail("android cumulative CPU counter decreased")
+    values.append(sum(deltas) / clk_tck / elapsed * 100.0)
+    raw_intervals.append({
+        "uptime_before_seconds": previous_uptime,
+        "uptime_after_seconds": current_uptime,
+        "elapsed_seconds": elapsed,
+        "ticks_before": previous_ticks,
+        "ticks_after": current_ticks,
+        "cpu_percent": values[-1],
+    })
     previous_ticks, previous_uptime = current_ticks, current_uptime
 
 if not values:
-    message = "android app process was not observed" if not seen_process else "android app CPU samples were unavailable"
-    print(f"[idle-cpu] FAIL: {message}", file=sys.stderr)
-    sys.exit(1)
+    fail("android app CPU samples were unavailable")
 avg = sum(values) / len(values)
 summary = {"platform": "android", "required_roles": ["app"], "roles": {"app": {"avg_cpu": round(avg, 2), "peak_cpu": round(max(values), 2), "samples": len(values), "limit": limit}}}
+summary["sampling"] = {"clk_tck": clk_tck, "pids": sorted(required_pids), "intervals": raw_intervals}
 print(json.dumps(summary, indent=2, sort_keys=True))
 if avg > limit:
     print(f"[idle-cpu] FAIL: android app avg CPU {avg:.2f}% > {limit:.2f}%", file=sys.stderr)
@@ -392,7 +447,9 @@ PY
     }
     trap cleanup_ios_idle_cpu EXIT
     launch_ios_app() {
-      if xcrun simctl launch "$ios_device" "$bundle_id" >/dev/null 2>&1; then
+      # CoreSimulator can retain a Debug profile path after reinstalling the app.
+      if SIMCTL_CHILD_IRIS_DRIVE_UI_TEST_BASE_DIR="${SIMCTL_CHILD_IRIS_DRIVE_UI_TEST_BASE_DIR:-}" \
+        xcrun simctl launch "$ios_device" "$bundle_id" >/dev/null 2>&1; then
         ios_launch_kind="simulator"
         return 0
       fi
@@ -408,124 +465,7 @@ PY
       if [[ "${IRIS_DRIVE_IDLE_CPU_IOS_LAUNCH:-1}" != "0" ]]; then
         launch_ios_app
       fi
-      echo "[idle-cpu] warmup ${warmup}s, host process delta ${duration}s every ${interval}s on simulator ${ios_device}" >&2
-      python3 - "$ios_device" "$warmup" "$duration" "$interval" <<'PY'
-import json
-import os
-import subprocess
-import sys
-import time
-
-ios_device, warmup, duration, interval = sys.argv[1], int(sys.argv[2]), int(sys.argv[3]), int(sys.argv[4])
-device_fragment = f"/CoreSimulator/Devices/{ios_device}/"
-thresholds = {
-    "app": float(os.environ.get("IRIS_DRIVE_IDLE_CPU_IOS_HOST_APP_MAX", os.environ.get("IRIS_DRIVE_IDLE_CPU_APP_MAX", "5"))),
-    "provider": float(os.environ.get("IRIS_DRIVE_IDLE_CPU_PROVIDER_MAX", "3")),
-}
-required_env = os.environ.get("IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES", "").strip()
-required = {item for item in required_env.replace(",", " ").split() if item} or {"app", "provider"}
-
-def classify(command: str):
-    if device_fragment not in command:
-        return None
-    if "/IrisDriveFileProvider.appex/IrisDriveFileProvider" in command:
-        return "provider"
-    if "/Iris Drive.app/Iris Drive" in command and "/PlugIns/" not in command:
-        return "app"
-    return None
-
-def parse_cpu_time(value: str) -> float:
-    days = 0
-    if "-" in value:
-        day_value, value = value.split("-", 1)
-        days = int(day_value)
-    parts = value.split(":")
-    if len(parts) == 3:
-        hours, minutes, seconds = parts
-    elif len(parts) == 2:
-        hours = "0"
-        minutes, seconds = parts
-    else:
-        return float(value)
-    return days * 86400 + int(hours) * 3600 + int(minutes) * 60 + float(seconds)
-
-def snapshot():
-    output = subprocess.check_output(["ps", "-axo", "pid=,time=,command="], text=True)
-    processes = {}
-    for raw in output.splitlines():
-        parts = raw.strip().split(None, 2)
-        if len(parts) < 3:
-            continue
-        pid, cpu_time, command = parts
-        role = classify(command)
-        if not role:
-            continue
-        try:
-            value = parse_cpu_time(cpu_time)
-        except ValueError:
-            continue
-        processes[int(pid)] = {"role": role, "cpu_seconds": value}
-    return processes
-
-time.sleep(warmup)
-samples = {role: [] for role in thresholds}
-seen = {role: set() for role in thresholds}
-deadline = time.monotonic() + duration
-previous_time = time.monotonic()
-previous = snapshot()
-while time.monotonic() < deadline:
-    time.sleep(interval)
-    now = time.monotonic()
-    current = snapshot()
-    elapsed = max(now - previous_time, 0.001)
-    totals = {role: 0.0 for role in thresholds}
-    observed_roles = set()
-    for pid, process in current.items():
-        role = process["role"]
-        observed_roles.add(role)
-        seen.setdefault(role, set()).add(pid)
-        previous_process = previous.get(pid)
-        if previous_process and previous_process["role"] == role:
-            delta = max(process["cpu_seconds"] - previous_process["cpu_seconds"], 0.0)
-            totals[role] = totals.get(role, 0.0) + (delta / elapsed * 100.0)
-    for role in observed_roles:
-        samples.setdefault(role, []).append(totals.get(role, 0.0))
-    previous = current
-    previous_time = now
-
-summary = {}
-failures = []
-for role in sorted(required | set(samples)):
-    values = samples.get(role, [])
-    if not values:
-        if role in required:
-            failures.append(f"{role}: required simulator process role was not observed")
-        continue
-    avg = sum(values) / len(values)
-    peak = max(values)
-    limit = thresholds.get(role, thresholds["app"])
-    summary[role] = {
-        "avg_cpu": round(avg, 2),
-        "peak_cpu": round(peak, 2),
-        "samples": len(values),
-        "pids": sorted(seen.get(role, set())),
-        "limit": limit,
-    }
-    if avg > limit:
-        failures.append(f"{role}: avg CPU {avg:.2f}% > {limit:.2f}%")
-
-print(json.dumps({
-    "platform": "ios",
-    "method": "host-process-delta",
-    "required_roles": sorted(required),
-    "roles": summary,
-}, indent=2, sort_keys=True))
-if failures:
-    for failure in failures:
-        print(f"[idle-cpu] FAIL: {failure}", file=sys.stderr)
-    sys.exit(1)
-print("[idle-cpu] OK", file=sys.stderr)
-PY
+      run_posix_process_sampler ios "$ios_device"
     }
     if [[ "${IRIS_DRIVE_IDLE_CPU_IOS_LAUNCH:-1}" != "0" ]]; then
       launch_ios_app

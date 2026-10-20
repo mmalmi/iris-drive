@@ -1,65 +1,22 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
-import { generateKeyPairSync } from 'node:crypto'
+import { createHash, generateKeyPairSync } from 'node:crypto'
 import { chmodSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { fileURLToPath } from 'node:url'
-
 import {
-  buildNumberFromVersion,
-  bumpCargoPackageVersion,
-  bumpPbxprojReleaseVersions,
-  bumpXcodegenProjectVersions,
   buildReleaseManifest,
   buildReleaseManifestFiles,
   buildZapstorePublishPlan,
   describeAsset,
   parseNotarytoolSubmitOutput,
   plannedReleaseAssetNames,
-  readWorkspaceVersionTag,
   renderReleaseNotes,
   validateReleaseAssetSet,
 } from './local-release-lib.mjs'
-
-test('readWorkspaceVersionTag reads the workspace package version', () => {
-  const tag = readWorkspaceVersionTag(`
-[workspace]
-members = []
-
-[workspace.package]
-version = "0.2.27"
-`)
-
-  assert.equal(tag, 'v0.2.27')
-})
-
-test('release version helpers sync native platform metadata', () => {
-  assert.equal(buildNumberFromVersion('v0.1.5'), '1005')
-
-  assert.equal(
-    bumpCargoPackageVersion('[package]\nname = "iris-drive-linux"\nversion = "0.1.4"\n\n[dependencies]\n', 'v0.1.5'),
-    '[package]\nname = "iris-drive-linux"\nversion = "0.1.5"\n\n[dependencies]\n',
-  )
-
-  assert.equal(
-    bumpXcodegenProjectVersions(
-      'settings:\n  base:\n    MARKETING_VERSION: "0.1.4"\n    CURRENT_PROJECT_VERSION: "1004"\n',
-      'v0.1.5',
-    ),
-    'settings:\n  base:\n    MARKETING_VERSION: "0.1.5"\n    CURRENT_PROJECT_VERSION: "1005"\n',
-  )
-
-  assert.equal(
-    bumpPbxprojReleaseVersions(
-      'MARKETING_VERSION = 0.1.4;\nCURRENT_PROJECT_VERSION = 1004;\n',
-      'v0.1.5',
-    ),
-    'MARKETING_VERSION = 0.1.5;\nCURRENT_PROJECT_VERSION = 1005;\n',
-  )
-})
 
 test('buildReleaseManifest marks idrive archives as binary archives', () => {
   const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-test-'))
@@ -73,6 +30,7 @@ test('buildReleaseManifest marks idrive archives as binary archives', () => {
     assetPaths: [cli],
   })
 
+  assert.equal(manifest.assets[0].sha256, createHash('sha256').update('archive').digest('hex'))
   assert.equal(manifest.app, 'iris-drive')
   assert.equal(manifest.version, '0.2.27')
   assert.equal(manifest.assets[0].kind, 'binary-archive')
@@ -128,7 +86,7 @@ test('buildReleaseManifestFiles writes both updater manifest names', () => {
 test('describeAsset labels idrive release assets', () => {
   assert.equal(
     describeAsset('idrive-v0.2.27-x86_64-pc-windows-msvc.zip'),
-    'Windows x64 idrive CLI',
+    'Windows x64 idrive CLI (unsigned)',
   )
   assert.equal(
     describeAsset('idrive-v0.2.27-x86_64-unknown-linux-gnu.tar.gz'),
@@ -210,7 +168,7 @@ test('validateReleaseAssetSet requires complete public app artifacts for final r
     () => validateReleaseAssetSet(['idrive-v0.2.27-aarch64-apple-darwin.tar.gz'], {
       requireCompleteAppRelease: true,
     }),
-    /macOS DMG.*macOS updater archive.*Linux x64 desktop package.*Windows x64 installer.*signed Android APK/,
+    /macOS DMG.*macOS updater archive.*Linux x64 desktop package.*Windows x64 CLI archive.*Windows x64 installer.*signed Android APK/,
   )
 })
 
@@ -267,15 +225,16 @@ test('renderReleaseNotes groups common app downloads before advanced files', () 
   assert.match(notes, /### Most People Will Want/)
   assert.match(notes, /Iris Drive for macOS/)
   assert.match(notes, /Iris Drive for Debian\/Ubuntu \(\.deb\)/)
-  assert.match(notes, /Iris Drive for Windows/)
+  assert.match(notes, /Iris Drive for Windows \(unsigned\)/)
   assert.match(notes, /Iris Drive for Android/)
   assert.match(notes, /### Command Line/)
   assert.match(notes, /macOS Apple Silicon idrive CLI/)
   assert.match(notes, /Linux x64 idrive CLI/)
-  assert.match(notes, /Windows x64 idrive CLI/)
+  assert.match(notes, /Windows x64 idrive CLI \(unsigned\)/)
   assert.match(notes, /### Other Files/)
   assert.match(notes, /Iris Drive macOS updater archive/)
   assert.match(notes, /Iris Drive Android app bundle/)
+  assert.match(notes, /Release source commit: `abc123`/)
   assert(
     notes.indexOf('### Most People Will Want') < notes.indexOf('### Command Line'),
     'common downloads should appear before CLI archives',
@@ -294,7 +253,6 @@ test('local-release dry-run validates planned build assets over partial existing
   mkdirSync(assetDir)
   writeFileSync(join(assetDir, 'iris-drive-v9.9.9-macos-arm64.dmg'), 'partial')
   writeFileSync(keystorePath, 'test keystore placeholder')
-
   const result = spawnSync(
     process.execPath,
     [
@@ -317,12 +275,12 @@ test('local-release dry-run validates planned build assets over partial existing
       encoding: 'utf8',
       env: {
         ...process.env,
+        PATH: stageDir,
         ANDROID_KEYSTORE_PATH: keystorePath,
         ANDROID_KEYSTORE_PASSWORD: 'password',
         ANDROID_KEY_ALIAS: 'iris',
         ANDROID_KEY_PASSWORD: 'password',
         IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: 'iris-drive-notary',
-        IRIS_DRIVE_WINDOWS_SIGNTOOL_CERT_SHA1: '00FAKECERT',
       },
     },
   )
@@ -360,12 +318,12 @@ test('local-release final dry-run refreshes public release resolver after htree 
         ...process.env,
         IRIS_DRIVE_RELEASE_NPUB: 'npub1example',
         IRIS_DRIVE_RELEASE_RESOLVER_REFRESH_BASE_URLS: 'https://cdn.iris.to',
-        IRIS_DRIVE_ALLOW_UNSIGNED_WINDOWS: '1',
       },
     },
   )
 
   assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /Would stage 9 asset\(s\)/)
   assert.match(result.stdout, /api\/resolve\/npub1example\/releases%2Firis-drive\?refresh=1/)
   assert.match(
     result.stdout,
@@ -546,13 +504,11 @@ test('local-release final dry-run can plan Zapstore publish from signed Android 
         PATH: `${binDir}:${process.env.PATH}`,
         SIGN_WITH: 'nsec1test',
         IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: 'iris-drive-notary',
-        IRIS_DRIVE_WINDOWS_SIGNTOOL_CERT_SHA1: '00FAKECERT',
       },
     },
   )
 
   assert.equal(result.status, 0, result.stderr)
-  assert.match(result.stdout, /-RequireSigning/)
   assert.match(result.stdout, /Would publish iris-drive-v9\.9\.9-android-arm64\.apk to Zapstore/)
 })
 
@@ -574,12 +530,11 @@ test('local-release dry-run builds the Windows installer in dist', () => {
   assert.equal(result.status, 0, result.stderr)
   assert.match(result.stdout, /scripts\/windows-publish\.ps1/)
   assert.match(result.stdout, /-Installer/)
-  assert.doesNotMatch(result.stdout, /-RequireSigning/)
   assert.match(result.stdout, /-Tag/)
   assert.match(result.stdout, /v9\.9\.9/)
 })
 
-test('local-release dry-run stages Linux CLI binary for cargo-deb', () => {
+test('local-release dry-run stages Linux CLI and selects the exact Debian output', () => {
   const result = spawnSync(
     process.execPath,
     [
@@ -598,7 +553,7 @@ test('local-release dry-run stages Linux CLI binary for cargo-deb', () => {
   assert.match(result.stdout, /\$ mkdir -p .*target\/release/)
   assert.match(
     result.stdout,
-    /\$ cp .*\/x86_64-unknown-linux-gnu\/release\/idrive .*linux\/target\/release\/idrive[\s\S]*\$ cargo deb --no-build/,
+    /\$ cp .*\/x86_64-unknown-linux-gnu\/release\/idrive .*linux\/target\/release\/idrive[\s\S]*\$ cargo deb --no-build --output .*\/linux\/target\/debian\/iris-drive-v9\.9\.9-linux-x64\.deb(?:\n|$)/,
   )
 })
 
@@ -619,12 +574,12 @@ test('local-release dry-run passes release versions to macOS and Android builder
 
   assert.equal(result.status, 0, result.stderr)
   assert.match(result.stdout, /MARKETING_VERSION=9\.9\.9/)
-  assert.match(result.stdout, /CURRENT_PROJECT_VERSION=9009009/)
+  assert.match(result.stdout, /CURRENT_PROJECT_VERSION=9009010/)
   assert.match(result.stdout, /--timestamp/)
   assert.match(result.stdout, /codesign --force --timestamp --options runtime --sign/)
   assert.match(result.stdout, /iris-drive-v9\.9\.9-macos-arm64\.app\.tar\.gz/)
   assert.match(result.stdout, /-PirisDriveVersionName=9\.9\.9/)
-  assert.match(result.stdout, /-PirisDriveVersionCode=9009009/)
+  assert.match(result.stdout, /-PirisDriveVersionCode=9009010/)
   assert.match(result.stdout, /tools\/run-android .* clean :app:assembleRelease :app:bundleRelease/)
 })
 
@@ -655,9 +610,36 @@ test('local-release dry-run notarizes macOS artifacts and adds Applications shor
   assert.match(result.stdout, /ditto .*ReleaseDmgRoot\/Iris Drive\.app/)
   assert.match(result.stdout, /Would link \/Applications -> .*ReleaseDmgRoot\/Applications/)
   assert.match(result.stdout, /hdiutil create .* -srcfolder .*ReleaseDmgRoot .*iris-drive-v9\.9\.9-macos-arm64\.dmg/)
+  assert.match(result.stdout, /hdiutil create .* -megabytes /)
   assert.match(result.stdout, /codesign .*iris-drive-v9\.9\.9-macos-arm64\.dmg/)
   assert.match(result.stdout, /xcrun notarytool submit .*iris-drive-v9\.9\.9-macos-arm64\.dmg .*--keychain-profile/)
   assert.match(result.stdout, /xcrun stapler staple .*iris-drive-v9\.9\.9-macos-arm64\.dmg/)
+})
+
+test('local-release pins Rust macOS objects to the supported deployment target', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+      '--build',
+      '--dry-run',
+      '--tag',
+      'v9.9.9',
+      '--only',
+      'macos',
+    ],
+    {
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        MACOSX_DEPLOYMENT_TARGET: '14.0',
+        IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: 'iris-drive-notary',
+      },
+    },
+  )
+
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /macOS deployment target: 14\.0/)
 })
 
 test('local-release dry-run wires restricted entitlement scrubbing and macOS release launch smoke', () => {
@@ -687,6 +669,9 @@ test('local-release dry-run wires restricted entitlement scrubbing and macOS rel
     result.stdout,
     /Would prepare entitlements .*Release\.entitlements.*strip.*com\.apple\.developer\.associated-domains/s,
   )
+  assert.match(result.stdout, /\$ strip -S .*Iris Drive[\s\S]*\$ codesign/)
+  assert.match(result.stdout, /\$ strip -S .*IrisDriveFileProvider[\s\S]*\$ codesign/)
+  assert.match(result.stdout, /codesign .*IrisDriveFileProvider\.appex/)
   assert.match(result.stdout, /scripts\/macos-release-smoke\.sh/)
   assert.match(result.stdout, /--app .*Iris Drive\.app/)
   assert.match(result.stdout, /--archive .*iris-drive-v9\.9\.9-macos-arm64\.app\.tar\.gz/)
@@ -829,7 +814,7 @@ test('local-release dry-run passes release versions to the iOS TestFlight builde
   )
 
   assert.equal(result.status, 0, result.stderr)
-  assert.match(result.stdout, /iOS TestFlight version: 9\.9\.9 \(9009009\)/)
+  assert.match(result.stdout, /iOS TestFlight version: 9\.9\.9 \(9009010\)/)
 })
 
 test('local-release dry-run uses a public-capable iOS upload for internal plus public TestFlight', () => {
@@ -875,7 +860,7 @@ test('iOS manual build keeps App Store Connect auth out of Xcode signing', () =>
     'utf8',
   )
   const manualArchive = script.match(
-    /return\n  fi\n\n([\s\S]*?xcodebuild[\s\S]*?CODE_SIGN_STYLE=Manual[\s\S]*?archive)/,
+    /run_ios_archive\(\)[\s\S]*?\n  else\n([\s\S]*?)\n  fi\n  verify_ios_archive_license/,
   )?.[1] ?? ''
 
   assert.match(manualArchive, /CODE_SIGN_STYLE=Manual/)

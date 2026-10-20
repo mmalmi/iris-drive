@@ -8,10 +8,15 @@ use fips_core::discovery::local::LocalInstanceCapability;
 use fips_core::{FipsEndpoint, PeerIdentity};
 use fips_tcp::{Config as TcpConfig, ConnectionId, MarkerStatus, SendMarker, State};
 use fips_tcp_endpoint::FipsTcpEndpoint;
-use tokio::sync::{broadcast, mpsc, oneshot};
+use tokio::sync::{broadcast, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 
 use super::FipsSyncError;
+
+mod bootstrap;
+use bootstrap::BootstrapBudget;
+mod queue;
+use queue::{PeerQueue, QueuedRecord};
 
 pub const DRIVE_CONTROL_CAPABILITY: &str = "iris.drive.control/1";
 pub const DRIVE_CONTROL_SERVICE_PORT: u16 = 39_019;
@@ -29,8 +34,8 @@ const IO_CHUNK_BYTES: usize = 16 * 1024;
 const COMMAND_CAPACITY: usize = 256;
 const DELIVERY_CAPACITY: usize = 1024;
 const SEEN_RECORD_CAPACITY: usize = 1024;
-pub(super) const CONTROL_POLL_INTERVAL: Duration = Duration::from_millis(100);
-pub(super) const BOOTSTRAP_STREAM_LIFETIME_MS: u64 = 5_000;
+pub(crate) const CONTROL_POLL_INTERVAL: Duration = Duration::from_millis(250);
+pub(crate) const BOOTSTRAP_STREAM_LIFETIME_MS: u64 = 5_000;
 const QUEUED_RECORD_LIFETIME_MS: u64 = 60_000;
 const RECONNECT_DELAY_MS: u64 = 1_000;
 
@@ -41,14 +46,15 @@ pub struct FipsAppMessage {
     pub data: Vec<u8>,
 }
 
-pub(super) struct DriveControlRuntime {
+pub(crate) struct DriveControlRuntime {
     commands: mpsc::Sender<Command>,
     deliveries: broadcast::Sender<FipsAppMessage>,
+    presence_changes: watch::Sender<Vec<String>>,
     task: Option<JoinHandle<()>>,
 }
 
 impl DriveControlRuntime {
-    pub(super) async fn bind(
+    pub(crate) async fn bind(
         endpoint: Arc<FipsEndpoint>,
         authorized_peers: BTreeSet<String>,
         bootstrap_topics: BTreeSet<&'static str>,
@@ -70,6 +76,7 @@ impl DriveControlRuntime {
         .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?;
         let (commands, command_rx) = mpsc::channel(COMMAND_CAPACITY);
         let (deliveries, _) = broadcast::channel(DELIVERY_CAPACITY);
+        let (presence_changes, _) = watch::channel(Vec::new());
         let actor = ControlActor {
             local_npub: endpoint.npub().to_string(),
             tcp,
@@ -79,23 +86,30 @@ impl DriveControlRuntime {
             active: BTreeMap::new(),
             inputs: HashMap::new(),
             queues: BTreeMap::new(),
+            next_connection_attempt_ms: BTreeMap::new(),
             seen_records: HashSet::new(),
             seen_record_order: VecDeque::new(),
             deliveries: deliveries.clone(),
+            presence_changes: presence_changes.clone(),
         };
         let task = tokio::spawn(actor.run(command_rx));
         Ok(Self {
             commands,
             deliveries,
+            presence_changes,
             task: Some(task),
         })
     }
 
-    pub(super) fn subscribe(&self) -> broadcast::Receiver<FipsAppMessage> {
+    pub(crate) fn subscribe(&self) -> broadcast::Receiver<FipsAppMessage> {
         self.deliveries.subscribe()
     }
 
-    pub(super) async fn set_policy(
+    pub(crate) fn subscribe_presence_changes(&self) -> watch::Receiver<Vec<String>> {
+        self.presence_changes.subscribe()
+    }
+
+    pub(crate) async fn set_policy(
         &self,
         authorized_peers: BTreeSet<String>,
         bootstrap_topics: BTreeSet<&'static str>,
@@ -109,7 +123,7 @@ impl DriveControlRuntime {
         .await
     }
 
-    pub(super) async fn send(
+    pub(crate) async fn send(
         &self,
         peer_id: String,
         topic: String,
@@ -124,7 +138,7 @@ impl DriveControlRuntime {
         .await
     }
 
-    pub(super) async fn broadcast(
+    pub(crate) async fn broadcast(
         &self,
         topic: String,
         data: Vec<u8>,
@@ -137,7 +151,16 @@ impl DriveControlRuntime {
         response.await.map_err(|_| closed())?
     }
 
-    pub(super) async fn shutdown(&mut self) -> Result<(), FipsSyncError> {
+    pub(crate) async fn connected_peer_ids(&self) -> Result<Vec<String>, FipsSyncError> {
+        let (reply, response) = oneshot::channel();
+        self.commands
+            .send(Command::ConnectedPeers { reply })
+            .await
+            .map_err(|_| closed())?;
+        response.await.map_err(|_| closed())
+    }
+
+    pub(crate) async fn shutdown(&mut self) -> Result<(), FipsSyncError> {
         let (reply, response) = oneshot::channel();
         if self
             .commands
@@ -192,6 +215,9 @@ enum Command {
         data: Vec<u8>,
         reply: oneshot::Sender<Result<usize, FipsSyncError>>,
     },
+    ConnectedPeers {
+        reply: oneshot::Sender<Vec<String>>,
+    },
     Shutdown {
         reply: oneshot::Sender<()>,
     },
@@ -207,45 +233,7 @@ struct TrackedConnection {
     peer: String,
     direction: Direction,
     opened_at_ms: u64,
-}
-
-#[derive(Default)]
-struct PeerQueue {
-    records: VecDeque<QueuedRecord>,
-    bytes: usize,
-    next_attempt_ms: u64,
-}
-
-struct QueuedRecord {
-    bytes: Vec<u8>,
-    offset: usize,
-    ack_marker: Option<SendMarker>,
-    expires_at_ms: u64,
-}
-
-impl PeerQueue {
-    fn rewind_after_stream_change(&mut self) {
-        for record in &mut self.records {
-            record.offset = 0;
-            record.ack_marker = None;
-        }
-    }
-
-    fn pop_front(&mut self) {
-        if let Some(record) = self.records.pop_front() {
-            self.bytes = self.bytes.saturating_sub(record.bytes.len());
-        }
-    }
-
-    fn expire_unstarted(&mut self, now_ms: u64) {
-        while self
-            .records
-            .front()
-            .is_some_and(|record| record.offset == 0 && now_ms >= record.expires_at_ms)
-        {
-            self.pop_front();
-        }
-    }
+    bootstrap_budget: BootstrapBudget,
 }
 
 #[derive(Default)]
@@ -269,9 +257,11 @@ struct ControlActor {
     active: BTreeMap<String, ConnectionId>,
     inputs: HashMap<String, RecordDecoder>,
     queues: BTreeMap<String, PeerQueue>,
+    next_connection_attempt_ms: BTreeMap<String, u64>,
     seen_records: HashSet<(String, [u8; RECORD_ID_BYTES])>,
     seen_record_order: VecDeque<(String, [u8; RECORD_ID_BYTES])>,
     deliveries: broadcast::Sender<FipsAppMessage>,
+    presence_changes: watch::Sender<Vec<String>>,
 }
 
 impl ControlActor {
@@ -300,6 +290,7 @@ impl ControlActor {
             if let Err(error) = self.drive(now_ms).await {
                 tracing::warn!(%error, "Drive control TCP/FIPS turn failed");
             }
+            self.publish_presence_if_changed();
         }
     }
 
@@ -343,10 +334,17 @@ impl ControlActor {
                 };
                 let _ = reply.send(result);
             }
+            Command::ConnectedPeers { reply } => {
+                let _ = reply.send(self.connected_peer_snapshot());
+            }
             Command::Shutdown { reply } => {
                 let ids = self.connections.keys().copied().collect::<Vec<_>>();
                 for id in ids {
-                    let _ = self.tcp.close(id, now_ms).await;
+                    // A control service shutdown must invalidate the peer's
+                    // stream immediately. A graceful half-close can leave the
+                    // remote side writing into an acknowledged but unobserved
+                    // socket while this actor is already gone.
+                    let _ = self.tcp.abort(id).await;
                 }
                 let _ = self.tcp.poll(now_ms).await;
                 let _ = reply.send(());
@@ -354,6 +352,25 @@ impl ControlActor {
             }
         }
         false
+    }
+
+    fn connected_peer_snapshot(&self) -> Vec<String> {
+        self.active
+            .keys()
+            .filter(|peer| self.authorized_peers.contains(*peer))
+            .cloned()
+            .collect()
+    }
+
+    fn publish_presence_if_changed(&self) {
+        let next = self.connected_peer_snapshot();
+        self.presence_changes.send_if_modified(|current| {
+            if *current == next {
+                return false;
+            }
+            current.clone_from(&next);
+            true
+        });
     }
 
     fn queue(
@@ -386,12 +403,12 @@ impl ControlActor {
         {
             return Err(endpoint_error("Drive control peer queue is full"));
         }
-        queue.bytes = queue.bytes.saturating_add(record.len());
-        queue.records.push_back(QueuedRecord {
+        queue.push(QueuedRecord {
             bytes: record,
             offset: 0,
             ack_marker: None,
             expires_at_ms: now_ms.saturating_add(QUEUED_RECORD_LIFETIME_MS),
+            bootstrap: super::CONTROL_BOOTSTRAP_TOPICS.contains(&topic),
         });
         queue.next_attempt_ms = queue.next_attempt_ms.min(now_ms);
         Ok(())
@@ -402,9 +419,7 @@ impl ControlActor {
             connection.peer == peer_id
                 && matches!(
                     self.tcp.state(*id),
-                    Some(
-                        State::SynSent | State::SynReceived | State::Established | State::CloseWait
-                    )
+                    Some(State::SynSent | State::SynReceived | State::Established)
                 )
         }) {
             return Ok(());
@@ -422,6 +437,7 @@ impl ControlActor {
                 peer: peer_id.to_string(),
                 direction: Direction::Outbound,
                 opened_at_ms: now_ms,
+                bootstrap_budget: BootstrapBudget::default(),
             },
         );
         Ok(())
@@ -432,6 +448,7 @@ impl ControlActor {
         self.select_streams().await?;
         self.expire_bootstrap_connections(now_ms).await?;
         self.expire_queues(now_ms);
+        self.connect_authorized(now_ms).await;
         self.reconnect_queued(now_ms).await;
         self.read(now_ms).await?;
         self.flush(now_ms).await?;
@@ -452,6 +469,31 @@ impl ControlActor {
                 }
                 tracing::debug!(%peer, %error, "Drive control reconnect deferred");
             }
+        }
+    }
+
+    async fn connect_authorized(&mut self, now_ms: u64) {
+        self.next_connection_attempt_ms
+            .retain(|peer, _| self.authorized_peers.contains(peer));
+        let peers = self
+            .authorized_peers
+            .iter()
+            .filter(|peer| {
+                now_ms
+                    >= self
+                        .next_connection_attempt_ms
+                        .get(*peer)
+                        .copied()
+                        .unwrap_or_default()
+            })
+            .cloned()
+            .collect::<Vec<_>>();
+        for peer in peers {
+            if let Err(error) = self.ensure_connection(&peer, now_ms).await {
+                tracing::debug!(%peer, %error, "Drive control presence connection deferred");
+            }
+            self.next_connection_attempt_ms
+                .insert(peer, now_ms.saturating_add(RECONNECT_DELAY_MS));
         }
     }
 
@@ -496,6 +538,7 @@ impl ControlActor {
                 peer,
                 direction: Direction::Inbound,
                 opened_at_ms: now_ms,
+                bootstrap_budget: BootstrapBudget::default(),
             });
         }
         Ok(())
@@ -551,12 +594,20 @@ impl ControlActor {
     }
 
     async fn read(&mut self, now_ms: u64) -> Result<(), FipsSyncError> {
+        // Binding starts the actor before its owner can obtain a receiver.
+        // Leave bytes in the bounded TCP receive buffers until at least one
+        // subscriber exists so messages arriving during startup/restart are
+        // never acknowledged and then discarded by an empty broadcast.
+        if self.deliveries.receiver_count() == 0 {
+            return Ok(());
+        }
         let streams = self
             .active
             .iter()
             .map(|(peer, id)| (peer.clone(), *id))
             .collect::<Vec<_>>();
         for (peer, id) in streams {
+            let mut drained_closed_stream = false;
             for _ in 0..MAX_RECORDS_PER_TURN {
                 let decoded = match self.decode_next(&peer) {
                     Ok(decoded) => decoded,
@@ -572,19 +623,25 @@ impl ControlActor {
                 };
                 if let Some(record) = decoded {
                     let authorized = self.authorized_peers.contains(&peer);
-                    if (authorized || self.bootstrap_topics.contains(record.topic.as_str()))
-                        && self.mark_record_seen(&peer, record.id)
-                    {
+                    let admitted = authorized
+                        || (self.bootstrap_topics.contains(record.topic.as_str())
+                            && self.connections.get_mut(&id).is_some_and(|connection| {
+                                connection.bootstrap_budget.admit(&record)
+                            }));
+                    if !admitted {
+                        self.abort_connection(id, &peer).await?;
+                        break;
+                    }
+                    if self.mark_record_seen(&peer, record.id) {
                         let _ = self.deliveries.send(FipsAppMessage {
                             peer_id: peer.clone(),
                             topic: record.topic,
                             data: record.data,
                         });
                     }
-                    if !authorized {
-                        self.abort_connection(id, &peer).await?;
-                        break;
-                    }
+                    // Keep the bounded bootstrap exchange open: an immediate
+                    // reset invalidates the sender's ACK marker and replays the
+                    // receipt forever, starving the roster queued behind it.
                     continue;
                 }
                 let bytes = self
@@ -593,6 +650,7 @@ impl ControlActor {
                     .await
                     .map_err(|error| endpoint_error(error.to_string()))?;
                 if bytes.is_empty() {
+                    drained_closed_stream = self.tcp.state(id) == Some(State::CloseWait);
                     break;
                 }
                 let input = self.inputs.entry(peer.clone()).or_default();
@@ -607,6 +665,9 @@ impl ControlActor {
                     break;
                 }
                 input.bytes.extend_from_slice(&bytes);
+            }
+            if drained_closed_stream {
+                self.abort_connection(id, &peer).await?;
             }
         }
         Ok(())
@@ -626,6 +687,17 @@ impl ControlActor {
             .map(|(peer, id)| (peer.clone(), *id))
             .collect::<Vec<_>>();
         for (peer, id) in streams {
+            // Bootstrap records must overtake queued roots while the remote
+            // peer is awaiting approval. Restart before writing a new header
+            // if an ordinary record was already partially sent.
+            if self
+                .queues
+                .get(&peer)
+                .is_some_and(|queue| queue.restart_stream)
+            {
+                self.abort_connection(id, &peer).await?;
+                continue;
+            }
             loop {
                 let ack_status = self
                     .queues
@@ -780,7 +852,7 @@ impl ControlActor {
     }
 }
 
-pub(super) fn encode_record(topic: &str, data: &[u8]) -> Result<Vec<u8>, FipsSyncError> {
+pub(crate) fn encode_record(topic: &str, data: &[u8]) -> Result<Vec<u8>, FipsSyncError> {
     let topic = topic.trim();
     if topic.is_empty() || topic.len() > MAX_TOPIC_BYTES {
         return Err(endpoint_error("invalid Drive control topic length"));

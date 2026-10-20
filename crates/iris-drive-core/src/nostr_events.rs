@@ -221,14 +221,38 @@ fn build_drive_root_event_at(
         root_key_wraps.insert(recipient, ciphertext);
     }
 
+    let parents = root
+        .parents
+        .iter()
+        .map(|parent| {
+            Ok(RootParent {
+                app_key_pubkey: parent.app_key_pubkey.clone(),
+                app_key_seq: parent.app_key_seq,
+                root_cid: public_causal_root_reference(&parent.root_cid)?,
+            })
+        })
+        .collect::<Result<Vec<_>, WireError>>()?;
+    let observed = root
+        .observed
+        .iter()
+        .map(|(app_key_pubkey, observation)| {
+            Ok((
+                app_key_pubkey.clone(),
+                RootObservation {
+                    app_key_seq: observation.app_key_seq,
+                    root_cid: public_causal_root_reference(&observation.root_cid)?,
+                },
+            ))
+        })
+        .collect::<Result<std::collections::BTreeMap<_, _>, WireError>>()?;
     let content = DriveRootWireContent {
         root_cid: None,
         root_hash: Some(to_hex(&root_cid.hash)),
         root_key_wraps,
         dck_generation: root.dck_generation,
         app_key_seq: root.app_key_seq,
-        parents: root.parents.clone(),
-        observed: root.observed.clone(),
+        parents,
+        observed,
     };
     let content_json =
         serde_json::to_string(&content).map_err(|e| WireError::BadContent(e.to_string()))?;
@@ -245,6 +269,13 @@ fn build_drive_root_event_at(
         .sign_with_keys(device_keys)
         .map_err(|e| WireError::Event(e.to_string()))?;
     Ok(event)
+}
+
+fn public_causal_root_reference(root_cid: &str) -> Result<String, WireError> {
+    let root = Cid::parse(root_cid).map_err(|error| {
+        WireError::InvalidRootCid(format!("invalid causal root reference {root_cid}: {error}"))
+    })?;
+    Ok(to_hex(&root.hash))
 }
 
 /// Build a standard private hashtree mutable-root event for drive.iris.to.

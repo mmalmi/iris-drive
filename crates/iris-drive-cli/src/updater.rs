@@ -1,13 +1,12 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result, anyhow};
 use iris_drive_core::config::AppConfig;
 use iris_drive_core::updater::{
     ProductUpdateConfig, ProductUpdateMode, ProductUpdateResult, check_product_update,
-    download_product_update,
+    create_update_workspace, download_product_update,
 };
 use serde_json::Value;
 
@@ -58,8 +57,8 @@ async fn run_update(
         return Ok(());
     }
 
-    let temp_dir = create_temp_dir("idrive-update")?;
-    let download_dir = args.download_dir.as_deref().unwrap_or(&temp_dir);
+    let temp_dir = create_update_workspace(None)?;
+    let download_dir = args.download_dir.as_deref().unwrap_or(temp_dir.path());
     let downloaded =
         download_product_update(PRODUCT_VERSION, mode, update_config, Some(download_dir))
             .await
@@ -72,11 +71,14 @@ async fn run_update(
 
     if args.download_only || args.app {
         print_downloaded(&downloaded, args.json)?;
+        if args.download_dir.is_none() {
+            // The returned archive remains available for the app or caller to install.
+            let _ = temp_dir.keep();
+        }
         return Ok(());
     }
 
-    install_cli_archive(&destination, &temp_dir, args.path.as_deref())?;
-    let _ = fs::remove_dir_all(&temp_dir);
+    install_cli_archive(&destination, temp_dir.path(), args.path.as_deref())?;
     println!(
         "updated idrive at {} from {PRODUCT_VERSION} to {}",
         args.path
@@ -178,8 +180,11 @@ fn install_cli_archive(
     temp_dir: &Path,
     destination: Option<&Path>,
 ) -> Result<()> {
-    extract_archive(archive_path, temp_dir)?;
-    let binary = find_idrive_binary(temp_dir)?;
+    // Archive directory modes must not weaken the enclosing private workspace.
+    let extraction = temp_dir.join("extracted");
+    fs::create_dir(&extraction).context("creating update extraction directory")?;
+    extract_archive(archive_path, &extraction)?;
+    let binary = find_idrive_binary(&extraction)?;
     let destination = destination.map(Path::to_path_buf).map_or_else(
         || std::env::current_exe().context("resolving current executable"),
         Ok,
@@ -248,35 +253,27 @@ fn find_idrive_binary(root: &Path) -> Result<PathBuf> {
 fn install_binary(source: &Path, destination: &Path) -> Result<()> {
     let parent = install_parent(destination)?;
     fs::create_dir_all(parent).with_context(|| format!("creating {}", parent.display()))?;
-    let temp_path = parent.join(format!(
-        ".idrive-update-{}-{}{}",
-        std::process::id(),
-        unix_timestamp(),
-        std::env::consts::EXE_SUFFIX
-    ));
-    if temp_path.exists() {
-        let _ = fs::remove_file(&temp_path);
-    }
-    fs::copy(source, &temp_path)
-        .with_context(|| format!("copying {} to {}", source.display(), temp_path.display()))?;
+    let mut staged = tempfile::Builder::new()
+        .prefix(".idrive-update-")
+        .suffix(std::env::consts::EXE_SUFFIX)
+        .tempfile_in(parent)
+        .context("creating private update staging file")?;
+    let mut source_file =
+        fs::File::open(source).with_context(|| format!("opening {}", source.display()))?;
+    std::io::copy(&mut source_file, staged.as_file_mut())
+        .context("copying verified update into staging file")?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(&temp_path, fs::Permissions::from_mode(0o755))
-            .with_context(|| format!("marking {} executable", temp_path.display()))?;
+        staged
+            .as_file()
+            .set_permissions(fs::Permissions::from_mode(0o755))
+            .context("marking staged update executable")?;
     }
-    #[cfg(target_os = "windows")]
-    if destination.exists() {
-        fs::remove_file(destination)
-            .with_context(|| format!("removing {}", destination.display()))?;
-    }
-    fs::rename(&temp_path, destination).with_context(|| {
-        format!(
-            "moving {} into {}",
-            temp_path.display(),
-            destination.display()
-        )
-    })
+    staged
+        .persist(destination)
+        .with_context(|| format!("installing update at {}", destination.display()))?;
+    Ok(())
 }
 
 fn install_parent(destination: &Path) -> Result<&Path> {
@@ -304,25 +301,6 @@ fn current_exe_display() -> String {
     )
 }
 
-fn create_temp_dir(prefix: &str) -> Result<PathBuf> {
-    let dir = std::env::temp_dir().join(format!(
-        "{prefix}-{}-{}",
-        std::process::id(),
-        unix_timestamp()
-    ));
-    if dir.exists() {
-        let _ = fs::remove_dir_all(&dir);
-    }
-    fs::create_dir_all(&dir).with_context(|| format!("creating {}", dir.display()))?;
-    Ok(dir)
-}
-
-fn unix_timestamp() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_or(0, |duration| duration.as_secs())
-}
-
 fn command_error(context: &str, output: &std::process::Output) -> String {
     let stderr = String::from_utf8_lossy(&output.stderr);
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -339,6 +317,90 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn update_workspaces_are_unique_and_preserve_existing_downloads() {
+        let first = create_update_workspace(None).unwrap();
+        let marker = first.path().join("verified-download");
+        fs::write(&marker, b"verified content").unwrap();
+        let second = create_update_workspace(None).unwrap();
+        assert_ne!(
+            first.path(),
+            second.path(),
+            "concurrent updates need separate workspaces"
+        );
+        assert_eq!(fs::read(marker).unwrap(), b"verified content");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn update_workspace_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = create_update_workspace(None).unwrap();
+        let permissions = fs::metadata(directory.path()).unwrap().permissions().mode();
+        assert_eq!(permissions & 0o077, 0);
+    }
+
+    #[test]
+    fn installs_archive_over_existing_binary() {
+        let fixture = create_update_workspace(None).unwrap();
+        let package = fixture.path().join("package");
+        fs::create_dir(&package).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            fs::set_permissions(&package, fs::Permissions::from_mode(0o777)).unwrap();
+        }
+        let name = format!("idrive{}", std::env::consts::EXE_SUFFIX);
+        fs::write(package.join(&name), b"verified replacement").unwrap();
+        let archive = fixture.path().join("update.tar.gz");
+        let output = Command::new("tar")
+            .arg("-czf")
+            .arg(&archive)
+            .arg("-C")
+            .arg(&package)
+            .arg(".")
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{}", command_error("tar", &output));
+        let destination = fixture.path().join(&name);
+        fs::write(&destination, b"old binary").unwrap();
+        let extraction = create_update_workspace(None).unwrap();
+
+        install_cli_archive(&archive, extraction.path(), Some(&destination)).unwrap();
+
+        assert_eq!(fs::read(&destination).unwrap(), b"verified replacement");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(destination).unwrap().permissions().mode() & 0o777,
+                0o755
+            );
+            assert_eq!(
+                fs::metadata(extraction.path())
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o700,
+                "archive directory permissions must not weaken the private workspace"
+            );
+        }
+    }
+
+    #[test]
+    fn failed_install_preserves_binary_and_cleans_staging() {
+        let directory = create_update_workspace(None).unwrap();
+        let destination = directory.path().join("idrive");
+        fs::write(&destination, b"existing binary").unwrap();
+
+        assert!(install_binary(&directory.path().join("missing"), &destination).is_err());
+
+        assert_eq!(fs::read(destination).unwrap(), b"existing binary");
+        assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+    }
 
     #[test]
     fn product_update_config_includes_running_embedded_hashtree_url() {

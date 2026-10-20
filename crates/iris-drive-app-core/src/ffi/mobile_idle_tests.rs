@@ -1,16 +1,21 @@
 use std::path::Path;
+use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 
 use iris_drive_core::paths::config_path_in;
 use iris_drive_core::{AppConfig, AppKeyAuthorizationState};
 use nostr_sdk::{Event, JsonUtil};
 
 use super::mobile_fips_status::{
-    NATIVE_FIPS_STATUS_STABLE_WRITE_MIN_SECS, native_app_key_link_exchange_should_run,
-    native_fips_status_write_is_due, write_native_fips_status_value,
+    AppKeyLinkTick, NATIVE_FIPS_STATUS_STABLE_WRITE_MIN_SECS,
+    native_app_key_link_exchange_should_run, native_fips_status_write_is_due,
+    wait_for_app_key_link_exchange_tick, write_native_fips_status_value,
 };
 use super::{
     APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS, APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS, FfiApp,
-    NATIVE_FIPS_STATUS_FRESH_SECS, NativeAppConfigCache, app_key_link_exchange_tick_millis,
+    NATIVE_FIPS_STATUS_FRESH_SECS, NativeAppConfigCache, ProviderSummaryMode,
+    app_key_link_exchange_tick_millis, app_key_link_exchange_tick_result,
+    native_action_uses_short_config_transaction, provider_summary_mode_for_action,
 };
 use crate::NativeAppAction;
 
@@ -77,13 +82,14 @@ fn mobile_app_key_link_exchange_stays_on_for_authorized_or_awaiting_approval() {
     let source = phone_dir.path().join("idle-note.txt");
     std::fs::write(&source, b"idle bytes").unwrap();
     let data_dir = phone_dir.path().display().to_string();
-    assert!(
+    assert_eq!(
         super::native_provider_mkdir_json(&data_dir, "Photos")["error"]
             .as_str()
             .unwrap_or_default()
-            .is_empty()
+            .len(),
+        0
     );
-    assert!(
+    assert_eq!(
         super::native_provider_write_json(
             &data_dir,
             "Photos/idle-note.txt",
@@ -91,7 +97,8 @@ fn mobile_app_key_link_exchange_stays_on_for_authorized_or_awaiting_approval() {
         )["error"]
             .as_str()
             .unwrap_or_default()
-            .is_empty()
+            .len(),
+        0
     );
 
     let running = phone_app.dispatch(NativeAppAction::StartSync);
@@ -134,10 +141,88 @@ fn native_app_key_link_config_cache_reports_only_real_changes() {
 }
 
 #[test]
+fn approving_a_device_wakes_an_idle_app_key_link_exchange() {
+    let owner_dir = tempfile::tempdir().unwrap();
+    let owner = FfiApp::new(owner_dir.path().display().to_string(), "test".to_owned());
+    let invite = owner
+        .dispatch(crate::NativeAppAction::CreateProfile {
+            app_key_label: "Owner".to_owned(),
+        })
+        .ui
+        .profile
+        .unwrap()
+        .app_key_link_invite;
+    let linked_dir = tempfile::tempdir().unwrap();
+    let linked = FfiApp::new(linked_dir.path().display().to_string(), "test".to_owned());
+    let request = linked
+        .dispatch(crate::NativeAppAction::LinkDevice {
+            link_target: invite,
+            app_key_label: "Phone".to_owned(),
+        })
+        .ui
+        .profile
+        .unwrap()
+        .app_key_link_request;
+
+    let mut runtime = owner.runtime.lock().unwrap();
+    let wake = runtime.app_key_link_exchange_wake.subscribe();
+
+    runtime.dispatch(crate::NativeAppAction::Refresh);
+    assert!(!wake.has_changed().unwrap());
+
+    runtime.dispatch(crate::NativeAppAction::ApproveDevice {
+        request,
+        label: "Phone".to_owned(),
+    });
+    assert!(wake.has_changed().unwrap());
+}
+
+#[tokio::test]
+async fn wake_reschedules_the_production_exchange_tick_immediately() {
+    let (sender, mut wake) = tokio::sync::watch::channel(());
+    let stop = AtomicBool::new(false);
+    let mut tick = Box::pin(tokio::time::sleep(Duration::from_mins(1)));
+
+    sender.send_replace(());
+    assert_eq!(
+        wait_for_app_key_link_exchange_tick(tick.as_mut(), &mut wake, &stop).await,
+        AppKeyLinkTick::Wake
+    );
+    assert_eq!(
+        tokio::time::timeout(
+            Duration::from_millis(100),
+            wait_for_app_key_link_exchange_tick(tick.as_mut(), &mut wake, &stop),
+        )
+        .await
+        .unwrap(),
+        AppKeyLinkTick::Due
+    );
+}
+
+#[test]
 fn app_key_link_exchange_uses_fast_ticks_only_while_approval_is_pending() {
+    assert_eq!(
+        APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS, 1_000,
+        "the exchange loop must honor the one-second startup retry deadline"
+    );
     let owner_dir = tempfile::tempdir().unwrap();
     let linked_dir = tempfile::tempdir().unwrap();
-    let owner = iris_drive_core::Profile::create(owner_dir.path(), Some("Mac".into())).unwrap();
+    let mut owner = iris_drive_core::Profile::create(owner_dir.path(), Some("Mac".into())).unwrap();
+    let assert_failed_tick = |state: &iris_drive_core::ProfileState, expected_millis| {
+        let error = app_key_link_exchange_tick_result(
+            Some(state),
+            Err("roster relay is unavailable".to_owned()),
+        )
+        .unwrap_err();
+        assert_eq!(error.message, "roster relay is unavailable");
+        assert_eq!(error.retry_millis, expected_millis);
+    };
+    assert_failed_tick(&owner.state, APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS);
+    let unknown = super::AppKeyLinkExchangeTickError::unknown_state("config unavailable".into());
+    assert_eq!(
+        unknown.retry_millis,
+        APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS
+    );
     let mut linked = iris_drive_core::Profile::link_to_profile(
         linked_dir.path(),
         owner.state.profile_id,
@@ -163,25 +248,103 @@ fn app_key_link_exchange_uses_fast_ticks_only_while_approval_is_pending() {
         .unwrap();
 
     assert_eq!(
-        app_key_link_exchange_tick_millis(Some(&linked.state)),
+        app_key_link_exchange_tick_millis(Some(&linked.state), false),
         APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS
     );
+    assert_failed_tick(&linked.state, APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS);
+    linked.state.authorization_state = AppKeyAuthorizationState::Authorized;
+    assert!(linked.state.outbound_app_key_link_request.is_some());
     assert_eq!(
-        app_key_link_exchange_tick_millis(Some(&owner.state)),
+        app_key_link_exchange_tick_millis(Some(&linked.state), false),
+        APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS,
+        "a retained request without a receipt must not keep an authorized device on the fast approval loop"
+    );
+    assert_failed_tick(&linked.state, APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS);
+    linked
+        .state
+        .outbound_app_key_link_request
+        .as_mut()
+        .unwrap()
+        .approval_receipt_event
+        .insert("signed approval receipt".to_owned());
+    assert_eq!(
+        app_key_link_exchange_tick_millis(Some(&linked.state), false),
+        APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS,
+        "an applied receipt must retry its ACK within the approval SLA"
+    );
+    assert_failed_tick(&linked.state, APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS);
+    assert_eq!(
+        app_key_link_exchange_tick_millis(Some(&linked.state), true),
+        APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS,
+        "a successfully delivered approval ACK must leave the one-second retry loop"
+    );
+    assert_eq!(
+        app_key_link_exchange_tick_millis(Some(&owner.state), true),
         APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS
     );
     assert_eq!(
-        app_key_link_exchange_tick_millis(None),
+        app_key_link_exchange_tick_millis(None, false),
         APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS
+    );
+    assert_eq!(
+        app_key_link_exchange_tick_result(Some(&linked.state), Ok(true)).unwrap(),
+        APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS
+    );
+    let bootstrap =
+        iris_drive_core::app_key_link_transport::parse_pending_app_key_approval_bootstrap(
+            linked.state.outbound_app_key_link_request.as_ref().unwrap(),
+        )
+        .unwrap()
+        .0;
+    owner
+        .approve_device_bootstrap(&bootstrap, Some("Phone".to_owned()))
+        .unwrap();
+    assert_ne!(owner.state.pending_device_approval_receipts.len(), 0);
+    assert_failed_tick(&owner.state, APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS);
+}
+
+#[test]
+fn app_key_link_actions_serialize_only_short_config_transactions() {
+    assert!(native_action_uses_short_config_transaction(
+        &NativeAppAction::ApproveDevice {
+            request: "request".into(),
+            label: "Phone".into(),
+        }
+    ));
+    assert!(!native_action_uses_short_config_transaction(
+        &NativeAppAction::StartSync
+    ));
+    assert!(!native_action_uses_short_config_transaction(
+        &NativeAppAction::SyncBackups {
+            target: "backup".into(),
+        }
+    ));
+}
+
+#[test]
+fn device_approval_reloads_roster_without_scanning_provider_contents() {
+    assert_eq!(
+        provider_summary_mode_for_action(&NativeAppAction::ApproveDevice {
+            request: "request".into(),
+            label: "Phone".into(),
+        }),
+        ProviderSummaryMode::Skip,
+        "the confirmed roster must reach mobile UI before provider projection work"
+    );
+    assert_eq!(
+        provider_summary_mode_for_action(&NativeAppAction::Refresh),
+        ProviderSummaryMode::Refresh,
     );
 }
 
 #[test]
 fn mobile_native_fips_status_suppresses_volatile_rewrites_until_heartbeat() {
-    assert!(
-        NATIVE_FIPS_STATUS_FRESH_SECS > NATIVE_FIPS_STATUS_STABLE_WRITE_MIN_SECS,
-        "the stable status heartbeat must refresh before UI freshness expires"
-    );
+    const {
+        assert!(
+            NATIVE_FIPS_STATUS_FRESH_SECS > NATIVE_FIPS_STATUS_STABLE_WRITE_MIN_SECS,
+            "the stable status heartbeat must refresh before UI freshness expires"
+        );
+    }
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join(super::NATIVE_FIPS_STATUS_FILE_NAME);
     let now = super::unix_now_seconds();

@@ -31,9 +31,11 @@
   <string>$(CURRENT_PROJECT_VERSION)</string>
   <key>IrisDriveAppGroupIdentifier</key>
   <string>$(IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER)</string>
-  <key>IrisDriveBackgroundSyncTaskIdentifier</key>
-  <string>$(IRIS_DRIVE_IOS_BACKGROUND_SYNC_TASK_IDENTIFIER)</string>
-  <key>LSApplicationCategoryType</key>
+	<key>IrisDriveBackgroundSyncTaskIdentifier</key>
+	<string>$(IRIS_DRIVE_IOS_BACKGROUND_SYNC_TASK_IDENTIFIER)</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+	<key>LSApplicationCategoryType</key>
   <string>public.app-category.productivity</string>
   <key>NSCameraUsageDescription</key>
   <string>Scan Iris Drive invite and device request QR codes.</string>

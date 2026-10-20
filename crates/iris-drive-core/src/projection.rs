@@ -10,15 +10,20 @@ use thiserror::Error;
 use crate::PRIMARY_DRIVE_ID;
 use crate::config::{AppConfig, AppKeyRootRef, Drive};
 use crate::conflict::conflict_filename;
-use crate::indexer::{IndexError, read_root_meta, should_ignore_name};
+use crate::indexer::{IndexError, read_path_kind_replacements, read_root_meta, should_ignore_name};
 use crate::merge::{
     AppKeySnapshot, MODIFIED_AT_META_KEY, MergedConflictFile, MergedConflictKind, MergedEntry,
-    MergedView, merge_drives, walk_app_key_tree,
+    MergedView, SuppressedMergedEntry, merge_drives, walk_app_key_tree,
 };
 use crate::profile::ProfileState;
 use crate::provider::{
     provider_collision_family_path, provider_file_probable_os_placeholder_family,
 };
+use path_kind::{MergedDirectory, insert_directory_candidate, resolve_path_kind_conflicts};
+
+mod path_kind;
+mod shared;
+pub use shared::{SharedMount, shared_folder_merged_root};
 
 type DirectoryMeta = HashMap<String, serde_json::Value>;
 const LOCAL_ONLY_PARENT_WALK_LIMIT: usize = 1024;
@@ -43,11 +48,12 @@ pub enum ProjectionError {
     Io(#[from] std::io::Error),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PrimaryMergedView {
     pub view: MergedView,
     pub authorized_app_keys: usize,
     pub app_key_roots_present: usize,
+    pub shared_mounts: Vec<SharedMount>,
 }
 
 impl PrimaryMergedView {
@@ -88,12 +94,23 @@ pub async fn primary_merged_view<S: Store>(
     let authorized = authorized_app_key_pubkeys(account);
     let merge_app_keys = merge_app_key_pubkeys(account, drive);
 
+    let mut merged = drive_merged_view(tree, drive, &merge_app_keys).await?;
+    merged.authorized_app_keys = authorized.len();
+    shared::add_shared_mounts(tree, config, &mut merged).await?;
+    Ok(merged)
+}
+
+async fn drive_merged_view<S: Store>(
+    tree: &HashTree<S>,
+    drive: &Drive,
+    merge_app_keys: &[String],
+) -> Result<PrimaryMergedView, ProjectionError> {
     let mut snapshots_data = Vec::new();
-    for app_key_pubkey in &merge_app_keys {
+    for app_key_pubkey in merge_app_keys {
         let Some(root) = drive.app_key_roots.get(app_key_pubkey) else {
             continue;
         };
-        let Some(root) = merge_root_for_device(tree, app_key_pubkey, root, &merge_app_keys).await?
+        let Some(root) = merge_root_for_device(tree, app_key_pubkey, root, merge_app_keys).await?
         else {
             continue;
         };
@@ -103,68 +120,128 @@ pub async fn primary_merged_view<S: Store>(
             source,
         })?;
         let (files, tombstones) = walk_app_key_tree(tree, &cid).await?;
-        snapshots_data.push((app_key_pubkey.clone(), root, files, tombstones));
+        let path_kind_replacements = read_path_kind_replacements(tree, &cid).await?;
+        snapshots_data.push((
+            app_key_pubkey.clone(),
+            root,
+            files,
+            tombstones,
+            path_kind_replacements,
+        ));
     }
 
     let merge_app_key_refs: Vec<&str> = merge_app_keys.iter().map(String::as_str).collect();
     let snapshots: Vec<AppKeySnapshot<'_>> = snapshots_data
         .iter()
-        .map(|(app_key_pubkey, root, files, tombstones)| AppKeySnapshot {
-            app_key_pubkey: app_key_pubkey.as_str(),
-            root,
-            files: files.clone(),
-            tombstones: tombstones.clone(),
-        })
+        .map(
+            |(app_key_pubkey, root, files, tombstones, path_kind_replacements)| AppKeySnapshot {
+                app_key_pubkey: app_key_pubkey.as_str(),
+                root,
+                files: files.clone(),
+                tombstones: tombstones.clone(),
+                path_kind_replacements: path_kind_replacements.as_ref().map(|replacements| {
+                    replacements
+                        .iter()
+                        .map(|(path, generation)| crate::merge::PathKindReplacement {
+                            path: path.clone(),
+                            generation: *generation,
+                        })
+                        .collect()
+                }),
+            },
+        )
         .collect();
     let mut view = merge_drives(&merge_app_key_refs, &snapshots);
     add_visible_conflict_entries(&mut view)?;
     suppress_probable_os_placeholder_entries(&mut view);
-    add_primary_share_shortcut_entries(&mut view, config);
     Ok(PrimaryMergedView {
         view,
-        authorized_app_keys: authorized.len(),
+        authorized_app_keys: merge_app_keys.len(),
         app_key_roots_present: snapshots.len(),
+        shared_mounts: Vec::new(),
     })
 }
 
 fn add_visible_conflict_entries(view: &mut MergedView) -> Result<(), ProjectionError> {
-    let winners_by_path = view
+    let mut occupied_paths = view
         .files
         .iter()
-        .map(|entry| (entry.path.clone(), entry.clone()))
-        .collect::<BTreeMap<_, _>>();
-    let mut occupied_paths = winners_by_path.keys().cloned().collect::<BTreeSet<_>>();
+        .map(|entry| entry.path.clone())
+        .chain(
+            view.suppressed_files
+                .iter()
+                .map(|suppressed| suppressed.entry.path.clone()),
+        )
+        .collect::<BTreeSet<_>>();
     let mut conflict_entries = Vec::new();
 
     for conflict in &view.conflict_details {
         match conflict.kind {
             MergedConflictKind::WriteWrite => {
-                let Some(winner) = winners_by_path.get(&conflict.path) else {
+                let Some(winner) = conflict.files.iter().max_by(|left, right| {
+                    canonical_conflict_file_key(left).cmp(&canonical_conflict_file_key(right))
+                }) else {
                     continue;
                 };
+                if let Some(winner_index) = view
+                    .files
+                    .iter()
+                    .position(|entry| entry.path == conflict.path)
+                {
+                    view.files[winner_index] = conflict_file_entry(&conflict.path, None, winner)?;
+
+                    for file in &conflict.files {
+                        if conflict_file_matches_entry(file, &view.files[winner_index]) {
+                            continue;
+                        }
+                        conflict_entries.push(visible_conflict_entry(
+                            &conflict.path,
+                            file,
+                            &mut occupied_paths,
+                        )?);
+                    }
+                    continue;
+                }
+
+                let Some(suppressed_index) = view
+                    .suppressed_files
+                    .iter()
+                    .position(|suppressed| suppressed.entry.path == conflict.path)
+                else {
+                    continue;
+                };
+                // A later tombstone can hide the canonical file before this
+                // conflict is projected. Keep every version hidden with the
+                // same provenance so a path-kind replacement can recover the
+                // complete pre-replacement conflict set without making an
+                // ordinary delete visible again.
+                view.suppressed_files[suppressed_index].entry =
+                    conflict_file_entry(&conflict.path, None, winner)?;
+                let provenance = view.suppressed_files[suppressed_index].clone();
 
                 for file in &conflict.files {
-                    if conflict_file_matches_entry(file, winner) {
+                    if conflict_file_matches_entry(
+                        file,
+                        &view.suppressed_files[suppressed_index].entry,
+                    ) {
                         continue;
                     }
-                    conflict_entries.push(visible_conflict_entry(
-                        &conflict.path,
-                        file,
-                        winner.published_at,
-                        &mut occupied_paths,
-                    )?);
+                    view.suppressed_files.push(SuppressedMergedEntry {
+                        entry: visible_conflict_entry(&conflict.path, file, &mut occupied_paths)?,
+                        tombstone_app_key_pubkey: provenance.tombstone_app_key_pubkey.clone(),
+                        tombstone_root: provenance.tombstone_root.clone(),
+                        tombstoned_at: provenance.tombstoned_at,
+                    });
                 }
             }
             MergedConflictKind::WriteDelete => {
-                if winners_by_path.contains_key(&conflict.path) {
+                if view.files.iter().any(|entry| entry.path == conflict.path) {
                     continue;
                 }
-                let published_at = conflict.tombstone.as_ref().map_or(0, |t| t.tombstoned_at);
                 for file in &conflict.files {
                     conflict_entries.push(visible_conflict_entry(
                         &conflict.path,
                         file,
-                        published_at,
                         &mut occupied_paths,
                     )?);
                 }
@@ -178,6 +255,17 @@ fn add_visible_conflict_entries(view: &mut MergedView) -> Result<(), ProjectionE
     }
 
     Ok(())
+}
+
+fn canonical_conflict_file_key(file: &MergedConflictFile) -> (i64, &str, u64, &str, &str, &str) {
+    (
+        file.published_at,
+        &file.app_key_pubkey,
+        file.app_key_seq,
+        &file.root_cid,
+        &file.content_hash,
+        &file.content_cid_hash,
+    )
 }
 
 fn suppress_probable_os_placeholder_entries(view: &mut MergedView) {
@@ -206,19 +294,26 @@ fn suppress_probable_os_placeholder_entries(view: &mut MergedView) {
 fn visible_conflict_entry(
     original_path: &str,
     file: &MergedConflictFile,
-    published_at: i64,
     occupied_paths: &mut BTreeSet<String>,
 ) -> Result<MergedEntry, ProjectionError> {
     let path = next_visible_conflict_path(original_path, &file.app_key_pubkey, occupied_paths);
+    conflict_file_entry(&path, Some(original_path), file)
+}
+
+fn conflict_file_entry(
+    path: &str,
+    source_path: Option<&str>,
+    file: &MergedConflictFile,
+) -> Result<MergedEntry, ProjectionError> {
     Ok(MergedEntry {
-        path,
-        source_path: Some(original_path.to_string()),
-        hash: parse_conflict_hash(&file.content_cid_hash, original_path)?,
+        path: path.to_string(),
+        source_path: source_path.map(str::to_string),
+        hash: parse_conflict_hash(&file.content_cid_hash, path)?,
         size: file.size,
-        whole_file_hash: parse_conflict_whole_file_hash(file, original_path)?,
+        whole_file_hash: parse_conflict_whole_file_hash(file, path)?,
         modified_at: file.modified_at,
         source_app_key_pubkey: file.app_key_pubkey.clone(),
-        published_at,
+        published_at: file.published_at,
     })
 }
 
@@ -306,23 +401,51 @@ pub async fn primary_merged_root_from_view<S: Store>(
         .drive(PRIMARY_DRIVE_ID)
         .ok_or(ProjectionError::PrimaryDriveMissing)?;
     let merge_app_keys = merge_app_key_pubkeys(account, drive);
-    let source_roots = merge_source_roots(tree, drive, &merge_app_keys).await?;
+    drive_merged_root_from_view(tree, drive, &merge_app_keys, merged).await
+}
+
+async fn drive_merged_root_from_view<S: Store>(
+    tree: &HashTree<S>,
+    drive: &Drive,
+    merge_app_keys: &[String],
+    merged: &PrimaryMergedView,
+) -> Result<PrimaryMergedRoot, ProjectionError> {
+    let source_roots = merge_source_roots(tree, drive, merge_app_keys).await?;
     let mut root = tree.put_directory(Vec::new()).await?;
 
-    let target_dir_meta = merged_user_directory_paths(
-        tree,
-        drive,
-        &merge_app_keys,
-        &merged.view.suppressed_by_tombstone,
-    )
-    .await?;
-    let mut target_dirs = target_dir_meta.keys().cloned().collect::<BTreeSet<_>>();
-    add_primary_share_shortcut_directory_paths(&mut target_dirs, &merged.view.files, config);
-    for dir in &target_dirs {
+    let mut target_dirs = merged_user_directory_paths(tree, drive, merge_app_keys).await?;
+    target_dirs.retain(|path, _| {
+        !merged
+            .shared_mounts
+            .iter()
+            .any(|mount| shared::under(path, &mount.path))
+    });
+    let base_files = merged
+        .view
+        .files
+        .iter()
+        .filter(|entry| {
+            !merged
+                .shared_mounts
+                .iter()
+                .any(|mount| shared::under(&entry.path, &mount.path))
+        })
+        .cloned()
+        .collect();
+    let (visible_files, target_dirs) = resolve_path_kind_conflicts(
+        base_files,
+        &merged.view.suppressed_files,
+        target_dirs,
+        &merged.view.tombstones,
+        &merged.view.path_kind_replacements,
+        &merged.view.path_kind_role_roots,
+        &source_roots,
+    )?;
+    for dir in target_dirs.keys() {
         root = ensure_visible_dir(tree, root, dir).await?;
     }
 
-    for entry in &merged.view.files {
+    for entry in &visible_files {
         root = ensure_visible_parent_dirs(tree, root, &entry.path).await?;
         let source = source_entry_for_merged_entry(tree, &source_roots, entry).await?;
         let cid = Cid {
@@ -334,113 +457,35 @@ pub async fn primary_merged_root_from_view<S: Store>(
             set_visible_entry_with_meta(tree, &root, &parent, name, &cid, &source, entry).await?;
     }
 
-    for (dir, meta) in target_dir_meta {
-        root = set_visible_dir_meta(tree, &root, &dir, meta).await?;
+    for directory in target_dirs.into_values() {
+        root = set_visible_dir_meta(tree, &root, &directory.path, directory.meta).await?;
     }
+    for mount in &merged.shared_mounts {
+        root = ensure_visible_parent_dirs(tree, root, &mount.path).await?;
+        let (parent, name) = split_visible_path(&mount.path)?;
+        root = tree
+            .set_entry(&root, &parent, name, &mount.root_cid, 0, LinkType::Dir)
+            .await?;
+    }
+    let mounted_files = merged.view.files.iter().filter(|entry| {
+        merged
+            .shared_mounts
+            .iter()
+            .any(|mount| shared::under(&entry.path, &mount.path))
+    });
+    let all_files: Vec<_> = visible_files.iter().chain(mounted_files).collect();
+    let top_level_entries = all_files
+        .iter()
+        .filter_map(|entry| entry.path.split('/').next())
+        .filter(|segment| !segment.is_empty())
+        .collect::<BTreeSet<_>>()
+        .len();
 
     Ok(PrimaryMergedRoot {
         root_cid: root,
-        file_count: merged.file_count(),
-        top_level_entries: merged.top_level_entries(),
+        file_count: all_files.len(),
+        top_level_entries,
     })
-}
-
-fn add_primary_share_shortcut_entries(view: &mut MergedView, config: &AppConfig) {
-    if config.share_shortcuts.is_empty() {
-        return;
-    }
-
-    let source_entries = view.files.clone();
-    let mut occupied_paths = view
-        .files
-        .iter()
-        .map(|entry| entry.path.clone())
-        .collect::<BTreeSet<_>>();
-    let mut shortcut_entries = Vec::new();
-
-    for shortcut in &config.share_shortcuts {
-        let Some(folder) = config.shared_folder(shortcut.share_id) else {
-            continue;
-        };
-        let source_root = share_shortcut_primary_source_path(&folder.source_path, shortcut);
-        for entry in &source_entries {
-            let Some(suffix) = suffix_under_path(&entry.path, &source_root) else {
-                continue;
-            };
-            let path = projected_share_shortcut_path(&shortcut.path, suffix);
-            if !occupied_paths.insert(path.clone()) {
-                continue;
-            }
-
-            let mut shortcut_entry = entry.clone();
-            shortcut_entry.path = path;
-            shortcut_entry.source_path = Some(merged_entry_source_path(entry).to_string());
-            shortcut_entries.push(shortcut_entry);
-        }
-    }
-
-    if !shortcut_entries.is_empty() {
-        view.files.extend(shortcut_entries);
-        view.files.sort_by(|left, right| left.path.cmp(&right.path));
-    }
-}
-
-fn add_primary_share_shortcut_directory_paths(
-    target_dirs: &mut BTreeSet<String>,
-    visible_files: &[MergedEntry],
-    config: &AppConfig,
-) {
-    if config.share_shortcuts.is_empty() {
-        return;
-    }
-
-    let source_dirs = target_dirs.clone();
-    let file_paths = visible_files
-        .iter()
-        .map(|entry| entry.path.as_str())
-        .collect::<BTreeSet<_>>();
-    for shortcut in &config.share_shortcuts {
-        let Some(folder) = config.shared_folder(shortcut.share_id) else {
-            continue;
-        };
-        let source_root = share_shortcut_primary_source_path(&folder.source_path, shortcut);
-        for dir in &source_dirs {
-            let Some(suffix) = suffix_under_path(dir, &source_root) else {
-                continue;
-            };
-            let path = projected_share_shortcut_path(&shortcut.path, suffix);
-            if !file_paths.contains(path.as_str()) {
-                target_dirs.insert(path);
-            }
-        }
-    }
-}
-
-fn share_shortcut_primary_source_path(
-    source_path: &str,
-    shortcut: &crate::sharing::ShareShortcut,
-) -> String {
-    if shortcut.target_path.is_empty() {
-        source_path.to_string()
-    } else {
-        format!("{source_path}/{}", shortcut.target_path)
-    }
-}
-
-fn suffix_under_path<'a>(path: &'a str, root: &str) -> Option<&'a str> {
-    if path == root {
-        return Some("");
-    }
-    let rest = path.strip_prefix(root)?;
-    rest.strip_prefix('/')
-}
-
-fn projected_share_shortcut_path(shortcut_path: &str, suffix: &str) -> String {
-    if suffix.is_empty() {
-        shortcut_path.to_string()
-    } else {
-        format!("{shortcut_path}/{suffix}")
-    }
 }
 
 async fn merge_source_roots<S: Store>(
@@ -671,8 +716,7 @@ async fn merged_user_directory_paths<S: Store>(
     tree: &HashTree<S>,
     drive: &crate::config::Drive,
     authorized_app_keys: &[String],
-    suppressed_paths: &[String],
-) -> Result<BTreeMap<String, DirectoryMeta>, ProjectionError> {
+) -> Result<BTreeMap<String, MergedDirectory>, ProjectionError> {
     let mut dirs = BTreeMap::new();
     for app_key_pubkey in authorized_app_keys {
         let Some(root) = drive.app_key_roots.get(app_key_pubkey) else {
@@ -688,19 +732,21 @@ async fn merged_user_directory_paths<S: Store>(
             root_cid: root.root_cid.clone(),
             source,
         })?;
-        collect_user_directory_paths(tree, &cid, "", &mut dirs).await?;
+        let mut source_dirs = Vec::new();
+        collect_user_directory_paths(tree, &cid, "", &mut source_dirs).await?;
+        for (path, meta) in source_dirs {
+            insert_directory_candidate(
+                &mut dirs,
+                MergedDirectory {
+                    path,
+                    meta,
+                    source_app_key_pubkey: app_key_pubkey.clone(),
+                    source_root: root.clone(),
+                },
+            );
+        }
     }
-    dirs.retain(|path, _meta| !path_is_suppressed_by_tombstone(path, suppressed_paths));
     Ok(dirs)
-}
-
-fn path_is_suppressed_by_tombstone(path: &str, suppressed_paths: &[String]) -> bool {
-    suppressed_paths.iter().any(|suppressed| {
-        path == suppressed
-            || path
-                .strip_prefix(suppressed)
-                .is_some_and(|rest| rest.starts_with('/'))
-    })
 }
 
 async fn merge_root_for_device<S: Store>(
@@ -712,10 +758,14 @@ async fn merge_root_for_device<S: Store>(
     let mut current = root.clone();
     for _ in 0..LOCAL_ONLY_PARENT_WALK_LIMIT {
         if !current.local_only {
-            return Ok(Some(current));
+            return canonical_merge_root_ref(tree, app_key_pubkey, current)
+                .await
+                .map(Some);
         }
         if should_use_local_only_root(app_key_pubkey, &current, active_app_keys) {
-            return Ok(Some(current));
+            return canonical_merge_root_ref(tree, app_key_pubkey, current)
+                .await
+                .map(Some);
         }
         let Some(parent) = current
             .parents
@@ -745,6 +795,29 @@ async fn merge_root_for_device<S: Store>(
     Ok(None)
 }
 
+async fn canonical_merge_root_ref<S: Store>(
+    tree: &HashTree<S>,
+    app_key_pubkey: &str,
+    root: AppKeyRootRef,
+) -> Result<AppKeyRootRef, ProjectionError> {
+    let cid = Cid::parse(&root.root_cid).map_err(|source| ProjectionError::RootCid {
+        app_key_pubkey: app_key_pubkey.to_string(),
+        root_cid: root.root_cid.clone(),
+        source,
+    })?;
+    let Some(meta) = read_root_meta(tree, &cid).await? else {
+        return Ok(root);
+    };
+    if meta.app_key_pubkey != app_key_pubkey || meta.drive_id != PRIMARY_DRIVE_ID {
+        return Ok(root);
+    }
+    Ok(AppKeyRootRef::from_meta(
+        root.root_cid,
+        meta.created_at,
+        &meta,
+    ))
+}
+
 fn should_use_local_only_root(
     app_key_pubkey: &str,
     root: &AppKeyRootRef,
@@ -766,7 +839,7 @@ fn collect_user_directory_paths<'a, S: Store>(
     tree: &'a HashTree<S>,
     dir_cid: &'a Cid,
     prefix: &'a str,
-    dirs: &'a mut BTreeMap<String, DirectoryMeta>,
+    dirs: &'a mut Vec<(String, DirectoryMeta)>,
 ) -> futures::future::BoxFuture<'a, Result<(), HashTreeError>> {
     Box::pin(async move {
         let entries = tree.list_directory(dir_cid).await?;
@@ -785,7 +858,7 @@ fn collect_user_directory_paths<'a, S: Store>(
             } else {
                 format!("{prefix}/{}", entry.name)
             };
-            remember_directory_meta(dirs, path.clone(), entry.meta.clone());
+            dirs.push((path.clone(), entry.meta.clone().unwrap_or_default()));
             let child_cid = Cid {
                 hash: entry.hash,
                 key: entry.key,
@@ -794,34 +867,6 @@ fn collect_user_directory_paths<'a, S: Store>(
         }
         Ok(())
     })
-}
-
-fn remember_directory_meta(
-    dirs: &mut BTreeMap<String, DirectoryMeta>,
-    path: String,
-    meta: Option<DirectoryMeta>,
-) {
-    let candidate = meta.unwrap_or_default();
-    dirs.entry(path)
-        .and_modify(|existing| merge_directory_meta(existing, &candidate))
-        .or_insert(candidate);
-}
-
-fn merge_directory_meta(existing: &mut DirectoryMeta, candidate: &DirectoryMeta) {
-    if candidate.is_empty() {
-        return;
-    }
-    if existing.is_empty()
-        || directory_meta_modified_at(candidate) > directory_meta_modified_at(existing)
-    {
-        existing.clone_from(candidate);
-    }
-}
-
-fn directory_meta_modified_at(meta: &DirectoryMeta) -> Option<i64> {
-    meta.get(MODIFIED_AT_META_KEY)
-        .and_then(serde_json::Value::as_i64)
-        .filter(|value| *value > 0)
 }
 
 fn authorized_app_key_pubkeys(state: &ProfileState) -> Vec<String> {
@@ -870,6 +915,13 @@ fn may_replace_destination(
 }
 
 #[cfg(test)]
+mod conflict_tests;
+#[cfg(test)]
+mod path_kind_tests;
+#[cfg(test)]
 mod provider_perf_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod shared_tests;

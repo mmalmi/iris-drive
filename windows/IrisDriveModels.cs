@@ -162,7 +162,9 @@ public sealed class IrisDriveStatusData
     private static IReadOnlyList<DriveRow> NativeDriveRows(JsonElement ui, bool setupComplete)
     {
         var rows = new List<DriveRow>();
-        var fallbackPath = setupComplete ? WindowsCloudFiles.SyncRootPath : null;
+        var fallbackPath = setupComplete && WindowsCloudFiles.IsEnabled
+            ? WindowsCloudFiles.SyncRootPath
+            : null;
         if (ui.ValueKind == JsonValueKind.Object &&
             ui.TryGetProperty("roots", out var roots) &&
             roots.ValueKind == JsonValueKind.Array)

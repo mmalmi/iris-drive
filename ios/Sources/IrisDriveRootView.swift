@@ -34,6 +34,7 @@ struct IrisDriveRootView: View {
         .animation(.easeInOut(duration: 0.18), value: model.stateLoaded)
         .animation(.easeInOut(duration: 0.18), value: showStartupLoading)
         .contentLinkConfirmationDialog(model: model)
+        .deviceApprovalConfirmationDialog(model: model)
         .fullScreenCover(item: $model.webRoute) { route in
             IrisWebBrowserView(model: model, route: route)
         }
@@ -224,6 +225,9 @@ private struct AwaitingApprovalSetupView: View {
                             QrCodeView(matrix: requestQrMatrix)
                                 .frame(width: 260, height: 260)
                                 .frame(maxWidth: .infinity, alignment: .center)
+                                .accessibilityElement(children: .ignore)
+                                .accessibilityLabel("Device approval request QR")
+                                .accessibilityIdentifier("approvalRequestQr")
                         } else {
                             ProgressView()
                                 .frame(width: 260, height: 260)
@@ -955,38 +959,14 @@ private struct AddDeviceSection: View {
     @ObservedObject var model: IrisDriveMobileModel
     @Binding var isExpanded: Bool
     @State private var scannerPresented = false
-    @State private var approvalConfirmationPresented = false
-    @State private var pendingApprovalRequest = ""
-    @State private var lastPromptedApprovalRequest = ""
 
     private var canAddManualDevice: Bool {
         IrisDriveNativeLinkInput.isCompleteDeviceApproval(model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines))
     }
 
-    private func normalizedDeviceApprovalRequest(_ value: String) -> String {
-        value.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
-    private func confirmManualDevice(_ value: String, force: Bool = false) {
-        let trimmed = normalizedDeviceApprovalRequest(value)
-        guard IrisDriveNativeLinkInput.isCompleteDeviceApproval(trimmed) else { return }
-        guard force || lastPromptedApprovalRequest != trimmed else { return }
-        pendingApprovalRequest = trimmed
-        lastPromptedApprovalRequest = trimmed
-        approvalConfirmationPresented = true
-    }
-
-    private func approvePendingDevice() {
-        let request = normalizedDeviceApprovalRequest(pendingApprovalRequest)
-        guard IrisDriveNativeLinkInput.isCompleteDeviceApproval(request) else { return }
-        model.approveDevice(request: request, label: "")
-        pendingApprovalRequest = ""
-        lastPromptedApprovalRequest = ""
-    }
-
     private func submitManualDevice() {
         guard canAddManualDevice else { return }
-        confirmManualDevice(model.approveDeviceKey, force: true)
+        model.requestDeviceApprovalConfirmation(model.approveDeviceKey)
     }
 
     var body: some View {
@@ -1000,7 +980,7 @@ private struct AddDeviceSection: View {
                         submitManualDevice()
                     }
                     .onChange(of: model.approveDeviceKey) { _, newValue in
-                        confirmManualDevice(newValue)
+                        model.requestDeviceApprovalConfirmation(newValue)
                     }
                 Button {
                     scannerPresented = true
@@ -1033,7 +1013,7 @@ private struct AddDeviceSection: View {
                                 .foregroundStyle(.secondary)
                                 .textSelection(.enabled)
                             Button {
-                                confirmManualDevice(request.requestLink, force: true)
+                                model.requestDeviceApprovalConfirmation(request.requestLink)
                             } label: {
                                 Label("Review", systemImage: "checkmark.circle")
                             }
@@ -1060,21 +1040,11 @@ private struct AddDeviceSection: View {
         .onAppear {
             prefillUiTestDeviceFields()
         }
-        .alert("Approve this device?", isPresented: $approvalConfirmationPresented) {
-            Button("Cancel", role: .cancel) {
-                pendingApprovalRequest = ""
-            }
-            Button("Approve") {
-                approvePendingDevice()
-            }
-        } message: {
-            Text("This will add the joining device to Iris Drive.")
-        }
         .sheet(isPresented: $scannerPresented) {
             QRCodeScannerSheet { code in
                 let trimmed = code.trimmingCharacters(in: .whitespacesAndNewlines)
                 model.approveDeviceKey = trimmed
-                confirmManualDevice(trimmed, force: true)
+                model.requestDeviceApprovalConfirmation(trimmed)
             }
         }
     }
@@ -1084,7 +1054,7 @@ private struct AddDeviceSection: View {
         if !requestLink.isEmpty,
            model.approveDeviceKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             model.approveDeviceKey = requestLink
-            confirmManualDevice(requestLink)
+            model.requestDeviceApprovalConfirmation(requestLink)
         }
     }
 }
@@ -1684,9 +1654,6 @@ private struct IrisWebBrowserView: View {
                 .background(.background)
             }
         }
-        .overlay {
-            IrisWebBrowserSafeAreaChrome()
-        }
         .overlay(alignment: .bottom) {
             IrisWebBrowserBar(
                 browser: browser,
@@ -1738,30 +1705,6 @@ private struct IrisWebBrowserView: View {
         guard let url = URL(string: candidate) else { return }
         browser.load(url)
         addressFocused = false
-    }
-}
-
-private struct IrisWebBrowserSafeAreaChrome: View {
-    var body: some View {
-        GeometryReader { proxy in
-            VStack(spacing: 0) {
-                IrisWebBrowserSafeAreaStrip()
-                    .frame(height: proxy.safeAreaInsets.top)
-                    .ignoresSafeArea(.container, edges: .top)
-                Spacer(minLength: 0)
-                IrisWebBrowserSafeAreaStrip()
-                    .frame(height: proxy.safeAreaInsets.bottom)
-                    .ignoresSafeArea(.container, edges: .bottom)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-        }
-        .accessibilityHidden(true)
-    }
-}
-
-private struct IrisWebBrowserSafeAreaStrip: View {
-    var body: some View {
-        Color(uiColor: .systemBackground)
     }
 }
 
@@ -2641,6 +2584,17 @@ private struct SettingsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .accessibilityIdentifier("appleCalendarSyncStatus")
+            }
+
+            Section("Help") {
+                Link(
+                    "Privacy Policy",
+                    destination: URL(string: "https://getdrive.iris.to/privacy/")!
+                )
+                Link(
+                    "Support",
+                    destination: URL(string: "https://getdrive.iris.to/support/")!
+                )
             }
 
             Section("Advanced") {

@@ -22,7 +22,7 @@ import kotlinx.coroutines.withContext
 import to.iris.drive.app.MainActivity
 import to.iris.drive.app.R
 
-class IrisDriveSyncService : Service() {
+open class IrisDriveSyncService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var syncLoop: Job? = null
 
@@ -43,6 +43,10 @@ class IrisDriveSyncService : Service() {
         }
         startSyncLoop()
         return START_STICKY
+    }
+
+    override fun onTimeout(startId: Int, fgsType: Int) {
+        stopSelf()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null

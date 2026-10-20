@@ -6,7 +6,6 @@ const DIRECT_ROOT_STATE_REQUEST_INTERVAL_SECS: u64 = 10;
 const DIRECT_ROOT_STATE_REQUEST_REPLY_REPUBLISH_INTERVAL_SECS: u64 = 10;
 const DIRECT_ROOT_HINT_REPEAT_INTERVAL_SECS: u64 = 30;
 const DIRECT_ROOT_HINT_CACHE_MAX_ENTRIES: usize = 2048;
-const DIRECT_ROOT_SEEN_FRAME_RETRY_INTERVAL_SECS: u64 = 30;
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 #[allow(clippy::struct_field_names)]
 pub(crate) struct DirectRootAppSendStats {
@@ -61,13 +60,13 @@ pub(crate) struct DirectRootExchange {
     seen_keys: BTreeSet<String>,
     known_publish_peers: BTreeSet<String>,
     known_visible_publish_peers: BTreeSet<String>,
+    pending_state_request_peers: BTreeSet<String>,
     profile_stream_cache: Option<CachedDirectRootProfileStream>,
     current_sync_events_cache: Option<CachedCurrentSyncEvents>,
     hint_config_cache: AppConfigLoadCache,
     state_request_times: BTreeMap<String, std::time::Instant>,
     state_request_reply_times: BTreeMap<String, std::time::Instant>,
     recent_hint_times: BTreeMap<String, std::time::Instant>,
-    seen_frame_retry_times: BTreeMap<String, std::time::Instant>,
 }
 #[derive(Debug, Clone)]
 struct CachedDirectRootProfileStream {
@@ -283,7 +282,7 @@ impl DirectRootExchange {
             );
             return Ok(DirectRootFrameOutcome::Ignored);
         }
-        if self.should_skip_seen_direct_root_frame(&frame.key, std::time::Instant::now()) {
+        if self.should_skip_seen_direct_root_frame(config_dir, &frame.key) {
             println!(
                 "{}",
                 json!({
@@ -428,7 +427,8 @@ impl DirectRootExchange {
         }
         drop(config_lock);
         if was_applied {
-            sync.refresh_authorized_peers(&config).await;
+            sync.refresh_authorized_peers_from_config_dir(config_dir)
+                .await;
             self.invalidate_current_sync_events_cache();
         }
         enqueue_root_apply_followup(
@@ -508,30 +508,13 @@ impl DirectRootExchange {
         .await
     }
 
-    fn should_skip_seen_direct_root_frame(&mut self, key: &str, now: std::time::Instant) -> bool {
+    fn should_skip_seen_direct_root_frame(&self, config_dir: &Path, key: &str) -> bool {
         if !self.seen_keys.contains(key) {
             return false;
         }
-        if direct_root_retry_root_cid(key).is_none() {
-            return true;
-        }
-        let repeat_interval =
-            std::time::Duration::from_secs(DIRECT_ROOT_SEEN_FRAME_RETRY_INTERVAL_SECS);
-        if self
-            .seen_frame_retry_times
-            .get(key)
-            .is_some_and(|last| now.duration_since(*last) < repeat_interval)
-        {
-            return true;
-        }
-        self.seen_frame_retry_times.insert(key.to_string(), now);
-        while self.seen_frame_retry_times.len() > DIRECT_ROOT_HINT_CACHE_MAX_ENTRIES {
-            let Some(key) = self.seen_frame_retry_times.keys().next().cloned() else {
-                break;
-            };
-            self.seen_frame_retry_times.remove(&key);
-        }
-        false
+        direct_root_retry_root_cid(key).is_none_or(|root_cid| {
+            root_has_successful_block_sync(config_dir, &root_cid)
+        })
     }
 
     fn should_skip_recent_direct_root_hint(
@@ -574,12 +557,12 @@ impl DirectRootExchange {
         let Ok(root_scope_id) = self.cached_profile_stream_root_scope_id(config_dir) else {
             return Ok(false);
         };
-        if let Some(root_scope_id) = root_scope_id
-            && self
-                .subscribe_profile_stream(&root_scope_id, Some(sync))
-                .await
-                .has_new_publish_peer
-        {
+        if let Some(root_scope_id) = root_scope_id {
+            self.subscribe_profile_stream(&root_scope_id, Some(sync))
+                .await;
+            if !self.peer_state_request_pending() {
+                return Ok(false);
+            }
             let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
             if let Some(state) = config.profile.as_ref() {
                 self.announce_current_state(config_dir, &config, state, Some(sync))
@@ -629,6 +612,7 @@ impl DirectRootExchange {
         let bytes = iris_drive_core::encode_direct_root_state_request_frame(&root_scope_id)
             .context("encoding direct-root state request")?;
         let send_stats = send_direct_root_app_message_to_authorized_peers(sync, bytes.clone()).await;
+        self.record_state_request_send(send_stats);
         println!(
             "{}",
             json!({
@@ -762,17 +746,12 @@ impl DirectRootExchange {
 
     fn cache_event(&mut self, event: DirectRootEvent) {
         self.seen_keys.insert(event.key.clone());
-        if direct_root_retry_root_cid(&event.key).is_some() {
-            self.seen_frame_retry_times
-                .insert(event.key.clone(), std::time::Instant::now());
-        }
         if !self.should_cache_event_as_latest(&event.key) {
             return;
         }
         for key in self.superseded_cached_event_keys(&event.key) {
             self.cached_events.remove(&key);
             self.published_keys.remove(&key);
-            self.seen_frame_retry_times.remove(&key);
         }
         self.cached_events.insert(event.key.clone(), event);
         while self.cached_events.len() > DIRECT_ROOT_EVENT_CACHE_CAP {
@@ -781,7 +760,6 @@ impl DirectRootExchange {
             };
             self.cached_events.remove(&key);
             self.published_keys.remove(&key);
-            self.seen_frame_retry_times.remove(&key);
         }
     }
 
@@ -968,6 +946,16 @@ impl DirectRootExchange {
         let has_new_visible_publish_peer = visible_publish_peers
             .iter()
             .any(|peer| !self.known_visible_publish_peers.contains(peer));
+        // Announcements and replies also refresh visibility. Keep their newly
+        // observed peers pending until a state request is actually sent.
+        self.pending_state_request_peers.extend(
+            publish_peers
+                .difference(&self.known_publish_peers)
+                .chain(visible_publish_peers.difference(&self.known_visible_publish_peers))
+                .cloned(),
+        );
+        self.pending_state_request_peers
+            .retain(|peer| publish_peers.contains(peer));
         if has_new_publish_peer || has_new_visible_publish_peer {
             self.published_keys.clear();
             self.invalidate_current_sync_events_cache();
@@ -1129,7 +1117,7 @@ async fn build_current_sync_events_from_disk(
     config_dir: &Path,
     expected_root_scope_id: &str,
 ) -> Result<Vec<DirectRootEvent>> {
-    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let config = iris_drive_core::shared_content::prepare_shared_folder_roots(config_dir).await?;
     match config.profile.as_ref() {
         Some(state) if state.root_scope_id() == expected_root_scope_id => {
             build_current_sync_events(config_dir, &config, state).await
@@ -1333,7 +1321,7 @@ async fn append_share_root_events(
             device.keys(),
             &folder.share_id.to_string(),
             iris_drive_core::PRIMARY_DRIVE_ID,
-            root,
+            &iris_drive_core::shared_content::share_root_for_publish(folder, root),
             &authorized_recipients,
         )
         .context("building share-root event")?;

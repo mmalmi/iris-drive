@@ -1,0 +1,86 @@
+name: Verify prepared iOS products
+on:
+  workflow_call:
+    inputs:
+      commit:
+        required: true
+        type: string
+      debug_run:
+        required: true
+        type: string
+      release_run:
+        required: true
+        type: string
+      mac_run:
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Exact application source commit
+        required: true
+      debug_run:
+        description: Run containing the simulator Debug product
+        required: true
+      release_run:
+        description: Run containing the simulator Release product
+        required: true
+      mac_run:
+        description: Run containing the macOS Release CLI
+        required: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  ios:
+    runs-on: macos-15
+    timeout-minutes: 75
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+      SOURCE_ROOT: ${{ github.workspace }}/source
+      SOURCE_COMMIT: ${{ inputs.commit }}
+      PRODUCT_INPUTS: ${{ github.workspace }}/products
+      CHECK_OUTPUT: ${{ github.workspace }}/ios-check
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tooling
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.debug_run }}
+          name: drive-ios-sim-debug-${{ inputs.commit }}
+          path: products/debug
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.release_run }}
+          name: drive-ios-sim-release-${{ inputs.commit }}
+          path: products/release
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.mac_run }}
+          name: drive-macos-release-${{ inputs.commit }}
+          path: products/mac
+      - name: Run canonical functional and optimized idle assertions
+        run: node tooling/scripts/check-hosted-ios.mjs
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ios-check-${{ inputs.commit }}
+          path: |
+            ios-check/receipt.json
+            ios-check/xcode-tests.log
+            ios-check/gui.png
+          if-no-files-found: ignore
+          retention-days: 7

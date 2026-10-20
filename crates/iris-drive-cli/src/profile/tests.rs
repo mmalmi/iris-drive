@@ -194,6 +194,93 @@ fn app_keys_rename_command_updates_device_label() {
     );
 }
 
+#[test]
+fn cli_device_approval_preserves_file_provider_root_and_releases_lock_before_publish() {
+    let dir = tempdir().unwrap();
+    let profile = Profile::create(dir.path(), Some("native".into())).unwrap();
+    let mut config = AppConfig {
+        profile: Some(profile.state.clone()),
+        ..AppConfig::default()
+    };
+    config.upsert_drive(Drive::primary(profile.state.root_scope_id()));
+    config.save(config_path_in(dir.path())).unwrap();
+    let joining_app_key = nostr_sdk::Keys::generate();
+    let request = iris_drive_core::app_key_link_transport::create_app_key_approval_bootstrap(
+        &joining_app_key,
+        Some("phone"),
+    )
+    .unwrap();
+
+    let file_provider_transaction = ConfigMutationLock::acquire_blocking(dir.path()).unwrap();
+    let mut file_provider_config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+    let local_app_key = file_provider_config
+        .profile
+        .as_ref()
+        .unwrap()
+        .app_key_pubkey
+        .clone();
+    let local_root_cid = hashtree_core::Cid::encrypted([0xbb; 32], [0xcc; 32]).to_string();
+    file_provider_config
+        .drives
+        .iter_mut()
+        .find(|drive| drive.drive_id == PRIMARY_DRIVE_ID)
+        .unwrap()
+        .app_key_roots
+        .insert(
+            local_app_key.clone(),
+            AppKeyRootRef::legacy(local_root_cid.clone(), 101, 0),
+        );
+    let config_dir = dir.path().to_path_buf();
+    let (approved_tx, approved_rx) = std::sync::mpsc::channel();
+    let approval = std::thread::spawn(move || {
+        let result = persist_device_approval(&config_dir, &request.url, Some("phone".to_owned()));
+        approved_tx.send(result).unwrap();
+    });
+
+    let early_approval = approved_rx
+        .recv_timeout(std::time::Duration::from_millis(250))
+        .ok();
+    file_provider_config
+        .save(config_path_in(dir.path()))
+        .unwrap();
+    drop(file_provider_transaction);
+    let approved = early_approval
+        .unwrap_or_else(|| {
+            approved_rx
+                .recv_timeout(std::time::Duration::from_secs(2))
+                .unwrap()
+        })
+        .unwrap();
+    approval.join().unwrap();
+
+    assert_ne!(approved.state.pending_device_approval_receipts.len(), 0);
+    let saved = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+    assert_ne!(
+        saved
+            .profile
+            .as_ref()
+            .unwrap()
+            .pending_device_approval_receipts
+            .len(),
+        0
+    );
+    assert_eq!(
+        saved
+            .drive(PRIMARY_DRIVE_ID)
+            .unwrap()
+            .app_key_roots
+            .get(&local_app_key)
+            .unwrap()
+            .root_cid,
+        local_root_cid
+    );
+
+    // The caller performs Blossom and relay publication next. Reacquiring here
+    // proves the local persistence helper did not leak its transaction into
+    // that network phase.
+    drop(ConfigMutationLock::acquire_blocking(dir.path()).unwrap());
+}
+
 #[tokio::test]
 async fn app_key_link_app_message_records_inbound_request_for_owner_admin() {
     let config_dir = tempdir().unwrap();
@@ -282,12 +369,9 @@ async fn app_key_link_app_message_ignores_wrong_link_secret() {
     );
 
     let saved = AppConfig::load_or_default(config_path_in(config_dir.path())).unwrap();
-    assert!(
-        saved
-            .profile
-            .unwrap()
-            .inbound_app_key_link_requests
-            .is_empty()
+    assert_eq!(
+        saved.profile.unwrap().inbound_app_key_link_requests.len(),
+        0
     );
 }
 
@@ -486,6 +570,39 @@ async fn app_key_link_roster_ack_marks_delivery_for_admin() {
     )));
 }
 
+#[tokio::test]
+async fn authorized_roster_delivery_bounds_direct_then_relay_fallback() {
+    let attempts = std::sync::Arc::new(std::sync::Mutex::new(Vec::new()));
+    let direct_attempts = attempts.clone();
+    let relay_attempts = attempts.clone();
+
+    let (direct, relay) = attempt_app_key_link_delivery(
+        Some(async move {
+            direct_attempts.lock().unwrap().push("direct");
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            Ok(())
+        }),
+        async move {
+            relay_attempts.lock().unwrap().push("relay");
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            Ok::<_, anyhow::Error>(())
+        },
+        std::time::Duration::from_millis(5),
+        std::time::Duration::from_millis(5),
+    )
+    .await;
+
+    assert_eq!(attempts.lock().unwrap().as_slice(), ["direct", "relay"]);
+    assert_eq!(
+        direct.unwrap().unwrap_err(),
+        "timed out sending approval over FIPS"
+    );
+    assert_eq!(
+        relay.unwrap_err(),
+        "timed out publishing approval over relays"
+    );
+}
+
 #[test]
 fn app_key_link_request_retry_uses_startup_burst_before_steady_interval() {
     let now = std::time::Instant::now();
@@ -605,4 +722,14 @@ fn authorized_roster_snapshot_cache_reuses_unchanged_config_and_invalidates_on_s
         .expect("changed config refreshes snapshot");
     assert_eq!(refreshed.recipients.len(), 2);
     assert_ne!(refreshed.frame_bytes, b"cached");
+
+    admin.revoke_app_key(&first_joiner).unwrap();
+    config.profile = Some(admin.state.clone());
+    config.save(config_path_in(admin_dir.path())).unwrap();
+    let revoked = load_authorized_app_key_link_roster_snapshot(admin_dir.path(), &mut cache)
+        .unwrap()
+        .expect("revocation refreshes the retained sender cache");
+    assert_eq!(revoked.recipients.len(), 1);
+    assert_eq!(revoked.recipients[0].app_key_pubkey, second_joiner);
+    assert_ne!(revoked.frame_bytes, refreshed.frame_bytes);
 }

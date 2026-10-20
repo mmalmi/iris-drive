@@ -8,8 +8,9 @@ use std::path::Path;
 use std::time::Duration;
 
 use anyhow::{Context, Result};
+use futures::stream::{FuturesUnordered, StreamExt};
 use hashtree_core::Cid;
-use nostr_sdk::Event;
+use nostr_sdk::{Event, Timestamp};
 
 use crate::blossom_sync::DownloadReport;
 use crate::config::{AppConfig, Drive};
@@ -32,6 +33,10 @@ pub struct NetworkSyncReport {
     pub blossom_servers: Vec<String>,
     pub device_approval_receipts_seen: usize,
     pub device_approval_receipts_applied: usize,
+    pub device_approval_applied_acks_seen: usize,
+    pub device_approval_applied_acks_applied: usize,
+    pub device_approval_applied_acks_published: usize,
+    pub device_approval_applied_ack_publish_errors: Vec<String>,
     pub profile_roster_ops_seen: usize,
     pub profile_roster_ops_applied: usize,
     pub share_access_snapshots_seen: usize,
@@ -118,6 +123,138 @@ pub async fn sync_once_with_fips(
     .await
 }
 
+/// Apply a pending device-approval ACK without waiting for the general
+/// roster/root/files sync. Each configured relay is queried independently so
+/// one responsive relay can satisfy the durable approval handshake while
+/// unrelated relays are slow or unreachable.
+pub async fn sync_pending_device_approval_acks(
+    config_dir: &Path,
+    relay_override: &[String],
+    timeout: Duration,
+) -> Result<NetworkSyncReport> {
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let state = config
+        .profile
+        .clone()
+        .ok_or_else(|| anyhow::anyhow!("not initialized; create or link a profile first"))?;
+    let relays = pick_relays(&config, relay_override);
+    let mut report = NetworkSyncReport {
+        relays: relays.clone(),
+        blossom_servers: config.blossom_servers.clone(),
+        files_root_event_outcome: "none".to_string(),
+        ..NetworkSyncReport::default()
+    };
+    if state.pending_device_approval_receipts.is_empty() {
+        return Ok(report);
+    }
+
+    let events = fetch_pending_device_approval_acks_first_available(&relays, &state, timeout)
+        .await
+        .context("fetching pending device approval ACK from responsive relay")?;
+    let _config_lock = crate::config_lock::ConfigMutationLock::acquire(config_dir)
+        .await
+        .context("locking pending device approval ACK persistence")?;
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    apply_device_approval_ack_events(config_dir, &mut config, &events, &mut report)?;
+    Ok(report)
+}
+
+async fn fetch_pending_device_approval_acks_first_available(
+    relays: &[String],
+    state: &ProfileState,
+    timeout: Duration,
+) -> Result<Vec<Event>> {
+    let mut clients = Vec::with_capacity(relays.len());
+    for relay in relays {
+        clients.push(
+            relay_sync::connect(std::slice::from_ref(relay))
+                .await
+                .with_context(|| format!("connecting to approval ACK relay {relay}"))?,
+        );
+    }
+    let mut fetches = FuturesUnordered::new();
+    for client in &clients {
+        fetches.push(fetch_pending_device_approval_acks_until(
+            client, state, timeout,
+        ));
+    }
+    let mut last_error = None;
+    let mut successful_fetch = false;
+    let mut selected = Vec::new();
+    while let Some(result) = fetches.next().await {
+        match result {
+            Ok(events) => {
+                successful_fetch = true;
+                if !events.is_empty() {
+                    selected = events;
+                    break;
+                }
+            }
+            Err(error) => last_error = Some(error),
+        }
+    }
+    drop(fetches);
+    for client in &clients {
+        relay_sync::shutdown_client(client).await;
+    }
+    if selected.is_empty()
+        && !successful_fetch
+        && let Some(error) = last_error
+    {
+        return Err(anyhow::anyhow!(error));
+    }
+    Ok(selected)
+}
+
+async fn fetch_pending_device_approval_acks_until(
+    client: &nostr_sdk::Client,
+    state: &ProfileState,
+    timeout: Duration,
+) -> Result<Vec<Event>, crate::relay_sync::RelayError> {
+    let deadline = tokio::time::Instant::now() + timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Ok(Vec::new());
+        }
+        let events =
+            relay_sync::fetch_device_approval_applied_ack_events(client, state, remaining).await?;
+        if !events.is_empty() {
+            return Ok(events);
+        }
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return Ok(Vec::new());
+        }
+        tokio::time::sleep(remaining.min(Duration::from_millis(100))).await;
+    }
+}
+
+fn apply_device_approval_ack_events(
+    config_dir: &Path,
+    config: &mut AppConfig,
+    events: &[Event],
+    report: &mut NetworkSyncReport,
+) -> Result<()> {
+    report.device_approval_applied_acks_seen += events.len();
+    for event in events {
+        let Some(state) = config.profile.as_mut() else {
+            continue;
+        };
+        if crate::app_key_link_transport::apply_device_approval_applied_ack_event(state, event)
+            .context("applying device approval applied ACK")?
+        {
+            report.device_approval_applied_acks_applied += 1;
+        }
+    }
+    if report.device_approval_applied_acks_applied > 0 {
+        config
+            .save(config_path_in(config_dir))
+            .context("persisting device approval applied ACK")?;
+    }
+    Ok(())
+}
+
 #[allow(clippy::too_many_lines)]
 async fn sync_once_inner(
     config_dir: &Path,
@@ -142,10 +279,21 @@ async fn sync_once_inner(
         ..NetworkSyncReport::default()
     };
 
+    let approval_ack_events =
+        relay_sync::fetch_device_approval_applied_ack_events(&client, &initial_state, timeout)
+            .await
+            .context("fetching device approval applied ACK events")?;
+    let mutation = crate::config_lock::ConfigMutationLock::acquire(config_dir).await?;
+    config = reload_sync_config(config_dir, &initial_state)?;
+    apply_device_approval_ack_events(config_dir, &mut config, &approval_ack_events, &mut report)?;
+    drop(mutation);
+
     let approval_events =
         relay_sync::fetch_device_approval_events(&client, &initial_state, timeout)
             .await
             .context("fetching device approval events")?;
+    let mutation = crate::config_lock::ConfigMutationLock::acquire(config_dir).await?;
+    config = reload_sync_config(config_dir, &initial_state)?;
     report.device_approval_receipts_seen = approval_events.receipt_events.len();
     for event in &approval_events.receipt_events {
         if matches!(
@@ -167,13 +315,33 @@ async fn sync_once_inner(
         }
     }
 
-    let approval_still_pending = initial_state.outbound_app_key_link_request.is_some()
+    let mut approval_still_pending = initial_state.outbound_app_key_link_request.is_some()
         && config.profile.as_ref().is_some_and(|state| {
             state.authorization_state == crate::AppKeyAuthorizationState::AwaitingApproval
         });
-    if !approval_events.receipt_events.is_empty() && approval_still_pending {
-        anyhow::bail!("configured relay returned an incomplete device approval roster");
+    if report.device_approval_receipts_applied > 0 || report.profile_roster_ops_applied > 0 {
+        config
+            .save(config_path_in(config_dir))
+            .context("persisting device approval before acknowledging it")?;
     }
+    let acknowledgements = if approval_events.receipt_events.is_empty() {
+        Vec::new()
+    } else {
+        let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
+        let state = config.profile.as_ref().context("profile disappeared")?;
+        let events = crate::app_key_link_transport::device_approval_applied_ack_events(
+            state,
+            device.keys(),
+            Timestamp::now().as_secs(),
+        )?;
+        approval_still_pending = events.is_empty();
+        if approval_still_pending {
+            anyhow::bail!("configured relay returned an incomplete device approval roster");
+        }
+        events
+    };
+    drop(mutation);
+    publish_device_approval_applied_acks(&client, &acknowledgements, timeout, &mut report).await;
 
     let profile_id = config
         .profile
@@ -187,6 +355,9 @@ async fn sync_once_inner(
             .await
             .context("fetching NostrIdentity roster ops")?
     };
+    let mutation = crate::config_lock::ConfigMutationLock::acquire(config_dir).await?;
+    config = reload_sync_config(config_dir, &initial_state)?;
+    let previously_applied = report.profile_roster_ops_applied;
     report.profile_roster_ops_seen += profile_events.len();
     for event in &profile_events {
         if matches!(
@@ -197,6 +368,10 @@ async fn sync_once_inner(
             report.profile_roster_ops_applied += 1;
         }
     }
+    if report.profile_roster_ops_applied > previously_applied {
+        config.save(config_path_in(config_dir))?;
+    }
+    drop(mutation);
     let share_ids = config
         .shared_folders
         .iter()
@@ -206,6 +381,9 @@ async fn sync_once_inner(
         let share_events = relay_sync::fetch_share_access_snapshots(&client, share_id, timeout)
             .await
             .with_context(|| format!("fetching share access snapshots for {share_id}"))?;
+        let mutation = crate::config_lock::ConfigMutationLock::acquire(config_dir).await?;
+        config = reload_sync_config(config_dir, &initial_state)?;
+        let previously_applied = report.share_access_snapshots_applied;
         report.share_access_snapshots_seen += share_events.len();
         for event in &share_events {
             if matches!(
@@ -216,6 +394,10 @@ async fn sync_once_inner(
                 report.share_access_snapshots_applied += 1;
             }
         }
+        if report.share_access_snapshots_applied > previously_applied {
+            config.save(config_path_in(config_dir))?;
+        }
+        drop(mutation);
     }
 
     let state = config
@@ -251,12 +433,18 @@ async fn sync_once_inner(
         .with_context(|| format!("fetching share roots for {}", folder.share_id))?;
         drive_root_events.append(&mut share_events);
     }
+    let mutation = crate::config_lock::ConfigMutationLock::acquire(config_dir).await?;
+    config = reload_sync_config(config_dir, &initial_state)?;
     let drive_roots = apply_drive_root_events(config_dir, &mut config, &drive_root_events)
         .context("applying drive-root events")?;
     report.drive_root_events_seen = drive_roots.seen;
     report.drive_root_events_applied = drive_roots.applied;
     report.drive_root_events_skipped = drive_roots.skipped;
     let mut root_cids_to_download = drive_roots.root_cids_to_download;
+    if drive_roots.applied > 0 {
+        config.save(config_path_in(config_dir))?;
+    }
+    drop(mutation);
 
     if let Some(account_state) = config.profile.clone().filter(ProfileState::can_write_roots) {
         match relay_sync::fetch_latest_files_root(
@@ -269,8 +457,11 @@ async fn sync_once_inner(
         {
             Ok(Some(ev)) => {
                 report.files_root_event_seen = true;
+                let mutation = crate::config_lock::ConfigMutationLock::acquire(config_dir).await?;
+                config = reload_sync_config(config_dir, &initial_state)?;
+                let current_state = config.profile.clone().context("profile disappeared")?;
                 let account =
-                    crate::Profile::load(account_state, config_dir).context("loading profile")?;
+                    crate::Profile::load(current_state, config_dir).context("loading profile")?;
                 let outcome = relay_sync::apply_remote_files_root_event(
                     &mut config,
                     &ev,
@@ -278,6 +469,10 @@ async fn sync_once_inner(
                 )
                 .context("applying files-root event")?;
                 report.files_root_event_outcome = files_root_apply_label(&outcome).to_string();
+                if matches!(outcome, relay_sync::FilesRootApply::Applied) {
+                    config.save(config_path_in(config_dir))?;
+                }
+                drop(mutation);
                 if matches!(outcome, relay_sync::FilesRootApply::Applied)
                     && let Some(root_ref) = config
                         .drive(PRIMARY_DRIVE_ID)
@@ -294,7 +489,9 @@ async fn sync_once_inner(
         }
     }
 
-    config.save(config_path_in(config_dir))?;
+    // A UI action may have changed settings or authorization during the fetch.
+    // Never write the earlier snapshot over that newer local transaction.
+    config = reload_sync_config(config_dir, &initial_state)?;
     download_roots(
         config_dir,
         &config,
@@ -325,6 +522,45 @@ async fn sync_once_inner(
     Ok(report)
 }
 
+fn reload_sync_config(config_dir: &Path, initial: &ProfileState) -> Result<AppConfig> {
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let current = config
+        .profile
+        .as_ref()
+        .context("profile disappeared during sync")?;
+    anyhow::ensure!(
+        current.app_key_pubkey == initial.app_key_pubkey
+            && (initial.authorization_state == crate::AppKeyAuthorizationState::AwaitingApproval
+                || current.profile_id == initial.profile_id),
+        "profile changed during sync",
+    );
+    Ok(config)
+}
+
+async fn publish_device_approval_applied_acks(
+    client: &nostr_sdk::Client,
+    acknowledgements: &[Event],
+    timeout: Duration,
+    report: &mut NetworkSyncReport,
+) {
+    for acknowledgement in acknowledgements {
+        match tokio::time::timeout(
+            timeout,
+            relay_sync::publish_device_approval_applied_ack(client, acknowledgement),
+        )
+        .await
+        {
+            Ok(Ok(_)) => report.device_approval_applied_acks_published += 1,
+            Ok(Err(error)) => report
+                .device_approval_applied_ack_publish_errors
+                .push(error.to_string()),
+            Err(_) => report
+                .device_approval_applied_ack_publish_errors
+                .push("publishing device approval applied ACK timed out".to_string()),
+        }
+    }
+}
+
 pub fn apply_drive_root_events(
     config_dir: &Path,
     config: &mut AppConfig,
@@ -348,6 +584,29 @@ pub fn apply_drive_root_events(
             _ => report.skipped += 1,
         }
     }
+    Ok(report)
+}
+
+/// Download drive roots that a caller already applied to the latest config.
+/// This function only writes blocks; the caller remains responsible for
+/// signaling any provider that reads the merged view.
+pub async fn download_applied_drive_roots(
+    config_dir: &Path,
+    root_cids: &[String],
+    fips: Option<&FsFipsBlockSync>,
+) -> Result<NetworkSyncReport> {
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let mut report = NetworkSyncReport {
+        blossom_servers: config.blossom_servers.clone(),
+        files_root_event_outcome: "none".to_string(),
+        ..NetworkSyncReport::default()
+    };
+    let options = if fips.is_some() {
+        NetworkSyncOptions::default()
+    } else {
+        NetworkSyncOptions::without_direct_fips_download()
+    };
+    download_roots(config_dir, &config, root_cids, fips, options, &mut report).await;
     Ok(report)
 }
 

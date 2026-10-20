@@ -1017,7 +1017,7 @@ pub(crate) fn confirm_approve_device(model: &AppRef, request: String) {
         return;
     }
     let Some(window) = model.application.active_window() else {
-        approve_device_values(model, request, String::new());
+        queue_launch_input(&request);
         return;
     };
     let dialog = adw::AlertDialog::builder()

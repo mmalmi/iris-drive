@@ -3,24 +3,7 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-
-require_contains() {
-  local file="$1"
-  local needle="$2"
-  if ! grep -Fq "$needle" "$ROOT/$file"; then
-    echo "missing '$needle' in $file" >&2
-    exit 1
-  fi
-}
-
-require_absent() {
-  local file="$1"
-  local needle="$2"
-  if grep -Fq "$needle" "$ROOT/$file"; then
-    echo "unexpected '$needle' in $file" >&2
-    exit 1
-  fi
-}
+source "$ROOT/scripts/lib/source-assertions.sh"
 
 require_contains crates/iris-drive-core/src/app_key_summary.rs "pub fn sync_status_label"
 require_contains crates/iris-drive-app-core/src/state.rs "pub status_label: String"

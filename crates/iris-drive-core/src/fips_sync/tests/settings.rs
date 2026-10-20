@@ -2,9 +2,12 @@ use super::*;
 
 use super::super::settings_runtime::{
     bounded_webrtc_max_connections, fips_endpoint_options, parse_bool_env_value,
-    parse_list_env_value, parse_static_peer_hints, target_allows_default_desktop_fips,
-    target_allows_default_lan_discovery,
+    parse_list_env_value, parse_static_peer_hints, parse_trusted_raters,
+    target_allows_default_desktop_fips, target_allows_default_lan_discovery,
 };
+use fips_core::config::ConnectPolicy;
+
+mod connector_policy;
 
 #[test]
 fn discovery_scope_is_profile_scoped() {
@@ -44,6 +47,7 @@ fn endpoint_options_can_advertise_native_udp_without_disabling_webrtc() {
         enable_udp: true,
         enable_webrtc: true,
         enable_lan_discovery: true,
+        enable_nostr_discovery: true,
         enable_mesh_pubsub: true,
         enable_local_rendezvous: true,
         websocket_bind_addr: None,
@@ -54,6 +58,7 @@ fn endpoint_options_can_advertise_native_udp_without_disabling_webrtc() {
         share_local_candidates: true,
         static_peer_hints: Vec::new(),
         bootstrap_peer_hints: Vec::new(),
+        trusted_raters: Vec::new(),
         webrtc_max_connections: 12,
         open_discovery_max_pending: 8,
     };
@@ -92,6 +97,23 @@ fn websocket_seed_list_ignores_empty_entries_and_whitespace() {
             "wss://two.example/fips".to_string(),
         ]
     );
+    assert_eq!(
+        parse_list_env_value("wss://seed.example/fips;route=one"),
+        vec!["wss://seed.example/fips;route=one".to_string()],
+    );
+}
+
+#[test]
+fn peer_reputation_has_no_default_external_rater_and_preserves_explicit_keys() {
+    assert_eq!(FipsTransportSettings::default().trusted_raters.len(), 0);
+    let identity = AppKey::generate("configured-rater");
+    let npub = identity.pubkey_bech32();
+    let hex = "ab".repeat(32);
+    assert_eq!(
+        parse_trusted_raters(&format!(" {npub}; {hex}, ; invalid-explicit-key ")),
+        vec![npub, hex, "invalid-explicit-key".to_string()],
+        "key validation belongs to the shared reputation constructor",
+    );
 }
 
 #[test]
@@ -114,7 +136,30 @@ fn endpoint_options_can_bind_a_native_websocket_entry_point() {
 
     assert_eq!(websocket.bind_addr.as_deref(), Some("127.0.0.1:2121"));
     assert!(!options.enable_local_rendezvous);
-    assert!(websocket.seed_urls.is_empty());
+    assert_eq!(websocket.seed_urls.len(), 0);
+}
+
+#[test]
+fn websocket_mesh_tests_can_disable_nostr_direct_upgrades() {
+    let settings = FipsTransportSettings {
+        enable_udp: false,
+        enable_webrtc: false,
+        enable_nostr_discovery: false,
+        enable_local_rendezvous: false,
+        websocket_seed_urls: vec!["ws://127.0.0.1:2121/fips".to_string()],
+        ..Default::default()
+    };
+
+    let options = fips_endpoint_options(
+        "nsec1example".to_string(),
+        IRIS_DRIVE_FIPS_DISCOVERY_SCOPE.to_string(),
+        vec!["ws://127.0.0.1:4848".to_string()],
+        &AppConfig::default(),
+        &settings,
+    );
+
+    assert_eq!(options.relays.len(), 0);
+    assert!(options.websocket.is_some());
 }
 
 #[test]
@@ -139,8 +184,9 @@ fn default_transport_settings_do_not_seed_fips_bootstrap_transit() {
             "wss://fips2.iris.to/fips".to_string(),
         ]
     );
-    assert!(settings.bootstrap_peer_hints.is_empty());
+    assert_eq!(settings.bootstrap_peer_hints.len(), 0);
     assert!(settings.enable_lan_discovery);
+    assert!(settings.enable_nostr_discovery);
 }
 
 #[test]
@@ -177,8 +223,14 @@ fn single_device_profile_does_not_route_to_bootstrap_fips_peers() {
         ..Default::default()
     };
 
-    assert!(authorized_device_fips_peers(&config, &FipsTransportSettings::default()).is_empty());
-    assert!(routing_fips_peers(&config, &FipsTransportSettings::default()).is_empty());
+    assert_eq!(
+        authorized_device_fips_peers(&config, &FipsTransportSettings::default()).len(),
+        0
+    );
+    assert_eq!(
+        routing_fips_peers(&config, &FipsTransportSettings::default()).len(),
+        0
+    );
 }
 
 #[test]
@@ -232,13 +284,16 @@ fn admin_inbound_app_key_link_request_configures_pending_fips_peer() {
 
     assert_eq!(peers.len(), 1);
     assert_eq!(peers[0].npub, pending_npub);
-    assert!(peers[0].udp_addresses.is_empty());
-    assert!(authorized_blob_fips_peers(&config, &FipsTransportSettings::default()).is_empty());
+    assert_eq!(peers[0].udp_addresses.len(), 0);
+    assert_eq!(
+        authorized_blob_fips_peers(&config, &FipsTransportSettings::default()).len(),
+        0
+    );
     config.relays = vec!["wss://relay.example".to_string()];
     let peers = authorized_device_fips_peers(&config, &FipsTransportSettings::default());
     assert_eq!(peers.len(), 1);
     assert_eq!(peers[0].npub, pending_npub);
-    assert!(peers[0].udp_addresses.is_empty());
+    assert_eq!(peers[0].udp_addresses.len(), 0);
 }
 
 #[test]
@@ -275,7 +330,10 @@ fn remote_authorized_device_does_not_seed_bootstrap_fips_routing_peers() {
         ..Default::default()
     };
 
-    assert!(routing_fips_peers(&config, &FipsTransportSettings::default()).is_empty());
+    assert_eq!(
+        routing_fips_peers(&config, &FipsTransportSettings::default()).len(),
+        0
+    );
 }
 
 #[test]
@@ -326,6 +384,7 @@ fn explicit_bootstrap_hints_add_fips_routing_peers() {
 fn fips_peer_config_snapshot_matches_endpoint_peer_sanitizing() {
     let snapshot = fips_peer_config_snapshot(
         Some("local"),
+        LocalInboundCapability::InboundRoutable,
         &[
             FipsPeerConfig {
                 npub: " remote ".to_string(),
@@ -375,6 +434,33 @@ fn fips_peer_config_snapshot_matches_endpoint_peer_sanitizing() {
         }]
     );
     assert_eq!(
+        snapshot.local_inbound_capability,
+        LocalInboundCapability::InboundRoutable
+    );
+    assert_ne!(
+        snapshot,
+        fips_peer_config_snapshot(
+            Some("local"),
+            LocalInboundCapability::OutboundOnly,
+            &[FipsPeerConfig {
+                npub: "remote".to_string(),
+                udp_addresses: vec![
+                    " 10.44.1.2:22121 ".to_string(),
+                    "udp:10.44.1.3:22121".to_string(),
+                ],
+            }],
+            &[FipsPeerConfig {
+                npub: "bootstrap".to_string(),
+                udp_addresses: vec!["udp:203.0.113.7:2121".to_string()],
+            }],
+            &[FipsPeerConfig {
+                npub: "remote".to_string(),
+                udp_addresses: vec![" 10.44.1.8:22121 ".to_string()],
+            }],
+        ),
+        "an endpoint that loses inbound reachability must not skip peer policy refresh"
+    );
+    assert_eq!(
         snapshot.routing,
         vec![FipsPeerConfig {
             npub: "bootstrap".to_string(),
@@ -388,6 +474,101 @@ fn fips_peer_config_snapshot_matches_endpoint_peer_sanitizing() {
             udp_addresses: vec!["10.44.1.8:22121".to_string()],
         }]
     );
+}
+
+#[test]
+fn authorized_drive_pair_elects_one_bounded_auto_connector() {
+    let lower = "npub1aaa";
+    let higher = "npub1zzz";
+    let lower_peer = FipsPeerConfig {
+        npub: higher.to_string(),
+        udp_addresses: vec!["udp:127.0.0.1:2121".to_string()],
+    };
+    let higher_peer = FipsPeerConfig {
+        npub: lower.to_string(),
+        udp_addresses: vec!["udp:127.0.0.1:2122".to_string()],
+    };
+    let application_peer_ids = BTreeSet::from([lower.to_string(), higher.to_string()]);
+    let outbound_connect_peer_ids = BTreeSet::new();
+
+    let lower_config = drive_core_peer_configs(
+        lower,
+        LocalInboundCapability::InboundRoutable,
+        &application_peer_ids,
+        &outbound_connect_peer_ids,
+        vec![lower_peer],
+    )
+    .remove(0);
+    let higher_config = drive_core_peer_configs(
+        higher,
+        LocalInboundCapability::InboundRoutable,
+        &application_peer_ids,
+        &outbound_connect_peer_ids,
+        vec![higher_peer],
+    )
+    .remove(0);
+
+    assert_eq!(lower_config.connect_policy, ConnectPolicy::AutoConnect);
+    assert_eq!(higher_config.connect_policy, ConnectPolicy::Manual);
+    assert!(
+        !lower_config.auto_reconnect,
+        "the authenticated control runtime owns application-peer reconnects"
+    );
+    assert!(!higher_config.auto_reconnect);
+}
+
+#[test]
+fn outbound_pending_admin_bypasses_authorized_identity_tie_break() {
+    let pending_joiner = "npub1zzz";
+    let admin = "npub1aaa";
+    let admin_peer = FipsPeerConfig {
+        npub: admin.to_string(),
+        udp_addresses: vec!["udp:127.0.0.1:2121".to_string()],
+    };
+    let application_peer_ids = BTreeSet::from([admin.to_string()]);
+    let outbound_connect_peer_ids = BTreeSet::from([admin.to_string()]);
+
+    let config = drive_core_peer_configs(
+        pending_joiner,
+        LocalInboundCapability::InboundRoutable,
+        &application_peer_ids,
+        &outbound_connect_peer_ids,
+        vec![admin_peer],
+    )
+    .remove(0);
+
+    assert_eq!(config.connect_policy, ConnectPolicy::AutoConnect);
+    assert!(
+        !config.auto_reconnect,
+        "the authenticated control runtime still owns pending application-peer reconnects"
+    );
+}
+
+#[test]
+fn routing_peer_remains_auto_connect_and_address_schemes_are_preserved() {
+    let config = FipsPeerConfig {
+        npub: "npub1routing".to_string(),
+        udp_addresses: vec![
+            "127.0.0.1:2121".to_string(),
+            "tcp:relay.example:443".to_string(),
+            "nostr_relay:npub1ignored".to_string(),
+        ],
+    };
+    let peers = drive_core_peer_configs(
+        "npub1local",
+        LocalInboundCapability::InboundRoutable,
+        &BTreeSet::new(),
+        &BTreeSet::new(),
+        vec![config],
+    );
+
+    assert_eq!(peers[0].connect_policy, ConnectPolicy::AutoConnect);
+    assert!(peers[0].auto_reconnect);
+    assert_eq!(peers[0].addresses.len(), 2);
+    assert_eq!(peers[0].addresses[0].transport, "udp");
+    assert_eq!(peers[0].addresses[0].addr, "127.0.0.1:2121");
+    assert_eq!(peers[0].addresses[1].transport, "tcp");
+    assert_eq!(peers[0].addresses[1].addr, "relay.example:443");
 }
 
 #[test]
@@ -434,7 +615,10 @@ fn legacy_drive_roots_do_not_seed_bootstrap_fips_routing_peers() {
         authorized_blob_fips_peers(&config, &FipsTransportSettings::default()),
         authorized,
     );
-    assert!(routing_fips_peers(&config, &FipsTransportSettings::default()).is_empty());
+    assert_eq!(
+        routing_fips_peers(&config, &FipsTransportSettings::default()).len(),
+        0
+    );
 }
 
 #[test]
@@ -525,7 +709,7 @@ fn pending_app_key_link_admin_is_allowed_for_roster_app_messages() {
                 invite_pubkey: "ee".repeat(32),
                 request_url: String::new(),
                 request_key_secret: "ff".repeat(32),
-                approval_receipt_event: None,
+                approval_receipt_event: crate::profile::PersistedDeviceApprovalReceipts::default(),
                 requested_at: 42,
             }),
             inbound_app_key_link_requests: Vec::new(),
@@ -541,7 +725,7 @@ fn pending_app_key_link_admin_is_allowed_for_roster_app_messages() {
     assert_eq!(authorized[0].npub, admin_npub);
     let expected_addresses = vec!["10.44.1.9:22121".to_string()];
     assert_eq!(authorized[0].udp_addresses, expected_addresses);
-    assert!(authorized_blob_fips_peers(&config, &settings).is_empty());
+    assert_eq!(authorized_blob_fips_peers(&config, &settings).len(), 0);
     let routing = routing_fips_peers(&config, &settings);
     assert_eq!(routing.len(), 1);
     assert_eq!(routing[0].npub, admin_npub);

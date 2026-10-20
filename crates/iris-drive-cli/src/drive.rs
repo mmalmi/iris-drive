@@ -1,11 +1,15 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
+use iris_drive_core::provider::rename_provider_path as shared_rename_provider_path;
 use iris_drive_core::provider::{
     ProviderListEntry, compose_provider_path, normalize_provider_document_path,
-    normalize_provider_parent_path, normalize_provider_path, provider_cache_destination,
+    normalize_provider_parent_path, normalize_provider_path,
     provider_entry_is_probable_os_placeholder, provider_file_probable_os_placeholder_family,
     provider_list_summary, provider_write_is_probable_os_placeholder, sanitized_provider_file_name,
     split_provider_path, unique_provider_path,
+};
+pub(crate) use iris_drive_core::provider::{
+    create_provider_dir, delete_provider_path, write_provider_file,
 };
 
 use crate::provider_staging::{
@@ -14,12 +18,14 @@ use crate::provider_staging::{
 };
 
 mod commands;
+mod provider_cache;
 mod provider_retry;
 pub(crate) use commands::*;
+use provider_cache::hydrate_provider_cache;
 pub(crate) use provider_retry::import_provider_root_with_retry;
 use provider_retry::{
-    ensure_provider_root_locally_available, primary_merged_root_from_view_with_retry,
-    primary_merged_root_with_retry, primary_merged_view_with_retry,
+    ensure_provider_root_locally_available, primary_merged_root_with_retry,
+    primary_merged_view_and_root_with_retry,
 };
 
 pub(crate) fn cmd_drives(config_dir: &std::path::Path) -> Result<()> {
@@ -144,6 +150,7 @@ pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
                 root,
                 files: files.clone(),
                 tombstones: tombs.clone(),
+                path_kind_replacements: None,
             })
             .collect();
 
@@ -241,22 +248,44 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
             elapsed_ms = started.elapsed().as_millis(),
             "provider command opened daemon"
         );
+        match &command {
+            ProviderCmd::Write { path, .. }
+            | ProviderCmd::Mkdir { path, .. }
+            | ProviderCmd::Delete { path, .. } => {
+                iris_drive_core::shared_content::ensure_shared_path_writable(
+                    daemon.config(),
+                    &normalize_provider_path(path)?,
+                )?;
+            }
+            ProviderCmd::Rename {
+                old_path, new_path, ..
+            } => {
+                for path in [old_path, new_path] {
+                    iris_drive_core::shared_content::ensure_shared_path_writable(
+                        daemon.config(),
+                        &normalize_provider_path(path)?,
+                    )?;
+                }
+            }
+            _ => {}
+        }
         let staged_root =
             read_provider_staging(config_dir).context("reading staged provider root")?;
         let supplied_base_root_cid = provider_command_base_root_cid(&command)?;
-        let visible_view = if provider_command_needs_merged_view(&command) {
+        let merged_view_and_root = if provider_command_needs_merged_view(&command) {
             let phase = std::time::Instant::now();
-            let view = primary_merged_view_with_retry(&daemon)
+            let merged = primary_merged_view_and_root_with_retry(&mut daemon)
                 .await
                 .context("building virtual provider timestamp index")?;
             tracing::debug!(
                 elapsed_ms = phase.elapsed().as_millis(),
                 "provider command built merged view"
             );
-            Some(view)
+            Some(merged)
         } else {
             None
         };
+        let visible_view = merged_view_and_root.as_ref().map(|(view, _)| view);
         let phase = std::time::Instant::now();
         let visible = if let Some(staged) = staged_root.as_ref() {
             tracing::debug!("provider command using staged visible root anchor");
@@ -272,12 +301,10 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                 file_count: 0,
                 top_level_entries: 0,
             }
-        } else if let Some(visible_view) = visible_view.as_ref() {
-            primary_merged_root_from_view_with_retry(&daemon, visible_view)
-                .await
-                .context("building virtual provider root")?
+        } else if let Some((_, visible_root)) = merged_view_and_root.as_ref() {
+            visible_root.clone()
         } else {
-            primary_merged_root_with_retry(&daemon)
+            primary_merged_root_with_retry(&mut daemon)
                 .await
                 .context("building virtual provider root")?
         };
@@ -288,7 +315,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
         if provider_command_is_mutation(&command) {
             if staged_root.is_none() && supplied_base_root_cid.is_none() {
                 let phase = std::time::Instant::now();
-                ensure_provider_root_locally_available(&daemon, &visible.root_cid).await?;
+                ensure_provider_root_locally_available(&mut daemon, &visible.root_cid).await?;
                 tracing::debug!(
                     elapsed_ms = phase.elapsed().as_millis(),
                     "provider command checked provider root availability"
@@ -318,9 +345,8 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
         match command {
             ProviderCmd::List => {
                 let phase = std::time::Instant::now();
-                let visible_view = visible_view
-                    .as_ref()
-                    .expect("list command should have prebuilt merged view");
+                let visible_view =
+                    visible_view.expect("list command should have prebuilt merged view");
                 let modified_at_by_path = provider_modified_at_index(visible_view);
                 let entries =
                     provider_entries(daemon.tree(), &visible.root_cid, &modified_at_by_path)
@@ -357,7 +383,6 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     .map(normalize_provider_path)
                     .transpose()?;
                 let modified_at_by_path = visible_view
-                    .as_ref()
                     .map(provider_modified_at_index)
                     .unwrap_or_default();
                 let entries =
@@ -666,195 +691,6 @@ fn provider_mutation_tombstone_paths(
     tombstone_paths
 }
 
-#[derive(Default)]
-struct ProviderCacheReport {
-    file_count: usize,
-    directory_count: usize,
-    written: usize,
-    updated: usize,
-    unchanged: usize,
-    skipped: usize,
-}
-
-async fn hydrate_provider_cache(
-    provider: &HashTreeProviderFs<FsBlobStore>,
-    entries: &[ProviderListEntry],
-    target_dir: &Path,
-) -> Result<ProviderCacheReport> {
-    std::fs::create_dir_all(target_dir)
-        .with_context(|| format!("creating {}", target_dir.display()))?;
-    let mut report = ProviderCacheReport::default();
-    for entry in entries {
-        let Some(destination) = provider_cache_destination(target_dir, &entry.path) else {
-            report.skipped += 1;
-            continue;
-        };
-        if entry.kind == "directory" {
-            report.directory_count += 1;
-            if destination.is_dir() {
-                report.unchanged += 1;
-                continue;
-            }
-            let existed = destination.exists();
-            remove_provider_cache_destination(&destination)?;
-            std::fs::create_dir_all(&destination)
-                .with_context(|| format!("creating {}", destination.display()))?;
-            if existed {
-                report.updated += 1;
-            } else {
-                report.written += 1;
-            }
-            continue;
-        }
-
-        report.file_count += 1;
-        if let Some(parent) = destination.parent() {
-            std::fs::create_dir_all(parent)
-                .with_context(|| format!("creating {}", parent.display()))?;
-        }
-        let bytes = provider.read(&entry.path, 0, entry.size).await?;
-        if destination.is_file() {
-            let existing = std::fs::read(&destination)
-                .with_context(|| format!("reading {}", destination.display()))?;
-            if existing == bytes {
-                report.unchanged += 1;
-                continue;
-            }
-            std::fs::write(&destination, bytes)
-                .with_context(|| format!("writing {}", destination.display()))?;
-            report.updated += 1;
-            continue;
-        }
-
-        let existed = destination.exists();
-        remove_provider_cache_destination(&destination)?;
-        std::fs::write(&destination, bytes)
-            .with_context(|| format!("writing {}", destination.display()))?;
-        if existed {
-            report.updated += 1;
-        } else {
-            report.written += 1;
-        }
-    }
-    Ok(report)
-}
-
-fn remove_provider_cache_destination(path: &Path) -> Result<()> {
-    if path.is_dir() {
-        std::fs::remove_dir_all(path).with_context(|| format!("removing {}", path.display()))?;
-    } else if path.exists() {
-        std::fs::remove_file(path).with_context(|| format!("removing {}", path.display()))?;
-    }
-    Ok(())
-}
-
-pub(crate) async fn write_provider_file(
-    provider: &HashTreeProviderFs<FsBlobStore>,
-    path: &str,
-    bytes: &[u8],
-) -> Result<()> {
-    let (parent, name) = split_provider_path(path)?;
-    ensure_provider_dirs(provider, &parent).await?;
-    match provider.item(&path.to_string()).await {
-        Ok(item) if item.kind == ItemKind::Directory => {
-            delete_provider_path(provider, path).await?;
-            provider.create_file(&parent, &name).await?;
-        }
-        Ok(_) => {
-            provider.truncate(&path.to_string(), 0).await?;
-        }
-        Err(_) => {
-            provider.create_file(&parent, &name).await?;
-        }
-    }
-    if !bytes.is_empty() {
-        provider.write(&path.to_string(), 0, bytes).await?;
-    }
-    Ok(())
-}
-
-pub(crate) async fn create_provider_dir(
-    provider: &HashTreeProviderFs<FsBlobStore>,
-    path: &str,
-) -> Result<()> {
-    let (parent, name) = split_provider_path(path)?;
-    ensure_provider_dirs(provider, &parent).await?;
-    match provider.item(&path.to_string()).await {
-        Ok(item) if item.kind == ItemKind::Directory => Ok(()),
-        Ok(_) => {
-            provider.remove(&parent, &name).await?;
-            provider.create_dir(&parent, &name).await?;
-            Ok(())
-        }
-        Err(_) => {
-            provider.create_dir(&parent, &name).await?;
-            Ok(())
-        }
-    }
-}
-
-async fn ensure_provider_dirs(
-    provider: &HashTreeProviderFs<FsBlobStore>,
-    parent: &str,
-) -> Result<()> {
-    let mut current = String::new();
-    for segment in parent.split('/').filter(|segment| !segment.is_empty()) {
-        let next = if current.is_empty() {
-            segment.to_string()
-        } else {
-            format!("{current}/{segment}")
-        };
-        match provider.item(&next).await {
-            Ok(item) if item.kind == ItemKind::Directory => {}
-            Ok(_) => {
-                provider.remove(&current, segment).await?;
-                provider.create_dir(&current, segment).await?;
-            }
-            Err(_) => {
-                provider.create_dir(&current, segment).await?;
-            }
-        }
-        current = next;
-    }
-    Ok(())
-}
-
-pub(crate) async fn delete_provider_path(
-    provider: &HashTreeProviderFs<FsBlobStore>,
-    path: &str,
-) -> Result<()> {
-    let root = path.to_string();
-    let mut stack = vec![root.clone()];
-    let mut directories = Vec::new();
-    while let Some(current) = stack.pop() {
-        let item = match provider.item(&current).await {
-            Ok(item) => item,
-            Err(hashtree_provider::ProviderError::NotFound) => continue,
-            Err(error) => return Err(error.into()),
-        };
-        if item.kind == ItemKind::Directory {
-            directories.push(current.clone());
-            for child in provider.read_dir(&current).await? {
-                stack.push(child.id);
-            }
-        } else {
-            let (parent, name) = split_provider_path(&current)?;
-            match provider.remove(&parent, &name).await {
-                Ok(()) | Err(hashtree_provider::ProviderError::NotFound) => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-    }
-    for directory in directories.into_iter().rev() {
-        let (parent, name) = split_provider_path(&directory)?;
-        match provider.remove(&parent, &name).await {
-            Ok(()) | Err(hashtree_provider::ProviderError::NotFound) => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
-    Ok(())
-}
-
 async fn provider_delete_tombstone_paths(
     provider: &HashTreeProviderFs<FsBlobStore>,
     path: &str,
@@ -886,16 +722,7 @@ pub(crate) async fn rename_provider_path(
     if old_path == new_path {
         return Ok(());
     }
-    let (old_parent, old_name) = split_provider_path(old_path)?;
-    let (new_parent, new_name) = split_provider_path(new_path)?;
-    ensure_provider_dirs(provider, &new_parent).await?;
-    if provider.item(&new_path.to_string()).await.is_ok() {
-        delete_provider_path(provider, new_path).await?;
-    }
-    provider
-        .rename(&old_parent, &old_name, &new_parent, &new_name)
-        .await?;
-    Ok(())
+    shared_rename_provider_path(provider, old_path, new_path).await
 }
 
 async fn print_provider_mutation(
@@ -1054,6 +881,41 @@ async fn provider_root_report(
         file_count: summary.file_count,
         top_level_entries: top_level_entry_count(&entries),
     })
+}
+
+#[cfg(test)]
+mod provider_mutation_tests {
+    use hashtree_provider::ProviderFs;
+
+    use super::{rename_provider_path, write_provider_file};
+
+    #[tokio::test]
+    async fn rename_same_path_is_a_noop() {
+        let store = tempfile::tempdir().unwrap();
+        let tree = std::sync::Arc::new(hashtree_core::HashTree::new(
+            hashtree_core::HashTreeConfig::new(std::sync::Arc::new(
+                hashtree_fs::FsBlobStore::new(store.path()).unwrap(),
+            ))
+            .public(),
+        ));
+        let provider = hashtree_provider::HashTreeProviderFs::fresh(tree)
+            .await
+            .unwrap();
+        write_provider_file(&provider, "same.txt", b"preserved")
+            .await
+            .unwrap();
+
+        rename_provider_path(&provider, "same.txt", "same.txt")
+            .await
+            .unwrap();
+
+        let path = "same.txt".to_owned();
+        let item = provider.item(&path).await.unwrap();
+        assert_eq!(
+            provider.read(&path, 0, item.size).await.unwrap(),
+            b"preserved"
+        );
+    }
 }
 
 #[cfg(test)]

@@ -12,6 +12,10 @@ esac
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/ios-simulator-signing.sh"
+source "$ROOT/scripts/lib/ios-simulator-build-profile.sh"
+source "$ROOT/scripts/lib/ios-linking-observer.sh"
+source "$ROOT/scripts/lib/ios-blossom-smoke.sh"
+source "$ROOT/scripts/lib/ios-xcuitest-accessibility-session.sh"
 PROJECT="$ROOT/ios/IrisDriveIOS.xcodeproj"
 SCHEME="IrisDriveIOS"
 CONFIGURATION="${IRIS_DRIVE_IOS_XCODE_CONFIGURATION:-Debug}"
@@ -26,10 +30,11 @@ DEVICE_NAME="${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-}"
 TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
 IDRIVE="${IRIS_DRIVE_IDRIVE_BIN:-$TARGET_DIR/debug/idrive}"
 RUST_IOS_TARGET="${IRIS_DRIVE_IOS_RUST_TARGET:-aarch64-apple-ios-sim}"
-RUST_LIB_DIR="$TARGET_DIR/$RUST_IOS_TARGET/debug"
-RUST_STATIC_LIB="$RUST_LIB_DIR/libiris_drive_app_core.a"
+iris_drive_ios_select_build_profile
 OWNER_CONFIG="$(mktemp -d -t iris-drive-ios-ui-owner)"
+export HTREE_DATA_DIR="$OWNER_CONFIG/hashtree-data"
 LINKED_CONFIG="$(mktemp -d -t iris-drive-ios-ui-linked)"
+MANUAL_LINKED_CONFIG="$(mktemp -d -t iris-drive-ios-ui-manual-linked)"
 XCTESTRUN=""
 OWNER_DAEMON_PID=""
 OWNER_DAEMON_LOG="$(mktemp -t iris-drive-ios-ui-owner-daemon.XXXXXX.log)"
@@ -38,10 +43,27 @@ OWNER_FIPS_OPEN_DISCOVERY_MAX_PENDING="${IRIS_DRIVE_IOS_FIPS_OPEN_DISCOVERY_MAX_
 SIM_APP_BASE_DIR=""
 LOCAL_RELAY_READY="$(mktemp -t iris-drive-ios-ui-relay.XXXXXX)"
 LOCAL_RELAY_LOG="$(mktemp -t iris-drive-ios-ui-relay.XXXXXX.log)"
+LOCAL_RELAY_EVENT_LOG="$(mktemp -t iris-drive-ios-ui-relay-events.XXXXXX.jsonl)"
 LOCAL_RELAY_PID=""
 LOCAL_RELAY_URL=""
+LINKED_SYNC_OBSERVER_PID=""
+LINKED_SYNC_OBSERVATION_FILE=""
+LINKED_ACK_OBSERVATION_FILE=""
+MANUAL_LINKED_SYNC_OBSERVER_PID=""
+MANUAL_LINKED_SYNC_OBSERVATION_FILE=""
+MANUAL_LINKED_ACK_OBSERVATION_FILE=""
 
+SMOKE_COMPLETED=0
 cleanup() {
+  local status=$? cleanup_status=0
+  trap - EXIT
+  set +e
+  for observer_pid in "$LINKED_SYNC_OBSERVER_PID" "$MANUAL_LINKED_SYNC_OBSERVER_PID"; do
+    if [[ -n "$observer_pid" ]]; then
+      kill "$observer_pid" >/dev/null 2>&1 || true
+      wait "$observer_pid" >/dev/null 2>&1 || true
+    fi
+  done
   if [[ -n "$OWNER_DAEMON_PID" ]]; then
     kill "$OWNER_DAEMON_PID" >/dev/null 2>&1 || true
     wait "$OWNER_DAEMON_PID" >/dev/null 2>&1 || true
@@ -50,8 +72,17 @@ cleanup() {
     kill "$LOCAL_RELAY_PID" >/dev/null 2>&1 || true
     wait "$LOCAL_RELAY_PID" >/dev/null 2>&1 || true
   fi
-  rm -rf "$OWNER_CONFIG" "$LINKED_CONFIG"
-  rm -f "$OWNER_DAEMON_LOG" "$LOCAL_RELAY_READY" "$LOCAL_RELAY_LOG"
+  rm -rf "$OWNER_CONFIG" "$LINKED_CONFIG" "$MANUAL_LINKED_CONFIG" || cleanup_status=$?
+  rm -f "$OWNER_DAEMON_LOG" "$LOCAL_RELAY_READY" "$LOCAL_RELAY_LOG" \
+    "$LOCAL_RELAY_EVENT_LOG" \
+    "$LINKED_SYNC_OBSERVATION_FILE" "$LINKED_ACK_OBSERVATION_FILE" \
+    "$MANUAL_LINKED_SYNC_OBSERVATION_FILE" "$MANUAL_LINKED_ACK_OBSERVATION_FILE" || cleanup_status=$?
+  stop_ios_smoke_blossom || cleanup_status=$?
+  if [[ "$status" == 0 && "$cleanup_status" != 0 ]]; then status="$cleanup_status"; fi
+  # Bash 3.2 can report zero to EXIT after a nounset inside a function.
+  # Only a completed selected journey may turn successful cleanup into a pass.
+  if [[ "$SMOKE_COMPLETED" != 1 && "$status" == 0 ]]; then status=1; fi
+  exit "$status"
 }
 trap cleanup EXIT
 
@@ -123,6 +154,8 @@ reset_sim_app_state() {
   SIM_APP_BASE_DIR="$group_container/IrisDrive"
   safe_remove_sim_container "$SIM_APP_BASE_DIR"
   mkdir -p "$SIM_APP_BASE_DIR"
+  configure_ios_smoke_blossom "$SIM_APP_BASE_DIR"
+  configure_ios_smoke_relay "$SIM_APP_BASE_DIR"
   clear_sim_env \
     IRIS_DRIVE_DEBUG_ACTION \
     IRIS_DRIVE_DEBUG_OWNER \
@@ -185,6 +218,37 @@ wait_for_config_status() {
   return 1
 }
 
+wait_for_config_status_before() {
+  local config_dir="$1"
+  local jq_expr="$2"
+  local deadline="$3"
+  while before_deadline "$deadline"; do
+    if "$IDRIVE" --config-dir "$config_dir" status 2>/dev/null \
+      | python3 -c "$jq_expr" >/dev/null 2>&1; then
+      before_deadline "$deadline" && return 0
+      return 1
+    fi
+    sleep 0.2
+  done
+  return 1
+}
+
+assert_config_link_state() {
+  local config_dir="$1"
+  local expected_roster="$2"
+  local expected_pending="$3"
+  local phase="$4"
+  local status
+
+  status="$("$IDRIVE" --config-dir "$config_dir" status)"
+  if ! python3 -c 'import json,sys; s=json.load(sys.stdin); p=s.get("profile") or {}; expected_roster=int(sys.argv[1]); expected_pending=sys.argv[2]; actual_roster=int(p.get("roster_size") or 0); actual_pending=int(p.get("pending_device_approval_receipt_count") or 0); ok=actual_roster == expected_roster and (expected_pending == "any" or actual_pending == int(expected_pending)); raise SystemExit(0 if ok else 1)' \
+    "$expected_roster" "$expected_pending" <<<"$status"; then
+    echo "FAIL: $phase changed the owner link state unexpectedly." >&2
+    echo "$status" >&2
+    exit 1
+  fi
+}
+
 unused_loopback_port() {
   python3 - <<'PY'
 import socket
@@ -216,6 +280,7 @@ start_local_relay() {
     return 0
   fi
   python3 "$ROOT/scripts/local-nostr-relay.py" --ready-file "$LOCAL_RELAY_READY" \
+    --event-log "$LOCAL_RELAY_EVENT_LOG" \
     >"$LOCAL_RELAY_LOG" 2>&1 &
   LOCAL_RELAY_PID="$!"
   for _ in $(seq 1 100); do
@@ -237,7 +302,7 @@ start_local_relay() {
 
 configure_owner_local_relay() {
   start_local_relay
-  "$IDRIVE" --config-dir "$OWNER_CONFIG" relays add "$LOCAL_RELAY_URL" >/dev/null
+  configure_ios_smoke_relay "$OWNER_CONFIG"
 }
 
 wait_for_owner_inbound_request() {
@@ -315,6 +380,7 @@ run_ui_test() {
   local run_file
   local env_updates=()
   local -a python_args
+  local -a test_command
   while [[ $# -gt 0 ]]; do
     env_updates+=("$1")
     shift
@@ -366,12 +432,21 @@ with open(path, "wb") as handle:
     plistlib.dump(data, handle)
 PY
 
-  local status=0
-  xcodebuild \
+  local status=0 build_log_offset=0
+  [[ ! -f "$BUILD_LOG" ]] || build_log_offset="$(wc -c <"$BUILD_LOG" | tr -d ' ')"
+  test_command=(xcodebuild \
     -xctestrun "$run_file" \
     -destination "$DESTINATION" \
     -only-testing:"$only_testing" \
-    test-without-building >>"$BUILD_LOG" || status=$?
+    test-without-building)
+  "${test_command[@]}" >>"$BUILD_LOG" || status=$?
+  if [[ "$status" != 0 ]] \
+    && ios_xcuitest_accessibility_session_disabled_after "$BUILD_LOG" "$build_log_offset"; then
+    echo "[ios-gui-smoke] resetting disabled simulator accessibility session once" >&2
+    restart_ios_simulator_accessibility_session "$DEVICE_UDID"
+    status=0
+    "${test_command[@]}" >>"$BUILD_LOG" || status=$?
+  fi
   rm -f "$run_file"
   return "$status"
 }
@@ -399,6 +474,8 @@ reset_sim_app_group_state() {
   safe_remove_sim_container "$group_container/IrisDrive"
   SIM_APP_BASE_DIR="$group_container/IrisDrive"
   mkdir -p "$SIM_APP_BASE_DIR"
+  configure_ios_smoke_blossom "$SIM_APP_BASE_DIR"
+  configure_ios_smoke_relay "$SIM_APP_BASE_DIR"
   clear_sim_env IRIS_DRIVE_DEBUG_ACTION IRIS_DRIVE_DEBUG_OWNER IRIS_DRIVE_UI_TEST_BASE_DIR
 }
 
@@ -450,11 +527,7 @@ PY
 
 cargo build -p idrive
 
-cargo build -p iris-drive-app-core --target "$RUST_IOS_TARGET"
-if [[ ! -f "$RUST_STATIC_LIB" ]]; then
-  echo "FAIL: static app-core library not found at $RUST_STATIC_LIB" >&2
-  exit 1
-fi
+iris_drive_ios_build_app_core
 
 if command -v xcodegen >/dev/null 2>&1; then
   (cd "$ROOT/ios" && xcodegen generate)
@@ -476,6 +549,8 @@ xcodebuild \
   CODE_SIGNING_REQUIRED=YES \
   CODE_SIGN_IDENTITY="${IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY:--}" \
   PROVISIONING_PROFILE_SPECIFIER= \
+  ARCHS="$RUST_IOS_ARCH" \
+  ONLY_ACTIVE_ARCH=YES \
   LIBRARY_SEARCH_PATHS="$RUST_LIB_DIR" \
   OTHER_LDFLAGS="$RUST_STATIC_LIB" \
   build-for-testing >"$BUILD_LOG"
@@ -490,6 +565,7 @@ if [[ -z "$SHARE_SOURCE_APP_PATH" || ! -d "$SHARE_SOURCE_APP_PATH" ]]; then
   echo "FAIL: built iOS share source app not found. Build log: $BUILD_LOG" >&2
   exit 1
 fi
+iris_drive_ios_assert_build_configuration "$APP_PATH"
 assert_static_app_core_linkage "$APP_PATH"
 iris_drive_ios_assert_simulator_entitlements "$DERIVED_DATA" "$CONFIGURATION"
 
@@ -504,6 +580,8 @@ xcrun simctl bootstatus "$DEVICE_UDID" -b >/dev/null
 
 run_ui_test "IrisDriveIOSShareExtensionTests"
 
+start_local_relay
+start_ios_smoke_blossom
 reset_sim_app_state
 run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testWelcomeRoutesWithoutSetupTitle"
 
@@ -518,6 +596,7 @@ run_ui_test \
   "IRIS_DRIVE_UI_TEST_SHARE_SHEET_CONTENT=$SHARE_SHEET_SMOKE_CONTENT"
 verify_share_sheet_import
 
+configure_ios_smoke_blossom "$OWNER_CONFIG"
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
 configure_owner_local_relay
 owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["app_key_link_invite"]["url"])' <<<"$owner_json")"
@@ -581,7 +660,24 @@ if ! wait_for_owner_inbound_request "$linked_device" 30; then
 fi
 request_url="$(owner_inbound_request_url "$linked_device")"
 approve_status=0
+cli_owner_approval_started="$(date +%s)"
+cli_owner_approval_deadline=$((cli_owner_approval_started + 15))
 approved_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" approve "$request_url" --label "iOS UI linked")" || approve_status="$?"
+python3 - "$cli_owner_approval_started" "$cli_owner_approval_deadline" "$approved_json" <<'PY'
+import json, sys, time
+try:
+    result = json.loads(sys.argv[3])
+except json.JSONDecodeError:
+    result = {}
+if not isinstance(result, dict):
+    result = {}
+print("IOS_CLI_OWNER_APPROVAL_COMMAND " + json.dumps({
+    "started_at": int(sys.argv[1]), "deadline": int(sys.argv[2]),
+    "command_finished_at": time.time(), "clock": "unix_seconds",
+    "published_approval_events": result.get("published_approval_events"),
+    "approval_publish_error": result.get("approval_publish_error"),
+}, separators=(",", ":"), sort_keys=True))
+PY
 if [[ "$approve_status" != "0" ]]; then
   echo "FAIL: CLI owner could not approve the inbound iOS UI request." >&2
   echo "request_url_length=${#request_url}" >&2
@@ -596,24 +692,32 @@ if [[ "$roster_size" != "2" ]]; then
   echo "$approved_json" >&2
   exit 1
 fi
+if ! before_deadline "$cli_owner_approval_deadline"; then
+  echo "FAIL: CLI owner approval command exceeded the 15-second iOS delivery budget." >&2
+  exit 1
+fi
 
-launch_sim_app \
-  "IRIS_DRIVE_FIPS_STATIC_PEERS=$owner_fips_peer" \
-  "IRIS_DRIVE_FIPS_ENABLE_BOOTSTRAP=false" \
-  "IRIS_DRIVE_FIPS_ENABLE_WEBRTC=false" \
-  "IRIS_DRIVE_FIPS_UDP_BIND_ADDR=127.0.0.1:0" \
-  "IRIS_DRIVE_FIPS_UDP_EXTERNAL_ADDR="
-
+# The receiver is already running with these FIPS settings. Restarting it here
+# interrupts the exchange and spends the delivery budget on simulator lifecycle.
 STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
-if ! wait_for_config_status \
+if ! wait_for_config_status_before \
   "$SIM_APP_BASE_DIR" \
   'import json,sys; s=json.load(sys.stdin); a=s.get("profile") or {}; raise SystemExit(0 if a.get("authorization_state") == "authorized" else 1)' \
-  90; then
-  echo "FAIL: iOS GUI device did not ingest owner approval before the approved-device UI check." >&2
+  "$cli_owner_approval_deadline"; then
+  echo "FAIL: iOS GUI authorization was not observed within 15 seconds of starting the approval command." >&2
+  print_cli_owner_ack_diagnostics "CLI-owner-to-iOS-ingestion" >&2 || true
   [[ -f "$STATE_FILE" ]] && cat "$STATE_FILE" >&2
   "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
   cat "$OWNER_DAEMON_LOG" >&2 || true
   exit 1
+fi
+echo "IOS_CLI_OWNER_AUTHORIZATION_OBSERVED host_observed_at=$(python3 -c 'import time; print(time.time())') deadline=$cli_owner_approval_deadline"
+wait_for_approval_ack "$OWNER_CONFIG" "CLI-owner-to-iOS" "$cli_owner_approval_deadline"
+assert_ios_smoke_blossom_handoff "$approved_json"
+if [[ "${IRIS_DRIVE_IOS_CLI_OWNER_ACK_ONLY:-0}" == "1" ]]; then
+  SMOKE_COMPLETED=1
+  echo "IOS_CLI_OWNER_ACK_SMOKE_OK"
+  exit 0
 fi
 
 run_ui_test \
@@ -654,19 +758,94 @@ if ! wait_for_debug_state \
   exit 1
 fi
 app_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["ui"]["profile"]["app_key_link_invite"])' <"$STATE_FILE")"
+xcrun simctl terminate "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+# The Files-app test resets and seeds native state, including network defaults.
+# Restore fixture routes while its owner is stopped, preserving its profile.
+configure_ios_smoke_blossom "$SIM_APP_BASE_DIR"
+configure_ios_smoke_relay "$SIM_APP_BASE_DIR"
+configure_ios_smoke_blossom "$LINKED_CONFIG"
+configure_ios_smoke_relay "$LINKED_CONFIG"
 linked_json="$("$IDRIVE" --config-dir "$LINKED_CONFIG" link "$app_invite" --label "iOS UI linked")"
-linked_device="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["current_app_key_npub"])' <<<"$linked_json")"
 linked_request="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["app_key_link_request"]["url"])' <<<"$linked_json")"
-linked_request_file="$SIM_APP_BASE_DIR/linked-device-request.txt"
-printf '%s' "$linked_request" >"$linked_request_file"
 linked_request_b64="$(printf '%s' "$linked_request" | base64_value)"
 
+assert_config_link_state "$SIM_APP_BASE_DIR" 1 0 "link request setup"
+run_ui_test \
+  "IrisDriveIOSUITests/IrisDriveDeviceApprovalUITests/testDeviceApprovalUniversalLinkCancelDoesNotApprove" \
+  "IRIS_DRIVE_UI_TEST_DEEP_LINK_REQUEST_B64=$linked_request_b64" \
+  "IRIS_DRIVE_UI_TEST_LINKED_DEVICE_LABEL=iOS UI linked"
+assert_config_link_state "$SIM_APP_BASE_DIR" 1 0 "canceling the universal-link confirmation"
+
+LINKED_SYNC_OBSERVATION_FILE="$(mktemp -t iris-drive-ios-ui-linked-observed.XXXXXX)"
+LINKED_ACK_OBSERVATION_FILE="$(mktemp -t iris-drive-ios-ui-linked-ack-observed.XXXXXX)"
+start_linked_device_sync_observer \
+  "$LINKED_CONFIG" \
+  "$SIM_APP_BASE_DIR" \
+  2 \
+  "$LINKED_SYNC_OBSERVATION_FILE" \
+  "$LINKED_ACK_OBSERVATION_FILE" \
+  LINKED_SYNC_OBSERVER_PID
+run_ui_test \
+  "IrisDriveIOSUITests/IrisDriveDeviceApprovalUITests/testDeviceApprovalUniversalLinkApprovesOnlyAfterTap" \
+  "IRIS_DRIVE_UI_TEST_DEEP_LINK_REQUEST_B64=$linked_request_b64" \
+  "IRIS_DRIVE_UI_TEST_LINKED_DEVICE_LABEL=iOS UI linked"
+assert_config_link_state "$SIM_APP_BASE_DIR" 2 any "explicit universal-link approval"
+linked_deadline="$(approval_deadline "$STATE_FILE")"
+
+if ! assert_linked_device_exchange_observed_before \
+  "$LINKED_SYNC_OBSERVER_PID" \
+  "$LINKED_SYNC_OBSERVATION_FILE" \
+  "$LINKED_ACK_OBSERVATION_FILE" \
+  "$STATE_FILE" \
+  "$linked_deadline" \
+  "universal-link"; then
+  "$IDRIVE" --config-dir "$LINKED_CONFIG" status >&2 || true
+  "$IDRIVE" --config-dir "$SIM_APP_BASE_DIR" status >&2 || true
+  exit 1
+fi
+LINKED_SYNC_OBSERVER_PID=""
+rm -f "$LINKED_SYNC_OBSERVATION_FILE" "$LINKED_ACK_OBSERVATION_FILE"
+LINKED_SYNC_OBSERVATION_FILE=""
+LINKED_ACK_OBSERVATION_FILE=""
+
+configure_ios_smoke_blossom "$MANUAL_LINKED_CONFIG"
+configure_ios_smoke_relay "$MANUAL_LINKED_CONFIG"
+manual_linked_json="$("$IDRIVE" --config-dir "$MANUAL_LINKED_CONFIG" link "$app_invite" --label "iOS UI manual")"
+manual_linked_device="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["current_app_key_npub"])' <<<"$manual_linked_json")"
+manual_linked_request="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["app_key_link_request"]["url"])' <<<"$manual_linked_json")"
+manual_linked_request_b64="$(printf '%s' "$manual_linked_request" | base64_value)"
+MANUAL_LINKED_SYNC_OBSERVATION_FILE="$(mktemp -t iris-drive-ios-ui-manual-linked-observed.XXXXXX)"
+MANUAL_LINKED_ACK_OBSERVATION_FILE="$(mktemp -t iris-drive-ios-ui-manual-linked-ack-observed.XXXXXX)"
+start_linked_device_sync_observer \
+  "$MANUAL_LINKED_CONFIG" \
+  "$SIM_APP_BASE_DIR" \
+  3 \
+  "$MANUAL_LINKED_SYNC_OBSERVATION_FILE" \
+  "$MANUAL_LINKED_ACK_OBSERVATION_FILE" \
+  MANUAL_LINKED_SYNC_OBSERVER_PID
 run_ui_test \
   "IrisDriveIOSUITests/IrisDriveIOSUITests/testAddLinkedDeviceFromDevices" \
-  "IRIS_DRIVE_UI_TEST_LINKED_DEVICE=$linked_device" \
-  "IRIS_DRIVE_UI_TEST_LINKED_DEVICE_REQUEST_B64=$linked_request_b64" \
-  "IRIS_DRIVE_UI_TEST_LINKED_DEVICE_REQUEST_FILE=$linked_request_file" \
-  "IRIS_DRIVE_UI_TEST_LINKED_DEVICE_LABEL=iOS UI linked"
+  "IRIS_DRIVE_UI_TEST_LINKED_DEVICE=$manual_linked_device" \
+  "IRIS_DRIVE_UI_TEST_LINKED_DEVICE_REQUEST_B64=$manual_linked_request_b64" \
+  "IRIS_DRIVE_UI_TEST_LINKED_DEVICE_LABEL=iOS UI manual"
+assert_config_link_state "$SIM_APP_BASE_DIR" 3 any "explicit manual approval"
+manual_linked_deadline="$(approval_deadline "$STATE_FILE")"
+
+if ! assert_linked_device_exchange_observed_before \
+  "$MANUAL_LINKED_SYNC_OBSERVER_PID" \
+  "$MANUAL_LINKED_SYNC_OBSERVATION_FILE" \
+  "$MANUAL_LINKED_ACK_OBSERVATION_FILE" \
+  "$STATE_FILE" \
+  "$manual_linked_deadline" \
+  "manual-link"; then
+  "$IDRIVE" --config-dir "$MANUAL_LINKED_CONFIG" status >&2 || true
+  "$IDRIVE" --config-dir "$SIM_APP_BASE_DIR" status >&2 || true
+  exit 1
+fi
+MANUAL_LINKED_SYNC_OBSERVER_PID=""
+rm -f "$MANUAL_LINKED_SYNC_OBSERVATION_FILE" "$MANUAL_LINKED_ACK_OBSERVATION_FILE"
+MANUAL_LINKED_SYNC_OBSERVATION_FILE=""
+MANUAL_LINKED_ACK_OBSERVATION_FILE=""
 
 STATE_FILE="$SIM_APP_BASE_DIR/debug-state.json"
 if ! wait_for_debug_state \
@@ -678,6 +857,7 @@ if ! wait_for_debug_state \
   exit 1
 fi
 
+SMOKE_COMPLETED=1
 echo "IOS_GUI_LINKING_SMOKE_OK"
 echo "device=$DEVICE_UDID"
 echo "build_log=$BUILD_LOG"

@@ -19,21 +19,6 @@ fn pending_request(
         .0
 }
 
-fn event_has_type(event: &serde_json::Value, type_name: &str) -> bool {
-    event["tags"].as_array().is_some_and(|tags| {
-        tags.iter().any(|tag| {
-            tag.as_array().is_some_and(|values| {
-                values.first().and_then(serde_json::Value::as_str) == Some("type")
-                    && values.get(1).and_then(serde_json::Value::as_str) == Some(type_name)
-            })
-        })
-    })
-}
-
-fn is_approval_receipt_event(event: &serde_json::Value) -> bool {
-    event_has_type(event, "nostr_identity_device_approval_receipt")
-}
-
 fn current_app_key_npub(value: &serde_json::Value) -> &str {
     value["current_app_key_npub"].as_str().unwrap()
 }
@@ -100,11 +85,11 @@ fn logout_removes_local_account_and_key_material() {
     let config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
     assert!(config.profile.is_none());
     assert!(config.user_profile.is_none());
-    assert!(config.drives.is_empty());
+    assert_eq!(config.drives.len(), 0);
 
     let status = run_json(dir.path(), &["status"]);
     assert_eq!(status["initialized"], false);
-    assert!(status["drives"].as_array().unwrap().is_empty());
+    assert_eq!(status["drives"].as_array().unwrap().len(), 0);
 
     idrive(dir.path()).arg("whoami").assert().failure();
     idrive(dir.path()).arg("logout").assert().success();
@@ -250,7 +235,7 @@ fn link_creates_awaiting_device_with_no_owner_key() {
         request.device_app_key_npub,
         v["current_app_key_npub"].as_str().unwrap()
     );
-    assert!(!request.request_npub.is_empty());
+    assert_ne!(request.request_npub, "");
     assert_eq!(request.request_secret.len(), 43);
     assert_ne!(request.device_app_key_npub, request.request_npub);
     let bootstrap =
@@ -495,8 +480,7 @@ fn owner_rejects_device_request_link() {
         .build()
         .unwrap();
     let approval_relay = runtime.block_on(LocalNostrRelay::spawn());
-    let request_url =
-        runtime.block_on(approval_relay.pending_approval_request_url(linked_dir.path()));
+    let request_url = LocalNostrRelay::pending_approval_request_url(linked_dir.path());
     add_config_relay(owner_dir.path(), &approval_relay.url);
 
     {
@@ -528,11 +512,12 @@ fn owner_rejects_device_request_link() {
 
     let rejected = run_json(owner_dir.path(), &["app-keys", "reject", &request_url]);
     assert_eq!(rejected["rejected"], true);
-    assert!(
+    assert_eq!(
         rejected["inbound_app_key_link_requests"]
             .as_array()
             .unwrap()
-            .is_empty()
+            .len(),
+        0
     );
 
     let roster = run_json(owner_dir.path(), &["app-keys", "list"]);
@@ -574,7 +559,7 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
         request.device_app_key_npub,
         linked["current_app_key_npub"].as_str().unwrap()
     );
-    assert!(!request.request_npub.is_empty());
+    assert_ne!(request.request_npub, "");
     assert_eq!(request.request_secret.len(), 43);
     assert_ne!(request.device_app_key_npub, request.request_npub);
     let bootstrap =
@@ -602,7 +587,7 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
 
     let requests = run_json(linked_dir.path(), &["app-keys", "requests"]);
     assert!(requests["outbound"].is_object());
-    assert!(requests["inbound"].as_array().unwrap().is_empty());
+    assert_eq!(requests["inbound"].as_array().unwrap().len(), 0);
 
     let approved = app_keys_approve_with_local_relay(owner_dir.path(), linked_dir.path());
     assert_eq!(
@@ -619,84 +604,14 @@ fn app_keys_group_covers_invite_request_approve_and_list_flow() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn approval_publishes_roster_and_receipt_to_configured_relay() {
-    let relay = LocalNostrRelay::spawn().await;
-    let owner_dir = tempdir().unwrap();
-    let linked_dir = tempdir().unwrap();
-
-    let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
-    let mut owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
-    owner_config.relays = vec![relay.url.clone()];
-    owner_config.save(config_path_in(owner_dir.path())).unwrap();
-    run_json(
-        linked_dir.path(),
-        &[
-            "link",
-            app_key_link_invite_url(&owner),
-            "--label",
-            "relay-device",
-        ],
-    );
-    let request_url = relay.pending_approval_request_url(linked_dir.path()).await;
-    let request = pending_request(linked_dir.path());
-    assert_eq!(
-        request.label.as_deref(),
-        Some("relay-device"),
-        "the request link carries only compact bootstrap fields"
-    );
-
-    let approved = run_json(owner_dir.path(), &["approve", &request_url]);
-    assert_eq!(approved["roster_size"], 2);
-
-    let saved_owner = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
-    let owner_state = saved_owner.profile.as_ref().unwrap();
-    let approval_events = relay.events().await;
-    assert_eq!(
-        approval_events
-            .iter()
-            .filter(|event| is_approval_receipt_event(event))
-            .count(),
-        1
-    );
-    assert_eq!(
-        approval_events.len(),
-        owner_state.profile_roster_ops.len() + 1,
-        "configured relay must receive the complete roster and encrypted receipt"
-    );
-    assert!(approval_events.iter().all(|event| {
-        event["kind"].as_u64() == Some(u64::from(iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP))
-    }));
-    assert!(
-        approval_events
-            .last()
-            .is_some_and(is_approval_receipt_event),
-        "the encrypted receipt must be accepted after the complete roster"
-    );
-    assert!(
-        approval_events[..approval_events.len() - 1]
-            .iter()
-            .all(|event| !is_approval_receipt_event(event))
-    );
-
-    let synced = run_json(
-        linked_dir.path(),
-        &["sync", "--relay", &relay.url, "--timeout", "1"],
-    );
-    assert_eq!(synced["device_approval_receipts_applied"], 1);
-    let linked_status = run_json(linked_dir.path(), &["status"]);
-    assert_eq!(
-        linked_status["profile"]["authorization_state"],
-        "authorized"
-    );
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn rejected_configured_relay_reports_publish_error_without_rollback() {
     let relay = LocalNostrRelay::spawn().await;
+    let blossom = LocalBlossomServer::spawn().await;
     relay.reject_kinds(&[iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP]);
     let owner_dir = tempdir().unwrap();
     let linked_dir = tempdir().unwrap();
     let owner = run_json(owner_dir.path(), &["init", "--label", "admin"]);
+    configure_local_blossom(owner_dir.path(), &blossom.url);
     run_json(
         linked_dir.path(),
         &[
@@ -706,7 +621,7 @@ async fn rejected_configured_relay_reports_publish_error_without_rollback() {
             "rejected-device",
         ],
     );
-    let request_url = relay.pending_approval_request_url(linked_dir.path()).await;
+    let request_url = LocalNostrRelay::pending_approval_request_url(linked_dir.path());
     add_config_relay(owner_dir.path(), &relay.url);
     let before = AppConfig::load_or_default(config_path_in(owner_dir.path()))
         .unwrap()
@@ -738,17 +653,13 @@ fn app_keys_repair_wraps_reports_noop_when_epoch_is_complete() {
     let repaired = run_json(owner_dir.path(), &["app-keys", "repair-wraps"]);
 
     assert_eq!(repaired["repaired_key_wrap_count"], 0);
-    assert!(
-        repaired["repaired_key_wraps"]
-            .as_array()
-            .unwrap()
-            .is_empty()
-    );
-    assert!(
+    assert_eq!(repaired["repaired_key_wraps"].as_array().unwrap().len(), 0);
+    assert_eq!(
         repaired["remaining_missing_key_wraps"]
             .as_array()
             .unwrap()
-            .is_empty()
+            .len(),
+        0
     );
 }
 
@@ -800,11 +711,12 @@ fn app_keys_reset_invite_rotates_secret_and_clears_inbound_requests() {
     let reset = run_json(owner_dir.path(), &["app-keys", "reset-invite"]);
     let new_invite = reset["app_key_link_invite"]["url"].as_str().unwrap();
     assert_ne!(new_invite, old_invite);
-    assert!(
+    assert_eq!(
         reset["inbound_app_key_link_requests"]
             .as_array()
             .unwrap()
-            .is_empty()
+            .len(),
+        0
     );
 
     let mut config = AppConfig::load_or_default(&config_path).unwrap();

@@ -1,21 +1,296 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
+use nostr_sdk::JsonUtil as _;
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn running_daemon_subscribes_when_join_request_is_created_after_startup() {
+async fn stalled_roster_relay_keeps_daemon_fips_status_and_direct_ack_responsive() {
+    let _guard = live_daemon_test_guard().await;
+    let relay = LocalNostrRelay::spawn().await;
+    let owner_cfg = tempdir().unwrap();
+    let linked_cfg = tempdir().unwrap();
+    let owner = run_json(owner_cfg.path(), &["init", "--label", "admin"]);
+    let linked = run_json(
+        linked_cfg.path(),
+        &[
+            "link",
+            owner["app_key_link_invite"]["url"].as_str().unwrap(),
+            "--label",
+            "phone",
+        ],
+    );
+    add_config_relay(owner_cfg.path(), &relay.url);
+    add_config_relay(linked_cfg.path(), &relay.url);
+    let seed_port = unused_loopback_port();
+    let owner_daemon = DaemonChild::spawn_websocket_listener(
+        owner_cfg.path(),
+        &relay.url,
+        owner_cfg.path().join("owner.log"),
+        unused_loopback_port(),
+        seed_port,
+        8,
+    );
+    let linked_daemon = DaemonChild::spawn_websocket_client(
+        linked_cfg.path(),
+        &relay.url,
+        linked_cfg.path().join("linked.log"),
+        unused_loopback_port(),
+        seed_port,
+        8,
+    );
+    wait_until_websocket_fips_connected(
+        owner_cfg.path(),
+        linked_cfg.path(),
+        linked["current_app_key_npub"].as_str().unwrap(),
+        owner["current_app_key_npub"].as_str().unwrap(),
+        &owner_daemon,
+        &linked_daemon,
+    )
+    .await;
+
+    relay.stall_kinds(&[iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP]);
+    // Persist through the same locked core approval path as the UI, leaving
+    // delivery to the running daemon instead of the CLI's one-shot publisher.
+    let expected_roster_events = {
+        let _lock = iris_drive_core::config_lock::ConfigMutationLock::acquire(owner_cfg.path())
+            .await
+            .unwrap();
+        let path = iris_drive_core::paths::config_path_in(owner_cfg.path());
+        let mut config = iris_drive_core::AppConfig::load_or_default(&path).unwrap();
+        let mut profile =
+            iris_drive_core::Profile::load(config.profile.take().unwrap(), owner_cfg.path())
+                .unwrap();
+        let bootstrap = iris_drive_core::app_key_link_transport::parse_app_key_approval_bootstrap(
+            linked["app_key_link_request"]["url"].as_str().unwrap(),
+        )
+        .unwrap()
+        .unwrap();
+        profile
+            .approve_device_bootstrap(&bootstrap, Some("Phone".into()))
+            .unwrap();
+        let expected = profile
+            .state
+            .profile_roster_ops
+            .iter()
+            .map(|op| serde_json::from_str::<Value>(&op.event_json).unwrap())
+            .collect::<Vec<_>>();
+        config.profile = Some(profile.state);
+        config.save(path).unwrap();
+        expected
+    };
+    assert_ne!(expected_roster_events, [] as [serde_json::Value; 0]);
+    let started = Instant::now();
+    while relay.stalled_publications() == 0 && started.elapsed() < Duration::from_secs(5) {
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert!(
+        relay.stalled_publications() > 0,
+        "daemon did not try the stalled relay"
+    );
+    let status_count = owner_daemon
+        .log()
+        .matches("\"event\":\"fips_status\"")
+        .count();
+    let deadline = Instant::now() + Duration::from_secs(3);
+    loop {
+        let log = owner_daemon.log();
+        let ack_applied = log
+            .lines()
+            .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+            .any(|event| {
+                event["event"] == "fips_device_approval_applied_ack"
+                    && event["outcome"] == "applied"
+                    && event["pending_after"] == 0
+            });
+        if ack_applied && log.matches("\"event\":\"fips_status\"").count() > status_count {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "stalled relay blocked the daemon's direct ACK or FIPS status\nowner:\n{log}\nlinked:\n{}",
+            linked_daemon.log()
+        );
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    assert_eq!(
+        run_json(owner_cfg.path(), &["status"])["profile"]["pending_device_approval_receipt_count"],
+        0
+    );
+    matrix_progress(format!(
+        "direct approval ACK and refreshed FIPS status while relay is stalled: {:?}",
+        started.elapsed()
+    ));
+
+    // A direct ACK must not discard the still-unpublished durable relay ops.
+    relay.stall_kinds(&[]);
+    let deadline = Instant::now() + Duration::from_secs(8);
+    loop {
+        // A send started before the ACK can finish both transports after
+        // recovery. Check the relay's actual complete signed events instead
+        // of requiring a later relay-only completion log.
+        let stored = relay.events().await;
+        let missing = expected_roster_events
+            .iter()
+            .filter(|event| !stored.contains(event))
+            .map(|event| event["id"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        if missing.is_empty() {
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "daemon did not retry durable relay publication after its direct ACK; missing signed events: {missing:?}\nowner:\n{}\nlinked:\n{}",
+            owner_daemon.log(),
+            linked_daemon.log(),
+        );
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn running_owner_replays_durable_approval_ack_after_live_fanout_is_lost() {
     let _guard = live_daemon_test_guard().await;
     let relay = LocalNostrRelay::spawn().await;
     let owner_cfg = tempdir().unwrap();
     let linked_cfg = tempdir().unwrap();
 
+    let owner = run_json(owner_cfg.path(), &["init", "--label", "admin"]);
+    add_config_relay(owner_cfg.path(), &relay.url);
+    let linked = run_json(
+        linked_cfg.path(),
+        &[
+            "link",
+            owner["app_key_link_invite"]["url"].as_str().unwrap(),
+            "--label",
+            "phone",
+        ],
+    );
+    add_config_relay(linked_cfg.path(), &relay.url);
+    let request_url = linked["app_key_link_request"]["url"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let owner_daemon = DaemonChild::spawn_relay_only(
+        owner_cfg.path(),
+        &relay.url,
+        owner_cfg.path().join("owner.log"),
+        unused_loopback_port(),
+    );
+    let startup_deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < startup_deadline && !owner_daemon.log().contains("subscribed") {
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    assert!(owner_daemon.log().contains("subscribed"));
+
+    let approval = run_json(
+        owner_cfg.path(),
+        &["app-keys", "approve", &request_url, "--label", "Phone"],
+    );
+    assert_eq!(approval["roster_size"], 2);
+    let subscription_deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < subscription_deadline
+        && !owner_daemon.log().contains("app_key_link_roster_sent")
+    {
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    assert!(
+        owner_daemon.log().contains("app_key_link_roster_sent"),
+        "owner did not activate its post-approval exchange:\n{}",
+        owner_daemon.log()
+    );
+
+    // Model a lost notification on an otherwise durable relay. A new bounded
+    // fetch can replay the ACK, but the daemon's existing live stream cannot.
+    relay.suppress_live_kinds(&[iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP]);
+    let linked_sync = run_json(
+        linked_cfg.path(),
+        &["sync", "--relay", &relay.url, "--timeout", "2"],
+    );
+    assert!(
+        relay.events().await.iter().any(|event| {
+            nostr_sdk::Event::from_json(event.to_string()).is_ok_and(|event| {
+                iris_drive_core::relay_sync::is_device_approval_applied_ack_event(&event)
+            })
+        }),
+        "linked sync did not durably publish an approval ACK: {linked_sync}"
+    );
+
+    let ack_deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < ack_deadline {
+        let status = run_json(owner_cfg.path(), &["status"]);
+        if status["profile"]["pending_device_approval_receipt_count"] == 0 {
+            assert!(
+                owner_daemon
+                    .log()
+                    .contains("\"event\":\"nostr_identity_device_approval_applied_ack_replay\""),
+                "durable ACK was applied without daemon audit evidence:\n{}",
+                owner_daemon.log()
+            );
+            return;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    panic!(
+        "running owner did not replay the durable approval ACK after live fanout loss\nowner status: {}\nowner log:\n{}",
+        serde_json::to_string_pretty(&run_json(owner_cfg.path(), &["status"])).unwrap(),
+        owner_daemon.log(),
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn relay_only_running_daemon_receives_preexisting_root_after_unbound_approval() {
+    let _guard = live_daemon_test_guard().await;
+    let relay = LocalNostrRelay::spawn().await;
+    let blossom = LocalBlossomServer::spawn_with_upload_delay(Duration::ZERO).await;
+    let owner_cfg = tempdir().unwrap();
+    let linked_cfg = tempdir().unwrap();
+
     let _owner = run_json(owner_cfg.path(), &["init", "--label", "admin"]);
     add_config_relay(owner_cfg.path(), &relay.url);
+    configure_local_blossom(owner_cfg.path(), &blossom.url);
     let owner_log = owner_cfg.path().join("owner.log");
-    let owner_daemon = DaemonChild::spawn(
+    let owner_daemon = DaemonChild::spawn_relay_only(
         owner_cfg.path(),
         &relay.url,
         owner_log,
         unused_loopback_port(),
+    );
+    let owner_startup_deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < owner_startup_deadline && !owner_daemon.log().contains("subscribed") {
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    assert!(
+        owner_daemon.log().contains("subscribed"),
+        "owner daemon did not start:\n{}",
+        owner_daemon.log()
+    );
+    let source = owner_cfg.path().join("pre-link-source.txt");
+    std::fs::write(&source, b"visible immediately after linking").unwrap();
+    run_json(
+        owner_cfg.path(),
+        &[
+            "provider",
+            "write",
+            "preexisting.txt",
+            source.to_str().unwrap(),
+        ],
+    );
+    let root_deadline = Instant::now() + Duration::from_secs(10);
+    while Instant::now() < root_deadline
+        && !relay.events().await.iter().any(|event| {
+            event["kind"].as_u64()
+                == Some(u64::from(iris_drive_core::nostr_events::KIND_DRIVE_ROOT))
+        })
+    {
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    assert!(
+        relay.events().await.iter().any(|event| {
+            event["kind"].as_u64()
+                == Some(u64::from(iris_drive_core::nostr_events::KIND_DRIVE_ROOT))
+        }),
+        "owner did not publish the pre-link drive root\n{}",
+        owner_daemon.log()
     );
 
     let mut linked = iris_drive_core::Profile::start_join_request(
@@ -25,6 +300,7 @@ async fn running_daemon_subscribes_when_join_request_is_created_after_startup() 
     .unwrap();
     let mut linked_config = iris_drive_core::AppConfig {
         profile: Some(linked.state.clone()),
+        blossom_servers: vec![blossom.url.clone()],
         ..iris_drive_core::AppConfig::default()
     };
     linked_config
@@ -32,7 +308,7 @@ async fn running_daemon_subscribes_when_join_request_is_created_after_startup() 
         .unwrap();
 
     let linked_log = linked_cfg.path().join("linked.log");
-    let linked_daemon = DaemonChild::spawn(
+    let linked_daemon = DaemonChild::spawn_relay_only(
         linked_cfg.path(),
         &relay.url,
         linked_log,
@@ -72,18 +348,21 @@ async fn running_daemon_subscribes_when_join_request_is_created_after_startup() 
     );
     assert_eq!(approval_result["approval_publish_error"], Value::Null);
 
-    let authorization_deadline = Instant::now() + Duration::from_secs(10);
+    let authorization_deadline = Instant::now() + Duration::from_secs(20);
     while Instant::now() < authorization_deadline {
         let status = run_json(linked_cfg.path(), &["status"]);
-        let owner_receipt_acknowledged = iris_drive_core::AppConfig::load_or_default(
-            iris_drive_core::paths::config_path_in(owner_cfg.path()),
-        )
-        .unwrap()
-        .profile
-        .is_some_and(|profile| profile.pending_device_approval_receipts.is_empty());
+        let preexisting_visible = run_json_result(linked_cfg.path(), &["list"])
+            .ok()
+            .and_then(|list| list["files"].as_array().cloned())
+            .is_some_and(|files| {
+                files
+                    .iter()
+                    .any(|file| file["path"].as_str() == Some("preexisting.txt"))
+            });
         if status["profile"]["authorization_state"] == "authorized"
             && status["profile"]["roster_size"] == 2
-            && owner_receipt_acknowledged
+            && preexisting_visible
+            && status["network"]["fips"]["roster_connected_peer_count"].as_u64() == Some(0)
         {
             return;
         }
@@ -91,8 +370,9 @@ async fn running_daemon_subscribes_when_join_request_is_created_after_startup() 
     }
 
     panic!(
-        "already-running daemon did not apply the approval and complete roster\nlinked status: {}\nlinked log:\n{}\nowner log:\n{}",
+        "relay-only already-running daemon did not apply the approval and pre-link root\nlinked status: {}\nlinked list: {}\nlinked log:\n{}\nowner log:\n{}",
         serde_json::to_string_pretty(&run_json(linked_cfg.path(), &["status"])).unwrap(),
+        serde_json::to_string_pretty(&run_json(linked_cfg.path(), &["list"])).unwrap(),
         linked_daemon.log(),
         owner_daemon.log(),
     );
@@ -177,7 +457,118 @@ async fn live_daemons_bootstrap_over_websocket_seed_and_deliver_link_request() {
     );
 }
 
-async fn wait_until_websocket_fips_connected(
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn routed_websocket_devices_deliver_approval_ack_and_report_online_through_mesh_sessions() {
+    let _guard = live_daemon_test_guard().await;
+    let relay = LocalNostrRelay::spawn().await;
+    let blossom = LocalBlossomServer::spawn_with_upload_delay(Duration::ZERO).await;
+    let seed_cfg = tempdir().unwrap();
+    let owner_cfg = tempdir().unwrap();
+    let linked_cfg = tempdir().unwrap();
+    for config_dir in [seed_cfg.path(), owner_cfg.path(), linked_cfg.path()] {
+        configure_local_blossom(config_dir, &blossom.url);
+    }
+
+    let _seed = run_json(seed_cfg.path(), &["init", "--label", "transit"]);
+    let owner = run_json(owner_cfg.path(), &["init", "--label", "admin"]);
+    let owner_npub = owner["current_app_key_npub"].as_str().unwrap().to_string();
+    let invite_url = owner["app_key_link_invite"]["url"].as_str().unwrap();
+    let linked = run_json(
+        linked_cfg.path(),
+        &["link", invite_url, "--label", "iphone"],
+    );
+    let linked_npub = linked["current_app_key_npub"].as_str().unwrap().to_string();
+    let request_url = linked["app_key_link_request"]["url"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    let websocket_seed_port = unused_loopback_port();
+    let seed_daemon = DaemonChild::spawn_websocket_listener(
+        seed_cfg.path(),
+        &relay.url,
+        seed_cfg.path().join("seed.log"),
+        unused_loopback_port(),
+        websocket_seed_port,
+        8,
+    );
+    let owner_daemon = DaemonChild::spawn_websocket_client(
+        owner_cfg.path(),
+        &relay.url,
+        owner_cfg.path().join("owner.log"),
+        unused_loopback_port(),
+        websocket_seed_port,
+        8,
+    );
+    let linked_daemon = DaemonChild::spawn_websocket_client(
+        linked_cfg.path(),
+        &relay.url,
+        linked_cfg.path().join("linked.log"),
+        unused_loopback_port(),
+        websocket_seed_port,
+        8,
+    );
+
+    let request_deadline = Instant::now() + Duration::from_secs(30);
+    while Instant::now() < request_deadline {
+        let owner_status = run_json(owner_cfg.path(), &["status"]);
+        if owner_status["profile"]["inbound_app_key_link_requests"]
+            .as_array()
+            .is_some_and(|requests| !requests.is_empty())
+        {
+            break;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+    let owner_status = run_json(owner_cfg.path(), &["status"]);
+    assert!(
+        owner_status["profile"]["inbound_app_key_link_requests"]
+            .as_array()
+            .is_some_and(|requests| !requests.is_empty()),
+        "routed FIPS link request did not reach owner\nowner status: {}\nseed log:\n{}\nowner log:\n{}\nlinked log:\n{}",
+        serde_json::to_string_pretty(&owner_status).unwrap(),
+        seed_daemon.log(),
+        owner_daemon.log(),
+        linked_daemon.log(),
+    );
+
+    // Accept the approval events at the relay but do not fan them out. The
+    // linked device must become authorized, and both roster entries must
+    // become online, through the routed FIPS session itself.
+    relay.drop_kinds(&[iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP]);
+    let approval = run_json(
+        owner_cfg.path(),
+        &["app-keys", "approve", &request_url, "--label", "iPhone"],
+    );
+    assert_eq!(approval["roster_size"], 2);
+
+    let online_deadline = Instant::now() + Duration::from_secs(8);
+    while Instant::now() < online_deadline {
+        let owner_status = run_json(owner_cfg.path(), &["status"]);
+        let linked_status = run_json(linked_cfg.path(), &["status"]);
+        if owner_status["profile"]["roster_size"] == 2
+            && owner_status["profile"]["pending_device_approval_receipt_count"] == 0
+            && linked_status["profile"]["authorization_state"] == "authorized"
+            && linked_status["profile"]["roster_size"] == 2
+            && mesh_fips_connected(&owner_status, &linked_npub)
+            && mesh_fips_connected(&linked_status, &owner_npub)
+        {
+            return;
+        }
+        tokio::time::sleep(POLL_INTERVAL).await;
+    }
+
+    panic!(
+        "routed FIPS approval did not authorize the joiner, drain its exact receipt, and bring both devices online within 8s\nowner status: {}\nlinked status: {}\nseed log:\n{}\nowner log:\n{}\nlinked log:\n{}",
+        serde_json::to_string_pretty(&run_json(owner_cfg.path(), &["status"])).unwrap(),
+        serde_json::to_string_pretty(&run_json(linked_cfg.path(), &["status"])).unwrap(),
+        seed_daemon.log(),
+        owner_daemon.log(),
+        linked_daemon.log(),
+    );
+}
+
+pub(super) async fn wait_until_websocket_fips_connected(
     owner_cfg: &Path,
     linked_cfg: &Path,
     linked_npub: &str,
@@ -218,4 +609,31 @@ fn websocket_fips_connected(status: &Value, expected_peer: &str) -> bool {
                     && peer["transport_type"].as_str() == Some("websocket")
             })
         })
+}
+
+fn mesh_fips_connected(status: &Value, expected_peer: &str) -> bool {
+    let fips = &status["network"]["fips"];
+    let mesh_online = fips["mesh_devices"].as_array().is_some_and(|peers| {
+        peers
+            .iter()
+            .any(|peer| peer.as_str() == Some(expected_peer))
+    });
+    let incorrectly_direct = fips["direct_devices"].as_array().is_some_and(|peers| {
+        peers
+            .iter()
+            .any(|peer| peer.as_str() == Some(expected_peer))
+    });
+    let roster_online = status["peers"].as_array().is_some_and(|peers| {
+        peers.iter().any(|peer| {
+            peer["app_key_npub"].as_str() == Some(expected_peer)
+                && peer["fips_online"].as_bool() == Some(true)
+                && peer["fips_online_via"].as_str() == Some("mesh")
+                && peer["connection_label"].as_str() == Some("Online (Mesh)")
+        })
+    });
+    fips["running"].as_bool().unwrap_or(false)
+        && fips["fresh"].as_bool().unwrap_or(false)
+        && mesh_online
+        && !incorrectly_direct
+        && roster_online
 }

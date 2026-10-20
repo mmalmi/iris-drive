@@ -33,7 +33,7 @@ git init -q "$TMPDIR/nostr-social-graph"
 git -C "$ROOT" remote add "$MACOS_REMOTE" check-macos:~/git/iris-drive.git
 git -C "$ROOT" remote add "$UBUNTU_REMOTE" check-ubuntu:~/git/iris-drive.git
 git -C "$ROOT" remote add "$WINDOWS_REMOTE" check-windows:~/git/iris-drive.git
-for repo in "$TMPDIR/hashtree" "$TMPDIR/fips"; do
+for repo in "$TMPDIR/hashtree" "$TMPDIR/fips" "$TMPDIR/nostr-social-graph"; do
   git -C "$repo" remote add "$MACOS_REMOTE" check-macos:~/git/repo.git
   git -C "$repo" remote add "$UBUNTU_REMOTE" check-ubuntu:~/git/repo.git
   git -C "$repo" remote add "$WINDOWS_REMOTE" check-windows:~/git/repo.git
@@ -48,6 +48,15 @@ export IRIS_DRIVE_SOCIAL_GRAPH_ROOT="$TMPDIR/nostr-social-graph"
 export IRIS_DRIVE_DEV_VM_MACOS_REMOTE="$MACOS_REMOTE"
 export IRIS_DRIVE_DEV_VM_UBUNTU_REMOTE="$UBUNTU_REMOTE"
 export IRIS_DRIVE_DEV_VM_WINDOWS_REMOTE="$WINDOWS_REMOTE"
+export IRIS_DRIVE_DEV_VM_MACOS_HASHTREE_REMOTE="$MACOS_REMOTE"
+export IRIS_DRIVE_DEV_VM_UBUNTU_HASHTREE_REMOTE="$UBUNTU_REMOTE"
+export IRIS_DRIVE_DEV_VM_WINDOWS_HASHTREE_REMOTE="$WINDOWS_REMOTE"
+export IRIS_DRIVE_DEV_VM_MACOS_FIPS_REMOTE="$MACOS_REMOTE"
+export IRIS_DRIVE_DEV_VM_UBUNTU_FIPS_REMOTE="$UBUNTU_REMOTE"
+export IRIS_DRIVE_DEV_VM_WINDOWS_FIPS_REMOTE="$WINDOWS_REMOTE"
+export IRIS_DRIVE_DEV_VM_MACOS_SOCIAL_GRAPH_REMOTE="$MACOS_REMOTE"
+export IRIS_DRIVE_DEV_VM_UBUNTU_SOCIAL_GRAPH_REMOTE="$UBUNTU_REMOTE"
+export IRIS_DRIVE_DEV_VM_WINDOWS_SOCIAL_GRAPH_REMOTE="$WINDOWS_REMOTE"
 export IRIS_DRIVE_DEV_VM_SSH_PROBE_TIMEOUT=1
 export IRIS_DRIVE_DEV_VM_USE_NVPN_STATIC_HINTS=auto
 

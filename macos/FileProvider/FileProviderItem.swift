@@ -96,23 +96,25 @@ extension FileProviderItem {
     }
 }
 
-enum FileProviderStorage {
-    private static let runtimeFileName = "fileprovider-runtime.json"
-    private static let snapshotFileName = "fileprovider-snapshot.json"
-    private static let debugLogFileName = "fileprovider-extension.log"
-    private static let pathPrefix = "path:"
-    private static let tempDirectoryName = "FileProviderTmp"
-    private static let contentCacheDirectoryName = "FileProviderContentCache"
-    private static let providerItemVersionPrefix = "iris-drive-provider-v2"
-    private static let providerListRetryDelays: [TimeInterval] = [0.15, 0.35, 0.75, 1.5]
-    private static let providerListCacheTTL: TimeInterval = 1.0
-    private static let minDisplayUnixSeconds: Int64 = 946_684_800
-    private static let providerListCacheLock = NSLock()
-    private static let providerPathCacheLock = NSLock()
-    private static let contentCacheLock = NSLock()
-    private static var providerListCache: (loadedAt: Date, refreshKey: String?, list: ProviderList)?
-    private static var providerPathCache: [String: String] = [:]
-    private static var configuredRuntime: Runtime?
+final class FileProviderStorage {
+    private let runtimeFileName = "fileprovider-runtime.json"
+    private let snapshotFileName = "fileprovider-snapshot.json"
+    private let debugLogFileName = "fileprovider-extension.log"
+    private let pathPrefix = "path:"
+    private let tempDirectoryName = "FileProviderTmp"
+    private let contentCacheDirectoryName = "FileProviderContentCache"
+    private let providerItemVersionPrefix = "iris-drive-provider-v2"
+    private let providerListRetryDelays: [TimeInterval] = [0.15, 0.35, 0.75, 1.5]
+    private let providerListCacheTTL: TimeInterval = 1.0
+    private let minDisplayUnixSeconds: Int64 = 946_684_800
+    private let providerListCacheLock = NSLock()
+    private let providerPathCacheLock = NSLock()
+    private let contentCacheLock = NSLock()
+    private var providerListCache: (loadedAt: Date, refreshKey: String?, list: ProviderList)?
+    private var providerPathCache: [String: String] = [:]
+    private let profile: IrisDriveFileProviderProfile
+    private let sharedSupportDirectory: URL
+    private let configuredRuntime: Runtime?
 
     struct Runtime: Decodable {
         let configDirectory: String?
@@ -141,18 +143,20 @@ enum FileProviderStorage {
         }
     }
 
-    static func configure(domain: NSFileProviderDomain) {
+    init(domain: NSFileProviderDomain, applicationSupportDirectory: URL? = nil) {
+        profile = IrisDriveFileProviderProfile(domainIdentifier: domain.identifier.rawValue)
+        sharedSupportDirectory = applicationSupportDirectory
+            ?? IrisDriveAppGroup.applicationSupportDirectory(
+                teamIdentifier: IrisDriveCodeSigning.currentTeamIdentifier()
+            )
         if #available(macOS 15.0, *) {
             configuredRuntime = Runtime(userInfo: domain.userInfo)
-            debugLog(
-                "configure domain=\(domain.identifier.rawValue) runtime=\(configuredRuntime != nil)"
-            )
         } else {
-            debugLog("configure domain=\(domain.identifier.rawValue) runtime=userInfo-unavailable")
+            configuredRuntime = nil
         }
     }
 
-    static func debugLog(_ message: String) {
+    func debugLog(_ message: String) {
         let clean = message.replacingOccurrences(of: "\n", with: "\\n")
         NSLog("Iris Drive FileProvider \(clean)")
 
@@ -169,7 +173,7 @@ enum FileProviderStorage {
         }
     }
 
-    private static func appendDebugLog(_ data: Data, to url: URL) {
+    private func appendDebugLog(_ data: Data, to url: URL) {
         do {
             try FileManager.default.createDirectory(
                 at: url.deletingLastPathComponent(),
@@ -252,18 +256,18 @@ enum FileProviderStorage {
         }
     }
 
-    static var baseDirectory: URL {
-        runtimeDirectory ?? runtimeDirectories[0]
+    var baseDirectory: URL {
+        profile.storageDirectory(in: sharedSupportDirectory)
     }
 
-    static var configDirectory: URL {
+    var configDirectory: URL {
         if let configured = runtime?.configDirectory, !configured.isEmpty {
             return URL(fileURLWithPath: configured, isDirectory: true)
         }
         return baseDirectory.appendingPathComponent("Config", isDirectory: true)
     }
 
-    static var runtime: Runtime? {
+    var runtime: Runtime? {
         if let configuredRuntime, runtimeIsUsable(configuredRuntime) {
             return configuredRuntime
         } else if configuredRuntime != nil {
@@ -273,7 +277,8 @@ enum FileProviderStorage {
             let url = directory.appendingPathComponent(runtimeFileName)
             guard let data = try? Data(contentsOf: url) else { continue }
             do {
-                return try JSONDecoder().decode(Runtime.self, from: data)
+                let candidate = try JSONDecoder().decode(Runtime.self, from: data)
+                if profile.isDefault || runtimeIsUsable(candidate) { return candidate }
             } catch {
                 NSLog("Iris Drive FileProvider runtime decode failed at \(url.path): \(error)")
             }
@@ -281,34 +286,19 @@ enum FileProviderStorage {
         return nil
     }
 
-    private static func runtimeIsUsable(_ runtime: Runtime) -> Bool {
+    private func runtimeIsUsable(_ runtime: Runtime) -> Bool {
         guard let configDirectory = runtime.configDirectory,
               !configDirectory.isEmpty
         else {
-            return true
+            return profile.isDefault
         }
-        return FileManager.default.isReadableFile(atPath: configDirectory)
+        return profile.accepts(configDirectory: configDirectory)
+            && FileManager.default.isReadableFile(atPath: configDirectory)
     }
 
-    private static var runtimeDirectory: URL? {
-        runtimeDirectories.first { directory in
-            FileManager.default.fileExists(
-                atPath: directory.appendingPathComponent(runtimeFileName).path
-            )
-        }
-    }
+    private var runtimeDirectories: [URL] { [baseDirectory] }
 
-    private static var runtimeDirectories: [URL] {
-        var directories = [URL]()
-        directories.append(appGroupApplicationSupportDirectory())
-
-        var seen = Set<String>()
-        return directories.filter { directory in
-            seen.insert(directory.standardizedFileURL.path).inserted
-        }
-    }
-
-    static var idriveExecutable: String? {
+    var idriveExecutable: String? {
         let extensionBundled = Bundle.main.bundleURL
             .appendingPathComponent("Contents", isDirectory: true)
             .appendingPathComponent("MacOS", isDirectory: true)
@@ -336,7 +326,7 @@ enum FileProviderStorage {
         return containingAppBundled.path
     }
 
-    static func item(for identifier: NSFileProviderItemIdentifier) -> FileProviderItem? {
+    func item(for identifier: NSFileProviderItemIdentifier) -> FileProviderItem? {
         if identifier == .rootContainer || identifier == .workingSet {
             return .root(anchor: providerList().anchor)
         }
@@ -352,7 +342,7 @@ enum FileProviderStorage {
         return item(for: entry, anchor: list.anchor)
     }
 
-    static func path(for identifier: NSFileProviderItemIdentifier) -> String? {
+    func path(for identifier: NSFileProviderItemIdentifier) -> String? {
         if identifier == .rootContainer || identifier == .workingSet {
             return ""
         }
@@ -367,7 +357,7 @@ enum FileProviderStorage {
         return normalizedProviderPath(relative)
     }
 
-    static func identifier(for path: String) -> NSFileProviderItemIdentifier {
+    func identifier(for path: String) -> NSFileProviderItemIdentifier {
         if path.isEmpty {
             return .rootContainer
         }
@@ -375,7 +365,7 @@ enum FileProviderStorage {
         return NSFileProviderItemIdentifier("\(pathPrefix)\(encoded)")
     }
 
-    static func children(of containerIdentifier: NSFileProviderItemIdentifier) -> [FileProviderItem] {
+    func children(of containerIdentifier: NSFileProviderItemIdentifier) -> [FileProviderItem] {
         if containerIdentifier == .trashContainer {
             debugLog("children parent=trash count=0")
             return []
@@ -390,11 +380,11 @@ enum FileProviderStorage {
         return items
     }
 
-    static func allItems() -> [FileProviderItem] {
+    func allItems() -> [FileProviderItem] {
         allItemsAndAnchor().items
     }
 
-    static func allItemsAndAnchor() -> (items: [FileProviderItem], anchor: NSFileProviderSyncAnchor) {
+    func allItemsAndAnchor() -> (items: [FileProviderItem], anchor: NSFileProviderSyncAnchor) {
         let list = providerList()
         var items = [FileProviderItem]()
         if list.anchor != nil {
@@ -408,21 +398,21 @@ enum FileProviderStorage {
         )
     }
 
-    static func storedSnapshotIdentifiers() -> Set<String> {
+    func storedSnapshotIdentifiers() -> Set<String> {
         guard let snapshot = storedSnapshot() else {
             return []
         }
         return Set(snapshot.identifiers)
     }
 
-    static func storedSnapshotAnchor() -> NSFileProviderSyncAnchor? {
+    func storedSnapshotAnchor() -> NSFileProviderSyncAnchor? {
         guard let snapshot = storedSnapshot() else {
             return nil
         }
         return syncAnchor(for: snapshot.anchor)
     }
 
-    static func currentProviderAnchor() -> NSFileProviderSyncAnchor {
+    func currentProviderAnchor() -> NSFileProviderSyncAnchor {
         let list = providerList()
         guard list.anchor != nil else {
             return storedSnapshotAnchor() ?? bootstrapAnchor()
@@ -430,11 +420,11 @@ enum FileProviderStorage {
         return syncAnchor(for: list.anchor)
     }
 
-    static func bootstrapAnchor() -> NSFileProviderSyncAnchor {
+    func bootstrapAnchor() -> NSFileProviderSyncAnchor {
         syncAnchor(for: "bootstrap")
     }
 
-    private static func storedSnapshot() -> ProviderSnapshot? {
+    private func storedSnapshot() -> ProviderSnapshot? {
         let url = snapshotURL()
         guard let data = try? Data(contentsOf: url),
               let snapshot = try? JSONDecoder().decode(ProviderSnapshot.self, from: data)
@@ -447,13 +437,13 @@ enum FileProviderStorage {
         return snapshot
     }
 
-    static func hasStoredSnapshot() -> Bool {
+    func hasStoredSnapshot() -> Bool {
         let url = snapshotURL()
         guard let data = try? Data(contentsOf: url) else { return false }
         return (try? JSONDecoder().decode(ProviderSnapshot.self, from: data)) != nil
     }
 
-    static func recordSnapshot(
+    func recordSnapshot(
         items: [FileProviderItem],
         anchor: NSFileProviderSyncAnchor
     ) {
@@ -481,7 +471,7 @@ enum FileProviderStorage {
         }
     }
 
-    static func createItem(
+    func createItem(
         template: NSFileProviderItem,
         contents: URL?,
         mayAlreadyExist: Bool
@@ -531,7 +521,7 @@ enum FileProviderStorage {
         return item
     }
 
-    static func modifyItem(
+    func modifyItem(
         _ item: NSFileProviderItem,
         changedFields: NSFileProviderItemFields,
         contents: URL?
@@ -588,7 +578,7 @@ enum FileProviderStorage {
         return updated
     }
 
-    static func deleteItem(identifier: NSFileProviderItemIdentifier) throws {
+    func deleteItem(identifier: NSFileProviderItemIdentifier) throws {
         guard let path = path(for: identifier), !path.isEmpty else {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier)
         }
@@ -601,7 +591,7 @@ enum FileProviderStorage {
         invalidateProviderListCache()
     }
 
-    static func contentsURL(for identifier: NSFileProviderItemIdentifier) throws -> URL {
+    func contentsURL(for identifier: NSFileProviderItemIdentifier) throws -> URL {
         guard let path = path(for: identifier), !path.isEmpty else {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier)
         }
@@ -629,7 +619,7 @@ enum FileProviderStorage {
         return output
     }
 
-    static func thumbnailData(
+    func thumbnailData(
         for identifier: NSFileProviderItemIdentifier,
         requestedSize size: CGSize
     ) throws -> Data? {
@@ -683,7 +673,7 @@ enum FileProviderStorage {
         return data as Data
     }
 
-    private static func item(for entry: ProviderEntry, anchor _: String?) -> FileProviderItem {
+    private func item(for entry: ProviderEntry, anchor _: String?) -> FileProviderItem {
         let isDirectory = entry.kind == "directory"
         let contentType: UTType = isDirectory
             ? UTType.folder
@@ -700,17 +690,17 @@ enum FileProviderStorage {
         )
     }
 
-    private static func providerItemVersionIdentifier(for entry: ProviderEntry) -> String {
+    private func providerItemVersionIdentifier(for entry: ProviderEntry) -> String {
         let version = (entry.version ?? "").trimmingCharacters(in: .whitespacesAndNewlines); if let primary = version.split(separator: ":").first, !primary.isEmpty { return "\(providerItemVersionPrefix):entry:\(entry.kind):\(primary)" }
         return "\(providerItemVersionPrefix):fallback:\(entry.kind):\(entry.size):\(entry.modifiedAt ?? 0):\(entry.path.suffix(40))"
     }
 
-    private static func displayDate(from unixSeconds: Int64?) -> Date? {
+    private func displayDate(from unixSeconds: Int64?) -> Date? {
         guard let unixSeconds, unixSeconds >= minDisplayUnixSeconds else { return nil }
         return Date(timeIntervalSince1970: TimeInterval(unixSeconds))
     }
 
-    private static func optimisticItem(
+    private func optimisticItem(
         for resolved: ProviderResolvedPath,
         template: NSFileProviderItem,
         contents: URL?
@@ -732,7 +722,7 @@ enum FileProviderStorage {
         )
     }
 
-    private static func providerList() -> ProviderList {
+    private func providerList() -> ProviderList {
         if let cached = cachedProviderList() {
             debugLog("provider list cached anchor=\(cached.anchor ?? "nil") entries=\(cached.entries.count)")
             return cached
@@ -759,7 +749,7 @@ enum FileProviderStorage {
         return ProviderList(anchor: nil, entries: [])
     }
 
-    private static func cachedProviderList() -> ProviderList? {
+    private func cachedProviderList() -> ProviderList? {
         let refreshKey = currentProviderRefreshKey()
         providerListCacheLock.lock()
         defer { providerListCacheLock.unlock() }
@@ -775,7 +765,7 @@ enum FileProviderStorage {
         return cached.list
     }
 
-    private static func mutationBaseRootCid() -> String? {
+    private func mutationBaseRootCid() -> String? {
         if let anchor = cachedProviderList()?.anchor,
            providerRootCidLooksUsable(anchor) {
             return anchor
@@ -787,29 +777,29 @@ enum FileProviderStorage {
         return nil
     }
 
-    private static func providerRootCidLooksUsable(_ value: String) -> Bool {
+    private func providerRootCidLooksUsable(_ value: String) -> Bool {
         value.contains(":") && value != "bootstrap" && value != "unavailable"
     }
 
-    private static func appendBaseRootCid(_ rootCid: String?, to arguments: inout [String]) {
+    private func appendBaseRootCid(_ rootCid: String?, to arguments: inout [String]) {
         guard let rootCid, !rootCid.isEmpty else { return }
         arguments.append("--base-root-cid")
         arguments.append(rootCid)
     }
 
-    private static func storeProviderListCache(_ list: ProviderList) {
+    private func storeProviderListCache(_ list: ProviderList) {
         providerListCacheLock.lock()
         providerListCache = (Date(), currentProviderRefreshKey(), list)
         providerListCacheLock.unlock()
     }
 
-    private static func invalidateProviderListCache() {
+    private func invalidateProviderListCache() {
         providerListCacheLock.lock()
         providerListCache = nil
         providerListCacheLock.unlock()
     }
 
-    private static func existingCachedContentsURL(for entry: ProviderEntry, anchor: String?) throws -> URL? {
+    private func existingCachedContentsURL(for entry: ProviderEntry, anchor: String?) throws -> URL? {
         let url = contentCacheURL(for: entry, anchor: anchor)
         guard contentCacheFileMatches(url, entry: entry) else {
             return nil
@@ -817,7 +807,7 @@ enum FileProviderStorage {
         return url
     }
 
-    private static func cachedContentsURL(for entry: ProviderEntry, anchor: String?) throws -> URL {
+    private func cachedContentsURL(for entry: ProviderEntry, anchor: String?) throws -> URL {
         contentCacheLock.lock()
         defer { contentCacheLock.unlock() }
 
@@ -840,13 +830,13 @@ enum FileProviderStorage {
         return url
     }
 
-    private static func contentCacheRootURL(for anchor: String?) -> URL {
+    private func contentCacheRootURL(for anchor: String?) -> URL {
         baseDirectory
             .appendingPathComponent(contentCacheDirectoryName, isDirectory: true)
             .appendingPathComponent(contentCacheKey(for: anchor), isDirectory: true)
     }
 
-    private static func contentCacheURL(for entry: ProviderEntry, anchor: String?) -> URL {
+    private func contentCacheURL(for entry: ProviderEntry, anchor: String?) -> URL {
         var url = contentCacheRootURL(for: anchor)
         for component in entry.path.split(separator: "/") {
             url.appendPathComponent(String(component), isDirectory: false)
@@ -854,7 +844,7 @@ enum FileProviderStorage {
         return url
     }
 
-    private static func contentCacheKey(for anchor: String?) -> String {
+    private func contentCacheKey(for anchor: String?) -> String {
         let value = anchor ?? "unavailable"
         let encoded = Data(value.utf8)
             .base64EncodedString()
@@ -864,7 +854,7 @@ enum FileProviderStorage {
         return encoded.isEmpty ? "empty" : encoded
     }
 
-    private static func contentCacheFileMatches(_ url: URL, entry: ProviderEntry) -> Bool {
+    private func contentCacheFileMatches(_ url: URL, entry: ProviderEntry) -> Bool {
         guard FileManager.default.isReadableFile(atPath: url.path),
               let values = try? url.resourceValues(forKeys: [.fileSizeKey, .isRegularFileKey]),
               values.isRegularFile == true,
@@ -875,7 +865,7 @@ enum FileProviderStorage {
         return UInt64(size) == entry.size
     }
 
-    private static func pruneContentCacheDirectories(keeping keepURL: URL) {
+    private func pruneContentCacheDirectories(keeping keepURL: URL) {
         let root = baseDirectory.appendingPathComponent(contentCacheDirectoryName, isDirectory: true)
         guard let entries = try? FileManager.default.contentsOfDirectory(
             at: root,
@@ -889,7 +879,7 @@ enum FileProviderStorage {
         }
     }
 
-    private static func fileSize(at url: URL?) -> Int {
+    private func fileSize(at url: URL?) -> Int {
         guard let url,
               let values = try? url.resourceValues(forKeys: [.fileSizeKey]),
               let size = values.fileSize
@@ -899,7 +889,7 @@ enum FileProviderStorage {
         return size
     }
 
-    private static func thumbnailMaxPixelSize(for size: CGSize) -> Int {
+    private func thumbnailMaxPixelSize(for size: CGSize) -> Int {
         let requested = max(size.width, size.height)
         guard requested.isFinite, requested > 0 else {
             return 512
@@ -907,15 +897,15 @@ enum FileProviderStorage {
         return min(2_048, max(64, Int(ceil(requested))))
     }
 
-    private static func syncAnchor(for anchor: String?) -> NSFileProviderSyncAnchor {
+    private func syncAnchor(for anchor: String?) -> NSFileProviderSyncAnchor {
         NSFileProviderSyncAnchor(rawValue: Data((anchor ?? "unavailable").utf8))
     }
 
-    private static func snapshotURL() -> URL {
+    private func snapshotURL() -> URL {
         baseDirectory.appendingPathComponent(snapshotFileName, isDirectory: false)
     }
 
-    private static func currentProviderRefreshKey() -> String? {
+    private func currentProviderRefreshKey() -> String? {
         let statusURL = configDirectory.appendingPathComponent(
             "daemon-status.json",
             isDirectory: false
@@ -931,7 +921,7 @@ enum FileProviderStorage {
         return key
     }
 
-    private static func daemonStatusIsFresh(_ status: DaemonStatus) -> Bool {
+    private func daemonStatusIsFresh(_ status: DaemonStatus) -> Bool {
         guard let updatedAt = status.updatedAt else {
             return false
         }
@@ -939,7 +929,10 @@ enum FileProviderStorage {
         return now >= updatedAt && now - updatedAt <= 15
     }
 
-    private static func runIDrive(arguments: [String], timeout: TimeInterval = 15) throws -> Data {
+    private func runIDrive(arguments: [String], timeout: TimeInterval = 15) throws -> Data {
+        guard profile.isDefault || runtime != nil else {
+            throw providerError("FileProvider runtime is missing or invalid for this profile")
+        }
         guard let executable = idriveExecutable, !executable.isEmpty else {
             throw providerError("bundled idrive helper unavailable")
         }
@@ -1003,14 +996,14 @@ enum FileProviderStorage {
         return output
     }
 
-    private static func emptyTemporaryFile() throws -> URL {
+    private func emptyTemporaryFile() throws -> URL {
         let url = try temporaryDirectory()
             .appendingPathComponent(UUID().uuidString, isDirectory: false)
         FileManager.default.createFile(atPath: url.path, contents: Data())
         return url
     }
 
-    private static func temporaryDirectory() throws -> URL {
+    private func temporaryDirectory() throws -> URL {
         let directory = baseDirectory.appendingPathComponent(tempDirectoryName, isDirectory: true)
         try FileManager.default.createDirectory(
             at: directory,
@@ -1019,7 +1012,7 @@ enum FileProviderStorage {
         return directory
     }
 
-    private static func resolvedPath(
+    private func resolvedPath(
         parent: String,
         name: String,
         excluding: String = "",
@@ -1041,7 +1034,7 @@ enum FileProviderStorage {
         return resolved
     }
 
-    private static func composedPath(
+    private func composedPath(
         parent: String,
         name: String
     ) throws -> ProviderResolvedPath {
@@ -1056,7 +1049,7 @@ enum FileProviderStorage {
         return resolved
     }
 
-    private static func normalizedProviderPath(_ path: String) -> String? {
+    private func normalizedProviderPath(_ path: String) -> String? {
         providerPathCacheLock.lock()
         if let cached = providerPathCache[path] {
             providerPathCacheLock.unlock()
@@ -1078,17 +1071,9 @@ enum FileProviderStorage {
         return resolved.path
     }
 
-    private static func appGroupApplicationSupportDirectory() -> URL {
-        IrisDriveAppGroup.applicationSupportDirectory(
-            teamIdentifier: currentProcessTeamIdentifier()
-        )
-    }
+    private func appGroupApplicationSupportDirectory() -> URL { baseDirectory }
 
-    private static func currentProcessTeamIdentifier() -> String? {
-        IrisDriveCodeSigning.currentTeamIdentifier()
-    }
-
-    private static func providerError(_ message: String) -> NSError {
+    private func providerError(_ message: String) -> NSError {
         NSError(
             domain: NSFileProviderErrorDomain,
             code: NSFileProviderError.serverUnreachable.rawValue,

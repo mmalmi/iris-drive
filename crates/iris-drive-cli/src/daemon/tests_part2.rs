@@ -36,12 +36,11 @@ fn windows_cloud_recursive_recent_rescan_finds_nested_file_edit_under_old_parent
     let sync_root = tempfile::tempdir().unwrap();
     let nested_dir = sync_root.path().join("e2e").join("run").join("ops");
     std::fs::create_dir_all(&nested_dir).unwrap();
-    let file = nested_dir.join("create-edit.txt");
-    std::fs::write(&file, b"version 1").unwrap();
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    let cutoff = std::time::SystemTime::now();
-    std::thread::sleep(std::time::Duration::from_millis(20));
-    std::fs::write(&file, b"version 2").unwrap();
+    let file = std::fs::File::create(nested_dir.join("create-edit.txt")).unwrap();
+    // Keep timestamps distinct even on filesystems with coarse resolution.
+    let cutoff = std::time::SystemTime::now() + std::time::Duration::from_secs(2);
+    file.set_modified(cutoff + std::time::Duration::from_secs(2))
+        .unwrap();
 
     let shallow =
         windows_cloud_local_projected_paths_since(sync_root.path(), Some(cutoff), false).unwrap();
@@ -155,7 +154,7 @@ fn windows_cloud_stale_cleanup_preserves_local_edit() {
         &BTreeSet::new(),
     );
 
-    assert!(removed.is_empty());
+    assert_eq!(removed.len(), 0);
     assert!(path.exists());
 }
 
@@ -191,7 +190,7 @@ fn windows_cloud_stale_cleanup_preserves_protected_local_mutation() {
         &protected,
     );
 
-    assert!(removed.is_empty());
+    assert_eq!(removed.len(), 0);
     assert!(dir.exists());
     assert!(file.exists());
 }
@@ -282,7 +281,7 @@ fn windows_cloud_local_state_omits_protected_local_mutation() {
 
     let state = snapshot_windows_cloud_local_state(sync_root.path(), &entries, &[], &protected);
 
-    assert!(state.is_empty());
+    assert_eq!(state.len(), 0);
 }
 
 #[test]
@@ -315,7 +314,7 @@ fn windows_cloud_local_state_does_not_retain_protected_previous_state() {
     let state =
         snapshot_windows_cloud_local_state(sync_root.path(), &[], &previous, &protected);
 
-    assert!(state.is_empty());
+    assert_eq!(state.len(), 0);
 }
 
 #[test]
@@ -359,7 +358,7 @@ fn windows_cloud_state_drops_stale_file_after_local_edit() {
         &BTreeSet::new(),
     );
 
-    assert!(retained.is_empty());
+    assert_eq!(retained.len(), 0);
 }
 
 #[tokio::test]
@@ -438,7 +437,7 @@ async fn windows_cloud_projection_preserves_local_edit_over_remote_change() {
     .await
     .unwrap();
 
-    assert!(removed.is_empty());
+    assert_eq!(removed.len(), 0);
     assert_eq!(
         std::fs::read(sync_root.path().join("remote.txt")).unwrap(),
         b"local edit"
@@ -592,28 +591,56 @@ async fn root_apply_followup_skips_refresh_when_blocks_are_missing() {
     let _ = task.await;
 }
 
+#[tokio::test]
+async fn blossom_can_complete_while_fips_block_search_is_still_pending() {
+    let fips = Box::pin(std::future::pending::<Result<DownloadReport, String>>());
+    let blossom = Box::pin(std::future::ready(Ok(DownloadReport {
+        total_hashes: 1,
+        fetched: 1,
+        already_local: 0,
+    })));
+
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_millis(100),
+        first_successful_block_download(Some(fips), Some(blossom)),
+    )
+    .await
+    .expect("Blossom must not wait behind the FIPS timeout")
+    .expect("Blossom download should succeed");
+
+    assert_eq!(outcome.transport, BlockDownloadTransport::Blossom);
+    assert_eq!(outcome.report.fetched, 1);
+}
+
+#[tokio::test]
+async fn concurrent_block_download_preserves_an_earlier_transport_error() {
+    let fips = Box::pin(std::future::ready(Err("fips unavailable".to_string())));
+    let blossom = Box::pin(async {
+        tokio::task::yield_now().await;
+        Ok(DownloadReport::default())
+    });
+
+    let outcome = first_successful_block_download(Some(fips), Some(blossom))
+        .await
+        .expect("Blossom download should succeed after FIPS failure");
+
+    assert_eq!(outcome.transport, BlockDownloadTransport::Blossom);
+    assert_eq!(outcome.prior_errors.len(), 1);
+    assert_eq!(outcome.prior_errors[0].transport, BlockDownloadTransport::Fips);
+    assert_eq!(outcome.prior_errors[0].message, "fips unavailable");
+}
+
 #[test]
-fn stale_drive_root_followup_refreshes_projection_after_blocks_sync() {
+fn applied_or_stale_current_drive_root_schedules_followup() {
+    let expected = DriveRootFollowupPlan {
+        pull_blocks: true,
+        refresh_projection: true,
+    };
+
+    assert_eq!(drive_root_followup_plan(false, true), expected);
     assert_eq!(
-        drive_root_followup_plan(false, true, false),
-        DriveRootFollowupPlan {
-            pull_blocks: true,
-            refresh_projection: true,
-        }
-    );
-    assert_eq!(
-        drive_root_followup_plan(false, true, true),
-        DriveRootFollowupPlan {
-            pull_blocks: true,
-            refresh_projection: true,
-        }
-    );
-    assert_eq!(
-        drive_root_followup_plan(true, false, false),
-        DriveRootFollowupPlan {
-            pull_blocks: true,
-            refresh_projection: true,
-        }
+        drive_root_followup_plan(true, false),
+        expected
     );
 }
 

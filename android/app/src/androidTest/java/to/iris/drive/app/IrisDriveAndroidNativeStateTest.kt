@@ -2,9 +2,12 @@ package to.iris.drive.app
 
 import android.content.Context
 import android.os.SystemClock
+import android.security.NetworkSecurityPolicy
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.UUID
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -25,6 +28,48 @@ class IrisDriveAndroidNativeStateTest {
     fun tearDown() {
         nativeHandles.toList().forEach { NativeCore.appFree(it) }
         nativeHandles.clear()
+    }
+
+    @Test
+    fun authorizedProfileStartsEmbeddedGateway() {
+        NativeCore.initializeAndroidContext(context)
+        val dataDir = tempDataDir("iris-drive-gateway")
+        val handle = NativeCore.appNew(dataDir.absolutePath, "ui-test").also(nativeHandles::add)
+        val state = dispatch(handle, NativeActions.createProfile("Gateway test"))
+        assertTrue(state.error, state.error.isBlank())
+        assertTrue(state.localNhashResolverEnabled)
+        assertEquals("authorized", state.profile?.authorizationState)
+
+        val statusFile = File(dataDir, "native-browser-gateway-status.json")
+        val deadline = SystemClock.elapsedRealtime() + 60_000
+        var status = JSONObject()
+        while (SystemClock.elapsedRealtime() < deadline) {
+            // The native writer may be replacing the status while we read it.
+            runCatching { JSONObject(statusFile.readText()) }.getOrNull()?.let { status = it }
+            assertTrue(status.toString(), status.optString("error").isBlank())
+            if (status.optBoolean("running")) break
+            Thread.sleep(200)
+        }
+        assertTrue("Embedded gateway did not start: $status", status.optBoolean("running"))
+        assertEquals("running", status.optString("state"))
+        assertTrue(status.toString(), status.getJSONObject("embedded_hashtree").getString("base_url").isNotBlank())
+
+        assertTrue(
+            "The local gateway readiness request must be allowed by Android's network policy",
+            NetworkSecurityPolicy.getInstance().isCleartextTrafficPermitted("127.0.0.1"),
+        )
+        val portal = URL(status.getString("portal_url"))
+        val connection = URL("http://127.0.0.1:${portal.port}/").openConnection() as HttpURLConnection
+        try {
+            connection.connectTimeout = 2_000
+            connection.readTimeout = 2_000
+            connection.instanceFollowRedirects = false
+            connection.setRequestProperty("Host", "iris.localhost:${portal.port}")
+            assertEquals(307, connection.responseCode)
+            assertEquals(portal.toString(), connection.getHeaderField("Location"))
+        } finally {
+            connection.disconnect()
+        }
     }
 
     @Test

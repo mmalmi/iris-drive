@@ -244,6 +244,32 @@ fn register_active_model(model: &AppRef) {
     });
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum LaunchInputDelivery {
+    Apply,
+    Queue,
+}
+
+fn launch_input_delivery(has_active_model: bool, has_active_window: bool) -> LaunchInputDelivery {
+    if has_active_model && has_active_window {
+        LaunchInputDelivery::Apply
+    } else {
+        LaunchInputDelivery::Queue
+    }
+}
+
+fn push_pending_launch_input(pending: &mut Vec<String>, input: &str) {
+    if !pending.iter().any(|queued| queued == input) {
+        pending.push(input.to_owned());
+    }
+}
+
+fn queue_launch_input(input: &str) {
+    PENDING_LAUNCH_INPUTS.with(|slot| {
+        push_pending_launch_input(&mut slot.borrow_mut(), input);
+    });
+}
+
 fn drain_pending_launch_inputs(model: &AppRef) {
     let pending = PENDING_LAUNCH_INPUTS.with(|slot| slot.take());
     for input in pending {
@@ -252,16 +278,23 @@ fn drain_pending_launch_inputs(model: &AppRef) {
 }
 
 fn handle_launch_input(input: &str) {
-    let handled = ACTIVE_MODEL.with(|slot| {
-        if let Some(model) = slot.borrow().as_ref() {
+    let delivery = ACTIVE_MODEL.with(|slot| {
+        let model = slot.borrow();
+        let delivery = launch_input_delivery(
+            model.is_some(),
+            model
+                .as_ref()
+                .is_some_and(|model| model.application.active_window().is_some()),
+        );
+        if delivery == LaunchInputDelivery::Apply
+            && let Some(model) = model.as_ref()
+        {
             apply_launch_input(model, input);
-            true
-        } else {
-            false
         }
+        delivery
     });
-    if !handled {
-        PENDING_LAUNCH_INPUTS.with(|slot| slot.borrow_mut().push(input.to_owned()));
+    if delivery == LaunchInputDelivery::Queue {
+        queue_launch_input(input);
     }
 }
 
@@ -284,11 +317,14 @@ fn apply_app_key_approval_link(
     classification: &LinkInputClassification,
 ) {
     if !classification.is_valid {
-        model.ui.notice.set_text(if classification.error.trim().is_empty() {
-            "Invalid device request"
-        } else {
-            classification.error.trim()
-        });
+        model
+            .ui
+            .notice
+            .set_text(if classification.error.trim().is_empty() {
+                "Invalid device request"
+            } else {
+                classification.error.trim()
+            });
         return;
     }
     confirm_approve_device(model, input.to_string());
@@ -296,11 +332,14 @@ fn apply_app_key_approval_link(
 
 fn apply_invite_link(model: &AppRef, input: &str, classification: &LinkInputClassification) {
     if !classification.is_valid {
-        model.ui.notice.set_text(if classification.error.trim().is_empty() {
-            "Could not open invite link"
-        } else {
-            classification.error.trim()
-        });
+        model
+            .ui
+            .notice
+            .set_text(if classification.error.trim().is_empty() {
+                "Could not open invite link"
+            } else {
+                classification.error.trim()
+            });
         return;
     }
     match relink_device(input) {
@@ -317,11 +356,14 @@ fn open_content_link(model: &AppRef, classification: &LinkInputClassification) {
         display_name
     };
     if !classification.is_valid || classification.local_open_url.trim().is_empty() {
-        model.ui.notice.set_text(if classification.error.trim().is_empty() {
-            "Could not open content link"
-        } else {
-            classification.error.trim()
-        });
+        model
+            .ui
+            .notice
+            .set_text(if classification.error.trim().is_empty() {
+                "Could not open content link"
+            } else {
+                classification.error.trim()
+            });
         return;
     }
     let Some(window) = model.application.active_window() else {
@@ -364,7 +406,10 @@ fn save_content_link(model: &AppRef, classification: &LinkInputClassification, l
         link: link.to_owned(),
     }) {
         Ok(_state) => {
-            model.ui.notice.set_text(&format!("Saved {label} to Iris Drive"));
+            model
+                .ui
+                .notice
+                .set_text(&format!("Saved {label} to Iris Drive"));
             refresh(model);
         }
         Err(error) => {
@@ -696,4 +741,30 @@ fn update_poll_interval_secs() -> u64 {
         .and_then(|raw| raw.parse::<u64>().ok())
         .filter(|seconds| *seconds > 0)
         .unwrap_or(6 * 60 * 60)
+}
+
+#[cfg(test)]
+mod launch_input_tests {
+    use super::*;
+
+    #[test]
+    fn launch_input_without_active_window_waits_for_ui() {
+        assert_eq!(
+            launch_input_delivery(true, false),
+            LaunchInputDelivery::Queue
+        );
+        assert_eq!(
+            launch_input_delivery(true, true),
+            LaunchInputDelivery::Apply
+        );
+    }
+
+    #[test]
+    fn repeated_pending_launch_input_is_presented_once() {
+        let mut pending = Vec::new();
+        push_pending_launch_input(&mut pending, "https://drive.iris.to/approve-device/request");
+        push_pending_launch_input(&mut pending, "https://drive.iris.to/approve-device/request");
+
+        assert_eq!(pending.len(), 1);
+    }
 }

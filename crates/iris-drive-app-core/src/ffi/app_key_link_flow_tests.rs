@@ -1,14 +1,20 @@
 use super::{
-    FfiApp, NativeAppKeyLinkRelayEventApply, apply_native_app_key_link_relay_event_to_config,
-    native_profile_roster_ops_pending_publish, normalize_pubkey,
+    ApprovalReceiptRelayStep, FfiApp, NativeAppKeyLinkRelayEventApply,
+    apply_and_persist_native_relay_event, apply_native_app_key_link_relay_event_to_config,
+    apply_native_drive_root_relay_event_to_config, approval_receipt_relay_steps,
+    drive_root_event_download_target, native_profile_roster_ops_pending_publish, normalize_pubkey,
 };
 use crate::NativeAppAction;
 use crate::state::NativeAppState;
-use iris_drive_core::paths::config_path_in;
+use iris_drive_core::paths::{config_path_in, key_path_in};
 use iris_drive_core::{AppConfig, AppKeyAuthorizationState};
 use nostr_sdk::{Event, JsonUtil};
 use std::collections::BTreeSet;
 use std::path::Path;
+use std::sync::Mutex;
+use std::task::{Context, Poll, Waker};
+
+mod relay_root_tests;
 
 fn record_inbound_request(
     config_dir: &Path,
@@ -102,14 +108,15 @@ fn owner_can_reject_then_approve_join_requests_e2e() {
         request: rejected_request,
     });
     assert!(after_reject.error.is_empty(), "{}", after_reject.error);
-    assert!(
+    assert_eq!(
         after_reject
             .ui
             .profile
             .as_ref()
             .unwrap()
             .inbound_app_key_link_requests
-            .is_empty()
+            .len(),
+        0
     );
     assert!(
         after_reject
@@ -120,15 +127,16 @@ fn owner_can_reject_then_approve_join_requests_e2e() {
     );
 
     let after_reject_refresh = app.refresh();
-    assert!(after_reject_refresh.error.is_empty());
-    assert!(
+    assert_eq!(after_reject_refresh.error.len(), 0);
+    assert_eq!(
         after_reject_refresh
             .ui
             .profile
             .as_ref()
             .unwrap()
             .inbound_app_key_link_requests
-            .is_empty()
+            .len(),
+        0
     );
     assert!(
         after_reject_refresh
@@ -166,14 +174,15 @@ fn owner_can_reject_then_approve_join_requests_e2e() {
         label: String::new(),
     });
     assert!(after_approve.error.is_empty(), "{}", after_approve.error);
-    assert!(
+    assert_eq!(
         after_approve
             .ui
             .profile
             .as_ref()
             .unwrap()
             .inbound_app_key_link_requests
-            .is_empty()
+            .len(),
+        0
     );
     assert!(after_approve.ui.app_actors.iter().any(|device| {
         device.pubkey == approved_device && device.label == "iPhone" && device.role == "member"
@@ -187,7 +196,7 @@ fn owner_can_reject_then_approve_join_requests_e2e() {
     );
 
     let final_refresh = app.refresh();
-    assert!(final_refresh.error.is_empty());
+    assert_eq!(final_refresh.error.len(), 0);
     assert!(final_refresh.ui.app_actors.iter().any(|device| {
         device.pubkey == approved_device && device.label == "iPhone" && device.role == "member"
     }));
@@ -198,13 +207,14 @@ fn owner_can_reject_then_approve_join_requests_e2e() {
             .iter()
             .all(|device| device.pubkey != rejected_device)
     );
-    assert!(
+    assert_eq!(
         AppConfig::load_or_default(config_path_in(owner_dir.path()))
             .unwrap()
             .profile
             .unwrap()
             .inbound_app_key_link_requests
-            .is_empty()
+            .len(),
+        0
     );
 }
 
@@ -237,6 +247,15 @@ fn roster_ops_cannot_authorize_waiting_native_device_before_bound_receipt() {
         Some("iPhone".to_owned()),
     );
     assert!(approved.error.is_empty(), "{}", approved.error);
+    assert_eq!(
+        approved
+            .ui
+            .profile
+            .as_ref()
+            .unwrap()
+            .pending_device_approval_receipt_count,
+        1
+    );
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
     let owner_state = owner_config.profile.unwrap();
     assert_eq!(
@@ -304,7 +323,7 @@ fn start_join_request_tracks_pending_manual_approval() {
             .starts_with(iris_drive_core::app_key_link_transport::APP_KEY_APPROVAL_REQUEST_PREFIX)
     );
     let request = pending_request(dir.path());
-    assert!(!request.request_npub.is_empty());
+    assert_ne!(request.request_npub.len(), 0);
     assert_eq!(request.request_secret.len(), 43);
     assert_eq!(request.device_app_key_npub, account.current_app_key_npub);
     assert_ne!(request.device_app_key_npub, request.request_npub);
@@ -314,8 +333,8 @@ fn start_join_request_tracks_pending_manual_approval() {
         .as_ref()
         .and_then(|profile| profile.outbound_app_key_link_request.as_ref())
         .expect("pending request");
-    assert!(pending.admin_app_key_pubkey.is_empty());
-    assert!(pending.invite_pubkey.is_empty());
+    assert_eq!(pending.admin_app_key_pubkey.len(), 0);
+    assert_eq!(pending.invite_pubkey.len(), 0);
     assert_eq!(pending.request_url, account.app_key_link_request);
     assert_eq!(state.ui.setup_state, "awaiting_approval");
     assert!(!state.ui.setup_complete);
@@ -405,7 +424,7 @@ fn refresh_recreates_missing_manual_join_request_url() {
         request.device_app_key_npub,
         linked_account.current_app_key_npub
     );
-    assert!(!request.request_npub.is_empty());
+    assert_ne!(request.request_npub.len(), 0);
     assert_eq!(request.request_secret.len(), 43);
     assert_ne!(request.device_app_key_npub, request.request_npub);
     let saved = AppConfig::load_or_default(config_path_in(linked_dir.path())).unwrap();
@@ -441,7 +460,7 @@ fn manual_join_request_approval_roster_authorizes_waiting_native_device_e2e() {
         parsed_request.device_app_key_npub,
         linked_account.current_app_key_npub
     );
-    assert!(!parsed_request.request_npub.is_empty());
+    assert_ne!(parsed_request.request_npub.len(), 0);
     assert_eq!(parsed_request.request_secret.len(), 43);
     assert_ne!(
         parsed_request.device_app_key_npub,
@@ -500,7 +519,7 @@ fn manual_join_request_approval_roster_authorizes_waiting_native_device_e2e() {
         owner_state.profile_id.to_string()
     );
     assert_eq!(refreshed_account.authorization_state, "authorized");
-    assert!(refreshed_account.app_key_link_request.is_empty());
+    assert_eq!(refreshed_account.app_key_link_request.len(), 0);
     assert!(refreshed.ui.setup_complete);
     assert!(!refreshed.ui.awaiting_approval);
 }
@@ -616,7 +635,10 @@ fn native_owner_approval_selects_roster_ops_for_relay_publish() {
     assert_eq!(candidates.len(), 1);
 
     published.extend(pending_ops.into_iter().map(|op| op.op_id));
-    assert!(native_profile_roster_ops_pending_publish(owner_state, &published).is_empty());
+    assert_eq!(
+        native_profile_roster_ops_pending_publish(owner_state, &published).len(),
+        0
+    );
 }
 
 #[test]
@@ -683,9 +705,9 @@ fn revoked_current_device_refresh_logs_out_and_allows_fresh_relink() {
     let refreshed = linked_app.refresh();
     assert!(refreshed.error.is_empty(), "{}", refreshed.error);
     assert!(refreshed.ui.profile.is_none());
-    assert!(refreshed.ui.app_actors.is_empty());
-    assert!(refreshed.ui.roots.is_empty());
-    assert!(refreshed.ui.snapshot_link.is_empty());
+    assert_eq!(refreshed.ui.app_actors.len(), 0);
+    assert_eq!(refreshed.ui.roots.len(), 0);
+    assert_eq!(refreshed.ui.snapshot_link.len(), 0);
     assert!(!refreshed.ui.sync.running);
     assert_eq!(refreshed.ui.sync.status, "ready");
     assert_eq!(refreshed.ui.sync.status_label, "Ready");

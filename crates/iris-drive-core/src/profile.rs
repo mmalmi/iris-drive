@@ -89,7 +89,7 @@ pub enum ProfileError {
     Wrap(String),
     #[error("failed to unwrap DCK: {0}")]
     Unwrap(String),
-    #[error("decrypted DCK has wrong length: expected 32 bytes, got {0}")]
+    #[error("decrypted DCK has wrong length: expected 32 raw bytes or 64 hex characters, got {0}")]
     InvalidDckLength(usize),
     #[error("config: {0}")]
     Config(#[from] ConfigError),
@@ -109,59 +109,14 @@ pub enum AppKeyAuthorizationState {
     Revoked,
 }
 
-pub const MAX_INBOUND_APP_KEY_LINK_REQUESTS: usize = 32;
-pub const MAX_HANDLED_APP_KEY_LINK_REQUESTS: usize = 128;
-pub const MAX_PENDING_DEVICE_APPROVAL_RECEIPTS: usize = 32;
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct PendingAppKeyLinkRequest {
-    #[serde(alias = "admin_device_pubkey")]
-    pub admin_app_key_pubkey: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub invite_pubkey: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub request_url: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub request_key_secret: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub approval_receipt_event: Option<String>,
-    pub requested_at: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct InboundAppKeyLinkRequest {
-    #[serde(alias = "device_pubkey")]
-    pub app_key_pubkey: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub label: Option<String>,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub invite_pubkey: String,
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub request_url: String,
-    pub requested_at: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct HandledAppKeyLinkRequest {
-    #[serde(alias = "device_pubkey")]
-    pub app_key_pubkey: String,
-    pub requested_at: u64,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(deny_unknown_fields)]
-pub struct PendingDeviceApprovalReceipt {
-    pub request_pubkey: String,
-    pub device_app_key_pubkey: String,
-    #[serde(
-        default,
-        alias = "request_relay",
-        skip_serializing_if = "String::is_empty"
-    )]
-    pub relay_url: String,
-    pub event_json: String,
-}
+#[path = "profile/app_key_link_state.rs"]
+mod app_key_link_state;
+pub use app_key_link_state::{
+    HandledAppKeyLinkRequest, InboundAppKeyLinkRequest, MAX_HANDLED_APP_KEY_LINK_REQUESTS,
+    MAX_INBOUND_APP_KEY_LINK_REQUESTS, MAX_PENDING_DEVICE_APPROVAL_RECEIPTS,
+    MAX_PERSISTED_DEVICE_APPROVAL_RECEIPTS, PendingAppKeyLinkRequest, PendingDeviceApprovalReceipt,
+    PersistedDeviceApprovalReceipts,
+};
 
 /// Persisted local profile state. Lives inside `AppConfig`.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -221,7 +176,7 @@ fn legacy_profile_id_from_owner_pubkey(value: &str) -> Option<NostrIdentityId> {
         return None;
     }
     let mut decoded = [0_u8; 32];
-    for (index, chunk) in value.as_bytes().chunks_exact(2).enumerate() {
+    for (index, chunk) in value.as_bytes().as_chunks::<2>().0.iter().enumerate() {
         let hex = std::str::from_utf8(chunk).ok()?;
         decoded[index] = u8::from_str_radix(hex, 16).ok()?;
     }
@@ -437,10 +392,8 @@ impl ProfileState {
             .as_ref()
             .is_some_and(|keys| keys.contains(&self.app_key_pubkey))
             && projection.can_write_roots(&self.app_key_pubkey);
-        let pending_receipt_authorizes_current_app_key =
-            self.pending_device_approval_receipt_authorizes_current_app_key();
         self.authorization_state = if current_app_key_has_usable_profile
-            || (pending_receipt_authorizes_current_app_key
+            || (self.pending_device_approval_receipt_authorizes_current_app_key()
                 && !projection.tombstones.contains_key(&self.app_key_pubkey))
         {
             AppKeyAuthorizationState::Authorized
@@ -522,7 +475,7 @@ impl ProfileState {
             invite_pubkey,
             request_url,
             request_key_secret,
-            approval_receipt_event: None,
+            approval_receipt_event: PersistedDeviceApprovalReceipts::default(),
             requested_at,
         };
         let changed = self.outbound_app_key_link_request.as_ref() != Some(&next);
@@ -541,7 +494,7 @@ impl ProfileState {
             invite_pubkey: String::new(),
             request_url,
             request_key_secret,
-            approval_receipt_event: None,
+            approval_receipt_event: PersistedDeviceApprovalReceipts::default(),
             requested_at,
         };
         let changed = self.outbound_app_key_link_request.as_ref() != Some(&next);
@@ -2210,11 +2163,7 @@ impl Profile {
             .map_err(|e| ProfileError::InvalidAppKeyPubkey(e.to_string()))?;
         let bytes = nip44::decrypt_to_bytes(self.app_key.keys().secret_key(), &signer_pk, wrap)
             .map_err(|e| ProfileError::Unwrap(e.to_string()))?;
-        let arr: [u8; 32] = bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| ProfileError::InvalidDckLength(bytes.len()))?;
-        Ok(arr)
+        decode_dck_plaintext(&bytes)
     }
 
     pub fn current_dck_from_recovery_phrase(
@@ -2259,11 +2208,7 @@ impl Profile {
             .map_err(|e| ProfileError::InvalidAppKeyPubkey(e.to_string()))?;
         let bytes = nip44::decrypt_to_bytes(authority_keys.secret_key(), &signer_pk, wrap)
             .map_err(|e| ProfileError::Unwrap(e.to_string()))?;
-        let arr: [u8; 32] = bytes
-            .as_slice()
-            .try_into()
-            .map_err(|_| ProfileError::InvalidDckLength(bytes.len()))?;
-        Ok(arr)
+        decode_dck_plaintext(&bytes)
     }
 }
 
@@ -2273,6 +2218,26 @@ fn generate_dck() -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(keys.secret_key().as_secret_bytes());
     out
+}
+
+/// Decode the NIP-44 plaintext used for a profile DCK wrap.
+///
+/// The shared Web protocol represents the key as 64 lowercase hex characters
+/// because the NIP-44 browser API encrypts strings. Earlier native releases
+/// encrypted the 32 raw bytes, so readers continue to accept that form while
+/// every new wrap is emitted in the interoperable text form.
+pub(crate) fn decode_dck_plaintext(plaintext: &[u8]) -> Result<[u8; 32], ProfileError> {
+    if let Ok(raw) = <[u8; 32]>::try_from(plaintext) {
+        return Ok(raw);
+    }
+    if plaintext.len() != 64 {
+        return Err(ProfileError::InvalidDckLength(plaintext.len()));
+    }
+    let decoded = hex::decode(plaintext)
+        .map_err(|error| ProfileError::Unwrap(format!("invalid hex-encoded DCK: {error}")))?;
+    decoded
+        .try_into()
+        .map_err(|bytes: Vec<u8>| ProfileError::InvalidDckLength(bytes.len()))
 }
 
 pub fn app_key_link_invite_keys(invite_secret_key: &str) -> Result<Keys, ProfileError> {
@@ -2318,11 +2283,17 @@ where
     I: IntoIterator<Item = &'a str>,
 {
     let mut wraps = BTreeMap::new();
+    let dck_plaintext = hex::encode(dck);
     for pubkey in pubkeys {
         let pk = PublicKey::from_hex(pubkey)
             .map_err(|e| ProfileError::InvalidAppKeyPubkey(e.to_string()))?;
-        let ct = nip44::encrypt(owner_secret, &pk, dck.as_slice(), Nip44Version::V2)
-            .map_err(|e| ProfileError::Wrap(e.to_string()))?;
+        let ct = nip44::encrypt(
+            owner_secret,
+            &pk,
+            dck_plaintext.as_bytes(),
+            Nip44Version::V2,
+        )
+        .map_err(|e| ProfileError::Wrap(e.to_string()))?;
         wraps.insert(pubkey.to_string(), ct);
     }
     Ok(wraps)
@@ -2680,5 +2651,9 @@ fn remove_file_if_present(path: &Path) -> Result<bool, std::io::Error> {
     }
 }
 
+#[cfg(test)]
+mod approval_receipt_tests;
+#[cfg(test)]
+mod dck_interop_tests;
 #[cfg(test)]
 mod tests;

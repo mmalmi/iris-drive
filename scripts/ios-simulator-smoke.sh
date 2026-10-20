@@ -12,6 +12,8 @@ esac
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/ios-simulator-signing.sh"
+source "$ROOT/scripts/lib/ios-simulator-build-profile.sh"
+source "$ROOT/scripts/lib/ios-blossom-smoke.sh"
 PROJECT="$ROOT/ios/IrisDriveIOS.xcodeproj"
 SCHEME="IrisDriveIOS"
 CONFIGURATION="${IRIS_DRIVE_IOS_XCODE_CONFIGURATION:-Debug}"
@@ -24,9 +26,9 @@ APP_GROUP_ID="${IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER:-group.fi.siriusbusiness.dri
 TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
 IDRIVE="${IRIS_DRIVE_IDRIVE_BIN:-$TARGET_DIR/debug/idrive}"
 RUST_IOS_TARGET="${IRIS_DRIVE_IOS_RUST_TARGET:-aarch64-apple-ios-sim}"
-RUST_LIB_DIR="$TARGET_DIR/$RUST_IOS_TARGET/debug"
-RUST_STATIC_LIB="$RUST_LIB_DIR/libiris_drive_app_core.a"
+iris_drive_ios_select_build_profile
 OWNER_CONFIG="$(mktemp -d -t iris-drive-ios-gui-owner)"
+export HTREE_DATA_DIR="$OWNER_CONFIG/hashtree-data"
 LOCAL_RELAY_READY="$(mktemp -t iris-drive-ios-smoke-relay.XXXXXX)"
 LOCAL_RELAY_LOG="$(mktemp -t iris-drive-ios-smoke-relay.XXXXXX.log)"
 LOCAL_RELAY_PID=""
@@ -35,34 +37,60 @@ LOCAL_RELAY_URL=""
 usage() {
   cat <<'USAGE'
 Usage:
-  scripts/ios-simulator-smoke.sh [--build-only]
+  scripts/ios-simulator-smoke.sh [--build-only] [--no-build] | --install-only
 
 Environment:
   IRIS_DRIVE_IOS_SIMULATOR_DEVICE  Optional simulator device name.
   IRIS_DRIVE_IOS_BUILD_LOG         Build log path.
+  IRIS_DRIVE_IOS_XCODE_CONFIGURATION  Debug (default) or Release; aligns Rust too.
   IRIS_DRIVE_IOS_SIMULATOR_BOOT_TIMEOUT_SECONDS
                                       Seconds to wait for simctl bootstatus.
+
+--no-build reuses the app produced by ios-gui-linking-smoke.sh in the shared
+DerivedData directory.
+--install-only builds and installs in place, preserving the retained app profile.
+It does not run the Debug-only functional journeys and cannot use --no-build.
 USAGE
 }
 
+SMOKE_COMPLETED=0
 cleanup() {
+  local status=$? cleanup_status=0
+  trap - EXIT
+  set +e
   if [[ -n "$LOCAL_RELAY_PID" ]]; then
     kill "$LOCAL_RELAY_PID" >/dev/null 2>&1 || true
     wait "$LOCAL_RELAY_PID" 2>/dev/null || true
   fi
-  rm -rf "$OWNER_CONFIG"
-  rm -f "$LOCAL_RELAY_READY" "$LOCAL_RELAY_LOG"
+  rm -rf "$OWNER_CONFIG" || cleanup_status=$?
+  rm -f "$LOCAL_RELAY_READY" "$LOCAL_RELAY_LOG" || cleanup_status=$?
+  stop_ios_smoke_blossom || cleanup_status=$?
+  if [[ "$status" == 0 && "$cleanup_status" != 0 ]]; then status="$cleanup_status"; fi
+  # Bash 3.2 can report zero to EXIT after a nounset inside a function.
+  if [[ "$SMOKE_COMPLETED" != 1 && "$status" == 0 ]]; then status=1; fi
+  exit "$status"
 }
 trap cleanup EXIT
 
 BUILD_ONLY=0
+NO_BUILD=0
+INSTALL_ONLY=0
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --build-only)
       BUILD_ONLY=1
       shift
       ;;
+    --no-build)
+      NO_BUILD=1
+      shift
+      ;;
+    --install-only)
+      INSTALL_ONLY=1
+      shift
+      ;;
     -h|--help)
+      SMOKE_COMPLETED=1
       usage
       exit 0
       ;;
@@ -73,6 +101,10 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+if [[ "$INSTALL_ONLY" == 1 && ( "$BUILD_ONLY" == 1 || "$NO_BUILD" == 1 ) ]]; then
+  echo "FAIL: --install-only requires its own build; cannot combine with --build-only or --no-build" >&2
+  exit 2
+fi
 
 select_simulator() {
   local devices_json candidates_file
@@ -298,52 +330,54 @@ start_local_relay() {
 
 configure_owner_local_relay() {
   start_local_relay
-  "$IDRIVE" --config-dir "$OWNER_CONFIG" relays add "$LOCAL_RELAY_URL" >/dev/null
+  configure_ios_smoke_relay "$OWNER_CONFIG"
 }
-
-if [[ ! -x "$IDRIVE" ]]; then
-  cargo build -p idrive
-fi
-
-cargo build -p iris-drive-app-core --target "$RUST_IOS_TARGET"
-if [[ ! -f "$RUST_STATIC_LIB" ]]; then
-  echo "FAIL: static app-core library not found at $RUST_STATIC_LIB" >&2
-  exit 1
-fi
-
-if command -v xcodegen >/dev/null 2>&1; then
-  (cd "$ROOT/ios" && xcodegen generate)
-elif [[ ! -d "$PROJECT" ]]; then
-  echo "FAIL: $PROJECT is missing and xcodegen is not installed" >&2
-  exit 1
-fi
 
 DEVICE_UDID="$(select_simulator)"
 DESTINATION="platform=iOS Simulator,id=$DEVICE_UDID"
 
-xcodebuild \
-  -project "$PROJECT" \
-  -scheme "$SCHEME" \
-  -configuration "$CONFIGURATION" \
-  -derivedDataPath "$DERIVED_DATA" \
-  -destination "$DESTINATION" \
-  CODE_SIGNING_ALLOWED=YES \
-  CODE_SIGNING_REQUIRED=YES \
-  CODE_SIGN_IDENTITY="${IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY:--}" \
-  PROVISIONING_PROFILE_SPECIFIER= \
-  LIBRARY_SEARCH_PATHS="$RUST_LIB_DIR" \
-  OTHER_LDFLAGS="$RUST_STATIC_LIB" \
-  build >"$BUILD_LOG"
+if [[ "$INSTALL_ONLY" == 0 && ! -x "$IDRIVE" ]]; then
+  cargo build -p idrive
+fi
+
+if [[ "$NO_BUILD" == "0" ]]; then
+  iris_drive_ios_build_app_core
+
+  if command -v xcodegen >/dev/null 2>&1; then
+    (cd "$ROOT/ios" && xcodegen generate)
+  elif [[ ! -d "$PROJECT" ]]; then
+    echo "FAIL: $PROJECT is missing and xcodegen is not installed" >&2
+    exit 1
+  fi
+
+  xcodebuild \
+    -project "$PROJECT" \
+    -scheme "$SCHEME" \
+    -configuration "$CONFIGURATION" \
+    -derivedDataPath "$DERIVED_DATA" \
+    -destination "$DESTINATION" \
+    CODE_SIGNING_ALLOWED=YES \
+    CODE_SIGNING_REQUIRED=YES \
+    CODE_SIGN_IDENTITY="${IRIS_DRIVE_IOS_CODE_SIGN_IDENTITY:--}" \
+    PROVISIONING_PROFILE_SPECIFIER= \
+    ARCHS="$RUST_IOS_ARCH" \
+    ONLY_ACTIVE_ARCH=YES \
+    LIBRARY_SEARCH_PATHS="$RUST_LIB_DIR" \
+    OTHER_LDFLAGS="$RUST_STATIC_LIB" \
+    build >"$BUILD_LOG"
+fi
 
 APP_PATH="$(resolve_app_path)"
 if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
-  echo "FAIL: built iOS app not found. Build log: $BUILD_LOG" >&2
+  echo "FAIL: iOS app not found in DerivedData. Build log: $BUILD_LOG" >&2
   exit 1
 fi
+iris_drive_ios_assert_build_configuration "$APP_PATH"
 assert_static_app_core_linkage "$APP_PATH"
 iris_drive_ios_assert_simulator_entitlements "$DERIVED_DATA" "$CONFIGURATION"
 
 if [[ "$BUILD_ONLY" == "1" ]]; then
+  SMOKE_COMPLETED=1
   echo "IOS_BUILD_OK"
   echo "$APP_PATH"
   exit 0
@@ -351,7 +385,17 @@ fi
 
 wait_for_simulator_boot "$DEVICE_UDID" "$SIMULATOR_BOOT_TIMEOUT_SECONDS"
 
+if [[ "$INSTALL_ONLY" == 1 ]]; then
+  xcrun simctl install "$DEVICE_UDID" "$APP_PATH"
+  SMOKE_COMPLETED=1
+  echo "IOS_INSTALL_OK configuration=$CONFIGURATION rust_profile=$RUST_BUILD_PROFILE"
+  echo "$APP_PATH"
+  exit 0
+fi
+
 xcrun simctl uninstall "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
+start_ios_smoke_blossom
+configure_ios_smoke_blossom "$OWNER_CONFIG"
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
 configure_owner_local_relay
 owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["app_key_link_invite"]["url"])' <<<"$owner_json")"
@@ -418,8 +462,12 @@ PY
   exit 1
 fi
 
+xcrun simctl terminate "$DEVICE_UDID" "$BUNDLE_ID" >/dev/null 2>&1 || true
 safe_remove_sim_container "$SIM_APP_BASE_DIR"
 mkdir -p "$SIM_APP_BASE_DIR"
+
+configure_ios_smoke_blossom "$SIM_APP_BASE_DIR"
+configure_ios_smoke_relay "$SIM_APP_BASE_DIR"
 
 SIMCTL_CHILD_IRIS_DRIVE_DEBUG_ACTION=link-device \
   SIMCTL_CHILD_IRIS_DRIVE_DEBUG_OWNER="$owner_invite" \
@@ -445,6 +493,9 @@ if [[ "$roster_size" != "2" ]]; then
   exit 1
 fi
 
+assert_ios_smoke_blossom_handoff "$approved_json"
+
+SMOKE_COMPLETED=1
 echo "IOS_SIMULATOR_SMOKE_OK"
 echo "device=$DEVICE_UDID"
 echo "app=$APP_PATH"

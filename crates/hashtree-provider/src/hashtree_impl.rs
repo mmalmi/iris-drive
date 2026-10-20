@@ -245,15 +245,22 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
         if offset >= resolved.size || size == 0 {
             return Ok(Vec::new());
         }
-        let end = (offset + size).min(resolved.size);
+        let end = offset.saturating_add(size).min(resolved.size);
         if resolved.cid.key.is_some() {
-            // Encrypted single-chunk blob — fetch + slice.
+            // Encrypted content must be validated before slicing.
             let data = self
                 .tree
-                .get(&resolved.cid, None)
+                .get(&resolved.cid, Some(resolved.size))
                 .await
                 .map_err(map_err)?
                 .ok_or(ProviderError::NotFound)?;
+            // A directory entry is peer-controlled metadata; its declared size
+            // must not become a slice index until the payload agrees with it.
+            if data.len() as u64 != resolved.size {
+                return Err(ProviderError::Backend(
+                    "file size does not match directory entry".into(),
+                ));
+            }
             let start = offset as usize;
             let stop = (end as usize).min(data.len());
             return Ok(data[start..stop].to_vec());

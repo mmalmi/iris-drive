@@ -12,26 +12,51 @@ DEBUG_NETWORK_PORT_EXTRA="${IRIS_DRIVE_ANDROID_DEBUG_NETWORK_PORT_EXTRA:-to.iris
 APK_PATH="${IRIS_DRIVE_ANDROID_APK:-$ROOT/android/app/build/outputs/apk/uiTest/app-uiTest.apk}"
 TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
 IDRIVE="${IRIS_DRIVE_IDRIVE_BIN:-$TARGET_DIR/debug/idrive}"
-OWNER_CONFIG="$(mktemp -d -t iris-drive-android-gui-owner)"
-OWNER_SOURCE_DIR="$(mktemp -d -t iris-drive-android-gui-owner-files)"
-OWNER_DAEMON_LOG="$(mktemp -t iris-drive-android-gui-owner-daemon.XXXXXX)"
+OWNER_CONFIG="$(mktemp -d "${TMPDIR:-/tmp}/iris-drive-android-gui-owner.XXXXXX")"
+export HTREE_DATA_DIR="$OWNER_CONFIG/hashtree-data"
+OWNER_SOURCE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/iris-drive-android-gui-owner-files.XXXXXX")"
+OWNER_DAEMON_LOG="$(mktemp "${TMPDIR:-/tmp}/iris-drive-android-gui-owner-daemon.XXXXXX")"
 OWNER_DAEMON_PID=""
 OWNER_FIPS_PORT=""
 OWNER_HOST_ADDR="${IRIS_DRIVE_ANDROID_HOST_ADDR:-}"
-LOCAL_RELAY_READY="$(mktemp -t iris-drive-android-gui-relay.XXXXXX)"
-LOCAL_RELAY_LOG="$(mktemp -t iris-drive-android-gui-relay.XXXXXX.log)"
+LOCAL_RELAY_READY="$(mktemp "${TMPDIR:-/tmp}/iris-drive-android-gui-relay.XXXXXX")"
+LOCAL_RELAY_LOG="$(mktemp "${TMPDIR:-/tmp}/iris-drive-android-gui-relay.log.XXXXXX")"
 LOCAL_RELAY_PID=""
 LOCAL_RELAY_URL=""
+LOCAL_RELAY_DEVICE_URL=""
+LOCAL_RELAY_PORT=""
+LOCAL_BLOSSOM_READY="$(mktemp "${TMPDIR:-/tmp}/iris-drive-android-gui-blossom.XXXXXX")"
+LOCAL_BLOSSOM_LOG="$(mktemp "${TMPDIR:-/tmp}/iris-drive-android-gui-blossom.log.XXXXXX")"
+LOCAL_BLOSSOM_REQUEST_LOG="$(mktemp "${TMPDIR:-/tmp}/iris-drive-android-gui-blossom.requests.XXXXXX")"
+LOCAL_BLOSSOM_STORAGE="$(mktemp -d "${TMPDIR:-/tmp}/iris-drive-android-gui-blossom-storage.XXXXXX")"
+LOCAL_BLOSSOM_PID=""
+LOCAL_BLOSSOM_PORT=""
+LOCAL_BLOSSOM_DEVICE_URL=""
 USE_DIRECT_STATIC_PEER="${IRIS_DRIVE_ANDROID_USE_DIRECT_STATIC_PEER:-true}"
 OWNER_FIPS_OPEN_DISCOVERY_MAX_PENDING="${IRIS_DRIVE_ANDROID_FIPS_OPEN_DISCOVERY_MAX_PENDING:-8}"
 ANDROID_FIPS_PORT="${IRIS_DRIVE_ANDROID_FIPS_PORT:-59011}"
-LINK_TIMEOUT_SECS="${IRIS_DRIVE_ANDROID_LINK_TIMEOUT_SECS:-90}"
+LINK_REQUEST_TIMEOUT_SECS="${IRIS_DRIVE_ANDROID_LINK_REQUEST_TIMEOUT_SECS:-${IRIS_DRIVE_ANDROID_LINK_TIMEOUT_SECS:-90}}"
+AUTHORIZATION_TIMEOUT_SECS="${IRIS_DRIVE_ANDROID_AUTHORIZATION_TIMEOUT_SECS:-15}"
+PROVIDER_SYNC_TIMEOUT_SECS="${IRIS_DRIVE_ANDROID_PROVIDER_SYNC_TIMEOUT_SECS:-${IRIS_DRIVE_ANDROID_LINK_TIMEOUT_SECS:-90}}"
 PUBLISH_TIMEOUT_SECS="${IRIS_DRIVE_ANDROID_PUBLISH_TIMEOUT_SECS:-3}"
 NETWORK_PROBE_HOST="${IRIS_DRIVE_ANDROID_NETWORK_PROBE_HOST:-1.1.1.1}"
 NETWORK_PROBE_PORT="${IRIS_DRIVE_ANDROID_NETWORK_PROBE_PORT:-443}"
 serial="${IRIS_DRIVE_ANDROID_SERIAL:-${ANDROID_SERIAL:-}}"
 
 cleanup() {
+  local status=$?
+  trap - EXIT
+  set +e
+  if [[ -n "$LOCAL_RELAY_PORT" && -n "${ADB:-}" && -n "$serial" ]]; then
+    "$ADB" -s "$serial" reverse --remove "tcp:$LOCAL_RELAY_PORT" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$LOCAL_BLOSSOM_PORT" && -n "${ADB:-}" && -n "$serial" ]]; then
+    "$ADB" -s "$serial" reverse --remove "tcp:$LOCAL_BLOSSOM_PORT" >/dev/null 2>&1 || true
+  fi
+  if [[ -n "$LOCAL_BLOSSOM_PID" ]]; then
+    kill "$LOCAL_BLOSSOM_PID" >/dev/null 2>&1 || true
+    wait "$LOCAL_BLOSSOM_PID" 2>/dev/null || true
+  fi
   if [[ -n "$OWNER_DAEMON_PID" ]]; then
     kill "$OWNER_DAEMON_PID" >/dev/null 2>&1 || true
     wait "$OWNER_DAEMON_PID" 2>/dev/null || true
@@ -40,15 +65,44 @@ cleanup() {
     kill "$LOCAL_RELAY_PID" >/dev/null 2>&1 || true
     wait "$LOCAL_RELAY_PID" 2>/dev/null || true
   fi
+  if [[ -n "${IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR:-}" ]]; then
+    mkdir -p "$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR"
+    cp -n "$LOCAL_BLOSSOM_REQUEST_LOG" "$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR/blossom-requests.jsonl"
+    cp -n "$LOCAL_BLOSSOM_LOG" "$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR/blossom.log"
+    cp -n "$LOCAL_RELAY_LOG" "$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR/relay.log"
+    cp -n "$OWNER_DAEMON_LOG" "$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR/owner-daemon.log"
+  fi
   if [[ "${IRIS_DRIVE_ANDROID_KEEP_TEST_APP:-false}" != "true" && -n "${ADB:-}" && -n "$serial" ]]; then
     "$ADB" -s "$serial" uninstall "$PACKAGE_NAME" >/dev/null 2>&1 || true
     "$ADB" -s "$serial" uninstall "$PACKAGE_NAME.test" >/dev/null 2>&1 || true
   fi
   rm -rf "$OWNER_CONFIG"
   rm -rf "$OWNER_SOURCE_DIR"
-  rm -f "$OWNER_DAEMON_LOG" "$LOCAL_RELAY_READY" "$LOCAL_RELAY_LOG"
+  rm -rf "$LOCAL_BLOSSOM_STORAGE"
+  rm -f \
+    "$OWNER_DAEMON_LOG" \
+    "$LOCAL_RELAY_READY" \
+    "$LOCAL_RELAY_LOG" \
+    "$LOCAL_BLOSSOM_READY" \
+    "$LOCAL_BLOSSOM_REQUEST_LOG" \
+    "$LOCAL_BLOSSOM_LOG"
+  exit "$status"
 }
 trap cleanup EXIT
+
+for timeout_name in \
+  LINK_REQUEST_TIMEOUT_SECS \
+  AUTHORIZATION_TIMEOUT_SECS \
+  PROVIDER_SYNC_TIMEOUT_SECS \
+  PUBLISH_TIMEOUT_SECS
+do
+  [[ "${!timeout_name}" =~ ^[1-9][0-9]*$ ]] \
+    || { echo "FAIL: $timeout_name must be a positive integer" >&2; exit 2; }
+done
+if ((AUTHORIZATION_TIMEOUT_SECS > 15)); then
+  echo "FAIL: IRIS_DRIVE_ANDROID_AUTHORIZATION_TIMEOUT_SECS must be at most 15" >&2
+  exit 2
+fi
 
 sdk_from_local_properties() {
   local file="$ROOT/android/local.properties"
@@ -103,6 +157,11 @@ with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
     sock.bind(("127.0.0.1", 0))
     print(sock.getsockname()[1])
 PY
+}
+
+monotonic_milliseconds() {
+  perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC \
+    -e 'printf "%.0f\n", clock_gettime(CLOCK_MONOTONIC) * 1000'
 }
 
 bool_true() {
@@ -214,9 +273,123 @@ start_local_relay() {
   exit 1
 }
 
+start_local_blossom() {
+  local host_url
+  if [[ -n "$LOCAL_BLOSSOM_DEVICE_URL" ]]; then
+    return 0
+  fi
+
+  python3 "$ROOT/scripts/local-blossom-server.py" \
+    --host 127.0.0.1 \
+    --port 0 \
+    --storage-dir "$LOCAL_BLOSSOM_STORAGE" \
+    --ready-file "$LOCAL_BLOSSOM_READY" \
+    --request-log "$LOCAL_BLOSSOM_REQUEST_LOG" \
+    >"$LOCAL_BLOSSOM_LOG" 2>&1 &
+  LOCAL_BLOSSOM_PID="$!"
+  for _ in $(seq 1 100); do
+    if [[ -s "$LOCAL_BLOSSOM_READY" ]]; then
+      host_url="$(cat "$LOCAL_BLOSSOM_READY")"
+      LOCAL_BLOSSOM_PORT="$(python3 -c 'import sys,urllib.parse; parsed=urllib.parse.urlsplit(sys.argv[1]); print(parsed.port or "")' "$host_url")"
+      if [[ ! "$LOCAL_BLOSSOM_PORT" =~ ^[1-9][0-9]*$ ]]; then
+        echo "FAIL: local Blossom fixture returned an invalid URL" >&2
+        cat "$LOCAL_BLOSSOM_LOG" >&2 || true
+        exit 1
+      fi
+      if ! "$ADB" -s "$serial" reverse \
+        "tcp:$LOCAL_BLOSSOM_PORT" "tcp:$LOCAL_BLOSSOM_PORT" >/dev/null; then
+        echo "FAIL: could not expose the local Blossom fixture to Android via adb reverse" >&2
+        exit 1
+      fi
+      LOCAL_BLOSSOM_DEVICE_URL="http://127.0.0.1:$LOCAL_BLOSSOM_PORT"
+      return 0
+    fi
+    if ! kill -0 "$LOCAL_BLOSSOM_PID" >/dev/null 2>&1; then
+      echo "FAIL: local Blossom fixture exited before becoming ready" >&2
+      cat "$LOCAL_BLOSSOM_LOG" >&2 || true
+      exit 1
+    fi
+    sleep 0.1
+  done
+  echo "FAIL: local Blossom fixture did not become ready" >&2
+  cat "$LOCAL_BLOSSOM_LOG" >&2 || true
+  exit 1
+}
+
+start_local_android_relay() {
+  start_local_relay
+  LOCAL_RELAY_PORT="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.urlsplit(sys.argv[1]).port or "")' "$LOCAL_RELAY_URL")"
+  [[ "$LOCAL_RELAY_PORT" =~ ^[1-9][0-9]*$ ]] || return 1
+  "$ADB" -s "$serial" reverse "tcp:$LOCAL_RELAY_PORT" "tcp:$LOCAL_RELAY_PORT" >/dev/null
+  LOCAL_RELAY_DEVICE_URL="ws://127.0.0.1:$LOCAL_RELAY_PORT"
+}
+
+verify_local_blossom_uploads() {
+  if (( $(local_blossom_blob_count) == 0 )); then
+    echo "FAIL: Android approval tests did not upload any block to the local Blossom fixture" >&2
+    cat "$LOCAL_BLOSSOM_LOG" >&2 || true
+    return 1
+  fi
+}
+
+local_blossom_blob_count() {
+  find "$LOCAL_BLOSSOM_STORAGE" -type f -name '*.bin' -print \
+    | awk 'END { print NR + 0 }'
+}
+
+configure_owner_local_blossom() {
+  local configured
+  "$IDRIVE" --config-dir "$OWNER_CONFIG" \
+    blossom-servers remove https://upload.iris.to >/dev/null
+  "$IDRIVE" --config-dir "$OWNER_CONFIG" \
+    blossom-servers add "$LOCAL_BLOSSOM_DEVICE_URL" >/dev/null
+  configured="$("$IDRIVE" --config-dir "$OWNER_CONFIG" blossom-servers list)"
+  if ! python3 -c 'import json,sys; servers=json.load(sys.stdin); expected=sys.argv[1]; raise SystemExit(0 if servers == [expected] else 1)' \
+    "$LOCAL_BLOSSOM_DEVICE_URL" <<<"$configured"; then
+    echo "FAIL: CLI owner must use only the deterministic local Blossom fixture" >&2
+    echo "$configured" >&2
+    return 1
+  fi
+}
+
+assert_local_blossom_approval_handoff() {
+  local approval_json="$1"
+  if ! python3 -c '
+import json, sys
+approval = json.load(sys.stdin)
+upload = approval.get("blossom_upload") or {}
+total = int(upload.get("total_hashes") or 0)
+uploaded = int(upload.get("uploaded") or 0)
+already_present = int(upload.get("already_present") or 0)
+valid = (
+    approval.get("approval_publish_error") is None
+    and approval.get("published_drive_root") is True
+    and int(approval.get("published_approval_events") or 0) > 0
+    and bool(approval.get("root_cid"))
+    and total > 0
+    and uploaded >= 0
+    and already_present >= 0
+    and uploaded + already_present == total
+)
+raise SystemExit(0 if valid else 1)
+' <<<"$approval_json"; then
+    echo "FAIL: CLI owner approval did not publish a complete local Blossom root handoff" >&2
+    printf '%s\n' "$approval_json" >&2
+    return 1
+  fi
+}
+
 configure_owner_local_relay() {
   start_local_relay
   "$IDRIVE" --config-dir "$OWNER_CONFIG" relays add "$LOCAL_RELAY_URL" >/dev/null
+  local relay
+  while IFS= read -r relay; do
+    [[ "$relay" == "$LOCAL_RELAY_URL" ]] && continue
+    "$IDRIVE" --config-dir "$OWNER_CONFIG" relays remove "$relay" >/dev/null
+  done < <("$IDRIVE" --config-dir "$OWNER_CONFIG" relays list \
+    | python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin)))')
+  "$IDRIVE" --config-dir "$OWNER_CONFIG" relays list \
+    | python3 -c 'import json,sys; assert json.load(sys.stdin) == [sys.argv[1]], "Owner fixture must use only its local relay"' "$LOCAL_RELAY_URL"
 }
 
 wait_for_owner_inbound_request() {
@@ -238,10 +411,10 @@ owner_inbound_request_url() {
     | python3 -c 'import json,sys; s=json.load(sys.stdin); expected=sys.argv[1]; prefix="https://drive.iris.to/approve-device/"; reqs=((s.get("profile") or {}).get("inbound_app_key_link_requests") or []); print(next(r["url"] for r in reqs if r.get("app_key_npub") == expected and str(r.get("url") or "").startswith(prefix)))' "$expected_device"
 }
 
-wait_for_android_authorized() {
+wait_for_android_authorized_until() {
   local expected_device="$1"
-  local seconds="$2"
-  for _ in $(seq 1 "$((seconds * 5))"); do
+  local deadline_ms="$2"
+  while (( $(monotonic_milliseconds) <= deadline_ms )); do
     adb_am_start -n "$MAIN_ACTIVITY" \
       --es "$DEBUG_ACTION_EXTRA" refresh >/dev/null
     if "$ADB" -s "$serial" exec-out run-as "$PACKAGE_NAME" cat files/debug-state.json 2>/dev/null \
@@ -348,7 +521,12 @@ require_android_app_network_permission() {
 
 run_android_gui_tests() {
   local class="to.iris.drive.app.IrisDriveAndroidGuiFlowTest"
+  local approval_deep_link_class="to.iris.drive.app.MainActivityApprovalDeepLinkTest"
+  local native_state_class="to.iris.drive.app.IrisDriveAndroidNativeStateTest"
+  local share_api_class="to.iris.drive.app.ShareActivityInstrumentedTest"
   local mode="${IRIS_DRIVE_ANDROID_GUI_TEST_MODE:-smoke}"
+  local blossom_argument="-Pandroid.testInstrumentationRunnerArguments.blossom_server=$LOCAL_BLOSSOM_DEVICE_URL"
+  local relay_argument="-Pandroid.testInstrumentationRunnerArguments.relay_server=$LOCAL_RELAY_DEVICE_URL"
   local smoke_tests=(
     createProfileFlowDoesNotRequireUsernameOrProfilePhoto
     linkThisDeviceFlowClicksThroughSignInUi
@@ -373,56 +551,40 @@ run_android_gui_tests() {
   )
 
   local test
+  local filter=""
   case "$mode" in
     class)
-      (
-        cd "$ROOT"
-        ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedUiTestAndroidTest \
-          "-Pandroid.testInstrumentationRunnerArguments.class=$class"
-      )
+      filter="$class,$approval_deep_link_class,$native_state_class,$share_api_class"
       ;;
     serial)
       for test in "${tests[@]}"; do
         (
           cd "$ROOT"
           ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedUiTestAndroidTest \
+            "$blossom_argument" \
+            "$relay_argument" \
             "-Pandroid.testInstrumentationRunnerArguments.class=$class#$test"
         )
       done
+      filter="$approval_deep_link_class,$native_state_class,$share_api_class"
       ;;
     smoke)
-      local filter=""
       for test in "${smoke_tests[@]}"; do
         filter+="${filter:+,}$class#$test"
       done
-      (
-        cd "$ROOT"
-        ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedUiTestAndroidTest \
-          "-Pandroid.testInstrumentationRunnerArguments.class=$filter"
-      )
+      filter+=",$approval_deep_link_class,$native_state_class,$share_api_class"
       ;;
     *)
       echo "FAIL: unknown IRIS_DRIVE_ANDROID_GUI_TEST_MODE=$mode (expected smoke, serial, or class)" >&2
       return 1
       ;;
   esac
-}
-
-run_android_native_state_tests() {
-  local class="to.iris.drive.app.IrisDriveAndroidNativeStateTest"
   (
     cd "$ROOT"
-    ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedUiTestAndroidTest \
-      "-Pandroid.testInstrumentationRunnerArguments.class=$class"
-  )
-}
-
-run_android_share_api_test() {
-  local class="to.iris.drive.app.ShareActivityInstrumentedTest"
-  (
-    cd "$ROOT"
-    ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedUiTestAndroidTest \
-      "-Pandroid.testInstrumentationRunnerArguments.class=$class"
+    ANDROID_SERIAL="$serial" ./tools/run-android :app:assembleDebug :app:connectedUiTestAndroidTest \
+      "$blossom_argument" \
+      "$relay_argument" \
+      "-Pandroid.testInstrumentationRunnerArguments.class=$filter"
   )
 }
 
@@ -434,9 +596,10 @@ if [[ -z "$serial" ]]; then
 fi
 
 "$ADB" -s "$serial" wait-for-device
+start_local_blossom
+start_local_android_relay
 run_android_gui_tests
-run_android_native_state_tests
-run_android_share_api_test
+verify_local_blossom_uploads
 
 if [[ ! -x "$IDRIVE" ]]; then
   cargo build -p idrive
@@ -465,6 +628,7 @@ fi
 
 owner_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" init --force --label "CLI owner")"
 configure_owner_local_relay
+configure_owner_local_blossom
 owner_invite="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["app_key_link_invite"]["url"])' <<<"$owner_json")"
 owner_app_key_npub="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["current_app_key_npub"])' <<<"$owner_json")"
 printf 'hello from android gui sync smoke\n' >"$OWNER_SOURCE_DIR/android-smoke.txt"
@@ -548,7 +712,7 @@ if ! wait_for_owner_fips 20; then
   exit 1
 fi
 
-if ! wait_for_owner_inbound_request "$linked_device" "$LINK_TIMEOUT_SECS"; then
+if ! wait_for_owner_inbound_request "$linked_device" "$LINK_REQUEST_TIMEOUT_SECS"; then
   echo "FAIL: owner did not receive the Android GUI app-key-link request over FIPS." >&2
   dump_android_debug_files
   "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
@@ -557,11 +721,32 @@ if ! wait_for_owner_inbound_request "$linked_device" "$LINK_TIMEOUT_SECS"; then
 fi
 
 request_url="$(owner_inbound_request_url "$linked_device")"
+authorization_started_ms="$(monotonic_milliseconds)"
+authorization_deadline_ms=$((authorization_started_ms + AUTHORIZATION_TIMEOUT_SECS * 1000))
 approved_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" approve "$request_url" --label "Android GUI")"
+if [[ -n "${IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR:-}" ]]; then
+  mkdir -p "$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR"
+  printf '%s\n' "$approved_json" >"$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR/owner-approval.json"
+fi
+assert_local_blossom_approval_handoff "$approved_json"
 roster_size="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["roster_size"])' <<<"$approved_json")"
 if [[ "$roster_size" != "2" ]]; then
   echo "FAIL: CLI owner did not approve the inbound Android GUI request." >&2
   echo "$approved_json" >&2
+  exit 1
+fi
+
+if ! wait_for_android_authorized_until "$linked_device" "$authorization_deadline_ms"; then
+  echo "FAIL: Android did not become authorized within ${AUTHORIZATION_TIMEOUT_SECS}s of starting approval submission." >&2
+  dump_android_debug_files
+  "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
+  cat "$OWNER_DAEMON_LOG" >&2 || true
+  exit 1
+fi
+authorization_finished_ms="$(monotonic_milliseconds)"
+authorization_delivery_ms=$((authorization_finished_ms - authorization_started_ms))
+if ((authorization_finished_ms > authorization_deadline_ms)); then
+  echo "FAIL: Android authorization was observed after the strict ${AUTHORIZATION_TIMEOUT_SECS}s deadline (${authorization_delivery_ms}ms)." >&2
   exit 1
 fi
 
@@ -571,19 +756,11 @@ if ! python3 -c 'import json,sys; s=json.load(sys.stdin); raise SystemExit(0 if 
   echo "$publish_json" >&2
 fi
 
-if ! wait_for_android_authorized "$linked_device" "$LINK_TIMEOUT_SECS"; then
-  echo "FAIL: Android did not leave Waiting for approval after the owner approved its request." >&2
-  dump_android_debug_files
-  "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
-  cat "$OWNER_DAEMON_LOG" >&2 || true
-  exit 1
-fi
-
 adb_am_start -n "$MAIN_ACTIVITY" \
   --es "$DEBUG_ACTION_EXTRA" start-sync \
   "${android_fips_args[@]}" >/dev/null
 
-if ! wait_for_android_provider_entry "android-smoke.txt" "$LINK_TIMEOUT_SECS"; then
+if ! wait_for_android_provider_entry "android-smoke.txt" "$PROVIDER_SYNC_TIMEOUT_SECS"; then
   echo "FAIL: Android provider did not expose the owner file after approval and sync." >&2
   dump_android_debug_files
   "$IDRIVE" --config-dir "$OWNER_CONFIG" status >&2 || true
@@ -594,6 +771,7 @@ if ! wait_for_android_provider_entry "android-smoke.txt" "$LINK_TIMEOUT_SECS"; t
 fi
 
 echo "ANDROID_GUI_LINKING_AND_SYNC_SMOKE_OK"
+echo "authorization_delivery_ms=$authorization_delivery_ms clock=host_monotonic_ms start=before_approval_command finish=host_observed_authorization ceiling_ms=$((AUTHORIZATION_TIMEOUT_SECS * 1000))"
 echo "serial=$serial"
 echo "owner_config=$OWNER_CONFIG"
 echo "owner_fips_addr=$owner_fips_addr"

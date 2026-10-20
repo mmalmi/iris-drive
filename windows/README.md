@@ -28,9 +28,9 @@ Publish a runnable Windows app without requiring the .NET Desktop Runtime:
 powershell -ExecutionPolicy Bypass -File .\scripts\windows-publish.ps1 -Configuration Debug -DesktopShortcut -StopRunningApp
 ```
 
-The publish script builds `idrive.exe`, publishes the WPF shell self-contained
-for `win-x64`, copies `idrive.exe` next to `IrisDrive.exe`, and can recreate the
-desktop shortcut with the packaged Iris Drive icon.
+The publish script builds both Rust payloads, publishes the WPF shell
+self-contained for `win-x64`, and can recreate the desktop shortcut with the
+packaged Iris Drive icon.
 
 Build the release installer used by `scripts/local-release.mjs`:
 
@@ -38,14 +38,27 @@ Build the release installer used by `scripts/local-release.mjs`:
 powershell -ExecutionPolicy Bypass -File .\scripts\windows-publish.ps1 -Configuration Release -Installer -Tag v0.1.0 -OutputDir dist
 ```
 
-The installer path requires Inno Setup 6 (`iscc` / `ISCC.exe`) on the Windows
-builder and writes `iris-drive-v...-windows-x64-setup.exe` into the output
-directory.
+The installer path requires Inno Setup 6 (`iscc` / `ISCC.exe`) and the Visual
+Studio C++ Clang compiler component. It writes
+`iris-drive-v...-windows-x64-setup.exe` into the output directory after
+rejecting debug files and private build paths. Windows artifacts are
+intentionally unsigned, as recorded in
+[`release-policy.json`](../release-policy.json). Final releases still require
+both the CLI archive and installer, and htree publication content-addresses
+their exact bytes.
 
 The app looks for `idrive.exe` next to the app, under `target\debug`, under
 `target\release`, or at `IRIS_DRIVE_CLI`. It starts the daemon with the shared
 loopback gateway/resolver enabled by default and opens a native Windows drive
 folder instead of relying on the Windows WebClient redirector.
+
+If the window stays blank on an affected graphics driver or virtual desktop,
+set `IRIS_DRIVE_WINDOWS_SOFTWARE_RENDERING=1` before launching Iris Drive.
+The flag also accepts `true`, `yes`, or `on`, ignoring case and surrounding
+whitespace. It requests WPF software rendering for that Iris Drive process;
+it does not change Windows graphics settings or other running apps. The default
+renderer remains unchanged when the flag is unset or disabled. Software
+rendering may use more CPU, so enable it only where needed.
 
 The **Open Drive Folder** action registers `%USERPROFILE%\Iris Drive` as an
 Iris Drive Cloud Files sync root when the Windows Cloud Files API is available.

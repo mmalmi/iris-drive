@@ -76,14 +76,15 @@ fn snap<'a>(
         root,
         files,
         tombstones,
+        path_kind_replacements: None,
     }
 }
 
 #[test]
 fn empty_merge_is_empty() {
     let view = merge_drives(&[], &[]);
-    assert!(view.files.is_empty());
-    assert!(view.suppressed_by_tombstone.is_empty());
+    assert_eq!(view.files.len(), 0);
+    assert_eq!(view.suppressed_by_tombstone.len(), 0);
 }
 
 #[test]
@@ -124,7 +125,7 @@ fn ignored_paths_are_not_merged_from_legacy_roots() {
 
     assert_eq!(view.files.len(), 1);
     assert_eq!(view.files[0].path, "keep.txt");
-    assert!(view.suppressed_by_tombstone.is_empty());
+    assert_eq!(view.suppressed_by_tombstone.len(), 0);
 }
 
 #[test]
@@ -179,7 +180,7 @@ fn causal_descendant_wins_even_with_older_wall_clock() {
     assert_eq!(view.files.len(), 1);
     assert_eq!(view.files[0].source_app_key_pubkey, "dev-b");
     assert_eq!(view.files[0].hash, [2u8; 32]);
-    assert!(view.conflicts.is_empty());
+    assert_eq!(view.conflicts.len(), 0);
 }
 
 #[test]
@@ -199,6 +200,29 @@ fn observed_same_sequence_with_different_root_is_not_descendant() {
         "legacy timestamp ordering should win when ancestry is unknown"
     );
     assert_eq!(view.conflicts, vec!["x".to_string()]);
+}
+
+#[test]
+fn hash_only_observation_at_same_sequence_establishes_ancestry() {
+    let full_root = Cid::encrypted([0x31; 32], [0x77; 32]).to_string();
+    let hash_only_root = hashtree_core::to_hex(&[0x31; 32]);
+    let r_a = causal_root(&full_root, 300, 1, &[]);
+    let r_b = causal_root(
+        &Cid::encrypted([0x32; 32], [0x78; 32]).to_string(),
+        100,
+        1,
+        &[("dev-a", 1, &hash_only_root)],
+    );
+    let view = merge_drives(
+        &["dev-a", "dev-b"],
+        &[
+            snap("dev-a", &r_a, vec![file("x", 1, 1)], vec![]),
+            snap("dev-b", &r_b, vec![file("x", 2, 1)], vec![]),
+        ],
+    );
+
+    assert_eq!(view.files[0].source_app_key_pubkey, "dev-b");
+    assert_eq!(view.conflicts.len(), 0);
 }
 
 #[test]
@@ -242,7 +266,7 @@ fn concurrent_same_content_converges_without_conflict() {
         ],
     );
     assert_eq!(view.files.len(), 1);
-    assert!(view.conflicts.is_empty());
+    assert_eq!(view.conflicts.len(), 0);
 }
 
 #[test]
@@ -268,7 +292,7 @@ fn concurrent_same_whole_file_hash_converges_despite_different_content_cids() {
     );
     assert_eq!(view.files.len(), 1);
     assert_eq!(view.files[0].whole_file_hash, Some([9u8; 32]));
-    assert!(view.conflicts.is_empty());
+    assert_eq!(view.conflicts.len(), 0);
 }
 
 #[test]
@@ -306,9 +330,9 @@ fn causal_tombstone_suppresses_observed_write_even_with_older_clock() {
             snap("dev-b", &r_b, vec![], vec![tomb("x", 100)]),
         ],
     );
-    assert!(view.files.is_empty());
+    assert_eq!(view.files.len(), 0);
     assert_eq!(view.suppressed_by_tombstone, vec!["x".to_string()]);
-    assert!(view.conflicts.is_empty());
+    assert_eq!(view.conflicts.len(), 0);
 }
 
 #[test]
@@ -363,7 +387,7 @@ fn newer_tombstone_suppresses_older_write() {
             snap("dev-b", &r_b, vec![], vec![tomb("x", 200)]),
         ],
     );
-    assert!(view.files.is_empty());
+    assert_eq!(view.files.len(), 0);
     assert_eq!(view.suppressed_by_tombstone, vec!["x".to_string()]);
 }
 
@@ -393,8 +417,26 @@ fn same_timestamp_tombstone_wins_over_write() {
             snap("dev-b", &r, vec![], vec![tomb("x", 100)]),
         ],
     );
-    assert!(view.files.is_empty());
+    assert_eq!(view.files.len(), 0);
     assert_eq!(view.suppressed_by_tombstone, vec!["x".to_string()]);
+}
+
+#[test]
+fn visible_entry_wins_over_barrier_authored_by_the_same_root() {
+    let root = dev_root(100);
+    let view = merge_drives(
+        &["dev-a"],
+        &[snap(
+            "dev-a",
+            &root,
+            vec![file("x", 1, 1)],
+            vec![tomb("x", 100)],
+        )],
+    );
+
+    assert_eq!(view.files.len(), 1);
+    assert_eq!(view.files[0].path, "x");
+    assert_eq!(view.suppressed_files.len(), 0);
 }
 
 #[test]
@@ -446,7 +488,7 @@ fn tombstone_in_one_device_wipes_across_others_when_newer() {
             snap("dev-c", &r_c, vec![], vec![tomb("shared", 200)]),
         ],
     );
-    assert!(view.files.is_empty());
+    assert_eq!(view.files.len(), 0);
     assert_eq!(view.suppressed_by_tombstone, vec!["shared".to_string()]);
 }
 
@@ -472,7 +514,7 @@ fn local_only_roots_do_not_compete_with_source_roots() {
     assert_eq!(view.files.len(), 1);
     assert_eq!(view.files[0].source_app_key_pubkey, "remote");
     assert_eq!(view.files[0].hash, [2; 32]);
-    assert!(view.conflicts.is_empty());
+    assert_eq!(view.conflicts.len(), 0);
 }
 
 #[test]
@@ -499,9 +541,9 @@ fn local_only_roots_do_not_block_source_tombstones() {
         ],
     );
 
-    assert!(view.files.is_empty());
+    assert_eq!(view.files.len(), 0);
     assert_eq!(view.suppressed_by_tombstone, vec!["note.txt"]);
-    assert!(view.conflicts.is_empty());
+    assert_eq!(view.conflicts.len(), 0);
 }
 
 #[test]
@@ -527,7 +569,7 @@ fn local_only_roots_fill_in_when_source_root_is_absent() {
         vec!["note.txt"]
     );
     assert_eq!(view.files[0].source_app_key_pubkey, "local");
-    assert!(view.conflicts.is_empty());
+    assert_eq!(view.conflicts.len(), 0);
 }
 
 #[test]

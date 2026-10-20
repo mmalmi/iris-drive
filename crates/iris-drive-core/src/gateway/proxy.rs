@@ -51,11 +51,11 @@ pub(super) async fn proxy_htree_daemon_request(
         .map_err(|e| (StatusCode::BAD_GATEWAY, format!("hashtree daemon: {e}")))?;
     let status = StatusCode::from_u16(upstream.status().as_u16())
         .map_err(|e| (StatusCode::BAD_GATEWAY, e.to_string()))?;
-    let is_html = upstream
+    let is_active_content = upstream
         .headers()
         .get(CONTENT_TYPE)
-        .is_some_and(is_html_content_type);
-    if status.is_success() && is_html && !request_allows_html(&request) {
+        .is_some_and(|value| value.to_str().is_ok_and(is_active_content_type));
+    if is_active_content && !request_allows_html(&request) {
         return Err((
             StatusCode::FORBIDDEN,
             "HTML htree apps require an isolated iris.localhost origin".into(),
@@ -66,6 +66,9 @@ pub(super) async fn proxy_htree_daemon_request(
         if is_proxy_response_header(name.as_str()) {
             builder = builder.header(name.as_str(), value.as_bytes());
         }
+    }
+    if !request_allows_html(&request) {
+        builder = builder.header("content-security-policy", "sandbox");
     }
     if let Some(key) = request_key_query(&request)
         && let Some(cookie) = key_cookie_value(key)
@@ -203,7 +206,7 @@ async fn serve_public_blossom_tree_path(
         .first_or_octet_stream()
         .essence_str()
         .to_string();
-    if mime_type.eq_ignore_ascii_case("text/html") && !allow_html {
+    if is_active_content_type(&mime_type) && !allow_html {
         return Err((
             StatusCode::FORBIDDEN,
             "HTML htree apps require an isolated iris.localhost origin".into(),
@@ -220,13 +223,17 @@ async fn serve_public_blossom_tree_path(
             Body::empty(),
         );
     }
+    let mut builder = response_builder(StatusCode::OK, method == Method::HEAD)
+        .header(CONTENT_TYPE, mime_type)
+        .header(CONTENT_LENGTH, bytes.len().to_string())
+        .header(CACHE_CONTROL, cache_control(CachePolicy::Mutable))
+        .header(ETAG, etag)
+        .header(X_CONTENT_TYPE_OPTIONS, "nosniff");
+    if !allow_html {
+        builder = builder.header("content-security-policy", "sandbox");
+    }
     try_finish_response(
-        response_builder(StatusCode::OK, method == Method::HEAD)
-            .header(CONTENT_TYPE, mime_type)
-            .header(CONTENT_LENGTH, bytes.len().to_string())
-            .header(CACHE_CONTROL, cache_control(CachePolicy::Mutable))
-            .header(ETAG, etag)
-            .header(X_CONTENT_TYPE_OPTIONS, "nosniff"),
+        builder,
         if method == Method::HEAD {
             Body::empty()
         } else {
@@ -402,19 +409,15 @@ fn request_key_query(request: &HtreeProxyRequest) -> Option<&str> {
 fn request_allows_html(request: &HtreeProxyRequest) -> bool {
     match request {
         HtreeProxyRequest::Tree { allow_html, .. } => *allow_html,
-        HtreeProxyRequest::Runtime { .. } => true,
+        HtreeProxyRequest::Runtime { .. } => false,
     }
 }
 
-fn is_html_content_type(value: &HeaderValue) -> bool {
-    value.to_str().ok().is_some_and(|value| {
-        value
-            .split(';')
-            .next()
-            .unwrap_or_default()
-            .trim()
-            .eq_ignore_ascii_case("text/html")
-    })
+fn is_active_content_type(value: &str) -> bool {
+    let mime = value.split(';').next().unwrap_or_default().trim();
+    ["text/html", "application/xhtml+xml", "image/svg+xml"]
+        .iter()
+        .any(|active| mime.eq_ignore_ascii_case(active))
 }
 
 fn htree_daemon_target(request: &HtreeProxyRequest) -> String {
@@ -469,7 +472,12 @@ pub(super) fn runtime_htree_daemon_request(
 }
 
 pub(super) fn htree_runtime_host_allowed(headers: &HeaderMap) -> bool {
-    share_action_host_allowed(headers)
+    request_host(headers).is_some_and(|host| {
+        is_loopback_host(&host)
+            || host == LOCAL_PORTAL_HOST
+            || host.ends_with(IRIS_LOCALHOST_SUFFIX)
+            || host.ends_with(IRIS_LOCAL_SUFFIX)
+    })
 }
 
 pub(super) fn is_htree_runtime_ws_path(path: &str) -> bool {

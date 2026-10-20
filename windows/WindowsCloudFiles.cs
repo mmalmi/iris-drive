@@ -190,15 +190,12 @@ public static partial class WindowsCloudFiles
         new(StringComparer.Ordinal);
     private static CloudFilesConnection? activeConnection;
 
-    public static string SyncRootPath =>
-        System.IO.Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            "Iris Drive");
+    public static bool IsEnabled => WindowsProfileEnvironment.CloudRootPath is not null;
 
-    private static string ConfigDirectoryPath =>
-        Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-            "iris-drive");
+    public static string SyncRootPath => WindowsProfileEnvironment.CloudRootPath
+        ?? throw new InvalidOperationException("Windows Cloud Files is disabled");
+
+    private static string ConfigDirectoryPath => WindowsProfileEnvironment.ConfigDirectory;
 
     public static void DebugLog(string message)
     {
@@ -708,7 +705,11 @@ public static partial class WindowsCloudFiles
         Action<string, string>? renamePath = null,
         IReadOnlyCollection<WindowsCloudLocalStateEntry>? previousState = null)
     {
-        var path = SyncRootPath;
+        var path = WindowsProfileEnvironment.CloudRootPath;
+        if (path is null)
+        {
+            return NativeProviderUnavailable("", "Windows Cloud Files is disabled");
+        }
         Directory.CreateDirectory(path);
 
         try
@@ -2120,7 +2121,7 @@ public static partial class WindowsCloudFiles
 
     private static void RegisterSyncRoot(string path)
     {
-        var identityBytes = Encoding.UTF8.GetBytes("iris-drive:main");
+        var identityBytes = Encoding.UTF8.GetBytes(WindowsProfileEnvironment.SyncRootIdentity);
         var identity = Marshal.AllocHGlobal(identityBytes.Length);
         try
         {

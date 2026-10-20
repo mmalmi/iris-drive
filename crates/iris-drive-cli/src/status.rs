@@ -104,6 +104,11 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
         });
     let fips_diagnostics = fips_network_diagnostics(&config, daemon_status.as_ref());
     let backup_targets = backup_targets_status(&config);
+    let friend_backups =
+        match iris_drive_core::friend_backup::status::friend_backup_status(config_dir) {
+            Ok(status) => serde_json::to_value(status)?,
+            Err(error) => json!({"error": format!("loading friend backups: {error:#}")}),
+        };
     let backup_target_count = backup_targets.len();
     let profile_block = status_profile_block(&config);
     let sync_status = daemon_sync_status_with_peers(daemon_status.as_ref(), &peers);
@@ -153,6 +158,7 @@ pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {
                 "blossom_servers": config.blossom_servers,
                 "backup_target_count": backup_target_count,
                 "backup_targets": backup_targets,
+                "friend_backups": friend_backups,
                 "authorized_app_key_count": authorized_app_key_count,
                 "published_app_key_roots": published_app_key_roots,
                 "relay_statuses": normalized_relay_statuses(&config, daemon_status.as_ref()),
@@ -349,6 +355,10 @@ pub(crate) fn status_profile_block(config: &AppConfig) -> Option<Value> {
                 .map_or(0, |snapshot| snapshot.app_actors.len())
         };
         output.insert("roster_size".to_string(), json!(roster_size));
+        output.insert(
+            "pending_device_approval_receipt_count".to_string(),
+            json!(state.pending_device_approval_receipts.len()),
+        );
         output.insert(
             "user_profile".to_string(),
             config.user_profile.as_ref().map_or(Value::Null, |profile| {

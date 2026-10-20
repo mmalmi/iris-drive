@@ -58,24 +58,23 @@ def is_usable_iphone(device):
 def names(device):
     props = device.get("deviceProperties", {})
     connection = device.get("connectionProperties", {})
-    values = [device.get("identifier"), props.get("name")]
+    values = [device.get("identifier"), device.get("hardwareProperties", {}).get("udid"), props.get("name")]
     values.extend(connection.get("potentialHostnames", []))
     return {value for value in values if value}
 
-if preferred:
-    for device in devices:
-        if preferred in names(device):
-            if not is_usable_iphone(device):
-                raise SystemExit(f"selected iOS device is not usable for install: {preferred}")
-            print(device["identifier"])
-            raise SystemExit(0)
-    raise SystemExit(f"iOS device not found: {preferred}")
-
 for device in devices:
-    if is_usable_iphone(device):
-        print(device["identifier"])
-        raise SystemExit(0)
-raise SystemExit("no paired available iPhone found")
+    if preferred and preferred not in names(device):
+        continue
+    if not is_usable_iphone(device):
+        if preferred:
+            raise SystemExit(f"selected iOS device is not usable for install: {preferred}")
+        continue
+    udid = device.get("hardwareProperties", {}).get("udid")
+    if not isinstance(udid, str) or not udid.strip():
+        raise SystemExit("selected iOS device has no hardware UDID for Xcode")
+    print(udid.strip())
+    raise SystemExit(0)
+raise SystemExit(f"iOS device not found: {preferred}" if preferred else "no paired available iPhone found")
 PY
   status=$?
   rm -f "$devices_json"
@@ -173,7 +172,7 @@ if ! xcodebuild \
   -scheme "$SCHEME" \
   -configuration "$CONFIGURATION" \
   -derivedDataPath "$DERIVED_DATA" \
-  -destination "platform=iOS,id=$DEVICE_UDID" \
+  -destination "generic/platform=iOS" \
   DEVELOPMENT_TEAM="$DEVELOPMENT_TEAM" \
   CODE_SIGN_STYLE=Automatic \
   CODE_SIGN_IDENTITY="$CODE_SIGN_IDENTITY" \
@@ -206,16 +205,32 @@ if ! poll_probe_result "$DEVICE_UDID" "$probe_json"; then
   echo "FAIL: device Iris Apps probe did not write a fresh result." >&2
   exit 1
 fi
+probe_screenshot_source="$(python3 - "$probe_json" <<'PY'
+import json
+import re
+import sys
+from pathlib import PurePosixPath
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+name = PurePosixPath(data.get("webview_screenshot_path") or "").name
+if not re.fullmatch(r"debug-iris-apps-webview-[0-9A-Fa-f-]{36}\.png", name):
+    raise SystemExit(f"FAIL: device Iris Apps probe did not capture a fresh screenshot: {data}")
+print(f"Documents/{name}")
+PY
+)"
 probe_screenshot="$(mktemp -t iris-drive-ios-device-iris-apps.XXXXXX.png)"
 if xcrun devicectl device copy from \
   --device "$DEVICE_UDID" \
   --domain-type appDataContainer \
   --domain-identifier "$BUNDLE_ID" \
-  --source Documents/debug-iris-apps-webview.png \
+  --source "$probe_screenshot_source" \
   --destination "$probe_screenshot" >/dev/null 2>&1; then
   echo "webview_screenshot=$probe_screenshot"
 else
   rm -f "$probe_screenshot"
+  echo "FAIL: device Iris Apps WebView screenshot was not copied." >&2
+  exit 1
 fi
 
 python3 - "$probe_json" "$MAX_OPEN_MS" <<'PY'
@@ -230,6 +245,29 @@ if not data.get("opened"):
     raise SystemExit(f"FAIL: device Iris Apps probe did not open: {data}")
 if not data.get("webview_loaded"):
     raise SystemExit(f"FAIL: device Iris Apps WebView did not load: {data}")
+if data.get("webview_ready_state") != "complete":
+    raise SystemExit(f"FAIL: device Iris Apps WebView document is not complete: {data}")
+if data.get("webview_title") != "Iris: The Freedom Toolkit":
+    raise SystemExit(f"FAIL: device Iris Apps WebView title is not the launcher: {data}")
+if (data.get("webview_error") or "") or (data.get("webview_error_domain") or "") or int(data.get("webview_error_code") or 0):
+    raise SystemExit(f"FAIL: device Iris Apps WebView retained a navigation error: {data}")
+if not (data.get("webview_screenshot_path") or "") or (data.get("webview_screenshot_error") or ""):
+    raise SystemExit(f"FAIL: device Iris Apps WebView did not persist a clean screenshot: {data}")
+required_http_200 = [
+    ("route_http_ok", "route_http_status_code", "route_http"),
+    ("route_proxy_http_ok", "route_proxy_http_status_code", "route_proxy_http"),
+    ("embedded_route_http_ok", "embedded_route_http_status_code", "embedded_route_http"),
+    ("embedded_resolve_http_ok", "embedded_resolve_http_status_code", "embedded_resolve_http"),
+    ("embedded_cached_resolve_http_ok", "embedded_cached_resolve_http_status_code", "embedded_cached_resolve_http"),
+    ("hashtree_status_ok", "hashtree_status_code", "hashtree_status"),
+]
+for ok_key, status_key, label in required_http_200:
+    if not data.get(ok_key) or int(data.get(status_key) or 0) != 200:
+        raise SystemExit(f"FAIL: device Iris Apps {label} probe was not HTTP 200: {data}")
+if not data.get("gateway_status_present") or not data.get("gateway_status_running"):
+    raise SystemExit(f"FAIL: device Iris Apps gateway status is not running: {data}")
+if data.get("gateway_status_state") != "running" or (data.get("gateway_status_error") or ""):
+    raise SystemExit(f"FAIL: device Iris Apps gateway retained an error state: {data}")
 body_text = (data.get("webview_body_text") or "").strip()
 body_lower = body_text.lower()
 failure_markers = [
@@ -261,6 +299,9 @@ webview_elapsed = int(data.get("webview_elapsed_ms") or 0)
 html_length = int(data.get("webview_html_length") or 0)
 if html_length < 1000:
     raise SystemExit(f"FAIL: device Iris Apps WebView rendered too little HTML to be the launcher: {data}")
+html_prefix = (data.get("webview_html_prefix") or "").lower()
+if 'id="app"' not in html_prefix and "id='app'" not in html_prefix:
+    raise SystemExit(f"FAIL: device Iris Apps WebView did not materialize the app root: {data}")
 launcher_markers = ["drive", "chat", "contacts"]
 missing_markers = [marker for marker in launcher_markers if marker not in body_lower]
 if missing_markers:

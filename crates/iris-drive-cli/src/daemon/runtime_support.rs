@@ -1,3 +1,13 @@
+const DIRECT_APP_MESSAGE_DRAIN_LIMIT: usize = 4096;
+const DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS: u64 = 750;
+const DIRECT_ROOT_PEER_REFRESH_INTERVAL_SECS: u64 = 30;
+const DIRECT_ROOT_REPAIR_INTERVAL_SECS: u64 = 300;
+const FIPS_STATUS_PROBE_INTERVAL_SECS: u64 = 2;
+const RELAY_STATUS_PROBE_INTERVAL_SECS: u64 = 120;
+const FIPS_STATUS_PROBE_TASK_KEY: &str = "fips_status_probe";
+const STATUS_PROBE_TASK_KEY: &str = "status_probe";
+const DAEMON_TOKIO_WORKER_STACK_BYTES: usize = 8 * 1024 * 1024;
+
 #[allow(clippy::needless_pass_by_value)]
 fn emit_daemon_status_event(config_dir: &Path, payload: Value) {
     let payload = write_runtime_daemon_status(config_dir, payload);
@@ -65,8 +75,14 @@ fn prepare_daemon_command(
     if filters.is_empty() {
         return Err(anyhow::anyhow!("no filters to subscribe to"));
     }
+    let mut retained_filters = filters.clone();
+    if let Some(filter) =
+        iris_drive_core::relay_sync::pending_device_approval_applied_ack_filter(&state)?
+    {
+        retained_filters.push(filter);
+    }
     let subscription_policy =
-        iris_drive_core::relay_sync::event_retention_policy(filters.clone());
+        iris_drive_core::relay_sync::event_retention_policy(retained_filters);
     let embedded_hashtree_requested = enable_gateway && config.local_nhash_resolver_enabled;
     let (embedded_hashtree, embedded_hashtree_status) = if embedded_hashtree_requested {
         match EmbeddedHashtreeHost::start(config_dir, &config) {

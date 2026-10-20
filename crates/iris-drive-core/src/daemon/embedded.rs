@@ -87,6 +87,9 @@ pub(crate) fn embedded_browser_settings(config: &AppConfig) -> serde_json::Value
 }
 
 pub(crate) fn embedded_browser_nostr_relays(config: &AppConfig) -> Vec<String> {
+    if config.relays.is_empty() {
+        return Vec::new();
+    }
     let mut relays = config.relays.clone();
     for relay in hashtree_resolver::nostr::NostrResolverConfig::default().relays {
         if !relays.iter().any(|existing| same_relay(existing, &relay)) {

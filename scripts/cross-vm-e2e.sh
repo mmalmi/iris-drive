@@ -46,6 +46,10 @@ Environment:
   IRIS_DRIVE_E2E_SIDELOAD_APPKEYS
                                   Copy the owner profile roster snapshot into temp peer configs after approval
                                   so VM file-sync tests do not depend on public relay timing (default: 1).
+  IRIS_DRIVE_E2E_DESKTOP_GUI_LINKING
+                                  Exercise bidirectional Windows WPF/Linux GTK linking (default: 0;
+                                  enabled by the five-platform gate).
+  IRIS_DRIVE_E2E_LINK_TIMEOUT_SECS  Real-daemon link + durable ACK bound (default: 15).
   IRIS_DRIVE_E2E_PROFILE          Build/use idrive from target/debug or target/release (default: debug).
   CARGO_TARGET_DIR                Optional Cargo target directory forwarded to POSIX idrive builds.
   IRIS_DRIVE_E2E_REBUILD_IDRIVE   Rebuild repo idrive before each host run unless an explicit
@@ -58,12 +62,16 @@ Environment:
   IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST
                                   Windows SSH alias to use from a Linux jump host.
   IRIS_DRIVE_E2E_IDLE_CPU_GATE    Sample every host daemon's idle CPU after convergence (default: 1).
-  IRIS_DRIVE_IDLE_CPU_WARMUP_SECS Override the post-workload idle CPU settle warmup (default: 90).
+  IRIS_DRIVE_IDLE_CPU_WARMUP_SECS Override the post-workload idle CPU settle warmup (default: 180).
   IRIS_DRIVE_E2E_KEEP            Keep remote temp dirs/daemons when set to 1.
 USAGE
 }
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+source "$ROOT/scripts/lib/parallel-gate.sh"
+source "$ROOT/scripts/lib/cross-vm-parallel-setup.sh"
+source "$ROOT/scripts/lib/cross-vm-local-store.sh"
+source "$ROOT/scripts/lib/cross-vm-device-link.sh"
 RUN_ID="run-$(date +%Y%m%d%H%M%S)-$$"
 TIMEOUT_SECS="${IRIS_DRIVE_E2E_TIMEOUT_SECS:-60}"
 REMOTE_TIMEOUT_SECS="${IRIS_DRIVE_E2E_REMOTE_TIMEOUT_SECS:-60}"
@@ -74,6 +82,8 @@ LARGE_BYTES="${IRIS_DRIVE_E2E_LARGE_BYTES:-262144}"
 KEEP="${IRIS_DRIVE_E2E_KEEP:-0}"
 MOUNT_LABELS="${IRIS_DRIVE_E2E_MOUNT_LABELS:-}"
 SIDELOAD_APPKEYS="${IRIS_DRIVE_E2E_SIDELOAD_APPKEYS:-1}"
+DESKTOP_GUI_LINKING="${IRIS_DRIVE_E2E_DESKTOP_GUI_LINKING:-0}"
+LINK_TIMEOUT_SECS="${IRIS_DRIVE_E2E_LINK_TIMEOUT_SECS:-15}"
 PROVIDER_MUTATIONS="${IRIS_DRIVE_E2E_PROVIDER_MUTATIONS:-0}"
 IDLE_CPU_GATE="${IRIS_DRIVE_E2E_IDLE_CPU_GATE:-1}"
 STATIC_FIPS_HINTS="${IRIS_DRIVE_E2E_STATIC_FIPS_HINTS:-1}"
@@ -84,24 +94,14 @@ case "$E2E_PROFILE" in
   debug | release) ;;
   *) echo "IRIS_DRIVE_E2E_PROFILE must be 'debug' or 'release'." >&2; exit 2 ;;
 esac
+[[ "$LINK_TIMEOUT_SECS" =~ ^[1-9][0-9]*$ ]] \
+  || { echo "IRIS_DRIVE_E2E_LINK_TIMEOUT_SECS must be a positive integer." >&2; exit 2; }
 
-declare -a LABELS=()
-declare -a KINDS=()
-declare -a SSH_HOSTS=()
-declare -a BASES=()
-declare -a CONFIGS=()
-declare -a WORKS=()
-declare -a IDRIVES=()
-declare -a LOGS=()
-declare -a ERRS=()
-declare -a PIDS=()
-declare -a DAEMON_SSH_PIDS=()
-declare -a FIPS_PORTS=()
-declare -a FIPS_ADDRS=()
-declare -a FIPS_STATIC_PEERS=()
-declare -a FIPS_BOOTSTRAP=()
-declare -a FIPS_OPEN_DISCOVERY=()
-declare -a APP_KEY_NPUBS=()
+declare -a LABELS=() KINDS=() SSH_HOSTS=()
+declare -a BASES=() CONFIGS=() WORKS=() IDRIVES=()
+declare -a LOGS=() ERRS=() PIDS=() DAEMON_SSH_PIDS=()
+declare -a FIPS_PORTS=() FIPS_ADDRS=() FIPS_STATIC_PEERS=()
+declare -a FIPS_BOOTSTRAP=() FIPS_OPEN_DISCOVERY=() APP_KEY_NPUBS=()
 
 find_label_index() {
   local needle="$1"
@@ -273,6 +273,13 @@ ps_quote() {
   printf "'%s'" "$(printf "%s" "$1" | sed "s/'/''/g")"
 }
 
+windows_script_stdin() {
+  # One ASCII statement lets PowerShell parse each UTF-8 script as a whole.
+  python3 -c 'import base64, sys
+encoded = base64.b64encode(sys.stdin.buffer.read()).decode("ascii")
+sys.stdout.write("& ([scriptblock]::Create([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String(\"" + encoded + "\")))); if (!$?) { if ($LASTEXITCODE) { exit $LASTEXITCODE }; exit 1 }\n\n\n")'
+}
+
 windows_guest_host_for() {
   if [[ -n "${IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST:-}" ]]; then
     printf "%s" "$IRIS_DRIVE_E2E_WINDOWS_GUEST_HOST"
@@ -313,14 +320,15 @@ host_idrive_override() {
 
 run_remote_exec() {
   local label="$1"
-  local script="$2"
+  local script
+  script="$(remote_shared_store_script "$1" "$2")"
   local kind
   local ssh_host
   kind="$(host_value "$label" kind)"
   ssh_host="$(host_value "$label" ssh)"
   if [[ "$kind" == "windows" ]]; then
-    printf "%s\n" "$script" | ssh "$ssh_host" "$(windows_powershell_command_for "$ssh_host")"
-  elif [[ "$ssh_host" == "local" ]]; then printf "%s\n" "$script" | bash -se
+    printf "%s\n" "$script" | windows_script_stdin | ssh "$ssh_host" "$(windows_powershell_command_for "$ssh_host")"
+  elif [[ "$ssh_host" == "local" ]]; then run_local_e2e_script "$script"
   else
     printf "%s\n" "$script" | ssh "$ssh_host" 'bash -se'
   fi
@@ -346,16 +354,30 @@ remote_exec_with_timeout() {
   run_remote_exec "$label" "$script" &
   pid="$!"
   (
+    cleanup_watchdog_timers() {
+      local timer
+      trap '' TERM INT HUP
+      # This subshell owns only its timers. Include a just-spawned timer even
+      # when a signal arrives before wait starts, and reap it before exiting.
+      for timer in $(jobs -pr); do
+        kill "$timer" 2>/dev/null || true
+        wait "$timer" 2>/dev/null || true
+      done
+    }
+    trap cleanup_watchdog_timers EXIT
+    trap 'exit 0' TERM INT HUP
     deadline=$((SECONDS + timeout_secs))
     while kill -0 "$pid" 2>/dev/null; do
       if (( SECONDS >= deadline )); then
         echo "remote command timed out after ${timeout_secs}s on $label" >&2
         kill "$pid" 2>/dev/null || true
-        sleep 1
+        sleep 1 &
+        wait "$!"
         kill -9 "$pid" 2>/dev/null || true
         exit 0
       fi
-      sleep 1
+      sleep 1 &
+      wait "$!"
     done
   ) >/dev/null &
   watchdog="$!"
@@ -405,7 +427,7 @@ detect_host_fips_addr() {
     return 0
   fi
   if [[ "$kind" == "windows" ]]; then
-    ip="$(ssh "$ssh_host" "$(windows_powershell_command_for "$ssh_host")" <<'REMOTE_PS' 2>/dev/null || true
+    ip="$(windows_script_stdin <<'REMOTE_PS' | ssh "$ssh_host" "$(windows_powershell_command_for "$ssh_host")" 2>/dev/null || true
 $TunnelIp = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object { $_.InterfaceAlias -eq 'nvpn' -and $_.IPAddress -like '10.44.*' } | Select-Object -First 1 -ExpandProperty IPAddress)
 if ($TunnelIp) { Write-Output $TunnelIp; exit 0 }
 $FallbackIp = (Get-NetIPAddress -AddressFamily IPv4 |
@@ -430,7 +452,11 @@ do
   [[ -n "$ip" ]] && break
 done
 if [[ -z "$ip" ]]; then
-  ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    ip="$(ipconfig getifaddr en0 2>/dev/null || true)"
+  else
+    ip="$(hostname -I 2>/dev/null | awk '{print $1}' || true)"
+  fi
 fi
 printf '%s\n' "$ip"
 REMOTE_SH
@@ -503,20 +529,10 @@ setup_host() {
 \$label = $(ps_quote "$label")
 \$run = $(ps_quote "$RUN_ID")
 \$base = Join-Path \$env:TEMP (\"iris-drive-e2e-\$run-\$label\")
-if (Test-Path -LiteralPath \$base) { Remove-Item -LiteralPath \$base -Recurse -Force }
-\$stale = Get-CimInstance Win32_Process | Where-Object {
-  \$_.CommandLine -like '*idrive*' -and
-  \$_.CommandLine -like '*--config-dir*' -and
-  \$_.CommandLine -like '*iris-drive-e2e-run-*' -and
-  \$_.CommandLine -like '* daemon*'
-}
-foreach (\$proc in \$stale) {
-  Stop-Process -Id \$proc.ProcessId -Force -ErrorAction SilentlyContinue
-}
-\$projectionE2e = Join-Path (Join-Path \$HOME 'Iris Drive') 'e2e'
-if (Test-Path -LiteralPath \$projectionE2e) { Remove-Item -LiteralPath \$projectionE2e -Recurse -Force }
+New-Item -ItemType Directory -Path \$base | Out-Null
 \$config = Join-Path \$base 'config'; \$work = Join-Path \$base 'work'
-New-Item -ItemType Directory -Force -Path \$config,\$work | Out-Null
+New-Item -ItemType Directory -Path \$config,\$work | Out-Null
+\$env:HTREE_DATA_DIR = Join-Path \$base 'shared-hashtree'
 \$repo = Join-Path \$HOME 'src\iris-drive'
 \$profile = $(ps_quote "$E2E_PROFILE")
 \$overrideIdrive = $(ps_quote "$idrive_override")
@@ -536,15 +552,9 @@ set -Eeuo pipefail
 label=$(sh_quote "$label")
 run=$(sh_quote "$RUN_ID")
 base=\"\${TMPDIR:-/tmp}/iris-drive-e2e-\${run}-\${label}\"
-while IFS= read -r stale_pid; do
-  [[ -n \"\$stale_pid\" && \"\$stale_pid\" != \"\$\$\" ]] || continue
-  kill \"\$stale_pid\" >/dev/null 2>&1 || true
-done < <(
-  ps -eo pid=,args= |
-    awk -v self=\"\$\$\" '\$1 != self && \$0 ~ /\\/idrive[[:space:]]+--config-dir/ && \$0 ~ /iris-drive-e2e-run-/ && \$0 ~ /[[:space:]]daemon([[:space:]]|\$)/ { print \$1 }'
-)
-rm -rf \"\$base\"
-mkdir -p \"\$base/config\" \"\$base/work\"
+mkdir \"\$base\"
+mkdir \"\$base/config\" \"\$base/work\"
+$(if [[ "$(host_value "$label" ssh)" != local ]]; then printf '%s\n' 'export HTREE_DATA_DIR="$base/shared-hashtree"'; fi)
 repo=\"\$HOME/src/iris-drive\"
 profile=$(sh_quote "$E2E_PROFILE")
 idrive=$(sh_quote "$idrive_override")
@@ -813,7 +823,8 @@ Set-Content -LiteralPath \$pidFile -Value \$PID
 \$ErrorActionPreference = 'Continue'
 & \$idrive @daemonArgs > \$log 2> \$err
 "
-    printf "%s\n" "$script" | ssh "$ssh_host" "$(windows_powershell_command_for "$ssh_host")" >/dev/null 2>&1 &
+    script="$(remote_shared_store_script "$label" "$script")"
+    printf "%s\n" "$script" | windows_script_stdin | ssh "$ssh_host" "$(windows_powershell_command_for "$ssh_host")" >/dev/null 2>&1 &
     set_host_value "$label" daemon_ssh_pid "$!"
     sleep 1
     if ! kill -0 "$(host_value "$label" daemon_ssh_pid)" 2>/dev/null; then
@@ -949,10 +960,12 @@ esac
 }
 
 cleanup() {
+  join_desktop_gui_reverse_action || echo "reverse desktop GUI action failed during cleanup" >&2
   if [[ "$KEEP" == "1" ]]; then
     echo "keeping remote temp dirs because IRIS_DRIVE_E2E_KEEP=1"
     return
   fi
+  stop_desktop_gui_aux_daemon
   local label kind base script
   for label in "${LABELS[@]}"; do
     stop_daemon "$label"
@@ -971,6 +984,7 @@ if (Test-Path -LiteralPath \$base) { Remove-Item -LiteralPath \$base -Recurse -F
     fi
     remote_exec "$label" "$script" || true
   done
+  assert_local_shared_store_removed
 }
 trap cleanup EXIT
 
@@ -1315,12 +1329,18 @@ union_snapshots() {
 print_statuses() {
   local label
   for label in "${LABELS[@]}"; do
+    echo "status_observed_monotonic_ms=$(monotonic_milliseconds)" >&2
     echo "---- $label status ----" >&2
     idrive_cmd "$label" status |
       jq '{
         daemon: {
           running: .daemon.running,
           fresh: .daemon.fresh
+        },
+        profile: {
+          authorization_state: .profile.authorization_state,
+          pending_device_approval_receipt_count: .profile.pending_device_approval_receipt_count,
+          roster_size: .profile.roster_size
         },
         summary: {
           file_count: .summary.file_count,
@@ -1402,26 +1422,6 @@ print_statuses() {
         fi
       fi
     fi
-  done
-}
-
-wait_until() {
-  local label="$1"
-  local check="$2"
-  local start now
-  start="$(date +%s)"
-  while true; do
-    if "$check"; then
-      echo "ok: $label"
-      return 0
-    fi
-    now="$(date +%s)"
-    if (( now - start >= TIMEOUT_SECS )); then
-      echo "timed out waiting for $label" >&2
-      print_statuses
-      return 1
-    fi
-    sleep "$POLL_SECS"
   done
 }
 
@@ -1717,46 +1717,45 @@ idle_cpu_remote_timeout_secs() {
     printf "%s" "$IRIS_DRIVE_E2E_IDLE_CPU_TIMEOUT_SECS"
     return
   fi
-  local warmup="${IRIS_DRIVE_IDLE_CPU_WARMUP_SECS:-90}"
+  local warmup="${IRIS_DRIVE_IDLE_CPU_WARMUP_SECS:-180}"
   local duration="${IRIS_DRIVE_IDLE_CPU_DURATION_SECS:-60}"
   printf "%s" $((warmup + duration + 90))
 }
 
 idle_cpu_gate_label() {
   local label="$1"
-  local kind config timeout script repo_line
+  local kind config timeout script sampler_b64
   kind="$(host_value "$label" kind)"
   config="$(host_value "$label" config)"
   timeout="$(idle_cpu_remote_timeout_secs)"
   if [[ "$kind" == "windows" ]]; then
+    sampler_b64="$(base64 < "$ROOT/scripts/idle-cpu-gate-windows.ps1" | tr -d '\n')"
     script="
 \$ErrorActionPreference = 'Stop'
-\$repo = Join-Path \$HOME 'src\iris-drive'
+\$sampler = Join-Path $(ps_quote "$config") 'idle-cpu-gate-windows.ps1'
+[IO.File]::WriteAllBytes(\$sampler, [Convert]::FromBase64String($(ps_quote "$sampler_b64")))
 \$env:IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES = 'daemon'
-\$env:IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH = \$repo
-\$env:IRIS_DRIVE_IDLE_CPU_WARMUP_SECS = $(ps_quote "${IRIS_DRIVE_IDLE_CPU_WARMUP_SECS:-90}")
+\$env:IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH = $(ps_quote "$config")
+\$env:IRIS_DRIVE_IDLE_CPU_WARMUP_SECS = $(ps_quote "${IRIS_DRIVE_IDLE_CPU_WARMUP_SECS:-180}")
 \$env:IRIS_DRIVE_IDLE_CPU_DURATION_SECS = $(ps_quote "${IRIS_DRIVE_IDLE_CPU_DURATION_SECS:-60}")
 \$env:IRIS_DRIVE_IDLE_CPU_INTERVAL_SECS = $(ps_quote "${IRIS_DRIVE_IDLE_CPU_INTERVAL_SECS:-5}")
 \$env:IRIS_DRIVE_IDLE_CPU_DAEMON_MAX = $(ps_quote "${IRIS_DRIVE_IDLE_CPU_DAEMON_MAX:-10}")
-& (Join-Path \$repo 'scripts\idle-cpu-gate-windows.ps1')
+& \$sampler
 exit \$LASTEXITCODE
 "
   else
-    if [[ "$(host_value "$label" ssh)" == "local" ]]; then
-      repo_line="repo=$(sh_quote "$ROOT")"
-    else
-      repo_line='repo="$HOME/src/iris-drive"'
-    fi
+    sampler_b64="$(base64 < "$ROOT/scripts/idle-cpu-gate.sh" | tr -d '\n')"
     script="
 set -Eeuo pipefail
-${repo_line}
+sampler=$(sh_quote "$config/idle-cpu-gate.sh")
+printf '%s' $(sh_quote "$sampler_b64") | base64 -d >\"\$sampler\"
 export IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES=daemon
 export IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH=$(sh_quote "$config")
-export IRIS_DRIVE_IDLE_CPU_WARMUP_SECS=$(sh_quote "${IRIS_DRIVE_IDLE_CPU_WARMUP_SECS:-90}")
+export IRIS_DRIVE_IDLE_CPU_WARMUP_SECS=$(sh_quote "${IRIS_DRIVE_IDLE_CPU_WARMUP_SECS:-180}")
 export IRIS_DRIVE_IDLE_CPU_DURATION_SECS=$(sh_quote "${IRIS_DRIVE_IDLE_CPU_DURATION_SECS:-60}")
 export IRIS_DRIVE_IDLE_CPU_INTERVAL_SECS=$(sh_quote "${IRIS_DRIVE_IDLE_CPU_INTERVAL_SECS:-5}")
 export IRIS_DRIVE_IDLE_CPU_DAEMON_MAX=$(sh_quote "${IRIS_DRIVE_IDLE_CPU_DAEMON_MAX:-10}")
-\"\$repo/scripts/idle-cpu-gate.sh\" --platform auto
+bash \"\$sampler\" --platform auto
 "
   fi
   remote_exec_with_timeout "$label" "$script" "$timeout"
@@ -1970,6 +1969,8 @@ done
 source_label="${windows_label:-${LABELS[0]}}"
 target_label="${ubuntu_label:-${LABELS[1]}}"
 
+validate_desktop_gui_linking
+
 if [[ -z "${IRIS_DRIVE_E2E_MOUNT_LABELS+x}" ]]; then
   MOUNT_LABELS=""
   for label in "${LABELS[@]}"; do
@@ -1988,10 +1989,8 @@ else
   echo "mutation surface: provider bridge on Windows; projections on POSIX mounts: ${MOUNT_LABELS:-none}"
 fi
 
-for label in "${LABELS[@]}"; do
-  echo "setting up $label ($(host_value "$label" ssh))"
-  setup_host "$label"
-done
+setup_hosts_parallel
+prepare_local_shared_store
 
 echo "initializing owner on $owner_label"
 owner_json="$(idrive_cmd "$owner_label" init --label "$owner_label")"
@@ -2001,6 +2000,7 @@ set_host_value "$owner_label" app_key_npub "$admin_app_key_npub"
 invite_json="$(idrive_cmd "$owner_label" app-keys invite)"
 invite_url="$(jq -r '.url' <<<"$invite_json")"
 invite_admin_app_key_npub="$(jq -r '.admin_app_key_npub' <<<"$invite_json")"
+desktop_gui_primary_request_url=""
 if [[ "$invite_url" != https://drive.iris.to/invite/* ]]; then
   echo "owner invite did not use canonical https://drive.iris.to/invite/ URL: $invite_url" >&2
   exit 1
@@ -2015,12 +2015,21 @@ for label in "${LABELS[@]}"; do
     continue
   fi
   echo "requesting invite-based link for $label"
-  link_json="$(idrive_cmd "$label" app-keys request "$invite_url" --label "$label")"
-  linked_app_key_npub="$(jq -r '.current_app_key_npub' <<<"$link_json")"
+  if bool_true "$DESKTOP_GUI_LINKING" && [[ "$label" == "$windows_label" ]]; then
+    run_desktop_gui_link_action "$label" "$invite_url" awaiting_approval
+    link_json="$(idrive_cmd "$label" status)"
+    linked_app_key_npub="$(jq -r '.profile.current_app_key_npub' <<<"$link_json")"
+    request_url="$(jq -r '.profile.app_key_link_request.url' <<<"$link_json")"
+    request_profile_id="$(jq -r '.profile.app_key_link_request.profile_id' <<<"$link_json")"
+    request_admin_app_key_npub="$(jq -r '.profile.app_key_link_request.admin_app_key_npub' <<<"$link_json")"
+  else
+    link_json="$(idrive_cmd "$label" app-keys request "$invite_url" --label "$label")"
+    linked_app_key_npub="$(jq -r '.current_app_key_npub' <<<"$link_json")"
+    request_url="$(jq -r '.app_key_link_request.url' <<<"$link_json")"
+    request_profile_id="$(jq -r '.app_key_link_request.profile_id' <<<"$link_json")"
+    request_admin_app_key_npub="$(jq -r '.app_key_link_request.admin_app_key_npub' <<<"$link_json")"
+  fi
   set_host_value "$label" app_key_npub "$linked_app_key_npub"
-  request_url="$(jq -r '.app_key_link_request.url' <<<"$link_json")"
-  request_profile_id="$(jq -r '.app_key_link_request.profile_id' <<<"$link_json")"
-  request_admin_app_key_npub="$(jq -r '.app_key_link_request.admin_app_key_npub' <<<"$link_json")"
   if ! is_app_key_request_url "$request_url"; then
     echo "$label did not create an app-key request URL: $request_url" >&2
     exit 1
@@ -2041,7 +2050,11 @@ for label in "${LABELS[@]}"; do
     echo "$label request URL leaked placeholder ids: $request_url" >&2
     exit 1
   fi
-  idrive_cmd "$owner_label" app-keys approve "$request_url" --label "$label" >/dev/null
+  if bool_true "$DESKTOP_GUI_LINKING" && [[ "$label" == "$windows_label" ]]; then
+    desktop_gui_primary_request_url="$request_url"
+  else
+    idrive_cmd "$owner_label" app-keys approve "$request_url" --label "$label" >/dev/null
+  fi
 done
 
 if [[ "$SIDELOAD_APPKEYS" == "1" ]]; then
@@ -2061,9 +2074,23 @@ for label in "${LABELS[@]}"; do
   start_daemon "$label"
 done
 
-run_step "authorization" wait_until "all devices authorized" all_authorized
+if bool_true "$DESKTOP_GUI_LINKING"; then
+  [[ -n "$desktop_gui_primary_request_url" ]] || {
+    echo "desktop GUI linking did not produce a Windows approval request" >&2
+    exit 1
+  }
+  run_timed_desktop_gui_primary_approval "$desktop_gui_primary_request_url"
+fi
+
+if [[ "$SIDELOAD_APPKEYS" == "0" ]]; then
+  run_step "authorization and durable approval ACK" \
+    wait_for_all_linking_complete
+else
+  run_step "authorization" wait_until "all devices authorized" all_authorized
+fi
 run_step "fresh daemons" wait_until "all daemon statuses fresh" all_fresh
 run_step "FIPS roster readiness" wait_until "every device has the full roster" all_have_roster_peers
+run_step "bidirectional desktop GUI linking" run_bidirectional_desktop_gui_linking
 
 run_step "initial seed writes" run_for_all_labels_parallel write_initial_seed_files
 
@@ -2085,7 +2112,13 @@ run_step "final fresh daemons" wait_until "all daemon statuses fresh" all_fresh
 run_step "final LAN/local FIPS peer discovery" wait_until "required devices have a direct peer" all_required_devices_have_direct_peer
 run_step "final Devices list online roster" wait_until "every Devices list shows roster peers online" all_devices_list_roster_online
 if idle_cpu_gate_enabled; then
-  run_step "idle daemon CPU gate" run_for_all_labels_parallel idle_cpu_gate_label
+  # Each sampler owns a distinct daemon/config. Start their full post-workload
+  # warmups together, retaining per-label logs and waiting for every outcome.
+  run_step "idle daemon CPU gates" parallel_group_begin "idle-daemon-cpu"
+  for label in "${LABELS[@]}"; do
+    parallel_group_start "$label" idle_cpu_gate_label "$label"
+  done
+  parallel_group_wait
 fi
 
 echo

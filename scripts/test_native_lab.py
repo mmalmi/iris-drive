@@ -10,10 +10,14 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Optional
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parent
 LAB = ROOT / "native_lab.py"
+sys.path.insert(0, str(ROOT))
+import native_lab  # noqa: E402
 
 
 class NativeLabTests(unittest.TestCase):
@@ -136,6 +140,87 @@ class NativeLabTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 75)
         self.assertEqual(report["category"], "resource_busy")
         self.assertEqual(report["busy_resource"], resource)
+
+    def ios_health(
+        self,
+        *,
+        pairing: str = "paired",
+        tunnel: str = "connected",
+        online: bool = True,
+        malformed: bool = False,
+        xctrace_output: Optional[str] = None,
+    ) -> dict:
+        device = {
+            "identifier": "core-device-id",
+            "deviceProperties": {"name": "Test iPhone"},
+            "hardwareProperties": {"productType": "iPhone99,1"},
+            "connectionProperties": {
+                "pairingState": pairing,
+                "tunnelState": tunnel,
+            },
+        }
+        devicectl = "not-json" if malformed else json.dumps({"result": {"devices": [device]}})
+        xctrace = (
+            "== Devices ==\nTest iPhone (26.5) (hardware-id)\n\n== Devices Offline ==\n"
+            if online
+            else "== Devices ==\n\n== Devices Offline ==\nTest iPhone (26.5) (hardware-id)\n"
+        )
+        if xctrace_output is not None:
+            xctrace = xctrace_output
+
+        def probe(command: list[str], timeout: int = 15) -> tuple[bool, str]:
+            del timeout
+            if "xctrace" in command:
+                return True, xctrace
+            self.fail(f"unexpected probe: {command}")
+
+        with (
+            mock.patch.object(native_lab.platform, "system", return_value="Darwin"),
+            mock.patch.object(native_lab.shutil, "which", return_value="/usr/bin/xcrun"),
+            mock.patch.object(
+                native_lab, "run_json_output_probe", return_value=(True, devicectl)
+            ),
+            mock.patch.object(native_lab, "run_probe", side_effect=probe),
+        ):
+            return native_lab.check_health("ios-device:auto")
+
+    def test_ios_device_health_accepts_paired_online_connected_or_available(self) -> None:
+        for tunnel in ("connected", "available"):
+            with self.subTest(tunnel=tunnel):
+                health = self.ios_health(tunnel=tunnel)
+                self.assertTrue(health["available"])
+                self.assertEqual(health["allocation"], "core-device-id")
+
+    def test_ios_device_health_rejects_offline_unpaired_or_unknown_tunnel(self) -> None:
+        cases = (
+            {"online": False},
+            {"pairing": "unpaired"},
+            {"tunnel": "unavailable"},
+            {"tunnel": "unknown"},
+        )
+        for case in cases:
+            with self.subTest(case=case):
+                self.assertFalse(self.ios_health(**case)["available"])
+
+    def test_ios_device_health_accepts_output_without_offline_devices(self) -> None:
+        health = self.ios_health(xctrace_output=(
+            "== Devices ==\nTest iPhone (26.5) (hardware-id)\n\n"
+            "== Simulators ==\nOther iPhone Simulator\n"
+        ))
+        self.assertTrue(health["available"])
+        self.assertEqual(health["allocation"], "core-device-id")
+
+    def test_ios_device_health_does_not_treat_simulator_as_online_phone(self) -> None:
+        health = self.ios_health(xctrace_output=(
+            "== Devices ==\nTest Mac\n\n"
+            "== Simulators ==\nTest iPhone (26.5) (simulator-id)\n"
+        ))
+        self.assertFalse(health["available"])
+
+    def test_ios_device_health_rejects_malformed_json(self) -> None:
+        health = self.ios_health(malformed=True)
+        self.assertFalse(health["available"])
+        self.assertIn("json", health["detail"].lower())
 
 
 if __name__ == "__main__":

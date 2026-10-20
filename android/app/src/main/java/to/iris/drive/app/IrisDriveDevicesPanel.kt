@@ -508,7 +508,10 @@ private fun AddDevicePanel(
         OutlinedTextField(
             value = request,
             onValueChange = onRequestChange,
-            modifier = Modifier.fillMaxWidth().testTag("manualDeviceId"),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("manualDeviceId")
+                .semantics { contentDescription = "Manual device approval request" },
             singleLine = true,
             label = { Text("Request link or device ID") },
             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),

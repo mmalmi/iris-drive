@@ -96,9 +96,7 @@ impl SyncCluster {
             .as_str()
             .unwrap()
             .to_string();
-        let request = relay
-            .pending_approval_request_url(ubuntu_cfg.path())
-            .await;
+        let request = LocalNostrRelay::pending_approval_request_url(ubuntu_cfg.path());
         let mut linked_requests = vec![(Client::Ubuntu, request)];
         let mut fips_peers = vec![
             (Client::Windows, windows_npub, windows_fips_port),
@@ -113,7 +111,7 @@ impl SyncCluster {
                 .as_str()
                 .unwrap()
                 .to_string();
-            let request = relay.pending_approval_request_url(config.path()).await;
+            let request = LocalNostrRelay::pending_approval_request_url(config.path());
             linked_requests.push((Client::MacOS, request));
             fips_peers.push((
                 Client::MacOS,
@@ -202,8 +200,16 @@ impl SyncCluster {
         };
 
         for (client, request) in linked_requests {
+            let approved_at = Instant::now();
             run_json(cluster.windows_cfg.path(), &["approve", &request]);
-            cluster.wait_until_client_authorized(client).await;
+            cluster
+                .wait_until_client_authorized(client, Duration::from_secs(8))
+                .await;
+            matrix_progress(format!(
+                "{} linked in {:.2?}",
+                client.label(),
+                approved_at.elapsed()
+            ));
         }
 
         cluster
@@ -222,9 +228,10 @@ impl SyncCluster {
         .await;
     }
 
-    async fn wait_until_client_authorized(&self, client: Client) {
-        self.wait_until(
+    async fn wait_until_client_authorized(&self, client: Client, timeout: Duration) {
+        self.wait_until_with_timeout(
             &format!("{} linked peer authorized", client.label()),
+            timeout,
             || {
                 let status = run_json(self.config_path(client), &["status"]);
                 status["profile"]["authorization_state"] == "authorized"
@@ -234,18 +241,20 @@ impl SyncCluster {
     }
 
     async fn wait_until_direct_peers_connected(&self) {
-        let expected_peers = self.clients().len().saturating_sub(1) as u64;
+        let expected_peers = self.clients().len().saturating_sub(1);
+        let expected_peers_u64 = u64::try_from(expected_peers).unwrap();
         self.wait_until("direct fips peers connected", || {
             self.clients().into_iter().all(|client| {
                 let status = run_json(self.config_path(client), &["status"]);
                 let fips = &status["network"]["fips"];
                 fips["running"].as_bool().unwrap_or(false)
                     && fips["fresh"].as_bool().unwrap_or(false)
-                    && fips["roster_peer_count"].as_u64().unwrap_or(0) >= expected_peers
-                    && fips["roster_connected_peer_count"]
-                    .as_u64()
-                    .unwrap_or(0)
-                        >= expected_peers
+                    && status["daemon"]["fips_block_sync"]["authorized_peers"]
+                        .as_array()
+                        .is_some_and(|peers| peers.len() >= expected_peers)
+                    && fips["roster_peer_count"].as_u64().unwrap_or(0) >= expected_peers_u64
+                    && fips["roster_connected_peer_count"].as_u64().unwrap_or(0)
+                        >= expected_peers_u64
             })
         })
         .await;
@@ -337,7 +346,8 @@ impl SyncCluster {
     }
 
     async fn wait_for_file(&self, client: Client, path: &str, expected: &[u8], label: &str) {
-        self.wait_for_file_latency(client, path, expected, label).await;
+        self.wait_for_file_latency(client, path, expected, label)
+            .await;
     }
 
     async fn wait_for_file_latency(
@@ -373,16 +383,59 @@ impl SyncCluster {
         label: &str,
     ) -> SyncLatency {
         let edit_started = Instant::now();
+        let target_log_start = self.daemon_log(target).lines().count();
         let root_cid = self.provider_write(source, path, bytes).await;
         let source_viewer_done = Instant::now();
-        self
-            .wait_for_file_latency(target, path, bytes, label)
-            .await;
-        SyncLatency {
-            root_cid,
-            local_edit_to_remote_visible: edit_started.elapsed(),
-            source_viewer_done_to_remote_visible: source_viewer_done.elapsed(),
+        let local_path = self.path(target).join(path);
+        let mut source_publish_finished = None;
+        let mut target_root_received = None;
+        let mut target_blocks_downloaded = None;
+        while source_viewer_done.elapsed() < WAIT_TIMEOUT {
+            let source_log = self.daemon_log(source);
+            let target_log = self.daemon_log(target);
+            source_publish_finished.get_or_insert_with(|| source_viewer_done.elapsed());
+            if !source_log.lines().any(|line| {
+                line.contains("provider_root_publish_finished") && line.contains(&root_cid)
+            }) {
+                source_publish_finished = None;
+            }
+            if target_root_received.is_none()
+                && target_log.lines().skip(target_log_start).any(|line| {
+                    line.contains(&root_cid)
+                        && (line.contains("direct_root_app_event")
+                            || line.contains("drive_root_hint"))
+                })
+            {
+                target_root_received = Some(source_viewer_done.elapsed());
+            }
+            if target_blocks_downloaded.is_none()
+                && target_log.lines().skip(target_log_start).any(|line| {
+                    line.contains(&root_cid)
+                        && (line.contains("fips_downloaded")
+                            || line.contains("blossom_downloaded"))
+                })
+            {
+                target_blocks_downloaded = Some(source_viewer_done.elapsed());
+            }
+            self.refresh_view(target).await;
+            if matches!(std::fs::read(&local_path), Ok(actual) if actual == bytes) {
+                return SyncLatency {
+                    root_cid,
+                    local_edit_to_remote_visible: edit_started.elapsed(),
+                    source_viewer_done_to_remote_visible: source_viewer_done.elapsed(),
+                    source_publish_finished,
+                    target_root_received,
+                    target_blocks_downloaded,
+                };
+            }
+            tokio::time::sleep(POLL_INTERVAL).await;
         }
+        panic!(
+            "timed out waiting for {} file {path} during {label}; last_read={:?}\n{}",
+            target.label(),
+            std::fs::read(&local_path).map(|actual| format!("{} bytes", actual.len())),
+            self.debug_state_with_rerun_hint()
+        );
     }
 
     fn assert_missing(&self, client: Client, path: &str) {
@@ -476,6 +529,8 @@ impl SyncCluster {
                     && event["publish"]["published_drive_root"]
                         .as_bool()
                         .unwrap_or(false)
+                    && event["publish"]["blossom_upload"].is_object()
+                    && event["publish"]["blossom_upload_error"].is_null()
             })
         })
         .await;
@@ -533,16 +588,26 @@ impl SyncCluster {
         );
     }
 
-    async fn wait_until(&self, label: &str, mut ready: impl FnMut() -> bool) {
+    async fn wait_until(&self, label: &str, ready: impl FnMut() -> bool) {
+        self.wait_until_with_timeout(label, WAIT_TIMEOUT, ready)
+            .await;
+    }
+
+    async fn wait_until_with_timeout(
+        &self,
+        label: &str,
+        timeout: Duration,
+        mut ready: impl FnMut() -> bool,
+    ) {
         let start = Instant::now();
-        while start.elapsed() < WAIT_TIMEOUT {
+        while start.elapsed() < timeout {
             if ready() {
                 return;
             }
             tokio::time::sleep(POLL_INTERVAL).await;
         }
         panic!(
-            "timed out waiting for {label}\n{}",
+            "timed out after {timeout:?} waiting for {label}\n{}",
             self.debug_state_with_rerun_hint()
         );
     }
@@ -730,7 +795,10 @@ fn idrive_bin() -> PathBuf {
 
 fn idrive(config_dir: &Path) -> Command {
     let mut command = Command::new(idrive_bin());
-    command.env("IRIS_DRIVE_CONFIG_DIR", config_dir);
+    command
+        .env("IRIS_DRIVE_CONFIG_DIR", config_dir)
+        .env("HTREE_CONFIG_DIR", config_dir.join("shared-hashtree-config"))
+        .env("HTREE_DATA_DIR", config_dir.join("shared-hashtree"));
     command
 }
 
@@ -778,9 +846,7 @@ fn run_command_result(command: &mut Command, context: &str) -> Result<Output, St
         match child.try_wait() {
             Ok(Some(_)) => {
                 return child.wait_with_output().map_err(|error| {
-                    format!(
-                        "{context} failed to collect output\ncommand: {command_debug}\n{error}"
-                    )
+                    format!("{context} failed to collect output\ncommand: {command_debug}\n{error}")
                 });
             }
             Ok(None) if start.elapsed() >= CLI_COMMAND_TIMEOUT => {
@@ -856,10 +922,7 @@ fn unused_udp_loopback_port() -> u16 {
         .port()
 }
 
-fn static_fips_peers_except(
-    local: Client,
-    peers: &[(Client, String, u16)],
-) -> String {
+fn static_fips_peers_except(local: Client, peers: &[(Client, String, u16)]) -> String {
     peers
         .iter()
         .filter(|(client, _, _)| *client != local)

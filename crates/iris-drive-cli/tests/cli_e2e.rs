@@ -1,7 +1,5 @@
-//! End-to-end tests for the `idrive` CLI.
-//!
-//! These exercise the actual compiled binary against a temp config dir,
-//! so they catch arg-parsing, exit-code, and IO surprises. No mocks.
+//! End-to-end tests for the real `idrive` binary against temporary configuration,
+//! covering argument parsing, exit codes, and I/O without mocks.
 
 use assert_cmd::Command;
 use hashtree_core::{Cid, HashTree, HashTreeConfig, Store, diff::collect_hashes, nhash_decode};
@@ -18,7 +16,7 @@ use tempfile::tempdir;
 
 mod support;
 
-use support::{LocalBlossomServer, LocalNostrRelay, add_config_relay};
+use support::{LocalBlossomServer, LocalNostrRelay, add_config_relay, configure_local_blossom};
 
 fn idrive(dir: &std::path::Path) -> Command {
     let mut cmd = Command::cargo_bin("idrive").unwrap();
@@ -67,7 +65,9 @@ fn approve_with_local_relay(
         .build()
         .unwrap();
     let relay = runtime.block_on(LocalNostrRelay::spawn());
-    let request = runtime.block_on(relay.pending_approval_request_url(linked_dir));
+    let blossom = runtime.block_on(LocalBlossomServer::spawn());
+    configure_local_blossom(owner_dir, &blossom.url);
+    let request = LocalNostrRelay::pending_approval_request_url(linked_dir);
     add_config_relay(owner_dir, &relay.url);
     let mut args = vec!["approve", request.as_str()];
     if let Some(label) = label {
@@ -86,7 +86,9 @@ fn app_keys_approve_with_local_relay(
         .build()
         .unwrap();
     let relay = runtime.block_on(LocalNostrRelay::spawn());
-    let request = runtime.block_on(relay.pending_approval_request_url(linked_dir));
+    let blossom = runtime.block_on(LocalBlossomServer::spawn());
+    configure_local_blossom(owner_dir, &blossom.url);
+    let request = LocalNostrRelay::pending_approval_request_url(linked_dir);
     add_config_relay(owner_dir, &relay.url);
     run_json(owner_dir, &["app-keys", "approve", &request])
 }
@@ -188,17 +190,6 @@ fn stats_prints_gui_summary_counts() {
     assert_eq!(value["unresolved_conflicts"], 0);
 }
 
-fn configure_local_blossom(config_dir: &std::path::Path, url: &str) {
-    idrive(config_dir)
-        .args(["blossom-servers", "remove", "https://upload.iris.to"])
-        .assert()
-        .success();
-    idrive(config_dir)
-        .args(["blossom-servers", "add", url])
-        .assert()
-        .success();
-}
-
 fn import_one_file(
     config_dir: &std::path::Path,
     file_name: &str,
@@ -248,6 +239,8 @@ fn assert_tree_does_not_contain_bytes(path: &std::path::Path, needle: &[u8]) {
     }
 }
 
+#[path = "cli_e2e/approval_sync_tests.rs"]
+mod approval_sync_tests;
 #[path = "cli_e2e/profile_tests.rs"]
 mod profile_tests;
 
@@ -267,7 +260,7 @@ fn status_before_init_reports_uninitialized() {
     assert_eq!(v["initialized"], false);
     assert!(v.get("account").is_none());
     assert!(v["profile"].is_null());
-    assert!(v["drives"].as_array().unwrap().is_empty());
+    assert_eq!(v["drives"].as_array().unwrap().len(), 0);
     assert_eq!(v["hashtree"]["local_block_count"], 0);
     assert_eq!(v["hashtree"]["local_block_bytes"], 0);
     assert_eq!(
@@ -278,7 +271,7 @@ fn status_before_init_reports_uninitialized() {
     assert_eq!(v["network"]["fips"]["roster_peer_count"], 0);
     assert_eq!(v["network"]["fips"]["roster_connected_peer_count"], 0);
     assert_eq!(v["network"]["fips"]["other_peer_count"], 0);
-    assert!(v["peers"].as_array().unwrap().is_empty());
+    assert_eq!(v["peers"].as_array().unwrap().len(), 0);
     assert_eq!(v["conflicts"]["total_count"], 0);
     assert_eq!(v["conflicts"]["unresolved_count"], 0);
 }

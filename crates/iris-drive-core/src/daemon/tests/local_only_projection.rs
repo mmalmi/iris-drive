@@ -118,7 +118,7 @@ async fn mounted_visible_import_ignores_previous_local_only_projection_files() {
             .collect::<Vec<_>>(),
         vec!["local.txt"]
     );
-    assert!(tombstones.is_empty());
+    assert_eq!(tombstones.len(), 0);
 
     let merged = crate::primary_merged_view(daemon.tree(), daemon.config())
         .await
@@ -210,7 +210,8 @@ async fn publish_after_local_only_projection_uses_publishable_history_root() {
             .iter()
             .map(|tombstone| tombstone.path.as_str())
             .collect::<Vec<_>>(),
-        vec!["seed/android.txt"]
+        vec!["seed/android.txt", "seed"],
+        "role-aware roots retain the exact directory barrier as well as the file marker"
     );
     daemon
         .report_and_record_root(

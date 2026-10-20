@@ -34,16 +34,28 @@ require_file ios/project.yml
 require_file ios/Sources/IrisDriveIOSApp.swift
 require_file ios/Sources/IrisDriveClipboard.swift
 require_file ios/Sources/IrisDriveMobileModel.swift
+require_file ios/Sources/IrisDriveDeviceApproval.swift
+require_file ios/Sources/IrisDriveScreenshotFixture.swift
 require_file ios/Sources/IrisDriveNativeCore.swift
 require_file ios/Sources/IrisDriveTypes.swift
+require_file ios/Resources/PrivacyInfo.xcprivacy
 require_file ios/FileProvider/FileProviderExtension.swift
+require_file ios/FileProvider/PrivacyInfo.xcprivacy
 require_file ios/ShareExtension/ShareItemImporter.swift
+require_file ios/ShareExtension/PrivacyInfo.xcprivacy
 require_file ios/ShareSource/ShareSourceApp.swift
 require_file ios/UnitTests/ShareItemImporterTests.swift
+require_file ios/UnitTests/ApprovalReceiptForegroundSyncTests.swift
 require_file ios/UITests/IrisDriveIOSUITests.swift
+require_file ios/UITests/IrisDriveDeviceApprovalUITests.swift
+require_file ios/UITests/IrisDriveAppStoreScreenshotTests.swift
 require_file ios/UITests/Fixtures/external-links.html
+require_file scripts/ios-app-store-screenshots.sh
 require_file scripts/ios-simulator-smoke.sh
 require_file scripts/ios-gui-linking-smoke.sh
+require_file scripts/lib/ios-linking-observer.sh
+require_file scripts/lib/ios-blossom-smoke.sh
+require_file scripts/lib/ios-xcuitest-accessibility-session.sh
 require_file scripts/cross-vm-four-platform-e2e.sh
 
 require_contains ios/project.yml "IrisDriveIOS"
@@ -61,8 +73,31 @@ require_contains ios/Info.plist "iris.localhost"
 require_contains ios/Info.plist "hash.localhost"
 require_contains ios/Info.plist "NSExceptionAllowsInsecureHTTPLoads"
 require_contains ios/Info.plist "NSIncludesSubdomains"
+require_contains ios/Info.plist "ITSAppUsesNonExemptEncryption"
+require_contains ios/Resources/PrivacyInfo.xcprivacy "NSPrivacyAccessedAPICategoryUserDefaults"
+require_contains ios/Resources/PrivacyInfo.xcprivacy "CA92.1"
+require_contains ios/Resources/PrivacyInfo.xcprivacy "NSPrivacyAccessedAPICategoryFileTimestamp"
+require_contains ios/Resources/PrivacyInfo.xcprivacy "C617.1"
+require_contains ios/Resources/PrivacyInfo.xcprivacy "NSPrivacyCollectedDataTypeOtherUserContent"
+require_contains ios/Resources/PrivacyInfo.xcprivacy "NSPrivacyCollectedDataTypeUserID"
+require_contains ios/Resources/PrivacyInfo.xcprivacy "NSPrivacyCollectedDataTypeDeviceID"
+require_contains ios/Resources/PrivacyInfo.xcprivacy "NSPrivacyCollectedDataTypePurposeAppFunctionality"
+require_contains ios/FileProvider/PrivacyInfo.xcprivacy "NSPrivacyAccessedAPICategoryFileTimestamp"
+require_contains ios/FileProvider/PrivacyInfo.xcprivacy "C617.1"
+require_contains ios/ShareExtension/PrivacyInfo.xcprivacy "NSPrivacyAccessedAPICategoryFileTimestamp"
+require_contains ios/ShareExtension/PrivacyInfo.xcprivacy "C617.1"
 require_contains ios/Sources/IrisDriveIOSApp.swift "ensureFileProviderDomain"
+require_contains ios/Sources/IrisDriveScreenshotFixture.swift "IRIS_DRIVE_UI_TEST_SCREENSHOT_FIXTURE"
+require_contains ios/UITests/IrisDriveAppStoreScreenshotTests.swift "testCaptureAppStoreScreenshots"
+require_contains scripts/ios-app-store-screenshots.sh "IPHONE_69"
+require_contains scripts/ios-app-store-screenshots.sh "IPAD_PRO_13"
 require_contains ios/Sources/IrisDriveMobileModel.swift "NSFileProviderManager.add"
+require_contains ios/Sources/IrisDriveMobileModel.swift "pendingDeviceApprovalReceiptCount"
+require_contains ios/Sources/IrisDriveBackgroundSync.swift "pendingApprovalReceiptForegroundSyncIntervalNanoseconds"
+require_contains ios/UnitTests/ApprovalReceiptForegroundSyncTests.swift "testPendingApprovalReceiptBypassesOrdinaryDriveSyncMinimum"
+require_contains ios/UnitTests/ApprovalReceiptForegroundSyncTests.swift "testPendingApprovalReceiptUsesFastForegroundPoll"
+require_contains ios/UnitTests/ApprovalReceiptForegroundSyncTests.swift "testPendingApprovalReceiptUsesDedicatedAckSyncBeforeGeneralSync"
+require_contains ios/Sources/IrisDriveMobileModel.swift '"type": "sync_approval_acks"'
 require_contains ios/Sources/IrisDriveMobileModel.swift "fileProviderRegistrationIdentity"
 require_contains ios/Sources/IrisDriveMobileModel.swift "shouldRepairFileProviderRegistration"
 require_contains ios/Sources/IrisDriveMobileModel.swift "repairFileProviderRegistration"
@@ -92,7 +127,9 @@ require_contains ios/Sources/IrisDriveRootView.swift ".fullScreenCover(item: \$m
 require_absent ios/Sources/IrisDriveRootView.swift ".sheet(item: \$model.webRoute)"
 require_contains ios/Sources/IrisDriveRootView.swift "model.startJoinRequest()"
 require_contains ios/Sources/IrisDriveRootView.swift "copyRequestLink"
-require_contains ios/Sources/IrisDriveRootView.swift "confirmManualDevice(trimmed, force: true)"
+require_contains ios/Sources/IrisDriveRootView.swift "model.requestDeviceApprovalConfirmation(trimmed)"
+require_contains ios/Sources/IrisDriveDeviceApproval.swift '"Approve this device?"'
+require_contains ios/Sources/IrisDriveMobileModel.swift "requestDeviceApprovalConfirmation(url.absoluteString)"
 require_contains ios/Sources/IrisDriveRootView.swift "IrisDriveNativeLinkInput.isCompleteDeviceApproval(model.approveDeviceKey"
 require_contains ios/Sources/IrisDriveRootView.swift "device.isCurrentDevice"
 require_absent ios/Sources/IrisDriveRootView.swift "LabeledContent(\"Device\""
@@ -107,6 +144,8 @@ require_contains ios/Sources/IrisDriveRootView.swift "irisWebMoreButton"
 require_contains ios/Sources/IrisDriveRootView.swift "irisWebCompactTitle"
 require_contains ios/Sources/IrisDriveRootView.swift "irisWebNavigationAction(for: url)"
 require_absent ios/Sources/IrisDriveRootView.swift ".navigationTitle(\"Iris Apps\")"
+require_contains ios/Sources/IrisDriveRootView.swift "https://getdrive.iris.to/privacy/"
+require_contains ios/Sources/IrisDriveRootView.swift "https://getdrive.iris.to/support/"
 require_contains ios/Sources/IrisDriveTypes.swift "storageDirectoryName = \"IrisDrive\""
 require_absent ios/Sources/IrisDriveMobileModel.swift "applicationSupportDirectory"
 require_absent ios/Sources/IrisDriveMobileModel.swift "UIDocumentPickerViewController"
@@ -136,6 +175,10 @@ require_contains ios/Sources/IrisDriveMobileModel.swift "statusTitle = state.ui.
 require_contains ios/Sources/IrisDriveMobileModel.swift "startNativeFipsStatusWatcher"
 require_contains ios/Sources/IrisDriveMobileModel.swift "native-fips-status.json"
 require_contains ios/Sources/IrisDriveMobileModel.swift "Iris Drive native FIPS status file changed"
+require_contains crates/iris-drive-core/src/fips_sync.rs "pub fn subscribe_presence_changes"
+require_contains crates/iris-drive-app-core/src/ffi.rs "let mut presence_changes = sync.subscribe_presence_changes();"
+require_contains crates/iris-drive-app-core/src/ffi.rs "presence_changed = presence_changes.changed()"
+require_contains crates/iris-drive-app-core/src/ffi.rs "writing native FIPS presence status failed"
 require_contains ios/Sources/IrisDriveMobileModel.swift "role: device.roleLabel"
 require_contains ios/Sources/IrisDriveMobileModel.swift "relayStatuses = state.ui.relayStatuses"
 require_contains ios/Sources/IrisDriveRootView.swift "ForEach(model.relayStatuses"
@@ -173,12 +216,176 @@ require_contains scripts/ios-simulator-smoke.sh "wait_for_simulator_boot"
 require_contains scripts/ios-simulator-smoke.sh "SIMCTL_CHILD_IRIS_DRIVE_DEBUG_ACTION"
 require_contains scripts/ios-gui-linking-smoke.sh "testLinkThisDeviceFromWelcome"
 require_contains scripts/ios-gui-linking-smoke.sh "testAddLinkedDeviceFromDevices"
+require_contains scripts/ios-gui-linking-smoke.sh "testDeviceApprovalUniversalLinkCancelDoesNotApprove"
+require_contains scripts/ios-gui-linking-smoke.sh "testDeviceApprovalUniversalLinkApprovesOnlyAfterTap"
+require_contains scripts/ios-gui-linking-smoke.sh 'assert_config_link_state "$SIM_APP_BASE_DIR" 1 0'
+require_contains scripts/ios-gui-linking-smoke.sh 'assert_config_link_state "$SIM_APP_BASE_DIR" 2 any'
+require_contains scripts/ios-gui-linking-smoke.sh 'assert_config_link_state "$SIM_APP_BASE_DIR" 3 any'
+require_contains scripts/lib/ios-linking-observer.sh "ios_config_mutation_audit"
+require_contains scripts/ios-gui-linking-smoke.sh "start_linked_device_sync_observer"
+require_contains scripts/ios-gui-linking-smoke.sh "assert_linked_device_exchange_observed_before"
+require_contains scripts/lib/ios-linking-observer.sh 'IOS_APPROVAL_EXCHANGE_OBSERVED phase=$phase'
+require_contains scripts/lib/ios-linking-observer.sh 'product_ack_persisted_at=$product_ack_persisted_at'
+require_contains scripts/lib/ios-linking-observer.sh 'approval_receipt_consumed_at "$state_file" "$deadline"'
+require_contains scripts/lib/ios-linking-observer.sh 'event.get("phase") != "pending_receipt_transition"'
+require_contains scripts/ios-gui-linking-smoke.sh '--event-log "$LOCAL_RELAY_EVENT_LOG"'
+require_contains scripts/lib/ios-linking-observer.sh "python3 -c 'import time; print(time.time())'"
+require_contains scripts/lib/ios-linking-observer.sh 'float(sys.argv[1]) <= float(sys.argv[2])'
+require_contains scripts/lib/ios-linking-observer.sh 'pending_device_approval_receipt_count'
+require_contains scripts/lib/ios-linking-observer.sh 'expected_owner_roster'
+require_contains scripts/lib/ios-linking-observer.sh 'xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID"'
+require_contains scripts/lib/ios-linking-observer.sh 'kill "$observer_pid"'
+require_absent scripts/lib/ios-linking-observer.sh 'if ! kill -0 "$observer_pid"'
+require_contains scripts/ios-gui-linking-smoke.sh 'rm -f "$OWNER_DAEMON_LOG" "$LOCAL_RELAY_READY" "$LOCAL_RELAY_LOG"'
+require_absent scripts/ios-gui-linking-smoke.sh "sync_linked_device_before"
+require_absent scripts/ios-gui-linking-smoke.sh 'wait_for_approval_ack "$SIM_APP_BASE_DIR" "universal-link"'
+require_absent scripts/ios-gui-linking-smoke.sh 'wait_for_approval_ack "$SIM_APP_BASE_DIR" "manual-link"'
+require_absent scripts/lib/ios-linking-observer.sh '"$IDRIVE" --config-dir "$owner_config_dir" sync'
+require_contains scripts/ios-gui-linking-smoke.sh 'cli_owner_approval_deadline=$((cli_owner_approval_started + 15))'
+require_contains scripts/ios-gui-linking-smoke.sh 'wait_for_config_status_before'
+require_contains scripts/ios-gui-linking-smoke.sh 'wait_for_approval_ack "$OWNER_CONFIG" "CLI-owner-to-iOS" "$cli_owner_approval_deadline"'
+require_contains scripts/lib/ios-linking-observer.sh 'IOS_CLI_OWNER_ACK_DAEMON_TIMELINE'
+require_contains scripts/lib/ios-linking-observer.sh 'IOS_NATIVE_APP_KEY_LINK_AUDIT'
+require_contains scripts/lib/ios-linking-observer.sh 'native-app-key-link-audit.json'
+require_contains scripts/lib/ios-linking-observer.sh 'IOS_CLI_OWNER_ACK_OBSERVED phase=$phase'
+require_contains scripts/ios-gui-linking-smoke.sh 'IRIS_DRIVE_IOS_CLI_OWNER_ACK_ONLY'
 require_contains scripts/ios-gui-linking-smoke.sh "testOpenIrisAppsLoadsBrowserWithoutConnectionError"
 require_contains scripts/ios-gui-linking-smoke.sh "testMyDriveShowsSyncStatusWithoutMobilePauseControls"
+require_contains scripts/lib/ios-blossom-smoke.sh '"$IDRIVE" --config-dir "$config_dir" relays add "$LOCAL_RELAY_URL"'
 require_contains scripts/ios-gui-linking-smoke.sh "testShareSheetImportsFileFromExternalSender"
 require_contains scripts/ios-gui-linking-smoke.sh "Iris Drive Share Source.app"
 require_contains scripts/ios-gui-linking-smoke.sh "--app-group"
 require_contains scripts/ios-gui-linking-smoke.sh "IrisDriveIOSShareExtensionTests"
+
+python3 - \
+  "$ROOT/scripts/ios-gui-linking-smoke.sh" \
+  "$ROOT/scripts/lib/ios-linking-observer.sh" <<'PY'
+import pathlib
+import sys
+
+main_source = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+observer_source = pathlib.Path(sys.argv[2]).read_text(encoding="utf-8")
+source = observer_source + "\n" + main_source
+
+initial_mobile_local_relay = source.index(
+    'configure_ios_smoke_relay "$SIM_APP_BASE_DIR"'
+)
+awaiting_approval_ui = source.index(
+    '"IrisDriveIOSUITests/IrisDriveIOSUITests/testAwaitingApprovalViewVisible"'
+)
+if initial_mobile_local_relay > awaiting_approval_ui:
+    raise SystemExit(
+        "the initial iOS linked profile must use the local relay before XCTest teardown"
+    )
+
+observer_function = source.index("start_linked_device_sync_observer()")
+observer_assertion = source.index(
+    "assert_linked_device_exchange_observed_before()", observer_function
+)
+linked_authorized_branch = source.index(
+    'if [[ -s "$linked_observation_file" ]]; then', observer_function, observer_assertion
+)
+linked_sync = source.index(
+    '"$IDRIVE" --config-dir "$linked_config_dir" sync',
+    observer_function,
+    linked_authorized_branch,
+)
+local_relay_override = source.index(
+    '--relay "$LOCAL_RELAY_URL" --timeout 2',
+    linked_sync,
+    linked_authorized_branch,
+)
+owner_pending_status = source.index(
+    '"$IDRIVE" --config-dir "$owner_config_dir" status',
+    local_relay_override,
+    linked_authorized_branch,
+)
+owner_receipt_keepalive = source.index(
+    'xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID"',
+    owner_pending_status,
+    linked_authorized_branch,
+)
+linked_status = source.index(
+    '"$IDRIVE" --config-dir "$linked_config_dir" status',
+    owner_receipt_keepalive,
+    linked_authorized_branch,
+)
+owner_ack_keepalive = source.index(
+    'xcrun simctl launch "$DEVICE_UDID" "$BUNDLE_ID"',
+    linked_authorized_branch,
+    observer_assertion,
+)
+owner_ack_status = source.index(
+    '"$IDRIVE" --config-dir "$owner_config_dir" status',
+    owner_ack_keepalive,
+    observer_assertion,
+)
+product_ack_poll = source.index(
+    'product_ack_persisted_at="$(approval_receipt_consumed_at',
+    observer_assertion,
+)
+if not (
+    linked_sync
+    < local_relay_override
+    < owner_pending_status
+    < owner_receipt_keepalive
+    < linked_status
+    < linked_authorized_branch
+    < owner_ack_keepalive
+    < owner_ack_status
+    < observer_assertion
+    < product_ack_poll
+):
+    raise SystemExit(
+        "linked CLI observer must sync only against the deterministic local relay, "
+        "keep the iOS owner alive after a durable pending receipt, then observe real "
+        "mobile approval publication and ACK ingestion"
+    )
+
+
+def require_ordered_flow(config, expected_owner_roster, test_name, deadline_assignment, phase):
+    test = source.index(test_name)
+    observer = source.rfind("start_linked_device_sync_observer", 0, test)
+    observer_config = source.index(f'"${config}"', observer, test)
+    owner_config = source.index('"$SIM_APP_BASE_DIR"', observer_config, test)
+    expected_roster = source.index(
+        f"\n  {expected_owner_roster} {chr(92)}\n", owner_config, test
+    )
+    deadline = source.index(deadline_assignment, test)
+    assertion = source.index('assert_linked_device_exchange_observed_before \\', deadline)
+    cleanup = source.index('SYNC_OBSERVER_PID=""', assertion)
+    if observer < 0 or not (
+        observer
+        < observer_config
+        < owner_config
+        < expected_roster
+        < test
+        < deadline
+        < assertion
+        < cleanup
+    ):
+        raise SystemExit(
+            f"{phase} approval must start its linked-CLI observer before the UI tap, "
+            "then compare authorization and ACK observations with the audit deadline"
+        )
+
+
+require_ordered_flow(
+    "LINKED_CONFIG",
+    2,
+    "testDeviceApprovalUniversalLinkApprovesOnlyAfterTap",
+    'linked_deadline="$(approval_deadline "$STATE_FILE")"',
+    "universal-link",
+)
+require_ordered_flow(
+    "MANUAL_LINKED_CONFIG",
+    3,
+    "testAddLinkedDeviceFromDevices",
+    'manual_linked_deadline="$(approval_deadline "$STATE_FILE")"',
+    "manual-link",
+)
+PY
+
 require_contains scripts/ios-device-smoke.sh "IrisDriveIOSShareExtensionTests"
 require_contains scripts/ios-device-smoke.sh "IOS_DEVICE_SHARE_EXTENSION_TESTS_OK"
 require_contains scripts/ios-device-smoke.sh 'TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/ios/.build/RustDeviceTarget}"'
@@ -186,11 +393,20 @@ require_contains scripts/ios-device-smoke.sh 'RUST_LIB_DIR="$TARGET_DIR/$RUST_IO
 require_contains scripts/ios-device-smoke.sh 'cargo build -p iris-drive-app-core --target "$RUST_IOS_TARGET" --release'
 require_contains scripts/ios-device-smoke.sh 'CARGO_TARGET_DIR="$TARGET_DIR"'
 require_contains scripts/ios-device-smoke.sh 'IPHONEOS_DEPLOYMENT_TARGET="$RUST_IOS_DEPLOYMENT_TARGET"'
+require_contains scripts/ios-build 'RUST_IOS_DEPLOYMENT_TARGET="${IRIS_DRIVE_IOS_DEPLOYMENT_TARGET:-17.0}"'
+require_contains scripts/ios-build 'IPHONEOS_DEPLOYMENT_TARGET="$RUST_IOS_DEPLOYMENT_TARGET"'
+require_contains scripts/ios-app-store-screenshots.sh 'IPHONEOS_DEPLOYMENT_TARGET="$RUST_IOS_DEPLOYMENT_TARGET"'
 require_contains scripts/ios-device-smoke.sh 'local status'
 require_contains scripts/ios-device-smoke.sh 'return "$status"'
 require_contains scripts/ios-device-iris-apps-smoke.sh 'local status'
 require_contains scripts/ios-device-iris-apps-smoke.sh 'return "$status"'
 require_contains scripts/ios-device-iris-apps-smoke.sh "assert_device_awake_for_launch"
+require_contains scripts/ios-device-iris-apps-smoke.sh 'data.get("webview_ready_state") != "complete"'
+require_contains scripts/ios-device-iris-apps-smoke.sh 'required_http_200'
+require_contains scripts/ios-gui-linking-smoke.sh 'ios_xcuitest_accessibility_session_disabled_after "$BUILD_LOG" "$build_log_offset"'
+require_contains scripts/ios-gui-linking-smoke.sh 'restart_ios_simulator_accessibility_session "$DEVICE_UDID"'
+require_contains ios/Sources/IrisDriveMobileBrowser.swift "irisDebugWebViewIsMaterialized"
+require_contains ios/UnitTests/IrisWebGatewayRetryTests.swift "testMaterializedLauncherDoesNotRequireNavigationDelegateCompletion"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "testShareSheetImportsFileFromExternalSender"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "assertSharedFileVisibleInFiles(sharedFile, in: refreshed)"
 require_contains ios/UITests/IrisDriveIOSUITests.swift "assertFilesOpen(in: app, files: files, timeout: 25, expectedItem: sharedFile)"
@@ -222,5 +438,112 @@ require_contains Justfile "ios-build"
 require_contains Justfile "ios-smoke"
 require_contains Justfile "ios-gui-smoke"
 require_contains Justfile "e2e-4devices"
+
+accessibility_log="$(mktemp -t iris-drive-ios-ax-session.XXXXXX)"
+trap 'rm -f "$accessibility_log"' EXIT
+# shellcheck source=scripts/lib/ios-xcuitest-accessibility-session.sh
+source "$ROOT/scripts/lib/ios-xcuitest-accessibility-session.sh"
+printf '%s\n' 'Error getting main window kAXErrorAPIDisabled' >"$accessibility_log"
+offset="$(wc -c <"$accessibility_log" | tr -d ' ')"
+if ios_xcuitest_accessibility_session_disabled_after "$accessibility_log" "$offset"; then
+  echo "stale accessibility failures from an earlier test must not trigger recovery" >&2
+  exit 1
+fi
+printf '%s\n' 'ordinary product assertion failure' >>"$accessibility_log"
+if ios_xcuitest_accessibility_session_disabled_after "$accessibility_log" "$offset"; then
+  echo "ordinary product assertions must not trigger accessibility recovery" >&2
+  exit 1
+fi
+offset="$(wc -c <"$accessibility_log" | tr -d ' ')"
+printf '%s\n' 'Failed to get matching snapshots: Error getting main window kAXErrorAPIDisabled' >>"$accessibility_log"
+ios_xcuitest_accessibility_session_disabled_after "$accessibility_log" "$offset" \
+  || { echo "current XCUITest accessibility failure was not classified" >&2; exit 1; }
+offset="$(wc -c <"$accessibility_log" | tr -d ' ')"
+printf '%s\n' 'Failed to initialize for UI testing: Timed out while enabling automation mode.' >>"$accessibility_log"
+ios_xcuitest_automation_mode_timed_out_after "$accessibility_log" "$offset" \
+  || { echo "current XCUITest automation-mode timeout was not classified" >&2; exit 1; }
+rm -f "$accessibility_log"
+trap - EXIT
+
+python3 - "$ROOT" <<'PY'
+import copy
+import json
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+phone = {
+    "identifier": "core-device-id",
+    "hardwareProperties": {"productType": "iPhone17,1", "udid": "hardware-device-udid"},
+    "deviceProperties": {"name": "Test iPhone"},
+    "connectionProperties": {
+        "pairingState": "paired",
+        "tunnelState": "connected",
+        "potentialHostnames": ["test-phone.local"],
+    },
+}
+for name in ("ios-device-smoke.sh", "ios-device-iris-apps-smoke.sh"):
+    source = (Path(sys.argv[1]) / "scripts" / name).read_text()
+    # Capture the actual build/test arguments without a compiler or connected device.
+    commands = re.findall(r"(?m)^ *(?:if ! )?(xcodebuild \\\n(?:.*\\\n)*.*)", source)
+    actions = []
+    for command in commands:
+        result = subprocess.run(
+            ["bash", "-eu", "-c", "xcodebuild() { printf '%s\\n' \"$@\"; }\n" + command.removesuffix("; then")],
+            env=dict(os.environ, PROJECT="fixture.xcodeproj", SCHEME="IrisDriveIOS",
+                     CONFIGURATION="Release", DERIVED_DATA="fixture-derived",
+                     DEVICE_UDID="hardware-device-udid", device_udid="hardware-device-udid",
+                     DEVELOPMENT_TEAM="fixture-team", CODE_SIGN_IDENTITY="Apple Development",
+                     RUST_LIB_DIR="fixture-lib", RUST_STATIC_LIB="fixture-lib/app-core.a",
+                     BUILD_LOG="/dev/stdout"),
+            text=True, capture_output=True, check=True, timeout=5,
+        )
+        args = result.stdout.splitlines()
+        action = args[-1]
+        actions.append(action)
+        assert args.count("-destination") == 1, (name, args)
+        expected = "generic/platform=iOS" if action == "build" else "platform=iOS,id=hardware-device-udid"
+        assert args[args.index("-destination") + 1] == expected, (name, action, args)
+    assert actions == (["test", "build"] if name == "ios-device-smoke.sh" else ["build"]), (name, actions)
+    function = source.split("select_device() {\n", 1)[1].split("\n}", 1)[0]
+    selector = function.split("<<'PY'\n", 1)[1].split("\nPY", 1)[0]
+    with tempfile.TemporaryDirectory(prefix="iris-ios-device-selection-") as directory:
+        fixture = Path(directory) / "devices.json"
+
+        def check(devices, preferred, expected):
+            fixture.write_text(json.dumps({"result": {"devices": devices}}))
+            result = subprocess.run(
+                [sys.executable, "-", preferred, str(fixture)], input=selector,
+                text=True, capture_output=True, timeout=5,
+            )
+            if expected is None:
+                assert result.returncode != 0 and not result.stdout, (name, preferred, result)
+            else:
+                assert result.returncode == 0 and result.stdout == expected + "\n", (name, preferred, result)
+
+        for preferred in ("core-device-id", "hardware-device-udid", "Test iPhone", "test-phone.local", ""):
+            check([phone], preferred, "hardware-device-udid")
+        check([phone], "unknown-device", None)
+        check([], "", None)
+        for section, field, value in (
+            ("hardwareProperties", "productType", "iPad17,1"),
+            ("connectionProperties", "pairingState", "unpaired"),
+            ("connectionProperties", "tunnelState", "unavailable"),
+        ):
+            unusable = copy.deepcopy(phone)
+            unusable[section][field] = value
+            check([unusable], "core-device-id", None)
+            check([unusable, phone], "", "hardware-device-udid")
+        for missing in (None, "", "   "):
+            invalid = copy.deepcopy(phone)
+            invalid["hardwareProperties"]["udid"] = missing
+            for preferred in ("core-device-id", ""):
+                check([invalid, phone], preferred, None)
+        del invalid["hardwareProperties"]["udid"]
+        check([invalid, phone], "", None)
+PY
 
 echo "IOS_E2E_KIT_OK"

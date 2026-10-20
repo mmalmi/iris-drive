@@ -26,6 +26,11 @@ internal object AndroidDebugSupport {
     private const val ENV_EXTRA_PREFIX = "IRIS_DRIVE_"
     private const val NETWORK_PROBE_TIMEOUT_MS = 2_000
 
+    fun action(intent: Intent?): String? {
+        if (!BuildConfig.DEBUG) return null
+        return intent?.getStringExtra(ACTION_EXTRA)
+    }
+
     fun applyEnvironment(context: Context, intent: Intent?) {
         if (!BuildConfig.DEBUG) return
         val extras = intent?.extras ?: return

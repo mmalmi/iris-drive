@@ -16,8 +16,8 @@ pub(crate) fn configure_launch_on_startup(enabled: bool) -> Result<(), String> {
         return Err("Autostart directory unavailable".to_owned());
     };
     if enabled {
-        let executable =
-            std::env::current_exe().map_err(|error| format!("Could not find app executable: {error}"))?;
+        let executable = std::env::current_exe()
+            .map_err(|error| format!("Could not find app executable: {error}"))?;
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)
                 .map_err(|error| format!("Could not create autostart directory: {error}"))?;

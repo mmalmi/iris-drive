@@ -40,6 +40,7 @@ mod caldav;
 mod paths;
 mod proxy;
 mod response;
+mod security;
 
 #[allow(clippy::wildcard_imports)]
 use self::caldav::*;
@@ -50,6 +51,8 @@ use self::paths::*;
 use self::proxy::*;
 #[allow(clippy::wildcard_imports)]
 use self::response::*;
+#[allow(clippy::wildcard_imports)]
+use self::security::*;
 
 pub const LOCAL_PORTAL_HOST: &str = "iris.localhost";
 pub const LOCAL_NHASH_RESOLVER_HOST: &str = "nhash.iris.localhost";
@@ -472,10 +475,19 @@ async fn gateway_handler(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
-    match handle_gateway_request(state, ws, method, uri, headers, body).await {
+    let sandbox = private_api_host_allowed(&headers);
+    let mut response = match handle_gateway_request(state, ws, method, uri, headers, body).await {
         Ok(response) => response,
         Err((status, message)) => text_response(status, &message),
+    };
+    if sandbox {
+        // A local drive file must not gain the privileges of the local account APIs.
+        response.headers_mut().append(
+            "content-security-policy",
+            HeaderValue::from_static("sandbox"),
+        );
     }
+    response
 }
 
 async fn handle_gateway_request(
@@ -491,10 +503,11 @@ async fn handle_gateway_request(
     }
 
     if uri.path() == SHARE_ACTION_API_PATH {
-        return handle_share_action_api(&state, &method, &headers, body.as_ref());
+        return handle_share_action_api(&state, &method, &headers, body.as_ref()).await;
     }
 
     if is_htree_runtime_ws_path(uri.path()) && htree_runtime_host_allowed(&headers) {
+        require_same_origin(&headers)?;
         let Some(ws) = ws else {
             return Err((StatusCode::BAD_REQUEST, "websocket upgrade required".into()));
         };
@@ -502,6 +515,7 @@ async fn handle_gateway_request(
     }
 
     if let Some(request) = runtime_htree_daemon_request(&uri, &headers) {
+        require_same_origin(&headers)?;
         return proxy_htree_daemon_request(&state, &method, &headers, request, body).await;
     }
 
@@ -561,14 +575,14 @@ async fn handle_gateway_request(
     }
 }
 
-fn handle_share_action_api(
+async fn handle_share_action_api(
     state: &GatewayState,
     method: &Method,
     headers: &HeaderMap,
     body: &[u8],
 ) -> Result<Response, (StatusCode, String)> {
     let cors_origin = share_action_cors_origin(headers)?;
-    if !share_action_host_allowed(headers) {
+    if !private_api_host_allowed(headers) {
         return Err((StatusCode::BAD_REQUEST, "invalid share action host".into()));
     }
     if method == Method::OPTIONS {
@@ -580,23 +594,45 @@ fn handle_share_action_api(
     if method == Method::GET {
         let result = crate::share_action_state(&state.config_dir)
             .map_err(|e| (StatusCode::BAD_REQUEST, format!("{e:#}")))?;
-        return share_action_json_response(&result, cors_origin.as_ref());
+        return share_action_json_response(&state.config_dir, &result, cors_origin.as_ref());
     }
     if method != Method::POST {
         return Err((StatusCode::METHOD_NOT_ALLOWED, "method not allowed".into()));
     }
     let action = serde_json::from_slice::<crate::ShareAction>(body)
         .map_err(|e| (StatusCode::BAD_REQUEST, format!("share action json: {e}")))?;
-    let result = crate::dispatch_share_action(&state.config_dir, action, gateway_now_seconds())
-        .map_err(|e| (StatusCode::BAD_REQUEST, format!("{e:#}")))?;
-    share_action_json_response(&result, cors_origin.as_ref())
+    let result = crate::share_actions::dispatch_share_action_with_content(
+        &state.config_dir,
+        action,
+        gateway_now_seconds(),
+    )
+    .await
+    .map_err(|e| (StatusCode::BAD_REQUEST, format!("{e:#}")))?;
+    share_action_json_response(&state.config_dir, &result, cors_origin.as_ref())
 }
 
 fn share_action_json_response(
+    config_dir: &std::path::Path,
     result: &crate::ShareActionResult,
     cors_origin: Option<&HeaderValue>,
 ) -> Result<Response, (StatusCode, String)> {
-    let body = serde_json::to_vec(result)
+    let mut value = serde_json::to_value(result)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    let config = crate::AppConfig::load_or_default(crate::paths::config_path_in(config_dir))
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    value["local_profile_id"] =
+        serde_json::json!(config.profile.as_ref().map(|profile| profile.profile_id));
+    let folders = config
+        .shared_folders
+        .into_iter()
+        .map(|mut folder| {
+            // Browser consumers obtain roots only from verified writer events.
+            folder.app_key_roots.clear();
+            folder
+        })
+        .collect::<Vec<_>>();
+    value["shared_folders"] = serde_json::json!(folders);
+    let body = serde_json::to_vec(&value)
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
     try_finish_response(
         share_action_response_builder(StatusCode::OK, cors_origin)
@@ -620,65 +656,6 @@ fn share_action_response_builder(
     builder
 }
 
-fn share_action_host_allowed(headers: &HeaderMap) -> bool {
-    let Some(host) = headers
-        .get(HOST)
-        .and_then(|value| value.to_str().ok())
-        .map(normalize_host)
-    else {
-        return false;
-    };
-    is_loopback_host(&host)
-        || host == LOCAL_PORTAL_HOST
-        || host.ends_with(DRIVE_HOST_SUFFIX)
-        || host.ends_with(IRIS_LOCALHOST_SUFFIX)
-        || host.ends_with(IRIS_LOCAL_SUFFIX)
-}
-
-fn share_action_cors_origin(
-    headers: &HeaderMap,
-) -> Result<Option<HeaderValue>, (StatusCode, String)> {
-    let Some(origin) = headers.get(ORIGIN) else {
-        return Ok(None);
-    };
-    let origin_str = origin
-        .to_str()
-        .map_err(|_| (StatusCode::FORBIDDEN, "invalid origin".to_string()))?;
-    let Some(host) = origin_host(origin_str) else {
-        return Err((StatusCode::FORBIDDEN, "invalid origin".into()));
-    };
-    if share_action_origin_host_allowed(&host) {
-        return Ok(Some(origin.clone()));
-    }
-    Err((StatusCode::FORBIDDEN, "origin is not allowed".into()))
-}
-
-fn share_action_origin_host_allowed(host: &str) -> bool {
-    let host = normalize_host(host);
-    is_loopback_host(&host)
-        || host == "drive.iris.to"
-        || host == LOCAL_PORTAL_HOST
-        || host.ends_with(DRIVE_HOST_SUFFIX)
-        || host.ends_with(IRIS_LOCALHOST_SUFFIX)
-        || host.ends_with(IRIS_LOCAL_SUFFIX)
-        || host.ends_with(".htree.localhost")
-}
-
-fn origin_host(origin: &str) -> Option<String> {
-    let rest = origin
-        .strip_prefix("http://")
-        .or_else(|| origin.strip_prefix("https://"))?;
-    let authority = rest.split('/').next().unwrap_or_default();
-    if authority.starts_with('[') {
-        return authority.split(']').next().map(|value| format!("{value}]"));
-    }
-    authority
-        .split(':')
-        .next()
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-}
-
 fn gateway_now_seconds() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -699,6 +676,11 @@ fn resolve_gateway_request(uri: &Uri, headers: &HeaderMap) -> Result<GatewayRequ
 
     let (path_segments, route_from_path) = parse_gateway_path(uri.path())?;
     if let Some(route) = route_from_path {
+        if !private_api_host_allowed(headers) {
+            return Err(GatewayError::InvalidRequest(
+                "path routes require a local gateway host".into(),
+            ));
+        }
         return request_from_path_route(uri, headers, route, path_segments);
     }
 

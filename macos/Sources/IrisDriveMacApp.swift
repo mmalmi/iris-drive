@@ -4,16 +4,19 @@ import FileProvider
 import Security
 import SwiftUI
 
-let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier("main")
+let irisDriveFileProviderProfile = IrisDriveFileProviderProfile(
+    appBaseDirectory: ProcessInfo.processInfo.environment["IRIS_DRIVE_APP_BASE_DIR"]
+)
+let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier(
+    irisDriveFileProviderProfile.domainIdentifier
+)
 let irisDriveDisplayName = "Iris Drive"
 let irisDriveHiddenLaunchArgument = "--hidden"
-// Keep the domain display empty so macOS names the CloudStorage root IrisDrive,
-// while Finder still shows the provider/root item as Iris Drive.
-let irisDriveFileProviderDomainDisplayName = ""
+let irisDriveFileProviderDomainDisplayName = irisDriveFileProviderProfile.domainDisplayName
 private let irisDriveControlPanelWindowID = "control-panel"
 private let irisDriveFileProviderRuntimeFileName = "fileprovider-runtime.json"
 private let irisDriveFileProviderPathIdentifierPrefix = "path:"
-let irisDriveFileProviderRegistrationIdentityKey = "fileProviderRegistrationIdentity"
+let irisDriveFileProviderRegistrationIdentityKey = irisDriveFileProviderProfile.registrationIdentityKey
 let irisDriveAppManagedDaemonStatusRefreshMinimumInterval: TimeInterval = 60
 let irisDriveProviderSignalRepeatInterval: TimeInterval = 60
 private let irisDriveShowControlPanelNotification =
@@ -37,18 +40,10 @@ private func irisDriveUserFacingDriveName(_ value: Any?) -> String {
 @main
 struct IrisDriveMacApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
-    @Environment(\.openWindow) private var openWindow
-    @ObservedObject private var status = IrisDriveStatus.shared
 
     var body: some Scene {
-        WindowGroup(irisDriveDisplayName, id: irisDriveControlPanelWindowID) {
-            IrisDriveControlPanel(status: status, controller: appDelegate)
-                .frame(minWidth: 780, minHeight: 520)
-                .onAppear {
-                    appDelegate.configureOpenControlPanelWindow {
-                        openWindow(id: irisDriveControlPanelWindowID)
-                    }
-                }
+        Settings {
+            EmptyView()
         }
     }
 }
@@ -66,9 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var fileProviderRegistrationInFlight = false
     private var fileProviderDomainState = FileProviderDomainState.unknown
     private var windowObserver: NSObjectProtocol?
-    private var openControlPanelWindow: (() -> Void)?
     private var controlPanelWindow: NSWindow?
-    var hiddenLaunchWindowSuppressed = false
     var launchOnStartupSynced: Bool?
     private var peerStatusRefreshWorkItem: DispatchWorkItem?
     private var lastPeerStatusRefreshAt = Date.distantPast
@@ -113,8 +106,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if screenshotFixtureMode {
             IrisDriveScreenshotFixtures.apply()
             installWindowObserver()
-            observeWindows()
-            NSApp.activate(ignoringOtherApps: true)
+            showControlPanel()
             return
         }
         if !singleInstanceHandoffDisabled, handOffToExistingInstanceIfNeeded() {
@@ -124,8 +116,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         installE2ENotificationObserverIfEnabled()
         installStatusItem()
         installWindowObserver()
-        observeWindows()
-        suppressHiddenLaunchWindowIfNeeded()
+        if !launchedHidden {
+            showControlPanel()
+        }
         nativeCoreQueue.async { [weak self] in
             NSLog("Iris Drive launching daemon bootstrap")
             self?.bootstrapAndStartDaemon()
@@ -182,7 +175,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     finish(state)
                 }
                 if resetDomain {
-                    resetAllFileProviderDomains(
+                    resetFileProviderDomain(
                         reason: "startup reset requested",
                         runtime: runtime,
                         completion
@@ -319,27 +312,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.unhide(nil)
         NSApp.activate(ignoringOtherApps: true)
         observeWindows()
-        if let window = mainWindow() {
-            window.makeKeyAndOrderFront(nil)
-            return
-        }
-        openControlPanelWindow?()
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.observeWindows()
-            if let window = self?.mainWindow() {
-                window.makeKeyAndOrderFront(nil)
-            } else {
-                self?.fallbackControlPanelWindow().makeKeyAndOrderFront(nil)
-            }
-        }
-    }
-
-    func configureOpenControlPanelWindow(_ openWindow: @escaping () -> Void) {
-        openControlPanelWindow = openWindow
+        (mainWindow() ?? fallbackControlPanelWindow()).makeKeyAndOrderFront(nil)
     }
 
     @objc private func handleShowControlPanelNotification(_ notification: Notification) {
-        showControlPanel()
+        DispatchQueue.main.async { [weak self] in
+            self?.showControlPanel()
+        }
     }
 
     @objc private func handleShowDriveFolderNotification(_ notification: Notification) {
@@ -373,6 +352,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     private func handleLaunchURL(_ url: URL) -> Bool {
         let classification = IrisDriveDesktopCore.classifyLinkInput(url.absoluteString)
+        if classification["kind"] as? String == "backup_invite" {
+            showControlPanel()
+            guard classification["is_valid"] as? Bool == true else {
+                updateStatus(classification["error"] as? String ?? "Invalid backup invite")
+                return true
+            }
+            IrisDriveStatus.shared.pendingBackupInvite = classification["normalized_input"] as? String
+            return true
+        }
         if classification["kind"] as? String == "share_dialog" {
             openShareDialog(
                 sourcePath: classification["share_source_path"] as? String ?? "",
@@ -400,7 +388,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 updateStatus(error.isEmpty ? "Invalid device request" : error)
                 return true
             }
-            approveDevice(url.absoluteString, label: "")
+            IrisDriveStatus.shared.pendingDeviceApproval = IrisDriveDeviceApprovalRequest(
+                requestURL: url.absoluteString
+            )
             return true
         }
         guard isIrisWebURL(url) else {
@@ -1281,11 +1271,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func observeWindows() {
         for window in NSApp.windows where window.title == irisDriveDisplayName {
             window.delegate = self
+            if window.isVisible && controlPanelWindow == nil {
+                controlPanelWindow = window
+            }
         }
     }
 
     private func mainWindow() -> NSWindow? {
-        NSApp.windows.first(where: { $0.title == irisDriveDisplayName }) ?? NSApp.windows.first
+        if let controlPanelWindow {
+            return controlPanelWindow
+        }
+        let window = NSApp.windows.first(where: {
+            $0.isVisible && (
+            $0.title == irisDriveDisplayName
+                || $0.identifier?.rawValue == irisDriveControlPanelWindowID
+            )
+        })
+        controlPanelWindow = window
+        return window
     }
 
     private func fallbackControlPanelWindow() -> NSWindow {
@@ -1658,7 +1661,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func handleFileProviderOpenFailure(_ reason: String) {
         updateStatus("FileProvider unavailable")
         irisDriveDebugLog("Iris Drive FileProvider open failed: \(reason)")
-        NSSound.beep()
     }
 
     private func resetDisabledFileProviderDomainForOpen(
@@ -1808,7 +1810,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let workItem = DispatchWorkItem { [weak self] in
             guard let self else { return }
             if self.externalDaemonMode || self.daemonServiceActive {
-                self.refreshExternalDaemonStatusFile(paths: paths)
+                // A config mutation can change authorization/profile state
+                // without changing every field in daemon-status.json. Always
+                // reload the authoritative CLI projection for filesystem
+                // events so an external approval cannot leave the UI stale.
+                self.refreshExternalDaemonStatus(paths: paths)
             } else {
                 let now = Date()
                 guard now.timeIntervalSince(self.lastAppManagedDaemonStatusRefreshAt)
@@ -2050,8 +2056,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func persistedFileProviderRuntime() -> FileProviderRuntimeConfig? {
-        let url = fileProviderApplicationSupportDirectory()
-            .appendingPathComponent(irisDriveFileProviderRuntimeFileName)
+        let url = irisDriveFileProviderProfile.storageDirectory(
+            in: fileProviderApplicationSupportDirectory()
+        ).appendingPathComponent(irisDriveFileProviderRuntimeFileName)
         guard let data = try? Data(contentsOf: url) else {
             return nil
         }
@@ -2181,6 +2188,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 (ui["relay_statuses"] as? [[String: Any]] ?? []).map(IrisDriveRelayStatus.init)
             status.backupTargets =
                 (ui["backups"] as? [[String: Any]] ?? []).map(IrisDriveBackupTarget.init)
+            status.friendBackups = IrisDriveFriendBackups(json: ui["friend_backups"] as? [String: Any] ?? [:])
             status.shares =
                 (ui["shares"] as? [[String: Any]] ?? []).map(IrisDriveShareStatus.init)
             let lastShareInvite = ui["last_share_invite"] as? String ?? ""
@@ -2240,7 +2248,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                     self.updateStatus(success)
                     if restartSyncAfterSuccess {
                         if self.externalDaemonMode {
-                            self.refreshStatus()
+                            // The app can enter external-daemon mode before a
+                            // profile exists. Start supervision now that setup
+                            // created one so later daemon/config mutations are
+                            // observed and projected into the window.
+                            self.userRequestedSyncStop = false
+                            self.startDaemon(self.idriveExecutableURL(), paths: paths)
                         } else if self.daemonServiceSupervisionEnabled && self.daemon == nil {
                             self.userRequestedSyncStop = false
                             self.startDaemonService(
@@ -2356,6 +2369,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 status.backupTargets =
                     (network["backup_targets"] as? [[String: Any]])?.map(IrisDriveBackupTarget.init)
                     ?? []
+                status.friendBackups = IrisDriveFriendBackups(json: network["friend_backups"] as? [String: Any] ?? [:])
                 status.fips = IrisDriveFipsStatus(
                     json: network["fips"] as? [String: Any] ?? [:]
                 )
@@ -2593,22 +2607,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func refreshExternalDaemonStatusFile(paths: IrisDriveRuntimePaths) {
-        DispatchQueue.global(qos: .utility).async {
-            let statusURL = paths.configDirectory.appendingPathComponent("daemon-status.json")
-            do {
-                let data = try Data(contentsOf: statusURL)
-                guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any]
-                else {
-                    return
-                }
-                self.applyExternalDaemonStatusPayload(json)
-            } catch {
-                NSLog("Iris Drive external daemon status file refresh failed: \(error)")
-            }
-        }
-    }
-
     private func applyExternalDaemonStatusPayload(_ json: [String: Any]) {
         DispatchQueue.main.async {
             let status = IrisDriveStatus.shared
@@ -2677,16 +2675,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             if let existing = try? Data(contentsOf: url), existing == data {
                 continue
             }
-            try data.write(to: url)
+            try data.write(to: url, options: .atomic)
         }
     }
 
     private func fileProviderRuntimeDirectories(paths: IrisDriveRuntimePaths) -> [URL] {
         var directories = [URL]()
         directories.append(paths.configDirectory.deletingLastPathComponent())
-        if ProcessInfo.processInfo.environment["IRIS_DRIVE_APP_BASE_DIR"] == nil {
-            directories.append(fileProviderApplicationSupportDirectory())
-        }
+        directories.append(irisDriveFileProviderProfile.storageDirectory(
+            in: fileProviderApplicationSupportDirectory()
+        ))
 
         var seen = Set<String>()
         return directories.filter { directory in

@@ -13,6 +13,7 @@ FILEPROVIDER_INFO="$ROOT/macos/FileProvider/Info.plist"
 HELPER_ENTITLEMENTS="$ROOT/macos/idrive-helper.entitlements"
 MACOS_PROJECT="$ROOT/macos/project.yml"
 DEV_APP="$ROOT/scripts/macos-dev-app.sh"
+FINDER_SMOKE="$ROOT/scripts/macos-finder-smoke.sh"
 DAEMON_SERVICE="$ROOT/macos/Sources/IrisDriveDaemonService.swift"
 DAEMON_RUNTIME="$ROOT/crates/iris-drive-cli/src/daemon/runtime.rs"
 DAEMON_GATEWAY_RUNTIME="$ROOT/crates/iris-drive-cli/src/daemon/gateway_runtime.rs"
@@ -43,7 +44,14 @@ require_plist_raw_value() {
   local key="$2"
   local expected="$3"
   local actual
-  actual="$(plutil -extract "$key" raw "$file" 2>/dev/null || true)"
+  actual="$(python3 - "$file" "$key" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as source:
+    print(plistlib.load(source).get(sys.argv[2], ""))
+PY
+)"
   if [[ "$actual" != "$expected" ]]; then
     echo "expected plist $key in $file to be '$expected', got '${actual:-<missing>}'" >&2
     exit 1
@@ -58,7 +66,10 @@ require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "repairFileProvide
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "Opening FileProvider roots as plain file URLs"
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "Iris Drive mounted drive folder revealed"
 require_not_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "Iris Drive mounted drive folder opened"
-require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" 'let irisDriveFileProviderDomainDisplayName = ""'
+require_contains "$ROOT/scripts/macos-smoke.sh" "scripts/macos-smoke.sh" "scripts/macos-finder-smoke.sh"
+require_contains "$FINDER_SMOKE" "scripts/macos-finder-smoke.sh" "wait_for_finder_target_path"
+require_contains "$ROOT/scripts/macos-smoke.sh" "scripts/macos-smoke.sh" "Finder did not show the revealed Iris Drive folder"
+require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" 'let irisDriveFileProviderDomainDisplayName = irisDriveFileProviderProfile.domainDisplayName'
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "irisDriveUserFacingDriveName"
 require_not_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "selectFile(nil, inFileViewerRootedAtPath:"
 require_contains "$MACOS_INFO" "macos/Info.plist" "NSLocalNetworkUsageDescription"
@@ -89,14 +100,9 @@ require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "CF
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "markFileProviderRegistrationCurrent"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "fileProviderRegistrationIdentityIsCurrent"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "queryFileProviderDomainStateWithError"
-require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "domain query failed after add"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "shouldRepairFileProviderRegistration"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "repairFileProviderRegistration"
-require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "removeAllDomains"
-require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "resetAllFileProviderDomains"
-require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "repairAllFileProviderRegistrations"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "addFreshFileProviderDomain"
-require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "Iris Drive repairing orphaned FileProvider domains"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "Iris Drive repairing stale FileProvider domain registration"
 require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "Iris Drive FileProvider domain removed without re-add"
 require_contains "$RUNTIME_SUPPORT" "macos/Shared/IrisDriveRuntimeSupport.swift" "existingAppGroupApplicationSupportDirectory"
@@ -114,13 +120,13 @@ require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "remove_daemon_service"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "remove_repo_local_daemon_service"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "app-group runtime is managed by sandboxed app"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'if [[ -z "$app_base_dir" && "$mode" != "development" ]]; then'
-require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "Removing stale macOS FileProvider pluginkit registration"
+require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'rm -rf "$candidate"'
 require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" "candidate_plugins"
 require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" '$HOME/Applications/Iris Drive.app/Contents/PlugIns/IrisDriveFileProvider.appex'
 require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" "/Applications/Iris Drive.app/Contents/PlugIns/IrisDriveFileProvider.appex"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "registered_plugins"
-require_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'if (( ${#registered_plugins[@]} > 0 )); then'
-require_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'pluginkit -r "$plugin"'
+require_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'pluginkit -a "$appex"'
+require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'pluginkit -r "$plugin"'
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "Reusing existing macOS FileProvider pluginkit registration"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "ensure_daemon_service"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "service install --launch --json"
@@ -131,8 +137,10 @@ require_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'remove_daemon_service "$
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "ad-hoc app manages daemon"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "macos_process_command_matches"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "default_install_app_path"
-require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "/Applications/Iris Drive.app"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "macos/.build/Applications/Iris Drive.app"
+require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "development signing never"
+require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'local stable_app="/Applications/Iris Drive.app"'
+require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" '-w "/Applications"'
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "IRIS_DRIVE_DISABLE_LOGIN_AGENT_SYNC=true"
 require_contains "$DEV_APP" "scripts/macos-dev-app.sh" "IRIS_DRIVE_FILEPROVIDER_RESET_ON_START=true"
 require_not_contains "$DEV_APP" "scripts/macos-dev-app.sh" 'pkill -TERM -x "$APP_PROCESS_NAME"'
@@ -158,5 +166,14 @@ require_contains "$ROOT/macos/Sources/IrisDriveControlPanel.swift" "macos/Source
 require_not_contains "$ROOT/macos/Sources/IrisDriveControlPanel.swift" "macos/Sources/IrisDriveControlPanel.swift" "return shareLocalGatewayLink(share, status: status)"
 require_contains "$DAEMON_RUNTIME" "crates/iris-drive-cli/src/daemon/runtime.rs" "embedded_hashtree_requested"
 require_contains "$DAEMON_GATEWAY_RUNTIME" "crates/iris-drive-cli/src/daemon/gateway_runtime.rs" '"requested": embedded_hashtree_requested'
+
+# Repair must never remove another explicit profile or the normal installation.
+require_not_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "NSFileProviderManager.removeAllDomains"
+require_contains "$LIFECYCLE" "macos/Sources/IrisDriveMacFileProvider.swift" "irisDriveFileProviderProfile.owns(domain.identifier.rawValue)"
+require_contains "$FILEPROVIDER_ITEM" "macos/FileProvider/FileProviderItem.swift" "final class FileProviderStorage"
+require_not_contains "$FILEPROVIDER_ITEM" "macos/FileProvider/FileProviderItem.swift" "static var configuredRuntime"
+if [[ $(uname -s) == Darwin ]]; then
+    "$ROOT/scripts/check-macos-profile-isolation.sh"
+fi
 
 echo "MACOS_FILEPROVIDER_LIFECYCLE_OK"

@@ -6,7 +6,7 @@ use crate::DIRECT_ROOT_APP_TOPIC;
 use fips_core::PeerIdentity;
 use fips_tcp::{Config as TcpConfig, ConnectionId, State};
 use fips_tcp_endpoint::FipsTcpEndpoint;
-use hashtree_fips_transport::{BoundFipsEndpoint, FipsPeerConfig, set_fips_peer_configs};
+use hashtree_fips_transport::{BoundFipsEndpoint, FipsPeerConfig};
 use nostr_sdk::{Alphabet, SingleLetterTag, Tag, TagKind};
 
 use super::super::control_runtime::{
@@ -17,9 +17,108 @@ use super::mesh_fallback::{bind_test_endpoint, reserve_udp_address, wait_for_pee
 #[test]
 fn control_poll_interval_is_idle_safe() {
     assert!(
-        CONTROL_POLL_INTERVAL >= Duration::from_millis(100),
-        "TCP/FIPS control polling below 100 ms keeps mobile runtimes busy while idle"
+        CONTROL_POLL_INTERVAL >= Duration::from_millis(250),
+        "TCP/FIPS control polling below 250 ms keeps mobile runtimes busy while idle"
     );
+}
+
+#[tokio::test]
+async fn pubsub_roster_refresh_accepts_more_contacts_than_connection_slots() {
+    let local = AppKey::generate("bounded-pubsub-roster");
+    let bound = bind_test_endpoint(
+        &local,
+        "drive-roster-test",
+        reserve_udp_address(),
+        reserve_udp_address(),
+        false,
+    )
+    .await
+    .unwrap();
+    let peers: Vec<_> = (0..70)
+        .map(|_| AppKey::generate("roster-contact").pubkey_bech32())
+        .collect();
+    let error = DriveNostrPubsubRuntime::bind(
+        bound.native_endpoint.clone(),
+        Vec::new(),
+        vec!["invalid-explicit-key".to_string()],
+    )
+    .await
+    .err()
+    .expect("invalid configured rater must fail shared validation");
+    assert!(
+        error
+            .to_string()
+            .contains("invalid trusted peer reputation rater")
+    );
+    let mut runtime =
+        DriveNostrPubsubRuntime::bind(bound.native_endpoint.clone(), peers.clone(), Vec::new())
+            .await
+            .unwrap();
+    runtime.set_routed_peers(peers).unwrap();
+    runtime.shutdown().await;
+    bound.native_endpoint.shutdown().await.unwrap();
+}
+
+#[tokio::test]
+async fn authorized_control_peers_connect_before_any_record_is_queued() {
+    let alice = AppKey::generate("presence-alice");
+    let bob = AppKey::generate("presence-bob");
+    let rendezvous = reserve_udp_address();
+    let alice_addr = reserve_udp_address();
+    let bob_addr = reserve_udp_address();
+    let alice_bound =
+        bind_test_endpoint(&alice, "drive-presence-test", rendezvous, alice_addr, false)
+            .await
+            .unwrap();
+    let bob_bound = bind_test_endpoint(&bob, "drive-presence-test", rendezvous, bob_addr, false)
+        .await
+        .unwrap();
+    connect_endpoint_pair(&alice_bound, &alice, alice_addr, &bob_bound, &bob, bob_addr).await;
+
+    let mut alice_runtime = DriveControlRuntime::bind(
+        alice_bound.native_endpoint.clone(),
+        BTreeSet::from([bob.pubkey_bech32()]),
+        BTreeSet::new(),
+    )
+    .await
+    .unwrap();
+    let mut bob_runtime = DriveControlRuntime::bind(
+        bob_bound.native_endpoint.clone(),
+        BTreeSet::from([alice.pubkey_bech32()]),
+        BTreeSet::new(),
+    )
+    .await
+    .unwrap();
+    let mut alice_presence = alice_runtime.subscribe_presence_changes();
+    let mut bob_presence = bob_runtime.subscribe_presence_changes();
+
+    tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::join!(
+            async {
+                loop {
+                    if alice_presence.borrow().contains(&bob.pubkey_bech32()) {
+                        break;
+                    }
+                    alice_presence.changed().await.unwrap();
+                }
+            },
+            async {
+                loop {
+                    if bob_presence.borrow().contains(&alice.pubkey_bech32()) {
+                        break;
+                    }
+                    bob_presence.changed().await.unwrap();
+                }
+            }
+        );
+    })
+    .await
+    .expect("both authorized peers did not signal online presence within two seconds");
+
+    alice_runtime.shutdown().await.unwrap();
+    bob_runtime.shutdown().await.unwrap();
+    alice_bound.native_endpoint.shutdown().await.unwrap();
+    bob_bound.native_endpoint.shutdown().await.unwrap();
 }
 
 #[tokio::test]
@@ -36,26 +135,9 @@ async fn reliable_control_enforces_topic_acl_and_survives_service_restart() {
     let bob_bound = bind_test_endpoint(&bob, "drive-control-test", rendezvous, bob_addr, false)
         .await
         .unwrap();
+    connect_endpoint_pair(&alice_bound, &alice, alice_addr, &bob_bound, &bob, bob_addr).await;
     let alice_endpoint = alice_bound.native_endpoint;
     let bob_endpoint = bob_bound.native_endpoint;
-    set_fips_peer_configs(
-        alice_endpoint.as_ref(),
-        vec![FipsPeerConfig {
-            npub: bob.pubkey_bech32(),
-            udp_addresses: vec![bob_addr.to_string()],
-        }],
-    )
-    .await
-    .unwrap();
-    set_fips_peer_configs(
-        bob_endpoint.as_ref(),
-        vec![FipsPeerConfig {
-            npub: alice.pubkey_bech32(),
-            udp_addresses: vec![alice_addr.to_string()],
-        }],
-    )
-    .await
-    .unwrap();
 
     let mut alice_runtime = DriveControlRuntime::bind(
         alice_endpoint.clone(),
@@ -73,6 +155,16 @@ async fn reliable_control_enforces_topic_acl_and_survives_service_restart() {
     .unwrap();
     let mut received = bob_runtime.subscribe();
 
+    // An owner can already have queued protected roots before the newly
+    // approved device receives the bootstrap records needed to authorize it.
+    alice_runtime
+        .send(
+            bob.pubkey_bech32(),
+            DIRECT_ROOT_APP_TOPIC.to_string(),
+            b"early root".to_vec(),
+        )
+        .await
+        .unwrap();
     alice_runtime
         .send(
             bob.pubkey_bech32(),
@@ -87,6 +179,23 @@ async fn reliable_control_enforces_topic_acl_and_survives_service_restart() {
         .unwrap();
     assert_eq!(request.peer_id, alice.pubkey_bech32());
     assert_eq!(request.topic, APP_KEY_LINK_REQUEST_APP_TOPIC);
+
+    // Approval requires more than one bootstrap record before the receiver
+    // can authorize the peer. A reset after the first record must not leave
+    // its transport marker replaying forever ahead of the next record.
+    alice_runtime
+        .send(
+            bob.pubkey_bech32(),
+            APP_KEY_LINK_REQUEST_APP_TOPIC.to_string(),
+            b"next bootstrap record".to_vec(),
+        )
+        .await
+        .unwrap();
+    let next = tokio::time::timeout(Duration::from_secs(2), received.recv())
+        .await
+        .expect("second bootstrap record was blocked by replay of the first")
+        .unwrap();
+    assert_eq!(next.data, b"next bootstrap record");
 
     bob_runtime
         .set_policy(
@@ -103,10 +212,17 @@ async fn reliable_control_enforces_topic_acl_and_survives_service_restart() {
         )
         .await
         .unwrap();
-    let root = tokio::time::timeout(Duration::from_secs(5), received.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let root = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let message = received.recv().await.unwrap();
+            if message.data == b"early root" {
+                continue;
+            }
+            break message;
+        }
+    })
+    .await
+    .unwrap();
     assert_eq!(root.topic, DIRECT_ROOT_APP_TOPIC);
     assert_eq!(root.data, b"authorized root");
 
@@ -148,10 +264,31 @@ async fn reliable_control_enforces_topic_acl_and_survives_service_restart() {
         b"queued first during restart".as_slice(),
         b"queued second during restart".as_slice(),
     ] {
-        let restarted = tokio::time::timeout(Duration::from_secs(8), replacement_received.recv())
-            .await
-            .expect("queued Drive control record was not replayed after service restart")
-            .unwrap();
+        let next_queued_record = async {
+            loop {
+                let message = replacement_received.recv().await.unwrap();
+                if matches!(
+                    message.data.as_slice(),
+                    b"link request" | b"authorized root"
+                ) {
+                    // Reliable control is intentionally at-least-once across
+                    // a service restart. A record delivered just before the
+                    // old runtime stopped may be replayed until its transport
+                    // marker reaches the sender.
+                    continue;
+                }
+                break message;
+            }
+        };
+        let Ok(restarted) = tokio::time::timeout(Duration::from_secs(8), next_queued_record).await
+        else {
+            let alice_connected = alice_runtime.connected_peer_ids().await.unwrap();
+            let replacement_connected = replacement.connected_peer_ids().await.unwrap();
+            panic!(
+                "queued Drive control record was not replayed after service restart; \
+                 alice connected={alice_connected:?}, replacement connected={replacement_connected:?}"
+            );
+        };
         assert_eq!(restarted.data, expected);
     }
 
@@ -168,43 +305,27 @@ async fn shared_pubsub_carries_only_verified_nostr_events() {
     let rendezvous = reserve_udp_address();
     let alice_addr = reserve_udp_address();
     let bob_addr = reserve_udp_address();
-    let alice_endpoint =
+    let alice_bound =
         bind_test_endpoint(&alice, "drive-pubsub-test", rendezvous, alice_addr, false)
             .await
-            .unwrap()
-            .native_endpoint;
-    let bob_endpoint = bind_test_endpoint(&bob, "drive-pubsub-test", rendezvous, bob_addr, false)
+            .unwrap();
+    let bob_bound = bind_test_endpoint(&bob, "drive-pubsub-test", rendezvous, bob_addr, false)
         .await
-        .unwrap()
-        .native_endpoint;
-    set_fips_peer_configs(
-        alice_endpoint.as_ref(),
-        vec![FipsPeerConfig {
-            npub: bob.pubkey_bech32(),
-            udp_addresses: vec![bob_addr.to_string()],
-        }],
+        .unwrap();
+    let alice_endpoint = alice_bound.native_endpoint.clone();
+    let bob_endpoint = bob_bound.native_endpoint.clone();
+
+    let mut alice_runtime = DriveNostrPubsubRuntime::bind(
+        alice_endpoint.clone(),
+        Vec::new(),
+        vec![bob.pubkey_bech32()],
     )
     .await
     .unwrap();
-
-    set_fips_peer_configs(
-        bob_endpoint.as_ref(),
-        vec![FipsPeerConfig {
-            npub: alice.pubkey_bech32(),
-            udp_addresses: vec![alice_addr.to_string()],
-        }],
-    )
-    .await
-    .unwrap();
-    wait_for_connected_endpoint(&alice_endpoint, &bob.pubkey_bech32()).await;
-    wait_for_connected_endpoint(&bob_endpoint, &alice.pubkey_bech32()).await;
-
-    let mut alice_runtime = DriveNostrPubsubRuntime::bind(alice_endpoint.clone())
-        .await
-        .unwrap();
-    let mut bob_runtime = DriveNostrPubsubRuntime::bind(bob_endpoint.clone())
-        .await
-        .unwrap();
+    let mut bob_runtime =
+        DriveNostrPubsubRuntime::bind(bob_endpoint.clone(), Vec::new(), Vec::new())
+            .await
+            .unwrap();
     let mut received = bob_runtime.subscribe();
     let release_keys = Keys::generate();
     let tree_name = "releases/iris-drive";
@@ -224,19 +345,18 @@ async fn shared_pubsub_carries_only_verified_nostr_events() {
         ])
         .sign_with_keys(&release_keys)
         .unwrap();
+    assert_eq!(alice_runtime.publish(event.clone()).await.unwrap(), 0);
+    connect_endpoint_pair(&alice_bound, &alice, alice_addr, &bob_bound, &bob, bob_addr).await;
     let delivery = tokio::time::timeout(Duration::from_secs(8), async {
         loop {
-            if alice_runtime.publish(event.clone()).await.is_ok()
-                && let Ok(Ok(delivery)) =
-                    tokio::time::timeout(Duration::from_millis(300), received.recv()).await
-                && delivery.event.id == event.id
-            {
+            let delivery = received.recv().await.unwrap();
+            if delivery.event.id == event.id {
                 break delivery;
             }
         }
     })
     .await
-    .expect("verified update event was not delivered over shared FIPS pubsub");
+    .expect("cached update was not replayed to a late FIPS peer");
     assert_eq!(delivery.event.id, event.id);
     assert_eq!(delivery.origin_peer_id, alice.pubkey_bech32());
     let target_dir = tempfile::tempdir().unwrap();
@@ -400,45 +520,44 @@ async fn connect_endpoint_pair(
     right_key: &AppKey,
     right_addr: std::net::SocketAddrV4,
 ) {
-    set_fips_peer_configs(
-        left.native_endpoint.as_ref(),
-        vec![FipsPeerConfig {
-            npub: right_key.pubkey_bech32(),
-            udp_addresses: vec![right_addr.to_string()],
-        }],
-    )
-    .await
-    .unwrap();
-    set_fips_peer_configs(
-        right.native_endpoint.as_ref(),
-        vec![FipsPeerConfig {
-            npub: left_key.pubkey_bech32(),
-            udp_addresses: vec![left_addr.to_string()],
-        }],
-    )
-    .await
-    .unwrap();
+    let left_npub = left_key.pubkey_bech32();
+    let right_npub = right_key.pubkey_bech32();
+    let left_peer = FipsPeerConfig {
+        npub: right_npub.clone(),
+        udp_addresses: vec![right_addr.to_string()],
+    };
+    let right_peer = FipsPeerConfig {
+        npub: left_npub.clone(),
+        udp_addresses: vec![left_addr.to_string()],
+    };
+
+    // Configure the elected passive side first so the single automatic dial
+    // always arrives at an endpoint that already recognizes its peer.
+    if left_npub < right_npub {
+        configure_application_peer(right, &right_npub, right_peer).await;
+        configure_application_peer(left, &left_npub, left_peer).await;
+    } else {
+        configure_application_peer(left, &left_npub, left_peer).await;
+        configure_application_peer(right, &right_npub, right_peer).await;
+    }
     wait_for_peer_connection(left, &right_key.pubkey_bech32()).await;
     wait_for_peer_connection(right, &left_key.pubkey_bech32()).await;
 }
 
-async fn wait_for_connected_endpoint(endpoint: &FipsEndpoint, peer: &str) {
-    tokio::time::timeout(Duration::from_secs(10), async {
-        loop {
-            if endpoint
-                .peers()
-                .await
-                .unwrap()
-                .iter()
-                .any(|candidate| candidate.npub == peer && candidate.connected)
-            {
-                break;
-            }
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
-    })
+async fn configure_application_peer(
+    endpoint: &BoundFipsEndpoint,
+    local_npub: &str,
+    peer: FipsPeerConfig,
+) {
+    set_drive_fips_peer_configs(
+        endpoint.native_endpoint.as_ref(),
+        local_npub,
+        std::slice::from_ref(&peer),
+        &[],
+        vec![peer.clone()],
+    )
     .await
-    .expect("FIPS endpoint peer did not connect");
+    .unwrap();
 }
 
 pub(super) async fn wait_for_tcp_state(

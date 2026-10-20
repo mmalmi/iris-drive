@@ -55,6 +55,9 @@ pub enum NativeAppAction {
     RemoveRelay {
         url: String,
     },
+    ReplaceRelays {
+        urls: Vec<String>,
+    },
     ResetRelays,
     AddBackupTarget {
         target: String,
@@ -63,11 +66,28 @@ pub enum NativeAppAction {
     RemoveBackupTarget {
         target: String,
     },
+    SetFriendBackupCapacity {
+        capacity_bytes: u64,
+    },
+    AddBackupFriend {
+        contact: String,
+        label: String,
+        quota_bytes: u64,
+    },
+    RemoveBackupFriend {
+        npub: String,
+    },
+    ExportFriendBackupRecovery {
+        path: String,
+    },
     AddBlossomServer {
         url: String,
     },
     RemoveBlossomServer {
         url: String,
+    },
+    ReplaceBlossomServers {
+        urls: Vec<String>,
     },
     SetLaunchOnStartup {
         enabled: bool,
@@ -80,6 +100,7 @@ pub enum NativeAppAction {
     },
     StartSync,
     StopSync,
+    SyncApprovalAcks,
     RestartSync,
     AddRoot {
         name: String,

@@ -44,6 +44,7 @@ pub(crate) fn cmd_publish(
                 "published_device_approval_receipts": report.published_device_approval_receipts,
                 "device_approval_receipt_publish_error": report.device_approval_receipt_publish_error,
                 "published_drive_root": report.published_drive_root,
+                "published_share_roots": report.published_share_roots,
                 "drive_root_publish_error": report.drive_root_publish_error,
                 "published_files_root": report.published_files_root,
                 "files_root_publish_error": report.files_root_publish_error,
@@ -71,6 +72,7 @@ pub(crate) struct PublishStateReport {
     published_device_approval_receipts: usize,
     device_approval_receipt_publish_error: Option<String>,
     published_share_access_snapshots: usize,
+    published_share_roots: usize,
     share_access_snapshot_publish_error: Option<String>,
     published_drive_root: bool,
     drive_root_publish_error: Option<String>,
@@ -82,6 +84,7 @@ pub(crate) struct PublishStateReport {
 }
 
 include!("publish/direct_root.rs");
+include!("publish/direct_root_recovery.rs");
 
 pub(crate) async fn announce_current_state_direct(
     direct_roots: &mut DirectRootExchange,
@@ -124,7 +127,7 @@ pub(crate) async fn maybe_upload_root_to_blossom(
     previous_root_cid: Option<&str>,
 ) -> Result<(Option<UploadReport>, Option<String>)> {
     if config.blossom_servers.is_empty() {
-        return Ok((None, None));
+        return Ok((None, Some("no Blossom servers configured".to_string())));
     }
 
     let root_cid =
@@ -177,15 +180,21 @@ pub(crate) async fn download_tree_over_fips_with_retry(
         if delay > 0 {
             tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
         }
-        match tokio::time::timeout(policy.attempt_timeout, fips.download_tree(root)).await {
-            Ok(Ok(report)) => return Ok(report),
-            Ok(Err(error)) => last_error = Some(anyhow::Error::from(error)),
-            Err(_) => {
-                last_error = Some(anyhow::anyhow!(
+        let download = fips.download_tree(root);
+        let result = if let Some(timeout) = policy.attempt_timeout {
+            match tokio::time::timeout(timeout, download).await {
+                Ok(result) => result.map_err(anyhow::Error::from),
+                Err(_) => Err(anyhow::anyhow!(
                     "FIPS download timed out after {}s",
-                    policy.attempt_timeout.as_secs()
-                ));
+                    timeout.as_secs()
+                )),
             }
+        } else {
+            download.await.map_err(anyhow::Error::from)
+        };
+        match result {
+            Ok(report) => return Ok(report),
+            Err(error) => last_error = Some(error),
         }
     }
     Err(last_error.unwrap_or_else(|| anyhow::anyhow!("FIPS download failed")))
@@ -194,21 +203,25 @@ pub(crate) async fn download_tree_over_fips_with_retry(
 #[derive(Clone, Copy)]
 pub(crate) struct FipsDownloadPolicy {
     retry_delays: &'static [u64],
-    attempt_timeout: std::time::Duration,
+    attempt_timeout: Option<std::time::Duration>,
 }
 
 pub(crate) fn fips_download_policy(config: &AppConfig) -> FipsDownloadPolicy {
     if config.blossom_servers.is_empty() {
         FipsDownloadPolicy {
             retry_delays: FIPS_DOWNLOAD_RETRY_DELAYS,
-            attempt_timeout: std::time::Duration::from_secs(FIPS_DOWNLOAD_ATTEMPT_TIMEOUT_SECS),
+            attempt_timeout: Some(std::time::Duration::from_secs(
+                FIPS_DOWNLOAD_ATTEMPT_TIMEOUT_SECS,
+            )),
         }
     } else {
         FipsDownloadPolicy {
-            retry_delays: FIPS_DOWNLOAD_BEFORE_BLOSSOM_RETRY_DELAYS,
-            attempt_timeout: std::time::Duration::from_secs(
-                FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS,
-            ),
+            retry_delays: &[],
+            // Blossom already runs concurrently. Let FIPS finish within its
+            // per-blob search/reply-idle bounds instead of canceling valid
+            // progress to "fall back". The root-apply caller still bounds the
+            // complete race, and a successful Blossom result cancels this read.
+            attempt_timeout: None,
         }
     }
 }
@@ -267,6 +280,7 @@ pub(crate) fn publish_state_report_json(report: &PublishStateReport) -> serde_js
         "published_share_access_snapshots": report.published_share_access_snapshots,
         "share_access_snapshot_publish_error": report.share_access_snapshot_publish_error,
         "published_drive_root": report.published_drive_root,
+                "published_share_roots": report.published_share_roots,
         "drive_root_publish_error": report.drive_root_publish_error,
         "published_files_root": report.published_files_root,
         "files_root_publish_error": report.files_root_publish_error,
@@ -399,13 +413,48 @@ pub(crate) fn spawn_publish_current_state(
 pub(crate) async fn publish_current_state(
     client: &nostr_sdk::Client,
     config_dir: &std::path::Path,
-    config: &AppConfig,
+    _config: &AppConfig,
     state: &ProfileState,
     upload_blossom: bool,
 ) -> Result<PublishStateReport> {
     use iris_drive_core::relay_sync;
 
+    let prepared = iris_drive_core::shared_content::prepare_shared_folder_roots(config_dir).await?;
+    let config = &prepared;
+    let state = config.profile.as_ref().unwrap_or(state);
     let mut report = PublishStateReport::default();
+    let approval_handoff = if state.pending_device_approval_receipts.is_empty() {
+        None
+    } else {
+        match iris_drive_core::prepare_device_approval_root_handoff(config_dir).await {
+            Ok(handoff) => {
+                report.root_cid = Some(handoff.root.root_cid.clone());
+                report.blossom_upload = Some(handoff.blossom_upload);
+                Some(handoff)
+            }
+            Err(error) => {
+                let error = format!("preparing device approval Drive root: {error:#}");
+                report.blossom_upload_error = Some(error.clone());
+                report.drive_root_publish_error = Some(error.clone());
+                report.device_approval_receipt_publish_error = Some(error);
+                return Ok(report);
+            }
+        }
+    };
+    let refreshed_config = if approval_handoff.is_some() {
+        Some(
+            AppConfig::load_or_default(config_path_in(config_dir))
+                .context("reloading device approval Drive root")?,
+        )
+    } else {
+        None
+    };
+    let config = refreshed_config.as_ref().unwrap_or(config);
+    let state = refreshed_config
+        .as_ref()
+        .and_then(|config| config.profile.as_ref())
+        .unwrap_or(state);
+
     if !state.profile_roster_ops.is_empty() {
         match relay_publish_with_timeout(relay_sync::publish_nostr_identity_roster_ops(
             client,
@@ -414,12 +463,37 @@ pub(crate) async fn publish_current_state(
         .await
         {
             Ok(event_ids) => report.published_profile_roster_ops = event_ids.len(),
-            Err(error) => report.profile_roster_publish_error = Some(error),
+            Err(error) => {
+                report.profile_roster_publish_error = Some(error);
+                if approval_handoff.is_some() {
+                    return Ok(report);
+                }
+            }
+        }
+    }
+    if let Some(handoff) = approval_handoff.as_ref() {
+        let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
+            .context("loading AppKey for device approval Drive root")?;
+        match relay_publish_with_timeout(relay_sync::publish_drive_root(
+            client,
+            device.keys(),
+            &handoff.root_scope_id,
+            &handoff.drive_id,
+            &handoff.root,
+            &handoff.authorized_app_keys,
+        ))
+        .await
+        {
+            Ok(_) => report.published_drive_root = true,
+            Err(error) => {
+                report.drive_root_publish_error = Some(error);
+                return Ok(report);
+            }
         }
     }
     for pending in &state.pending_device_approval_receipts {
-        match relay_publish_with_timeout(relay_sync::publish_device_approval_receipt(
-            client, state, pending,
+        match relay_publish_with_timeout(relay_sync::publish_pending_device_approval_receipt(
+            client, pending,
         ))
         .await
         {
@@ -457,6 +531,45 @@ pub(crate) async fn publish_current_state(
         }
     }
 
+    let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))?;
+    for folder in &config.shared_folders {
+        if !iris_drive_core::shared_folder_app_key_can_write_roots(folder, &state.app_key_pubkey) {
+            continue;
+        }
+        let Some(root) = folder.app_key_roots.get(&state.app_key_pubkey) else {
+            continue;
+        };
+        if root.local_only {
+            continue;
+        }
+        if upload_blossom {
+            let (uploaded, error) =
+                maybe_upload_root_to_blossom(config_dir, config, &device, &root.root_cid, None)
+                    .await?;
+            if uploaded.is_none() || error.is_some() {
+                report.drive_root_publish_error =
+                    Some(error.unwrap_or_else(|| "Could not upload shared folder".into()));
+                continue;
+            }
+        }
+        match relay_publish_with_timeout(relay_sync::publish_drive_root(
+            client,
+            device.keys(),
+            &folder.share_id.to_string(),
+            iris_drive_core::PRIMARY_DRIVE_ID,
+            &iris_drive_core::shared_content::share_root_for_publish(folder, root),
+            &iris_drive_core::shared_folder_key_recipient_pubkeys(folder),
+        ))
+        .await
+        {
+            Ok(_) => report.published_share_roots += 1,
+            Err(error) => report.drive_root_publish_error = Some(error),
+        }
+    }
+
+    let approval_root_cid = approval_handoff
+        .as_ref()
+        .map(|handoff| handoff.root.root_cid.as_str());
     let mut published_primary_files_root = false;
     if state.can_write_roots()
         && let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID)
@@ -472,28 +585,38 @@ pub(crate) async fn publish_current_state(
             .context("loading app key")?;
         report.root_cid = Some(root.root_cid.clone());
 
-        if upload_blossom {
+        let approval_root_already_published =
+            approval_root_cid == Some(root.root_cid.as_str()) && report.published_drive_root;
+        let mut root_blocks_available = approval_root_already_published || !upload_blossom;
+        if upload_blossom && !approval_root_already_published {
             let (blossom_upload, blossom_upload_error) =
                 maybe_upload_root_to_blossom(config_dir, config, &device, &root.root_cid, None)
                     .await?;
+            root_blocks_available = blossom_upload.is_some() && blossom_upload_error.is_none();
             report.blossom_upload = blossom_upload;
             report.blossom_upload_error = blossom_upload_error;
         }
 
-        match relay_publish_with_timeout(relay_sync::publish_drive_root(
-            client,
-            device.keys(),
-            &state.root_scope_id(),
-            &drive.drive_id,
-            &root,
-            &authorized_app_key_pubkeys,
-        ))
-        .await
-        {
-            Ok(_) => report.published_drive_root = true,
-            Err(error) => report.drive_root_publish_error = Some(error),
+        if !root_blocks_available {
+            report.drive_root_publish_error = Some(
+                "withheld Drive root because its blocks are unavailable on Blossom".to_string(),
+            );
+        } else if !approval_root_already_published {
+            match relay_publish_with_timeout(relay_sync::publish_drive_root(
+                client,
+                device.keys(),
+                &state.root_scope_id(),
+                &drive.drive_id,
+                &root,
+                &authorized_app_key_pubkeys,
+            ))
+            .await
+            {
+                Ok(_) => report.published_drive_root = true,
+                Err(error) => report.drive_root_publish_error = Some(error),
+            }
         }
-        published_primary_files_root = true;
+        published_primary_files_root = root_blocks_available;
     }
 
     if state.can_write_roots() {
@@ -505,13 +628,17 @@ pub(crate) async fn publish_current_state(
                 continue;
             };
             ensure_publishable_root_locally_available(config_dir, config, &root.root_cid).await?;
+            let mut root_blocks_available = !upload_blossom
+                || (drive.drive_id == iris_drive_core::PRIMARY_DRIVE_ID
+                    && published_primary_files_root);
             if upload_blossom
                 && !(drive.drive_id == iris_drive_core::PRIMARY_DRIVE_ID
                     && published_primary_files_root)
             {
-                let (_upload, upload_error) =
+                let (upload, upload_error) =
                     maybe_upload_root_to_blossom(config_dir, config, &device, &root.root_cid, None)
                         .await?;
+                root_blocks_available = upload.is_some() && upload_error.is_none();
                 if let Some(error) = upload_error {
                     let detail = format!("{}: {error}", drive.drive_id);
                     report.files_root_publish_error = Some(
@@ -521,6 +648,9 @@ pub(crate) async fn publish_current_state(
                             .map_or(detail.clone(), |existing| format!("{existing}; {detail}")),
                     );
                 }
+            }
+            if !root_blocks_available {
+                continue;
             }
             match relay_publish_with_timeout(relay_sync::publish_files_root(
                 client,
@@ -579,29 +709,30 @@ pub(crate) fn spawn_initial_publish(
                 println!(
                     "{}",
                     json!({
-                        "event": "initial_publish",
-                        "published_profile_roster_ops": report.published_profile_roster_ops,
-                        "profile_roster_publish_error": report.profile_roster_publish_error,
-                        "published_device_approval_receipts": report.published_device_approval_receipts,
-                        "device_approval_receipt_publish_error": report.device_approval_receipt_publish_error,
-                        "published_share_access_snapshots": report.published_share_access_snapshots,
-                        "share_access_snapshot_publish_error": report.share_access_snapshot_publish_error,
-                        "published_drive_root": report.published_drive_root,
-                        "drive_root_publish_error": report.drive_root_publish_error,
-                        "published_files_root": report.published_files_root,
-                        "files_root_publish_error": report.files_root_publish_error,
-                        "root_cid": report.root_cid,
-                        "drive_iris_to_url": drive_iris_to_url,
-                        "files_iris_to_url": drive_iris_to_url,
-                        "snapshot_url": snapshot_url,
-                        "permalink_url": snapshot_url,
-                        "blossom_upload_error": report.blossom_upload_error,
-                        "blossom_upload": report.blossom_upload.map(|r| json!({
-                            "total_hashes": r.total_hashes,
-                            "uploaded": r.uploaded,
-                            "already_present": r.already_present,
-                        })),
-                    })
+                            "event": "initial_publish",
+                            "published_profile_roster_ops": report.published_profile_roster_ops,
+                            "profile_roster_publish_error": report.profile_roster_publish_error,
+                            "published_device_approval_receipts": report.published_device_approval_receipts,
+                            "device_approval_receipt_publish_error": report.device_approval_receipt_publish_error,
+                            "published_share_access_snapshots": report.published_share_access_snapshots,
+                            "share_access_snapshot_publish_error": report.share_access_snapshot_publish_error,
+                            "published_drive_root": report.published_drive_root,
+                    "published_share_roots": report.published_share_roots,
+                            "drive_root_publish_error": report.drive_root_publish_error,
+                            "published_files_root": report.published_files_root,
+                            "files_root_publish_error": report.files_root_publish_error,
+                            "root_cid": report.root_cid,
+                            "drive_iris_to_url": drive_iris_to_url,
+                            "files_iris_to_url": drive_iris_to_url,
+                            "snapshot_url": snapshot_url,
+                            "permalink_url": snapshot_url,
+                            "blossom_upload_error": report.blossom_upload_error,
+                            "blossom_upload": report.blossom_upload.map(|r| json!({
+                                "total_hashes": r.total_hashes,
+                                "uploaded": r.uploaded,
+                                "already_present": r.already_present,
+                            })),
+                        })
                 );
             }
             Ok(Err(error)) => {

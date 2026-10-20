@@ -551,6 +551,9 @@ pub(crate) enum BlossomServersCmd {
 
 #[derive(Debug, Subcommand)]
 pub(crate) enum BackupsCmd {
+    /// Privately share encrypted backup space with friends.
+    #[command(subcommand)]
+    Friends(BackupFriendsCmd),
     /// Print configured encrypted backup targets as JSON.
     List,
     /// Add or update a Blossom URL, FIPS npub, filesystem, or LMDB backup target.
@@ -575,6 +578,46 @@ pub(crate) enum BackupsCmd {
         /// Number of live blocks to sample per target.
         #[arg(long, default_value_t = 16)]
         sample_size: usize,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum BackupFriendsCmd {
+    /// Save the secret recovery file needed to restore if this device is lost.
+    ExportRecovery {
+        #[arg(long)]
+        output: PathBuf,
+    },
+    /// Restore your encrypted backup from a friend into a new folder in this Drive.
+    Restore {
+        #[arg(long)]
+        recovery_file: PathBuf,
+        #[arg(long, value_name = "BACKUP_LINK")]
+        friend: String,
+    },
+    /// Print your backup link for private backups.
+    Identity,
+    /// Print private friends, capacity, retained usage, and backup status.
+    List,
+    /// Set the total local space available to friends.
+    Capacity {
+        #[arg(long)]
+        bytes: u64,
+    },
+    /// Add or update a friend's backup link, choosing space locally.
+    Add {
+        #[arg(value_name = "BACKUP_LINK")]
+        contact: String,
+        /// Space offered to this friend. Zero only requests backup space from them.
+        #[arg(long)]
+        bytes: u64,
+        #[arg(long)]
+        label: Option<String>,
+    },
+    /// Remove a friend only when none of their backup data remains locally.
+    Remove {
+        #[arg(value_name = "BACKUP_LINK")]
+        npub: String,
     },
 }
 

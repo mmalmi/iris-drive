@@ -8,6 +8,9 @@ description = "Shared Iris Drive configuration, sync state, htree client, and sh
 repository.workspace = true
 readme = "README.md"
 
+[features]
+stack-fixture = []
+
 [dependencies]
 anyhow.workspace = true
 aes-gcm.workspace = true
@@ -17,10 +20,10 @@ base64.workspace = true
 bip39.workspace = true
 dirs.workspace = true
 futures.workspace = true
-fips-core.workspace = true
-fips-endpoint.workspace = true
-fips-tcp.workspace = true
-fips-tcp-endpoint.workspace = true
+nvpn-fips-core.workspace = true
+nvpn-fips-endpoint.workspace = true
+nvpn-fips-tcp.workspace = true
+nvpn-fips-tcp-endpoint.workspace = true
 hashtree-core.workspace = true
 hashtree-blossom.workspace = true
 hashtree-config.workspace = true
@@ -31,7 +34,7 @@ hashtree-lmdb.workspace = true
 hashtree-nostr.workspace = true
 hashtree-network.workspace = true
 hashtree-resolver.workspace = true
-hashtree-updater = { workspace = true, features = ["secure-nostr-blossom"] }
+hashtree-updater = { workspace = true, features = ["peer-storage"] }
 hashtree-provider.workspace = true
 http.workspace = true
 mime_guess.workspace = true
@@ -49,12 +52,19 @@ thiserror.workspace = true
 tokio.workspace = true
 tokio-tungstenite.workspace = true
 toml.workspace = true
+tempfile.workspace = true
 tracing.workspace = true
 uuid.workspace = true
 hex.workspace = true
 
+[target.'cfg(target_os = "ios")'.dependencies]
+# nix 0.26 (via WebRTC) still uses Apple symbols removed from newer libc.
+libc = "=0.2.186"
+# iOS forbids System V semaphores. Enable the supported LMDB backend for all
+# embedded consumers, including the CLI's exactly pinned hashtree-lmdb version.
+heed = { package = "hashtree-heed", version = "=0.20.5-hashtree.2", default-features = false, features = ["posix-sem"] }
+
 [dev-dependencies]
-tempfile.workspace = true
 tokio = { workspace = true, features = ["full", "macros", "rt-multi-thread"] }
 
 [lints]

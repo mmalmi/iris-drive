@@ -66,6 +66,8 @@ Start-Sleep -Seconds $WarmupSecs
 
 $samples = @{}
 $seen = @{}
+$baseline = @{}
+$failures = New-Object System.Collections.Generic.List[string]
 foreach ($role in $thresholds.Keys) {
   $samples[$role] = New-Object System.Collections.Generic.List[double]
   $seen[$role] = New-Object 'System.Collections.Generic.HashSet[int]'
@@ -85,27 +87,41 @@ while ($true) {
   }
 
   $totals = @{}
-  foreach ($role in $thresholds.Keys) { $totals[$role] = 0.0 }
+  $observed = @{}
+  foreach ($role in $thresholds.Keys) {
+    $totals[$role] = 0.0
+    $observed[$role] = New-Object 'System.Collections.Generic.HashSet[int]'
+  }
   Get-CimInstance Win32_PerfFormattedData_PerfProc_Process | ForEach-Object {
     $processId = [int]$_.IDProcess
-    if ($processes.ContainsKey($processId)) {
+    if ($processes.ContainsKey($processId) -and $null -ne $_.PercentProcessorTime) {
       $role = $processes[$processId].role
       $totals[$role] = [double]$totals[$role] + [double]$_.PercentProcessorTime
       [void]$seen[$role].Add($processId)
+      [void]$observed[$role].Add($processId)
+    }
+  }
+  foreach ($role in $required) {
+    $currentPids = @($processes.Keys | Where-Object { $processes[$_].role -eq $role } | Sort-Object)
+    if (-not $baseline.ContainsKey($role)) { $baseline[$role] = $currentPids }
+    $measuredPids = @($observed[$role] | Sort-Object)
+    if ($currentPids.Count -eq 0 -or
+        ($currentPids -join ',') -ne ($baseline[$role] -join ',') -or
+        ($currentPids -join ',') -ne ($measuredPids -join ',')) {
+      $failures.Add("${role}: required process set changed or missing CPU reading during idle sample")
     }
   }
   foreach ($role in $totals.Keys) {
-    if ($totals[$role] -gt 0 -or $seen[$role].Count -gt 0) {
+    if ($observed[$role].Count -gt 0) {
       $samples[$role].Add([double]$totals[$role])
     }
   }
 
-  if ((Get-Date) -ge $deadline) { break }
+  if ($failures.Count -gt 0 -or (Get-Date) -ge $deadline) { break }
   Start-Sleep -Seconds $IntervalSecs
 }
 
 $summaryRoles = @{}
-$failures = New-Object System.Collections.Generic.List[string]
 $sampleRoles = @($samples.Keys | ForEach-Object { [string]$_ })
 $allRoles = @((@($required) + $sampleRoles) | Sort-Object -Unique)
 foreach ($role in $allRoles) {

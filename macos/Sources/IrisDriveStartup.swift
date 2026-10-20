@@ -30,25 +30,6 @@ extension AppDelegate {
         }
     }
 
-    func suppressHiddenLaunchWindowIfNeeded(remainingAttempts: Int = 4) {
-        guard launchedHidden && !hiddenLaunchWindowSuppressed else {
-            return
-        }
-        if let window = NSApp.windows.first(where: { $0.title == irisDriveDisplayName })
-            ?? NSApp.windows.first {
-            window.orderOut(nil)
-            NSApp.hide(nil)
-            hiddenLaunchWindowSuppressed = true
-            return
-        }
-        guard remainingAttempts > 0 else {
-            return
-        }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
-            self?.suppressHiddenLaunchWindowIfNeeded(remainingAttempts: remainingAttempts - 1)
-        }
-    }
-
     func syncLaunchAgentIfNeeded(enabled: Bool) {
         guard !launchAgentSyncDisabled else {
             if launchOnStartupSynced != enabled {
@@ -94,6 +75,9 @@ extension AppDelegate {
     }
 
     private var launchAgentSyncDisabled: Bool {
+        guard idriveExecutableURL() != nil else {
+            return true
+        }
         if IrisDriveEnvironment.flag("IRIS_DRIVE_DISABLE_LOGIN_AGENT_SYNC") {
             return true
         }

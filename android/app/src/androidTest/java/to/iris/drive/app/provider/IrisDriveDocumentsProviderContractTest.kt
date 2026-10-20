@@ -28,7 +28,6 @@ class IrisDriveDocumentsProviderContractTest {
     @Before
     fun setUp() {
         context = ApplicationProvider.getApplicationContext()
-        NativeCore.initializeAndroidContext(context)
         resetAppStorage()
         createProfile()
     }
@@ -39,7 +38,7 @@ class IrisDriveDocumentsProviderContractTest {
     }
 
     @Test
-    fun documentsContractClientCreatesWritesReadsRenamesAndDeletesFile() {
+    fun coldDocumentsContractClientCreatesWritesReadsRenamesAndDeletesWithoutMainActivity() {
         val resolver = context.contentResolver
         val authority = BuildConfig.DOCUMENTS_PROVIDER_AUTHORITY
         val rootUri = DocumentsContract.buildDocumentUri(

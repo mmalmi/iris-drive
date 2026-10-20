@@ -7,7 +7,7 @@ use hashtree_fips_transport::{
 
 const LOCAL_RENDEZVOUS_ADDR_ENV: &str = "IRIS_DRIVE_FIPS_LOCAL_RENDEZVOUS_ADDR";
 
-pub(super) async fn bind_drive_fips_endpoint(
+pub(crate) async fn bind_drive_fips_endpoint(
     options: FipsEndpointOptions,
 ) -> Result<BoundFipsEndpoint, FipsTransportError> {
     let Some(value) = std::env::var(LOCAL_RENDEZVOUS_ADDR_ENV)

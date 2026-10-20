@@ -30,6 +30,74 @@ pub(crate) fn drive_root_apply_outcome_is_retryable(
     )
 }
 
+async fn publish_ready_device_approval_acks(
+    client: &nostr_sdk::Client,
+    config_dir: &std::path::Path,
+    fips: Option<&FsFipsBlockSync>,
+) -> Result<bool> {
+    use iris_drive_core::relay_sync;
+
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let Some(state) = config.profile.as_ref() else {
+        return Ok(false);
+    };
+    let Some(pending) = state.outbound_app_key_link_request.as_ref() else {
+        return Ok(false);
+    };
+    let receipt_count = pending.approval_receipt_event.len();
+    if receipt_count == 0 {
+        return Ok(false);
+    }
+    let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
+        .context("loading app key for approval ACK")?;
+    let acknowledgements =
+        iris_drive_core::app_key_link_transport::device_approval_applied_ack_events(
+            state,
+            device.keys(),
+            crate::provider_staging::unix_now_seconds(),
+        )?;
+    let all_receipts_ready = acknowledgements.len() == receipt_count;
+    for acknowledgement in acknowledgements {
+        let parsed = iris_drive_core::nostr_identity::parse_nostr_identity_device_approval_applied_ack_event(&acknowledgement)?;
+        let fips_sent = if let Some(sync) = fips {
+            match sync
+                .send_app_message(
+                    &pubkey_npub(&parsed.approved_by_pubkey),
+                    crate::profile::APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC,
+                    acknowledgement.as_json().into_bytes(),
+                )
+                .await
+            {
+                Ok(()) => true,
+                Err(error) => {
+                    emit_daemon_status_event(
+                        config_dir,
+                        json!({"event": "device_approval_applied_ack_fips_error", "error": format!("{error:#}")}),
+                    );
+                    false
+                }
+            }
+        } else {
+            false
+        };
+        if fips_sent {
+            let client = client.clone();
+            tokio::spawn(async move {
+                let _ = relay_sync::publish_device_approval_applied_ack(&client, &acknowledgement)
+                    .await;
+            });
+        } else if let Err(error) =
+            relay_sync::publish_device_approval_applied_ack(client, &acknowledgement).await
+        {
+            emit_daemon_status_event(
+                config_dir,
+                json!({"event": "device_approval_applied_ack_publish_error", "error": format!("{error:#}")}),
+            );
+        }
+    }
+    Ok(all_receipts_ready)
+}
+
 #[allow(
     clippy::needless_return,
     clippy::redundant_else,
@@ -44,7 +112,12 @@ pub(crate) async fn apply_one_event(
     daemon_tasks: &DaemonTaskSet,
 ) -> Result<EventApplyOutcome> {
     use iris_drive_core::relay_sync;
+    let event_received_at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis());
+    let config_lock_started_at = std::time::Instant::now();
     let config_lock = ConfigMutationLock::acquire(config_dir).await?;
+    let config_lock_wait_ms = config_lock_started_at.elapsed().as_millis();
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let kind = event.kind.as_u16();
     if relay_sync::is_device_approval_applied_ack_event(event) {
@@ -65,6 +138,12 @@ pub(crate) async fn apply_one_event(
                 "event": "nostr_identity_device_approval_applied_ack",
                 "event_id": event.id.to_hex(),
                 "author": pubkey_npub(&event.pubkey.to_hex()),
+                "event_created_at": event.created_at.as_secs(),
+                "received_at_ms": event_received_at,
+                "config_lock_wait_ms": config_lock_wait_ms,
+                "persisted_at_ms": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map_or(0, |duration| duration.as_millis()),
                 "outcome": if changed { "applied" } else { "ignored" },
             }),
         );
@@ -89,48 +168,47 @@ pub(crate) async fn apply_one_event(
             relay_sync::NostrIdentityRosterOpApply::Applied
                 | relay_sync::NostrIdentityRosterOpApply::Current
         );
+        let profile_id = config.profile.as_ref().map(|state| state.profile_id);
         if matches!(outcome, relay_sync::NostrIdentityRosterOpApply::Applied) {
             config.save(config_path_in(config_dir))?;
         }
         drop(config_lock);
         if should_ack {
-            let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
-                .context("loading app key for approval ACK")?;
-            let ack = iris_drive_core::app_key_link_transport::device_approval_applied_ack_event(
-                config.profile.as_ref().ok_or_else(|| anyhow::anyhow!("profile disappeared"))?,
-                device.keys(),
-                event,
-                crate::provider_staging::unix_now_seconds(),
-            )?;
-            if let Err(error) = relay_sync::publish_device_approval_applied_ack(client, &ack).await {
-                emit_daemon_status_event(
-                    config_dir,
-                    json!({"event": "device_approval_applied_ack_publish_error", "error": format!("{error:#}")}),
+            let roster_events = relay_sync::fetch_nostr_identity_roster_ops(
+                client,
+                profile_id.ok_or_else(|| anyhow::anyhow!("profile disappeared"))?,
+                relay_sync::DEVICE_APPROVAL_ROSTER_BACKFILL_TIMEOUT,
+            )
+            .await?;
+            let config_lock = ConfigMutationLock::acquire(config_dir).await?;
+            config = AppConfig::load_or_default(config_path_in(config_dir))?;
+            let mut backfilled = false;
+            for roster_event in &roster_events {
+                backfilled |= matches!(
+                    relay_sync::apply_remote_nostr_identity_roster_op_event(
+                        &mut config,
+                        roster_event,
+                    )?,
+                    relay_sync::NostrIdentityRosterOpApply::Applied
                 );
             }
-            if let Some(sync) = fips_blocks.as_deref() {
-                let parsed = iris_drive_core::nostr_identity::parse_nostr_identity_device_approval_applied_ack_event(&ack)?;
-                if let Err(error) = sync
-                    .send_app_message(
-                        &pubkey_npub(&parsed.approved_by_pubkey),
-                        crate::profile::APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC,
-                        ack.as_json().into_bytes(),
-                    )
-                    .await
-                {
-                    emit_daemon_status_event(
-                        config_dir,
-                        json!({"event": "device_approval_applied_ack_fips_error", "error": format!("{error:#}")}),
-                    );
-                }
-                sync.refresh_authorized_peers(&config).await;
+            if backfilled {
+                config.save(config_path_in(config_dir))?;
             }
+            drop(config_lock);
+            if let Some(sync) = fips_blocks.as_deref() {
+                sync.refresh_authorized_peers_from_config_dir(config_dir)
+                    .await;
+            }
+            publish_ready_device_approval_acks(client, config_dir, fips_blocks.as_deref()).await?;
         }
-        return Ok(if matches!(outcome, relay_sync::NostrIdentityRosterOpApply::Applied) {
-            EventApplyOutcome::Changed
-        } else {
-            EventApplyOutcome::Unchanged
-        });
+        return Ok(
+            if matches!(outcome, relay_sync::NostrIdentityRosterOpApply::Applied) {
+                EventApplyOutcome::Changed
+            } else {
+                EventApplyOutcome::Unchanged
+            },
+        );
     } else if iris_drive_core::is_nostr_identity_roster_op_event_coordinate(event) {
         let outcome = relay_sync::apply_remote_nostr_identity_roster_op_event(&mut config, event)?;
         emit_daemon_status_event(
@@ -146,9 +224,15 @@ pub(crate) async fn apply_one_event(
             config.save(config_path_in(config_dir))?;
             drop(config_lock);
             if let Some(sync) = fips_blocks.as_deref() {
-                sync.refresh_authorized_peers(&config).await;
+                sync.refresh_authorized_peers_from_config_dir(config_dir)
+                    .await;
             }
+            publish_ready_device_approval_acks(client, config_dir, fips_blocks.as_deref()).await?;
             return Ok(EventApplyOutcome::Changed);
+        }
+        drop(config_lock);
+        if matches!(outcome, relay_sync::NostrIdentityRosterOpApply::Current) {
+            publish_ready_device_approval_acks(client, config_dir, fips_blocks.as_deref()).await?;
         }
         return Ok(EventApplyOutcome::Unchanged);
     } else if iris_drive_core::is_share_access_snapshot_event_coordinate(event) {
@@ -166,7 +250,8 @@ pub(crate) async fn apply_one_event(
             config.save(config_path_in(config_dir))?;
             drop(config_lock);
             if let Some(sync) = fips_blocks.as_deref() {
-                sync.refresh_authorized_peers(&config).await;
+                sync.refresh_authorized_peers_from_config_dir(config_dir)
+                    .await;
             }
             return Ok(EventApplyOutcome::Changed);
         }
@@ -193,11 +278,7 @@ pub(crate) async fn apply_one_event(
         let parsed_root_cid = parsed
             .as_ref()
             .map(|(_, _, _, root_ref)| root_ref.root_cid.clone());
-        let root_blocks_already_synced = parsed_root_cid
-            .as_deref()
-            .is_some_and(|root_cid| root_has_successful_block_sync(config_dir, root_cid));
-        let followup =
-            drive_root_followup_plan(was_applied, stale_current_root, root_blocks_already_synced);
+        let followup = drive_root_followup_plan(was_applied, stale_current_root);
         let root_cid_to_pull = parsed_root_cid
             .as_ref()
             .filter(|_| followup.pull_blocks)
@@ -217,7 +298,8 @@ pub(crate) async fn apply_one_event(
         }
         drop(config_lock);
         if let Some(sync) = fips_blocks.as_deref() {
-            sync.refresh_authorized_peers(&config).await;
+            sync.refresh_authorized_peers_from_config_dir(config_dir)
+                .await;
         }
 
         enqueue_root_apply_followup(
@@ -282,10 +364,10 @@ pub(crate) fn apply_files_root_event(
     let outcome =
         relay_sync::apply_remote_files_root_event(config, event, Some(account.app_key.keys()))?;
     let was_applied = matches!(outcome, relay_sync::FilesRootApply::Applied);
-    let tree_name = event
-        .tags
-        .identifier()
-        .map_or_else(|| iris_drive_core::PRIMARY_DRIVE_ID.to_string(), str::to_owned);
+    let tree_name = event.tags.identifier().map_or_else(
+        || iris_drive_core::PRIMARY_DRIVE_ID.to_string(),
+        str::to_owned,
+    );
     let root_cid_to_pull = if was_applied {
         config
             .drive(&tree_name)
@@ -334,7 +416,6 @@ struct DriveRootFollowupPlan {
 fn drive_root_followup_plan(
     was_applied: bool,
     stale_current_root: bool,
-    _root_blocks_already_synced: bool,
 ) -> DriveRootFollowupPlan {
     DriveRootFollowupPlan {
         pull_blocks: was_applied || stale_current_root,
@@ -424,8 +505,11 @@ pub(crate) fn spawn_root_apply_followup(
     if root_cid_to_pull.is_none() && !should_refresh_projection {
         return None;
     }
-    let expected_projection_root_key =
-        root_apply_followup_key(&config, root_cid_to_pull.as_deref(), should_refresh_projection);
+    let expected_projection_root_key = root_apply_followup_key(
+        &config,
+        root_cid_to_pull.as_deref(),
+        should_refresh_projection,
+    );
     let root_cid_for_materialize = root_cid_to_pull
         .as_ref()
         .filter(|root_cid| root_cid_belongs_to_peer(&config, root_cid))
@@ -561,8 +645,7 @@ pub(crate) fn spawn_root_apply_followup(
         }
 
         if root_cid_for_materialize.is_some() {
-            match materialize_primary_merged_root_for_followup(&config_dir).await
-            {
+            match materialize_primary_merged_root_for_followup(&config_dir).await {
                 Ok(Some(report)) => {
                     let direct_root_mesh_error = if let Some(sync) = fips_blocks.as_deref() {
                         let mut direct_roots = DirectRootExchange::default();
@@ -759,10 +842,9 @@ fn root_cid_belongs_to_peer(config: &AppConfig, root_cid: &str) -> bool {
     config
         .drive(iris_drive_core::PRIMARY_DRIVE_ID)
         .is_some_and(|drive| {
-            drive
-                .app_key_roots
-                .iter()
-                .any(|(device, root)| device != &account.app_key_pubkey && root.root_cid == root_cid)
+            drive.app_key_roots.iter().any(|(device, root)| {
+                device != &account.app_key_pubkey && root.root_cid == root_cid
+            })
         })
 }
 
@@ -775,102 +857,77 @@ pub(crate) async fn pull_blocks_for_root(
 ) -> Result<()> {
     let cid =
         Cid::parse(root_cid_str).with_context(|| format!("parsing root cid {root_cid_str}"))?;
-    let mut attempted = false;
-    let mut fips_had_peers = false;
-    let mut errors = Vec::new();
-    if let Some(sync) = fips_blocks {
-        let connected_peers = sync.connected_peer_ids().await;
-        fips_had_peers = !connected_peers.is_empty();
-        if connected_peers.is_empty() {
-            println!(
-                "{}",
-                json!({
-                    "event": "fips_download_skipped",
-                    "root_cid": root_cid_str,
-                    "reason": "no_connected_peers",
-                })
-            );
-        } else {
-            attempted = true;
-            match download_tree_over_fips_with_retry(sync, &cid, fips_download_policy(config)).await
-            {
-                Ok(report) => {
-                    record_block_sync(config_dir, root_cid_str, "fips", &report);
-                    println!(
-                        "{}",
-                        json!({
-                            "event": "fips_downloaded",
-                            "root_cid": root_cid_str,
-                            "report": download_report_json(&report),
-                        })
-                    );
-                    return Ok(());
-                }
-                Err(error) => {
-                    let error = format!("{error:#}");
-                    errors.push(format!("fips: {error}"));
-                    println!(
-                        "{}",
-                        json!({
-                            "event": "fips_download_error",
-                            "root_cid": root_cid_str,
-                            "error": error,
-                            "connected_peers": connected_peers,
-                        })
-                    );
-                }
-            }
-        }
-    }
-
-    if should_try_blossom_download(config, attempted, fips_had_peers) {
-        attempted = true;
-        match download_roots_over_blossom(config_dir, config, &[root_cid_str.to_string()]).await {
-            Ok(report) => {
-                record_block_sync(config_dir, root_cid_str, "blossom", &report);
-                println!(
-                    "{}",
-                    json!({
-                        "event": "blossom_downloaded",
-                        "root_cid": root_cid_str,
-                        "report": download_report_json(&report),
-                    })
-                );
-                return Ok(());
-            }
-            Err(error) => {
-                let error = error.to_string();
-                errors.push(format!("blossom: {error}"));
-                println!(
-                    "{}",
-                    json!({
-                        "event": "blossom_download_error",
-                        "root_cid": root_cid_str,
-                        "error": error,
-                    })
-                );
-            }
-        }
-    } else if !config.blossom_servers.is_empty() && attempted && fips_had_peers {
+    let connected_peers = if let Some(sync) = fips_blocks {
+        sync.connected_peer_ids().await
+    } else {
+        Vec::new()
+    };
+    if fips_blocks.is_some() && connected_peers.is_empty() {
         println!(
             "{}",
             json!({
-                "event": "blossom_download_skipped",
+                "event": "fips_download_skipped",
                 "root_cid": root_cid_str,
-                "reason": "fips_peers_available",
+                "reason": "no_connected_peers",
             })
         );
     }
 
-    if attempted {
-        Err(anyhow::anyhow!(
-            "all block download transports failed for {root_cid_str}: {}",
-            errors.join("; ")
-        ))
-    } else {
-        Err(anyhow::anyhow!(
+    let fips_download = fips_blocks
+        .filter(|_| !connected_peers.is_empty())
+        .map(|sync| {
+            Box::pin(async move {
+                download_tree_over_fips_with_retry(sync, &cid, fips_download_policy(config))
+                    .await
+                    .map_err(|error| format!("{error:#}"))
+            }) as BlockDownloadFuture<'_>
+        });
+    let fips_attempted = fips_download.is_some();
+    let blossom_download = should_try_blossom_download(
+        config,
+        fips_attempted,
+        !connected_peers.is_empty(),
+    )
+    .then(|| {
+        Box::pin(async move {
+            download_roots_over_blossom(config_dir, config, &[root_cid_str.to_string()])
+                .await
+                .map_err(|error| error.to_string())
+        }) as BlockDownloadFuture<'_>
+    });
+
+    match first_successful_block_download(fips_download, blossom_download).await {
+        Ok(outcome) => {
+            log_block_download_errors(root_cid_str, &connected_peers, &outcome.prior_errors);
+            let (transport, event) = match outcome.transport {
+                BlockDownloadTransport::Fips => ("fips", "fips_downloaded"),
+                BlockDownloadTransport::Blossom => ("blossom", "blossom_downloaded"),
+            };
+            record_block_sync(config_dir, root_cid_str, transport, &outcome.report);
+            println!(
+                "{}",
+                json!({
+                    "event": event,
+                    "root_cid": root_cid_str,
+                    "report": download_report_json(&outcome.report),
+                })
+            );
+            Ok(())
+        }
+        Err(errors) if errors.is_empty() => Err(anyhow::anyhow!(
             "no block download transport available for {root_cid_str}"
-        ))
+        )),
+        Err(errors) => {
+            log_block_download_errors(root_cid_str, &connected_peers, &errors);
+            Err(anyhow::anyhow!(
+                "all block download transports failed for {root_cid_str}: {}",
+                errors
+                    .iter()
+                    .map(BlockDownloadError::summary)
+                    .collect::<Vec<_>>()
+                    .join("; ")
+            ))
+        }
     }
 }
 
@@ -913,8 +970,6 @@ fn event_block_pull_timeout_secs(config: &AppConfig) -> u64 {
     if config.blossom_servers.is_empty() {
         EVENT_BLOCK_PULL_TIMEOUT_SECS
     } else {
-        FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS
-            + BLOSSOM_DOWNLOAD_RETRY_DELAYS.iter().sum::<u64>()
-            + EVENT_BLOCK_PULL_WITH_BLOSSOM_HEADROOM_SECS
+        EVENT_BLOCK_PULL_WITH_BLOSSOM_TIMEOUT_SECS
     }
 }

@@ -653,6 +653,7 @@ struct NativeProfile: Codable {
     var appKeyLinkRequest: String
     var appKeyLinkInvite: String
     var inboundAppKeyLinkRequests: [NativeAppKeyLinkRequest]
+    var pendingDeviceApprovalReceiptCount: UInt64? = nil
 
     var devicePubkey: String { currentAppKeyNpub }
 
@@ -669,6 +670,7 @@ struct NativeProfile: Codable {
         case appKeyLinkRequest = "app_key_link_request"
         case appKeyLinkInvite = "app_key_link_invite"
         case inboundAppKeyLinkRequests = "inbound_app_key_link_requests"
+        case pendingDeviceApprovalReceiptCount = "pending_device_approval_receipt_count"
     }
 }
 

@@ -201,6 +201,7 @@ impl DaemonTaskSet {
 }
 
 include!("daemon/app_key_link_subscriptions.rs");
+include!("daemon/app_key_link_sender.rs");
 include!("daemon/runtime_support.rs");
 include!("daemon/runtime.rs");
 include!("daemon/gateway_runtime.rs");
@@ -261,6 +262,7 @@ impl ProviderRootPublishKey {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn publish_provider_root_if_changed(
     client: &nostr_sdk::Client,
     config_dir: &Path,
@@ -269,7 +271,22 @@ async fn publish_provider_root_if_changed(
     direct_roots: &mut DirectRootExchange,
     fips_blocks: Option<&FsFipsBlockSync>,
     daemon_tasks: &DaemonTaskSet,
+    trigger: &str,
 ) -> Result<Option<AppConfig>> {
+    if iris_drive_core::paths::provider_root_staging_path_in(config_dir).exists() {
+        match import_staged_provider_root(config_dir).await {
+            Ok(Some(report)) => emit_daemon_status_event(
+                config_dir,
+                provider_root_import_status_payload("provider_root_staged_imported", &report),
+            ),
+            Ok(None) => {}
+            Err(error) => println!(
+                "{}",
+                json!({"event": "provider_root_staged_import_error", "trigger": trigger, "error": format!("{error:#}")})
+            ),
+        }
+    }
+    // Pending file data must not delay roster publication or peer revocation.
     let config_path = config_path_in(config_dir);
     let config_fingerprint = config_file_fingerprint(&config_path)?;
     if cache.fingerprint_matches(&config_fingerprint) {
@@ -277,7 +294,8 @@ async fn publish_provider_root_if_changed(
     }
     let updated_config = AppConfig::load_or_default(&config_path)?;
     if let Some(sync) = fips_blocks {
-        sync.refresh_authorized_peers(&updated_config).await;
+        sync.refresh_authorized_peers_from_config_dir(config_dir)
+            .await;
     }
     let current_key = current_app_key_root_key(&updated_config);
     let publish_key = ProviderRootPublishKey::from_config(&updated_config, current_key.clone());
@@ -367,13 +385,15 @@ async fn import_staged_provider_root(
     let tombstone_paths = staged.tombstone_paths;
     let mut daemon = Daemon::open(config_dir)
         .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
-    let report = crate::drive::import_provider_root_with_retry(
-        &mut daemon,
-        root,
-        tombstone_base_root,
-        Some(&tombstone_paths),
-    )
-    .await?;
+    // Yield the event loop and config lock on a missing block so peer sync can
+    // make progress. The provider recheck timer retries the retained staging.
+    let report = daemon
+        .import_visible_root_with_tombstone_base_and_paths(
+            root,
+            tombstone_base_root,
+            Some(&tombstone_paths),
+        )
+        .await?;
     clear_provider_staging(config_dir)?;
     Ok(Some(report))
 }
@@ -391,24 +411,6 @@ fn provider_root_import_status_payload(
             "top_level_entries": report.top_level_entries,
         },
     })
-}
-
-async fn handle_provider_root_wake_payload(config_dir: &Path, wake_payload: &Value, trigger: &str) {
-    if provider_root_wake_payload_is_staged(wake_payload) {
-        match import_staged_provider_root(config_dir).await {
-            Ok(Some(report)) => emit_daemon_status_event(
-                config_dir,
-                provider_root_import_status_payload("provider_root_staged_imported", &report),
-            ),
-            Ok(None) => {}
-            Err(error) => println!(
-                "{}",
-                json!({"event": "provider_root_staged_import_error", "trigger": trigger, "error": format!("{error:#}")})
-            ),
-        }
-    } else if let Some(status_payload) = provider_root_wake_status_payload(wake_payload) {
-        emit_daemon_status_event(config_dir, status_payload);
-    }
 }
 
 const PROVIDER_ROOT_SAFETY_POLL_MIN_SECS: u64 = 30;
@@ -892,7 +894,7 @@ pub(crate) async fn fips_block_sync_status(sync: Option<&FsFipsBlockSync>) -> Op
     let sync = sync?;
     let transport = sync.transport_settings();
     let direct_devices = sync.connected_peer_ids().await;
-    let mesh_devices = Vec::new();
+    let mesh_devices = sync.mesh_peer_ids().await;
     let online_devices = fips_online_device_ids(&direct_devices, &mesh_devices);
     Some(json!({
         "endpoint_npub": sync.endpoint_npub(),
@@ -1015,6 +1017,7 @@ pub(crate) async fn parent_exit_signal(service_mode: bool) {
 }
 
 include!("daemon/direct_root_state_request.rs");
+include!("daemon/block_download_race.rs");
 include!("daemon/apply_and_blocks.rs");
 
 pub(crate) fn record_block_sync(
@@ -1121,6 +1124,7 @@ pub(crate) fn files_root_apply_label(
 
 #[cfg(test)]
 mod tests {
+    mod delayed_blob;
     include!("daemon/tests_part1.rs");
     include!("daemon/tests_part2.rs");
     include!("daemon/tests_part3.rs");

@@ -96,6 +96,9 @@ struct SyncLatency {
     root_cid: String,
     local_edit_to_remote_visible: Duration,
     source_viewer_done_to_remote_visible: Duration,
+    source_publish_finished: Option<Duration>,
+    target_root_received: Option<Duration>,
+    target_blocks_downloaded: Option<Duration>,
 }
 
 #[derive(Clone)]
@@ -202,47 +205,6 @@ async fn live_daemons_sync_windows_create_edit_rename_delete_to_ubuntu_peer() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-async fn live_daemons_linked_devices_see_each_others_edits_after_authorization() {
-    let _guard = live_daemon_test_guard().await;
-    let cluster = SyncCluster::start(Duration::from_millis(250)).await;
-    cluster.wait_until_authorized().await;
-
-    cluster
-        .write(
-            Client::Windows,
-            "linked/windows-note.txt",
-            b"created after device authorization on windows",
-        )
-        .await;
-    cluster
-        .wait_for_convergence_from(Client::Windows, "authorized windows edit")
-        .await;
-    cluster.assert_file(
-        Client::Ubuntu,
-        "linked/windows-note.txt",
-        b"created after device authorization on windows",
-    );
-
-    cluster
-        .write(
-            Client::Ubuntu,
-            "linked/ubuntu-note.txt",
-            b"created after device authorization on ubuntu",
-        )
-        .await;
-    cluster
-        .wait_for_convergence_from(Client::Ubuntu, "authorized ubuntu edit")
-        .await;
-    cluster.assert_file(
-        Client::Windows,
-        "linked/ubuntu-note.txt",
-        b"created after device authorization on ubuntu",
-    );
-    cluster.assert_status_counts(Client::Windows, 2, 2);
-    cluster.assert_status_counts(Client::Ubuntu, 2, 2);
-}
-
-#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn live_daemons_sync_when_relay_drops_root_events_after_fips_connect() {
     let _guard = live_daemon_test_guard().await;
     let cluster = SyncCluster::start(Duration::ZERO).await;
@@ -312,14 +274,18 @@ async fn live_daemons_provider_write_viewer_to_viewer_latency_probe() {
                 "root_cid": &latency.root_cid,
                 "local_edit_to_remote_visible_ms": latency.local_edit_to_remote_visible.as_millis(),
                 "source_viewer_done_to_remote_visible_ms": latency.source_viewer_done_to_remote_visible.as_millis(),
+                "source_publish_finished_ms": latency.source_publish_finished.map(|elapsed| elapsed.as_millis()),
+                "target_root_received_ms": latency.target_root_received.map(|elapsed| elapsed.as_millis()),
+                "target_blocks_downloaded_ms": latency.target_blocks_downloaded.map(|elapsed| elapsed.as_millis()),
             })
         );
         assert!(
             latency.source_viewer_done_to_remote_visible < Duration::from_secs(10),
-            "{} to {} viewer latency was {:?}, expected under 10s",
+            "{} to {} viewer latency was {:?}, expected under 10s\n{}",
             source.label(),
             target.label(),
             latency.source_viewer_done_to_remote_visible,
+            cluster.debug_state_with_rerun_hint(),
         );
     }
 }
@@ -446,6 +412,18 @@ async fn live_daemons_three_vm_macos_provider_changes_catch_up_without_source_on
     let mut cluster = SyncCluster::start_three(Duration::ZERO).await;
     cluster.wait_until_authorized().await;
 
+    // Authorization can finish before the initial roots and their blocks arrive.
+    // Establish the source's complete base before taking the receivers offline.
+    cluster
+        .wait_until("macos discovered all initial roots", || {
+            let status = run_json(cluster.config_path(Client::MacOS), &["status"]);
+            status["drives"][0]["app_key_root_count"] == 3
+        })
+        .await;
+    cluster
+        .refresh_view_until_available(Client::MacOS, "macos initial roots downloaded")
+        .await;
+
     cluster.stop_daemon(Client::Windows);
     cluster.stop_daemon(Client::Ubuntu);
 
@@ -508,5 +486,11 @@ async fn live_daemons_three_vm_macos_provider_changes_catch_up_without_source_on
 mod app_key_link_tests;
 #[path = "daemon_sync_matrix/provider_visibility_tests.rs"]
 mod provider_visibility_tests;
+#[path = "daemon_sync_matrix/relayless_tests.rs"]
+mod relayless_tests;
 #[path = "daemon_sync_matrix/scenario_tests.rs"]
 mod scenario_tests;
+#[path = "daemon_sync_matrix/staged_recovery_tests.rs"]
+mod staged_recovery_tests;
+#[path = "daemon_sync_matrix/successive_approval_tests.rs"]
+mod successive_approval_tests;

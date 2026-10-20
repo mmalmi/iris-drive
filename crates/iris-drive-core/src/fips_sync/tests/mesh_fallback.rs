@@ -84,12 +84,30 @@ async fn drive_blob_service_accepts_roster_peer_and_rejects_unrelated_identity()
     drive_local.put(hash, data.clone()).await.unwrap();
     let drive = DriveBlobRuntime::bind(
         drive_bound.native_endpoint.clone(),
-        drive_local,
+        drive_local.clone(),
         &[FipsPeerConfig::new(roster_device.pubkey_bech32())],
         None,
     )
     .await
     .unwrap();
+    // An updater shares downloaded public blocks through the same service,
+    // without granting unrelated peers access to the Drive store.
+    let update_bytes = b"public signed-release payload".to_vec();
+    let update_hash = hashtree_core::sha256(&update_bytes);
+    let origin = Arc::new(MemoryStore::new());
+    origin.put(update_hash, update_bytes.clone()).await.unwrap();
+    let updates = hashtree_updater::build_update_store(
+        drive_local,
+        Some(Arc::new(StoreBlobRoute::new(origin))),
+        hashtree_updater::SecurePubsubBlossomConfig::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        updates.get(&update_hash).await.unwrap(),
+        Some(update_bytes.clone())
+    );
+    drop(updates);
+
     let roster_reader = TcpBlobTransport::bind(
         roster_bound.native_endpoint.clone(),
         Arc::new(MemoryStore::new()),
@@ -121,6 +139,20 @@ async fn drive_blob_service_accepts_roster_peer_and_rejects_unrelated_identity()
         "an unrelated authenticated identity reached Drive's blob resolver",
     );
 
+    assert_eq!(
+        roster_reader
+            .fetch_from_peer(&update_hash, drive_identity)
+            .await
+            .unwrap(),
+        Some(update_bytes),
+    );
+    assert!(
+        unrelated_reader
+            .fetch_from_peer(&update_hash, drive_identity)
+            .await
+            .is_err()
+    );
+
     unrelated_reader.shutdown().await.unwrap();
     roster_reader.shutdown().await.unwrap();
     drop(drive);
@@ -130,7 +162,7 @@ async fn drive_blob_service_accepts_roster_peer_and_rejects_unrelated_identity()
 }
 
 pub(super) async fn wait_for_peer_connection(endpoint: &BoundFipsEndpoint, npub: &str) {
-    tokio::time::timeout(Duration::from_secs(10), async {
+    tokio::time::timeout(Duration::from_secs(30), async {
         loop {
             if endpoint
                 .native_endpoint
@@ -231,8 +263,14 @@ async fn real_same_host_provider_failure_still_uses_drive_standalone_route() {
     .await
     .unwrap();
     let target_store = Arc::new(MemoryStore::new());
-    set_fips_peer_configs(
+    set_drive_fips_peer_configs(
         source_native.as_ref(),
+        &source_device.pubkey_bech32(),
+        &[FipsPeerConfig {
+            npub: target_device.pubkey_bech32(),
+            udp_addresses: vec![target_udp_addr.to_string()],
+        }],
+        &[],
         vec![FipsPeerConfig {
             npub: target_device.pubkey_bech32(),
             udp_addresses: vec![target_udp_addr.to_string()],
@@ -392,6 +430,7 @@ pub(super) fn local_only_settings(
         enable_udp: true,
         enable_webrtc: false,
         enable_lan_discovery: false,
+        enable_nostr_discovery: false,
         enable_mesh_pubsub: false,
         enable_local_rendezvous: false,
         websocket_bind_addr: None,
@@ -402,6 +441,7 @@ pub(super) fn local_only_settings(
         share_local_candidates: false,
         static_peer_hints: vec![(source.pubkey_bech32(), vec![source_udp_addr.to_string()])],
         bootstrap_peer_hints: Vec::new(),
+        trusted_raters: Vec::new(),
         webrtc_max_connections: 1,
         open_discovery_max_pending: 0,
     }

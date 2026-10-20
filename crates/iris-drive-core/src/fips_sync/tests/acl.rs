@@ -5,9 +5,7 @@ use fips_core::PeerIdentity;
 use fips_tcp::{Config as TcpConfig, State};
 use fips_tcp_endpoint::FipsTcpEndpoint;
 use hashtree_core::Store;
-use hashtree_fips_transport::{
-    FipsPeerConfig, TcpBlobTransport, TcpBlobTransportConfig, set_fips_peer_configs,
-};
+use hashtree_fips_transport::{FipsPeerConfig, TcpBlobTransport, TcpBlobTransportConfig};
 
 use crate::DIRECT_ROOT_APP_TOPIC;
 use crate::app_key_link_transport::APP_KEY_LINK_REQUEST_APP_TOPIC;
@@ -157,7 +155,16 @@ async fn authenticated_same_host_blob_provider_never_enters_drive_data_acl() {
 async fn pending_link_peer_can_bootstrap_but_cannot_access_drive_roots() {
     let admin_dir = tempfile::tempdir().unwrap();
     let mut admin = crate::Profile::create(admin_dir.path(), Some("admin".into())).unwrap();
-    let pending = AppKey::generate("pending-link-peer");
+    let pending_dir = tempfile::tempdir().unwrap();
+    let mut pending_profile =
+        crate::Profile::create(pending_dir.path(), Some("pending".into())).unwrap();
+    // Order two complete fixtures instead of searching randomly above an
+    // arbitrary administrator key, which can be near the end of the keyspace.
+    if admin.app_key.pubkey_bech32() > pending_profile.app_key.pubkey_bech32() {
+        std::mem::swap(&mut admin, &mut pending_profile);
+    }
+    let pending = pending_profile.app_key;
+    assert!(admin.app_key.pubkey_bech32() < pending.pubkey_bech32());
     admin
         .state
         .inbound_app_key_link_requests
@@ -195,15 +202,10 @@ async fn pending_link_peer_can_bootstrap_but_cannot_access_drive_roots() {
     .await
     .unwrap();
     let pending_endpoint = pending_bound.native_endpoint.clone();
-    set_fips_peer_configs(
-        pending_endpoint.as_ref(),
-        vec![FipsPeerConfig {
-            npub: admin.app_key.pubkey_bech32(),
-            udp_addresses: vec![admin_addr.to_string()],
-        }],
-    )
-    .await
-    .unwrap();
+    let admin_peer = FipsPeerConfig {
+        npub: admin.app_key.pubkey_bech32(),
+        udp_addresses: vec![admin_addr.to_string()],
+    };
     let sync = FipsBlockSync::start_with_bound_endpoint(
         admin_bound,
         Arc::new(MemoryStore::new()),
@@ -213,10 +215,24 @@ async fn pending_link_peer_can_bootstrap_but_cannot_access_drive_roots() {
     )
     .await
     .unwrap();
+    // Bring up the accepting control runtime before the raw pending endpoint
+    // makes its one-shot application-peer dial. Configuring both sides at the
+    // same instant creates a transport-level crossed-dial race unrelated to
+    // the ACL behavior this test exercises.
+    set_drive_fips_peer_configs(
+        pending_endpoint.as_ref(),
+        &pending.pubkey_bech32(),
+        std::slice::from_ref(&admin_peer),
+        std::slice::from_ref(&admin_peer),
+        vec![admin_peer.clone()],
+    )
+    .await
+    .unwrap();
     assert!(
         sync.authorized_peer_ids().is_empty(),
         "a pending device entered the approved Drive roster"
     );
+    wait_for_peer_connection(&pending_bound, &admin.app_key.pubkey_bech32()).await;
 
     let mut deliveries = sync.subscribe_app_messages();
     let mut control = FipsTcpEndpoint::bind(

@@ -57,6 +57,9 @@ require_registry_package() {
 }
 
 require_executable scripts/release-gate.sh
+require_executable scripts/lib/parallel-gate.sh
+require_file scripts/lib/cross-vm-parallel-setup.sh
+require_executable scripts/test_release_workflows.py
 require_executable scripts/verify.sh
 require_executable scripts/verify_full_native.sh
 require_executable scripts/native_lab.py
@@ -66,21 +69,37 @@ require_file scripts/remove_fileprovider_domain.swift
 require_executable scripts/idle-cpu-gate.sh
 require_file scripts/idle-cpu-gate-windows.ps1
 require_executable scripts/macos-release-smoke.sh
+require_executable scripts/macos-vm-git-sync.sh
+require_executable scripts/macos-vm-smoke.sh
+require_executable scripts/macos-vm-idle-cpu.sh
+require_executable scripts/macos-idle-cpu-smoke.sh
+require_executable scripts/macos-vm-android-manual-link-e2e.sh
+require_executable scripts/macos-android-manual-link-remote.sh
 require_executable scripts/macos-profiles
 require_executable scripts/ios-build
+require_executable scripts/release-build-number.mjs
+require_file scripts/release-build-hygiene.mjs
+require_file scripts/release-build-hygiene.test.mjs
+require_file scripts/release-zip.mjs
+require_executable scripts/verify-linux-deb-license.mjs
+require_file scripts/local-release-android-license.test.mjs
+require_file scripts/local-release-assets.test.mjs
+require_file scripts/local-release-platform-license.test.mjs
 require_executable scripts/ios-profiles
 require_executable scripts/testflight-internal
 require_executable scripts/testflight-public
 require_file scripts/macos-entitlements.mjs
 require_file .env.release.example
+require_file release-policy.json
 require_file .env.zapstore.example
 require_file zapstore.yaml
+require_file LICENSE
 
 require_contains Justfile "release-gate *args:"
 require_contains Justfile "verify-fast:"
 require_contains Justfile "verify-full:"
 require_contains Justfile "verify-health:"
-require_contains scripts/verify.sh 'cargo clippy --workspace --all-targets -- -D warnings'
+require_contains scripts/verify.sh 'cargo clippy --locked --workspace --all-targets --keep-going -- -D warnings'
 require_contains scripts/native_lab.py 'infrastructure_unavailable'
 require_contains Justfile "node scripts/local-release.mjs --build"
 require_contains Justfile "release-publish:"
@@ -89,19 +108,30 @@ require_contains scripts/local-release.mjs "--build"
 require_contains scripts/local-release.mjs "--skip-zapstore"
 require_contains scripts/local-release.mjs "publishZapstore"
 require_contains scripts/local-release.mjs "scripts', 'ios-build'"
+require_contains scripts/local-release-lib.mjs "BUILD_NUMBER_EPOCH"
 require_contains scripts/local-release.mjs "IRIS_DRIVE_IOS_TESTFLIGHT_CHANNELS"
 require_contains scripts/local-release.mjs "IRIS_DRIVE_IOS_MARKETING_VERSION"
 require_contains scripts/local-release.mjs "App Store Connect API key file"
 require_contains scripts/local-release.mjs ".env.zapstore.local"
 require_contains scripts/local-release.mjs "requireCompleteAppRelease"
+require_contains scripts/local-release-lib.mjs "validateCanonicalReleaseAssetSet"
 require_contains scripts/local-release.mjs "validateFinalReleaseBuildInputs"
 require_contains scripts/local-release.mjs "validateFinalPublishInputs"
-require_contains scripts/local-release.mjs "windowsPeHasAuthenticodeSignature"
-require_contains scripts/local-release.mjs "IRIS_DRIVE_ALLOW_UNSIGNED_WINDOWS"
+require_contains scripts/local-release.mjs "readProjectReleasePolicy"
+require_contains scripts/local-release.mjs "assertZipEntriesEqualFiles"
+require_contains scripts/local-release.mjs "verify-linux-deb-license.mjs"
+require_contains release-policy.json '"signing": "unsigned"'
+require_absent scripts/local-release.mjs "IRIS_DRIVE_WINDOWS_SIGNTOOL"
+require_absent scripts/local-release.mjs "IRIS_DRIVE_ALLOW_UNSIGNED_WINDOWS"
 require_contains scripts/local-release.mjs "Missing Zapstore signing key"
 require_contains scripts/local-release.mjs "notarytool"
 require_contains scripts/local-release.mjs "stapler"
 require_contains scripts/local-release.mjs "macos-release-smoke.sh"
+require_contains scripts/macos-release-smoke.sh "verify_file_provider_contract"
+require_contains scripts/macos-release-smoke.sh "verify_embedded_license"
+require_contains scripts/macos-release-smoke.sh 'com\.apple\.security\.application-groups.0'
+require_contains scripts/macos-release-smoke.sh 'REGISTERED_APP_PATHS'
+require_contains scripts/macos-release-smoke.sh '"$LSREGISTER" -u "$app"'
 require_contains scripts/local-release.mjs "IRIS_DRIVE_RELEASE_RESOLVER_REFRESH_BASE_URLS"
 require_contains scripts/local-release.mjs "api/resolve"
 require_contains scripts/local-release.mjs "IRIS_DRIVE_MACOS_KEEP_PROVISIONED_ENTITLEMENTS"
@@ -111,7 +141,9 @@ require_contains scripts/local-release.mjs "-PirisDriveVersionName="
 require_contains android/app/build.gradle.kts "irisDriveVersionName"
 require_contains scripts/ios-build "ios-testflight-public"
 require_contains scripts/ios-build "scripts/ios-profiles"
+require_contains scripts/ios-build 'node "$ROOT/scripts/release-build-number.mjs" "$1"'
 require_contains scripts/ios-build "testflight-internal"
+require_contains scripts/ios-build "verify_ios_export_license"
 require_contains scripts/ios-build 'FILE_PROVIDER_BUNDLE_ID="${IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID:-$BUNDLE_ID.FileProvider}"'
 require_contains scripts/ios-build "IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER"
 require_contains scripts/ios-build "IRIS_DRIVE_IOS_SIGNING_STYLE"
@@ -128,59 +160,82 @@ require_contains scripts/release-gate.sh "just structure"
 require_contains scripts/release-gate.sh "cargo test --workspace --exclude idrive"
 require_contains scripts/release-gate.sh "--test daemon_sync_matrix"
 require_contains scripts/release-gate.sh "cargo build --workspace --release"
-require_contains Cargo.toml 'fips-core = "=0.4.34"'
-require_contains Cargo.toml 'fips-endpoint = "=0.4.34"'
-require_contains Cargo.toml 'hashtree-core = "=0.2.86"'
+require_contains Cargo.toml 'nvpn-fips-core = { version = "=0.4.106" }'
+require_contains Cargo.toml 'nvpn-fips-endpoint = { version = "=0.4.106" }'
+require_contains Cargo.toml 'nvpn-fips-tcp = { version = "=0.2.6" }'
+require_contains Cargo.toml 'nvpn-fips-tcp-endpoint = { version = "=0.2.41" }'
+require_contains Cargo.toml 'hashtree-core = "=0.2.91"'
 require_contains Cargo.toml 'hashtree-config = "=0.2.83"'
-require_contains Cargo.toml 'hashtree-embedded = "=0.2.87"'
-require_contains Cargo.toml 'hashtree-fips-transport = { version = "=0.4.9"'
-require_contains Cargo.toml 'hashtree-lmdb = "=0.2.85"'
-require_contains Cargo.toml 'hashtree-network = "=0.2.87"'
-require_contains Cargo.toml 'hashtree-nostr = "=0.2.83"'
+require_contains Cargo.toml 'hashtree-embedded = "=0.2.94"'
+require_contains Cargo.toml 'hashtree-fips-transport = { version = "=0.4.29", features = ["webrtc-endpoint"] }'
+require_contains Cargo.toml 'hashtree-lmdb = "=0.2.91"'
+require_contains Cargo.toml 'hashtree-network = "=0.2.88"'
+require_contains Cargo.toml 'hashtree-nostr = "=0.2.90"'
 require_contains Cargo.toml 'nostr-identity = "=0.3.1"'
+require_contains Cargo.toml 'nostr-pubsub-fips = "=0.5.34"'
 require_contains crates/iris-drive-core/src/fips_bootstrap.rs '"wss://fips1.iris.to/fips"'
 require_contains crates/iris-drive-core/src/fips_bootstrap.rs '"wss://fips2.iris.to/fips"'
-require_contains crates/iris-drive-core/Cargo.toml "fips-core.workspace = true"
+require_contains crates/iris-drive-core/Cargo.toml "nvpn-fips-core.workspace = true"
 require_absent Cargo.toml "[patch.crates-io]"
 require_absent Cargo.toml "git = "
 require_absent Cargo.toml 'path = "crates/hashtree-fips-transport"'
 require_absent Cargo.toml 'path = "../nostr-social-graph'
 require_absent linux/Cargo.toml "[patch.crates-io]"
+require_contains linux/Cargo.toml 'license = "MIT"'
+require_contains linux/Cargo.toml 'authors = ["Iris Drive contributors"]'
+require_contains linux/Cargo.toml 'repository = "htree://self/iris-drive"'
+require_contains linux/Cargo.toml 'copyright = "2026 Iris Drive contributors"'
+require_contains linux/Cargo.toml 'license-file = ["../LICENSE", "0"]'
+require_contains LICENSE "Permission is hereby granted, free of charge"
+require_contains LICENSE 'THE SOFTWARE IS PROVIDED "AS IS"'
 for lock in Cargo.lock linux/Cargo.lock; do
-  require_registry_package "$lock" fips-core 0.4.34 9f2cf90fed9ed72aef49ee1c0419adbb1d920a7947ee07103e2e81aaf919c8b3
-  require_registry_package "$lock" fips-endpoint 0.4.34 c3c02957332c1fab70b2014cbb42c443fa33f53f0ed467b35ae60fd0f9c54c08
-  require_registry_package "$lock" fips-tcp 0.2.0 d18861c5eca7c472fbbdbbfb498f8d2525405081a9a24b42633c600ba6f6e42a
-  require_registry_package "$lock" fips-tcp-endpoint 0.2.0 8e3e01e352b709b80f4261e2cd7d0ffde2d3aaf175267b3960997e70f7305c12
-  require_registry_package "$lock" hashtree-cli 0.2.101 039d4fc44f50ca195c92c7e87f663c9a3a3329c62fc798875682921b42c2a034
+  require_registry_package "$lock" negentropy 0.5.2 a3d66662cb5ca384d4991509755ed5a42dd8e31c4282bf881938e506fc3146ec
+  require_registry_package "$lock" hashtree-resolver 0.2.86 b7d86c6cfd737a94475f33d082ce6f8401d58f88b866653076014a9225e960ae
+  require_registry_package "$lock" nvpn-fips-core 0.4.106 87116dbf72331b27d4478b1a9b4c5a2e6718aadeb2faade810cbdbf2c09aac9e
+  require_registry_package "$lock" nvpn-fips-endpoint 0.4.106 4443ed00a7d04e46ec8abb805ebef0566e06198b0ebfc2bf519ce61120739c38
+  require_registry_package "$lock" nvpn-fips-tcp 0.2.6 299df22559c4af63e7d276fcb90cf000f2f1cd5546c213f17d8860154c1383d7
+  require_registry_package "$lock" nvpn-fips-tcp-endpoint 0.2.41 a91989d7f4d8209069ada185e31b307cae15a6d8e6ebbe33613199af9273a885
+  require_registry_package "$lock" git-remote-htree 0.2.92 b6402f07ca6ab86a8c4ebbde9cad8ec33c4fcc774f4a3e426938f103f5a32929
+  require_registry_package "$lock" hashtree-cli 0.2.155 d161bc50cf193aa81704a59bd7302cf98a78abaef7351fc038dafa2ef075df99
+  require_registry_package "$lock" hashtree-updater 0.2.89 84c1c9809282fb6428f25ff473252937e6b8627e8d15c4f436d083f0b2ddb0df
   require_registry_package "$lock" hashtree-config 0.2.83 661c0bec57ba49999860fc418a7e656714cd79d82a3c3ee272794b90bb49db76
-  require_registry_package "$lock" hashtree-core 0.2.86 574476b1fe122bddc7783ba0346dca42ec673a241128b0edf9e38166c1bb800f
-  require_registry_package "$lock" hashtree-embedded 0.2.87 b0fb583de515f7b55bf7d7f33de8d44bb8f0b662eff2d65196f9cacecb33ca9d
-  require_registry_package "$lock" hashtree-fips-transport 0.4.9 16f4f738e78ca631f7333637503d87d4396ec8319d3e2ce9a07e22b5a98cd607
-  require_registry_package "$lock" hashtree-lmdb 0.2.85 e61f72986fce9c84f9fd03c72c581af092e25ea698e8b7bc54ddc18fe821286b
-  require_registry_package "$lock" hashtree-network 0.2.87 aa83a68204dfbdc10f2fa9e810740c981e6f87c114a763ee56d8823df02c077e
-  require_registry_package "$lock" hashtree-nostr 0.2.83 489b2bf6d5e57921409aeee0a199a0f82512d473d290143306fc053d815c6973
-  require_registry_package "$lock" hashtree-nostr-pubsub 0.2.83 6fbf53cd18ddd9caf53dab8483db6a36011c11e3dc62233e0343ff5147c5672b
-  require_registry_package "$lock" nostr-pubsub 0.1.13 84bfacf8bb4c535ad4c80dc14bdef1dfe94b2b7064f8bf83509a137f8068e0e1
-  require_registry_package "$lock" nostr-pubsub-fips 0.4.7 fff9423f0785b558569a05c26879cae30ae7db6e4db806bda1f80fba558387d2
-  require_registry_package "$lock" nostr-pubsub-relay 0.1.11 8641200920d163b2d82c34e6f15605cff93a0546e3e0087fce8f3bddaa2329ca
+  require_registry_package "$lock" hashtree-core 0.2.91 76daf5b56bdf139dfa406c4c18eebd276b823d59e073bf1a81b1b0539f41fb4a
+  require_registry_package "$lock" hashtree-embedded 0.2.94 39872e2351ec599d6b04c5ccb564470f34ea7769ebfeb8b8746a1d6d7064b3c2
+  require_registry_package "$lock" hashtree-fips-transport 0.4.29 692a95f08fb680caf3ba02c96a8cc73a1e8add9bea50d4ab0298aefbc302ed71
+  require_registry_package "$lock" hashtree-lmdb 0.2.91 53db56d8d675711307c46d4d277dd8120902872fc03f5466f7ec42ebbcc69351
+  require_registry_package "$lock" hashtree-network 0.2.88 4f8fdbb7f18e4ebd4b3887055ca3af7230fc7cbf06e49e21c2ff9122130fcfa5
+  require_registry_package "$lock" hashtree-nostr 0.2.90 06bdf0a61b4dbcd0e96f8a347a98b91e8d37084d9fa72c3e27b01490a135d67a
+  require_registry_package "$lock" hashtree-nostr-pubsub 0.2.86 8c6173956c8614689b08d40091311d32cf581472fceca88d246f720b60984eaf
+  require_registry_package "$lock" nostr-pubsub 0.1.17 cbbd3fc8e3b9c8ee4fd00b22abb3f01b44fde2998ba8ba9b45051f9b7b5c473b
+  require_registry_package "$lock" nostr-pubsub-fips 0.5.34 835fe4d5cd9678a2daab5ac59a372b55bd403e67e90a16211bab343c24e4df7c
+  require_registry_package "$lock" nostr-pubsub-social-graph 0.2.3 35325e59eea42ad99eb05fba75c85dd4882450c755d5b99be6582b45679e0a6f
+  require_registry_package "$lock" nostr-pubsub-relay 0.1.15 fe53648d219d8fc5e3f8c2606d3dced398c383521127aeeaa9f3b345d2d3a9a9
 done
 require_absent scripts/docker-cli-e2e.sh "Missing required sibling checkout"
 require_contains scripts/docker-cli-e2e.sh '-v "$ROOT:/work/iris-drive:ro"'
 require_contains scripts/release-gate.sh "IRIS_DRIVE_RELEASE_GATE_FULL"
+require_contains scripts/release-gate.sh "IRIS_DRIVE_RELEASE_GATE_FAST_PRECHECKED"
 require_contains scripts/release-gate.sh "IRIS_DRIVE_RELEASE_GATE_IDLE_CPU"
-require_contains scripts/release-gate.sh "just macos-build"
 require_contains scripts/release-gate.sh "just smoke-macos"
+require_contains scripts/release-gate.sh "scripts/macos-vm-smoke.sh"
+require_contains scripts/release-gate.sh "scripts/macos-vm-idle-cpu.sh"
+require_contains scripts/release-gate.sh "IRIS_DRIVE_MACOS_SSH_HOST"
+require_contains scripts/release-gate.sh "macos_vm_gate_enabled"
+require_contains scripts/release-gate.sh "IRIS_DRIVE_RELEASE_GATE_MACOS_VM"
+require_contains scripts/release-gate.sh "scripts/local-release*.test.mjs"
+require_contains scripts/release-gate.sh "scripts/release-build-hygiene.test.mjs"
+require_contains scripts/macos-idle-cpu-smoke.sh "macos-dev-app.sh"
+require_absent scripts/release-gate.sh "just macos-build"
 require_contains scripts/release-gate.sh "run_macos_idle_cpu_gate"
-require_contains scripts/release-gate.sh "macOS idle CPU gate"
-require_contains scripts/release-gate.sh "idle-cpu-gate.sh --platform macos"
+require_contains scripts/macos-idle-cpu-smoke.sh "macOS idle CPU gate"
+require_contains scripts/macos-idle-cpu-smoke.sh "idle-cpu-gate.sh\" --platform macos"
 require_contains scripts/release-gate.sh "terminate_booted_ios_simulator_instances"
 require_contains scripts/release-gate.sh "IRIS_DRIVE_IOS_FILE_PROVIDER_BUNDLE_ID"
-require_contains scripts/release-gate.sh "ios-smoke builds the simulator app"
-require_contains scripts/release-gate.sh "just ios-smoke"
+require_contains scripts/release-gate.sh "just ios-smoke --no-build"
 require_contains scripts/release-gate.sh "just ios-gui-smoke"
 require_contains scripts/release-gate.sh "idle-cpu-gate.sh --platform ios"
-require_contains scripts/release-gate.sh "just android-build"
 require_contains scripts/release-gate.sh "just android-gui-smoke"
+require_absent scripts/release-gate.sh "just android-build"
 require_contains scripts/release-gate.sh "idle-cpu-gate.sh --platform android"
 require_contains scripts/release-gate.sh "just e2e-5devices"
 require_contains scripts/idle-cpu-gate.sh "IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES"
@@ -206,13 +261,16 @@ require_contains scripts/cross-vm-five-platform-e2e.sh "desktop-gui-smoke.sh\" w
 require_contains scripts/cross-vm-five-platform-e2e.sh "scripts/ios-gui-linking-smoke.sh"
 require_contains scripts/cross-vm-five-platform-e2e.sh "scripts/android-gui-linking-smoke.sh"
 require_contains scripts/cross-vm-five-platform-e2e.sh "scripts/mobile-android-smoke.sh --no-build"
+require_contains scripts/cross-vm-five-platform-e2e.sh "scripts/macos-vm-android-manual-link-e2e.sh"
+require_contains scripts/cross-vm-five-platform-e2e.sh "IRIS_DRIVE_MOBILE_REUSE_ANDROID_ARTIFACTS=1"
 require_contains scripts/cross-vm-e2e.sh "IRIS_DRIVE_E2E_IDLE_CPU_GATE"
 require_contains scripts/cross-vm-e2e.sh 'SETUP_REMOTE_TIMEOUT_SECS="${IRIS_DRIVE_E2E_SETUP_REMOTE_TIMEOUT_SECS:-300}"'
 require_contains scripts/cross-vm-e2e.sh "idle daemon CPU gate"
 require_contains scripts/cross-vm-e2e.sh "idle-cpu-gate-windows.ps1"
 require_contains scripts/cross-vm-e2e.sh "IRIS_DRIVE_IDLE_CPU_REQUIRED_ROLES = 'daemon'"
-require_contains scripts/cross-vm-e2e.sh 'IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH = \$repo'
-require_contains scripts/cross-vm-e2e.sh 'idle-cpu-gate.sh\" --platform auto'
+require_contains scripts/cross-vm-e2e.sh 'IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH = $(ps_quote "$config")'
+require_contains scripts/cross-vm-e2e.sh 'bash \"\$sampler\" --platform auto'
+require_contains scripts/cross-vm-e2e.sh '${IRIS_DRIVE_IDLE_CPU_WARMUP_SECS:-180}'
 require_contains scripts/cross-vm-e2e.sh "https://drive.iris.to/approve-device/"
 require_contains scripts/dev-vm-update-run.sh "IRIS_DRIVE_SOCIAL_GRAPH_ROOT"
 require_contains scripts/dev-vm-update-run.sh "SOCIAL_GRAPH_BARE"
@@ -221,9 +279,8 @@ require_contains zapstore.yaml "release_source: dist/zapstore-current-android-ar
 require_contains .env.release.example "IRIS_DRIVE_RELEASE_TREE=releases/iris-drive"
 require_contains .env.release.example "IRIS_DRIVE_RELEASE_RESOLVER_REFRESH_BASE_URLS="
 require_contains scripts/windows-publish.ps1 '[switch]$Installer'
-require_contains scripts/windows-publish.ps1 '[switch]$RequireSigning'
-require_contains scripts/windows-publish.ps1 "Invoke-WindowsSign"
-require_contains scripts/windows-publish.ps1 "signtool"
+require_absent scripts/windows-publish.ps1 "RequireSigning"
+require_absent scripts/windows-publish.ps1 "signtool"
 require_contains scripts/windows-installer.iss "OutputBaseFilename"
 require_contains .env.release.example "IRIS_DRIVE_IOS_TESTFLIGHT_CHANNELS=internal,public"
 require_contains .env.release.example "IRIS_DRIVE_IOS_PROFILE_RECREATE=true"
@@ -236,8 +293,6 @@ require_contains ios/project.yml 'PRODUCT_BUNDLE_IDENTIFIER: $(IRIS_DRIVE_IOS_FI
 require_contains ios/project.yml 'PRODUCT_BUNDLE_IDENTIFIER: $(IRIS_DRIVE_IOS_SHARE_EXTENSION_BUNDLE_ID)'
 require_contains .env.release.example "IRIS_DRIVE_MACOS_CODESIGN_RETRY_DELAY_SECONDS="
 require_contains .env.release.example "IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE="
-require_contains .env.release.example "IRIS_DRIVE_WINDOWS_SIGNTOOL_CERT_SHA1="
-require_contains .env.release.example "IRIS_DRIVE_WINDOWS_SIGNTOOL_PFX_PATH="
 require_contains .env.release.example "IRIS_DRIVE_MACOS_KEEP_PROVISIONED_ENTITLEMENTS="
 require_contains .env.release.example "IRIS_DRIVE_MACOS_PROFILE_TYPE=MAC_APP_DIRECT"
 require_contains .env.release.example "IRIS_DRIVE_MACOS_PROFILES_ENV_PATH="

@@ -55,6 +55,15 @@ unavailable, dev builds use their own sandboxed Application Support runtime path
 instead of hand-building a `~/Library/Group Containers` path, which would
 trigger macOS privacy prompts for other apps' data.
 
+An explicit `IRIS_DRIVE_APP_BASE_DIR` uses a stable, separate File Provider
+domain. Its runtime mapping, registration marker, snapshots, and caches are
+isolated from the default `main` domain and other explicit profiles. Automatic
+repair and startup reset only remove that profile's expected domain. The config
+directory must be readable by the sandboxed extension; a missing or mismatched
+custom mapping never selects the default profile. Run
+`scripts/check-macos-profile-isolation.sh` for the focused native Swift checks;
+the macOS lifecycle gate includes them automatically on macOS.
+
 ## Smoke test
 
 ```bash

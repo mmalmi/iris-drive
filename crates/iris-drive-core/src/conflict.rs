@@ -370,6 +370,7 @@ mod tests {
             app_key_pubkey: app_key_pubkey.into(),
             app_key_seq: seq,
             root_cid: root.into(),
+            published_at: 0,
             content_hash: hash.into(),
             content_cid_hash: format!("cid-{hash}"),
             size: 10,

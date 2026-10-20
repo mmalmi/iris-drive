@@ -324,18 +324,45 @@ pub(crate) fn idrive_path() -> PathBuf {
         return PathBuf::from(path);
     }
 
-    let manifest = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    for candidate in [
+    let sibling = std::env::current_exe()
+        .ok()
+        .and_then(|executable| sibling_idrive_path(&executable, Path::is_file));
+    #[cfg(debug_assertions)]
+    let checkout = debug_checkout_idrive_path();
+    #[cfg(not(debug_assertions))]
+    let checkout = None;
+    select_idrive_path(sibling, checkout)
+}
+
+fn sibling_idrive_path(executable: &Path, is_file: impl Fn(&Path) -> bool) -> Option<PathBuf> {
+    let candidate = executable.with_file_name("idrive");
+    is_file(&candidate).then_some(candidate)
+}
+
+fn select_idrive_path(sibling: Option<PathBuf>, checkout: Option<PathBuf>) -> PathBuf {
+    sibling
+        .or(checkout)
+        .unwrap_or_else(|| PathBuf::from("idrive"))
+}
+
+#[cfg(debug_assertions)]
+fn debug_checkout_idrive_path() -> Option<PathBuf> {
+    debug_checkout_idrive_path_from(Path::new(env!("CARGO_MANIFEST_DIR")), Path::is_file)
+}
+
+#[cfg(debug_assertions)]
+fn debug_checkout_idrive_path_from(
+    manifest: &Path,
+    is_file: impl Fn(&Path) -> bool,
+) -> Option<PathBuf> {
+    [
         manifest.join("../target/debug/idrive"),
         manifest.join("../target/release/idrive"),
         manifest.join("../../target/debug/idrive"),
         manifest.join("../../target/release/idrive"),
-    ] {
-        if candidate.exists() {
-            return candidate;
-        }
-    }
-    PathBuf::from("idrive")
+    ]
+    .into_iter()
+    .find(|candidate| is_file(candidate))
 }
 
 pub(crate) fn default_drive_dir() -> PathBuf {
@@ -343,4 +370,44 @@ pub(crate) fn default_drive_dir() -> PathBuf {
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))
         .join("Iris Drive")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn installed_idrive_prefers_runtime_sibling_then_path() {
+        let sibling = PathBuf::from("/opt/iris-drive/idrive");
+        let checkout = PathBuf::from("/checkout/target/debug/idrive");
+
+        assert_eq!(
+            select_idrive_path(Some(sibling.clone()), Some(checkout.clone())),
+            sibling
+        );
+        assert_eq!(select_idrive_path(None, Some(checkout.clone())), checkout);
+        assert_eq!(select_idrive_path(None, None), PathBuf::from("idrive"));
+    }
+
+    #[test]
+    fn runtime_sibling_uses_executable_directory() {
+        let executable = Path::new("/opt/iris-drive/iris-drive");
+        let expected = PathBuf::from("/opt/iris-drive/idrive");
+
+        assert_eq!(
+            sibling_idrive_path(executable, |candidate| candidate == expected),
+            Some(expected)
+        );
+        assert_eq!(sibling_idrive_path(executable, |_| false), None);
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn debug_checkout_probe_keeps_existing_candidate_order() {
+        let manifest = Path::new("/checkout/iris-drive/linux");
+        let expected = manifest.join("../target/release/idrive");
+        let selected = debug_checkout_idrive_path_from(manifest, |candidate| candidate == expected);
+
+        assert_eq!(selected, Some(expected));
+    }
 }

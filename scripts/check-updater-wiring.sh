@@ -34,8 +34,14 @@ require_contains macos/Sources/IrisDriveControlPanel.swift "controller.updateDae
 require_contains macos/Sources/IrisDriveUpdater.swift "installingAppUpdate = true"
 require_contains macos/Sources/IrisDriveUpdater.swift "NSApp.terminate(nil)"
 require_contains macos/Sources/IrisDriveUpdater.swift 'while kill -0 "$old_pid"'
+require_contains macos/Sources/IrisDriveUpdater.swift "runPrivilegedUpdateInstall"
 require_contains macos/Sources/IrisDriveUpdater.swift 'service start --json'
+require_contains macos/Resources/iris-drive-install-update.sh "/usr/bin/codesign --verify --deep --strict"
+require_contains macos/Resources/iris-drive-install-update.sh "downloaded app is ad-hoc signed"
+require_contains macos/Resources/iris-drive-install-update.sh 'com\.apple\.security\.application-groups.0'
+require_contains macos/Resources/iris-drive-install-update.sh "restoring previous app"
 require_contains macos/Sources/IrisDriveMacApp.swift "if installingAppUpdate"
 require_contains macos/Sources/IrisDriveMacApp.swift 'updateStatus("Installing update")'
 require_contains macos/Sources/IrisDriveMacApp.swift "stopSync()"
+"$ROOT/scripts/test-macos-update-install.sh"
 echo "UPDATER_WIRING_OK"

@@ -16,6 +16,7 @@ import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.activity.ComponentActivity
@@ -57,7 +58,7 @@ class IrisWebActivity : ComponentActivity() {
         }
     }
 
-    private fun browserLayout(): LinearLayout {
+    private fun browserLayout(): FrameLayout {
         addressField = EditText(this).apply {
             setSingleLine(true)
             setSelectAllOnFocus(true)
@@ -93,7 +94,7 @@ class IrisWebActivity : ComponentActivity() {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(10), dp(8), dp(10), dp(10))
-            setBackgroundColor(Color.rgb(20, 24, 26))
+            setBackgroundColor(Color.TRANSPARENT)
             addView(closeButton, iconLayoutParams())
             addView(backButton, iconLayoutParams())
             addView(
@@ -106,22 +107,21 @@ class IrisWebActivity : ComponentActivity() {
             addView(shareButton, iconLayoutParams())
         }
 
-        return LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        return FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
             addView(
                 webView,
-                LinearLayout.LayoutParams(
+                FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
-                    0,
-                    1f,
+                    ViewGroup.LayoutParams.MATCH_PARENT,
                 ),
             )
             addView(
                 bar,
-                LinearLayout.LayoutParams(
+                FrameLayout.LayoutParams(
                     ViewGroup.LayoutParams.MATCH_PARENT,
                     ViewGroup.LayoutParams.WRAP_CONTENT,
+                    Gravity.BOTTOM,
                 ),
             )
         }

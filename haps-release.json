@@ -1,0 +1,60 @@
+{
+  "catalog": "iris-drive",
+  "publisher": "npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm",
+  "source": "htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-drive",
+  "packages": [
+    {
+      "name": "iris-drive",
+      "target": "aarch64-apple-darwin",
+      "asset": "iris-drive-{tag}-macos-arm64.app.tar.gz",
+      "description": "Private file sync across your devices.",
+      "commands": {
+        "iris-drive": "Iris Drive.app/Contents/MacOS/Iris Drive"
+      },
+      "app": "Iris Drive.app"
+    },
+    {
+      "name": "iris-drive",
+      "target": "x86_64-unknown-linux-gnu",
+      "asset": "iris-drive-{tag}-linux-x64.deb",
+      "description": "Private file sync across your devices.",
+      "commands": {
+        "iris-drive": "usr/bin/iris-drive"
+      },
+      "desktop": {
+        "name": "Iris Drive",
+        "command": "iris-drive",
+        "icon": "usr/share/icons/hicolor/scalable/apps/iris-drive.svg"
+      }
+    },
+    {
+      "name": "idrive",
+      "target": "aarch64-apple-darwin",
+      "asset": "idrive-{tag}-aarch64-apple-darwin.tar.gz",
+      "description": "Iris Drive command-line client",
+      "commands": {
+        "idrive": "idrive"
+      },
+      "root": "idrive"
+    },
+    {
+      "name": "idrive",
+      "target": "x86_64-unknown-linux-gnu",
+      "asset": "idrive-{tag}-x86_64-unknown-linux-gnu.tar.gz",
+      "description": "Iris Drive command-line client",
+      "commands": {
+        "idrive": "idrive"
+      },
+      "root": "idrive"
+    },
+    {
+      "name": "idrive",
+      "target": "x86_64-pc-windows-msvc",
+      "asset": "idrive-{tag}-x86_64-pc-windows-msvc.zip",
+      "description": "Iris Drive command-line client",
+      "commands": {
+        "idrive": "idrive.exe"
+      }
+    }
+  ]
+}

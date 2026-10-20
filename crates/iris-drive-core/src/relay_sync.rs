@@ -177,6 +177,19 @@ pub use app_key_approval_candidates::{
     nostr_identity_app_key_approval_candidates_from_events,
 };
 
+#[path = "relay_sync/approval_ack.rs"]
+mod approval_ack;
+pub use approval_ack::{
+    fetch_device_approval_applied_ack_events, pending_device_approval_applied_ack_filter,
+};
+
+#[path = "relay_sync/approval_roster_backfill.rs"]
+mod approval_roster_backfill;
+pub use approval_roster_backfill::{
+    DEVICE_APPROVAL_ROSTER_BACKFILL_TIMEOUT, apply_device_approval_roster_backfill_events,
+    backfill_device_approval_roster,
+};
+
 #[path = "relay_sync/restore_candidates.rs"]
 mod restore_candidates;
 pub use restore_candidates::{
@@ -252,6 +265,7 @@ pub fn apply_app_key_link_roster_frame(
     let ops_changed = account.profile_id != frame.profile_id
         || !same_profile_ops(&account.profile_roster_ops, &merged_ops);
     let merged_projection = project_nostr_identity_roster(frame.profile_id, merged_ops.clone());
+    ensure_profile_roster_bootstrap_unchanged(account, &merged_projection)?;
     let merged_app_keys = app_keys_from_profile_projection(&merged_projection)
         .ok_or_else(|| RelayError::AppKeyLinkRoster("profile roster has no AppKey epoch".into()))?;
 
@@ -330,6 +344,8 @@ fn app_key_link_roster_apply_decision(
 /// projection rejects them. That keeps out-of-order delivery mergeable: once a
 /// missing parent/add op arrives, deterministic projection can accept the
 /// previously rejected op without needing the network to resend it.
+/// Incoming material that changes the established bootstrap is rejected before
+/// it can enter the log.
 pub fn apply_remote_nostr_identity_roster_op_event(
     config: &mut AppConfig,
     event: &Event,
@@ -351,6 +367,7 @@ pub fn apply_remote_nostr_identity_roster_op_event(
             merge_profile_roster_ops(&account.profile_roster_ops, std::slice::from_ref(&op));
         let merged_projection =
             project_nostr_identity_roster(account.profile_id, merged_ops.clone());
+        ensure_profile_roster_bootstrap_unchanged(account, &merged_projection)?;
         if account.authorization_state == crate::AppKeyAuthorizationState::AwaitingApproval
             && merged_projection.can_write_roots(&account.app_key_pubkey)
             && !pending_device_approval_receipt_is_valid(account)
@@ -374,18 +391,10 @@ pub fn apply_remote_nostr_identity_roster_op_event(
     Ok(NostrIdentityRosterOpApply::NotOurProfile)
 }
 
-fn pending_device_approval_receipt_is_valid(account: &crate::ProfileState) -> bool {
-    let Some(pending) = account.outbound_app_key_link_request.as_ref() else {
-        return false;
-    };
-    let Some(event_json) = pending.approval_receipt_event.as_deref() else {
-        return false;
-    };
-    let Ok(event) = Event::from_json(event_json) else {
-        return false;
-    };
-    parse_pending_app_key_approval_receipt_event(pending, &event).is_ok()
-}
+mod roster_trust;
+use roster_trust::{
+    ensure_profile_roster_bootstrap_unchanged, pending_device_approval_receipt_is_valid,
+};
 
 pub fn apply_remote_device_approval_receipt_event(
     config: &mut AppConfig,
@@ -444,9 +453,9 @@ pub fn apply_remote_device_approval_receipt_event(
         .outbound_app_key_link_request
         .as_mut()
         .ok_or(RelayError::NoAccount)?;
-    pending.approval_receipt_event = Some(event.as_json());
+    let receipt_inserted = pending.approval_receipt_event.insert(event.as_json());
     let outcome = apply_remote_nostr_identity_roster_op_event(config, &roster_event)?;
-    let mut changed = matches!(outcome, NostrIdentityRosterOpApply::Applied);
+    let mut changed = receipt_inserted || matches!(outcome, NostrIdentityRosterOpApply::Applied);
     let root_scope_id = {
         let account = config.profile.as_mut().ok_or(RelayError::NoAccount)?;
         let before = account.authorization_state;
@@ -846,31 +855,6 @@ pub async fn publish_nostr_identity_roster_ops(
             .send_event(&event)
             .await
             .map_err(|e| RelayError::Client(e.to_string()))?;
-        event_ids.push(*output.id());
-    }
-    Ok(event_ids)
-}
-
-pub async fn publish_device_approval_receipt(
-    client: &Client,
-    state: &crate::ProfileState,
-    pending: &PendingDeviceApprovalReceipt,
-) -> Result<Vec<nostr_sdk::EventId>, RelayError> {
-    let mut event_ids = Vec::with_capacity(state.profile_roster_ops.len() + 1);
-    for op in &state.profile_roster_ops {
-        let event = Event::from_json(&op.event_json)
-            .map_err(|error| RelayError::Client(format!("profile roster op JSON: {error}")))?;
-        let parsed = parse_nostr_identity_roster_op_event(&event)?;
-        if parsed.op_id != op.op_id {
-            return Err(RelayError::Client(format!(
-                "profile roster op id mismatch: stored {}, parsed {}",
-                op.op_id, parsed.op_id
-            )));
-        }
-        let output = client
-            .send_event(&event)
-            .await
-            .map_err(|error| RelayError::Client(error.to_string()))?;
         if output.success.is_empty() {
             let failed = output
                 .failed
@@ -889,7 +873,30 @@ pub async fn publish_device_approval_receipt(
         }
         event_ids.push(*output.id());
     }
+    Ok(event_ids)
+}
 
+pub async fn publish_device_approval_receipt(
+    client: &Client,
+    state: &crate::ProfileState,
+    pending: &PendingDeviceApprovalReceipt,
+) -> Result<Vec<nostr_sdk::EventId>, RelayError> {
+    let mut event_ids =
+        publish_nostr_identity_roster_ops(client, &state.profile_roster_ops).await?;
+    event_ids.push(publish_pending_device_approval_receipt(client, pending).await?);
+    Ok(event_ids)
+}
+
+/// Publish only the encrypted approval receipt event.
+///
+/// Callers using this lower-level operation must first publish the roster op
+/// that authorizes the device and any current Drive-root envelope the newly
+/// approved `AppKey` needs. [`publish_device_approval_receipt`] remains the
+/// convenient roster-plus-receipt operation for flows without a root handoff.
+pub async fn publish_pending_device_approval_receipt(
+    client: &Client,
+    pending: &PendingDeviceApprovalReceipt,
+) -> Result<nostr_sdk::EventId, RelayError> {
     let receipt = Event::from_json(&pending.event_json)
         .map_err(|error| RelayError::Client(format!("device approval receipt JSON: {error}")))?;
     if !is_device_approval_receipt_event(&receipt) {
@@ -917,8 +924,7 @@ pub async fn publish_device_approval_receipt(
             }
         )));
     }
-    event_ids.push(*output.id());
-    Ok(event_ids)
+    Ok(*output.id())
 }
 
 pub async fn publish_device_approval_applied_ack(
@@ -986,10 +992,38 @@ pub async fn publish_drive_root(
         root,
         authorized_app_key_pubkeys,
     )?;
+    publish_prebuilt_drive_root(client, &event).await
+}
+
+/// Publish an already signed Drive-root event.
+///
+/// Preparing the event separately lets a local config transaction serialize
+/// replaceable-event timestamps without holding its lock across relay I/O.
+pub async fn publish_prebuilt_drive_root(
+    client: &Client,
+    event: &Event,
+) -> Result<nostr_sdk::EventId, RelayError> {
+    parse_drive_root_event_preview(event)?;
     let output = client
-        .send_event(&event)
+        .send_event(event)
         .await
         .map_err(|e| RelayError::Client(e.to_string()))?;
+    if output.success.is_empty() {
+        let failed = output
+            .failed
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(RelayError::Client(format!(
+            "publishing Drive root was not accepted by any relay{}",
+            if failed.is_empty() {
+                String::new()
+            } else {
+                format!(": {failed}")
+            }
+        )));
+    }
     Ok(*output.id())
 }
 
@@ -1098,6 +1132,7 @@ pub async fn fetch_device_approval_events(
         .await?
         .into_iter()
         .filter(is_device_approval_receipt_event)
+        .filter(|event| parse_pending_app_key_approval_receipt_event(pending, event).is_ok())
         .collect::<Vec<_>>();
     let profile_id = receipt_events.iter().find_map(|event| {
         parse_pending_app_key_approval_receipt_event(pending, event)
@@ -1256,8 +1291,14 @@ fn drive_root_preview_ms(preview: &crate::nostr_events::DriveRootEventPreview) -
 #[path = "relay_sync/app_key_approval_candidate_tests.rs"]
 mod app_key_approval_candidate_tests;
 #[cfg(test)]
+mod approval_ack_tests;
+#[cfg(test)]
+mod approval_roster_backfill_tests;
+#[cfg(test)]
 mod calendar_tests;
 #[cfg(test)]
 mod restore_candidate_tests;
+#[cfg(test)]
+mod roster_trust_tests;
 #[cfg(test)]
 mod tests;

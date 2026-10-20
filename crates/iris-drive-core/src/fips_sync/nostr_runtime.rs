@@ -8,7 +8,7 @@ use fips_core::FipsEndpoint;
 use nostr_pubsub::{EventBus, EventSource, Filter, VerifiedEvent};
 use nostr_pubsub_fips::{
     FIPS_NOSTR_PUBSUB_DEFAULT_MAX_HOPS, FIPS_NOSTR_PUBSUB_MAX_FRAME_BYTES, FipsPubsubClient,
-    FipsPubsubClientOptions,
+    FipsPubsubClientOptions, FipsPubsubPolicyOptions,
 };
 use nostr_sdk::Event;
 use tokio::sync::broadcast;
@@ -17,7 +17,7 @@ use tokio::task::JoinHandle;
 use super::FipsSyncError;
 
 const DELIVERY_CAPACITY: usize = 256;
-const SUBSCRIPTION_REFRESH_INTERVAL: Duration = Duration::from_millis(500);
+const SUBSCRIPTION_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 const RECENT_EVENT_IDS: usize = 256;
 
 #[derive(Debug, Clone)]
@@ -33,21 +33,35 @@ pub(super) struct DriveNostrPubsubRuntime {
 }
 
 impl DriveNostrPubsubRuntime {
-    pub(super) async fn bind(endpoint: Arc<FipsEndpoint>) -> Result<Self, FipsSyncError> {
+    pub(super) async fn bind(
+        endpoint: Arc<FipsEndpoint>,
+        routed_peers: Vec<String>,
+        trusted_raters: Vec<String>,
+    ) -> Result<Self, FipsSyncError> {
+        #[cfg(feature = "stack-fixture")]
+        let max_connected_peers = std::env::var("IRIS_STACK_FIXTURE_PUBSUB_MAX_PEERS")
+            .map_or(64, |value| value.parse().unwrap_or(0));
+        #[cfg(not(feature = "stack-fixture"))]
+        let max_connected_peers = 64;
+        let mut reputation = FipsPubsubPolicyOptions::default();
+        reputation.reputation.trusted_raters = trusted_raters.into_iter().collect();
         let client = Arc::new(
-            FipsPubsubClient::start(
-                endpoint.clone(),
+            FipsPubsubClient::start_with_reputation(
+                endpoint,
                 FipsPubsubClientOptions {
                     query_timeout: Duration::from_millis(500),
                     max_frame_bytes: FIPS_NOSTR_PUBSUB_MAX_FRAME_BYTES,
-                    max_connected_peers: 64,
-                    fanout: nostr_pubsub::DEFAULT_INV_WANT_FANOUT,
+                    max_connected_peers,
+                    fanout: nostr_pubsub::DEFAULT_INV_WANT_FANOUT.min(max_connected_peers),
                     max_active_subscriptions: 4,
                     max_filters_per_subscription: 4,
                     max_replay_events: 32,
                     receive_batch_size: 64,
                     max_hops: FIPS_NOSTR_PUBSUB_DEFAULT_MAX_HOPS,
+                    routed_peers: bounded_routed_peers(routed_peers, max_connected_peers),
+                    ..FipsPubsubClientOptions::default()
                 },
+                reputation,
             )
             .await
             .map_err(|error| endpoint_error(error.to_string()))?,
@@ -55,51 +69,34 @@ impl DriveNostrPubsubRuntime {
         let (deliveries, _) = broadcast::channel(DELIVERY_CAPACITY);
         let task_deliveries = deliveries.clone();
         let task_client = client.clone();
-        let task_endpoint = endpoint.clone();
         let receiver_task = tokio::spawn(async move {
-            let mut refresh = tokio::time::interval(SUBSCRIPTION_REFRESH_INTERVAL);
-            refresh.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-            let mut subscription = None;
-            let mut subscribed_peers = Vec::new();
             let mut recent_order = VecDeque::new();
             let mut recent_ids = HashSet::new();
             loop {
-                if subscription.is_none() {
-                    refresh.tick().await;
-                    subscribed_peers = connected_peer_ids(task_endpoint.as_ref()).await;
-                    subscription = task_client.subscribe(vec![Filter::new()]).await.ok();
+                // The adapter replays this subscription when peers arrive or
+                // reconnect. Keep queued deliveries and dedup across link churn.
+                let Ok(mut subscription) = task_client.subscribe(vec![Filter::new()]).await else {
+                    tokio::time::sleep(SUBSCRIPTION_RETRY_INTERVAL).await;
                     continue;
-                }
-                tokio::select! {
-                    _ = refresh.tick() => {
-                        let peers = connected_peer_ids(task_endpoint.as_ref()).await;
-                        if peers != subscribed_peers {
-                            subscribed_peers = peers;
-                            subscription = task_client.subscribe(vec![Filter::new()]).await.ok();
+                };
+                while let Some(delivery) = subscription.recv().await {
+                    let event = delivery.event.into_event();
+                    let event_id = event.id.to_string();
+                    if !recent_ids.insert(event_id.clone()) {
+                        continue;
+                    }
+                    recent_order.push_back(event_id);
+                    while recent_order.len() > RECENT_EVENT_IDS {
+                        if let Some(expired) = recent_order.pop_front() {
+                            recent_ids.remove(&expired);
                         }
                     }
-                    delivery = subscription.as_mut().expect("subscription exists").recv() => {
-                        let Some(delivery) = delivery else {
-                            subscription = None;
-                            continue;
-                        };
-                        let event = delivery.event.into_event();
-                        let event_id = event.id.to_string();
-                        if !recent_ids.insert(event_id.clone()) {
-                            continue;
-                        }
-                        recent_order.push_back(event_id);
-                        while recent_order.len() > RECENT_EVENT_IDS {
-                            if let Some(expired) = recent_order.pop_front() {
-                                recent_ids.remove(&expired);
-                            }
-                        }
-                        let _ = task_deliveries.send(FipsNostrPubsubEvent {
-                            origin_peer_id: delivery.source.id.0,
-                            event,
-                        });
-                    }
+                    let _ = task_deliveries.send(FipsNostrPubsubEvent {
+                        origin_peer_id: delivery.source.id.0,
+                        event,
+                    });
                 }
+                tokio::time::sleep(SUBSCRIPTION_RETRY_INTERVAL).await;
             }
         });
         Ok(Self {
@@ -113,11 +110,35 @@ impl DriveNostrPubsubRuntime {
         self.deliveries.subscribe()
     }
 
+    pub(super) fn register_updater(&self, config_dir: &std::path::Path) {
+        if let Some(client) = &self.client {
+            crate::updater::pubsub::register(config_dir, client);
+        }
+    }
+
+    pub(super) fn max_connected_peers(&self) -> Option<usize> {
+        self.client
+            .as_ref()
+            .map(|client| client.options().max_connected_peers)
+    }
+
     pub(super) fn connected_peer_count(&self) -> usize {
         match self.client.as_ref() {
             Some(client) => client.connected_peer_count().unwrap_or_default(),
             None => 0,
         }
+    }
+
+    pub(super) fn set_routed_peers(&self, peers: Vec<String>) -> Result<(), FipsSyncError> {
+        if let Some(client) = &self.client {
+            client
+                .set_routed_peers(bounded_routed_peers(
+                    peers,
+                    client.options().max_connected_peers,
+                ))
+                .map_err(|error| endpoint_error(error.to_string()))?;
+        }
+        Ok(())
     }
 
     pub(super) async fn publish(&self, event: Event) -> Result<usize, FipsSyncError> {
@@ -142,10 +163,7 @@ impl DriveNostrPubsubRuntime {
             let _ = task.await;
         }
         if let Some(client) = self.client.take() {
-            match Arc::try_unwrap(client) {
-                Ok(client) => client.shutdown().await,
-                Err(client) => drop(client),
-            }
+            client.shutdown_shared().await;
         }
     }
 }
@@ -162,16 +180,11 @@ fn endpoint_error(error: impl Into<String>) -> FipsSyncError {
     FipsSyncError::Endpoint(error.into())
 }
 
-async fn connected_peer_ids(endpoint: &FipsEndpoint) -> Vec<String> {
-    let mut peers = endpoint
-        .peers()
-        .await
-        .unwrap_or_default()
-        .into_iter()
-        .filter(|peer| peer.connected)
-        .map(|peer| peer.npub)
-        .collect::<Vec<_>>();
-    peers.sort_unstable();
-    peers.dedup();
+fn bounded_routed_peers(peers: Vec<String>, max_connected_peers: usize) -> Vec<String> {
     peers
+        .into_iter()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .take(max_connected_peers.min(63))
+        .collect()
 }

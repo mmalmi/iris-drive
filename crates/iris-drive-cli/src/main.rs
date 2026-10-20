@@ -12,9 +12,11 @@ use hashtree_core::{
 use hashtree_fs::FsBlobStore;
 use hashtree_lmdb::LmdbBlobStore;
 use hashtree_provider::{HashTreeProviderFs, ItemKind, ProviderFs};
+#[cfg(test)]
+use iris_drive_core::DriveRole;
 use iris_drive_core::{
     AppKeyRootRef, BackupTarget, BackupTargetCheck, BackupTargetKind, BackupTargetSync, Drive,
-    DriveRole, FsFipsBlockSync, PRIMARY_DRIVE_ID, Profile, ProfileState, UserProfile,
+    FsFipsBlockSync, PRIMARY_DRIVE_ID, Profile, ProfileState, UserProfile,
     blossom_sync::{DownloadReport, UploadReport},
     config::AppConfig,
     config_lock::ConfigMutationLock,
@@ -24,7 +26,7 @@ use iris_drive_core::{
     merge::{AppKeyFileEntry, AppKeySnapshot, AppKeyTombstone, merge_drives},
     paths::{config_path_in, default_config_dir, default_mountpoint_in, key_path_in},
 };
-use nostr_sdk::{Event, JsonUtil, PublicKey, RelayStatus};
+use nostr_sdk::{Event, JsonUtil, RelayStatus};
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -33,6 +35,7 @@ mod backups;
 mod commands;
 mod daemon;
 mod drive;
+mod friend_backups;
 mod mount;
 mod profile;
 mod provider_staging;
@@ -74,14 +77,12 @@ use updater::*;
 const DEFAULT_GATEWAY_PORT: u16 = iris_drive_core::gateway::DEFAULT_GATEWAY_PORT;
 const CONFLICT_STATUS_PATH_CAP: usize = 32;
 const FIPS_DOWNLOAD_RETRY_DELAYS: &[u64] = &[1, 2, 4];
-const FIPS_DOWNLOAD_BEFORE_BLOSSOM_RETRY_DELAYS: &[u64] = &[];
 const FIPS_DOWNLOAD_ATTEMPT_TIMEOUT_SECS: u64 = 8;
-const FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS: u64 = 3;
 const STARTUP_NETWORK_TIMEOUT_SECS: u64 = 20;
 const DIRECT_ROOT_RECEIVE_COALESCE_MS: u64 = 750;
 const EVENT_BLOCK_PULL_TIMEOUT_SECS: u64 = 3;
 const EVENT_BLOCK_PULL_RETRY_DELAYS: &[u64] = &[0, 1, 2];
-const EVENT_BLOCK_PULL_WITH_BLOSSOM_HEADROOM_SECS: u64 = 35;
+const EVENT_BLOCK_PULL_WITH_BLOSSOM_TIMEOUT_SECS: u64 = 45;
 const EVENT_BLOCK_PULL_WITH_BLOSSOM_RETRY_DELAYS: &[u64] = &[0, 1];
 const RELAY_PUBLISH_TIMEOUT_SECS: u64 = 10;
 const STATUS_PROBE_TIMEOUT_SECS: u64 = 5;

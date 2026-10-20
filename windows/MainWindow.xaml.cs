@@ -165,7 +165,7 @@ public partial class MainWindow : Window
                         : classification.Error.Trim();
                     return;
                 }
-                await ApproveDeviceAsync(argument, "");
+                await ConfirmAndApproveDeviceAsync(argument, NoticeText, static () => { });
             }
         }
         catch (Exception error)
@@ -824,7 +824,8 @@ public partial class MainWindow : Window
 
     private void ScheduleDriveFolderRefresh(IrisDriveStatusData status)
     {
-        if (!status.IsSetupComplete || string.IsNullOrWhiteSpace(status.ProviderRefreshKey))
+        if (!WindowsCloudFiles.IsEnabled || !status.IsSetupComplete ||
+            string.IsNullOrWhiteSpace(status.ProviderRefreshKey))
         {
             return;
         }
@@ -1593,7 +1594,7 @@ public partial class MainWindow : Window
             }
 
             updateStatus = $"Downloaded {IOPath.GetFileName(result.Path)}";
-            if (!IsTruthy(Environment.GetEnvironmentVariable("IRIS_DRIVE_UPDATE_SKIP_OPEN")))
+            if (!WindowsProfileEnvironment.IsTruthy(Environment.GetEnvironmentVariable("IRIS_DRIVE_UPDATE_SKIP_OPEN")))
             {
                 _ = Process.Start(new ProcessStartInfo(result.Path) { UseShellExecute = true });
             }
@@ -1741,15 +1742,5 @@ public partial class MainWindow : Window
     }
 
     private static bool ExternalDaemonMode =>
-        IsTruthy(Environment.GetEnvironmentVariable("IRIS_DRIVE_EXTERNAL_DAEMON"));
-
-    private static bool IsTruthy(string? value)
-    {
-        if (string.IsNullOrWhiteSpace(value))
-        {
-            return false;
-        }
-
-        return value.Trim().ToLowerInvariant() is "1" or "true" or "yes" or "on";
-    }
+        WindowsProfileEnvironment.IsTruthy(Environment.GetEnvironmentVariable("IRIS_DRIVE_EXTERNAL_DAEMON"));
 }

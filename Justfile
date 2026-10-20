@@ -41,6 +41,7 @@ info:
     @echo "  just dev-vms"
     @echo "  just smoke"
     @echo "  just smoke-macos"
+    @echo "  just e2e-macos-android-manual"
     @echo "  just docker-cli-e2e"
     @echo
     @echo "Checks"
@@ -137,8 +138,8 @@ ios-build:
     cd ios && xcodegen generate
     ./scripts/ios-simulator-smoke.sh --build-only
 
-ios-smoke:
-    ./scripts/ios-simulator-smoke.sh
+ios-smoke *args:
+    ./scripts/ios-simulator-smoke.sh {{args}}
 
 ios-gui-smoke:
     ./scripts/ios-gui-linking-smoke.sh
@@ -170,6 +171,9 @@ e2e-4devices *args:
 
 e2e-5devices *args:
     ./scripts/cross-vm-five-platform-e2e.sh {{args}}
+
+e2e-macos-android-manual:
+    ./scripts/macos-vm-android-manual-link-e2e.sh
 
 release *args:
     node scripts/local-release.mjs --build {{args}}
@@ -206,6 +210,7 @@ verify-health:
 
 structure:
     ./scripts/check-platform-parity-matrix.sh
+    ./scripts/check-mobile-physical-linking-e2e.sh
     ./scripts/check-android-e2e-kit.sh
     ./scripts/check-ios-e2e-kit.sh
     ./scripts/check-desktop-gui-e2e-kit.sh
@@ -227,6 +232,8 @@ structure:
     ./scripts/check-macos-normalized-status.sh
     ./scripts/check-macos-gateway-default.sh
     ./scripts/check-macos-smoke-process-scope.sh
+    ./scripts/check-macos-smoke-blossom-fixture.sh
+    ./scripts/check-local-nostr-relay-fixture.sh
     ./scripts/check-macos-fileprovider-lifecycle.sh
     ./scripts/check-macos-provider-summary.sh
     ./scripts/check-ios-idle-work-gates.sh

@@ -85,6 +85,26 @@ async fn grouped_keyed_daemon_tasks_replace_older_roots_but_coalesce_duplicates(
         .expect("new drop notification");
 }
 
+#[tokio::test]
+async fn roster_sender_owns_one_task_and_releases_its_receiver_on_shutdown() {
+    let dir = tempfile::tempdir().unwrap();
+    let tasks = DaemonTaskSet::default();
+    let client = nostr_sdk::Client::default();
+    let acked = spawn_app_key_link_roster_sender(dir.path(), &client, None, &tasks);
+    for index in 0..100 {
+        acked.send_replace(Arc::new(BTreeSet::from([index.to_string()])));
+    }
+    tokio::time::sleep(std::time::Duration::from_millis(
+        APP_KEY_LINK_TICK_MILLIS + 20,
+    ))
+    .await;
+    assert_eq!(tasks.tasks.lock().unwrap().len(), 1);
+    assert_eq!(acked.receiver_count(), 1);
+    tasks.abort_all().await;
+    assert_eq!(acked.receiver_count(), 0);
+    assert!(tasks.tasks.lock().unwrap().is_empty());
+}
+
 #[test]
 fn config_root_watch_accepts_exact_file_and_parent_directory_events() {
     let dir = tempfile::tempdir().unwrap();
@@ -423,7 +443,10 @@ fn online_authorized_app_key_without_primary_root_needs_state_lookup() {
             remote_app_key.clone(),
             AppKeyRootRef::legacy("remote-root", 11, 1),
         );
-    assert!(authorized_app_keys_missing_primary_roots(&with_remote_root).is_empty());
+    assert_eq!(
+        authorized_app_keys_missing_primary_roots(&with_remote_root).len(),
+        0
+    );
 }
 
 #[test]
@@ -548,16 +571,13 @@ async fn pending_mount_update_drain_keeps_latest_after_debounce() {
 async fn config_mutation_lock_serializes_same_config_dir() {
     let dir = tempfile::tempdir().unwrap();
     let first = ConfigMutationLock::acquire(dir.path()).await.unwrap();
-    let contender_dir = dir.path().to_path_buf();
-    let contender =
-        tokio::spawn(async move { ConfigMutationLock::acquire(&contender_dir).await });
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    assert!(!contender.is_finished());
+    let contender = ConfigMutationLock::acquire(dir.path());
+    tokio::pin!(contender);
+    assert!(futures::poll!(&mut contender).is_pending());
     drop(first);
 
     let second = tokio::time::timeout(std::time::Duration::from_secs(2), contender)
         .await
-        .unwrap()
         .unwrap()
         .unwrap();
     drop(second);
@@ -662,16 +682,14 @@ async fn daemon_task_set_coalesces_active_keyed_tasks() {
         }),
     ));
 
+    let completion = tasks.tasks.lock().unwrap().pop().unwrap().join;
     release_tx.send(()).unwrap();
-    for _ in 0..20 {
-        if tasks.push_keyed("root:one".to_string(), tokio::spawn(async {})) {
-            tasks.abort_all().await;
-            return;
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-    }
+    tokio::time::timeout(std::time::Duration::from_secs(1), completion)
+        .await
+        .expect("keyed task should finish after release")
+        .unwrap();
+    assert!(tasks.push_keyed("root:one".to_string(), tokio::spawn(async {})));
     tasks.abort_all().await;
-    panic!("keyed task was not released after completion");
 }
 
 #[test]
@@ -698,8 +716,7 @@ fn event_block_pull_timeout_allows_blossom_retry_window() {
     assert_eq!(event_block_pull_retry_delays(&config), &[0, 1]);
     assert!(
         event_block_pull_timeout_secs(&config)
-            > FIPS_DOWNLOAD_BEFORE_BLOSSOM_ATTEMPT_TIMEOUT_SECS
-                + BLOSSOM_DOWNLOAD_RETRY_DELAYS.iter().sum::<u64>()
+            > BLOSSOM_DOWNLOAD_RETRY_DELAYS.iter().sum::<u64>()
     );
     assert!(event_block_pull_timeout_secs(&config) >= 45);
     assert!(attempts * event_block_pull_timeout_secs(&config) + retry_sleep <= 95);
@@ -761,7 +778,7 @@ fn windows_cloud_rescan_without_delete_recovery_ignores_cached_projection_misses
         windows_cloud_rescan_missing_cached_provider_paths(sync_root.path(), &cached, false)
             .unwrap();
 
-    assert!(missing.is_empty());
+    assert_eq!(missing.len(), 0);
 }
 
 #[test]

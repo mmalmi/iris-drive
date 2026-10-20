@@ -1,0 +1,186 @@
+name: Unsigned native products
+
+on:
+  pull_request:
+    types: [opened, reopened]
+    paths:
+      - '.github/workflows/release-products.yml'
+      - 'scripts/build-hosted-products.mjs'
+      - 'scripts/hosted-product-receipt*'
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: Exact source commit to build
+        required: true
+      platform:
+        description: One product platform, or all
+        required: true
+        default: all
+
+      daemon_ack_only:
+        description: Run only the existing stalled-relay approval journey for native-check
+        required: false
+        type: boolean
+        default: false
+
+      fixture_readiness_only:
+        description: Run approval observer and delayed peer fixture regressions for native-check
+        required: false
+        type: boolean
+        default: false
+
+      web_commit:
+        description: Exact published web source for web-check
+        required: false
+
+      debug_run:
+        description: Simulator Debug artifact run for ios-check
+        required: false
+      release_run:
+        description: Simulator Release artifact run for ios-check
+        required: false
+      mac_run:
+        description: macOS Release artifact run for ios-check
+        required: false
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: unsigned-products-${{ github.ref }}-${{ inputs.platform || 'all' }}
+  cancel-in-progress: false
+
+jobs:
+  android-tests:
+    if: inputs.platform == 'android-tests'
+    uses: ./.github/workflows/release-android-tests.yml
+    with:
+      commit: ${{ inputs.commit }}
+      product_run: ${{ inputs.release_run }}
+  native-check:
+    if: inputs.platform == 'native-check'
+    uses: ./.github/workflows/release-native-check.yml
+    with:
+      commit: ${{ inputs.commit }}
+      daemon_ack_only: ${{ inputs.daemon_ack_only || false }}
+      fixture_readiness_only: ${{ inputs.fixture_readiness_only || false }}
+  web-check:
+    if: inputs.platform == 'web-check'
+    uses: ./.github/workflows/release-web-check.yml
+    with:
+      commit: ${{ inputs.commit }}
+      web_commit: ${{ inputs.web_commit }}
+      product_run: ${{ inputs.release_run }}
+  linux-check:
+    if: inputs.platform == 'linux-check'
+    uses: ./.github/workflows/release-linux-check.yml
+    with:
+      commit: ${{ inputs.commit }}
+      product_run: ${{ inputs.release_run }}
+  ios-check:
+    if: inputs.platform == 'ios-check'
+    uses: ./.github/workflows/release-ios-check.yml
+    with:
+      commit: ${{ inputs.commit }}
+      debug_run: ${{ inputs.debug_run }}
+      release_run: ${{ inputs.release_run }}
+      mac_run: ${{ inputs.mac_run }}
+  products:
+    if: inputs.platform != 'ios-check' && inputs.platform != 'native-check' && inputs.platform != 'linux-check' && inputs.platform != 'web-check' && inputs.platform != 'android-tests'
+    name: ${{ matrix.platform }}
+    runs-on: ${{ matrix.platform == 'windows' && 'windows-2025' || (startsWith(matrix.platform, 'macos') || startsWith(matrix.platform, 'ios')) && 'macos-15' || 'ubuntu-24.04' }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(inputs.platform && inputs.platform != 'all' && format('["{0}"]', inputs.platform) || '["macos-release","macos-debug","ios-release","ios-sim-debug","ios-sim-release","android","linux","windows"]') }}
+    env:
+      SOURCE_COMMIT: ${{ inputs.commit || github.event.pull_request.head.sha || github.sha }}
+      SOURCE_ROOT: ${{ github.workspace }}/source
+      PRODUCT_OUTPUT: ${{ github.workspace }}/products
+      PRODUCT_PLATFORM: ${{ matrix.platform }}
+      CARGO_BUILD_JOBS: '2'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tooling
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          ref: ${{ env.SOURCE_COMMIT }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+      - uses: actions/setup-dotnet@v4
+        if: runner.os == 'Windows'
+        with:
+          dotnet-version: '8.0.x'
+      - name: Install Apple build tools
+        if: runner.os == 'macOS'
+        run: brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+      - name: Select submission-compatible iOS SDK
+        if: startsWith(matrix.platform, 'ios')
+        run: |
+          test -d /Applications/Xcode_26.2.app/Contents/Developer
+          echo 'DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer' >> "$GITHUB_ENV"
+          /Applications/Xcode_26.2.app/Contents/Developer/usr/bin/xcodebuild -version
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libdbus-1-dev libfuse3-dev libgtk-4-dev libadwaita-1-dev libxdo-dev pkg-config protobuf-compiler
+      - uses: actions/setup-java@v4
+        if: matrix.platform == 'android'
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        if: matrix.platform == 'android'
+        with:
+          gradle-version: '8.13'
+      - name: Install Android NDK
+        if: matrix.platform == 'android'
+        run: |
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'ndk;28.2.13676358' 'platforms;android-36' 'build-tools;36.0.0'
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
+          cargo install --locked cargo-ndk
+      - name: Install Debian packager
+        if: matrix.platform == 'linux'
+        run: cargo install --locked cargo-deb
+      - uses: actions/cache/restore@v4
+        id: cache
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            source/target
+            source/linux/target
+          key: drive-products-${{ matrix.platform }}-${{ runner.arch }}-${{ hashFiles('source/Cargo.lock', 'source/linux/Cargo.lock') }}
+          restore-keys: drive-products-${{ matrix.platform }}-${{ runner.arch }}-
+      - name: Build source-bound unsigned products
+        run: node tooling/scripts/build-hosted-products.mjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: drive-${{ matrix.platform }}-${{ env.SOURCE_COMMIT }}
+          path: |
+            products/*-products.tar.gz
+            products/build-receipt.json
+          if-no-files-found: error
+          retention-days: 7
+      - uses: actions/cache/save@v4
+        if: ${{ !cancelled() && steps.cache.outputs.cache-hit != 'true' }}
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            source/target
+            source/linux/target
+          key: ${{ steps.cache.outputs.cache-primary-key }}

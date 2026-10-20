@@ -4,12 +4,18 @@ use std::hash::{Hash, Hasher};
 
 mod app_key_link_urls;
 mod device_approval_ack;
+mod device_approval_command;
 mod device_approval_publish;
+mod labels;
+mod link_delivery;
 pub(crate) use app_key_link_urls::*;
 use device_approval_ack::{
     handle_device_approval_applied_ack_app_message, handle_device_approval_receipt_app_message,
+    send_device_approval_applied_ack_if_ready,
 };
-use device_approval_publish::publish_device_approval;
+pub(crate) use device_approval_command::cmd_approve;
+#[cfg(test)]
+use device_approval_command::persist_device_approval;
 #[cfg(test)]
 pub(crate) use iris_drive_core::app_key_link_transport::app_key_link_roster_fingerprint;
 pub(crate) use iris_drive_core::app_key_link_transport::{
@@ -19,6 +25,8 @@ pub(crate) use iris_drive_core::app_key_link_transport::{
     AppKeyLinkRosterFrame, app_key_link_roster_ack_frame, app_key_link_roster_ack_matches_state,
     app_key_link_roster_frame, app_key_link_roster_recipients,
 };
+pub(crate) use labels::drive_role_label;
+use link_delivery::attempt_app_key_link_delivery;
 
 pub(crate) fn cmd_init(
     config_dir: &std::path::Path,
@@ -202,62 +210,6 @@ pub(crate) fn cmd_logout(config_dir: &std::path::Path) -> Result<()> {
             "cleared_user_profile": report.cleared_user_profile,
             "cleared_drives": report.cleared_drives,
             "cleared_backup_targets": report.cleared_backup_targets,
-        })
-    );
-    Ok(())
-}
-
-pub(crate) fn cmd_approve(
-    config_dir: &std::path::Path,
-    device: &str,
-    label: Option<String>,
-) -> Result<()> {
-    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let state = config
-        .profile
-        .clone()
-        .ok_or_else(|| anyhow::anyhow!("not initialized; run `idrive init` first"))?;
-    let bootstrap = decode_app_key_approval_bootstrap(&config, device)?;
-    let app_key_hex = PublicKey::parse(&bootstrap.device_app_key_npub)
-        .context("parsing approval device AppKey")?
-        .to_hex();
-    let request_pubkey = PublicKey::parse(&bootstrap.request_npub)
-        .context("parsing approval request key")?
-        .to_hex();
-    let label = label.or_else(|| bootstrap.label.clone()).or_else(|| {
-        state
-            .inbound_app_key_link_requests
-            .iter()
-            .find(|pending| pending.app_key_pubkey == app_key_hex)
-            .and_then(|pending| pending.label.clone())
-    });
-    let approved_app_key_npub = pubkey_npub(&app_key_hex);
-    let mut profile = Profile::load(state, config_dir).context("loading profile")?;
-    let snap = profile
-        .approve_device_bootstrap(&bootstrap, label)
-        .context("approving AppKey")?;
-    let device_count = snap.app_actors.len();
-    let pending = profile
-        .state
-        .pending_device_approval_receipts
-        .iter()
-        .find(|pending| pending.request_pubkey == request_pubkey)
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("approval did not retain its encrypted receipt"))?;
-    config.profile = Some(profile.state.clone());
-    config.save(config_path_in(config_dir))?;
-    let (published_events, approval_publish_error) =
-        publish_device_approval(&config, &profile.state, &pending).map_or_else(
-            |error| (0, Some(format!("{error:#}"))),
-            |events| (events, None),
-        );
-    println!(
-        "{}",
-        json!({
-            "approved_app_key_npub": approved_app_key_npub,
-            "roster_size": device_count,
-            "published_approval_events": published_events,
-            "approval_publish_error": approval_publish_error,
         })
     );
     Ok(())
@@ -572,6 +524,12 @@ fn unix_now_seconds() -> u64 {
         .map_or(0, |duration| duration.as_secs())
 }
 
+fn unix_now_millis() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_millis())
+}
+
 pub(crate) fn profile_identity_json_map(state: &ProfileState) -> serde_json::Map<String, Value> {
     let summary = iris_drive_core::app_key_summary::nostr_identity_summary(state);
     let mut output = serde_json::Map::new();
@@ -781,7 +739,8 @@ pub(crate) async fn send_pending_app_key_link_request(
     let mut fips_sent = false;
     let mut fips_error = None;
     if let (Some(sync), Some(admin_npub)) = (fips_blocks, admin_npub.as_deref()) {
-        sync.refresh_authorized_peers(&config).await;
+        sync.refresh_authorized_peers_from_config_dir(config_dir)
+            .await;
         match tokio::time::timeout(
             std::time::Duration::from_secs(APP_KEY_LINK_FIPS_SEND_TIMEOUT_SECS),
             sync.send_app_message(admin_npub, APP_KEY_LINK_REQUEST_APP_TOPIC, bytes.clone()),
@@ -827,7 +786,7 @@ pub(crate) async fn send_pending_app_key_link_request(
 
 pub(crate) async fn send_authorized_app_key_link_rosters(
     config_dir: &Path,
-    relay_client: &nostr_sdk::Client,
+    relay_client: Option<&nostr_sdk::Client>,
     fips_blocks: Option<&FsFipsBlockSync>,
     cache: &mut AuthorizedAppKeyLinkRosterSendCache,
     acked_rosters: &BTreeSet<String>,
@@ -846,42 +805,15 @@ pub(crate) async fn send_authorized_app_key_link_rosters(
         .filter(|op| !cache.published_relay_event_ids.contains(&op.op_id))
         .cloned()
         .collect::<Vec<_>>();
-    if !pending_ops.is_empty() {
-        tokio::time::timeout(
-            std::time::Duration::from_secs(APP_KEY_LINK_RELAY_PUBLISH_TIMEOUT_SECS),
-            iris_drive_core::relay_sync::publish_nostr_identity_roster_ops(
-                relay_client,
-                &pending_ops,
-            ),
-        )
-        .await
-        .context("publishing app-key approval roster ops timed out")??;
-        cache
-            .published_relay_event_ids
-            .extend(pending_ops.into_iter().map(|op| op.op_id));
-    }
-    for pending in &state.pending_device_approval_receipts {
-        let event = nostr_sdk::Event::from_json(&pending.event_json)
-            .context("parsing pending device approval receipt")?;
-        if cache.published_relay_event_ids.contains(&event.id.to_hex()) {
-            continue;
-        }
-        tokio::time::timeout(
-            std::time::Duration::from_secs(APP_KEY_LINK_RELAY_PUBLISH_TIMEOUT_SECS),
-            iris_drive_core::relay_sync::publish_device_approval_receipt(
-                relay_client,
-                state,
-                pending,
-            ),
-        )
-        .await
-        .context("publishing device approval receipt timed out")??;
-        cache.published_relay_event_ids.insert(event.id.to_hex());
-    }
-    let Some(sync) = fips_blocks else {
-        return Ok(None);
-    };
-    sync.refresh_authorized_peers(&snapshot.config).await;
+    let pending_receipts = state
+        .pending_device_approval_receipts
+        .iter()
+        .map(|pending| {
+            let event = nostr_sdk::Event::from_json(&pending.event_json)
+                .context("parsing pending device approval receipt")?;
+            Ok((event.id.to_hex(), pending.clone()))
+        })
+        .collect::<Result<Vec<_>>>()?;
     let now = std::time::Instant::now();
     let due_devices = snapshot
         .recipients
@@ -896,45 +828,108 @@ pub(crate) async fn send_authorized_app_key_link_rosters(
                 .copied()
                 .is_none_or(|sent| app_key_link_roster_send_due(Some(sent), now))
         })
+        .cloned()
         .collect::<Vec<_>>();
-    if due_devices.is_empty() {
+    let relay_pending = relay_client.is_some()
+        && (!pending_ops.is_empty()
+            || pending_receipts
+                .iter()
+                .any(|(event_id, _)| !cache.published_relay_event_ids.contains(event_id)));
+    let fips_due = fips_blocks.is_some() && !due_devices.is_empty();
+    if !relay_pending && !fips_due {
         return Ok(None);
     }
 
-    let mut recipients = Vec::new();
-    for recipient in due_devices {
-        let recipient_npub = pubkey_npub(&recipient.app_key_pubkey);
-        for receipt in state
-            .pending_device_approval_receipts
-            .iter()
-            .filter(|receipt| receipt.device_app_key_pubkey == recipient.app_key_pubkey)
-        {
+    let fips_receipts = pending_receipts.clone();
+    let frame_bytes = snapshot.frame_bytes.clone();
+    let sent_cache = &mut cache.sent;
+    let published_relay_event_ids = &mut cache.published_relay_event_ids;
+    let fips_send = fips_blocks.filter(|_| fips_due).map(|sync| async move {
+        sync.refresh_authorized_peers_from_config_dir(config_dir)
+            .await;
+        let mut recipients = Vec::with_capacity(due_devices.len());
+        for recipient in due_devices {
+            let recipient_npub = pubkey_npub(&recipient.app_key_pubkey);
+            for (_, receipt) in fips_receipts
+                .iter()
+                .filter(|(_, receipt)| receipt.device_app_key_pubkey == recipient.app_key_pubkey)
+            {
+                sync.send_app_message(
+                    &recipient_npub,
+                    APP_KEY_APPROVAL_RECEIPT_APP_TOPIC,
+                    receipt.event_json.as_bytes().to_vec(),
+                )
+                .await
+                .context("sending approval receipt over FIPS")?;
+            }
             sync.send_app_message(
                 &recipient_npub,
-                APP_KEY_APPROVAL_RECEIPT_APP_TOPIC,
-                receipt.event_json.as_bytes().to_vec(),
+                APP_KEY_LINK_ROSTER_APP_TOPIC,
+                frame_bytes.clone(),
             )
-            .await?;
+            .await
+            .context("sending approval roster over FIPS")?;
+            let attempts = sent_cache
+                .get(&recipient.roster_fingerprint)
+                .map_or(1, |sent| sent.attempts.saturating_add(1));
+            sent_cache.insert(
+                recipient.roster_fingerprint.clone(),
+                SentAppKeyLinkRoster {
+                    last_sent: now,
+                    attempts,
+                },
+            );
+            recipients.push(recipient_npub);
         }
-        sync.send_app_message(
-            &recipient_npub,
-            APP_KEY_LINK_ROSTER_APP_TOPIC,
-            snapshot.frame_bytes.clone(),
-        )
-        .await?;
-        let attempts = cache
-            .sent
-            .get(&recipient.roster_fingerprint)
-            .map_or(1, |sent| sent.attempts.saturating_add(1));
-        cache.sent.insert(
-            recipient.roster_fingerprint.clone(),
-            SentAppKeyLinkRoster {
-                last_sent: now,
-                attempts,
-            },
-        );
-        recipients.push(recipient_npub);
-    }
+        Ok::<_, anyhow::Error>(recipients)
+    });
+    let (fips, relay) = Box::pin(attempt_app_key_link_delivery(
+        fips_send,
+        async move {
+            let Some(relay_client) = relay_client else {
+                return Ok(0);
+            };
+            let mut published = 0;
+            if !pending_ops.is_empty() {
+                published += iris_drive_core::relay_sync::publish_nostr_identity_roster_ops(
+                    relay_client,
+                    &pending_ops,
+                )
+                .await
+                .context("publishing approval roster ops")?
+                .len();
+                published_relay_event_ids.extend(pending_ops.into_iter().map(|op| op.op_id));
+            }
+            for (event_id, pending) in pending_receipts {
+                if published_relay_event_ids.contains(&event_id) {
+                    continue;
+                }
+                published += iris_drive_core::relay_sync::publish_device_approval_receipt(
+                    relay_client,
+                    state,
+                    &pending,
+                )
+                .await
+                .context("publishing approval receipt")?
+                .len();
+                published_relay_event_ids.insert(event_id);
+            }
+            Ok::<_, anyhow::Error>(published)
+        },
+        std::time::Duration::from_secs(APP_KEY_LINK_FIPS_SEND_TIMEOUT_SECS),
+        std::time::Duration::from_secs(APP_KEY_LINK_RELAY_PUBLISH_TIMEOUT_SECS),
+    ))
+    .await;
+    let (recipients, fips_error) = match fips {
+        Some(Ok(recipients)) => (recipients, None),
+        Some(Err(error)) => (Vec::new(), Some(error)),
+        None => (Vec::new(), None),
+    };
+    let (published_relay_events, relay_error) = match relay {
+        Ok(published) => (published, None),
+        Err(error) => (0, Some(error)),
+    };
+    let sent_over_relay = published_relay_events > 0;
 
     Ok(Some(json!({
         "event": "app_key_link_roster_sent",
@@ -943,6 +938,11 @@ pub(crate) async fn send_authorized_app_key_link_rosters(
         "dck_generation": snapshot.dck_generation,
         "created_at": snapshot.created_at,
         "sent_bytes": snapshot.frame_bytes.len(),
+        "sent_over_fips": !recipients.is_empty(),
+        "fips_error": fips_error,
+        "sent_over_relay": sent_over_relay,
+        "published_relay_events": published_relay_events,
+        "relay_error": relay_error,
     })))
 }
 
@@ -1215,9 +1215,20 @@ async fn handle_app_key_link_roster_app_message(
     }
     drop(config_lock);
     if changed && let Some(sync) = fips_blocks {
-        sync.refresh_authorized_peers(&config).await;
+        sync.refresh_authorized_peers_from_config_dir(config_dir)
+            .await;
     }
-    if let Some(frame) = ack_frame {
+    let has_pending_approval_receipt = config.profile.as_ref().is_some_and(|state| {
+        state
+            .outbound_app_key_link_request
+            .as_ref()
+            .is_some_and(|pending| pending.approval_receipt_event.is_some())
+    });
+    let approval_ack_sent =
+        send_device_approval_applied_ack_if_ready(config_dir, &config, fips_blocks).await?;
+    if (!has_pending_approval_receipt || approval_ack_sent)
+        && let Some(frame) = ack_frame
+    {
         send_app_key_link_roster_ack(fips_blocks, &frame).await?;
     }
     Ok(true)
@@ -1291,13 +1302,7 @@ async fn send_app_key_link_roster_ack(
 #[cfg(test)]
 mod tests;
 
-pub(crate) fn pubkey_npub(hex: &str) -> String {
-    use nostr_sdk::nips::nip19::ToBech32;
-    PublicKey::from_hex(hex)
-        .ok()
-        .and_then(|pk| pk.to_bech32().ok())
-        .unwrap_or_else(|| hex.to_string())
-}
+pub(crate) use iris_drive_core::app_key_summary::pubkey_npub;
 
 pub(crate) fn authorization_state_label(state: &ProfileState) -> &'static str {
     iris_drive_core::app_key_summary::authorization_state_key(state.authorization_state)
@@ -1305,12 +1310,4 @@ pub(crate) fn authorization_state_label(state: &ProfileState) -> &'static str {
 
 pub(crate) fn app_actor_role_label(role: iris_drive_core::AppActorRole) -> &'static str {
     iris_drive_core::app_key_summary::app_actor_role_key(role)
-}
-
-pub(crate) fn drive_role_label(role: DriveRole) -> &'static str {
-    match role {
-        DriveRole::Owner => "owner",
-        DriveRole::Editor => "editor",
-        DriveRole::Reader => "reader",
-    }
 }

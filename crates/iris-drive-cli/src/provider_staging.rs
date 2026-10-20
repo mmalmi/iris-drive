@@ -43,15 +43,8 @@ pub(crate) fn read_provider_staging(config_dir: &Path) -> Result<Option<Provider
 
 pub(crate) fn write_provider_staging(config_dir: &Path, staged: &ProviderStagedRoot) -> Result<()> {
     let path = iris_drive_core::paths::provider_root_staging_path_in(config_dir);
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .with_context(|| format!("creating {}", parent.display()))?;
-    }
-    let tmp_path = path.with_extension("staged.json.tmp");
-    std::fs::write(&tmp_path, serde_json::to_vec_pretty(staged)?)
-        .with_context(|| format!("writing {}", tmp_path.display()))?;
-    std::fs::rename(&tmp_path, &path)
-        .with_context(|| format!("moving {} to {}", tmp_path.display(), path.display()))?;
+    iris_drive_core::atomic_write(&path, &serde_json::to_vec_pretty(staged)?)
+        .with_context(|| format!("writing provider staging {}", path.display()))?;
     Ok(())
 }
 
@@ -69,4 +62,31 @@ pub(crate) fn unix_now_seconds() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn staging_write_does_not_follow_predictable_temporary_symlink() {
+        let config = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let external_file = outside.path().join("private.txt");
+        std::fs::write(&external_file, b"keep private data").unwrap();
+        let path = iris_drive_core::paths::provider_root_staging_path_in(config.path());
+        let old_tmp_path = path.with_extension("staged.json.tmp");
+        std::os::unix::fs::symlink(&external_file, old_tmp_path).unwrap();
+        let staged = ProviderStagedRoot {
+            root_cid: "root".into(),
+            tombstone_base_root_cid: None,
+            tombstone_paths: BTreeSet::new(),
+            updated_at: 1,
+        };
+
+        write_provider_staging(config.path(), &staged).unwrap();
+
+        assert_eq!(std::fs::read(&external_file).unwrap(), b"keep private data");
+        assert_eq!(read_provider_staging(config.path()).unwrap(), Some(staged));
+    }
 }

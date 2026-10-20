@@ -201,19 +201,23 @@ public partial class MainWindow
         Action closeDialog)
     {
         var trimmed = device.Trim();
-        if (string.IsNullOrWhiteSpace(trimmed) ||
-            !await service.IsCompleteDeviceApprovalInputAsync(trimmed))
+        var isComplete = !string.IsNullOrWhiteSpace(trimmed) &&
+            await service.IsCompleteDeviceApprovalInputAsync(trimmed);
+        WindowsShellTrace.Write($"device approval confirmation input complete={isComplete}");
+        if (!isComplete)
         {
             notice.Text = "Enter a complete request link or device ID.";
             return;
         }
 
+        WindowsShellTrace.Write("showing device approval confirmation");
         var confirmed = WpfMessageBox.Show(
             this,
             "This will add the joining device to Iris Drive.",
             "Approve this device?",
             MessageBoxButton.YesNo,
             MessageBoxImage.Question) == MessageBoxResult.Yes;
+        WindowsShellTrace.Write($"device approval confirmation accepted={confirmed}");
         if (!confirmed)
         {
             return;

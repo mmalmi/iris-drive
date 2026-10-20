@@ -167,6 +167,10 @@ struct IrisDriveControlPanel: View {
         .onChange(of: status.pendingShareDialog?.id) { _, _ in
             applyPendingShareDialog()
         }
+        .onChange(of: status.pendingDeviceApproval?.id, initial: true) { _, _ in applyPendingDeviceApproval() }
+        .onChange(of: status.pendingBackupInvite, initial: true) { _, invite in
+            if invite != nil { selectedTab = .backup }
+        }
         .task(id: status.stateLoaded) {
             await revealStartupLoadingIfNeeded()
         }
@@ -323,6 +327,13 @@ struct IrisDriveControlPanel: View {
         approveDeviceConfirmationPresented = true
     }
 
+    private func applyPendingDeviceApproval() {
+        guard let request = status.pendingDeviceApproval else { return }
+        status.pendingDeviceApproval = nil
+        (selectedTab, showAddDevice, approveDeviceKey) = (.peers, true, request.requestURL)
+        confirmApproveDevice(request.requestURL, force: true)
+    }
+
     private func approvePendingDevice() {
         let request = pendingApprovalRequest
         guard IrisDriveDesktopCore.validateDeviceApprovalInput(request) else { return }
@@ -407,7 +418,7 @@ struct IrisDriveControlPanel: View {
                 } label: {
                     setupButtonLabel("Sign in", systemImage: "rectangle.portrait.and.arrow.right")
                 }
-                .accessibilityLabel("Sign in")
+                .accessibilityIdentifier("welcomeSignIn").accessibilityLabel("Sign in")
                 .buttonStyle(.bordered)
             }
         case .create:
@@ -646,9 +657,8 @@ struct IrisDriveControlPanel: View {
                     symbol: tab.symbol,
                     title: tab.title,
                     selected: selectedTab == tab
-                ) {
-                    selectedTab = tab
-                }
+                ) { selectedTab = tab }
+                .accessibilityIdentifier(tab == .peers ? "sidebarDevices" : "sidebar\(tab.rawValue)")
             }
             Divider()
                 .padding(.vertical, 4)
@@ -685,7 +695,7 @@ struct IrisDriveControlPanel: View {
                     heroStatusIcon
                     VStack(alignment: .leading, spacing: 3) {
                         Text(status.driveName)
-                            .font(.title2.weight(.semibold))
+                            .font(.title2.weight(.semibold)).accessibilityIdentifier("driveTitle")
                         Text(heroText)
                             .font(.headline)
                             .foregroundStyle(heroColor)
@@ -928,12 +938,10 @@ struct IrisDriveControlPanel: View {
         .background(Color(nsColor: .textBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 10))
         .alert("Approve this device?", isPresented: $approveDeviceConfirmationPresented) {
-            Button("Cancel", role: .cancel) {
-                pendingApprovalRequest = ""
-            }
-            Button("Approve") {
-                approvePendingDevice()
-            }
+            Button("Cancel", role: .cancel) { pendingApprovalRequest = "" }
+                .accessibilityIdentifier("deviceApprovalCancel")
+            Button("Approve") { approvePendingDevice() }
+                .accessibilityIdentifier("deviceApprovalApprove")
         } message: {
             Text("This will add the joining device to Iris Drive.")
         }
@@ -950,8 +958,8 @@ struct IrisDriveControlPanel: View {
                     }
                 }
             }
-            TextField("Request link or device ID", text: $approveDeviceKey)
-                .textFieldStyle(.roundedBorder)
+            TextField("Request link or device ID", text: $approveDeviceKey).textFieldStyle(.roundedBorder)
+                .accessibilityIdentifier("manualDeviceApprovalInput").accessibilityLabel("Request link or device ID")
                 .disableAutocorrection(true)
                 .onChange(of: approveDeviceKey) { _, newValue in
                     approveDeviceError = ""
@@ -1432,18 +1440,18 @@ struct IrisDriveControlPanel: View {
     }
 
     private var checkingAllBackupsLabel: String {
-        if backupCheckTotal > 0 {
-            return "Checking \(checkedBackupCount) of \(backupCheckTotal)"
-        }
-        return "Checked \(checkedBackupCount)"
+        backupCheckTotal > 0
+            ? "Checking \(checkedBackupCount) of \(backupCheckTotal)" : "Checked \(checkedBackupCount)"
     }
 
     // MARK: Backup
-
     private var backup: some View {
         VStack(alignment: .leading, spacing: 14) {
+            SectionTitle("Backup")
+            FriendBackupsSection(status: status, controller: controller)
+            Divider().padding(.vertical, 6)
             HStack {
-                SectionTitle("Backup")
+                Text("Other backups").font(.title3.weight(.semibold))
                 Spacer()
                 Button {
                     guard !checkingAllBackups else { return }

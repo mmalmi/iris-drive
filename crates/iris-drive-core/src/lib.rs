@@ -11,11 +11,13 @@ pub mod calendar;
 pub mod config;
 pub mod config_lock;
 pub mod daemon_liveness;
+pub mod device_approval_handoff;
 pub mod device_labels;
 pub mod direct_root_transport;
 mod fips_bootstrap;
 pub mod fips_status;
 pub mod fips_sync;
+pub mod friend_backup;
 pub mod profile;
 
 /// Convenience constructor: a `BlossomClient` wired with the given
@@ -60,6 +62,8 @@ pub mod relay_status;
 pub mod relay_sync;
 pub mod root_meta;
 pub mod share_actions;
+pub mod share_links;
+pub mod shared_content;
 pub mod sharing;
 pub mod sync;
 pub mod sync_cache;
@@ -67,6 +71,7 @@ pub mod update_announcement;
 pub mod updater;
 
 pub use app_keys::{AppActorEntry, AppActorRole, AppKeysProjection, ApplyDecision};
+pub use atomic_file::atomic_write;
 pub use config::{
     AppConfig, AppKeyRootRef, BackupTarget, BackupTargetCheck, BackupTargetKind, BackupTargetSync,
     ConfigError, Drive, DriveRole, UserProfile,
@@ -76,6 +81,9 @@ pub use conflict::{
     conflict_filename, conflict_records_from_merge, resolve as resolve_conflict,
 };
 pub use daemon::{Daemon, DaemonError, ImportReport, PRIMARY_DRIVE_ID};
+pub use device_approval_handoff::{
+    DeviceApprovalRootHandoff, prepare_device_approval_root_handoff,
+};
 pub use direct_root_transport::{
     DIRECT_ROOT_APP_TOPIC, DirectRootEvent, DirectRootExchange, DirectRootFrame,
     DirectRootHintApply, DirectRootHintApplyReport, DirectRootHintFrame, DirectRootHintScope,
@@ -107,9 +115,10 @@ pub use merge::{
 };
 pub use network_sync::{
     DriveRootEventApplyReport, NetworkSyncOptions, NetworkSyncReport, apply_drive_root_events,
-    authorized_app_key_pubkeys, drive_root_app_key_can_write_roots,
+    authorized_app_key_pubkeys, download_applied_drive_roots, drive_root_app_key_can_write_roots,
     drive_root_recipient_app_key_pubkeys, drive_root_writer_app_key_pubkeys,
     sync_once as network_sync_once, sync_once_with_fips, sync_once_with_options,
+    sync_pending_device_approval_acks,
 };
 pub use nostr_identity::{
     KIND_NOSTR_IDENTITY_FACET_ACCEPTANCE, KIND_NOSTR_IDENTITY_ROSTER_OP,

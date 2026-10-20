@@ -1,19 +1,20 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 #[cfg(test)]
-use std::sync::{Mutex, atomic::AtomicU64, atomic::Ordering};
+use std::sync::Mutex;
 
 use anyhow::Context;
 use hashtree_provider::{HashTreeProviderFs, ItemKind, ProviderFs};
 use iris_drive_core::config::DEFAULT_RELAYS;
-use iris_drive_core::paths::config_path_in;
+use iris_drive_core::paths::{config_path_in, key_path_in};
 use iris_drive_core::provider::{
-    ProviderListEntry, compose_provider_path, normalize_provider_document_path,
-    normalize_provider_parent_path, normalize_provider_path, optional_normalized_provider_path,
-    provider_entry_is_probable_os_placeholder, provider_file_probable_os_placeholder_family,
-    provider_list_summary, provider_path_is_child_document,
-    provider_write_is_probable_os_placeholder, sanitized_provider_file_name, split_provider_path,
-    unique_provider_path,
+    ProviderListEntry, compose_provider_path, create_provider_dir, delete_provider_path,
+    normalize_provider_document_path, normalize_provider_parent_path, normalize_provider_path,
+    optional_normalized_provider_path, provider_entry_is_probable_os_placeholder,
+    provider_file_probable_os_placeholder_family, provider_list_summary,
+    provider_path_is_child_document, provider_write_is_probable_os_placeholder,
+    rename_provider_path, sanitized_provider_file_name, split_provider_path, unique_provider_path,
+    write_provider_file,
 };
 use iris_drive_core::{AppConfig, Profile};
 use serde_json::json;
@@ -23,6 +24,7 @@ use crate::provider_metadata::provider_modified_at_index;
 
 const PROVIDER_IMPORT_RETRY_DELAYS_MS: &[u64] = &[25, 50, 100, 200, 400];
 const NATIVE_SYNC_RELAY_TIMEOUT_SECS: u64 = 10;
+const APPROVAL_ACK_FAST_SYNC_TIMEOUT_SECS: u64 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ProviderMutationLiveness {
@@ -219,7 +221,7 @@ async fn import_provider_bytes(
     display_name: &str,
     bytes: &[u8],
 ) -> anyhow::Result<serde_json::Value> {
-    let _config_lock =
+    let config_lock =
         iris_drive_core::config_lock::ConfigMutationLock::acquire(Path::new(data_dir)).await?;
     let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
     let modified_at_by_path = BTreeMap::new();
@@ -229,7 +231,14 @@ async fn import_provider_bytes(
         anyhow::bail!("refusing probable FileProvider placeholder copy: {path}");
     }
     write_provider_file(&provider, &path, bytes).await?;
-    import_provider_mutation(&mut daemon, &provider, &path, Some(visible_root)).await
+    import_provider_mutation(
+        &mut daemon,
+        &provider,
+        &path,
+        Some(visible_root),
+        config_lock,
+    )
+    .await
 }
 
 async fn download_content_link_bytes(url: &str) -> anyhow::Result<Vec<u8>> {
@@ -336,6 +345,8 @@ fn run_native_provider_resolve_path(
 }
 
 pub(crate) fn run_native_provider_list(data_dir: &str) -> anyhow::Result<serde_json::Value> {
+    #[cfg(test)]
+    work_pause::wait(data_dir, "provider");
     let runtime = native_provider_runtime()?;
     runtime.block_on(async {
         let config_dir = Path::new(data_dir);
@@ -411,7 +422,7 @@ fn run_native_provider_write(
         let path = normalize_provider_path(path)?;
         let bytes = std::fs::read(source_path)
             .with_context(|| format!("reading {}", Path::new(source_path).display()))?;
-        let _config_lock =
+        let config_lock =
             iris_drive_core::config_lock::ConfigMutationLock::acquire(Path::new(data_dir)).await?;
         let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
         apply_provider_open_delay_for_test();
@@ -422,7 +433,14 @@ fn run_native_provider_write(
             }
         }
         write_provider_file(&provider, &path, &bytes).await?;
-        import_provider_mutation(&mut daemon, &provider, &path, Some(visible_root)).await
+        import_provider_mutation(
+            &mut daemon,
+            &provider,
+            &path,
+            Some(visible_root),
+            config_lock,
+        )
+        .await
     })
 }
 
@@ -431,11 +449,18 @@ fn run_native_provider_mkdir(data_dir: &str, path: &str) -> anyhow::Result<serde
     let runtime = native_provider_runtime()?;
     runtime.block_on(async {
         let path = normalize_provider_path(path)?;
-        let _config_lock =
+        let config_lock =
             iris_drive_core::config_lock::ConfigMutationLock::acquire(Path::new(data_dir)).await?;
         let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
         create_provider_dir(&provider, &path).await?;
-        import_provider_mutation(&mut daemon, &provider, &path, Some(visible_root)).await
+        import_provider_mutation(
+            &mut daemon,
+            &provider,
+            &path,
+            Some(visible_root),
+            config_lock,
+        )
+        .await
     })
 }
 
@@ -444,11 +469,18 @@ fn run_native_provider_delete(data_dir: &str, path: &str) -> anyhow::Result<serd
     let runtime = native_provider_runtime()?;
     runtime.block_on(async {
         let path = normalize_provider_path(path)?;
-        let _config_lock =
+        let config_lock =
             iris_drive_core::config_lock::ConfigMutationLock::acquire(Path::new(data_dir)).await?;
         let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
         delete_provider_path(&provider, &path).await?;
-        import_provider_mutation(&mut daemon, &provider, &path, Some(visible_root)).await
+        import_provider_mutation(
+            &mut daemon,
+            &provider,
+            &path,
+            Some(visible_root),
+            config_lock,
+        )
+        .await
     })
 }
 
@@ -462,11 +494,18 @@ fn run_native_provider_rename(
     runtime.block_on(async {
         let old_path = normalize_provider_path(old_path)?;
         let new_path = normalize_provider_path(new_path)?;
-        let _config_lock =
+        let config_lock =
             iris_drive_core::config_lock::ConfigMutationLock::acquire(Path::new(data_dir)).await?;
         let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
         rename_provider_path(&provider, &old_path, &new_path).await?;
-        import_provider_mutation(&mut daemon, &provider, &new_path, Some(visible_root)).await
+        import_provider_mutation(
+            &mut daemon,
+            &provider,
+            &new_path,
+            Some(visible_root),
+            config_lock,
+        )
+        .await
     })
 }
 
@@ -556,6 +595,7 @@ async fn import_provider_mutation<P>(
     provider: &P,
     changed_path: &str,
     tombstone_base_root: Option<hashtree_core::Cid>,
+    config_lock: iris_drive_core::config_lock::ConfigMutationLock,
 ) -> anyhow::Result<serde_json::Value>
 where
     P: ProviderFs<ItemId = String>,
@@ -565,7 +605,20 @@ where
     let report = import_provider_root_with_retry(daemon, root, tombstone_base_root).await?;
     iris_drive_core::paths::touch_provider_root_signal_in(daemon.config_dir())
         .context("signaling provider root change")?;
-    let publish = publish_current_app_key_root_best_effort(daemon.config_dir()).await;
+    let prepared_publish = match prepare_current_app_key_root_publish(daemon) {
+        Ok(prepared) => prepared,
+        Err(error) => PreparedProviderRootPublish::Unavailable(json!({
+            "published_drive_root": false,
+            "error": format!("{error:#}"),
+        })),
+    };
+    // Import, config persistence, and event signing are one serialized local
+    // transaction. Release the cross-process lock before Blossom or relay I/O.
+    // Signing here also preserves replaceable-event ordering if deliveries
+    // from two successive mutations finish out of order.
+    drop(config_lock);
+    let publish =
+        publish_prepared_app_key_root_best_effort(daemon.config_dir(), prepared_publish).await;
     Ok(json!({
         "path": changed_path,
         "root_cid": report.root_cid,
@@ -600,10 +653,68 @@ async fn import_provider_root_with_retry(
     }
 }
 
-async fn publish_current_app_key_root_best_effort(config_dir: &Path) -> serde_json::Value {
+struct PreparedProviderRootPublishReady {
+    config: AppConfig,
+    root: iris_drive_core::AppKeyRootRef,
+    event: nostr_sdk::Event,
+}
+
+enum PreparedProviderRootPublish {
+    Ready(Box<PreparedProviderRootPublishReady>),
+    Unavailable(serde_json::Value),
+}
+
+fn prepare_current_app_key_root_publish(
+    daemon: &iris_drive_core::Daemon,
+) -> anyhow::Result<PreparedProviderRootPublish> {
+    let config = daemon.config().clone();
+    let Some(account) = config.profile.as_ref() else {
+        return Ok(PreparedProviderRootPublish::Unavailable(
+            json!({"published_drive_root": false, "error": "account missing"}),
+        ));
+    };
+    let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID) else {
+        return Ok(PreparedProviderRootPublish::Unavailable(
+            json!({"published_drive_root": false, "error": "primary drive missing"}),
+        ));
+    };
+    let Some(root) = drive.app_key_roots.get(&account.app_key_pubkey).cloned() else {
+        return Ok(PreparedProviderRootPublish::Unavailable(
+            json!({"published_drive_root": false, "error": "AppKey root missing"}),
+        ));
+    };
+    let loaded_account =
+        Profile::load(account.clone(), daemon.config_dir()).context("loading profile keys")?;
+    let authorized_app_keys = iris_drive_core::drive_root_recipient_app_key_pubkeys(account, drive);
+    let event = iris_drive_core::nostr_events::build_drive_root_publish_event(
+        loaded_account.app_key.keys(),
+        &account.root_scope_id(),
+        &drive.drive_id,
+        &root,
+        &authorized_app_keys,
+    )
+    .map_err(iris_drive_core::relay_sync::RelayError::from)?;
+
+    Ok(PreparedProviderRootPublish::Ready(Box::new(
+        PreparedProviderRootPublishReady {
+            config,
+            root,
+            event,
+        },
+    )))
+}
+
+async fn publish_prepared_app_key_root_best_effort(
+    config_dir: &Path,
+    prepared: PreparedProviderRootPublish,
+) -> serde_json::Value {
+    let prepared = match prepared {
+        PreparedProviderRootPublish::Ready(prepared) => prepared,
+        PreparedProviderRootPublish::Unavailable(result) => return result,
+    };
     match tokio::time::timeout(
-        std::time::Duration::from_secs(3),
-        publish_current_app_key_root(config_dir),
+        std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS),
+        publish_prepared_app_key_root(config_dir, *prepared),
     )
     .await
     {
@@ -613,53 +724,117 @@ async fn publish_current_app_key_root_best_effort(config_dir: &Path) -> serde_js
     }
 }
 
-async fn publish_current_app_key_root(config_dir: &Path) -> anyhow::Result<serde_json::Value> {
-    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let Some(account) = config.profile.as_ref() else {
-        return Ok(json!({"published_drive_root": false, "error": "account missing"}));
-    };
-    let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID) else {
-        return Ok(json!({"published_drive_root": false, "error": "primary drive missing"}));
-    };
-    let Some(root) = drive.app_key_roots.get(&account.app_key_pubkey) else {
-        return Ok(json!({"published_drive_root": false, "error": "AppKey root missing"}));
-    };
-    let loaded_account =
-        Profile::load(account.clone(), config_dir).context("loading profile keys")?;
+async fn publish_prepared_app_key_root(
+    config_dir: &Path,
+    prepared: PreparedProviderRootPublishReady,
+) -> anyhow::Result<serde_json::Value> {
+    #[cfg(test)]
+    if let Some(result) = provider_publish_lock_probe_result_for_test(
+        config_dir,
+        &prepared.root,
+        Some(&prepared.event),
+    )
+    .await
+    {
+        return Ok(result);
+    }
 
-    let relays = if config.relays.is_empty() {
+    let blossom_upload = if provider_root_blossom_upload_enabled(&prepared.config)? {
+        Some(
+            upload_current_app_key_root_to_blossom(
+                config_dir,
+                &prepared.config,
+                &prepared.root.root_cid,
+            )
+            .await
+            .context("making provider root blocks available")?,
+        )
+    } else {
+        None
+    };
+
+    let relays = if prepared.config.relays.is_empty() {
         default_relays()
     } else {
-        config.relays.clone()
+        prepared.config.relays.clone()
     };
     let client = iris_drive_core::relay_sync::connect(&relays).await?;
-    let authorized_app_keys = iris_drive_core::drive_root_recipient_app_key_pubkeys(account, drive);
-    let result = iris_drive_core::relay_sync::publish_drive_root(
-        &client,
-        loaded_account.app_key.keys(),
-        &account.root_scope_id(),
-        &drive.drive_id,
-        root,
-        &authorized_app_keys,
-    )
-    .await;
+    let result =
+        iris_drive_core::relay_sync::publish_prebuilt_drive_root(&client, &prepared.event).await;
     iris_drive_core::relay_sync::shutdown_client(&client).await;
     let event_id = result?;
     Ok(json!({
         "published_drive_root": true,
         "drive_root_event_id": event_id.to_hex(),
+        "blossom_total_hashes": blossom_upload.map_or(0, |upload| upload.total_hashes),
+        "blossom_uploaded": blossom_upload.map_or(0, |upload| upload.uploaded),
+        "blossom_already_present": blossom_upload.map_or(0, |upload| upload.already_present),
     }))
+}
+
+fn provider_root_blossom_upload_enabled(config: &AppConfig) -> anyhow::Result<bool> {
+    if config.blossom_servers.is_empty() {
+        anyhow::bail!(
+            "cannot publish provider root before its blocks are available: no Blossom servers configured"
+        );
+    }
+    #[cfg(test)]
+    {
+        // Unit tests create throwaway profiles with production defaults. Keep
+        // them hermetic; focused upload tests use an explicit loopback server.
+        Ok(config.blossom_servers.iter().all(|server| {
+            server.starts_with("http://127.0.0.1:") || server.starts_with("http://[::1]:")
+        }))
+    }
+    #[cfg(not(test))]
+    {
+        Ok(true)
+    }
+}
+
+pub(crate) async fn upload_current_app_key_root_to_blossom(
+    config_dir: &Path,
+    config: &AppConfig,
+    root_cid: &str,
+) -> anyhow::Result<iris_drive_core::blossom_sync::UploadReport> {
+    if config.blossom_servers.is_empty() {
+        anyhow::bail!("no Blossom servers configured");
+    }
+    let root = hashtree_core::Cid::parse(root_cid)
+        .with_context(|| format!("parsing provider root CID {root_cid}"))?;
+    let device = iris_drive_core::AppKey::load(key_path_in(config_dir))
+        .context("loading AppKey for Blossom upload")?;
+    let client =
+        iris_drive_core::blossom_sync_client(device.keys().clone(), &config.blossom_servers);
+    let daemon = iris_drive_core::Daemon::open(config_dir)
+        .context("opening provider block store for Blossom upload")?;
+    iris_drive_core::blossom_sync::upload_tree(daemon.tree(), &root, &client)
+        .await
+        .context("uploading provider root to Blossom")
 }
 
 pub(crate) fn run_native_sync_once(
     data_dir: &str,
 ) -> anyhow::Result<iris_drive_core::NetworkSyncReport> {
+    #[cfg(test)]
+    work_pause::wait(data_dir, "sync");
     let runtime = native_provider_runtime()?;
     runtime.block_on(iris_drive_core::sync_once_with_options(
         Path::new(data_dir),
         &[],
         std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS),
         native_sync_options(),
+    ))
+}
+
+pub(crate) fn run_native_sync_pending_device_approval_acks(
+    data_dir: &str,
+) -> anyhow::Result<iris_drive_core::NetworkSyncReport> {
+    let runtime = native_provider_runtime()?;
+    runtime.block_on(iris_drive_core::sync_pending_device_approval_acks(
+        Path::new(data_dir),
+        &[],
+        std::time::Duration::from_secs(APPROVAL_ACK_FAST_SYNC_TIMEOUT_SECS),
     ))
 }
 
@@ -691,127 +866,6 @@ pub(crate) fn native_sync_status_label(
     }
 }
 
-async fn write_provider_file<P>(provider: &P, path: &str, bytes: &[u8]) -> anyhow::Result<()>
-where
-    P: ProviderFs<ItemId = String>,
-{
-    let (parent, name) = split_provider_path(path)?;
-    ensure_provider_dirs(provider, &parent).await?;
-    match provider.item(&path.to_owned()).await {
-        Ok(item) if item.kind == ItemKind::Directory => {
-            delete_provider_path(provider, path).await?;
-            provider.create_file(&parent, &name).await?;
-        }
-        Ok(_) => {
-            provider.truncate(&path.to_owned(), 0).await?;
-        }
-        Err(_) => {
-            provider.create_file(&parent, &name).await?;
-        }
-    }
-    if !bytes.is_empty() {
-        provider.write(&path.to_owned(), 0, bytes).await?;
-    }
-    Ok(())
-}
-
-async fn create_provider_dir<P>(provider: &P, path: &str) -> anyhow::Result<()>
-where
-    P: ProviderFs<ItemId = String>,
-{
-    let (parent, name) = split_provider_path(path)?;
-    ensure_provider_dirs(provider, &parent).await?;
-    match provider.item(&path.to_owned()).await {
-        Ok(item) if item.kind == ItemKind::Directory => Ok(()),
-        Ok(_) => {
-            provider.remove(&parent, &name).await?;
-            provider.create_dir(&parent, &name).await?;
-            Ok(())
-        }
-        Err(_) => {
-            provider.create_dir(&parent, &name).await?;
-            Ok(())
-        }
-    }
-}
-
-async fn ensure_provider_dirs<P>(provider: &P, parent: &str) -> anyhow::Result<()>
-where
-    P: ProviderFs<ItemId = String>,
-{
-    let mut current = String::new();
-    for segment in parent.split('/').filter(|segment| !segment.is_empty()) {
-        let next = if current.is_empty() {
-            segment.to_owned()
-        } else {
-            format!("{current}/{segment}")
-        };
-        match provider.item(&next).await {
-            Ok(item) if item.kind == ItemKind::Directory => {}
-            Ok(_) => {
-                provider.remove(&current, segment).await?;
-                provider.create_dir(&current, segment).await?;
-            }
-            Err(_) => {
-                provider.create_dir(&current, segment).await?;
-            }
-        }
-        current = next;
-    }
-    Ok(())
-}
-
-async fn delete_provider_path<P>(provider: &P, path: &str) -> anyhow::Result<()>
-where
-    P: ProviderFs<ItemId = String>,
-{
-    let mut directories = Vec::new();
-    let mut stack = vec![path.to_owned()];
-    while let Some(current) = stack.pop() {
-        let item = match provider.item(&current).await {
-            Ok(item) => item,
-            Err(hashtree_provider::ProviderError::NotFound) => continue,
-            Err(error) => return Err(error.into()),
-        };
-        if item.kind == ItemKind::Directory {
-            directories.push(current.clone());
-            for child in provider.read_dir(&current).await? {
-                stack.push(child.id);
-            }
-        } else {
-            let (parent, name) = split_provider_path(&current)?;
-            match provider.remove(&parent, &name).await {
-                Ok(()) | Err(hashtree_provider::ProviderError::NotFound) => {}
-                Err(error) => return Err(error.into()),
-            }
-        }
-    }
-    for directory in directories.into_iter().rev() {
-        let (parent, name) = split_provider_path(&directory)?;
-        match provider.remove(&parent, &name).await {
-            Ok(()) | Err(hashtree_provider::ProviderError::NotFound) => {}
-            Err(error) => return Err(error.into()),
-        }
-    }
-    Ok(())
-}
-
-async fn rename_provider_path<P>(provider: &P, old_path: &str, new_path: &str) -> anyhow::Result<()>
-where
-    P: ProviderFs<ItemId = String>,
-{
-    let (old_parent, old_name) = split_provider_path(old_path)?;
-    let (new_parent, new_name) = split_provider_path(new_path)?;
-    ensure_provider_dirs(provider, &new_parent).await?;
-    if provider.item(&new_path.to_owned()).await.is_ok() {
-        delete_provider_path(provider, new_path).await?;
-    }
-    provider
-        .rename(&old_parent, &old_name, &new_parent, &new_name)
-        .await?;
-    Ok(())
-}
-
 fn provider_import_error_message_is_retryable(message: &str) -> bool {
     message.contains("block not found")
         || message.contains("missing block")
@@ -826,32 +880,16 @@ fn default_relays() -> Vec<String> {
 }
 
 #[cfg(test)]
-static PROVIDER_OPEN_DELAY_MS_FOR_TEST: AtomicU64 = AtomicU64::new(0);
-
+#[path = "native_provider_test_hooks.rs"]
+mod test_hooks;
 #[cfg(test)]
-pub(crate) struct ProviderOpenDelayGuard;
-
+use test_hooks::{apply_provider_open_delay_for_test, provider_publish_lock_probe_result_for_test};
 #[cfg(test)]
-impl Drop for ProviderOpenDelayGuard {
-    fn drop(&mut self) {
-        PROVIDER_OPEN_DELAY_MS_FOR_TEST.store(0, Ordering::SeqCst);
-    }
-}
-
-#[cfg(test)]
-pub(crate) fn provider_open_delay_for_test(delay: std::time::Duration) -> ProviderOpenDelayGuard {
-    let delay_ms = u64::try_from(delay.as_millis()).unwrap_or(u64::MAX);
-    PROVIDER_OPEN_DELAY_MS_FOR_TEST.store(delay_ms, Ordering::SeqCst);
-    ProviderOpenDelayGuard
-}
-
-#[cfg(test)]
-fn apply_provider_open_delay_for_test() {
-    let delay_ms = PROVIDER_OPEN_DELAY_MS_FOR_TEST.load(Ordering::SeqCst);
-    if delay_ms > 0 {
-        std::thread::sleep(std::time::Duration::from_millis(delay_ms));
-    }
-}
+pub(crate) use test_hooks::{provider_open_delay_for_test, provider_publish_lock_probe_for_test};
 
 #[cfg(not(test))]
 fn apply_provider_open_delay_for_test() {}
+
+#[cfg(test)]
+#[path = "native_provider_work_pause.rs"]
+pub(crate) mod work_pause;

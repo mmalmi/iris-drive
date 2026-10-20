@@ -47,16 +47,6 @@ BUILD_DIR="${IRIS_DRIVE_MACOS_BUILD_DIR:-$ROOT/macos/.build}"
 DERIVED_DATA="$BUILD_DIR/DerivedData"
 BUILD_LOG="${IRIS_DRIVE_MACOS_BUILD_LOG:-/tmp/iris-drive-macos-build.log}"
 default_install_app_path() {
-  local stable_app="/Applications/Iris Drive.app"
-
-  if [[ -d "$stable_app" && -w "$stable_app" ]]; then
-    printf '%s\n' "$stable_app"
-    return 0
-  fi
-  if [[ ! -e "$stable_app" && -w "/Applications" ]]; then
-    printf '%s\n' "$stable_app"
-    return 0
-  fi
   printf '%s\n' "$BUILD_DIR/Applications/Iris Drive.app"
 }
 
@@ -68,7 +58,7 @@ BUILD_APP_PATH=""
 
 usage() {
   cat <<'EOF'
-usage: scripts/macos-dev-app.sh build|run
+usage: scripts/macos-dev-app.sh build|run|run-existing
 
 Environment:
   .env.local
@@ -92,8 +82,9 @@ Environment:
       Optional App Store Connect API key for provisioning updates when Xcode
       has no signed-in account.
 	  IRIS_DRIVE_MACOS_INSTALL_APP
-	      Stable app bundle to install and launch. Defaults to /Applications/Iris Drive.app
-	      when writable, otherwise macos/.build/Applications/Iris Drive.app.
+	      App bundle to install and launch. Defaults to
+	      macos/.build/Applications/Iris Drive.app so development signing never
+	      overwrites a release installed in /Applications.
 EOF
 }
 
@@ -282,40 +273,10 @@ register_app_bundle() {
   local app_path="$1"
   local built_app_path="$2"
   local lsregister
-  local candidate
-  local stale_root
 
   lsregister="$(launch_services_tool)"
   [[ -x "$lsregister" ]] || return 0
-
   "$lsregister" -u "$built_app_path" >/dev/null 2>&1 || true
-  if command -v mdfind >/dev/null 2>&1; then
-    mdfind "kMDItemCFBundleIdentifier == 'to.iris.drive.macos'" 2>/dev/null \
-      | while IFS= read -r candidate; do
-          [[ -n "$candidate" && "$candidate" != "$app_path" ]] || continue
-          "$lsregister" -u "$candidate" >/dev/null 2>&1 || true
-        done
-  fi
-  if [[ -d "$HOME/Library/Developer/Xcode/DerivedData" ]]; then
-    find "$HOME/Library/Developer/Xcode/DerivedData" \
-      -path "*/Build/Products/Debug/Iris Drive.app" \
-      -type d -prune -print 2>/dev/null \
-      | while IFS= read -r candidate; do
-          [[ -n "$candidate" && "$candidate" != "$app_path" ]] || continue
-          "$lsregister" -u "$candidate" >/dev/null 2>&1 || true
-          rm -rf "$candidate"
-        done
-  fi
-  for stale_root in /private/tmp/iris-drive-sign-tests /tmp/iris-drive-sign-tests; do
-    [[ -d "$stale_root" ]] || continue
-    find "$stale_root" \
-      -name "*.app" \
-      -type d -prune -print 2>/dev/null \
-      | while IFS= read -r candidate; do
-          "$lsregister" -u "$candidate" >/dev/null 2>&1 || true
-        done
-    rm -rf "$stale_root"
-  done
   "$lsregister" -f -R -trusted "$app_path" >/dev/null 2>&1 || true
 }
 
@@ -323,35 +284,16 @@ register_fileprovider_plugin() {
   local app_path="$1"
   local appex="$app_path/Contents/PlugIns/IrisDriveFileProvider.appex"
   local plugin_id="to.iris.drive.macos.FileProvider"
-  local plugin
-  local appex_registered=0
-  local registered_plugins=()
+  local registered_plugins
 
   [[ -d "$appex" ]] || return 0
   command -v pluginkit >/dev/null 2>&1 || return 0
-
-  while IFS= read -r plugin; do
-    [[ -n "$plugin" ]] || continue
-    registered_plugins+=("$plugin")
-  done < <(pluginkit -m -i "$plugin_id" -ADv 2>/dev/null | awk -F '\t' 'NF >= 4 { print $4 }')
-
-  if (( ${#registered_plugins[@]} > 0 )); then
-    for plugin in "${registered_plugins[@]}"; do
-      if [[ "$plugin" == "$appex" ]]; then
-        appex_registered=1
-      else
-        log "Removing stale macOS FileProvider pluginkit registration for $plugin"
-        pluginkit -r "$plugin" >/dev/null 2>&1 || true
-      fi
-    done
-  fi
-
-  if [[ "$appex_registered" == "1" ]]; then
+  registered_plugins="$(pluginkit -m -i "$plugin_id" -ADv 2>/dev/null | awk -F '\t' 'NF >= 4 { print $4 }')"
+  if grep -Fxq -- "$appex" <<<"$registered_plugins"; then
     log "Reusing existing macOS FileProvider pluginkit registration for $appex"
   else
     pluginkit -a "$appex" >/dev/null 2>&1 || true
   fi
-
   pluginkit -e use -i "$plugin_id" >/dev/null 2>&1 || true
 }
 
@@ -659,14 +601,19 @@ remove_repo_local_daemon_service() {
 }
 
 run_app() {
-  local app_path
+  local app_path="${1:-}"
   local app_base_dir="${IRIS_DRIVE_APP_BASE_DIR:-}"
   local mode
   local service_config_dir=""
 
   mode="$(signing_mode)"
-  build_app
-  app_path="$BUILD_APP_PATH"
+  if [[ -z "$app_path" ]]; then
+    build_app
+    app_path="$BUILD_APP_PATH"
+  elif [[ ! -d "$app_path" ]]; then
+    echo "Existing macOS app not found: $app_path" >&2
+    exit 1
+  fi
   if [[ -z "$app_base_dir" && "$mode" != "development" ]]; then
     app_base_dir="$BUILD_DIR/AppData"
   fi
@@ -705,6 +652,9 @@ case "${1:-}" in
     ;;
   run)
     run_app
+    ;;
+  run-existing)
+    run_app "${2:-$INSTALL_APP_PATH}"
     ;;
   -h|--help|help)
     usage
