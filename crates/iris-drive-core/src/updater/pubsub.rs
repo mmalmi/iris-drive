@@ -1,6 +1,6 @@
 //! Reuse the running app's pubsub client, or bootstrap a temporary FIPS client.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock, Weak};
 
@@ -19,7 +19,16 @@ use crate::fips_sync::FipsTransportSettings;
 use crate::fips_sync::endpoint_config::bind_drive_fips_endpoint;
 use crate::fips_sync::settings_runtime::fips_endpoint_options;
 
-type SharedClients = HashMap<PathBuf, Weak<FipsPubsubClient>>;
+mod update_routes;
+use update_routes::UpdateRouteLease;
+pub(crate) use update_routes::UpdateRoutes;
+
+struct SharedClient {
+    client: Weak<FipsPubsubClient>,
+    routes: Arc<UpdateRoutes>,
+}
+
+type SharedClients = HashMap<PathBuf, SharedClient>;
 static SHARED_CLIENTS: OnceLock<Mutex<SharedClients>> = OnceLock::new();
 
 type SharedStorage = (
@@ -58,13 +67,30 @@ pub(super) fn storage(
     Some((store.upgrade()?, route.upgrade()?))
 }
 
-pub(crate) fn register(config_dir: &Path, client: &Arc<FipsPubsubClient>) {
+#[cfg(test)]
+pub(crate) fn register(config_dir: &Path, client: &Arc<FipsPubsubClient>) -> Arc<UpdateRoutes> {
+    let routes = UpdateRoutes::new(client);
+    register_routed(config_dir, client, &routes);
+    routes
+}
+
+pub(crate) fn register_routed(
+    config_dir: &Path,
+    client: &Arc<FipsPubsubClient>,
+    routes: &Arc<UpdateRoutes>,
+) {
     let mut clients = SHARED_CLIENTS
         .get_or_init(Mutex::default)
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
-    clients.retain(|_, client| client.strong_count() > 0);
-    clients.insert(config_dir.to_path_buf(), Arc::downgrade(client));
+    clients.retain(|_, entry| entry.client.strong_count() > 0);
+    clients.insert(
+        config_dir.to_path_buf(),
+        SharedClient {
+            client: Arc::downgrade(client),
+            routes: routes.clone(),
+        },
+    );
 }
 
 /// The existing provider owns its connections; only standalone checks own an
@@ -77,6 +103,7 @@ pub(super) struct UpdatePubsub {
 struct UpdateConnections {
     owned_fips: Option<(Arc<FipsPubsubClient>, Arc<FipsEndpoint>)>,
     relay: Option<RelayEventBus>,
+    _route_lease: Option<UpdateRouteLease>,
 }
 
 impl UpdatePubsub {
@@ -106,15 +133,22 @@ impl UpdatePubsub {
                 _connections: UpdateConnections {
                     owned_fips: None,
                     relay: Some(relay),
+                    _route_lease: None,
                 },
             }));
         }
-        let shared = config
-            .config_dir
-            .as_ref()
-            .and_then(|directory| SHARED_CLIENTS.get()?.lock().ok()?.get(directory)?.upgrade());
-        let (client, owned_fips) = if let Some(client) = shared {
-            (client, None)
+        let reference = super::product_update_reference(config.update_ref.as_deref())?;
+        let publisher = PublicKey::parse(&reference.npub)
+            .context("invalid update publisher")?
+            .to_bech32()?;
+        let shared = config.config_dir.as_ref().and_then(|directory| {
+            let clients = SHARED_CLIENTS.get()?.lock().ok()?;
+            let entry = clients.get(directory)?;
+            Some((entry.client.upgrade()?, entry.routes.clone()))
+        });
+        let (client, owned_fips, route_lease) = if let Some((client, routes)) = shared {
+            let lease = routes.lease(publisher)?;
+            (client, None, Some(lease))
         } else {
             let settings = FipsTransportSettings {
                 // A check has its own ephemeral identity and must not claim the
@@ -148,7 +182,13 @@ impl UpdatePubsub {
             let mut policy = FipsPubsubPolicyOptions::default();
             policy.reputation.trusted_raters = settings.trusted_raters.into_iter().collect();
             let options = FipsPubsubClientOptions {
-                routed_peers: peers.into_iter().map(|peer| peer.npub).collect(),
+                routed_peers: peers
+                    .into_iter()
+                    .map(|peer| peer.npub)
+                    .chain(std::iter::once(publisher))
+                    .collect::<BTreeSet<_>>()
+                    .into_iter()
+                    .collect(),
                 ..Default::default()
             };
             let client =
@@ -161,13 +201,14 @@ impl UpdatePubsub {
                         return Err(error.into());
                     }
                 };
-            (client.clone(), Some((client, endpoint)))
+            (client.clone(), Some((client, endpoint)), None)
         };
         Ok(Arc::new(Self {
             provider: Arc::new(client.fresh_subscriber()),
             _connections: UpdateConnections {
                 owned_fips,
                 relay: None,
+                _route_lease: route_lease,
             },
         }))
     }

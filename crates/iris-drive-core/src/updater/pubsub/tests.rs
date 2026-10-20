@@ -10,6 +10,10 @@ use nostr_sdk::{Event, EventBuilder, Kind, Tag, TagKind, Timestamp};
 use crate::update_announcement::{load_update_event_cache, persist_update_event_cache};
 
 async fn endpoint(peers: Vec<PeerConfig>) -> Arc<FipsEndpoint> {
+    endpoint_with_keys(Keys::generate(), peers).await
+}
+
+async fn endpoint_with_keys(keys: Keys, peers: Vec<PeerConfig>) -> Arc<FipsEndpoint> {
     let mut config = fips_core::Config::new();
     config.node.control.enabled = false;
     config.node.discovery.nostr.enabled = false;
@@ -26,13 +30,157 @@ async fn endpoint(peers: Vec<PeerConfig>) -> Arc<FipsEndpoint> {
         Box::pin(
             FipsEndpoint::builder()
                 .config(config)
-                .identity_nsec(Keys::generate().secret_key().to_bech32().unwrap())
+                .identity_nsec(keys.secret_key().to_bech32().unwrap())
                 .without_system_tun()
                 .bind(),
         )
         .await
         .unwrap(),
     )
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn shared_updater_routes_to_release_author_through_transit() {
+    use hashtree_fips_transport::{FipsPeerConfig, set_fips_peer_configs};
+    let keys = Keys::generate();
+    let publisher_endpoint = endpoint_with_keys(keys.clone(), Vec::new()).await;
+    let transit = endpoint(Vec::new()).await;
+    let app_endpoint = endpoint(Vec::new()).await;
+    let peer = |node: &Arc<FipsEndpoint>, address: String| FipsPeerConfig {
+        npub: node.npub().to_owned(),
+        udp_addresses: vec![address],
+    };
+    let publisher_address =
+        publisher_endpoint.bound_udp_listen_addrs().await.unwrap()[0].to_string();
+    let transit_address = transit.bound_udp_listen_addrs().await.unwrap()[0].to_string();
+    let app_address = app_endpoint.bound_udp_listen_addrs().await.unwrap()[0].to_string();
+    set_fips_peer_configs(
+        &publisher_endpoint,
+        vec![peer(&transit, transit_address.clone())],
+    )
+    .await
+    .unwrap();
+    set_fips_peer_configs(
+        &transit,
+        vec![
+            peer(&publisher_endpoint, publisher_address),
+            peer(&app_endpoint, app_address),
+        ],
+    )
+    .await
+    .unwrap();
+    set_fips_peer_configs(&app_endpoint, vec![peer(&transit, transit_address)])
+        .await
+        .unwrap();
+    let publisher = FipsPubsubClient::start(
+        publisher_endpoint.clone(),
+        FipsPubsubClientOptions {
+            max_inbound_routed_peers: 2,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let event = release(&keys, 10, 0x53);
+    publisher
+        .publish(
+            VerifiedEvent::try_from(event).unwrap(),
+            EventSource::local_index("release"),
+        )
+        .await
+        .unwrap();
+    let app_client = Arc::new(
+        FipsPubsubClient::start(app_endpoint.clone(), FipsPubsubClientOptions::default())
+            .await
+            .unwrap(),
+    );
+    let reference = UpdateRef {
+        npub: keys.public_key().to_bech32().unwrap(),
+        tree_name: "releases/iris-drive".into(),
+        path: Some("latest".into()),
+    };
+    let directory = tempfile::tempdir().unwrap();
+    let update_routes = register(directory.path(), &app_client);
+    let provider = UpdatePubsub::connect(&ProductUpdateConfig {
+        config_dir: Some(directory.path().to_path_buf()),
+        update_ref: Some(format!(
+            "htree://{}/releases%2Firis-drive/latest",
+            reference.npub
+        )),
+        ..Default::default()
+    })
+    .await
+    .unwrap();
+    update_routes.set_application_peers(Vec::new()).unwrap();
+    let resolver = PubsubRootResolver::new(provider, Duration::from_secs(8));
+    let observed = resolver.resolve(&reference.resolver_key()).await;
+    let direct_provider_link = app_endpoint
+        .peers()
+        .await
+        .unwrap()
+        .iter()
+        .any(|p| p.connected && p.npub == publisher_endpoint.npub());
+    drop(resolver);
+    app_client.shutdown_shared().await;
+    publisher.shutdown_shared().await;
+    app_endpoint.shutdown().await.unwrap();
+    publisher_endpoint.shutdown().await.unwrap();
+    transit.shutdown().await.unwrap();
+    assert!(
+        !direct_provider_link,
+        "the publisher must remain behind the transit peer"
+    );
+    assert_eq!(
+        observed
+            .expect("fresh shared updater must route to its configured release author")
+            .unwrap()
+            .hash,
+        [0x53; 32]
+    );
+}
+
+#[tokio::test]
+async fn update_route_leases_preserve_peer_changes_and_release_capacity() {
+    let endpoint = endpoint(Vec::new()).await;
+    let identity = || Keys::generate().public_key().to_bech32().unwrap();
+    let original = identity();
+    let publisher = identity();
+    let replacement = identity();
+    let client = Arc::new(
+        FipsPubsubClient::start(
+            endpoint.clone(),
+            FipsPubsubClientOptions {
+                max_connected_peers: 2,
+                fanout: 2,
+                routed_peers: vec![original.clone()],
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap(),
+    );
+    let routes = UpdateRoutes::new(&client);
+    let first = routes.lease(publisher.clone()).unwrap();
+    let second = routes.lease(publisher.clone()).unwrap();
+    assert!(routes.lease(replacement.clone()).is_err());
+    routes.set_application_peers(vec![replacement]).unwrap();
+    drop(first);
+    assert!(
+        routes.lease(original.clone()).is_err(),
+        "the second check still owns the publisher route"
+    );
+    drop(second);
+    let third = routes.lease(original.clone()).unwrap();
+    assert!(
+        routes.lease(publisher.clone()).is_err(),
+        "the new application peer must survive check cleanup"
+    );
+    drop(third);
+    let fourth = routes.lease(publisher).unwrap();
+    assert!(routes.lease(original).is_err());
+    drop(fourth);
+    client.shutdown_shared().await;
+    endpoint.shutdown().await.unwrap();
 }
 
 fn release(keys: &Keys, created_at: u64, byte: u8) -> Event {

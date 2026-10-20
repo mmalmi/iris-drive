@@ -2573,7 +2573,7 @@ dependencies = [
 
 [[package]]
 name = "hashtree-provider"
-version = "0.1.38"
+version = "0.1.39"
 dependencies = [
  "async-trait",
  "futures",
@@ -3065,7 +3065,7 @@ checksum = "cf370abdafd54d13e54a620e8c3e1145f28e46cc9d704bc6d94414559df41763"
 
 [[package]]
 name = "iris-drive-app-core"
-version = "0.1.38"
+version = "0.1.39"
 dependencies = [
  "anyhow",
  "hashtree-core",
@@ -3086,7 +3086,7 @@ dependencies = [
 
 [[package]]
 name = "iris-drive-core"
-version = "0.1.38"
+version = "0.1.39"
 dependencies = [
  "aes-gcm 0.10.3",
  "anyhow",
@@ -3138,7 +3138,7 @@ dependencies = [
 
 [[package]]
 name = "iris-drive-linux"
-version = "0.1.38"
+version = "0.1.39"
 dependencies = [
  "gio",
  "glib",

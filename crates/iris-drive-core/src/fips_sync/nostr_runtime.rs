@@ -28,6 +28,7 @@ pub struct FipsNostrPubsubEvent {
 
 pub(super) struct DriveNostrPubsubRuntime {
     client: Option<Arc<FipsPubsubClient>>,
+    update_routes: Arc<crate::updater::pubsub::UpdateRoutes>,
     deliveries: broadcast::Sender<FipsNostrPubsubEvent>,
     receiver_task: Option<JoinHandle<()>>,
 }
@@ -66,6 +67,7 @@ impl DriveNostrPubsubRuntime {
             .await
             .map_err(|error| endpoint_error(error.to_string()))?,
         );
+        let update_routes = crate::updater::pubsub::UpdateRoutes::new(&client);
         let (deliveries, _) = broadcast::channel(DELIVERY_CAPACITY);
         let task_deliveries = deliveries.clone();
         let task_client = client.clone();
@@ -101,6 +103,7 @@ impl DriveNostrPubsubRuntime {
         });
         Ok(Self {
             client: Some(client),
+            update_routes,
             deliveries,
             receiver_task: Some(receiver_task),
         })
@@ -112,7 +115,7 @@ impl DriveNostrPubsubRuntime {
 
     pub(super) fn register_updater(&self, config_dir: &std::path::Path) {
         if let Some(client) = &self.client {
-            crate::updater::pubsub::register(config_dir, client);
+            crate::updater::pubsub::register_routed(config_dir, client, &self.update_routes);
         }
     }
 
@@ -131,8 +134,8 @@ impl DriveNostrPubsubRuntime {
 
     pub(super) fn set_routed_peers(&self, peers: Vec<String>) -> Result<(), FipsSyncError> {
         if let Some(client) = &self.client {
-            client
-                .set_routed_peers(bounded_routed_peers(
+            self.update_routes
+                .set_application_peers(bounded_routed_peers(
                     peers,
                     client.options().max_connected_peers,
                 ))
