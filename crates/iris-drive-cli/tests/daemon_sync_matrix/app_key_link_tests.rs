@@ -568,7 +568,7 @@ async fn routed_websocket_devices_deliver_approval_ack_and_report_online_through
     );
 }
 
-async fn wait_until_websocket_fips_connected(
+pub(super) async fn wait_until_websocket_fips_connected(
     owner_cfg: &Path,
     linked_cfg: &Path,
     linked_npub: &str,

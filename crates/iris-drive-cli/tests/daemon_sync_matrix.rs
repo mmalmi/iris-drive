@@ -492,3 +492,5 @@ mod relayless_tests;
 mod scenario_tests;
 #[path = "daemon_sync_matrix/staged_recovery_tests.rs"]
 mod staged_recovery_tests;
+#[path = "daemon_sync_matrix/successive_approval_tests.rs"]
+mod successive_approval_tests;
