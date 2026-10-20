@@ -135,7 +135,7 @@ run_desktop_gui_link_action() {
 }
 
 run_timed_desktop_gui_primary_approval() {
-  local request_url="$1" output action_pid status=0
+  local request_url="$1" output action_pid status=0 action_finished=0
   output="$(mktemp -t iris-drive-desktop-gui-approval.XXXXXX)"
   run_desktop_gui_link_action \
     "$owner_label" "$request_url" approval_queued \
@@ -145,6 +145,12 @@ run_timed_desktop_gui_primary_approval() {
   while ! grep -Fq 'IRIS_DRIVE_DESKTOP_GUI_APPROVAL_STARTED=1' "$output"; do
     if ! kill -0 "$action_pid" >/dev/null 2>&1; then
       wait "$action_pid" || status=$?
+      action_finished=1
+      # The activation can be written after the first probe but before exit.
+      # Recheck the final output before treating process exit as no activation.
+      if grep -Fq 'IRIS_DRIVE_DESKTOP_GUI_APPROVAL_STARTED=1' "$output"; then
+        break
+      fi
       cat "$output" >&2
       rm -f "$output"
       ((status != 0)) || status=1
@@ -155,7 +161,9 @@ run_timed_desktop_gui_primary_approval() {
   done
 
   mark_desktop_gui_primary_approval_submission
-  wait "$action_pid" || status=$?
+  if ((action_finished == 0)); then
+    wait "$action_pid" || status=$?
+  fi
   cat "$output"
   if ((status == 0)) && ! grep -Fq 'IRIS_DRIVE_DESKTOP_GUI_APPROVAL_SUBMITTED=1' "$output"; then
     echo "desktop GUI approval exited without successful submission" >&2

@@ -786,7 +786,7 @@ pub(crate) async fn send_pending_app_key_link_request(
 
 pub(crate) async fn send_authorized_app_key_link_rosters(
     config_dir: &Path,
-    relay_client: &nostr_sdk::Client,
+    relay_client: Option<&nostr_sdk::Client>,
     fips_blocks: Option<&FsFipsBlockSync>,
     cache: &mut AuthorizedAppKeyLinkRosterSendCache,
     acked_rosters: &BTreeSet<String>,
@@ -830,10 +830,11 @@ pub(crate) async fn send_authorized_app_key_link_rosters(
         })
         .cloned()
         .collect::<Vec<_>>();
-    let relay_pending = !pending_ops.is_empty()
-        || pending_receipts
-            .iter()
-            .any(|(event_id, _)| !cache.published_relay_event_ids.contains(event_id));
+    let relay_pending = relay_client.is_some()
+        && (!pending_ops.is_empty()
+            || pending_receipts
+                .iter()
+                .any(|(event_id, _)| !cache.published_relay_event_ids.contains(event_id)));
     let fips_due = fips_blocks.is_some() && !due_devices.is_empty();
     if !relay_pending && !fips_due {
         return Ok(None);
@@ -885,6 +886,9 @@ pub(crate) async fn send_authorized_app_key_link_rosters(
     let (fips, relay) = Box::pin(attempt_app_key_link_delivery(
         fips_send,
         async move {
+            let Some(relay_client) = relay_client else {
+                return Ok(0);
+            };
             let mut published = 0;
             if !pending_ops.is_empty() {
                 published += iris_drive_core::relay_sync::publish_nostr_identity_roster_ops(

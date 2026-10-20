@@ -99,7 +99,7 @@ fn add_mutual(config_dir: &Path, friend: &str) -> FriendBackupConfig {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[allow(clippy::too_many_lines)]
 async fn mutual_friends_store_audit_and_restore_over_authenticated_fips() {
-    tokio::time::timeout(Duration::from_mins(1), async {
+    Box::pin(tokio::time::timeout(Duration::from_mins(1), async {
         let temp = tempfile::tempdir().unwrap();
         let alice_dir = temp.path().join("alice");
         let bob_dir = temp.path().join("bob");
@@ -408,7 +408,7 @@ async fn mutual_friends_store_audit_and_restore_over_authenticated_fips() {
         stranger_bound.native_endpoint.shutdown().await.unwrap();
         alice.shutdown().await;
         bob.shutdown().await;
-    })
+    }))
     .await
     .expect("friend backup exchange, audit and recovery exceeded one minute");
 }

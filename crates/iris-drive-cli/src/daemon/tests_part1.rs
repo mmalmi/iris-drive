@@ -443,7 +443,10 @@ fn online_authorized_app_key_without_primary_root_needs_state_lookup() {
             remote_app_key.clone(),
             AppKeyRootRef::legacy("remote-root", 11, 1),
         );
-    assert!(authorized_app_keys_missing_primary_roots(&with_remote_root).is_empty());
+    assert_eq!(
+        authorized_app_keys_missing_primary_roots(&with_remote_root).len(),
+        0
+    );
 }
 
 #[test]
@@ -775,7 +778,7 @@ fn windows_cloud_rescan_without_delete_recovery_ignores_cached_projection_misses
         windows_cloud_rescan_missing_cached_provider_paths(sync_root.path(), &cached, false)
             .unwrap();
 
-    assert!(missing.is_empty());
+    assert_eq!(missing.len(), 0);
 }
 
 #[test]

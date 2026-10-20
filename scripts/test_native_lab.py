@@ -10,6 +10,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Optional
 from unittest import mock
 
 
@@ -147,6 +148,7 @@ class NativeLabTests(unittest.TestCase):
         tunnel: str = "connected",
         online: bool = True,
         malformed: bool = False,
+        xctrace_output: Optional[str] = None,
     ) -> dict:
         device = {
             "identifier": "core-device-id",
@@ -163,6 +165,8 @@ class NativeLabTests(unittest.TestCase):
             if online
             else "== Devices ==\n\n== Devices Offline ==\nTest iPhone (26.5) (hardware-id)\n"
         )
+        if xctrace_output is not None:
+            xctrace = xctrace_output
 
         def probe(command: list[str], timeout: int = 15) -> tuple[bool, str]:
             del timeout
@@ -197,6 +201,21 @@ class NativeLabTests(unittest.TestCase):
         for case in cases:
             with self.subTest(case=case):
                 self.assertFalse(self.ios_health(**case)["available"])
+
+    def test_ios_device_health_accepts_output_without_offline_devices(self) -> None:
+        health = self.ios_health(xctrace_output=(
+            "== Devices ==\nTest iPhone (26.5) (hardware-id)\n\n"
+            "== Simulators ==\nOther iPhone Simulator\n"
+        ))
+        self.assertTrue(health["available"])
+        self.assertEqual(health["allocation"], "core-device-id")
+
+    def test_ios_device_health_does_not_treat_simulator_as_online_phone(self) -> None:
+        health = self.ios_health(xctrace_output=(
+            "== Devices ==\nTest Mac\n\n"
+            "== Simulators ==\nTest iPhone (26.5) (simulator-id)\n"
+        ))
+        self.assertFalse(health["available"])
 
     def test_ios_device_health_rejects_malformed_json(self) -> None:
         health = self.ios_health(malformed=True)

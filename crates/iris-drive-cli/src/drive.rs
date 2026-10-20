@@ -248,6 +248,27 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
             elapsed_ms = started.elapsed().as_millis(),
             "provider command opened daemon"
         );
+        match &command {
+            ProviderCmd::Write { path, .. }
+            | ProviderCmd::Mkdir { path, .. }
+            | ProviderCmd::Delete { path, .. } => {
+                iris_drive_core::shared_content::ensure_shared_path_writable(
+                    daemon.config(),
+                    &normalize_provider_path(path)?,
+                )?;
+            }
+            ProviderCmd::Rename {
+                old_path, new_path, ..
+            } => {
+                for path in [old_path, new_path] {
+                    iris_drive_core::shared_content::ensure_shared_path_writable(
+                        daemon.config(),
+                        &normalize_provider_path(path)?,
+                    )?;
+                }
+            }
+            _ => {}
+        }
         let staged_root =
             read_provider_staging(config_dir).context("reading staged provider root")?;
         let supplied_base_root_cid = provider_command_base_root_cid(&command)?;

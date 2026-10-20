@@ -127,6 +127,26 @@ final class IrisWebGatewayRetryTests: XCTestCase {
         XCTAssertEqual(results, ["validated complete result"])
     }
 
+    @MainActor
+    func testProbeDeadlinePreservesPartialEvidenceAndRejectsLateProgress() {
+        let completion = IrisDebugProbeCompletion()
+        var timeoutFields: [String: Any] = [:]
+        completion.record(["phase": "gateway", "opened": false])
+        completion.start(timeoutMilliseconds: 30_000) {
+            timeoutFields = completion.fields
+        }
+        completion.record(["phase": "webview.capture", "opened": true])
+        completion.record(["webview_title": "Iris: The Freedom Toolkit"])
+        completion.deadlineExpired()
+        completion.record(["phase": "finished", "webview_loaded": true])
+
+        XCTAssertEqual(timeoutFields["phase"] as? String, "webview.capture")
+        XCTAssertEqual(timeoutFields["opened"] as? Bool, true)
+        XCTAssertEqual(timeoutFields["webview_title"] as? String, "Iris: The Freedom Toolkit")
+        XCTAssertNil(completion.fields["webview_loaded"])
+        XCTAssertEqual(completion.fields["phase"] as? String, "webview.capture")
+    }
+
 
     @MainActor
     func testProbeConfiguredDeadlineDoesNotWaitForCapture() async {

@@ -4,6 +4,7 @@
 import base64
 import json
 import os
+import plistlib
 import re
 import shutil
 import subprocess
@@ -77,30 +78,58 @@ class CrossVmIdleGateTests(unittest.TestCase):
         self.assertIn("IRIS_DRIVE_IDLE_CPU_COMMAND_MATCH = " + quoted_config, command)
         self.assertNotIn("$repo", command)
 
-    def test_final_idle_samples_run_serially(self):
+    def test_final_idle_gates_overlap_without_losing_failures_or_cleanup(self):
         gate = self.source[self.source.rindex("if idle_cpu_gate_enabled; then"):
                            self.source.rindex('\necho\necho "cross-vm e2e passed')]
-        parallel = self.source[self.source.index("run_for_all_labels_parallel() {"):
-                               self.source.index("idle_cpu_gate_enabled() {")]
-        script = ("set -euo pipefail\n" + parallel
-                  + "\nLABELS=(one two); calls=0\n"
-                  + "idle_cpu_gate_enabled() { return 0; }\n"
-                  + "idle_cpu_gate_label() { calls=$((calls + 1)); }\n"
-                  + "run_step() { shift; \"$@\"; }\n" + gate
-                  + '\n[[ "$calls" == 2 ]]\n')
-        result = subprocess.run(["bash", "-c", script], text=True, capture_output=True, timeout=5)
-        self.assertEqual(result.returncode, 0, "Idle samples escaped into parallel subshells")
+        helper = (SCRIPTS / "lib/parallel-gate.sh").read_text()
+        for failing in ("", "windows"):
+            with self.subTest(failing=failing), tempfile.TemporaryDirectory() as directory:
+                script = ("set -Eeuo pipefail\n" + helper + "\n" + textwrap.dedent("""\
+                    LABELS=(ubuntu windows macos ios android)
+                    trap 'printf "cleanup\\n" >> "$STATE_DIR/cleanup"' EXIT
+                    idle_cpu_gate_enabled() { return 0; }
+                    run_step() { shift; "$@"; }
+                    idle_cpu_gate_label() {
+                      local label="$1" end=$((SECONDS+3))
+                      touch "$STATE_DIR/start-$label"
+                      while [[ "$(find "$STATE_DIR" -name 'start-*' | wc -l | tr -d ' ')" != 5 ]]; do
+                        [[ "$SECONDS" -lt "$end" ]] || return 8
+                        sleep .01
+                      done
+                      touch "$STATE_DIR/done-$label"
+                      [[ "$label" != "$FAIL_LABEL" ]]
+                    }
+                    """) + gate + "\n")
+                result = subprocess.run(["bash", "-c", script], text=True, capture_output=True,
+                    env=dict(os.environ, STATE_DIR=directory, FAIL_LABEL=failing), timeout=6)
+                self.assertEqual(result.returncode, 1 if failing else 0, result.stderr)
+                state = Path(directory)
+                self.assertEqual(len(list(state.glob("start-*"))), 5)
+                self.assertEqual(len(list(state.glob("done-*"))), 5,
+                                 "Every sampler must finish before cleanup, including after failure")
+                self.assertEqual((state / "cleanup").read_text().splitlines(), ["cleanup"],
+                                 "Only the owning parent may clean up the daemon fixtures")
 
 
 class ProcessIdleCpuTests(unittest.TestCase):
     @unittest.skipUnless(sys.platform == "darwin", "Requires the actual Darwin mktemp")
     def test_macos_smoke_allocates_profile_inside_supplied_tmpdir(self):
+        self.assert_macos_smoke_profile_parent(False)
+
+    @unittest.skipUnless(sys.platform == "darwin", "Requires the actual Darwin mktemp")
+    def test_signed_macos_smoke_allocates_profile_inside_entitled_group(self):
+        self.assert_macos_smoke_profile_parent(True)
+
+    def assert_macos_smoke_profile_parent(self, sandboxed):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             scripts = root / "scripts"
             scripts.mkdir()
             shutil.copyfile(SCRIPTS / "macos-idle-cpu-smoke.sh",
                             scripts / "macos-idle-cpu-smoke.sh")
+            (scripts / "lib").mkdir()
+            shutil.copyfile(SCRIPTS / "lib/macos-smoke-profile.sh",
+                            scripts / "lib/macos-smoke-profile.sh")
             app = root / "Signed App.app"
             helper = app / "Contents" / "MacOS" / "idrive"
             helper.parent.mkdir(parents=True)
@@ -115,6 +144,12 @@ class ProcessIdleCpuTests(unittest.TestCase):
             helper.chmod(0o755)
             mocks = root / "bin"
             mocks.mkdir()
+            entitlements = {"com.apple.security.app-sandbox": True,
+                            "com.apple.security.application-groups": ["TEST.to.iris.drive"]} if sandboxed else {}
+            (root / "entitlements.plist").write_bytes(plistlib.dumps(entitlements))
+            signer = mocks / "codesign"
+            signer.write_text('#!/bin/sh\ncat "$TEST_ENTITLEMENTS"\n')
+            signer.chmod(0o755)
             for command in ("pkill", "osascript"):
                 tool = mocks / command
                 tool.write_text("#!/bin/sh\nexit 0\n")
@@ -123,14 +158,16 @@ class ProcessIdleCpuTests(unittest.TestCase):
             owned_tmp.mkdir()
             result = subprocess.run(
                 ["/bin/bash", str(scripts / "macos-idle-cpu-smoke.sh")],
-                env=dict(os.environ, TMPDIR=str(owned_tmp),
+                env=dict(os.environ, TMPDIR=str(owned_tmp), HOME=str(root),
+                         TEST_ENTITLEMENTS=str(root / "entitlements.plist"),
                          PATH=f"{mocks}:/usr/bin:/bin:/usr/sbin:/sbin",
                          IRIS_DRIVE_MACOS_IDLE_APP_PATH=str(app),
                          OBSERVED_CONFIG=str(observed)),
                 text=True, capture_output=True, timeout=5)
             self.assertEqual(result.returncode, 73, result.stderr)
             profile = Path(observed.read_text()).parent
-            self.assertEqual(profile.parent.resolve(), owned_tmp.resolve())
+            expected = root / "Library/Group Containers/TEST.to.iris.drive/Iris Drive Smoke" if sandboxed else owned_tmp
+            self.assertEqual(profile.parent.resolve(), expected.resolve())
             self.assertFalse(profile.exists(), "Stock cleanup must remove the task profile")
 
     def test_ios_launch_clears_stale_profile_but_preserves_explicit_override(self):

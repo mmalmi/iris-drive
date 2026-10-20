@@ -12,20 +12,23 @@ DEBUG_NETWORK_PORT_EXTRA="${IRIS_DRIVE_ANDROID_DEBUG_NETWORK_PORT_EXTRA:-to.iris
 APK_PATH="${IRIS_DRIVE_ANDROID_APK:-$ROOT/android/app/build/outputs/apk/uiTest/app-uiTest.apk}"
 TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
 IDRIVE="${IRIS_DRIVE_IDRIVE_BIN:-$TARGET_DIR/debug/idrive}"
-OWNER_CONFIG="$(mktemp -d -t iris-drive-android-gui-owner)"
+OWNER_CONFIG="$(mktemp -d "${TMPDIR:-/tmp}/iris-drive-android-gui-owner.XXXXXX")"
 export HTREE_DATA_DIR="$OWNER_CONFIG/hashtree-data"
-OWNER_SOURCE_DIR="$(mktemp -d -t iris-drive-android-gui-owner-files)"
-OWNER_DAEMON_LOG="$(mktemp -t iris-drive-android-gui-owner-daemon.XXXXXX)"
+OWNER_SOURCE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/iris-drive-android-gui-owner-files.XXXXXX")"
+OWNER_DAEMON_LOG="$(mktemp "${TMPDIR:-/tmp}/iris-drive-android-gui-owner-daemon.XXXXXX")"
 OWNER_DAEMON_PID=""
 OWNER_FIPS_PORT=""
 OWNER_HOST_ADDR="${IRIS_DRIVE_ANDROID_HOST_ADDR:-}"
-LOCAL_RELAY_READY="$(mktemp -t iris-drive-android-gui-relay.XXXXXX)"
-LOCAL_RELAY_LOG="$(mktemp -t iris-drive-android-gui-relay.XXXXXX.log)"
+LOCAL_RELAY_READY="$(mktemp "${TMPDIR:-/tmp}/iris-drive-android-gui-relay.XXXXXX")"
+LOCAL_RELAY_LOG="$(mktemp "${TMPDIR:-/tmp}/iris-drive-android-gui-relay.log.XXXXXX")"
 LOCAL_RELAY_PID=""
 LOCAL_RELAY_URL=""
-LOCAL_BLOSSOM_READY="$(mktemp -t iris-drive-android-gui-blossom.XXXXXX)"
-LOCAL_BLOSSOM_LOG="$(mktemp -t iris-drive-android-gui-blossom.XXXXXX.log)"
-LOCAL_BLOSSOM_STORAGE="$(mktemp -d -t iris-drive-android-gui-blossom-storage)"
+LOCAL_RELAY_DEVICE_URL=""
+LOCAL_RELAY_PORT=""
+LOCAL_BLOSSOM_READY="$(mktemp "${TMPDIR:-/tmp}/iris-drive-android-gui-blossom.XXXXXX")"
+LOCAL_BLOSSOM_LOG="$(mktemp "${TMPDIR:-/tmp}/iris-drive-android-gui-blossom.log.XXXXXX")"
+LOCAL_BLOSSOM_REQUEST_LOG="$(mktemp "${TMPDIR:-/tmp}/iris-drive-android-gui-blossom.requests.XXXXXX")"
+LOCAL_BLOSSOM_STORAGE="$(mktemp -d "${TMPDIR:-/tmp}/iris-drive-android-gui-blossom-storage.XXXXXX")"
 LOCAL_BLOSSOM_PID=""
 LOCAL_BLOSSOM_PORT=""
 LOCAL_BLOSSOM_DEVICE_URL=""
@@ -44,6 +47,9 @@ cleanup() {
   local status=$?
   trap - EXIT
   set +e
+  if [[ -n "$LOCAL_RELAY_PORT" && -n "${ADB:-}" && -n "$serial" ]]; then
+    "$ADB" -s "$serial" reverse --remove "tcp:$LOCAL_RELAY_PORT" >/dev/null 2>&1 || true
+  fi
   if [[ -n "$LOCAL_BLOSSOM_PORT" && -n "${ADB:-}" && -n "$serial" ]]; then
     "$ADB" -s "$serial" reverse --remove "tcp:$LOCAL_BLOSSOM_PORT" >/dev/null 2>&1 || true
   fi
@@ -59,6 +65,13 @@ cleanup() {
     kill "$LOCAL_RELAY_PID" >/dev/null 2>&1 || true
     wait "$LOCAL_RELAY_PID" 2>/dev/null || true
   fi
+  if [[ -n "${IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR:-}" ]]; then
+    mkdir -p "$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR"
+    cp -n "$LOCAL_BLOSSOM_REQUEST_LOG" "$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR/blossom-requests.jsonl"
+    cp -n "$LOCAL_BLOSSOM_LOG" "$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR/blossom.log"
+    cp -n "$LOCAL_RELAY_LOG" "$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR/relay.log"
+    cp -n "$OWNER_DAEMON_LOG" "$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR/owner-daemon.log"
+  fi
   if [[ "${IRIS_DRIVE_ANDROID_KEEP_TEST_APP:-false}" != "true" && -n "${ADB:-}" && -n "$serial" ]]; then
     "$ADB" -s "$serial" uninstall "$PACKAGE_NAME" >/dev/null 2>&1 || true
     "$ADB" -s "$serial" uninstall "$PACKAGE_NAME.test" >/dev/null 2>&1 || true
@@ -71,6 +84,7 @@ cleanup() {
     "$LOCAL_RELAY_READY" \
     "$LOCAL_RELAY_LOG" \
     "$LOCAL_BLOSSOM_READY" \
+    "$LOCAL_BLOSSOM_REQUEST_LOG" \
     "$LOCAL_BLOSSOM_LOG"
   exit "$status"
 }
@@ -270,6 +284,7 @@ start_local_blossom() {
     --port 0 \
     --storage-dir "$LOCAL_BLOSSOM_STORAGE" \
     --ready-file "$LOCAL_BLOSSOM_READY" \
+    --request-log "$LOCAL_BLOSSOM_REQUEST_LOG" \
     >"$LOCAL_BLOSSOM_LOG" 2>&1 &
   LOCAL_BLOSSOM_PID="$!"
   for _ in $(seq 1 100); do
@@ -299,6 +314,14 @@ start_local_blossom() {
   echo "FAIL: local Blossom fixture did not become ready" >&2
   cat "$LOCAL_BLOSSOM_LOG" >&2 || true
   exit 1
+}
+
+start_local_android_relay() {
+  start_local_relay
+  LOCAL_RELAY_PORT="$(python3 -c 'import sys,urllib.parse; print(urllib.parse.urlsplit(sys.argv[1]).port or "")' "$LOCAL_RELAY_URL")"
+  [[ "$LOCAL_RELAY_PORT" =~ ^[1-9][0-9]*$ ]] || return 1
+  "$ADB" -s "$serial" reverse "tcp:$LOCAL_RELAY_PORT" "tcp:$LOCAL_RELAY_PORT" >/dev/null
+  LOCAL_RELAY_DEVICE_URL="ws://127.0.0.1:$LOCAL_RELAY_PORT"
 }
 
 verify_local_blossom_uploads() {
@@ -351,6 +374,7 @@ valid = (
 raise SystemExit(0 if valid else 1)
 ' <<<"$approval_json"; then
     echo "FAIL: CLI owner approval did not publish a complete local Blossom root handoff" >&2
+    printf '%s\n' "$approval_json" >&2
     return 1
   fi
 }
@@ -358,6 +382,14 @@ raise SystemExit(0 if valid else 1)
 configure_owner_local_relay() {
   start_local_relay
   "$IDRIVE" --config-dir "$OWNER_CONFIG" relays add "$LOCAL_RELAY_URL" >/dev/null
+  local relay
+  while IFS= read -r relay; do
+    [[ "$relay" == "$LOCAL_RELAY_URL" ]] && continue
+    "$IDRIVE" --config-dir "$OWNER_CONFIG" relays remove "$relay" >/dev/null
+  done < <("$IDRIVE" --config-dir "$OWNER_CONFIG" relays list \
+    | python3 -c 'import json,sys; print("\n".join(json.load(sys.stdin)))')
+  "$IDRIVE" --config-dir "$OWNER_CONFIG" relays list \
+    | python3 -c 'import json,sys; assert json.load(sys.stdin) == [sys.argv[1]], "Owner fixture must use only its local relay"' "$LOCAL_RELAY_URL"
 }
 
 wait_for_owner_inbound_request() {
@@ -494,6 +526,7 @@ run_android_gui_tests() {
   local share_api_class="to.iris.drive.app.ShareActivityInstrumentedTest"
   local mode="${IRIS_DRIVE_ANDROID_GUI_TEST_MODE:-smoke}"
   local blossom_argument="-Pandroid.testInstrumentationRunnerArguments.blossom_server=$LOCAL_BLOSSOM_DEVICE_URL"
+  local relay_argument="-Pandroid.testInstrumentationRunnerArguments.relay_server=$LOCAL_RELAY_DEVICE_URL"
   local smoke_tests=(
     createProfileFlowDoesNotRequireUsernameOrProfilePhoto
     linkThisDeviceFlowClicksThroughSignInUi
@@ -529,6 +562,7 @@ run_android_gui_tests() {
           cd "$ROOT"
           ANDROID_SERIAL="$serial" ./tools/run-android :app:connectedUiTestAndroidTest \
             "$blossom_argument" \
+            "$relay_argument" \
             "-Pandroid.testInstrumentationRunnerArguments.class=$class#$test"
         )
       done
@@ -549,6 +583,7 @@ run_android_gui_tests() {
     cd "$ROOT"
     ANDROID_SERIAL="$serial" ./tools/run-android :app:assembleDebug :app:connectedUiTestAndroidTest \
       "$blossom_argument" \
+      "$relay_argument" \
       "-Pandroid.testInstrumentationRunnerArguments.class=$filter"
   )
 }
@@ -562,6 +597,7 @@ fi
 
 "$ADB" -s "$serial" wait-for-device
 start_local_blossom
+start_local_android_relay
 run_android_gui_tests
 verify_local_blossom_uploads
 
@@ -688,6 +724,10 @@ request_url="$(owner_inbound_request_url "$linked_device")"
 authorization_started_ms="$(monotonic_milliseconds)"
 authorization_deadline_ms=$((authorization_started_ms + AUTHORIZATION_TIMEOUT_SECS * 1000))
 approved_json="$("$IDRIVE" --config-dir "$OWNER_CONFIG" approve "$request_url" --label "Android GUI")"
+if [[ -n "${IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR:-}" ]]; then
+  mkdir -p "$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR"
+  printf '%s\n' "$approved_json" >"$IRIS_DRIVE_ANDROID_GUI_EVIDENCE_DIR/owner-approval.json"
+fi
 assert_local_blossom_approval_handoff "$approved_json"
 roster_size="$(python3 -c 'import json,sys; print(json.load(sys.stdin)["roster_size"])' <<<"$approved_json")"
 if [[ "$roster_size" != "2" ]]; then

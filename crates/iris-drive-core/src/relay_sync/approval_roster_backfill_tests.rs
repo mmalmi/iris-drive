@@ -81,7 +81,7 @@ fn device_approval_receipt_clears_awaiting_approval_before_full_roster_frame() {
     assert!(linked_state.can_write_roots());
     assert!(linked_state.can_write_roots_for_app_key(&linked_state.app_key_pubkey));
     assert!(linked_state.outbound_app_key_link_request.is_some());
-    assert!(!linked_state.profile_roster_ops.is_empty());
+    assert_ne!(linked_state.profile_roster_ops.len(), 0);
     assert!(linked_state.app_keys.is_none());
     assert!(apply_device_approval_roster_backfill_events(&mut cfg, &[]).is_err());
 

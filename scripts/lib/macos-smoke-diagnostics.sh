@@ -17,6 +17,8 @@ capture_macos_smoke_failure_diagnostics() {
     "$MACOS_SMOKE_APPINTENTS_LOG" \
     "$APP_STDOUT" \
     "$APP_STDERR" \
+    "$SMOKE_STATE_DIR/app.stdout.log" \
+    "$SMOKE_STATE_DIR/app.stderr.log" \
     "$APP_DEBUG_LOG" \
     "$SMOKE_STATE_DIR/owner-daemon.stdout" \
     "$SMOKE_STATE_DIR/owner-daemon.stderr" \

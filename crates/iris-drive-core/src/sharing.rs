@@ -843,6 +843,18 @@ impl ShareRootWriteAuthorization {
     }
 }
 
+pub(crate) fn shared_with_me_mount_path(folder: &SharedFolder, folders: &[SharedFolder]) -> String {
+    let path = folder.shared_with_me_path();
+    if folders
+        .iter()
+        .any(|other| other.share_id != folder.share_id && other.shared_with_me_path() == path)
+    {
+        format!("{path} ({})", folder.share_id)
+    } else {
+        path
+    }
+}
+
 #[must_use]
 pub fn shared_folder_views(
     shared_folders: &[SharedFolder],
@@ -851,7 +863,11 @@ pub fn shared_folder_views(
 ) -> Vec<SharedFolderView> {
     let mut views = shared_folders
         .iter()
-        .map(|folder| shared_folder_view(folder, share_shortcuts, current_app_pubkey))
+        .map(|folder| {
+            let mut view = shared_folder_view(folder, share_shortcuts, current_app_pubkey);
+            view.shared_with_me_path = shared_with_me_mount_path(folder, shared_folders);
+            view
+        })
         .collect::<Vec<_>>();
     views.sort_by(|left, right| {
         left.shared_with_me_path

@@ -205,12 +205,26 @@ if ! poll_probe_result "$DEVICE_UDID" "$probe_json"; then
   echo "FAIL: device Iris Apps probe did not write a fresh result." >&2
   exit 1
 fi
+probe_screenshot_source="$(python3 - "$probe_json" <<'PY'
+import json
+import re
+import sys
+from pathlib import PurePosixPath
+
+with open(sys.argv[1], "r", encoding="utf-8") as handle:
+    data = json.load(handle)
+name = PurePosixPath(data.get("webview_screenshot_path") or "").name
+if not re.fullmatch(r"debug-iris-apps-webview-[0-9A-Fa-f-]{36}\.png", name):
+    raise SystemExit(f"FAIL: device Iris Apps probe did not capture a fresh screenshot: {data}")
+print(f"Documents/{name}")
+PY
+)"
 probe_screenshot="$(mktemp -t iris-drive-ios-device-iris-apps.XXXXXX.png)"
 if xcrun devicectl device copy from \
   --device "$DEVICE_UDID" \
   --domain-type appDataContainer \
   --domain-identifier "$BUNDLE_ID" \
-  --source Documents/debug-iris-apps-webview.png \
+  --source "$probe_screenshot_source" \
   --destination "$probe_screenshot" >/dev/null 2>&1; then
   echo "webview_screenshot=$probe_screenshot"
 else

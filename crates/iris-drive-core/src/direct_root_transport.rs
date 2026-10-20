@@ -126,8 +126,9 @@ impl DirectRootExchange {
         if !periodic_direct_root_exchange_has_peer(sync).await {
             return Ok(());
         }
-        let config = AppConfig::load_or_default(config_path_in(config_dir))
-            .map_err(|error| format!("loading config: {error}"))?;
+        let config = crate::shared_content::prepare_shared_folder_roots(config_dir)
+            .await
+            .map_err(|error| format!("preparing shared folders: {error}"))?;
         sync.refresh_authorized_peers_from_config_dir(config_dir)
             .await;
         let Some(state) = config.profile.as_ref() else {
@@ -667,6 +668,7 @@ fn has_connected_authorized_peer(authorized: &[String], connected: &[String]) ->
 pub fn coalesce_direct_root_app_messages(
     messages: Vec<crate::FipsAppMessage>,
 ) -> (Vec<crate::FipsAppMessage>, usize) {
+    let mut control = Vec::new();
     let mut passthrough = Vec::new();
     let mut latest_roots =
         BTreeMap::<String, (DirectRootCacheSlot, bool, crate::FipsAppMessage)>::new();
@@ -674,6 +676,12 @@ pub fn coalesce_direct_root_app_messages(
     let mut skipped = 0usize;
 
     for message in messages {
+        // Approval handshakes and durable ACKs must precede root application,
+        // which can wait on storage or network work in the same receive batch.
+        if crate::fips_sync::is_control_bootstrap_topic(&message.topic) {
+            control.push(message);
+            continue;
+        }
         let Some(frame) = direct_root_message_batch_frame(&message) else {
             passthrough.push(message);
             continue;
@@ -713,12 +721,9 @@ pub fn coalesce_direct_root_app_messages(
         }
     }
 
-    let mut coalesced = latest_roots
-        .into_values()
-        .map(|(_, _, message)| message)
-        .collect::<Vec<_>>();
-    coalesced.extend(passthrough);
-    (coalesced, skipped)
+    control.extend(latest_roots.into_values().map(|(_, _, message)| message));
+    control.extend(passthrough);
+    (control, skipped)
 }
 
 #[derive(Debug, Clone, Eq, PartialEq)]
@@ -991,6 +996,45 @@ pub fn build_current_direct_root_events(
                     root.app_key_seq,
                     root.root_cid,
                     authorized_app_keys.join(",")
+                ),
+                &event,
+            ));
+        }
+    }
+    let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
+    for folder in &config.shared_folders {
+        if crate::shared_folder_app_key_can_write_roots(folder, &state.app_key_pubkey)
+            && let Some(root) = folder.app_key_roots.get(&state.app_key_pubkey)
+            && !root.local_only
+        {
+            let recipients = crate::shared_folder_key_recipient_pubkeys(folder);
+            let event = crate::nostr_events::build_drive_root_publish_event(
+                device.keys(),
+                &folder.share_id.to_string(),
+                PRIMARY_DRIVE_ID,
+                &crate::shared_content::share_root_for_publish(folder, root),
+                &recipients,
+            )?;
+            events.push(direct_root_event(
+                format!(
+                    "share-root:{}:{}:{}:{}:{}",
+                    folder.share_id,
+                    state.app_key_pubkey,
+                    root.app_key_seq,
+                    root.root_cid,
+                    recipients.join(",")
+                ),
+                &event,
+            ));
+        }
+        if crate::shared_folder_app_key_can_admin(folder, &state.app_key_pubkey) {
+            let snapshot =
+                crate::sign_share_access_snapshot(device.keys(), folder, folder.access.updated_at)?;
+            let event = Event::from_json(&snapshot.event_json)?;
+            events.push(direct_root_event(
+                format!(
+                    "share-access:{}:{}:{}",
+                    folder.share_id, snapshot.snapshot_id, snapshot.content.updated_at
                 ),
                 &event,
             ));
@@ -1618,6 +1662,40 @@ mod tests {
                 "share-root:share:remote:2:share-hash:share-key:local,remote".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn direct_root_batch_keeps_approval_exchange_ahead_of_root_work() {
+        use crate::app_key_link_transport::{
+            APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC, APP_KEY_APPROVAL_RECEIPT_APP_TOPIC,
+            APP_KEY_LINK_ROSTER_APP_TOPIC,
+        };
+
+        let control = [
+            APP_KEY_APPROVAL_RECEIPT_APP_TOPIC,
+            APP_KEY_LINK_ROSTER_APP_TOPIC,
+            APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC,
+        ]
+        .map(|topic| crate::FipsAppMessage {
+            peer_id: "peer".to_string(),
+            topic: topic.to_string(),
+            data: topic.as_bytes().to_vec(),
+        });
+        let profile = direct_root_app_message("profile-op:profile:event");
+        let older =
+            direct_root_app_message("drive-root:remote:main:7:old-hash:old-key:local,remote");
+        let newer =
+            direct_root_app_message("drive-root:remote:main:8:new-hash:new-key:local,remote");
+        let mut batch = vec![profile.clone(), older];
+        batch.extend(control.clone());
+        batch.push(newer.clone());
+
+        let (messages, skipped) = coalesce_direct_root_app_messages(batch);
+
+        assert_eq!(skipped, 1);
+        assert_eq!(&messages[..control.len()], &control);
+        assert_eq!(messages[control.len()], newer);
+        assert_eq!(messages[control.len() + 1], profile);
     }
 
     #[test]

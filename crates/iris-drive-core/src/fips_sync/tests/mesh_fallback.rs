@@ -84,12 +84,30 @@ async fn drive_blob_service_accepts_roster_peer_and_rejects_unrelated_identity()
     drive_local.put(hash, data.clone()).await.unwrap();
     let drive = DriveBlobRuntime::bind(
         drive_bound.native_endpoint.clone(),
-        drive_local,
+        drive_local.clone(),
         &[FipsPeerConfig::new(roster_device.pubkey_bech32())],
         None,
     )
     .await
     .unwrap();
+    // An updater shares downloaded public blocks through the same service,
+    // without granting unrelated peers access to the Drive store.
+    let update_bytes = b"public signed-release payload".to_vec();
+    let update_hash = hashtree_core::sha256(&update_bytes);
+    let origin = Arc::new(MemoryStore::new());
+    origin.put(update_hash, update_bytes.clone()).await.unwrap();
+    let updates = hashtree_updater::build_update_store(
+        drive_local,
+        Some(Arc::new(StoreBlobRoute::new(origin))),
+        hashtree_updater::SecurePubsubBlossomConfig::default(),
+    )
+    .unwrap();
+    assert_eq!(
+        updates.get(&update_hash).await.unwrap(),
+        Some(update_bytes.clone())
+    );
+    drop(updates);
+
     let roster_reader = TcpBlobTransport::bind(
         roster_bound.native_endpoint.clone(),
         Arc::new(MemoryStore::new()),
@@ -119,6 +137,20 @@ async fn drive_blob_service_accepts_roster_peer_and_rejects_unrelated_identity()
             .await
             .is_err(),
         "an unrelated authenticated identity reached Drive's blob resolver",
+    );
+
+    assert_eq!(
+        roster_reader
+            .fetch_from_peer(&update_hash, drive_identity)
+            .await
+            .unwrap(),
+        Some(update_bytes),
+    );
+    assert!(
+        unrelated_reader
+            .fetch_from_peer(&update_hash, drive_identity)
+            .await
+            .is_err()
     );
 
     unrelated_reader.shutdown().await.unwrap();

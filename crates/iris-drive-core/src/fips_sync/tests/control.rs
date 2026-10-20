@@ -155,6 +155,16 @@ async fn reliable_control_enforces_topic_acl_and_survives_service_restart() {
     .unwrap();
     let mut received = bob_runtime.subscribe();
 
+    // An owner can already have queued protected roots before the newly
+    // approved device receives the bootstrap records needed to authorize it.
+    alice_runtime
+        .send(
+            bob.pubkey_bech32(),
+            DIRECT_ROOT_APP_TOPIC.to_string(),
+            b"early root".to_vec(),
+        )
+        .await
+        .unwrap();
     alice_runtime
         .send(
             bob.pubkey_bech32(),
@@ -169,6 +179,23 @@ async fn reliable_control_enforces_topic_acl_and_survives_service_restart() {
         .unwrap();
     assert_eq!(request.peer_id, alice.pubkey_bech32());
     assert_eq!(request.topic, APP_KEY_LINK_REQUEST_APP_TOPIC);
+
+    // Approval requires more than one bootstrap record before the receiver
+    // can authorize the peer. A reset after the first record must not leave
+    // its transport marker replaying forever ahead of the next record.
+    alice_runtime
+        .send(
+            bob.pubkey_bech32(),
+            APP_KEY_LINK_REQUEST_APP_TOPIC.to_string(),
+            b"next bootstrap record".to_vec(),
+        )
+        .await
+        .unwrap();
+    let next = tokio::time::timeout(Duration::from_secs(2), received.recv())
+        .await
+        .expect("second bootstrap record was blocked by replay of the first")
+        .unwrap();
+    assert_eq!(next.data, b"next bootstrap record");
 
     bob_runtime
         .set_policy(
@@ -185,10 +212,17 @@ async fn reliable_control_enforces_topic_acl_and_survives_service_restart() {
         )
         .await
         .unwrap();
-    let root = tokio::time::timeout(Duration::from_secs(5), received.recv())
-        .await
-        .unwrap()
-        .unwrap();
+    let root = tokio::time::timeout(Duration::from_secs(5), async {
+        loop {
+            let message = received.recv().await.unwrap();
+            if message.data == b"early root" {
+                continue;
+            }
+            break message;
+        }
+    })
+    .await
+    .unwrap();
     assert_eq!(root.topic, DIRECT_ROOT_APP_TOPIC);
     assert_eq!(root.data, b"authorized root");
 

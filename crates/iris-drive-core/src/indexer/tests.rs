@@ -180,7 +180,7 @@ async fn ignored_files_do_not_keep_removed_files_alive() {
     let (files, tombstones) = crate::merge::walk_app_key_tree(&tree, &second)
         .await
         .unwrap();
-    assert!(files.is_empty());
+    assert_eq!(files.len(), 0);
     assert_eq!(tombstones.len(), 1);
     assert_eq!(tombstones[0].path, "removed.txt");
 }
@@ -245,7 +245,7 @@ async fn root_metadata_is_embedded_under_hashtree_and_not_user_visible() {
     let (files, tombstones) = crate::merge::walk_app_key_tree(&tree, &root).await.unwrap();
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].path, "a.txt");
-    assert!(tombstones.is_empty());
+    assert_eq!(tombstones.len(), 0);
 }
 
 #[tokio::test]
@@ -259,7 +259,7 @@ async fn indexed_large_files_preserve_whole_file_hash_metadata() {
     let root = index_dir(&tree, dir.path()).await.unwrap();
 
     let (files, tombstones) = crate::merge::walk_app_key_tree(&tree, &root).await.unwrap();
-    assert!(tombstones.is_empty());
+    assert_eq!(tombstones.len(), 0);
     assert_eq!(files.len(), 1);
     assert_eq!(files[0].path, "large.bin");
     assert_eq!(files[0].whole_file_hash, Some(whole_file_hash));
@@ -293,7 +293,7 @@ async fn indexed_files_preserve_modified_at_metadata() {
         .and_then(serde_json::Value::as_i64);
     assert_eq!(stored, Some(modified_at));
     let (files, tombstones) = crate::merge::walk_app_key_tree(&tree, &root).await.unwrap();
-    assert!(tombstones.is_empty());
+    assert_eq!(tombstones.len(), 0);
     assert_eq!(files[0].modified_at, Some(modified_at));
 }
 
@@ -337,7 +337,7 @@ async fn conflict_records_round_trip_and_are_not_user_visible() {
         .unwrap();
     let file_paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
     assert_eq!(file_paths, vec!["a.txt"]);
-    assert!(tombstones.is_empty());
+    assert_eq!(tombstones.len(), 0);
 }
 
 #[tokio::test]
@@ -348,7 +348,7 @@ async fn missing_conflict_records_dir_reads_as_empty() {
     let root = index_dir(&tree, dir.path()).await.unwrap();
 
     let records = read_conflict_records(&tree, &root).await.unwrap();
-    assert!(records.is_empty());
+    assert_eq!(records.len(), 0);
 }
 
 #[tokio::test]
@@ -654,7 +654,7 @@ async fn visible_root_import_preserves_post_base_local_files_from_stale_provider
             .collect::<Vec<_>>(),
         vec!["one.txt", "two.txt"]
     );
-    assert!(tombstones.is_empty());
+    assert_eq!(tombstones.len(), 0);
 }
 
 #[tokio::test]
@@ -696,7 +696,7 @@ async fn visible_root_import_tombstones_deleted_scoped_directory_tree() {
     let (files, tombstones) = crate::merge::walk_app_key_tree(&tree, &layered)
         .await
         .unwrap();
-    assert!(files.is_empty());
+    assert_eq!(files.len(), 0);
     assert_eq!(
         tombstones
             .iter()

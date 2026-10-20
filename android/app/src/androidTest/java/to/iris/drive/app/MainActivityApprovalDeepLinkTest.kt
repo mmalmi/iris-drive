@@ -18,6 +18,8 @@ import androidx.test.espresso.matcher.ViewMatchers.withText
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
+import java.net.HttpURLConnection
+import java.net.URL
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicLong
 import org.hamcrest.Matcher
@@ -37,6 +39,7 @@ import to.iris.drive.app.core.NativeCore
 class MainActivityApprovalDeepLinkTest {
     private lateinit var context: Context
     private lateinit var blossomServer: String
+    private lateinit var relayServer: String
 
     @Before
     fun setUp() {
@@ -44,6 +47,10 @@ class MainActivityApprovalDeepLinkTest {
         NativeCore.initializeAndroidContext(context)
         resetAppStorage()
         blossomServer = requireBlossomServerArgument()
+        relayServer = requireNotNull(
+            InstrumentationRegistry.getArguments().getString("relay_server")
+                ?.takeIf { it.startsWith("ws://127.0.0.1:") },
+        ) { "Android approval tests require the local relay_server fixture" }
     }
 
     @After
@@ -65,6 +72,7 @@ class MainActivityApprovalDeepLinkTest {
             assertOwnerRoster()
             clickApprovalDialogButton("Approve")
             assertEquals(setOf("Android owner", "Phone"), waitForDeviceLabels(2))
+            waitForPublishedApproval()
         }
     }
 
@@ -102,6 +110,7 @@ class MainActivityApprovalDeepLinkTest {
                 waitForApprovalDialog()
                 clickApprovalDialogButton("Approve")
                 assertEquals(setOf("Android owner", "Phone"), waitForDeviceLabels(2))
+                waitForPublishedApproval()
             } finally {
                 it.onActivity { activity -> activity.intent = launchIntent }
             }
@@ -137,6 +146,8 @@ class MainActivityApprovalDeepLinkTest {
         val linkedDir = File(context.cacheDir, "linked-${UUID.randomUUID()}").also { it.mkdirs() }
         val linked = NativeCore.appNew(linkedDir.absolutePath, "approval-deep-link-test")
         return try {
+            val localRelays = dispatch(owner, NativeActions.replaceRelays(listOf(relayServer)))
+            assertTrue(localRelays.error, localRelays.error.isEmpty())
             dispatch(owner, NativeActions.createProfile("Android owner"))
             val ownerState = configureApprovalBlossom(owner)
             dispatch(linked, NativeActions.linkDevice(ownerState.profile!!.appKeyLinkInvite, "Phone"))
@@ -178,6 +189,27 @@ class MainActivityApprovalDeepLinkTest {
             Intent(Intent.ACTION_VIEW, Uri.parse(request), context, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
         )
+
+    private fun waitForPublishedApproval() {
+        // Local roster mutation is immediate; publication runs independently.
+        // Keep the app and its data alive until the fixture has actual bytes.
+        val deadline = System.currentTimeMillis() + 15_000
+        while (System.currentTimeMillis() < deadline) {
+            val connection = URL("$blossomServer/_test/uploads")
+                .openConnection() as HttpURLConnection
+            connection.connectTimeout = 2_000
+            connection.readTimeout = 2_000
+            try {
+                assertEquals(200, connection.responseCode)
+                val status = connection.inputStream.bufferedReader().use { it.readText() }
+                if (JSONObject(status).getInt("stored_blobs") > 0) return
+            } finally {
+                connection.disconnect()
+            }
+            Thread.sleep(100)
+        }
+        throw AssertionError("Approved device root was not uploaded before app teardown")
+    }
 
     private fun dispatch(handle: Long, action: String): AppState {
         NativeCore.dispatchJson(handle, action)

@@ -44,7 +44,14 @@ require_plist_raw_value() {
   local key="$2"
   local expected="$3"
   local actual
-  actual="$(plutil -extract "$key" raw "$file" 2>/dev/null || true)"
+  actual="$(python3 - "$file" "$key" <<'PY'
+import plistlib
+import sys
+
+with open(sys.argv[1], "rb") as source:
+    print(plistlib.load(source).get(sys.argv[2], ""))
+PY
+)"
   if [[ "$actual" != "$expected" ]]; then
     echo "expected plist $key in $file to be '$expected', got '${actual:-<missing>}'" >&2
     exit 1
@@ -62,7 +69,7 @@ require_not_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "Iris Drive mo
 require_contains "$ROOT/scripts/macos-smoke.sh" "scripts/macos-smoke.sh" "scripts/macos-finder-smoke.sh"
 require_contains "$FINDER_SMOKE" "scripts/macos-finder-smoke.sh" "wait_for_finder_target_path"
 require_contains "$ROOT/scripts/macos-smoke.sh" "scripts/macos-smoke.sh" "Finder did not show the revealed Iris Drive folder"
-require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" 'let irisDriveFileProviderDomainDisplayName = ""'
+require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" 'let irisDriveFileProviderDomainDisplayName = irisDriveFileProviderProfile.domainDisplayName'
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "irisDriveUserFacingDriveName"
 require_not_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "selectFile(nil, inFileViewerRootedAtPath:"
 require_contains "$MACOS_INFO" "macos/Info.plist" "NSLocalNetworkUsageDescription"

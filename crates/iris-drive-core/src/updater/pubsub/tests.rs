@@ -53,9 +53,12 @@ fn release(keys: &Keys, created_at: u64, byte: u8) -> Event {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shared_fips_provider_refreshes_cached_release_and_fails_offline() {
     let publisher_endpoint = endpoint(Vec::new()).await;
-    let publisher = FipsPubsubClient::start(publisher_endpoint.clone(), Default::default())
-        .await
-        .unwrap();
+    let publisher = FipsPubsubClient::start(
+        publisher_endpoint.clone(),
+        FipsPubsubClientOptions::default(),
+    )
+    .await
+    .unwrap();
     let keys = Keys::generate();
     let reference = UpdateRef {
         npub: keys.public_key().to_bech32().unwrap(),
@@ -85,7 +88,7 @@ async fn shared_fips_provider_refreshes_cached_release_and_fails_offline() {
     )])
     .await;
     let app_client = Arc::new(
-        FipsPubsubClient::start(app_endpoint.clone(), Default::default())
+        FipsPubsubClient::start(app_endpoint.clone(), FipsPubsubClientOptions::default())
             .await
             .unwrap(),
     );
@@ -117,12 +120,16 @@ async fn shared_fips_provider_refreshes_cached_release_and_fails_offline() {
     })
     .await
     .unwrap();
+    let UpdatePubsub {
+        _connections: connections,
+        ..
+    } = provider.as_ref();
     assert!(
-        provider._connections.owned_fips.is_none(),
+        connections.owned_fips.is_none(),
         "must reuse the app endpoint"
     );
     assert!(
-        provider._connections.relay.is_none(),
+        connections.relay.is_none(),
         "FIPS mode must ignore legacy configured relay defaults"
     );
     let resolver = PubsubRootResolver::new(provider, Duration::from_millis(500));
@@ -175,4 +182,41 @@ fn older_check_does_not_overwrite_newer_persisted_release() {
             .latest(),
         newer.latest()
     );
+}
+
+#[tokio::test]
+async fn update_reads_fill_the_running_store_without_retaining_a_closed_profile() {
+    use hashtree_core::{MemoryStore, Store, StoreBlobRoute, sha256};
+    use hashtree_network::{BlobRouteEntry, BlobRouter, BlobRouterConfig};
+    let directory = tempfile::tempdir().unwrap();
+    let primary = Arc::new(MemoryStore::new());
+    let peer = Arc::new(MemoryStore::new());
+    let bytes = b"public software update block".to_vec();
+    let hash = sha256(&bytes);
+    peer.put(hash, bytes.clone()).await.unwrap();
+    let route = Arc::new(
+        BlobRouter::new(
+            vec![BlobRouteEntry::new(
+                "peer",
+                Arc::new(StoreBlobRoute::new(peer)),
+            )],
+            Some(primary.clone()),
+            BlobRouterConfig::default(),
+        )
+        .unwrap(),
+    );
+    register_storage(directory.path(), &primary, &route);
+    let (cache, peers) = storage(Some(directory.path())).unwrap();
+    let updates = hashtree_updater::build_update_store(
+        cache,
+        Some(peers),
+        hashtree_updater::SecurePubsubBlossomConfig::default(),
+    )
+    .unwrap();
+    assert_eq!(updates.get(&hash).await.unwrap(), Some(bytes.clone()));
+    assert_eq!(primary.get(&hash).await.unwrap(), Some(bytes));
+    drop(updates);
+    drop(route);
+    drop(primary);
+    assert!(storage(Some(directory.path())).is_none());
 }

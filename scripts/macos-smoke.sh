@@ -107,6 +107,7 @@ source "$ROOT/scripts/lib/macos-blossom-smoke.sh"
 source "$ROOT/scripts/lib/macos-relay-smoke.sh"
 source "$ROOT/scripts/lib/macos-app-launch-smoke.sh"
 source "$ROOT/scripts/lib/macos-smoke-diagnostics.sh"
+source "$ROOT/scripts/lib/macos-smoke-profile.sh"
 
 run_ui_smoke() {
   truthy "${IRIS_DRIVE_MACOS_SMOKE_UI:-0}"
@@ -786,21 +787,7 @@ SWIFT
 }
 
 app_group_identifier() {
-  local app_path="$1"
-
-  codesign -d --entitlements :- "$app_path" 2>/dev/null \
-    | python3 -c '
-import plistlib
-import sys
-
-try:
-    entitlements = plistlib.loads(sys.stdin.buffer.read())
-except Exception:
-    sys.exit(0)
-groups = entitlements.get("com.apple.security.application-groups") or []
-if groups:
-    print(groups[0])
-'
+  macos_smoke_app_group_identifier "$1"
 }
 
 configure_smoke_app_data() {

@@ -1117,7 +1117,7 @@ async fn build_current_sync_events_from_disk(
     config_dir: &Path,
     expected_root_scope_id: &str,
 ) -> Result<Vec<DirectRootEvent>> {
-    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let config = iris_drive_core::shared_content::prepare_shared_folder_roots(config_dir).await?;
     match config.profile.as_ref() {
         Some(state) if state.root_scope_id() == expected_root_scope_id => {
             build_current_sync_events(config_dir, &config, state).await
@@ -1321,7 +1321,7 @@ async fn append_share_root_events(
             device.keys(),
             &folder.share_id.to_string(),
             iris_drive_core::PRIMARY_DRIVE_ID,
-            root,
+            &iris_drive_core::shared_content::share_root_for_publish(folder, root),
             &authorized_recipients,
         )
         .context("building share-root event")?;

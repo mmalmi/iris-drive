@@ -686,7 +686,7 @@ if "IrisDrivePhysicalLinkingUITests.swift" not in xcode_project:
 
 PY
 
-contract_tmp="$(mktemp -d -t iris-drive-mobile-cleanup-contract)"
+contract_tmp="$(mktemp -d "${TMPDIR:-/tmp}/iris-drive-mobile-cleanup-contract.XXXXXX")"
 cleanup_contract_tmp() {
   [[ ! -d "$contract_tmp" ]] || rm -rf "$contract_tmp"
 }

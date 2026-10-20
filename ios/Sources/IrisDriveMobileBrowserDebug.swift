@@ -3,11 +3,34 @@ import Network
 import os
 
 #if DEBUG
+struct IrisDebugHTTPProbeResult {
+    var ok: Bool
+    var statusCode: Int
+    var error: String
+    var errorDomain: String
+    var errorCode: Int
+}
+
+struct IrisDebugTextHTTPProbeResult {
+    var ok: Bool
+    var statusCode: Int
+    var bodyText: String
+    var error: String
+    var errorDomain: String
+    var errorCode: Int
+}
+
 @MainActor
 final class IrisDebugProbeCompletion {
     private var timeoutTask: Task<Void, Never>?
     private var onTimeout: (() -> Void)?
     private(set) var completed = false
+    private(set) var fields: [String: Any] = [:]
+
+    func record(_ fields: [String: Any]) {
+        guard !completed else { return }
+        self.fields.merge(fields) { _, current in current }
+    }
 
     func start(timeoutMilliseconds: UInt64, onTimeout: @escaping () -> Void) {
         precondition(timeoutTask == nil && !completed)
@@ -189,6 +212,102 @@ extension IrisDriveMobileModel {
             return "other"
         @unknown default:
             return "unknown"
+        }
+    }
+    func debugProbeHTTP(_ url: URL, useIrisProxy: Bool) async -> IrisDebugHTTPProbeResult {
+        var request = URLRequest(url: url)
+        request.httpMethod = "HEAD"
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        request.timeoutInterval = 2
+        let session: URLSession
+        if useIrisProxy {
+            let configuration = URLSessionConfiguration.ephemeral
+            configuration.proxyConfigurations = debugIrisWebProxyConfigurations()
+            session = URLSession(configuration: configuration)
+        } else {
+            session = URLSession.shared
+        }
+        do {
+            let (_, response) = try await session.data(for: request)
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+            return IrisDebugHTTPProbeResult(
+                ok: statusCode == 0 || (100..<600).contains(statusCode),
+                statusCode: statusCode,
+                error: "",
+                errorDomain: "",
+                errorCode: 0
+            )
+        } catch {
+            let nsError = error as NSError
+            return IrisDebugHTTPProbeResult(
+                ok: false,
+                statusCode: 0,
+                error: nsError.localizedDescription,
+                errorDomain: nsError.domain,
+                errorCode: nsError.code
+            )
+        }
+    }
+
+    func debugProbeTextHTTP(
+        _ value: String,
+        timeout: TimeInterval = 3
+    ) async -> IrisDebugTextHTTPProbeResult {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let url = URL(string: trimmed), !trimmed.isEmpty else {
+            return IrisDebugTextHTTPProbeResult(
+                ok: false,
+                statusCode: 0,
+                bodyText: "",
+                error: "URL missing",
+                errorDomain: "",
+                errorCode: 0
+            )
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = "GET"
+        request.cachePolicy = .reloadIgnoringLocalAndRemoteCacheData
+        request.timeoutInterval = timeout
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+            return IrisDebugTextHTTPProbeResult(
+                ok: statusCode == 0 || (100..<600).contains(statusCode),
+                statusCode: statusCode,
+                bodyText: String(data: data, encoding: .utf8) ?? "",
+                error: "",
+                errorDomain: "",
+                errorCode: 0
+            )
+        } catch {
+            let nsError = error as NSError
+            return IrisDebugTextHTTPProbeResult(
+                ok: false,
+                statusCode: 0,
+                bodyText: "",
+                error: nsError.localizedDescription,
+                errorDomain: nsError.domain,
+                errorCode: nsError.code
+            )
+        }
+    }
+
+    func writeIrisAppsProbeResult(_ value: [String: Any]) {
+        guard JSONSerialization.isValidJSONObject(value),
+              let data = try? JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys])
+        else { return }
+        let destinations = [
+            IrisDriveSharedContainer.baseDirectory
+                .appendingPathComponent("debug-iris-apps-probe.json", isDirectory: false),
+            FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first?
+                .appendingPathComponent("debug-iris-apps-probe.json", isDirectory: false),
+        ].compactMap { $0 }
+        for url in destinations {
+            try? FileManager.default.createDirectory(
+                at: url.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            try? data.write(to: url, options: [.atomic])
         }
     }
 }

@@ -82,13 +82,14 @@ fn mobile_app_key_link_exchange_stays_on_for_authorized_or_awaiting_approval() {
     let source = phone_dir.path().join("idle-note.txt");
     std::fs::write(&source, b"idle bytes").unwrap();
     let data_dir = phone_dir.path().display().to_string();
-    assert!(
+    assert_eq!(
         super::native_provider_mkdir_json(&data_dir, "Photos")["error"]
             .as_str()
             .unwrap_or_default()
-            .is_empty()
+            .len(),
+        0
     );
-    assert!(
+    assert_eq!(
         super::native_provider_write_json(
             &data_dir,
             "Photos/idle-note.txt",
@@ -96,7 +97,8 @@ fn mobile_app_key_link_exchange_stays_on_for_authorized_or_awaiting_approval() {
         )["error"]
             .as_str()
             .unwrap_or_default()
-            .is_empty()
+            .len(),
+        0
     );
 
     let running = phone_app.dispatch(NativeAppAction::StartSync);
@@ -297,7 +299,7 @@ fn app_key_link_exchange_uses_fast_ticks_only_while_approval_is_pending() {
     owner
         .approve_device_bootstrap(&bootstrap, Some("Phone".to_owned()))
         .unwrap();
-    assert!(!owner.state.pending_device_approval_receipts.is_empty());
+    assert_ne!(owner.state.pending_device_approval_receipts.len(), 0);
     assert_failed_tick(&owner.state, APP_KEY_LINK_EXCHANGE_ACTIVE_TICK_MILLIS);
 }
 

@@ -8,7 +8,6 @@
 //! Stays minimal for v1: one-shot import + status. Long-running sync is
 //! handled by the CLI daemon over virtual roots/providers.
 
-use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -34,6 +33,9 @@ const LOCAL_ONLY_PARENT_WALK_LIMIT: usize = 1024;
 
 mod embedded;
 mod local_only;
+mod profile_coverage;
+
+use profile_coverage::full_profile_covers_known_app_key_roots;
 
 pub use embedded::{EmbeddedHashtreeHost, embedded_hashtree_state_root_in};
 #[cfg(test)]
@@ -197,6 +199,14 @@ impl Daemon {
         )
         .await?;
 
+        crate::shared_content::import_owned_shared_folders(
+            &self.tree,
+            &mut self.config,
+            &root_cid,
+            previous_root.as_ref(),
+        )
+        .await
+        .map_err(|error| DaemonError::Store(error.to_string()))?;
         self.report_and_record_root(
             root_cid,
             Some(source_dir.to_path_buf()),
@@ -396,6 +406,19 @@ impl Daemon {
     ) -> Result<ImportReport, DaemonError> {
         self.load_full_profile_for_mutation()?;
         self.ensure_drive_for_import(drive_id)?;
+        let (root, tombstone_base_root) = if drive_id == PRIMARY_DRIVE_ID {
+            crate::shared_content::route_shared_edits(
+                &self.tree,
+                &mut self.config,
+                root,
+                tombstone_base_root,
+                local_only,
+            )
+            .await
+            .map_err(|error| DaemonError::Store(error.to_string()))?
+        } else {
+            (root, tombstone_base_root)
+        };
         let previous_root_ref = self.config.profile.as_ref().and_then(|account| {
             self.config
                 .drive(drive_id)
@@ -933,26 +956,6 @@ impl Daemon {
         });
         Ok(())
     }
-}
-
-fn full_profile_covers_known_app_key_roots(
-    profile: &crate::profile::ProfileState,
-    config: &AppConfig,
-) -> bool {
-    if !profile.has_profile_roster_evidence() {
-        return true;
-    }
-    let active_app_keys = profile
-        .active_root_writer_app_key_pubkeys()
-        .into_iter()
-        .collect::<BTreeSet<_>>();
-    let projection = profile.profile_projection();
-    config.drives.iter().all(|drive| {
-        drive.app_key_roots.keys().all(|app_key_pubkey| {
-            active_app_keys.contains(app_key_pubkey)
-                || projection.tombstones.contains_key(app_key_pubkey)
-        })
-    })
 }
 
 async fn current_root_observes_drive_roots(

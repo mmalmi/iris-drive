@@ -44,6 +44,7 @@ pub(crate) fn cmd_publish(
                 "published_device_approval_receipts": report.published_device_approval_receipts,
                 "device_approval_receipt_publish_error": report.device_approval_receipt_publish_error,
                 "published_drive_root": report.published_drive_root,
+                "published_share_roots": report.published_share_roots,
                 "drive_root_publish_error": report.drive_root_publish_error,
                 "published_files_root": report.published_files_root,
                 "files_root_publish_error": report.files_root_publish_error,
@@ -71,6 +72,7 @@ pub(crate) struct PublishStateReport {
     published_device_approval_receipts: usize,
     device_approval_receipt_publish_error: Option<String>,
     published_share_access_snapshots: usize,
+    published_share_roots: usize,
     share_access_snapshot_publish_error: Option<String>,
     published_drive_root: bool,
     drive_root_publish_error: Option<String>,
@@ -278,6 +280,7 @@ pub(crate) fn publish_state_report_json(report: &PublishStateReport) -> serde_js
         "published_share_access_snapshots": report.published_share_access_snapshots,
         "share_access_snapshot_publish_error": report.share_access_snapshot_publish_error,
         "published_drive_root": report.published_drive_root,
+                "published_share_roots": report.published_share_roots,
         "drive_root_publish_error": report.drive_root_publish_error,
         "published_files_root": report.published_files_root,
         "files_root_publish_error": report.files_root_publish_error,
@@ -410,12 +413,15 @@ pub(crate) fn spawn_publish_current_state(
 pub(crate) async fn publish_current_state(
     client: &nostr_sdk::Client,
     config_dir: &std::path::Path,
-    config: &AppConfig,
+    _config: &AppConfig,
     state: &ProfileState,
     upload_blossom: bool,
 ) -> Result<PublishStateReport> {
     use iris_drive_core::relay_sync;
 
+    let prepared = iris_drive_core::shared_content::prepare_shared_folder_roots(config_dir).await?;
+    let config = &prepared;
+    let state = config.profile.as_ref().unwrap_or(state);
     let mut report = PublishStateReport::default();
     let approval_handoff = if state.pending_device_approval_receipts.is_empty() {
         None
@@ -522,6 +528,42 @@ pub(crate) async fn publish_current_state(
                 Ok(_) => report.published_share_access_snapshots += 1,
                 Err(error) => report.share_access_snapshot_publish_error = Some(error),
             }
+        }
+    }
+
+    let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))?;
+    for folder in &config.shared_folders {
+        if !iris_drive_core::shared_folder_app_key_can_write_roots(folder, &state.app_key_pubkey) {
+            continue;
+        }
+        let Some(root) = folder.app_key_roots.get(&state.app_key_pubkey) else {
+            continue;
+        };
+        if root.local_only {
+            continue;
+        }
+        if upload_blossom {
+            let (uploaded, error) =
+                maybe_upload_root_to_blossom(config_dir, config, &device, &root.root_cid, None)
+                    .await?;
+            if uploaded.is_none() || error.is_some() {
+                report.drive_root_publish_error =
+                    Some(error.unwrap_or_else(|| "Could not upload shared folder".into()));
+                continue;
+            }
+        }
+        match relay_publish_with_timeout(relay_sync::publish_drive_root(
+            client,
+            device.keys(),
+            &folder.share_id.to_string(),
+            iris_drive_core::PRIMARY_DRIVE_ID,
+            &iris_drive_core::shared_content::share_root_for_publish(folder, root),
+            &iris_drive_core::shared_folder_key_recipient_pubkeys(folder),
+        ))
+        .await
+        {
+            Ok(_) => report.published_share_roots += 1,
+            Err(error) => report.drive_root_publish_error = Some(error),
         }
     }
 
@@ -667,29 +709,30 @@ pub(crate) fn spawn_initial_publish(
                 println!(
                     "{}",
                     json!({
-                        "event": "initial_publish",
-                        "published_profile_roster_ops": report.published_profile_roster_ops,
-                        "profile_roster_publish_error": report.profile_roster_publish_error,
-                        "published_device_approval_receipts": report.published_device_approval_receipts,
-                        "device_approval_receipt_publish_error": report.device_approval_receipt_publish_error,
-                        "published_share_access_snapshots": report.published_share_access_snapshots,
-                        "share_access_snapshot_publish_error": report.share_access_snapshot_publish_error,
-                        "published_drive_root": report.published_drive_root,
-                        "drive_root_publish_error": report.drive_root_publish_error,
-                        "published_files_root": report.published_files_root,
-                        "files_root_publish_error": report.files_root_publish_error,
-                        "root_cid": report.root_cid,
-                        "drive_iris_to_url": drive_iris_to_url,
-                        "files_iris_to_url": drive_iris_to_url,
-                        "snapshot_url": snapshot_url,
-                        "permalink_url": snapshot_url,
-                        "blossom_upload_error": report.blossom_upload_error,
-                        "blossom_upload": report.blossom_upload.map(|r| json!({
-                            "total_hashes": r.total_hashes,
-                            "uploaded": r.uploaded,
-                            "already_present": r.already_present,
-                        })),
-                    })
+                            "event": "initial_publish",
+                            "published_profile_roster_ops": report.published_profile_roster_ops,
+                            "profile_roster_publish_error": report.profile_roster_publish_error,
+                            "published_device_approval_receipts": report.published_device_approval_receipts,
+                            "device_approval_receipt_publish_error": report.device_approval_receipt_publish_error,
+                            "published_share_access_snapshots": report.published_share_access_snapshots,
+                            "share_access_snapshot_publish_error": report.share_access_snapshot_publish_error,
+                            "published_drive_root": report.published_drive_root,
+                    "published_share_roots": report.published_share_roots,
+                            "drive_root_publish_error": report.drive_root_publish_error,
+                            "published_files_root": report.published_files_root,
+                            "files_root_publish_error": report.files_root_publish_error,
+                            "root_cid": report.root_cid,
+                            "drive_iris_to_url": drive_iris_to_url,
+                            "files_iris_to_url": drive_iris_to_url,
+                            "snapshot_url": snapshot_url,
+                            "permalink_url": snapshot_url,
+                            "blossom_upload_error": report.blossom_upload_error,
+                            "blossom_upload": report.blossom_upload.map(|r| json!({
+                                "total_hashes": r.total_hashes,
+                                "uploaded": r.uploaded,
+                                "already_present": r.already_present,
+                            })),
+                        })
                 );
             }
             Ok(Err(error)) => {

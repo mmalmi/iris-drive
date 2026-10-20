@@ -323,13 +323,14 @@ impl IrisDriveMountHandle {
         }
     }
 
-    #[allow(clippy::unused_async)]
-    pub(crate) async fn refresh_from_config_if_current(
+    pub(crate) fn refresh_from_config_if_current(
         &self,
         _config_dir: &std::path::Path,
         _expected_current: &hashtree_core::Cid,
-    ) -> anyhow::Result<MountRefreshOutcome> {
-        anyhow::bail!("Iris Drive mount mode is not supported on this platform yet")
+    ) -> std::future::Ready<anyhow::Result<MountRefreshOutcome>> {
+        std::future::ready(Err(anyhow::anyhow!(
+            "Iris Drive mount mode is not supported on this platform yet"
+        )))
     }
 }
 

@@ -99,6 +99,26 @@ func waitForElement(
     return nil
 }
 
+func confirmationDismissed(
+    _ application: AXUIElement, pid: pid_t, deadline: Date
+) -> Bool {
+    repeat {
+        guard kill(pid, 0) == 0 else { return false }
+        let identifiers = Set(descendants(application).filter {
+            boolAttribute($0, kAXHiddenAttribute) != true
+        }.map { text($0, kAXIdentifierAttribute) })
+        // Require a readable, still-running owner window, not merely an empty
+        // AX tree after the process or accessibility connection disappears.
+        if identifiers.contains(Control.devices),
+           !identifiers.contains(Control.approve),
+           !identifiers.contains(Control.cancel) {
+            return true
+        }
+        Thread.sleep(forTimeInterval: 0.1)
+    } while Date() < deadline
+    return false
+}
+
 func press(
     _ application: AXUIElement, identifier: String, stage: String, timeout: TimeInterval
 ) throws {
@@ -279,6 +299,7 @@ func run() throws {
         reportStage("manual_confirmation_ready")
         print("MACOS_DEVICE_LINK_MANUAL_CONFIRMATION_READY")
     case "Approve", "Cancel":
+        let deadline = Date().addingTimeInterval(timeout)
         let identifier = arguments[2] == "Approve" ? Control.approve : Control.cancel
         guard waitForElement(
             application, identifier: identifier, timeout: timeout
@@ -287,11 +308,21 @@ func run() throws {
                 "\(arguments[2].lowercased())_confirmation"
             )
         }
-        try press(
-            application, identifier: identifier,
-            stage: "\(arguments[2].lowercased())_confirmation",
-            timeout: timeout
-        )
+        do {
+            try press(
+                application, identifier: identifier,
+                stage: "\(arguments[2].lowercased())_confirmation",
+                timeout: timeout
+            )
+        } catch let error as LinkDriverError {
+            guard case .actionOutcomeUnknown = error,
+                  confirmationDismissed(application, pid: pid, deadline: deadline)
+            else { throw error }
+            // AXPress can report failure after SwiftUI has dismissed its alert.
+            // Never click again. The shell still verifies unchanged authority
+            // after Cancel, or the complete roster/ACK exchange after Approve.
+            reportStage("\(arguments[2].lowercased())_confirmation_dismissed")
+        }
         print("MACOS_DEVICE_LINK_CONFIRMATION_\(arguments[2].uppercased())_OK")
     default:
         throw LinkDriverError.usage

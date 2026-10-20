@@ -123,6 +123,13 @@ class LocalRelay:
         self.events: list[dict] = []
         self.event_log = event_log
         self.connections: set[RelayConnection] = set()
+        self.writers: set[asyncio.StreamWriter] = set()
+
+    def close_connections(self) -> None:
+        # Server.wait_closed also waits for accepted clients on newer Python.
+        # Stop owned sockets before awaiting it, including partial handshakes.
+        for writer in tuple(self.writers):
+            writer.transport.abort()
 
     def record_event(self, event: dict) -> None:
         self.events.append(event)
@@ -161,6 +168,7 @@ class LocalRelay:
     async def handle(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
     ) -> None:
+        self.writers.add(writer)
         fragments = bytearray()
         fragment_opcode: int | None = None
         connection: RelayConnection | None = None
@@ -226,6 +234,7 @@ class LocalRelay:
         except (asyncio.IncompleteReadError, ConnectionError, ValueError):
             pass
         finally:
+            self.writers.discard(writer)
             if connection is not None:
                 self.connections.discard(connection)
             writer.close()
@@ -269,7 +278,11 @@ async def main() -> None:
     args.ready_file.write_text(f"ws://127.0.0.1:{port}\n", encoding="utf-8")
     try:
         async with server:
-            await stop.wait()
+            try:
+                await stop.wait()
+            finally:
+                server.close()
+                relay.close_connections()
     finally:
         args.ready_file.unlink(missing_ok=True)
 

@@ -47,7 +47,7 @@ use nostr_runtime::DriveNostrPubsubRuntime;
 pub use nostr_runtime::FipsNostrPubsubEvent;
 use peer_config::{
     FipsPeerConfigSnapshot, authenticated_local_inbound_capability, fips_peer_config_snapshot,
-    peer_ids, set_drive_fips_peer_configs,
+    normalize_fips_peer_npub, peer_ids, set_drive_fips_peer_configs,
 };
 #[cfg(test)]
 use peer_config::{
@@ -139,6 +139,13 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             runtime.set_friend_route(friends.read_route.clone()).await?;
         }
         sync.friend_backups = Some(friends);
+        if let Some(directory) = device.path().parent() {
+            crate::updater::pubsub::register_storage(
+                directory,
+                &sync.local_store,
+                &sync.blob_router,
+            );
+        }
         if let (Some(runtime), Some(directory)) =
             (sync.nostr_runtime.as_ref(), device.path().parent())
         {
@@ -680,14 +687,20 @@ fn merged_endpoint_peers(
         .collect()
 }
 
+const CONTROL_BOOTSTRAP_TOPICS: [&str; 5] = [
+    APP_KEY_LINK_REQUEST_APP_TOPIC,
+    APP_KEY_APPROVAL_RECEIPT_APP_TOPIC,
+    APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC,
+    APP_KEY_LINK_ROSTER_APP_TOPIC,
+    APP_KEY_LINK_ROSTER_ACK_APP_TOPIC,
+];
+
+pub(crate) fn is_control_bootstrap_topic(topic: &str) -> bool {
+    CONTROL_BOOTSTRAP_TOPICS.contains(&topic)
+}
+
 fn control_bootstrap_topics() -> BTreeSet<&'static str> {
-    BTreeSet::from([
-        APP_KEY_LINK_REQUEST_APP_TOPIC,
-        APP_KEY_APPROVAL_RECEIPT_APP_TOPIC,
-        APP_KEY_APPROVAL_APPLIED_ACK_APP_TOPIC,
-        APP_KEY_LINK_ROSTER_APP_TOPIC,
-        APP_KEY_LINK_ROSTER_ACK_APP_TOPIC,
-    ])
+    BTreeSet::from(CONTROL_BOOTSTRAP_TOPICS)
 }
 
 #[must_use]
@@ -892,17 +905,6 @@ fn default_fips_bootstrap_peer_hints() -> Vec<(String, Vec<String>)> {
             )
         })
         .collect()
-}
-
-fn normalize_fips_peer_npub(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    PublicKey::from_hex(trimmed)
-        .ok()
-        .and_then(|pubkey| pubkey.to_bech32().ok())
-        .or_else(|| Some(trimmed.to_string()))
 }
 
 fn static_peer_addresses_for_device(

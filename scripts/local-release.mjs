@@ -45,6 +45,7 @@ import { prepareMacosReleaseBinaries } from './macos-release-binaries.mjs'
 import { createMacosDmg } from './macos-release-dmg.mjs'
 import { assertZipEntriesEqualFiles } from './release-zip.mjs'
 import { requireMeshRelease } from './mesh-release-gate.mjs'
+import { stageHostedProduct } from './stage-hosted-product.mjs'
 import {
   assertNoPrivateBuildMetadata,
   normalizedTarOwnerArgs,
@@ -53,7 +54,8 @@ import {
 } from './release-build-hygiene.mjs'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
-const repoRoot = resolve(__dirname, '..')
+const repoRoot = process.env.IRIS_DRIVE_RELEASE_SOURCE_ROOT
+  ? resolve(process.env.IRIS_DRIVE_RELEASE_SOURCE_ROOT) : resolve(__dirname, '..')
 const rootCargoToml = join(repoRoot, 'Cargo.toml')
 const releasePolicyPath = join(repoRoot, 'release-policy.json')
 const distDir = join(repoRoot, 'dist')
@@ -89,7 +91,10 @@ Options:
   --help                 Show this help
 
 Final publication requires IRIS_STACK_GATE_RECEIPT for the exact annotated
-release commit, produced by the pinned Iris Stack release gate.`)
+release commit, produced by the pinned Iris Stack release gate.
+Set IRIS_DRIVE_MACOS_PREBUILT_DIR to a verified hosted product directory to
+sign and package its app without compiling. IRIS_DRIVE_RELEASE_SOURCE_ROOT
+selects the clean source checkout whose commit must match the product receipt.`)
 }
 
 function parseArgs(argv) {
@@ -577,26 +582,37 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
   }
   env = { ...env, MACOSX_DEPLOYMENT_TARGET: deploymentTarget }
   const rustLibDir = join(cargoTargetDir(env), 'aarch64-apple-darwin', 'release')
-  const idrivePath = join(rustLibDir, 'idrive')
+  let idrivePath = join(rustLibDir, 'idrive')
+  let appPath
+  const prebuilt = env.IRIS_DRIVE_MACOS_PREBUILT_DIR
+  if (prebuilt) {
+    const payload = dryRun ? join(prebuilt, 'prepared') : stageHostedProduct({
+      repoRoot, productDirectory: prebuilt, platform: 'macos-release', run, env,
+    })
+    idrivePath = join(payload, 'idrive')
+    appPath = join(payload, 'Iris Drive.app')
+  }
   console.log(`macOS deployment target: ${deploymentTarget}`)
-  run('cargo', ['build', '--release', '-p', 'idrive', '--target', 'aarch64-apple-darwin'], {
-    env,
-    dryRun,
-  })
-  run(
-    'cargo',
-    ['build', '--release', '-p', 'iris-drive-app-core', '--target', 'aarch64-apple-darwin'],
-    {
+  if (!prebuilt) {
+    run('cargo', ['build', '--release', '-p', 'idrive', '--target', 'aarch64-apple-darwin'], {
       env,
       dryRun,
-    },
-  )
-  if (!dryRun) {
-    assertNoPrivateBuildMetadata(
-      [idrivePath, join(rustLibDir, 'libiris_drive_app_core.a')],
-      env,
-      { repoRoot },
+    })
+    run(
+      'cargo',
+      ['build', '--release', '-p', 'iris-drive-app-core', '--target', 'aarch64-apple-darwin'],
+      {
+        env,
+        dryRun,
+      },
     )
+    if (!dryRun) {
+      assertNoPrivateBuildMetadata(
+        [idrivePath, join(rustLibDir, 'libiris_drive_app_core.a')],
+        env,
+        { repoRoot },
+      )
+    }
   }
   packageUnixCliTarball({
     binaryPath: idrivePath,
@@ -608,32 +624,34 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
     dryRun,
   })
 
-  if (commandExists('xcodegen')) {
-    run('xcodegen', ['generate'], { cwd: join(repoRoot, 'macos'), dryRun, env })
+  if (!prebuilt) {
+    if (commandExists('xcodegen')) {
+      run('xcodegen', ['generate'], { cwd: join(repoRoot, 'macos'), dryRun, env })
+    }
+    const derivedData = join(repoRoot, 'macos', '.build', 'ReleaseDerivedData')
+    const releaseVersion = releaseVersionInfo(tag)
+    run(
+      'xcodebuild',
+      [
+        '-project',
+        join(repoRoot, 'macos', 'IrisDriveMac.xcodeproj'),
+        '-scheme',
+        'IrisDriveMac',
+        '-configuration',
+        'Release',
+        '-derivedDataPath',
+        derivedData,
+        'CODE_SIGNING_ALLOWED=NO',
+        `LIBRARY_SEARCH_PATHS=${rustLibDir}`,
+        `OTHER_LDFLAGS=${join(rustLibDir, 'libiris_drive_app_core.a')}`,
+        `MARKETING_VERSION=${releaseVersion.version}`,
+        `CURRENT_PROJECT_VERSION=${releaseVersion.build}`,
+        'build',
+      ],
+      { dryRun, env },
+    )
+    appPath = join(derivedData, 'Build', 'Products', 'Release', 'Iris Drive.app')
   }
-  const derivedData = join(repoRoot, 'macos', '.build', 'ReleaseDerivedData')
-  const releaseVersion = releaseVersionInfo(tag)
-  run(
-    'xcodebuild',
-    [
-      '-project',
-      join(repoRoot, 'macos', 'IrisDriveMac.xcodeproj'),
-      '-scheme',
-      'IrisDriveMac',
-      '-configuration',
-      'Release',
-      '-derivedDataPath',
-      derivedData,
-      'CODE_SIGNING_ALLOWED=NO',
-      `LIBRARY_SEARCH_PATHS=${rustLibDir}`,
-      `OTHER_LDFLAGS=${join(rustLibDir, 'libiris_drive_app_core.a')}`,
-      `MARKETING_VERSION=${releaseVersion.version}`,
-      `CURRENT_PROJECT_VERSION=${releaseVersion.build}`,
-      'build',
-    ],
-    { dryRun, env },
-  )
-  const appPath = join(derivedData, 'Build', 'Products', 'Release', 'Iris Drive.app')
   const { appCliPath, appexCliPath, appexPath } = prepareMacosReleaseBinaries({
     appPath,
     cliPath: idrivePath,
@@ -765,7 +783,7 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
     { dryRun },
   )
   run(
-    join(repoRoot, 'scripts', 'macos-release-smoke.sh'),
+    env.IRIS_DRIVE_MACOS_RELEASE_SMOKE_COMMAND || join(repoRoot, 'scripts', 'macos-release-smoke.sh'),
     ['--app', appPath, '--archive', updaterArchivePath, '--dmg', dmgPath],
     { dryRun, env },
   )
@@ -1418,10 +1436,12 @@ function main() {
   })
 
   if (options.publish) {
-    if (!commandExists('htree')) {
+    if (!options.dryRun && !commandExists('htree')) {
       throw new Error('Missing htree; cannot publish release')
     }
     if (!options.draft && !options.dryRun) requireMeshRelease(meshGate)
+    const hapsArgs = ['import-release', stageDir, '--config', join(repoRoot, 'haps-release.json'), '--tag', tag]
+    if (!options.draft) run('haps', [...hapsArgs, '--check'], { env, dryRun: options.dryRun })
     const published = publishRelease({
       stageDir,
       releaseTree,
@@ -1442,6 +1462,7 @@ function main() {
         dryRun: options.dryRun,
       })
     }
+    if (!options.draft) run('haps', [...hapsArgs, '--publish'], { env, dryRun: options.dryRun })
     if (!options.draft && !options.skipZapstore) {
       publishZapstore({ env, tag, assetDir, dryRun: options.dryRun, plannedAssetNames })
     }

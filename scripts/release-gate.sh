@@ -85,11 +85,11 @@ run_parallel_functions() {
 }
 
 run_rust_tests() {
-  local compile_args=(--bin idrive --test cli_e2e --test daemon_sync_matrix)
-  local cli_args=(--bin idrive --test cli_e2e)
+  local compile_args=(--test cli_e2e --test daemon_sync_matrix)
+  local cli_args=(--test cli_e2e)
   if [[ "${IRIS_DRIVE_RELEASE_GATE_FAST_PRECHECKED:-0}" != "1" ]]; then
-    compile_args+=(--test link_input_e2e)
-    cli_args+=(--test link_input_e2e)
+    compile_args+=(--bin idrive --test link_input_e2e)
+    cli_args+=(--bin idrive --test link_input_e2e)
   fi
 
   run cargo test -p idrive "${compile_args[@]}" --no-run

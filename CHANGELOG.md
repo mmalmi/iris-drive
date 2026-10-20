@@ -1,5 +1,27 @@
 # Changelog
 
+## 0.1.38 - 2026-10-19
+
+### Security
+
+- Update Negentropy to 0.5.2 to reject malformed synchronization messages before
+  allocating memory (GHSA-jcg8-qg98-373g / RUSTSEC-2026-0365).
+
+### Changed
+
+- Update the compatible Hashtree and FIPS dependency set, retaining the iOS
+  compatibility constraint for libc.
+
+### Fixed
+
+- Keep reopened device approval screens responsive during background sync and
+  provider scans, and preserve new approvals when an older sync finishes.
+- Keep device approval exchanges open long enough to deliver large rosters and
+  acknowledgements, with bounded connection time, records and memory.
+- Run native update checks and downloads on an owned thread with enough stack
+  space for network startup, preventing crashes on native dispatch queues.
+- Stop the macOS approval journey immediately when any required action fails.
+
 ## 0.1.37 - 2026-09-10
 
 ### Changed

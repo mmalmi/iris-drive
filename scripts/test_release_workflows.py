@@ -18,6 +18,11 @@ from typing import Optional
 from test_cross_vm_powershell_transport import WindowsPowerShellTransportTests
 from test_idle_cpu_gate import CrossVmIdleGateTests, ProcessIdleCpuTests
 from test_macos_app_registration import MacAppRegistrationTests
+from test_macos_owner_link_failure import OwnerLinkFailureTests
+from test_macos_finder_smoke import FinderSmokeLogs
+from test_macos_smoke_profile import MacSmokeProfileTests
+from test_local_blossom_server import BlossomStartupTests
+from test_ios_linking_observer import IosLinkingObserverTests
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -272,6 +277,48 @@ class ReleaseWorkflowTests(unittest.TestCase):
                     if not restore_status:
                         expected.append("barrier")
                 self.assertEqual(events.read_text().splitlines(), expected)
+
+    def test_primary_gui_approval_observes_final_marker_after_process_exit(self) -> None:
+        helper = ROOT / "scripts/lib/cross-vm-device-link.sh"
+        for restore_status in (0, 24):
+            with self.subTest(restore_status=restore_status):
+                script = self.scripts / "approval-exit-race.sh"
+                self.write_executable(script,
+                    "source " + shlex.quote(str(helper)) + "\n"
+                    + "DESKTOP_GUI_LINKING=1\nowner_label=ubuntu\nwindows_label=windows\nLINK_TIMEOUT_SECS=15\n"
+                    + "host_value() { echo expected; }\n"
+                    + 'bool_true() { [[ "$1" == 1 ]]; }\n'
+                    + "monotonic_milliseconds() { echo 1000; }\n"
+                    + textwrap.dedent('''\
+                        first_marker_probe=1
+                        grep() {
+                          if [[ "$*" == *IRIS_DRIVE_DESKTOP_GUI_APPROVAL_STARTED* && "$first_marker_probe" == 1 ]]; then
+                            first_marker_probe=0
+                            return 1
+                          fi
+                          command grep "$@"
+                        }
+                        kill() {
+                          if [[ "$1" == -0 ]]; then
+                            # Complete the real child after the first negative marker read.
+                            wait "$2" 2>/dev/null || true
+                            return 1
+                          fi
+                          command kill "$@"
+                        }
+                        run_desktop_gui_link_action() {
+                          echo IRIS_DRIVE_DESKTOP_GUI_APPROVAL_STARTED=1
+                          echo IRIS_DRIVE_DESKTOP_GUI_APPROVAL_SUBMITTED=1
+                        }
+                        start_daemon() { return "$FIXTURE_RESTORE_STATUS"; }
+                        status=0
+                        run_timed_desktop_gui_primary_approval fixture-request || status=$?
+                        exit "$status"
+                        '''))
+                result = subprocess.run(["bash", str(script)], capture_output=True, text=True,
+                    timeout=WORKFLOW_TIMEOUT_SECONDS,
+                    env=self.environment(FIXTURE_RESTORE_STATUS=str(restore_status)))
+                self.assertEqual(result.returncode, restore_status, result.stdout + result.stderr)
 
     def test_macos_manual_link_forwards_only_explicit_build_environment(self) -> None:
         source = (ROOT / "scripts/macos-vm-android-manual-link-e2e.sh").read_text()
@@ -1037,7 +1084,7 @@ class ReleaseWorkflowTests(unittest.TestCase):
     def test_release_gate_skips_only_prechecks_proven_by_fast_tier(self) -> None:
         script = self.copy_script("release-gate.sh")
         call_log = self.state / "calls"
-        for command in ("cargo", "node", "just"):
+        for command in ("cargo", "node", "just", "python3"):
             self.write_executable(
                 self.bin / command,
                 f'printf "{command} %s\\n" "$*" >>"$RELEASE_WORKFLOW_TEST_STATE/calls"\n',
@@ -1045,25 +1092,71 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.write_executable(self.bin / "git", 'printf "0\n"\n')
         self.write_executable(self.bin / "uname", 'printf "TestOS\n"\n')
 
-        completed = subprocess.run(
-            [str(script)],
-            check=False,
-            capture_output=True,
-            text=True,
-            env=self.environment(IRIS_DRIVE_RELEASE_GATE_FAST_PRECHECKED="1"),
-            timeout=WORKFLOW_TIMEOUT_SECONDS,
-        )
+        for prechecked in ("0", "1"):
+            with self.subTest(prechecked=prechecked):
+                call_log.write_text("", encoding="utf-8")
+                completed = subprocess.run(
+                    [str(script)],
+                    check=False,
+                    capture_output=True,
+                    text=True,
+                    env=self.environment(
+                        IRIS_DRIVE_RELEASE_GATE_FAST_PRECHECKED=prechecked,
+                        IRIS_DRIVE_DEV_LAB_ENV=str(self.state / "no-lab-env"),
+                    ),
+                    timeout=WORKFLOW_TIMEOUT_SECONDS,
+                )
 
-        self.assertEqual(completed.returncode, 0, completed.stderr)
-        calls = call_log.read_text(encoding="utf-8")
-        self.assertNotIn("node --test", calls)
-        self.assertNotIn("cargo fmt --check", calls)
-        self.assertNotIn("just structure", calls)
-        self.assertNotIn("cargo test --workspace --exclude idrive", calls)
-        self.assertNotIn("--test link_input_e2e", calls)
-        self.assertIn("cargo test -p idrive --bin idrive --test cli_e2e", calls)
-        self.assertIn("cargo test -p idrive --test daemon_sync_matrix", calls)
-        self.assertIn("cargo build --workspace --release", calls)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                calls = call_log.read_text(encoding="utf-8")
+                for fast_check in (
+                    "node --test", "cargo fmt --check", "just structure",
+                    "cargo test --workspace --exclude idrive",
+                    "--bin idrive", "--test link_input_e2e",
+                ):
+                    if prechecked == "1":
+                        self.assertNotIn(fast_check, calls)
+                    else:
+                        self.assertIn(fast_check, calls)
+                self.assertIn("cargo test -p idrive --test cli_e2e", calls)
+                self.assertIn("cargo test -p idrive --test daemon_sync_matrix", calls)
+                self.assertIn("cargo build --workspace --release", calls)
+
+    def test_verify_full_reuses_fast_checks_only_after_success(self) -> None:
+        script = self.copy_script("verify.sh")
+        call_log = self.state / "calls"
+        for command in ("cargo", "node", "just", "python3"):
+            self.write_executable(
+                self.bin / command,
+                f'printf "{command} prechecked=%s %s\\n" '
+                '"${IRIS_DRIVE_RELEASE_GATE_FAST_PRECHECKED:-0}" "$*" '
+                '>>"$RELEASE_WORKFLOW_TEST_STATE/calls"\n'
+                + ('if [[ "$*" == *"--bin idrive"* ]]; then '
+                   'exit "$TEST_FAST_EXIT"; fi\n' if command == "cargo" else ""),
+            )
+        self.write_executable(self.bin / "uname", 'printf "TestOS\\n"\n')
+
+        for fast_exit in ("0", "42"):
+            with self.subTest(fast_exit=fast_exit):
+                call_log.write_text("", encoding="utf-8")
+                completed = subprocess.run(
+                    [str(script), "full"],
+                    check=False, capture_output=True, text=True,
+                    env=self.environment(
+                        TEST_FAST_EXIT=fast_exit, IRIS_VERIFY_SKIP_FAST="0",
+                        IRIS_DRIVE_RELEASE_GATE_FAST_PRECHECKED="0",
+                        IRIS_DRIVE_E2E_IOS_HOST="local",
+                    ),
+                    timeout=WORKFLOW_TIMEOUT_SECONDS,
+                )
+                calls = call_log.read_text(encoding="utf-8")
+                self.assertIn("--bin idrive --test link_input_e2e", calls)
+                if fast_exit == "0":
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    self.assertIn("python3 prechecked=1 scripts/native_lab.py run", calls)
+                else:
+                    self.assertNotEqual(completed.returncode, 0)
+                    self.assertNotIn("scripts/native_lab.py run", calls)
 
 
 if __name__ == "__main__":

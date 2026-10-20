@@ -22,6 +22,8 @@ use crate::provider::{
 use path_kind::{MergedDirectory, insert_directory_candidate, resolve_path_kind_conflicts};
 
 mod path_kind;
+mod shared;
+pub use shared::{SharedMount, shared_folder_merged_root};
 
 type DirectoryMeta = HashMap<String, serde_json::Value>;
 const LOCAL_ONLY_PARENT_WALK_LIMIT: usize = 1024;
@@ -46,11 +48,12 @@ pub enum ProjectionError {
     Io(#[from] std::io::Error),
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct PrimaryMergedView {
     pub view: MergedView,
     pub authorized_app_keys: usize,
     pub app_key_roots_present: usize,
+    pub shared_mounts: Vec<SharedMount>,
 }
 
 impl PrimaryMergedView {
@@ -91,12 +94,23 @@ pub async fn primary_merged_view<S: Store>(
     let authorized = authorized_app_key_pubkeys(account);
     let merge_app_keys = merge_app_key_pubkeys(account, drive);
 
+    let mut merged = drive_merged_view(tree, drive, &merge_app_keys).await?;
+    merged.authorized_app_keys = authorized.len();
+    shared::add_shared_mounts(tree, config, &mut merged).await?;
+    Ok(merged)
+}
+
+async fn drive_merged_view<S: Store>(
+    tree: &HashTree<S>,
+    drive: &Drive,
+    merge_app_keys: &[String],
+) -> Result<PrimaryMergedView, ProjectionError> {
     let mut snapshots_data = Vec::new();
-    for app_key_pubkey in &merge_app_keys {
+    for app_key_pubkey in merge_app_keys {
         let Some(root) = drive.app_key_roots.get(app_key_pubkey) else {
             continue;
         };
-        let Some(root) = merge_root_for_device(tree, app_key_pubkey, root, &merge_app_keys).await?
+        let Some(root) = merge_root_for_device(tree, app_key_pubkey, root, merge_app_keys).await?
         else {
             continue;
         };
@@ -140,11 +154,11 @@ pub async fn primary_merged_view<S: Store>(
     let mut view = merge_drives(&merge_app_key_refs, &snapshots);
     add_visible_conflict_entries(&mut view)?;
     suppress_probable_os_placeholder_entries(&mut view);
-    add_primary_share_shortcut_entries(&mut view, config);
     Ok(PrimaryMergedView {
         view,
-        authorized_app_keys: authorized.len(),
+        authorized_app_keys: merge_app_keys.len(),
         app_key_roots_present: snapshots.len(),
+        shared_mounts: Vec::new(),
     })
 }
 
@@ -387,13 +401,39 @@ pub async fn primary_merged_root_from_view<S: Store>(
         .drive(PRIMARY_DRIVE_ID)
         .ok_or(ProjectionError::PrimaryDriveMissing)?;
     let merge_app_keys = merge_app_key_pubkeys(account, drive);
-    let source_roots = merge_source_roots(tree, drive, &merge_app_keys).await?;
+    drive_merged_root_from_view(tree, drive, &merge_app_keys, merged).await
+}
+
+async fn drive_merged_root_from_view<S: Store>(
+    tree: &HashTree<S>,
+    drive: &Drive,
+    merge_app_keys: &[String],
+    merged: &PrimaryMergedView,
+) -> Result<PrimaryMergedRoot, ProjectionError> {
+    let source_roots = merge_source_roots(tree, drive, merge_app_keys).await?;
     let mut root = tree.put_directory(Vec::new()).await?;
 
-    let mut target_dirs = merged_user_directory_paths(tree, drive, &merge_app_keys).await?;
-    add_primary_share_shortcut_directory_paths(&mut target_dirs, config);
+    let mut target_dirs = merged_user_directory_paths(tree, drive, merge_app_keys).await?;
+    target_dirs.retain(|path, _| {
+        !merged
+            .shared_mounts
+            .iter()
+            .any(|mount| shared::under(path, &mount.path))
+    });
+    let base_files = merged
+        .view
+        .files
+        .iter()
+        .filter(|entry| {
+            !merged
+                .shared_mounts
+                .iter()
+                .any(|mount| shared::under(&entry.path, &mount.path))
+        })
+        .cloned()
+        .collect();
     let (visible_files, target_dirs) = resolve_path_kind_conflicts(
-        merged.view.files.clone(),
+        base_files,
         &merged.view.suppressed_files,
         target_dirs,
         &merged.view.tombstones,
@@ -420,7 +460,21 @@ pub async fn primary_merged_root_from_view<S: Store>(
     for directory in target_dirs.into_values() {
         root = set_visible_dir_meta(tree, &root, &directory.path, directory.meta).await?;
     }
-    let top_level_entries = visible_files
+    for mount in &merged.shared_mounts {
+        root = ensure_visible_parent_dirs(tree, root, &mount.path).await?;
+        let (parent, name) = split_visible_path(&mount.path)?;
+        root = tree
+            .set_entry(&root, &parent, name, &mount.root_cid, 0, LinkType::Dir)
+            .await?;
+    }
+    let mounted_files = merged.view.files.iter().filter(|entry| {
+        merged
+            .shared_mounts
+            .iter()
+            .any(|mount| shared::under(&entry.path, &mount.path))
+    });
+    let all_files: Vec<_> = visible_files.iter().chain(mounted_files).collect();
+    let top_level_entries = all_files
         .iter()
         .filter_map(|entry| entry.path.split('/').next())
         .filter(|segment| !segment.is_empty())
@@ -429,102 +483,9 @@ pub async fn primary_merged_root_from_view<S: Store>(
 
     Ok(PrimaryMergedRoot {
         root_cid: root,
-        file_count: visible_files.len(),
+        file_count: all_files.len(),
         top_level_entries,
     })
-}
-
-fn add_primary_share_shortcut_entries(view: &mut MergedView, config: &AppConfig) {
-    if config.share_shortcuts.is_empty() {
-        return;
-    }
-
-    let source_entries = view.files.clone();
-    let mut occupied_paths = view
-        .files
-        .iter()
-        .map(|entry| entry.path.clone())
-        .collect::<BTreeSet<_>>();
-    let mut shortcut_entries = Vec::new();
-
-    for shortcut in &config.share_shortcuts {
-        let Some(folder) = config.shared_folder(shortcut.share_id) else {
-            continue;
-        };
-        let source_root = share_shortcut_primary_source_path(&folder.source_path, shortcut);
-        for entry in &source_entries {
-            let Some(suffix) = suffix_under_path(&entry.path, &source_root) else {
-                continue;
-            };
-            let path = projected_share_shortcut_path(&shortcut.path, suffix);
-            if !occupied_paths.insert(path.clone()) {
-                continue;
-            }
-
-            let mut shortcut_entry = entry.clone();
-            shortcut_entry.path = path;
-            shortcut_entry.source_path = Some(merged_entry_source_path(entry).to_string());
-            shortcut_entries.push(shortcut_entry);
-        }
-    }
-
-    if !shortcut_entries.is_empty() {
-        view.files.extend(shortcut_entries);
-        view.files.sort_by(|left, right| left.path.cmp(&right.path));
-    }
-}
-
-fn add_primary_share_shortcut_directory_paths(
-    target_dirs: &mut BTreeMap<String, MergedDirectory>,
-    config: &AppConfig,
-) {
-    if config.share_shortcuts.is_empty() {
-        return;
-    }
-
-    let source_dirs = target_dirs.values().cloned().collect::<Vec<_>>();
-    for shortcut in &config.share_shortcuts {
-        let Some(folder) = config.shared_folder(shortcut.share_id) else {
-            continue;
-        };
-        let source_root = share_shortcut_primary_source_path(&folder.source_path, shortcut);
-        for directory in &source_dirs {
-            let Some(suffix) = suffix_under_path(&directory.path, &source_root) else {
-                continue;
-            };
-            let path = projected_share_shortcut_path(&shortcut.path, suffix);
-            let mut candidate = directory.clone();
-            candidate.path = path;
-            insert_directory_candidate(target_dirs, candidate);
-        }
-    }
-}
-
-fn share_shortcut_primary_source_path(
-    source_path: &str,
-    shortcut: &crate::sharing::ShareShortcut,
-) -> String {
-    if shortcut.target_path.is_empty() {
-        source_path.to_string()
-    } else {
-        format!("{source_path}/{}", shortcut.target_path)
-    }
-}
-
-fn suffix_under_path<'a>(path: &'a str, root: &str) -> Option<&'a str> {
-    if path == root {
-        return Some("");
-    }
-    let rest = path.strip_prefix(root)?;
-    rest.strip_prefix('/')
-}
-
-fn projected_share_shortcut_path(shortcut_path: &str, suffix: &str) -> String {
-    if suffix.is_empty() {
-        shortcut_path.to_string()
-    } else {
-        format!("{shortcut_path}/{suffix}")
-    }
 }
 
 async fn merge_source_roots<S: Store>(
@@ -961,3 +922,6 @@ mod path_kind_tests;
 mod provider_perf_tests;
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+mod shared_tests;

@@ -6,6 +6,7 @@ use fips_core::discovery::nostr::{
     ADVERT_IDENTIFIER, ADVERT_KIND, ADVERT_VERSION, OverlayAdvert, OverlayTransportKind,
 };
 use hashtree_fips_transport::FipsPeerConfig;
+use nostr_sdk::nips::nip19::ToBech32;
 use nostr_sdk::{Event, PublicKey};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -213,4 +214,15 @@ pub(super) fn peer_ids(peers: &[FipsPeerConfig]) -> BTreeSet<String> {
         .filter(|npub| !npub.is_empty())
         .map(str::to_string)
         .collect()
+}
+
+pub(super) fn normalize_fips_peer_npub(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    PublicKey::from_hex(trimmed)
+        .ok()
+        .and_then(|pubkey| pubkey.to_bech32().ok())
+        .or_else(|| Some(trimmed.to_string()))
 }

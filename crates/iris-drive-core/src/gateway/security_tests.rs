@@ -101,7 +101,7 @@ async fn gateway_private_apis_reject_untrusted_content_hosts_and_origins() {
         assert!(calendar.starts_with("HTTP/1.1 403 Forbidden"), "{calendar}");
     }
     let config = AppConfig::load_or_default(config_path_in(cfg_dir.path())).unwrap();
-    assert!(config.shared_folders.is_empty());
+    assert_eq!(config.shared_folders.len(), 0);
     server.shutdown().await.unwrap();
 }
 

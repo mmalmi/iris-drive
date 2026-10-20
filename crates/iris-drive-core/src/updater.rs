@@ -3,11 +3,11 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use hashtree_updater::{
-    ProductAssetPolicy, SecurePubsubBlossomConfig, SecurePubsubBlossomSelection,
-    SecurePubsubBlossomUpdater, UpdateEventCache, UpdateRef, build_secure_pubsub_blossom_updater,
-    current_archive_target, dedupe_nonempty, download_product_selection, env_csv,
-    platform_app_asset_suffixes, preferred_product_asset, product_result_from_selection,
-    select_product_update, update_ref_from_override,
+    HashtreeUpdater, ProductAssetPolicy, ProductUpdateSelection, PubsubRootResolver,
+    SecurePubsubBlossomConfig, UpdateEventCache, UpdateRef, UpdateStore,
+    build_secure_pubsub_store_updater, build_update_store, current_archive_target, dedupe_nonempty,
+    download_product_selection, env_csv, platform_app_asset_suffixes, preferred_product_asset,
+    product_result_from_selection, select_product_update, update_ref_from_override,
 };
 pub use hashtree_updater::{
     ProductUpdateMode, ProductUpdateResult, SECURE_SOURCE_NAME, UpdateAsset, UpdateAutoCheckPolicy,
@@ -15,6 +15,9 @@ pub use hashtree_updater::{
 };
 
 use crate::config::{AppConfig, DEFAULT_BLOSSOM_SERVERS};
+
+type PeerUpdateSelection = ProductUpdateSelection<PubsubRootResolver, UpdateStore>;
+type PeerUpdateUpdater = HashtreeUpdater<PubsubRootResolver, UpdateStore>;
 
 pub(crate) mod pubsub;
 use crate::paths::config_path_in;
@@ -59,11 +62,32 @@ pub fn check_product_update_blocking(
     mode: ProductUpdateMode,
     config: ProductUpdateConfig,
 ) -> Result<ProductUpdateResult> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
+    on_update_thread(move || {
+        let runtime = update_runtime()?;
+        runtime.block_on(check_product_update(current_version, mode, config))
+    })
+}
+
+// Native dispatch queues can have only 512 KiB of stack. Construct and poll
+// network startup futures on an owned thread instead of the FFI caller's stack.
+fn on_update_thread<T: Send>(operation: impl FnOnce() -> Result<T> + Send) -> Result<T> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("iris-drive-update".to_owned())
+            .stack_size(8 * 1024 * 1024)
+            .spawn_scoped(scope, operation)
+            .context("failed to start update thread")?
+            .join()
+            .map_err(|_| anyhow::anyhow!("update thread panicked"))?
+    })
+}
+
+fn update_runtime() -> Result<tokio::runtime::Runtime> {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
         .enable_all()
         .build()
-        .context("failed to start update runtime")?;
-    runtime.block_on(check_product_update(current_version, mode, config))
+        .context("failed to start update runtime")
 }
 
 pub async fn check_product_update(
@@ -81,16 +105,15 @@ pub fn download_product_update_blocking(
     config: ProductUpdateConfig,
     download_dir: Option<&Path>,
 ) -> Result<ProductUpdateResult> {
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .build()
-        .context("failed to start update runtime")?;
-    runtime.block_on(download_product_update(
-        current_version,
-        mode,
-        config,
-        download_dir,
-    ))
+    on_update_thread(move || {
+        let runtime = update_runtime()?;
+        runtime.block_on(download_product_update(
+            current_version,
+            mode,
+            config,
+            download_dir,
+        ))
+    })
 }
 
 pub async fn download_product_update(
@@ -112,7 +135,7 @@ async fn select_update(
     current_version: &str,
     mode: ProductUpdateMode,
     config: ProductUpdateConfig,
-) -> Result<SecurePubsubBlossomSelection> {
+) -> Result<PeerUpdateSelection> {
     secure_selection(current_version, mode, config)
         .await
         .context("signed hashtree update check failed")
@@ -120,7 +143,7 @@ async fn select_update(
 
 fn result_from_selection(
     current_version: &str,
-    selection: &SecurePubsubBlossomSelection,
+    selection: &PeerUpdateSelection,
     path: Option<&Path>,
 ) -> ProductUpdateResult {
     product_result_from_selection(current_version, selection, SECURE_SOURCE_NAME, true, path)
@@ -130,7 +153,7 @@ async fn secure_selection(
     current_version: &str,
     mode: ProductUpdateMode,
     config: ProductUpdateConfig,
-) -> Result<SecurePubsubBlossomSelection> {
+) -> Result<PeerUpdateSelection> {
     let reference = product_update_reference(config.update_ref.as_deref())?;
     let updater = build_secure_updater(&config, &reference).await?;
     let key = reference.resolver_key();
@@ -143,12 +166,12 @@ async fn secure_selection(
         &asset_policy(),
     )
     .await;
-    if let Some(directory) = config.config_dir.as_deref() {
-        if let Some(event) = resolver.latest_event(&key).await? {
-            let mut cache = UpdateEventCache::new(&reference)?;
-            cache.ingest_event(event)?;
-            persist_update_event_cache(directory, &cache).map_err(anyhow::Error::msg)?;
-        }
+    if let Some(directory) = config.config_dir.as_deref()
+        && let Some(event) = resolver.latest_event(&key).await?
+    {
+        let mut cache = UpdateEventCache::new(&reference)?;
+        cache.ingest_event(event)?;
+        persist_update_event_cache(directory, &cache).map_err(anyhow::Error::msg)?;
     }
     selection.with_context(|| {
         format!(
@@ -170,22 +193,35 @@ pub(crate) fn product_update_reference(override_ref: Option<&str>) -> Result<Upd
 async fn build_secure_updater(
     config: &ProductUpdateConfig,
     reference: &UpdateRef,
-) -> Result<SecurePubsubBlossomUpdater> {
+) -> Result<PeerUpdateUpdater> {
     let provider = tokio::time::timeout(
         Duration::from_secs(UPDATE_CONNECT_TIMEOUT_SECS),
         pubsub::UpdatePubsub::connect(config),
     )
     .await
     .context("starting update pubsub transport timed out")??;
-    let updater = build_secure_pubsub_blossom_updater(
-        provider,
+    let (primary, peers) = match pubsub::storage(config.config_dir.as_deref()) {
+        Some((store, route)) => (store, Some(route)),
+        None => (
+            std::sync::Arc::new(hashtree_core::MemoryStore::new())
+                as std::sync::Arc<dyn hashtree_core::Store>,
+            None,
+        ),
+    };
+    let store = build_update_store(
+        primary,
+        peers,
         SecurePubsubBlossomConfig {
             blossom_read_servers: blossom_read_servers(config),
             manifest_timeout: Duration::from_secs(UPDATE_MANIFEST_TIMEOUT_SECS),
             download_timeout: Duration::from_secs(UPDATE_DOWNLOAD_TIMEOUT_SECS),
         },
-    )
-    .await?;
+    )?;
+    let updater = build_secure_pubsub_store_updater(
+        provider,
+        store,
+        Duration::from_secs(UPDATE_MANIFEST_TIMEOUT_SECS),
+    );
     if let Some(directory) = config.config_dir.as_deref() {
         let cache = load_update_event_cache(directory, reference).map_err(anyhow::Error::msg)?;
         for event in cache.resolver_events() {
@@ -224,7 +260,7 @@ fn blossom_read_servers(config: &ProductUpdateConfig) -> Vec<String> {
 }
 
 async fn download_selection(
-    selection: &SecurePubsubBlossomSelection,
+    selection: &PeerUpdateSelection,
     download_dir: Option<&Path>,
 ) -> Result<PathBuf> {
     let workspace = create_update_workspace(download_dir)?;
@@ -307,6 +343,69 @@ fn version_parts(value: &str) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blocking_updates_fit_native_dispatch_stack() {
+        const CHILD: &str = "IRIS_DRIVE_TEST_UPDATE_SMALL_STACK";
+        if let Ok(operation) = std::env::var(CHILD) {
+            std::thread::Builder::new()
+                .stack_size(512 * 1024)
+                .spawn(move || {
+                    let directory = tempfile::tempdir().unwrap();
+                    let config = ProductUpdateConfig {
+                        config_dir: Some(directory.path().to_owned()),
+                        ..ProductUpdateConfig::default()
+                    };
+                    let result = if operation == "check" {
+                        check_product_update_blocking("0.1.38", ProductUpdateMode::App, config)
+                    } else {
+                        download_product_update_blocking(
+                            "0.1.38",
+                            ProductUpdateMode::App,
+                            config,
+                            Some(directory.path()),
+                        )
+                    };
+                    assert!(
+                        result.is_err(),
+                        "isolated transport has no signed update root"
+                    );
+                })
+                .unwrap()
+                .join()
+                .unwrap();
+            return;
+        }
+        for operation in ["check", "download"] {
+            let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+            child.args([
+                "--exact",
+                "updater::tests::blocking_updates_fit_native_dispatch_stack",
+                "--nocapture",
+            ]);
+            child.env(CHILD, operation);
+            for feature in [
+                "BOOTSTRAP",
+                "LAN_DISCOVERY",
+                "NOSTR_DISCOVERY",
+                "WEBRTC",
+                "LOCAL_RENDEZVOUS",
+            ] {
+                child.env(format!("IRIS_DRIVE_FIPS_ENABLE_{feature}"), "false");
+            }
+            child.env("IRIS_DRIVE_FIPS_ENABLE_MESH_PUBSUB", "true");
+            child.env("IRIS_DRIVE_FIPS_ENABLE_UDP", "true");
+            child.env("IRIS_DRIVE_FIPS_STATIC_PEERS", "");
+            child.env("IRIS_DRIVE_UPDATE_RELAYS", "");
+            child.env("IRIS_FIPS_WEBSOCKET_SEED_URLS", "");
+            let result = child.output().unwrap();
+            assert!(
+                result.status.success(),
+                "{operation} on a native-sized stack failed: {}",
+                String::from_utf8_lossy(&result.stderr)
+            );
+        }
+    }
 
     #[tokio::test]
     async fn invalid_signed_reference_fails_without_starting_an_unsigned_update() {

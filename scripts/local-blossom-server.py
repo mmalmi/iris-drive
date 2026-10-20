@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import re
 import signal
+from socketserver import TCPServer
 import threading
 from typing import Optional
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -23,6 +24,12 @@ BLOB_PATH = re.compile(r"/([0-9a-f]{64})\.bin")
 class BlossomFixtureServer(ThreadingHTTPServer):
     daemon_threads = True
 
+    def server_bind(self) -> None:
+        # This byte-storage fixture needs its bound address, not a reverse-DNS
+        # name. HTTPServer's getfqdn call can stall readiness on hosted Macs.
+        TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
     def __init__(
         self,
         address: tuple[str, int],
@@ -34,6 +41,11 @@ class BlossomFixtureServer(ThreadingHTTPServer):
         self.request_log = request_log
         self.request_log_lock = threading.Lock()
         self.request_sequence = 0
+        self.completed_blobs = {path.name for path in storage_dir.glob('*.bin')}
+
+    def stored_blob_count(self) -> int:
+        with self.request_log_lock:
+            return len(self.completed_blobs)
 
     def record_request(self, method: str, path: str, status: int) -> None:
         if self.request_log is None:
@@ -58,6 +70,10 @@ class BlossomFixtureHandler(BaseHTTPRequestHandler):
         return
 
     def do_GET(self) -> None:  # noqa: N802 - BaseHTTPRequestHandler API
+        if self._path() == '/_test/uploads':
+            body = json.dumps({'stored_blobs': self.server.stored_blob_count()}).encode()
+            self._respond(200, body, 'application/json')
+            return
         if self._path() == "/health":
             self._respond(200, b"ok\n", "text/plain")
             return
@@ -98,6 +114,8 @@ class BlossomFixtureHandler(BaseHTTPRequestHandler):
             return
         with os.fdopen(descriptor, "wb") as blob:
             blob.write(body)
+        with self.server.request_log_lock:
+            self.server.completed_blobs.add(blob_path.name)
         self._respond(201, b"created\n", "text/plain")
 
     def _path(self) -> str:

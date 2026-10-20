@@ -58,7 +58,7 @@ async fn calendar_delete_event_removes_it_from_calendar_tree() {
         .await
         .unwrap();
 
-    assert!(data.events.is_empty());
+    assert_eq!(data.events.len(), 0);
 }
 
 #[test]

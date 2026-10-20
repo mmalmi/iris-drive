@@ -265,10 +265,8 @@ fn own_backup_address_cannot_be_accepted_as_a_friend() {
     AppKey::load_or_generate(dir.path().join("key")).unwrap();
     let own = backup_npub(dir.path()).unwrap();
     assert!(upsert_friend(dir.path(), &own, None, 0, true).is_err());
-    assert!(
-        FriendBackupConfig::load(dir.path())
-            .unwrap()
-            .friends
-            .is_empty()
+    assert_eq!(
+        FriendBackupConfig::load(dir.path()).unwrap().friends.len(),
+        0
     );
 }

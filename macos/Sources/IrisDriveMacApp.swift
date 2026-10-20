@@ -12,9 +12,7 @@ let irisDriveDomainIdentifier = NSFileProviderDomainIdentifier(
 )
 let irisDriveDisplayName = "Iris Drive"
 let irisDriveHiddenLaunchArgument = "--hidden"
-// Keep the domain display empty so macOS names the CloudStorage root IrisDrive,
-// while Finder still shows the provider/root item as Iris Drive.
-let irisDriveFileProviderDomainDisplayName = ""
+let irisDriveFileProviderDomainDisplayName = irisDriveFileProviderProfile.domainDisplayName
 private let irisDriveControlPanelWindowID = "control-panel"
 private let irisDriveFileProviderRuntimeFileName = "fileprovider-runtime.json"
 private let irisDriveFileProviderPathIdentifierPrefix = "path:"
