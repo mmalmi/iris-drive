@@ -25,10 +25,10 @@ base64 = "0.22"
 bip39 = { version = "2.2", features = ["rand"] }
 clap = { version = "4.5", features = ["derive", "env"] }
 dirs = "6"
-nvpn-fips-core = { version = "=0.4.106" }
-nvpn-fips-endpoint = { version = "=0.4.106" }
+nvpn-fips-core = { version = "=0.4.107" }
+nvpn-fips-endpoint = { version = "=0.4.107" }
 nvpn-fips-tcp = { version = "=0.2.6" }
-nvpn-fips-tcp-endpoint = { version = "=0.2.41" }
+nvpn-fips-tcp-endpoint = { version = "=0.2.42" }
 futures = "0.3"
 hex = "0.4"
 http = "1"
@@ -47,8 +47,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uniffi = "0.29"
 uuid = { version = "1", features = ["v4", "serde"] }
 nostr-sdk = { version = "0.44", default-features = false, features = ["nip06", "nip44", "nip59"] }
-nostr-pubsub = "=0.1.17"
-nostr-pubsub-fips = "=0.5.34"
+nostr-pubsub = "=0.1.18"
+nostr-pubsub-fips = "=0.5.37"
 nostr-pubsub-relay = "=0.1.15"
 nostr-identity = "=0.3.1"
 # Iris Drive's provider abstraction and FIPS adapter remain local workspace
