@@ -7,16 +7,21 @@ on:
       commit:
         description: Exact source commit to qualify
         required: true
+      restore_only:
+        description: Only qualify Windows locked runtime inputs
+        type: boolean
+        default: false
 
 permissions:
   contents: read
 
 concurrency:
-  group: native-ci-${{ github.event.pull_request.number || inputs.commit }}
+  group: native-ci-${{ github.event.pull_request.number || inputs.commit }}-${{ inputs.restore_only || false }}
   cancel-in-progress: true
 
 jobs:
   native:
+    if: inputs.restore_only != true
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -53,3 +58,25 @@ jobs:
         run: cargo check --locked --manifest-path linux/Cargo.toml --all-targets
       - name: Verify locks remain unchanged
         run: git diff --exit-code -- Cargo.lock linux/Cargo.lock
+
+  windows-inputs:
+    if: inputs.restore_only == true
+    runs-on: windows-2025
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.420'
+      - name: Qualify locked runtime downloads without compiling the app
+        shell: pwsh
+        run: ./scripts/test-windows-build-inputs.ps1 -ResultPath "$env:RUNNER_TEMP/windows-input-results.json"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-runtime-input-results
+          path: ${{ runner.temp }}/windows-input-results.json
+          if-no-files-found: error
