@@ -91,6 +91,8 @@ require_executable scripts/testflight-public
 require_file scripts/macos-entitlements.mjs
 require_file .env.release.example
 require_file release-policy.json
+require_file haps.toml
+require_contains haps.toml '# https://haps.hashtree.cc'
 require_file .env.zapstore.example
 require_file zapstore.yaml
 require_file LICENSE

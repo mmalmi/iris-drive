@@ -1,0 +1,46 @@
+# https://haps.hashtree.cc
+[package]
+name = "iris-drive"
+version = "0.1.39"
+target = "aarch64-apple-darwin"
+description = "Private file sync across your devices."
+
+[targets."aarch64-apple-darwin".package]
+app = "Iris Drive.app"
+commands = { iris-drive = "Iris Drive.app/Contents/MacOS/Iris Drive" }
+
+[targets."aarch64-apple-darwin".build]
+unavailable = "Local macOS GUI builds require the FileProvider signing setup documented in README.md (Haps distribution)."
+
+[targets."x86_64-unknown-linux-gnu".package]
+target = "x86_64-unknown-linux-gnu"
+commands = { iris-drive = "usr/bin/iris-drive" }
+desktop = { name = "Iris Drive", command = "iris-drive", icon = "usr/share/icons/hicolor/scalable/apps/iris-drive.svg" }
+
+[targets."x86_64-unknown-linux-gnu".build]
+commands = [
+  ["cargo", "build", "--release", "--locked", "--target", "{target}", "--target-dir", "target", "-p", "idrive"],
+  ["cargo", "build", "--release", "--locked", "--target", "{target}", "--target-dir", "target", "--manifest-path", "linux/Cargo.toml"],
+]
+
+[targets."x86_64-unknown-linux-gnu".build.artifacts]
+"usr/bin/iris-drive" = "target/{target}/release/iris-drive"
+"usr/bin/idrive" = "target/{target}/release/idrive"
+"usr/share/icons/hicolor/scalable/apps/iris-drive.svg" = "linux/resources/iris-drive.svg"
+"LICENSE" = "LICENSE"
+
+[packages.idrive.package]
+name = "idrive"
+version = "0.1.39"
+target = "host"
+description = "Iris Drive command-line client"
+commands = { idrive = "idrive{exe}" }
+
+[packages.idrive.build]
+commands = [
+  ["cargo", "build", "--release", "--locked", "--target", "{target}", "--target-dir", "target", "-p", "idrive"],
+]
+
+[packages.idrive.build.artifacts]
+"idrive{exe}" = "target/{target}/release/idrive{exe}"
+"LICENSE" = "LICENSE"

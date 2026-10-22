@@ -462,6 +462,23 @@ MIT.
 
 ### Haps distribution
 
+[`haps.toml`](haps.toml) describes the `iris-drive` desktop package and the
+separately installable `idrive` command-line package. Linux GUI builds require
+the GTK 4, libadwaita, FUSE 3 and D-Bus development libraries used by Native CI;
+CLI builds use the locked Rust dependencies and the selected host toolchain.
+The release version step updates both Haps package versions.
+
+The macOS GUI has package metadata and an explicit source-build limitation. Its
+FileProvider requires the signing and app-group entitlements in
+`macos/Release.entitlements` and `macos/FileProvider/Release.entitlements`.
+The existing macOS release builder additionally requires Developer ID,
+provisioning and notarization configuration; it is a maintainer workflow.
+An ad-hoc GUI build is not a supported substitute. The `idrive` CLI source
+recipe remains available on macOS.
+
+Source review applies to the reviewed source and recipe. It does not approve an
+unrelated downloaded binary or establish equality with the signed app release.
+
 The final local release flow also publishes desktop/CLI packages using
 `haps-release.json` and the same verified `release.json` assets. Drafts do not
 publish Haps packages. Install Haps with the `import-release` subcommand and Python

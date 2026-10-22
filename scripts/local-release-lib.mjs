@@ -122,6 +122,43 @@ export function bumpCargoPackageVersion(cargoTomlText, version) {
   return cargoTomlText.replace(original, replaced)
 }
 
+export function bumpWorkspaceVersion(cargoTomlText, version) {
+  const semver = semverFromTag(version)
+  return cargoTomlText
+    .replace(
+      /^(\[workspace\.package\][\s\S]*?^version\s*=\s*")[^"\n]+(")/m,
+      `$1${semver}$2`,
+    )
+    .replace(
+      /(iris-drive-core\s*=\s*\{\s*version\s*=\s*")[^"\n]+(")/g,
+      `$1${semver}$2`,
+    )
+    .replace(
+      /(iris-drive-app-core\s*=\s*\{\s*version\s*=\s*")[^"\n]+(")/g,
+      `$1${semver}$2`,
+    )
+}
+
+export function bumpHapsManifestVersions(manifestText, version) {
+  const semver = semverFromTag(version)
+  let packageTable = false
+  let updated = 0
+  const next = manifestText.split('\n').map((line) => {
+    const table = line.match(/^\s*\[([^\]]+)\]\s*(?:#.*)?$/)
+    if (table) {
+      packageTable = table[1] === 'package' ||
+        (/^(?:packages|targets)\./.test(table[1]) && table[1].endsWith('.package'))
+    }
+    if (packageTable && /^\s*version\s*=\s*"[^"]+"/.test(line)) {
+      updated += 1
+      return line.replace(/(version\s*=\s*")[^"]+(")/, `$1${semver}$2`)
+    }
+    return line
+  }).join('\n')
+  if (updated === 0) throw new Error('Could not find a Haps package version')
+  return next
+}
+
 export function readWorkspaceVersionTag(cargoTomlText) {
   const match = cargoTomlText.match(
     /^\[workspace\.package\][\s\S]*?^version\s*=\s*"([^"\n]+)"/m,

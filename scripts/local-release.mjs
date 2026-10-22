@@ -20,6 +20,8 @@ import { fileURLToPath } from 'node:url'
 import {
   buildNumberFromVersion,
   bumpCargoPackageVersion,
+  bumpHapsManifestVersions,
+  bumpWorkspaceVersion,
   bumpPbxprojReleaseVersions,
   bumpXcodegenProjectVersions,
   buildReleaseManifest,
@@ -1136,6 +1138,7 @@ function buildReleaseArtifacts({ env, tag, options }) {
 function syncPlatformVersions({ tag, dryRun }) {
   const targets = [
     { path: rootCargoToml, bump: bumpWorkspaceVersion },
+    { path: join(repoRoot, 'haps.toml'), bump: bumpHapsManifestVersions },
     { path: join(repoRoot, 'linux', 'Cargo.toml'), bump: bumpCargoPackageVersion },
     { path: join(repoRoot, 'macos', 'project.yml'), bump: bumpXcodegenProjectVersions },
     { path: join(repoRoot, 'ios', 'project.yml'), bump: bumpXcodegenProjectVersions },
@@ -1162,23 +1165,6 @@ function syncPlatformVersions({ tag, dryRun }) {
   } else {
     console.log(`Platform versions already at ${tag}`)
   }
-}
-
-function bumpWorkspaceVersion(cargoTomlText, version) {
-  const semver = semverFromTag(version)
-  return cargoTomlText
-    .replace(
-      /^(\[workspace\.package\][\s\S]*?^version\s*=\s*")[^"\n]+(")/m,
-      `$1${semver}$2`,
-    )
-    .replace(
-      /(iris-drive-core\s*=\s*\{\s*version\s*=\s*")[^"\n]+(")/g,
-      `$1${semver}$2`,
-    )
-    .replace(
-      /(iris-drive-app-core\s*=\s*\{\s*version\s*=\s*")[^"\n]+(")/g,
-      `$1${semver}$2`,
-    )
 }
 
 function collectReleaseAssetPaths(assetDir, tag) {

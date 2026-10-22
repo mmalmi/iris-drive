@@ -7,6 +7,8 @@ import { fileURLToPath } from 'node:url'
 import {
   buildNumberFromVersion,
   bumpCargoPackageVersion,
+  bumpHapsManifestVersions,
+  bumpWorkspaceVersion,
   bumpPbxprojReleaseVersions,
   bumpXcodegenProjectVersions,
   readWorkspaceVersionTag,
@@ -34,6 +36,10 @@ test('release build numbers are strictly increasing and collision-free', () => {
 })
 
 test('release version helpers sync native platform metadata', () => {
+  assert.equal(bumpWorkspaceVersion(
+    '[workspace.package]\nversion = "0.1.39"\n[workspace.dependencies]\niris-drive-core = { version = "0.1.39", path = "crates/iris-drive-core" }\n',
+    'v0.1.40',
+  ), '[workspace.package]\nversion = "0.1.40"\n[workspace.dependencies]\niris-drive-core = { version = "0.1.40", path = "crates/iris-drive-core" }\n')
   assert.equal(
     bumpCargoPackageVersion('[package]\nname = "iris-drive-linux"\nversion = "0.1.4"\n\n[dependencies]\n', 'v0.1.5'),
     '[package]\nname = "iris-drive-linux"\nversion = "0.1.5"\n\n[dependencies]\n',
@@ -49,6 +55,42 @@ test('release version helpers sync native platform metadata', () => {
     bumpPbxprojReleaseVersions('MARKETING_VERSION = 0.1.4;\nCURRENT_PROJECT_VERSION = 1004;\n', 'v0.1.5'),
     'MARKETING_VERSION = 0.1.5;\nCURRENT_PROJECT_VERSION = 1006;\n',
   )
+})
+
+test('release versions update every Haps package without changing dependency versions', () => {
+  const input = `# https://haps.hashtree.cc
+[package]
+name = "iris-drive"
+version = "0.1.39"
+[package.dependencies.helper]
+version = "0.2.0"
+[packages.idrive.package]
+name = "idrive"
+version = "0.1.39"
+[targets."aarch64-apple-darwin".package]
+version = "0.1.39"
+[build]
+commands = [["cargo", "build", "--locked"]]
+`
+  const next = bumpHapsManifestVersions(input, 'v0.1.40')
+  assert.equal((next.match(/version = "0.1.40"/g) ?? []).length, 3)
+  assert.match(next, /version = "0.2.0"/)
+  assert.match(next, /commands = \[\["cargo", "build", "--locked"\]\]/)
+  assert.ok(next.startsWith('# https://haps.hashtree.cc\n'))
+  assert.equal(bumpHapsManifestVersions(next, 'v0.1.40'), next)
+  assert.throws(() => bumpHapsManifestVersions('[package]\nname = "iris-drive"\n', 'v0.1.40'), /version/)
+})
+
+test('platform version preview includes Haps packages and leaves the manifest unchanged', () => {
+  const manifest = new URL('../haps.toml', import.meta.url)
+  const before = readFileSync(manifest, 'utf8')
+  const result = spawnSync(process.execPath, [
+    fileURLToPath(new URL('./local-release.mjs', import.meta.url)),
+    '--build', '--only', 'platform-versions', '--tag', 'v9.9.9', '--dry-run',
+  ], { encoding: 'utf8' })
+  assert.equal(result.status, 0, result.stderr)
+  assert.match(result.stdout, /Synced platform versions to v9\.9\.9:.*haps\.toml/)
+  assert.equal(readFileSync(manifest, 'utf8'), before)
 })
 
 test('standalone iOS release paths share the canonical build sequence', () => {
