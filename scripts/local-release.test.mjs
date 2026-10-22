@@ -195,6 +195,7 @@ test('plannedReleaseAssetNames names the public release artifacts', () => {
     'iris-drive-v0.2.27-linux-x64.deb',
     'idrive-v0.2.27-x86_64-pc-windows-msvc.zip',
     'iris-drive-v0.2.27-windows-x64-setup.exe',
+    'iris-drive-v0.2.27-windows-x64.zip',
     'iris-drive-v0.2.27-android-arm64.apk',
     'iris-drive-v0.2.27-android-arm64.aab',
   ])
@@ -214,6 +215,7 @@ test('renderReleaseNotes groups common app downloads before advanced files', () 
       'iris-drive-v0.2.27-macos-arm64.app.tar.gz',
       'iris-drive-v0.2.27-linux-x64.deb',
       'iris-drive-v0.2.27-windows-x64-setup.exe',
+    'iris-drive-v0.2.27-windows-x64.zip',
       'iris-drive-v0.2.27-android-arm64.apk',
       'iris-drive-v0.2.27-android-arm64.aab',
       'idrive-v0.2.27-aarch64-apple-darwin.tar.gz',
@@ -286,7 +288,7 @@ test('local-release dry-run validates planned build assets over partial existing
   )
 
   assert.equal(result.status, 0, result.stderr)
-  assert.match(result.stdout, /Would stage 9 planned asset\(s\)/)
+  assert.match(result.stdout, /Would stage 10 planned asset\(s\)/)
 })
 
 test('local-release final dry-run refreshes public release resolver after htree publish', () => {
@@ -323,7 +325,7 @@ test('local-release final dry-run refreshes public release resolver after htree 
   )
 
   assert.equal(result.status, 0, result.stderr)
-  assert.match(result.stdout, /Would stage 9 asset\(s\)/)
+  assert.match(result.stdout, /Would stage 10 asset\(s\)/)
   assert.match(result.stdout, /api\/resolve\/npub1example\/releases%2Firis-drive\?refresh=1/)
   assert.match(
     result.stdout,

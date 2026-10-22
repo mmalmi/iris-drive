@@ -466,6 +466,12 @@ MIT.
 separately installable `idrive` command-line package. Linux GUI builds require
 the GTK 4, libadwaita, FUSE 3 and D-Bus development libraries used by Native CI;
 CLI builds use the locked Rust dependencies and the selected host toolchain.
+The Windows GUI recipe uses the same self-contained payload as the native
+installer. It requires the .NET 8 SDK, Rust MSVC toolchain and Visual Studio C++
+Clang component. Haps installs its Start Menu shortcut and `iris-drive:` link
+handler; the app registers its Cloud Files sync root when used. The release
+publishes this complete payload as a ZIP alongside the installer, and verifies
+its files against the original build output before publication.
 The release version step updates both Haps package versions.
 
 The macOS GUI has package metadata and an explicit source-build limitation. Its

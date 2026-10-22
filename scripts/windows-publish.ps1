@@ -325,6 +325,14 @@ if ($Installer) {
     Invoke-Checked node @((Join-Path $Root "scripts\release-build-hygiene-cli.mjs"), $Root, $InstallerPath)
   }
 
+  # The same complete self-contained payload feeds both Inno Setup and Haps.
+  $AppArchivePath = Join-Path $InstallerOutputDir "iris-drive-$VersionTag-windows-x64.zip"
+  Compress-Archive -Path (Join-Path $PublishDir "*") -DestinationPath $AppArchivePath -Force
+  if (!(Test-Path $AppArchivePath)) {
+    throw "Expected Windows app archive was not produced: $AppArchivePath"
+  }
+  Write-Output "Built Iris Drive app archive: $AppArchivePath"
+
   $CliArchivePath = Join-Path $InstallerOutputDir "idrive-$VersionTag-x86_64-pc-windows-msvc.zip"
   $CliStage = Join-Path $Root "target\release\windows-cli-package"
   if (Test-Path $CliStage) {

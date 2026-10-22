@@ -1050,6 +1050,20 @@ function buildWindowsArtifacts({ env, tag, dryRun }) {
       [[cliPath, cliZipPath, 'idrive.exe'], [windowsLicensePath, cliZipPath, 'LICENSE']],
       'Windows CLI archive validation failed.',
     )
+    const publishDir = join(repoRoot, 'windows', 'bin', 'Release', 'net8.0-windows', 'win-x64', 'publish')
+    const appArchive = join(distDir, `iris-drive-${tag}-windows-x64.zip`)
+    const archiveEntries = []
+    function collectPayload(directory, prefix = '') {
+      for (const entry of readdirSync(directory, { withFileTypes: true })) {
+        const name = prefix + entry.name
+        const path = join(directory, entry.name)
+        if (entry.isDirectory()) collectPayload(path, `${name}/`)
+        else if (entry.isFile()) archiveEntries.push([path, appArchive, name])
+        else throw new Error('Unsupported Windows payload entry')
+      }
+    }
+    collectPayload(publishDir)
+    assertZipEntriesEqualFiles(archiveEntries, 'Windows app archive validation failed.')
     if (!existsSync(expectedInstallerPath)) {
       throw new Error(`Missing Windows installer: ${expectedInstallerPath}`)
     }

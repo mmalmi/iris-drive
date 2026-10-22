@@ -28,6 +28,23 @@
       }
     },
     {
+      "name": "iris-drive",
+      "target": "x86_64-pc-windows-msvc",
+      "asset": "iris-drive-{tag}-windows-x64.zip",
+      "description": "Private file sync across your devices.",
+      "commands": {
+        "iris-drive": "IrisDrive.exe"
+      },
+      "desktop": {
+        "name": "Iris Drive",
+        "command": "iris-drive",
+        "icon": "IrisDrive.ico",
+        "uri_schemes": [
+          "iris-drive"
+        ]
+      }
+    },
+    {
       "name": "idrive",
       "target": "aarch64-apple-darwin",
       "asset": "idrive-{tag}-aarch64-apple-darwin.tar.gz",

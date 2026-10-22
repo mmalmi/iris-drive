@@ -233,6 +233,7 @@ export function validateReleaseAssetSet(
   const hasWindowsX64Setup = names.some((name) =>
     /^iris-drive-v.*-windows-x64-setup\.exe$/.test(name),
   )
+  const hasWindowsX64App = names.some((name) => /^iris-drive-v.*-windows-x64\.zip$/.test(name))
   const hasSignedAndroidApk = names.some((name) =>
     /^iris-drive-v.*-android-arm64\.apk$/.test(name),
   )
@@ -269,6 +270,9 @@ export function validateReleaseAssetSet(
     if (!hasWindowsX64Setup) {
       missing.push('Windows x64 installer')
     }
+    if (!hasWindowsX64App) {
+      missing.push('Windows x64 app archive')
+    }
     if (!hasSignedAndroidApk) {
       missing.push('signed Android APK')
     }
@@ -294,6 +298,7 @@ export function plannedReleaseAssetNames(tag, steps, { signedAndroid = true } = 
   if (selected.has('windows')) {
     names.push(`idrive-${normalizedTag}-x86_64-pc-windows-msvc.zip`)
     names.push(`iris-drive-${normalizedTag}-windows-x64-setup.exe`)
+    names.push(`iris-drive-${normalizedTag}-windows-x64.zip`)
   }
   if (selected.has('android')) {
     const suffix = signedAndroid ? '' : '-unsigned'

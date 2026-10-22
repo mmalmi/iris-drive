@@ -58,3 +58,9 @@ test('final release dry-run builds required Windows artifacts without signing in
   assert.match(result.stdout, /idrive-v9\.9\.9-x86_64-pc-windows-msvc\.zip/)
   assert.match(result.stdout, /iris-drive-v9\.9\.9-windows-x64-setup\.exe/)
 })
+
+test('complete releases require the Windows Haps payload', () => {
+  const assets = plannedReleaseAssetNames('v9.9.9', ['macos', 'linux', 'windows', 'android'])
+  assert.throws(() => validateReleaseAssetSet(assets.filter(name => !name.endsWith('windows-x64.zip')),
+    { requireCompleteAppRelease: true }), /Windows x64 app archive/)
+})

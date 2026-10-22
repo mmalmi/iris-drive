@@ -29,6 +29,19 @@ commands = [
 "usr/share/icons/hicolor/scalable/apps/iris-drive.svg" = "linux/resources/iris-drive.svg"
 "LICENSE" = "LICENSE"
 
+[targets."x86_64-pc-windows-msvc".package]
+target = "x86_64-pc-windows-msvc"
+commands = { iris-drive = "IrisDrive.exe" }
+desktop = { name = "Iris Drive", command = "iris-drive", icon = "IrisDrive.ico", uri_schemes = ["iris-drive"] }
+
+[targets."x86_64-pc-windows-msvc".build]
+commands = [
+  ["powershell.exe", "-NoProfile", "-File", "scripts/windows-publish.ps1", "-Configuration", "Release"],
+]
+
+[targets."x86_64-pc-windows-msvc".build.artifacts]
+"." = "windows/bin/Release/net8.0-windows/win-x64/publish"
+
 [packages.idrive.package]
 name = "idrive"
 version = "0.1.39"
