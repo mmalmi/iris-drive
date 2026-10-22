@@ -71,6 +71,20 @@ if (-not $failure) {
     Restore-Checked 'final' $false
     Assert-PinnedDownloadPackages -AssetsPath $assets -PinsPath $pinsPath
     $checks += 'final locked restore and hashes'
+    $payload = Join-Path $stage 'payload'
+    New-Item -ItemType Directory $payload | Out-Null
+    [IO.File]::WriteAllText((Join-Path $payload 'test.txt'), 'payload bytes')
+    $archive = Join-Path $stage 'payload.zip'
+    Compress-Archive -Path (Join-Path $payload '*') -DestinationPath $archive
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $zip = [IO.Compression.ZipFile]::OpenRead($archive)
+    try {
+      if ($zip.Entries.Count -ne 1 -or $zip.Entries[0].FullName -ne 'test.txt') { throw 'Archive layout differs' }
+      $reader = New-Object IO.StreamReader($zip.Entries[0].Open())
+      try { if ($reader.ReadToEnd() -ne 'payload bytes') { throw 'Archive payload differs' } }
+      finally { $reader.Dispose() }
+    } finally { $zip.Dispose() }
+    $checks += 'portable archive payload and layout'
   } catch { $failure = $_.Exception.Message }
 }
 $after = (Get-PSDrive C).Free
