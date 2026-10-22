@@ -1,0 +1,22 @@
+[
+  {
+    "id": "Microsoft.AspNetCore.App.Runtime.win-x64",
+    "version": "8.0.26",
+    "sha512": "2c5ae714aa57938c262468b26d2d37c1324d68c78910b561b3401f76681adb56e654a150ebcd4db9f8a193bacfa5b90cb421fda57915e18ab4f5a7f55758f24b"
+  },
+  {
+    "id": "Microsoft.NETCore.App.Host.win-x64",
+    "version": "8.0.26",
+    "sha512": "1efb5f6d77f5c3937a30e8476d4545a94473fc5b2e42ae36f9bec76c85b266d61fc29868ab81c83777a20063445be9b21935f132b5c3831bbabbf72a016fe5e9"
+  },
+  {
+    "id": "Microsoft.NETCore.App.Runtime.win-x64",
+    "version": "8.0.26",
+    "sha512": "77f2aa8d724120074d3564ebaf7eaaa09e5ba9e184352106fef5cf898d3c2e4c45624204b754ce37b88a11158f7f437558836f94632f86f2ec418f67b74fcef1"
+  },
+  {
+    "id": "Microsoft.WindowsDesktop.App.Runtime.win-x64",
+    "version": "8.0.26",
+    "sha512": "2765a2fa0b2718b2ab67e5c631e1d71edf91f97c89c5d91db9f723e7d531544b7e6198cc31e712014c205d3bbc10e188e189057468a1a922e47575c57aeb7560"
+  }
+]

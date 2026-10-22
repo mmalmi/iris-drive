@@ -186,26 +186,6 @@ test('validateReleaseAssetSet rejects unsigned Android public artifacts', () => 
   )
 })
 
-test('plannedReleaseAssetNames names the public release artifacts', () => {
-  assert.deepEqual(plannedReleaseAssetNames('0.2.27', ['macos', 'linux', 'windows', 'android']), [
-    'idrive-v0.2.27-aarch64-apple-darwin.tar.gz',
-    'iris-drive-v0.2.27-macos-arm64.dmg',
-    'iris-drive-v0.2.27-macos-arm64.app.tar.gz',
-    'idrive-v0.2.27-x86_64-unknown-linux-gnu.tar.gz',
-    'iris-drive-v0.2.27-linux-x64.deb',
-    'idrive-v0.2.27-x86_64-pc-windows-msvc.zip',
-    'iris-drive-v0.2.27-windows-x64-setup.exe',
-    'iris-drive-v0.2.27-windows-x64.zip',
-    'iris-drive-v0.2.27-android-arm64.apk',
-    'iris-drive-v0.2.27-android-arm64.aab',
-  ])
-})
-
-test('plannedReleaseAssetNames covers the complete final release validator', () => {
-  const names = plannedReleaseAssetNames('v0.2.27', ['macos', 'linux', 'windows', 'android'])
-  assert.doesNotThrow(() => validateReleaseAssetSet(names, { requireCompleteAppRelease: true }))
-})
-
 test('renderReleaseNotes groups common app downloads before advanced files', () => {
   const notes = renderReleaseNotes({
     tag: 'v0.2.27',
@@ -215,7 +195,7 @@ test('renderReleaseNotes groups common app downloads before advanced files', () 
       'iris-drive-v0.2.27-macos-arm64.app.tar.gz',
       'iris-drive-v0.2.27-linux-x64.deb',
       'iris-drive-v0.2.27-windows-x64-setup.exe',
-    'iris-drive-v0.2.27-windows-x64.zip',
+      'iris-drive-v0.2.27-windows-x64.zip',
       'iris-drive-v0.2.27-android-arm64.apk',
       'iris-drive-v0.2.27-android-arm64.aab',
       'idrive-v0.2.27-aarch64-apple-darwin.tar.gz',

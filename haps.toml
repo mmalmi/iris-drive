@@ -36,7 +36,7 @@ desktop = { name = "Iris Drive", command = "iris-drive", icon = "IrisDrive.ico",
 
 [targets."x86_64-pc-windows-msvc".build]
 commands = [
-  ["powershell.exe", "-NoProfile", "-File", "scripts/windows-publish.ps1", "-Configuration", "Release"],
+  ["powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/windows-publish.ps1", "-Configuration", "Release"],
 ]
 
 [targets."x86_64-pc-windows-msvc".build.artifacts]

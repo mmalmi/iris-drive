@@ -10,6 +10,9 @@
     <RootNamespace>IrisDrive.WindowsShell</RootNamespace>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <SelfContained>true</SelfContained>
+    <RuntimeFrameworkVersion>8.0.26</RuntimeFrameworkVersion>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <RestoreLockedMode>true</RestoreLockedMode>
     <PublishSingleFile>false</PublishSingleFile>
     <ApplicationIcon>IrisDrive.ico</ApplicationIcon>
   </PropertyGroup>

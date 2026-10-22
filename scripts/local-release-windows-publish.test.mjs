@@ -230,3 +230,14 @@ test('Windows publishing remains unsigned', () => {
   )
   assert.doesNotMatch(source, /Llvm\\ARM64/i)
 })
+
+
+test('Windows runtime downloads are locked and checked before native compilation', () => {
+  const restore = position(/Invoke-Checked dotnet @\("restore"/, 'restore locked runtime inputs')
+  const verify = position(/Assert-PinnedDownloadPackages -AssetsPath/, 'verify downloaded package archives')
+  const cargo = position(/Invoke-Checked\s+cargo\s+\$CargoArgs/i, 'compile native code')
+  assertBefore(restore, verify, 'Restore precedes archive verification')
+  assertBefore(verify, cargo, 'Input verification precedes native compilation')
+  assert.match(source, /"--locked-mode"/)
+  assert.match(source, /"publish",[\s\S]{0,80}"--no-restore"/)
+})

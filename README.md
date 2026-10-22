@@ -468,7 +468,9 @@ the GTK 4, libadwaita, FUSE 3 and D-Bus development libraries used by Native CI;
 CLI builds use the locked Rust dependencies and the selected host toolchain.
 The Windows GUI recipe uses the same self-contained payload as the native
 installer. It requires the .NET 8 SDK, Rust MSVC toolchain and Visual Studio C++
-Clang component. Haps installs its Start Menu shortcut and `iris-drive:` link
+Clang component. The self-contained .NET runtime is version-pinned; restore
+uses the committed package lock and verifies SDK download archive hashes before
+compilation. Publishing cannot perform a second implicit restore. Haps installs its Start Menu shortcut and `iris-drive:` link
 handler; the app registers its Cloud Files sync root when used. The release
 publishes this complete payload as a ZIP alongside the installer, and verifies
 its files against the original build output before publication.

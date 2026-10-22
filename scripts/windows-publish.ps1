@@ -183,6 +183,13 @@ function Test-ReleaseNativePathRemapping {
   }
 }
 
+# Resolve and verify runtime downloads before starting the native compilation.
+. (Join-Path $PSScriptRoot "windows-build-inputs.ps1")
+Invoke-Checked dotnet @("restore", $Project, "--runtime", $Runtime, "--locked-mode",
+  "-p:Configuration=$Configuration", "-p:WindowsPackageType=None")
+Assert-PinnedDownloadPackages -AssetsPath (Join-Path $Root "windows\obj\project.assets.json") `
+  -PinsPath (Join-Path $Root "windows\sdk-packages.json")
+
 if ($Configuration -eq "Release") {
   Set-ReleaseRustPathRemapping
   $ReleaseNative = Set-ReleaseNativePathRemapping
@@ -232,6 +239,7 @@ if (Test-Path $PublishDir) {
 $DotnetArgs = @(
   "publish",
   $Project,
+  "--no-restore",
   "-c",
   $Configuration,
   "-r",
