@@ -75,9 +75,12 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: '8.0.420'
+      - uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
       - name: Qualify locked runtime downloads without compiling the app
         shell: pwsh
-        run: ./scripts/test-windows-build-inputs.ps1 -ResultPath "$env:RUNNER_TEMP/windows-input-results.json"
+        run: powershell.exe -NoProfile -ExecutionPolicy Bypass -File ./scripts/test-windows-build-inputs.ps1 -ResultPath "$env:RUNNER_TEMP/windows-input-results.json"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
