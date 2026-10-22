@@ -7,6 +7,9 @@ on:
       commit:
         description: Exact source commit to qualify
         required: true
+      inspection_run:
+        description: Product artifact run to verify and measure without compiling
+        required: false
       mesh_only:
         description: Only run the pinned release mesh gate
         type: boolean
@@ -18,14 +21,15 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
-  group: native-ci-${{ github.event.pull_request.number || inputs.commit }}-${{ inputs.restore_only || false }}-${{ inputs.mesh_only || false }}
+  group: native-ci-${{ github.event.pull_request.number || inputs.commit }}-${{ inputs.restore_only || false }}-${{ inputs.mesh_only || false }}-${{ inputs.inspection_run || false }}
   cancel-in-progress: true
 
 jobs:
   native:
-    if: inputs.restore_only != true && inputs.mesh_only != true
+    if: inputs.restore_only != true && inputs.mesh_only != true && !inputs.inspection_run
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -96,3 +100,36 @@ jobs:
       drive_rev: ${{ inputs.commit }}
       chat_rev: dc524968bab6b93d770cc1d7e8e81414293c37ad
       htree_version: '0.2.150'
+
+  inspect-products:
+    if: inputs.inspection_run
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tooling
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          path: source
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Download exact source products
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PRODUCT_RUN: ${{ inputs.inspection_run }}
+          EXPECTED_COMMIT: ${{ inputs.commit }}
+        run: |
+          test "$(git -C source rev-parse HEAD)" = "$EXPECTED_COMMIT"
+          gh run download "$PRODUCT_RUN" --repo "$GITHUB_REPOSITORY" --pattern "drive-*-$EXPECTED_COMMIT" --dir "$RUNNER_TEMP/products"
+      - name: Verify receipts and measure actual extracted payloads
+        run: python3 tooling/scripts/inspect-hosted-products.py source "$RUNNER_TEMP/products" "$RUNNER_TEMP/product-sizes.json"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: verified-product-sizes
+          path: ${{ runner.temp }}/product-sizes.json
+          if-no-files-found: error
