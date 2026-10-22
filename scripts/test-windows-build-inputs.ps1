@@ -29,16 +29,30 @@ function Restore-Checked([string]$label, [bool]$expectMismatch) {
   if ($remaining -le 0) { throw 'Overall restore bound reached' }
   $out = Join-Path $stage "$label.log"
   $err = Join-Path $stage "$label.err"
-  $process = Start-Process dotnet -ArgumentList @('restore', $project, '--runtime', 'win-x64', '--locked-mode') -PassThru -RedirectStandardOutput $out -RedirectStandardError $err -WindowStyle Hidden
+  # Use Process directly: Start-Process can lose ExitCode under Windows
+  # PowerShell after a fast child exits, even after WaitForExit.
+  $process = New-Object Diagnostics.Process
+  $process.StartInfo.FileName = 'dotnet'
+  $process.StartInfo.Arguments = 'restore "' + $project + '" --runtime win-x64 --locked-mode'
+  $process.StartInfo.UseShellExecute = $false
+  $process.StartInfo.CreateNoWindow = $true
+  $process.StartInfo.RedirectStandardOutput = $true
+  $process.StartInfo.RedirectStandardError = $true
+  [void]$process.Start()
+  $stdout = $process.StandardOutput.ReadToEndAsync()
+  $stderr = $process.StandardError.ReadToEndAsync()
   if (-not $process.WaitForExit([int][Math]::Min(45000, $remaining))) {
     taskkill /PID $process.Id /T /F | Out-Null
     throw "Restore $label timed out"
   }
-  $process.Refresh()
+  $exitCode = $process.ExitCode
+  [IO.File]::WriteAllText($out, $stdout.Result)
+  [IO.File]::WriteAllText($err, $stderr.Result)
+  $process.Dispose()
   $text = [IO.File]::ReadAllText($out) + [IO.File]::ReadAllText($err)
   if ($expectMismatch) {
     if ($text -notmatch 'NU1004') { throw "Expected lock rejection: $text" }
-  } elseif ($process.ExitCode -ne 0) { throw "Restore failed: $text" }
+  } elseif ($exitCode -ne 0) { throw "Restore failed: $text" }
   if ((Get-PSDrive C).Free -lt 3GB -or $before - (Get-PSDrive C).Free -gt $MaxGrowthBytes) { throw 'Space bound reached' }
 }
 try {
