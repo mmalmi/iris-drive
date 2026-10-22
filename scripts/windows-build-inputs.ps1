@@ -1,3 +1,13 @@
+# Use .NET directly: Windows PowerShell launched from pwsh can inherit a
+# PSModulePath that does not expose the Windows Get-FileHash cmdlet.
+function Get-BuildInputFileHash {
+    param([string] $Path, [ValidateSet('SHA256', 'SHA512')][string] $Algorithm)
+    $stream = [IO.File]::OpenRead($Path)
+    $hashAlgorithm = [Security.Cryptography.HashAlgorithm]::Create($Algorithm)
+    try { return [BitConverter]::ToString($hashAlgorithm.ComputeHash($stream)).Replace('-', '') }
+    finally { $hashAlgorithm.Dispose(); $stream.Dispose() }
+}
+
 # Validate restored SDK runtime inputs before compiling or publishing.
 function Assert-PinnedDownloadPackages {
     param([string] $AssetsPath, [string] $PinsPath)
@@ -22,7 +32,7 @@ function Assert-PinnedDownloadPackages {
             })
             if ($archives.Count -eq 0) { throw "Restored SDK package archive is missing: $key" }
             foreach ($archive in $archives) {
-                $actual = (Get-FileHash -LiteralPath $archive -Algorithm SHA512).Hash
+                $actual = (Get-BuildInputFileHash -Path $archive -Algorithm SHA512)
                 if ($actual -ne $pin[0].sha512) { throw "SDK package content hash mismatch: $key" }
             }
             $checked[$key] = $true
