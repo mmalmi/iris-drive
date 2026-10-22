@@ -470,8 +470,9 @@ The Windows GUI recipe uses the same self-contained payload as the native
 installer. It requires the .NET 8 SDK, Rust MSVC toolchain and Visual Studio C++
 Clang component. The self-contained .NET runtime is version-pinned; restore
 uses the committed package lock and verifies SDK download archive hashes before
-compilation. Publishing cannot perform a second implicit restore. Haps installs its Start Menu shortcut and `iris-drive:` link
-handler; the app registers its Cloud Files sync root when used. The release
+compilation. Publishing cannot perform a second implicit restore. Windows desktop
+packages require Haps 0.1.20 or later. Haps installs the Start Menu shortcut and
+`iris-drive:` link handler; the app registers its Cloud Files sync root when used. The release
 publishes this complete payload as a ZIP alongside the installer, and verifies
 its files against the original build output before publication.
 The release version step updates both Haps package versions.
