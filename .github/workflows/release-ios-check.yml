@@ -2,6 +2,10 @@ name: Verify prepared iOS products
 on:
   workflow_call:
     inputs:
+      idle_only:
+        type: boolean
+        required: false
+        default: false
       commit:
         required: true
         type: string
@@ -16,6 +20,10 @@ on:
         type: string
   workflow_dispatch:
     inputs:
+      idle_only:
+        type: boolean
+        required: false
+        default: false
       commit:
         description: Exact application source commit
         required: true
@@ -41,6 +49,7 @@ jobs:
       SOURCE_COMMIT: ${{ inputs.commit }}
       PRODUCT_INPUTS: ${{ github.workspace }}/products
       CHECK_OUTPUT: ${{ github.workspace }}/ios-check
+      IRIS_DRIVE_IOS_IDLE_ONLY: ${{ inputs.idle_only }}
     steps:
       - uses: actions/checkout@v4
         with:

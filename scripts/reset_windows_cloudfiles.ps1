@@ -34,7 +34,7 @@ using System;
 using System.Runtime.InteropServices;
 namespace IrisDriveLab {
     public static class CfApi {
-        [DllImport("CfApi.dll", CharSet = CharSet.Unicode)]
+        [DllImport("cldapi.dll", CharSet = CharSet.Unicode, ExactSpelling = true)]
         public static extern int CfUnregisterSyncRoot(string syncRootPath);
     }
 }
