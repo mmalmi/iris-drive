@@ -1,4 +1,9 @@
-param([string]$ResultPath)
+param(
+  [string]$ResultPath,
+  # A fresh hosted runner downloads the self-contained runtime packs. Local
+  # constrained hosts must pass their separately admitted growth budget.
+  [long]$MaxGrowthBytes = 1GB
+)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $root = Split-Path -Parent $PSScriptRoot
@@ -34,7 +39,7 @@ function Restore-Checked([string]$label, [bool]$expectMismatch) {
   if ($expectMismatch) {
     if ($text -notmatch 'NU1004') { throw "Expected lock rejection: $text" }
   } elseif ($process.ExitCode -ne 0) { throw "Restore failed: $text" }
-  if ((Get-PSDrive C).Free -lt 3GB -or $before - (Get-PSDrive C).Free -gt 256MB) { throw 'Space bound reached' }
+  if ((Get-PSDrive C).Free -lt 3GB -or $before - (Get-PSDrive C).Free -gt $MaxGrowthBytes) { throw 'Space bound reached' }
 }
 try {
   Restore-Checked 'locked' $false
