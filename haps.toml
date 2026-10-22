@@ -1,7 +1,7 @@
 # https://haps.hashtree.cc
 [package]
 name = "iris-drive"
-version = "0.1.39"
+version = "0.1.40"
 target = "aarch64-apple-darwin"
 description = "Private file sync across your devices."
 
@@ -44,7 +44,7 @@ commands = [
 
 [packages.idrive.package]
 name = "idrive"
-version = "0.1.39"
+version = "0.1.40"
 target = "host"
 description = "Iris Drive command-line client"
 commands = { idrive = "idrive{exe}" }
