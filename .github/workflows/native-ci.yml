@@ -7,6 +7,10 @@ on:
       commit:
         description: Exact source commit to qualify
         required: true
+      mesh_only:
+        description: Only run the pinned release mesh gate
+        type: boolean
+        default: false
       restore_only:
         description: Only qualify Windows locked runtime inputs
         type: boolean
@@ -16,12 +20,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: native-ci-${{ github.event.pull_request.number || inputs.commit }}-${{ inputs.restore_only || false }}
+  group: native-ci-${{ github.event.pull_request.number || inputs.commit }}-${{ inputs.restore_only || false }}-${{ inputs.mesh_only || false }}
   cancel-in-progress: true
 
 jobs:
   native:
-    if: inputs.restore_only != true
+    if: inputs.restore_only != true && inputs.mesh_only != true
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -80,3 +84,12 @@ jobs:
           name: windows-runtime-input-results
           path: ${{ runner.temp }}/windows-input-results.json
           if-no-files-found: error
+
+  release-mesh:
+    if: inputs.mesh_only == true
+    uses: irislib/iris-stack/.github/workflows/product-lab.yml@cec9501659b9cf08f9600e3f14987cad6ca1e7d3
+    with:
+      lab_rev: cec9501659b9cf08f9600e3f14987cad6ca1e7d3
+      drive_rev: ${{ inputs.commit }}
+      chat_rev: dc524968bab6b93d770cc1d7e8e81414293c37ad
+      htree_version: '0.2.150'
