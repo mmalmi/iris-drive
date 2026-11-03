@@ -27,8 +27,39 @@ async fn encrypted_node(store: &FsBlobStore, node: &TreeNode) -> Cid {
     store.put(hash, ciphertext).await.unwrap();
     Cid {
         hash,
-        key: Some(key),
+        key: Some(key.into()),
     }
+}
+
+#[tokio::test]
+async fn mixed_old_and_new_encrypted_links_are_backed_up_once_per_blob() {
+    use hashtree_core::EncryptionMode;
+    let dir = tempfile::tempdir().unwrap();
+    let store = Arc::new(FsBlobStore::new(dir.path().join("source")).unwrap());
+    let reader = HashTree::new(HashTreeConfig::new(store.clone()));
+    let mut entries = Vec::new();
+    let mut expected = std::collections::BTreeSet::new();
+    for (name, mode) in [
+        ("old", EncryptionMode::LegacyChk),
+        ("chk", EncryptionMode::ChkV1),
+        ("random", EncryptionMode::RndV1),
+    ] {
+        let writer = HashTree::new(HashTreeConfig::new(store.clone())).with_encryption_mode(mode);
+        let (file, size) = writer.put(b"same bytes").await.unwrap();
+        expected.insert(file.hash);
+        entries.push(
+            DirEntry::from_cid(name, &file)
+                .with_size(size)
+                .with_link_type(LinkType::Blob),
+        );
+    }
+    assert_eq!(expected.len(), 2);
+    let root = reader.put_directory(entries).await.unwrap();
+    expected.insert(root.hash);
+    assert_eq!(
+        super::collect_backup_hashes(&reader, &root).await.unwrap(),
+        expected.into_iter().collect::<Vec<_>>()
+    );
 }
 
 #[tokio::test]

@@ -6,7 +6,8 @@ use crate::{
 };
 use anyhow::{Context, Result, bail};
 use hashtree_core::{
-    NHashData, Store, content_hash, decrypt_chk, encrypt_chk, nhash_decode, nhash_encode_full,
+    EncryptionMode, NHashData, Store, content_hash, decrypt_object, encrypt_object, nhash_decode,
+    nhash_encode_full,
 };
 use std::{path::Path, time::Duration};
 
@@ -21,7 +22,7 @@ pub fn encode_compact_invite(bundle: &ShareInviteBundle) -> Result<(String, Vec<
     if bytes.len() + 16 > MAX_INVITE_BYTES {
         bail!("Invite is too large");
     }
-    let (ciphertext, key) = encrypt_chk(&bytes)?;
+    let (ciphertext, key) = encrypt_object(&bytes, EncryptionMode::ChkV1)?;
     let reference = nhash_encode_full(&NHashData {
         hash: content_hash(&ciphertext),
         decrypt_key: Some(key),
@@ -59,7 +60,7 @@ pub fn decode_compact_invite(reference: &str, ciphertext: &[u8]) -> Result<Strin
     if ciphertext.len() > MAX_INVITE_BYTES || content_hash(ciphertext) != cid.hash {
         bail!("Invalid invite content");
     }
-    let bytes = decrypt_chk(ciphertext, &cid.decrypt_key.context("Invite key missing")?)?;
+    let bytes = decrypt_object(ciphertext, &cid.decrypt_key.context("Invite key missing")?)?;
     let bundle: ShareInviteBundle = serde_json::from_slice(&bytes)?;
     let invite = crate::encode_share_invite(&bundle)?;
     crate::parse_share_invite(&invite)?;
@@ -173,8 +174,29 @@ mod tests {
         let (link, mut ciphertext) = encode_compact_invite(&bundle).unwrap();
         assert!(link.len() < 180);
         let reference = compact_invite_reference(&link).unwrap();
+        assert_eq!(
+            decode_reference(reference)
+                .unwrap()
+                .decrypt_key
+                .unwrap()
+                .mode(),
+            EncryptionMode::ChkV1
+        );
         let decoded = decode_compact_invite(reference, &ciphertext).unwrap();
         assert_eq!(crate::parse_share_invite(&decoded).unwrap(), bundle);
+        // Other clients can use legacy CHK or randomized encryption for the
+        // very same signed invite. Always dispatch on the key in the link.
+        let bytes = serde_json::to_vec(&bundle).unwrap();
+        for mode in [EncryptionMode::LegacyChk, EncryptionMode::RndV1] {
+            let (payload, key) = encrypt_object(&bytes, mode).unwrap();
+            let reference = nhash_encode_full(&NHashData {
+                hash: content_hash(&payload),
+                decrypt_key: Some(key),
+            })
+            .unwrap();
+            let decoded = decode_compact_invite(&reference, &payload).unwrap();
+            assert_eq!(crate::parse_share_invite(&decoded).unwrap(), bundle);
+        }
         ciphertext[0] ^= 1;
         assert!(decode_compact_invite(reference, &ciphertext).is_err());
     }

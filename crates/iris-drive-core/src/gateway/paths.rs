@@ -22,7 +22,8 @@ pub(crate) fn cid_with_request_key(
     let Some(key) = key else {
         return Ok((cid, None));
     };
-    let parsed = from_hex(&key).map_err(|_| GatewayError::InvalidRequest("invalid key".into()))?;
+    let parsed = hashtree_core::ObjectKey::from_hex(&key)
+        .map_err(|_| GatewayError::InvalidRequest("invalid key".into()))?;
     cid.key = Some(parsed);
     Ok((cid, Some(to_hex(&parsed))))
 }

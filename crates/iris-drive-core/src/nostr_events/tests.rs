@@ -45,6 +45,36 @@ fn drive_root_event_roundtrip() {
 }
 
 #[test]
+fn recipient_can_read_both_versioned_root_suites_without_exposing_the_key() {
+    use hashtree_core::{EncryptionMode, decrypt_object, encrypt_object, sha256};
+    let owner = Keys::generate();
+    let reader = Keys::generate();
+    let scope = NostrIdentityId::new_v4().to_string();
+    for mode in [EncryptionMode::ChkV1, EncryptionMode::RndV1] {
+        let (bytes, key) = encrypt_object(b"shared root", mode).unwrap();
+        let cid = Cid::encrypted(sha256(&bytes), key);
+        let root = AppKeyRootRef::legacy(cid.to_string(), 1_700_000_000, 1);
+        let event = build_drive_root_event(
+            &owner,
+            &scope,
+            "main",
+            &root,
+            &[reader.public_key().to_hex()],
+        )
+        .unwrap();
+        assert!(!event.as_json().contains(&key.to_hex()));
+        let (_, _, _, opened) = parse_drive_root_event_for_device(&event, &reader).unwrap();
+        let opened = Cid::parse(&opened.root_cid).unwrap();
+        assert_eq!(opened, cid);
+        assert_eq!(
+            decrypt_object(&bytes, &opened.key.unwrap()).unwrap(),
+            b"shared root"
+        );
+        assert!(parse_drive_root_event_for_device(&event, &Keys::generate()).is_err());
+    }
+}
+
+#[test]
 fn drive_root_event_roundtrip_preserves_causal_fields() {
     let device = Keys::generate();
     let root_scope_id = NostrIdentityId::new_v4().to_string();

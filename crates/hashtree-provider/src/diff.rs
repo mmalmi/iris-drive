@@ -4,7 +4,7 @@
 //! to upload; this module emits the user-facing `(path, change)` events
 //! that NSFileProvider / SAF adapters need.
 
-use hashtree_core::{Cid, HashTree, HashTreeError, LinkType, Store};
+use hashtree_core::{Cid, HashTree, HashTreeError, LinkType, ObjectKey, Store};
 
 /// A snapshot of the on-tree metadata for an entry. The optional `key` is
 /// present for encrypted-content nodes; consumers can ignore it.
@@ -13,7 +13,7 @@ pub struct EntryInfo {
     pub hash: [u8; 32],
     pub size: u64,
     pub link_type: LinkType,
-    pub key: Option<[u8; 32]>,
+    pub key: Option<ObjectKey>,
 }
 
 /// A path-level change between two tree revisions. Paths use forward
@@ -66,16 +66,6 @@ pub async fn path_diff<S: Store>(
     Ok(out)
 }
 
-fn entry_info_from(name_size_link: (&[u8; 32], u64, LinkType, Option<[u8; 32]>)) -> EntryInfo {
-    let (hash, size, link_type, key) = name_size_link;
-    EntryInfo {
-        hash: *hash,
-        size,
-        link_type,
-        key,
-    }
-}
-
 fn cids_equivalent(a: &Cid, b: &Cid) -> bool {
     a.hash == b.hash && a.key == b.key
 }
@@ -109,7 +99,12 @@ fn cid_from_entry(e: &hashtree_core::TreeEntry) -> Cid {
 }
 
 fn entry_info_of(e: &hashtree_core::TreeEntry) -> EntryInfo {
-    entry_info_from((&e.hash, e.size, e.link_type, e.key))
+    EntryInfo {
+        hash: e.hash,
+        size: e.size,
+        link_type: e.link_type,
+        key: e.key,
+    }
 }
 
 /// Box the recursive call so the async future has a known size.

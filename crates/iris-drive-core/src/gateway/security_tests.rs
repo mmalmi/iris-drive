@@ -274,3 +274,42 @@ async fn gateway_runtime_content_cannot_execute_on_a_shared_origin() {
         htree.shutdown().await;
     }
 }
+
+#[test]
+fn gateway_preserves_object_key_in_query_cookie_and_nhash() {
+    use hashtree_core::{EncryptionMode, encrypt_object, sha256};
+    for mode in [
+        EncryptionMode::LegacyChk,
+        EncryptionMode::ChkV1,
+        EncryptionMode::RndV1,
+    ] {
+        let (bytes, key) = encrypt_object(b"shared file", mode).unwrap();
+        let hash = sha256(&bytes);
+        let public = Cid::public(hash);
+        let keyed = Cid::encrypted(hash, key);
+        let nhash = nhash_encode_full(&NHashData {
+            hash,
+            decrypt_key: Some(key),
+        })
+        .unwrap();
+        assert_eq!(cid_from_nhash(&nhash).unwrap(), keyed);
+        let mut headers = HeaderMap::new();
+        let uri: Uri = format!("/?k={}", key.to_hex()).parse().unwrap();
+        let (from_query, to_cookie) = cid_with_request_key(public.clone(), &uri, &headers).unwrap();
+        assert_eq!(from_query, keyed);
+        headers.insert(
+            COOKIE,
+            format!("{KEY_COOKIE}={}", to_cookie.unwrap())
+                .parse()
+                .unwrap(),
+        );
+        assert_eq!(
+            cid_with_request_key(public, &Uri::from_static("/"), &headers)
+                .unwrap()
+                .0,
+            keyed
+        );
+    }
+    let invalid: Uri = format!("/?k=03{}", "00".repeat(32)).parse().unwrap();
+    assert!(cid_with_request_key(Cid::public([0; 32]), &invalid, &HeaderMap::new()).is_err());
+}

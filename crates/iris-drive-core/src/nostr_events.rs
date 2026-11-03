@@ -408,7 +408,8 @@ fn root_cid_from_wire_content(
         .ok_or(WireError::RootKeyUnavailable)?;
     let key_hex = nip44::decrypt(device_keys.secret_key(), &event.pubkey, ciphertext)
         .map_err(|_| WireError::RootKeyUnavailable)?;
-    let key = from_hex(&key_hex).map_err(|e| WireError::InvalidRootCid(e.to_string()))?;
+    let key = hashtree_core::ObjectKey::from_hex(&key_hex)
+        .map_err(|e| WireError::InvalidRootCid(e.to_string()))?;
     Ok(Cid {
         hash,
         key: Some(key),

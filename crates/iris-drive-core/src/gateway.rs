@@ -779,7 +779,7 @@ fn nhash_request(
     let key_query = query_param(uri.query(), "k")
         .or_else(|| cookie_value(headers, KEY_COOKIE))
         .map(|key| {
-            from_hex(&key)
+            hashtree_core::ObjectKey::from_hex(&key)
                 .map(|parsed| to_hex(&parsed))
                 .map_err(|_| GatewayError::InvalidRequest("invalid key".into()))
         })

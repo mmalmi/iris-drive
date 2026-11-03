@@ -3,8 +3,8 @@
 use std::collections::{BTreeMap, HashSet};
 
 use hashtree_core::{
-    Cid, Hash, HashTree, Link, LinkType, Store, TreeNode, decode_tree_node, decrypt_chk,
-    is_tree_node, sha256,
+    Cid, EncryptionMode, Hash, HashTree, Link, LinkType, ObjectKey, Store, TreeNode,
+    decode_tree_node, decrypt_object, is_tree_node, sha256,
 };
 use hashtree_fs::FsBlobStore;
 
@@ -28,7 +28,7 @@ enum Context {
 }
 
 struct Selection {
-    keys: BTreeMap<Hash, [u8; 32]>,
+    keys: BTreeMap<Hash, ObjectKey>,
     scheduled: HashSet<(Hash, Context)>,
     pending: Vec<(Cid, Context)>,
     limit: usize,
@@ -40,7 +40,14 @@ impl Selection {
             .key
             .ok_or_else(|| invalid("selected backup contains unencrypted content"))?;
         if let Some(existing) = self.keys.get(&cid.hash) {
-            if existing != &key {
+            // Legacy CHK and versioned CHK refer to identical ciphertext for
+            // identical content; the two references can coexist in a mixed tree.
+            let same_chk = matches!(
+                (existing.mode(), key.mode()),
+                (EncryptionMode::LegacyChk, EncryptionMode::ChkV1)
+                    | (EncryptionMode::ChkV1, EncryptionMode::LegacyChk)
+            ) && existing.raw_key() == key.raw_key();
+            if existing != &key && !same_chk {
                 return Err(invalid("selected block has inconsistent encryption keys"));
             }
         } else {
@@ -97,7 +104,7 @@ async fn collect_with_limit(
         if bytes.len() > MAX_BLOB_BYTES || sha256(&bytes) != cid.hash {
             return Err(FriendBackupError::InvalidBlob(hex::encode(cid.hash)));
         }
-        let plaintext = decrypt_chk(&bytes, &selection.keys[&cid.hash])
+        let plaintext = decrypt_object(&bytes, &selection.keys[&cid.hash])
             .map_err(|error| invalid(format!("selected backup cannot be decrypted: {error}")))?;
         match context {
             Context::Directory(scope) => {

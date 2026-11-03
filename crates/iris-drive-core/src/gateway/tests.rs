@@ -29,7 +29,7 @@ fn init_account_config(dir: &Path) {
 fn test_nhash() -> String {
     nhash_encode_full(&NHashData {
         hash: [8u8; 32],
-        decrypt_key: Some([9u8; 32]),
+        decrypt_key: Some([9u8; 32].into()),
     })
     .unwrap()
 }

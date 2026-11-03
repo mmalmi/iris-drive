@@ -166,13 +166,13 @@ require_contains Cargo.toml 'nvpn-fips-core = { version = "=0.4.107" }'
 require_contains Cargo.toml 'nvpn-fips-endpoint = { version = "=0.4.107" }'
 require_contains Cargo.toml 'nvpn-fips-tcp = { version = "=0.2.6" }'
 require_contains Cargo.toml 'nvpn-fips-tcp-endpoint = { version = "=0.2.42" }'
-require_contains Cargo.toml 'hashtree-core = "=0.2.91"'
+require_contains Cargo.toml 'hashtree-core = "=0.3.0"'
 require_contains Cargo.toml 'hashtree-config = "=0.2.83"'
-require_contains Cargo.toml 'hashtree-embedded = "=0.2.94"'
-require_contains Cargo.toml 'hashtree-fips-transport = { version = "=0.4.29", features = ["webrtc-endpoint"] }'
-require_contains Cargo.toml 'hashtree-lmdb = "=0.2.91"'
-require_contains Cargo.toml 'hashtree-network = "=0.2.88"'
-require_contains Cargo.toml 'hashtree-nostr = "=0.2.90"'
+require_contains Cargo.toml 'hashtree-embedded = "=0.3.0"'
+require_contains Cargo.toml 'hashtree-fips-transport = { version = "=0.5.0", features = ["webrtc-endpoint"] }'
+require_contains Cargo.toml 'hashtree-lmdb = "=0.3.0"'
+require_contains Cargo.toml 'hashtree-network = "=0.3.0"'
+require_contains Cargo.toml 'hashtree-nostr = "=0.3.0"'
 require_contains Cargo.toml 'nostr-identity = "=0.3.1"'
 require_contains Cargo.toml 'nostr-pubsub-fips = "=0.5.37"'
 require_contains crates/iris-drive-core/src/fips_bootstrap.rs '"wss://fips1.iris.to/fips"'
@@ -192,22 +192,22 @@ require_contains LICENSE "Permission is hereby granted, free of charge"
 require_contains LICENSE 'THE SOFTWARE IS PROVIDED "AS IS"'
 for lock in Cargo.lock linux/Cargo.lock; do
   require_registry_package "$lock" negentropy 0.5.2 a3d66662cb5ca384d4991509755ed5a42dd8e31c4282bf881938e506fc3146ec
-  require_registry_package "$lock" hashtree-resolver 0.2.86 b7d86c6cfd737a94475f33d082ce6f8401d58f88b866653076014a9225e960ae
+  require_registry_package "$lock" hashtree-resolver 0.3.0 365c245edfd117d2d0bbfd4e84d0c9876930a6c970485a95b3083e0f5ce651e4
   require_registry_package "$lock" nvpn-fips-core 0.4.107 7870a8c92de2e67d5b12fd3d1d283209b2be16d806f10f2142b25b7eee8de809
   require_registry_package "$lock" nvpn-fips-endpoint 0.4.107 8d2b5b44763ecbe51eaa7ddde9a0cf9fcca3ea7dbda7b6ad2a9b22f74e997b8c
   require_registry_package "$lock" nvpn-fips-tcp 0.2.6 299df22559c4af63e7d276fcb90cf000f2f1cd5546c213f17d8860154c1383d7
   require_registry_package "$lock" nvpn-fips-tcp-endpoint 0.2.42 f0af3903afca9fcc84c8c07be36089e81190a4f27254e4d58918a52dd234f76b
-  require_registry_package "$lock" git-remote-htree 0.2.92 b6402f07ca6ab86a8c4ebbde9cad8ec33c4fcc774f4a3e426938f103f5a32929
-  require_registry_package "$lock" hashtree-cli 0.2.156 6102d2839264e1a30ee89c4693f833cbeb21bfcffa739b3e321a743c18d9190a
-  require_registry_package "$lock" hashtree-updater 0.2.89 84c1c9809282fb6428f25ff473252937e6b8627e8d15c4f436d083f0b2ddb0df
+  require_registry_package "$lock" git-remote-htree 0.3.0 e7331fa0c63f684ff626bc6245473866f5bafbec79e2d6d37281c5e767d79567
+  require_registry_package "$lock" hashtree-cli 0.3.0 0df9d5509c6cfe20ea7134436c296df72270db4d70891d545ad386462d4688a2
+  require_registry_package "$lock" hashtree-updater 0.3.0 d74b436997bd5c98adeeef4d03177a9403f24eeb55c76ea0f3cb42a3a7c62e52
   require_registry_package "$lock" hashtree-config 0.2.83 661c0bec57ba49999860fc418a7e656714cd79d82a3c3ee272794b90bb49db76
-  require_registry_package "$lock" hashtree-core 0.2.91 76daf5b56bdf139dfa406c4c18eebd276b823d59e073bf1a81b1b0539f41fb4a
-  require_registry_package "$lock" hashtree-embedded 0.2.94 39872e2351ec599d6b04c5ccb564470f34ea7769ebfeb8b8746a1d6d7064b3c2
-  require_registry_package "$lock" hashtree-fips-transport 0.4.29 692a95f08fb680caf3ba02c96a8cc73a1e8add9bea50d4ab0298aefbc302ed71
-  require_registry_package "$lock" hashtree-lmdb 0.2.91 53db56d8d675711307c46d4d277dd8120902872fc03f5466f7ec42ebbcc69351
-  require_registry_package "$lock" hashtree-network 0.2.88 4f8fdbb7f18e4ebd4b3887055ca3af7230fc7cbf06e49e21c2ff9122130fcfa5
-  require_registry_package "$lock" hashtree-nostr 0.2.90 06bdf0a61b4dbcd0e96f8a347a98b91e8d37084d9fa72c3e27b01490a135d67a
-  require_registry_package "$lock" hashtree-nostr-pubsub 0.2.86 8c6173956c8614689b08d40091311d32cf581472fceca88d246f720b60984eaf
+  require_registry_package "$lock" hashtree-core 0.3.0 0984dfd6c005bdd85b0ae249d3ee77680d18df3a778807e45b618b8f0814704f
+  require_registry_package "$lock" hashtree-embedded 0.3.0 c7e044deb678fea0b089a7c4afe1a3556486b9dc1b0e45a0ac2b772a849d42cf
+  require_registry_package "$lock" hashtree-fips-transport 0.5.0 fe8ec8fd82d673c7f0e6c692cabdbf89839cdcba9c5600ec9077e8f1e799d824
+  require_registry_package "$lock" hashtree-lmdb 0.3.0 e175d64320b99ec4df162d2db593d18b25528a5362456dee0aac0e704c49c5e5
+  require_registry_package "$lock" hashtree-network 0.3.0 e5e282964a08e2ee6851006a91823740672fa5f103d5de652532ee03186381c5
+  require_registry_package "$lock" hashtree-nostr 0.3.0 22700b3e7821fdcfe9f74aebbbcdd019cb42444ccd33422b821fcfb3bdb0af46
+  require_registry_package "$lock" hashtree-nostr-pubsub 0.3.0 3a382f11cbff77cc56667fbe8fba34cc1ae802e9ef3b8289e2a3831dd1487a28
   require_registry_package "$lock" nostr-pubsub 0.1.18 afd77c862de316d52c9996a406ba7f5b3614e9574666021a01ac733986a8def4
   require_registry_package "$lock" nostr-pubsub-fips 0.5.37 47e3ef48230aada06af7d02401a37a5690372bbae1dd1459963024795fd3ce59
   require_registry_package "$lock" nostr-pubsub-social-graph 0.2.3 35325e59eea42ad99eb05fba75c85dd4882450c755d5b99be6582b45679e0a6f

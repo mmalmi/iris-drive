@@ -31,6 +31,63 @@ fn new_tree() -> HashTree<MemoryStore> {
 }
 
 #[tokio::test]
+async fn diff_entries_preserve_readable_public_legacy_and_versioned_links() {
+    use hashtree_core::{EncryptionMode, Store, from_hex, sha256};
+    let store = Arc::new(MemoryStore::new());
+    let reader = HashTree::new(HashTreeConfig::new(store.clone()));
+    // Legacy chk_hello interop vector: these are bytes written before versioned keys.
+    let old_bytes = vec![
+        0xc6, 0x53, 0x08, 0xd9, 0xc8, 0x64, 0x9f, 0xf1, 0xc5, 0x98, 0x20, 0xd0, 0xb3, 0xa0, 0x30,
+        0xdb, 0x34, 0xad, 0x00, 0xf9, 0x2d,
+    ];
+    let old = Cid::encrypted(
+        sha256(&old_bytes),
+        from_hex("2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824").unwrap(),
+    );
+    store.put(old.hash, old_bytes).await.unwrap();
+    let public_tree = HashTree::new(HashTreeConfig::new(store.clone()).public());
+    let random_tree =
+        HashTree::new(HashTreeConfig::new(store)).with_encryption_mode(EncryptionMode::RndV1);
+    let files = [
+        ("legacy", old, Some(EncryptionMode::LegacyChk)),
+        ("public", put_file(&public_tree, b"hello").await, None),
+        (
+            "chk",
+            put_file(&reader, b"hello").await,
+            Some(EncryptionMode::ChkV1),
+        ),
+        (
+            "random",
+            put_file(&random_tree, b"hello").await,
+            Some(EncryptionMode::RndV1),
+        ),
+    ];
+    let root = dir_with(
+        &reader,
+        files
+            .iter()
+            .map(|(name, cid, _)| (*name, cid.clone(), 5, LinkType::Blob))
+            .collect(),
+    )
+    .await;
+    let changes = path_diff(&reader, None, &root).await.unwrap();
+    assert_eq!(changes.len(), files.len());
+    for change in changes {
+        let PathChange::Added { path, entry } = change else {
+            panic!("expected added file")
+        };
+        let (_, expected, mode) = files.iter().find(|(name, _, _)| path == *name).unwrap();
+        let cid = Cid {
+            hash: entry.hash,
+            key: entry.key,
+        };
+        assert_eq!(cid.key.map(|key| key.mode()), *mode);
+        assert_eq!(&cid, expected);
+        assert_eq!(reader.get(&cid, Some(5)).await.unwrap().unwrap(), b"hello");
+    }
+}
+
+#[tokio::test]
 async fn empty_to_empty_emits_nothing() {
     let tree = new_tree();
     let old = empty_dir(&tree).await;
