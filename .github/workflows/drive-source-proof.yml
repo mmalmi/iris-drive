@@ -1,0 +1,42 @@
+name: Verify public Drive source
+on:
+  push:
+    branches: [codex/drive-source-proof-f4af90a9]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 26
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - name: Check runner capacity and install pinned read-only helper
+        shell: bash
+        run: |
+          set -euo pipefail
+          df -B1 "$RUNNER_TEMP"
+          test "$(df -B1 --output=avail "$RUNNER_TEMP" | tail -1)" -ge 22548578304
+          archive="$RUNNER_TEMP/hashtree-v0.2.150.tar.gz"
+          curl --fail --location --output "$archive" https://github.com/mmalmi/hashtree/releases/download/v0.2.150/hashtree-x86_64-unknown-linux-musl.tar.gz
+          echo "d309f938ead838fabaf1c072c89d9b844bfdfb7d3a3549f90804109a26f536de  $archive" | sha256sum --check --strict
+          mkdir "$RUNNER_TEMP/htree-tools"
+          member="$(tar -tzf "$archive" | awk -F/ '$NF=="git-remote-htree"{print}')"
+          test -n "$member"
+          tar -xOzf "$archive" "$member" > "$RUNNER_TEMP/htree-tools/git-remote-htree"
+          echo "ab3177515c89b59c82dd433b43361314a7b6e31c6f493469309257c8019ec21c  $RUNNER_TEMP/htree-tools/git-remote-htree" | sha256sum --check --strict
+          chmod 0755 "$RUNNER_TEMP/htree-tools/git-remote-htree"
+      - name: Qualify anonymous source reader against retained public refs
+        run: python3 .github/source-proof/check.py qualify
+      - name: Await exact source publication
+        run: python3 .github/source-proof/check.py wait
+      - name: Cold mirror and compare all reachable Git payloads
+        run: python3 .github/source-proof/check.py verify
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: drive-source-receipt
+          path: ${{ runner.temp }}/source-receipt.json
+          if-no-files-found: error
+          retention-days: 14

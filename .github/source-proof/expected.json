@@ -1,0 +1,24 @@
+{
+  "before": {
+    "HEAD": "9f1863facb885867958c2e1abba2242bee336d2a",
+    "refs/heads/codex/drive-fixture-readiness": "254abccefb9c5b715a1cb48d8cc3001a23a294da",
+    "refs/heads/codex/drive-hosted-products": "1f16b7fca15c33d787c2620bf7cef917eb8c8ca6",
+    "refs/heads/codex/drive-updater-routing": "c90274977b29e6eaa559c911975557d08e2cc9cd",
+    "refs/heads/master": "9f1863facb885867958c2e1abba2242bee336d2a",
+    "refs/tags/v0.1.38": "82442b401078e4621e534378ee0b1358cbc769c5",
+    "refs/tags/v0.1.39": "11c50e964a32186dd5c5989759f6c3bec31f3b96"
+  },
+  "commit": "f4af90a92c7238c0601fb9dbae9ae216e0efa737",
+  "expected": {
+    "HEAD": "f4af90a92c7238c0601fb9dbae9ae216e0efa737",
+    "refs/heads/codex/drive-fixture-readiness": "254abccefb9c5b715a1cb48d8cc3001a23a294da",
+    "refs/heads/codex/drive-hosted-products": "1f16b7fca15c33d787c2620bf7cef917eb8c8ca6",
+    "refs/heads/codex/drive-updater-routing": "c90274977b29e6eaa559c911975557d08e2cc9cd",
+    "refs/heads/master": "f4af90a92c7238c0601fb9dbae9ae216e0efa737",
+    "refs/tags/v0.1.38": "82442b401078e4621e534378ee0b1358cbc769c5",
+    "refs/tags/v0.1.39": "11c50e964a32186dd5c5989759f6c3bec31f3b96"
+  },
+  "manifest_sha256": "8d123570403fa720fd84657e9abc705f3e6b2e40cea52ece1180b86cbe89aa2c",
+  "objects": 20077,
+  "source": "htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-drive"
+}
