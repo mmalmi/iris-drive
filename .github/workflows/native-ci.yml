@@ -40,6 +40,14 @@ jobs:
         run: test "$(git rev-parse HEAD)" = "$EXPECTED_COMMIT"
       - name: Run development checks and production Core tests
         run: just verify-fast
+      - name: Export disposable native sharing inputs for browser interop
+        run: target/debug/examples/sharing_wire_fixture > "$RUNNER_TEMP/sharing-wire.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sharing-wire-${{ github.event.pull_request.head.sha }}
+          path: ${{ runner.temp }}/sharing-wire.json
+          if-no-files-found: error
+          retention-days: 3
       - name: Check iOS WebRTC platform dependencies
         run: cargo check --locked --target aarch64-apple-ios -p nix@0.26.4
       - name: Run CLI and daemon sync journeys
