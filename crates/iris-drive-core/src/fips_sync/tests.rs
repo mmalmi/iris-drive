@@ -7,6 +7,7 @@ mod app_key_link_peers;
 mod blob_forwarding;
 mod control;
 mod mesh_fallback;
+mod peer_announcements;
 mod peer_refresh;
 
 mod settings;

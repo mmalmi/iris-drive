@@ -1,11 +1,15 @@
 //! Verified Nostr events over the shared FIPS pubsub adapter.
 
 use std::collections::{HashSet, VecDeque};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Duration;
 
 use fips_core::FipsEndpoint;
-use nostr_pubsub::{EventBus, EventSource, Filter, VerifiedEvent};
+use fips_core::discovery::nostr::{ADVERT_IDENTIFIER, ADVERT_KIND};
+use nostr_pubsub::{
+    EventBus, EventRetentionPolicy, EventSource, FileEventBus, Filter, VerifiedEvent,
+};
 use nostr_pubsub_fips::{
     FIPS_NOSTR_PUBSUB_DEFAULT_MAX_HOPS, FIPS_NOSTR_PUBSUB_MAX_FRAME_BYTES, FipsPubsubClient,
     FipsPubsubClientOptions, FipsPubsubPolicyOptions,
@@ -28,6 +32,7 @@ pub struct FipsNostrPubsubEvent {
 
 pub(super) struct DriveNostrPubsubRuntime {
     client: Option<Arc<FipsPubsubClient>>,
+    announcement_store: Option<Arc<FileEventBus>>,
     update_routes: Arc<crate::updater::pubsub::UpdateRoutes>,
     deliveries: broadcast::Sender<FipsNostrPubsubEvent>,
     receiver_task: Option<JoinHandle<()>>,
@@ -38,6 +43,7 @@ impl DriveNostrPubsubRuntime {
         endpoint: Arc<FipsEndpoint>,
         routed_peers: Vec<String>,
         trusted_raters: Vec<String>,
+        device_directory: Option<&Path>,
     ) -> Result<Self, FipsSyncError> {
         #[cfg(feature = "stack-fixture")]
         let max_connected_peers = std::env::var("IRIS_STACK_FIXTURE_PUBSUB_MAX_PEERS")
@@ -46,9 +52,13 @@ impl DriveNostrPubsubRuntime {
         let max_connected_peers = 64;
         let mut reputation = FipsPubsubPolicyOptions::default();
         reputation.reputation.trusted_raters = trusted_raters.into_iter().collect();
+        let announcement_store = match device_directory {
+            Some(directory) => Some(open_announcement_store(directory, &endpoint).await?),
+            None => None,
+        };
         let client = Arc::new(
             FipsPubsubClient::start_with_reputation(
-                endpoint,
+                endpoint.clone(),
                 FipsPubsubClientOptions {
                     query_timeout: Duration::from_millis(500),
                     max_frame_bytes: FIPS_NOSTR_PUBSUB_MAX_FRAME_BYTES,
@@ -67,10 +77,22 @@ impl DriveNostrPubsubRuntime {
             .await
             .map_err(|error| endpoint_error(error.to_string()))?,
         );
+        if let Some(store) = &announcement_store {
+            if let Err(error) = client
+                .set_peer_announcement_store(Some(store.clone()))
+                .await
+                .and_then(|()| client.set_replay_source(Some(store.clone())))
+            {
+                client.shutdown_shared().await;
+                store.close().await;
+                return Err(endpoint_error(error.to_string()));
+            }
+        }
         let update_routes = crate::updater::pubsub::UpdateRoutes::new(&client);
         let (deliveries, _) = broadcast::channel(DELIVERY_CAPACITY);
         let task_deliveries = deliveries.clone();
         let task_client = client.clone();
+        let task_announcement_store = announcement_store.clone();
         let receiver_task = tokio::spawn(async move {
             let mut recent_order = VecDeque::new();
             let mut recent_ids = HashSet::new();
@@ -82,6 +104,16 @@ impl DriveNostrPubsubRuntime {
                     continue;
                 };
                 while let Some(delivery) = subscription.recv().await {
+                    if delivery.event.as_event().kind == nostr_sdk::Kind::Custom(ADVERT_KIND)
+                        && let Err(error) = observe_announcement(
+                            &endpoint,
+                            task_announcement_store.as_deref(),
+                            &delivery,
+                        )
+                        .await
+                    {
+                        tracing::warn!(%error, "processing Drive peer announcement");
+                    }
                     let event = delivery.event.into_event();
                     let event_id = event.id.to_string();
                     if !recent_ids.insert(event_id.clone()) {
@@ -103,6 +135,7 @@ impl DriveNostrPubsubRuntime {
         });
         Ok(Self {
             client: Some(client),
+            announcement_store,
             update_routes,
             deliveries,
             receiver_task: Some(receiver_task),
@@ -168,6 +201,9 @@ impl DriveNostrPubsubRuntime {
         if let Some(client) = self.client.take() {
             client.shutdown_shared().await;
         }
+        if let Some(store) = self.announcement_store.take() {
+            store.close().await;
+        }
     }
 }
 
@@ -177,6 +213,44 @@ impl Drop for DriveNostrPubsubRuntime {
             task.abort();
         }
     }
+}
+
+async fn observe_announcement(
+    endpoint: &FipsEndpoint,
+    store: Option<&FileEventBus>,
+    delivery: &nostr_pubsub::QueryEvent,
+) -> nostr_pubsub::Result<()> {
+    if nostr_pubsub_fips::ingest_fips_discovery_event(endpoint, delivery.event.clone()).await?
+        && let Some(store) = store
+    {
+        store
+            .publish(delivery.event.clone(), delivery.source.clone())
+            .await?;
+    }
+    Ok(())
+}
+
+async fn open_announcement_store(
+    directory: &Path,
+    endpoint: &FipsEndpoint,
+) -> Result<Arc<FileEventBus>, FipsSyncError> {
+    let scope = endpoint
+        .discovery_scope()
+        .map(str::trim)
+        .filter(|scope| !scope.is_empty())
+        .unwrap_or(ADVERT_IDENTIFIER);
+    let namespace = format!("{}\0{scope}", endpoint.npub());
+    let key = hex::encode(hashtree_core::sha256(namespace.as_bytes()));
+    let path = directory
+        .join("fips-peer-announcements")
+        .join(format!("{key}.json"));
+    let filter = Filter::new()
+        .kind(nostr_sdk::Kind::Custom(ADVERT_KIND))
+        .identifier(scope);
+    FileEventBus::open(path, EventRetentionPolicy::new(256, vec![filter]))
+        .await
+        .map(Arc::new)
+        .map_err(|error| endpoint_error(error.to_string()))
 }
 
 fn endpoint_error(error: impl Into<String>) -> FipsSyncError {

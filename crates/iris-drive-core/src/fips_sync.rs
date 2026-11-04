@@ -192,8 +192,8 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         let outbound_connect_peers = pending_app_key_link_fips_peers(config, &transport_settings);
         let routing_peers = routing_fips_peers(config, &transport_settings);
         let blob_peers = authorized_blob_fips_peers(config, &transport_settings);
-        let recent_peers = recent_peers_path.and_then(|path| {
-            DriveRecentPeers::load(&path, &local_peer_id, &discovery_scope, unix_time_ms())
+        let recent_peers = recent_peers_path.as_deref().and_then(|path| {
+            DriveRecentPeers::load(path, &local_peer_id, &discovery_scope, unix_time_ms())
         });
         let mut endpoint_peers =
             merged_endpoint_peers(&application_peers, &routing_peers, &blob_peers);
@@ -229,6 +229,9 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
                     native_endpoint.clone(),
                     peer_ids(&blob_peers).into_iter().collect(),
                     transport_settings.trusted_raters.clone(),
+                    recent_peers_path
+                        .as_deref()
+                        .and_then(std::path::Path::parent),
                 )
                 .await?,
             )

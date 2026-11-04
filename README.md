@@ -62,6 +62,12 @@ on LNVPS (`wss://fips1.iris.to/fips`) and Osiris
 `wss://.../fips` URLs or an empty value. Normal Nostr relay settings remain
 event and discovery/signaling routes; they do not carry FIPS packets.
 
+With mesh pubsub enabled, Drive saves up to 256 signed FIPS peer announcements
+in `fips-peer-announcements/` beside the device key. Each device and discovery
+scope has its own JSON file. After restart, Drive restores valid announcements
+for discovery and can answer a connected peer’s Nostr request from disk even
+when the relays and the original announcing peer are offline.
+
 Mesh peer selection uses the shared FIPS reputation policy and local transport
 observations. No external rater is trusted by default. Optionally set
 `IRIS_DRIVE_FIPS_TRUSTED_RATERS` to comma- or semicolon-separated `npub` or hex

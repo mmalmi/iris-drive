@@ -41,6 +41,7 @@ async fn pubsub_roster_refresh_accepts_more_contacts_than_connection_slots() {
         bound.native_endpoint.clone(),
         Vec::new(),
         vec!["invalid-explicit-key".to_string()],
+        None,
     )
     .await
     .err()
@@ -50,10 +51,14 @@ async fn pubsub_roster_refresh_accepts_more_contacts_than_connection_slots() {
             .to_string()
             .contains("invalid trusted peer reputation rater")
     );
-    let mut runtime =
-        DriveNostrPubsubRuntime::bind(bound.native_endpoint.clone(), peers.clone(), Vec::new())
-            .await
-            .unwrap();
+    let mut runtime = DriveNostrPubsubRuntime::bind(
+        bound.native_endpoint.clone(),
+        peers.clone(),
+        Vec::new(),
+        None,
+    )
+    .await
+    .unwrap();
     runtime.set_routed_peers(peers).unwrap();
     runtime.shutdown().await;
     bound.native_endpoint.shutdown().await.unwrap();
@@ -319,11 +324,12 @@ async fn shared_pubsub_carries_only_verified_nostr_events() {
         alice_endpoint.clone(),
         Vec::new(),
         vec![bob.pubkey_bech32()],
+        None,
     )
     .await
     .unwrap();
     let mut bob_runtime =
-        DriveNostrPubsubRuntime::bind(bob_endpoint.clone(), Vec::new(), Vec::new())
+        DriveNostrPubsubRuntime::bind(bob_endpoint.clone(), Vec::new(), Vec::new(), None)
             .await
             .unwrap();
     let mut received = bob_runtime.subscribe();
@@ -512,7 +518,7 @@ async fn disallowed_malformed_and_partial_streams_are_reset_and_release_capacity
     server_bound.native_endpoint.shutdown().await.unwrap();
 }
 
-async fn connect_endpoint_pair(
+pub(super) async fn connect_endpoint_pair(
     left: &BoundFipsEndpoint,
     left_key: &AppKey,
     left_addr: std::net::SocketAddrV4,
