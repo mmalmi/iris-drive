@@ -77,16 +77,15 @@ impl DriveNostrPubsubRuntime {
             .await
             .map_err(|error| endpoint_error(error.to_string()))?,
         );
-        if let Some(store) = &announcement_store {
-            if let Err(error) = client
+        if let Some(store) = &announcement_store
+            && let Err(error) = client
                 .set_peer_announcement_store(Some(store.clone()))
                 .await
                 .and_then(|()| client.set_replay_source(Some(store.clone())))
-            {
-                client.shutdown_shared().await;
-                store.close().await;
-                return Err(endpoint_error(error.to_string()));
-            }
+        {
+            client.shutdown_shared().await;
+            store.close().await;
+            return Err(endpoint_error(error.to_string()));
         }
         let update_routes = crate::updater::pubsub::UpdateRoutes::new(&client);
         let (deliveries, _) = broadcast::channel(DELIVERY_CAPACITY);
@@ -213,6 +212,20 @@ impl Drop for DriveNostrPubsubRuntime {
             task.abort();
         }
     }
+}
+
+pub(super) async fn recv_optional_nostr_pubsub_event(
+    receiver: Option<&tokio::sync::Mutex<broadcast::Receiver<FipsNostrPubsubEvent>>>,
+) -> FipsNostrPubsubEvent {
+    let Some(receiver) = receiver else {
+        return std::future::pending().await;
+    };
+    receiver
+        .lock()
+        .await
+        .recv()
+        .await
+        .expect("Nostr pubsub runtime stopped")
 }
 
 async fn observe_announcement(

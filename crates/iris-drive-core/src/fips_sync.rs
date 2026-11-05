@@ -43,8 +43,8 @@ use control_runtime::DriveControlRuntime;
 pub use control_runtime::FipsAppMessage;
 use download::download_tree_with_router;
 use endpoint_config::bind_drive_fips_endpoint;
-use nostr_runtime::DriveNostrPubsubRuntime;
 pub use nostr_runtime::FipsNostrPubsubEvent;
+use nostr_runtime::{DriveNostrPubsubRuntime, recv_optional_nostr_pubsub_event};
 use peer_config::{
     FipsPeerConfigSnapshot, authenticated_local_inbound_capability, fips_peer_config_snapshot,
     normalize_fips_peer_npub, peer_ids, set_drive_fips_peer_configs,
@@ -626,20 +626,6 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         }
         peers
     }
-}
-
-async fn recv_optional_nostr_pubsub_event(
-    receiver: Option<&tokio::sync::Mutex<tokio::sync::broadcast::Receiver<FipsNostrPubsubEvent>>>,
-) -> FipsNostrPubsubEvent {
-    let Some(receiver) = receiver else {
-        return std::future::pending().await;
-    };
-    receiver
-        .lock()
-        .await
-        .recv()
-        .await
-        .expect("Nostr pubsub runtime stopped")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

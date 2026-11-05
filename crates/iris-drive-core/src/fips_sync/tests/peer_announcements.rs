@@ -16,13 +16,9 @@ async fn endpoint(key: &AppKey, address: SocketAddrV4) -> BoundFipsEndpoint {
     let bound = bind_test_endpoint(key, SCOPE, reserve_udp_address(), address, false)
         .await
         .unwrap();
-    assert!(
-        bound
-            .native_endpoint
-            .relay_statuses()
-            .await
-            .unwrap()
-            .is_empty()
+    assert_eq!(
+        bound.native_endpoint.relay_statuses().await.unwrap().len(),
+        0
     );
     bound
 }
@@ -72,9 +68,12 @@ async fn restarted_drive_serves_valid_peer_announcements_without_relays_or_origi
     let bound = endpoint(&key, addr).await;
     let author_bound = endpoint(&original, author_addr).await;
     let first = drive(&bound, &key).await;
-    let author = FipsPubsubClient::start(author_bound.native_endpoint.clone(), Default::default())
-        .await
-        .unwrap();
+    let author = FipsPubsubClient::start(
+        author_bound.native_endpoint.clone(),
+        FipsPubsubClientOptions::default(),
+    )
+    .await
+    .unwrap();
     connect_endpoint_pair(&bound, &key, addr, &author_bound, &original, author_addr).await;
 
     let content = serde_json::json!({
@@ -181,4 +180,96 @@ async fn restarted_drive_serves_valid_peer_announcements_without_relays_or_origi
     reader.shutdown().await;
     reader_bound.native_endpoint.shutdown().await.unwrap();
     reopened.shutdown().await.unwrap();
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn local_drive_provider_exposes_authenticated_accepting_udp_hints() {
+    let directory = tempfile::tempdir().unwrap();
+    let key = AppKey::load_or_generate(directory.path().join("key")).unwrap();
+    let observer_key = AppKey::generate("local-provider-observer");
+    let rendezvous = reserve_udp_address();
+    let provider = bind_test_endpoint(&key, SCOPE, rendezvous, reserve_udp_address(), true)
+        .await
+        .unwrap();
+    let observer = bind_test_endpoint(
+        &observer_key,
+        SCOPE,
+        rendezvous,
+        reserve_udp_address(),
+        true,
+    )
+    .await
+    .unwrap();
+    let serving = drive(&provider, &key).await;
+
+    timeout(Duration::from_secs(10), async {
+        loop {
+            if observer
+                .native_endpoint
+                .local_instance_advertisements()
+                .unwrap()
+                .iter()
+                .any(|advert| {
+                    advert.npub == key.pubkey_bech32()
+                        && advert
+                            .capability(nostr_pubsub_fips::FIPS_NOSTR_PUBSUB_CAPABILITY)
+                            .is_some()
+                })
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("the local observer discovers the actual Drive provider");
+
+    // The fixture hides its UDP listener from public discovery. Only the
+    // authenticated local roster may supply its accepting socket addresses.
+    let hints = observer
+        .native_endpoint
+        .authenticated_local_udp_listen_addrs(
+            fips_core::PeerIdentity::from_npub(&key.pubkey_bech32()).unwrap(),
+        )
+        .await
+        .unwrap();
+    let listeners = provider
+        .native_endpoint
+        .bound_udp_listen_addrs()
+        .await
+        .unwrap();
+    assert!(
+        !hints.is_empty(),
+        "the first lookup includes listener metadata"
+    );
+    assert!(
+        hints.iter().all(|hint| {
+            hint.ip().is_loopback() && hint.port() != 0 && listeners.contains(hint)
+        })
+    );
+    assert!(
+        !provider
+            .native_endpoint
+            .routing_status()
+            .await
+            .unwrap()
+            .client_only
+    );
+    assert!(
+        observer
+            .native_endpoint
+            .authenticated_local_udp_listen_addrs(
+                fips_core::PeerIdentity::from_npub(
+                    &AppKey::generate("unrelated-provider").pubkey_bech32(),
+                )
+                .unwrap(),
+            )
+            .await
+            .unwrap()
+            .is_empty(),
+        "an undiscovered identity cannot acquire authenticated listener hints"
+    );
+
+    observer.native_endpoint.shutdown().await.unwrap();
+    serving.shutdown().await.unwrap();
 }
