@@ -9,12 +9,25 @@ use std::collections::BTreeMap;
 
 impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     pub fn stack_fixture_traffic_snapshot(&self) -> anyhow::Result<serde_json::Value> {
-        let client = self
-            .nostr_runtime
-            .as_ref()
-            .and_then(DriveNostrPubsubRuntime::stack_fixture_client)
-            .ok_or_else(|| anyhow::anyhow!("fixture pubsub runtime unavailable"))?;
-        snapshot(&self.endpoint, client)
+        snapshot_when_pubsub_enabled(self.transport_settings.enable_mesh_pubsub, || {
+            let client = self
+                .nostr_runtime
+                .as_ref()
+                .and_then(DriveNostrPubsubRuntime::stack_fixture_client)
+                .ok_or_else(|| anyhow::anyhow!("fixture pubsub runtime unavailable"))?;
+            snapshot(&self.endpoint, client)
+        })
+    }
+}
+
+fn snapshot_when_pubsub_enabled(
+    enabled: bool,
+    read_snapshot: impl FnOnce() -> anyhow::Result<Value>,
+) -> anyhow::Result<Value> {
+    if enabled {
+        read_snapshot()
+    } else {
+        Ok(Value::Null)
     }
 }
 
@@ -95,6 +108,34 @@ fn pubsub_counters(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn disabled_pubsub_diagnostics_are_null_without_reading_runtime() {
+        let value = snapshot_when_pubsub_enabled(false, || {
+            panic!("disabled pubsub must not read its absent runtime or counters")
+        })
+        .unwrap();
+        assert_eq!(value, Value::Null);
+    }
+
+    #[test]
+    fn enabled_pubsub_diagnostics_preserve_snapshot_errors() {
+        for message in [
+            "fixture pubsub runtime unavailable",
+            "fixture traffic snapshot exceeds cap",
+        ] {
+            let error = snapshot_when_pubsub_enabled(true, || anyhow::bail!(message)).unwrap_err();
+            assert_eq!(error.to_string(), message);
+        }
+    }
+
+    #[test]
+    fn enabled_pubsub_diagnostics_preserve_snapshot_value() {
+        let expected = json!({"version": 1, "counters": {"pubsub.req_frames_received": 3}});
+        let value = snapshot_when_pubsub_enabled(true, || Ok(expected.clone())).unwrap();
+        assert_eq!(value, expected);
+    }
+
     #[test]
     fn snapshot_fields_keep_errors_and_message_counters_distinct() {
         let counters = pubsub_counters(
