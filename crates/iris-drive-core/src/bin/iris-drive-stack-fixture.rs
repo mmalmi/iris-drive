@@ -64,8 +64,14 @@ async fn main() -> Result<()> {
         .await
         .context("start Iris Drive FIPS block sync")?;
 
+    #[cfg(feature = "stack-fixture")]
+    let traffic = sync.stack_fixture_traffic_snapshot()?;
+    #[cfg(not(feature = "stack-fixture"))]
+    let traffic = serde_json::Value::Null;
+
     emit(&json!({
         "event": "ready",
+        "traffic": traffic,
         "npub": sync.endpoint_npub(),
         "remote_npub": remote_npub,
         "discovery_scope": sync.discovery_scope(),
@@ -186,8 +192,13 @@ async fn main() -> Result<()> {
                 let remote_connected = remote
                     .as_ref()
                     .is_some_and(|peer| peer.transport_addr.is_some());
+                #[cfg(feature = "stack-fixture")]
+                let traffic = sync.stack_fixture_traffic_snapshot()?;
+                #[cfg(not(feature = "stack-fixture"))]
+                let traffic = serde_json::Value::Null;
                 emit(&json!({
                     "event": "status",
+                    "traffic": traffic,
                     "remote_connected": remote_connected,
                     "remote_transport": remote.as_ref().and_then(|peer| peer.transport_type.clone()),
                     "remote_addr": remote.as_ref().and_then(|peer| peer.transport_addr.clone()),

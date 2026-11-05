@@ -38,6 +38,8 @@ mod peer_config;
 mod peer_refresh;
 mod recent_peer_cache;
 pub(crate) mod settings_runtime;
+#[cfg(feature = "stack-fixture")]
+mod stack_fixture_traffic;
 use blob_runtime::{DriveBlobRuntime, configured_shared_lmdb_route};
 use control_runtime::DriveControlRuntime;
 pub use control_runtime::FipsAppMessage;

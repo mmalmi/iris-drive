@@ -141,6 +141,11 @@ impl DriveNostrPubsubRuntime {
         })
     }
 
+    #[cfg(feature = "stack-fixture")]
+    pub(super) fn stack_fixture_client(&self) -> Option<&FipsPubsubClient> {
+        self.client.as_deref()
+    }
+
     pub(super) fn subscribe(&self) -> broadcast::Receiver<FipsNostrPubsubEvent> {
         self.deliveries.subscribe()
     }
