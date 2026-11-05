@@ -41,6 +41,10 @@ require_absent() {
 
 require_registry_package() {
   local path="$1" package="$2" version="$3" checksum="$4" block
+  if [[ "$(grep -Fxc -- "name = \"$package\"" "$ROOT/$path")" != 1 ]]; then
+    echo "expected one registry $package family in $path" >&2
+    exit 1
+  fi
   block="$(awk -v package="$package" \
     '/^\[\[package\]\]$/ { capture = 0 } $0 == "name = \"" package "\"" { capture = 1 } capture' \
     "$ROOT/$path")"
@@ -168,13 +172,13 @@ require_contains Cargo.toml 'nvpn-fips-tcp = { version = "=0.2.6" }'
 require_contains Cargo.toml 'nvpn-fips-tcp-endpoint = { version = "=0.2.54" }'
 require_contains Cargo.toml 'hashtree-core = "=0.3.0"'
 require_contains Cargo.toml 'hashtree-config = "=0.2.83"'
-require_contains Cargo.toml 'hashtree-embedded = "=0.3.0"'
+require_contains Cargo.toml 'hashtree-embedded = "=0.4.1"'
 require_contains Cargo.toml 'hashtree-fips-transport = { version = "=0.5.0", features = ["webrtc-endpoint"] }'
 require_contains Cargo.toml 'hashtree-lmdb = "=0.3.0"'
 require_contains Cargo.toml 'hashtree-network = "=0.3.0"'
-require_contains Cargo.toml 'hashtree-nostr = "=0.3.0"'
+require_contains Cargo.toml 'hashtree-nostr = "=0.4.0"'
 require_contains Cargo.toml 'nostr-identity = "=0.3.1"'
-require_contains Cargo.toml 'nostr-pubsub-fips = "=0.5.51"'
+require_contains Cargo.toml 'nostr-pubsub-fips = "=0.6.1"'
 require_contains crates/iris-drive-core/src/fips_bootstrap.rs '"wss://fips1.iris.to/fips"'
 require_contains crates/iris-drive-core/src/fips_bootstrap.rs '"wss://fips2.iris.to/fips"'
 require_contains crates/iris-drive-core/Cargo.toml "nvpn-fips-core.workspace = true"
@@ -197,20 +201,23 @@ for lock in Cargo.lock linux/Cargo.lock; do
   require_registry_package "$lock" nvpn-fips-endpoint 0.4.119 81c0af30c73900078f4f2835e7bef02b0131cc2316a8edd80856edcafc3ed71b
   require_registry_package "$lock" nvpn-fips-tcp 0.2.6 299df22559c4af63e7d276fcb90cf000f2f1cd5546c213f17d8860154c1383d7
   require_registry_package "$lock" nvpn-fips-tcp-endpoint 0.2.54 5a6e31c1319cb5ef6dc754905828436c7a1596a6f4888b16223673330f23bf8e
-  require_registry_package "$lock" git-remote-htree 0.3.0 e7331fa0c63f684ff626bc6245473866f5bafbec79e2d6d37281c5e767d79567
-  require_registry_package "$lock" hashtree-cli 0.3.1 15fc6ae37692a44ab8d8541eeb6fb1e578975530b04eb7933b3ef01e1048fb8b
+  require_registry_package "$lock" git-remote-htree 0.4.0 6c4f5a0feac5a320ea383af86849063d2ca890d0c318aa5dd9d38046c5b2ccf8
+  require_registry_package "$lock" hashtree-cli 0.4.1 e2dba54451f29489a8858fdacc8f05f7bdc58b7d7386a1c2b998de281d29bbdf
   require_registry_package "$lock" hashtree-updater 0.3.0 d74b436997bd5c98adeeef4d03177a9403f24eeb55c76ea0f3cb42a3a7c62e52
   require_registry_package "$lock" hashtree-config 0.2.83 661c0bec57ba49999860fc418a7e656714cd79d82a3c3ee272794b90bb49db76
   require_registry_package "$lock" hashtree-core 0.3.0 0984dfd6c005bdd85b0ae249d3ee77680d18df3a778807e45b618b8f0814704f
-  require_registry_package "$lock" hashtree-embedded 0.3.0 c7e044deb678fea0b089a7c4afe1a3556486b9dc1b0e45a0ac2b772a849d42cf
+  require_registry_package "$lock" hashtree-embedded 0.4.1 9fd7360cad9c373584bd744685bfc336ca59bd5a0df419eaf840ac0867629bb5
   require_registry_package "$lock" hashtree-fips-transport 0.5.0 fe8ec8fd82d673c7f0e6c692cabdbf89839cdcba9c5600ec9077e8f1e799d824
   require_registry_package "$lock" hashtree-lmdb 0.3.0 e175d64320b99ec4df162d2db593d18b25528a5362456dee0aac0e704c49c5e5
   require_registry_package "$lock" hashtree-network 0.3.0 e5e282964a08e2ee6851006a91823740672fa5f103d5de652532ee03186381c5
-  require_registry_package "$lock" hashtree-nostr 0.3.0 22700b3e7821fdcfe9f74aebbbcdd019cb42444ccd33422b821fcfb3bdb0af46
-  require_registry_package "$lock" hashtree-nostr-pubsub 0.3.0 3a382f11cbff77cc56667fbe8fba34cc1ae802e9ef3b8289e2a3831dd1487a28
+  require_registry_package "$lock" hashtree-nostr 0.4.0 381059616e65a3154eeac615a811ef18d854400958f78dfb8e11024f65800501
+  require_registry_package "$lock" hashtree-nostr-pubsub 0.4.0 114ab31557c3e5466969fcfa9d7f0a294fbd7069bc501274f47860ff763b6b5b
   require_registry_package "$lock" nostr-pubsub 0.1.20 d7615308044527a935027210cf62720d1ce36e49ae1fe888c0dd705c6359d4a8
-  require_registry_package "$lock" nostr-pubsub-fips 0.5.51 15c52b732331c717b85165ddee1234e09fdd42793a539d9d543fa1983ec6de9b
-  require_registry_package "$lock" nostr-pubsub-social-graph 0.2.4 82f49b582d5b174358516a230372196691bd014ff997ff58bc039e554198f7fe
+  require_registry_package "$lock" nostr-pubsub-fips 0.6.1 23568533712a3635e45e86ed79895e42f87a11dfcd43ba9bcf02a5e9b90db90f
+  require_registry_package "$lock" nostr-pubsub-social-graph 0.3.0 e9dd2d0a1cdacf1ea254ea05d7f63dd6624ff4ee6dae62c4c4000dd4db8b9666
+  require_registry_package "$lock" hashtree-nostr-social-graph-heed 0.2.0-hashtree.1 99c4f448573e151bf32a0e6a9c18eb2ee69178a441680622a9729229d788f375
+  require_registry_package "$lock" nostr-social-graph 0.2.0 83a7c3e6dedf8c0474c9e09938496abde4a9c77cd38ec4832d9b56ee9602b8f8
+  require_registry_package "$lock" nostr-social-memory 0.2.0 39fb16cde2e5bb0e6eeed1c5c8740b01a3c90daa277c30c397715e84aa7a89c9
   require_registry_package "$lock" nostr-pubsub-relay 0.1.15 fe53648d219d8fc5e3f8c2606d3dced398c383521127aeeaa9f3b345d2d3a9a9
 done
 require_absent scripts/docker-cli-e2e.sh "Missing required sibling checkout"

@@ -24,6 +24,8 @@ use tokio::io::{AsyncBufReadExt, BufReader};
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
+    #[cfg(feature = "stack-fixture")]
+    iris_drive_core::stack_fixture_control::install()?;
     let mut args = std::env::args().skip(1);
     let mode = args.next().context("missing fixture mode")?;
     if mode == "identity" {

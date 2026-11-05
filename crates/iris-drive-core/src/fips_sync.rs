@@ -190,6 +190,13 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             ..
         } = endpoint;
 
+        #[cfg(feature = "stack-fixture")]
+        if crate::stack_fixture_control::is_installed() {
+            stack_fixture_traffic::enable_services(&native_endpoint).map_err(|_| {
+                FipsSyncError::Endpoint("fixture diagnostics unavailable".to_string())
+            })?;
+        }
+
         let application_peers = authorized_device_fips_peers(config, &transport_settings);
         let outbound_connect_peers = pending_app_key_link_fips_peers(config, &transport_settings);
         let routing_peers = routing_fips_peers(config, &transport_settings);

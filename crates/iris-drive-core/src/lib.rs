@@ -1,3 +1,7 @@
+#[cfg(feature = "stack-fixture")]
+#[path = "fips_sync/stack_fixture_control.rs"]
+pub mod stack_fixture_control;
+
 pub mod app_key_link_invite;
 pub mod app_key_link_transport;
 pub mod app_key_summary;
