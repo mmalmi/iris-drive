@@ -162,10 +162,10 @@ require_contains scripts/release-gate.sh "just structure"
 require_contains scripts/release-gate.sh "cargo test --workspace --exclude idrive"
 require_contains scripts/release-gate.sh "--test daemon_sync_matrix"
 require_contains scripts/release-gate.sh "cargo build --workspace --release"
-require_contains Cargo.toml 'nvpn-fips-core = { version = "=0.4.118" }'
-require_contains Cargo.toml 'nvpn-fips-endpoint = { version = "=0.4.118" }'
+require_contains Cargo.toml 'nvpn-fips-core = { version = "=0.4.119" }'
+require_contains Cargo.toml 'nvpn-fips-endpoint = { version = "=0.4.119" }'
 require_contains Cargo.toml 'nvpn-fips-tcp = { version = "=0.2.6" }'
-require_contains Cargo.toml 'nvpn-fips-tcp-endpoint = { version = "=0.2.53" }'
+require_contains Cargo.toml 'nvpn-fips-tcp-endpoint = { version = "=0.2.54" }'
 require_contains Cargo.toml 'hashtree-core = "=0.3.0"'
 require_contains Cargo.toml 'hashtree-config = "=0.2.83"'
 require_contains Cargo.toml 'hashtree-embedded = "=0.3.0"'
@@ -174,7 +174,7 @@ require_contains Cargo.toml 'hashtree-lmdb = "=0.3.0"'
 require_contains Cargo.toml 'hashtree-network = "=0.3.0"'
 require_contains Cargo.toml 'hashtree-nostr = "=0.3.0"'
 require_contains Cargo.toml 'nostr-identity = "=0.3.1"'
-require_contains Cargo.toml 'nostr-pubsub-fips = "=0.5.50"'
+require_contains Cargo.toml 'nostr-pubsub-fips = "=0.5.51"'
 require_contains crates/iris-drive-core/src/fips_bootstrap.rs '"wss://fips1.iris.to/fips"'
 require_contains crates/iris-drive-core/src/fips_bootstrap.rs '"wss://fips2.iris.to/fips"'
 require_contains crates/iris-drive-core/Cargo.toml "nvpn-fips-core.workspace = true"
@@ -193,10 +193,10 @@ require_contains LICENSE 'THE SOFTWARE IS PROVIDED "AS IS"'
 for lock in Cargo.lock linux/Cargo.lock; do
   require_registry_package "$lock" negentropy 0.5.2 a3d66662cb5ca384d4991509755ed5a42dd8e31c4282bf881938e506fc3146ec
   require_registry_package "$lock" hashtree-resolver 0.3.0 365c245edfd117d2d0bbfd4e84d0c9876930a6c970485a95b3083e0f5ce651e4
-  require_registry_package "$lock" nvpn-fips-core 0.4.118 7ee237ffad9fd0af520fdce807c6ad18fe46e9d7b0e28d1f7d6912c2d7aac395
-  require_registry_package "$lock" nvpn-fips-endpoint 0.4.118 1191ac4f2c8a2c9536c7b89250c0065a0af881be576cb87ae7a11593ae83bcc7
+  require_registry_package "$lock" nvpn-fips-core 0.4.119 ba0e1a75a2b7fb5d71e4a602c41d8a1ed163417e56798e2198df1dfe3f73cda2
+  require_registry_package "$lock" nvpn-fips-endpoint 0.4.119 81c0af30c73900078f4f2835e7bef02b0131cc2316a8edd80856edcafc3ed71b
   require_registry_package "$lock" nvpn-fips-tcp 0.2.6 299df22559c4af63e7d276fcb90cf000f2f1cd5546c213f17d8860154c1383d7
-  require_registry_package "$lock" nvpn-fips-tcp-endpoint 0.2.53 81f40b3a38a1121f0b701e88e18476fc3833fed96aeb1277dda5f64fe211a0e3
+  require_registry_package "$lock" nvpn-fips-tcp-endpoint 0.2.54 5a6e31c1319cb5ef6dc754905828436c7a1596a6f4888b16223673330f23bf8e
   require_registry_package "$lock" git-remote-htree 0.3.0 e7331fa0c63f684ff626bc6245473866f5bafbec79e2d6d37281c5e767d79567
   require_registry_package "$lock" hashtree-cli 0.3.1 15fc6ae37692a44ab8d8541eeb6fb1e578975530b04eb7933b3ef01e1048fb8b
   require_registry_package "$lock" hashtree-updater 0.3.0 d74b436997bd5c98adeeef4d03177a9403f24eeb55c76ea0f3cb42a3a7c62e52
@@ -209,7 +209,7 @@ for lock in Cargo.lock linux/Cargo.lock; do
   require_registry_package "$lock" hashtree-nostr 0.3.0 22700b3e7821fdcfe9f74aebbbcdd019cb42444ccd33422b821fcfb3bdb0af46
   require_registry_package "$lock" hashtree-nostr-pubsub 0.3.0 3a382f11cbff77cc56667fbe8fba34cc1ae802e9ef3b8289e2a3831dd1487a28
   require_registry_package "$lock" nostr-pubsub 0.1.20 d7615308044527a935027210cf62720d1ce36e49ae1fe888c0dd705c6359d4a8
-  require_registry_package "$lock" nostr-pubsub-fips 0.5.50 228f2f4bbd5b1b9e1a1d30204734a8bd4385314d0ef58bf0756ddb6c700eeabf
+  require_registry_package "$lock" nostr-pubsub-fips 0.5.51 15c52b732331c717b85165ddee1234e09fdd42793a539d9d543fa1983ec6de9b
   require_registry_package "$lock" nostr-pubsub-social-graph 0.2.4 82f49b582d5b174358516a230372196691bd014ff997ff58bc039e554198f7fe
   require_registry_package "$lock" nostr-pubsub-relay 0.1.15 fe53648d219d8fc5e3f8c2606d3dced398c383521127aeeaa9f3b345d2d3a9a9
 done
