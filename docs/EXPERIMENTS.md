@@ -109,6 +109,22 @@ tests, without a mismatch, before it was removed. One behaviour differs by
 design: when the view is reused, a source block that disappears from the store
 between building the view and materializing the root no longer matters.
 
+### One walk of the base root in the history layer
+
+When the caller does not supply tombstone or kind-replacement paths, the
+history layer derived them by listing the tombstone base (or previous) root,
+then walked that same root again for its files and tombstones. It now walks it
+once and uses the result for both. A committed test counts store reads of a
+previous-root directory: two before, one after.
+
+The release probe showed no measurable change: index with history took 72,
+91 and 109 ms across three runs against 70-76 ms before, on a machine that was
+not idle, so the spread is noise rather than a regression signal. The saving
+is one listing of every directory of one root per import and was not isolated.
+The previous implementation ran beside the new one on every debug-build call
+and asserted equal roots across 223 calls in the core, CLI and app-core tests,
+at least 42 of which took the shared-walk path, before it was removed.
+
 ## 2026-09-11 Slow approval relays and daemon responsiveness
 
 A native linking run established its authenticated direct FIPS connection while

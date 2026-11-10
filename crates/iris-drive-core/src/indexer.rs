@@ -16,9 +16,10 @@ use thiserror::Error;
 use crate::conflict::ConflictRecord;
 use crate::dir_builder::{DirBuilder, LeafLink};
 use crate::merge::{
-    CONFLICTS_PREFIX, MAX_PATH_KIND_REPLACEMENT_GENERATION, META_DIR, MODIFIED_AT_META_KEY,
-    PATH_KIND_REPLACEMENTS_PATH, PREV_LINK_PATH, PathKindReplacement, PathKindReplacementDocument,
-    ROOT_META_PATH, WHOLE_FILE_HASH_META_KEY, walk_app_key_tree,
+    AppKeyFileEntry, AppKeyTombstone, CONFLICTS_PREFIX, MAX_PATH_KIND_REPLACEMENT_GENERATION,
+    META_DIR, MODIFIED_AT_META_KEY, PATH_KIND_REPLACEMENTS_PATH, PREV_LINK_PATH,
+    PathKindReplacement, PathKindReplacementDocument, ROOT_META_PATH, WHOLE_FILE_HASH_META_KEY,
+    walk_app_key_tree, walk_app_key_tree_indexed,
 };
 use crate::root_meta::DriveRootMeta;
 
@@ -236,31 +237,24 @@ pub async fn layer_history_and_meta_on_root_with_tombstone_base_paths_and_replac
         );
         let mut derived_tombstone_paths = None;
         let mut derived_kind_replacement_paths = None;
+        let mut walked = None;
         if (tombstone_paths.is_none() || kind_replacement_paths.is_none())
             && let Some(base_root) = tombstone_base_root.or(previous_root)
         {
-            let VisibleEntries {
-                files: base_files,
-                dirs: base_dirs,
-            } = visible_entries(tree, base_root).await?;
-            let replacements = base_dirs
-                .keys()
+            // The history attach below needs this root's files and
+            // tombstones too, so one walk serves both.
+            let (base_files, base_tombstones, base_index) =
+                walk_app_key_tree_indexed(tree, base_root).await?;
+            let base_file_paths = || base_files.iter().map(|file| &file.path);
+            let base_dir_paths = || base_index.dirs.iter().map(|(path, _)| path);
+            let replacements = base_dir_paths()
                 .filter(|path| current_files.contains_key(*path))
-                .chain(
-                    base_files
-                        .keys()
-                        .filter(|path| current_dirs.contains_key(*path)),
-                )
+                .chain(base_file_paths().filter(|path| current_dirs.contains_key(*path)))
                 .cloned()
                 .collect::<BTreeSet<_>>();
-            let mut deletions = base_files
-                .keys()
+            let mut deletions = base_file_paths()
                 .filter(|path| !current_files.contains_key(*path))
-                .chain(
-                    base_dirs
-                        .keys()
-                        .filter(|path| !current_dirs.contains_key(*path)),
-                )
+                .chain(base_dir_paths().filter(|path| !current_dirs.contains_key(*path)))
                 .cloned()
                 .collect::<BTreeSet<_>>();
             deletions.retain(|path| {
@@ -270,6 +264,11 @@ pub async fn layer_history_and_meta_on_root_with_tombstone_base_paths_and_replac
             });
             derived_tombstone_paths = Some(deletions);
             derived_kind_replacement_paths = Some(replacements);
+            walked = Some(WalkedRoot {
+                root: base_root.clone(),
+                files: base_files,
+                tombstones: base_tombstones,
+            });
         }
         let tombstone_paths = tombstone_paths.or(derived_tombstone_paths.as_ref());
         let kind_replacement_paths =
@@ -284,6 +283,7 @@ pub async fn layer_history_and_meta_on_root_with_tombstone_base_paths_and_replac
             &current_paths,
             tombstone_paths,
             kind_replacement_paths,
+            walked,
         )
         .await?;
         tracing::debug!(
@@ -539,6 +539,7 @@ async fn attach_history_for_current_paths<S: Store>(
     current_paths: &BTreeSet<String>,
     tombstone_paths: Option<&BTreeSet<String>>,
     kind_replacement_paths: Option<&BTreeSet<String>>,
+    mut walked: Option<WalkedRoot>,
 ) -> Result<Cid, IndexError> {
     let mut tombstones: BTreeMap<String, i64> = BTreeMap::new();
     if let Some(paths) = tombstone_paths {
@@ -552,9 +553,7 @@ async fn attach_history_for_current_paths<S: Store>(
     // previous root, the walk below stamps the same paths with the same time.
     if let Some(base) = tombstone_base_root.filter(|base| previous_root != Some(*base)) {
         let phase = std::time::Instant::now();
-        let (base_files, _base_tombstones) = walk_app_key_tree(tree, base)
-            .await
-            .map_err(IndexError::Tree)?;
+        let (base_files, _base_tombstones) = files_and_tombstones(tree, base, &mut walked).await?;
         tracing::debug!(
             elapsed_ms = phase.elapsed().as_millis(),
             file_count = base_files.len(),
@@ -572,9 +571,7 @@ async fn attach_history_for_current_paths<S: Store>(
 
     if let Some(prev) = previous_root {
         let phase = std::time::Instant::now();
-        let (prev_files, prev_tombstones) = walk_app_key_tree(tree, prev)
-            .await
-            .map_err(IndexError::Tree)?;
+        let (prev_files, prev_tombstones) = files_and_tombstones(tree, prev, &mut walked).await?;
         tracing::debug!(
             elapsed_ms = phase.elapsed().as_millis(),
             file_count = prev_files.len(),
@@ -643,6 +640,27 @@ async fn attach_history_for_current_paths<S: Store>(
     }
 
     Ok(root)
+}
+
+/// Files and tombstones of a root the caller has already walked.
+struct WalkedRoot {
+    root: Cid,
+    files: Vec<AppKeyFileEntry>,
+    tombstones: Vec<AppKeyTombstone>,
+}
+
+/// Files and tombstones of `root`, taken from `walked` when it holds that root.
+async fn files_and_tombstones<S: Store>(
+    tree: &HashTree<S>,
+    root: &Cid,
+    walked: &mut Option<WalkedRoot>,
+) -> Result<(Vec<AppKeyFileEntry>, Vec<AppKeyTombstone>), IndexError> {
+    if let Some(known) = walked.take_if(|known| &known.root == root) {
+        return Ok((known.files, known.tombstones));
+    }
+    walk_app_key_tree(tree, root)
+        .await
+        .map_err(IndexError::Tree)
 }
 
 fn path_is_at_or_below(path: &str, ancestor: &str) -> bool {
@@ -854,6 +872,8 @@ fn split_visible_path(path: &str) -> Result<(Vec<&str>, &str), IndexError> {
 }
 
 include!("indexer/metadata.rs");
+#[cfg(test)]
+mod history_walk_tests;
 #[cfg(test)]
 mod mount_import_tests;
 #[cfg(test)]
