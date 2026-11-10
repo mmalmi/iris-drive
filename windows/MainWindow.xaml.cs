@@ -1151,7 +1151,7 @@ public partial class MainWindow : Window
         var secret = RestoreSecretBox.Password.Trim();
         if (restoringWithSigner && !secret.StartsWith("bunker://", StringComparison.Ordinal))
         {
-            MessageBox.Show("Enter a bunker:// link from your signer.", "Remote signer");
+            System.Windows.MessageBox.Show("Enter a bunker:// link from your signer.", "Remote signer");
             return;
         }
         OpenSignerApproval.Visibility = restoringWithSigner ? Visibility.Visible : Visibility.Collapsed;
