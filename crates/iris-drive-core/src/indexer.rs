@@ -14,6 +14,7 @@ use hashtree_core::{Cid, DirEntry, HashTree, HashTreeError, LinkType, Store, Tre
 use thiserror::Error;
 
 use crate::conflict::ConflictRecord;
+use crate::dir_builder::{DirBuilder, LeafLink};
 use crate::merge::{
     CONFLICTS_PREFIX, MAX_PATH_KIND_REPLACEMENT_GENERATION, META_DIR, MODIFIED_AT_META_KEY,
     PATH_KIND_REPLACEMENTS_PATH, PREV_LINK_PATH, PathKindReplacement, PathKindReplacementDocument,
@@ -50,12 +51,15 @@ pub enum IndexError {
 
 #[must_use]
 pub fn should_ignore_name(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
+    const TRASH_PREFIX: &[u8] = b".trash-";
     IGNORED_NAMES
         .iter()
         .any(|ignored| name.eq_ignore_ascii_case(ignored))
         || name.starts_with("._")
-        || lower.starts_with(".trash-")
+        || name
+            .as_bytes()
+            .get(..TRASH_PREFIX.len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case(TRASH_PREFIX))
         || name.ends_with('~')
         || (name.starts_with('#') && name.ends_with('#'))
         || Path::new(name)
@@ -221,10 +225,10 @@ pub async fn layer_history_and_meta_on_root_with_tombstone_base_paths_and_replac
     );
     if previous_root.is_some() || tombstone_base_root.is_some() {
         let phase = std::time::Instant::now();
-        let mut current_files = BTreeMap::new();
-        collect_visible_files(tree, &root, "", &mut current_files).await?;
-        let mut current_dirs = BTreeMap::new();
-        collect_visible_dirs(tree, &root, "", &mut current_dirs).await?;
+        let VisibleEntries {
+            files: current_files,
+            dirs: current_dirs,
+        } = visible_entries(tree, &root).await?;
         let current_paths = current_files.keys().cloned().collect::<BTreeSet<_>>();
         tracing::debug!(
             elapsed_ms = phase.elapsed().as_millis(),
@@ -235,10 +239,10 @@ pub async fn layer_history_and_meta_on_root_with_tombstone_base_paths_and_replac
         if (tombstone_paths.is_none() || kind_replacement_paths.is_none())
             && let Some(base_root) = tombstone_base_root.or(previous_root)
         {
-            let mut base_files = BTreeMap::new();
-            collect_visible_files(tree, base_root, "", &mut base_files).await?;
-            let mut base_dirs = BTreeMap::new();
-            collect_visible_dirs(tree, base_root, "", &mut base_dirs).await?;
+            let VisibleEntries {
+                files: base_files,
+                dirs: base_dirs,
+            } = visible_entries(tree, base_root).await?;
             let replacements = base_dirs
                 .keys()
                 .filter(|path| current_files.contains_key(*path))
@@ -323,21 +327,21 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
     let edited_root = filter_ignored_entries_from_root(tree, edited_root).await?;
     let base_root = filter_ignored_entries_from_root(tree, base_root).await?;
 
-    let mut edited_files = BTreeMap::new();
-    collect_visible_files(tree, &edited_root, "", &mut edited_files).await?;
-    let mut edited_dirs = BTreeMap::new();
-    collect_visible_dirs(tree, &edited_root, "", &mut edited_dirs).await?;
-    let mut base_files = BTreeMap::new();
-    collect_visible_files(tree, &base_root, "", &mut base_files).await?;
-    let mut base_dirs = BTreeMap::new();
-    collect_visible_dirs(tree, &base_root, "", &mut base_dirs).await?;
+    let VisibleEntries {
+        files: edited_files,
+        dirs: edited_dirs,
+    } = visible_entries(tree, &edited_root).await?;
+    let VisibleEntries {
+        files: base_files,
+        dirs: base_dirs,
+    } = visible_entries(tree, &base_root).await?;
     let mut projection_files = BTreeMap::new();
     if let Some(projection_root) = projection_root {
         if projection_root == &original_base_root {
             projection_files = base_files.clone();
         } else {
             let projection_root = filter_ignored_entries_from_root(tree, projection_root).await?;
-            collect_visible_files(tree, &projection_root, "", &mut projection_files).await?;
+            projection_files = visible_entries(tree, &projection_root).await?.files;
         }
     }
 
@@ -345,19 +349,22 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
         Some(previous_root) => filter_ignored_entries_from_root(tree, previous_root).await?,
         None => tree.put_directory(Vec::new()).await?,
     };
-    let mut previous_files = BTreeMap::new();
-    collect_visible_files(tree, &previous_visible_root, "", &mut previous_files).await?;
-    let mut previous_dirs = BTreeMap::new();
-    collect_visible_dirs(tree, &previous_visible_root, "", &mut previous_dirs).await?;
+    let VisibleEntries {
+        files: previous_files,
+        dirs: previous_dirs,
+    } = visible_entries(tree, &previous_visible_root).await?;
 
-    let mut root = tree.put_directory(Vec::new()).await?;
+    // The whole local contribution is known up front, so assemble it in
+    // memory and store each directory once instead of editing a stored tree
+    // path by path.
+    let mut delta = DirBuilder::default();
     for (path, previous) in &previous_dirs {
         if !base_dirs.contains_key(path)
             && (edited_dirs.contains_key(path) || tombstone_path_selected(tombstone_paths, path))
         {
             continue;
         }
-        root = set_visible_dir_entry(tree, root, path, previous).await?;
+        set_delta_dir(&mut delta, path, previous);
     }
     for (path, previous) in &previous_files {
         if base_files
@@ -367,7 +374,7 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
                 && !edited_files.contains_key(path)
                 && !tombstone_path_selected(tombstone_paths, path))
         {
-            root = set_visible_file_entry(tree, &root, path, previous).await?;
+            set_delta_file(&mut delta, path, previous)?;
         }
     }
 
@@ -397,11 +404,11 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
                 {
                     continue;
                 }
-                root = set_visible_file_entry(tree, &root, &path, entry).await?;
+                set_delta_file(&mut delta, &path, entry)?;
             }
             None if tombstone_path_allowed(tombstone_paths, &path) => {
-                deleted_paths.insert(path.clone());
-                root = remove_visible_path_if_present(tree, &root, &path).await?;
+                remove_delta_path(&mut delta, &path)?;
+                deleted_paths.insert(path);
             }
             None => {}
         }
@@ -424,13 +431,13 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
                 // directory shell creates an empty duplicate conflict root.
             }
             (_, Some(edited)) => {
-                root = set_visible_dir_entry(tree, root, &path, edited).await?;
+                set_delta_dir(&mut delta, &path, edited);
             }
             (true, None) if !edited_files.contains_key(&path) => {
+                remove_delta_path(&mut delta, &path)?;
                 if tombstone_path_allowed(tombstone_paths, &path) {
-                    deleted_paths.insert(path.clone());
+                    deleted_paths.insert(path);
                 }
-                root = remove_visible_path_if_present(tree, &root, &path).await?;
             }
             _ => {}
         }
@@ -462,7 +469,7 @@ pub async fn local_visible_root_for_mount_import<S: Store>(
     deleted_paths.extend(kind_replacement_paths.iter().cloned());
 
     Ok(VisibleImportDelta {
-        root,
+        root: delta.put(tree).await?,
         tombstone_paths: deleted_paths,
         kind_replacement_paths,
     })
@@ -541,8 +548,9 @@ async fn attach_history_for_current_paths<S: Store>(
     }
 
     // Files that were in the root being edited but are no longer visible get a
-    // fresh tombstone stamped at import time.
-    if let Some(base) = tombstone_base_root {
+    // fresh tombstone stamped at import time. When that root is also the
+    // previous root, the walk below stamps the same paths with the same time.
+    if let Some(base) = tombstone_base_root.filter(|base| previous_root != Some(*base)) {
         let phase = std::time::Instant::now();
         let (base_files, _base_tombstones) = walk_app_key_tree(tree, base)
             .await
@@ -676,15 +684,30 @@ fn path_is_below_visible_selected_barrier(
     })
 }
 
-fn collect_visible_files<'a, S: Store>(
+/// User-visible files and directories of one root, keyed by path.
+#[derive(Default)]
+struct VisibleEntries {
+    files: BTreeMap<String, TreeEntry>,
+    dirs: BTreeMap<String, TreeEntry>,
+}
+
+async fn visible_entries<S: Store>(
+    tree: &HashTree<S>,
+    root: &Cid,
+) -> Result<VisibleEntries, IndexError> {
+    let mut entries = VisibleEntries::default();
+    collect_visible_entries(tree, root, "", &mut entries).await?;
+    Ok(entries)
+}
+
+fn collect_visible_entries<'a, S: Store>(
     tree: &'a HashTree<S>,
     root: &'a Cid,
     prefix: &'a str,
-    out: &'a mut BTreeMap<String, TreeEntry>,
+    out: &'a mut VisibleEntries,
 ) -> futures::future::BoxFuture<'a, Result<(), IndexError>> {
     Box::pin(async move {
-        let entries = tree.list_directory(root).await?;
-        for entry in entries {
+        for entry in tree.list_directory(root).await? {
             if should_ignore_name(&entry.name) {
                 continue;
             }
@@ -698,38 +721,11 @@ fn collect_visible_files<'a, S: Store>(
                     hash: entry.hash,
                     key: entry.key,
                 };
-                collect_visible_files(tree, &cid, &path, out).await?;
+                out.dirs.insert(path.clone(), entry);
+                collect_visible_entries(tree, &cid, &path, out).await?;
             } else {
-                out.insert(path, entry);
+                out.files.insert(path, entry);
             }
-        }
-        Ok(())
-    })
-}
-
-fn collect_visible_dirs<'a, S: Store>(
-    tree: &'a HashTree<S>,
-    root: &'a Cid,
-    prefix: &'a str,
-    out: &'a mut BTreeMap<String, TreeEntry>,
-) -> futures::future::BoxFuture<'a, Result<(), IndexError>> {
-    Box::pin(async move {
-        let entries = tree.list_directory(root).await?;
-        for entry in entries {
-            if should_ignore_name(&entry.name) || entry.link_type != LinkType::Dir {
-                continue;
-            }
-            let path = if prefix.is_empty() {
-                entry.name.clone()
-            } else {
-                format!("{prefix}/{}", entry.name)
-            };
-            let cid = Cid {
-                hash: entry.hash,
-                key: entry.key,
-            };
-            out.insert(path.clone(), entry);
-            collect_visible_dirs(tree, &cid, &path, out).await?;
         }
         Ok(())
     })
@@ -743,136 +739,70 @@ fn visible_entry_matches(left: &TreeEntry, right: &TreeEntry) -> bool {
         && left.meta == right.meta
 }
 
-async fn set_visible_dir_entry<S: Store>(
-    tree: &HashTree<S>,
-    root: Cid,
-    path: &str,
-    entry: &TreeEntry,
-) -> Result<Cid, IndexError> {
-    set_visible_dir_with_meta(tree, root, path, entry.meta.clone()).await
+/// The directory at `segments`, created along with any missing ancestors. A
+/// file holding one of those names gives way to the directory.
+fn delta_dir<'d>(mut dir: &'d mut DirBuilder, segments: &[&str]) -> &'d mut DirBuilder {
+    for segment in segments {
+        dir.leaves.remove(*segment);
+        dir = dir.dirs.entry((*segment).to_string()).or_default();
+    }
+    dir
 }
 
-async fn set_visible_dir_with_meta<S: Store>(
-    tree: &HashTree<S>,
-    mut root: Cid,
-    path: &str,
-    meta: Option<HashMap<String, serde_json::Value>>,
-) -> Result<Cid, IndexError> {
+/// Ensure the directory at `path` exists, adopting `entry`'s link metadata
+/// when it carries any.
+fn set_delta_dir(root: &mut DirBuilder, path: &str, entry: &TreeEntry) {
     let segments = path
         .split('/')
         .filter(|segment| !segment.is_empty())
-        .map(ToString::to_string)
         .collect::<Vec<_>>();
-    for depth in 1..=segments.len() {
-        let dir_meta = (depth == segments.len()).then(|| meta.clone()).flatten();
-        root = ensure_visible_dir(tree, &root, &segments[..depth], dir_meta).await?;
+    if segments.is_empty() {
+        return;
     }
-    Ok(root)
+    let dir = delta_dir(root, &segments);
+    if entry.meta.is_some() {
+        dir.meta.clone_from(&entry.meta);
+    }
 }
 
-async fn ensure_visible_dir<S: Store>(
-    tree: &HashTree<S>,
-    root: &Cid,
-    dir_path: &[String],
-    meta: Option<HashMap<String, serde_json::Value>>,
-) -> Result<Cid, IndexError> {
-    let segs: Vec<&str> = dir_path.iter().map(String::as_str).collect();
-    let Some((name, parent_segs)) = segs.split_last() else {
-        return Err(IndexError::RootMeta(
-            "visible directory path is empty".into(),
-        ));
-    };
-    let parent_cid = resolve_dir(tree, root, parent_segs).await?;
-    let entries = tree.list_directory(&parent_cid).await?;
-    if let Some(existing) = entries
-        .iter()
-        .find(|entry| entry.name == *name && entry.link_type == LinkType::Dir)
-    {
-        if meta.is_some() && existing.meta != meta {
-            let cid = Cid {
-                hash: existing.hash,
-                key: existing.key,
-            };
-            return tree
-                .set_entry_with_meta(
-                    root,
-                    parent_segs,
-                    name,
-                    &cid,
-                    existing.size,
-                    existing.link_type,
-                    meta,
-                )
-                .await
-                .map_err(Into::into);
-        }
-        return Ok(root.clone());
-    }
-    let empty = tree.put_directory(Vec::new()).await?;
-    tree.set_entry_with_meta(root, parent_segs, name, &empty, 0, LinkType::Dir, meta)
-        .await
-        .map_err(Into::into)
-}
-
-async fn set_visible_file_entry<S: Store>(
-    tree: &HashTree<S>,
-    root: &Cid,
-    path: &str,
-    entry: &TreeEntry,
-) -> Result<Cid, IndexError> {
+/// Link `entry` at `path`, replacing whatever held that name.
+fn set_delta_file(root: &mut DirBuilder, path: &str, entry: &TreeEntry) -> Result<(), IndexError> {
     let (parent, name) = split_visible_path(path)?;
-    let mut root = ensure_parent_dirs(tree, root.clone(), &parent).await?;
-    let parent_cid = resolve_dir(tree, &root, &parent).await?;
-    let mut entries = tree
-        .list_directory(&parent_cid)
-        .await?
-        .into_iter()
-        .filter(|existing| existing.name != name)
-        .map(|existing| DirEntry {
-            name: existing.name,
-            hash: existing.hash,
-            size: existing.size,
-            key: existing.key,
-            link_type: existing.link_type,
-            meta: existing.meta,
-        })
-        .collect::<Vec<_>>();
-    entries.push(DirEntry {
-        name: name.to_string(),
-        hash: entry.hash,
-        size: entry.size,
-        key: entry.key,
-        link_type: entry.link_type,
-        meta: entry.meta.clone(),
-    });
-    let parent_cid = tree.put_directory(entries).await?;
-    if parent.is_empty() {
-        return Ok(parent_cid);
+    let dir = delta_dir(root, &parent);
+    dir.dirs.remove(name);
+    dir.leaves
+        .insert(name.to_string(), LeafLink::from_entry(entry));
+    if !parent.is_empty() {
+        // Published roots have always re-linked a directory without metadata
+        // whenever a file is written into it; keep that so roots stay stable.
+        dir.meta = None;
     }
-    root = tree
-        .set_entry(
-            &root,
-            &parent[..parent.len() - 1],
-            parent[parent.len() - 1],
-            &parent_cid,
-            0,
-            LinkType::Dir,
-        )
-        .await?;
-    Ok(root)
+    Ok(())
 }
 
-async fn ensure_parent_dirs<S: Store>(
-    tree: &HashTree<S>,
-    mut root: Cid,
-    parent: &[&str],
-) -> Result<Cid, IndexError> {
-    let mut current = Vec::new();
-    for segment in parent {
-        current.push((*segment).to_string());
-        root = ensure_dir(tree, &root, &current).await?;
+/// Remove `path` if present, then drop every ancestor it leaves empty.
+fn remove_delta_path(root: &mut DirBuilder, path: &str) -> Result<(), IndexError> {
+    let (parent, name) = split_visible_path(path)?;
+    remove_delta_entry(root, &parent, name);
+    Ok(())
+}
+
+fn remove_delta_entry(dir: &mut DirBuilder, parent: &[&str], name: &str) -> bool {
+    let Some((segment, rest)) = parent.split_first() else {
+        let removed_dir = dir.dirs.remove(name).is_some();
+        let removed_leaf = dir.leaves.remove(name).is_some();
+        return removed_dir || removed_leaf;
+    };
+    let Some(child) = dir.dirs.get_mut(*segment) else {
+        return false;
+    };
+    if !remove_delta_entry(child, rest, name) {
+        return false;
     }
-    Ok(root)
+    if child.is_empty() {
+        dir.dirs.remove(*segment);
+    }
+    true
 }
 
 pub(crate) async fn remove_visible_path_if_present<S: Store>(
@@ -924,5 +854,7 @@ fn split_visible_path(path: &str) -> Result<(Vec<&str>, &str), IndexError> {
 }
 
 include!("indexer/metadata.rs");
+#[cfg(test)]
+mod mount_import_tests;
 #[cfg(test)]
 mod tests;

@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use hashtree_core::HashTreeError;
 
@@ -39,18 +39,24 @@ pub(super) fn resolve_path_kind_conflicts(
     path_kind_role_roots: &[MergedPathKindRoleRoot],
     source_roots: &BTreeMap<String, AppKeyRootRef>,
 ) -> Result<(Vec<MergedEntry>, BTreeMap<String, MergedDirectory>), ProjectionError> {
-    files.retain(|file| {
-        !tombstones.iter().any(|tombstone| {
-            inactive_role_barrier_suppresses_file(
-                tombstone,
-                file,
-                tombstones,
-                path_kind_replacements,
-                path_kind_role_roots,
-                source_roots,
-            )
-        })
-    });
+    let tombstone_index = TombstoneIndex::new(tombstones);
+    if !tombstones.is_empty() {
+        files.retain(|file| {
+            // Only a barrier on a strict ancestor can suppress a file.
+            !strict_ancestor_paths(merged_entry_source_path(file))
+                .flat_map(|ancestor| tombstone_index.at(ancestor))
+                .any(|tombstone| {
+                    inactive_role_barrier_suppresses_file(
+                        tombstone,
+                        file,
+                        &tombstone_index,
+                        path_kind_replacements,
+                        path_kind_role_roots,
+                        source_roots,
+                    )
+                })
+        });
+    }
     let mut replacement_roots = BTreeMap::<String, Vec<ReplacementRoot>>::new();
     for file in &files {
         let collision_path = merged_entry_source_path(file);
@@ -144,7 +150,7 @@ pub(super) fn resolve_path_kind_conflicts(
         }
     }
     directories.retain(|path, directory| {
-        applicable_tombstone(path, tombstones).is_none_or(|tombstone| {
+        applicable_tombstone(path, &tombstone_index).is_none_or(|tombstone| {
             root_source_matches(
                 &directory.source_app_key_pubkey,
                 &directory.source_root,
@@ -420,10 +426,12 @@ fn root_has_exact_barrier(
     })
 }
 
+/// Whether `tombstone`, which the caller found on a strict ancestor of the
+/// file's source path, hides that file.
 fn inactive_role_barrier_suppresses_file(
     tombstone: &MergedTombstone,
     file: &MergedEntry,
-    tombstones: &[MergedTombstone],
+    tombstones: &TombstoneIndex<'_>,
     path_kind_replacements: &[MergedPathKindReplacement],
     path_kind_role_roots: &[MergedPathKindRoleRoot],
     source_roots: &BTreeMap<String, AppKeyRootRef>,
@@ -445,18 +453,14 @@ fn inactive_role_barrier_suppresses_file(
                 &active.source_app_key_pubkey,
                 &active.source_root,
             )
-    }) || source_path == tombstone.path
-        || tombstones.iter().any(|exact| {
-            exact.path == source_path
-                && root_source_matches(
-                    &tombstone.source_app_key_pubkey,
-                    &tombstone.source_root,
-                    &exact.source_app_key_pubkey,
-                    &exact.source_root,
-                )
-        })
-        || !path_is_at_or_below(source_path, &tombstone.path)
-    {
+    }) || tombstones.at(source_path).iter().any(|exact| {
+        root_source_matches(
+            &tombstone.source_app_key_pubkey,
+            &tombstone.source_root,
+            &exact.source_app_key_pubkey,
+            &exact.source_root,
+        )
+    }) {
         return false;
     }
     let Some(file_root) = source_roots.get(&file.source_app_key_pubkey) else {
@@ -599,14 +603,42 @@ fn path_is_at_or_below(path: &str, prefix: &str) -> bool {
             .is_some_and(|remainder| remainder.starts_with('/'))
 }
 
+/// Tombstones grouped by exact logical path, in their original order.
+struct TombstoneIndex<'a> {
+    by_path: HashMap<&'a str, Vec<&'a MergedTombstone>>,
+}
+
+impl<'a> TombstoneIndex<'a> {
+    fn new(tombstones: &'a [MergedTombstone]) -> Self {
+        let mut by_path = HashMap::<&str, Vec<&MergedTombstone>>::new();
+        for tombstone in tombstones {
+            by_path
+                .entry(tombstone.path.as_str())
+                .or_default()
+                .push(tombstone);
+        }
+        Self { by_path }
+    }
+
+    fn at(&self, path: &str) -> &[&'a MergedTombstone] {
+        self.by_path.get(path).map_or(&[], Vec::as_slice)
+    }
+}
+
+/// Every proper prefix of `path` that ends just before a `/`, shortest first:
+/// exactly the other paths `path_is_at_or_below(path, _)` accepts.
+fn strict_ancestor_paths(path: &str) -> impl DoubleEndedIterator<Item = &str> {
+    path.match_indices('/').map(|(index, _)| &path[..index])
+}
+
+/// The tombstone on the deepest path at or above `path`.
 fn applicable_tombstone<'a>(
     path: &str,
-    tombstones: &'a [MergedTombstone],
+    tombstones: &TombstoneIndex<'a>,
 ) -> Option<&'a MergedTombstone> {
-    tombstones
-        .iter()
-        .filter(|tombstone| path_is_at_or_below(path, &tombstone.path))
-        .max_by(|left, right| compare_paths_by_depth(&left.path, &right.path))
+    std::iter::once(path)
+        .chain(strict_ancestor_paths(path).rev())
+        .find_map(|candidate| tombstones.at(candidate).last().copied())
 }
 
 fn remap_subtree_path(path: &str, from: &str, to: &str) -> String {
@@ -614,5 +646,65 @@ fn remap_subtree_path(path: &str, from: &str, to: &str) -> String {
         to.to_string()
     } else {
         format!("{to}{}", &path[from.len()..])
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tombstone(path: &str, tombstoned_at: i64) -> MergedTombstone {
+        MergedTombstone {
+            path: path.to_string(),
+            tombstoned_at,
+            source_app_key_pubkey: "app-key".to_string(),
+            source_root: AppKeyRootRef::legacy("root", 0, 0),
+        }
+    }
+
+    #[test]
+    fn tombstone_index_agrees_with_scanning_every_tombstone() {
+        let tombstones = ["", "a", "a/b", "a/b", "a/", "ab", "a/b/c/d", "x/y"]
+            .into_iter()
+            .zip(1..)
+            .map(|(path, tombstoned_at)| tombstone(path, tombstoned_at))
+            .collect::<Vec<_>>();
+        let index = TombstoneIndex::new(&tombstones);
+
+        for path in [
+            "",
+            "a",
+            "a/b",
+            "a/b/c",
+            "a/b/c/d/e",
+            "a//b",
+            "/a",
+            "ab/c",
+            "x",
+            "x/y/z",
+        ] {
+            let scanned = tombstones
+                .iter()
+                .filter(|tombstone| path_is_at_or_below(path, &tombstone.path))
+                .max_by(|left, right| compare_paths_by_depth(&left.path, &right.path));
+            assert_eq!(
+                applicable_tombstone(path, &index).map(|tombstone| tombstone.tombstoned_at),
+                scanned.map(|tombstone| tombstone.tombstoned_at),
+                "deepest tombstone at or above {path:?}"
+            );
+
+            let scanned_above = tombstones
+                .iter()
+                .filter(|tombstone| {
+                    tombstone.path != path && path_is_at_or_below(path, &tombstone.path)
+                })
+                .map(|tombstone| tombstone.tombstoned_at)
+                .collect::<BTreeSet<_>>();
+            let indexed_above = strict_ancestor_paths(path)
+                .flat_map(|ancestor| index.at(ancestor))
+                .map(|tombstone| tombstone.tombstoned_at)
+                .collect::<BTreeSet<_>>();
+            assert_eq!(indexed_above, scanned_above, "tombstones above {path:?}");
+        }
     }
 }

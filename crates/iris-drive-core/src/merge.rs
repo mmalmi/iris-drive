@@ -263,18 +263,35 @@ pub struct MergedView {
     pub conflict_details: Vec<MergedConflict>,
 }
 
-#[derive(Debug, Clone)]
-struct WriteCandidate {
-    entry: MergedEntry,
-    app_key_pubkey: String,
-    root: AppKeyRootRef,
+/// One snapshot's claim on a path. Candidates borrow from their snapshot so
+/// losing claims cost no allocation; only winners become owned output.
+#[derive(Debug, Clone, Copy)]
+struct WriteCandidate<'a> {
+    file: &'a AppKeyFileEntry,
+    app_key_pubkey: &'a str,
+    root: &'a AppKeyRootRef,
 }
 
-#[derive(Debug, Clone)]
-struct TombstoneCandidate {
+impl WriteCandidate<'_> {
+    fn merged_entry(&self) -> MergedEntry {
+        MergedEntry {
+            path: self.file.path.clone(),
+            source_path: None,
+            hash: self.file.hash,
+            size: self.file.size,
+            whole_file_hash: self.file.whole_file_hash,
+            modified_at: self.file.modified_at,
+            source_app_key_pubkey: self.app_key_pubkey.to_string(),
+            published_at: self.root.published_at,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TombstoneCandidate<'a> {
     tombstoned_at: i64,
-    app_key_pubkey: String,
-    root: AppKeyRootRef,
+    app_key_pubkey: &'a str,
+    root: &'a AppKeyRootRef,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -301,10 +318,10 @@ pub(crate) enum RootRelation {
 pub fn merge_drives(authorized_app_keys: &[&str], snapshots: &[AppKeySnapshot<'_>]) -> MergedView {
     let allow: std::collections::BTreeSet<&str> = authorized_app_keys.iter().copied().collect();
 
-    let mut writes: BTreeMap<String, WriteCandidate> = BTreeMap::new();
-    let mut tombstones: BTreeMap<String, TombstoneCandidate> = BTreeMap::new();
-    let mut local_only_writes: BTreeMap<String, WriteCandidate> = BTreeMap::new();
-    let mut local_only_tombstones: BTreeMap<String, TombstoneCandidate> = BTreeMap::new();
+    let mut writes: BTreeMap<&str, WriteCandidate<'_>> = BTreeMap::new();
+    let mut tombstones: BTreeMap<&str, TombstoneCandidate<'_>> = BTreeMap::new();
+    let mut local_only_writes: BTreeMap<&str, WriteCandidate<'_>> = BTreeMap::new();
+    let mut local_only_tombstones: BTreeMap<&str, TombstoneCandidate<'_>> = BTreeMap::new();
     let mut conflicts: std::collections::BTreeSet<String> = std::collections::BTreeSet::new();
     let mut conflict_details: BTreeMap<String, MergedConflict> = BTreeMap::new();
     let mut path_kind_replacements = Vec::new();
@@ -328,32 +345,21 @@ pub fn merge_drives(authorized_app_keys: &[&str], snapshots: &[AppKeySnapshot<'_
                 }
             }));
         }
-        for f in &snap.files {
-            if path_has_ignored_component(&f.path) {
+        for file in &snap.files {
+            if path_has_ignored_component(&file.path) {
                 continue;
             }
-            let candidate = MergedEntry {
-                path: f.path.clone(),
-                source_path: None,
-                hash: f.hash,
-                size: f.size,
-                whole_file_hash: f.whole_file_hash,
-                modified_at: f.modified_at,
-                source_app_key_pubkey: snap.app_key_pubkey.to_string(),
-                published_at: snap.root.published_at,
-            };
             let candidate = WriteCandidate {
-                entry: candidate,
-                app_key_pubkey: snap.app_key_pubkey.to_string(),
-                root: snap.root.clone(),
+                file,
+                app_key_pubkey: snap.app_key_pubkey,
+                root: snap.root,
             };
             if snap.root.local_only {
-                insert_write_candidate(&mut local_only_writes, None, None, candidate);
+                insert_write_candidate(&mut local_only_writes, None, candidate);
             } else {
                 insert_write_candidate(
                     &mut writes,
-                    Some(&mut conflicts),
-                    Some(&mut conflict_details),
+                    Some((&mut conflicts, &mut conflict_details)),
                     candidate,
                 );
             }
@@ -364,67 +370,66 @@ pub fn merge_drives(authorized_app_keys: &[&str], snapshots: &[AppKeySnapshot<'_
             }
             let candidate = TombstoneCandidate {
                 tombstoned_at: t.tombstoned_at,
-                app_key_pubkey: snap.app_key_pubkey.to_string(),
-                root: snap.root.clone(),
+                app_key_pubkey: snap.app_key_pubkey,
+                root: snap.root,
             };
             if snap.root.local_only {
-                insert_tombstone_candidate(&mut local_only_tombstones, t.path.clone(), candidate);
+                insert_tombstone_candidate(&mut local_only_tombstones, &t.path, candidate);
             } else {
-                insert_tombstone_candidate(&mut tombstones, t.path.clone(), candidate);
+                insert_tombstone_candidate(&mut tombstones, &t.path, candidate);
             }
         }
     }
 
     for (path, write) in local_only_writes {
-        if !writes.contains_key(&path) && !tombstones.contains_key(&path) {
+        if !writes.contains_key(path) && !tombstones.contains_key(path) {
             writes.insert(path, write);
         }
     }
     for (path, tombstone) in local_only_tombstones {
-        if !writes.contains_key(&path) && !tombstones.contains_key(&path) {
+        if !writes.contains_key(path) && !tombstones.contains_key(path) {
             tombstones.insert(path, tombstone);
         }
     }
 
+    // Both maps iterate in path order, so `files`, `suppressed_files` and
+    // `tombstones` come out sorted by path without a separate pass.
     let mut view = MergedView::default();
-    for (path, write) in &writes {
+    for (&path, write) in &writes {
         let tombstone = tombstones.get(path);
         if let Some(tombstone) = tombstone
             && should_mark_write_delete_conflict(write, tombstone)
         {
-            conflicts.insert(path.clone());
-            record_write_delete_conflict(&mut conflict_details, path.as_str(), write, tombstone);
+            conflicts.insert(path.to_string());
+            record_write_delete_conflict(&mut conflict_details, path, write, tombstone);
         }
         if let Some(tombstone) = tombstone.filter(|t| tombstone_suppresses_write(t, write)) {
             view.suppressed_files.push(SuppressedMergedEntry {
-                entry: write.entry.clone(),
-                tombstone_app_key_pubkey: tombstone.app_key_pubkey.clone(),
+                entry: write.merged_entry(),
+                tombstone_app_key_pubkey: tombstone.app_key_pubkey.to_string(),
                 tombstone_root: tombstone.root.clone(),
                 tombstoned_at: tombstone.tombstoned_at,
             });
-            view.suppressed_by_tombstone.push(path.clone());
+            view.suppressed_by_tombstone.push(path.to_string());
         } else {
-            view.files.push(write.entry.clone());
+            view.files.push(write.merged_entry());
         }
     }
     // Tombstones that don't have a surviving write anywhere should also
     // show up as evidence the path was deleted. Without this, a
     // single-AppKey delete (no concurrent write to suppress) would
     // silently vanish from both lists.
-    for (path, tombstone) in &tombstones {
+    for (&path, tombstone) in &tombstones {
         view.tombstones.push(MergedTombstone {
-            path: path.clone(),
+            path: path.to_string(),
             tombstoned_at: tombstone.tombstoned_at,
-            source_app_key_pubkey: tombstone.app_key_pubkey.clone(),
+            source_app_key_pubkey: tombstone.app_key_pubkey.to_string(),
             source_root: tombstone.root.clone(),
         });
         if !writes.contains_key(path) {
-            view.suppressed_by_tombstone.push(path.clone());
+            view.suppressed_by_tombstone.push(path.to_string());
         }
     }
-    view.files.sort_by(|a, b| a.path.cmp(&b.path));
-    view.suppressed_files
-        .sort_by(|left, right| left.entry.path.cmp(&right.entry.path));
     view.suppressed_by_tombstone.sort();
     view.suppressed_by_tombstone.dedup();
     view.conflicts = conflicts.into_iter().collect();
@@ -445,34 +450,37 @@ pub fn merge_drives(authorized_app_keys: &[&str], snapshots: &[AppKeySnapshot<'_
     view
 }
 
-fn insert_write_candidate(
-    writes: &mut BTreeMap<String, WriteCandidate>,
-    conflicts: Option<&mut std::collections::BTreeSet<String>>,
-    conflict_details: Option<&mut BTreeMap<String, MergedConflict>>,
-    candidate: WriteCandidate,
+type ConflictSink<'s> = (
+    &'s mut std::collections::BTreeSet<String>,
+    &'s mut BTreeMap<String, MergedConflict>,
+);
+
+fn insert_write_candidate<'a>(
+    writes: &mut BTreeMap<&'a str, WriteCandidate<'a>>,
+    conflict_sink: Option<ConflictSink<'_>>,
+    candidate: WriteCandidate<'a>,
 ) {
-    let path = candidate.entry.path.clone();
-    if let Some(existing) = writes.get_mut(&path) {
-        if should_mark_write_conflict(&candidate, existing)
-            && let (Some(conflicts), Some(conflict_details)) = (conflicts, conflict_details)
-        {
-            conflicts.insert(candidate.entry.path.clone());
-            record_write_conflict(conflict_details, &candidate, existing);
-        }
-        if write_candidate_wins(&candidate, existing) {
-            *existing = candidate;
-        }
-    } else {
-        writes.insert(path, candidate);
+    let Some(existing) = writes.get_mut(candidate.file.path.as_str()) else {
+        writes.insert(&candidate.file.path, candidate);
+        return;
+    };
+    if let Some((conflicts, conflict_details)) = conflict_sink
+        && should_mark_write_conflict(&candidate, existing)
+    {
+        conflicts.insert(candidate.file.path.clone());
+        record_write_conflict(conflict_details, &candidate, existing);
+    }
+    if write_candidate_wins(&candidate, existing) {
+        *existing = candidate;
     }
 }
 
-fn insert_tombstone_candidate(
-    tombstones: &mut BTreeMap<String, TombstoneCandidate>,
-    path: String,
-    candidate: TombstoneCandidate,
+fn insert_tombstone_candidate<'a>(
+    tombstones: &mut BTreeMap<&'a str, TombstoneCandidate<'a>>,
+    path: &'a str,
+    candidate: TombstoneCandidate<'a>,
 ) {
-    if let Some(current) = tombstones.get_mut(&path) {
+    if let Some(current) = tombstones.get_mut(path) {
         if tombstone_candidate_wins(&candidate, current) {
             *current = candidate;
         }
@@ -483,14 +491,14 @@ fn insert_tombstone_candidate(
 
 fn record_write_conflict(
     conflicts: &mut BTreeMap<String, MergedConflict>,
-    candidate: &WriteCandidate,
-    existing: &WriteCandidate,
+    candidate: &WriteCandidate<'_>,
+    existing: &WriteCandidate<'_>,
 ) {
-    let path = candidate.entry.path.clone();
+    let path = &candidate.file.path;
     let detail = conflicts
         .entry(path.clone())
         .or_insert_with(|| MergedConflict {
-            path,
+            path: path.clone(),
             kind: MergedConflictKind::WriteWrite,
             files: Vec::new(),
             tombstone: None,
@@ -503,8 +511,8 @@ fn record_write_conflict(
 fn record_write_delete_conflict(
     conflicts: &mut BTreeMap<String, MergedConflict>,
     path: &str,
-    write: &WriteCandidate,
-    tombstone: &TombstoneCandidate,
+    write: &WriteCandidate<'_>,
+    tombstone: &TombstoneCandidate<'_>,
 ) {
     let detail = conflicts
         .entry(path.to_string())
@@ -528,7 +536,7 @@ fn record_write_delete_conflict(
     detail.kind = MergedConflictKind::WriteDelete;
     insert_conflict_file(&mut detail.files, conflict_file_side(write));
     detail.tombstone = Some(MergedConflictTombstone {
-        app_key_pubkey: tombstone.app_key_pubkey.clone(),
+        app_key_pubkey: tombstone.app_key_pubkey.to_string(),
         app_key_seq: tombstone.root.app_key_seq,
         root_cid: tombstone.root.root_cid.clone(),
         tombstoned_at: tombstone.tombstoned_at,
@@ -553,56 +561,62 @@ fn insert_conflict_file(files: &mut Vec<MergedConflictFile>, file: MergedConflic
     }
 }
 
-fn conflict_file_side(write: &WriteCandidate) -> MergedConflictFile {
+fn conflict_file_side(write: &WriteCandidate<'_>) -> MergedConflictFile {
     MergedConflictFile {
-        app_key_pubkey: write.app_key_pubkey.clone(),
+        app_key_pubkey: write.app_key_pubkey.to_string(),
         app_key_seq: write.root.app_key_seq,
         root_cid: write.root.root_cid.clone(),
         published_at: write.root.published_at,
-        content_hash: to_hex(&identity_hash(&write.entry)),
-        content_cid_hash: to_hex(&write.entry.hash),
-        size: write.entry.size,
-        modified_at: write.entry.modified_at,
+        content_hash: to_hex(&identity_hash(write.file)),
+        content_cid_hash: to_hex(&write.file.hash),
+        size: write.file.size,
+        modified_at: write.file.modified_at,
     }
 }
 
-fn write_candidate_wins(candidate: &WriteCandidate, existing: &WriteCandidate) -> bool {
+fn write_candidate_wins(candidate: &WriteCandidate<'_>, existing: &WriteCandidate<'_>) -> bool {
     match root_relation(
-        &candidate.app_key_pubkey,
-        &candidate.root,
-        &existing.app_key_pubkey,
-        &existing.root,
+        candidate.app_key_pubkey,
+        candidate.root,
+        existing.app_key_pubkey,
+        existing.root,
     ) {
         RootRelation::Same | RootRelation::LeftDescends => true,
         RootRelation::RightDescends => false,
         RootRelation::Concurrent => legacy_order_newer(
-            candidate.entry.published_at,
-            &candidate.app_key_pubkey,
-            existing.entry.published_at,
-            &existing.app_key_pubkey,
+            candidate.root.published_at,
+            candidate.app_key_pubkey,
+            existing.root.published_at,
+            existing.app_key_pubkey,
         ),
     }
 }
 
-fn tombstone_candidate_wins(candidate: &TombstoneCandidate, existing: &TombstoneCandidate) -> bool {
+fn tombstone_candidate_wins(
+    candidate: &TombstoneCandidate<'_>,
+    existing: &TombstoneCandidate<'_>,
+) -> bool {
     match root_relation(
-        &candidate.app_key_pubkey,
-        &candidate.root,
-        &existing.app_key_pubkey,
-        &existing.root,
+        candidate.app_key_pubkey,
+        candidate.root,
+        existing.app_key_pubkey,
+        existing.root,
     ) {
         RootRelation::Same | RootRelation::LeftDescends => true,
         RootRelation::RightDescends => false,
         RootRelation::Concurrent => legacy_order_newer(
             candidate.tombstoned_at,
-            &candidate.app_key_pubkey,
+            candidate.app_key_pubkey,
             existing.tombstoned_at,
-            &existing.app_key_pubkey,
+            existing.app_key_pubkey,
         ),
     }
 }
 
-fn tombstone_suppresses_write(tombstone: &TombstoneCandidate, write: &WriteCandidate) -> bool {
+fn tombstone_suppresses_write(
+    tombstone: &TombstoneCandidate<'_>,
+    write: &WriteCandidate<'_>,
+) -> bool {
     // A path-kind barrier intentionally coexists with the replacement entry in
     // the exact root that authored it. It suppresses older roots, never its own
     // visible entry.
@@ -612,54 +626,57 @@ fn tombstone_suppresses_write(tombstone: &TombstoneCandidate, write: &WriteCandi
         return false;
     }
     match root_relation(
-        &tombstone.app_key_pubkey,
-        &tombstone.root,
-        &write.app_key_pubkey,
-        &write.root,
+        tombstone.app_key_pubkey,
+        tombstone.root,
+        write.app_key_pubkey,
+        write.root,
     ) {
         RootRelation::Same | RootRelation::LeftDescends => true,
         RootRelation::RightDescends => false,
-        RootRelation::Concurrent => tombstone.tombstoned_at >= write.entry.published_at,
+        RootRelation::Concurrent => tombstone.tombstoned_at >= write.root.published_at,
     }
 }
 
-fn should_mark_write_conflict(candidate: &WriteCandidate, existing: &WriteCandidate) -> bool {
-    if file_identity_matches(&candidate.entry, &existing.entry) {
+fn should_mark_write_conflict(
+    candidate: &WriteCandidate<'_>,
+    existing: &WriteCandidate<'_>,
+) -> bool {
+    if file_identity_matches(candidate.file, existing.file) {
         return false;
     }
-    roots_are_causal(&candidate.root)
-        && roots_are_causal(&existing.root)
+    roots_are_causal(candidate.root)
+        && roots_are_causal(existing.root)
         && matches!(
             root_relation(
-                &candidate.app_key_pubkey,
-                &candidate.root,
-                &existing.app_key_pubkey,
-                &existing.root,
+                candidate.app_key_pubkey,
+                candidate.root,
+                existing.app_key_pubkey,
+                existing.root,
             ),
             RootRelation::Concurrent
         )
 }
 
-fn file_identity_matches(left: &MergedEntry, right: &MergedEntry) -> bool {
+fn file_identity_matches(left: &AppKeyFileEntry, right: &AppKeyFileEntry) -> bool {
     left.size == right.size && identity_hash(left) == identity_hash(right)
 }
 
-fn identity_hash(entry: &MergedEntry) -> [u8; 32] {
+fn identity_hash(entry: &AppKeyFileEntry) -> [u8; 32] {
     entry.whole_file_hash.unwrap_or(entry.hash)
 }
 
 fn should_mark_write_delete_conflict(
-    write: &WriteCandidate,
-    tombstone: &TombstoneCandidate,
+    write: &WriteCandidate<'_>,
+    tombstone: &TombstoneCandidate<'_>,
 ) -> bool {
-    roots_are_causal(&write.root)
-        && roots_are_causal(&tombstone.root)
+    roots_are_causal(write.root)
+        && roots_are_causal(tombstone.root)
         && matches!(
             root_relation(
-                &write.app_key_pubkey,
-                &write.root,
-                &tombstone.app_key_pubkey,
-                &tombstone.root,
+                write.app_key_pubkey,
+                write.root,
+                tombstone.app_key_pubkey,
+                tombstone.root,
             ),
             RootRelation::Concurrent
         )

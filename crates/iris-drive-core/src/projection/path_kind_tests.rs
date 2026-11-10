@@ -2,7 +2,7 @@ use super::*;
 use crate::config::{AppConfig, AppKeyRootRef, Drive};
 use crate::profile::Profile;
 use crate::root_meta::{DriveRootMeta, RootObservation};
-use hashtree_core::{HashTreeConfig, MemoryStore, sha256};
+use hashtree_core::{DirEntry, HashTreeConfig, MemoryStore, sha256};
 use std::sync::Arc;
 use tempfile::tempdir;
 

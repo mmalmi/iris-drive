@@ -17,6 +17,7 @@ pub mod config_lock;
 pub mod daemon_liveness;
 pub mod device_approval_handoff;
 pub mod device_labels;
+mod dir_builder;
 pub mod direct_root_transport;
 mod fips_bootstrap;
 pub mod fips_status;

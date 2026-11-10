@@ -4,6 +4,55 @@ Performance and integration experiments log. Omit identifying information
 (pubkeys, secrets, IPs, private hostnames, exact repo names, raw hashes)
 unless the user explicitly asks otherwise.
 
+## 2026-11-10 Merged projection and mount-import scaling
+
+Building the merged provider root and the local delta for a mount import both
+edited a stored hashtree one path at a time. Every edit re-resolved the path
+from the root, re-listed the parent and rewrote each ancestor directory, so the
+work grew with files times directory size and every intermediate directory
+node stayed in the block store. The path-kind pass also compared every file
+with every tombstone and, for role-aware roots, rescanned all tombstones inside
+that comparison before the cheap ancestor check.
+
+Both builders now assemble the result in memory and store each directory once.
+Source entries are looked up through one listing per source directory.
+Tombstones are indexed by path, so a file only meets the barriers on its own
+ancestors. The merge keeps borrowed candidates and allocates owned entries for
+winners only. The history layer walks each root once for files and
+directories, and skips the separate deletion-base walk when that base is the
+previous root.
+
+An ignored in-process probe (`projection_and_mount_import_scaling_probe`)
+projects one device with 2,000 live files in 20 directories and 301
+tombstones, then imports one file added through the mounted view. It uses an
+in-memory encrypted store and the unoptimized test profile. One run each,
+before and after:
+
+| Step | Before | After |
+| --- | --- | --- |
+| Materialize merged root | 39,851 ms, 3,999 new blocks, 22.9 MB | 415 ms, no new blocks |
+| Mount-import local delta | 19,363 ms | 910 ms |
+| Index with history | 1,578 ms | 1,007 ms |
+| Merged view | 181 ms | 166 ms |
+
+The block counts are deterministic; the times are single unoptimized runs on a
+shared two-core machine and only indicate scale. The merged-root figure is for
+the combined change: no separate saving is attributed to the tombstone index.
+The mount-import step stored no new blocks in either run only because the
+preceding projection had already written the same intermediate nodes.
+
+The results must stay byte-identical because the daemon compares projected and
+published root identifiers. During development the previous entry-at-a-time
+implementations ran beside the new ones in every debug-build call and asserted
+equal root identifiers, tombstone paths and replacement paths. That covered 187
+projections and 49 mount imports across the core library tests and the CLI
+unit tests without a mismatch; the comparison code was then removed. Two
+committed tests bound the blocks stored for a 300-file directory, where the
+previous projection stored more than 700.
+
+This does not measure LMDB, a release build, device CPU, battery or bandwidth,
+and no native provider, FileProvider or Cloud Files surface was exercised.
+
 ## 2026-09-11 Slow approval relays and daemon responsiveness
 
 A native linking run established its authenticated direct FIPS connection while

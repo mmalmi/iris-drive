@@ -1,15 +1,16 @@
 //! Build the merged signed drive view exposed by virtual provider surfaces.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 
 use hashtree_core::{
-    Cid, CidParseError, DirEntry, HashTree, HashTreeError, LinkType, Store, from_hex, to_hex,
+    Cid, CidParseError, HashTree, HashTreeError, LinkType, Store, from_hex, to_hex,
 };
 use thiserror::Error;
 
 use crate::PRIMARY_DRIVE_ID;
 use crate::config::{AppConfig, AppKeyRootRef, Drive};
 use crate::conflict::conflict_filename;
+use crate::dir_builder::{DirBuilder, LinkMeta};
 use crate::indexer::{IndexError, read_path_kind_replacements, read_root_meta, should_ignore_name};
 use crate::merge::{
     AppKeySnapshot, MODIFIED_AT_META_KEY, MergedConflictFile, MergedConflictKind, MergedEntry,
@@ -20,12 +21,14 @@ use crate::provider::{
     provider_collision_family_path, provider_file_probable_os_placeholder_family,
 };
 use path_kind::{MergedDirectory, insert_directory_candidate, resolve_path_kind_conflicts};
+use visible_root::{SourceEntries, ensure_dir, set_dir_meta, set_file};
 
 mod path_kind;
 mod shared;
+mod visible_root;
 pub use shared::{SharedMount, shared_folder_merged_root};
 
-type DirectoryMeta = HashMap<String, serde_json::Value>;
+type DirectoryMeta = LinkMeta;
 const LOCAL_ONLY_PARENT_WALK_LIMIT: usize = 1024;
 
 #[derive(Debug, Error)]
@@ -105,7 +108,8 @@ async fn drive_merged_view<S: Store>(
     drive: &Drive,
     merge_app_keys: &[String],
 ) -> Result<PrimaryMergedView, ProjectionError> {
-    let mut snapshots_data = Vec::new();
+    let mut roots = Vec::new();
+    let mut contents = Vec::new();
     for app_key_pubkey in merge_app_keys {
         let Some(root) = drive.app_key_roots.get(app_key_pubkey) else {
             continue;
@@ -121,33 +125,31 @@ async fn drive_merged_view<S: Store>(
         })?;
         let (files, tombstones) = walk_app_key_tree(tree, &cid).await?;
         let path_kind_replacements = read_path_kind_replacements(tree, &cid).await?;
-        snapshots_data.push((
-            app_key_pubkey.clone(),
-            root,
-            files,
-            tombstones,
-            path_kind_replacements,
-        ));
+        roots.push((app_key_pubkey.as_str(), root));
+        contents.push((files, tombstones, path_kind_replacements));
     }
 
     let merge_app_key_refs: Vec<&str> = merge_app_keys.iter().map(String::as_str).collect();
-    let snapshots: Vec<AppKeySnapshot<'_>> = snapshots_data
+    let snapshots: Vec<AppKeySnapshot<'_>> = roots
         .iter()
+        .zip(contents)
         .map(
-            |(app_key_pubkey, root, files, tombstones, path_kind_replacements)| AppKeySnapshot {
-                app_key_pubkey: app_key_pubkey.as_str(),
-                root,
-                files: files.clone(),
-                tombstones: tombstones.clone(),
-                path_kind_replacements: path_kind_replacements.as_ref().map(|replacements| {
-                    replacements
-                        .iter()
-                        .map(|(path, generation)| crate::merge::PathKindReplacement {
-                            path: path.clone(),
-                            generation: *generation,
-                        })
-                        .collect()
-                }),
+            |((app_key_pubkey, root), (files, tombstones, path_kind_replacements))| {
+                AppKeySnapshot {
+                    app_key_pubkey,
+                    root,
+                    files,
+                    tombstones,
+                    path_kind_replacements: path_kind_replacements.map(|replacements| {
+                        replacements
+                            .into_iter()
+                            .map(|(path, generation)| crate::merge::PathKindReplacement {
+                                path,
+                                generation,
+                            })
+                            .collect()
+                    }),
+                }
             },
         )
         .collect();
@@ -163,6 +165,9 @@ async fn drive_merged_view<S: Store>(
 }
 
 fn add_visible_conflict_entries(view: &mut MergedView) -> Result<(), ProjectionError> {
+    if view.conflict_details.is_empty() {
+        return Ok(());
+    }
     let mut occupied_paths = view
         .files
         .iter()
@@ -269,6 +274,13 @@ fn canonical_conflict_file_key(file: &MergedConflictFile) -> (i64, &str, u64, &s
 }
 
 fn suppress_probable_os_placeholder_entries(view: &mut MergedView) {
+    // Placeholders are rare; skip computing every file's collision family
+    // unless there is a candidate to hide.
+    if !view.files.iter().any(|entry| {
+        provider_file_probable_os_placeholder_family(&entry.path, entry.size).is_some()
+    }) {
+        return;
+    }
     let non_empty_families = view
         .files
         .iter()
@@ -411,9 +423,8 @@ async fn drive_merged_root_from_view<S: Store>(
     merged: &PrimaryMergedView,
 ) -> Result<PrimaryMergedRoot, ProjectionError> {
     let source_roots = merge_source_roots(tree, drive, merge_app_keys).await?;
-    let mut root = tree.put_directory(Vec::new()).await?;
 
-    let mut target_dirs = merged_user_directory_paths(tree, drive, merge_app_keys).await?;
+    let mut target_dirs = merged_user_directory_paths(tree, merge_app_keys, &source_roots).await?;
     target_dirs.retain(|path, _| {
         !merged
             .shared_mounts
@@ -441,25 +452,23 @@ async fn drive_merged_root_from_view<S: Store>(
         &merged.view.path_kind_role_roots,
         &source_roots,
     )?;
+
+    let mut visible = DirBuilder::default();
     for dir in target_dirs.keys() {
-        root = ensure_visible_dir(tree, root, dir).await?;
+        ensure_dir(&mut visible, &visible_path_segments(dir))?;
     }
-
+    let mut sources = SourceEntries::new(tree, &source_roots);
     for entry in &visible_files {
-        root = ensure_visible_parent_dirs(tree, root, &entry.path).await?;
-        let source = source_entry_for_merged_entry(tree, &source_roots, entry).await?;
-        let cid = Cid {
-            hash: source.hash,
-            key: source.key,
-        };
         let (parent, name) = split_visible_path(&entry.path)?;
-        root =
-            set_visible_entry_with_meta(tree, &root, &parent, name, &cid, &source, entry).await?;
+        let dir = ensure_dir(&mut visible, &parent)?;
+        let source = sources.entry_for(entry).await?;
+        set_file(dir, name, source, entry);
     }
-
     for directory in target_dirs.into_values() {
-        root = set_visible_dir_meta(tree, &root, &directory.path, directory.meta).await?;
+        set_dir_meta(&mut visible, &directory.path, directory.meta)?;
     }
+    let mut root = visible.put(tree).await?;
+
     for mount in &merged.shared_mounts {
         root = ensure_visible_parent_dirs(tree, root, &mount.path).await?;
         let (parent, name) = split_visible_path(&mount.path)?;
@@ -507,11 +516,14 @@ async fn merge_source_roots<S: Store>(
     Ok(source_roots)
 }
 
-fn split_visible_path(path: &str) -> Result<(Vec<&str>, &str), ProjectionError> {
-    let mut segments: Vec<&str> = path
-        .split('/')
+fn visible_path_segments(path: &str) -> Vec<&str> {
+    path.split('/')
         .filter(|segment| !segment.is_empty())
-        .collect();
+        .collect()
+}
+
+fn split_visible_path(path: &str) -> Result<(Vec<&str>, &str), ProjectionError> {
+    let mut segments = visible_path_segments(path);
     let name = segments
         .pop()
         .ok_or_else(|| HashTreeError::PathNotFound(path.to_string()))?;
@@ -527,22 +539,6 @@ async fn ensure_visible_parent_dirs<S: Store>(
     let mut current_root = root;
     for depth in 1..=parent.len() {
         current_root = ensure_visible_dir_segments(tree, current_root, &parent[..depth]).await?;
-    }
-    Ok(current_root)
-}
-
-async fn ensure_visible_dir<S: Store>(
-    tree: &HashTree<S>,
-    root: Cid,
-    path: &str,
-) -> Result<Cid, ProjectionError> {
-    let segments: Vec<&str> = path
-        .split('/')
-        .filter(|segment| !segment.is_empty())
-        .collect();
-    let mut current_root = root;
-    for depth in 1..=segments.len() {
-        current_root = ensure_visible_dir_segments(tree, current_root, &segments[..depth]).await?;
     }
     Ok(current_root)
 }
@@ -572,130 +568,6 @@ async fn ensure_visible_dir_segments<S: Store>(
         .map_err(Into::into)
 }
 
-async fn source_entry_for_merged_entry<S: Store>(
-    tree: &HashTree<S>,
-    source_roots: &BTreeMap<String, AppKeyRootRef>,
-    entry: &MergedEntry,
-) -> Result<hashtree_core::TreeEntry, ProjectionError> {
-    let root = source_roots
-        .get(&entry.source_app_key_pubkey)
-        .ok_or_else(|| HashTreeError::PathNotFound(entry.source_app_key_pubkey.clone()))?;
-    let root = Cid::parse(&root.root_cid).map_err(|source| ProjectionError::RootCid {
-        app_key_pubkey: entry.source_app_key_pubkey.clone(),
-        root_cid: root.root_cid.clone(),
-        source,
-    })?;
-    tree_entry_at_path(tree, &root, merged_entry_source_path(entry)).await
-}
-
-async fn tree_entry_at_path<S: Store>(
-    tree: &HashTree<S>,
-    root: &Cid,
-    path: &str,
-) -> Result<hashtree_core::TreeEntry, ProjectionError> {
-    let (parent, name) = split_visible_path(path)?;
-    let parent_cid = if parent.is_empty() {
-        root.clone()
-    } else {
-        tree.resolve(root, &parent.join("/"))
-            .await?
-            .ok_or_else(|| HashTreeError::PathNotFound(parent.join("/")))?
-    };
-    tree.list_directory(&parent_cid)
-        .await?
-        .into_iter()
-        .find(|entry| entry.name == name)
-        .ok_or_else(|| HashTreeError::EntryNotFound(name.to_string()).into())
-}
-
-async fn set_visible_entry_with_meta<S: Store>(
-    tree: &HashTree<S>,
-    root: &Cid,
-    parent: &[&str],
-    name: &str,
-    cid: &Cid,
-    source: &hashtree_core::TreeEntry,
-    merged: &MergedEntry,
-) -> Result<Cid, ProjectionError> {
-    let parent_cid = if parent.is_empty() {
-        root.clone()
-    } else {
-        tree.resolve(root, &parent.join("/"))
-            .await?
-            .ok_or_else(|| HashTreeError::PathNotFound(parent.join("/")))?
-    };
-    let mut entries = tree
-        .list_directory(&parent_cid)
-        .await?
-        .into_iter()
-        .filter(|entry| entry.name != name)
-        .map(|entry| DirEntry {
-            name: entry.name,
-            hash: entry.hash,
-            size: entry.size,
-            key: entry.key,
-            link_type: entry.link_type,
-            meta: entry.meta,
-        })
-        .collect::<Vec<_>>();
-    entries.push(DirEntry {
-        name: name.to_string(),
-        hash: cid.hash,
-        size: source.size,
-        key: cid.key,
-        link_type: source.link_type,
-        meta: visible_entry_meta(source, merged),
-    });
-    let new_parent_cid = tree.put_directory(entries).await?;
-    if parent.is_empty() {
-        return Ok(new_parent_cid);
-    }
-
-    let parent_of_parent = &parent[..parent.len() - 1];
-    let dir_name = parent[parent.len() - 1];
-    tree.set_entry(
-        root,
-        parent_of_parent,
-        dir_name,
-        &new_parent_cid,
-        0,
-        LinkType::Dir,
-    )
-    .await
-    .map_err(Into::into)
-}
-
-async fn set_visible_dir_meta<S: Store>(
-    tree: &HashTree<S>,
-    root: &Cid,
-    path: &str,
-    meta: DirectoryMeta,
-) -> Result<Cid, ProjectionError> {
-    if meta.is_empty() {
-        return Ok(root.clone());
-    }
-    let (parent, name) = split_visible_path(path)?;
-    let existing = tree_entry_at_path(tree, root, path).await?;
-    if existing.link_type != LinkType::Dir {
-        return Err(HashTreeError::PathNotFound(path.to_string()).into());
-    }
-    let cid = Cid {
-        hash: existing.hash,
-        key: existing.key,
-    };
-    tree.set_entry_with_meta(
-        root,
-        &parent,
-        name,
-        &cid,
-        existing.size,
-        existing.link_type,
-        Some(meta),
-    )
-    .await
-    .map_err(Into::into)
-}
-
 fn visible_entry_meta(
     source: &hashtree_core::TreeEntry,
     merged: &MergedEntry,
@@ -714,17 +586,12 @@ fn visible_entry_meta(
 
 async fn merged_user_directory_paths<S: Store>(
     tree: &HashTree<S>,
-    drive: &crate::config::Drive,
-    authorized_app_keys: &[String],
+    merge_app_keys: &[String],
+    source_roots: &BTreeMap<String, AppKeyRootRef>,
 ) -> Result<BTreeMap<String, MergedDirectory>, ProjectionError> {
     let mut dirs = BTreeMap::new();
-    for app_key_pubkey in authorized_app_keys {
-        let Some(root) = drive.app_key_roots.get(app_key_pubkey) else {
-            continue;
-        };
-        let Some(root) =
-            merge_root_for_device(tree, app_key_pubkey, root, authorized_app_keys).await?
-        else {
+    for app_key_pubkey in merge_app_keys {
+        let Some(root) = source_roots.get(app_key_pubkey) else {
             continue;
         };
         let cid = Cid::parse(&root.root_cid).map_err(|source| ProjectionError::RootCid {
