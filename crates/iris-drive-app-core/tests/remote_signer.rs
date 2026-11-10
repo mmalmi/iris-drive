@@ -20,6 +20,7 @@ impl NostrConnectSignerActions for ApproveRecovery {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[allow(clippy::too_many_lines)]
 async fn signer_restores_existing_profile_through_native_setup() {
     let roster = LocalNostrRelay::spawn().await;
     let transport = LocalNostrRelay::spawn().await;
@@ -192,5 +193,5 @@ async fn cancel_while_waiting_preserves_pending_setup() {
         .unwrap();
     assert_eq!(profile.profile_id, next.profile_id);
     assert_eq!(profile.app_key_pubkey, next.app_key_pubkey);
-    assert!(next.profile_roster_ops.is_empty());
+    assert_eq!(next.profile_roster_ops.len(), 0);
 }
