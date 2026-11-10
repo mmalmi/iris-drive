@@ -145,12 +145,37 @@ try {
     if ($handle -ne [IntPtr]::Zero) { try { Save-AppWindow $handle 'failure-window.png' } catch {} }
 } finally {
     # Closing the main window can minimize to tray. Only terminate this published product.
-    if ($app -and !$app.HasExited) { $null = $app.CloseMainWindow(); $null = $app.WaitForExit(1500) }
+    if ($app) {
+        if (!$app.HasExited) { $null = $app.CloseMainWindow(); $null = $app.WaitForExit(1500) }
+        $app.Dispose()
+    }
     $prefix = [IO.Path]::GetFullPath($Product).TrimEnd('\') + '\'
     $owned = { Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -and $_.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase) } }
-    foreach ($process in (& $owned)) { Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue }
-    $receipt.closed = @(& $owned).Count -eq 0
-    if (!$receipt.closed) { $receipt.error = 'Product processes remained after closure'; $receipt.passed = $false }
+    $remaining = @(& $owned)
+    $receipt.cleanupRequested = @($remaining | ForEach-Object { $_.Name })
+    $deadline = (Get-Date).AddSeconds(15)
+    while ($remaining.Count -gt 0 -and (Get-Date) -lt $deadline) {
+        foreach ($item in $remaining) {
+            $process = Get-Process -Id $item.ProcessId -ErrorAction SilentlyContinue
+            if (!$process) { continue }
+            try {
+                if (!$process.HasExited -and $process.Path -and $process.Path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+                    Stop-Process -InputObject $process -Force -ErrorAction Stop
+                    $null = $process.WaitForExit(2000)
+                }
+            } catch {
+                if (!$process.HasExited) { $receipt.cleanupDetail = $_.Exception.Message }
+            } finally { $process.Dispose() }
+        }
+        Start-Sleep -Milliseconds 350
+        $remaining = @(& $owned)
+    }
+    $receipt.cleanupRemaining = @($remaining | ForEach-Object { $_.Name })
+    $receipt.closed = $remaining.Count -eq 0
+    if (!$receipt.closed) {
+        if (!$receipt.error) { $receipt.error = 'Product processes remained after closure' }
+        $receipt.passed = $false
+    }
     if (Test-Path $profile) { Remove-Item -Recurse -Force $profile }
     $receipt | ConvertTo-Json | Set-Content "$resultFile.tmp"
     Move-Item "$resultFile.tmp" $resultFile
