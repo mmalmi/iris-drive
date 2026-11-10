@@ -108,6 +108,7 @@ private enum class SetupRoute {
     RestoreOptions,
     RestoreRecoveryPhrase,
     RestoreSecretKey,
+    RemoteSigner,
 }
 
 internal data class RecoveryWordsInputResult(
@@ -184,6 +185,7 @@ internal fun IrisDriveAndroidApp(
     selfUpdateActions: SelfUpdateActions,
     onCreateProfile: (String) -> Unit,
     onRestoreProfile: (String, String) -> Unit,
+    onSignerInteraction: (Boolean) -> Unit,
     onStartJoinRequest: (String) -> Unit,
     onCopyText: (String, String) -> Unit,
     onExportRecoverySecret: () -> RecoverySecretExport,
@@ -278,6 +280,7 @@ internal fun IrisDriveAndroidApp(
                         padding = padding,
                         state = state,
                         onCopyText = onCopyText,
+                        onSignerInteraction = onSignerInteraction,
                         onRestoreProfile = { secret ->
                             onRestoreProfile(secret, "")
                             onAddRoot("My Drive", ProviderRoot)
@@ -292,6 +295,7 @@ internal fun IrisDriveAndroidApp(
                             onCreateProfile("")
                             onAddRoot("My Drive", ProviderRoot)
                         },
+                        onSignerInteraction = onSignerInteraction,
                         onRestoreProfile = { secret ->
                             onRestoreProfile(secret, "")
                             onAddRoot("My Drive", ProviderRoot)
@@ -427,11 +431,11 @@ private fun AwaitingApprovalContent(
     state: AppState,
     onCopyText: (String, String) -> Unit,
     onRestoreProfile: (String) -> Unit,
+    onSignerInteraction: (Boolean) -> Unit,
     onLogout: () -> Unit,
 ) {
     val profile = state.profile ?: return
     var route by remember { mutableStateOf(SetupRoute.RestoreOptions) }
-    var restoreSecret by remember { mutableStateOf("") }
     var recoveryWords by remember { mutableStateOf(List(RecoveryPhraseWordCount) { "" }) }
     var recoveryWordIndex by remember { mutableStateOf(0) }
     val context = LocalContext.current
@@ -469,6 +473,11 @@ private fun AwaitingApprovalContent(
                         text = "Restore from recovery phrase",
                         onClick = { route = SetupRoute.RestoreRecoveryPhrase },
                         testTag = "openRecoveryPhrase",
+                    )
+                    SetupSecondaryButton(
+                        text = "Sign in with remote signer",
+                        onClick = { route = SetupRoute.RemoteSigner },
+                        testTag = "openRemoteSigner",
                     )
                     SetupSecondaryButton(
                         text = "Restore from secret key",
@@ -562,30 +571,12 @@ private fun AwaitingApprovalContent(
                         }
                     }
                 }
-                SetupRoute.RestoreSecretKey -> {
-                    SetupFormHeader(title = "Secret key", onBack = { route = SetupRoute.RestoreOptions })
-                    OutlinedTextField(
-                        value = restoreSecret,
-                        onValueChange = { restoreSecret = it },
-                        modifier = Modifier.fillMaxWidth().testTag("restoreSecretKeyInput"),
-                        singleLine = true,
-                        label = { Text("Secret key") },
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(
-                            onDone = {
-                                if (restoreSecret.isNotBlank()) {
-                                    onRestoreProfile(restoreSecret)
-                                }
-                            },
-                        ),
-                    )
-                    SetupPrimaryButton(
-                        text = "Restore",
-                        onClick = { onRestoreProfile(restoreSecret) },
-                        enabled = restoreSecret.isNotBlank(),
-                        testTag = "restoreSecretKeySubmit",
-                    )
-                }
+                SetupRoute.RestoreSecretKey, SetupRoute.RemoteSigner -> RestoreCredentialForm(
+                    signer = route == SetupRoute.RemoteSigner,
+                    onBack = { route = SetupRoute.RestoreOptions },
+                    onRestore = onRestoreProfile,
+                    onSignerInteraction = onSignerInteraction,
+                )
                 else -> Unit
             }
         }
@@ -687,11 +678,11 @@ private fun SetupContent(
     error: String,
     onCreateProfile: () -> Unit,
     onRestoreProfile: (String) -> Unit,
+    onSignerInteraction: (Boolean) -> Unit,
     onStartJoinRequest: () -> Unit,
 ) {
     var createUsername by remember { mutableStateOf("") }
     var selectedPhoto by remember { mutableStateOf("") }
-    var restoreSecret by remember { mutableStateOf("") }
     var recoveryWords by remember { mutableStateOf(List(RecoveryPhraseWordCount) { "" }) }
     var recoveryWordIndex by remember { mutableStateOf(0) }
     var joinRequestStarted by remember { mutableStateOf(false) }
@@ -803,6 +794,11 @@ private fun SetupContent(
                         testTag = "openRecoveryPhrase",
                     )
                     SetupSecondaryButton(
+                        text = "Sign in with remote signer",
+                        onClick = { route = SetupRoute.RemoteSigner },
+                        testTag = "openRemoteSigner",
+                    )
+                    SetupSecondaryButton(
                         text = "Restore from secret key",
                         onClick = { route = SetupRoute.RestoreSecretKey },
                         testTag = "openSecretKey",
@@ -898,30 +894,12 @@ private fun SetupContent(
                         }
                     }
                 }
-                SetupRoute.RestoreSecretKey -> {
-                    SetupFormHeader(title = "Secret key", onBack = { route = SetupRoute.RestoreOptions })
-                    OutlinedTextField(
-                        value = restoreSecret,
-                        onValueChange = { restoreSecret = it },
-                        modifier = Modifier.fillMaxWidth().testTag("restoreSecretKeyInput"),
-                        singleLine = true,
-                        label = { Text("Secret key") },
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
-                        keyboardActions = KeyboardActions(
-                            onDone = {
-                                if (restoreSecret.isNotBlank()) {
-                                    onRestoreProfile(restoreSecret)
-                                }
-                            },
-                        ),
-                    )
-                    SetupPrimaryButton(
-                        text = "Restore",
-                        onClick = { onRestoreProfile(restoreSecret) },
-                        enabled = restoreSecret.isNotBlank(),
-                        testTag = "restoreSecretKeySubmit",
-                    )
-                }
+                SetupRoute.RestoreSecretKey, SetupRoute.RemoteSigner -> RestoreCredentialForm(
+                    signer = route == SetupRoute.RemoteSigner,
+                    onBack = { route = SetupRoute.RestoreOptions },
+                    onRestore = onRestoreProfile,
+                    onSignerInteraction = onSignerInteraction,
+                )
             }
         }
     }
@@ -939,7 +917,7 @@ private fun SetupBrand() {
 }
 
 @Composable
-private fun SetupFormHeader(
+internal fun SetupFormHeader(
     title: String?,
     onBack: () -> Unit,
     backTestTag: String? = null,
@@ -958,7 +936,7 @@ private fun SetupFormHeader(
 }
 
 @Composable
-private fun SetupPrimaryButton(
+internal fun SetupPrimaryButton(
     text: String,
     onClick: () -> Unit,
     enabled: Boolean = true,
@@ -982,7 +960,7 @@ private fun SetupPrimaryButton(
 }
 
 @Composable
-private fun SetupSecondaryButton(text: String, onClick: () -> Unit, testTag: String? = null) {
+internal fun SetupSecondaryButton(text: String, onClick: () -> Unit, testTag: String? = null) {
     val modifier = Modifier.setupButton(testTag)
 
     OutlinedButton(

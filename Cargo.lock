@@ -3299,6 +3299,7 @@ dependencies = [
  "hashtree-provider",
  "iris-drive-core",
  "jni",
+ "nostr-connect",
  "nostr-sdk",
  "qrcode",
  "reqwest",
@@ -4010,6 +4011,7 @@ version = "0.44.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40ff7b77ef428b40aa2834a6acbae38a0e104c98b306208ca4b87a420d579a4b"
 dependencies = [
+ "aes 0.8.4",
  "base64 0.22.1",
  "bech32",
  "bip39",
@@ -4026,6 +4028,19 @@ dependencies = [
  "serde_json",
  "unicode-normalization",
  "url",
+]
+
+[[package]]
+name = "nostr-connect"
+version = "0.44.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0055317f298380628e79c4663ea00bfab67d3cf4f00aefde5fc2b4f35f47d629"
+dependencies = [
+ "async-utility",
+ "nostr",
+ "nostr-relay-pool",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]

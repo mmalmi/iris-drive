@@ -11,6 +11,8 @@ extension IrisDriveIOSUITests {
         XCTAssertTrue(app.buttons["welcomeSignIn"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["welcomeSignIn"].label.contains("Sign in"))
 
+        XCTAssertFalse(app.buttons["openRemoteSigner"].exists)
+
         app.buttons["welcomeCreateProfile"].tap()
         XCTAssertTrue(app.navigationBars["Create profile"].waitForExistence(timeout: 5))
 
@@ -38,6 +40,19 @@ extension IrisDriveIOSUITests {
             RunLoop.current.run(until: Date().addingTimeInterval(0.1))
         }
         XCTAssertTrue(copyRequestLink.exists || awaitingApproval.exists)
+    }
+
+    func testRemoteSignerFromExistingAccount() throws {
+        let app = launchApp(environment: try isolatedBaseEnvironment())
+        app.buttons["welcomeSignIn"].tap()
+        let awaiting = app.descendants(matching: .any)["awaitingApprovalView"]
+        XCTAssertTrue(awaiting.waitForExistence(timeout: 15))
+        let signer = app.buttons["openRemoteSigner"]
+        for _ in 0..<4 where !signer.isHittable { awaiting.swipeUp() }
+        XCTAssertTrue(signer.isHittable, app.debugDescription)
+        signer.tap()
+        XCTAssertTrue(app.secureTextFields["remoteSignerInput"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["remoteSignerSubmit"].isEnabled)
     }
 
     func testLinkThisDeviceFromWelcome() throws {

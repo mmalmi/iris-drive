@@ -69,6 +69,7 @@ private enum IrisDriveSetupMode {
     case restoreOptions
     case restorePhrase
     case restoreSecretKey
+    case remoteSigner
 }
 
 private enum RecoveryKeyFlowMode {
@@ -110,7 +111,6 @@ struct IrisDriveControlPanel: View {
     @State private var setupMode = IrisDriveSetupMode.welcome
     @State private var setupUsername = ""
     @State private var setupPhotoPath = ""
-    @State private var setupSecret = ""
     @State private var setupRecoveryWords = Array(repeating: "", count: recoveryPhraseWordCount)
     @State private var setupRecoveryWordIndex = 0
     @State private var setupJoinRequestStarted = false
@@ -386,14 +386,15 @@ struct IrisDriveControlPanel: View {
             RevokedDeviceSetupView(status: status, controller: controller)
         } else if status.awaitingApproval {
             switch setupMode {
-            case .restorePhrase, .restoreSecretKey:
+            case .restorePhrase, .restoreSecretKey, .remoteSigner:
                 setupModeContent
             default:
                 AwaitingApprovalSetupView(
                     status: status,
                     controller: controller,
                     openRecoveryPhrase: { setupMode = .restorePhrase },
-                    openSecretKey: { setupMode = .restoreSecretKey }
+                    openSecretKey: { setupMode = .restoreSecretKey },
+                    openSigner: { setupMode = .remoteSigner }
                 )
             }
         } else {
@@ -479,6 +480,11 @@ struct IrisDriveControlPanel: View {
                 }
                 .accessibilityLabel("Restore from recovery phrase")
                 .buttonStyle(.bordered)
+                Button(action: { setupMode = .remoteSigner }) {
+                    setupButtonLabel("Sign in with remote signer", systemImage: "signature")
+                }
+                .accessibilityIdentifier("openRemoteSigner")
+                .buttonStyle(.bordered)
                 Button {
                     setupMode = .restoreSecretKey
                 } label: {
@@ -516,16 +522,9 @@ struct IrisDriveControlPanel: View {
                     .disabled(setupRecoveryWordIndex == recoveryPhraseWordCount - 1 ? !allRecoveryWordsFilled : currentRecoveryWord.isEmpty)
                 }
             }
-        case .restoreSecretKey:
-            setupForm(title: "Secret key", backTarget: .restoreOptions) {
-                SecureField("nsec1... or hex secret key", text: $setupSecret)
-                    .onSubmit {
-                        controller.restoreProfile(recoverySecret: setupSecret)
-                    }
-                setupSubmit("Restore") {
-                    controller.restoreProfile(recoverySecret: setupSecret)
-                }
-                .disabled(setupSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        case .restoreSecretKey, .remoteSigner:
+            setupForm(title: setupMode == .remoteSigner ? "Remote signer" : "Secret key", backTarget: .restoreOptions) {
+                DriveCredentialSetupFields(signer: setupMode == .remoteSigner, controller: controller)
             }
         }
     }

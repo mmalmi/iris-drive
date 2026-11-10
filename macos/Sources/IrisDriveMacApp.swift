@@ -732,6 +732,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             updateStatus("Recovery phrase or secret key required")
             return
         }
+        if recoverySecret.hasPrefix("bunker://") {
+            dispatchNativeAction(
+                ["type": "restore_profile", "recovery_secret": recoverySecret, "app_key_label": defaultDeviceLabel()],
+                progress: "Waiting for your signer", success: "Signed in", restartSyncAfterSuccess: true
+            )
+            return
+        }
         let args = setupArguments(
             command: "restore",
             label: defaultDeviceLabel(),

@@ -137,6 +137,7 @@ class MainActivity : ComponentActivity() {
                 onCreateProfile = { deviceLabel ->
                     dispatch(NativeActions.createProfile(resolveDeviceLabel(deviceLabel)), ::autoStartSyncIfNeeded)
                 },
+                onSignerInteraction = { signerInteraction(this, nativeHandle, it) },
                 onRestoreProfile = { secret, deviceLabel ->
                     dispatch(
                         NativeActions.restoreProfile(secret, resolveDeviceLabel(deviceLabel)),

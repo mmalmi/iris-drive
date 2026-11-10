@@ -248,6 +248,12 @@ private struct AwaitingApprovalSetupView: View {
                     }
                     .accessibilityIdentifier("openRecoveryPhrase")
                     NavigationLink {
+                        RestoreSecretKeySetupView(model: model, signer: true)
+                    } label: {
+                        Label("Sign in with remote signer", systemImage: "signature")
+                    }
+                    .accessibilityIdentifier("openRemoteSigner")
+                    NavigationLink {
                         RestoreSecretKeySetupView(model: model)
                     } label: {
                         Label("Restore from secret key", systemImage: "key")
@@ -321,6 +327,7 @@ private enum SetupRoute: Hashable {
     case restoreOptions
     case restorePhrase
     case restoreSecretKey
+    case remoteSigner
 }
 
 private struct SetupWelcomeView: View {
@@ -376,10 +383,13 @@ private struct SetupWelcomeView: View {
                     RestoreOptionsSetupView(
                         model: model,
                         openRecoveryPhrase: { path.append(.restorePhrase) },
-                        openSecretKey: { path.append(.restoreSecretKey) }
+                        openSecretKey: { path.append(.restoreSecretKey) },
+                        openSigner: { path.append(.remoteSigner) }
                     )
                 case .restorePhrase:
                     RestoreRecoveryPhraseSetupView(model: model)
+                case .remoteSigner:
+                    RestoreSecretKeySetupView(model: model, signer: true)
                 case .restoreSecretKey:
                     RestoreSecretKeySetupView(model: model)
                 }
@@ -482,6 +492,7 @@ private struct RestoreOptionsSetupView: View {
     @State private var requested = false
     let openRecoveryPhrase: () -> Void
     let openSecretKey: () -> Void
+    let openSigner: () -> Void
 
     var body: some View {
         Form {
@@ -490,6 +501,10 @@ private struct RestoreOptionsSetupView: View {
                     Label("Restore from recovery phrase", systemImage: "text.badge.checkmark")
                 }
                 .accessibilityIdentifier("openRecoveryPhrase")
+                Button(action: openSigner) {
+                    Label("Sign in with remote signer", systemImage: "signature")
+                }
+                .accessibilityIdentifier("openRemoteSigner")
                 Button(action: openSecretKey) {
                     Label("Restore from secret key", systemImage: "key")
                 }
@@ -609,26 +624,58 @@ private struct RestoreRecoveryPhraseSetupView: View {
 private struct RestoreSecretKeySetupView: View {
     @ObservedObject var model: IrisDriveMobileModel
 
+    var signer = false
+    @State private var input = ""
+    @State private var waiting = false
+    @State private var approvalNotice = false
+    @Environment(\.openURL) private var openURL
+
+    private func submit() {
+        let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.isEmpty, !waiting, !signer || value.hasPrefix("bunker://") else { return }
+        if signer {
+            waiting = true
+            Task {
+                await model.restoreWithSigner(value)
+                waiting = false
+            }
+        } else {
+            model.restoreProfile(recoverySecret: value)
+        }
+    }
+
     var body: some View {
         Form {
             Section {
-                SecureField("nsec1... or hex secret key", text: $model.restoreSecret)
+                SecureField(signer ? "Signer connection link (bunker://…)" : "nsec1... or hex secret key", text: $input)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .onSubmit {
-                        model.restoreProfile()
+                        submit()
                     }
-                    .accessibilityIdentifier("restoreSecretKeyInput")
+                    .accessibilityIdentifier(signer ? "remoteSignerInput" : "restoreSecretKeyInput")
                 Button {
-                    model.restoreProfile()
+                    submit()
                 } label: {
-                    Label("Restore", systemImage: "key")
+                    Label(signer ? "Connect signer" : "Restore", systemImage: signer ? "signature" : "key")
                 }
-                .disabled(model.restoreSecret.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                .accessibilityIdentifier("restoreSecretKeySubmit")
+                .disabled(waiting || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (signer && !input.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("bunker://")))
+                .accessibilityIdentifier(signer ? "remoteSignerSubmit" : "restoreSecretKeySubmit")
+                if waiting {
+                    ProgressView("Waiting for your signer")
+                    Button("Open signer") {
+                        if let url = model.signerInteraction(cancel: false) { openURL(url) }
+                        else { approvalNotice = true }
+                    }
+                }
+                if !model.setupErrorMessage.isEmpty {
+                    Text(model.setupErrorMessage).foregroundStyle(.red)
+                }
             }
         }
-        .navigationTitle("Secret key")
+        .onDisappear { if waiting { _ = model.signerInteraction(cancel: true) } }
+        .alert("Check your signer for an approval request", isPresented: $approvalNotice) { Button("OK") {} }
+        .navigationTitle(signer ? "Remote signer" : "Secret key")
         .toolbar(.visible, for: .navigationBar)
     }
 }

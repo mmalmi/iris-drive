@@ -53,10 +53,22 @@ pub fn nostr_identity_restore_candidates_from_events(
     recovery_pubkey_hex: &str,
     events: &[Event],
 ) -> Result<Vec<NostrIdentityRestoreCandidate>, RelayError> {
-    let candidate_ids: BTreeSet<_> =
+    Ok(restore_candidates_for_ids(
+        recovery_pubkey_hex,
+        events,
         nostr_identity_candidate_ids_for_pubkey_from_events(recovery_pubkey_hex, events)?
             .into_iter()
-            .collect();
+            .collect(),
+        false,
+    ))
+}
+
+fn restore_candidates_for_ids(
+    recovery_pubkey_hex: &str,
+    events: &[Event],
+    candidate_ids: BTreeSet<NostrIdentityId>,
+    include_admins: bool,
+) -> Vec<NostrIdentityRestoreCandidate> {
     let mut roster_ops_by_profile =
         BTreeMap::<NostrIdentityId, BTreeMap<String, SignedNostrIdentityRosterOp>>::new();
     for event in events {
@@ -82,7 +94,9 @@ pub fn nostr_identity_restore_candidates_from_events(
         let Some(facet) = projection.active_facets.get(recovery_pubkey_hex) else {
             continue;
         };
-        if !facet.capabilities.can_recover_app_keys {
+        if !(facet.capabilities.can_recover_app_keys
+            || (include_admins && facet.capabilities.can_admin_profile))
+        {
             continue;
         }
         let accepted_op_ids = projection
@@ -117,7 +131,7 @@ pub fn nostr_identity_restore_candidates_from_events(
             .then_with(|| right.active_app_key_count.cmp(&left.active_app_key_count))
             .then_with(|| left.profile_id.cmp(&right.profile_id))
     });
-    Ok(candidates)
+    candidates
 }
 
 /// Fetch restore candidates for a recovery/NIP-46 pubkey from relays.
@@ -155,4 +169,40 @@ pub async fn fetch_nostr_identity_restore_candidates(
     let mut events = discovery_events;
     events.extend(roster_events);
     nostr_identity_restore_candidates_from_events(recovery_pubkey_hex, &events)
+}
+
+/// Only discover profiles that the signer itself referenced in signed roster
+/// evidence. Another profile adding our key is insufficient for account selection.
+pub async fn fetch_signer_restore_candidates(
+    client: &Client,
+    signer: PublicKey,
+    timeout: Duration,
+) -> Result<Vec<NostrIdentityRestoreCandidate>, RelayError> {
+    let key = signer.to_hex();
+    let own = fetch_events(
+        client,
+        vec![
+            Filter::new()
+                .kind(nostr_sdk::Kind::from(KIND_NOSTR_IDENTITY_ROSTER_OP))
+                .author(signer),
+        ],
+        timeout,
+    )
+    .await?;
+    let ids: BTreeSet<_> = nostr_identity_candidate_ids_for_pubkey_from_events(&key, &own)?
+        .into_iter()
+        .collect();
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let events = fetch_events(
+        client,
+        ids.iter()
+            .copied()
+            .map(nostr_identity_roster_op_filter)
+            .collect(),
+        timeout,
+    )
+    .await?;
+    Ok(restore_candidates_for_ids(&key, &events, ids, true))
 }

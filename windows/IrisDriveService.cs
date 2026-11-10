@@ -75,6 +75,12 @@ public sealed partial class IrisDriveService
             throw new InvalidOperationException("Secret key is required.");
         }
 
+        if (secret.Trim().StartsWith("bunker://", StringComparison.Ordinal))
+        {
+            return DispatchNativeActionAsync(new Dictionary<string, object> {
+                ["type"] = "restore_profile", ["recovery_secret"] = secret.Trim(), ["app_key_label"] = DefaultDeviceLabel()
+            });
+        }
         return FinishSetupAsync(new[] { "restore", secret.Trim(), "--label", DefaultDeviceLabel() });
     }
 

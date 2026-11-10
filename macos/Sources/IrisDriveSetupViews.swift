@@ -60,6 +60,7 @@ struct AwaitingApprovalSetupView: View {
     let controller: AppDelegate
     let openRecoveryPhrase: () -> Void
     let openSecretKey: () -> Void
+    let openSigner: () -> Void
 
     var body: some View {
         VStack(alignment: .center, spacing: 12) {
@@ -94,6 +95,11 @@ struct AwaitingApprovalSetupView: View {
                 openRecoveryPhrase()
             }
             .buttonStyle(.bordered)
+            IrisDriveCopyButton(title: "Sign in with remote signer", systemImage: "signature", fillsWidth: true) {
+                openSigner()
+            }
+            .accessibilityIdentifier("openRemoteSigner")
+            .buttonStyle(.bordered)
             IrisDriveCopyButton(
                 title: "Restore from secret key",
                 systemImage: "key",
@@ -104,5 +110,50 @@ struct AwaitingApprovalSetupView: View {
             .buttonStyle(.bordered)
         }
         .multilineTextAlignment(.center)
+    }
+}
+
+struct DriveCredentialSetupFields: View {
+    let signer: Bool
+    let controller: AppDelegate
+    @State private var input = ""
+    @State private var submitted = false
+    private var valid: Bool {
+        let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !value.isEmpty && (!signer || value.hasPrefix("bunker://"))
+    }
+
+    private func submit() {
+        guard valid else { return }
+        submitted = true
+        controller.restoreProfile(recoverySecret: input)
+    }
+
+    var body: some View {
+        SecureField(signer ? "Signer connection link (bunker://…)" : "nsec1... or hex secret key", text: $input)
+            .accessibilityIdentifier(signer ? "remoteSignerInput" : "restoreSecretKeyInput")
+            .onSubmit(submit)
+        IrisDriveCopyButton(title: signer ? "Connect signer" : "Restore", fillsWidth: true, action: submit)
+            .accessibilityIdentifier(signer ? "remoteSignerSubmit" : "restoreSecretKeySubmit")
+            .buttonStyle(.borderedProminent)
+            .disabled(!valid)
+        if signer && submitted {
+            Button("Open signer") { controller.signerInteraction(cancel: false) }
+                .onDisappear { controller.signerInteraction(cancel: true) }
+        }
+    }
+}
+
+extension AppDelegate {
+    func signerInteraction(cancel: Bool) {
+        let method = cancel ? "cancel_signer_recovery" : "signer_approval_link"
+        let json = desktopCore.dispatchJson("{\"type\":\"\(method)\"}")
+        guard !cancel else { return }
+        if let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+           let value = object["signer_approval_url"] as? String, let url = URL(string: value), url.scheme == "https" {
+            NSWorkspace.shared.open(url)
+        } else {
+            updateStatus("Check your signer for an approval request")
+        }
     }
 }

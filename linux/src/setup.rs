@@ -9,7 +9,9 @@ pub(crate) fn render_setup(model: &AppRef) {
         SetupScreen::CreatePhoto => render_create_profile_photo(model),
         SetupScreen::RestoreOptions => render_restore_options(model),
         SetupScreen::RestorePhrase => render_restore_phrase_profile(model),
-        SetupScreen::RestoreSecretKey => render_restore_secret_key_profile(model),
+        SetupScreen::RestoreSecretKey | SetupScreen::RemoteSigner => {
+            render_restore_secret_key_profile(model)
+        }
     }
 }
 
@@ -73,6 +75,20 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
         phrase.connect_clicked(move |_| open_recovery_phrase_setup(&model));
     }
     container.append(&phrase);
+
+    let signer = welcome_button(
+        "Sign in with remote signer",
+        "document-sign-symbolic",
+        false,
+    );
+    {
+        let model = Rc::clone(model);
+        signer.connect_clicked(move |_| {
+            *model.setup_screen.borrow_mut() = SetupScreen::RemoteSigner;
+            render_setup(&model);
+        });
+    }
+    container.append(&signer);
 
     let secret = welcome_button("Restore from secret key", "dialog-password-symbolic", false);
     {
@@ -202,11 +218,14 @@ pub(crate) fn setup_container(model: &AppRef, title: &str) -> gtk::Box {
     {
         let model = Rc::clone(model);
         back.connect_clicked(move |_| {
+            if *model.setup_screen.borrow() == SetupScreen::RemoteSigner {
+                let _ = dispatch_desktop_action(NativeAppAction::CancelSignerRecovery);
+            }
             let target = match *model.setup_screen.borrow() {
                 SetupScreen::CreatePhoto => SetupScreen::Create,
-                SetupScreen::RestorePhrase | SetupScreen::RestoreSecretKey => {
-                    SetupScreen::RestoreOptions
-                }
+                SetupScreen::RestorePhrase
+                | SetupScreen::RestoreSecretKey
+                | SetupScreen::RemoteSigner => SetupScreen::RestoreOptions,
                 _ => SetupScreen::Welcome,
             };
             *model.setup_screen.borrow_mut() = target;
@@ -413,6 +432,20 @@ pub(crate) fn render_restore_options(model: &AppRef) {
     }
     container.append(&phrase);
 
+    let signer = welcome_button(
+        "Sign in with remote signer",
+        "document-sign-symbolic",
+        false,
+    );
+    {
+        let model = Rc::clone(model);
+        signer.connect_clicked(move |_| {
+            *model.setup_screen.borrow_mut() = SetupScreen::RemoteSigner;
+            render_setup(&model);
+        });
+    }
+    container.append(&signer);
+
     let secret = welcome_button("Restore from secret key", "dialog-password-symbolic", false);
     {
         let model = Rc::clone(model);
@@ -517,35 +550,79 @@ pub(crate) fn render_restore_phrase_profile(model: &AppRef) {
 }
 
 pub(crate) fn render_restore_secret_key_profile(model: &AppRef) {
-    let container = setup_container(model, "Secret key");
-    let secret = setup_entry("nsec1... or hex secret key");
+    let signer = *model.setup_screen.borrow() == SetupScreen::RemoteSigner;
+    let container = setup_container(
+        model,
+        if signer {
+            "Remote signer"
+        } else {
+            "Secret key"
+        },
+    );
+    let secret = setup_entry(if signer {
+        "Signer connection link (bunker://…)"
+    } else {
+        "nsec1... or hex secret key"
+    });
     secret.set_visibility(false);
     secret.set_input_purpose(gtk::InputPurpose::Password);
     container.append(&secret);
 
     let notice = setup_notice();
-    let submit = primary_button("Restore");
+    let open = welcome_button("Open signer", "web-browser-symbolic", false);
+    open.set_visible(false);
+    if signer {
+        let notice = notice.clone();
+        open.connect_clicked(move |_| {
+            match dispatch_desktop_action(NativeAppAction::SignerApprovalLink)
+                .ok()
+                .and_then(|s| s.signer_approval_url)
+            {
+                Some(url) => open_uri(&url),
+                None => notice.set_text("Check your signer for an approval request"),
+            }
+        });
+    }
+    let submit = primary_button(if signer { "Connect signer" } else { "Restore" });
     {
         let model = Rc::clone(model);
         let secret = secret.clone();
         let notice = notice.clone();
+        let open = open.clone();
         submit.connect_clicked(move |button| {
             let secret = secret.text().trim().to_string();
-            if secret.is_empty() {
-                notice.set_text("Secret key is required.");
+            if secret.is_empty() || (signer && !secret.starts_with("bunker://")) {
+                notice.set_text(if signer {
+                    "Enter a bunker:// link from your signer."
+                } else {
+                    "Secret key is required."
+                });
                 return;
             }
             button.set_sensitive(false);
-            match restore_profile(&secret) {
-                Ok(()) => {
-                    *model.setup_screen.borrow_mut() = SetupScreen::Welcome;
-                    refresh(&model);
-                }
-                Err(error) => {
-                    notice.set_text(&error);
-                    button.set_sensitive(true);
-                }
+            let button = button.clone();
+            let model = Rc::clone(&model);
+            let notice = notice.clone();
+            if signer {
+                open.set_visible(true);
+                notice.set_text("Waiting for your signer");
             }
+            glib::spawn_future_local(async move {
+                match gtk::gio::spawn_blocking(move || restore_profile(&secret)).await {
+                    Ok(Ok(())) => {
+                        *model.setup_screen.borrow_mut() = SetupScreen::Welcome;
+                        refresh(&model);
+                    }
+                    Ok(Err(error)) => {
+                        notice.set_text(&error);
+                        button.set_sensitive(true);
+                    }
+                    Err(_) => {
+                        notice.set_text("Sign-in was interrupted.");
+                        button.set_sensitive(true);
+                    }
+                }
+            });
         });
     }
     {
@@ -553,6 +630,7 @@ pub(crate) fn render_restore_secret_key_profile(model: &AppRef) {
         secret.connect_activate(move |_| submit.emit_clicked());
     }
     container.append(&submit);
+    container.append(&open);
     container.append(&notice);
     append_centered_setup(model, &container);
 
@@ -738,6 +816,13 @@ pub(crate) fn create_profile(username: &str, photo_path: Option<&str>) -> Result
 }
 
 pub(crate) fn restore_profile(recovery_secret: &str) -> Result<(), String> {
+    if recovery_secret.starts_with("bunker://") {
+        return dispatch_desktop_action(NativeAppAction::RestoreProfile {
+            recovery_secret: recovery_secret.to_string(),
+            app_key_label: default_device_label(),
+        })
+        .map(|_| ());
+    }
     run_idrive_owned(&[
         "restore".to_string(),
         recovery_secret.to_string(),

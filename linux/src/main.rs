@@ -162,6 +162,7 @@ enum SetupScreen {
     RestoreOptions,
     RestorePhrase,
     RestoreSecretKey,
+    RemoteSigner,
 }
 
 #[cfg_attr(not(target_os = "linux"), allow(dead_code))]

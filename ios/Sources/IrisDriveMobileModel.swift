@@ -1109,6 +1109,23 @@ final class IrisDriveMobileModel: ObservableObject {
         recordConfigMutation(action: "create_profile", before: before)
     }
 
+    func signerInteraction(cancel: Bool) -> URL? {
+        let method = cancel ? "cancel_signer_recovery" : "signer_approval_link"
+        let json = nativeCore.dispatchJson("{\"type\":\"\(method)\"}")
+        guard let object = try? JSONSerialization.jsonObject(with: Data(json.utf8)) as? [String: Any],
+              let value = object["signer_approval_url"] as? String, let url = URL(string: value),
+              url.scheme == "https" else { return nil }
+        return url
+    }
+
+    func restoreWithSigner(_ connection: String) async {
+        await dispatchInBackground([
+            "type": "restore_profile", "recovery_secret": connection, "app_key_label": deviceLabel,
+        ], invalidatePendingState: true)
+        ensureFileProviderDomainIfProfileExists()
+        scheduleBackgroundSyncIfNeeded()
+    }
+
     func restoreProfile() {
         let recoverySecret = restoreSecret
         restoreSecret = ""

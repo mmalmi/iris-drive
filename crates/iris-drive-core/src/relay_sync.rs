@@ -10,7 +10,6 @@
 //!
 //! - **Network (live)** — `publish_nostr_identity_roster_ops`,
 //!   `publish_drive_root`, `fetch_nostr_identity_roster_ops`,
-//!   `fetch_nostr_identity_restore_candidates`,
 //!   `fetch_nostr_identity_app_key_approval_candidates`, and `fetch_drive_roots`
 //!   wrap nostr-sdk's `Client` for actual relay I/O. Tested manually against
 //!   real relays; the wire/apply layers below them are what we cover
@@ -194,7 +193,8 @@ pub use approval_roster_backfill::{
 mod restore_candidates;
 pub use restore_candidates::{
     NostrIdentityRestoreCandidate, fetch_nostr_identity_restore_candidates,
-    nostr_identity_restore_candidate_filters, nostr_identity_restore_candidates_from_events,
+    fetch_signer_restore_candidates, nostr_identity_restore_candidate_filters,
+    nostr_identity_restore_candidates_from_events,
 };
 
 #[path = "relay_sync/subscriptions.rs"]

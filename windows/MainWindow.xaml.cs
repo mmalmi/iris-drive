@@ -1148,7 +1148,15 @@ public partial class MainWindow : Window
 
     private async void RestoreSubmit_Click(object sender, RoutedEventArgs e)
     {
-        await RunSetupAsync(() => service.RestoreProfileAsync(RestoreSecretBox.Password));
+        var secret = RestoreSecretBox.Password.Trim();
+        if (restoringWithSigner && !secret.StartsWith("bunker://", StringComparison.Ordinal))
+        {
+            MessageBox.Show("Enter a bunker:// link from your signer.", "Remote signer");
+            return;
+        }
+        OpenSignerApproval.Visibility = restoringWithSigner ? Visibility.Visible : Visibility.Collapsed;
+        await RunSetupAsync(() => service.RestoreProfileAsync(secret));
+        OpenSignerApproval.Visibility = Visibility.Collapsed;
     }
 
     private void RestoreSecretBox_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
@@ -1297,6 +1305,7 @@ public partial class MainWindow : Window
 
     private void ShowRestore_Click(object sender, RoutedEventArgs e)
     {
+        if (restoringWithSigner) service.SignerInteraction(true);
         ShowSetupPanel(RestoreOptionsPanel);
         _ = StartJoinRequestAsync();
     }
@@ -1311,8 +1320,27 @@ public partial class MainWindow : Window
         RecoveryWordBox.Focus();
     }
 
-    private void ShowSecretKey_Click(object sender, RoutedEventArgs e)
+    private void OpenSignerApproval_Click(object sender, RoutedEventArgs e)
     {
+        var link = service.SignerInteraction(false);
+        if (Uri.TryCreate(link, UriKind.Absolute, out var url) && url.Scheme == Uri.UriSchemeHttps)
+            Process.Start(new ProcessStartInfo(url.AbsoluteUri) { UseShellExecute = true });
+        else
+            SetupNotice.Text = "Check your signer for an approval request";
+    }
+
+    private bool restoringWithSigner;
+    private void ShowRemoteSigner_Click(object sender, RoutedEventArgs e) => ShowCredentialForm(true);
+    private void ShowSecretKey_Click(object sender, RoutedEventArgs e) => ShowCredentialForm(false);
+
+    private void ShowCredentialForm(bool signer)
+    {
+        restoringWithSigner = signer;
+        RestoreTitle.Text = signer ? "Remote signer" : "Secret key";
+        RestoreInputLabel.Text = signer ? "Signer connection link" : "Secret key";
+        RestoreSecretPlaceholder.Text = signer ? "bunker://…" : "nsec1... or hex secret key";
+        RestoreActionText.Text = signer ? "Connect signer" : "Restore";
+        RestoreSecretBox.Clear();
         ShowSetupPanel(RestorePanel);
         RestoreSecretBox.Focus();
     }

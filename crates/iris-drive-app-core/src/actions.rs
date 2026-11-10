@@ -5,6 +5,8 @@ use serde::{Deserialize, Serialize};
 pub enum NativeAppAction {
     Refresh,
     RefreshProfile,
+    SignerApprovalLink,
+    CancelSignerRecovery,
     CreateProfile {
         app_key_label: String,
     },

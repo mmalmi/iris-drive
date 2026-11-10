@@ -326,6 +326,9 @@ impl FfiApp {
 
     #[must_use]
     pub fn dispatch(&self, action: NativeAppAction) -> NativeAppState {
+        if let Some(result) = self.dispatch_signer_action(&action) {
+            return result;
+        }
         if matches!(
             action,
             NativeAppAction::Refresh | NativeAppAction::StartSync | NativeAppAction::RestartSync
@@ -368,6 +371,7 @@ impl FfiApp {
 struct NativeAppRuntime {
     state: NativeAppState,
     state_revision: u64,
+    signer_request: Option<remote_recovery::SignerRequest>,
     background_work: Arc<Mutex<()>>,
     data_dir: String,
     app_version: String,
@@ -429,6 +433,7 @@ impl NativeAppRuntime {
         let mut runtime = Self {
             state,
             state_revision: 0,
+            signer_request: None,
             background_work: Arc::new(Mutex::new(())),
             data_dir,
             app_version,
@@ -499,7 +504,10 @@ impl NativeAppRuntime {
         );
         let provider_summary = provider_summary_mode_for_action(&action);
         match action {
-            NativeAppAction::Refresh | NativeAppAction::RefreshProfile => {}
+            NativeAppAction::Refresh
+            | NativeAppAction::RefreshProfile
+            | NativeAppAction::SignerApprovalLink
+            | NativeAppAction::CancelSignerRecovery => {}
             NativeAppAction::CreateProfile { app_key_label } => {
                 self.create_profile(&app_key_label);
             }
@@ -3750,6 +3758,7 @@ mod network_config_actions;
 mod provider_tests;
 #[cfg(test)]
 mod relay_tests;
+mod remote_recovery;
 mod snapshot_link;
 #[cfg(test)]
 mod tests;

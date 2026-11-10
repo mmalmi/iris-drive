@@ -54,6 +54,16 @@ pub(crate) struct LocalNostrRelay {
 }
 
 impl LocalNostrRelay {
+    pub(crate) fn pause_relay_queries(&self) -> PausedRelayQueries {
+        let permit = self.query_gate.clone().try_acquire_owned().unwrap();
+        let (started, entered) = std::sync::mpsc::channel();
+        *self.query_started.lock().unwrap() = Some(started);
+        PausedRelayQueries {
+            _permit: permit,
+            entered,
+        }
+    }
+
     pub(crate) async fn spawn() -> Self {
         let (broadcasts, _rx) = broadcast::channel(256);
         let state = LocalRelayState {
@@ -523,13 +533,7 @@ impl SharingTestServices {
     }
 
     pub(crate) fn pause_relay_queries(&self) -> PausedRelayQueries {
-        let permit = self.relay.query_gate.clone().try_acquire_owned().unwrap();
-        let (started, entered) = std::sync::mpsc::channel();
-        *self.relay.query_started.lock().unwrap() = Some(started);
-        PausedRelayQueries {
-            _permit: permit,
-            entered,
-        }
+        self.relay.pause_relay_queries()
     }
 
     pub(crate) fn prepare(&self, config_dir: &std::path::Path) {

@@ -111,6 +111,7 @@ pub enum AppKeyAuthorizationState {
 
 #[path = "profile/app_key_link_state.rs"]
 mod app_key_link_state;
+mod remote_recovery;
 pub use app_key_link_state::{
     HandledAppKeyLinkRequest, InboundAppKeyLinkRequest, MAX_HANDLED_APP_KEY_LINK_REQUESTS,
     MAX_INBOUND_APP_KEY_LINK_REQUESTS, MAX_PENDING_DEVICE_APPROVAL_RECEIPTS,
@@ -1084,27 +1085,9 @@ impl Profile {
         if let Some(phrase) = recovery_phrase.as_deref() {
             save_recovery_phrase(recovery_phrase_path_in(config_dir), phrase)?;
         }
-        let app_key_label = resolve_app_key_label(app_key_label, &device.pubkey_hex());
-        let mut state = ProfileState {
-            profile_id,
-            app_key_pubkey: device.pubkey_hex(),
-            profile_roster_ops,
-            app_key_link_secret: default_app_key_link_secret(),
-            authorization_state: AppKeyAuthorizationState::AwaitingApproval,
-            app_key_label: app_key_label.clone(),
-            app_keys: None,
-            profile_roster_projection: None,
-            outbound_app_key_link_request: None,
-            inbound_app_key_link_requests: Vec::new(),
-            handled_app_key_link_requests: Vec::new(),
-            pending_device_approval_receipts: Vec::new(),
-        };
-        state.sync_app_keys_from_profile();
-
-        let mut profile = Self {
-            state,
-            app_key: device,
-        };
+        let mut profile =
+            Self::pending_recovery(device, profile_id, profile_roster_ops, app_key_label);
+        let app_key_label = profile.state.app_key_label.clone();
         profile.admit_current_app_key_with_authority_keys(
             recovery_key.keys(),
             expected_purpose,

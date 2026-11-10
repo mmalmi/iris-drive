@@ -239,6 +239,9 @@ pub struct UiFipsPeerStatus {
 
 #[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct NativeAppState {
+    /// Only populated on an explicit user request to open the signer's approval page.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signer_approval_url: Option<String>,
     pub ui: UiState,
     pub error: String,
 }

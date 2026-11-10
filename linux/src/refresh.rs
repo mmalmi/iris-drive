@@ -27,7 +27,9 @@ pub(crate) fn refresh(model: &AppRef) {
             if awaiting_link_approval {
                 if matches!(
                     *model.setup_screen.borrow(),
-                    SetupScreen::RestorePhrase | SetupScreen::RestoreSecretKey
+                    SetupScreen::RestorePhrase
+                        | SetupScreen::RestoreSecretKey
+                        | SetupScreen::RemoteSigner
                 ) {
                     render_setup(model);
                     return;
