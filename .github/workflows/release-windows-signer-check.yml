@@ -1,0 +1,56 @@
+name: Windows signer window
+on:
+  workflow_call:
+    inputs:
+      commit:
+        type: string
+        required: true
+      product_run:
+        type: string
+        required: true
+permissions:
+  contents: read
+  actions: read
+jobs:
+  signer-window:
+    runs-on: windows-2025
+    timeout-minutes: 12
+    env:
+      SOURCE_COMMIT: ${{ inputs.commit }}
+      PRODUCT_RUN: ${{ inputs.product_run }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit }}
+          path: candidate
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          name: drive-windows-${{ inputs.commit }}
+          path: product
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.product_run }}
+      - name: Verify and unpack the existing unsigned product
+        shell: pwsh
+        run: |
+          $tree = git -C candidate rev-parse 'HEAD^{tree}'
+          if ((git -C candidate rev-parse HEAD) -ne $env:SOURCE_COMMIT) { throw 'Source mismatch' }
+          node candidate/scripts/hosted-product-receipt.mjs product/build-receipt.json product/windows-products.tar.gz $env:SOURCE_COMMIT $tree windows
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          New-Item -Type Directory -Path unpacked, evidence | Out-Null
+          Copy-Item product/build-receipt.json evidence/
+          python candidate/scripts/unpack-hosted-product.py product/windows-products.tar.gz unpacked
+      - name: Exercise the signer form on an isolated input desktop
+        shell: powershell
+        run: |
+          scripts/hosted-windows-signer.ps1 -Product (Resolve-Path unpacked/publish) -Evidence (Resolve-Path evidence)
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: drive-windows-signer-window-${{ github.run_id }}
+          path: evidence/
+          if-no-files-found: warn
+          retention-days: 14
