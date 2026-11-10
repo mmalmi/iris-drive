@@ -72,6 +72,7 @@ mod tests {
             authorized_app_keys: 1,
             app_key_roots_present: 1,
             shared_mounts: Vec::new(),
+            ..Default::default()
         };
 
         let index = provider_modified_at_index(&view);

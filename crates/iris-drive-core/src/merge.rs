@@ -20,11 +20,11 @@
 
 use std::collections::BTreeMap;
 
-use hashtree_core::{Cid, HashTree, HashTreeError, LinkType, Store, from_hex, to_hex};
+use hashtree_core::to_hex;
 use serde::{Deserialize, Serialize};
 
 use crate::config::AppKeyRootRef;
-use crate::indexer::{path_has_ignored_component, should_ignore_name};
+use crate::indexer::path_has_ignored_component;
 use crate::root_meta::root_cid_identity_matches;
 
 /// Reserved top-level subdirectory inside any hashtree directory for
@@ -762,133 +762,9 @@ pub fn original_path_from_tombstone(tombstone_path: &str) -> Option<&str> {
         .and_then(|rest| rest.strip_prefix('/'))
 }
 
-/// Walk an htree directory root and partition its contents into
-/// regular files and tombstones. Tombstone leaves (under `.tombstones/`)
-/// are decoded by parsing their content as a unix-seconds integer; any
-/// leaf whose content can't be parsed is silently skipped.
-pub async fn walk_app_key_tree<S: Store>(
-    tree: &HashTree<S>,
-    root: &Cid,
-) -> Result<(Vec<AppKeyFileEntry>, Vec<AppKeyTombstone>), HashTreeError> {
-    let mut files = Vec::new();
-    let mut tombstones = Vec::new();
-    walk_dir_recursive(tree, root, "", &mut files, &mut tombstones).await?;
-    Ok((files, tombstones))
-}
-
-/// Walk inside `.hashtree/` collecting tombstones and ignoring other
-/// structural metadata.
-/// Lifted out so the main walker doesn't need to know `META_DIR`
-/// internals.
-fn walk_meta_dir<'a, S: Store>(
-    tree: &'a HashTree<S>,
-    dir_cid: &'a Cid,
-    prefix: &'a str,
-    files: &'a mut Vec<AppKeyFileEntry>,
-    tombstones: &'a mut Vec<AppKeyTombstone>,
-) -> futures::future::BoxFuture<'a, Result<(), HashTreeError>> {
-    Box::pin(async move {
-        let entries = tree.list_directory_required(dir_cid).await?;
-        for entry in entries {
-            let path = format!("{prefix}/{}", entry.name);
-            // Structural metadata is not user-visible content. Only
-            // the tombstone subtree is intentionally traversed.
-            if path == PREV_LINK_PATH
-                || path == ROOT_META_PATH
-                || path == CONFLICTS_PREFIX
-                || path == PATH_KIND_REPLACEMENTS_PATH
-            {
-                continue;
-            }
-            let child_cid = Cid {
-                hash: entry.hash,
-                key: entry.key,
-            };
-            if entry.link_type == LinkType::Dir && path == TOMBSTONE_PREFIX {
-                // The tombstones subtree mirrors original paths; recurse
-                // and let the tombstone-leaf check below pick them up.
-                walk_dir_recursive(tree, &child_cid, &path, files, tombstones).await?;
-            }
-        }
-        Ok(())
-    })
-}
-
-fn walk_dir_recursive<'a, S: Store>(
-    tree: &'a HashTree<S>,
-    dir_cid: &'a Cid,
-    prefix: &'a str,
-    files: &'a mut Vec<AppKeyFileEntry>,
-    tombstones: &'a mut Vec<AppKeyTombstone>,
-) -> futures::future::BoxFuture<'a, Result<(), HashTreeError>> {
-    Box::pin(async move {
-        let entries = tree.list_directory_required(dir_cid).await?;
-        for entry in entries {
-            let path = if prefix.is_empty() {
-                entry.name.clone()
-            } else {
-                format!("{prefix}/{}", entry.name)
-            };
-            let child_cid = Cid {
-                hash: entry.hash,
-                key: entry.key,
-            };
-            if entry.name == META_DIR && prefix.is_empty() {
-                // `.hashtree/` subtree carries htree-format metadata
-                // (revision back-link, tombstones, ...). Recurse so the
-                // tombstone walker can pick up entries under
-                // `.hashtree/tombstones/`, but skip the `prev` link.
-                walk_meta_dir(tree, &child_cid, META_DIR, files, tombstones).await?;
-                continue;
-            }
-            if should_ignore_name(&entry.name) {
-                continue;
-            }
-            if entry.link_type == LinkType::Dir {
-                walk_dir_recursive(tree, &child_cid, &path, files, tombstones).await?;
-            } else if let Some(orig_path) = original_path_from_tombstone(&path) {
-                let raw = tree
-                    .get(&child_cid, None)
-                    .await?
-                    .ok_or_else(|| HashTreeError::MissingChunk(to_hex(&entry.hash)))?;
-                let ts_str = String::from_utf8_lossy(&raw);
-                if let Ok(tombstoned_at) = ts_str.trim().parse::<i64>() {
-                    tombstones.push(AppKeyTombstone {
-                        path: orig_path.to_string(),
-                        tombstoned_at,
-                    });
-                } else {
-                    tracing::warn!("malformed tombstone at {path}: {ts_str:?}");
-                }
-            } else {
-                files.push(AppKeyFileEntry {
-                    path,
-                    hash: entry.hash,
-                    size: entry.size,
-                    whole_file_hash: whole_file_hash_from_meta(entry.meta.as_ref()),
-                    modified_at: modified_at_from_meta(entry.meta.as_ref()),
-                });
-            }
-        }
-        Ok(())
-    })
-}
-
-fn whole_file_hash_from_meta(
-    meta: Option<&std::collections::HashMap<String, serde_json::Value>>,
-) -> Option<[u8; 32]> {
-    meta.and_then(|m| m.get(WHOLE_FILE_HASH_META_KEY))
-        .and_then(serde_json::Value::as_str)
-        .and_then(|s| from_hex(s).ok())
-}
-
-fn modified_at_from_meta(
-    meta: Option<&std::collections::HashMap<String, serde_json::Value>>,
-) -> Option<i64> {
-    meta.and_then(|m| m.get(MODIFIED_AT_META_KEY))
-        .and_then(serde_json::Value::as_i64)
-        .filter(|value| *value > 0)
-}
+mod tree_walk;
+pub use tree_walk::walk_app_key_tree;
+pub(crate) use tree_walk::{UserTreeIndex, walk_app_key_tree_indexed};
 
 #[cfg(test)]
 mod tests;

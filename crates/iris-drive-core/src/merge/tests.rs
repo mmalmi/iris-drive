@@ -1,5 +1,6 @@
 #[allow(clippy::wildcard_imports)]
 use super::*;
+use hashtree_core::Cid;
 
 fn dev_root(published_at: i64) -> AppKeyRootRef {
     AppKeyRootRef::legacy(format!("cid-{published_at}"), published_at, 1)

@@ -1,14 +1,8 @@
 //! Assemble the merged visible root in memory before storing it.
 
-use std::collections::{BTreeMap, HashMap};
+use hashtree_core::{Cid, HashTreeError, TreeEntry};
 
-use hashtree_core::{Cid, HashTree, HashTreeError, Store, TreeEntry};
-
-use super::{
-    DirectoryMeta, ProjectionError, merged_entry_source_path, split_visible_path,
-    visible_entry_meta,
-};
-use crate::config::AppKeyRootRef;
+use super::{DirectoryMeta, ProjectionError, split_visible_path, visible_entry_meta};
 use crate::dir_builder::{DirBuilder, LeafLink};
 use crate::merge::MergedEntry;
 
@@ -74,60 +68,4 @@ pub(super) fn set_dir_meta(
         .ok_or_else(|| HashTreeError::EntryNotFound(name.to_string()))?
         .meta = Some(meta);
     Ok(())
-}
-
-/// Looks up the source-tree entry behind each merged file, listing every
-/// source directory at most once.
-pub(super) struct SourceEntries<'a, S: Store> {
-    tree: &'a HashTree<S>,
-    roots: &'a BTreeMap<String, AppKeyRootRef>,
-    listings: HashMap<(&'a str, String), HashMap<String, TreeEntry>>,
-}
-
-impl<'a, S: Store> SourceEntries<'a, S> {
-    pub(super) fn new(tree: &'a HashTree<S>, roots: &'a BTreeMap<String, AppKeyRootRef>) -> Self {
-        Self {
-            tree,
-            roots,
-            listings: HashMap::new(),
-        }
-    }
-
-    pub(super) async fn entry_for(
-        &mut self,
-        entry: &MergedEntry,
-    ) -> Result<&TreeEntry, ProjectionError> {
-        let (app_key_pubkey, root) = self
-            .roots
-            .get_key_value(&entry.source_app_key_pubkey)
-            .ok_or_else(|| HashTreeError::PathNotFound(entry.source_app_key_pubkey.clone()))?;
-        let (parent, name) = split_visible_path(merged_entry_source_path(entry))?;
-        let key = (app_key_pubkey.as_str(), parent.join("/"));
-        if !self.listings.contains_key(&key) {
-            let root_cid =
-                Cid::parse(&root.root_cid).map_err(|source| ProjectionError::RootCid {
-                    app_key_pubkey: app_key_pubkey.clone(),
-                    root_cid: root.root_cid.clone(),
-                    source,
-                })?;
-            let parent_cid = if parent.is_empty() {
-                root_cid
-            } else {
-                self.tree
-                    .resolve(&root_cid, &key.1)
-                    .await?
-                    .ok_or_else(|| HashTreeError::PathNotFound(key.1.clone()))?
-            };
-            let mut by_name = HashMap::new();
-            for listed in self.tree.list_directory(&parent_cid).await? {
-                // A lookup takes the first entry carrying a name.
-                by_name.entry(listed.name.clone()).or_insert(listed);
-            }
-            self.listings.insert(key.clone(), by_name);
-        }
-        self.listings
-            .get(&key)
-            .and_then(|by_name| by_name.get(name))
-            .ok_or_else(|| HashTreeError::EntryNotFound(name.to_string()).into())
-    }
 }

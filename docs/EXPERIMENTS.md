@@ -86,6 +86,29 @@ merged view at 39 ms and the root materialization and entry listing under
 deletes, several devices, large files and the FileProvider extension itself
 remain unmeasured.
 
+### One walk per source root
+
+Each projection listed every source root three times: once for files and
+tombstones, once for user directories, and once more per directory to find the
+stored entry behind each visible file. The device root was also resolved twice
+per app key. The file walk now records directories and listings as it goes,
+and the merged view carries that result to the root materialization. The view
+is reused only when the drive still records the same root for the same app
+keys; otherwise, and for a view assembled by hand, the roots are walked again.
+
+Same release probe, three runs: materializing the merged root went from
+6-7 ms to 2-3 ms; the other steps did not move (merged view 4-6 ms, index
+with history 70-76 ms, mount import 15-16 ms). The absolute saving is small on
+one device with an in-memory store; it is two fewer listings of every source
+directory per projection and was not measured on disk or with several devices.
+
+The previous three-walk root builder ran beside the new one in every
+debug-build call and asserted equal root identifiers: 128 materializations in
+the core library tests, 57 in the CLI unit tests and 310 in the app-core
+tests, without a mismatch, before it was removed. One behaviour differs by
+design: when the view is reused, a source block that disappears from the store
+between building the view and materializing the root no longer matters.
+
 ## 2026-09-11 Slow approval relays and daemon responsiveness
 
 A native linking run established its authenticated direct FIPS connection while

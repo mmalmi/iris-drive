@@ -109,6 +109,55 @@ async fn primary_merged_root_stores_each_directory_once() {
     );
 }
 
+#[tokio::test]
+async fn primary_merged_root_from_view_does_not_walk_sources_again() {
+    let cfg_dir = tempdir().unwrap();
+    let account = Profile::create(cfg_dir.path(), Some("provider-list-test".into())).unwrap();
+    let tree = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())));
+
+    let source = tempdir().unwrap();
+    std::fs::create_dir_all(source.path().join("docs/empty")).unwrap();
+    std::fs::write(source.path().join("docs/a.txt"), b"a").unwrap();
+    std::fs::write(source.path().join("top.txt"), b"top").unwrap();
+    let meta = test_meta(&account.state.app_key_pubkey, 1);
+    let root = index_dir_with_history_and_meta(&tree, source.path(), None, 1, Some(&meta))
+        .await
+        .unwrap();
+    let mut config = AppConfig {
+        profile: Some(account.state.clone()),
+        ..AppConfig::default()
+    };
+    upsert_root(&mut config, &account.state, root.to_string(), &meta);
+
+    let view = primary_merged_view(&tree, &config).await.unwrap();
+    let expected = primary_merged_root_from_view(&tree, &config, &view)
+        .await
+        .unwrap();
+
+    // A store holding none of the source blocks can still materialize the
+    // root: everything it needs was gathered while building the view.
+    let blank = HashTree::new(HashTreeConfig::new(Arc::new(MemoryStore::new())));
+    let from_cache = primary_merged_root_from_view(&blank, &config, &view)
+        .await
+        .unwrap();
+    assert_eq!(from_cache.root_cid, expected.root_cid);
+
+    // A view assembled by hand carries no walk and gets the same root.
+    let by_hand = PrimaryMergedView {
+        sources: SourceCache::default(),
+        ..view.clone()
+    };
+    let rewalked = primary_merged_root_from_view(&tree, &config, &by_hand)
+        .await
+        .unwrap();
+    assert_eq!(rewalked.root_cid, expected.root_cid);
+    assert!(
+        primary_merged_root_from_view(&blank, &config, &by_hand)
+            .await
+            .is_err()
+    );
+}
+
 /// Prints wall time and store growth for the merged projection and the
 /// mount-import delta on a larger drive. See `docs/EXPERIMENTS.md`.
 #[tokio::test]
