@@ -53,6 +53,39 @@ previous projection stored more than 700.
 This does not measure LMDB, a release build, device CPU, battery or bandwidth,
 and no native provider, FileProvider or Cloud Files surface was exercised.
 
+### Release-build follow-up
+
+The same probe with `--release` on a 14-core Apple Silicon Mac, three runs,
+still on the in-memory store and with the new code only:
+
+| Step | Time |
+| --- | --- |
+| Index with history | 74-80 ms |
+| Merged view | 3-4 ms |
+| Materialize merged root | 6-7 ms, no new blocks |
+| Mount-import local delta | 16-17 ms |
+
+`idrive provider list` was then timed on a throwaway on-disk (LMDB) config
+directory, not on the installed app's provider surface: the app's group
+container was not readable from the measuring shell. The drive was built with
+`idrive init`, an import of 2,300 twelve-byte files in 20 directories, and a
+second import after removing 300 of them, which leaves 2,000 visible files and
+300 tombstones on one device. No daemon was running and nothing was published.
+
+| Binary | Runs | Real | User CPU |
+| --- | --- | --- | --- |
+| Installed 0.1.37 release helper | 2 | 30.6 s, 37.7 s | 28.5 s, 30.6 s |
+| This change, release build | 5 | 0.03-0.04 s | 0.01-0.02 s |
+
+Each binary created and listed its own config directory from the same source
+files, so the identities and root identifiers differ. The installed helper is
+three releases older than the parent of this change, so the gap is not
+attributable to this change alone. Debug logging on the new build put the
+merged view at 39 ms and the root materialization and entry listing under
+10 ms together, in a separate run. A drive whose tombstones come from provider
+deletes, several devices, large files and the FileProvider extension itself
+remain unmeasured.
+
 ## 2026-09-11 Slow approval relays and daemon responsiveness
 
 A native linking run established its authenticated direct FIPS connection while
