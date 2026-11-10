@@ -212,7 +212,7 @@ for lock in Cargo.lock linux/Cargo.lock; do
   require_registry_package "$lock" hashtree-network 0.3.0 e5e282964a08e2ee6851006a91823740672fa5f103d5de652532ee03186381c5
   require_registry_package "$lock" hashtree-nostr 0.4.0 381059616e65a3154eeac615a811ef18d854400958f78dfb8e11024f65800501
   require_registry_package "$lock" hashtree-nostr-pubsub 0.4.0 114ab31557c3e5466969fcfa9d7f0a294fbd7069bc501274f47860ff763b6b5b
-  require_registry_package "$lock" nostr-pubsub 0.1.20 d7615308044527a935027210cf62720d1ce36e49ae1fe888c0dd705c6359d4a8
+  require_registry_package "$lock" nostr-pubsub 0.1.21 8e06419d62a5196b9d9d5f7ed50a54664a08cec1497de18cae5a2643547d3907
   require_registry_package "$lock" nostr-pubsub-fips 0.6.1 23568533712a3635e45e86ed79895e42f87a11dfcd43ba9bcf02a5e9b90db90f
   require_registry_package "$lock" nostr-pubsub-social-graph 0.3.0 e9dd2d0a1cdacf1ea254ea05d7f63dd6624ff4ee6dae62c4c4000dd4db8b9666
   require_registry_package "$lock" hashtree-nostr-social-graph-heed 0.2.0-hashtree.1 99c4f448573e151bf32a0e6a9c18eb2ee69178a441680622a9729229d788f375

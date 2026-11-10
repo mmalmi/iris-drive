@@ -3697,9 +3697,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-pubsub"
-version = "0.1.20"
+version = "0.1.21"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d7615308044527a935027210cf62720d1ce36e49ae1fe888c0dd705c6359d4a8"
+checksum = "8e06419d62a5196b9d9d5f7ed50a54664a08cec1497de18cae5a2643547d3907"
 dependencies = [
  "async-trait",
  "nostr",
