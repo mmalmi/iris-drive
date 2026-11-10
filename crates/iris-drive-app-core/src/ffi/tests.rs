@@ -310,6 +310,8 @@ fn profile_actions_populate_mobile_parity_state() {
         export.error
     );
 
+    let relay = super::test_relay::TestRelay::spawn();
+    relay.use_for(dir.path());
     let state = app.dispatch(NativeAppAction::StartSync);
     assert!(state.ui.sync.running);
     assert_eq!(state.ui.sync.status, "up to date");

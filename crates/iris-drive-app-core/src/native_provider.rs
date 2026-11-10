@@ -758,6 +758,20 @@ async fn publish_prepared_app_key_root(
     } else {
         prepared.config.relays.clone()
     };
+    #[cfg(test)]
+    {
+        // Unit tests create throwaway profiles with production defaults. Keep
+        // them hermetic; a test that publishes configures a loopback relay.
+        if !relays
+            .iter()
+            .all(|relay| relay.starts_with("ws://127.0.0.1:") || relay.starts_with("ws://[::1]:"))
+        {
+            return Ok(json!({
+                "published_drive_root": false,
+                "error": "unit tests publish only to loopback relays",
+            }));
+        }
+    }
     let client = iris_drive_core::relay_sync::connect(&relays).await?;
     let result =
         iris_drive_core::relay_sync::publish_prebuilt_drive_root(&client, &prepared.event).await;

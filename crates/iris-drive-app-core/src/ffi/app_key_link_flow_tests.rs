@@ -657,6 +657,9 @@ fn revoked_current_device_refresh_logs_out_and_allows_fresh_relink() {
         link_target: owner_invite.clone(),
         app_key_label: "Phone".to_owned(),
     });
+    let relay = super::test_relay::TestRelay::spawn();
+    relay.use_for(owner_dir.path());
+    relay.use_for(linked_dir.path());
     let linked_account = linked.ui.profile.unwrap();
     let linked_device = linked_account.current_app_key_npub.clone();
     let approved = approve_owner_from_pending_request(

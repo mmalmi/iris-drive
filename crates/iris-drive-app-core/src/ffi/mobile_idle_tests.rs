@@ -60,6 +60,9 @@ fn mobile_app_key_link_exchange_stays_on_for_authorized_or_awaiting_approval() {
         app_key_label: "Phone".to_owned(),
     });
     assert!(linked.error.is_empty(), "{}", linked.error);
+    let relay = super::test_relay::TestRelay::spawn();
+    relay.use_for(owner_dir.path());
+    relay.use_for(phone_dir.path());
     approve_owner_from_pending_request(
         owner_dir.path(),
         phone_dir.path(),

@@ -3761,6 +3761,8 @@ mod relay_tests;
 mod remote_recovery;
 mod snapshot_link;
 #[cfg(test)]
+mod test_relay;
+#[cfg(test)]
 mod tests;
 
 #[cfg(test)]

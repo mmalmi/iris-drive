@@ -125,6 +125,32 @@ The previous implementation ran beside the new one on every debug-build call
 and asserted equal roots across 223 calls in the core, CLI and app-core tests,
 at least 42 of which took the shared-walk path, before it was removed.
 
+### Path-kind collision loop (measured, not changed)
+
+`resolve_path_kind_conflicts` rescans every file and rebuilds the occupied
+path set once per file/directory collision. A release probe over 20,000 files
+in 2,000 directories, with concurrent roots so each colliding file is renamed,
+took 3-8 ms with no collision and then about 12 ms per collision: 13 ms for
+one, 119 ms for ten, 252 ms for twenty. The machine was heavily loaded, so the
+absolute numbers are high; the shape is linear in collisions times entries.
+A drive without kind collisions pays nothing, and the suppressed-entry scan
+only runs for entries under a collision, so the loop was left as it is.
+
+## 2026-11-11 App-core unit tests and public relays
+
+`cargo test -p iris-drive-app-core --lib` took 74 s inside `verify-fast`, the
+longest step of its workspace-test lane. Per-test timing showed about twenty
+tests at almost exactly 10, 20, 30 or 60 s. They create throwaway profiles with
+the production default relays; every provider write then tried to publish its
+root to those relays and gave up after the 10 s publish timeout, and three
+tests ran a real sync whose relay fetches each waited out the same timeout.
+
+Unit-test publishes now go only to loopback relays, as Blossom uploads already
+did, and the three sync tests use an in-process loopback relay. The same 124
+tests pass in 6.5-6.8 s, and unit tests no longer open connections to public
+relays. Wall time of the whole gate was not compared because the machine was
+shared with other builds during both runs.
+
 ## 2026-09-11 Slow approval relays and daemon responsiveness
 
 A native linking run established its authenticated direct FIPS connection while
