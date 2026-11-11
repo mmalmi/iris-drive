@@ -692,6 +692,25 @@ async fn daemon_task_set_coalesces_active_keyed_tasks() {
     tasks.abort_all().await;
 }
 
+#[tokio::test]
+async fn daemon_task_set_releases_finished_tasks() {
+    let tasks = DaemonTaskSet::default();
+    for index in 0..200 {
+        tasks.push(tokio::spawn(async {}));
+        assert!(tasks.push_keyed(
+            format!("probe:{index}"),
+            tokio::spawn(async {})
+        ));
+        tokio::time::sleep(std::time::Duration::from_millis(1)).await;
+    }
+    let retained = tasks.tasks.lock().unwrap().len();
+    assert!(
+        retained < 20,
+        "finished daemon tasks must not accumulate, retained {retained}"
+    );
+    tasks.abort_all().await;
+}
+
 #[test]
 fn event_block_pull_retry_budget_stays_short_without_blossom() {
     let config = AppConfig {

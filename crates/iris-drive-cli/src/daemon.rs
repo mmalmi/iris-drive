@@ -33,12 +33,22 @@ struct ActiveKeyedTask {
 }
 
 impl DaemonTaskSet {
+    // The daemon loop registers short-lived tasks for its whole lifetime, so
+    // finished handles must be released on every registration.
+    fn push_managed(tasks: &mut Vec<ManagedDaemonTask>, task: ManagedDaemonTask) {
+        tasks.retain(|managed| !managed.join.is_finished());
+        tasks.push(task);
+    }
+
     pub(crate) fn push(&self, task: tokio::task::JoinHandle<()>) {
         match self.tasks.lock() {
-            Ok(mut tasks) => tasks.push(ManagedDaemonTask {
-                join: task,
-                abort_inner: None,
-            }),
+            Ok(mut tasks) => Self::push_managed(
+                &mut tasks,
+                ManagedDaemonTask {
+                    join: task,
+                    abort_inner: None,
+                },
+            ),
             Err(_) => task.abort(),
         }
     }
@@ -144,10 +154,13 @@ impl DaemonTaskSet {
             }
         });
         if let Ok(mut tasks) = self.tasks.lock() {
-            tasks.push(ManagedDaemonTask {
-                join,
-                abort_inner: Some(abort_inner),
-            });
+            Self::push_managed(
+                &mut tasks,
+                ManagedDaemonTask {
+                    join,
+                    abort_inner: Some(abort_inner),
+                },
+            );
             true
         } else {
             if let Ok(mut keyed_tasks) = self.keyed_tasks.lock()
