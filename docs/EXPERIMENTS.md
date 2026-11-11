@@ -151,6 +151,21 @@ tests pass in 6.5-6.8 s, and unit tests no longer open connections to public
 relays. Wall time of the whole gate was not compared because the machine was
 shared with other builds during both runs.
 
+## 2026-11-11 Release-gate daemon matrix split (rejected)
+
+Per-test timing of the release gate's Rust lane, one test at a time: the 66
+`cli_e2e` tests took about 20 s together and the 31 `daemon_sync_matrix` tests
+about 415 s, the longest being live multi-daemon scenarios of 25-43 s. None
+showed a fixed wait of the kind found in the app-core tests.
+
+Running the matrix as two concurrent halves (`scenario_tests::` and the rest,
+each still serial) beside `cli_e2e` took 310 s and 337 s of wall time, so the
+halves slowed each other and the saving was about a fifth rather than a half.
+In the second run one scenario failed when an `idrive provider list` did not
+return within the harness's 60 s limit; the cause was not investigated. The
+host carried other builds (load average 11-14). The gate keeps the matrix as
+one serial lane.
+
 ## 2026-09-11 Slow approval relays and daemon responsiveness
 
 A native linking run established its authenticated direct FIPS connection while
