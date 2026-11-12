@@ -111,12 +111,17 @@ struct Fields {
     accepted: Option<bool>,
     unsupported: Option<bool>,
     signal_path: Option<bool>,
+    consecutive_failures: Option<u64>,
     invalid: bool,
 }
 
 impl Fields {
     fn text(&mut self, name: &str, text: &str) {
         let value = match name {
+            "consecutive_failures" => {
+                self.invalid = true;
+                return;
+            }
             "peer" => &mut self.peer,
             "npub" => &mut self.npub,
             "session" => &mut self.session,
@@ -141,11 +146,22 @@ impl Fields {
     }
 }
 impl Visit for Fields {
+    fn record_u64(&mut self, field: &Field, value: u64) {
+        if field.name() == "consecutive_failures" {
+            self.invalid |= self.consecutive_failures.replace(value).is_some()
+                || value == 0
+                || value > LIMIT as u64;
+        }
+    }
     fn record_str(&mut self, field: &Field, value: &str) {
         self.text(field.name(), value);
     }
     fn record_bool(&mut self, field: &Field, value: bool) {
         let slot = match field.name() {
+            "consecutive_failures" => {
+                self.invalid = true;
+                return;
+            }
             "mesh_signaling_allowed" => &mut self.mesh,
             "accepted" => &mut self.accepted,
             _ => return,
@@ -155,7 +171,7 @@ impl Visit for Fields {
     fn record_debug(&mut self, field: &Field, value: &dyn fmt::Debug) {
         if !matches!(
             field.name(),
-            "peer" | "npub" | "session" | "error" | "signal_path"
+            "peer" | "npub" | "session" | "error" | "signal_path" | "consecutive_failures"
         ) {
             return;
         }
@@ -173,6 +189,7 @@ struct Attempt {
     session: Option<String>,
     answer: bool,
     terminal: bool,
+    failure_count: Option<u64>,
 }
 #[derive(Debug)]
 struct Ledger {
@@ -218,30 +235,26 @@ impl Ledger {
                 session: None,
                 answer: false,
                 terminal: false,
+                failure_count: None,
             });
             return;
         }
         if kind == Kind::Offer {
-            let Some(token) = f
+            if !f
                 .session
                 .as_ref()
-                .filter(|s| s.len() == 8 && s.bytes().all(|b| b.is_ascii_hexdigit()))
-            else {
-                self.invalid = true;
-                return;
-            };
-            // The logs shorten the random session ID. Ambiguous repeated tokens
-            // fail; the core itself validates the full nonce/identity before the
-            // exact terminal error below. Tokens alone are never authentication.
-            if self
-                .attempts
-                .iter()
-                .any(|a| a.session.as_ref() == Some(token))
+                .is_some_and(|s| s.len() == 8 && s.bytes().all(|b| b.is_ascii_digit()))
             {
                 self.invalid = true;
                 return;
             }
+            // short_id truncates a timestamp-prefixed nonce, so this display
+            // prefix can repeat. Correlation instead requires a serial complete
+            // sequence plus the full peer's monotonically advancing counter.
+            // The pinned core demultiplexes full nonces and validates the full
+            // session, sender and freshness before emitting the terminal error.
         }
+        let ordinal = self.attempts.len() as u64;
         let Some(attempt) = self.attempts.last_mut().filter(|a| !a.terminal) else {
             self.invalid = true;
             return;
@@ -259,16 +272,22 @@ impl Ledger {
             {
                 attempt.answer = true
             }
-            Kind::Failed if attempt.answer && f.unsupported == Some(true) => {
-                attempt.terminal = true
+            Kind::Failed
+                if attempt.answer
+                    && f.unsupported == Some(true)
+                    && f.consecutive_failures == Some(ordinal) =>
+            {
+                attempt.terminal = true;
+                attempt.failure_count = f.consecutive_failures;
             }
             _ => self.invalid = true,
         }
     }
     fn snapshot(&self) -> Value {
-        json!({"version": 1, "expected_peer": self.expected, "invalid": self.invalid,
+        json!({"version": 2, "expected_peer": self.expected, "invalid": self.invalid,
             "attempts": self.attempts.iter().enumerate().map(|(i, a)| json!({
-                "ordinal": i + 1, "session_token": a.session, "answer_received": a.answer,
+                "ordinal": i + 1, "session_prefix": a.session, "answer_received": a.answer,
+                "terminal_failure_count": a.failure_count,
                 "terminal": if a.terminal { "authenticated-unsupported" } else { "pending" }
             })).collect::<Vec<_>>()})
     }
@@ -349,30 +368,43 @@ mod tests {
             accepted: Some(false),
             unsupported: Some(kind == Kind::Failed),
             signal_path: Some(true),
+            consecutive_failures: Some(1),
             ..Fields::default()
         }
     }
     fn finish(l: &mut Ledger, token: &str) {
+        let ordinal = l.attempts.len() as u64 + 1;
         for kind in [Kind::Start, Kind::Offer, Kind::Answer, Kind::Failed] {
-            l.record(kind, fields(kind, token));
+            let mut f = fields(kind, token);
+            f.consecutive_failures = Some(ordinal);
+            l.record(kind, f);
         }
     }
     #[test]
     fn exact_terminal_sequence_is_positive_without_assuming_five_attempts() {
         let mut l = Ledger::new(PEER).unwrap();
-        finish(&mut l, "0123abcd");
-        finish(&mut l, "89abcdef");
+        finish(&mut l, "17945015");
+        finish(&mut l, "17945016");
         assert!(!l.invalid);
         assert!(l.attempts.iter().all(|a| a.terminal));
         assert_eq!(l.snapshot()["attempts"].as_array().unwrap().len(), 2);
     }
     #[test]
-    fn missing_unmatched_wrong_peer_unknown_outcome_and_ambiguous_tokens_fail() {
+    fn completed_serial_attempts_can_share_the_timestamp_display_prefix() {
+        let mut l = Ledger::new(PEER).unwrap();
+        finish(&mut l, "17945015");
+        finish(&mut l, "17945015");
+        assert!(!l.invalid);
+        assert!(l.attempts.iter().all(|a| a.terminal));
+        assert_eq!(l.snapshot()["attempts"].as_array().unwrap().len(), 2);
+    }
+    #[test]
+    fn missing_unmatched_wrong_peer_unknown_outcome_and_stale_counter_fail() {
         for bad in 0..7 {
             let mut l = Ledger::new(PEER).unwrap();
-            l.record(Kind::Start, fields(Kind::Start, "0123abcd"));
-            l.record(Kind::Offer, fields(Kind::Offer, "0123abcd"));
-            let mut answer = fields(Kind::Answer, "0123abcd");
+            l.record(Kind::Start, fields(Kind::Start, "17945015"));
+            l.record(Kind::Offer, fields(Kind::Offer, "17945015"));
+            let mut answer = fields(Kind::Answer, "17945015");
             if bad == 0 {
                 answer.session = Some("00000000".into());
             }
@@ -385,27 +417,85 @@ mod tests {
             if bad != 3 {
                 l.record(Kind::Answer, answer);
             }
-            let mut end = fields(Kind::Failed, "0123abcd");
+            let mut end = fields(Kind::Failed, "17945015");
             if bad == 4 {
                 end.unsupported = Some(false);
             }
             if bad == 5 {
                 end.npub = Some("other".into());
             }
-            l.record(Kind::Failed, end);
             if bad == 6 {
-                finish(&mut l, "0123abcd");
+                end.consecutive_failures = Some(2);
             }
+            l.record(Kind::Failed, end);
             assert!(l.invalid, "case {bad}");
         }
     }
     #[test]
     fn unfinished_attempt_remains_pending_and_overlap_is_invalid() {
         let mut l = Ledger::new(PEER).unwrap();
-        l.record(Kind::Start, fields(Kind::Start, "0123abcd"));
+        l.record(Kind::Start, fields(Kind::Start, "17945015"));
         assert_eq!(l.snapshot()["attempts"][0]["terminal"], "pending");
-        l.record(Kind::Start, fields(Kind::Start, "89abcdef"));
+        l.record(Kind::Start, fields(Kind::Start, "17945016"));
         assert!(l.invalid);
+    }
+    #[test]
+    fn serial_correlation_rejects_missing_stale_skipped_and_duplicate_evidence() {
+        for bad in 0..7 {
+            let mut l = Ledger::new(PEER).unwrap();
+            finish(&mut l, "17945015");
+            for kind in [Kind::Start, Kind::Offer, Kind::Answer] {
+                l.record(kind, fields(kind, "17945015"));
+                if bad == 5 && kind == Kind::Offer {
+                    l.record(kind, fields(kind, "17945015"));
+                }
+                if bad == 6 && kind == Kind::Answer {
+                    l.record(kind, fields(kind, "17945015"));
+                }
+            }
+            let mut end = fields(Kind::Failed, "17945015");
+            end.consecutive_failures = match bad {
+                0 => None,
+                1 => Some(1),
+                2 => Some(3),
+                3 => Some(0),
+                _ => Some(2),
+            };
+            l.record(Kind::Failed, end);
+            if bad == 4 {
+                let mut duplicate = fields(Kind::Failed, "17945015");
+                duplicate.consecutive_failures = Some(2);
+                l.record(Kind::Failed, duplicate);
+            }
+            assert!(l.invalid, "case {bad}");
+            assert_eq!(l.snapshot()["invalid"], true);
+        }
+    }
+    #[test]
+    fn full_peer_counter_requires_one_bounded_unsigned_value() {
+        let m = meta(
+            "synthetic",
+            "synthetic.rs",
+            1,
+            Level::DEBUG,
+            &["consecutive_failures"],
+        );
+        let field = m.fields().field("consecutive_failures").unwrap();
+        for bad in 0..6 {
+            let mut f = Fields::default();
+            match bad {
+                0 => f.record_u64(&field, 0),
+                1 => f.record_u64(&field, 33),
+                2 => {
+                    f.record_u64(&field, 1);
+                    f.record_u64(&field, 1);
+                }
+                3 => f.record_str(&field, "1"),
+                4 => f.record_bool(&field, true),
+                _ => f.record_i64(&field, -1),
+            }
+            assert!(f.invalid, "case {bad}");
+        }
     }
     #[test]
     fn bounded_writer_rejects_overflow() {
@@ -421,7 +511,7 @@ mod tests {
         let short = format!("npub1{}..{}", &PEER[5..9], &PEER[59..]);
         let peer = tracing::field::display(&short);
         let full_peer = tracing::field::display(PEER);
-        let token = tracing::field::display("0123abcd");
+        let token = tracing::field::display("17945015");
         let reason = tracing::field::display("protocol error: traversal-unsupported");
         let private = tracing::field::debug(UnrelatedPrivate);
         let mut l = Ledger::new(PEER).unwrap();
