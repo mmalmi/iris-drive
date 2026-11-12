@@ -59,6 +59,8 @@ async fn main() -> Result<()> {
 
     let remote_pubkey =
         PublicKey::from_bech32(&remote_npub).context("remote htree identity must be an npub")?;
+    #[cfg(feature = "stack-fixture")]
+    iris_drive_core::stack_fixture_control::configure_negotiation(&remote_npub)?;
     let device = AppKey::load_or_generate(key_path).context("load fixture AppKey")?;
     let config = fixture_config(&device, remote_pubkey.to_hex(), profile_id);
     let local = Arc::new(MemoryStore::new());

@@ -24,6 +24,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         let peers = self.endpoint.peers().await?;
         let snapshot = json!({
             "version": 1,
+            "observations": crate::stack_fixture_control::negotiation_snapshot()?,
             "observed_unix_ms": super::unix_time_ms(),
             "peers": peers.into_iter().map(|peer| json!({
                 "npub": peer.npub,
