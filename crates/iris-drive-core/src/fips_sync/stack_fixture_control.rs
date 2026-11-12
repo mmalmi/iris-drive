@@ -1,5 +1,7 @@
-//! Numeric, process-wide diagnostics for synthetic stack-fixture binaries only.
-//! No writer, formatter, payload, identity, filter or error string is retained.
+//! Fixed diagnostics for synthetic stack-fixture binaries only.
+//! The numeric traffic collector retains no payloads, identities or error text.
+//! The separate negotiation observer retains its configured synthetic peer and
+//! serial attempt counters and display prefixes; it never changes network state.
 //! Metadata selectors below are qualified against nvpn-fips-core 0.4.119.
 use std::fmt;
 use std::sync::{Arc, Mutex, OnceLock};
