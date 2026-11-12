@@ -1,5 +1,6 @@
 //! Fixed, local-only counters for the opt-in stack process fixture.
-//! No payloads, peer identifiers, routing changes or new network requests.
+//! No payloads, routing changes or new network requests.
+//! Peer identities appear only in the isolated fixture negotiation observation.
 use super::{DriveNostrPubsubRuntime, FipsBlockSync};
 use fips_core::FipsEndpoint;
 use hashtree_core::Store;
@@ -17,6 +18,33 @@ pub(super) fn enable_services(endpoint: &FipsEndpoint) -> anyhow::Result<()> {
 }
 
 impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
+    /// Observe the real endpoint without updating the app's recent-peer cache.
+    /// This is only compiled into the isolated process fixture.
+    pub async fn stack_fixture_negotiation_snapshot(&self) -> anyhow::Result<Value> {
+        let peers = self.endpoint.peers().await?;
+        let snapshot = json!({
+            "version": 1,
+            "observed_unix_ms": super::unix_time_ms(),
+            "peers": peers.into_iter().map(|peer| json!({
+                "npub": peer.npub,
+                "connected": peer.connected,
+                "rekey_in_progress": peer.rekey_in_progress,
+                "rekey_draining": peer.rekey_draining,
+                "direct_probe_pending": peer.direct_probe_pending,
+                "direct_probe_after_ms": peer.direct_probe_after_ms,
+                "direct_probe_retry_count": peer.direct_probe_retry_count,
+                "nostr_traversal_consecutive_failures": peer.nostr_traversal_consecutive_failures,
+                "nostr_traversal_in_cooldown": peer.nostr_traversal_in_cooldown,
+                "nostr_traversal_cooldown_until_ms": peer.nostr_traversal_cooldown_until_ms,
+            })).collect::<Vec<_>>(),
+        });
+        anyhow::ensure!(
+            serde_json::to_vec(&snapshot)?.len() <= 8192,
+            "fixture negotiation snapshot exceeds cap"
+        );
+        Ok(snapshot)
+    }
+
     pub fn stack_fixture_traffic_snapshot(&self) -> anyhow::Result<serde_json::Value> {
         snapshot_when_pubsub_enabled(self.transport_settings.enable_mesh_pubsub, || {
             let client = self
