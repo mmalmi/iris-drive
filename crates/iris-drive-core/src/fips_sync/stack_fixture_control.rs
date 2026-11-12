@@ -12,6 +12,9 @@ use tracing::span::{Attributes, Id, Record};
 use tracing::subscriber::Interest;
 use tracing::{Event, Level, Metadata, Subscriber};
 
+#[path = "stack_fixture_control/negotiation.rs"]
+mod negotiation;
+
 const TYPES: usize = 8;
 const RETRIES: usize = 11;
 const SNAPSHOT_CAP: usize = 2048;
@@ -262,7 +265,7 @@ struct NumericSubscriber(Arc<Collector>);
 
 impl Subscriber for NumericSubscriber {
     fn enabled(&self, metadata: &Metadata<'_>) -> bool {
-        classify(metadata).is_some()
+        classify(metadata).is_some() || negotiation::enabled(metadata)
     }
     fn register_callsite(&self, metadata: &'static Metadata<'static>) -> Interest {
         if self.enabled(metadata) {
@@ -280,6 +283,7 @@ impl Subscriber for NumericSubscriber {
     fn record(&self, _span: &Id, _values: &Record<'_>) {}
     fn record_follows_from(&self, _span: &Id, _follows: &Id) {}
     fn event(&self, event: &Event<'_>) {
+        negotiation::event(event);
         if let Some(kind) = classify(event.metadata()) {
             self.0.record(kind, event);
         }
@@ -338,3 +342,16 @@ pub(crate) fn snapshot() -> Result<Value> {
 #[cfg(test)]
 #[path = "stack_fixture_control/tests.rs"]
 mod tests;
+
+/// Configure the sole synthetic traversal target before endpoint startup.
+pub fn configure_negotiation(expected_peer: &str) -> Result<()> {
+    ensure!(
+        is_installed(),
+        "fixture observer must be installed before its target"
+    );
+    negotiation::configure(expected_peer)
+}
+
+pub(crate) fn negotiation_snapshot() -> Result<Value> {
+    negotiation::snapshot()
+}

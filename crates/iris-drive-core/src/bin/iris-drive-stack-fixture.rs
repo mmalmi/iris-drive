@@ -59,6 +59,8 @@ async fn main() -> Result<()> {
 
     let remote_pubkey =
         PublicKey::from_bech32(&remote_npub).context("remote htree identity must be an npub")?;
+    #[cfg(feature = "stack-fixture")]
+    iris_drive_core::stack_fixture_control::configure_negotiation(&remote_npub)?;
     let device = AppKey::load_or_generate(key_path).context("load fixture AppKey")?;
     let config = fixture_config(&device, remote_pubkey.to_hex(), profile_id);
     let local = Arc::new(MemoryStore::new());
@@ -198,9 +200,14 @@ async fn main() -> Result<()> {
                 let traffic = sync.stack_fixture_traffic_snapshot()?;
                 #[cfg(not(feature = "stack-fixture"))]
                 let traffic = serde_json::Value::Null;
+                #[cfg(feature = "stack-fixture")]
+                let negotiation = sync.stack_fixture_negotiation_snapshot().await?;
+                #[cfg(not(feature = "stack-fixture"))]
+                let negotiation = serde_json::Value::Null;
                 emit(&json!({
                     "event": "status",
                     "traffic": traffic,
+                    "negotiation": negotiation,
                     "remote_connected": remote_connected,
                     "remote_transport": remote.as_ref().and_then(|peer| peer.transport_type.clone()),
                     "remote_addr": remote.as_ref().and_then(|peer| peer.transport_addr.clone()),
