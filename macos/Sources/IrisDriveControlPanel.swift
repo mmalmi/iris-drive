@@ -4,64 +4,6 @@ import SwiftUI
 import UniformTypeIdentifiers
 import Vision
 
-private enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
-    case drive
-    case peers
-    case shares
-    case backup
-    case settings
-
-    var id: Self { self }
-
-    var title: String {
-        switch self {
-        case .drive:
-            return "Iris Drive"
-        case .peers:
-            return "Devices"
-        case .shares:
-            return "Shares"
-        case .backup:
-            return "Backup"
-        case .settings:
-            return "Settings"
-        }
-    }
-
-    var symbol: String {
-        switch self {
-        case .drive:
-            return "externaldrive.fill"
-        case .peers:
-            return "person.2.fill"
-        case .shares:
-            return "person.3.fill"
-        case .backup:
-            return "arrow.triangle.2.circlepath"
-        case .settings:
-            return "gearshape.fill"
-        }
-    }
-
-    static var initialScreenshotSelection: IrisDrivePanelTab {
-        guard IrisDriveScreenshotFixtures.enabled else {
-            return .drive
-        }
-        switch IrisDriveScreenshotFixtures.tabArgument {
-        case "device", "devices", "peers":
-            return .peers
-        case "share", "shares":
-            return .shares
-        case "backup", "backups", "file-server", "file-servers", "server", "servers":
-            return .backup
-        case "setting", "settings":
-            return .settings
-        default:
-            return .drive
-        }
-    }
-}
-
 private enum IrisDriveSetupMode {
     case welcome
     case create
@@ -271,6 +213,8 @@ struct IrisDriveControlPanel: View {
         switch selectedTab {
         case .drive:
             page { driveHome }
+        case .mirrors:
+            page { MirrorFoldersView(model: controller.folderMirrors) }
         case .peers:
             page { peers }
         case .shares:

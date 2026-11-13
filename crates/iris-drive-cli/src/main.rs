@@ -36,6 +36,7 @@ mod commands;
 mod daemon;
 mod drive;
 mod friend_backups;
+mod mirrors;
 mod mount;
 mod profile;
 mod provider_staging;
@@ -179,6 +180,7 @@ fn run_cli() -> ExitCode {
         Command::Drives => cmd_drives(&config_dir),
         Command::Whoami => cmd_whoami(&config_dir),
         Command::Index { dir } => cmd_index(&dir),
+        Command::Mirror { json, command } => mirrors::command(&config_dir, command, json),
         Command::Import { dir } => cmd_import(&config_dir, &dir),
         Command::List { at } => cmd_list(&config_dir, at),
         Command::Provider(command) => cmd_provider(&config_dir, command),

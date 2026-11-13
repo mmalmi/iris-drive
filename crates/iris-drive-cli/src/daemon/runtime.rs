@@ -36,6 +36,7 @@ pub(crate) fn cmd_daemon(
         let mut block_config = config.clone();
         block_config.relays = relays.clone();
         let daemon_tasks = DaemonTaskSet::default();
+        daemon_tasks.push(tokio::spawn(crate::mirrors::schedule(config_dir.to_owned())));
         let (fips_blocks, fips_block_sync_error) =
             match start_fips_block_sync(config_dir, &block_config).await {
                 Ok(sync) => (Some(Arc::new(sync)), None),

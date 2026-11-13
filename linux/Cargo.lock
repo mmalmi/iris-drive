@@ -3097,6 +3097,7 @@ dependencies = [
  "nvpn-fips-tcp",
  "nvpn-fips-tcp-endpoint",
  "reqwest",
+ "rustix",
  "rustls",
  "serde",
  "serde_json",
@@ -3105,6 +3106,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-tungstenite 0.24.0",
+ "tokio-util",
  "toml 0.9.12+spec-1.1.0",
  "tracing",
  "uuid",
@@ -5982,6 +5984,7 @@ checksum = "e464cf451ba96ebfc6f9b6542f17ee8b8956e33f1e40d9690624e59d7a7f8a4b"
 dependencies = [
  "bytes",
  "futures-core",
+ "futures-io",
  "futures-sink",
  "libc",
  "pin-project-lite",

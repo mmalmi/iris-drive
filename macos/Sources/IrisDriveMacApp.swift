@@ -96,10 +96,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         appVersion: appVersion
     )
 
-    var appVersion: String {
-        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String
-            ?? "0.1.0"
-    }
+    lazy var folderMirrors = FolderMirrors(directory: runtimePaths().configDirectory.path)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         IrisDriveDesktopCore.installRustlsCryptoProvider()
@@ -130,6 +127,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         )
         ensureFileProviderDomainIfProfileExists()
         startAutomaticUpdateChecks()
+        folderMirrors.start()
     }
 
     func ensureFileProviderDomain() {

@@ -55,6 +55,19 @@ just run-cli import /path/to/seed-folder
 just run-cli daemon
 ```
 
+### Mirror a folder into My Drive
+
+On Mac, open **Mirrors → Mirror folder…**, choose a source, then enter a folder name or path inside My Drive. For iCloud Drive sources, use Finder’s **Keep Downloaded** on folders you want available for copying.
+
+```bash
+idrive mirror add "/path/to/source" --to "iCloud"
+idrive mirror list
+idrive mirror run "iCloud"
+idrive mirror remove "iCloud"
+```
+
+Mirrors check every five minutes while Iris is running. The Mac app handles folders selected in its picker. The daemon handles folders registered from the CLI. Both use the same profile-local registrations and Rust copy engine. Use the same Iris profile for both interfaces (the CLI accepts `--config-dir`). New or changed files are verified against their stored bytes. Source deletions leave the Iris copies in place. An existing destination file with different contents, a symbolic link, or a cloud-only file appears under **need attention**. Resolve it and run the mirror again. Stopping a mirror keeps its contents in My Drive. The CLI supports `--json`; a manual run with pending items prints its report and exits nonzero.
+
 Fresh clients use the independent authenticated FIPS first-adjacency services
 on LNVPS (`wss://fips1.iris.to/fips`) and Osiris
 (`wss://fips2.iris.to/fips`) by default. Override or disable them with

@@ -251,6 +251,18 @@ pub extern "C" fn iris_drive_update_download_json(
     json_string(&result)
 }
 
+mod mirrors;
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_mirror_json(
+    data_dir: *const c_char,
+    request: *const c_char,
+) -> *mut c_char {
+    let dir = c_string_lossy(data_dir);
+    let result = mirrors::dispatch(Path::new(&dir), &c_string_lossy(request))
+        .unwrap_or_else(|error| serde_json::json!({"error": format!("{error:#}")}));
+    json_string(&result)
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn iris_drive_provider_list_json(data_dir: *const c_char) -> *mut c_char {
     json_string(&native_provider_list_json(&c_string_lossy(data_dir)))

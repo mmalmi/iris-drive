@@ -532,7 +532,7 @@ fn index_dir_inner<'a, S: Store>(
     })
 }
 
-fn file_entry_meta(
+pub(crate) fn file_entry_meta(
     whole_file_hash: &[u8; 32],
     modified_at: Option<i64>,
 ) -> HashMap<String, serde_json::Value> {

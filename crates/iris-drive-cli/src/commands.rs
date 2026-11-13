@@ -169,6 +169,14 @@ pub(crate) enum Command {
         /// Source directory to import once.
         dir: PathBuf,
     },
+    /// Copy changes from a local folder into a private folder in My Drive.
+    Mirror {
+        /// Print machine-readable results.
+        #[arg(long, global = true)]
+        json: bool,
+        #[command(subcommand)]
+        command: Option<MirrorCmd>,
+    },
     /// List the merged view of My Drive — files across every authorized
     /// `AppKey`'s tree with LWW resolution applied. On a single-`AppKey` install
     /// this is just that `AppKey`'s tree.
@@ -723,4 +731,21 @@ pub(crate) enum EventCmd {
     /// drive. Requires a previous `idrive import` so there's a CID
     /// to publish.
     DriveRoot,
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum MirrorCmd {
+    /// Register a source folder. Defaults to its folder name inside My Drive.
+    Add {
+        source: PathBuf,
+        #[arg(long, value_name = "IRIS_FOLDER")]
+        to: Option<String>,
+    },
+    /// Show sources, destinations and the last run.
+    #[command(alias = "status")]
+    List,
+    /// Copy and verify changes now.
+    Run { destination: String },
+    /// Stop mirroring. Keeps all files in My Drive.
+    Remove { destination: String },
 }

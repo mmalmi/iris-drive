@@ -30,7 +30,7 @@ require_file linux/src/ui.rs
 require_file windows/MainWindow.xaml
 require_file windows/MainWindowShares.cs
 
-require_contains macos/Sources/IrisDriveControlPanel.swift "case shares"
+require_contains macos/Sources/IrisDrivePanelTab.swift "case shares"
 require_contains macos/Sources/IrisDriveControlPanel.swift "SectionTitle(\"Shares\")"
 require_contains macos/Sources/IrisDriveControlPanel.swift "Create Shared Folder"
 require_contains macos/Sources/IrisDriveControlPanel.swift "Join Shared Folder"

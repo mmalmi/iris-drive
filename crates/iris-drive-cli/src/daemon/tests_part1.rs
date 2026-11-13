@@ -982,8 +982,9 @@ fn windows_cloud_cleanup_delete_marker_suppresses_delete_once() {
 #[test]
 fn windows_cloud_cleanup_delete_marker_prunes_expired_entries() {
     let config_dir = tempfile::tempdir().unwrap();
+    let marker = config_dir.path().join(WINDOWS_CLOUD_CLEANUP_DELETE_FILE);
     std::fs::write(
-        config_dir.path().join(WINDOWS_CLOUD_CLEANUP_DELETE_FILE),
+        &marker,
         r#"{"entries":[{"path":"old.txt","created_at_unix_ms":1}]}"#,
     )
     .unwrap();
@@ -992,10 +993,5 @@ fn windows_cloud_cleanup_delete_marker_prunes_expired_entries() {
         config_dir.path(),
         "old.txt",
     ));
-    assert!(
-        !config_dir
-            .path()
-            .join(WINDOWS_CLOUD_CLEANUP_DELETE_FILE)
-            .exists()
-    );
+    assert!(!marker.exists());
 }

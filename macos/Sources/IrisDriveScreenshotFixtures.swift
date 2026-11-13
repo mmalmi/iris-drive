@@ -15,6 +15,14 @@ enum IrisDriveScreenshotFixtures {
         #endif
     }
 
+    static var mirroredFolders: [MirroredFolder] {
+        [MirroredFolder(id: "fixture", source: "iCloud Drive/Documents", destination: "iCloud/Documents",
+                        bookmark: nil, due: false, running: false,
+                        last_run: .init(finished_at: Date().addingTimeInterval(-60).timeIntervalSince1970,
+                                        copied: 3, unchanged: 18, pending: 1,
+                                        issues: ["Trip notes.pages: Waiting for download. Choose Keep Downloaded in Finder"]))]
+    }
+
     static var tabArgument: String {
         argumentValue(after: "--iris-drive-screenshot-tab")
             ?? ProcessInfo.processInfo.environment["IRIS_DRIVE_MACOS_SCREENSHOT_TAB"]

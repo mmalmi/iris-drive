@@ -54,6 +54,7 @@ pub mod identity;
 pub mod indexer;
 pub mod link_input;
 pub mod merge;
+pub mod mirror;
 pub mod network_sync;
 pub mod nostr_events;
 pub mod nostr_identity;

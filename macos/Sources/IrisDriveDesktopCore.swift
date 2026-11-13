@@ -1,5 +1,8 @@
 import Foundation
 
+@_silgen_name("iris_drive_mirror_json")
+private func irisDriveMirrorJson(_ dir: UnsafePointer<CChar>, _ request: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("iris_drive_install_rustls_crypto_provider")
 private func irisDriveInstallRustlsCryptoProvider()
 
@@ -271,6 +274,20 @@ final class IrisDriveDesktopCore {
 
     private func takeString(_ pointer: UnsafeMutablePointer<CChar>?) -> String {
         Self.takeString(pointer)
+    }
+
+    static func mirror(_ request: [String: Any], in directory: String) throws -> [String: Any] {
+        let encoded = try JSONSerialization.data(withJSONObject: request)
+        let response = directory.withCString { dir in
+            String(decoding: encoded, as: UTF8.self).withCString { takeString(irisDriveMirrorJson(dir, $0)) }
+        }
+        guard let value = try JSONSerialization.jsonObject(with: Data(response.utf8)) as? [String: Any] else {
+            throw CocoaError(.coderInvalidValue)
+        }
+        if let error = value["error"] as? String {
+            throw NSError(domain: "IrisDriveMirror", code: 1, userInfo: [NSLocalizedDescriptionKey: error])
+        }
+        return value
     }
 
     private static func takeString(_ pointer: UnsafeMutablePointer<CChar>?) -> String {

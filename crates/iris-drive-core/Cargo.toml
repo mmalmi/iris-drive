@@ -50,6 +50,7 @@ serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-util = { version = "0.7", features = ["compat"] }
 tokio-tungstenite.workspace = true
 toml.workspace = true
 tempfile.workspace = true
@@ -63,6 +64,9 @@ libc = "=0.2.186"
 # iOS forbids System V semaphores. Enable the supported LMDB backend for all
 # embedded consumers, including the CLI's exactly pinned hashtree-lmdb version.
 heed = { package = "hashtree-heed", version = "=0.20.5-hashtree.2", default-features = false, features = ["posix-sem"] }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs"] }
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "macros", "rt-multi-thread"] }
