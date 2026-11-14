@@ -6,11 +6,10 @@ use anyhow::{Context, Result, anyhow};
 use iris_drive_core::config::AppConfig;
 use iris_drive_core::updater::{
     ProductUpdateConfig, ProductUpdateMode, ProductUpdateResult, check_product_update,
-    create_update_workspace, download_product_update,
+    create_update_workspace, download_product_update, product_update_config,
 };
-use serde_json::Value;
 
-use super::{UpdateArgs, config_path_in, load_daemon_status};
+use super::{UpdateArgs, config_path_in};
 
 const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -21,28 +20,19 @@ pub(crate) fn cmd_update(config_dir: &Path, args: UpdateArgs) -> Result<()> {
         .context("building update runtime")?;
     let config = AppConfig::load_or_default(config_path_in(config_dir))
         .with_context(|| format!("reading {}", config_path_in(config_dir).display()))?;
-    let daemon_status = load_daemon_status(config_dir);
-    runtime.block_on(run_update(
-        config_dir,
-        &config,
-        daemon_status.as_ref(),
-        args,
-    ))
+    let mut update_config = product_update_config(config_dir, config);
+    if let Some(reference) = &args.reference {
+        update_config.update_ref = Some(reference.clone());
+    }
+    runtime.block_on(run_update(update_config, args))
 }
 
-async fn run_update(
-    config_dir: &Path,
-    config: &AppConfig,
-    daemon_status: Option<&Value>,
-    args: UpdateArgs,
-) -> Result<()> {
+async fn run_update(update_config: ProductUpdateConfig, args: UpdateArgs) -> Result<()> {
     let mode = if args.app {
         ProductUpdateMode::App
     } else {
         ProductUpdateMode::Cli
     };
-    let update_config =
-        product_update_config(config_dir, config, daemon_status, args.reference.as_deref());
     let check = check_product_update(PRODUCT_VERSION, mode, update_config.clone())
         .await
         .context("resolving signed hashtree release")?;
@@ -87,38 +77,6 @@ async fn run_update(
         downloaded.tag
     );
     Ok(())
-}
-
-fn product_update_config(
-    config_dir: &Path,
-    config: &AppConfig,
-    daemon_status: Option<&Value>,
-    reference: Option<&str>,
-) -> ProductUpdateConfig {
-    ProductUpdateConfig {
-        relays: config.relays.clone(),
-        blossom_servers: config.blossom_servers.clone(),
-        embedded_hashtree_base_url: embedded_hashtree_base_url(daemon_status).map(str::to_string),
-        update_ref: reference.map(str::to_string),
-        config_dir: Some(config_dir.to_path_buf()),
-    }
-}
-
-fn embedded_hashtree_base_url(status: Option<&Value>) -> Option<&str> {
-    let status = status?;
-    if !status
-        .get("fresh")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-    {
-        return None;
-    }
-    status
-        .get("embedded_hashtree")
-        .and_then(|embedded| embedded.get("base_url"))
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
 }
 
 fn print_update_check(result: &ProductUpdateResult, json_output: bool) -> Result<()> {
@@ -314,8 +272,6 @@ fn command_error(context: &str, output: &std::process::Output) -> String {
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
-
     use super::*;
 
     #[test]
@@ -400,33 +356,5 @@ mod tests {
 
         assert_eq!(fs::read(destination).unwrap(), b"existing binary");
         assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
-    }
-
-    #[test]
-    fn product_update_config_includes_running_embedded_hashtree_url() {
-        let status = json!({
-            "fresh": true,
-            "embedded_hashtree": {
-                "base_url": "http://127.0.0.1:18432"
-            }
-        });
-        let app_config = AppConfig {
-            blossom_servers: vec!["https://backup.example".to_string()],
-            ..AppConfig::default()
-        };
-        let config_dir = Path::new("/tmp/iris-drive-test");
-        let update_config =
-            product_update_config(config_dir, &app_config, Some(&status), Some("htree://test"));
-
-        assert_eq!(
-            update_config.embedded_hashtree_base_url.as_deref(),
-            Some("http://127.0.0.1:18432")
-        );
-        assert_eq!(
-            update_config.blossom_servers,
-            vec!["https://backup.example"]
-        );
-        assert_eq!(update_config.update_ref.as_deref(), Some("htree://test"));
-        assert_eq!(update_config.config_dir.as_deref(), Some(config_dir));
     }
 }

@@ -46,15 +46,35 @@ pub struct ProductUpdateConfig {
 #[must_use]
 pub fn product_update_config_for_dir(config_dir: &Path) -> ProductUpdateConfig {
     let config = AppConfig::load_or_default(config_path_in(config_dir)).unwrap_or_default();
+    product_update_config(config_dir, config)
+}
+
+#[must_use]
+pub fn product_update_config(config_dir: &Path, config: AppConfig) -> ProductUpdateConfig {
     ProductUpdateConfig {
         relays: config.relays,
         blossom_servers: config.blossom_servers,
-        embedded_hashtree_base_url: None,
+        embedded_hashtree_base_url: running_embedded_hashtree_url(config_dir),
         update_ref: std::env::var("IRIS_DRIVE_UPDATE_HTREE_REF")
             .ok()
             .filter(|value| !value.trim().is_empty()),
         config_dir: Some(config_dir.to_path_buf()),
     }
+}
+
+fn running_embedded_hashtree_url(config_dir: &Path) -> Option<String> {
+    use crate::daemon_liveness::{daemon_lock_pid, fresh_daemon_status};
+
+    let status = fresh_daemon_status(config_dir)?;
+    // The profile lock disappears on shutdown. A new daemon must advertise its
+    // own endpoint before clients reuse the port from the previous generation.
+    let owner = daemon_lock_pid(config_dir)?;
+    if status["pid"].as_u64()? != u64::from(owner) {
+        return None;
+    }
+    let base = status["embedded_hashtree"]["base_url"].as_str()?;
+    let address: std::net::SocketAddr = base.strip_prefix("http://")?.parse().ok()?;
+    (address.ip().is_loopback() && address.port() != 0).then(|| base.to_owned())
 }
 
 pub fn check_product_update_blocking(
@@ -343,6 +363,43 @@ fn version_parts(value: &str) -> Vec<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_update_config_uses_the_running_profiles_embedded_hashtree() {
+        let directory = tempfile::tempdir().unwrap();
+        let profile = directory.path();
+        let lock = crate::daemon_liveness::daemon_lock_path(profile);
+        let status = profile.join(crate::daemon_liveness::DAEMON_STATUS_FILE_NAME);
+        let pid = std::process::id();
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        let endpoint = "http://127.0.0.1:18432";
+        let write_status = |updated_at, running, url| {
+            let value = serde_json::json!({
+                "pid": pid, "running": running, "fresh": true, "updated_at": updated_at,
+                "embedded_hashtree": {"base_url": url},
+            });
+            std::fs::write(&status, value.to_string()).unwrap();
+        };
+        let address = || product_update_config_for_dir(profile).embedded_hashtree_base_url;
+
+        std::fs::write(&lock, pid.to_string()).unwrap();
+        write_status(now, true, endpoint);
+        assert_eq!(address().as_deref(), Some(endpoint));
+        write_status(now - 60, true, endpoint);
+        assert!(address().is_none());
+        write_status(now, false, endpoint);
+        assert!(address().is_none());
+        write_status(now, true, "http://example.org:18432");
+        assert!(address().is_none());
+        write_status(now, true, endpoint);
+        std::fs::write(&lock, (pid + 1).to_string()).unwrap();
+        assert!(address().is_none());
+        std::fs::remove_file(lock).unwrap();
+        assert!(address().is_none());
+    }
 
     #[test]
     fn blocking_updates_fit_native_dispatch_stack() {

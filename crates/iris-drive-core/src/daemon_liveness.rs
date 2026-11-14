@@ -50,7 +50,7 @@ fn daemon_status_path(config_dir: &Path) -> PathBuf {
     config_dir.join(DAEMON_STATUS_FILE_NAME)
 }
 
-fn fresh_daemon_status_liveness(config_dir: &Path) -> Option<DaemonLiveness> {
+pub(crate) fn fresh_daemon_status(config_dir: &Path) -> Option<serde_json::Value> {
     let data = std::fs::read(daemon_status_path(config_dir)).ok()?;
     let status: serde_json::Value = serde_json::from_slice(&data).ok()?;
     let running = status
@@ -71,6 +71,11 @@ fn fresh_daemon_status_liveness(config_dir: &Path) -> Option<DaemonLiveness> {
     if !fresh_flag || unix_now_seconds().saturating_sub(updated_at) > DAEMON_STATUS_FRESH_SECS {
         return None;
     }
+    Some(status)
+}
+
+fn fresh_daemon_status_liveness(config_dir: &Path) -> Option<DaemonLiveness> {
+    let status = fresh_daemon_status(config_dir)?;
     let pid = status
         .get("pid")
         .and_then(serde_json::Value::as_u64)
