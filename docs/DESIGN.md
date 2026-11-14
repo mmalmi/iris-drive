@@ -139,6 +139,10 @@ All four are hashtree's concern, not iris-drive's. No iris-drive feature code ye
 - **Drive model**: primary My Drive is scoped by `IrisProfileId` (`root_scope_id`
   in config) with per-AppKey roots. AppKeys are actors; recovery/NIP-46 facets
   can admit fresh AppKeys and optionally decrypt key epochs but do not sign drive roots.
+  Each My Drive root key is also wrapped for every active recovery phrase facet
+  (not for shared folders), so a phrase restore with no other device online opens
+  the devices' latest roots, then publishes its own merged root. Adding a phrase
+  also has the phrase key sign its facet acceptance, which web sign-in looks up.
 - **Embedded daemon**: link `hashtree-embedded`, start on app launch with the
   config dir as block store path.
 - **Indexer**: maintain the htree directory tree from the present working set.

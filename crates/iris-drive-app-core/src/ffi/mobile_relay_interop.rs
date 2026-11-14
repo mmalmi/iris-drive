@@ -193,6 +193,9 @@ pub(super) async fn publish_native_profile_roster_ops(
         .map_err(|error| format!("publishing native profile roster ops: {error}"))?;
     }
 
+    if !pending_ops.is_empty() {
+        publish_recovery_phrase_follow_ups(config_dir, relay_client, state, &pending_ops).await;
+    }
     for op in pending_ops {
         published_roster_op_ids.insert(op.op_id);
     }
@@ -241,6 +244,49 @@ pub(super) async fn publish_native_profile_roster_ops(
         published_roster_op_ids.insert(event.id.to_hex());
     }
     Ok(())
+}
+
+/// A new recovery phrase needs its acceptance published and this device's
+/// root wrapped for it. Both run again with the roster ops on next start.
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+async fn publish_recovery_phrase_follow_ups(
+    config_dir: &Path,
+    relay_client: &nostr_sdk::Client,
+    state: &iris_drive_core::ProfileState,
+    published_ops: &[iris_drive_core::SignedNostrIdentityRosterOp],
+) {
+    let timeout = std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS);
+    match tokio::time::timeout(
+        timeout,
+        iris_drive_core::recovery_acceptance::publish_queued_facet_acceptances(
+            relay_client,
+            config_dir,
+        ),
+    )
+    .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => tracing::warn!(%error, "publishing recovery phrase acceptances failed"),
+        Err(_) => tracing::warn!("publishing recovery phrase acceptances timed out"),
+    }
+    match tokio::time::timeout(
+        timeout,
+        iris_drive_core::recovery_wraps::republish_root_for_added_recovery_phrase(
+            config_dir,
+            relay_client,
+            state,
+            published_ops,
+        ),
+    )
+    .await
+    {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => tracing::warn!(
+            error = %format!("{error:#}"),
+            "wrapping Drive root for recovery phrase failed"
+        ),
+        Err(_) => tracing::warn!("wrapping Drive root for recovery phrase timed out"),
+    }
 }
 
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]

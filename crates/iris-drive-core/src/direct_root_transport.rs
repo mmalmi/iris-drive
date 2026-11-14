@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::paths::{config_path_in, key_path_in};
 use crate::{
     AppConfig, AppKey, AppKeyRootRef, FsFipsBlockSync, PRIMARY_DRIVE_ID, ProfileState,
-    drive_root_recipient_app_key_pubkeys,
+    drive_root_key_recipient_pubkeys,
 };
 
 pub const DIRECT_ROOT_APP_TOPIC: &str = "iris-drive/root-events/v1/direct";
@@ -978,7 +978,7 @@ pub fn build_current_direct_root_events(
         && let Some(root) = drive.app_key_roots.get(&state.app_key_pubkey)
     {
         let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
-        let authorized_app_keys = drive_root_recipient_app_key_pubkeys(state, drive);
+        let authorized_app_keys = drive_root_key_recipient_pubkeys(state, drive);
         if !authorized_app_keys.is_empty() {
             let event = crate::nostr_events::build_drive_root_publish_event(
                 config_dir,

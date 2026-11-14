@@ -111,6 +111,7 @@ pub enum AppKeyAuthorizationState {
 
 #[path = "profile/app_key_link_state.rs"]
 mod app_key_link_state;
+mod phrase_restore;
 mod remote_recovery;
 pub use app_key_link_state::{
     HandledAppKeyLinkRequest, InboundAppKeyLinkRequest, MAX_HANDLED_APP_KEY_LINK_REQUESTS,

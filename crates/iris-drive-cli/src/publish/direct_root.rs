@@ -1251,7 +1251,7 @@ async fn append_primary_drive_root_events(
             return Ok(());
         };
         let authorized_app_keys =
-            iris_drive_core::drive_root_recipient_app_key_pubkeys(state, drive);
+            iris_drive_core::drive_root_key_recipient_pubkeys(state, drive);
         if authorized_app_keys.is_empty() {
             return Ok(());
         }
@@ -1348,64 +1348,7 @@ pub(crate) async fn publishable_app_key_root(
     drive: &Drive,
     state: &ProfileState,
 ) -> Result<Option<AppKeyRootRef>> {
-    let Some(root) = drive.app_key_roots.get(&state.app_key_pubkey).cloned() else {
-        return Ok(None);
-    };
-    if !root.local_only {
-        return Ok(Some(root));
-    }
-    publishable_parent_root(config_dir, state, root).await
-}
-
-pub(crate) async fn publishable_parent_root(
-    config_dir: &Path,
-    state: &ProfileState,
-    mut root: AppKeyRootRef,
-) -> Result<Option<AppKeyRootRef>> {
-    let daemon = Daemon::open(config_dir).context("opening daemon for publishable root lookup")?;
-    let mut seen = BTreeSet::new();
-    for _ in 0..32 {
-        if !seen.insert(root.root_cid.clone()) {
-            return Ok(None);
-        }
-        let cid = Cid::parse(&root.root_cid)
-            .with_context(|| format!("parsing root cid {}", root.root_cid))?;
-        let Some(meta) = iris_drive_core::indexer::read_root_meta(daemon.tree(), &cid)
-            .await
-            .with_context(|| format!("reading root metadata for {}", root.root_cid))?
-        else {
-            return Ok(None);
-        };
-        let Some(parent) = meta
-            .parents
-            .iter()
-            .find(|parent| parent.app_key_pubkey == state.app_key_pubkey)
-        else {
-            return Ok(None);
-        };
-        let parent_cid = Cid::parse(&parent.root_cid)
-            .with_context(|| format!("parsing parent root cid {}", parent.root_cid))?;
-        let parent_root = match iris_drive_core::indexer::read_root_meta(daemon.tree(), &parent_cid)
-            .await
-            .with_context(|| format!("reading parent root metadata for {}", parent.root_cid))?
-        {
-            Some(parent_meta) => AppKeyRootRef::from_meta(
-                parent.root_cid.clone(),
-                parent_meta.created_at,
-                &parent_meta,
-            ),
-            None => AppKeyRootRef::legacy(
-                parent.root_cid.clone(),
-                root.published_at,
-                root.dck_generation,
-            ),
-        };
-        if !parent_root.local_only {
-            return Ok(Some(parent_root));
-        }
-        root = parent_root;
-    }
-    Ok(None)
+    iris_drive_core::publishable_root::publishable_app_key_root(config_dir, drive, state).await
 }
 
 pub(crate) fn direct_root_event(key: String, event: &Event) -> Result<DirectRootEvent> {

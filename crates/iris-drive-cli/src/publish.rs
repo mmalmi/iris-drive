@@ -470,6 +470,16 @@ pub(crate) async fn publish_current_state(
                 }
             }
         }
+        // Acceptances signed by recovery phrases this device added.
+        if let Err(error) = relay_publish_with_timeout(
+            iris_drive_core::recovery_acceptance::publish_queued_facet_acceptances(
+                client, config_dir,
+            ),
+        )
+        .await
+        {
+            report.profile_roster_publish_error.get_or_insert(error);
+        }
     }
     if let Some(handoff) = approval_handoff.as_ref() {
         let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
@@ -578,7 +588,7 @@ pub(crate) async fn publish_current_state(
         && let Some(root) = publishable_app_key_root(config_dir, drive, state).await?
     {
         let authorized_app_key_pubkeys =
-            iris_drive_core::drive_root_recipient_app_key_pubkeys(state, drive);
+            iris_drive_core::drive_root_key_recipient_pubkeys(state, drive);
         if authorized_app_key_pubkeys.is_empty() {
             return Ok(report);
         }

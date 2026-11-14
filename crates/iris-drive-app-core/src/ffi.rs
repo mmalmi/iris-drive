@@ -909,9 +909,16 @@ impl NativeAppRuntime {
             self.state.error = format!("adding recovery key: {error}");
             return;
         }
+        let config_dir = Path::new(&self.data_dir);
         config.profile = Some(account.state);
-        if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
+        if let Err(error) = config.save(config_path_in(config_dir)) {
             self.state.error = format!("saving config: {error}");
+        } else if let Err(error) = recovery_acceptance::queue_added_recovery_phrase_acceptance(
+            config_dir,
+            config.profile.as_ref().expect("profile was just saved"),
+            &recovery_pubkey,
+        ) {
+            self.state.error = error;
         }
     }
 
@@ -3399,6 +3406,7 @@ fn generate_recovery_key_value() -> GeneratedRecoveryKey {
             };
         }
     };
+    recovery_acceptance::remember_shown_recovery_phrase_key(&keys);
     let recovery_pubkey = match keys.public_key().to_bech32() {
         Ok(npub) => npub,
         Err(error) => {
@@ -3425,6 +3433,7 @@ fn recovery_pubkey_for_phrase_value(recovery_phrase: &str) -> GeneratedRecoveryK
             };
         }
     };
+    recovery_acceptance::remember_shown_recovery_phrase_key(&keys);
     let recovery_pubkey = match keys.public_key().to_bech32() {
         Ok(npub) => npub,
         Err(error) => {
@@ -3754,8 +3763,10 @@ mod mobile_fips_status;
 #[cfg(test)]
 mod mobile_idle_tests;
 mod network_config_actions;
+mod phrase_restore;
 #[cfg(test)]
 mod provider_tests;
+mod recovery_acceptance;
 #[cfg(test)]
 mod relay_tests;
 mod remote_recovery;

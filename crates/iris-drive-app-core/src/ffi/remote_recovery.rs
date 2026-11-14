@@ -113,6 +113,7 @@ impl FfiApp {
             } if recovery_secret.trim().starts_with("bunker://") => {
                 Some(self.restore_with_signer(recovery_secret, app_key_label))
             }
+            NativeAppAction::RestoreProfile { .. } => self.dispatch_recovery_phrase_restore(action),
             _ => None,
         }
     }

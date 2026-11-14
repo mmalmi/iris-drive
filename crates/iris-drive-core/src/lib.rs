@@ -62,7 +62,11 @@ pub mod nostr_identity;
 pub mod paths;
 pub mod projection;
 pub mod provider;
+pub mod publishable_root;
+pub mod recovery_acceptance;
 pub mod recovery_phrase;
+pub mod recovery_restore;
+pub mod recovery_wraps;
 pub mod relay_config;
 mod relay_filters;
 pub mod relay_status;
@@ -153,6 +157,7 @@ pub use projection::{
     PrimaryMergedRoot, PrimaryMergedView, ProjectionError, primary_merged_root,
     primary_merged_root_from_view, primary_merged_view,
 };
+pub use recovery_wraps::{active_recovery_phrase_pubkeys, drive_root_key_recipient_pubkeys};
 pub use root_meta::{DriveRootMeta, RootObservation, RootParent};
 pub use share_actions::{
     ShareAction, ShareActionResult, dispatch_share_action, repair_missing_share_shortcuts,

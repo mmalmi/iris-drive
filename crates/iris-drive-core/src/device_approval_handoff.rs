@@ -97,7 +97,7 @@ async fn prepare_device_approval_root_snapshot(
         );
     }
 
-    let authorized_app_keys = crate::drive_root_recipient_app_key_pubkeys(state, drive);
+    let authorized_app_keys = crate::drive_root_key_recipient_pubkeys(state, drive);
     if authorized_app_keys.is_empty() {
         anyhow::bail!("device approval Drive root has no authorized recipients");
     }
