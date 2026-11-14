@@ -135,16 +135,28 @@ async fn recovery_phrase_alone_brings_back_the_files() {
         .expect("notes.txt came back");
     assert_eq!(notes.size, 5);
 
-    let published = relay_sync::fetch_drive_roots(
-        &client,
-        &phone.root_scope_id(),
-        PRIMARY_DRIVE_ID,
-        std::slice::from_ref(&phone.app_key_pubkey),
-        Duration::from_secs(5),
-    )
+    // The background restore saves its root locally before publishing the roster and
+    // root. A relay can finish an initially empty query during that interval.
+    let published = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let roots = relay_sync::fetch_drive_roots(
+                &client,
+                &phone.root_scope_id(),
+                PRIMARY_DRIVE_ID,
+                std::slice::from_ref(&phone.app_key_pubkey),
+                Duration::from_secs(5),
+            )
+            .await
+            .unwrap();
+            if let Some(root) = roots.into_iter().next() {
+                break root;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    })
     .await
-    .unwrap();
-    let (_, _, _, opened) = parse_drive_root_event_for_device(&published[0], &recovery_keys)
+    .expect("the relay never received the restored phone's root");
+    let (_, _, _, opened) = parse_drive_root_event_for_device(&published, &recovery_keys)
         .expect("the phone's root is wrapped for the phrase");
     assert_eq!(opened.root_cid, phone_root.root_cid);
     relay_sync::shutdown_client(&client).await;

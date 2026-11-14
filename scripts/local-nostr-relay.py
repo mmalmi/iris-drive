@@ -11,6 +11,7 @@ import json
 from pathlib import Path
 import signal
 import struct
+from tempfile import TemporaryDirectory
 import time
 
 
@@ -275,7 +276,10 @@ async def main() -> None:
         loop.add_signal_handler(stop_signal, stop.set)
     server = await asyncio.start_server(relay.handle, "127.0.0.1", 0)
     port = server.sockets[0].getsockname()[1]
-    args.ready_file.write_text(f"ws://127.0.0.1:{port}\n", encoding="utf-8")
+    with TemporaryDirectory(dir=args.ready_file.parent) as temporary:
+        ready = Path(temporary) / "ready"
+        ready.write_text(f"ws://127.0.0.1:{port}\n", encoding="utf-8")
+        ready.replace(args.ready_file)
     try:
         async with server:
             try:
