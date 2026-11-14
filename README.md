@@ -403,6 +403,13 @@ building. The iOS step runs `scripts/ios-build ios-testflight`; set
 The iOS release script runs `scripts/ios-profiles ensure` before archiving so
 the app, File Provider, and Share Extension are exported with installed manual
 App Store provisioning profiles instead of Xcode cloud signing.
+To export an unsigned hosted iOS release from the current revision, set
+`IRIS_DRIVE_IOS_HOSTED_PRODUCT_DIR` to the downloaded directory containing
+`build-receipt.json` and `ios-release-products.tar.gz`. Run
+`scripts/ios-build ios-export`, then `scripts/ios-build ios-upload` with the
+same settings. Both steps verify the signed app and its two extensions have
+the committed release entitlements, including their shared App Group.
+
 Before the first iOS upload for a bundle ID, run
 `scripts/testflight-internal ensure-app` or create the App Store Connect app
 record manually with the documented bundle ID and SKU if the API key cannot
@@ -451,13 +458,15 @@ node scripts/local-release.mjs --tag v0.1.0 --final
 ```
 
 Final publication requires a clean checkout at the exact annotated tag and
-`IRIS_STACK_GATE_RECEIPT` pointing to the successful [pinned Iris Stack process-gate receipt](https://github.com/irislib/iris-stack/blob/cec9501659b9cf08f9600e3f14987cad6ca1e7d3/docs/integration-lab.md).
+`IRIS_STACK_GATE_RECEIPT` pointing to the successful [pinned Iris Stack process-gate receipt](https://github.com/irislib/iris-stack/blob/9bb0e9361afa6b2b031c243af21cebbdefa1de4e/docs/integration-lab.md).
 Publish the source commit first and run that gate with `IRIS_STACK_RELEASE_GATE=1`,
 the pinned `IRIS_STACK_LAB_REV`, and `IRIS_STACK_DRIVE_REV` set to the full candidate
 commit. Set `IRIS_STACK_CHAT_REV` and `IRIS_STACK_HTREE_VERSION` to the companion
 pins in `scripts/mesh-release-gate.mjs`. The publisher checks the exact source
-tuple and passing CPU/bandwidth measurements before building and again before
-publication. Draft staging and dry-run planning do not require a receipt.
+tuple, recovery, private blob protection and passing CPU/bandwidth measurements
+for all four processes before building and again before publication. The Hashtree
+0.3 cohort reads the authenticated references used by this version of Drive.
+Draft staging and dry-run planning do not require a receipt.
 Receipts check locally supplied provenance; they are not signed attestations.
 
 The default release tree is `releases/iris-drive`. Copy
@@ -515,11 +524,12 @@ unrelated downloaded binary or establish equality with the signed app release.
 
 The final local release flow also publishes desktop/CLI packages using
 `haps-release.json` and the same verified `release.json` assets. Drafts do not
-publish Haps packages. Install Haps with the `import-release` subcommand and Python
+publish Haps packages. Install Haps 0.1.22 or later and Python
 3.9+ on the publisher. Set `HAPS_KEY_FILE` to an existing secret-key file matching
 the public publisher pinned in the mapping (or provision the matching existing
 Haps identity). Never generate a new release identity. The flow verifies
-checksums and package layout before upload, then requires Nostr acknowledgement.
+checksums and package layout, publishes and cold-fetches the complete source
+history, and then uploads the release. Package publication requires Nostr acknowledgement.
 A Haps failure fails the final release; byte-identical retries reuse the signed
 package versions. Iris Git, native updaters and Haps consume the same release
 artifacts; Android/iOS and native installer channels retain their existing gates.

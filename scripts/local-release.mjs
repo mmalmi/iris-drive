@@ -1441,7 +1441,10 @@ function main() {
     }
     if (!options.draft && !options.dryRun) requireMeshRelease(meshGate)
     const hapsArgs = ['import-release', stageDir, '--config', join(repoRoot, 'haps-release.json'), '--tag', tag]
-    if (!options.draft) run('haps', [...hapsArgs, '--check'], { env, dryRun: options.dryRun })
+    if (!options.draft) {
+      run('haps', [...hapsArgs, '--check'], { env, dryRun: options.dryRun })
+      run('haps', [...hapsArgs, '--publish-source'], { env, dryRun: options.dryRun })
+    }
     const published = publishRelease({
       stageDir,
       releaseTree,

@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process'
 import { readFileSync } from 'node:fs'
 
-export const labRevision = 'cec9501659b9cf08f9600e3f14987cad6ca1e7d3'
+export const labRevision = '9bb0e9361afa6b2b031c243af21cebbdefa1de4e'
 
 export function validateMeshReceipt(receipt, commit) {
   if (!/^[0-9a-f]{40}$/.test(commit) || receipt?.schema_version !== 1
@@ -11,8 +11,8 @@ export function validateMeshReceipt(receipt, commit) {
   }
   const expected = {
     drive: { source: 'htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-drive', rev: commit },
-    chat: { source: 'https://github.com/irislib/iris-chat-rs', rev: 'dc524968bab6b93d770cc1d7e8e81414293c37ad' },
-    hashtree: { source: 'crates.io', version: '0.2.150' },
+    chat: { source: 'https://github.com/irislib/iris-chat-rs', rev: 'f3ec6dff066508cb891dfdda7b21b088b1898076' },
+    hashtree: { source: 'crates.io', version: '0.3.0' },
   }
   for (const [name, source] of Object.entries(expected)) {
     const product = receipt.products?.[name]
@@ -21,12 +21,19 @@ export function validateMeshReceipt(receipt, commit) {
       throw new Error(`Mesh gate receipt does not match the ${name} release source`)
     }
   }
-  const samples = receipt.metrics?.idle
-  if (!Array.isArray(samples) || samples.length !== 2 || samples.some(sample =>
-    sample?.cpu_required !== true || sample.cpu_budget_percent !== 5
+  const metrics = receipt.metrics
+  if (metrics?.functional_recovery_complete !== true || metrics.wire_budget_passed !== true
+      || metrics.anonymous_reader_adjacency !== true || metrics.private_blob_probe?.disclosed !== false) {
+    throw new Error('Mesh gate receipt is missing recovery or anonymous reader privacy checks')
+  }
+  const samples = metrics.idle
+  const phases = ['before partition', 'after recovery']
+  if (!Array.isArray(samples) || samples.length !== phases.length || samples.some((sample, index) =>
+    sample?.phase !== phases[index] || sample.wire_budget_passed !== true
+      || sample.cpu_required !== true || sample.cpu_budget_percent !== 5
       || sample.wire_budget_bytes_per_second !== 4096
       || !Number.isFinite(sample.seconds) || sample.seconds < 65
-      || !Array.isArray(sample.cpu_percent) || sample.cpu_percent.length !== 3
+      || !Array.isArray(sample.cpu_percent) || sample.cpu_percent.length !== 4
       || sample.cpu_percent.some(cpu => !Number.isFinite(cpu) || cpu < 0 || cpu > 5)
       || !Number.isFinite(sample.combined_bytes_per_second)
       || sample.combined_bytes_per_second < 0 || sample.combined_bytes_per_second >= 4096)) {

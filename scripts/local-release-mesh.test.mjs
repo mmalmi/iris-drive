@@ -13,13 +13,18 @@ function receipt(revision = sha) {
     lab_worktree_clean: true,
     products: {
       drive: { source: 'htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-drive', rev: revision, sha256: 'b'.repeat(64) },
-      chat: { source: 'https://github.com/irislib/iris-chat-rs', rev: 'dc524968bab6b93d770cc1d7e8e81414293c37ad', sha256: 'b'.repeat(64) },
-      hashtree: { source: 'crates.io', version: '0.2.150', sha256: 'b'.repeat(64) },
+      chat: { source: 'https://github.com/irislib/iris-chat-rs', rev: 'f3ec6dff066508cb891dfdda7b21b088b1898076', sha256: 'b'.repeat(64) },
+      hashtree: { source: 'crates.io', version: '0.3.0', sha256: 'b'.repeat(64) },
     },
-    metrics: { idle: Array.from({ length: 2 }, () => ({
-      seconds: 65, cpu_required: true, cpu_budget_percent: 5, wire_budget_bytes_per_second: 4096,
-      cpu_percent: [0, 0.5, 5], combined_bytes_per_second: 3000,
-    })) },
+    metrics: {
+      functional_recovery_complete: true, wire_budget_passed: true, anonymous_reader_adjacency: true,
+      private_blob_probe: { disclosed: false },
+      idle: ['before partition', 'after recovery'].map(phase => ({
+        phase, wire_budget_passed: true, seconds: 65,
+        cpu_required: true, cpu_budget_percent: 5, wire_budget_bytes_per_second: 4096,
+        cpu_percent: [0, 0.5, 5, 0.3], combined_bytes_per_second: 3000,
+      })),
+    },
   }
 }
 
@@ -34,6 +39,13 @@ test('mesh receipt binds candidate, lab, companions and measured budgets', () =>
     value => { value.products.hashtree.version = '0.2.145' },
     value => { value.products.drive.source = 'local-binary' },
     value => { value.products.drive.sha256 = '' },
+    value => { value.metrics.functional_recovery_complete = false },
+    value => { value.metrics.anonymous_reader_adjacency = false },
+    value => { value.metrics.private_blob_probe.disclosed = true },
+    value => { value.metrics.wire_budget_passed = false },
+    value => { value.metrics.idle[1].wire_budget_passed = false },
+    value => { value.metrics.idle[1].phase = 'before partition' },
+    value => { value.metrics.idle[0].cpu_percent.pop() },
     value => { value.metrics.idle[0].cpu_budget_percent = 100 },
     value => { delete value.metrics.idle[0].seconds },
     value => { value.metrics.idle[0].seconds = 64.99 },
@@ -87,4 +99,7 @@ test('supported final publisher enforces the receipt before build and publicatio
   assert.equal(main.match(/requireMeshRelease\(meshGate\)/g)?.length, 2)
   assert(main.indexOf('requireMeshRelease(meshGate)') < main.indexOf('buildReleaseArtifacts('))
   assert(main.lastIndexOf('requireMeshRelease(meshGate)') < main.indexOf('const published = publishRelease('))
+  const publishSource = main.indexOf("run('haps', [...hapsArgs, '--publish-source']")
+  assert(publishSource > main.indexOf("run('haps', [...hapsArgs, '--check']"))
+  assert(publishSource < main.indexOf('const published = publishRelease('))
 })

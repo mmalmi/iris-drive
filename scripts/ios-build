@@ -97,6 +97,7 @@ env:
   IRIS_DRIVE_IOS_SIGNING_STYLE=automatic to let xcodebuild create/update
     App IDs, capabilities, and profiles with the App Store Connect API key
   IRIS_DRIVE_IOS_TESTFLIGHT_CHANNELS=internal,public for both channels
+  IRIS_DRIVE_IOS_HOSTED_PRODUCT_DIR optional exact hosted receipt and ios-release-products.tar.gz for export/upload
   IRIS_DRIVE_IOS_INTERNAL_ONLY=false for public-TestFlight capable exports
   IRIS_DRIVE_IOS_AFTER_UPLOAD_COMMAND optional shell command after upload
   IRIS_DRIVE_IOS_SKIP_TESTFLIGHT_PUBLISH=1 to upload without attaching/submitting
@@ -546,6 +547,26 @@ EOF
 EOF
 }
 
+use_hosted_ios_archive() {
+  local product="$IRIS_DRIVE_IOS_HOSTED_PRODUCT_DIR" commit tree
+  git -C "$ROOT" diff --quiet HEAD -- ios || { echo "The hosted export requires the committed iOS settings." >&2; return 1; }
+  commit="$(git -C "$ROOT" rev-parse HEAD)"
+  tree="$(git -C "$ROOT" rev-parse 'HEAD^{tree}')"
+  node "$ROOT/scripts/hosted-product-receipt.mjs" "$product/build-receipt.json" \
+    "$product/ios-release-products.tar.gz" "$commit" "$tree" ios-release
+  IOS_HOSTED_STAGE="$(mktemp -d /tmp/iris-drive-ios-product.XXXXXX)"
+  trap 'rm -rf -- "$IOS_HOSTED_STAGE"' EXIT
+  python3 "$ROOT/scripts/unpack-hosted-product.py" "$product/ios-release-products.tar.gz" "$IOS_HOSTED_STAGE"
+  ARCHIVE_PATH="$IOS_HOSTED_STAGE/IrisDriveIOS.xcarchive"
+  if [[ "$1" == ios-export ]]; then
+    python3 "$ROOT/scripts/ios-distribution-entitlements.py" prepare-archive "$ARCHIVE_PATH" "$IOS_DIR" "$APP_GROUP_IDENTIFIER"
+  fi
+}
+
+verify_ios_export_entitlements() {
+  python3 "$ROOT/scripts/ios-distribution-entitlements.py" verify-ipa "$(ipa_path)" "$IOS_DIR" "$APP_GROUP_IDENTIFIER"
+}
+
 run_ios_export() {
   require_darwin
   [[ -d "$ARCHIVE_PATH" ]] || { echo "iOS release archive not found." >&2; exit 1; }
@@ -577,6 +598,7 @@ run_ios_export() {
       -exportOptionsPlist "$EXPORT_OPTIONS"
   fi
   verify_ios_export_license
+  verify_ios_export_entitlements
 }
 
 ipa_path() {
@@ -589,6 +611,7 @@ run_ios_upload() {
   verify_ios_archive_license
   verify_ios_archive_privacy
   verify_ios_export_license
+  verify_ios_export_entitlements
   ipa="$(ipa_path)"
   [[ -n "$ipa" ]] || { echo "No IPA found in $EXPORT_DIR; run ios-export first." >&2; exit 1; }
   key_id="$(asc_key_id)"
@@ -652,6 +675,10 @@ run_ios_testflight_public() {
   run_testflight_helper testflight-internal put
   run_testflight_helper testflight-public put
 }
+
+if [[ -n "${IRIS_DRIVE_IOS_HOSTED_PRODUCT_DIR:-}" && ( "${1:-}" == ios-export || "${1:-}" == ios-upload ) ]]; then
+  use_hosted_ios_archive "$1"
+fi
 
 case "${1:-}" in
   ios-rust) run_ios_rust ;;
