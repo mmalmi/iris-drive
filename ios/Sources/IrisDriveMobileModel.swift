@@ -98,6 +98,7 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var appleCalendarSyncStatus = "Off"
     @Published private var irisWebPublisherProfileNameCache: [String: IrisWebPublisherProfileNameCacheEntry] = [:]
 
+    let photoBackup = IrisDrivePhotoBackup()
     let defaults = UserDefaults.standard
     private let nativeCore: IrisDriveNativeCore
     private let appleCalendarSync = IrisDriveAppleCalendarSync.shared
@@ -784,10 +785,12 @@ final class IrisDriveMobileModel: ObservableObject {
 
     func performBackgroundSyncTask() async {
         await syncOnceIfRunning()
+        if !Task.isCancelled { await photoBackup.backgroundRefresh() }
         scheduleBackgroundSyncIfNeeded()
     }
 
     func reconcileForegroundWork(isActive: Bool) {
+        photoBackup.setForeground(isActive)
         if isActive {
             startForegroundSyncLoop()
         } else {
@@ -1293,6 +1296,7 @@ final class IrisDriveMobileModel: ObservableObject {
         let before = configIdentitySnapshot()
         cancelBackgroundSync()
         appleCalendarSync.setEnabled(false)
+        photoBackup.setEnabled(false)
         refreshAppleCalendarSyncState()
         clearLocalProfileUiForLogout()
         Task { @MainActor [weak self] in
@@ -2038,6 +2042,7 @@ final class IrisDriveMobileModel: ObservableObject {
         }
         relayInput = ""
         syncOverCellular = defaults.bool(forKey: "syncOverCellular")
+        configurePhotoBackup()
         refreshAppleCalendarSyncState()
     }
 
@@ -2050,6 +2055,7 @@ final class IrisDriveMobileModel: ObservableObject {
         defaults.set(profileUsername, forKey: "profileUsername")
         defaults.set(profilePhotoName, forKey: "profilePhotoName")
         defaults.set(syncOverCellular, forKey: "syncOverCellular")
+        configurePhotoBackup()
     }
 
     private func removeObsoletePrototypeDefaults() {
@@ -2306,6 +2312,11 @@ final class IrisDriveMobileModel: ObservableObject {
         return String(data: data, encoding: .utf8)
     }
 
+    private func configurePhotoBackup() {
+        let profile = isSetupComplete && !isRevoked && !screenshotFixtureEnabled ? localProfileId : ""
+        photoBackup.configure(profile: profile, dataDir: sharedContainerPath, allowsCellular: syncOverCellular)
+    }
+
     private func applyStateJson(_ json: String) {
         let previousPendingReceiptCount =
             lastState?.ui.profile?.pendingDeviceApprovalReceiptCount
@@ -2316,6 +2327,7 @@ final class IrisDriveMobileModel: ObservableObject {
             syncRunning = false
             stateLoaded = true
             statusTitle = "Native state failed"
+            configurePhotoBackup()
             statusDetail = json
             writeDebugState(json)
             reconcileForegroundWorkIfAppActive()
@@ -2327,6 +2339,7 @@ final class IrisDriveMobileModel: ObservableObject {
         lastAppliedStateJson = json
         stateLoaded = true
         lastState = state
+        configurePhotoBackup()
         let currentPendingReceiptCount =
             state.ui.profile?.pendingDeviceApprovalReceiptCount
         if irisDriveShouldAuditPendingReceiptTransition(

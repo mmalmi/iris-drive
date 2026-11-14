@@ -384,15 +384,20 @@ fn direct_root_republish_skips_cached_files_root_events() {
 fn direct_root_seen_drive_root_retries_until_blocks_are_synced() {
     let config_dir = tempfile::tempdir().unwrap();
     let mut exchange = DirectRootExchange::default();
-    let key = "drive-root:remote:main:8:root-hash:root-key:local,remote".to_string();
+    let bytes = b"received encrypted root block";
+    let hash = hashtree_core::sha256(bytes);
+    let root_cid = Cid::encrypted(hash, [41; 32]).to_string();
+    let key = format!("drive-root:remote:main:8:{root_cid}:local,remote");
+    let store = FsBlobStore::new(config_dir.path().join("blocks")).unwrap();
 
     exchange.seen_keys.insert(key.clone());
 
     assert!(!exchange.should_skip_seen_direct_root_frame(config_dir.path(), &key));
 
+    store.put_sync(hash, bytes).unwrap();
     record_block_sync(
         config_dir.path(),
-        "root-hash:root-key",
+        &root_cid,
         "fips",
         &DownloadReport::default(),
     );

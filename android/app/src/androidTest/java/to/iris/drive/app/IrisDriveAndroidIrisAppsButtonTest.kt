@@ -69,6 +69,7 @@ class IrisDriveAndroidIrisAppsButtonTest {
                 ),
                 onCreateProfile = {},
                 onRestoreProfile = { _, _ -> },
+                onSignerInteraction = {},
                 onStartJoinRequest = {},
                 onCopyText = { _, _ -> },
                 onExportRecoverySecret = { RecoverySecretExport() },

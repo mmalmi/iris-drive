@@ -10,6 +10,7 @@ use tempfile::tempdir;
 mod convergence;
 mod local_only_projection;
 mod path_kind;
+mod provider_snapshot;
 
 fn init_config(dir: &Path) -> Identity {
     let identity = Identity::generate(key_path_in(dir));

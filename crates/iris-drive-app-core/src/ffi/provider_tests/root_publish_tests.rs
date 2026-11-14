@@ -269,3 +269,76 @@ fn provider_write_keeps_local_success_and_nested_publish_error_when_blossom_uplo
         .collect::<Vec<_>>();
     assert_eq!(publish_keys, vec!["error", "published_drive_root"]);
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn photo_backup_retries_queued_originals_after_restart() {
+    use crate::native_provider::photo_backup::{import_json, publish_json};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let blossom_url = format!("http://{}", listener.local_addr().unwrap());
+    let uploads = Arc::new(Mutex::new(Vec::new()));
+    let server = tokio::spawn(record_blossom_uploads(listener, uploads.clone()));
+    let dir = tempfile::tempdir().unwrap();
+    let (expected_root, expected_photo) = tokio::task::spawn_blocking(move || {
+        let path = dir.path().to_str().unwrap();
+        let app = FfiApp::new(path.to_owned(), "test".to_owned());
+        let _ = app.dispatch(NativeAppAction::CreateProfile {
+            app_key_label: "Photo test".into(),
+        });
+        let relay = crate::ffi::test_relay::TestRelay::spawn();
+        relay.use_for(dir.path());
+        let mut config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+        let profile = config.profile.as_ref().unwrap().profile_id.to_string();
+        let (rejecting_url, rejecting_server) = spawn_rejecting_blossom_server();
+        config.blossom_servers = vec![rejecting_url];
+        config.save(config_path_in(dir.path())).unwrap();
+        let source = dir.path().join("test.jpg");
+        std::fs::write(&source, b"photo original").unwrap();
+        assert_eq!(publish_json(path, &profile, false)["ok"], true);
+        assert_eq!(
+            import_json(path, "other", "asset", "test.jpg", source.to_str().unwrap())["ok"],
+            false
+        );
+        let saved = import_json(
+            path,
+            &profile,
+            "asset",
+            "test.jpg",
+            source.to_str().unwrap(),
+        );
+        assert_eq!(saved["path"], "Photos/test.jpg", "{saved}");
+        assert_eq!(publish_json(path, &profile, false)["pending"], true);
+        assert_eq!(publish_json(path, &profile, true)["ok"], false);
+        rejecting_server.join().unwrap();
+        assert_eq!(publish_json(path, &profile, false)["pending"], true);
+        let mut config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+        config.blossom_servers = vec![blossom_url];
+        config.save(config_path_in(dir.path())).unwrap();
+        let synced = publish_json(path, &profile, true);
+        assert_eq!(synced["ok"], true, "{synced}");
+        assert_eq!(publish_json(path, &profile, false)["pending"], false);
+        let state = config.profile.as_ref().unwrap();
+        let head = &config
+            .drive(iris_drive_core::PRIMARY_DRIVE_ID)
+            .unwrap()
+            .app_key_roots[&state.app_key_pubkey];
+        let root = hashtree_core::Cid::parse(&head.root_cid).unwrap();
+        let daemon = iris_drive_core::Daemon::open(dir.path()).unwrap();
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let photo = rt
+            .block_on(daemon.tree().resolve_path(&root, "Photos/test.jpg"))
+            .unwrap()
+            .unwrap();
+        (
+            hashtree_core::to_hex(&root.hash),
+            hashtree_core::to_hex(&photo.hash),
+        )
+    })
+    .await
+    .unwrap();
+    let stored = uploads.lock().unwrap();
+    assert!(stored.contains(&expected_root) && stored.contains(&expected_photo));
+    server.abort();
+}

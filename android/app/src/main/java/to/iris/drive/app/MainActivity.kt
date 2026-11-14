@@ -40,6 +40,7 @@ import to.iris.drive.app.core.AppState
 import to.iris.drive.app.core.NativeActions
 import to.iris.drive.app.core.NativeCore
 import to.iris.drive.app.core.recoverySecretExportFromJson
+import to.iris.drive.app.photos.PhotoBackupJobs
 import to.iris.drive.app.sync.BackgroundSyncPolicy
 import to.iris.drive.app.sync.IrisDriveBackgroundSync
 import to.iris.drive.app.sync.IrisDriveSyncService
@@ -200,6 +201,7 @@ class MainActivity : ComponentActivity() {
                     dispatch(NativeActions.renameDevice(devicePubkey, label))
                 },
                 onLogout = {
+                    PhotoBackupJobs.disable(applicationContext)
                     IrisDriveBackgroundSync.cancel(applicationContext)
                     stopSyncService()
                     dispatch(NativeActions.logout())

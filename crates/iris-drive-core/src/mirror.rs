@@ -115,7 +115,7 @@ fn overlaps(a: &str, b: &str) -> bool {
     under(a, b) || under(b, a)
 }
 
-fn ensure_private(config: &AppConfig, dest: &str) -> Result<()> {
+pub(crate) fn ensure_private(config: &AppConfig, dest: &str) -> Result<()> {
     let profile = config.profile.as_ref().context("Set up Iris Drive first")?;
     for folder in &config.shared_folders {
         let received = crate::sharing::shared_with_me_mount_path(folder, &config.shared_folders);
@@ -134,6 +134,20 @@ fn ensure_private(config: &AppConfig, dest: &str) -> Result<()> {
         "Choose a destination outside shared shortcuts"
     );
     Ok(())
+}
+
+/// Store a staged local original in bounded chunks and verify it against the source.
+pub(crate) async fn verified_original(
+    daemon: &crate::Daemon,
+    source: &Path,
+) -> Result<(hashtree_core::Cid, u64, [u8; 32], Option<i64>)> {
+    let file = source::verify_file(daemon.tree(), fs::File::open(source)?, None).await?;
+    Ok((
+        hashtree_core::Cid::parse(&file.cid)?,
+        file.size(),
+        file.digest,
+        file.modified(),
+    ))
 }
 
 pub fn list(config: &Path) -> Result<Vec<Status>> {

@@ -876,6 +876,7 @@ class IrisDriveAndroidGuiFlowTest {
                 ),
                 onCreateProfile = onCreateProfile,
                 onRestoreProfile = { _, _ -> },
+                onSignerInteraction = {},
                 onStartJoinRequest = onStartJoinRequest,
                 onCopyText = { _, _ -> },
                 onExportRecoverySecret = onExportRecoverySecret,

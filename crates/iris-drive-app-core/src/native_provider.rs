@@ -354,17 +354,11 @@ pub(crate) fn run_native_provider_list(data_dir: &str) -> anyhow::Result<serde_j
             .map_err(anyhow::Error::msg)?;
         let daemon = iris_drive_core::Daemon::open_with_config(config_dir, config)
             .with_context(|| format!("opening daemon at {}", Path::new(data_dir).display()))?;
-        let visible_view = iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
+        let (visible_view, visible_root, _) = daemon
+            .provider_projection()
             .await
             .context("building provider view")?;
         let modified_at_by_path = provider_modified_at_index(&visible_view);
-        let visible_root = iris_drive_core::primary_merged_root_from_view(
-            daemon.tree(),
-            daemon.config(),
-            &visible_view,
-        )
-        .await
-        .context("building provider root")?;
         let provider =
             HashTreeProviderFs::open(daemon.tree_handle(), visible_root.root_cid.clone())
                 .await
@@ -539,7 +533,8 @@ async fn native_provider(
 )> {
     let daemon = iris_drive_core::Daemon::open(data_dir)
         .with_context(|| format!("opening daemon at {}", Path::new(data_dir).display()))?;
-    let visible = iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
+    let (_, visible, _) = daemon
+        .provider_projection()
         .await
         .context("building provider root")?;
     let provider = HashTreeProviderFs::open(daemon.tree_handle(), visible.root_cid.clone())
@@ -602,10 +597,20 @@ where
 {
     let root = hashtree_core::Cid::parse(provider.anchor().await.as_str())
         .context("reading provider root CID")?;
-    let report = import_provider_root_with_retry(daemon, root, tombstone_base_root).await?;
-    iris_drive_core::paths::touch_provider_root_signal_in(daemon.config_dir())
-        .context("signaling provider root change")?;
-    let prepared_publish = match prepare_current_app_key_root_publish(daemon) {
+    commit_provider_root(daemon, root, tombstone_base_root, changed_path, config_lock).await
+}
+
+pub(crate) mod photo_backup;
+
+async fn commit_provider_root(
+    daemon: &mut iris_drive_core::Daemon,
+    root: hashtree_core::Cid,
+    tombstone_base_root: Option<hashtree_core::Cid>,
+    changed_path: &str,
+    config_lock: iris_drive_core::config_lock::ConfigMutationLock,
+) -> anyhow::Result<serde_json::Value> {
+    let report = persist_provider_root(daemon, root, tombstone_base_root).await?;
+    let prepared_publish = match prepare_current_app_key_root_publish(daemon).await {
         Ok(prepared) => prepared,
         Err(error) => PreparedProviderRootPublish::Unavailable(json!({
             "published_drive_root": false,
@@ -626,6 +631,17 @@ where
         "top_level_entries": report.top_level_entries,
         "publish": publish,
     }))
+}
+
+async fn persist_provider_root(
+    daemon: &mut iris_drive_core::Daemon,
+    root: hashtree_core::Cid,
+    base: Option<hashtree_core::Cid>,
+) -> anyhow::Result<iris_drive_core::ImportReport> {
+    let report = import_provider_root_with_retry(daemon, root, base).await?;
+    iris_drive_core::paths::touch_provider_root_signal_in(daemon.config_dir())
+        .context("signaling provider root change")?;
+    Ok(report)
 }
 
 async fn import_provider_root_with_retry(
@@ -664,7 +680,7 @@ enum PreparedProviderRootPublish {
     Unavailable(serde_json::Value),
 }
 
-fn prepare_current_app_key_root_publish(
+async fn prepare_current_app_key_root_publish(
     daemon: &iris_drive_core::Daemon,
 ) -> anyhow::Result<PreparedProviderRootPublish> {
     let config = daemon.config().clone();
@@ -678,7 +694,13 @@ fn prepare_current_app_key_root_publish(
             json!({"published_drive_root": false, "error": "primary drive missing"}),
         ));
     };
-    let Some(root) = drive.app_key_roots.get(&account.app_key_pubkey).cloned() else {
+    let Some(root) = iris_drive_core::publishable_root::publishable_app_key_root(
+        daemon.config_dir(),
+        drive,
+        account,
+    )
+    .await?
+    else {
         return Ok(PreparedProviderRootPublish::Unavailable(
             json!({"published_drive_root": false, "error": "AppKey root missing"}),
         ));

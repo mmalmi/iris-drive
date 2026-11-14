@@ -252,6 +252,7 @@ pub extern "C" fn iris_drive_update_download_json(
 }
 
 mod mirrors;
+mod photo_backup;
 #[unsafe(no_mangle)]
 pub extern "C" fn iris_drive_mirror_json(
     data_dir: *const c_char,

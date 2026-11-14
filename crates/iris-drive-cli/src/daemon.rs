@@ -374,14 +374,13 @@ fn profile_roster_publish_key(config: &AppConfig) -> Option<String> {
 }
 
 async fn primary_drive_status_payload(config_dir: &Path, config: &AppConfig) -> Option<Value> {
-    let daemon = Daemon::open(config_dir).ok()?;
-    let merged = iris_drive_core::primary_merged_view(daemon.tree(), config)
-        .await
-        .ok()?;
+    let daemon = Daemon::open_with_config(config_dir, config.clone()).ok()?;
+    let (merged, recovering) = daemon.provider_view().await.ok()?;
     Some(json!({
         "current_root_cid": crate::status::current_primary_root_cid(config),
         "file_count": merged.file_count(),
         "top_level_entries": merged.top_level_entries(),
+        "waiting_for_source_blocks": recovering,
         "visible_file_bytes": merged.view.files.iter().map(|entry| entry.size).sum::<u64>(),
     }))
 }

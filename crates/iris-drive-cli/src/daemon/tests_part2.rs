@@ -647,7 +647,12 @@ fn applied_or_stale_current_drive_root_schedules_followup() {
 #[test]
 fn startup_root_sync_collects_unsynced_remote_roots() {
     let config_dir = tempfile::tempdir().unwrap();
-    let synced = AppKeyRootRef::legacy("already-synced", 10, 1);
+    let store = FsBlobStore::new(config_dir.path().join("blocks")).unwrap();
+    let bytes = b"transferred root";
+    let hash = hashtree_core::sha256(bytes);
+    let synced_cid = hashtree_core::to_hex(&hash);
+    store.put_sync(hash, bytes).unwrap();
+    let synced = AppKeyRootRef::legacy(synced_cid.clone(), 10, 1);
     let needs_sync = AppKeyRootRef::legacy("needs-sync", 20, 1);
     let duplicate = AppKeyRootRef::legacy("needs-sync", 21, 1);
     let mut projected = AppKeyRootRef::legacy("local-only", 30, 1);
@@ -673,7 +678,7 @@ fn startup_root_sync_collects_unsynced_remote_roots() {
     config.drives.push(drive);
     record_block_sync(
         config_dir.path(),
-        "already-synced",
+        &synced_cid,
         "fips",
         &DownloadReport::default(),
     );
@@ -681,6 +686,8 @@ fn startup_root_sync_collects_unsynced_remote_roots() {
     let roots = startup_root_cids_needing_sync(config_dir.path(), &config);
 
     assert_eq!(roots, vec!["needs-sync".to_string()]);
+    store.delete_sync(&hash).unwrap();
+    assert!(startup_root_cids_needing_sync(config_dir.path(), &config).contains(&synced_cid));
 }
 
 #[test]
@@ -711,6 +718,10 @@ fn startup_root_sync_retries_failed_remote_roots() {
 #[test]
 fn known_remote_root_without_blocks_counts_as_pending() {
     let config_dir = tempfile::tempdir().unwrap();
+    let bytes = b"pending device root";
+    let hash = hashtree_core::sha256(bytes);
+    let root_cid = hashtree_core::to_hex(&hash);
+    let store = FsBlobStore::new(config_dir.path().join("blocks")).unwrap();
     let mut drive = Drive {
         root_scope_id: iris_drive_core::NostrIdentityId::new_v4().to_string(),
         drive_id: PRIMARY_DRIVE_ID.to_string(),
@@ -722,7 +733,7 @@ fn known_remote_root_without_blocks_counts_as_pending() {
     };
     drive.app_key_roots.insert(
         "device-a".to_string(),
-        AppKeyRootRef::legacy("pending-root", 10, 1),
+        AppKeyRootRef::legacy(root_cid.clone(), 10, 1),
     );
     let config = AppConfig {
         drives: vec![drive],
@@ -734,9 +745,10 @@ fn known_remote_root_without_blocks_counts_as_pending() {
         1
     );
 
+    store.put_sync(hash, bytes).unwrap();
     record_block_sync(
         config_dir.path(),
-        "pending-root",
+        &root_cid,
         "fips",
         &DownloadReport::default(),
     );

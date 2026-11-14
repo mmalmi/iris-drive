@@ -5,6 +5,7 @@ struct BackupView: View {
 
     var body: some View {
         Form {
+            PhotoBackupSection(backup: model.photoBackup)
             Section("Actions") {
                 Button {
                     model.syncBackups(model.backups)

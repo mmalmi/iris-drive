@@ -43,6 +43,10 @@
   <string>Sync your Iris calendar with Apple Calendar.</string>
   <key>NSCalendarsUsageDescription</key>
   <string>Sync your Iris calendar with Apple Calendar.</string>
+  <key>NSPhotoLibraryUsageDescription</key>
+  <string>Back up the photos and videos you choose to Photos in your Iris Drive.</string>
+  <key>PHPhotoLibraryPreventAutomaticLimitedAccessAlert</key>
+  <true/>
   <key>NSLocalNetworkUsageDescription</key>
   <string>Find and connect directly to nearby Iris Drive devices on your local network.</string>
   <key>NSAppTransportSecurity</key>

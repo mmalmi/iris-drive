@@ -109,13 +109,14 @@ pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
             .ok_or_else(|| anyhow::anyhow!("no account; run `idrive init` first"))?;
         let authorized = authorized_app_key_pubkeys(account);
         if at == 0 {
-            let projected = iris_drive_core::primary_merged_view(daemon.tree(), config).await?;
+            let (projected, recovering) = daemon.provider_view().await?;
             print_drive_list(
                 drive,
                 at,
                 authorized.len(),
                 projected.app_key_roots_present,
                 &projected.view,
+                recovering,
             );
             return Ok::<_, anyhow::Error>(());
         }
@@ -156,7 +157,7 @@ pub(crate) fn cmd_list(config_dir: &std::path::Path, at: usize) -> Result<()> {
 
         let view = merge_drives(&merge_app_key_refs, &snapshots);
 
-        print_drive_list(drive, at, authorized.len(), snapshots.len(), &view);
+        print_drive_list(drive, at, authorized.len(), snapshots.len(), &view, false);
         Ok::<_, anyhow::Error>(())
     })
 }
@@ -167,12 +168,14 @@ fn print_drive_list(
     authorized_app_key_count: usize,
     app_key_roots_present: usize,
     view: &iris_drive_core::merge::MergedView,
+    recovering: bool,
 ) {
     println!(
         "{}",
         json!({
             "drive_id": drive.drive_id,
             "at_revision": at,
+            "waiting_for_source_blocks": recovering,
             "authorized_app_keys": authorized_app_key_count,
             "app_key_roots_present": app_key_roots_present,
             "files": view
@@ -182,12 +185,12 @@ fn print_drive_list(
                     "path": e.path,
                     "size": e.size,
                     "sha256": e.whole_file_hash.unwrap_or(e.hash).map(|byte| format!("{byte:02x}")).join(""),
-                    "source_app_key_pubkey": e.source_app_key_pubkey,
+                    "source_app_key_pubkey": (!e.source_app_key_pubkey.is_empty()).then_some(&e.source_app_key_pubkey),
                     "modified_at": e.modified_at,
-                    "published_at": e.published_at,
+                    "published_at": (!e.source_app_key_pubkey.is_empty()).then_some(e.published_at),
                 }))
                 .collect::<Vec<_>>(),
-            "suppressed_by_tombstone": view.suppressed_by_tombstone,
+            "suppressed_by_tombstone": (!recovering).then_some(&view.suppressed_by_tombstone),
         })
     );
 }
@@ -771,7 +774,6 @@ async fn print_provider_mutation(
             true,
         )
     } else {
-        clear_provider_staging(daemon.config_dir())?;
         let report = import_provider_root_with_retry(
             daemon,
             root,
@@ -779,6 +781,7 @@ async fn print_provider_mutation(
             Some(&tombstone_paths),
         )
         .await?;
+        clear_provider_staging(daemon.config_dir())?;
         let wake_payload = json!({
             "root_cid": report.root_cid,
             "file_count": report.file_count,

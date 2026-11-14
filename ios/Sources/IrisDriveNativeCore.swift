@@ -402,7 +402,7 @@ enum IrisDriveNativeProvider {
         return value
     }
 
-    private static func takeString(_ pointer: UnsafeMutablePointer<CChar>?) -> String {
+    static func takeString(_ pointer: UnsafeMutablePointer<CChar>?) -> String {
         guard let pointer else { return #"{"error":"native provider returned null"}"# }
         defer { irisDriveStringFree(pointer) }
         return String(cString: pointer)

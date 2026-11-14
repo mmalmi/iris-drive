@@ -327,7 +327,7 @@ pub(super) async fn scan<S: Store>(
     Ok(result)
 }
 
-async fn verify_file<S: Store>(
+pub(super) async fn verify_file<S: Store>(
     tree: &HashTree<S>,
     file: fs::File,
     old: Option<&Verified>,

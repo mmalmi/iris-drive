@@ -43,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import to.iris.drive.app.core.AppState
+import to.iris.drive.app.photos.PhotoBackupSettings
 import to.iris.drive.app.core.BackupState
 import to.iris.drive.app.core.PendingShareInviteState
 import to.iris.drive.app.core.RecoverySecretExport
@@ -374,6 +375,9 @@ private fun SettingsContent(
     ) {
         if (state.error.isNotBlank()) {
             item { Notice(state.error) }
+        }
+        state.profile?.profileId?.takeIf { state.isSetupComplete && !state.isRevoked }?.let { profileId ->
+            item { PhotoBackupSettings(profileId) }
         }
         item {
             SettingsPanel(

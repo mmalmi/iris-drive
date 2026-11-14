@@ -60,6 +60,7 @@ pub mod network_sync;
 pub mod nostr_events;
 pub mod nostr_identity;
 pub mod paths;
+pub mod photo_backup;
 pub mod projection;
 pub mod provider;
 pub mod publishable_root;

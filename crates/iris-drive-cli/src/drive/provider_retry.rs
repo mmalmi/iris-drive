@@ -82,9 +82,7 @@ pub(super) async fn primary_merged_root_with_retry(
     daemon: &mut Daemon,
 ) -> Result<iris_drive_core::PrimaryMergedRoot> {
     retry_provider_operation(daemon, "merged root build", |daemon| {
-        Box::pin(async move {
-            Ok(iris_drive_core::primary_merged_root(daemon.tree(), daemon.config()).await?)
-        })
+        Box::pin(async move { Ok(daemon.provider_projection().await?.1) })
     })
     .await
 }
@@ -97,13 +95,7 @@ pub(super) async fn primary_merged_view_and_root_with_retry(
 )> {
     retry_provider_operation(daemon, "merged view build", |daemon| {
         Box::pin(async move {
-            let view = iris_drive_core::primary_merged_view(daemon.tree(), daemon.config()).await?;
-            let root = iris_drive_core::primary_merged_root_from_view(
-                daemon.tree(),
-                daemon.config(),
-                &view,
-            )
-            .await?;
+            let (view, root, _) = daemon.provider_projection().await?;
             Ok((view, root))
         })
     })

@@ -8,6 +8,22 @@ static ATOMIC_WRITE_COUNTER: AtomicU64 = AtomicU64::new(0);
 /// Atomically replace a file without opening an existing destination or
 /// temporary path for writing. The containing directory must be trusted.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    atomic_write_with_options(path, bytes, fs::OpenOptions::new())
+}
+
+pub(crate) fn atomic_write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    #[allow(unused_mut)]
+    let mut options = fs::OpenOptions::new();
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    atomic_write_with_options(path, bytes, options)
+}
+
+fn atomic_write_with_options(
+    path: &Path,
+    bytes: &[u8],
+    mut options: fs::OpenOptions,
+) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -20,10 +36,7 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     ));
 
     // Only clean up a temporary file after successfully creating it ourselves.
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(&tmp_path)?;
+    let mut file = options.write(true).create_new(true).open(&tmp_path)?;
     let result = (|| {
         file.write_all(bytes)?;
         file.sync_all()?;

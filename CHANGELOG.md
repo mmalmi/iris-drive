@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.1.40 - 2026-11-15
+
+- Add optional photo and video backup to My Drive on iOS and Android. Back up
+  originals from the library you authorize, keep both files on a name collision,
+  and retry pending uploads when connectivity returns.
+- Add a photo folder shortcut to one-way folder mirroring on macOS. Removing a
+  source file keeps the copy in Drive.
+- Keep verified files available when a device block goes missing and a complete
+  local snapshot covers the same device history. New files can be added safely
+  while Drive retries the missing block. Edits to existing files wait for recovery.
+- Restore My Drive from the recovery phrase and give newly linked devices the
+  root that carries their key. Native updates can download through a running
+  Drive service.
+
 ## 0.1.38 - 2026-10-19
 
 ### Security

@@ -29,6 +29,14 @@ internal object NativeCore {
         mode: String,
         downloadDir: String,
     ): String
+    external fun photoBackupPublishJson(dataDir: String, expectedProfileId: String, allowNetwork: Boolean): String
+    external fun photoBackupImportJson(
+        dataDir: String,
+        expectedProfileId: String,
+        resourceId: String,
+        originalFilename: String,
+        sourcePath: String,
+    ): String
     external fun providerListJson(dataDir: String): String
     external fun providerReadJson(dataDir: String, path: String, outputPath: String): String
     external fun providerWriteJson(dataDir: String, path: String, sourcePath: String): String

@@ -34,6 +34,7 @@ const LOCAL_ONLY_PARENT_WALK_LIMIT: usize = 1024;
 mod embedded;
 mod local_only;
 mod profile_coverage;
+mod provider_snapshot;
 
 use profile_coverage::full_profile_covers_known_app_key_roots;
 
@@ -493,15 +494,14 @@ impl Daemon {
         }
         let mut scoped_tombstone_paths = None;
         let mut scoped_kind_replacement_paths = None;
-        let projection_root = if tombstone_base_root.is_some() && drive_id == PRIMARY_DRIVE_ID {
-            Some(
-                crate::primary_merged_root(&self.tree, &self.config)
-                    .await?
-                    .root_cid,
+        let (projection_root, checkpoint) = self
+            .provider_import_base(
+                drive_id,
+                &root,
+                tombstone_base_root.as_ref(),
+                tombstone_paths,
             )
-        } else {
-            tombstone_base_root.clone()
-        };
+            .await?;
         let import_root = if let Some(tombstone_base_root) = tombstone_base_root.as_ref() {
             let phase = std::time::Instant::now();
             let delta = local_visible_root_for_mount_import(
@@ -568,6 +568,9 @@ impl Daemon {
             root_cid
         };
 
+        if let (Some(visible), Some(meta)) = (checkpoint, root_meta.as_ref()) {
+            self.save_provider_snapshot(&root_cid, meta.app_key_seq, &visible)?;
+        }
         self.report_and_record_root_for_drive(drive_id, root_cid, None, root_meta.as_ref(), now)
             .await
     }

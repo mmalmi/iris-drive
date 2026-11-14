@@ -749,6 +749,40 @@ fn collect_visible_entries<'a, S: Store>(
     })
 }
 
+/// A cached visible projection can safely stage additions only against the
+/// exact view the caller edited. Existing files, directory metadata, and
+/// path kinds must survive intact.
+pub(crate) async fn only_visible_additions<S: Store>(
+    tree: &HashTree<S>,
+    base: &Cid,
+    edited: &Cid,
+    paths: Option<&BTreeSet<String>>,
+) -> Result<bool, IndexError> {
+    let base = visible_entries(tree, base).await?;
+    let edited = visible_entries(tree, edited).await?;
+    Ok(base.files.iter().all(|(path, file)| {
+        edited
+            .files
+            .get(path)
+            .is_some_and(|new| visible_entry_matches(file, new))
+    }) && base.dirs.iter().all(|(path, dir)| {
+        edited
+            .dirs
+            .get(path)
+            .is_some_and(|new| dir.meta == new.meta)
+    }) && edited
+        .files
+        .keys()
+        .all(|p| base.files.contains_key(p) || tombstone_path_allowed(paths, p))
+        && edited.dirs.keys().all(|p| {
+            base.dirs.contains_key(p)
+                || tombstone_path_allowed(paths, p)
+                || paths.is_some_and(|selected| {
+                    selected.iter().any(|child| path_is_at_or_below(child, p))
+                })
+        }))
+}
+
 fn visible_entry_matches(left: &TreeEntry, right: &TreeEntry) -> bool {
     left.hash == right.hash
         && left.key == right.key

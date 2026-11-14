@@ -13,7 +13,8 @@ struct MirrorFoldersView: View {
             HStack {
                 Text("Mirrored folders").font(.title2.weight(.semibold))
                 Spacer()
-                Button { chooseSource() } label: { Label("Mirror folder…", systemImage: "plus") }
+                Button { chooseSource(photoFolder: true) } label: { Label("Back up photo folder…", systemImage: "photo.on.rectangle") }
+                Button { chooseSource(photoFolder: false) } label: { Label("Mirror folder…", systemImage: "plus") }
                     .buttonStyle(.borderedProminent)
             }
             Text("Copy new and changed files into My Drive every 5 minutes. Files removed from the source stay in Iris Drive.")
@@ -52,9 +53,13 @@ struct MirrorFoldersView: View {
         }
     }
 
-    private func chooseSource() {
+    private func chooseSource(photoFolder: Bool) {
         let panel = NSOpenPanel()
-        panel.title = "Choose a folder to mirror"
+        panel.title = photoFolder ? "Choose a folder of photos and videos" : "Choose a folder to mirror"
+        if photoFolder {
+            panel.directoryURL = FileManager.default.urls(for: .picturesDirectory, in: .userDomainMask).first
+            panel.message = "All files in this folder will be copied to Photos in My Drive."
+        }
         panel.prompt = "Choose folder"
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -62,7 +67,7 @@ struct MirrorFoldersView: View {
         guard panel.runModal() == .OK, let selected = panel.url else { return }
         model.error = nil
         source = selected
-        destination = selected.lastPathComponent
+        destination = photoFolder ? "Photos/\(selected.lastPathComponent)" : selected.lastPathComponent
         configuring = true
     }
 

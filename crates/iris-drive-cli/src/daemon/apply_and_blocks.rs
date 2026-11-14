@@ -413,10 +413,7 @@ struct DriveRootFollowupPlan {
     refresh_projection: bool,
 }
 
-fn drive_root_followup_plan(
-    was_applied: bool,
-    stale_current_root: bool,
-) -> DriveRootFollowupPlan {
+fn drive_root_followup_plan(was_applied: bool, stale_current_root: bool) -> DriveRootFollowupPlan {
     DriveRootFollowupPlan {
         pull_blocks: was_applied || stale_current_root,
         refresh_projection: was_applied || stale_current_root,
@@ -424,6 +421,14 @@ fn drive_root_followup_plan(
 }
 
 pub(crate) fn root_has_successful_block_sync(config_dir: &Path, root_cid: &str) -> bool {
+    // A receipt records an earlier transfer. A local eviction or restored
+    // config must still schedule the missing source head for download.
+    let Ok(cid) = Cid::parse(root_cid) else {
+        return false;
+    };
+    if !FsBlobStore::new(config_dir.join("blocks")).is_ok_and(|store| store.exists(&cid.hash)) {
+        return false;
+    }
     load_daemon_status(config_dir)
         .and_then(|status| {
             status
@@ -883,18 +888,16 @@ pub(crate) async fn pull_blocks_for_root(
             }) as BlockDownloadFuture<'_>
         });
     let fips_attempted = fips_download.is_some();
-    let blossom_download = should_try_blossom_download(
-        config,
-        fips_attempted,
-        !connected_peers.is_empty(),
-    )
-    .then(|| {
-        Box::pin(async move {
-            download_roots_over_blossom(config_dir, config, &[root_cid_str.to_string()])
-                .await
-                .map_err(|error| error.to_string())
-        }) as BlockDownloadFuture<'_>
-    });
+    let blossom_download =
+        should_try_blossom_download(config, fips_attempted, !connected_peers.is_empty()).then(
+            || {
+                Box::pin(async move {
+                    download_roots_over_blossom(config_dir, config, &[root_cid_str.to_string()])
+                        .await
+                        .map_err(|error| error.to_string())
+                }) as BlockDownloadFuture<'_>
+            },
+        );
 
     match first_successful_block_download(fips_download, blossom_download).await {
         Ok(outcome) => {

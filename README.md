@@ -55,6 +55,12 @@ just run-cli import /path/to/seed-folder
 just run-cli daemon
 ```
 
+### Back up photos and videos
+
+On iOS or Android, open **Backup** and enable **Back up photos and videos** to copy originals into **My Drive → Photos**. Photo backup starts off. Choose which photos and videos Iris Drive may read in the system permission prompt. The app catches up when opened and can also run when the operating system grants background time. Removing a picture from the device or turning off backup keeps its Drive copy.
+
+On Mac, open **Mirrors → Back up photo folder…** and select a folder of originals. Its contents go into **My Drive → Photos → [folder name]**. For Apple Photos, export originals into a regular folder first. On Windows or Linux, use the same mirror command shown below with a source of your choice and `--to "Photos/Camera"`.
+
 ### Mirror a folder into My Drive
 
 On Mac, open **Mirrors → Mirror folder…**, choose a source, then enter a folder name or path inside My Drive. For iCloud Drive sources, use Finder’s **Keep Downloaded** on folders you want available for copying.
