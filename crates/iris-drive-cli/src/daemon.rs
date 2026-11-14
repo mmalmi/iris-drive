@@ -385,7 +385,7 @@ async fn primary_drive_status_payload(config_dir: &Path, config: &AppConfig) -> 
     }))
 }
 
-async fn import_staged_provider_root(
+pub(crate) async fn import_staged_provider_root(
     config_dir: &Path,
 ) -> Result<Option<iris_drive_core::daemon::ImportReport>> {
     let _config_lock = ConfigMutationLock::acquire(config_dir).await?;

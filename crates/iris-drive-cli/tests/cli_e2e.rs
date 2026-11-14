@@ -243,6 +243,8 @@ fn assert_tree_does_not_contain_bytes(path: &std::path::Path, needle: &[u8]) {
 mod approval_sync_tests;
 #[path = "cli_e2e/profile_tests.rs"]
 mod profile_tests;
+#[path = "cli_e2e/provider_recovery_tests.rs"]
+mod provider_recovery_tests;
 
 #[test]
 fn whoami_before_init_errors() {

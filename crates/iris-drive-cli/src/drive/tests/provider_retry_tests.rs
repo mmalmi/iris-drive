@@ -62,7 +62,7 @@ fn merged_view_retry_reloads_a_superseded_root() {
         );
         config.upsert_drive(drive.clone());
         config.save(config_path_in(config_dir.path())).unwrap();
-        let mut stale_daemon = Daemon::open(config_dir.path()).unwrap();
+        let stale_daemon = Daemon::open(config_dir.path()).unwrap();
         assert!(
             iris_drive_core::merge::walk_app_key_tree(stale_daemon.tree(), &missing_root)
                 .await
@@ -70,20 +70,27 @@ fn merged_view_retry_reloads_a_superseded_root() {
             "test setup should expose a missing nested block",
         );
 
+        let command = ProviderCmd::List;
+        let listing = retry_provider_operation("list", || {
+            prepare_provider_command(config_dir.path(), &command)
+        });
+        tokio::pin!(listing);
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), &mut listing)
+                .await
+                .is_err()
+        );
         drive.app_key_roots.insert(
             remote,
             AppKeyRootRef::legacy(current_root.to_string(), 101, 1),
         );
         config.upsert_drive(drive);
         config.save(config_path_in(config_dir.path())).unwrap();
-
-        let (merged, _) = tokio::time::timeout(
-            std::time::Duration::from_secs(2),
-            provider_retry::primary_merged_view_and_root_with_retry(&mut stale_daemon),
-        )
-        .await
-        .expect("provider retry stayed pinned to a superseded root")
-        .unwrap();
+        let state = tokio::time::timeout(std::time::Duration::from_secs(2), &mut listing)
+            .await
+            .expect("provider retry stayed pinned to a superseded root")
+            .unwrap();
+        let merged = state.visible_view.unwrap();
         let paths = merged
             .view
             .files

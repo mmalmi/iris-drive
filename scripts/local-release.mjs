@@ -1409,10 +1409,8 @@ function main() {
   console.log(`Stage dir: ${stageDir}`)
   console.log(`Windows release signing: ${releasePolicy.windows.signing}`)
 
-  if (options.build && options.publish && !options.draft) {
-    validateFinalReleaseBuildInputs({ env, steps: buildSteps })
-  }
   if (options.publish && !options.draft) {
+    if (options.build) validateFinalReleaseBuildInputs({ env, steps: buildSteps })
     validateFinalPublishInputs({ env, skipZapstore: options.skipZapstore })
     if (!options.dryRun) requireMeshRelease(meshGate)
   }

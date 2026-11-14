@@ -930,7 +930,7 @@ fn provider_import_tombstone_scope_preserves_unrelated_base_file() {
     config.save(config_path_in(config_dir.path())).unwrap();
 
     runtime.block_on(async {
-        let mut daemon = Daemon::open(config_dir.path()).unwrap();
+        let daemon = Daemon::open(config_dir.path()).unwrap();
         let base = iris_drive_core::primary_merged_root(daemon.tree(), daemon.config())
             .await
             .unwrap()
@@ -949,15 +949,18 @@ fn provider_import_tombstone_scope_preserves_unrelated_base_file() {
             .await
             .unwrap();
         let tombstone_paths = BTreeSet::from(["local.txt".to_string()]);
-        provider_retry::import_provider_root_with_retry(
-            &mut daemon,
-            edited,
-            Some(base),
-            Some(&tombstone_paths),
-        )
-        .await
-        .unwrap();
-
+        let staged = ProviderStagedRoot {
+            root_cid: edited.to_string(),
+            tombstone_base_root_cid: Some(base.to_string()),
+            tombstone_paths,
+            updated_at: unix_now_seconds(),
+        };
+        write_provider_staging(config_dir.path(), &staged).unwrap();
+        crate::daemon::import_staged_provider_root(config_dir.path())
+            .await
+            .unwrap()
+            .unwrap();
+        let daemon = Daemon::open(config_dir.path()).unwrap();
         let merged = iris_drive_core::primary_merged_view(daemon.tree(), daemon.config())
             .await
             .unwrap();

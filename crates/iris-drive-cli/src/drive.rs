@@ -13,8 +13,7 @@ pub(crate) use iris_drive_core::provider::{
 };
 
 use crate::provider_staging::{
-    ProviderStagedRoot, clear_provider_staging, read_provider_staging, unix_now_seconds,
-    write_provider_staging,
+    ProviderStagedRoot, read_provider_staging, unix_now_seconds, write_provider_staging,
 };
 
 mod commands;
@@ -22,11 +21,7 @@ mod provider_cache;
 mod provider_retry;
 pub(crate) use commands::*;
 use provider_cache::hydrate_provider_cache;
-pub(crate) use provider_retry::import_provider_root_with_retry;
-use provider_retry::{
-    ensure_provider_root_locally_available, primary_merged_root_with_retry,
-    primary_merged_view_and_root_with_retry,
-};
+use provider_retry::{ProviderCommandState, prepare_provider_command, retry_provider_operation};
 
 pub(crate) fn cmd_drives(config_dir: &std::path::Path) -> Result<()> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
@@ -235,98 +230,17 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
         .build()
         .context("building tokio runtime")?;
     runtime.block_on(async {
-        let started = std::time::Instant::now();
-        let provider_mutation = provider_command_is_mutation(&command);
-        let _config_lock = if provider_mutation {
-            iris_drive_core::daemon_liveness::ensure_daemon_available_for_provider_mutation(
-                config_dir,
-            )?;
-            Some(ConfigMutationLock::acquire(config_dir).await?)
-        } else {
-            None
-        };
-        let mut daemon = Daemon::open(config_dir)
-            .with_context(|| format!("opening daemon at {}", config_dir.display()))?;
-        tracing::debug!(
-            elapsed_ms = started.elapsed().as_millis(),
-            "provider command opened daemon"
-        );
-        match &command {
-            ProviderCmd::Write { path, .. }
-            | ProviderCmd::Mkdir { path, .. }
-            | ProviderCmd::Delete { path, .. } => {
-                iris_drive_core::shared_content::ensure_shared_path_writable(
-                    daemon.config(),
-                    &normalize_provider_path(path)?,
-                )?;
-            }
-            ProviderCmd::Rename {
-                old_path, new_path, ..
-            } => {
-                for path in [old_path, new_path] {
-                    iris_drive_core::shared_content::ensure_shared_path_writable(
-                        daemon.config(),
-                        &normalize_provider_path(path)?,
-                    )?;
-                }
-            }
-            _ => {}
-        }
-        let staged_root =
-            read_provider_staging(config_dir).context("reading staged provider root")?;
-        let supplied_base_root_cid = provider_command_base_root_cid(&command)?;
-        let merged_view_and_root = if provider_command_needs_merged_view(&command) {
-            let phase = std::time::Instant::now();
-            let merged = primary_merged_view_and_root_with_retry(&mut daemon)
-                .await
-                .context("building virtual provider timestamp index")?;
-            tracing::debug!(
-                elapsed_ms = phase.elapsed().as_millis(),
-                "provider command built merged view"
-            );
-            Some(merged)
-        } else {
-            None
-        };
-        let visible_view = merged_view_and_root.as_ref().map(|(view, _)| view);
-        let phase = std::time::Instant::now();
-        let visible = if let Some(staged) = staged_root.as_ref() {
-            tracing::debug!("provider command using staged visible root anchor");
-            iris_drive_core::projection::PrimaryMergedRoot {
-                root_cid: staged.root()?,
-                file_count: 0,
-                top_level_entries: 0,
-            }
-        } else if let Some(root_cid) = supplied_base_root_cid.clone() {
-            tracing::debug!("provider command using supplied visible root anchor");
-            iris_drive_core::projection::PrimaryMergedRoot {
-                root_cid,
-                file_count: 0,
-                top_level_entries: 0,
-            }
-        } else if let Some((_, visible_root)) = merged_view_and_root.as_ref() {
-            visible_root.clone()
-        } else {
-            primary_merged_root_with_retry(&mut daemon)
-                .await
-                .context("building virtual provider root")?
-        };
-        tracing::debug!(
-            elapsed_ms = phase.elapsed().as_millis(),
-            "provider command built merged root"
-        );
-        if provider_command_is_mutation(&command) {
-            if staged_root.is_none() && supplied_base_root_cid.is_none() {
-                let phase = std::time::Instant::now();
-                ensure_provider_root_locally_available(&mut daemon, &visible.root_cid).await?;
-                tracing::debug!(
-                    elapsed_ms = phase.elapsed().as_millis(),
-                    "provider command checked provider root availability"
-                );
-            } else {
-                tracing::debug!("provider command skipped provider root availability preflight");
-            }
-        }
+        let ProviderCommandState {
+            daemon,
+            mutation_lock,
+            staged_root,
+            visible,
+            visible_view,
+        } = retry_provider_operation("provider preflight", || {
+            prepare_provider_command(config_dir, &command)
+        })
+        .await?;
+        let visible_view = visible_view.as_ref();
         let tombstone_base_root = if provider_command_is_mutation(&command) {
             match staged_root.as_ref() {
                 Some(staged) => staged
@@ -483,7 +397,8 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     "provider command wrote file"
                 );
                 print_provider_mutation(
-                    &mut daemon,
+                    &daemon,
+                    mutation_lock,
                     &provider,
                     &path,
                     tombstone_base_root.clone(),
@@ -506,7 +421,8 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     "provider command created directory"
                 );
                 print_provider_mutation(
-                    &mut daemon,
+                    &daemon,
+                    mutation_lock,
                     &provider,
                     &path,
                     tombstone_base_root.clone(),
@@ -530,7 +446,8 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     "provider command deleted path"
                 );
                 print_provider_mutation(
-                    &mut daemon,
+                    &daemon,
+                    mutation_lock,
                     &provider,
                     &path,
                     tombstone_base_root.clone(),
@@ -552,7 +469,8 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     "provider command renamed path"
                 );
                 print_provider_mutation(
-                    &mut daemon,
+                    &daemon,
+                    mutation_lock,
                     &provider,
                     &new_path,
                     tombstone_base_root.clone(),
@@ -729,7 +647,8 @@ pub(crate) async fn rename_provider_path(
 }
 
 async fn print_provider_mutation(
-    daemon: &mut Daemon,
+    daemon: &Daemon,
+    mutation_lock: Option<ConfigMutationLock>,
     provider: &HashTreeProviderFs<FsBlobStore>,
     changed_path: &str,
     tombstone_base_root: Option<Cid>,
@@ -750,6 +669,7 @@ async fn print_provider_mutation(
         updated_at: unix_now_seconds(),
     };
     write_provider_staging(daemon.config_dir(), &staged)?;
+    drop(mutation_lock);
     let wake_payload = json!({
         "root_cid": report.root_cid,
         "file_count": report.file_count,
@@ -766,22 +686,17 @@ async fn print_provider_mutation(
             false
         }
     };
-    let (root_cid, file_count, top_level_entries, staged) = if woke {
-        (
-            report.root_cid,
-            report.file_count,
-            report.top_level_entries,
-            true,
-        )
+    let committed = if woke {
+        None
     } else {
-        let report = import_provider_root_with_retry(
-            daemon,
-            root,
-            tombstone_base_root,
-            Some(&tombstone_paths),
-        )
-        .await?;
-        clear_provider_staging(daemon.config_dir())?;
+        // A foreground publisher and other provider writes may be running now.
+        // Each attempt imports the current stage exactly once under its own lock.
+        retry_provider_operation("provider import", || {
+            crate::daemon::import_staged_provider_root(daemon.config_dir())
+        })
+        .await?
+    };
+    let (root_cid, file_count, top_level_entries) = if let Some(report) = committed {
         let wake_payload = json!({
             "root_cid": report.root_cid,
             "file_count": report.file_count,
@@ -799,14 +714,15 @@ async fn print_provider_mutation(
             report.root_cid,
             u64::try_from(report.file_count).unwrap_or(u64::MAX),
             report.top_level_entries,
-            false,
         )
+    } else {
+        (report.root_cid, report.file_count, report.top_level_entries)
     };
     iris_drive_core::paths::touch_provider_root_signal_in(daemon.config_dir())
         .context("signaling provider root change")?;
     tracing::debug!(
         elapsed_ms = phase.elapsed().as_millis(),
-        staged,
+        staged = woke,
         "provider command staged provider root"
     );
     println!(
@@ -816,7 +732,7 @@ async fn print_provider_mutation(
             "root_cid": root_cid,
             "file_count": file_count,
             "top_level_entries": top_level_entries,
-            "staged": staged,
+            "staged": woke,
         })
     );
     Ok(())
