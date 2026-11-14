@@ -90,6 +90,7 @@ fn publish_device_approval(
             tokio::time::timeout(
                 std::time::Duration::from_secs(APP_KEY_LINK_RELAY_PUBLISH_TIMEOUT_SECS),
                 iris_drive_core::relay_sync::publish_drive_root(
+                    config_dir,
                     &client,
                     device.keys(),
                     &drive_root.root_scope_id,

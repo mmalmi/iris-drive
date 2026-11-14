@@ -475,6 +475,7 @@ pub(crate) async fn publish_current_state(
         let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
             .context("loading AppKey for device approval Drive root")?;
         match relay_publish_with_timeout(relay_sync::publish_drive_root(
+            config_dir,
             client,
             device.keys(),
             &handoff.root_scope_id,
@@ -553,6 +554,7 @@ pub(crate) async fn publish_current_state(
             }
         }
         match relay_publish_with_timeout(relay_sync::publish_drive_root(
+            config_dir,
             client,
             device.keys(),
             &folder.share_id.to_string(),
@@ -603,6 +605,7 @@ pub(crate) async fn publish_current_state(
             );
         } else if !approval_root_already_published {
             match relay_publish_with_timeout(relay_sync::publish_drive_root(
+                config_dir,
                 client,
                 device.keys(),
                 &state.root_scope_id(),

@@ -17,10 +17,13 @@
 //! functions take an `Event`, verify its signature, and extract the
 //! application-level type.
 
+use std::path::Path;
+
 use hashtree_core::{Cid, from_hex, to_hex};
 use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
 use nostr_sdk::{Event, EventBuilder, Keys, Kind, PublicKey, Tag, TagKind};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::config::AppKeyRootRef;
@@ -139,23 +142,27 @@ pub fn build_drive_root_event(
 
 /// Build a signed drive-root event for live relay publishing.
 ///
-/// Relays treat Iris Drive roots as replaceable events. If the root CID did
-/// not change but the authorized recipient set did, reusing the old
-/// `created_at` causes relays to reject the event and the newly linked device
-/// never receives its root-key wrap.
+/// Relays keep one root per address and break a `created_at` tie by event id,
+/// so the event signs after the stored root and after any different version
+/// this config already signed for the address (the clock in `config_dir`).
+/// Otherwise approving a device right after a publish can lose to the root
+/// that has no key wrap for it.
 pub fn build_drive_root_publish_event(
+    config_dir: &Path,
     device_keys: &Keys,
     root_scope_id: &str,
     drive_id: &str,
     root: &AppKeyRootRef,
     authorized_app_key_pubkeys: &[String],
 ) -> Result<Event, WireError> {
-    let stored_ts = if root.published_at > 0 {
-        u64::try_from(root.published_at).unwrap_or(0)
-    } else {
-        0
-    };
-    let ts = unix_now_secs().max(stored_ts.saturating_add(1));
+    let stored_ts = u64::try_from(root.published_at).unwrap_or(0);
+    let ts = crate::drive_root_clock::reserve(
+        config_dir,
+        &drive_root_d_tag(root_scope_id, drive_id),
+        &drive_root_version(root, authorized_app_key_pubkeys)?,
+        unix_now_secs().max(stored_ts.saturating_add(1)),
+    )
+    .map_err(|error| WireError::Event(format!("drive-root clock: {error}")))?;
     build_drive_root_event_at(
         device_keys,
         root_scope_id,
@@ -165,6 +172,22 @@ pub fn build_drive_root_publish_event(
         ts,
         Some(unix_now_millis().max(ts.saturating_mul(1000))),
     )
+}
+
+/// Everything a drive-root event says apart from its timestamp.
+fn drive_root_version(
+    root: &AppKeyRootRef,
+    authorized_app_key_pubkeys: &[String],
+) -> Result<String, WireError> {
+    let root = AppKeyRootRef {
+        published_at: 0,
+        ..root.clone()
+    };
+    let recipients: std::collections::BTreeSet<&String> =
+        authorized_app_key_pubkeys.iter().collect();
+    let bytes = serde_json::to_vec(&(root, recipients))
+        .map_err(|e| WireError::BadContent(e.to_string()))?;
+    Ok(hex::encode(Sha256::digest(bytes)))
 }
 
 fn drive_root_timestamp_from_root(root: &AppKeyRootRef) -> u64 {

@@ -194,6 +194,7 @@ async fn editor_changes_and_deletions_merge_while_reader_writes_are_rejected() {
 
 #[test]
 fn membership_updates_advance_root_announcement_even_without_file_changes() {
+    let dir = tempfile::tempdir().unwrap();
     let keys = nostr_sdk::Keys::generate();
     let mut folder = create_shared_folder(
         &keys,
@@ -211,6 +212,7 @@ fn membership_updates_advance_root_announcement_even_without_file_changes() {
         1,
     );
     let first = crate::nostr_events::build_drive_root_publish_event(
+        dir.path(),
         &keys,
         &folder.share_id.to_string(),
         PRIMARY_DRIVE_ID,
@@ -220,6 +222,7 @@ fn membership_updates_advance_root_announcement_even_without_file_changes() {
     .unwrap();
     folder.access.updated_at = i64::try_from(first.created_at.as_secs()).unwrap() + 1;
     let second = crate::nostr_events::build_drive_root_publish_event(
+        dir.path(),
         &keys,
         &folder.share_id.to_string(),
         PRIMARY_DRIVE_ID,

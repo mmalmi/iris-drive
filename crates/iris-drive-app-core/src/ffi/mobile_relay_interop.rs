@@ -202,6 +202,7 @@ pub(super) async fn publish_native_profile_roster_ops(
         tokio::time::timeout(
             std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS),
             iris_drive_core::relay_sync::publish_drive_root(
+                config_dir,
                 relay_client,
                 app_key.keys(),
                 &handoff.root_scope_id,

@@ -25,7 +25,7 @@ crates/iris-drive-core/src/nostr_identity.rs 2100 NostrIdentity authority shim n
 crates/iris-drive-core/src/profile.rs 2684 Profile create, recovery, admission, projection guards, DCK flows, device labels, device rename, request-event-free compact bootstrap approval receipts, and receipt-first authorization/write guards need a later lifecycle/helper split.
 crates/iris-drive-core/src/profile/tests.rs 1807 Profile recovery, AppKey authority, request-event-free compact bootstrap fixtures, and device-label rename scenarios need a later test-module split.
 crates/iris-drive-core/src/projection/tests.rs 1150 Projection conflict and merged-root coverage needs a later scenario split.
-crates/iris-drive-core/src/relay_sync.rs 1304 Relay sync root/app-key/share dispatcher includes strict approval-receipt gating plus request-scoped receipt publish/fetch/subscribe; needs a later event-handler split.
+crates/iris-drive-core/src/relay_sync.rs 1306 Relay sync root/app-key/share dispatcher includes strict approval-receipt gating plus request-scoped receipt publish/fetch/subscribe and the config-scoped drive-root clock; needs a later event-handler split.
 crates/iris-drive-core/src/relay_sync/tests.rs 1510 Relay/app-key/share sync coverage now includes unbound join roster adoption; needs a later test-module split.
 crates/iris-drive-core/src/sharing.rs 5200 Share roster, key epoch, and shortcut model needs a later module/test split.
 crates/iris-drive-core/src/fips_sync.rs 950 FIPS sync runtime includes peer-config idle deduplication, mobile ambient-discovery defaults, and optional mesh pubsub; needs a later transport/state split.

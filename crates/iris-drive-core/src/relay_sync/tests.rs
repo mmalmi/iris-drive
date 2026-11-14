@@ -1290,6 +1290,7 @@ fn apply_drive_root_event_replaces_hint_placeholder_for_same_root() {
         );
 
     let event = build_drive_root_publish_event(
+        dir.path(),
         &device_b,
         &acct.state.root_scope_id(),
         "main",

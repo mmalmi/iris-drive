@@ -172,6 +172,7 @@ async fn publish_share_content(config_dir: &Path, share_id: NostrIdentityId) -> 
             crate::sign_share_access_snapshot(app_key.keys(), folder, folder.access.updated_at)?;
         crate::relay_sync::publish_share_access_snapshot(&client, &snapshot).await?;
         crate::relay_sync::publish_drive_root(
+            config_dir,
             &client,
             app_key.keys(),
             &share_id.to_string(),

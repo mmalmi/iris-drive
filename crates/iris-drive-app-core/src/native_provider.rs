@@ -687,6 +687,7 @@ fn prepare_current_app_key_root_publish(
         Profile::load(account.clone(), daemon.config_dir()).context("loading profile keys")?;
     let authorized_app_keys = iris_drive_core::drive_root_recipient_app_key_pubkeys(account, drive);
     let event = iris_drive_core::nostr_events::build_drive_root_publish_event(
+        daemon.config_dir(),
         loaded_account.app_key.keys(),
         &account.root_scope_id(),
         &drive.drive_id,

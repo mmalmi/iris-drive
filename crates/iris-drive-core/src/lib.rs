@@ -19,6 +19,7 @@ pub mod device_approval_handoff;
 pub mod device_labels;
 mod dir_builder;
 pub mod direct_root_transport;
+mod drive_root_clock;
 mod fips_bootstrap;
 pub mod fips_status;
 pub mod fips_sync;

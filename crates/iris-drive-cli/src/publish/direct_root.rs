@@ -1259,6 +1259,7 @@ async fn append_primary_drive_root_events(
         let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
             .context("loading app key")?;
         let event = iris_drive_core::nostr_events::build_drive_root_publish_event(
+            config_dir,
             device.keys(),
             &state.root_scope_id(),
             &drive.drive_id,
@@ -1318,6 +1319,7 @@ async fn append_share_root_events(
         ensure_publishable_root_locally_available(config_dir, config, &root.root_cid).await?;
         let authorized_recipients = iris_drive_core::shared_folder_key_recipient_pubkeys(folder);
         let event = iris_drive_core::nostr_events::build_drive_root_publish_event(
+            config_dir,
             device.keys(),
             &folder.share_id.to_string(),
             iris_drive_core::PRIMARY_DRIVE_ID,

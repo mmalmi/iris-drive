@@ -978,6 +978,7 @@ pub async fn publish_share_access_snapshot(
 
 /// Publish a signed drive-root event for this device's current root.
 pub async fn publish_drive_root(
+    config_dir: &std::path::Path,
     client: &Client,
     device_keys: &Keys,
     root_scope_id: &str,
@@ -986,6 +987,7 @@ pub async fn publish_drive_root(
     authorized_app_key_pubkeys: &[String],
 ) -> Result<nostr_sdk::EventId, RelayError> {
     let event = build_drive_root_publish_event(
+        config_dir,
         device_keys,
         root_scope_id,
         drive_id,

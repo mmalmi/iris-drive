@@ -328,6 +328,7 @@ fn drive_root_event_with_zero_published_at_uses_wall_clock() {
 
 #[test]
 fn drive_root_publish_event_advances_past_stored_root_timestamp() {
+    let dir = tempfile::tempdir().unwrap();
     let device = Keys::generate();
     let root_scope_id = NostrIdentityId::new_v4().to_string();
     let root = AppKeyRootRef::legacy(
@@ -337,6 +338,7 @@ fn drive_root_publish_event_advances_past_stored_root_timestamp() {
     );
 
     let event = build_drive_root_publish_event(
+        dir.path(),
         &device,
         &root_scope_id,
         "main",
@@ -347,6 +349,39 @@ fn drive_root_publish_event_advances_past_stored_root_timestamp() {
     let (_, _, _, parsed_root) = parse_drive_root_event_for_device(&event, &device).unwrap();
 
     assert!(parsed_root.published_at > root.published_at);
+}
+
+#[test]
+fn approval_republish_never_ties_with_the_previous_publish() {
+    let dir = tempfile::tempdir().unwrap();
+    let device = Keys::generate();
+    let new_device = Keys::generate();
+    let root_scope_id = NostrIdentityId::new_v4().to_string();
+    // A stored root ahead of wall time pins both events to the same wanted
+    // second, so only the clock can separate them.
+    let ahead = i64::try_from(unix_now_secs()).unwrap() + 3600;
+    let root = AppKeyRootRef::legacy(Cid::encrypted([0x56; 32], [0x78; 32]).to_string(), ahead, 1);
+    let owner = vec![device.public_key().to_hex()];
+    let approved = vec![owner[0].clone(), new_device.public_key().to_hex()];
+    let build = |recipients: &[String]| {
+        build_drive_root_publish_event(
+            dir.path(),
+            &device,
+            &root_scope_id,
+            "main",
+            &root,
+            recipients,
+        )
+        .unwrap()
+    };
+
+    let published = build(&owner);
+    let approval = build(&approved);
+
+    assert!(approval.created_at > published.created_at);
+    parse_drive_root_event_for_device(&approval, &new_device).unwrap();
+    // Rebuilding the same version does not run the clock ahead.
+    assert_eq!(build(&approved).created_at, approval.created_at);
 }
 
 #[test]

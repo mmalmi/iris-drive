@@ -981,6 +981,7 @@ pub fn build_current_direct_root_events(
         let authorized_app_keys = drive_root_recipient_app_key_pubkeys(state, drive);
         if !authorized_app_keys.is_empty() {
             let event = crate::nostr_events::build_drive_root_publish_event(
+                config_dir,
                 device.keys(),
                 &state.root_scope_id(),
                 &drive.drive_id,
@@ -1009,6 +1010,7 @@ pub fn build_current_direct_root_events(
         {
             let recipients = crate::shared_folder_key_recipient_pubkeys(folder);
             let event = crate::nostr_events::build_drive_root_publish_event(
+                config_dir,
                 device.keys(),
                 &folder.share_id.to_string(),
                 PRIMARY_DRIVE_ID,
