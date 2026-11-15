@@ -609,6 +609,7 @@ fn logout(model: &AppRef) {
     stop_daemon(model);
     match dispatch_desktop_action(NativeAppAction::Logout) {
         Ok(_) => {
+            *model.setup_screen.borrow_mut() = SetupScreen::Welcome;
             model.ui.notice.set_text("Logged out");
             refresh(model);
         }

@@ -248,6 +248,7 @@ require_file_contains linux/src/setup.rs 'confirm_logout(&model, LogoutPrompt::P
 require_file_contains linux/src/ui.rs 'confirm_logout(&model, LogoutPrompt::Profile)'
 require_file_contains linux/src/actions.rs '.default_response("cancel")'
 require_file_contains linux/src/actions.rs 'if response == "confirm"'
+require_file_contains linux/src/actions.rs '*model.setup_screen.borrow_mut() = SetupScreen::Welcome;'
 require_file_absent linux/src/setup.rs "Start over"
 require_file_contains linux/src/setup.rs "open_recovery_phrase_setup"
 require_file_contains linux/src/setup.rs "open_secret_key_setup"
