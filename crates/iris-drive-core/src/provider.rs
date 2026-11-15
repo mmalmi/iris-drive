@@ -1,7 +1,7 @@
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
-use hashtree_provider::{ItemKind, ProviderError, ProviderFs};
+use hashtree_provider::{HashTreeProviderFs, ItemKind, ProviderError, ProviderFs};
 use serde::Serialize;
 
 const PROBABLE_OS_PLACEHOLDER_COLLISION_DEPTH: usize = 3;
@@ -401,6 +401,34 @@ where
     if !bytes.is_empty() {
         provider.write(&path, 0, bytes).await?;
     }
+    Ok(())
+}
+
+/// Save the local file `source` at `path`, creating folders as needed. The
+/// bytes are stored chunk by chunk as they are read, so a large video from
+/// the share sheet, the Files app or photo backup never sits in memory whole.
+pub async fn write_provider_file_from_path<S>(
+    provider: &HashTreeProviderFs<S>,
+    path: &str,
+    source: &Path,
+) -> anyhow::Result<()>
+where
+    S: hashtree_core::Store + 'static,
+{
+    let (parent, name) = split_provider_path(path)?;
+    ensure_provider_dirs(provider, &parent).await?;
+    let path = path.to_owned();
+    match provider.item(&path).await {
+        Ok(item) if item.kind == ItemKind::Directory => {
+            delete_provider_path(provider, &path).await?;
+            provider.create_file(&parent, &name).await?;
+        }
+        Ok(_) => {}
+        Err(_) => {
+            provider.create_file(&parent, &name).await?;
+        }
+    }
+    provider.write_file_from_path(&path, source).await?;
     Ok(())
 }
 

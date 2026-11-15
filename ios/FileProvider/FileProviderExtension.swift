@@ -8,6 +8,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
     required init(domain: NSFileProviderDomain) {
         self.domain = domain
         super.init()
+        FileProviderStorage.useSmallWriteBatches()
         FileProviderStorage.debugLog("extension init domain=\(domain.identifier.rawValue)")
     }
 

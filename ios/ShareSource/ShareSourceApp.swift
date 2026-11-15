@@ -50,7 +50,11 @@ final class ShareSourceViewController: UIViewController {
             .appendingPathComponent(filename, isDirectory: false)
 
         do {
-            try contents.write(to: url, atomically: true, encoding: .utf8)
+            if let bytes = environment["IRIS_DRIVE_SHARE_SOURCE_BYTES"].flatMap(Int.init), bytes > 0 {
+                try writeLargeFile(to: url, bytes: bytes)
+            } else {
+                try contents.write(to: url, atomically: true, encoding: .utf8)
+            }
         } catch {
             assertionFailure("Unable to write share source file: \(error)")
             return
@@ -63,5 +67,24 @@ final class ShareSourceViewController: UIViewController {
         controller.popoverPresentationController?.sourceView = shareButton
         controller.popoverPresentationController?.sourceRect = shareButton.bounds
         present(controller, animated: false)
+    }
+
+    /// A file as large as a long video, written a megabyte at a time.
+    private func writeLargeFile(to url: URL, bytes: Int) throws {
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: url)
+        defer { try? handle.close() }
+        var block = [UInt8](repeating: 0, count: 1 << 20)
+        var written = 0
+        var counter: UInt32 = 0
+        while written < bytes {
+            for index in stride(from: 0, to: block.count, by: 4) {
+                counter &+= 2_654_435_761
+                withUnsafeBytes(of: counter) { block.replaceSubrange(index..<index + 4, with: $0) }
+            }
+            let count = min(block.count, bytes - written)
+            try handle.write(contentsOf: block[0..<count])
+            written += count
+        }
     }
 }

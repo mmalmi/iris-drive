@@ -6,7 +6,11 @@ import XCTest
 @MainActor
 final class ShareSaveModelTests: XCTestCase {
     private func item(_ name: String) -> PendingSharedItem {
-        PendingSharedItem(name: name, contentType: .plainText, contents: Data(name.utf8))
+        PendingSharedItem(
+            name: name,
+            contentType: .plainText,
+            source: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        )
     }
 
     func testWithoutAProfileItSaysToSetUpFirst() {

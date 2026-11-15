@@ -2,14 +2,22 @@ import Foundation
 import UIKit
 import UniformTypeIdentifiers
 
+/// Turns what another app shares into files staged on disk. A shared file is
+/// copied, never read into memory, so a long video does not end the extension.
 final class ShareItemImporter {
-    typealias SaveSharedFile = (_ displayName: String, _ contentType: UTType, _ contents: Data) throws -> Void
+    /// `staged` is a file in the staging directory that the receiver owns.
+    typealias SaveSharedFile = (_ displayName: String, _ contentType: UTType, _ staged: URL) throws -> Void
     typealias Log = (_ message: String) -> Void
 
+    /// A file larger than this cannot be a reference to another file.
+    private static let fileURLPayloadLimit = 64 * 1024
+
+    private let stagingDirectory: URL
     private let saveSharedFile: SaveSharedFile
     private let log: Log
 
-    init(saveSharedFile: @escaping SaveSharedFile, log: @escaping Log = { _ in }) {
+    init(stagingDirectory: URL, saveSharedFile: @escaping SaveSharedFile, log: @escaping Log = { _ in }) {
+        self.stagingDirectory = stagingDirectory
         self.saveSharedFile = saveSharedFile
         self.log = log
     }
@@ -104,7 +112,7 @@ final class ShareItemImporter {
             try saveSharedFile(
                 defaultName(provider: provider, contentType: contentType),
                 contentType,
-                data
+                try stage(data)
             )
             return true
         }
@@ -121,7 +129,7 @@ final class ShareItemImporter {
             try saveSharedFile(
                 defaultName(provider: provider, contentType: .png),
                 .png,
-                data
+                try stage(data)
             )
             return true
         }
@@ -138,7 +146,7 @@ final class ShareItemImporter {
 
     private func importText(_ text: String, name: String, contentType: UTType) throws {
         guard let data = text.data(using: .utf8) else { return }
-        try saveSharedFile(name, contentType, data)
+        try saveSharedFile(name, contentType, try stage(data))
     }
 
     private func defaultName(provider: NSItemProvider, contentType: UTType) -> String {
@@ -187,9 +195,13 @@ final class ShareItemImporter {
                 url.stopAccessingSecurityScopedResource()
             }
         }
-        let data = try Data(contentsOf: url)
+        let values = try url.resourceValues(forKeys: [.isDirectoryKey, .fileSizeKey])
+        if values.isDirectory == true {
+            throw CocoaError(.fileReadUnknown, userInfo: [NSFilePathErrorKey: url.path])
+        }
         if declaredContentType.conforms(to: .fileURL),
-           let referencedURL = fileURLPayload(from: data),
+           (values.fileSize ?? 0) <= Self.fileURLPayloadLimit,
+           let referencedURL = fileURLPayload(from: try Data(contentsOf: url)),
            referencedURL != url {
             try importFileURL(referencedURL, declaredContentType: .data, provider: provider)
             return
@@ -203,8 +215,25 @@ final class ShareItemImporter {
                 contentType: fileType
             ),
             fileType,
-            data
+            try stageCopy(of: url)
         )
+    }
+
+    private func stage(_ data: Data) throws -> URL {
+        let staged = try newStagedURL()
+        try data.write(to: staged)
+        return staged
+    }
+
+    private func stageCopy(of source: URL) throws -> URL {
+        let staged = try newStagedURL()
+        try FileManager.default.copyItem(at: source, to: staged)
+        return staged
+    }
+
+    private func newStagedURL() throws -> URL {
+        try FileManager.default.createDirectory(at: stagingDirectory, withIntermediateDirectories: true)
+        return stagingDirectory.appendingPathComponent(UUID().uuidString, isDirectory: false)
     }
 
     private func fileURLPayload(from data: Data) -> URL? {

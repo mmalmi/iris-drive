@@ -19,6 +19,8 @@ use crate::diff::{PathChange, path_diff};
 use crate::error::ProviderError;
 use crate::provider::{DirItem, Item, ItemKind, ProviderFs, SyncAnchor};
 
+mod stream_write;
+
 const MODIFIED_AT_META_KEY: &str = "modified_at";
 const WHOLE_FILE_HASH_META_KEY: &str = "whole_file_hash";
 

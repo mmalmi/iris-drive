@@ -8,6 +8,7 @@ use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+mod large_file_tests;
 mod root_publish_tests;
 
 fn apply_owner_profile_roster_to_linked_config(owner_dir: &Path, linked_dir: &Path) {

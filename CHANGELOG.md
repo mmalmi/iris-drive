@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Save large videos to Iris Drive from another app's share sheet on iPhone.
+  The share extension used to read the whole file into memory, so iOS closed
+  it on large videos and nothing was saved; a 380 MB video now saves using
+  under 50 MB of memory. Files saved through the Files app, Android and photo
+  backup are also stored in chunks instead of read in all at once.
+
 ## 0.1.41 - 2026-11-15
 
 - Share folders by link from every app. Anyone who opens a drive.iris.to share

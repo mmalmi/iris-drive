@@ -1,12 +1,13 @@
 import SwiftUI
 import UniformTypeIdentifiers
 
-/// Something handed to the share sheet, ready to be saved under `name`.
+/// Something handed to the share sheet, staged on disk at `source` and ready
+/// to be saved under `name`.
 struct PendingSharedItem: Identifiable, Equatable {
     let id = UUID()
     var name: String
     let contentType: UTType
-    let contents: Data
+    let source: URL
 }
 
 /// What the "Save to Iris Drive" sheet shows: the items, where they go, and

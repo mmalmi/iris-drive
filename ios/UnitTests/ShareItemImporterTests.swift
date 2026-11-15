@@ -10,6 +10,15 @@ final class ShareItemImporterTests: XCTestCase {
 
     private final class SaveRecorder {
         var files: [SavedFile] = []
+        var stagedURLs: [URL] = []
+    }
+
+    private lazy var stagingDirectory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("iris-drive-share-staging-\(UUID().uuidString)", isDirectory: true)
+
+    override func tearDown() {
+        try? FileManager.default.removeItem(at: stagingDirectory)
+        super.tearDown()
     }
 
     func testPreferredTypeChoosesPlainTextBeforeGenericData() {
@@ -204,6 +213,44 @@ final class ShareItemImporterTests: XCTestCase {
         XCTAssertEqual(loadedData, Data("file representation bytes".utf8))
     }
 
+    func testALargeFileIsStagedAsACopyThatOutlivesTheSharedOriginal() throws {
+        let recorder = SaveRecorder()
+        let source = FileManager.default.temporaryDirectory
+            .appendingPathComponent("Iris Drive Large Shared Video.mov")
+        let bytes = Data((0..<(8 << 20)).map { UInt8(truncatingIfNeeded: $0 &* 31) })
+        try bytes.write(to: source)
+        let importer = makeImporter(recorder: recorder)
+
+        XCTAssertTrue(try importer.importItem(
+            source as NSURL,
+            typeIdentifier: UTType.fileURL.identifier,
+            provider: NSItemProvider()
+        ))
+        // The system deletes its copy of a shared file once loading returns.
+        try FileManager.default.removeItem(at: source)
+
+        let staged = try XCTUnwrap(recorder.stagedURLs.first)
+        XCTAssertEqual(staged.deletingLastPathComponent(), stagingDirectory)
+        XCTAssertEqual(recorder.files.first?.displayName, "Iris Drive Large Shared Video.mov")
+        XCTAssertEqual(recorder.files.first?.contentType, .quickTimeMovie)
+        XCTAssertEqual(try Data(contentsOf: staged), bytes)
+    }
+
+    func testAFolderIsNotSaved() throws {
+        let recorder = SaveRecorder()
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iris-drive-share-folder-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        addTeardownBlock { try? FileManager.default.removeItem(at: folder) }
+
+        XCTAssertThrowsError(try makeImporter(recorder: recorder).importItem(
+            folder as NSURL,
+            typeIdentifier: UTType.fileURL.identifier,
+            provider: NSItemProvider()
+        ))
+        XCTAssertTrue(recorder.files.isEmpty)
+    }
+
     func testWebURLImportCreatesUrlFile() throws {
         let recorder = SaveRecorder()
         let importer = makeImporter(recorder: recorder)
@@ -252,11 +299,12 @@ final class ShareItemImporterTests: XCTestCase {
     }
 
     private func makeImporter(recorder: SaveRecorder? = nil) -> ShareItemImporter {
-        ShareItemImporter { displayName, contentType, contents in
+        ShareItemImporter(stagingDirectory: stagingDirectory) { displayName, contentType, staged in
+            recorder?.stagedURLs.append(staged)
             recorder?.files.append(SavedFile(
                 displayName: displayName,
                 contentType: contentType,
-                contents: contents
+                contents: try Data(contentsOf: staged)
             ))
         }
     }

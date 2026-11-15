@@ -10,18 +10,28 @@ final class ShareViewController: UIViewController {
     private var didStartLoading = false
     private let collectedLock = NSLock()
     private var collected: [PendingSharedItem] = []
+    /// Shared files wait here, on disk, until Save or Cancel.
+    private let staging = FileManager.default.temporaryDirectory
+        .appendingPathComponent("Shared items", isDirectory: true)
+        .appendingPathComponent(UUID().uuidString, isDirectory: true)
     private lazy var importer = ShareItemImporter(
-        saveSharedFile: { [weak self] displayName, contentType, contents in
+        stagingDirectory: staging,
+        saveSharedFile: { [weak self] displayName, contentType, staged in
             guard let self else { return }
             self.collectedLock.lock()
-            self.collected.append(PendingSharedItem(name: displayName, contentType: contentType, contents: contents))
+            self.collected.append(PendingSharedItem(name: displayName, contentType: contentType, source: staged))
             self.collectedLock.unlock()
         },
         log: FileProviderStorage.debugLog
     )
 
+    deinit {
+        try? FileManager.default.removeItem(at: staging)
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
+        FileProviderStorage.useSmallWriteBatches()
         let host = UIHostingController(rootView: ShareSaveView(
             model: model,
             onCancel: { [weak self] in self?.cancel() },
@@ -83,16 +93,21 @@ final class ShareViewController: UIViewController {
         model.save(using: { item, folder in
             try FileProviderStorage.importSharedFile(
                 named: item.name.trimmingCharacters(in: .whitespacesAndNewlines),
-                contentType: item.contentType,
-                contents: item.contents,
+                from: item.source,
                 into: folder
             )
         }, done: { [weak self] in
+            self?.removeStaging()
             self?.extensionContext?.completeRequest(returningItems: nil)
         })
     }
 
+    private func removeStaging() {
+        try? FileManager.default.removeItem(at: staging)
+    }
+
     private func cancel() {
+        removeStaging()
         if case .saved = model.phase {
             extensionContext?.completeRequest(returningItems: nil)
         } else {

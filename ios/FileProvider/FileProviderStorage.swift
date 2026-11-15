@@ -241,24 +241,25 @@ enum FileProviderStorage {
         return optimisticItem(for: destination, template: template, contents: contents)
     }
 
+    /// Extensions get little memory, so files are stored in small batches of
+    /// chunks rather than the 64 MB default. Call before the first write.
+    static func useSmallWriteBatches() {
+        setenv("HTREE_STREAM_PUT_BATCH_TARGET_BYTES", "\(8 << 20)", 0)
+    }
+
     /// Folders of My Drive a shared item can be saved into, or nil when Iris
     /// Drive has no profile on this device yet.
     static func shareDestinations() -> [String]? {
         (try? loadProviderBackedState())?.saveFolders
     }
 
-    /// Save a shared item into `parent` (empty for My Drive itself), keeping
-    /// both files when the name is taken.
+    /// Save the staged file `source` into `parent` (empty for My Drive itself),
+    /// keeping both files when the name is taken. The core reads it in chunks.
     static func importSharedFile(
         named displayName: String,
-        contentType: UTType,
-        contents: Data,
+        from source: URL,
         into parent: String = ""
     ) throws {
-        let source = try temporaryDirectory()
-            .appendingPathComponent(UUID().uuidString, isDirectory: false)
-        try contents.write(to: source)
-        defer { try? FileManager.default.removeItem(at: source) }
         let result: String
         if parent.isEmpty {
             result = IrisDriveNativeProvider.importSharedFile(
@@ -275,7 +276,8 @@ enum FileProviderStorage {
             )
         }
         try runProviderMutation(result)
-        debugLog("share import saved name=\(displayName) parent=\(parent) bytes=\(contents.count) result=\(result)")
+        let bytes = (try? source.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        debugLog("share import saved name=\(displayName) parent=\(parent) bytes=\(bytes) result=\(result)")
         signalProviderChanged()
     }
 

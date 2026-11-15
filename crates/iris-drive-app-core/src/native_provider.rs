@@ -14,7 +14,7 @@ use iris_drive_core::provider::{
     provider_file_probable_os_placeholder_family, provider_list_summary,
     provider_path_is_child_document, provider_write_is_probable_os_placeholder,
     rename_provider_path, sanitized_provider_file_name, split_provider_path, unique_provider_path,
-    write_provider_file,
+    write_provider_file, write_provider_file_from_path,
 };
 use iris_drive_core::{AppConfig, Profile};
 use serde_json::json;
@@ -181,11 +181,11 @@ pub(crate) fn native_provider_import_shared_file(
     ensure_daemon_available_for_provider_mutation(data_dir)?;
     let display_name = sanitized_provider_file_name(display_name);
     let runtime = native_provider_runtime()?;
-    runtime.block_on(async {
-        let bytes = std::fs::read(source_path)
-            .with_context(|| format!("reading {}", Path::new(source_path).display()))?;
-        import_provider_bytes(data_dir, &display_name, &bytes).await
-    })
+    runtime.block_on(import_provider_file(
+        data_dir,
+        &display_name,
+        Path::new(source_path),
+    ))
 }
 
 pub(crate) fn native_provider_import_content_link(
@@ -239,6 +239,40 @@ async fn import_provider_bytes(
         config_lock,
     )
     .await
+}
+
+/// Save a staged local file under a name not yet taken in My Drive, reading
+/// it in chunks so a large shared video never sits in memory whole.
+async fn import_provider_file(
+    data_dir: &str,
+    display_name: &str,
+    source: &Path,
+) -> anyhow::Result<serde_json::Value> {
+    let size = source_len(source)?;
+    let config_lock =
+        iris_drive_core::config_lock::ConfigMutationLock::acquire(Path::new(data_dir)).await?;
+    let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
+    let modified_at_by_path = BTreeMap::new();
+    let entries = provider_entries(&provider, &modified_at_by_path).await?;
+    let path = unique_provider_path(&entries, "", display_name, None);
+    if size == 0 && provider_write_is_probable_os_placeholder(&entries, &path, &[]) {
+        anyhow::bail!("refusing probable FileProvider placeholder copy: {path}");
+    }
+    write_provider_file_from_path(&provider, &path, source).await?;
+    import_provider_mutation(
+        &mut daemon,
+        &provider,
+        &path,
+        Some(visible_root),
+        config_lock,
+    )
+    .await
+}
+
+fn source_len(source: &Path) -> anyhow::Result<u64> {
+    Ok(std::fs::metadata(source)
+        .with_context(|| format!("reading {}", source.display()))?
+        .len())
 }
 
 async fn download_content_link_bytes(url: &str) -> anyhow::Result<Vec<u8>> {
@@ -422,19 +456,19 @@ fn run_native_provider_write(
     let runtime = native_provider_runtime()?;
     runtime.block_on(async {
         let path = normalize_provider_path(path)?;
-        let bytes = std::fs::read(source_path)
-            .with_context(|| format!("reading {}", Path::new(source_path).display()))?;
+        let source = Path::new(source_path);
+        let size = source_len(source)?;
         let config_lock =
             iris_drive_core::config_lock::ConfigMutationLock::acquire(Path::new(data_dir)).await?;
         let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
         apply_provider_open_delay_for_test();
-        if provider_file_probable_os_placeholder_family(&path, bytes.len() as u64).is_some() {
+        if provider_file_probable_os_placeholder_family(&path, size).is_some() {
             let entries = provider_entries(&provider, &BTreeMap::new()).await?;
-            if provider_write_is_probable_os_placeholder(&entries, &path, &bytes) {
+            if provider_write_is_probable_os_placeholder(&entries, &path, &[]) {
                 anyhow::bail!("refusing probable FileProvider placeholder copy: {path}");
             }
         }
-        write_provider_file(&provider, &path, &bytes).await?;
+        write_provider_file_from_path(&provider, &path, source).await?;
         import_provider_mutation(
             &mut daemon,
             &provider,

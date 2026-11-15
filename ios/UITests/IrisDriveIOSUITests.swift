@@ -94,6 +94,7 @@ final class IrisDriveIOSUITests: XCTestCase {
         )
         sender.launchEnvironment["IRIS_DRIVE_SHARE_SOURCE_FILENAME"] = sharedFile
         sender.launchEnvironment["IRIS_DRIVE_SHARE_SOURCE_CONTENT"] = sharedContents
+        sender.launchEnvironment["IRIS_DRIVE_SHARE_SOURCE_BYTES"] = optionalEnvironment("IRIS_DRIVE_UI_TEST_SHARE_SHEET_BYTES")
         sender.launch()
         addTeardownBlock {
             sender.terminate()

@@ -26,6 +26,15 @@ SHARE_SOURCE_BUNDLE_ID="${IRIS_DRIVE_IOS_SHARE_SOURCE_BUNDLE_ID:-fi.siriusbusine
 APP_GROUP_ID="${IRIS_DRIVE_IOS_APP_GROUP_IDENTIFIER:-group.fi.siriusbusiness.drive}"
 SHARE_SHEET_SMOKE_FILE="Iris Drive Share Sheet Smoke.txt"
 SHARE_SHEET_SMOKE_CONTENT="shared from iOS share sheet"
+# Share a generated file of this many bytes instead, as a long video would be.
+SHARE_SHEET_SMOKE_BYTES="${IRIS_DRIVE_IOS_SHARE_SHEET_SMOKE_BYTES:-}"
+if [[ -n "$SHARE_SHEET_SMOKE_BYTES" ]]; then
+  [[ "$SHARE_SHEET_SMOKE_BYTES" =~ ^[1-9][0-9]*$ ]] || {
+    echo "FAIL: IRIS_DRIVE_IOS_SHARE_SHEET_SMOKE_BYTES must be a positive byte count" >&2
+    exit 2
+  }
+  SHARE_SHEET_SMOKE_FILE="Iris Drive Share Sheet Smoke.mov"
+fi
 DEVICE_NAME="${IRIS_DRIVE_IOS_SIMULATOR_DEVICE:-}"
 TARGET_DIR="${CARGO_TARGET_DIR:-$(cargo metadata --format-version 1 --no-deps | python3 -c 'import json,sys; print(json.load(sys.stdin)["target_directory"])')}"
 IDRIVE="${IRIS_DRIVE_IDRIVE_BIN:-$TARGET_DIR/debug/idrive}"
@@ -484,13 +493,13 @@ verify_share_sheet_import() {
   local output
 
   provider_json="$("$IDRIVE" --config-dir "$SIM_APP_BASE_DIR" provider list)"
-  if ! PROVIDER_JSON="$provider_json" python3 - "$SHARE_SHEET_SMOKE_FILE" "$SHARE_SHEET_SMOKE_CONTENT" <<'PY'; then
+  if ! PROVIDER_JSON="$provider_json" python3 - "$SHARE_SHEET_SMOKE_FILE" "$SHARE_SHEET_SMOKE_CONTENT" "$SHARE_SHEET_SMOKE_BYTES" <<'PY'; then
 import json
 import os
 import sys
 
 expected_name = sys.argv[1]
-expected_size = len(sys.argv[2].encode("utf-8"))
+expected_size = int(sys.argv[3]) if sys.argv[3] else len(sys.argv[2].encode("utf-8"))
 provider = json.loads(os.environ["PROVIDER_JSON"])
 entries = provider.get("entries") or []
 ok = (
@@ -511,13 +520,26 @@ PY
 
   output="$(mktemp -t iris-drive-ios-share-sheet.XXXXXX)"
   "$IDRIVE" --config-dir "$SIM_APP_BASE_DIR" provider read "$SHARE_SHEET_SMOKE_FILE" "$output" >/dev/null
-  if ! python3 - "$output" "$SHARE_SHEET_SMOKE_CONTENT" <<'PY'; then
+  if ! python3 - "$output" "$SHARE_SHEET_SMOKE_CONTENT" "$SHARE_SHEET_SMOKE_BYTES" <<'PY'; then
+import array
+import hashlib
 import pathlib
 import sys
 
-actual = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
-expected = sys.argv[2]
-raise SystemExit(0 if actual == expected else 1)
+path, content, size = sys.argv[1], sys.argv[2], sys.argv[3]
+if not size:
+    raise SystemExit(0 if pathlib.Path(path).read_text(encoding="utf-8") == content else 1)
+# The share source app writes the little-endian sequence i * 2654435761 (mod 2^32).
+size = int(size)
+words = array.array("I", ((i * 2654435761) & 0xFFFFFFFF for i in range(1, size // 4 + 2)))
+if sys.byteorder != "little":
+    words.byteswap()
+expected = hashlib.sha256(words.tobytes()[:size]).hexdigest()
+digest = hashlib.sha256()
+with open(path, "rb") as stored:
+    for block in iter(lambda: stored.read(1 << 20), b""):
+        digest.update(block)
+raise SystemExit(0 if digest.hexdigest() == expected else 1)
 PY
     echo "FAIL: iOS share-sheet import bytes did not match expected content." >&2
     exit 1
@@ -593,7 +615,8 @@ run_ui_test \
   --app-group \
   "IrisDriveIOSUITests/IrisDriveIOSUITests/testShareSheetImportsFileFromExternalSender" \
   "IRIS_DRIVE_UI_TEST_SHARE_SHEET_FILE=$SHARE_SHEET_SMOKE_FILE" \
-  "IRIS_DRIVE_UI_TEST_SHARE_SHEET_CONTENT=$SHARE_SHEET_SMOKE_CONTENT"
+  "IRIS_DRIVE_UI_TEST_SHARE_SHEET_CONTENT=$SHARE_SHEET_SMOKE_CONTENT" \
+  ${SHARE_SHEET_SMOKE_BYTES:+"IRIS_DRIVE_UI_TEST_SHARE_SHEET_BYTES=$SHARE_SHEET_SMOKE_BYTES"}
 verify_share_sheet_import
 
 configure_ios_smoke_blossom "$OWNER_CONFIG"
