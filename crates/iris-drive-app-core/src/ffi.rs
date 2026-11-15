@@ -1505,8 +1505,10 @@ impl NativeAppRuntime {
             self.state.ui.provider_change_key = previous_provider_summary.2;
             self.state.ui.provider_directory_paths = previous_provider_summary.3;
         }
-        self.state.ui.shareable_folders =
-            share_actions::shareable_folders(&config, &self.state.ui.provider_directory_paths);
+        self.state.ui.shareable_folders = iris_drive_core::share_folders::shareable_folders(
+            &config,
+            &self.state.ui.provider_directory_paths,
+        );
         self.refresh_ui_summary(Some(ui_fips_status));
     }
 

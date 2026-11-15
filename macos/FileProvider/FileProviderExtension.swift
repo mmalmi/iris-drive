@@ -1,8 +1,10 @@
+import AppKit
 import CoreGraphics
 import FileProvider
 import Foundation
 
-final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, NSFileProviderThumbnailing {
+final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, NSFileProviderThumbnailing,
+    NSFileProviderCustomAction {
     private let storage: FileProviderStorage
 
     required init(domain: NSFileProviderDomain) {
@@ -188,6 +190,46 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
             completionHandler(error)
         }
         progress.completedUnitCount = 1
+        return progress
+    }
+
+    /// "Share with Iris Drive…" on a folder in Finder: the app shows its share sheet.
+    func performAction(
+        identifier actionIdentifier: NSFileProviderExtensionActionIdentifier,
+        onItemsWithIdentifiers itemIdentifiers: [NSFileProviderItemIdentifier],
+        completionHandler: @escaping (Error?) -> Void
+    ) -> Progress {
+        let progress = Progress(totalUnitCount: 1)
+        do {
+            guard actionIdentifier.rawValue == IrisDriveFinderShare.actionIdentifier,
+                  itemIdentifiers.count == 1,
+                  let path = storage.path(for: itemIdentifiers[0]),
+                  !path.isEmpty
+            else {
+                throw CocoaError(.featureUnsupported)
+            }
+            storage.debugLog("share action path=\(path)")
+            let link = try IrisDriveFinderShare.link(path: path, storage: storage.baseDirectory)
+            // This extension lives in Iris Drive.app/Contents/PlugIns.
+            let app = Bundle.main.bundleURL
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+            NSWorkspace.shared.open(
+                [link],
+                withApplicationAt: app,
+                configuration: NSWorkspace.OpenConfiguration()
+            ) { [storage] _, error in
+                if let error {
+                    storage.debugLog("share action could not open the app: \(error)")
+                }
+                progress.completedUnitCount = 1
+                completionHandler(error)
+            }
+        } catch {
+            storage.debugLog("share action failed: \(error)")
+            completionHandler(error)
+        }
         return progress
     }
 }

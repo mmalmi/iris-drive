@@ -64,6 +64,23 @@ custom mapping never selects the default profile. Run
 `scripts/check-macos-profile-isolation.sh` for the focused native Swift checks;
 the macOS lifecycle gate includes them automatically on macOS.
 
+## Share from Finder
+
+Right-clicking a folder in the Iris Drive location offers **Share with Iris
+Drive…**, as Google Drive for desktop does. The File Provider extension
+declares the action in `FileProvider/Info.plist` and shows it for one folder
+at a time, on folders the provider list marks in `share_action_paths`: those a
+share could start from and those this profile already shares. Folders inside
+or around a shared folder do not offer it.
+
+The extension hands the folder to the app with
+`iris-drive://share?path=<folder>&request=<token>` and leaves the token in the
+app group. The app accepts a token once and then opens the folder's share
+sheet, creating the share first if there is none. An `iris-drive://share` link
+without a valid token, from a web page or another app, only fills in the
+folder on the Shares tab. Finder reads the flag when items sync, so the
+extension folds the shareable folders into its sync anchor and item versions.
+
 ## Smoke test
 
 ```bash

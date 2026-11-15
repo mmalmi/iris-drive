@@ -104,7 +104,9 @@ struct IrisDriveControlPanel: View {
             if loaded {
                 controller.ensureFileProviderDomainIfProfileExists()
             }
+            applyPendingShareDialog()
         }
+        .onChange(of: status.setupComplete) { _, _ in applyPendingShareDialog() }
         .onChange(of: status.pendingShareDialog?.id) { _, _ in
             applyPendingShareDialog()
         }
@@ -1216,7 +1218,20 @@ struct IrisDriveControlPanel: View {
     private func applyPendingShareDialog() {
         guard let request = status.pendingShareDialog else { return }
         selectedTab = .shares
-        shareSourceInput = request.sourcePath
+        guard request.fromFinder else {
+            shareSourceInput = request.sourcePath
+            return
+        }
+        // From Finder there is no form: share the folder if it isn't yet, then show its link.
+        guard status.stateLoaded, status.setupComplete else { return }
+        status.pendingShareDialog = nil
+        let path = request.sourcePath
+        let shared = { status.shares.first { $0.owned && $0.location == path } }
+        if let share = shared() {
+            inviteShare = share
+        } else {
+            controller.createShare(sourcePath: path) { inviteShare = shared() }
+        }
     }
 
     private var shares: some View {

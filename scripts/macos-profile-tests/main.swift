@@ -96,4 +96,37 @@ let unavailableMainConfig = root.appendingPathComponent("unavailable/Config")
 let unavailableMainBytes = try JSONSerialization.data(withJSONObject: ["config_dir": unavailableMainConfig.path])
 try unavailableMainBytes.write(to: shared.appendingPathComponent("fileprovider-runtime.json"))
 check(mainStorage.configDirectory.path == unavailableMainConfig.path, "default runtime lookup behavior changed")
+
+// "Share with Iris Drive…" in Finder: the extension's link carries the folder
+// and a one-time token only that profile's app accepts.
+let shareStorage = first.storageDirectory(in: shared)
+let shareLink = try IrisDriveFinderShare.link(path: "Photos/Trips & more+1/Åland", storage: shareStorage)
+check(shareLink.absoluteString.hasPrefix("iris-drive://share?path=Photos%2FTrips%20%26%20more%2B1%2F%C3%85land&request="),
+      "Finder share link does not carry the folder")
+check(!IrisDriveFinderShare.accept(shareLink, storage: second.storageDirectory(in: shared)), "Finder share request crossed profiles")
+check(!IrisDriveFinderShare.accept(URL(string: "iris-drive://share?path=Photos")!, storage: shareStorage),
+      "a plain share link passed as a Finder request")
+check(!IrisDriveFinderShare.accept(URL(string: "iris-drive://share?path=Photos&request=guess")!, storage: shareStorage),
+      "a guessed token passed as a Finder request")
+check(IrisDriveFinderShare.accept(shareLink, storage: shareStorage), "Finder share request rejected")
+check(!IrisDriveFinderShare.accept(shareLink, storage: shareStorage), "Finder share request accepted twice")
+func folder(_ name: String, canShare: Bool) -> FileProviderItem {
+    FileProviderItem(itemIdentifier: .init(name), parentItemIdentifier: .rootContainer, filename: name,
+                     contentType: .folder, canShare: canShare)
+}
+let plainFolder = folder("Plain", canShare: false)
+let shareFolder = folder("Trip", canShare: true)
+check(plainFolder.itemVersion.metadataVersion != folder("Plain", canShare: true).itemVersion.metadataVersion,
+      "Finder does not learn that a folder became shareable")
+let extensionInfo = try PropertyListSerialization.propertyList(
+    from: Data(contentsOf: URL(fileURLWithPath: CommandLine.arguments[1])), format: nil
+) as? [String: Any]
+let actions = (extensionInfo?["NSExtension"] as? [String: Any])?["NSExtensionFileProviderActions"] as? [[String: String]] ?? []
+check(actions.count == 1 && actions[0]["NSExtensionFileProviderActionIdentifier"] == IrisDriveFinderShare.actionIdentifier,
+      "Finder share action is not declared")
+let shareRule = NSPredicate(format: actions[0]["NSExtensionFileProviderActionActivationRule"] ?? "FALSEPREDICATE")
+func offersShare(_ items: [FileProviderItem]) -> Bool { shareRule.evaluate(with: ["fileproviderItems": items]) }
+check(offersShare([shareFolder]), "Share is not offered on a folder that can be shared")
+check(!offersShare([plainFolder]), "Share is offered on a folder inside or around a share")
+check(!offersShare([shareFolder, folder("Other", canShare: true)]), "Share is offered on several folders at once")
 print("macOS profile isolation passed: stable domains, scoped ownership, runtime mappings, concurrent storage, snapshots, and fail-closed custom configuration")

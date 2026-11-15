@@ -159,6 +159,8 @@ struct IrisDriveShareDialogRequest: Identifiable, Equatable {
     let recipientNpubHint: String
     let recipientDisplayName: String
     let recipientProfileId: String
+    /// The person chose "Share with Iris Drive…" on this folder in Finder.
+    var fromFinder = false
 }
 
 struct IrisDriveDeviceApprovalRequest: Identifiable, Equatable {

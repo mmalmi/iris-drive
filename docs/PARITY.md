@@ -18,7 +18,7 @@ equivalent to desktop.
 | Start/stop/restart sync daemon | Yes | Yes | Yes | Foreground sync control scaffold | Foreground service start/stop/restart |
 | Auto-scan local drive folder | No; mount publishes writes | No | No | No | No |
 | Open drive folder | Yes, mounted | FileProvider domain | Cloud Files placeholders | Files app FileProvider domain + open action | SAF DocumentsProvider + open action |
-| Open share dialog for selected folder | `iris-drive://share` + `drive.iris.to/share` | `iris-drive://share` + `drive.iris.to/share` | `iris-drive://share` via installer protocol | `iris-drive://share` + `drive.iris.to/share` | SAF folder action -> `iris-drive://share` |
+| Open share dialog for selected folder | `iris-drive://share` + `drive.iris.to/share` | Finder right-click -> share sheet; `iris-drive://share` + `drive.iris.to/share` | `iris-drive://share` via installer protocol | `iris-drive://share` + `drive.iris.to/share` | SAF folder action -> `iris-drive://share` |
 | Share folder by link (`#/share-join/`) | Share dialog: copy link | Share sheet: QR + copy | Share dialog: copy link | Share sheet: send/copy | Share dialog: send/copy |
 | Join from a share link | Join field | Join field + opened link prompt | Join field | Join field + opened link | Join field + opened link |
 | Add to / Remove from My Drive, Leave, Stop sharing | Row buttons | Row + menu | Row + menu | Row + menu | Row buttons |
@@ -75,7 +75,13 @@ is `iris-drive://share?path=<folder>&name=<optional-name>` or
 `https://drive.iris.to/share?...`; native shells select the **Shares** tab and
 prefill the create-share form, while app-core remains responsible for the actual
 share creation. Android exposes this through the SAF folder settings action for
-non-root Iris Drive folders. Optional `recipient_npub`, `recipient_name`, and
+non-root Iris Drive folders. On macOS, Finder offers **Share with Iris Drive…**
+on a folder a share could start from or one this profile already shares
+(`share_action_paths` in the provider list, from Rust core). The File Provider
+extension opens the same route with a one-time token it leaves in the app
+group; only a link carrying that token skips the form, creates the share if
+needed and opens its share sheet, so a share link opened from a web page or
+another app still only fills in the form. Optional `recipient_npub`, `recipient_name`, and
 `recipient_profile` query fields prefill invite/contact fields only; signed
 recipient evidence and IrisProfile roster ops prove the member's IrisProfile
 UUID and AppKeys before Rust core writes the share access snapshot grant.

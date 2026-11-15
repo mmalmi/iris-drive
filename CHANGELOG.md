@@ -15,6 +15,10 @@
   copy at the top of the owner's Drive. Take a joined folder out of My Drive
   and add it back from Shares without losing access; deleting or moving its
   folder on disk only changes your own Drive, never the shared files.
+- Share a folder from Finder on Mac: right-click it in Iris Drive and choose
+  Share with Iris Drive… to get its link. Sharing a folder that is already
+  shared opens the same share instead of making a second one, and a folder
+  inside or around a shared folder can no longer be shared again.
 - Pick the folder to share from a list on Mac, iPhone and Android, and get
   the share link right after creating a shared folder on iPhone.
 - Folders shared or joined while Drive is running now sync without a restart.

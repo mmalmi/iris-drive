@@ -281,6 +281,10 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                         "file_count": summary.file_count,
                         "top_level_entries": top_level_entry_count(&entries),
                         "visible_file_bytes": summary.visible_file_bytes,
+                        "share_action_paths": iris_drive_core::share_folders::share_action_folders(
+                            daemon.config(),
+                            &summary.directory_paths,
+                        ),
                         "directory_paths": summary.directory_paths,
                         "change_key": summary.change_key,
                         "entries": entries,

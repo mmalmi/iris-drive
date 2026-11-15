@@ -361,13 +361,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return true
         }
         if classification["kind"] as? String == "share_dialog" {
-            openShareDialog(
-                sourcePath: classification["share_source_path"] as? String ?? "",
-                displayName: classification["share_display_name"] as? String ?? "",
-                recipientNpubHint: classification["share_recipient_npub_hint"] as? String ?? "",
-                recipientDisplayName: classification["share_recipient_display_name"] as? String ?? "",
-                recipientProfileId: classification["share_recipient_profile_id"] as? String ?? ""
-            )
+            openShareDialog(url, classification: classification)
             return true
         }
         if classification["kind"] as? String == "nhash_file" || classification["kind"] as? String == "mutable_file" {
@@ -397,30 +391,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         handleIrisWebURL(url)
         return true
-    }
-
-    private func openShareDialog(
-        sourcePath: String,
-        displayName: String,
-        recipientNpubHint: String = "",
-        recipientDisplayName: String = "",
-        recipientProfileId: String = ""
-    ) {
-        let sourcePath = sourcePath.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !sourcePath.isEmpty else {
-            showControlPanel()
-            updateStatus("Share folder path required")
-            return
-        }
-        IrisDriveStatus.shared.pendingShareDialog = IrisDriveShareDialogRequest(
-            sourcePath: sourcePath,
-            displayName: displayName.trimmingCharacters(in: .whitespacesAndNewlines),
-            recipientNpubHint: recipientNpubHint.trimmingCharacters(in: .whitespacesAndNewlines),
-            recipientDisplayName: recipientDisplayName.trimmingCharacters(in: .whitespacesAndNewlines),
-            recipientProfileId: recipientProfileId.trimmingCharacters(in: .whitespacesAndNewlines)
-        )
-        showControlPanel()
-        updateStatus("Share folder selected")
     }
 
     private func installSingleInstanceNotificationObserver() {

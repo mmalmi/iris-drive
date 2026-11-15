@@ -370,6 +370,10 @@ pub(crate) fn run_native_provider_list(data_dir: &str) -> anyhow::Result<serde_j
             "root_cid": visible_root.root_cid.to_string(),
             "file_count": summary.file_count,
             "visible_file_bytes": summary.visible_file_bytes,
+            "share_action_paths": iris_drive_core::share_folders::share_action_folders(
+                daemon.config(),
+                &summary.directory_paths,
+            ),
             "directory_paths": summary.directory_paths,
             "change_key": summary.change_key,
             "entries": entries,

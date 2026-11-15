@@ -40,6 +40,37 @@ fn create_share_defaults_display_name_to_source_dirname() {
 }
 
 #[test]
+fn sharing_a_shared_folder_again_reuses_its_share() {
+    let owner_dir = tempdir().unwrap();
+    let owner = Profile::create(owner_dir.path(), Some("Owner".into())).unwrap();
+    init_config(owner_dir.path(), &owner);
+    let create = |path: &str| {
+        dispatch_share_action(
+            owner_dir.path(),
+            ShareAction::CreateShare {
+                source_path: path.to_owned(),
+                display_name: None,
+            },
+            10,
+        )
+    };
+
+    let first = create("Projects/Alpha").unwrap();
+    let again = create("/Projects/Alpha/").unwrap();
+
+    assert_eq!(again.share_id, first.share_id);
+    assert_eq!(again.shares.len(), 1);
+    for nested in ["Projects/Alpha/Notes", "Projects"] {
+        let error = create(nested).unwrap_err().to_string();
+        assert!(
+            error.contains("inside or contains a shared folder"),
+            "{error}"
+        );
+    }
+    assert_eq!(create("Projects/Beta").unwrap().shares.len(), 2);
+}
+
+#[test]
 fn accept_share_invite_adds_share_to_my_drive() {
     let owner_dir = tempdir().unwrap();
     let owner = Profile::create(owner_dir.path(), Some("Owner".into())).unwrap();

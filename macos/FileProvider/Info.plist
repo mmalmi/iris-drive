@@ -38,6 +38,17 @@
     <true/>
     <key>NSExtensionFileProviderDownloadPipelineDepth</key>
     <integer>4</integer>
+    <key>NSExtensionFileProviderActions</key>
+    <array>
+      <dict>
+        <key>NSExtensionFileProviderActionIdentifier</key>
+        <string>to.iris.drive.share</string>
+        <key>NSExtensionFileProviderActionName</key>
+        <string>Share with Iris Drive…</string>
+        <key>NSExtensionFileProviderActionActivationRule</key>
+        <string>fileproviderItems.@count == 1 AND SUBQUERY(fileproviderItems, $fileproviderItem, $fileproviderItem.userInfo.irisDriveCanShare == true).@count == 1</string>
+      </dict>
+    </array>
     <key>NSExtensionPointIdentifier</key>
     <string>com.apple.fileprovider-nonui</string>
     <key>NSExtensionPrincipalClass</key>

@@ -36,6 +36,11 @@ require_contains macos/Sources/IrisDriveControlPanel.swift "SectionTitle(\"Share
 require_contains macos/Sources/IrisDriveControlPanel.swift "Create Shared Folder"
 require_contains macos/Sources/IrisDriveControlPanel.swift "Join Shared Folder"
 require_contains macos/Sources/IrisDriveControlPanel.swift "InviteShareMemberSheet"
+require_contains macos/FileProvider/Info.plist "NSExtensionFileProviderActions"
+require_contains macos/FileProvider/Info.plist "Share with Iris Drive…"
+require_contains macos/FileProvider/FileProviderExtension.swift "NSFileProviderCustomAction"
+require_contains macos/Sources/IrisDriveShareLinks.swift "IrisDriveFinderShare.accept"
+require_contains crates/iris-drive-cli/src/drive.rs '"share_action_paths"'
 
 require_contains ios/Sources/IrisDriveRootView.swift "case shares"
 require_contains ios/Sources/IrisDriveRootView.swift "Label(\"Shares\""

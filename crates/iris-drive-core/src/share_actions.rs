@@ -472,6 +472,21 @@ fn create_share(
     now_seconds: i64,
 ) -> Result<ShareActionMetadata> {
     let account = load_profile(config_dir, config)?;
+    // Sharing a folder this profile already shares opens that share again.
+    let source = crate::provider::normalize_provider_path(source_path)?;
+    let shared_here = |folder: &&SharedFolder| {
+        folder.owner_profile_id == account.state.profile_id && folder.source_path == source
+    };
+    if let Some(existing) = config.shared_folders.iter().find(shared_here) {
+        return Ok(ShareActionMetadata {
+            share_id: Some(existing.share_id),
+            ..ShareActionMetadata::default()
+        });
+    }
+    anyhow::ensure!(
+        crate::share_folders::can_start_share(config, &source),
+        "This folder is inside or contains a shared folder"
+    );
     let display_name = display_name
         .map(str::trim)
         .filter(|value| !value.is_empty())

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import FileProvider
 import ImageIO
@@ -15,6 +16,7 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
     let created: Date?
     let modified: Date?
     let itemVersion: NSFileProviderItemVersion
+    let userInfo: [AnyHashable: Any]?
 
     init(
         itemIdentifier: NSFileProviderItemIdentifier,
@@ -24,7 +26,8 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
         itemSize: NSNumber? = nil,
         created: Date? = nil,
         modified: Date? = nil,
-        versionIdentifier: String = "iris-drive-provider-v1"
+        versionIdentifier: String = "iris-drive-provider-v1",
+        canShare: Bool = false
     ) {
         self.itemIdentifier = itemIdentifier
         self.parentItemIdentifier = parentItemIdentifier
@@ -33,7 +36,8 @@ final class FileProviderItem: NSObject, NSFileProviderItem {
         self.itemSize = itemSize
         self.created = created
         self.modified = modified
-        let version = fileProviderVersionData(versionIdentifier)
+        userInfo = canShare ? [IrisDriveFinderShare.itemUserInfoKey: true] : nil
+        let version = fileProviderVersionData((canShare ? "share:" : "") + versionIdentifier)
         self.itemVersion = NSFileProviderItemVersion(
             contentVersion: version,
             metadataVersion: version
@@ -195,6 +199,15 @@ final class FileProviderStorage {
     private struct ProviderList: Decodable {
         let anchor: String?
         let entries: [ProviderEntry]
+        var shareActionPaths: Set<String>? = nil
+        enum CodingKeys: String, CodingKey { case anchor, entries, shareActionPaths = "share_action_paths" }
+
+        /// Sharing changes which folders offer Share without changing the tree.
+        var changeAnchor: String? {
+            guard let anchor, let paths = shareActionPaths, !paths.isEmpty else { return anchor }
+            let digest = SHA256.hash(data: Data(paths.sorted().joined(separator: "\n").utf8))
+            return anchor + "#" + digest.prefix(8).map { String(format: "%02x", $0) }.joined()
+        }
     }
 
     private struct DaemonStatus: Decodable {
@@ -339,7 +352,7 @@ final class FileProviderStorage {
         else {
             return nil
         }
-        return item(for: entry, anchor: list.anchor)
+        return item(for: entry, in: list)
     }
 
     func path(for identifier: NSFileProviderItemIdentifier) -> String? {
@@ -375,7 +388,7 @@ final class FileProviderStorage {
         let items = list.entries
             .filter { $0.parentPath == parent }
             .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
-            .map { item(for: $0, anchor: list.anchor) }
+            .map { item(for: $0, in: list) }
         debugLog("children parent=\(parent.isEmpty ? "/" : parent) count=\(items.count)")
         return items
     }
@@ -391,11 +404,8 @@ final class FileProviderStorage {
             items.append(.root(anchor: list.anchor))
             items.append(.trash(anchor: list.anchor))
         }
-        items.append(contentsOf: list.entries.map { item(for: $0, anchor: list.anchor) })
-        return (
-            items,
-            syncAnchor(for: list.anchor)
-        )
+        items.append(contentsOf: list.entries.map { item(for: $0, in: list) })
+        return (items, syncAnchor(for: list.changeAnchor))
     }
 
     func storedSnapshotIdentifiers() -> Set<String> {
@@ -417,7 +427,7 @@ final class FileProviderStorage {
         guard list.anchor != nil else {
             return storedSnapshotAnchor() ?? bootstrapAnchor()
         }
-        return syncAnchor(for: list.anchor)
+        return syncAnchor(for: list.changeAnchor)
     }
 
     func bootstrapAnchor() -> NSFileProviderSyncAnchor {
@@ -489,7 +499,7 @@ final class FileProviderStorage {
             let list = providerList()
             if let existing = list.entries.first(where: { $0.path == destination.path }) {
                 debugLog("create mayAlreadyExist resolved existing path=\(destination.path)")
-                return item(for: existing, anchor: list.anchor)
+                return item(for: existing, in: list)
             }
             debugLog("create mayAlreadyExist rejected absent path=\(destination.path)")
             throw NSError.fileProviderErrorForNonExistentItem(
@@ -673,7 +683,7 @@ final class FileProviderStorage {
         return data as Data
     }
 
-    private func item(for entry: ProviderEntry, anchor _: String?) -> FileProviderItem {
+    private func item(for entry: ProviderEntry, in list: ProviderList) -> FileProviderItem {
         let isDirectory = entry.kind == "directory"
         let contentType: UTType = isDirectory
             ? UTType.folder
@@ -686,7 +696,8 @@ final class FileProviderStorage {
             itemSize: isDirectory ? nil : NSNumber(value: entry.size),
             created: displayDate(from: entry.modifiedAt),
             modified: displayDate(from: entry.modifiedAt),
-            versionIdentifier: providerItemVersionIdentifier(for: entry)
+            versionIdentifier: providerItemVersionIdentifier(for: entry),
+            canShare: isDirectory && list.shareActionPaths?.contains(entry.path) == true
         )
     }
 
@@ -770,7 +781,7 @@ final class FileProviderStorage {
            providerRootCidLooksUsable(anchor) {
             return anchor
         }
-        if let anchor = storedSnapshot()?.anchor,
+        if let anchor = storedSnapshot()?.anchor.split(separator: "#").first.map(String.init),
            providerRootCidLooksUsable(anchor) {
             return anchor
         }
@@ -918,7 +929,10 @@ final class FileProviderStorage {
         else {
             return nil
         }
-        return key
+        // Sharing is kept in the config: it changes what Finder offers, not the tree.
+        let config = configDirectory.appendingPathComponent("config.toml", isDirectory: false)
+        let changed = try? config.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+        return "\(key)@\(changed?.timeIntervalSince1970 ?? 0)"
     }
 
     private func daemonStatusIsFresh(_ status: DaemonStatus) -> Bool {

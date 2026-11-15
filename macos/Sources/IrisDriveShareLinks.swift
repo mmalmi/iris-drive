@@ -65,6 +65,35 @@ extension AppDelegate {
         }
     }
 
+    /// `iris-drive://share` links fill in the folder to share. From Finder's
+    /// "Share with Iris Drive…" the folder's share sheet opens straight away.
+    func openShareDialog(_ url: URL, classification: [String: Any]) {
+        let field = { (name: String) in
+            (classification[name] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let sourcePath = field("share_source_path").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        showControlPanel()
+        guard !sourcePath.isEmpty else {
+            updateStatus("Share folder path required")
+            return
+        }
+        let fromFinder = IrisDriveFinderShare.accept(
+            url,
+            storage: IrisDriveFinderShare.storage(for: irisDriveFileProviderProfile)
+        )
+        IrisDriveStatus.shared.pendingShareDialog = IrisDriveShareDialogRequest(
+            sourcePath: sourcePath,
+            displayName: field("share_display_name"),
+            recipientNpubHint: field("share_recipient_npub_hint"),
+            recipientDisplayName: field("share_recipient_display_name"),
+            recipientProfileId: field("share_recipient_profile_id"),
+            fromFinder: fromFinder
+        )
+        if !fromFinder {
+            updateStatus("Share folder selected")
+        }
+    }
+
     /// drive.iris.to join and invite links open the app's Join prompt.
     func handleShareLinkURL(_ url: URL, classification: [String: Any]) -> Bool {
         let kind = classification["kind"] as? String ?? ""
