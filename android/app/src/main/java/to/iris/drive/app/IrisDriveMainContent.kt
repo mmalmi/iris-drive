@@ -454,7 +454,8 @@ private fun SummaryPanel(state: AppState, onShowDevices: () -> Unit) {
 private fun SyncPanel(
     state: AppState,
 ) {
-    CardSection(title = "Sync", trailing = state.sync.statusLabel) {
+    // The status is said once: the card has nothing else to show.
+    CardSection(title = "Sync", trailing = "") {
         StatRow("State", state.sync.statusLabel)
     }
 }

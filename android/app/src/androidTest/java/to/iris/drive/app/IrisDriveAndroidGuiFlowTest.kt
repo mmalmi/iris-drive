@@ -601,7 +601,9 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onAllNodesWithText("Pause").assertCountEquals(0)
         compose.onAllNodesWithText("Resume").assertCountEquals(0)
 
-        stateFlow.value = running.copy(sync = SyncState(running = false, status = "paused"))
+        stateFlow.value = running.copy(
+            sync = SyncState(running = false, status = "paused", statusLabel = "Sync paused"),
+        )
         compose.waitForIdle()
 
         compose.onNodeWithTag("driveContent").performScrollToNode(hasText("Sync paused"))
