@@ -450,10 +450,10 @@ final class IrisDriveIOSUITests: XCTestCase {
 
         XCTAssertTrue(app.navigationBars["Backup"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["upload.iris.to"].waitForExistence(timeout: 10))
+        app.buttons["Add Backup"].firstMatch.tap()
         XCTAssertTrue(app.textFields["backupTargetInput"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["addBackupButton"].waitForExistence(timeout: 10))
-        XCTAssertFalse(app.buttons["Add Custom Target"].exists)
-        XCTAssertFalse(app.buttons["Add File Server"].exists)
+        XCTAssertFalse(app.buttons["Add Custom Target"].exists || app.buttons["Add File Server"].exists)
     }
 
     func testSettingsExposeAppleCalendarContinuousSyncToggle() throws {

@@ -7,6 +7,10 @@
   it on large videos and nothing was saved; a 380 MB video now saves using
   under 50 MB of memory. Files saved through the Files app, Android and photo
   backup are also stored in chunks instead of read in all at once.
+- The Backup page on iPhone and Android groups where My Drive is backed up,
+  with Sync Now and Check All beside that list, and keeps the form for
+  adding a backup folded until you need it. Photo backup now says when it
+  last backed up.
 
 ## 0.1.41 - 2026-11-15
 

@@ -525,49 +525,14 @@ private fun BackupsPanel(
 ) {
     var backupInput by remember { mutableStateOf("") }
     var backupLabel by remember { mutableStateOf("") }
+    var adding by remember { mutableStateOf(false) }
 
-    CardSection(title = "Backup", trailing = "${backups.size}") {
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(
-                onClick = { onSyncBackups("") },
-                enabled = backups.isNotEmpty(),
-            ) {
-                Text("Sync Now")
-            }
-            OutlinedButton(
-                onClick = { onCheckBackups("") },
-                enabled = backups.isNotEmpty() && !backupCheckProgress.isRunning,
-            ) {
-                Text(if (backupCheckProgress.isRunning) backupCheckProgress.label else "Check All")
-            }
-        }
-        if (backupCheckProgress.isRunning) {
-            BackupProgressIndicator(backupCheckProgress)
-        }
-        OutlinedTextField(
-            value = backupInput,
-            onValueChange = { backupInput = it },
-            label = { Text("Destination URL, User ID, or folder path") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+    CardSection(title = "Backups of My Drive", trailing = "${backups.size}") {
+        Text(
+            "Encrypted copies of My Drive kept on a file server, with a friend, or in a folder.",
+            color = Muted,
+            style = MaterialTheme.typography.bodySmall,
         )
-        OutlinedTextField(
-            value = backupLabel,
-            onValueChange = { backupLabel = it },
-            label = { Text("Name") },
-            singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
-        )
-        Button(
-            onClick = {
-                onAddBackupTarget(backupInput, backupLabel)
-                backupInput = ""
-                backupLabel = ""
-            },
-            enabled = backupInput.isNotBlank(),
-        ) {
-            Text("Add Backup")
-        }
         if (backups.isEmpty()) {
             Text("No backups configured", color = Muted)
         }
@@ -590,6 +555,58 @@ private fun BackupsPanel(
                 }
                 TextButton(onClick = { onRemoveBackupTarget(backup.target) }) {
                     Text("Remove backup")
+                }
+            }
+        }
+        if (backups.isNotEmpty()) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedButton(onClick = { onSyncBackups("") }) {
+                    Text("Sync Now")
+                }
+                OutlinedButton(
+                    onClick = { onCheckBackups("") },
+                    enabled = !backupCheckProgress.isRunning,
+                ) {
+                    Text(if (backupCheckProgress.isRunning) backupCheckProgress.label else "Check All")
+                }
+            }
+        }
+        if (backupCheckProgress.isRunning) {
+            BackupProgressIndicator(backupCheckProgress)
+        }
+        if (!adding) {
+            TextButton(onClick = { adding = true }) {
+                Text("Add Backup")
+            }
+        } else {
+            OutlinedTextField(
+                value = backupInput,
+                onValueChange = { backupInput = it },
+                label = { Text("Destination URL, User ID, or folder path") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            OutlinedTextField(
+                value = backupLabel,
+                onValueChange = { backupLabel = it },
+                label = { Text("Name") },
+                singleLine = true,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(
+                    onClick = {
+                        onAddBackupTarget(backupInput, backupLabel)
+                        backupInput = ""
+                        backupLabel = ""
+                        adding = false
+                    },
+                    enabled = backupInput.isNotBlank(),
+                ) {
+                    Text("Add")
+                }
+                TextButton(onClick = { adding = false }) {
+                    Text("Cancel")
                 }
             }
         }

@@ -30,8 +30,8 @@ struct PhotoBackupSection: View {
                     .accessibilityIdentifier("photoBackupStatus")
                     if let last = backup.lastComplete {
                         Text(Date().timeIntervalSince(last) < 60
-                            ? "Last full backup just now"
-                            : "Last full backup \(last.formatted(.relative(presentation: .named)))")
+                            ? "Last backed up just now"
+                            : "Last backed up \(last.formatted(.relative(presentation: .named)))")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                     if backup.waitingForWiFiNow {
