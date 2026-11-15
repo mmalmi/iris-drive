@@ -306,6 +306,8 @@ test('local-release final dry-run refreshes public release resolver after htree 
 
   assert.equal(result.status, 0, result.stderr)
   assert.match(result.stdout, /Would stage 10 asset\(s\)/)
+  assert.match(result.stdout, /^\$ htree add --legacy-keys /m)
+  assert.match(result.stdout, /^\$ htree release publish releases\/iris-drive v9\.9\.9 dry-run --legacy-keys$/m)
   assert.match(result.stdout, /api\/resolve\/npub1example\/releases%2Firis-drive\?refresh=1/)
   assert.match(
     result.stdout,

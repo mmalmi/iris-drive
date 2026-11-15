@@ -1267,13 +1267,14 @@ function stageRelease({
 }
 
 function publishRelease({ stageDir, releaseTree, tag, draft, dryRun, env = process.env }) {
-  const addOutput = run('htree', ['add', stageDir], { capture: true, dryRun })
+  // Drive 0.1.39 needs 32-byte CHK keys for both the release assets and their parent tree.
+  const addOutput = run('htree', ['add', '--legacy-keys', stageDir], { capture: true, dryRun })
   const match = addOutput.match(/^\s*url:\s*(\S+)/m)
   if (!dryRun && !match) {
     throw new Error('Could not parse htree add output for release CID')
   }
   const cid = dryRun ? 'dry-run' : match[1]
-  const args = ['release', 'publish', releaseTree, tag, cid]
+  const args = ['release', 'publish', releaseTree, tag, cid, '--legacy-keys']
   if (draft) {
     args.push('--draft')
   }
