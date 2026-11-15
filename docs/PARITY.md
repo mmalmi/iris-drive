@@ -23,6 +23,7 @@ equivalent to desktop.
 | Join from a share link | Join field | Join field + opened link prompt | Join field | Join field + opened link | Join field + opened link |
 | Add to / Remove from My Drive, Leave, Stop sharing | Row buttons | Row + menu | Row + menu | Row + menu | Row buttons |
 | Choose folder to share from a list | Typed path | Choose menu | Choose menu | Choose menu | Choose menu |
+| Save from another app's share sheet | No | No | No | Save sheet: name, folder, Cancel/Save | Save sheet: name, folder, Cancel/Save |
 | Let in people who opened a link | Daemon, live | Daemon, live | Daemon, live | On sync | On sync |
 | Copy/view drive.iris.to link | Yes | Yes | Yes | Yes | App-core UI flow |
 | Open/save Drive content link | Passed `drive.iris.to/#/nhash...` or `#/npub.../tree/path` URL -> local resolver or app-core import | Universal link -> local resolver or app-core import | Launch URL -> local resolver or app-core import | Universal link -> local resolver or app-core import attempt | App link -> local resolver or app-core import attempt |

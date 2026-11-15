@@ -98,6 +98,23 @@ internal class IrisDriveDocumentStore(
         return if (mimeType.isBlank()) entry else entry.copy(mimeType = mimeType)
     }
 
+    /**
+     * Folders of My Drive a shared item can be saved into, or null when Iris
+     * Drive has no profile on this device yet.
+     */
+    fun shareDestinations(): List<String>? {
+        val json = JSONObject(NativeCore.providerListJson(dataDir.absolutePath))
+        if (json.optString("error").isNotBlank()) return null
+        return providerEntries()
+            .filter { entry -> entry.isDirectory && entry.path.split('/').none { it.startsWith(".") } }
+            .map { it.path }
+            .sortedBy { it.lowercase() }
+    }
+
+    /** The document a shared item is saved under: My Drive itself for a blank folder. */
+    fun documentIdForFolder(folder: String): String =
+        if (folder.isBlank()) ROOT_DOCUMENT_ID else documentIdForPath(folder)
+
     fun deleteDocument(documentId: String) {
         if (documentId == ROOT_DOCUMENT_ID) {
             throw FileNotFoundException(documentId)

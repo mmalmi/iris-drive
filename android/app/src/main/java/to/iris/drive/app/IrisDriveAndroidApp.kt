@@ -586,7 +586,7 @@ private fun AwaitingApprovalContent(
 }
 
 @Composable
-private fun IrisDriveTheme(content: @Composable () -> Unit) {
+internal fun IrisDriveTheme(content: @Composable () -> Unit) {
     val darkTheme = isSystemInDarkTheme()
 
     MaterialTheme(

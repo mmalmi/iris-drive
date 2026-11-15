@@ -1,53 +1,57 @@
 import Foundation
+import SwiftUI
 import UIKit
 import UniformTypeIdentifiers
 
+/// "Save to Iris Drive" from any app's share sheet. Like Google Drive's, it
+/// shows what will be saved and where, and saves only when asked to.
 final class ShareViewController: UIViewController {
-    private let statusLabel = UILabel()
-    private var didStartImport = false
+    private let model = ShareSaveModel()
+    private var didStartLoading = false
+    private let collectedLock = NSLock()
+    private var collected: [PendingSharedItem] = []
     private lazy var importer = ShareItemImporter(
-        saveSharedFile: { displayName, contentType, contents in
-            try FileProviderStorage.importSharedFile(
-                named: displayName,
-                contentType: contentType,
-                contents: contents
-            )
+        saveSharedFile: { [weak self] displayName, contentType, contents in
+            guard let self else { return }
+            self.collectedLock.lock()
+            self.collected.append(PendingSharedItem(name: displayName, contentType: contentType, contents: contents))
+            self.collectedLock.unlock()
         },
         log: FileProviderStorage.debugLog
     )
 
     override func viewDidLoad() {
         super.viewDidLoad()
-        view.backgroundColor = .systemBackground
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
-        statusLabel.text = "Saving to Iris Drive..."
-        statusLabel.textAlignment = .center
-        statusLabel.font = .preferredFont(forTextStyle: .headline)
-        view.addSubview(statusLabel)
+        let host = UIHostingController(rootView: ShareSaveView(
+            model: model,
+            onCancel: { [weak self] in self?.cancel() },
+            onSave: { [weak self] in self?.save() }
+        ))
+        addChild(host)
+        host.view.translatesAutoresizingMaskIntoConstraints = false
+        view.addSubview(host.view)
         NSLayoutConstraint.activate([
-            statusLabel.centerXAnchor.constraint(equalTo: view.centerXAnchor),
-            statusLabel.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-            statusLabel.leadingAnchor.constraint(greaterThanOrEqualTo: view.leadingAnchor, constant: 24),
-            statusLabel.trailingAnchor.constraint(lessThanOrEqualTo: view.trailingAnchor, constant: -24)
+            host.view.topAnchor.constraint(equalTo: view.topAnchor),
+            host.view.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            host.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+            host.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         ])
+        host.didMove(toParent: self)
     }
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        guard !didStartImport else { return }
-        didStartImport = true
-        importSharedItems()
+        guard !didStartLoading else { return }
+        didStartLoading = true
+        loadSharedItems()
     }
 
-    private func importSharedItems() {
+    /// Read what was shared; nothing is written to the Drive yet.
+    private func loadSharedItems() {
         let providers = extensionContext?.inputItems
             .compactMap { $0 as? NSExtensionItem }
             .flatMap { $0.attachments ?? [] } ?? []
         let group = DispatchGroup()
-        let lock = NSLock()
-        var imported = 0
-        var failed = 0
-
         for provider in providers {
             guard let typeIdentifier = importer.preferredTypeIdentifier(for: provider) else { continue }
             FileProviderStorage.debugLog(
@@ -58,31 +62,41 @@ final class ShareViewController: UIViewController {
                 defer { group.leave() }
                 do {
                     let item = try result.get()
-                    if try self.importer.importItem(item, typeIdentifier: typeIdentifier, provider: provider) {
-                        lock.lock()
-                        imported += 1
-                        lock.unlock()
-                    } else {
+                    if try !self.importer.importItem(item, typeIdentifier: typeIdentifier, provider: provider) {
                         FileProviderStorage.debugLog("share import unsupported item for \(typeIdentifier)")
                     }
                 } catch {
-                    FileProviderStorage.debugLog("share import failed: \(error)")
-                    lock.lock()
-                    failed += 1
-                    lock.unlock()
+                    FileProviderStorage.debugLog("share item unreadable: \(error)")
                 }
             }
         }
-
         group.notify(queue: .main) {
-            if imported == 0 {
-                self.statusLabel.text = failed == 0 ? "No items saved" : "Could not save to Iris Drive"
-            } else {
-                self.statusLabel.text = imported == 1
-                    ? "Saved to Iris Drive"
-                    : "Saved \(imported) items to Iris Drive"
-            }
-            self.extensionContext?.completeRequest(returningItems: nil)
+            self.collectedLock.lock()
+            let items = self.collected
+            self.collectedLock.unlock()
+            let folders = FileProviderStorage.shareDestinations()
+            Task { @MainActor in self.model.loaded(items, folders: folders) }
+        }
+    }
+
+    private func save() {
+        model.save(using: { item, folder in
+            try FileProviderStorage.importSharedFile(
+                named: item.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                contentType: item.contentType,
+                contents: item.contents,
+                into: folder
+            )
+        }, done: { [weak self] in
+            self?.extensionContext?.completeRequest(returningItems: nil)
+        })
+    }
+
+    private func cancel() {
+        if case .saved = model.phase {
+            extensionContext?.completeRequest(returningItems: nil)
+        } else {
+            extensionContext?.cancelRequest(withError: CocoaError(.userCancelled))
         }
     }
 }

@@ -6,68 +6,66 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.provider.OpenableColumns
-import android.widget.Toast
 import androidx.activity.ComponentActivity
-import androidx.lifecycle.lifecycleScope
+import androidx.activity.compose.setContent
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import java.io.ByteArrayInputStream
-import java.io.File
+import java.io.FileNotFoundException
 import java.net.URLConnection
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import to.iris.drive.app.provider.IrisDriveDocumentStore
 
+/** The system share sheet's "Save to Iris Drive": confirm the name and folder, then save. */
 class ShareActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        importSharedContent(intent)
-    }
-
-    private fun importSharedContent(intent: Intent?) {
-        lifecycleScope.launch {
-            val result = withContext(Dispatchers.IO) {
-                runCatching { importIntent(intent) }
+        val store = IrisDriveDocumentStore(filesDir, getString(R.string.app_name))
+        val items = sharedItems(intent)
+        setContent {
+            IrisDriveTheme {
+                val folders by produceState<Result<List<String>?>?>(initialValue = null) {
+                    value = withContext(Dispatchers.IO) { runCatching { store.shareDestinations() } }
+                }
+                folders?.let { loaded ->
+                    ShareSaveScreen(
+                        items = items,
+                        folders = loaded.getOrNull(),
+                        onSave = { toSave, folder -> save(store, toSave, folder) },
+                        onOpenApp = {
+                            startActivity(Intent(this@ShareActivity, MainActivity::class.java))
+                            finish()
+                        },
+                        onClose = { finish() },
+                    )
+                }
             }
-            val count = result.getOrDefault(0)
-            val message = when {
-                result.isFailure -> "Could not save to Iris Drive"
-                count == 1 -> "Saved to Iris Drive"
-                count > 1 -> "Saved $count items to Iris Drive"
-                else -> "Nothing to save"
-            }
-            Toast.makeText(this@ShareActivity, message, Toast.LENGTH_SHORT).show()
-            finish()
         }
     }
 
-    private fun importIntent(intent: Intent?): Int {
-        if (intent == null) return 0
-        val store = IrisDriveDocumentStore(
-            filesDir,
-            getString(R.string.app_name),
-        )
-        var imported = 0
-        for (uri in streamUris(intent)) {
+    private fun save(store: IrisDriveDocumentStore, items: List<SharedItem>, folder: String) {
+        val parent = store.documentIdForFolder(folder)
+        for (item in items) {
+            val input = item.uri?.let { contentResolver.openInputStream(it) }
+                ?: item.text?.let { ByteArrayInputStream(it.toByteArray()) }
+                ?: throw FileNotFoundException("${item.name} can no longer be read")
+            store.importFile(parent, item.mimeType, item.name, input)
+        }
+    }
+
+    /** What was shared: every file, or the text as a note when there is no file. */
+    private fun sharedItems(intent: Intent?): List<SharedItem> {
+        if (intent == null) return emptyList()
+        val files = streamUris(intent).map { uri ->
             val name = displayName(uri) ?: uri.lastPathSegment ?: "Shared file"
-            val mimeType = contentResolver.getType(uri) ?: inferMimeType(name)
-            val input = contentResolver.openInputStream(uri) ?: continue
-            store.importFile(IrisDriveDocumentStore.ROOT_DOCUMENT_ID, mimeType, name, input)
-            imported += 1
+            SharedItem(name = name, mimeType = contentResolver.getType(uri) ?: inferMimeType(name), uri = uri)
         }
-        val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()
-        if (!text.isNullOrBlank() && imported == 0) {
-            val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)
-                ?.takeIf { it.isNotBlank() }
-                ?: "Shared text"
-            store.importFile(
-                IrisDriveDocumentStore.ROOT_DOCUMENT_ID,
-                "text/plain",
-                "$subject.txt",
-                ByteArrayInputStream(text.toByteArray()),
-            )
-            imported += 1
-        }
-        return imported
+        if (files.isNotEmpty()) return files
+        val text = intent.getCharSequenceExtra(Intent.EXTRA_TEXT)?.toString()?.takeIf { it.isNotBlank() }
+            ?: return emptyList()
+        val subject = intent.getStringExtra(Intent.EXTRA_SUBJECT)?.takeIf { it.isNotBlank() } ?: "Shared text"
+        return listOf(SharedItem(name = "$subject.txt", mimeType = "text/plain", text = text))
     }
 
     private fun streamUris(intent: Intent): List<Uri> {

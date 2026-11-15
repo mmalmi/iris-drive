@@ -234,21 +234,45 @@ enum FileProviderStorage {
         return optimisticItem(for: destination, template: template, contents: contents)
     }
 
+    /// Folders of My Drive a shared item can be saved into, or nil when Iris
+    /// Drive has no profile on this device yet.
+    static func shareDestinations() -> [String]? {
+        guard let state = try? loadProviderBackedState() else { return nil }
+        return state.entries
+            .filter { $0.kind == "directory" && !$0.path.split(separator: "/").contains { $0.hasPrefix(".") } }
+            .map(\.path)
+            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+    }
+
+    /// Save a shared item into `parent` (empty for My Drive itself), keeping
+    /// both files when the name is taken.
     static func importSharedFile(
         named displayName: String,
         contentType: UTType,
-        contents: Data
+        contents: Data,
+        into parent: String = ""
     ) throws {
         let source = try temporaryDirectory()
             .appendingPathComponent(UUID().uuidString, isDirectory: false)
         try contents.write(to: source)
-        let result = IrisDriveNativeProvider.importSharedFile(
-            dataDir: baseDirectory.path,
-            displayName: displayName,
-            sourcePath: source.path
-        )
+        defer { try? FileManager.default.removeItem(at: source) }
+        let result: String
+        if parent.isEmpty {
+            result = IrisDriveNativeProvider.importSharedFile(
+                dataDir: baseDirectory.path,
+                displayName: displayName,
+                sourcePath: source.path
+            )
+        } else {
+            let destination = try resolvedPath(parent: parent, name: displayName)
+            result = IrisDriveNativeProvider.write(
+                dataDir: baseDirectory.path,
+                path: destination.path,
+                sourcePath: source.path
+            )
+        }
         try runProviderMutation(result)
-        debugLog("share import saved name=\(displayName) bytes=\(contents.count) result=\(result)")
+        debugLog("share import saved name=\(displayName) parent=\(parent) bytes=\(contents.count) result=\(result)")
         signalProviderChanged()
     }
 

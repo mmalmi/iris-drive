@@ -131,6 +131,7 @@ targets:
     sources:
       - path: UnitTests
       - path: ShareExtension/ShareItemImporter.swift
+      - path: ShareExtension/ShareSaveView.swift
     settings:
       base:
         PRODUCT_NAME: IrisDriveIOSShareExtensionTests

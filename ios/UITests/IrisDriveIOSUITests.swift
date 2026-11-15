@@ -107,6 +107,7 @@ final class IrisDriveIOSUITests: XCTestCase {
         shareButton.tap()
 
         tapShareExtensionAction(sourceApp: sender, timeout: 20)
+        confirmShareSave(sourceApp: sender, expectedName: sharedFile)
         waitForShareSheetToDismiss(sourceApp: sender, timeout: 12)
 
         app.terminate()
@@ -1007,6 +1008,28 @@ final class IrisDriveIOSUITests: XCTestCase {
         }
         XCTAssertTrue(element.exists, "Expected share sheet element to exist: \(element.debugDescription)")
         XCTAssertTrue(element.isHittable, "Expected share sheet element to be hittable: \(element.debugDescription)")
+    }
+
+    /// The sheet shows what will be saved and where; nothing is saved until Save.
+    private func confirmShareSave(sourceApp: XCUIApplication, expectedName: String) {
+        let springboard = XCUIApplication(bundleIdentifier: "com.apple.springboard")
+        let deadline = Date().addingTimeInterval(20)
+        while Date() < deadline {
+            for candidate in [sourceApp, springboard] {
+                let save = candidate.buttons["shareSaveButton"].firstMatch
+                guard save.exists, save.isEnabled else { continue }
+                let name = candidate.textFields["shareSaveName"].firstMatch
+                XCTAssertEqual(name.value as? String, expectedName)
+                XCTAssertTrue(candidate.descendants(matching: .any)["shareSaveFolder"].firstMatch.exists)
+                if let shots = optionalEnvironment("IRIS_DRIVE_UI_SCREENSHOT_DIR") {
+                    try? saveScreenshot(named: "share-save-sheet", in: shots)
+                }
+                save.tap()
+                return
+            }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.25))
+        }
+        XCTFail("Save to Iris Drive sheet did not offer Save. Hierarchy:\n\(sourceApp.debugDescription)")
     }
 
     private func waitForShareSheetToDismiss(sourceApp: XCUIApplication, timeout: TimeInterval) {
