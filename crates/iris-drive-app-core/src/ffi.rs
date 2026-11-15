@@ -2177,7 +2177,7 @@ async fn run_app_key_link_exchange_async(
     let daemon = iris_drive_core::Daemon::open(config_dir)
         .map_err(|error| format!("opening block store: {error}"))?;
     let local = daemon.tree().get_store().clone();
-    let sync = iris_drive_core::FipsBlockSync::start(&device, local, &startup_config)
+    let sync = iris_drive_core::FipsBlockSync::start_for_drive(&device, local, &startup_config)
         .await
         .map_err(|error| format!("starting FIPS app-key-link exchange: {error}"))?;
     let mut presence_changes = sync.subscribe_presence_changes();

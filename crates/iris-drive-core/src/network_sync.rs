@@ -777,7 +777,7 @@ async fn start_fips_block_sync(config_dir: &Path, config: &AppConfig) -> Result<
     let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
     let daemon = Daemon::open(config_dir).context("opening daemon for direct FIPS sync")?;
     let local = daemon.tree().get_store().clone();
-    crate::FipsBlockSync::start(&device, local, config)
+    crate::FipsBlockSync::start_for_drive(&device, local, config)
         .await
         .context("starting direct FIPS block sync")
 }

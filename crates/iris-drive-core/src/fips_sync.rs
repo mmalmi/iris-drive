@@ -45,8 +45,10 @@ use control_runtime::DriveControlRuntime;
 pub use control_runtime::FipsAppMessage;
 use download::download_tree_with_router;
 use endpoint_config::bind_drive_fips_endpoint;
+use nostr_runtime::DriveNostrPubsubRuntime;
 pub use nostr_runtime::FipsNostrPubsubEvent;
-use nostr_runtime::{DriveNostrPubsubRuntime, recv_optional_nostr_pubsub_event};
+#[cfg(test)]
+use nostr_runtime::recv_optional_nostr_pubsub_event;
 use peer_config::{
     FipsPeerConfigSnapshot, authenticated_local_inbound_capability, fips_peer_config_snapshot,
     normalize_fips_peer_npub, peer_ids, set_drive_fips_peer_configs,
@@ -98,10 +100,39 @@ pub struct FipsBlockSync<L: Store + Send + Sync + 'static> {
 pub type FsFipsBlockSync = FipsBlockSync<hashtree_fs::FsBlobStore>;
 
 impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
+    /// Start a general-purpose endpoint that receives arbitrary Nostr events.
     pub async fn start(
         device: &AppKey,
         local_store: Arc<L>,
         config: &AppConfig,
+    ) -> Result<Self, FipsSyncError> {
+        Self::start_with_nostr_filters(
+            device,
+            local_store,
+            config,
+            vec![nostr_pubsub::Filter::new()],
+        )
+        .await
+    }
+
+    /// Subscribe the Drive app to its discovery scope and trusted release tree.
+    pub async fn start_for_drive(
+        device: &AppKey,
+        local_store: Arc<L>,
+        config: &AppConfig,
+    ) -> Result<Self, FipsSyncError> {
+        let reference = crate::updater::product_update_reference(None)
+            .map_err(|error| FipsSyncError::Endpoint(error.to_string()))?;
+        let filters =
+            nostr_runtime::drive_subscription_filters(&discovery_scope(config), &reference)?;
+        Self::start_with_nostr_filters(device, local_store, config, filters).await
+    }
+
+    async fn start_with_nostr_filters(
+        device: &AppKey,
+        local_store: Arc<L>,
+        config: &AppConfig,
+        filters: Vec<nostr_pubsub::Filter>,
     ) -> Result<Self, FipsSyncError> {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let identity_nsec = device
@@ -133,6 +164,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             transport_settings,
             shared_store,
             Some(recent_peers_path),
+            filters,
         )
         .await?;
         let friends = crate::friend_backup::runtime::FriendBackupRuntime::spawn(device)
@@ -171,6 +203,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             transport_settings,
             shared_store,
             None,
+            vec![nostr_pubsub::Filter::new()],
         )
         .await
     }
@@ -182,6 +215,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         transport_settings: FipsTransportSettings,
         shared_store: Option<Arc<dyn BlobRoute>>,
         recent_peers_path: Option<PathBuf>,
+        filters: Vec<nostr_pubsub::Filter>,
     ) -> Result<Self, FipsSyncError> {
         let BoundFipsEndpoint {
             native_endpoint,
@@ -241,6 +275,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
                     recent_peers_path
                         .as_deref()
                         .and_then(std::path::Path::parent),
+                    filters,
                 )
                 .await?,
             )
@@ -535,49 +570,6 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             .ok_or_else(|| FipsSyncError::Endpoint("Drive control runtime is stopped".into()))?
             .broadcast(topic.to_string(), data)
             .await
-    }
-
-    pub async fn publish_nostr_event(
-        &self,
-        event: nostr_sdk::Event,
-    ) -> Result<usize, FipsSyncError> {
-        let Some(runtime) = self.nostr_runtime.as_ref() else {
-            return Ok(0);
-        };
-        runtime.publish(event).await
-    }
-
-    pub async fn drain_nostr_pubsub_events(&self) -> Vec<FipsNostrPubsubEvent> {
-        let Some(receiver) = self.nostr_receiver.as_ref() else {
-            return Vec::new();
-        };
-        let mut receiver = receiver.lock().await;
-        let mut events = Vec::new();
-        while events.len() < 64 {
-            match receiver.try_recv() {
-                Ok(event) => events.push(event),
-                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {}
-                Err(_) => break,
-            }
-        }
-        events
-    }
-
-    pub async fn recv_nostr_pubsub_event(&self) -> FipsNostrPubsubEvent {
-        recv_optional_nostr_pubsub_event(self.nostr_receiver.as_ref()).await
-    }
-
-    pub fn mesh_peer_limit(&self) -> Option<usize> {
-        self.nostr_runtime
-            .as_ref()
-            .and_then(DriveNostrPubsubRuntime::max_connected_peers)
-    }
-
-    pub fn mesh_peer_count(&self) -> usize {
-        let Some(runtime) = self.nostr_runtime.as_ref() else {
-            return 0;
-        };
-        runtime.connected_peer_count()
     }
 
     pub async fn download_tree(&self, root: &Cid) -> Result<DownloadReport, FipsSyncError> {

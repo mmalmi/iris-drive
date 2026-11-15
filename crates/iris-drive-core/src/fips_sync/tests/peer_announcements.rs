@@ -40,6 +40,11 @@ async fn drive(bound: &BoundFipsEndpoint, key: &AppKey) -> FipsBlockSync<MemoryS
         },
         None,
         Some(recent_peers_file_path(key.path())),
+        nostr_runtime::drive_subscription_filters(
+            SCOPE,
+            &crate::updater::product_update_reference(None).unwrap(),
+        )
+        .unwrap(),
     )
     .await
     .unwrap()
@@ -94,7 +99,7 @@ async fn restarted_drive_serves_valid_peer_announcements_without_relays_or_origi
             .await
             .unwrap()
     );
-    for event in [&valid, &malformed, &other_scope] {
+    for event in [&valid, &malformed] {
         author
             .publish(
                 VerifiedEvent::try_from(event.clone()).unwrap(),
@@ -108,6 +113,18 @@ async fn restarted_drive_serves_valid_peer_announcements_without_relays_or_origi
         .await
         .expect("Drive processed the signed event from its peer");
     }
+    let excluded = author
+        .publish(
+            VerifiedEvent::try_from(other_scope.clone()).unwrap(),
+            EventSource::local_index("fixture"),
+        )
+        .await
+        .unwrap();
+    assert!(excluded.accepted);
+    assert_eq!(
+        excluded.reason.as_deref(),
+        Some("cached for live FIPS subscriptions")
+    );
     author.shutdown().await;
     author_bound.native_endpoint.shutdown().await.unwrap();
     first.shutdown().await.unwrap();

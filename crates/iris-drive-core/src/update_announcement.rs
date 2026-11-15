@@ -81,6 +81,13 @@ impl UpdateAnnouncementExchange {
         config_dir: &Path,
         message: &FipsNostrPubsubEvent,
     ) -> Result<bool, String> {
+        if !self
+            .cache
+            .filter()
+            .match_event(&message.event, nostr_pubsub::MatchEventOptions::new())
+        {
+            return Ok(false);
+        }
         self.ingest_event(config_dir, message.event.clone())
     }
 

@@ -42,6 +42,7 @@ async fn pubsub_roster_refresh_accepts_more_contacts_than_connection_slots() {
         Vec::new(),
         vec!["invalid-explicit-key".to_string()],
         None,
+        vec![nostr_pubsub::Filter::new()],
     )
     .await
     .err()
@@ -56,6 +57,7 @@ async fn pubsub_roster_refresh_accepts_more_contacts_than_connection_slots() {
         peers.clone(),
         Vec::new(),
         None,
+        vec![nostr_pubsub::Filter::new()],
     )
     .await
     .unwrap();
@@ -325,14 +327,10 @@ async fn shared_pubsub_carries_only_verified_nostr_events() {
         Vec::new(),
         vec![bob.pubkey_bech32()],
         None,
+        vec![nostr_pubsub::Filter::new()],
     )
     .await
     .unwrap();
-    let mut bob_runtime =
-        DriveNostrPubsubRuntime::bind(bob_endpoint.clone(), Vec::new(), Vec::new(), None)
-            .await
-            .unwrap();
-    let mut received = bob_runtime.subscribe();
     let release_keys = Keys::generate();
     let tree_name = "releases/iris-drive";
     let reference = hashtree_updater::UpdateRef {
@@ -340,6 +338,13 @@ async fn shared_pubsub_carries_only_verified_nostr_events() {
         tree_name: tree_name.to_string(),
         path: Some("latest".to_string()),
     };
+    let filters =
+        nostr_runtime::drive_subscription_filters("drive-pubsub-test", &reference).unwrap();
+    let mut bob_runtime =
+        DriveNostrPubsubRuntime::bind(bob_endpoint.clone(), Vec::new(), Vec::new(), None, filters)
+            .await
+            .unwrap();
+    let mut received = bob_runtime.subscribe();
     let event = EventBuilder::new(Kind::Custom(30_064), "verified update")
         .tags([
             Tag::identifier(tree_name),
@@ -365,6 +370,38 @@ async fn shared_pubsub_carries_only_verified_nostr_events() {
     .expect("cached update was not replayed to a late FIPS peer");
     assert_eq!(delivery.event.id, event.id);
     assert_eq!(delivery.origin_peer_id, alice.pubkey_bech32());
+    // After Bob receives the cached release, Alice has Bob's real wire filters.
+    // A matching publication would send an inventory instead of just caching it.
+    let signed = |kind, identifier: &str, keys: &Keys| {
+        EventBuilder::new(kind, "")
+            .tag(Tag::identifier(identifier))
+            .sign_with_keys(keys)
+            .unwrap()
+    };
+    for excluded in [
+        signed(Kind::TextNote, tree_name, &release_keys),
+        signed(Kind::Custom(30_064), tree_name, &Keys::generate()),
+        signed(Kind::Custom(30_064), "unrelated/tree", &release_keys),
+        signed(
+            Kind::Custom(fips_core::discovery::nostr::ADVERT_KIND),
+            "unrelated-scope",
+            &release_keys,
+        ),
+    ] {
+        let report = nostr_pubsub::EventBus::publish(
+            alice_runtime.stack_fixture_client().unwrap(),
+            nostr_pubsub::VerifiedEvent::try_from(excluded).unwrap(),
+            nostr_pubsub::EventSource::local_index("test"),
+        )
+        .await
+        .unwrap();
+        assert!(report.accepted);
+        assert_eq!(
+            report.reason.as_deref(),
+            Some("cached for live FIPS subscriptions")
+        );
+    }
+
     let target_dir = tempfile::tempdir().unwrap();
     let mut exchange =
         crate::UpdateAnnouncementExchange::load_for_reference(target_dir.path(), &reference)
@@ -377,6 +414,19 @@ async fn shared_pubsub_carries_only_verified_nostr_events() {
     assert_eq!(
         exchange.latest_event().map(|event| event.id),
         Some(event.id)
+    );
+    let mut tampered = delivery.clone();
+    tampered.event.content.push('!');
+    assert!(
+        exchange
+            .handle_nostr_event(target_dir.path(), &tampered)
+            .is_err()
+    );
+    tampered.event.kind = Kind::TextNote;
+    assert!(
+        !exchange
+            .handle_nostr_event(target_dir.path(), &tampered)
+            .unwrap()
     );
 
     alice_runtime.shutdown().await;

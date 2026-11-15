@@ -18,7 +18,7 @@ use nostr_sdk::Event;
 use tokio::sync::broadcast;
 use tokio::task::JoinHandle;
 
-use super::FipsSyncError;
+use super::{FipsBlockSync, FipsSyncError};
 
 const DELIVERY_CAPACITY: usize = 256;
 const SUBSCRIPTION_RETRY_INTERVAL: Duration = Duration::from_millis(500);
@@ -38,12 +38,58 @@ pub(super) struct DriveNostrPubsubRuntime {
     receiver_task: Option<JoinHandle<()>>,
 }
 
+impl<L: hashtree_core::Store + Send + Sync + 'static> FipsBlockSync<L> {
+    pub async fn publish_nostr_event(
+        &self,
+        event: nostr_sdk::Event,
+    ) -> Result<usize, FipsSyncError> {
+        let Some(runtime) = self.nostr_runtime.as_ref() else {
+            return Ok(0);
+        };
+        runtime.publish(event).await
+    }
+
+    pub async fn drain_nostr_pubsub_events(&self) -> Vec<FipsNostrPubsubEvent> {
+        let Some(receiver) = self.nostr_receiver.as_ref() else {
+            return Vec::new();
+        };
+        let mut receiver = receiver.lock().await;
+        let mut events = Vec::new();
+        while events.len() < 64 {
+            match receiver.try_recv() {
+                Ok(event) => events.push(event),
+                Err(tokio::sync::broadcast::error::TryRecvError::Lagged(_)) => {}
+                Err(_) => break,
+            }
+        }
+        events
+    }
+
+    pub async fn recv_nostr_pubsub_event(&self) -> FipsNostrPubsubEvent {
+        recv_optional_nostr_pubsub_event(self.nostr_receiver.as_ref()).await
+    }
+
+    pub fn mesh_peer_limit(&self) -> Option<usize> {
+        self.nostr_runtime
+            .as_ref()
+            .and_then(DriveNostrPubsubRuntime::max_connected_peers)
+    }
+
+    pub fn mesh_peer_count(&self) -> usize {
+        let Some(runtime) = self.nostr_runtime.as_ref() else {
+            return 0;
+        };
+        runtime.connected_peer_count()
+    }
+}
+
 impl DriveNostrPubsubRuntime {
     pub(super) async fn bind(
         endpoint: Arc<FipsEndpoint>,
         routed_peers: Vec<String>,
         trusted_raters: Vec<String>,
         device_directory: Option<&Path>,
+        filters: Vec<Filter>,
     ) -> Result<Self, FipsSyncError> {
         #[cfg(feature = "stack-fixture")]
         let max_connected_peers = std::env::var("IRIS_STACK_FIXTURE_PUBSUB_MAX_PEERS")
@@ -98,7 +144,7 @@ impl DriveNostrPubsubRuntime {
             loop {
                 // The adapter replays this subscription when peers arrive or
                 // reconnect. Keep queued deliveries and dedup across link churn.
-                let Ok(mut subscription) = task_client.subscribe(vec![Filter::new()]).await else {
+                let Ok(mut subscription) = task_client.subscribe(filters.clone()).await else {
                     tokio::time::sleep(SUBSCRIPTION_RETRY_INTERVAL).await;
                     continue;
                 };
@@ -141,7 +187,7 @@ impl DriveNostrPubsubRuntime {
         })
     }
 
-    #[cfg(feature = "stack-fixture")]
+    #[cfg(any(feature = "stack-fixture", test))]
     pub(super) fn stack_fixture_client(&self) -> Option<&FipsPubsubClient> {
         self.client.as_deref()
     }
@@ -262,13 +308,29 @@ async fn open_announcement_store(
     let path = directory
         .join("fips-peer-announcements")
         .join(format!("{key}.json"));
-    let filter = Filter::new()
-        .kind(nostr_sdk::Kind::Custom(ADVERT_KIND))
-        .identifier(scope);
+    let filter = peer_announcement_filter(scope);
     FileEventBus::open(path, EventRetentionPolicy::new(256, vec![filter]))
         .await
         .map(Arc::new)
         .map_err(|error| endpoint_error(error.to_string()))
+}
+
+fn peer_announcement_filter(scope: &str) -> Filter {
+    Filter::new()
+        .kind(nostr_sdk::Kind::Custom(ADVERT_KIND))
+        .identifier(scope)
+}
+
+pub(super) fn drive_subscription_filters(
+    scope: &str,
+    reference: &hashtree_updater::UpdateRef,
+) -> Result<Vec<Filter>, FipsSyncError> {
+    let updates = hashtree_updater::UpdateEventCache::new(reference)
+        .map_err(|error| endpoint_error(error.to_string()))?;
+    Ok(vec![
+        peer_announcement_filter(scope),
+        updates.filter().clone(),
+    ])
 }
 
 fn endpoint_error(error: impl Into<String>) -> FipsSyncError {
