@@ -41,6 +41,13 @@ remote_command+=" IRIS_DRIVE_MACOS_SMOKE_PRESERVE_ARTIFACTS=1"
 remote_command+=" IRIS_DRIVE_MACOS_SMOKE_LINK_JOURNEY='$link_journey'"
 remote_command+=" IRIS_DRIVE_MACOS_SMOKE_SURVIVAL_SECONDS=0"
 remote_command+=" IRIS_DRIVE_MACOS_SIGNING='${IRIS_DRIVE_MACOS_SIGNING:-none}'"
+# A lean Cargo profile chosen for this run applies to the VM's build too: the
+# VM has little disk to spare for debug information.
+for cargo_setting in CARGO_PROFILE_DEV_DEBUG CARGO_PROFILE_TEST_DEBUG CARGO_INCREMENTAL; do
+  if [[ "${!cargo_setting:-}" =~ ^[A-Za-z0-9_-]+$ ]]; then
+    remote_command+=" $cargo_setting='${!cargo_setting}'"
+  fi
+done
 remote_command+=" ./scripts/macos-smoke.sh >'$REMOTE_PRIVATE_LOG' 2>&1"
 remote_command+="; smoke_exit=\$?; rm -rf \"\$state_dir\"; if (( smoke_exit == 0 )); then rm -f '$REMOTE_PRIVATE_LOG'; fi; exit \$smoke_exit; }"
 

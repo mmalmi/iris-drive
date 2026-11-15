@@ -2,6 +2,11 @@ package to.iris.drive.app
 
 import android.content.Context
 import android.content.Intent
+import androidx.compose.ui.test.assertTextContains
+import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -11,6 +16,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
+import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.json.JSONObject
@@ -19,6 +25,9 @@ import to.iris.drive.app.provider.IrisDriveDocumentStore
 
 @RunWith(AndroidJUnit4::class)
 class ShareActivityInstrumentedTest {
+    @get:Rule
+    val compose = createEmptyComposeRule()
+
     private lateinit var context: Context
 
     @Before
@@ -35,7 +44,7 @@ class ShareActivityInstrumentedTest {
     }
 
     @Test
-    fun actionSendTextImportsSharedTextIntoProviderRoot() {
+    fun actionSendTextIsSavedToMyDriveOnceConfirmed() {
         val intent = Intent(Intent.ACTION_SEND)
             .setClass(context, ShareActivity::class.java)
             .setType("text/plain")
@@ -44,6 +53,15 @@ class ShareActivityInstrumentedTest {
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
         ActivityScenario.launch<ShareActivity>(intent).use {
+            compose.waitUntil(10_000) {
+                compose.onAllNodesWithTag("shareSaveButton").fetchSemanticsNodes().isNotEmpty()
+            }
+            compose.onNodeWithTag("shareSaveName").assertTextContains("Mobile share API.txt")
+            assertTrue(
+                "Nothing may be saved before Save is tapped",
+                store().childDocuments(IrisDriveDocumentStore.ROOT_DOCUMENT_ID).isEmpty(),
+            )
+            compose.onNodeWithTag("shareSaveButton").performClick()
             val entry = waitForProviderEntry("Mobile share API.txt")
             assertNotNull("Shared text did not appear in Iris Drive provider root", entry)
             assertEquals("hello from Android share API\n", readDocumentText(entry!!.documentId))
