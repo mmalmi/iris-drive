@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.42 - 2026-11-15
 
 - Save large videos to Iris Drive from another app's share sheet on iPhone.
   The share extension used to read the whole file into memory, so iOS closed
