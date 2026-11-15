@@ -277,7 +277,6 @@ fn share_row(
     title.set_xalign(0.0);
     labels.append(&title);
 
-
     let mut metadata = Vec::new();
     if !share.role_label.is_empty() {
         metadata.push(share.role_label.clone());
