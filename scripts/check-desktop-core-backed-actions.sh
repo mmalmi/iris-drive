@@ -9,10 +9,11 @@ require_contains linux/src/daemon_control.rs "iris_drive_app_core::FfiApp"
 require_contains linux/src/daemon_control.rs "dispatch_desktop_action"
 require_contains linux/src/setup.rs "RejectDevice"
 require_contains linux/src/render.rs "state.ui.app_actors"
-require_contains linux/src/render.rs "share.source_path"
+require_contains linux/src/render.rs "share.location"
 require_contains linux/src/render.rs "missing access wrap"
 require_contains linux/src/render.rs "pending_invites"
-require_contains linux/src/actions.rs "RecordPendingShareInvite"
+require_contains linux/src/actions.rs "CreateShareJoinLink"
+require_contains linux/src/actions.rs "RemoveShareShortcuts"
 require_contains linux/src/data.rs "authorized_app_key_count"
 require_contains linux/src/main.rs "ApplicationFlags::HANDLES_OPEN"
 require_contains linux/src/main.rs "classify_link_input"
@@ -32,7 +33,8 @@ require_contains macos/Sources/IrisDriveMacApp.swift "desktopCore.refreshJson()"
 require_contains macos/Sources/IrisDriveMacApp.swift "applyNativeStatePayload"
 require_contains macos/Sources/IrisDriveMacApp.swift "openContentLink"
 require_contains macos/Sources/IrisDriveContentLinks.swift '"import_content_link"'
-require_contains macos/Sources/IrisDriveMacApp.swift '"record_pending_share_invite"'
+require_contains macos/Sources/IrisDriveShareLinks.swift '"create_share_join_link"'
+require_contains macos/Sources/IrisDriveShareLinks.swift '"remove_share_shortcuts"'
 require_contains macos/Sources/IrisDriveControlPanel.swift "Reject"
 require_contains macos/Sources/IrisDriveControlPanel.swift "peer.isCurrentDevice || peer.fipsOnline"
 require_contains macos/Sources/IrisDriveControlPanel.swift 'Approve this device?'

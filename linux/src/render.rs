@@ -277,9 +277,6 @@ fn share_row(
     title.set_xalign(0.0);
     labels.append(&title);
 
-    if !share.source_path.trim().is_empty() {
-        labels.append(&share_detail_label(&share.source_path, 72));
-    }
 
     let mut metadata = Vec::new();
     if !share.role_label.is_empty() {
