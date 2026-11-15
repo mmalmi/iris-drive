@@ -62,4 +62,10 @@ require_absent "android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDo
 require_absent "android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentStore.kt" "?: path"
 require_absent "android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentStore.kt" 'startsWith("$parentPath/")'
 
+require_contains "crates/iris-drive-core/src/share_folders.rs" "pub fn save_folders"
+require_contains "crates/iris-drive-app-core/src/native_provider.rs" '"save_folders": iris_drive_core::share_folders::save_folders('
+require_contains "ios/FileProvider/FileProviderStorage.swift" 'case saveFolders = "save_folders"'
+require_contains "android/app/src/main/java/to/iris/drive/app/provider/IrisDriveDocumentStore.kt" 'json.optJSONArray("save_folders")'
+require_absent "ios/FileProvider/FileProviderStorage.swift" 'split(separator: "/")'
+
 echo "PROVIDER_ENTRY_NORMALIZATION_OK"

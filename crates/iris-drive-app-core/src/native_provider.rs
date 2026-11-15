@@ -374,6 +374,10 @@ pub(crate) fn run_native_provider_list(data_dir: &str) -> anyhow::Result<serde_j
                 daemon.config(),
                 &summary.directory_paths,
             ),
+            "save_folders": iris_drive_core::share_folders::save_folders(
+                daemon.config(),
+                &summary.directory_paths,
+            ),
             "directory_paths": summary.directory_paths,
             "change_key": summary.change_key,
             "entries": entries,

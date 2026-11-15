@@ -105,10 +105,8 @@ internal class IrisDriveDocumentStore(
     fun shareDestinations(): List<String>? {
         val json = JSONObject(NativeCore.providerListJson(dataDir.absolutePath))
         if (json.optString("error").isNotBlank()) return null
-        return providerEntries()
-            .filter { entry -> entry.isDirectory && entry.path.split('/').none { it.startsWith(".") } }
-            .map { it.path }
-            .sortedBy { it.lowercase() }
+        val folders = json.optJSONArray("save_folders") ?: return emptyList()
+        return List(folders.length()) { folders.getString(it) }
     }
 
     /** The document a shared item is saved under: My Drive itself for a blank folder. */

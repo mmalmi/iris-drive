@@ -17,9 +17,10 @@ enum FileProviderStorage {
     private static let providerItemVersionPrefix = "iris-drive-ios-provider-v2"
     private static let minDisplayUnixSeconds: Int64 = 946_684_800
 
-    private struct ProviderState: Decodable {
+    private struct ProviderState {
         var anchor: String
         var entries: [ProviderEntry]
+        var saveFolders: [String] = []
     }
 
     private struct ProviderEntry: Decodable {
@@ -45,7 +46,13 @@ enum FileProviderStorage {
     private struct ProviderList: Decodable {
         var anchor: String?
         var entries: [ProviderEntry]
+        var saveFolders: [String]?
         var error: String?
+
+        enum CodingKeys: String, CodingKey {
+            case anchor, entries, error
+            case saveFolders = "save_folders"
+        }
     }
 
     private struct ProviderSnapshot: Codable {
@@ -237,11 +244,7 @@ enum FileProviderStorage {
     /// Folders of My Drive a shared item can be saved into, or nil when Iris
     /// Drive has no profile on this device yet.
     static func shareDestinations() -> [String]? {
-        guard let state = try? loadProviderBackedState() else { return nil }
-        return state.entries
-            .filter { $0.kind == "directory" && !$0.path.split(separator: "/").contains { $0.hasPrefix(".") } }
-            .map(\.path)
-            .sorted { $0.localizedStandardCompare($1) == .orderedAscending }
+        (try? loadProviderBackedState())?.saveFolders
     }
 
     /// Save a shared item into `parent` (empty for My Drive itself), keeping
@@ -427,7 +430,7 @@ enum FileProviderStorage {
         guard let anchor = list.anchor, !anchor.isEmpty else {
             throw providerError("provider root unavailable")
         }
-        return ProviderState(anchor: anchor, entries: list.entries)
+        return ProviderState(anchor: anchor, entries: list.entries, saveFolders: list.saveFolders ?? [])
     }
 
     private static func item(for entry: ProviderEntry, anchor _: String) -> FileProviderItem {

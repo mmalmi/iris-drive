@@ -455,6 +455,10 @@ fn provider_list_includes_summary_and_change_key() {
         provider["share_action_paths"].as_array().unwrap(),
         &vec![serde_json::json!("Reports")]
     );
+    assert_eq!(
+        provider["save_folders"].as_array().unwrap(),
+        &vec![serde_json::json!("Reports")]
+    );
     assert!(
         provider["change_key"]
             .as_str()

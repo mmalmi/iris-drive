@@ -21,6 +21,7 @@ macos/Resources/binaries/
 windows/**/bin/
 windows/**/obj/
 android/.gradle/
+android/.kotlin/
 android/build/
 android/app/build/
 android/app/src/main/jniLibs/

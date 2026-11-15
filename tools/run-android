@@ -4,9 +4,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ANDROID_DIR="$ROOT/android"
 
+# The Android Gradle plugin pinned in android/build.gradle.kts uses a Gradle
+# API removed in 9.6, so a newer Gradle on PATH cannot build the app. Prefer
+# the newest cached distribution it runs on.
 find_gradle() {
   local cached
-  cached="$(find "$HOME/.gradle/wrapper/dists" -path '*/bin/gradle' -type f 2>/dev/null | sort -V | grep -v '/gradle-9\.' | tail -n 1 || true)"
+  cached="$(find "$HOME/.gradle/wrapper/dists" -path '*/bin/gradle' -type f 2>/dev/null | sort -V | grep -Ev '/gradle-(9\.([6-9]|[0-9]{2,})|[1-9][0-9]+)[.-]' | tail -n 1 || true)"
   if [[ -n "$cached" ]]; then
     printf '%s\n' "$cached"
     return

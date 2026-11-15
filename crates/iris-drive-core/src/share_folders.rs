@@ -70,6 +70,24 @@ pub fn share_action_folders(config: &AppConfig, directories: &[String]) -> Vec<S
         .collect()
 }
 
+/// Folders of My Drive something can be saved into from another app: not
+/// hidden and not inside a shared folder this profile can only read, in the
+/// order a person would look for them.
+#[must_use]
+pub fn save_folders(config: &AppConfig, directories: &[String]) -> Vec<String> {
+    let mut folders: Vec<String> = directories
+        .iter()
+        .filter(|dir| !dir.is_empty() && !dir.split('/').any(|part| part.starts_with('.')))
+        .filter(|dir| {
+            crate::shared_content::ensure_shared_path_writable(config, &format!("{dir}/file"))
+                .is_ok()
+        })
+        .cloned()
+        .collect();
+    folders.sort_by_key(|dir| dir.to_lowercase());
+    folders
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -136,6 +154,29 @@ mod tests {
         assert_eq!(
             shareable_folders(&config, &directories()),
             ["Documents", "Photos", "Team", "Team/Plans"]
+        );
+    }
+
+    #[test]
+    fn save_folders_skip_hidden_and_read_only_shared_folders() {
+        let (_dir, config) = config_with_shares();
+        let mut directories = directories();
+        directories.push("archive".to_owned());
+
+        // "Joined/Plans" is someone else's folder this profile can only read.
+        assert_eq!(
+            save_folders(&config, &directories),
+            [
+                "archive",
+                "Documents",
+                "Joined",
+                "Photos",
+                "Projects",
+                "Projects/Trip",
+                "Projects/Trip/Day 1",
+                "Team",
+                "Team/Plans",
+            ]
         );
     }
 
