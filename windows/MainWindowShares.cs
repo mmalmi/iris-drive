@@ -1,15 +1,15 @@
 using System;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 using System.Windows.Media;
 using WpfBrush = System.Windows.Media.Brush;
 using WpfButton = System.Windows.Controls.Button;
+using WpfClipboard = System.Windows.Clipboard;
 using WpfComboBox = System.Windows.Controls.ComboBox;
 using WpfHorizontalAlignment = System.Windows.HorizontalAlignment;
 using WpfMessageBox = System.Windows.MessageBox;
 using WpfOrientation = System.Windows.Controls.Orientation;
-using WpfTextBox = System.Windows.Controls.TextBox;
+using WpfRadioButton = System.Windows.Controls.RadioButton;
 
 namespace IrisDrive.WindowsShell;
 
@@ -27,16 +27,33 @@ public partial class MainWindow
     private void RenderShares(IrisDriveStatusData status)
     {
         SharesList.Items.Clear();
-        if (status.Shares.Count == 0)
+        foreach (var join in status.PendingShareJoins)
         {
-            SharesList.Items.Add(Row("No shared folders", "", ""));
-            return;
+            var name = string.IsNullOrWhiteSpace(join.DisplayName) ? "Shared folder" : join.DisplayName;
+            SharesList.Items.Add(Row(
+                $"Waiting to join \u201c{name}\u201d",
+                "You get access when someone who manages it has Iris Drive open.",
+                join.RoleLabel));
         }
 
         foreach (var share in status.Shares)
         {
             SharesList.Items.Add(ShareListRow(share));
         }
+
+        if (SharesList.Items.Count == 0)
+        {
+            SharesList.Items.Add(Row("No shared folders", "", ""));
+        }
+    }
+
+    /// Share actions report here: the Drive page notice is not visible from Shares.
+    private void ShowSharesNotice(string text)
+    {
+        SharesNotice.Text = text;
+        SharesNotice.Visibility = string.IsNullOrWhiteSpace(text)
+            ? Visibility.Collapsed
+            : Visibility.Visible;
     }
 
     private Border ShareListRow(ShareRow share)
@@ -90,9 +107,14 @@ public partial class MainWindow
 
         if (share.CanAdmin)
         {
-            var invite = ShareActionButton("Invite", share.ShareId);
-            invite.Click += ShowInviteShareMember_Click;
-            actions.Children.Add(invite);
+            var shareByLink = new WpfButton
+            {
+                Content = "Share",
+                Tag = share,
+                Margin = new Thickness(8, 0, 0, 0),
+            };
+            shareByLink.Click += ShowInviteShareMember_Click;
+            actions.Children.Add(shareByLink);
         }
 
         if (share.RepairNeeded || share.MissingKeyWrapCount > 0)
@@ -277,9 +299,9 @@ public partial class MainWindow
 
         if (!classification.IsValid || string.IsNullOrWhiteSpace(classification.ShareSourcePath))
         {
-            NoticeText.Text = string.IsNullOrWhiteSpace(classification.Error)
+            ShowSharesNotice(string.IsNullOrWhiteSpace(classification.Error)
                 ? "Share folder path is required."
-                : classification.Error.Trim();
+                : classification.Error.Trim());
             return;
         }
 
@@ -289,9 +311,9 @@ public partial class MainWindow
             classification.ShareRecipientDisplayName,
             classification.ShareRecipientNpubHint,
             classification.ShareRecipientProfileId);
-        NoticeText.Text = string.IsNullOrWhiteSpace(recipient)
+        ShowSharesNotice(string.IsNullOrWhiteSpace(recipient)
             ? "Share folder selected"
-            : $"Share folder selected for {recipient}";
+            : $"Share folder selected for {recipient}");
     }
 
     private bool OpenContentLinkFromLink(string input)
@@ -444,27 +466,40 @@ public partial class MainWindow
         {
             await service.CreateShareAsync(ShareSourceBox.Text);
             ShareSourceBox.Text = "";
-            NoticeText.Text = "Share created";
+            ShowSharesNotice("Share created");
             await RefreshAsync();
         }
         catch (Exception error)
         {
-            NoticeText.Text = error.Message;
+            ShowSharesNotice(error.Message);
         }
     }
 
     private async void AcceptShareInvite_Click(object sender, RoutedEventArgs e)
     {
+        var link = ShareInviteBox.Text.Trim();
+        if (link.Length == 0)
+        {
+            ShowSharesNotice("Paste a share link");
+            return;
+        }
+
         try
         {
-            await service.AcceptShareInviteAsync(ShareInviteBox.Text);
+            var asksToJoin = string.Equals(
+                IrisDriveNativeCore.ClassifyLinkInput(link).Kind,
+                "share_join",
+                StringComparison.Ordinal);
+            await service.AcceptShareInviteAsync(link);
             ShareInviteBox.Text = "";
-            NoticeText.Text = "Share accepted";
+            ShowSharesNotice(asksToJoin
+                ? "Asked to join. It appears in Shares once you're let in."
+                : "Joined");
             await RefreshAsync();
         }
         catch (Exception error)
         {
-            NoticeText.Text = error.Message;
+            ShowSharesNotice(error.Message);
         }
     }
 
@@ -478,12 +513,12 @@ public partial class MainWindow
         try
         {
             await service.AddShareShortcutAsync(shareId);
-            NoticeText.Text = "Added to My Drive";
+            ShowSharesNotice("Added to My Drive");
             await RefreshAsync();
         }
         catch (Exception error)
         {
-            NoticeText.Text = error.Message;
+            ShowSharesNotice(error.Message);
         }
     }
 
@@ -500,7 +535,7 @@ public partial class MainWindow
         }
         catch (Exception error)
         {
-            NoticeText.Text = error.Message;
+            ShowSharesNotice(error.Message);
         }
     }
 
@@ -524,26 +559,12 @@ public partial class MainWindow
         try
         {
             await service.DeleteShareAsync(shareId);
-            NoticeText.Text = "Share deleted";
+            ShowSharesNotice("Share deleted");
             await RefreshAsync();
         }
         catch (Exception error)
         {
-            NoticeText.Text = error.Message;
-        }
-    }
-
-    private async void CopyShareIdentity_Click(object sender, RoutedEventArgs e)
-    {
-        try
-        {
-            var status = await service.ExportShareRecipientEvidenceAsync("");
-            CopyText(status.LastShareRecipientEvidence, "Share identity copied");
-            await RefreshAsync();
-        }
-        catch (Exception error)
-        {
-            NoticeText.Text = error.Message;
+            ShowSharesNotice(error.Message);
         }
     }
 
@@ -557,100 +578,97 @@ public partial class MainWindow
         try
         {
             await service.RepairShareWrapsAsync(shareId);
-            NoticeText.Text = "Share access repaired";
+            ShowSharesNotice("Share access repaired");
             await RefreshAsync();
         }
         catch (Exception error)
         {
-            NoticeText.Text = error.Message;
+            ShowSharesNotice(error.Message);
         }
     }
 
+    /// Share by link: anyone who opens it can ask to join, and this PC lets
+    /// them in while Iris Drive runs. No app is needed to open the link.
     private void ShowInviteShareMember_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not WpfButton { Tag: string shareId })
+        if (sender is not WpfButton { Tag: ShareRow share })
         {
             return;
         }
 
-        var evidenceBox = new WpfTextBox
+        var shareName = string.IsNullOrWhiteSpace(share.DisplayName)
+            ? "Shared folder"
+            : share.DisplayName.Trim();
+        var view = new WpfRadioButton
         {
-            Tag = "Signed recipient evidence JSON",
-            MinHeight = 72,
-            MinWidth = 460,
-            TextWrapping = TextWrapping.Wrap,
-            AcceptsReturn = true,
-            Margin = new Thickness(0, 4, 0, 10),
+            Content = "View",
+            GroupName = "ShareLinkRole",
+            IsChecked = true,
+            Margin = new Thickness(0, 0, 18, 0),
         };
-        var displayNameBox = new WpfTextBox
+        var edit = new WpfRadioButton { Content = "Edit", GroupName = "ShareLinkRole" };
+        var roles = new StackPanel
         {
-            Tag = "Name",
-            MinHeight = 34,
-            MinWidth = 460,
-            Margin = new Thickness(0, 4, 0, 10),
+            Orientation = WpfOrientation.Horizontal,
+            Margin = new Thickness(0, 6, 0, 14),
         };
-        var npubHintBox = new WpfTextBox
-        {
-            Tag = "User ID",
-            MinHeight = 34,
-            MinWidth = 460,
-            Margin = new Thickness(0, 4, 0, 10),
-        };
-        var roleBox = new WpfComboBox
-        {
-            MinWidth = 140,
-            Margin = new Thickness(0, 4, 0, 14),
-        };
-        foreach (var role in ShareRoles)
-        {
-            roleBox.Items.Add(role);
-        }
-        roleBox.SelectedItem = "reader";
+        roles.Children.Add(view);
+        roles.Children.Add(edit);
 
         var notice = new TextBlock
         {
-            Foreground = (WpfBrush)FindResource("IrisMutedBrush"),
+            Foreground = (WpfBrush)FindResource("IrisSuccessBrush"),
             TextWrapping = TextWrapping.Wrap,
             Margin = new Thickness(0, 0, 0, 12),
+            Visibility = Visibility.Collapsed,
         };
-        var cancel = new WpfButton { Content = "Cancel", MinWidth = 92 };
-        var invite = new WpfButton
+        var disable = new WpfButton { Content = "Turn off links", MinWidth = 108 };
+        var done = new WpfButton { Content = "Done", MinWidth = 80 };
+        var copy = new WpfButton
         {
-            Content = "Invite",
+            Content = "Copy link",
             Style = (Style)FindResource("PrimaryButton"),
-            MinWidth = 92,
+            MinWidth = 100,
             Margin = new Thickness(8, 0, 0, 0),
+            IsDefault = true,
         };
-        var buttons = new StackPanel
-        {
-            Orientation = WpfOrientation.Horizontal,
-            HorizontalAlignment = WpfHorizontalAlignment.Right,
-        };
-        buttons.Children.Add(cancel);
-        buttons.Children.Add(invite);
+        var buttons = new DockPanel { LastChildFill = false };
+        DockPanel.SetDock(disable, Dock.Left);
+        DockPanel.SetDock(copy, Dock.Right);
+        DockPanel.SetDock(done, Dock.Right);
+        buttons.Children.Add(disable);
+        buttons.Children.Add(copy);
+        buttons.Children.Add(done);
 
-        var body = new StackPanel { Margin = new Thickness(18), Width = 500 };
+        var body = new StackPanel { Margin = new Thickness(18), Width = 420 };
         body.Children.Add(new TextBlock
         {
-            Text = "Invite to share",
+            Text = $"Share \u201c{shareName}\u201d",
             FontSize = 20,
             FontWeight = FontWeights.SemiBold,
-            Margin = new Thickness(0, 0, 0, 10),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            Margin = new Thickness(0, 0, 0, 12),
+        });
+        body.Children.Add(new TextBlock
+        {
+            Text = "People with the link can",
+            Style = (Style)FindResource("FieldName"),
+        });
+        body.Children.Add(roles);
+        body.Children.Add(new TextBlock
+        {
+            Text = "Anyone with this link can join. This PC lets them in while Iris Drive is running. "
+                + "They don't need the app \u2014 the link opens in a browser.",
+            Foreground = (WpfBrush)FindResource("IrisMutedBrush"),
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 0, 14),
         });
         body.Children.Add(notice);
-        body.Children.Add(new TextBlock { Text = "Recipient identity evidence", Style = (Style)FindResource("FieldName") });
-        body.Children.Add(evidenceBox);
-        body.Children.Add(new TextBlock { Text = "User ID", Style = (Style)FindResource("FieldName") });
-        body.Children.Add(npubHintBox);
-        body.Children.Add(new TextBlock { Text = "Name", Style = (Style)FindResource("FieldName") });
-        body.Children.Add(displayNameBox);
-        body.Children.Add(new TextBlock { Text = "Role", Style = (Style)FindResource("FieldName") });
-        body.Children.Add(roleBox);
         body.Children.Add(buttons);
 
         var dialog = new Window
         {
-            Title = "Invite to share",
+            Title = "Share",
             Owner = this,
             WindowStartupLocation = WindowStartupLocation.CenterOwner,
             ResizeMode = ResizeMode.NoResize,
@@ -658,47 +676,55 @@ public partial class MainWindow
             Content = body,
         };
 
-        async Task SubmitAsync()
+        void ShowDialogNotice(string text, bool failed)
         {
-            invite.IsEnabled = false;
+            notice.Text = text;
+            notice.Foreground = (WpfBrush)FindResource(failed ? "IrisMutedBrush" : "IrisSuccessBrush");
+            notice.Visibility = Visibility.Visible;
+        }
+
+        done.Click += (_, _) => dialog.Close();
+        copy.Click += async (_, _) =>
+        {
+            copy.IsEnabled = false;
             try
             {
-                if (string.IsNullOrWhiteSpace(evidenceBox.Text))
+                var status = await service.CreateShareJoinLinkAsync(
+                    share.ShareId,
+                    edit.IsChecked == true ? "editor" : "reader");
+                if (string.IsNullOrWhiteSpace(status.LastShareInviteUrl))
                 {
-                    await service.RecordPendingShareInviteAsync(
-                        shareId,
-                        npubHintBox.Text,
-                        roleBox.SelectedItem as string ?? "reader",
-                        displayNameBox.Text);
-                    NoticeText.Text = "Pending share invite recorded";
+                    ShowDialogNotice("Link unavailable", failed: true);
                 }
                 else
                 {
-                    var invited = await service.InviteShareMemberFromEvidenceAsync(
-                        shareId,
-                        evidenceBox.Text,
-                        roleBox.SelectedItem as string ?? "reader",
-                        displayNameBox.Text);
-                    CopyText(invited.LastShareInviteUrl, "Share invite copied");
+                    WpfClipboard.SetText(status.LastShareInviteUrl);
+                    ShowDialogNotice("Link copied", failed: false);
+                    ShowSharesNotice("Link copied");
                 }
-                dialog.Close();
-                await RefreshAsync();
             }
             catch (Exception error)
             {
-                notice.Text = error.Message;
-                invite.IsEnabled = true;
+                ShowDialogNotice(error.Message, failed: true);
             }
-        }
-
-        cancel.Click += (_, _) => dialog.Close();
-        invite.Click += async (_, _) => await SubmitAsync();
-        evidenceBox.KeyDown += async (_, key) =>
-        {
-            if (key.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.Control)
+            finally
             {
-                key.Handled = true;
-                await SubmitAsync();
+                copy.IsEnabled = true;
+            }
+        };
+        disable.Click += async (_, _) =>
+        {
+            disable.IsEnabled = false;
+            try
+            {
+                await service.DisableShareJoinLinksAsync(share.ShareId);
+                ShowSharesNotice("Links turned off. People already in keep access.");
+                dialog.Close();
+            }
+            catch (Exception error)
+            {
+                ShowDialogNotice(error.Message, failed: true);
+                disable.IsEnabled = true;
             }
         };
         dialog.ShowDialog();
@@ -724,12 +750,12 @@ public partial class MainWindow
         try
         {
             await service.RevokeShareMemberAsync(tag.ShareId, tag.ProfileId);
-            NoticeText.Text = "Share member removed";
+            ShowSharesNotice("Share member removed");
             await RefreshAsync();
         }
         catch (Exception error)
         {
-            NoticeText.Text = error.Message;
+            ShowSharesNotice(error.Message);
         }
     }
 
@@ -743,12 +769,12 @@ public partial class MainWindow
         try
         {
             await service.SetShareMemberRoleAsync(tag.ShareId, tag.ProfileId, role);
-            NoticeText.Text = "Share role updated";
+            ShowSharesNotice("Share role updated");
             await RefreshAsync();
         }
         catch (Exception error)
         {
-            NoticeText.Text = error.Message;
+            ShowSharesNotice(error.Message);
         }
     }
 }

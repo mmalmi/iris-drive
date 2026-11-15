@@ -379,80 +379,53 @@ public sealed partial class IrisDriveService
             });
     }
 
-    public Task AcceptShareInviteAsync(string invite)
+    public Task AcceptShareInviteAsync(string link)
     {
-        if (string.IsNullOrWhiteSpace(invite))
+        if (string.IsNullOrWhiteSpace(link))
         {
-            throw new InvalidOperationException("Share invite is required.");
+            throw new InvalidOperationException("Paste a share link");
         }
 
         return DispatchNativeActionAsync(
             new Dictionary<string, object>
             {
                 ["type"] = "accept_share_invite",
-                ["invite"] = invite.Trim(),
+                ["invite"] = link.Trim(),
             });
     }
 
-    public Task<IrisDriveStatusData> InviteShareMemberFromEvidenceAsync(
-        string shareId,
-        string evidenceJson,
-        string role,
-        string displayName)
+    /// Makes (or reuses) the folder's join link for `role`; the link is in
+    /// the returned status as LastShareInviteUrl.
+    public Task<IrisDriveStatusData> CreateShareJoinLinkAsync(string shareId, string role)
     {
         if (string.IsNullOrWhiteSpace(shareId))
         {
             throw new InvalidOperationException("Share is required.");
         }
-        if (string.IsNullOrWhiteSpace(evidenceJson))
-        {
-            throw new InvalidOperationException("Recipient identity evidence is required.");
-        }
 
         return DispatchNativeActionAsync(
             new Dictionary<string, object>
             {
-                ["type"] = "invite_share_member_from_evidence",
+                ["type"] = "create_share_join_link",
                 ["share_id"] = shareId.Trim(),
-                ["evidence_json"] = evidenceJson.Trim(),
-                ["role"] = string.IsNullOrWhiteSpace(role) ? "reader" : role.Trim(),
-                ["display_name"] = displayName.Trim(),
+                ["role"] = string.Equals(role, "editor", StringComparison.Ordinal)
+                    ? "editor"
+                    : "reader",
             });
     }
 
-    public Task<IrisDriveStatusData> ExportShareRecipientEvidenceAsync(string displayName)
-    {
-        return DispatchNativeActionAsync(
-            new Dictionary<string, object>
-            {
-                ["type"] = "export_share_recipient_evidence",
-                ["display_name"] = displayName.Trim(),
-            });
-    }
-
-    public Task RecordPendingShareInviteAsync(
-        string shareId,
-        string representativeNpubHint,
-        string role,
-        string displayName)
+    public Task DisableShareJoinLinksAsync(string shareId)
     {
         if (string.IsNullOrWhiteSpace(shareId))
         {
             throw new InvalidOperationException("Share is required.");
         }
-        if (string.IsNullOrWhiteSpace(representativeNpubHint))
-        {
-            throw new InvalidOperationException("User ID is required.");
-        }
 
         return DispatchNativeActionAsync(
             new Dictionary<string, object>
             {
-                ["type"] = "record_pending_share_invite",
+                ["type"] = "disable_share_join_links",
                 ["share_id"] = shareId.Trim(),
-                ["representative_npub_hint"] = representativeNpubHint.Trim(),
-                ["role"] = string.IsNullOrWhiteSpace(role) ? "reader" : role.Trim(),
-                ["display_name"] = displayName.Trim(),
             });
     }
 

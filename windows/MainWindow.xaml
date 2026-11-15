@@ -448,15 +448,7 @@
             </StackPanel>
 
             <StackPanel x:Name="SharesPage" Visibility="Collapsed">
-              <DockPanel Margin="0,0,0,10">
-                <Button DockPanel.Dock="Right" Click="CopyShareIdentity_Click">
-                  <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="&#xE77B;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
-                    <TextBlock Text="Copy share identity" />
-                  </StackPanel>
-                </Button>
-                <TextBlock Text="Shares" FontWeight="SemiBold" FontSize="18" />
-              </DockPanel>
+              <TextBlock Text="Shares" FontWeight="SemiBold" FontSize="18" Margin="0,0,0,10" />
               <TextBlock Text="Create shared folder" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
               <DockPanel LastChildFill="True" Margin="0,0,0,12">
                 <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}" Click="CreateShare_Click" Margin="8,0,0,0">
@@ -467,16 +459,21 @@
                 </Button>
                 <TextBox x:Name="ShareSourceBox" Tag="My Drive/Folder" MinHeight="34" />
               </DockPanel>
-              <TextBlock Text="Accept invite" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
+              <TextBlock Text="Paste a share link" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
               <DockPanel LastChildFill="True" Margin="0,0,0,14">
                 <Button DockPanel.Dock="Right" Style="{StaticResource PrimaryButton}" Click="AcceptShareInvite_Click" Margin="8,0,0,0">
                   <StackPanel Orientation="Horizontal">
-                    <TextBlock Text="&#xE896;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
-                    <TextBlock Text="Accept" />
+                    <TextBlock Text="&#xE71B;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                    <TextBlock Text="Join" />
                   </StackPanel>
                 </Button>
-                <TextBox x:Name="ShareInviteBox" Tag="iris-drive://share-invite/..." MinHeight="34" />
+                <TextBox x:Name="ShareInviteBox" Tag="https://drive.iris.to/#/share-join/..." MinHeight="34" />
               </DockPanel>
+              <TextBlock x:Name="SharesNotice"
+                         Foreground="{StaticResource IrisMutedBrush}"
+                         TextWrapping="Wrap"
+                         Visibility="Collapsed"
+                         Margin="0,0,0,12" />
               <TextBlock Text="Shared with me" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
               <ListBox x:Name="SharesList" BorderBrush="{StaticResource IrisBorderBrush}" />
             </StackPanel>

@@ -56,8 +56,8 @@ require_contains windows/IrisDriveService.cs "RunNativeCoreAsync"
 require_contains windows/IrisDriveService.cs "core.RefreshJson()"
 require_contains windows/IrisDriveServiceNativeCore.cs "DispatchNativeActionAsync"
 require_contains windows/IrisDriveService.cs '["type"] = "create_share"'
-require_contains windows/IrisDriveService.cs '["type"] = "invite_share_member_from_evidence"'
-require_contains windows/IrisDriveService.cs '["type"] = "record_pending_share_invite"'
+require_contains windows/IrisDriveService.cs '["type"] = "create_share_join_link"'
+require_contains windows/IrisDriveService.cs '["type"] = "disable_share_join_links"'
 require_contains windows/IrisDriveService.cs '["type"] = "add_share_shortcut"'
 require_contains windows/IrisDriveService.cs '["type"] = "repair_share_wraps"'
 require_contains windows/IrisDriveService.cs '["type"] = "revoke_share_member"'
@@ -75,8 +75,8 @@ require_contains windows/MainWindow.xaml.cs "ApplyLaunchArguments"
 require_contains windows/MainWindowShares.cs "OpenShareDialogFromLink"
 require_contains windows/MainWindowShares.cs "OpenContentLinkFromLink"
 require_contains windows/IrisDriveServiceContentLinks.cs '["type"] = "import_content_link"'
-require_contains windows/MainWindowShares.cs "InviteShareMemberFromEvidenceAsync"
-require_contains windows/MainWindowShares.cs "RecordPendingShareInviteAsync"
+require_contains windows/MainWindowShares.cs "CreateShareJoinLinkAsync"
+require_contains windows/MainWindowShares.cs "DisableShareJoinLinksAsync"
 require_contains windows/MainWindowShares.cs "MissingKeyWrapCount"
 require_contains scripts/windows-installer.iss '"URL Protocol"'
 require_contains scripts/windows-installer.iss '"""{app}\IrisDrive.exe"" ""%1"""'

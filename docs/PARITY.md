@@ -19,8 +19,8 @@ equivalent to desktop.
 | Auto-scan local drive folder | No; mount publishes writes | No | No | No | No |
 | Open drive folder | Yes, mounted | FileProvider domain | Cloud Files placeholders | Files app FileProvider domain + open action | SAF DocumentsProvider + open action |
 | Open share dialog for selected folder | `iris-drive://share` + `drive.iris.to/share` | `iris-drive://share` + `drive.iris.to/share` | `iris-drive://share` via installer protocol | `iris-drive://share` + `drive.iris.to/share` | SAF folder action -> `iris-drive://share` |
-| Share folder by link (`#/share-join/`) | Share dialog: copy link | Share sheet: QR + copy | `idrive shares link`; dialog pending | Share sheet: send/copy | Share dialog: send/copy |
-| Join from a share link | Join field | Join field + opened link prompt | Accept field (core routes links) | Join field + opened link | Join field + opened link |
+| Share folder by link (`#/share-join/`) | Share dialog: copy link | Share sheet: QR + copy | Share dialog: copy link | Share sheet: send/copy | Share dialog: send/copy |
+| Join from a share link | Join field | Join field + opened link prompt | Join field | Join field + opened link | Join field + opened link |
 | Let in people who opened a link | Daemon, live | Daemon, live | Daemon, live | On sync | On sync |
 | Copy/view drive.iris.to link | Yes | Yes | Yes | Yes | App-core UI flow |
 | Open/save Drive content link | Passed `drive.iris.to/#/nhash...` or `#/npub.../tree/path` URL -> local resolver or app-core import | Universal link -> local resolver or app-core import | Launch URL -> local resolver or app-core import | Universal link -> local resolver or app-core import attempt | App link -> local resolver or app-core import attempt |

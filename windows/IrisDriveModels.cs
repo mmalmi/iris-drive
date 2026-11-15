@@ -33,7 +33,6 @@ public sealed class IrisDriveStatusData
     public string? SitesPortalUrl { get; init; }
     public string? CalDavUrl { get; init; }
     public string? LastShareInviteUrl { get; init; }
-    public string? LastShareRecipientEvidence { get; init; }
     public int FileCount { get; init; }
     public long VisibleFileBytes { get; init; }
     public bool LocalNhashResolverEnabled { get; init; } = true;
@@ -43,6 +42,8 @@ public sealed class IrisDriveStatusData
     public IReadOnlyList<BackupTargetRow> BackupTargets { get; init; } =
         Array.Empty<BackupTargetRow>();
     public IReadOnlyList<ShareRow> Shares { get; init; } = Array.Empty<ShareRow>();
+    public IReadOnlyList<PendingShareJoinRow> PendingShareJoins { get; init; } =
+        Array.Empty<PendingShareJoinRow>();
     public IReadOnlyList<string> Relays { get; init; } = Array.Empty<string>();
     public IReadOnlyList<string> BlossomServers { get; init; } = Array.Empty<string>();
     public FipsDiagnostics Fips { get; init; } = FipsDiagnostics.Empty;
@@ -115,7 +116,6 @@ public sealed class IrisDriveStatusData
             SitesPortalUrl = sitesPortalUrl,
             CalDavUrl = EmptyToNull(String(ui, "caldav_url")),
             LastShareInviteUrl = EmptyToNull(String(ui, "last_share_invite")),
-            LastShareRecipientEvidence = EmptyToNull(String(ui, "last_share_recipient_evidence")),
             FileCount = Int(ui, "file_count"),
             VisibleFileBytes = Long(ui, "visible_file_bytes"),
             LocalNhashResolverEnabled = localNhashResolverEnabled,
@@ -124,6 +124,7 @@ public sealed class IrisDriveStatusData
             Peers = NativePeerRows(ui),
             BackupTargets = backupTargets,
             Shares = NativeShareRows(ui),
+            PendingShareJoins = NativePendingShareJoinRows(ui),
             Relays = StringArray(ui, "relays"),
             BlossomServers = backupTargets
                 .Where(target => target.Kind == "blossom")
@@ -319,6 +320,27 @@ public sealed class IrisDriveStatusData
                 NativeShareMemberRows(share),
                 NativePendingShareInviteRows(share),
                 StringArray(share, "shortcut_paths")));
+        }
+
+        return rows;
+    }
+
+    private static IReadOnlyList<PendingShareJoinRow> NativePendingShareJoinRows(JsonElement ui)
+    {
+        if (ui.ValueKind != JsonValueKind.Object ||
+            !ui.TryGetProperty("pending_share_joins", out var joins) ||
+            joins.ValueKind != JsonValueKind.Array)
+        {
+            return Array.Empty<PendingShareJoinRow>();
+        }
+
+        var rows = new List<PendingShareJoinRow>();
+        foreach (var join in joins.EnumerateArray())
+        {
+            rows.Add(new PendingShareJoinRow(
+                String(join, "share_id") ?? "",
+                String(join, "display_name") ?? "Shared folder",
+                String(join, "role_label") ?? ""));
         }
 
         return rows;
@@ -527,6 +549,9 @@ public sealed record ShareRow(
     IReadOnlyList<ShareMemberRow> Members,
     IReadOnlyList<PendingShareInviteRow> PendingInvites,
     IReadOnlyList<string> ShortcutPaths);
+
+/// A folder this PC asked to join from a link, still waiting to be let in.
+public sealed record PendingShareJoinRow(string ShareId, string DisplayName, string RoleLabel);
 
 public sealed record PendingShareInviteRow(
     string RepresentativeNpubHint,
