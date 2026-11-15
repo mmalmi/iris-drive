@@ -159,7 +159,13 @@ class IrisDriveAndroidGuiFlowTest {
         )
 
         compose.onNodeWithTag("awaitingApprovalBack").assertIsDisplayed().activate()
-        compose.onAllNodesWithText("Start over").assertCountEquals(0)
+        compose.onNodeWithText("Cancel this sign-in request?").assertIsDisplayed()
+        assertEquals(0, backActions)
+        compose.onNodeWithText("Keep waiting").activate()
+        compose.onAllNodesWithText("Cancel request").assertCountEquals(0)
+        assertEquals(0, backActions)
+        compose.onNodeWithTag("awaitingApprovalBack").activate()
+        compose.onNodeWithText("Cancel request").activate()
         assertEquals(1, backActions)
     }
 

@@ -138,6 +138,29 @@ private struct CopyFeedbackToast: View {
     }
 }
 
+private struct DeviceLogoutButton: View {
+    @ObservedObject var model: IrisDriveMobileModel
+    @State private var showingLogoutConfirmation = false
+
+    var body: some View {
+        Button(role: .destructive) {
+            showingLogoutConfirmation = true
+        } label: {
+            Label("Log out", systemImage: "rectangle.portrait.and.arrow.right")
+        }
+        .confirmationDialog(
+            "Log out of Iris Drive on this device?",
+            isPresented: $showingLogoutConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Log out", role: .destructive) {
+                model.logout()
+            }
+            Button("Cancel", role: .cancel) {}
+        }
+    }
+}
+
 private struct RevokedDeviceSetupView: View {
     @ObservedObject var model: IrisDriveMobileModel
 
@@ -170,11 +193,7 @@ private struct RevokedDeviceSetupView: View {
                 }
 
                 Section {
-                    Button(role: .destructive) {
-                        model.logout()
-                    } label: {
-                        Label("Log out", systemImage: "rectangle.portrait.and.arrow.right")
-                    }
+                    DeviceLogoutButton(model: model)
                 }
             }
             .accessibilityIdentifier("revokedDeviceView")
@@ -192,6 +211,7 @@ private struct RevokedDeviceSetupView: View {
 
 private struct AwaitingApprovalSetupView: View {
     @ObservedObject var model: IrisDriveMobileModel
+    @State private var showingCancelRequest = false
     @State private var requestQrMatrix = QrMatrix()
     @State private var requestQrValue = ""
     @State private var requestQrTask: Task<Void, Never>?
@@ -264,11 +284,15 @@ private struct AwaitingApprovalSetupView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
                     Button {
-                        model.logout()
+                        showingCancelRequest = true
                     } label: {
                         Label("Back", systemImage: "chevron.left")
                     }
                     .accessibilityIdentifier("awaitingApprovalBack")
+                    .confirmationDialog("Cancel this sign-in request?", isPresented: $showingCancelRequest, titleVisibility: .visible) {
+                        Button("Cancel request", role: .destructive) { model.logout() }
+                        Button("Keep waiting", role: .cancel) {}
+                    }
                 }
             }
             .accessibilityIdentifier("awaitingApprovalView")
@@ -2430,7 +2454,6 @@ private struct IrisWebView: UIViewRepresentable {
 
 private struct SettingsView: View {
     @ObservedObject var model: IrisDriveMobileModel
-    @State private var showingLogoutConfirmation = false
 
     var body: some View {
         Form {
@@ -2451,11 +2474,7 @@ private struct SettingsView: View {
                     }
                     .accessibilityIdentifier("openRecoveryPhraseExport")
                 }
-                Button(role: .destructive) {
-                    showingLogoutConfirmation = true
-                } label: {
-                    Label("Log out", systemImage: "rectangle.portrait.and.arrow.right")
-                }
+                DeviceLogoutButton(model: model)
             }
 
             Section("Network") {
@@ -2537,16 +2556,7 @@ private struct SettingsView: View {
             }
         }
         .navigationTitle("Settings")
-        .confirmationDialog(
-            "Log out of Iris Drive on this device?",
-            isPresented: $showingLogoutConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Log out", role: .destructive) {
-                model.logout()
-            }
-            Button("Cancel", role: .cancel) {}
-        }
+
     }
 
     private func relayHealthColor(_ health: String) -> Color {

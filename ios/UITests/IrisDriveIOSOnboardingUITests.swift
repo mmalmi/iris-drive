@@ -81,6 +81,21 @@ extension IrisDriveIOSUITests {
         XCTAssertFalse(app.buttons["Start over"].exists, app.debugDescription)
     }
 
+    func testCancelSignInRequestRequiresConfirmation() throws {
+        let app = launchApp(environment: try isolatedBaseEnvironment())
+        app.buttons["welcomeSignIn"].tap()
+        let awaitingApproval = app.descendants(matching: .any)["awaitingApprovalView"]
+        XCTAssertTrue(awaitingApproval.waitForExistence(timeout: 15), app.debugDescription)
+        let back = app.buttons["awaitingApprovalBack"]
+        XCTAssertTrue(back.isHittable, app.debugDescription)
+        back.tap()
+        app.buttons["Keep waiting"].tap()
+        XCTAssertTrue(awaitingApproval.exists, app.debugDescription)
+        back.tap()
+        app.buttons["Cancel request"].tap()
+        XCTAssertTrue(app.buttons["welcomeSignIn"].waitForExistence(timeout: 15), app.debugDescription)
+    }
+
     func testSignInStartsJoinRequest() throws {
         let app = launchApp(environment: try isolatedBaseEnvironment())
 

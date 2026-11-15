@@ -20,6 +20,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -232,6 +233,7 @@ internal fun IrisDriveAndroidApp(
     val isOpeningIrisApps by isOpeningIrisAppsFlow.collectAsState()
     val androidCalendarSyncEnabled by androidCalendarSyncEnabledFlow.collectAsState()
     val profile = state.profile
+    var confirmLogout by remember(profile?.devicePubkey, state.setupState) { mutableStateOf(false) }
     var selectedTab by remember { mutableStateOf(MainTab.MyDrive) }
     var showStartupLoading by remember { mutableStateOf(false) }
 
@@ -250,6 +252,23 @@ internal fun IrisDriveAndroidApp(
     }
 
     IrisDriveTheme {
+        if (confirmLogout) {
+            val pending = state.isAwaitingApproval
+            AlertDialog(
+                onDismissRequest = { confirmLogout = false },
+                title = { Text(if (pending) "Cancel this sign-in request?" else "Log out") },
+                text = { Text(if (pending) "You can start a new request later." else "Remove this local Iris Drive profile from Android?") },
+                confirmButton = {
+                    TextButton(onClick = {
+                        confirmLogout = false
+                        onLogout()
+                    }) { Text(if (pending) "Cancel request" else "Log out") }
+                },
+                dismissButton = {
+                    TextButton(onClick = { confirmLogout = false }) { Text(if (pending) "Keep waiting" else "Cancel") }
+                },
+            )
+        }
         Scaffold(
             modifier = Modifier.testTag("irisDriveApp"),
             containerColor = Background,
@@ -275,7 +294,7 @@ internal fun IrisDriveAndroidApp(
                         padding = padding,
                         state = state,
                         onCopyText = onCopyText,
-                        onLogout = onLogout,
+                        onLogout = { confirmLogout = true },
                     )
                 } else if (state.isAwaitingApproval && profile != null) {
                     AwaitingApprovalContent(
@@ -287,7 +306,7 @@ internal fun IrisDriveAndroidApp(
                             onRestoreProfile(secret, "")
                             onAddRoot("My Drive", ProviderRoot)
                         },
-                        onLogout = onLogout,
+                        onLogout = { confirmLogout = true },
                     )
                 } else {
                     SetupContent(
@@ -335,7 +354,7 @@ internal fun IrisDriveAndroidApp(
                     onAppointAdmin = onAppointAdmin,
                     onDemoteAdmin = onDemoteAdmin,
                     onRenameDevice = onRenameDevice,
-                    onLogout = onLogout,
+                    onLogout = { confirmLogout = true },
                     onAddRelay = onAddRelay,
                     onRemoveRelay = onRemoveRelay,
                     onResetRelays = onResetRelays,

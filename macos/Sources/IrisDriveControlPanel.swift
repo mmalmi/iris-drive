@@ -76,7 +76,6 @@ struct IrisDriveControlPanel: View {
     @State private var checkingAllBackups = false
     @State private var checkedBackupCount = 0
     @State private var backupCheckTotal = 0
-    @State private var showLogoutConfirmation = false
     @State private var recoveryExport: [String: Any]?
     @State private var recoveryExportWordIndex = 0
     @State private var showStartupLoading = false
@@ -1613,9 +1612,7 @@ struct IrisDriveControlPanel: View {
                         Label("Recovery Phrase", systemImage: "text.badge.checkmark")
                     }
                 }
-                Button(role: .destructive) {
-                    showLogoutConfirmation = true
-                } label: {
+                MacLogoutButton(onConfirm: controller.logout) {
                     Label("Log Out", systemImage: "rectangle.portrait.and.arrow.right")
                 }
             }
@@ -1649,16 +1646,6 @@ struct IrisDriveControlPanel: View {
             }
         }
         .formStyle(.grouped)
-        .confirmationDialog(
-            "Log out of Iris Drive on this Mac?",
-            isPresented: $showLogoutConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Log Out", role: .destructive) {
-                controller.logout()
-            }
-            Button("Cancel", role: .cancel) {}
-        }
         .sheet(
             isPresented: Binding(
                 get: { recoveryExport != nil },

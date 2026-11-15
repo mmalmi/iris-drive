@@ -1,5 +1,19 @@
 import SwiftUI
 
+struct MacLogoutButton<Label: View>: View {
+    let onConfirm: () -> Void
+    @ViewBuilder let label: () -> Label
+    @State private var showingConfirmation = false
+
+    var body: some View {
+        Button(role: .destructive) { showingConfirmation = true } label: { label() }
+            .confirmationDialog("Log out of Iris Drive on this Mac?", isPresented: $showingConfirmation, titleVisibility: .visible) {
+                Button("Log Out", role: .destructive, action: onConfirm)
+                Button("Cancel", role: .cancel) {}
+            }
+    }
+}
+
 struct RevokedDeviceSetupView: View {
     @ObservedObject var status: IrisDriveStatus
     let controller: AppDelegate
@@ -23,9 +37,7 @@ struct RevokedDeviceSetupView: View {
                 }
                 .buttonStyle(.bordered)
             }
-            Button(role: .destructive) {
-                controller.logout()
-            } label: {
+            MacLogoutButton(onConfirm: controller.logout) {
                 buttonLabel("Log out", systemImage: "rectangle.portrait.and.arrow.right")
             }
             .buttonStyle(.bordered)
@@ -56,6 +68,7 @@ struct RevokedDeviceSetupView: View {
 }
 
 struct AwaitingApprovalSetupView: View {
+    @State private var showingCancelRequest = false
     @ObservedObject var status: IrisDriveStatus
     let controller: AppDelegate
     let openRecoveryPhrase: () -> Void
@@ -65,13 +78,17 @@ struct AwaitingApprovalSetupView: View {
     var body: some View {
         VStack(alignment: .center, spacing: 12) {
             Button {
-                controller.logout()
+                showingCancelRequest = true
             } label: {
                 Label("Back", systemImage: "chevron.left")
             }
             .buttonStyle(.borderless)
             .frame(maxWidth: .infinity, alignment: .leading)
             .accessibilityIdentifier("awaitingApprovalBack")
+            .confirmationDialog("Cancel this sign-in request?", isPresented: $showingCancelRequest, titleVisibility: .visible) {
+                Button("Cancel request", role: .destructive) { controller.logout() }
+                Button("Keep waiting", role: .cancel) {}
+            }
             Text("Waiting for approval")
                 .font(.title2.weight(.semibold))
             if let request = status.appKeyLinkRequestURL, !request.isEmpty {

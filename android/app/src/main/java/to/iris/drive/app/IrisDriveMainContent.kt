@@ -989,33 +989,9 @@ private fun SettingsPanel(
     onResetRelays: () -> Unit,
 ) {
     var relayInput by remember { mutableStateOf("") }
-    var confirmLogout by remember { mutableStateOf(false) }
     var recoveryExport by remember { mutableStateOf<RecoverySecretExport?>(null) }
     var recoveryWordIndex by remember { mutableStateOf(0) }
     val profile = state.profile
-
-    if (confirmLogout) {
-        AlertDialog(
-            onDismissRequest = { confirmLogout = false },
-            title = { Text("Log out") },
-            text = { Text("Remove this local Iris Drive profile from Android?") },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        confirmLogout = false
-                        onLogout()
-                    },
-                ) {
-                    Text("Log out")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { confirmLogout = false }) {
-                    Text("Cancel")
-                }
-            },
-        )
-    }
 
     recoveryExport?.let { export ->
         RecoveryPhraseDialog(
@@ -1099,7 +1075,7 @@ private fun SettingsPanel(
                 modifier = Modifier.testTag("androidCalendarSyncToggle"),
             )
         }
-        OutlinedButton(onClick = { confirmLogout = true }) {
+        OutlinedButton(onClick = onLogout) {
             Icon(painterResource(R.drawable.ic_delete), contentDescription = null, tint = Danger)
             Spacer(Modifier.size(8.dp))
             Text("Log out", color = Danger)
