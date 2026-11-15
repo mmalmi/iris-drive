@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.44 - 2026-11-16
+
+- Drive asks before logging out on this device. Going back while waiting
+  for a device approval also lets you keep the sign-in request open.
+
 ## 0.1.43 - 2026-11-15
 
 - See, under Devices, how much of your Drive each of your devices holds, in
