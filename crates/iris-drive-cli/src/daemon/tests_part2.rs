@@ -686,6 +686,26 @@ fn startup_root_sync_collects_unsynced_remote_roots() {
     let roots = startup_root_cids_needing_sync(config_dir.path(), &config);
 
     assert_eq!(roots, vec!["needs-sync".to_string()]);
+    record_block_sync_error(
+        config_dir.path(),
+        &synced_cid,
+        "a nested block became unavailable",
+    );
+    write_daemon_status(config_dir.path(), json!({"event": "heartbeat"}));
+    assert!(!root_has_successful_block_sync(
+        config_dir.path(),
+        &synced_cid
+    ));
+    record_block_sync(
+        config_dir.path(),
+        &synced_cid,
+        "blossom",
+        &DownloadReport::default(),
+    );
+    assert!(root_has_successful_block_sync(
+        config_dir.path(),
+        &synced_cid
+    ));
     store.delete_sync(&hash).unwrap();
     assert!(startup_root_cids_needing_sync(config_dir.path(), &config).contains(&synced_cid));
 }
@@ -713,6 +733,46 @@ fn startup_root_sync_retries_failed_remote_roots() {
     let roots = startup_root_cids_needing_sync(config_dir.path(), &config);
 
     assert_eq!(roots, vec!["failed-root".to_string()]);
+}
+
+#[test]
+fn pending_block_repair_stops_for_a_superseded_or_revoked_peer() {
+    let dir = tempfile::tempdir().unwrap();
+    let mut profile = iris_drive_core::Profile::create(dir.path(), Some("local".into())).unwrap();
+    let peer = nostr_sdk::Keys::generate().public_key().to_hex();
+    profile.approve_app_key(&peer, Some("peer".into())).unwrap();
+    let initial = profile.state.clone();
+    let mut drive = Drive::primary(initial.root_scope_id());
+    drive
+        .app_key_roots
+        .insert(peer.clone(), AppKeyRootRef::legacy("original", 1, 1));
+    let mut config = AppConfig {
+        profile: Some(initial.clone()),
+        drives: vec![drive],
+        ..AppConfig::default()
+    };
+    let expected = [(peer.clone(), "original".into(), 0)];
+    assert!(is_current_peer_block_repair(
+        &config, &initial, "original", &expected
+    ));
+    config.drives[0]
+        .app_key_roots
+        .get_mut(&peer)
+        .unwrap()
+        .app_key_seq = 2;
+    assert!(!is_current_peer_block_repair(
+        &config, &initial, "original", &expected
+    ));
+    config.drives[0]
+        .app_key_roots
+        .get_mut(&peer)
+        .unwrap()
+        .app_key_seq = 0;
+    profile.revoke_app_key(&peer).unwrap();
+    config.profile = Some(profile.state);
+    assert!(!is_current_peer_block_repair(
+        &config, &initial, "original", &expected
+    ));
 }
 
 #[test]

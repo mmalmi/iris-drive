@@ -3,11 +3,32 @@ async fn refresh_app_key_link_relay_subscriptions_for_config(
     config_dir: &Path,
     config_cache: &mut AppConfigLoadCache,
     subscriptions: &mut iris_drive_core::relay_sync::AppKeyLinkRelaySubscriptionState,
+    published_writer: &mut Option<(iris_drive_core::NostrIdentityId, String)>,
+    daemon_tasks: &DaemonTaskSet,
 ) -> Result<Option<iris_drive_core::relay_sync::RelayEventRetentionPolicy>> {
     let config = load_app_config_cached(&config_path_in(config_dir), config_cache)?;
     let Some(state) = config.profile.as_ref() else {
+        *published_writer = None;
         return Ok(None);
     };
+    if state.authorization_state != iris_drive_core::AppKeyAuthorizationState::Authorized {
+        *published_writer = None;
+    } else if !published_writer.as_ref().is_some_and(|(profile, app_key)| {
+        *profile == state.profile_id && *app_key == state.app_key_pubkey
+    }) {
+        *published_writer = Some((state.profile_id, state.app_key_pubkey.clone()));
+        // Startup could only announce a root held by an authorized writer.
+        // Enrollment can complete through the relay or directly to another device.
+        let client = client.clone();
+        let dir = config_dir.to_path_buf();
+        let approved = state.clone();
+        daemon_tasks.push_keyed(
+            format!("approved-writer:{}", state.app_key_pubkey),
+            tokio::spawn(async move {
+                crate::publish::retry_writer_storage_publication(&client, &dir, &approved).await;
+            }),
+        );
+    }
     let share_ids = config
         .shared_folders
         .iter()

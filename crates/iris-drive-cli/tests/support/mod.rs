@@ -384,6 +384,7 @@ fn event_matches_filter(event: &Value, filter: &Value) -> bool {
 struct LocalBlossomState {
     blobs: Arc<Mutex<BTreeMap<String, Vec<u8>>>>,
     upload_delay: Duration,
+    uploads_offline: Arc<std::sync::atomic::AtomicBool>,
 }
 
 pub(crate) struct LocalBlossomServer {
@@ -403,6 +404,7 @@ impl LocalBlossomServer {
         let state = LocalBlossomState {
             blobs: Arc::new(Mutex::new(BTreeMap::new())),
             upload_delay,
+            uploads_offline: Arc::default(),
         };
         let app = Router::new()
             .route("/upload", put(blossom_upload))
@@ -422,6 +424,13 @@ impl LocalBlossomServer {
         }
     }
     #[allow(dead_code)]
+    pub(crate) fn set_uploads_offline(&self, offline: bool) {
+        self.state
+            .uploads_offline
+            .store(offline, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    #[allow(dead_code)]
     pub(crate) async fn blob_count(&self) -> usize {
         self.state.blobs.lock().await.len()
     }
@@ -438,6 +447,12 @@ async fn blossom_upload(
     headers: HeaderMap,
     body: Bytes,
 ) -> Response {
+    if state
+        .uploads_offline
+        .load(std::sync::atomic::Ordering::Relaxed)
+    {
+        return text_response(StatusCode::SERVICE_UNAVAILABLE, "offline");
+    }
     if !state.upload_delay.is_zero() {
         tokio::time::sleep(state.upload_delay).await;
     }

@@ -467,6 +467,7 @@ pub(crate) fn write_daemon_status(config_dir: &Path, mut payload: Value) -> Valu
         for key in [
             "last_block_sync",
             "block_sync_by_root",
+            "block_sync_error_by_root",
             "relays",
             "current_app_key_npub",
             "summary",

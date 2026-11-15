@@ -85,6 +85,7 @@ pub(crate) struct PublishStateReport {
 
 include!("publish/direct_root.rs");
 include!("publish/direct_root_recovery.rs");
+include!("publish/writer_storage.rs");
 
 pub(crate) async fn announce_current_state_direct(
     direct_roots: &mut DirectRootExchange,
@@ -704,13 +705,15 @@ pub(crate) fn spawn_initial_publish(
     startup_state: ProfileState,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        match tokio::time::timeout(
+        let retry_storage = match tokio::time::timeout(
             std::time::Duration::from_secs(STARTUP_NETWORK_TIMEOUT_SECS),
             publish_current_state(&client, &config_dir, &startup_config, &startup_state, true),
         )
         .await
         {
             Ok(Ok(report)) => {
+                let incomplete =
+                    report.blossom_upload.is_none() || report.blossom_upload_error.is_some();
                 let drive_iris_to_url = report
                     .root_cid
                     .as_ref()
@@ -747,12 +750,14 @@ pub(crate) fn spawn_initial_publish(
                             })),
                         })
                 );
+                incomplete
             }
             Ok(Err(error)) => {
                 println!(
                     "{}",
                     json!({"event": "initial_publish_error", "error": error.to_string()})
                 );
+                true
             }
             Err(_) => {
                 println!(
@@ -762,7 +767,14 @@ pub(crate) fn spawn_initial_publish(
                         "error": format!("timed out after {STARTUP_NETWORK_TIMEOUT_SECS}s"),
                     })
                 );
+                true
             }
+        };
+        if retry_storage
+            && startup_state.can_write_roots()
+            && !startup_config.blossom_servers.is_empty()
+        {
+            retry_writer_storage_publication(&client, &config_dir, &startup_state).await;
         }
     })
 }

@@ -292,6 +292,9 @@ pub(crate) fn cmd_daemon(
             mount_refresh_tx.clone(),
             &daemon_tasks,
         );
+        let mut published_writer =
+            (startup_state.authorization_state == iris_drive_core::AppKeyAuthorizationState::Authorized)
+                .then(|| (startup_state.profile_id, startup_state.app_key_pubkey.clone()));
         daemon_tasks.push(spawn_initial_publish(
             client.clone(),
             config_dir.to_path_buf(),
@@ -907,6 +910,8 @@ pub(crate) fn cmd_daemon(
                         config_dir,
                         &mut app_key_link_request_config_cache,
                         &mut app_key_link_relay_subscriptions,
+                        &mut published_writer,
+                        &daemon_tasks,
                     ).await {
                         Ok(Some(policy)) => subscription_policy = policy,
                         Ok(None) => {}

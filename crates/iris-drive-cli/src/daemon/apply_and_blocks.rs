@@ -429,14 +429,10 @@ pub(crate) fn root_has_successful_block_sync(config_dir: &Path, root_cid: &str) 
     if !FsBlobStore::new(config_dir.join("blocks")).is_ok_and(|store| store.exists(&cid.hash)) {
         return false;
     }
-    load_daemon_status(config_dir)
-        .and_then(|status| {
-            status
-                .get("block_sync_by_root")
-                .and_then(|roots| roots.get(root_cid))
-                .cloned()
-        })
-        .is_some()
+    load_daemon_status(config_dir).is_some_and(|status| {
+        status["block_sync_by_root"].get(root_cid).is_some()
+            && status["block_sync_error_by_root"].get(root_cid).is_none()
+    })
 }
 
 fn startup_root_cids_needing_sync(config_dir: &Path, config: &AppConfig) -> Vec<String> {
@@ -645,7 +641,12 @@ pub(crate) fn spawn_root_apply_followup(
                         "projection_refresh_skipped": should_refresh_projection,
                     })
                 );
-                return;
+                if !recover_pending_peer_blocks(
+                    &config_dir, &config, &root_cid, expected_projection_root_key.as_ref(),
+                    fips_blocks.as_deref(),
+                ).await {
+                    return;
+                }
             }
         }
 
@@ -976,3 +977,5 @@ fn event_block_pull_timeout_secs(config: &AppConfig) -> u64 {
         EVENT_BLOCK_PULL_WITH_BLOSSOM_TIMEOUT_SECS
     }
 }
+
+include!("pending_blocks.rs");
