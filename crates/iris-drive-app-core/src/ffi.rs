@@ -1496,6 +1496,13 @@ impl NativeAppRuntime {
             share_actions::pending_share_joins(&self.data_dir, &config);
         let ui_fips_status = ui_fips_status_for_config_dir(Path::new(&self.data_dir));
         self.state.ui.app_actors = app_actors_from_account(&account, &ui_fips_status);
+        self.state.ui.device_storage = crate::device_storage_ui::device_storage_ui(
+            Path::new(&self.data_dir),
+            &config,
+            &account,
+            &self.state.ui.app_actors,
+            unix_now_seconds(),
+        );
         update_snapshot_link(&mut self.state, &config);
         if provider_summary == ProviderSummaryMode::Refresh {
             self.refresh_provider_summary();
@@ -2016,6 +2023,12 @@ async fn run_app_key_link_exchange_async(
             .map_err(|error| format!("subscribing app-key-link relays: {error}"))?;
     }
     let mut relay_notifications = relay_client.notifications();
+    // How much of the Drive this device holds, for the profile's other devices.
+    let (_, device_storage_task) = iris_drive_core::device_storage::DeviceStorageReporter::spawn(
+        config_dir,
+        relay_client.clone(),
+        stop.clone(),
+    );
     iris_drive_core::relay_sync::subscribe_device_approval_events(&relay_client, account_state)
         .await
         .map_err(|error| format!("subscribing to device approval events: {error}"))?;
@@ -2232,6 +2245,14 @@ async fn run_app_key_link_exchange_async(
             notification = relay_notifications.recv() => {
                 match notification {
                     Ok(nostr_sdk::RelayPoolNotification::Event { event, .. }) => {
+                        if iris_drive_core::device_storage::looks_like_device_storage_event(&event) {
+                            if let Err(error) =
+                                iris_drive_core::device_storage::take_in_relay_event(config_dir, &event)
+                            {
+                                tracing::warn!(error = %format!("{error:#}"), "taking in a device storage report failed");
+                            }
+                            continue;
+                        }
                         let is_device_approval_receipt =
                             iris_drive_core::relay_sync::is_device_approval_receipt_event(&event);
                         if event.kind.as_u16() == iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP
@@ -2275,6 +2296,7 @@ async fn run_app_key_link_exchange_async(
             }
         }
     }
+    device_storage_task.abort();
     iris_drive_core::relay_sync::shutdown_client(&relay_client).await;
     Ok(())
 }

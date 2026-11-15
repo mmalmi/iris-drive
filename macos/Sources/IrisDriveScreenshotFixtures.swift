@@ -215,6 +215,39 @@ enum IrisDriveScreenshotFixtures {
                 hasRoot: true
             ),
         ]
+        status.deviceStorage = IrisDriveDeviceStorage(json: [
+            "summary": "Your Drive is 12.4 GB in 3,210 files. All of it is on this device.",
+            "devices": [
+                [
+                    "pubkey": "mac", "name": "This Mac", "is_current": true, "icon": "computer",
+                    "has_report": true, "held_label": "All of it", "holds_all": true,
+                    "held_permille": 1000, "space_label": "Uses 12.9 GB of 210.4 GB allowed",
+                    "age_label": "Updated just now",
+                    "folders": [
+                        ["label": "Photos", "depth": 0, "detail": "All 9.1 GB", "held_permille": 1000],
+                        ["label": "2026", "depth": 1, "detail": "All 4.2 GB", "held_permille": 1000],
+                        ["label": "Documents", "depth": 0, "detail": "All 3.0 GB", "held_permille": 1000],
+                    ],
+                ],
+                [
+                    "pubkey": "iphone", "name": "iPhone", "icon": "phone", "has_report": true,
+                    "held_label": "1.1 GB · 8%", "held_permille": 88, "connected": true,
+                    "connection_label": "Connected", "sync_state": "in-sync", "sync_label": "In sync",
+                    "space_label": "Uses 1.4 GB of 64.0 GB allowed", "age_label": "Updated 3 min ago",
+                ],
+                [
+                    "pubkey": "linux", "name": "Linux server", "icon": "computer", "has_report": true,
+                    "held_label": "All of it", "holds_all": true, "held_permille": 1000,
+                    "connection_label": "Not connected", "sync_state": "behind",
+                    "sync_label": "Missing recent changes", "space_label": "Uses 12.6 GB",
+                    "age_label": "Updated 2 h ago",
+                ],
+                [
+                    "pubkey": "windows", "name": "Windows desktop", "has_report": false,
+                    "held_label": "No report yet", "connected": true, "connection_label": "Connected",
+                ],
+            ],
+        ])
         status.lastUpload = IrisDriveUploadStatus(json: [
             "total_hashes": 0,
             "uploaded": 0,

@@ -830,6 +830,7 @@ struct IrisDriveControlPanel: View {
                     }
                 }
             }
+            DeviceStorageSection(storage: status.deviceStorage)
             if !showAddDevice, !status.inboundAppKeyLinkRequests.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Requests")

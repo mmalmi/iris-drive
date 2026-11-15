@@ -9,6 +9,7 @@ internal data class AppState(
     val roots: List<SyncRoot> = emptyList(),
     val shares: List<ShareState> = emptyList(),
     val devices: List<DeviceState> = emptyList(),
+    val deviceStorage: DeviceStorageState = DeviceStorageState(),
     val relays: List<String> = emptyList(),
     val relayStatuses: List<RelayStatus> = emptyList(),
     val backups: List<BackupState> = emptyList(),
@@ -47,6 +48,7 @@ internal data class AppState(
                 roots = ui.optJSONArray("roots").toRoots(),
                 shares = ui.optJSONArray("shares").toShares(),
                 devices = ui.optJSONArray("app_actors").toDevices(),
+                deviceStorage = ui.optJSONObject("device_storage")?.toDeviceStorage() ?: DeviceStorageState(),
                 relays = ui.optJSONArray("relays").toStrings(),
                 relayStatuses = ui.optJSONArray("relay_statuses").toRelayStatuses(),
                 backups = ui.optJSONArray("backups").toBackups(),
@@ -122,6 +124,46 @@ internal data class DeviceState(
     val canAppointAdmin: Boolean,
     val canDemoteAdmin: Boolean,
     val actorKind: String = "device",
+)
+
+/** How much of the Drive each of the profile's devices holds; labels come from the app core. */
+internal data class DeviceStorageState(
+    val summary: String = "",
+    val devices: List<DeviceStorageRowState> = emptyList(),
+)
+
+internal data class DeviceStorageRowState(
+    val pubkey: String,
+    val npub: String,
+    val name: String,
+    val isCurrent: Boolean,
+    val app: String,
+    /** `web`, `phone`, `computer` or `drive`. */
+    val icon: String,
+    val hasReport: Boolean,
+    val heldLabel: String,
+    val holdsAll: Boolean,
+    /** Bar fill in thousandths. */
+    val heldPermille: Int,
+    val connected: Boolean,
+    val connectionLabel: String,
+    val connectionDetail: String,
+    /** `in-sync`, `behind`, `ahead`, `apart` or blank. */
+    val syncState: String,
+    val syncLabel: String,
+    val syncDetail: String,
+    val spaceLabel: String,
+    val spaceDetail: String,
+    val ageLabel: String,
+    val folders: List<DeviceStorageFolderState> = emptyList(),
+    val notes: List<String> = emptyList(),
+)
+
+internal data class DeviceStorageFolderState(
+    val label: String,
+    val depth: Int,
+    val detail: String,
+    val heldPermille: Int,
 )
 
 internal data class BackupState(
@@ -667,6 +709,63 @@ private fun JSONArray?.toDevices(): List<DeviceState> {
                             "device"
                         },
                     ),
+                ),
+            )
+        }
+    }
+}
+
+private fun JSONObject.toDeviceStorage(): DeviceStorageState =
+    DeviceStorageState(
+        summary = optString("summary"),
+        devices = optJSONArray("devices").toDeviceStorageRows(),
+    )
+
+private fun JSONArray?.toDeviceStorageRows(): List<DeviceStorageRowState> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            add(
+                DeviceStorageRowState(
+                    pubkey = item.optString("pubkey"),
+                    npub = item.optString("npub"),
+                    name = item.optString("name"),
+                    isCurrent = item.optBoolean("is_current"),
+                    app = item.optString("app"),
+                    icon = item.optString("icon"),
+                    hasReport = item.optBoolean("has_report"),
+                    heldLabel = item.optString("held_label"),
+                    holdsAll = item.optBoolean("holds_all"),
+                    heldPermille = item.optInt("held_permille"),
+                    connected = item.optBoolean("connected"),
+                    connectionLabel = item.optString("connection_label"),
+                    connectionDetail = item.optString("connection_detail"),
+                    syncState = item.optString("sync_state"),
+                    syncLabel = item.optString("sync_label"),
+                    syncDetail = item.optString("sync_detail"),
+                    spaceLabel = item.optString("space_label"),
+                    spaceDetail = item.optString("space_detail"),
+                    ageLabel = item.optString("age_label"),
+                    folders = item.optJSONArray("folders").toDeviceStorageFolders(),
+                    notes = item.optJSONArray("notes").toStringList(),
+                ),
+            )
+        }
+    }
+}
+
+private fun JSONArray?.toDeviceStorageFolders(): List<DeviceStorageFolderState> {
+    if (this == null) return emptyList()
+    return buildList {
+        for (index in 0 until length()) {
+            val item = optJSONObject(index) ?: continue
+            add(
+                DeviceStorageFolderState(
+                    label = item.optString("label"),
+                    depth = item.optInt("depth"),
+                    detail = item.optString("detail"),
+                    heldPermille = item.optInt("held_permille"),
                 ),
             )
         }

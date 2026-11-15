@@ -41,6 +41,8 @@ pub fn subscription_filters_for_shared_roots(
     push_drive_root_filters(&mut filters, root_scope_id, drive_id);
     // The profile's shared folders, as each of its devices lists them.
     filters.push(crate::share_index::share_index_filter(root_scope_id));
+    // How much of the Drive each of the profile's devices holds.
+    filters.push(crate::device_storage::device_storage_filter(root_scope_id));
     for share_id in share_ids {
         let share_scope = share_id.to_string();
         if share_scope == root_scope_id {

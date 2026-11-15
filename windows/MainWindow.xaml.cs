@@ -345,6 +345,7 @@ public partial class MainWindow : Window
 
         RenderDrives(status);
         RenderPeers(status);
+        RenderDeviceStorage(status.DeviceStorage);
         RenderShares(status);
         RenderBackups(status);
         RenderNetwork(status);
@@ -395,6 +396,7 @@ public partial class MainWindow : Window
         UpdateTrayText(false);
         DrivesList.Items.Clear();
         PeersList.Items.Clear();
+        RenderDeviceStorage(DeviceStorageReport.Empty);
         SharesList.Items.Clear();
         BackupsList.Items.Clear();
         RelaysList.Items.Clear();

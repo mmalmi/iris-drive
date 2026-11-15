@@ -29,6 +29,7 @@ equivalent to desktop.
 | Open/save Drive content link | Passed `drive.iris.to/#/nhash...` or `#/npub.../tree/path` URL -> local resolver or app-core import | Universal link -> local resolver or app-core import | Launch URL -> local resolver or app-core import | Universal link -> local resolver or app-core import attempt | App link -> local resolver or app-core import attempt |
 | App installs list and auth state | Yes | Yes | Yes | Local UI flow | App-core UI flow |
 | App install online/sync status | Yes | Planned | Yes | Local-only scaffold | Local scaffold |
+| What each device holds, its room and sync state (device storage reports, shared with Iris Drive web) | Devices -> Storage | Devices -> Storage | Devices -> Storage | Devices -> Storage | Devices -> Storage |
 | AppKey revoke control | Yes | Planned | Yes | Local UI flow | App-core UI flow |
 | Relay add/reset controls | Yes | Yes | Yes | Local UI flow | App-core UI flow |
 | Direct FIPS block sync | Yes | Yes | Yes | Harness daemon peer; app pending | Harness daemon peer; app pending |

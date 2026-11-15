@@ -138,6 +138,104 @@ class AppStateTest {
     }
 
     @Test
+    fun deviceStorageIsParsedFromNativeState() {
+        val state = AppState.fromJson(
+            """
+            {
+              "ui": {
+                "device_storage": {
+                  "summary": "Your Drive is 2.3 GB in 1,204 files. All of it is on this device.",
+                  "devices": [{
+                    "pubkey": "device-a",
+                    "npub": "npub1devicea",
+                    "name": "Pixel",
+                    "is_current": true,
+                    "app": "android",
+                    "icon": "phone",
+                    "has_report": true,
+                    "held_label": "All of it",
+                    "holds_all": true,
+                    "held_permille": 1000,
+                    "connected": false,
+                    "connection_label": "",
+                    "connection_detail": "",
+                    "sync_state": "",
+                    "sync_label": "",
+                    "sync_detail": "",
+                    "space_label": "Uses 2.3 GB of 50.0 GB allowed",
+                    "space_detail": "Free space on this device",
+                    "age_label": "Updated 5 min ago",
+                    "folders": [
+                      {"label": "Photos", "depth": 0, "detail": "1.2 GB of 1.2 GB", "held_permille": 1000},
+                      {"label": "2024", "depth": 1, "detail": "300.0 MB of 1.2 GB", "held_permille": 250}
+                    ],
+                    "notes": ["Some folders could not be read when it measured."]
+                  }, {
+                    "pubkey": "device-b",
+                    "npub": "npub1deviceb",
+                    "name": "MacBook",
+                    "is_current": false,
+                    "app": "",
+                    "icon": "drive",
+                    "has_report": false,
+                    "held_label": "No report yet",
+                    "holds_all": false,
+                    "held_permille": 0,
+                    "connected": true,
+                    "connection_label": "Connected",
+                    "connection_detail": "Linked directly",
+                    "sync_state": "behind",
+                    "sync_label": "Missing recent changes",
+                    "sync_detail": "It has not seen the latest changes",
+                    "space_label": "",
+                    "space_detail": "",
+                    "age_label": ""
+                  }]
+                }
+              },
+              "error": ""
+            }
+            """.trimIndent(),
+        )
+
+        val storage = state.deviceStorage
+        assertEquals("Your Drive is 2.3 GB in 1,204 files. All of it is on this device.", storage.summary)
+        assertEquals(2, storage.devices.size)
+        val current = storage.devices[0]
+        assertTrue(current.isCurrent)
+        assertEquals("phone", current.icon)
+        assertTrue(current.hasReport)
+        assertTrue(current.holdsAll)
+        assertEquals("All of it", current.heldLabel)
+        assertEquals(1000, current.heldPermille)
+        assertEquals("Uses 2.3 GB of 50.0 GB allowed", current.spaceLabel)
+        assertEquals("Updated 5 min ago", current.ageLabel)
+        assertEquals(listOf("Photos", "2024"), current.folders.map { it.label })
+        assertEquals(1, current.folders[1].depth)
+        assertEquals(250, current.folders[1].heldPermille)
+        assertEquals("300.0 MB of 1.2 GB", current.folders[1].detail)
+        assertEquals(listOf("Some folders could not be read when it measured."), current.notes)
+        val other = storage.devices[1]
+        assertEquals(false, other.isCurrent)
+        assertEquals(false, other.hasReport)
+        assertTrue(other.connected)
+        assertEquals("Connected", other.connectionLabel)
+        assertEquals("behind", other.syncState)
+        assertEquals("Missing recent changes", other.syncLabel)
+        assertEquals("It has not seen the latest changes", other.syncDetail)
+        assertTrue(other.folders.isEmpty())
+        assertTrue(other.notes.isEmpty())
+    }
+
+    @Test
+    fun missingDeviceStorageDecodesAsEmpty() {
+        val state = AppState.fromJson("""{"ui": {}, "error": ""}""")
+
+        assertEquals("", state.deviceStorage.summary)
+        assertTrue(state.deviceStorage.devices.isEmpty())
+    }
+
+    @Test
     fun defaultAppStateIsLoadedForFirstRunFixtures() {
         val state = AppState()
 

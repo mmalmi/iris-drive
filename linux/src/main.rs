@@ -17,6 +17,7 @@ use iris_drive_app_core::{
 mod actions;
 mod daemon_control;
 mod data;
+mod device_storage;
 mod platform;
 mod refresh;
 mod render;
@@ -29,6 +30,7 @@ mod widgets;
 use actions::*;
 use daemon_control::*;
 use data::*;
+use device_storage::*;
 use platform::*;
 use refresh::*;
 use render::*;
@@ -83,6 +85,7 @@ struct Ui {
     notice: gtk::Label,
     drives: gtk::ListBox,
     peers: gtk::ListBox,
+    device_storage: DeviceStorageSection,
     backups: gtk::ListBox,
     shares: gtk::ListBox,
     fips: gtk::ListBox,

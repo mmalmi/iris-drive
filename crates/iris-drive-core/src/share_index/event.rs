@@ -11,15 +11,9 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
-use aes_gcm::aead::{Aead, OsRng, rand_core::RngCore};
-use aes_gcm::{Aes256Gcm, KeyInit, Nonce};
 use anyhow::{Context, Result};
-use base64::Engine;
-use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use nostr_sdk::nips::nip44::{self, Version as Nip44Version};
 use nostr_sdk::{
-    Alphabet, Event, EventBuilder, Filter, JsonUtil, Keys, Kind, PublicKey, SingleLetterTag, Tag,
-    TagKind,
+    Alphabet, Event, EventBuilder, Filter, JsonUtil, Keys, Kind, SingleLetterTag, Tag, TagKind,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -29,13 +23,13 @@ use super::{MAX_SHARE_INDEX_ENTRIES, ShareIndex, ShareIndexEntry};
 use crate::config::AppConfig;
 use crate::nostr_events::KIND_DRIVE_ROOT;
 use crate::paths::key_path_in;
+use crate::sealed_content::{self, SealedContentError};
 use crate::{AppKey, NostrIdentityId, PRIMARY_DRIVE_ID, ProfileState};
 
 pub const SHARE_INDEX_LABEL: &str = "iris-drive/share-index";
 /// The events this device last signed for its list.
 pub const SHARE_INDEX_EVENT_FILE: &str = "share-index-event.json";
 const MAX_CONTENT_BYTES: usize = 2 * 1024 * 1024;
-const NONCE_LEN: usize = 12;
 /// How much of the list one event carries before it is split, as JSON. The
 /// event that results stays well under the 64 KB many relays accept.
 const PART_BYTES: usize = 16 * 1024;
@@ -50,15 +44,6 @@ pub enum ShareIndexEventError {
     KeyUnavailable,
     #[error("shared folder list: {0}")]
     Invalid(String),
-}
-
-#[derive(Serialize, Deserialize)]
-struct Wire {
-    v: u8,
-    /// The list's key, wrapped for each of the profile's devices.
-    key_wraps: BTreeMap<String, String>,
-    /// `nonce.ciphertext`, base64url.
-    data: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -120,6 +105,15 @@ fn invalid(error: impl std::fmt::Display) -> ShareIndexEventError {
     ShareIndexEventError::Invalid(error.to_string())
 }
 
+impl From<SealedContentError> for ShareIndexEventError {
+    fn from(error: SealedContentError) -> Self {
+        match error {
+            SealedContentError::KeyUnavailable => Self::KeyUnavailable,
+            SealedContentError::Invalid(error) => Self::Invalid(error),
+        }
+    }
+}
+
 pub fn build_share_index_event<'a>(
     keys: &Keys,
     root_scope_id: &str,
@@ -132,40 +126,7 @@ pub fn build_share_index_event<'a>(
         entries: entries.into_iter().cloned().collect(),
     };
     let plaintext = serde_json::to_vec(&doc).map_err(invalid)?;
-    let mut key = [0_u8; 32];
-    OsRng.fill_bytes(&mut key);
-    let mut nonce = [0_u8; NONCE_LEN];
-    OsRng.fill_bytes(&mut nonce);
-    let ciphertext = Aes256Gcm::new_from_slice(&key)
-        .map_err(invalid)?
-        .encrypt(Nonce::from_slice(&nonce), plaintext.as_slice())
-        .map_err(invalid)?;
-    let mut key_wraps = BTreeMap::new();
-    let own = keys.public_key().to_hex();
-    for recipient in recipients.iter().chain(std::iter::once(&own)) {
-        if key_wraps.contains_key(recipient) {
-            continue;
-        }
-        let pubkey = PublicKey::from_hex(recipient).map_err(invalid)?;
-        let wrap = nip44::encrypt(
-            keys.secret_key(),
-            &pubkey,
-            hex::encode(key),
-            Nip44Version::V2,
-        )
-        .map_err(invalid)?;
-        key_wraps.insert(recipient.clone(), wrap);
-    }
-    let content = serde_json::to_string(&Wire {
-        v: 1,
-        key_wraps,
-        data: format!(
-            "{}.{}",
-            URL_SAFE_NO_PAD.encode(nonce),
-            URL_SAFE_NO_PAD.encode(ciphertext)
-        ),
-    })
-    .map_err(invalid)?;
+    let content = sealed_content::seal(keys, recipients, &plaintext)?;
     EventBuilder::new(Kind::from(KIND_DRIVE_ROOT), content)
         .tags([
             Tag::identifier(share_index_d_tag(root_scope_id, part)),
@@ -189,29 +150,7 @@ pub fn parse_share_index_event(
         return Err(invalid("too large"));
     }
     event.verify().map_err(invalid)?;
-    let wire: Wire = serde_json::from_str(&event.content).map_err(invalid)?;
-    if wire.v != 1 {
-        return Err(invalid(format!("unsupported version {}", wire.v)));
-    }
-    let wrap = wire
-        .key_wraps
-        .get(&keys.public_key().to_hex())
-        .ok_or(ShareIndexEventError::KeyUnavailable)?;
-    let key_hex = nip44::decrypt(keys.secret_key(), &event.pubkey, wrap).map_err(invalid)?;
-    let key = hex::decode(key_hex).map_err(invalid)?;
-    let (nonce, ciphertext) = wire
-        .data
-        .split_once('.')
-        .ok_or_else(|| invalid("malformed"))?;
-    let nonce = URL_SAFE_NO_PAD.decode(nonce).map_err(invalid)?;
-    if nonce.len() != NONCE_LEN {
-        return Err(invalid("malformed"));
-    }
-    let ciphertext = URL_SAFE_NO_PAD.decode(ciphertext).map_err(invalid)?;
-    let plaintext = Aes256Gcm::new_from_slice(&key)
-        .map_err(invalid)?
-        .decrypt(Nonce::from_slice(&nonce), ciphertext.as_slice())
-        .map_err(|_| invalid("could not be decrypted"))?;
+    let plaintext = sealed_content::open(&event.content, &event.pubkey, keys)?;
     let doc: Doc = serde_json::from_slice(&plaintext).map_err(invalid)?;
     if doc.entries.len() > MAX_SHARE_INDEX_ENTRIES {
         return Err(invalid("too many folders"));

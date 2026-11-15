@@ -75,6 +75,7 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var fileProviderStatus = "Files provider not registered"
     @Published var approveDeviceKey = ""
     @Published var devices: [IrisDriveDevice] = []
+    @Published var deviceStorage = NativeDeviceStorage()
     @Published var inboundAppKeyLinkRequests: [IrisDriveAppKeyLinkRequest] = []
     @Published var backups: [IrisDriveBackup] = []
     @Published var checkingBackupTargets: Set<String> = []
@@ -2081,6 +2082,7 @@ final class IrisDriveMobileModel: ObservableObject {
             devicePublicKey = "local-device"
             authorizationState = "Not linked"
             devices = []
+            deviceStorage = NativeDeviceStorage()
             inboundAppKeyLinkRequests = []
             roots = []
             backups = []
@@ -2138,6 +2140,7 @@ final class IrisDriveMobileModel: ObservableObject {
                 canDemoteAdmin: device.canDemoteAdmin
             )
         }
+        deviceStorage = state.ui.deviceStorage ?? NativeDeviceStorage()
         inboundAppKeyLinkRequests = state.ui.profile?.inboundAppKeyLinkRequests.map { request in
             IrisDriveAppKeyLinkRequest(
                 devicePubkey: request.devicePubkey,

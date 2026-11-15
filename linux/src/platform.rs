@@ -153,6 +153,14 @@ pub(crate) fn install_css() {
         .iris-row-title {
           font-weight: 700;
         }
+        progressbar.iris-storage-bar > trough,
+        progressbar.iris-storage-bar > trough > progress {
+          min-height: 6px;
+        }
+        progressbar.iris-storage-folder-bar > trough,
+        progressbar.iris-storage-folder-bar > trough > progress {
+          min-height: 4px;
+        }
         .iris-qr-frame {
           background: white;
           border-radius: 8px;

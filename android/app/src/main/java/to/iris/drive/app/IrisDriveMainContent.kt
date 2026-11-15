@@ -253,6 +253,7 @@ private fun DevicesContent(
         item {
             DevicesPanel(
                 devices = state.devices,
+                deviceStorage = state.deviceStorage,
                 inboundRequests = state.profile?.inboundAppKeyLinkRequests.orEmpty(),
                 canApprove = state.profile?.canAdminProfile == true,
                 onAddRecoveryKey = onAddRecoveryKey,

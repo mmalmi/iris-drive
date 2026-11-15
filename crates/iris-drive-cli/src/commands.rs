@@ -129,6 +129,8 @@ pub(crate) enum Command {
     },
     /// Print compact GUI summary stats as JSON.
     Stats,
+    /// Print how much of the Drive each of the profile's devices holds, as JSON.
+    Storage,
     /// List shared folders and add shortcuts into My Drive.
     Shares {
         #[command(subcommand)]

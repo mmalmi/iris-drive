@@ -76,6 +76,63 @@ extension IrisDriveMobileModel {
             ),
         ]
 
+        deviceStorage = NativeDeviceStorage(
+            summary: "Your Drive is 9.2 GB in 247 files. All of it is on 2 devices.",
+            devices: [
+                NativeDeviceStorageRow(
+                    pubkey: "fixture-iphone",
+                    name: "iPhone",
+                    isCurrent: true,
+                    app: "ios",
+                    icon: "phone",
+                    hasReport: true,
+                    heldLabel: "All of it",
+                    holdsAll: true,
+                    heldPermille: 1000,
+                    spaceLabel: "Uses 9.2 GB of 64.0 GB allowed",
+                    ageLabel: "Updated just now",
+                    folders: [
+                        NativeDeviceStorageFolder(label: "Photos", depth: 0, detail: "All 6.1 GB", heldPermille: 1000),
+                        NativeDeviceStorageFolder(label: "Projects", depth: 0, detail: "All 3.1 GB", heldPermille: 1000),
+                    ]
+                ),
+                NativeDeviceStorageRow(
+                    pubkey: "fixture-macbook",
+                    name: "MacBook",
+                    app: "macos",
+                    icon: "computer",
+                    hasReport: true,
+                    heldLabel: "All of it",
+                    holdsAll: true,
+                    heldPermille: 1000,
+                    connected: true,
+                    connectionLabel: "Connected",
+                    syncState: "in-sync",
+                    syncLabel: "In sync",
+                    spaceLabel: "Uses 9.2 GB of 200.0 GB allowed",
+                    ageLabel: "Updated 5 min ago"
+                ),
+                NativeDeviceStorageRow(
+                    pubkey: "fixture-home-server",
+                    name: "Home server",
+                    app: "linux",
+                    icon: "drive",
+                    hasReport: true,
+                    heldLabel: "6.1 GB · 66%",
+                    heldPermille: 663,
+                    connectionLabel: "Not connected",
+                    syncState: "behind",
+                    syncLabel: "Missing recent changes",
+                    spaceLabel: "Uses 6.1 GB of 500.0 GB allowed",
+                    ageLabel: "Updated 3 h ago",
+                    folders: [
+                        NativeDeviceStorageFolder(label: "Photos", depth: 0, detail: "All 6.1 GB", heldPermille: 1000),
+                        NativeDeviceStorageFolder(label: "Projects", depth: 0, detail: "0 B of 3.1 GB", heldPermille: 0),
+                    ]
+                ),
+            ]
+        )
+
         relayStatuses = [
             IrisDriveRelayStatus(
                 url: "wss://relay.iris.to",

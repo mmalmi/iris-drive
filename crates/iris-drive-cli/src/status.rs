@@ -5,6 +5,7 @@ mod backups;
 mod config_load;
 mod network;
 mod peers;
+mod storage;
 
 #[cfg(test)]
 pub(crate) use backups::backup_target_status;
@@ -23,6 +24,7 @@ use iris_drive_core::provider::provider_refresh_key;
 use iris_drive_core::relay_status::normalized_relay_statuses_for_relays;
 pub(crate) use network::fips_network_diagnostics;
 use peers::{app_key_actors_for_status, peer_statuses};
+pub(crate) use storage::cmd_storage;
 
 #[allow(clippy::too_many_lines)]
 pub(crate) fn cmd_status(config_dir: &std::path::Path) -> Result<()> {

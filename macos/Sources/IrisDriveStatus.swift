@@ -68,6 +68,7 @@ final class IrisDriveStatus: ObservableObject {
     @Published var blossomServers: [String] = []
     @Published var backupTargets: [IrisDriveBackupTarget] = []
     @Published var friendBackups = IrisDriveFriendBackups(json: [:])
+    @Published var deviceStorage = IrisDriveDeviceStorage(json: [:])
     @Published var pendingBackupInvite: String?
     @Published var shares: [IrisDriveShareStatus] = []
     @Published var lastShareInviteURL: String?

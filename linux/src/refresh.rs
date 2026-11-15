@@ -132,6 +132,7 @@ pub(crate) fn refresh(model: &AppRef) {
             }
             render_drives(&model.ui.drives, &state);
             render_peers(model, &state);
+            render_device_storage(&model.ui.device_storage, &state);
             render_backups(model, &state);
             render_shares(model, &state);
             render_network(&model.ui.fips, &model.ui.relays, &model.ui.blossom, &state);
@@ -170,6 +171,7 @@ pub(crate) fn refresh(model: &AppRef) {
             model.ui.notice.set_text(&error);
             clear_list(&model.ui.drives);
             clear_list(&model.ui.peers);
+            clear_device_storage(&model.ui.device_storage);
             clear_list(&model.ui.backups);
             clear_list(&model.ui.shares);
             clear_list(&model.ui.relays);

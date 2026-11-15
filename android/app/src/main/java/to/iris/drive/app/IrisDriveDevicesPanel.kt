@@ -50,11 +50,13 @@ import androidx.compose.ui.unit.dp
 import org.json.JSONObject
 import to.iris.drive.app.core.AppKeyLinkRequestState
 import to.iris.drive.app.core.DeviceState
+import to.iris.drive.app.core.DeviceStorageState
 import to.iris.drive.app.core.NativeCore
 
 @Composable
 internal fun DevicesPanel(
     devices: List<DeviceState>,
+    deviceStorage: DeviceStorageState,
     inboundRequests: List<AppKeyLinkRequestState>,
     canApprove: Boolean,
     onApproveDevice: (String, String) -> Unit,
@@ -181,6 +183,8 @@ internal fun DevicesPanel(
             )
         }
     }
+
+    DeviceStorageSection(storage = deviceStorage)
 
     if (recoveryKeyActors.isNotEmpty()) {
         CardSection(title = "Recovery Keys", trailing = "${recoveryKeyActors.size}") {
@@ -354,7 +358,7 @@ private fun DeviceStatusDot(device: DeviceState) {
     )
 }
 
-private val OnlineGreen = Color(0xFF16A34A)
+internal val OnlineGreen = Color(0xFF16A34A)
 
 private val DeviceState.isDeviceActor: Boolean
     get() = actorKind.ifBlank {

@@ -445,6 +445,8 @@ struct NativeUiState: Codable {
     var lastShareRecipientEvidence: String
     var pendingShareJoins: [NativePendingShareJoin]
     var shareableFolders: [String]
+    /// Missing from older cores; read as no devices.
+    var deviceStorage: NativeDeviceStorage?
 
     enum CodingKeys: String, CodingKey {
         case roots
@@ -477,6 +479,7 @@ struct NativeUiState: Codable {
         case lastShareRecipientEvidence = "last_share_recipient_evidence"
         case pendingShareJoins = "pending_share_joins"
         case shareableFolders = "shareable_folders"
+        case deviceStorage = "device_storage"
     }
 }
 
@@ -780,6 +783,75 @@ struct NativeDevice: Codable {
         case canRevoke = "can_revoke"
         case canAppointAdmin = "can_appoint_admin"
         case canDemoteAdmin = "can_demote_admin"
+    }
+}
+
+/// What each of the profile's devices holds of the Drive, worded by the core.
+struct NativeDeviceStorage: Codable, Equatable {
+    var summary: String = ""
+    var devices: [NativeDeviceStorageRow] = []
+}
+
+struct NativeDeviceStorageRow: Codable, Equatable, Identifiable {
+    var id: String { pubkey }
+    var pubkey: String = ""
+    var npub: String = ""
+    var name: String = ""
+    var isCurrent: Bool = false
+    var app: String = ""
+    var icon: String = ""
+    var hasReport: Bool = false
+    var heldLabel: String = ""
+    var holdsAll: Bool = false
+    var heldPermille: UInt32 = 0
+    var connected: Bool = false
+    var connectionLabel: String = ""
+    var connectionDetail: String = ""
+    var syncState: String = ""
+    var syncLabel: String = ""
+    var syncDetail: String = ""
+    var spaceLabel: String = ""
+    var spaceDetail: String = ""
+    var ageLabel: String = ""
+    var folders: [NativeDeviceStorageFolder] = []
+    var notes: [String] = []
+
+    enum CodingKeys: String, CodingKey {
+        case pubkey
+        case npub
+        case name
+        case isCurrent = "is_current"
+        case app
+        case icon
+        case hasReport = "has_report"
+        case heldLabel = "held_label"
+        case holdsAll = "holds_all"
+        case heldPermille = "held_permille"
+        case connected
+        case connectionLabel = "connection_label"
+        case connectionDetail = "connection_detail"
+        case syncState = "sync_state"
+        case syncLabel = "sync_label"
+        case syncDetail = "sync_detail"
+        case spaceLabel = "space_label"
+        case spaceDetail = "space_detail"
+        case ageLabel = "age_label"
+        case folders
+        case notes
+    }
+}
+
+struct NativeDeviceStorageFolder: Codable, Equatable {
+    var label: String = ""
+    var depth: UInt32 = 0
+    var detail: String = ""
+    var heldPermille: UInt32 = 0
+
+    enum CodingKeys: String, CodingKey {
+        case label
+        case depth
+        case detail
+        case heldPermille = "held_permille"
     }
 }
 

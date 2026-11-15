@@ -807,6 +807,7 @@ private struct DevicesView: View {
                     deviceRow(device, showPresence: true)
                 }
             }
+            DeviceStorageSection(storage: model.deviceStorage)
             if !recoveryKeyActors.isEmpty {
                 Section("Recovery Keys") {
                     ForEach(recoveryKeyActors) { device in

@@ -51,6 +51,8 @@ public sealed class IrisDriveStatusData
     public FipsDiagnostics Fips { get; init; } = FipsDiagnostics.Empty;
     public IReadOnlyList<RelayStatusRow> RelayStatuses { get; init; } =
         Array.Empty<RelayStatusRow>();
+    // What each of the profile's devices holds, for the Devices page's Storage section.
+    public DeviceStorageReport DeviceStorage { get; init; } = DeviceStorageReport.Empty;
 
     public static IrisDriveStatusData FromNativeJson(string json)
     {
@@ -136,6 +138,7 @@ public sealed class IrisDriveStatusData
                 .ToArray(),
             Fips = FipsDiagnostics.FromJson(Object(ui, "fips")),
             RelayStatuses = RelayStatusesFromJson(ui),
+            DeviceStorage = DeviceStorageReport.FromJson(Object(ui, "device_storage")),
         };
     }
 

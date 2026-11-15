@@ -172,6 +172,7 @@ fn run_cli() -> ExitCode {
         Command::Status => cmd_status(&config_dir),
         Command::Service { command } => cmd_service(&config_dir, command),
         Command::Stats => cmd_stats(&config_dir),
+        Command::Storage => cmd_storage(&config_dir),
         Command::Shares { command } => cmd_shares(&config_dir, command),
         Command::LinkInput { command } => cmd_link_input(command),
         Command::AppKeys(command) => cmd_app_keys(&config_dir, command),

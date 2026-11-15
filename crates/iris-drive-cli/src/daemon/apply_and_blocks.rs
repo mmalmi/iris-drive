@@ -112,6 +112,9 @@ pub(crate) async fn apply_one_event(
     daemon_tasks: &DaemonTaskSet,
 ) -> Result<EventApplyOutcome> {
     use iris_drive_core::relay_sync;
+    if iris_drive_core::device_storage::looks_like_device_storage_event(event) {
+        return Ok(apply_device_storage_relay_event(config_dir, event));
+    }
     if iris_drive_core::share_index::is_share_index_event(event) {
         return apply_share_index_relay_event(
             config_dir,

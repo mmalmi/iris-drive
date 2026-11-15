@@ -39,6 +39,65 @@ pub struct UiState {
     /// My Drive folders that can be shared: not already shared, and not
     /// inside or around a shared folder.
     pub shareable_folders: Vec<String>,
+    /// What each of the profile's devices holds, for the Storage page.
+    #[serde(default)]
+    pub device_storage: UiDeviceStorage,
+}
+
+/// What each of the profile's devices holds of the Drive, how much room it
+/// has and whether it is in sync, as Iris Drive web's Storage page shows it.
+#[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UiDeviceStorage {
+    /// "Your Drive is 2.3 GB in 1,204 files. All of it is on this device."
+    pub summary: String,
+    /// This device first, then those that reported, holding most first.
+    pub devices: Vec<UiDeviceStorageRow>,
+}
+
+#[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[allow(clippy::struct_excessive_bools)]
+pub struct UiDeviceStorageRow {
+    pub pubkey: String,
+    pub npub: String,
+    pub name: String,
+    pub is_current: bool,
+    /// `web`, `macos`, `ios`, `android`, `windows`, `linux`; empty before a report.
+    pub app: String,
+    /// `web`, `phone`, `computer` or `drive`, for the shell's own icon.
+    pub icon: String,
+    pub has_report: bool,
+    /// "All of it", "1.2 GB · 35%", or "No report yet".
+    pub held_label: String,
+    pub holds_all: bool,
+    /// The bar: held bytes in thousandths of the largest Drive size reported.
+    pub held_permille: u32,
+    pub connected: bool,
+    /// "Connected" or "Not connected"; empty for this device.
+    pub connection_label: String,
+    pub connection_detail: String,
+    /// `in-sync`, `behind`, `ahead`, `apart`; empty when not known or for this device.
+    pub sync_state: String,
+    pub sync_label: String,
+    pub sync_detail: String,
+    /// "Uses 2.3 GB of 50.0 GB allowed".
+    pub space_label: String,
+    pub space_detail: String,
+    /// "Updated 5 min ago".
+    pub age_label: String,
+    /// What the device holds, folder by folder.
+    pub folders: Vec<UiDeviceStorageFolder>,
+    /// Short lines under the folders, such as "No files yet".
+    pub notes: Vec<String>,
+}
+
+#[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UiDeviceStorageFolder {
+    pub label: String,
+    /// How far under a top-level folder it is, 0 at the top.
+    pub depth: u32,
+    /// "All 1.2 GB" or "300.0 MB of 1.2 GB".
+    pub detail: String,
+    pub held_permille: u32,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

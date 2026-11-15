@@ -2153,6 +2153,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             status.fips = IrisDriveFipsStatus(json: ui["fips"] as? [String: Any] ?? [:])
             status.peers =
                 (ui["app_actors"] as? [[String: Any]] ?? []).map(IrisDrivePeerStatus.init)
+            status.deviceStorage = IrisDriveDeviceStorage(json: ui["device_storage"] as? [String: Any] ?? [:])
             status.lastUpload = nil
 
             if status.setupComplete, let paths = self.runtimePathsForMenu {
