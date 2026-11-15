@@ -12,6 +12,12 @@ pub async fn dispatch_share_action_with_content(
     mut action: ShareAction,
     now_seconds: i64,
 ) -> Result<ShareActionResult> {
+    action = action.normalized();
+    if let ShareAction::JoinShareLink { .. } = &action {
+        let result = dispatch_share_action(config_dir, action, now_seconds)?;
+        publish_share_join_requests(config_dir).await;
+        return Ok(result);
+    }
     if let ShareAction::AcceptShareInvite { invite } = &mut action {
         *invite = crate::share_links::resolve_share_invite(config_dir, invite).await?;
     }
@@ -149,7 +155,27 @@ pub fn dispatch_share_action_with_content_blocking(
     .map_err(|_| anyhow::anyhow!("Share action failed"))?
 }
 
-async fn publish_share_content(config_dir: &Path, share_id: NostrIdentityId) -> Result<()> {
+/// Send this device's join requests without waiting on any relay's answer:
+/// the request is kept, and Drive sends it again until the folder lets it in.
+async fn publish_share_join_requests(config_dir: &Path) {
+    let Ok(config) = AppConfig::load_or_default(config_path_in(config_dir)) else {
+        return;
+    };
+    let Ok(client) = crate::relay_sync::connect(&config.relays).await else {
+        return;
+    };
+    let _ = tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        crate::share_join::publish_pending_share_join_requests(&client, config_dir),
+    )
+    .await;
+    crate::relay_sync::shutdown_client(&client).await;
+}
+
+pub(crate) async fn publish_share_content(
+    config_dir: &Path,
+    share_id: NostrIdentityId,
+) -> Result<()> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let folder = config.shared_folder(share_id).context("Share missing")?;
     let app_key = crate::AppKey::load(key_path_in(config_dir))?;

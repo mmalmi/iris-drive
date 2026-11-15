@@ -427,7 +427,7 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTAssertTrue(app.buttons["createShareButton"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.textFields["shareInviteInput"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.buttons["acceptShareInviteButton"].waitForExistence(timeout: 10))
-        XCTAssertTrue(app.buttons["copyShareIdentityButton"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.buttons["copyShareIdentityButton"].exists, "Sharing is by link; no identity to copy")
     }
 
     func testBackupTabShowsFilesystemDestinationControls() throws {

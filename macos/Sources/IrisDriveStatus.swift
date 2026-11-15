@@ -73,6 +73,8 @@ final class IrisDriveStatus: ObservableObject {
     @Published var lastShareInviteURL: String?
     @Published var lastShareRecipientEvidence: String?
     @Published var pendingShareDialog: IrisDriveShareDialogRequest?
+    @Published var pendingShareJoins: [IrisDrivePendingShareJoin] = []
+    @Published var pendingJoinLink: IrisDriveJoinLinkRequest?
     @Published var pendingDeviceApproval: IrisDriveDeviceApprovalRequest?
     @Published var fips = IrisDriveFipsStatus()
     @Published var peers: [IrisDrivePeerStatus] = []

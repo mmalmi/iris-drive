@@ -123,6 +123,8 @@ internal data class ShareDialogRequest(
     val recipientNpubHint: String = "",
     val recipientDisplayName: String = "",
     val recipientProfileId: String = "",
+    /** A share link opened from outside the app, ready to join. */
+    val joinLink: String = "",
 )
 
 internal fun fillRecoveryWords(
@@ -211,10 +213,8 @@ internal fun IrisDriveAndroidApp(
     onSyncBackups: (String) -> Unit,
     onCheckBackups: (String) -> Unit,
     onCreateShare: (String, String) -> Unit,
-    onInviteShareMember: (String, String, String, String, String, String, String) -> Unit,
-    onInviteShareMemberFromEvidence: (String, String, String, String) -> Unit,
-    onExportShareRecipientEvidence: (String) -> Unit,
-    onRecordPendingShareInvite: (String, String, String, String) -> Unit,
+    onCreateShareLink: (String, String) -> Unit,
+    onDisableShareLinks: (String) -> Unit,
     onAcceptShareInvite: (String) -> Unit,
     onRevokeShareMember: (String, String) -> Unit,
     onOpenSharePath: (String) -> Unit,
@@ -344,10 +344,8 @@ internal fun IrisDriveAndroidApp(
                     onSyncBackups = onSyncBackups,
                     onCheckBackups = onCheckBackups,
                     onCreateShare = onCreateShare,
-                    onInviteShareMember = onInviteShareMember,
-                    onInviteShareMemberFromEvidence = onInviteShareMemberFromEvidence,
-                    onExportShareRecipientEvidence = onExportShareRecipientEvidence,
-                    onRecordPendingShareInvite = onRecordPendingShareInvite,
+                    onCreateShareLink = onCreateShareLink,
+                    onDisableShareLinks = onDisableShareLinks,
                     onAcceptShareInvite = onAcceptShareInvite,
                     onRevokeShareMember = onRevokeShareMember,
                     onOpenSharePath = onOpenSharePath,

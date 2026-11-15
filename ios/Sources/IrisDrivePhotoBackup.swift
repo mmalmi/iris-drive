@@ -9,6 +9,8 @@ final class IrisDrivePhotoBackup: NSObject, ObservableObject, PHPhotoLibraryChan
     @Published private(set) var access = PHAuthorizationStatus.notDetermined
     @Published private(set) var status = ""
     @Published private(set) var busy = false
+    /// When every original was last confirmed saved and published.
+    @Published private(set) var lastComplete: Date?
 
     private let defaults = UserDefaults.standard
     private let consentKey = "photoBackupEnabledForProfile"
@@ -22,6 +24,8 @@ final class IrisDrivePhotoBackup: NSObject, ObservableObject, PHPhotoLibraryChan
     private var task: Task<Void, Never>?
     private var needsRescan = false
     private var canRead: Bool { access == .authorized || access == .limited }
+    private var lastCompleteKey: String { "photoBackupLastComplete:\(profile)" }
+    var waitingForWiFiNow: Bool { enabled && waitingForWiFi }
     private var waitingForWiFi: Bool { path?.isExpensive == true && !allowsCellular }
 
     func configure(profile: String, dataDir: String, allowsCellular: Bool) {
@@ -32,6 +36,7 @@ final class IrisDrivePhotoBackup: NSObject, ObservableObject, PHPhotoLibraryChan
         self.dataDir = dataDir
         self.allowsCellular = allowsCellular
         enabled = !profile.isEmpty && defaults.string(forKey: consentKey) == profile
+        lastComplete = defaults.object(forKey: lastCompleteKey) as? Date
         refreshAccess()
         if waitingForWiFi { task?.cancel() }
         requestScan()
@@ -131,7 +136,13 @@ final class IrisDrivePhotoBackup: NSObject, ObservableObject, PHPhotoLibraryChan
                 }) { n in
                     await self.showProgress(n, profile: scope.profile)
                 }
-                if !Task.isCancelled && profile == scope.profile && enabled { status = result }
+                if !Task.isCancelled && profile == scope.profile && enabled {
+                    status = result
+                    if result == "Up to date" {
+                        lastComplete = Date()
+                        defaults.set(lastComplete, forKey: lastCompleteKey)
+                    }
+                }
             } catch {
                 if !Task.isCancelled && profile == scope.profile && enabled { status = error.localizedDescription }
             }
@@ -145,6 +156,6 @@ final class IrisDrivePhotoBackup: NSObject, ObservableObject, PHPhotoLibraryChan
 
     private func showProgress(_ count: Int, profile: String) {
         guard self.profile == profile, enabled else { return }
-        status = count == 1 ? "1 original saved" : "\(count) originals saved"
+        status = count == 1 ? "Backing up… 1 saved" : "Backing up… \(count) saved"
     }
 }

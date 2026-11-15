@@ -1925,6 +1925,7 @@ final class IrisDriveMobileModel: ObservableObject {
 
     func handle(url: URL) {
         let linkInput = IrisDriveNativeLinkInput.classify(url.absoluteString)
+        if handleShareLink(linkInput, url: url) { return }
         if linkInput.kind == "share_dialog" {
             openShareDialog(
                 sourcePath: linkInput.shareSourcePath,

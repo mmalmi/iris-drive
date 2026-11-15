@@ -172,9 +172,9 @@ pub(crate) fn cmd_daemon(
         let relay_statuses = relay_status_payload(&client).await;
         let mut relay_notifications_open = !relay_statuses.is_empty();
         if relay_notifications_open {
-            for filter in filters {
+            for filter in &filters {
                 client
-                    .subscribe(filter, None)
+                    .subscribe(filter.clone(), None)
                     .await
                     .context("opening subscription")?;
             }
@@ -184,7 +184,8 @@ pub(crate) fn cmd_daemon(
         }
         let mut notifications = client.notifications();
         let mut app_key_link_relay_subscriptions =
-            relay_sync::AppKeyLinkRelaySubscriptionState::from_profile(&state);
+            relay_sync::AppKeyLinkRelaySubscriptionState::from_profile(&state)
+                .with_open_share_filters(&filters);
         relay_sync::refresh_app_key_link_relay_subscriptions(
             &client,
             &state,

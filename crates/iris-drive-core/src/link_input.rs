@@ -88,6 +88,9 @@ pub fn classify_link_input(input: &str) -> LinkInputClassification {
     if let Some(result) = classify_invite_link_input(trimmed) {
         return result;
     }
+    if let Some(result) = classify_share_link_input(trimmed) {
+        return result;
+    }
     if let Some(result) = classify_share_dialog_link_input(trimmed) {
         return result;
     }
@@ -237,6 +240,38 @@ fn classify_invite_link_input(input: &str) -> Option<LinkInputClassification> {
         Err(_) => {}
     }
     Some(classification)
+}
+
+/// A link that joins a shared folder (`share_join`) or accepts a signed
+/// invite (`share_invite`); native shells open their Join prompt for these.
+fn classify_share_link_input(input: &str) -> Option<LinkInputClassification> {
+    let web_or_native = |route: &str| {
+        (input.starts_with("https://drive.iris.to/") && input.contains(&format!("#{route}")))
+            || input.starts_with(&format!("iris-drive:/{route}"))
+    };
+    let mut classification = LinkInputClassification {
+        normalized_input: input.to_owned(),
+        ..LinkInputClassification::default()
+    };
+    if web_or_native(crate::share_join::SHARE_JOIN_ROUTE) {
+        "share_join".clone_into(&mut classification.kind);
+        classification.is_complete = true;
+        match crate::share_join::ShareJoinLink::parse(input) {
+            Ok(link) => {
+                classification.is_valid = true;
+                classification.share_display_name = link.display_name();
+            }
+            Err(error) => classification.error = error.to_string(),
+        }
+        return Some(classification);
+    }
+    if web_or_native("/share-invite/") {
+        "share_invite".clone_into(&mut classification.kind);
+        classification.is_complete = true;
+        classification.is_valid = true;
+        return Some(classification);
+    }
+    None
 }
 
 fn classify_share_dialog_link_input(input: &str) -> Option<LinkInputClassification> {

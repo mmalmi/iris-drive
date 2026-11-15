@@ -1,5 +1,6 @@
 package to.iris.drive.app
 
+import android.content.Intent
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -37,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -53,7 +55,6 @@ import to.iris.drive.app.update.AndroidSelfUpdateState
 import to.iris.drive.app.update.SelfUpdateActions
 import to.iris.drive.app.update.buttonText
 
-private data class ShareInvitePrefill(val profileId: String = "", val npubHint: String = "", val displayName: String = "")
 
 @Composable
 internal fun AuthenticatedContent(
@@ -93,10 +94,8 @@ internal fun AuthenticatedContent(
     onSyncBackups: (String) -> Unit,
     onCheckBackups: (String) -> Unit,
     onCreateShare: (String, String) -> Unit,
-    onInviteShareMember: (String, String, String, String, String, String, String) -> Unit,
-    onInviteShareMemberFromEvidence: (String, String, String, String) -> Unit,
-    onExportShareRecipientEvidence: (String) -> Unit,
-    onRecordPendingShareInvite: (String, String, String, String) -> Unit,
+    onCreateShareLink: (String, String) -> Unit,
+    onDisableShareLinks: (String) -> Unit,
     onAcceptShareInvite: (String) -> Unit,
     onRevokeShareMember: (String, String) -> Unit,
     onOpenSharePath: (String) -> Unit,
@@ -144,10 +143,8 @@ internal fun AuthenticatedContent(
             shareDialogRequest = shareDialogRequest,
             onCopyText = onCopyText,
             onCreateShare = onCreateShare,
-            onInviteShareMember = onInviteShareMember,
-            onInviteShareMemberFromEvidence = onInviteShareMemberFromEvidence,
-            onExportShareRecipientEvidence = onExportShareRecipientEvidence,
-            onRecordPendingShareInvite = onRecordPendingShareInvite,
+            onCreateShareLink = onCreateShareLink,
+            onDisableShareLinks = onDisableShareLinks,
             onAcceptShareInvite = onAcceptShareInvite,
             onRevokeShareMember = onRevokeShareMember,
             onOpenSharePath = onOpenSharePath,
@@ -306,10 +303,8 @@ private fun SharesContent(
     shareDialogRequest: ShareDialogRequest?,
     onCopyText: (String, String) -> Unit,
     onCreateShare: (String, String) -> Unit,
-    onInviteShareMember: (String, String, String, String, String, String, String) -> Unit,
-    onInviteShareMemberFromEvidence: (String, String, String, String) -> Unit,
-    onExportShareRecipientEvidence: (String) -> Unit,
-    onRecordPendingShareInvite: (String, String, String, String) -> Unit,
+    onCreateShareLink: (String, String) -> Unit,
+    onDisableShareLinks: (String) -> Unit,
     onAcceptShareInvite: (String) -> Unit,
     onRevokeShareMember: (String, String) -> Unit,
     onOpenSharePath: (String) -> Unit,
@@ -334,10 +329,8 @@ private fun SharesContent(
                 shareDialogRequest = shareDialogRequest,
                 onCopyText = onCopyText,
                 onCreateShare = onCreateShare,
-                onInviteShareMember = onInviteShareMember,
-                onInviteShareMemberFromEvidence = onInviteShareMemberFromEvidence,
-                onExportShareRecipientEvidence = onExportShareRecipientEvidence,
-                onRecordPendingShareInvite = onRecordPendingShareInvite,
+                onCreateShareLink = onCreateShareLink,
+                onDisableShareLinks = onDisableShareLinks,
                 onAcceptShareInvite = onAcceptShareInvite,
                 onRevokeShareMember = onRevokeShareMember,
                 onOpenSharePath = onOpenSharePath,
@@ -598,10 +591,8 @@ private fun SharesPanel(
     shareDialogRequest: ShareDialogRequest?,
     onCopyText: (String, String) -> Unit,
     onCreateShare: (String, String) -> Unit,
-    onInviteShareMember: (String, String, String, String, String, String, String) -> Unit,
-    onInviteShareMemberFromEvidence: (String, String, String, String) -> Unit,
-    onExportShareRecipientEvidence: (String) -> Unit,
-    onRecordPendingShareInvite: (String, String, String, String) -> Unit,
+    onCreateShareLink: (String, String) -> Unit,
+    onDisableShareLinks: (String) -> Unit,
     onAcceptShareInvite: (String) -> Unit,
     onRevokeShareMember: (String, String) -> Unit,
     onOpenSharePath: (String) -> Unit,
@@ -614,33 +605,23 @@ private fun SharesPanel(
     var inviteTarget by remember { mutableStateOf<ShareState?>(null) }
     var revokeTarget by remember { mutableStateOf<Pair<ShareState, ShareMemberState>?>(null) }
     var deleteTarget by remember { mutableStateOf<ShareState?>(null) }
-    var invitePrefill by remember { mutableStateOf(ShareInvitePrefill()) }
 
     LaunchedEffect(shareDialogRequest?.id) {
         val request = shareDialogRequest ?: return@LaunchedEffect
-        sourceInput = request.sourcePath
-        invitePrefill = ShareInvitePrefill(
-            profileId = request.recipientProfileId,
-            npubHint = request.recipientNpubHint,
-            displayName = request.recipientDisplayName,
-        )
+        if (request.joinLink.isNotBlank()) inviteInput = request.joinLink else sourceInput = request.sourcePath
     }
 
     inviteTarget?.let { share ->
         InviteShareMemberDialog(
             share = share,
-            prefill = invitePrefill,
-            onDismiss = { inviteTarget = null },
-            onInvite = { evidenceJson, profileId, appKey, role, npubHint, displayName, label ->
-                if (evidenceJson.isNotBlank()) {
-                    onInviteShareMemberFromEvidence(share.shareId, evidenceJson, role, displayName)
-                } else if (profileId.isBlank() && appKey.isBlank()) {
-                    onRecordPendingShareInvite(share.shareId, npubHint, role, displayName)
-                } else {
-                    onInviteShareMember(share.shareId, profileId, appKey, role, npubHint, displayName, label)
-                }
+            link = state.lastShareInvite,
+            onRole = { role -> onCreateShareLink(share.shareId, role) },
+            onCopy = { onCopyText("Link", state.lastShareInvite) },
+            onDisable = {
+                onDisableShareLinks(share.shareId)
                 inviteTarget = null
             },
+            onDismiss = { inviteTarget = null },
         )
     }
 
@@ -705,7 +686,7 @@ private fun SharesPanel(
         OutlinedTextField(
             value = sourceInput,
             onValueChange = { sourceInput = it },
-            label = { Text("Folder path") },
+            label = { Text("Folder in My Drive, e.g. Photos/Trip") },
             singleLine = true,
             modifier = Modifier
                 .fillMaxWidth()
@@ -721,38 +702,31 @@ private fun SharesPanel(
             Text("Create shared folder")
         }
 
+        Text("Join Shared Folder", fontWeight = FontWeight.SemiBold)
+        state.pendingShareJoins.forEach { join ->
+            Column(Modifier.testTag("pendingShareJoin")) {
+                Text("Waiting to join “${join.displayName}”", color = Ink)
+                Text("You get access when someone who manages it has Iris Drive open.", color = Muted, style = MaterialTheme.typography.bodySmall)
+            }
+        }
         OutlinedTextField(
             value = inviteInput,
             onValueChange = { inviteInput = it },
-            label = { Text("Share invite") },
+            label = { Text("Paste a share link") },
             singleLine = true,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("shareInviteInput"),
         )
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            OutlinedButton(
-                onClick = {
-                    onAcceptShareInvite(inviteInput)
-                    inviteInput = ""
-                },
-                enabled = inviteInput.isNotBlank(),
-            ) {
-                Text("Accept invite")
-            }
-            OutlinedButton(
-                onClick = { onCopyText("Share invite", state.lastShareInvite) },
-                enabled = state.lastShareInvite.isNotBlank(),
-            ) {
-                Text("Copy invite")
-            }
-        }
         OutlinedButton(
             onClick = {
-                onExportShareRecipientEvidence(state.profile?.appKeyLabel.orEmpty())
+                onAcceptShareInvite(inviteInput)
+                inviteInput = ""
             },
-            enabled = state.profile != null,
-            modifier = Modifier.testTag("copyShareIdentityButton"),
+            enabled = inviteInput.isNotBlank(),
+            modifier = Modifier.testTag("acceptShareInviteButton"),
         ) {
-            Text("Copy my share identity")
+            Text("Join")
         }
 
         if (state.shares.isEmpty()) {
@@ -773,105 +747,57 @@ private fun SharesPanel(
     }
 }
 
+/** Share by link: anyone who opens it can ask to join; no app needed to open it. */
 @Composable
 private fun InviteShareMemberDialog(
     share: ShareState,
-    prefill: ShareInvitePrefill,
+    link: String,
+    onRole: (String) -> Unit,
+    onCopy: () -> Unit,
+    onDisable: () -> Unit,
     onDismiss: () -> Unit,
-    onInvite: (String, String, String, String, String, String, String) -> Unit,
 ) {
-    var evidenceJson by remember { mutableStateOf("") }
-    var profileId by remember(share.shareId, prefill.profileId) { mutableStateOf(prefill.profileId) }
-    var appKey by remember { mutableStateOf("") }
-    var role by remember { mutableStateOf("reader") }
-    var npubHint by remember(share.shareId, prefill.npubHint) { mutableStateOf(prefill.npubHint) }
-    var displayName by remember(share.shareId, prefill.displayName) { mutableStateOf(prefill.displayName) }
-    var label by remember { mutableStateOf("") }
-
+    var role by remember(share.shareId) { mutableStateOf("reader") }
+    val context = LocalContext.current
+    LaunchedEffect(share.shareId, role) { onRole(role) }
+    val ready = link.contains("/share-join/")
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Invite to ${displayShareName(share)}") },
+        title = { Text("Share “${displayShareName(share)}”") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = evidenceJson,
-                    onValueChange = { evidenceJson = it },
-                    label = { Text("Recipient identity evidence") },
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(112.dp)
-                        .testTag("shareRecipientEvidenceInput"),
-                    minLines = 3,
-                    maxLines = 5,
-                )
-                OutlinedTextField(
-                    value = profileId,
-                    onValueChange = { profileId = it },
-                    label = { Text("Member profile UUID") },
-                    singleLine = true,
-                    modifier = Modifier.testTag("shareRecipientProfileInput"),
-                )
-                OutlinedTextField(
-                    value = appKey,
-                    onValueChange = { appKey = it },
-                    label = { Text("Recipient device ID") },
-                    singleLine = true,
-                )
+                Text("People with the link can", color = Muted)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("reader", "editor", "admin").forEach { option ->
-                        OutlinedButton(onClick = { role = option }) {
-                            Text(if (role == option) option.uppercase() else option)
+                    listOf("reader" to "View", "editor" to "Edit").forEach { (value, label) ->
+                        if (role == value) {
+                            Button(onClick = {}, modifier = Modifier.testTag("shareLinkRole_$value")) { Text(label) }
+                        } else {
+                            OutlinedButton(onClick = { role = value }, modifier = Modifier.testTag("shareLinkRole_$value")) { Text(label) }
                         }
                     }
                 }
-                OutlinedTextField(
-                    value = npubHint,
-                    onValueChange = { npubHint = it },
-                    label = { Text("User ID") },
-                    singleLine = true,
-                    modifier = Modifier.testTag("shareRecipientNpubInput"),
+                Text(
+                    "Anyone with this link can join. Iris Drive lets them in when it syncs. They don't need the app — the link opens in a browser.",
+                    color = Muted,
+                    style = MaterialTheme.typography.bodySmall,
                 )
-                OutlinedTextField(
-                    value = displayName,
-                    onValueChange = { displayName = it },
-                    label = { Text("Name") },
-                    singleLine = true,
-                    modifier = Modifier.testTag("shareRecipientNameInput"),
-                )
-                OutlinedTextField(
-                    value = label,
-                    onValueChange = { label = it },
-                    label = { Text("Device label") },
-                    singleLine = true,
-                )
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(
+                        onClick = {
+                            val send = Intent(Intent.ACTION_SEND).setType("text/plain").putExtra(Intent.EXTRA_TEXT, link)
+                            context.startActivity(Intent.createChooser(send, "Share link"))
+                        },
+                        enabled = ready,
+                        modifier = Modifier.testTag("shareLinkSend"),
+                    ) { Text("Send link") }
+                    OutlinedButton(onClick = onCopy, enabled = ready, modifier = Modifier.testTag("shareLinkCopy")) {
+                        Text("Copy link")
+                    }
+                }
+                TextButton(onClick = onDisable) { Text("Turn off links", color = Danger) }
             }
         },
-        confirmButton = {
-            TextButton(
-                modifier = Modifier.testTag("shareInviteConfirm"),
-                onClick = {
-                    onInvite(
-                        evidenceJson,
-                        profileId,
-                        appKey,
-                        role,
-                        npubHint,
-                        displayName,
-                        label,
-                    )
-                },
-                enabled = evidenceJson.isNotBlank() ||
-                    (profileId.isNotBlank() && appKey.isNotBlank()) ||
-                    (profileId.isBlank() && appKey.isBlank() && npubHint.isNotBlank()),
-            ) {
-                Text("Invite")
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text("Cancel")
-            }
-        },
+        confirmButton = { TextButton(onClick = onDismiss) { Text("Done") } },
     )
 }
 
@@ -907,7 +833,7 @@ private fun ShareItem(
             }
             if (share.canAdmin) {
                 TextButton(onClick = onInvite) {
-                    Text("Invite")
+                    Text("Share")
                 }
             }
             if (share.repairNeeded || share.missingKeyWraps.isNotEmpty()) {

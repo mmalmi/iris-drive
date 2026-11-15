@@ -33,6 +33,11 @@ pub(crate) fn cmd_shares(config_dir: &Path, command: Option<SharesCmd>) -> Resul
             label,
         ),
         SharesCmd::Accept { invite } => cmd_shares_accept(config_dir, &invite),
+        SharesCmd::Link {
+            share_id,
+            role,
+            disable,
+        } => cmd_shares_link(config_dir, &share_id, &role, disable),
         SharesCmd::Revoke {
             share_id,
             profile_id,
@@ -119,7 +124,14 @@ fn cmd_shares_list(config_dir: &Path, diagnostics: bool) -> Result<()> {
     let result = iris_drive_core::share_action_state(config_dir).context("reading share state")?;
     println!(
         "{}",
-        json!({ "shares": share_views_json_with_diagnostics(&result.shares, diagnostics) })
+        json!({
+            "shares": share_views_json_with_diagnostics(&result.shares, diagnostics),
+            "waiting_to_join": result.pending_joins.iter().map(|pending| json!({
+                "share_id": pending.share_id.to_string(),
+                "name": pending.display_name,
+                "role": pending.role.as_str(),
+            })).collect::<Vec<_>>(),
+        })
     );
     Ok(())
 }
@@ -252,6 +264,22 @@ fn cmd_shares_accept(config_dir: &Path, invite: &str) -> Result<()> {
     let share_id = result
         .share_id
         .ok_or_else(|| anyhow::anyhow!("accepted share action did not return a share id"))?;
+    if let Some(pending) = result
+        .pending_joins
+        .iter()
+        .find(|item| item.share_id == share_id)
+    {
+        println!(
+            "{}",
+            json!({
+                "share_id": share_id.to_string(),
+                "status": "waiting",
+                "name": pending.display_name,
+                "role": pending.role.as_str(),
+            })
+        );
+        return Ok(());
+    }
     let view = result
         .shares
         .iter()
@@ -262,6 +290,29 @@ fn cmd_shares_accept(config_dir: &Path, invite: &str) -> Result<()> {
         json!({
             "share": share_view_json(view),
             "share_id": share_id.to_string(),
+        })
+    );
+    Ok(())
+}
+
+fn cmd_shares_link(config_dir: &Path, share_id: &str, role: &str, disable: bool) -> Result<()> {
+    let share_id = share_id
+        .parse::<iris_drive_core::NostrIdentityId>()
+        .context("parsing share id")?;
+    let action = if disable {
+        iris_drive_core::ShareAction::DisableShareJoinLinks { share_id }
+    } else {
+        let role = iris_drive_core::ShareRole::parse_user_input(role)
+            .filter(|role| *role != iris_drive_core::ShareRole::Admin)
+            .ok_or_else(|| anyhow::anyhow!("role must be reader or editor"))?;
+        iris_drive_core::ShareAction::CreateShareJoinLink { share_id, role }
+    };
+    let result = dispatch_cli_share_action(config_dir, action).context("sharing by link")?;
+    println!(
+        "{}",
+        json!({
+            "share_id": share_id.to_string(),
+            "link": result.share_join_link,
         })
     );
     Ok(())
@@ -601,3 +652,7 @@ mod sharing_test_network;
 
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "shares/link_tests.rs"]
+mod link_tests;

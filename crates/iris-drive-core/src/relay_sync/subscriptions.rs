@@ -24,6 +24,7 @@ pub struct AppKeyLinkRelaySubscriptionState {
     approval_ack_uses_dynamic_id: bool,
     profile_was_awaiting_approval: bool,
     drive_root_scope_id: String,
+    shares: crate::share_join::ShareRelaySubscriptionState,
 }
 
 impl AppKeyLinkRelaySubscriptionState {
@@ -39,7 +40,20 @@ impl AppKeyLinkRelaySubscriptionState {
             profile_was_awaiting_approval: state.authorization_state
                 == crate::AppKeyAuthorizationState::AwaitingApproval,
             drive_root_scope_id: state.root_scope_id(),
+            shares: crate::share_join::ShareRelaySubscriptionState::default(),
         }
+    }
+
+    /// Note filters the caller subscribed to at startup, so share
+    /// subscriptions only open what is new.
+    #[must_use]
+    pub fn with_open_share_filters(mut self, filters: &[nostr_sdk::Filter]) -> Self {
+        self.shares = crate::share_join::ShareRelaySubscriptionState::opened_elsewhere(filters);
+        self
+    }
+
+    pub fn share_subscriptions(&mut self) -> &mut crate::share_join::ShareRelaySubscriptionState {
+        &mut self.shares
     }
 
     fn roster_subscription_needs_refresh(&self, state: &crate::ProfileState) -> bool {

@@ -183,8 +183,7 @@ mod mobile_relay_interop;
 #[path = "ffi/post_link_sync.rs"]
 mod post_link_sync;
 use action_inputs::{
-    decode_app_key_approval_bootstrap, inbound_app_key_link_requests, optional_trimmed,
-    parse_share_role, resolve_app_key_link_target, share_now_seconds,
+    decode_app_key_approval_bootstrap, inbound_app_key_link_requests, resolve_app_key_link_target,
 };
 #[cfg(test)]
 use app_config_cache::NATIVE_RUNTIME_CONFIG_CACHE;
@@ -234,6 +233,7 @@ use snapshot_link::{drive_link_for_cid_value, update_snapshot_link};
 
 mod backup_actions;
 mod friend_backup_actions;
+mod share_actions;
 
 #[cfg(any(test, all(not(test), any(target_os = "ios", target_os = "android"))))]
 fn apply_native_app_key_link_relay_event_to_config(
@@ -616,6 +616,8 @@ impl NativeAppRuntime {
             | NativeAppAction::RevokeShareMember { .. }
             | NativeAppAction::SetShareMemberRole { .. }
             | NativeAppAction::AddShareShortcut { .. }
+            | NativeAppAction::CreateShareJoinLink { .. }
+            | NativeAppAction::DisableShareJoinLinks { .. }
             | NativeAppAction::RepairShareWraps { .. }) => self.dispatch_share_action(share_action),
             NativeAppAction::ExportShareRecipientEvidence { display_name } => {
                 self.export_share_recipient_evidence(&display_name);
@@ -635,151 +637,6 @@ impl NativeAppRuntime {
         self.reload_from_disk_preserving_error(provider_summary);
         self.reconcile_app_key_link_exchange(wake_app_key_link_exchange);
         self.start_browser_gateway_if_needed();
-    }
-
-    fn dispatch_share_action(&mut self, action: NativeAppAction) {
-        match self.try_dispatch_share_action(action) {
-            Ok(result) => {
-                if let Some(invite) = result.last_share_invite {
-                    self.state.ui.last_share_invite = invite;
-                }
-            }
-            Err(error) => {
-                self.state.error = format!("running share action: {error:#}");
-            }
-        }
-    }
-
-    fn export_share_recipient_evidence(&mut self, display_name: &str) {
-        self.state.ui.last_share_recipient_evidence.clear();
-        match self.try_export_share_recipient_evidence(display_name) {
-            Ok(evidence_json) => {
-                self.state.ui.last_share_recipient_evidence = evidence_json;
-            }
-            Err(error) => {
-                self.state.error = format!("exporting share recipient evidence: {error:#}");
-            }
-        }
-    }
-
-    fn try_export_share_recipient_evidence(&self, display_name: &str) -> anyhow::Result<String> {
-        let config_dir = Path::new(&self.data_dir);
-        let config = AppConfig::load_or_default(config_path_in(config_dir))?;
-        let state = config
-            .profile
-            .context("profile is required before exporting recipient evidence")?;
-        let profile = Profile::load(state, config_dir)?;
-        let evidence = iris_drive_core::share_recipient_profile_evidence_for_app_key(
-            profile.state.profile_id,
-            &profile.state.profile_roster_ops,
-            profile.app_key.keys(),
-            optional_trimmed(display_name),
-            share_now_seconds(),
-        )
-        .context("exporting share recipient evidence")?;
-        serde_json::to_string(&evidence).context("encoding recipient evidence")
-    }
-
-    fn try_dispatch_share_action(
-        &self,
-        action: NativeAppAction,
-    ) -> anyhow::Result<iris_drive_core::ShareActionResult> {
-        let action = match action {
-            NativeAppAction::CreateShare {
-                source_path,
-                display_name,
-            } => iris_drive_core::ShareAction::CreateShare {
-                source_path,
-                display_name: optional_trimmed(&display_name),
-            },
-            NativeAppAction::DeleteShare { share_id } => {
-                iris_drive_core::ShareAction::DeleteShare {
-                    share_id: share_id.parse()?,
-                }
-            }
-            NativeAppAction::InviteShareMember {
-                share_id,
-                profile_id,
-                app_key,
-                role,
-                representative_npub_hint,
-                display_name,
-                label,
-            } => iris_drive_core::ShareAction::InviteShareMember {
-                share_id: share_id.parse()?,
-                profile_id: profile_id.parse()?,
-                app_key,
-                role: parse_share_role(&role)?,
-                representative_npub_hint: optional_trimmed(&representative_npub_hint),
-                display_name: optional_trimmed(&display_name),
-                label: optional_trimmed(&label),
-            },
-            NativeAppAction::InviteShareMemberFromEvidence {
-                share_id,
-                evidence_json,
-                role,
-                display_name,
-            } => iris_drive_core::ShareAction::InviteShareMemberFromEvidence {
-                share_id: share_id.parse()?,
-                evidence_json,
-                role: parse_share_role(&role)?,
-                display_name: optional_trimmed(&display_name),
-            },
-            NativeAppAction::RecordPendingShareInvite {
-                share_id,
-                representative_npub_hint,
-                role,
-                display_name,
-            } => iris_drive_core::ShareAction::RecordPendingShareInvite {
-                share_id: share_id.parse()?,
-                representative_npub_hint,
-                role: parse_share_role(&role)?,
-                display_name: optional_trimmed(&display_name),
-            },
-            NativeAppAction::AcceptShareInvite { invite } => {
-                iris_drive_core::ShareAction::AcceptShareInvite { invite }
-            }
-            NativeAppAction::RevokeShareMember {
-                share_id,
-                profile_id,
-                reason,
-            } => iris_drive_core::ShareAction::RevokeShareMember {
-                share_id: share_id.parse()?,
-                profile_id: profile_id.parse()?,
-                reason: optional_trimmed(&reason),
-            },
-            NativeAppAction::SetShareMemberRole {
-                share_id,
-                profile_id,
-                role,
-            } => iris_drive_core::ShareAction::SetShareMemberRole {
-                share_id: share_id.parse()?,
-                profile_id: profile_id.parse()?,
-                role: parse_share_role(&role)?,
-            },
-            NativeAppAction::AddShareShortcut {
-                share_id,
-                path,
-                parent,
-                target_path,
-            } => iris_drive_core::ShareAction::AddShareShortcut {
-                share_id: share_id.parse()?,
-                path: optional_trimmed(&path),
-                parent: optional_trimmed(&parent),
-                target_path: optional_trimmed(&target_path),
-            },
-            NativeAppAction::RepairShareWraps { share_id } => {
-                iris_drive_core::ShareAction::RepairShareWraps {
-                    share_id: share_id.parse()?,
-                }
-            }
-            _ => unreachable!("non-share action dispatched to share action handler"),
-        };
-        iris_drive_core::share_actions::dispatch_share_action_with_content_blocking(
-            Path::new(&self.data_dir),
-            action,
-            share_now_seconds(),
-        )
     }
 
     fn create_profile(&mut self, app_key_label: &str) {
@@ -1644,6 +1501,8 @@ impl NativeAppRuntime {
                 as u64,
         });
         self.state.ui.shares = ui_shares_for_config(&config, &account.app_key_pubkey);
+        self.state.ui.pending_share_joins =
+            share_actions::pending_share_joins(&self.data_dir, &config);
         let ui_fips_status = ui_fips_status_for_config_dir(Path::new(&self.data_dir));
         self.state.ui.app_actors = app_actors_from_account(&account, &ui_fips_status);
         update_snapshot_link(&mut self.state, &config);

@@ -22,10 +22,21 @@ struct PhotoBackupSection: View {
                     if backup.access == .limited {
                         Button("Manage selected photos", action: manageSelection)
                     }
-                    if !backup.status.isEmpty {
-                        Text(backup.status).font(.footnote).foregroundStyle(.secondary)
+                    HStack(spacing: 8) {
+                        if backup.busy { ProgressView() }
+                        Text(backup.status.isEmpty ? "Ready" : backup.status)
+                            .font(.footnote).foregroundStyle(.secondary)
                     }
-                    Button("Back up now", action: backup.requestScan).disabled(backup.busy)
+                    .accessibilityIdentifier("photoBackupStatus")
+                    if let last = backup.lastComplete {
+                        Text("Last full backup \(last.formatted(.relative(presentation: .named)))")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    if backup.waitingForWiFiNow {
+                        Text("Connect to Wi-Fi, or turn on Sync over cellular in Settings.")
+                            .font(.footnote).foregroundStyle(.secondary)
+                    }
+                    Button("Back up now", action: backup.requestScan).disabled(backup.busy || backup.waitingForWiFiNow)
                 default:
                     Text("Waiting for photo access…")
                 }

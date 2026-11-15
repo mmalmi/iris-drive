@@ -74,6 +74,7 @@ pub mod relay_status;
 pub mod relay_sync;
 pub mod root_meta;
 pub mod share_actions;
+pub mod share_join;
 pub mod share_links;
 pub mod shared_content;
 pub mod sharing;

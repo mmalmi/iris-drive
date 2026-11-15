@@ -299,3 +299,21 @@ fn resolve_app_key_link_target_rejects_bare_app_key_as_identity() {
 
     assert!(error.to_string().contains("NostrIdentity UUID"));
 }
+
+#[test]
+fn share_links_open_the_join_prompt_instead_of_the_browser() {
+    let web = "https://drive.iris.to/#/share-join/eyJ2IjoxLCJzaGFyZV9pZCI6IjExMTExMTExLTExMTEtNDExMS04MTExLTExMTExMTExMTExMSIsIm93bmVyX3Byb2ZpbGVfaWQiOiIyMjIyMjIyMi0yMjIyLTQyMjItODIyMi0yMjIyMjIyMjIyMjIiLCJhZG1pbiI6ImFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWEiLCJuYW1lIjoiVHJpcCBwaG90b3MiLCJyb2xlIjoicmVhZGVyIiwia2V5IjoiMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMTAxMDEwMSJ9";
+    let join = classify_link_input(web);
+    assert_eq!(join.kind, "share_join");
+    assert!(join.is_valid);
+    assert_eq!(join.share_display_name, "Trip photos");
+    let native = classify_link_input(&web.replace("https://drive.iris.to/#", "iris-drive:/"));
+    assert_eq!(native.kind, "share_join");
+
+    let broken = classify_link_input("https://drive.iris.to/#/share-join/nope");
+    assert_eq!(broken.kind, "share_join");
+    assert!(!broken.is_valid);
+
+    let invite = classify_link_input("https://drive.iris.to/#/share-invite/nhash1abc");
+    assert_eq!(invite.kind, "share_invite");
+}

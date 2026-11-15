@@ -164,6 +164,14 @@ pub enum NativeAppAction {
     RepairShareWraps {
         share_id: String,
     },
+    /// Make (or reuse) the link that lets anyone ask to join with `role`.
+    CreateShareJoinLink {
+        share_id: String,
+        role: String,
+    },
+    DisableShareJoinLinks {
+        share_id: String,
+    },
     ImportFile {
         display_name: String,
         source_path: String,

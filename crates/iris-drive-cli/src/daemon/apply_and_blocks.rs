@@ -112,6 +112,9 @@ pub(crate) async fn apply_one_event(
     daemon_tasks: &DaemonTaskSet,
 ) -> Result<EventApplyOutcome> {
     use iris_drive_core::relay_sync;
+    if let Some(outcome) = apply_share_join_relay_event(client, config_dir, event, daemon_tasks).await? {
+        return Ok(outcome);
+    }
     let event_received_at = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |duration| duration.as_millis());

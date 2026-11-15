@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+- Share folders by link from every app. Anyone who opens a drive.iris.to share
+  link can join from a browser without installing anything, or from the app's
+  Join field. The sharer's Drive lets them in. Links made in Iris Drive web
+  work in the apps, and links made in the apps work on the web.
+- Open drive.iris.to share links in the app on iPhone and Mac, with the choice
+  to open them in the browser instead. Other drive.iris.to pages the Mac app
+  cannot show open in the browser.
+- Folders shared or joined while Drive is running now sync without a restart.
+- Photo backup on iPhone shows its progress and when the last full backup
+  finished, and says how to back up when it is waiting for Wi-Fi.
+
 ## 0.1.40 - 2026-11-15
 
 - Add optional photo and video backup to My Drive on iOS and Android. Back up

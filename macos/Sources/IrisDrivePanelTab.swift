@@ -52,7 +52,7 @@ enum IrisDrivePanelTab: String, CaseIterable, Identifiable {
         case "mirrors": return .mirrors
         case "device", "devices", "peers":
             return .peers
-        case "share", "shares":
+        case "share", "shares", "share-link":
             return .shares
         case "backup", "backups", "file-server", "file-servers", "server", "servers":
             return .backup

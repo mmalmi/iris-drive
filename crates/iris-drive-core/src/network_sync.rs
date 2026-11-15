@@ -372,6 +372,10 @@ async fn sync_once_inner(
         config.save(config_path_in(config_dir))?;
     }
     drop(mutation);
+    crate::share_join::sync_share_joins_once(config_dir, &client, timeout)
+        .await
+        .context("syncing share links")?;
+    config = reload_sync_config(config_dir, &initial_state)?;
     let share_ids = config
         .shared_folders
         .iter()

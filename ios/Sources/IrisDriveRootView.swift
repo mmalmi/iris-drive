@@ -1281,7 +1281,7 @@ private struct SharesView: View {
     var body: some View {
         Form {
             Section("Create Shared Folder") {
-                TextField("Folder path", text: $model.shareSourceInput)
+                TextField("Folder in My Drive, e.g. Photos/Trip", text: $model.shareSourceInput)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .onSubmit { model.createShare() }
@@ -1295,8 +1295,9 @@ private struct SharesView: View {
                 .accessibilityIdentifier("createShareButton")
             }
 
-            Section("Accept Invite") {
-                TextField("Share invite", text: $model.shareInviteInput)
+            Section("Join Shared Folder") {
+                PendingShareJoinRows(joins: model.pendingShareJoins)
+                TextField("Paste a share link", text: $model.shareInviteInput)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .onSubmit { model.acceptShareInvite() }
@@ -1304,26 +1305,10 @@ private struct SharesView: View {
                 Button {
                     model.acceptShareInvite()
                 } label: {
-                    Label("Accept invite", systemImage: "tray.and.arrow.down.fill")
+                    Label("Join", systemImage: "tray.and.arrow.down.fill")
                 }
                 .disabled(model.shareInviteInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 .accessibilityIdentifier("acceptShareInviteButton")
-                Button {
-                    model.copyLastShareInvite()
-                } label: {
-                    Label("Copy last invite", systemImage: "doc.on.doc")
-                }
-                .disabled(model.lastShareInvite.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-            }
-
-            Section("Share Identity") {
-                Button {
-                    model.copyShareRecipientEvidence()
-                } label: {
-                    Label("Copy my share identity", systemImage: "person.crop.circle.badge.checkmark")
-                }
-                .disabled(!model.hasLocalProfile)
-                .accessibilityIdentifier("copyShareIdentityButton")
             }
 
             Section("Shared Folders") {
@@ -1372,7 +1357,7 @@ private struct ShareRow: View {
                     Button {
                         showingInvite = true
                     } label: {
-                        Label("Invite", systemImage: "person.badge.plus")
+                        Label("Share", systemImage: "link")
                     }
                 }
                 if share.repairNeeded || !share.missingKeyWraps.isEmpty {
@@ -1434,13 +1419,7 @@ private struct ShareRow: View {
             }
         }
         .sheet(isPresented: $showingInvite) {
-            InviteShareMemberSheet(
-                model: model,
-                share: share,
-                profileId: model.shareRecipientProfileId,
-                representativeNpubHint: model.shareRecipientNpubHint,
-                displayName: model.shareRecipientDisplayName
-            )
+            ShareLinkSheet(model: model, share: share)
         }
         .alert(
             "Revoke access?",
@@ -1472,117 +1451,6 @@ private struct ShareRow: View {
         } message: {
             Text("Delete \(shareDisplayName(share)) from this device? Folder contents stay in My Drive.")
         }
-    }
-}
-
-private struct InviteShareMemberSheet: View {
-    @ObservedObject var model: IrisDriveMobileModel
-    let share: IrisDriveShare
-    @Environment(\.dismiss) private var dismiss
-    @State private var evidenceJson = ""
-    @State private var profileId = ""
-    @State private var appKey = ""
-    @State private var role = "reader"
-    @State private var representativeNpubHint = ""
-    @State private var displayName = ""
-    @State private var label = ""
-
-    init(
-        model: IrisDriveMobileModel,
-        share: IrisDriveShare,
-        profileId: String = "",
-        representativeNpubHint: String = "",
-        displayName: String = ""
-    ) {
-        self.model = model
-        self.share = share
-        _profileId = State(initialValue: profileId)
-        _representativeNpubHint = State(initialValue: representativeNpubHint)
-        _displayName = State(initialValue: displayName)
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section("Recipient") {
-                    TextEditor(text: $evidenceJson)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(minHeight: 120)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                }
-                Section("Advanced Device") {
-                    TextField("Member profile UUID", text: $profileId)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    TextField("Recipient device ID", text: $appKey)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    Picker("Role", selection: $role) {
-                        Text("Reader").tag("reader")
-                        Text("Editor").tag("editor")
-                        Text("Admin").tag("admin")
-                    }
-                }
-                Section("Contact") {
-                    TextField("User ID", text: $representativeNpubHint)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                    TextField("Name", text: $displayName)
-                    TextField("Device label", text: $label)
-                }
-            }
-            .navigationTitle("Invite")
-            .toolbar {
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Invite") {
-                        if evidenceJson.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            if profileId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
-                               appKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                                model.recordPendingShareInvite(
-                                    shareId: share.shareId,
-                                    representativeNpubHint: representativeNpubHint,
-                                    role: role,
-                                    displayName: displayName
-                                )
-                            } else {
-                                model.inviteShareMember(
-                                    shareId: share.shareId,
-                                    profileId: profileId,
-                                    appKey: appKey,
-                                    role: role,
-                                    representativeNpubHint: representativeNpubHint,
-                                    displayName: displayName,
-                                    label: label
-                                )
-                            }
-                        } else {
-                            model.inviteShareMemberFromEvidence(
-                                shareId: share.shareId,
-                                evidenceJson: evidenceJson,
-                                role: role,
-                                displayName: displayName
-                            )
-                        }
-                        dismiss()
-                    }
-                    .disabled(!canSubmitInvite)
-                }
-            }
-        }
-    }
-
-    private var canSubmitInvite: Bool {
-        if !evidenceJson.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return true
-        }
-        let profilePresent = !profileId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let appKeyPresent = !appKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        let npubPresent = !representativeNpubHint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        return (profilePresent && appKeyPresent) || (!profilePresent && !appKeyPresent && npubPresent)
     }
 }
 

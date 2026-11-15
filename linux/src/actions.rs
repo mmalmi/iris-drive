@@ -161,14 +161,19 @@ fn normalized_share_source_input(source_path: &str) -> String {
 pub(crate) fn accept_share_invite(model: &AppRef) {
     let invite = model.ui.share_invite_entry.text().trim().to_string();
     if invite.is_empty() {
-        model.ui.notice.set_text("Share invite is required");
+        model.ui.notice.set_text("Paste a share link");
         return;
     }
 
+    let asks_to_join = invite.contains("/share-join/");
     match dispatch_desktop_action(NativeAppAction::AcceptShareInvite { invite }) {
         Ok(_) => {
             model.ui.share_invite_entry.set_text("");
-            model.ui.notice.set_text("Share accepted");
+            model.ui.notice.set_text(if asks_to_join {
+                "Asked to join. It appears in Shares once you're let in."
+            } else {
+                "Joined"
+            });
             refresh(model);
         }
         Err(error) => model.ui.notice.set_text(&error),
@@ -201,6 +206,8 @@ pub(crate) fn copy_share_identity(model: &AppRef) {
     }
 }
 
+/// Share by link: anyone who opens it can ask to join, and this computer
+/// lets them in while Iris Drive runs. No app is needed to open the link.
 pub(crate) fn show_invite_share_member_dialog(
     model: &AppRef,
     share_id: String,
@@ -208,9 +215,9 @@ pub(crate) fn show_invite_share_member_dialog(
 ) {
     let dialog = gtk::Window::builder()
         .application(&model.application)
-        .title("Invite to share")
+        .title("Share")
         .modal(true)
-        .default_width(460)
+        .default_width(420)
         .build();
     if let Some(parent) = model.application.active_window() {
         dialog.set_transient_for(Some(&parent));
@@ -222,124 +229,69 @@ pub(crate) fn show_invite_share_member_dialog(
     body.set_margin_start(18);
     body.set_margin_end(18);
 
-    let title = gtk::Label::new(Some(&format!("Invite to {share_name}")));
+    let title = gtk::Label::new(Some(&format!("Share “{share_name}”")));
     title.add_css_class("title-2");
     title.set_xalign(0.0);
     body.append(&title);
 
-    let evidence_label = gtk::Label::new(Some("Recipient evidence JSON"));
-    evidence_label.set_xalign(0.0);
-    evidence_label.add_css_class("iris-muted");
-    let evidence = gtk::TextView::new();
-    evidence.set_monospace(true);
-    evidence.set_wrap_mode(gtk::WrapMode::WordChar);
-    evidence.set_size_request(-1, 112);
-    body.append(&evidence_label);
-    body.append(&evidence);
-
-    let profile_id = setup_entry("NostrIdentity UUID");
-    let app_key = setup_entry("Recipient device ID");
-    let npub_hint = setup_entry("User ID");
-    let display_name = setup_entry("Name");
-    let label = setup_entry("Device label");
-    body.append(&profile_id);
-    body.append(&app_key);
-    body.append(&npub_hint);
-    body.append(&display_name);
-    body.append(&label);
-
-    let role = gtk::DropDown::from_strings(&["reader", "editor", "admin"]);
+    let role_label = gtk::Label::new(Some("People with the link can"));
+    role_label.set_xalign(0.0);
+    let role = gtk::DropDown::from_strings(&["View", "Edit"]);
     role.set_selected(0);
+    body.append(&role_label);
     body.append(&role);
+
+    let hint = gtk::Label::new(Some(
+        "Anyone with this link can join. This computer lets them in while Iris Drive is running. They don't need the app — the link opens in a browser.",
+    ));
+    hint.set_wrap(true);
+    hint.set_xalign(0.0);
+    hint.add_css_class("iris-muted");
+    body.append(&hint);
 
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     buttons.set_halign(gtk::Align::End);
-    let cancel = pill_button("Cancel");
-    let invite = primary_button("Invite");
-    buttons.append(&cancel);
-    buttons.append(&invite);
+    let disable = pill_button("Turn off links");
+    let done = pill_button("Done");
+    let copy = primary_button("Copy link");
+    buttons.append(&disable);
+    buttons.append(&done);
+    buttons.append(&copy);
     body.append(&buttons);
 
     {
         let dialog = dialog.clone();
-        cancel.connect_clicked(move |_| dialog.close());
+        done.connect_clicked(move |_| dialog.close());
     }
     {
         let model = Rc::clone(model);
         let dialog = dialog.clone();
         let share_id = share_id.clone();
-        invite.connect_clicked(move |_| {
-            let buffer = evidence.buffer();
-            let (start, end) = buffer.bounds();
-            let evidence_json = buffer.text(&start, &end, true).trim().to_string();
-            let role = match role.selected() {
-                1 => "editor",
-                2 => "admin",
-                _ => "reader",
+        disable.connect_clicked(move |_| {
+            match dispatch_desktop_action(NativeAppAction::DisableShareJoinLinks {
+                share_id: share_id.clone(),
+            }) {
+                Ok(_) => model
+                    .ui
+                    .notice
+                    .set_text("Links turned off. People already in keep access."),
+                Err(error) => model.ui.notice.set_text(&error),
             }
-            .to_string();
-            let result = if evidence_json.is_empty() {
-                let profile_id = profile_id.text().trim().to_string();
-                let app_key = app_key.text().trim().to_string();
-                let representative_npub_hint = npub_hint.text().trim().to_string();
-                let display_name = display_name.text().trim().to_string();
-                let label = label.text().trim().to_string();
-                if profile_id.is_empty() && app_key.is_empty() {
-                    if representative_npub_hint.is_empty() {
-                        model.ui.notice.set_text(
-                            "Recipient evidence, NostrIdentity/device ID, or User ID is required",
-                        );
-                        return;
-                    }
-                    if !label.is_empty() {
-                        model
-                            .ui
-                            .notice
-                            .set_text("Device label requires a concrete device ID");
-                        return;
-                    }
-                    dispatch_desktop_action(NativeAppAction::RecordPendingShareInvite {
-                        share_id: share_id.clone(),
-                        representative_npub_hint,
-                        role,
-                        display_name,
-                    })
-                } else {
-                    if profile_id.is_empty() || app_key.is_empty() {
-                        model
-                            .ui
-                            .notice
-                            .set_text("Both NostrIdentity UUID and device ID are required");
-                        return;
-                    }
-                    dispatch_desktop_action(NativeAppAction::InviteShareMember {
-                        share_id: share_id.clone(),
-                        profile_id,
-                        app_key,
-                        role,
-                        representative_npub_hint,
-                        display_name,
-                        label,
-                    })
+            dialog.close();
+        });
+    }
+    {
+        let model = Rc::clone(model);
+        copy.connect_clicked(move |_| {
+            let role = if role.selected() == 1 { "editor" } else { "reader" };
+            match dispatch_desktop_action(NativeAppAction::CreateShareJoinLink {
+                share_id: share_id.clone(),
+                role: role.to_string(),
+            }) {
+                Ok(state) if !state.ui.last_share_invite.is_empty() => {
+                    copy_text(&model, &state.ui.last_share_invite, "Link copied");
                 }
-            } else {
-                dispatch_desktop_action(NativeAppAction::InviteShareMemberFromEvidence {
-                    share_id: share_id.clone(),
-                    evidence_json,
-                    role,
-                    display_name: display_name.text().trim().to_string(),
-                })
-            };
-            match result {
-                Ok(state) => {
-                    if state.ui.last_share_invite.is_empty() {
-                        model.ui.notice.set_text("Share invite created");
-                    } else {
-                        copy_text(&model, &state.ui.last_share_invite, "Share invite copied");
-                    }
-                    refresh(&model);
-                    dialog.close();
-                }
+                Ok(_) => model.ui.notice.set_text("Link unavailable"),
                 Err(error) => model.ui.notice.set_text(&error),
             }
         });

@@ -230,53 +230,11 @@ class MainActivity : ComponentActivity() {
                 onCreateShare = { sourcePath, displayName ->
                     createShareFromProviderPath(sourcePath, displayName)
                 },
-                onInviteShareMember = { shareId, profileId, appKey, role, representativeNpubHint, displayName, label ->
-                    dispatch(
-                        NativeActions.inviteShareMember(
-                            shareId = shareId,
-                            profileId = profileId,
-                            appKey = appKey,
-                            role = role,
-                            representativeNpubHint = representativeNpubHint,
-                            displayName = displayName,
-                            label = label,
-                        ),
-                    ) { state ->
-                        if (state.lastShareInvite.isNotBlank()) {
-                            copyToClipboard("Share invite", state.lastShareInvite)
-                        }
-                    }
+                onCreateShareLink = { shareId, role ->
+                    dispatch(NativeActions.createShareJoinLink(shareId, role))
                 },
-                onInviteShareMemberFromEvidence = { shareId, evidenceJson, role, displayName ->
-                    dispatch(
-                        NativeActions.inviteShareMemberFromEvidence(
-                            shareId = shareId,
-                            evidenceJson = evidenceJson,
-                            role = role,
-                            displayName = displayName,
-                        ),
-                    ) { state ->
-                        if (state.lastShareInvite.isNotBlank()) {
-                            copyToClipboard("Share invite", state.lastShareInvite)
-                        }
-                    }
-                },
-                onExportShareRecipientEvidence = { displayName ->
-                    dispatch(NativeActions.exportShareRecipientEvidence(displayName)) { state ->
-                        if (state.lastShareRecipientEvidence.isNotBlank()) {
-                            copyToClipboard("Share identity", state.lastShareRecipientEvidence)
-                        }
-                    }
-                },
-                onRecordPendingShareInvite = { shareId, representativeNpubHint, role, displayName ->
-                    dispatch(
-                        NativeActions.recordPendingShareInvite(
-                            shareId = shareId,
-                            representativeNpubHint = representativeNpubHint,
-                            role = role,
-                            displayName = displayName,
-                        ),
-                    )
+                onDisableShareLinks = { shareId ->
+                    dispatch(NativeActions.disableShareJoinLinks(shareId))
                 },
                 onAcceptShareInvite = { invite ->
                     dispatch(NativeActions.acceptShareInvite(invite))
@@ -918,6 +876,16 @@ class MainActivity : ComponentActivity() {
 
                 "invite" -> {
                     dispatch(NativeActions.linkDevice(uri.toString(), defaultDeviceLabel()))
+                }
+
+                "share_join", "share_invite" -> {
+                    nextShareDialogRequestId += 1
+                    shareDialogFlow.value = ShareDialogRequest(
+                        id = nextShareDialogRequestId,
+                        sourcePath = "",
+                        displayName = classification.optString("share_display_name"),
+                        joinLink = uri.toString(),
+                    )
                 }
 
                 "iris_web" -> {

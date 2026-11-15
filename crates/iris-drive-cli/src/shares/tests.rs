@@ -744,6 +744,8 @@ fn shares_repair_json_hides_app_key_wrap_lists_without_diagnostics() {
         revoked_app_pubkeys: Vec::new(),
         repaired_key_wrap_pubkeys: vec![repaired_pubkey],
         remaining_missing_key_wrap_pubkeys: vec![missing_pubkey],
+        share_join_link: None,
+        pending_joins: Vec::new(),
     };
 
     let normal = share_repair_result_json(&result, share_id, false);

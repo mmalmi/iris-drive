@@ -34,6 +34,16 @@ pub struct UiState {
     pub caldav_url: String,
     pub last_share_invite: String,
     pub last_share_recipient_evidence: String,
+    /// Folders this device asked to join from a link, still waiting.
+    pub pending_share_joins: Vec<UiPendingShareJoin>,
+}
+
+#[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct UiPendingShareJoin {
+    pub share_id: String,
+    pub display_name: String,
+    pub role: String,
+    pub role_label: String,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

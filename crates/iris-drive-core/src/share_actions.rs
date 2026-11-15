@@ -1,4 +1,5 @@
 mod content;
+pub(crate) use content::publish_share_content;
 pub use content::{
     dispatch_share_action_with_content, dispatch_share_action_with_content_blocking,
 };
@@ -86,6 +87,19 @@ pub enum ShareAction {
     RepairShareWraps {
         share_id: NostrIdentityId,
     },
+    /// The link that lets anyone who opens it ask to join with `role`.
+    CreateShareJoinLink {
+        share_id: NostrIdentityId,
+        role: ShareRole,
+    },
+    /// Stop the folder's links from letting anyone else in.
+    DisableShareJoinLinks {
+        share_id: NostrIdentityId,
+    },
+    /// Ask to join a folder from its link.
+    JoinShareLink {
+        link: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -113,6 +127,37 @@ pub struct ShareActionResult {
     pub repaired_key_wrap_pubkeys: Vec<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub remaining_missing_key_wrap_pubkeys: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub share_join_link: Option<String>,
+    /// Folders this device asked to join and is waiting to be let into.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub pending_joins: Vec<PendingShareJoinView>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PendingShareJoinView {
+    pub share_id: NostrIdentityId,
+    pub display_name: String,
+    pub role: ShareRole,
+    pub requested_at: i64,
+}
+
+fn pending_join_views(config_dir: &Path, config: &AppConfig) -> Vec<PendingShareJoinView> {
+    crate::share_join::ShareJoinStore::load(config_dir)
+        .map(|store| {
+            store
+                .pending
+                .iter()
+                .filter(|pending| config.shared_folder(pending.link.share_id).is_none())
+                .map(|pending| PendingShareJoinView {
+                    share_id: pending.link.share_id,
+                    display_name: pending.link.display_name(),
+                    role: pending.link.role,
+                    requested_at: pending.requested_at,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -128,6 +173,22 @@ struct ShareActionMetadata {
     revoked_app_pubkeys: Vec<String>,
     repaired_key_wrap_pubkeys: Vec<String>,
     remaining_missing_key_wrap_pubkeys: Vec<String>,
+    share_join_link: Option<String>,
+}
+
+impl ShareAction {
+    /// A join link pasted where an invite goes is joined like any other link.
+    #[must_use]
+    pub fn normalized(self) -> Self {
+        match self {
+            Self::AcceptShareInvite { invite }
+                if crate::share_join::ShareJoinLink::is_link(&invite) =>
+            {
+                Self::JoinShareLink { link: invite }
+            }
+            action => action,
+        }
+    }
 }
 
 pub fn dispatch_share_action(
@@ -135,6 +196,7 @@ pub fn dispatch_share_action(
     action: ShareAction,
     now_seconds: i64,
 ) -> Result<ShareActionResult> {
+    let action = action.normalized();
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let metadata = apply_share_action(config_dir, &mut config, action, now_seconds)?;
     repair_missing_share_shortcuts(&mut config)?;
@@ -163,6 +225,8 @@ pub fn dispatch_share_action(
         revoked_app_pubkeys: metadata.revoked_app_pubkeys,
         repaired_key_wrap_pubkeys: metadata.repaired_key_wrap_pubkeys,
         remaining_missing_key_wrap_pubkeys: metadata.remaining_missing_key_wrap_pubkeys,
+        share_join_link: metadata.share_join_link,
+        pending_joins: pending_join_views(config_dir, &config),
     })
 }
 
@@ -196,6 +260,8 @@ pub fn share_action_state(config_dir: &Path) -> Result<ShareActionResult> {
         revoked_app_pubkeys: Vec::new(),
         repaired_key_wrap_pubkeys: Vec::new(),
         remaining_missing_key_wrap_pubkeys: Vec::new(),
+        share_join_link: None,
+        pending_joins: pending_join_views(config_dir, &config),
     })
 }
 
@@ -302,7 +368,59 @@ fn apply_share_action(
         ShareAction::RepairShareWraps { share_id } => {
             repair_share_wraps(config_dir, config, share_id, now_seconds)
         }
+        ShareAction::CreateShareJoinLink { share_id, role } => {
+            create_share_join_link(config_dir, config, share_id, role)
+        }
+        ShareAction::DisableShareJoinLinks { share_id } => {
+            let mut store = crate::share_join::ShareJoinStore::load(config_dir)?;
+            if store.disable_links(share_id) {
+                store.save(config_dir)?;
+            }
+            Ok(ShareActionMetadata {
+                share_id: Some(share_id),
+                ..ShareActionMetadata::default()
+            })
+        }
+        ShareAction::JoinShareLink { link } => {
+            let link = crate::share_join::ShareJoinLink::parse(&link)?;
+            let share_id = link.share_id;
+            crate::share_join::record_share_join(config_dir, config, link, now_seconds)?;
+            Ok(ShareActionMetadata {
+                share_id: Some(share_id),
+                ..ShareActionMetadata::default()
+            })
+        }
     }
+}
+
+fn create_share_join_link(
+    config_dir: &Path,
+    config: &AppConfig,
+    share_id: NostrIdentityId,
+    role: ShareRole,
+) -> Result<ShareActionMetadata> {
+    let admin = config
+        .profile
+        .as_ref()
+        .context("profile is required before sharing")?
+        .app_key_pubkey
+        .clone();
+    let folder = config.shared_folder(share_id).context("Share missing")?;
+    anyhow::ensure!(
+        crate::shared_folder_app_key_can_admin(folder, &admin),
+        "Only people who manage this folder can make links to it"
+    );
+    let mut store = crate::share_join::ShareJoinStore::load(config_dir)?;
+    let (link, created) = store.link_for(folder, &admin, role)?;
+    if created {
+        store.save(config_dir)?;
+    }
+    Ok(ShareActionMetadata {
+        share_id: Some(share_id),
+        role: Some(role),
+        share_join_link: Some(link.url()),
+        ..ShareActionMetadata::default()
+    })
 }
 
 fn revoke_share_member_action(
@@ -562,7 +680,7 @@ fn add_share_shortcut(
     })
 }
 
-fn ensure_default_share_shortcut(
+pub(crate) fn ensure_default_share_shortcut(
     config: &mut AppConfig,
     share_id: NostrIdentityId,
     display_name: &str,

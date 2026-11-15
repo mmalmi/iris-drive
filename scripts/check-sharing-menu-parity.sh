@@ -39,8 +39,8 @@ require_contains macos/Sources/IrisDriveControlPanel.swift "InviteShareMemberShe
 require_contains ios/Sources/IrisDriveRootView.swift "case shares"
 require_contains ios/Sources/IrisDriveRootView.swift "Label(\"Shares\""
 require_contains ios/Sources/IrisDriveRootView.swift "Section(\"Create Shared Folder\")"
-require_contains ios/Sources/IrisDriveRootView.swift "Section(\"Accept Invite\")"
-require_contains ios/Sources/IrisDriveRootView.swift "InviteShareMemberSheet"
+require_contains ios/Sources/IrisDriveRootView.swift "Section(\"Join Shared Folder\")"
+require_contains ios/Sources/IrisDriveRootView.swift "ShareLinkSheet"
 
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "Shares(\"Shares\", \"tabShares\", R.drawable.ic_shares)"
 require_contains android/app/src/main/java/to/iris/drive/app/IrisDriveAndroidApp.kt "MainTab.values().forEach"
@@ -53,7 +53,7 @@ require_contains android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAnd
 require_contains linux/src/ui.rs 'stack.add_titled(&shares_page, Some("shares"), "Shares")'
 require_contains linux/src/ui.rs '("shares", "emblem-shared-symbolic", "Shares")'
 require_contains linux/src/ui.rs "Create shared folder"
-require_contains linux/src/ui.rs "Accept share invite"
+require_contains linux/src/ui.rs "Join with a share link"
 require_contains linux/src/actions.rs "show_invite_share_member_dialog"
 
 require_contains windows/MainWindow.xaml "NavSharesButton"

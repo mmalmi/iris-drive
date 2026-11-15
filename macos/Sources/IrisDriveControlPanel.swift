@@ -45,9 +45,6 @@ struct IrisDriveControlPanel: View {
     @State private var backupURLInput = ""
     @State private var shareSourceInput = ""
     @State private var shareInviteInput = ""
-    @State private var shareRecipientNpubHint = ""
-    @State private var shareRecipientDisplayName = ""
-    @State private var shareRecipientProfileId = ""
     @State private var editingRelayURL: String?
     @State private var editingRelayDraft = ""
     @State private var setupMode = IrisDriveSetupMode.welcome
@@ -75,7 +72,6 @@ struct IrisDriveControlPanel: View {
     @State private var showAddRecoveryKey = false
     @State private var inviteShare: IrisDriveShareStatus?
     @State private var deleteShare: IrisDriveShareStatus?
-    @State private var showMyNpub = false
     @State private var revokeShareMember: ShareMemberRevokeTarget?
     @State private var checkingAllBackups = false
     @State private var checkedBackupCount = 0
@@ -100,6 +96,9 @@ struct IrisDriveControlPanel: View {
                 controller.ensureFileProviderDomainIfProfileExists()
             }
             applyPendingShareDialog()
+            if IrisDriveScreenshotFixtures.enabled, IrisDriveScreenshotFixtures.tabArgument == "share-link" {
+                inviteShare = status.shares.first
+            }
         }
         .onChange(of: status.stateLoaded) { _, loaded in
             if loaded {
@@ -108,6 +107,9 @@ struct IrisDriveControlPanel: View {
         }
         .onChange(of: status.pendingShareDialog?.id) { _, _ in
             applyPendingShareDialog()
+        }
+        .onChange(of: status.pendingJoinLink?.id, initial: true) { _, id in
+            if id != nil { selectedTab = .shares }
         }
         .onChange(of: status.pendingDeviceApproval?.id, initial: true) { _, _ in applyPendingDeviceApproval() }
         .onChange(of: status.pendingBackupInvite, initial: true) { _, invite in
@@ -1215,34 +1217,23 @@ struct IrisDriveControlPanel: View {
         guard let request = status.pendingShareDialog else { return }
         selectedTab = .shares
         shareSourceInput = request.sourcePath
-        shareRecipientNpubHint = request.recipientNpubHint
-        shareRecipientDisplayName = request.recipientDisplayName
-        shareRecipientProfileId = request.recipientProfileId
     }
 
     private var shares: some View {
         VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                SectionTitle("Shares")
-                Spacer()
-                if myShareNpub != nil {
-                    Button {
-                        showMyNpub = true
-                    } label: {
-                        Label("My User ID", systemImage: "qrcode")
-                    }
-                }
-            }
+            SectionTitle("Shares")
 
             VStack(alignment: .leading, spacing: 10) {
                 Text("Create Shared Folder")
                     .font(.headline)
-                TextField("Folder path", text: $shareSourceInput)
+                TextField("Folder in My Drive, e.g. Projects/Trip", text: $shareSourceInput)
                     .textFieldStyle(.roundedBorder)
                     .disableAutocorrection(true)
                 Button {
-                    controller.createShare(sourcePath: shareSourceInput) {
+                    let source = shareSourceInput.trimmingCharacters(in: .whitespacesAndNewlines)
+                    controller.createShare(sourcePath: source) {
                         shareSourceInput = ""
+                        inviteShare = status.shares.first { $0.sourcePath == source && $0.canAdmin }
                     }
                 } label: {
                     Label("Create Shared Folder", systemImage: "plus")
@@ -1254,7 +1245,7 @@ struct IrisDriveControlPanel: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Join Shared Folder")
                     .font(.headline)
-                TextField("Paste invite link", text: $shareInviteInput)
+                TextField("Paste a share link", text: $shareInviteInput)
                     .textFieldStyle(.roundedBorder)
                     .disableAutocorrection(true)
                 HStack(spacing: 8) {
@@ -1263,7 +1254,7 @@ struct IrisDriveControlPanel: View {
                             .string(forType: .string)?
                             .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                     } label: {
-                        Label("Paste Invite", systemImage: "doc.on.clipboard")
+                        Label("Paste", systemImage: "doc.on.clipboard")
                     }
                     Button {
                         scanQRCodeFromImage { code in
@@ -1274,7 +1265,7 @@ struct IrisDriveControlPanel: View {
                     }
                     Spacer()
                     Button {
-                        controller.acceptShareInvite(shareInviteInput)
+                        controller.joinSharedFolder(shareInviteInput)
                         shareInviteInput = ""
                     } label: {
                         Label("Join", systemImage: "tray.and.arrow.down.fill")
@@ -1284,8 +1275,11 @@ struct IrisDriveControlPanel: View {
                 }
             }
 
+            PendingShareJoinRows(joins: status.pendingShareJoins)
             if status.shares.isEmpty {
-                emptyState("No shared folders")
+                if status.pendingShareJoins.isEmpty {
+                    emptyState("No shared folders")
+                }
             } else {
                 ForEach(status.shares) { share in
                     ShareStatusRow(
@@ -1312,17 +1306,27 @@ struct IrisDriveControlPanel: View {
             }
         }
         .sheet(item: $inviteShare) { share in
-            InviteShareMemberSheet(
-                controller: controller,
-                status: status,
-                share: share,
-                profileId: shareRecipientProfileId,
-                representativeNpubHint: shareRecipientNpubHint,
-                displayName: shareRecipientDisplayName
-            )
+            InviteShareMemberSheet(controller: controller, status: status, share: share)
         }
-        .sheet(isPresented: $showMyNpub) {
-            MyShareNpubSheet(npub: myShareNpub ?? "")
+        .alert(
+            "Join “\(status.pendingJoinLink?.displayName ?? "")”?",
+            isPresented: Binding(
+                get: { status.pendingJoinLink != nil },
+                set: { if !$0 { status.pendingJoinLink = nil } }
+            ),
+            presenting: status.pendingJoinLink
+        ) { request in
+            Button("Join") {
+                controller.joinSharedFolder(request.link)
+                status.pendingJoinLink = nil
+            }
+            Button("Open in Browser") {
+                if let url = URL(string: request.link) { controller.openInWebBrowser(url) }
+                status.pendingJoinLink = nil
+            }
+            Button("Cancel", role: .cancel) { status.pendingJoinLink = nil }
+        } message: { _ in
+            Text("It's added to My Drive once someone who manages it lets you in.")
         }
         .alert(
             "Delete share?",
@@ -1374,12 +1378,6 @@ struct IrisDriveControlPanel: View {
         } message: { target in
             Text("Revoke \(shareMemberDisplayName(target.member)) from \(shareDisplayName(target.share))?")
         }
-    }
-
-    private var myShareNpub: String? {
-        let value = (status.currentAppKeyNpub ?? status.deviceNpub ?? "")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        return value.isEmpty ? nil : value
     }
 
     private var checkingAllBackupsLabel: String {
@@ -2098,7 +2096,7 @@ private struct ShareStatusRow: View {
                     Button {
                         onInvite()
                     } label: {
-                        Label("Invite", systemImage: "person.badge.plus")
+                        Label("Share", systemImage: "link")
                     }
                 }
                 if share.repairNeeded || !share.missingKeyWraps.isEmpty {
@@ -2117,7 +2115,7 @@ private struct ShareStatusRow: View {
             ForEach(share.members) { member in
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(shareMemberDisplayName(member))
+                        Text(member.profileId == localProfileId ? "You" : shareMemberDisplayName(member))
                         Text(shareMemberSummary(member))
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -2147,145 +2145,6 @@ private struct ShareStatusRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(nsColor: .textBackgroundColor))
         .clipShape(RoundedRectangle(cornerRadius: 8))
-    }
-}
-
-private struct InviteShareMemberSheet: View {
-    let controller: AppDelegate
-    @ObservedObject var status: IrisDriveStatus
-    let share: IrisDriveShareStatus
-    @Environment(\.dismiss) private var dismiss
-    @State private var role = "reader"
-    @State private var representativeNpubHint = ""
-    @State private var displayName = ""
-    @State private var showManualInvite = false
-
-    init(
-        controller: AppDelegate,
-        status: IrisDriveStatus,
-        share: IrisDriveShareStatus,
-        profileId: String = "",
-        representativeNpubHint: String = "",
-        displayName: String = ""
-    ) {
-        self.controller = controller
-        self.status = status
-        self.share = share
-        _representativeNpubHint = State(initialValue: representativeNpubHint)
-        _displayName = State(initialValue: displayName)
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Invite to \(shareDisplayName(share))")
-                .font(.title3.weight(.semibold))
-            if !viewLink.isEmpty {
-                Text("Anyone with link")
-                    .font(.headline)
-                IrisDriveQRCodeView(value: viewLink)
-                    .frame(width: 200, height: 200)
-                    .frame(maxWidth: .infinity, alignment: .center)
-                IrisDriveCopyButton(title: "Copy view link", systemImage: "link") {
-                    irisDriveCopyToPasteboard(viewLink, feedback: "View link copied")
-                }
-            }
-            Divider()
-            Button {
-                showManualInvite.toggle()
-            } label: {
-                Label("Invite specific user", systemImage: "person.badge.plus")
-            }
-            .buttonStyle(.bordered)
-            if showManualInvite {
-                TextField("Paste their User ID", text: $representativeNpubHint)
-                    .textFieldStyle(.roundedBorder)
-                    .disableAutocorrection(true)
-                HStack(spacing: 8) {
-                    Button {
-                        representativeNpubHint = NSPasteboard.general
-                            .string(forType: .string)?
-                            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                    } label: {
-                        Label("Paste User ID", systemImage: "doc.on.clipboard")
-                    }
-                    Button {
-                        scanQRCodeFromImage { code in
-                            representativeNpubHint = code
-                        }
-                    } label: {
-                        Label("Scan QR", systemImage: "qrcode.viewfinder")
-                    }
-                }
-                TextField("Display name (optional)", text: $displayName)
-                    .textFieldStyle(.roundedBorder)
-                Picker("Access", selection: $role) {
-                    Text("View").tag("reader")
-                    Text("Edit").tag("editor")
-                    Text("Manage").tag("admin")
-                }
-                .pickerStyle(.segmented)
-            }
-            HStack {
-                Spacer()
-                Button("Cancel") {
-                    dismiss()
-                }
-                Button(showManualInvite ? "Add User" : "Done") {
-                    if showManualInvite {
-                        controller.recordPendingShareInvite(
-                            shareId: share.shareId,
-                            representativeNpubHint: representativeNpubHint,
-                            role: role,
-                            displayName: displayName
-                        )
-                    }
-                    dismiss()
-                }
-                .buttonStyle(.borderedProminent)
-                .disabled(showManualInvite && !canSubmitInvite)
-            }
-        }
-        .padding(20)
-        .frame(width: 420)
-    }
-
-    private var viewLink: String {
-        shareDriveLink(share, status: status) ?? ""
-    }
-
-    private var canSubmitInvite: Bool {
-        !representativeNpubHint.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-}
-
-private struct MyShareNpubSheet: View {
-    let npub: String
-    @Environment(\.dismiss) private var dismiss
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text("My User ID")
-                .font(.title3.weight(.semibold))
-            IrisDriveQRCodeView(value: npub)
-                .frame(width: 220, height: 220)
-                .frame(maxWidth: .infinity, alignment: .center)
-            Text(npub)
-                .font(.system(.caption, design: .monospaced))
-                .textSelection(.enabled)
-                .lineLimit(4)
-            HStack {
-                Spacer()
-                IrisDriveCopyButton(title: "Copy", systemImage: "doc.on.doc") {
-                    irisDriveCopyToPasteboard(npub, feedback: "User ID copied")
-                }
-                Button("Done") {
-                    dismiss()
-                }
-                .buttonStyle(.borderedProminent)
-            }
-        }
-        .padding(20)
-        .frame(width: 420)
     }
 }
 
@@ -2367,15 +2226,9 @@ private func shareMemberDisplayName(_ member: IrisDriveShareMemberStatus) -> Str
 }
 
 private func shareMemberSummary(_ member: IrisDriveShareMemberStatus) -> String {
-    [
-        member.roleLabel.isEmpty ? member.role : member.roleLabel,
-        member.statusLabel.isEmpty ? member.status : member.statusLabel,
-        shortValue(
-            member.representativeNpubHint.isEmpty
-                ? member.profileId
-                : member.representativeNpubHint
-        ),
-    ].joined(separator: " | ")
+    let role = member.roleLabel.isEmpty ? member.role : member.roleLabel
+    let status = member.statusLabel.isEmpty ? member.status : member.statusLabel
+    return member.status == "active" ? role : "\(role) · \(status)"
 }
 
 private func pendingShareInviteDisplayName(_ invite: IrisDrivePendingShareInviteStatus) -> String {

@@ -81,6 +81,22 @@ enum IrisDriveScreenshotFixtures {
             "https://blossom.primal.net",
             "https://cdn.satellite.earth",
         ]
+        status.shares = [
+            IrisDriveShareStatus(json: [
+                "share_id": "11111111-1111-4111-8111-111111111111", "display_name": "Trip photos",
+                "source_path": "Photos/Trip", "role": "admin", "role_label": "Admin", "can_admin": true,
+                "can_write": true, "participant_count": 3,
+                "members": [
+                    ["profile_id": "a", "display_name": "You", "role": "admin", "role_label": "Admin", "status": "active", "status_label": "Active"],
+                    ["profile_id": "b", "display_name": "Alice", "role": "editor", "role_label": "Editor", "status": "active", "status_label": "Active"],
+                    ["profile_id": "c", "display_name": "Sam", "role": "reader", "role_label": "Reader", "status": "active", "status_label": "Active"],
+                ],
+            ])
+        ]
+        status.profileId = "a"
+        status.pendingShareJoins = [
+            IrisDrivePendingShareJoin(json: ["share_id": "2", "display_name": "Book club", "role_label": "Reader"])
+        ]
         status.backupTargets = [
             IrisDriveBackupTarget(json: [
                 "id": "home-server",

@@ -252,10 +252,10 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     shares_page.append(&share_create_controls);
 
     let share_accept_controls = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-    let share_invite_entry = setup_entry("Share invite");
+    let share_invite_entry = setup_entry("Paste a share link");
     share_invite_entry.set_hexpand(true);
     let accept_share_invite_button =
-        action_button("mail-mark-read-symbolic", "Accept", "Accept share invite");
+        action_button("mail-mark-read-symbolic", "Join", "Join with a share link");
     share_accept_controls.append(&share_invite_entry);
     share_accept_controls.append(&accept_share_invite_button);
     shares_page.append(&share_accept_controls);
@@ -267,22 +267,13 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     last_invite_grid.set_hexpand(true);
     let last_share_invite = value_label();
     let copy_last_share_invite_button = icon_button("edit-copy-symbolic", "Copy invite");
-    let share_identity_placeholder = value_label();
-    share_identity_placeholder.set_text("Signed NostrIdentity proof");
     let copy_share_identity_button = icon_button("edit-copy-symbolic", "Copy my share identity");
     add_copy_field(
         &last_invite_grid,
         0,
-        "Last invite",
+        "Last link",
         &last_share_invite,
         &copy_last_share_invite_button,
-    );
-    add_copy_field(
-        &last_invite_grid,
-        1,
-        "My share identity",
-        &share_identity_placeholder,
-        &copy_share_identity_button,
     );
     shares_page.append(&last_invite_grid);
 

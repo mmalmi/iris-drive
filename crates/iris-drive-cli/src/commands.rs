@@ -367,10 +367,21 @@ pub(crate) enum SharesCmd {
         #[arg(long)]
         label: Option<String>,
     },
-    /// Accept/import a share invite bundle.
+    /// Accept an invite, or ask to join with a share link.
     Accept {
-        /// Invite URL or base64url bundle.
+        /// Invite or share link (drive.iris.to or iris-drive://).
         invite: String,
+    },
+    /// Print the link anyone can open to ask to join; this device lets them in.
+    Link {
+        /// Share UUID.
+        share_id: String,
+        /// Access for people who join with the link: reader or editor.
+        #[arg(long, default_value = "reader")]
+        role: String,
+        /// Stop the share's links from letting anyone else in.
+        #[arg(long)]
+        disable: bool,
     },
     /// Revoke one `NostrIdentity` member from a share and rotate the share key.
     Revoke {

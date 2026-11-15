@@ -1044,7 +1044,7 @@ pub async fn publish_files_root(
     Ok(*output.id())
 }
 
-async fn fetch_events(
+pub(crate) async fn fetch_events(
     client: &Client,
     filters: Vec<Filter>,
     timeout: Duration,

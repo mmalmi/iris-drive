@@ -223,6 +223,12 @@ pub(crate) fn render_backups(model: &AppRef, state: &NativeAppState) {
 pub(crate) fn render_shares(model: &AppRef, state: &NativeAppState) {
     let list = &model.ui.shares;
     clear_list(list);
+    for join in &state.ui.pending_share_joins {
+        list.append(&simple_row(
+            &format!("Waiting to join “{}”", join.display_name),
+            "You get access when someone who manages it has Iris Drive open.",
+        ));
+    }
     for share in &state.ui.shares {
         list.append(&share_row(model, state, share));
     }
@@ -311,7 +317,7 @@ fn share_row(
     }
 
     if share.can_admin {
-        let invite = icon_button("list-add-symbolic", "Invite member");
+        let invite = icon_button("emblem-shared-symbolic", "Share by link");
         let model = Rc::clone(model);
         let share_id = share.share_id.clone();
         let display_name = share.display_name.clone();

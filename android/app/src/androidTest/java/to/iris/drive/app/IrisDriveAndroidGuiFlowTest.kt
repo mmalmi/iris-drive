@@ -38,6 +38,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.json.JSONObject
 import to.iris.drive.app.core.AppState
+import to.iris.drive.app.core.PendingShareJoinState
 import to.iris.drive.app.core.BackupState
 import to.iris.drive.app.core.NativeActions
 import to.iris.drive.app.core.NativeCore
@@ -252,9 +253,8 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     @Test
-    fun shareInviteDialogDispatchesRecipientEvidence() {
-        val evidenceInvites = mutableListOf<List<String>>()
-        var directInviteCount = 0
+    fun shareDialogMakesAViewLinkAndAnEditLink() {
+        val requested = mutableListOf<Pair<String, String>>()
         val share = ShareState(
             shareId = "123e4567-e89b-42d3-a456-426614174000",
             displayName = "Alpha",
@@ -285,116 +285,43 @@ class IrisDriveAndroidGuiFlowTest {
                 shares = listOf(share),
                 setupState = "authorized",
                 isSetupComplete = true,
+                lastShareInvite = "https://drive.iris.to/#/share-join/demo",
             ),
-            onInviteShareMember = { _, _, _, _, _, _, _ -> directInviteCount += 1 },
-            onInviteShareMemberFromEvidence = { shareId, evidenceJson, role, displayName ->
-                evidenceInvites += listOf(shareId, evidenceJson, role, displayName)
-            },
+            onCreateShareLink = { shareId, role -> requested += shareId to role },
         )
 
         compose.onNodeWithTag("tabShares").activate()
-        compose.onNodeWithText("My Drive/Alpha", substring = true).assertIsDisplayed()
-        compose.onNodeWithText("Invite").performScrollTo().assertIsDisplayed().activate()
-        compose.onNodeWithText("Recipient identity evidence").assertIsDisplayed()
-        compose.onNodeWithText("Member profile UUID").assertIsDisplayed()
-        compose.onNodeWithText("Recipient device ID").assertIsDisplayed()
-        compose.onNodeWithText("Device label").assertIsDisplayed()
-        compose.onNodeWithTag("shareRecipientEvidenceInput")
-            .performTextInput("""{"profile_id":"profile-1"}""")
-        compose.onNodeWithTag("shareInviteConfirm").assertIsEnabled().activate()
+        compose.onNodeWithText("Share").performScrollTo().assertIsDisplayed().activate()
+        compose.waitUntil(5_000) { requested.isNotEmpty() }
+        compose.onNodeWithTag("shareLinkCopy").assertIsEnabled()
+        compose.onNodeWithTag("shareLinkRole_editor").activate()
+        compose.waitUntil(5_000) { requested.size == 2 }
 
-        assertEquals(0, directInviteCount)
-        assertEquals(
-            listOf(
-                listOf(
-                    share.shareId,
-                    """{"profile_id":"profile-1"}""",
-                    "reader",
-                    "",
-                ),
-            ),
-            evidenceInvites,
-        )
+        assertEquals(listOf(share.shareId to "reader", share.shareId to "editor"), requested)
     }
 
     @Test
-    fun sharesPanelExportsRecipientEvidenceFromAppCore() {
-        val exportedDisplayNames = mutableListOf<String>()
+    fun openedJoinLinkIsReadyToJoinAndWaitingJoinsAreShown() {
+        val joined = mutableListOf<String>()
+        val link = "https://drive.iris.to/#/share-join/demo"
 
         render(
             state = AppState(
                 profile = profileState(),
                 setupState = "authorized",
                 isSetupComplete = true,
+                pendingShareJoins = listOf(PendingShareJoinState("1", "Book club", "Reader")),
             ),
-            onExportShareRecipientEvidence = { displayName ->
-                exportedDisplayNames += displayName
-            },
+            shareDialogRequest = ShareDialogRequest(id = 1, sourcePath = "", displayName = "Trip", joinLink = link),
+            onAcceptShareInvite = { joined += it },
         )
 
-        compose.onNodeWithTag("tabShares").activate()
-        compose.onNodeWithTag("copyShareIdentityButton")
-            .performScrollTo()
-            .assertIsEnabled()
-            .activate()
+        compose.onNodeWithTag("sharesContent").assertIsDisplayed()
+        compose.onNodeWithText("Waiting to join “Book club”").assertIsDisplayed()
+        compose.onNodeWithTag("shareInviteInput").assertTextContains(link)
+        compose.onNodeWithTag("acceptShareInviteButton").assertIsEnabled().activate()
 
-        assertEquals(listOf("Pixel"), exportedDisplayNames)
-    }
-
-    @Test
-    fun shareInviteDialogDispatchesPendingNpubHintWithoutAuthority() {
-        val pendingInvites = mutableListOf<List<String>>()
-        var directInviteCount = 0
-        var evidenceInviteCount = 0
-        val share = ShareState(
-            shareId = "123e4567-e89b-42d3-a456-426614174000",
-            displayName = "Alpha",
-            sourcePath = "My Drive/Alpha",
-            sharedWithMePath = "Shared with me/Alpha",
-            role = "admin",
-            roleLabel = "Admin",
-            keyStatus = "available",
-            keyStatusLabel = "Available",
-            writeAuthorization = "authorized",
-            writeAuthorizationLabel = "Authorized",
-            canWrite = true,
-            canAdmin = true,
-            currentKeyEpoch = 1,
-            hasCurrentKeyWrap = true,
-            keyUnavailable = false,
-            repairNeeded = false,
-            missingKeyWraps = emptyList(),
-            participantCount = 1,
-            appKeyCount = 1,
-            members = emptyList(),
-            shortcutPaths = emptyList(),
-        )
-
-        render(
-            state = AppState(
-                profile = profileState(),
-                shares = listOf(share),
-                setupState = "authorized",
-                isSetupComplete = true,
-            ),
-            onInviteShareMember = { _, _, _, _, _, _, _ -> directInviteCount += 1 },
-            onInviteShareMemberFromEvidence = { _, _, _, _ -> evidenceInviteCount += 1 },
-            onRecordPendingShareInvite = { shareId, npubHint, role, displayName ->
-                pendingInvites += listOf(shareId, npubHint, role, displayName)
-            },
-        )
-
-        compose.onNodeWithTag("tabShares").activate()
-        compose.onNodeWithText("Invite").performScrollTo().assertIsDisplayed().activate()
-        compose.onNodeWithTag("shareRecipientNpubInput")
-            .performTextInput("npub1alice")
-        compose.onNodeWithTag("shareRecipientNameInput")
-            .performTextInput("Alice")
-        compose.onNodeWithTag("shareInviteConfirm").assertIsEnabled().activate()
-
-        assertEquals(0, directInviteCount)
-        assertEquals(0, evidenceInviteCount)
-        assertEquals(listOf(listOf(share.shareId, "npub1alice", "reader", "Alice")), pendingInvites)
+        assertEquals(listOf(link), joined)
     }
 
     @Test
@@ -469,64 +396,6 @@ class IrisDriveAndroidGuiFlowTest {
         compose.onNodeWithText("Create shared folder").assertIsEnabled().activate()
 
         assertEquals(listOf("My Drive/Projects" to ""), createdShares)
-    }
-
-    @Test
-    fun shareDialogRecipientHintsPrefillInviteDialogOnly() {
-        var inviteCount = 0
-        val share = ShareState(
-            shareId = "123e4567-e89b-42d3-a456-426614174000",
-            displayName = "Projects",
-            sourcePath = "My Drive/Projects",
-            sharedWithMePath = "Shared with me/Projects",
-            role = "admin",
-            roleLabel = "Admin",
-            keyStatus = "available",
-            keyStatusLabel = "Available",
-            writeAuthorization = "authorized",
-            writeAuthorizationLabel = "Authorized",
-            canWrite = true,
-            canAdmin = true,
-            currentKeyEpoch = 1,
-            hasCurrentKeyWrap = true,
-            keyUnavailable = false,
-            repairNeeded = false,
-            missingKeyWraps = emptyList(),
-            participantCount = 1,
-            appKeyCount = 1,
-            members = emptyList(),
-            shortcutPaths = emptyList(),
-        )
-
-        render(
-            state = AppState(
-                profile = profileState(),
-                shares = listOf(share),
-                setupState = "authorized",
-                isSetupComplete = true,
-            ),
-            shareDialogRequest = ShareDialogRequest(
-                id = 1,
-                sourcePath = "My Drive/Projects",
-                displayName = "Projects",
-                recipientNpubHint = "npub1alice",
-                recipientDisplayName = "Alice",
-                recipientProfileId = "123e4567-e89b-42d3-a456-426614174111",
-            ),
-            onInviteShareMember = { _, _, _, _, _, _, _ -> inviteCount += 1 },
-        )
-
-        compose.onNodeWithTag("sharesContent").assertIsDisplayed()
-        compose.onNodeWithText("Invite").performScrollTo().assertIsDisplayed().activate()
-        compose.onNodeWithTag("shareRecipientProfileInput")
-            .assertTextContains("123e4567-e89b-42d3-a456-426614174111")
-        compose.onNodeWithTag("shareRecipientNpubInput")
-            .assertTextContains("npub1alice")
-        compose.onNodeWithTag("shareRecipientNameInput")
-            .assertTextContains("Alice")
-        compose.onNodeWithTag("shareInviteConfirm").assertIsNotEnabled()
-
-        assertEquals(0, inviteCount)
     }
 
     @Test
@@ -837,13 +706,8 @@ class IrisDriveAndroidGuiFlowTest {
         onSyncBackups: (String) -> Unit = {},
         onCheckBackups: (String) -> Unit = {},
         onCreateShare: (String, String) -> Unit = { _, _ -> },
-        onInviteShareMember: (String, String, String, String, String, String, String) -> Unit =
-            { _, _, _, _, _, _, _ -> },
-        onInviteShareMemberFromEvidence: (String, String, String, String) -> Unit =
-            { _, _, _, _ -> },
-        onExportShareRecipientEvidence: (String) -> Unit = {},
-        onRecordPendingShareInvite: (String, String, String, String) -> Unit =
-            { _, _, _, _ -> },
+        onCreateShareLink: (String, String) -> Unit = { _, _ -> },
+        onDisableShareLinks: (String) -> Unit = {},
         onAcceptShareInvite: (String) -> Unit = {},
         onRevokeShareMember: (String, String) -> Unit = { _, _ -> },
         onOpenSharePath: (String) -> Unit = {},
@@ -903,10 +767,8 @@ class IrisDriveAndroidGuiFlowTest {
                 onSyncBackups = onSyncBackups,
                 onCheckBackups = onCheckBackups,
                 onCreateShare = onCreateShare,
-                onInviteShareMember = onInviteShareMember,
-                onInviteShareMemberFromEvidence = onInviteShareMemberFromEvidence,
-                onExportShareRecipientEvidence = onExportShareRecipientEvidence,
-                onRecordPendingShareInvite = onRecordPendingShareInvite,
+                onCreateShareLink = onCreateShareLink,
+                onDisableShareLinks = onDisableShareLinks,
                 onAcceptShareInvite = onAcceptShareInvite,
                 onRevokeShareMember = onRevokeShareMember,
                 onOpenSharePath = onOpenSharePath,

@@ -115,6 +115,8 @@ just run-cli app-keys approve <device-request-url-or-device-npub>
 just run-cli app-keys list
 just run-cli app-keys repair-wraps
 just run-cli shares create "Projects/Alpha" --name "Alpha"
+just run-cli shares link <share-id> --role reader
+just run-cli shares accept <drive.iris.to-share-link>
 just run-cli shares recipient-evidence --display-name "Alice" > recipient-profile.json
 just run-cli shares invite <share-id> --recipient-evidence recipient-profile.json --role reader
 just run-cli shares invite <share-id> --profile <nostr-identity-id> --app-key <recipient-device-npub> --role reader
@@ -130,8 +132,18 @@ just run-cli backups add fs:/path/to/encrypted-backup --label "External disk"
 just run-cli backups sync
 ```
 
+Sharing is link-first. **Share** on a shared folder gives a
+`https://drive.iris.to/#/share-join/...` link for viewers or editors. Anyone
+who opens it can ask to join, in a browser with no install or from the app's
+**Join** field. The sharer's Drive lets them in when it sees the request: the
+desktop daemon at once, mobile apps on their next sync, the web app while it
+is open. Joined folders appear under Shares and as a shortcut in My Drive.
+`idrive shares link <share-id> --disable` stops a folder's links from letting
+anyone else in; people already in keep access. The link format is shared with
+Iris Drive web (`src/drive/shareJoinLink.ts`).
+
 Native apps expose the same share operations from the **Shares** tab: create a
-shared folder, invite a NostrIdentity member, accept an invite, change member
+shared folder, share it by link, join from a link, change member
 roles, revoke a member, add a shortcut, and repair missing key wraps. The UI
 shows people/profile members first; invite dialogs prefer signed
 recipient-evidence JSON. `idrive shares recipient-evidence` or the app-core

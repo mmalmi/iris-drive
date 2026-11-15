@@ -19,6 +19,7 @@ internal data class AppState(
     val localNhashResolverEnabled: Boolean = true,
     val sitesPortalUrl: String = "",
     val lastShareInvite: String = "",
+    val pendingShareJoins: List<PendingShareJoinState> = emptyList(),
     val lastShareRecipientEvidence: String = "",
     val error: String = "",
     val setupState: String = "not_configured",
@@ -55,6 +56,7 @@ internal data class AppState(
                 localNhashResolverEnabled = ui.optBoolean("local_nhash_resolver_enabled", true),
                 sitesPortalUrl = ui.optString("sites_portal_url"),
                 lastShareInvite = ui.optString("last_share_invite"),
+                pendingShareJoins = ui.optJSONArray("pending_share_joins").toPendingShareJoins(),
                 lastShareRecipientEvidence = ui.optString("last_share_recipient_evidence"),
                 error = json.optString("error"),
                 setupState = ui.optString("setup_state", "not_configured"),
@@ -155,6 +157,16 @@ internal data class ShareState(
     val pendingInvites: List<PendingShareInviteState> = emptyList(),
     val shortcutPaths: List<String>,
 )
+
+/** A folder this device asked to join from a link, still waiting to be let in. */
+internal data class PendingShareJoinState(val shareId: String, val displayName: String, val roleLabel: String)
+
+private fun JSONArray?.toPendingShareJoins(): List<PendingShareJoinState> {
+    if (this == null) return emptyList()
+    return (0 until length()).mapNotNull { optJSONObject(it) }.map {
+        PendingShareJoinState(it.optString("share_id"), it.optString("display_name"), it.optString("role_label"))
+    }
+}
 
 internal data class PendingShareInviteState(
     val representativeNpubHint: String,
@@ -461,6 +473,12 @@ internal object NativeActions {
             .put("role", role)
             .put("display_name", displayName)
             .toString()
+
+    fun createShareJoinLink(shareId: String, role: String): String =
+        JSONObject().put("type", "create_share_join_link").put("share_id", shareId).put("role", role).toString()
+
+    fun disableShareJoinLinks(shareId: String): String =
+        JSONObject().put("type", "disable_share_join_links").put("share_id", shareId).toString()
 
     fun acceptShareInvite(invite: String): String =
         JSONObject()

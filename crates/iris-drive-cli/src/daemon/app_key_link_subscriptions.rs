@@ -45,6 +45,15 @@ async fn refresh_app_key_link_relay_subscriptions_for_config(
     {
         filters.push(filter);
     }
+    let share_filters = refresh_share_join_subscriptions(
+        client,
+        config_dir,
+        &config,
+        subscriptions.share_subscriptions(),
+        daemon_tasks,
+    )
+    .await?;
+    filters.extend(share_filters);
     let policy = iris_drive_core::relay_sync::event_retention_policy(filters);
     iris_drive_core::relay_sync::refresh_app_key_link_relay_subscriptions(
         client,

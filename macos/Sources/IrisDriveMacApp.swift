@@ -342,14 +342,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return irisDriveAssociatedHosts.contains(host)
     }
 
+    /// drive.iris.to pages the app has no native view for open in the browser.
     private func handleIrisWebURL(_ url: URL) {
-        showControlPanel()
-        updateStatus("Iris link opened")
         NSLog("Iris Drive opened universal link: \(url.absoluteString)")
+        openInWebBrowser(url)
     }
 
     private func handleLaunchURL(_ url: URL) -> Bool {
         let classification = IrisDriveDesktopCore.classifyLinkInput(url.absoluteString)
+        if handleShareLinkURL(url, classification: classification) { return true }
         if classification["kind"] as? String == "backup_invite" {
             showControlPanel()
             guard classification["is_valid"] as? Bool == true else {
@@ -1103,30 +1104,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 irisDriveCopyToPasteboard(evidence, feedback: "Share identity copied")
             }
         }
-    }
-
-    func recordPendingShareInvite(
-        shareId: String,
-        representativeNpubHint: String,
-        role: String,
-        displayName: String
-    ) {
-        let representativeNpubHint = representativeNpubHint.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !representativeNpubHint.isEmpty else {
-            updateStatus("User ID required")
-            return
-        }
-        dispatchNativeAction(
-            [
-                "type": "record_pending_share_invite",
-                "share_id": shareId,
-                "representative_npub_hint": representativeNpubHint,
-                "role": role,
-                "display_name": displayName,
-            ],
-            progress: "Saving invite",
-            success: "Invite saved"
-        )
     }
 
     func revokeShareMember(shareId: String, profileId: String) {
@@ -2196,6 +2173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             status.friendBackups = IrisDriveFriendBackups(json: ui["friend_backups"] as? [String: Any] ?? [:])
             status.shares =
                 (ui["shares"] as? [[String: Any]] ?? []).map(IrisDriveShareStatus.init)
+            status.pendingShareJoins = (ui["pending_share_joins"] as? [[String: Any]] ?? []).map(IrisDrivePendingShareJoin.init)
             let lastShareInvite = ui["last_share_invite"] as? String ?? ""
             status.lastShareInviteURL = lastShareInvite.isEmpty ? nil : lastShareInvite
             let lastShareRecipientEvidence = ui["last_share_recipient_evidence"] as? String ?? ""
