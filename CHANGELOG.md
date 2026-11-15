@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.43 - 2026-11-15
+
+- See, under Devices, how much of your Drive each of your devices holds, in
+  which folders, how much room it has, whether it has the same version of the
+  Drive as this one and whether it is connected directly. Native apps and
+  Iris Drive web tell each other, so every device shows every other one. Each
+  device measures itself now and then and sends its numbers to your other
+  devices only, encrypted; relays cannot tell what they are or whose they are.
+  `idrive storage` prints the same list.
+
 ## 0.1.42 - 2026-11-15
 
 - Save large videos to Iris Drive from another app's share sheet on iPhone.
