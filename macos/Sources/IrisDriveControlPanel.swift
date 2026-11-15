@@ -105,6 +105,12 @@ struct IrisDriveControlPanel: View {
             }
             applyPendingShareDialog()
         }
+        .onChange(of: status.initialized) { _, initialized in
+            if !initialized {
+                setupMode = .welcome
+                setupJoinRequestStarted = false
+            }
+        }
         .onChange(of: status.setupComplete) { _, _ in applyPendingShareDialog() }
         .onChange(of: status.pendingShareDialog?.id) { _, _ in
             applyPendingShareDialog()
