@@ -44,6 +44,8 @@ public sealed class IrisDriveStatusData
     public IReadOnlyList<ShareRow> Shares { get; init; } = Array.Empty<ShareRow>();
     public IReadOnlyList<PendingShareJoinRow> PendingShareJoins { get; init; } =
         Array.Empty<PendingShareJoinRow>();
+    // My Drive folders a share can start from.
+    public IReadOnlyList<string> ShareableFolders { get; init; } = Array.Empty<string>();
     public IReadOnlyList<string> Relays { get; init; } = Array.Empty<string>();
     public IReadOnlyList<string> BlossomServers { get; init; } = Array.Empty<string>();
     public FipsDiagnostics Fips { get; init; } = FipsDiagnostics.Empty;
@@ -125,6 +127,7 @@ public sealed class IrisDriveStatusData
             BackupTargets = backupTargets,
             Shares = NativeShareRows(ui),
             PendingShareJoins = NativePendingShareJoinRows(ui),
+            ShareableFolders = StringArray(ui, "shareable_folders"),
             Relays = StringArray(ui, "relays"),
             BlossomServers = backupTargets
                 .Where(target => target.Kind == "blossom")
@@ -299,8 +302,8 @@ public sealed class IrisDriveStatusData
             rows.Add(new ShareRow(
                 String(share, "share_id") ?? "",
                 String(share, "display_name") ?? "Shared folder",
-                String(share, "source_path") ?? "",
-                String(share, "shared_with_me_path") ?? "",
+                Bool(share, "owned"),
+                String(share, "location") ?? "",
                 String(share, "role") ?? "",
                 String(share, "role_label") ?? "",
                 String(share, "key_status") ?? "",
@@ -318,8 +321,7 @@ public sealed class IrisDriveStatusData
                 Int(share, "participant_count"),
                 Int(share, "app_key_count"),
                 NativeShareMemberRows(share),
-                NativePendingShareInviteRows(share),
-                StringArray(share, "shortcut_paths")));
+                NativePendingShareInviteRows(share)));
         }
 
         return rows;
@@ -528,8 +530,10 @@ public sealed record BackupTargetRow(
 public sealed record ShareRow(
     string ShareId,
     string DisplayName,
-    string SourcePath,
-    string SharedWithMePath,
+    // This profile shared the folder (rather than joined it).
+    bool Owned,
+    // Where it is in My Drive on this PC; empty when it is not in My Drive.
+    string Location,
     string Role,
     string RoleLabel,
     string KeyStatus,
@@ -547,8 +551,7 @@ public sealed record ShareRow(
     int ParticipantCount,
     int AppKeyCount,
     IReadOnlyList<ShareMemberRow> Members,
-    IReadOnlyList<PendingShareInviteRow> PendingInvites,
-    IReadOnlyList<string> ShortcutPaths);
+    IReadOnlyList<PendingShareInviteRow> PendingInvites);
 
 /// A folder this PC asked to join from a link, still waiting to be let in.
 public sealed record PendingShareJoinRow(string ShareId, string DisplayName, string RoleLabel);

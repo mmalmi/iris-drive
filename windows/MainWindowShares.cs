@@ -7,7 +7,6 @@ using WpfButton = System.Windows.Controls.Button;
 using WpfClipboard = System.Windows.Clipboard;
 using WpfComboBox = System.Windows.Controls.ComboBox;
 using WpfHorizontalAlignment = System.Windows.HorizontalAlignment;
-using WpfMessageBox = System.Windows.MessageBox;
 using WpfOrientation = System.Windows.Controls.Orientation;
 using WpfRadioButton = System.Windows.Controls.RadioButton;
 
@@ -29,11 +28,7 @@ public partial class MainWindow
         SharesList.Items.Clear();
         foreach (var join in status.PendingShareJoins)
         {
-            var name = string.IsNullOrWhiteSpace(join.DisplayName) ? "Shared folder" : join.DisplayName;
-            SharesList.Items.Add(Row(
-                $"Waiting to join \u201c{name}\u201d",
-                "You get access when someone who manages it has Iris Drive open.",
-                join.RoleLabel));
+            SharesList.Items.Add(PendingShareJoinListRow(join));
         }
 
         foreach (var share in status.Shares)
@@ -60,31 +55,21 @@ public partial class MainWindow
     {
         var titleBlock = new TextBlock
         {
-            Text = string.IsNullOrWhiteSpace(share.DisplayName) ? "Shared folder" : share.DisplayName,
+            Text = ShareName(share),
             FontWeight = FontWeights.SemiBold,
             TextTrimming = TextTrimming.CharacterEllipsis,
         };
         var stack = new StackPanel { Orientation = WpfOrientation.Vertical };
         stack.Children.Add(titleBlock);
-
-        if (!string.IsNullOrWhiteSpace(share.SourcePath))
-        {
-            stack.Children.Add(ShareDetail(share.SourcePath));
-        }
-
-        stack.Children.Add(ShareDetail(ShareMetadata(share)));
+        stack.Children.Add(ShareDetail(ShareSummary(share)));
         if (!string.IsNullOrWhiteSpace(ShareRepairText(share)))
         {
             stack.Children.Add(ShareDetail(ShareRepairText(share)));
         }
-        if (share.ShortcutPaths.Count > 0)
-        {
-            stack.Children.Add(ShareDetail($"My Drive: {share.ShortcutPaths[0]}"));
-        }
 
         foreach (var member in share.Members)
         {
-            stack.Children.Add(ShareMemberRow(share.ShareId, member));
+            stack.Children.Add(ShareMemberRow(share, member));
         }
         foreach (var invite in share.PendingInvites)
         {
@@ -95,12 +80,18 @@ public partial class MainWindow
         {
             Orientation = WpfOrientation.Horizontal,
             HorizontalAlignment = WpfHorizontalAlignment.Right,
+            VerticalAlignment = VerticalAlignment.Top,
         };
 
-        var openPath = ShareOpenPath(share);
-        if (!string.IsNullOrWhiteSpace(openPath))
+        if (string.IsNullOrWhiteSpace(share.Location))
         {
-            var open = ShareActionButton("Open", openPath);
+            var shortcut = ShareActionButton("Add to My Drive", share.ShareId);
+            shortcut.Click += AddShareShortcut_Click;
+            actions.Children.Add(shortcut);
+        }
+        else
+        {
+            var open = ShareActionButton("Open", share.Location);
             open.Click += OpenShare_Click;
             actions.Children.Add(open);
         }
@@ -124,16 +115,7 @@ public partial class MainWindow
             actions.Children.Add(repair);
         }
 
-        if (share.ShortcutPaths.Count == 0)
-        {
-            var shortcut = ShareActionButton("Add to My Drive", share.ShareId);
-            shortcut.Click += AddShareShortcut_Click;
-            actions.Children.Add(shortcut);
-        }
-
-        var delete = ShareActionButton("Delete", share.ShareId);
-        delete.Click += DeleteShare_Click;
-        actions.Children.Add(delete);
+        actions.Children.Add(ShareMoreButton(share));
 
         var grid = new Grid();
         grid.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
@@ -153,21 +135,22 @@ public partial class MainWindow
         };
     }
 
-    private Grid ShareMemberRow(string shareId, ShareMemberRow member)
+    private Grid ShareMemberRow(ShareRow share, ShareMemberRow member)
     {
         var row = new Grid { Margin = new Thickness(0, 7, 0, 0) };
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
         var display = string.IsNullOrWhiteSpace(member.DisplayName)
-            ? "NostrIdentity"
+            ? "Someone"
             : member.DisplayName;
         var role = string.IsNullOrWhiteSpace(member.RoleLabel) ? member.Role : member.RoleLabel;
         var status = string.IsNullOrWhiteSpace(member.StatusLabel) ? member.Status : member.StatusLabel;
         var identity = string.IsNullOrWhiteSpace(member.RepresentativeNpubHint)
             ? member.ProfileId
             : member.RepresentativeNpubHint;
-        var text = ShareDetail($"{display} | {role} | {status} | {IrisDriveStatusData.ShortText(identity)}");
+        var text = ShareDetail($"{display} \u00b7 {role} \u00b7 {status} \u00b7 {IrisDriveStatusData.ShortText(identity)}");
+        var tag = new ShareMemberActionTag(share.ShareId, member.ProfileId, display, ShareName(share));
         Grid.SetColumn(text, 0);
         row.Children.Add(text);
 
@@ -181,7 +164,7 @@ public partial class MainWindow
             var roleBox = new WpfComboBox
             {
                 MinWidth = 86,
-                Tag = new ShareMemberActionTag(shareId, member.ProfileId),
+                Tag = tag,
                 Margin = new Thickness(8, 0, 0, 0),
             };
             foreach (var item in ShareRoles)
@@ -197,7 +180,7 @@ public partial class MainWindow
             var revoke = new WpfButton
             {
                 Content = "Remove",
-                Tag = new ShareMemberActionTag(shareId, member.ProfileId),
+                Tag = tag,
                 Margin = new Thickness(8, 0, 0, 0),
             };
             revoke.Click += RevokeShareMember_Click;
@@ -221,7 +204,7 @@ public partial class MainWindow
         var role = string.IsNullOrWhiteSpace(invite.RoleLabel) ? invite.Role : invite.RoleLabel;
         var status = string.IsNullOrWhiteSpace(invite.StatusLabel) ? invite.Status : invite.StatusLabel;
         return ShareDetail(
-            $"{display} | {role} | {status} | {IrisDriveStatusData.ShortText(invite.RepresentativeNpubHint)}");
+            $"{display} \u00b7 {role} \u00b7 {status} \u00b7 {IrisDriveStatusData.ShortText(invite.RepresentativeNpubHint)}");
     }
 
     private TextBlock ShareDetail(string text) =>
@@ -233,12 +216,17 @@ public partial class MainWindow
             FontSize = 12,
         };
 
-    private static string ShareMetadata(ShareRow share)
+    private static string ShareName(ShareRow share) =>
+        string.IsNullOrWhiteSpace(share.DisplayName) ? "Shared folder" : share.DisplayName.Trim();
+
+    private static string ShareSummary(ShareRow share)
     {
         var role = string.IsNullOrWhiteSpace(share.RoleLabel) ? share.Role : share.RoleLabel;
-        var key = string.IsNullOrWhiteSpace(share.KeyStatusLabel) ? share.KeyStatus : share.KeyStatusLabel;
-        var participants = $"{share.ParticipantCount} {(share.ParticipantCount == 1 ? "person" : "people")}";
-        return $"{role} | {key} | {participants}";
+        var people = $"{share.ParticipantCount} {(share.ParticipantCount == 1 ? "person" : "people")}";
+        var place = string.IsNullOrWhiteSpace(share.Location)
+            ? "Not in My Drive"
+            : $"My Drive/{share.Location}";
+        return $"{role} \u00b7 {people} \u00b7 {place}";
     }
 
     private static string ShareRepairText(ShareRow share)
@@ -253,17 +241,6 @@ public partial class MainWindow
             return $"{share.MissingKeyWrapCount} missing {noun}";
         }
         return "Repair needed";
-    }
-
-    private static string ShareOpenPath(ShareRow share)
-    {
-        if (share.ShortcutPaths.Count > 0)
-        {
-            return share.ShortcutPaths[0];
-        }
-        return !string.IsNullOrWhiteSpace(share.SourcePath)
-            ? share.SourcePath
-            : share.SharedWithMePath;
     }
 
     private WpfButton ShareActionButton(string text, string shareId) =>
@@ -539,35 +516,6 @@ public partial class MainWindow
         }
     }
 
-    private async void DeleteShare_Click(object sender, RoutedEventArgs e)
-    {
-        if (sender is not WpfButton { Tag: string shareId })
-        {
-            return;
-        }
-
-        if (WpfMessageBox.Show(
-                this,
-                "Delete this share from this device? Folder contents stay in My Drive.",
-                "Delete share",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning) != MessageBoxResult.Yes)
-        {
-            return;
-        }
-
-        try
-        {
-            await service.DeleteShareAsync(shareId);
-            ShowSharesNotice("Share deleted");
-            await RefreshAsync();
-        }
-        catch (Exception error)
-        {
-            ShowSharesNotice(error.Message);
-        }
-    }
-
     private async void RepairShare_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not WpfButton { Tag: string shareId })
@@ -596,9 +544,7 @@ public partial class MainWindow
             return;
         }
 
-        var shareName = string.IsNullOrWhiteSpace(share.DisplayName)
-            ? "Shared folder"
-            : share.DisplayName.Trim();
+        var shareName = ShareName(share);
         var view = new WpfRadioButton
         {
             Content = "View",
@@ -737,12 +683,10 @@ public partial class MainWindow
             return;
         }
 
-        if (WpfMessageBox.Show(
-                this,
-                $"Remove this identity from the share?\n\n{tag.ProfileId}",
-                "Remove share member",
-                MessageBoxButton.YesNo,
-                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+        if (!ConfirmShareAction(
+                "Remove access?",
+                $"{tag.MemberName} will no longer get changes to \u201c{tag.ShareName}\u201d.",
+                "Remove"))
         {
             return;
         }
@@ -750,7 +694,7 @@ public partial class MainWindow
         try
         {
             await service.RevokeShareMemberAsync(tag.ShareId, tag.ProfileId);
-            ShowSharesNotice("Share member removed");
+            ShowSharesNotice("Access removed");
             await RefreshAsync();
         }
         catch (Exception error)
@@ -779,4 +723,8 @@ public partial class MainWindow
     }
 }
 
-public sealed record ShareMemberActionTag(string ShareId, string ProfileId);
+public sealed record ShareMemberActionTag(
+    string ShareId,
+    string ProfileId,
+    string MemberName,
+    string ShareName);

@@ -447,6 +447,38 @@ public sealed partial class IrisDriveService
             });
     }
 
+    /// Takes the folder out of My Drive on this PC; access is kept.
+    public Task RemoveShareShortcutsAsync(string shareId)
+    {
+        if (string.IsNullOrWhiteSpace(shareId))
+        {
+            throw new InvalidOperationException("Share is required.");
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "remove_share_shortcuts",
+                ["share_id"] = shareId.Trim(),
+            });
+    }
+
+    /// Stops waiting on a folder this PC asked to join.
+    public Task CancelShareJoinAsync(string shareId)
+    {
+        if (string.IsNullOrWhiteSpace(shareId))
+        {
+            throw new InvalidOperationException("Share is required.");
+        }
+
+        return DispatchNativeActionAsync(
+            new Dictionary<string, object>
+            {
+                ["type"] = "cancel_share_join",
+                ["share_id"] = shareId.Trim(),
+            });
+    }
+
     public Task RepairShareWrapsAsync(string shareId)
     {
         if (string.IsNullOrWhiteSpace(shareId))

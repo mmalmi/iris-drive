@@ -8,8 +8,9 @@ shared `idrive` CLI:
 - sync start/stop/restart
 - drive folder and snapshot link actions
 - Devices, shares, network, and settings pages
-- shared-folder create, share by link, join from a link, shortcut, repair,
-  member role, and revoke actions through Rust app-core
+- shared-folder create (typed or chosen from My Drive), share by link, join
+  from a link, add to / remove from My Drive, stop sharing or leave, repair,
+  member role, and remove-access actions through Rust app-core
 - local profile logout
 - Windows tray icon with show/open/sync/quit actions
 - self-contained `win-x64` publish output for shortcuts/installers

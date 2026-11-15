@@ -29,6 +29,7 @@ require_file android/app/src/main/res/drawable/ic_shares.xml
 require_file linux/src/ui.rs
 require_file windows/MainWindow.xaml
 require_file windows/MainWindowShares.cs
+require_file windows/MainWindowShareMyDrive.cs
 
 require_contains macos/Sources/IrisDrivePanelTab.swift "case shares"
 require_contains macos/Sources/IrisDriveControlPanel.swift "SectionTitle(\"Shares\")"
@@ -62,6 +63,9 @@ require_contains windows/MainWindow.xaml "Create shared folder"
 require_contains windows/MainWindow.xaml "Paste a share link"
 require_contains windows/MainWindowShares.cs "ShowInviteShareMember_Click"
 require_contains windows/MainWindowShares.cs "Copy link"
-require_contains windows/MainWindowShares.cs "Waiting to join"
+require_contains windows/MainWindowShareMyDrive.cs "Waiting to join"
+require_contains windows/MainWindowShareMyDrive.cs "Remove from My Drive"
+require_contains windows/MainWindowShareMyDrive.cs "Stop sharing"
+require_contains windows/MainWindow.xaml "ChooseShareFolder_Click"
 
 echo "SHARING_MENU_PARITY_OK"

@@ -457,7 +457,13 @@
                     <TextBlock Text="Create" />
                   </StackPanel>
                 </Button>
-                <TextBox x:Name="ShareSourceBox" Tag="My Drive/Folder" MinHeight="34" />
+                <Button x:Name="ChooseShareFolderButton" DockPanel.Dock="Right" Click="ChooseShareFolder_Click" Margin="8,0,0,0" AutomationProperties.Name="Choose folder" ToolTip="Choose a folder in My Drive">
+                  <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="&#xE8B7;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
+                    <TextBlock Text="Choose" />
+                  </StackPanel>
+                </Button>
+                <TextBox x:Name="ShareSourceBox" Tag="Folder in My Drive" MinHeight="34" />
               </DockPanel>
               <TextBlock Text="Paste a share link" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
               <DockPanel LastChildFill="True" Margin="0,0,0,14">
@@ -474,8 +480,10 @@
                          TextWrapping="Wrap"
                          Visibility="Collapsed"
                          Margin="0,0,0,12" />
-              <TextBlock Text="Shared with me" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
-              <ListBox x:Name="SharesList" BorderBrush="{StaticResource IrisBorderBrush}" />
+              <ListBox x:Name="SharesList"
+                       BorderBrush="{StaticResource IrisBorderBrush}"
+                       HorizontalContentAlignment="Stretch"
+                       ScrollViewer.HorizontalScrollBarVisibility="Disabled" />
             </StackPanel>
 
             <StackPanel x:Name="BackupsPage" Visibility="Collapsed">

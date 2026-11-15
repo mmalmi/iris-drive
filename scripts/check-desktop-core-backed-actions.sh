@@ -61,6 +61,8 @@ require_contains windows/IrisDriveService.cs '["type"] = "create_share"'
 require_contains windows/IrisDriveService.cs '["type"] = "create_share_join_link"'
 require_contains windows/IrisDriveService.cs '["type"] = "disable_share_join_links"'
 require_contains windows/IrisDriveService.cs '["type"] = "add_share_shortcut"'
+require_contains windows/IrisDriveService.cs '["type"] = "remove_share_shortcuts"'
+require_contains windows/IrisDriveService.cs '["type"] = "cancel_share_join"'
 require_contains windows/IrisDriveService.cs '["type"] = "repair_share_wraps"'
 require_contains windows/IrisDriveService.cs '["type"] = "revoke_share_member"'
 require_contains windows/IrisDriveService.cs '["type"] = "set_share_member_role"'
@@ -80,6 +82,9 @@ require_contains windows/IrisDriveServiceContentLinks.cs '["type"] = "import_con
 require_contains windows/MainWindowShares.cs "CreateShareJoinLinkAsync"
 require_contains windows/MainWindowShares.cs "DisableShareJoinLinksAsync"
 require_contains windows/MainWindowShares.cs "MissingKeyWrapCount"
+require_contains windows/MainWindowShares.cs "share.Location"
+require_contains windows/MainWindowShareMyDrive.cs "RemoveShareShortcutsAsync"
+require_contains windows/MainWindowShareMyDrive.cs "CancelShareJoinAsync"
 require_contains scripts/windows-installer.iss '"URL Protocol"'
 require_contains scripts/windows-installer.iss '"""{app}\IrisDrive.exe"" ""%1"""'
 require_contains windows/MainWindowDevices.cs "RejectDeviceAsync"
