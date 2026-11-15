@@ -304,13 +304,20 @@ pub(super) async fn apply_and_persist_native_relay_event(
     let config_mutation_guard = config_mutation
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
+    // The profile's shared folders as another of its devices lists them.
+    // The folders it adds are let in by the next sync.
+    if iris_drive_core::share_index::is_share_index_event(event) {
+        iris_drive_core::share_index::apply_share_index_event_locked(config_dir, event)
+            .map_err(|error| format!("applying the profile's shared folders: {error:#}"))?;
+    }
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))
         .map_err(|error| format!("loading config: {error}"))?;
     #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
     let approval_was_ready = native_device_approval_ack_is_ready(config_dir, &config)?;
     #[cfg(test)]
     let approval_was_ready = false;
-    let is_drive_root = event.kind.as_u16() == iris_drive_core::nostr_events::KIND_DRIVE_ROOT;
+    let is_drive_root = event.kind.as_u16() == iris_drive_core::nostr_events::KIND_DRIVE_ROOT
+        && !iris_drive_core::share_index::is_share_index_event(event);
     let app_key = if is_drive_root {
         Some(
             iris_drive_core::AppKey::load(key_path_in(config_dir))

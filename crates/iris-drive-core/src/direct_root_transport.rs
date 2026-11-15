@@ -1042,6 +1042,13 @@ pub fn build_current_direct_root_events(
             ));
         }
     }
+    // The profile's shared folders, so its devices agree on them without relays.
+    if let Some((event, _)) = crate::share_index::current_share_index_event(config_dir, config)? {
+        events.push(direct_root_event(
+            format!("share-index:{}:{}", state.app_key_pubkey, event.id.to_hex()),
+            &event,
+        ));
+    }
     for op in &state.profile_roster_ops {
         let event =
             Event::from_json(&op.event_json).context("parsing NostrIdentity roster op event")?;
@@ -1079,6 +1086,11 @@ async fn apply_direct_root_event_serialized(
         lock.lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     });
+    if crate::share_index::is_share_index_event(event) {
+        drop(config_mutation);
+        let outcome = crate::share_index::apply_share_index_event(config_dir, event).await?;
+        return Ok(outcome == crate::share_index::ShareIndexApply::Applied);
+    }
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     if crate::is_nostr_identity_roster_op_event_coordinate(event) {
         let outcome =

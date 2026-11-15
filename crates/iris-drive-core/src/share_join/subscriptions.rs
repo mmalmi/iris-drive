@@ -10,12 +10,17 @@ use super::{ShareJoinStore, share_join_filters};
 use crate::config::AppConfig;
 use crate::relay_filters::{drive_root_filter, share_access_snapshot_filter};
 use crate::relay_sync::RelayError;
+use crate::share_index::ShareIndex;
 
 const SHARE_SUBSCRIPTION_PREFIX: &str = "iris-drive-share-";
 
 /// Everything shared folders, their links and pending joins need from relays.
 #[must_use]
-pub fn share_relay_filters(config: &AppConfig, store: &ShareJoinStore) -> Vec<Filter> {
+pub fn share_relay_filters(
+    config: &AppConfig,
+    store: &ShareJoinStore,
+    index: &ShareIndex,
+) -> Vec<Filter> {
     let root_scope = config
         .profile
         .as_ref()
@@ -29,7 +34,7 @@ pub fn share_relay_filters(config: &AppConfig, store: &ShareJoinStore) -> Vec<Fi
         filters.push(share_access_snapshot_filter(folder.share_id));
         filters.push(drive_root_filter(&scope, crate::PRIMARY_DRIVE_ID));
     }
-    filters.extend(share_join_filters(config, store));
+    filters.extend(share_join_filters(config, store, index));
     filters
 }
 

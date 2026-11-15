@@ -27,9 +27,10 @@ pub mod apply;
 pub mod store;
 pub mod subscriptions;
 pub use apply::{
-    ShareJoinEventOutcome, ShareJoinSyncReport, apply_share_join_event, is_share_join_event,
-    pending_share_join_requests, publish_approved_share, publish_pending_share_join_requests,
-    record_share_join, share_join_filters, sync_share_joins_once,
+    ShareJoinEventOutcome, ShareJoinSyncReport, apply_share_join_event, complete_share_join,
+    is_share_join_event, pending_share_join_requests, publish_approved_share,
+    publish_pending_share_join_requests, record_share_join, share_join_filters,
+    sync_share_joins_once,
 };
 pub use store::{PendingShareJoin, ShareJoinStore};
 pub use subscriptions::{
@@ -274,6 +275,41 @@ pub fn join_request_needs_approval(
     !folder.projection().active_facets.contains_key(requester)
 }
 
+/// What a device already trusts about a folder it does not have yet: which
+/// folder it is, and the admin device whose signed access list to start
+/// from. A join link carries one; so does the profile's list of its shared
+/// folders, for the profile's other devices.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ShareAnchor {
+    pub share_id: NostrIdentityId,
+    pub owner_profile_id: NostrIdentityId,
+    pub admin: String,
+    pub name: String,
+}
+
+impl ShareAnchor {
+    /// Whether `event` is the access list of this folder as signed by its
+    /// trusted admin, whoever it lets in.
+    #[must_use]
+    pub fn signed(&self, event: &Event) -> bool {
+        event.pubkey.to_hex() == self.admin
+            && parse_share_access_snapshot_event(event)
+                .is_ok_and(|snapshot| snapshot.content.resource_id == self.share_id)
+    }
+}
+
+impl ShareJoinLink {
+    #[must_use]
+    pub fn anchor(&self) -> ShareAnchor {
+        ShareAnchor {
+            share_id: self.share_id,
+            owner_profile_id: self.owner_profile_id,
+            admin: self.admin.clone(),
+            name: self.display_name(),
+        }
+    }
+}
+
 /// The visitor's side: the admin's signed access list as a folder this device
 /// can open, once the list includes this device. Only a list signed by the
 /// admin named in the link is trusted as the starting point.
@@ -283,24 +319,36 @@ pub fn shared_folder_from_access_event_for_join(
     event: &Event,
     app_pubkey: &str,
 ) -> Option<SharedFolder> {
-    if event.pubkey.to_hex() != link.admin {
+    shared_folder_from_access_event(&link.anchor(), event, app_pubkey)
+}
+
+/// The trusted admin's signed access list as a folder this device can open,
+/// once the list includes this device.
+#[must_use]
+pub fn shared_folder_from_access_event(
+    anchor: &ShareAnchor,
+    event: &Event,
+    app_pubkey: &str,
+) -> Option<SharedFolder> {
+    if event.pubkey.to_hex() != anchor.admin {
         return None;
     }
     let snapshot = parse_share_access_snapshot_event(event).ok()?;
-    if snapshot.content.resource_id != link.share_id {
+    if snapshot.content.resource_id != anchor.share_id {
         return None;
     }
     let mut folder = SharedFolder {
-        share_id: link.share_id,
-        owner_profile_id: link.owner_profile_id,
+        share_id: anchor.share_id,
+        owner_profile_id: anchor.owner_profile_id,
         source_path: String::new(),
-        display_name: link.display_name(),
-        local_role: link.role,
+        display_name: anchor.name.clone(),
+        // Replaced below by the role the access list gives this device.
+        local_role: ShareRole::Reader,
         access: snapshot.content,
         pending_invites: std::collections::BTreeMap::default(),
         app_key_roots: std::collections::BTreeMap::default(),
     };
-    if !shared_folder_app_key_can_admin(&folder, &link.admin) {
+    if !shared_folder_app_key_can_admin(&folder, &anchor.admin) {
         return None;
     }
     let member = folder.active_member_for_app_key(app_pubkey)?;

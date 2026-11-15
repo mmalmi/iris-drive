@@ -177,40 +177,59 @@ pub(crate) async fn publish_share_content(
     share_id: NostrIdentityId,
 ) -> Result<()> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let client = crate::relay_sync::connect(&config.relays).await?;
+    let outcome = publish_share_content_to(config_dir, share_id, &client).await;
+    crate::relay_sync::shutdown_client(&client).await;
+    outcome
+}
+
+/// Publish a folder's access list and this device's files in it through a
+/// relay client the caller keeps open.
+pub(crate) async fn publish_share_content_to(
+    config_dir: &Path,
+    share_id: NostrIdentityId,
+    client: &nostr_sdk::Client,
+) -> Result<()> {
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let folder = config.shared_folder(share_id).context("Share missing")?;
     let app_key = crate::AppKey::load(key_path_in(config_dir))?;
     let pubkey = app_key.keys().public_key().to_hex();
     let daemon = Daemon::open(config_dir)?;
     let blossom = crate::blossom_sync_client(app_key.keys().clone(), &config.blossom_servers);
-    let root = folder
-        .app_key_roots
-        .get(&pubkey)
-        .context("Shared folder is not ready")?;
-    crate::blossom_sync::upload_tree(
-        daemon.tree(),
-        &hashtree_core::Cid::parse(&root.root_cid)?,
-        &blossom,
-    )
-    .await?;
-    let client = crate::relay_sync::connect(&config.relays).await?;
+    // Another device of the owner's profile manages the folder without
+    // having put files of its own in it: its access list is all it sends.
+    let root = folder.app_key_roots.get(&pubkey);
+    anyhow::ensure!(
+        root.is_some() || !crate::sharing::shared_folder_created_by(folder, &pubkey),
+        "Shared folder is not ready"
+    );
+    if let Some(root) = root {
+        crate::blossom_sync::upload_tree(
+            daemon.tree(),
+            &hashtree_core::Cid::parse(&root.root_cid)?,
+            &blossom,
+        )
+        .await?;
+    }
     let outcome = tokio::time::timeout(std::time::Duration::from_secs(20), async {
         let snapshot =
             crate::sign_share_access_snapshot(app_key.keys(), folder, folder.access.updated_at)?;
-        crate::relay_sync::publish_share_access_snapshot(&client, &snapshot).await?;
-        crate::relay_sync::publish_drive_root(
-            config_dir,
-            &client,
-            app_key.keys(),
-            &share_id.to_string(),
-            crate::PRIMARY_DRIVE_ID,
-            &crate::shared_content::share_root_for_publish(folder, root),
-            &crate::shared_folder_key_recipient_pubkeys(folder),
-        )
-        .await?;
+        crate::relay_sync::publish_share_access_snapshot(client, &snapshot).await?;
+        if let Some(root) = root {
+            crate::relay_sync::publish_drive_root(
+                config_dir,
+                client,
+                app_key.keys(),
+                &share_id.to_string(),
+                crate::PRIMARY_DRIVE_ID,
+                &crate::shared_content::share_root_for_publish(folder, root),
+                &crate::shared_folder_key_recipient_pubkeys(folder),
+            )
+            .await?;
+        }
         Ok::<_, anyhow::Error>(())
     })
     .await;
-    crate::relay_sync::shutdown_client(&client).await;
     outcome.context("Publishing shared folder timed out")?
 }
 

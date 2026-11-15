@@ -112,6 +112,16 @@ pub(crate) async fn apply_one_event(
     daemon_tasks: &DaemonTaskSet,
 ) -> Result<EventApplyOutcome> {
     use iris_drive_core::relay_sync;
+    if iris_drive_core::share_index::is_share_index_event(event) {
+        return apply_share_index_relay_event(
+            config_dir,
+            event,
+            fips_blocks,
+            mount_refresh,
+            daemon_tasks,
+        )
+        .await;
+    }
     if let Some(outcome) = apply_share_join_relay_event(client, config_dir, event, daemon_tasks).await? {
         return Ok(outcome);
     }

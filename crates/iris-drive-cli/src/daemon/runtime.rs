@@ -302,6 +302,8 @@ pub(crate) fn cmd_daemon(
             startup_config,
             startup_state,
         ));
+        let mut share_index_changed_rx =
+            start_share_index_reconciler(&client, config_dir, &daemon_tasks);
         if let Err(error) = direct_roots
             .request_current_state_from_peers(config_dir, fips_blocks.as_deref(), "startup")
             .await
@@ -425,12 +427,7 @@ pub(crate) fn cmd_daemon(
                                 Ok(outcome) if outcome.should_announce_current_state() => {
                                     direct_roots.invalidate_current_sync_events_cache();
                                     direct_root_change_announce_pending = true;
-                                    direct_root_change_announce_timer.as_mut().reset(
-                                        tokio::time::Instant::now()
-                                            + std::time::Duration::from_millis(
-                                                DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS,
-                                            ),
-                                    );
+                                    direct_root_change_announce_timer.as_mut().reset(direct_root_change_announce_deadline());
                                 }
                                 Ok(_) => {}
                                 Err(e) => {
@@ -839,6 +836,11 @@ pub(crate) fn cmd_daemon(
                         );
                     }
                 }
+                Some(()) = share_index_changed_rx.recv() => {
+                    direct_roots.invalidate_current_sync_events_cache();
+                    direct_root_change_announce_pending = true;
+                    direct_root_change_announce_timer.as_mut().reset(direct_root_change_announce_deadline());
+                }
                 () = &mut direct_root_change_announce_timer, if direct_root_change_announce_pending => {
                     direct_root_change_announce_pending = false;
                     if let Err(error) =
@@ -960,12 +962,7 @@ pub(crate) fn cmd_daemon(
                     .await
                     {
                         direct_root_change_announce_pending = true;
-                        direct_root_change_announce_timer.as_mut().reset(
-                            tokio::time::Instant::now()
-                                + std::time::Duration::from_millis(
-                                    DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS,
-                                ),
-                        );
+                        direct_root_change_announce_timer.as_mut().reset(direct_root_change_announce_deadline());
                     }
                     if acked_app_key_link_rosters.len() != acked_count {
                         acked_app_key_link_tx.send_replace(Arc::new(acked_app_key_link_rosters.clone()));

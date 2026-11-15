@@ -18,6 +18,11 @@
 - Pick the folder to share from a list on Mac, iPhone and Android, and get
   the share link right after creating a shared folder on iPhone.
 - Folders shared or joined while Drive is running now sync without a restart.
+- Shared folders follow your profile, as in Google Drive. A folder you share
+  or join on one device appears on your other devices, in the same place in My
+  Drive; moving it, taking it out of My Drive, leaving it or stopping sharing
+  applies on all of them. A device you link later is let into the folders you
+  own. For a folder someone else owns it asks to join with the link you used.
 - Photo backup on iPhone shows its progress and when the last full backup
   finished, and says how to back up when it is waiting for Wi-Fi.
 

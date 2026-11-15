@@ -144,6 +144,14 @@ they join from the app). There is no "Shared with me" folder on disk; the
 Shares list is that view. **Remove from My Drive**, or deleting the shortcut
 folder on disk, keeps membership; **Add to My Drive** puts it back; moving the
 folder moves the shortcut.
+Shared folders belong to the profile, not to one device. Each device sends
+its list of them (what it shared or joined, where they sit in My Drive, what
+it left) to the profile's other devices, encrypted for them, and they follow
+it. A device linked later is let into the folders the profile owns by the
+device that shared them. For a folder someone else owns it asks to join with
+the link the profile used, so that link has to be still on; a folder joined
+from a signed invite instead of a link has to be shared with the new device
+again.
 `idrive shares link <share-id> --disable` stops a folder's links from letting
 anyone else in; people already in keep access. The link format is shared with
 Iris Drive web (`src/drive/shareJoinLink.ts`).

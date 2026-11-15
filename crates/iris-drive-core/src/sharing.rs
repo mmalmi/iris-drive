@@ -2028,6 +2028,42 @@ pub fn invite_shared_folder_resolved_recipient(
     )
 }
 
+/// Let more devices of a profile that is already in the folder open it, at
+/// the role the profile has.
+pub fn add_shared_folder_member_devices(
+    folder: &mut SharedFolder,
+    signer_keys: &Keys,
+    member: &ShareMember,
+    app_pubkeys: &[String],
+    created_at: i64,
+) -> Result<ShareInviteOutcome, SharingError> {
+    let recipients = app_pubkeys
+        .iter()
+        .map(|app_pubkey| ShareRecipient {
+            profile_id: member.profile_id,
+            app_pubkey: app_pubkey.clone(),
+            role: member.role,
+            label: None,
+            representative_npub_hint: None,
+            display_name: None,
+        })
+        .collect();
+    invite_shared_folder_recipients(folder, signer_keys, recipients, created_at)
+}
+
+/// Whether `app_pubkey` is the device that shared the folder. Only it turns
+/// the owner's folder into the shared one; the profile's other devices get
+/// the folder from it.
+#[must_use]
+pub fn shared_folder_created_by(folder: &SharedFolder, app_pubkey: &str) -> bool {
+    folder
+        .access
+        .key_epochs
+        .values()
+        .next()
+        .is_some_and(|epoch| epoch.signed_by_pubkey == app_pubkey)
+}
+
 fn invite_shared_folder_recipients(
     folder: &mut SharedFolder,
     signer_keys: &Keys,

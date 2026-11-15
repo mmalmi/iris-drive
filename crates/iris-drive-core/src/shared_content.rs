@@ -78,6 +78,7 @@ pub(crate) async fn seed_shared_roots<S: Store>(
         .filter(|(_, folder)| {
             folder.owner_profile_id == profile_id
                 && folder.app_key_roots.is_empty()
+                && crate::sharing::shared_folder_created_by(folder, &app_key)
                 && crate::shared_folder_app_key_can_write_roots(folder, &app_key)
         })
         .map(|(index, _)| index)

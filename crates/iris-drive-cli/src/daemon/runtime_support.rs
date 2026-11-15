@@ -1,5 +1,12 @@
 const DIRECT_APP_MESSAGE_DRAIN_LIMIT: usize = 4096;
 const DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS: u64 = 750;
+
+/// When to tell directly connected devices of a change: shortly, so changes
+/// that arrive together go out as one announcement.
+fn direct_root_change_announce_deadline() -> tokio::time::Instant {
+    tokio::time::Instant::now()
+        + std::time::Duration::from_millis(DIRECT_ROOT_CHANGE_ANNOUNCE_COALESCE_MS)
+}
 const DIRECT_ROOT_PEER_REFRESH_INTERVAL_SECS: u64 = 30;
 const DIRECT_ROOT_REPAIR_INTERVAL_SECS: u64 = 300;
 const FIPS_STATUS_PROBE_INTERVAL_SECS: u64 = 2;

@@ -11,10 +11,12 @@ use super::store::ShareJoinStore;
 use super::{
     ShareJoinLink, build_share_join_request, is_share_join_request_event,
     join_request_needs_approval, share_join_request_filter, share_recipient_from_join_request,
-    shared_folder_from_access_event_for_join,
+    shared_folder_from_access_event, shared_folder_from_access_event_for_join,
 };
 use crate::config::AppConfig;
 use crate::paths::{config_path_in, key_path_in};
+use crate::share_index::ShareIndex;
+use crate::sharing::SharedFolder;
 use crate::sharing::{
     invite_shared_folder_resolved_recipient, share_access_snapshot_d_tag,
     share_recipient_profile_evidence_for_app_key, shared_folder_app_key_can_admin,
@@ -28,8 +30,12 @@ use crate::{
 pub enum ShareJoinEventOutcome {
     /// Someone who asked with one of this device's links was let in.
     Approved(NostrIdentityId),
-    /// A folder this device asked to join let it in.
+    /// A folder this device asked to join, or one the profile's other
+    /// devices have, let it in.
     Joined(NostrIdentityId),
+    /// A folder the profile's other devices have does not list this device
+    /// yet, so it asks with the profile's link.
+    Asked(NostrIdentityId),
     Ignored,
 }
 
@@ -68,48 +74,115 @@ pub fn approve_share_join_request(
     Ok(Some(folder.share_id))
 }
 
-/// Keep a folder this device asked to join, once its admin's access list
-/// includes this device.
+fn access_event_is_for(event: &Event, admin: &str, share_id: NostrIdentityId) -> bool {
+    event.pubkey.to_hex() == admin
+        && event.tags.identifier() == Some(share_access_snapshot_d_tag(share_id).as_str())
+}
+
+/// Keep `folder`, which just let this device in. A folder the profile's
+/// other devices already have sits where it sits on them; a folder new to
+/// the profile gets a shortcut in My Drive.
+fn keep_joined_folder(
+    config: &mut AppConfig,
+    index: &mut ShareIndex,
+    folder: SharedFolder,
+    link: Option<&ShareJoinLink>,
+    now: i64,
+) -> Result<()> {
+    let share_id = folder.share_id;
+    let name = folder.display_name.clone();
+    let device = config
+        .profile
+        .as_ref()
+        .context("Profile required")?
+        .app_key_pubkey
+        .clone();
+    config.upsert_shared_folder(folder);
+    match index.entry(share_id).cloned() {
+        Some(entry) => {
+            crate::share_index::place(config, &entry);
+        }
+        None => {
+            crate::share_actions::ensure_default_share_shortcut(config, share_id, &name)?;
+        }
+    }
+    if let Some(link) = link {
+        index.note_link(link, &device, now);
+    }
+    index.capture_local(config, now);
+    Ok(())
+}
+
+/// Keep a folder once its admin's access list includes this device: one this
+/// device asked to join, or one the profile's other devices have. If the
+/// list of such a folder leaves this device out, ask with the profile's link.
 pub fn complete_share_join(
     config: &mut AppConfig,
     store: &mut ShareJoinStore,
+    index: &mut ShareIndex,
     app_pubkey: &str,
     event: &Event,
-) -> Result<Option<NostrIdentityId>> {
-    let Some(pending) = store.pending.iter().find(|pending| {
-        pending.link.admin == event.pubkey.to_hex()
-            && event.tags.identifier()
-                == Some(share_access_snapshot_d_tag(pending.link.share_id).as_str())
-    }) else {
-        return Ok(None);
-    };
-    let share_id = pending.link.share_id;
-    if config.shared_folder(share_id).is_some() {
+    now: i64,
+) -> Result<ShareJoinEventOutcome> {
+    if let Some(link) = store
+        .pending
+        .iter()
+        .map(|pending| &pending.link)
+        .find(|link| access_event_is_for(event, &link.admin, link.share_id))
+        .cloned()
+    {
+        let share_id = link.share_id;
+        if config.shared_folder(share_id).is_some() {
+            store.finish_pending(share_id);
+            return Ok(ShareJoinEventOutcome::Ignored);
+        }
+        let Some(folder) = shared_folder_from_access_event_for_join(&link, event, app_pubkey)
+        else {
+            return Ok(ShareJoinEventOutcome::Ignored);
+        };
+        keep_joined_folder(config, index, folder, Some(&link), now)?;
         store.finish_pending(share_id);
-        return Ok(None);
+        return Ok(ShareJoinEventOutcome::Joined(share_id));
     }
-    let Some(folder) = shared_folder_from_access_event_for_join(&pending.link, event, app_pubkey)
+    let Some(entry) = index
+        .wanted()
+        .find(|entry| access_event_is_for(event, &entry.admin, entry.share_id))
+        .cloned()
     else {
-        return Ok(None);
+        return Ok(ShareJoinEventOutcome::Ignored);
     };
-    let name = folder.display_name.clone();
-    config.upsert_shared_folder(folder);
-    crate::share_actions::ensure_default_share_shortcut(config, share_id, &name)?;
-    store.finish_pending(share_id);
-    Ok(Some(share_id))
+    let share_id = entry.share_id;
+    if config.shared_folder(share_id).is_some() {
+        return Ok(ShareJoinEventOutcome::Ignored);
+    }
+    let anchor = entry.anchor();
+    if let Some(folder) = shared_folder_from_access_event(&anchor, event, app_pubkey) {
+        keep_joined_folder(config, index, folder, None, now)?;
+        return Ok(ShareJoinEventOutcome::Joined(share_id));
+    }
+    if let Some(link) = entry.link()
+        && anchor.signed(event)
+    {
+        store.record_pending(link, now);
+        return Ok(ShareJoinEventOutcome::Asked(share_id));
+    }
+    Ok(ShareJoinEventOutcome::Ignored)
 }
 
 /// Whether the event is one this module acts on.
 #[must_use]
-pub fn is_share_join_event(event: &Event, store: &ShareJoinStore) -> bool {
+pub fn is_share_join_event(event: &Event, store: &ShareJoinStore, index: &ShareIndex) -> bool {
     if is_share_join_request_event(event) {
         return store.link_signed_by(&event.pubkey.to_hex()).is_some();
     }
     is_share_access_snapshot_event_coordinate(event)
-        && store.pending.iter().any(|pending| {
-            event.tags.identifier()
-                == Some(share_access_snapshot_d_tag(pending.link.share_id).as_str())
-        })
+        && (store
+            .pending
+            .iter()
+            .any(|pending| access_event_is_for(event, &pending.link.admin, pending.link.share_id))
+            || index
+                .wanted()
+                .any(|entry| access_event_is_for(event, &entry.admin, entry.share_id)))
 }
 
 /// Apply one relay event under the config lock. After `Approved`, the caller
@@ -120,31 +193,47 @@ pub async fn apply_share_join_event(
 ) -> Result<ShareJoinEventOutcome> {
     let lock = crate::config_lock::ConfigMutationLock::acquire(config_dir).await?;
     let mut store = ShareJoinStore::load(config_dir)?;
-    if !is_share_join_event(event, &store) {
+    let mut index = ShareIndex::load(config_dir)?;
+    if !is_share_join_event(event, &store, &index) {
         return Ok(ShareJoinEventOutcome::Ignored);
     }
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let outcome = if is_share_join_request_event(event) {
-        approve_share_join_request(config_dir, &mut config, &store, event, now_seconds())?.map_or(
-            ShareJoinEventOutcome::Ignored,
-            ShareJoinEventOutcome::Approved,
-        )
-    } else {
+    let index_before = index.clone();
+    let answers_a_join = !is_share_join_request_event(event);
+    let outcome = if answers_a_join {
         let app_pubkey = config
             .profile
             .as_ref()
             .context("Profile required")?
             .app_key_pubkey
             .clone();
-        let joined = complete_share_join(&mut config, &mut store, &app_pubkey, event)?;
-        store.save(config_dir)?;
-        joined.map_or(
+        complete_share_join(
+            &mut config,
+            &mut store,
+            &mut index,
+            &app_pubkey,
+            event,
+            now_seconds(),
+        )?
+    } else {
+        approve_share_join_request(config_dir, &mut config, &store, event, now_seconds())?.map_or(
             ShareJoinEventOutcome::Ignored,
-            ShareJoinEventOutcome::Joined,
+            ShareJoinEventOutcome::Approved,
         )
     };
-    if outcome != ShareJoinEventOutcome::Ignored {
+    // The folder first, then the list that says this device has it: a list
+    // saved without the folder would read as the profile removing it.
+    if matches!(
+        outcome,
+        ShareJoinEventOutcome::Approved(_) | ShareJoinEventOutcome::Joined(_)
+    ) {
         config.save(config_path_in(config_dir))?;
+    }
+    if answers_a_join {
+        store.save(config_dir)?;
+    }
+    if index != index_before {
+        index.save(config_dir)?;
     }
     drop(lock);
     Ok(outcome)
@@ -157,9 +246,14 @@ pub async fn publish_approved_share(config_dir: &Path, share_id: NostrIdentityId
 }
 
 /// Relay filters for requests made with this device's links and for the
-/// access lists of folders it asked to join.
+/// access lists of folders it is waiting to be let into: those it asked to
+/// join, and those the profile's other devices have.
 #[must_use]
-pub fn share_join_filters(config: &AppConfig, store: &ShareJoinStore) -> Vec<Filter> {
+pub fn share_join_filters(
+    config: &AppConfig,
+    store: &ShareJoinStore,
+    index: &ShareIndex,
+) -> Vec<Filter> {
     let mut filters = Vec::new();
     if let Some(profile) = config.profile.as_ref() {
         let link_pubkeys = store
@@ -171,27 +265,32 @@ pub fn share_join_filters(config: &AppConfig, store: &ShareJoinStore) -> Vec<Fil
             .collect::<Vec<_>>();
         filters.extend(share_join_request_filter(&link_pubkeys));
     }
-    let pending = store
+    let awaited = store
         .pending
         .iter()
-        .filter(|pending| config.shared_folder(pending.link.share_id).is_none())
-        .collect::<Vec<_>>();
-    if !pending.is_empty() {
-        let admins = pending
+        .map(|pending| (pending.link.admin.clone(), pending.link.share_id))
+        .chain(
+            index
+                .wanted()
+                .map(|entry| (entry.admin.clone(), entry.share_id)),
+        )
+        .filter(|(_, share_id)| config.shared_folder(*share_id).is_none())
+        .collect::<std::collections::BTreeSet<_>>();
+    if !awaited.is_empty() {
+        let admins = awaited
             .iter()
-            .filter_map(|pending| nostr_sdk::PublicKey::from_hex(&pending.link.admin).ok())
-            .collect::<Vec<_>>();
+            .filter_map(|(admin, _)| nostr_sdk::PublicKey::from_hex(admin).ok())
+            .collect::<std::collections::BTreeSet<_>>();
+        let d_tags = awaited
+            .iter()
+            .map(|(_, share_id)| share_access_snapshot_d_tag(*share_id))
+            .collect::<std::collections::BTreeSet<_>>();
         filters.push(
             Filter::new()
                 .kind(Kind::from(KIND_SHARE_ACCESS_SNAPSHOT))
                 .authors(admins)
                 .custom_tag(SingleLetterTag::lowercase(Alphabet::L), SHARE_ACCESS_LABEL)
-                .custom_tags(
-                    SingleLetterTag::lowercase(Alphabet::D),
-                    pending
-                        .iter()
-                        .map(|pending| share_access_snapshot_d_tag(pending.link.share_id)),
-                ),
+                .custom_tags(SingleLetterTag::lowercase(Alphabet::D), d_tags),
         );
     }
     filters
@@ -287,18 +386,27 @@ pub async fn sync_share_joins_once(
         ..ShareJoinSyncReport::default()
     };
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let filters = share_join_filters(&config, &ShareJoinStore::load(config_dir)?);
+    let filters = share_join_filters(
+        &config,
+        &ShareJoinStore::load(config_dir)?,
+        &ShareIndex::load(config_dir)?,
+    );
     if filters.is_empty() {
         return Ok(report);
     }
     let events = crate::relay_sync::fetch_events(client, filters, timeout).await?;
+    let mut asked = false;
     for event in &events {
         // A request that does not check out is skipped, never fatal to sync.
         match apply_share_join_event(config_dir, event).await {
             Ok(ShareJoinEventOutcome::Approved(share_id)) => report.approved.push(share_id),
             Ok(ShareJoinEventOutcome::Joined(share_id)) => report.joined.push(share_id),
+            Ok(ShareJoinEventOutcome::Asked(_)) => asked = true,
             Ok(ShareJoinEventOutcome::Ignored) | Err(_) => {}
         }
+    }
+    if asked {
+        report.requests_sent += publish_pending_share_join_requests(client, config_dir).await?;
     }
     report.approved.sort();
     report.approved.dedup();

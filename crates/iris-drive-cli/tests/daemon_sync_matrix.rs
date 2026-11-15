@@ -490,6 +490,8 @@ mod provider_visibility_tests;
 mod relayless_tests;
 #[path = "daemon_sync_matrix/scenario_tests.rs"]
 mod scenario_tests;
+#[path = "daemon_sync_matrix/share_devices_tests.rs"]
+mod share_devices_tests;
 #[path = "daemon_sync_matrix/staged_recovery_tests.rs"]
 mod staged_recovery_tests;
 #[path = "daemon_sync_matrix/successive_approval_tests.rs"]

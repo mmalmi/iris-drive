@@ -236,6 +236,26 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
   these touch the shared files. An owner's shared folder moves with them and
   cannot be deleted on disk until they stop sharing it. Team/shared
   DriveSpaces can come later; the first UX remains one Iris Drive.
+- **Same on every device**: sharing is per profile, as it is per account in
+  Google Drive, with no server to hold the list. Each AppKey publishes the
+  profile's shared folders (`share_index`) as one replaceable event, kind
+  30078 with `d` = `iris-drive/<profile>/share-index` and `l` =
+  `iris-drive/share-index`. Its content is AES-256-GCM under a fresh key that
+  is NIP-44-wrapped for each of the profile's AppKeys, the same recipients a
+  drive root is wrapped for, and it travels the same ways: relays and the
+  direct root exchange. An entry holds the share id, owner profile, the admin
+  AppKey to trust, name, role, the key of the join link if one was used, and
+  the place in My Drive (the owner's source path, a member's shortcuts).
+  Entries merge per share, newest change first, with removals kept as
+  tombstones; a device stamps its change after every change it has seen, so
+  clocks do not decide. The list grants nothing: a device adds a folder only
+  from the access snapshot signed by the entry's admin, once that snapshot
+  includes it. For a folder the profile owns, the admin AppKey named in the
+  entry adds the profile's newly linked AppKeys and republishes; if the
+  profile removed that AppKey, another one that manages the folder takes
+  over. For a folder someone else owns, a device that is not in the snapshot
+  asks with the profile's join link. **Remove from My Drive**, moving, leaving
+  and **Stop sharing** on one device apply on the others.
 - **GUI parity**: native control panels render app-core `UiShare`,
   `UiShareMember`, and `UiPendingShareInvite` state from the **Shares** tab,
   including source path, role/status, pending contacts,

@@ -372,9 +372,22 @@ async fn sync_once_inner(
         config.save(config_path_in(config_dir))?;
     }
     drop(mutation);
-    crate::share_join::sync_share_joins_once(config_dir, &client, timeout)
+    // The profile's other devices first: what they shared, joined, moved or
+    // left decides which folders this device waits to be let into.
+    if !approval_still_pending {
+        crate::share_index::sync_share_index_once(config_dir, &client, timeout)
+            .await
+            .context("syncing the profile's shared folders")?;
+    }
+    let joins = crate::share_join::sync_share_joins_once(config_dir, &client, timeout)
         .await
         .context("syncing share links")?;
+    if !joins.joined.is_empty() {
+        // A folder joined just now belongs on the profile's other devices.
+        crate::share_index::publish_share_index(&client, config_dir, false)
+            .await
+            .context("sending the profile's shared folders")?;
+    }
     config = reload_sync_config(config_dir, &initial_state)?;
     let share_ids = config
         .shared_folders
