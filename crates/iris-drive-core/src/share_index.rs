@@ -4,6 +4,8 @@
 //! so each device keeps the list and sends it to the profile's other devices,
 //! encrypted for them. Folders merge one by one, the newest change winning; a
 //! folder the profile stopped sharing or left stays in the list as removed.
+//! Two devices that change the list at once both keep their change when it
+//! is to different folders, and agree on one when it is to the same folder.
 //!
 //! The list says which folders to have and where they sit in My Drive. It
 //! never grants access: a device adds a folder only from the signed access
@@ -25,7 +27,8 @@ pub mod event;
 pub mod sync;
 
 pub use event::{
-    SHARE_INDEX_LABEL, current_share_index_event, is_share_index_event, share_index_filter,
+    SHARE_INDEX_EVENT_FILE, SHARE_INDEX_LABEL, current_share_index_events, is_share_index_event,
+    share_index_filter,
 };
 pub use sync::{
     ShareIndexApply, ShareIndexReconcile, apply_share_index_event, apply_share_index_event_locked,
@@ -152,18 +155,25 @@ impl ShareIndexEntry {
 /// The list as this device keeps it, in a private file beside the config.
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ShareIndex {
+    /// The profile the list belongs to. A list left by another profile is
+    /// never used for this one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub profile_id: Option<NostrIdentityId>,
     #[serde(default)]
     pub entries: BTreeMap<String, ShareIndexEntry>,
-    /// Folders this device has. One that then leaves its config was removed
-    /// here; a listed folder it never had is still to be added.
+    /// Folders this device has. A listed folder outside this set is still to
+    /// be added here.
     #[serde(default)]
     pub adopted: BTreeSet<String>,
 }
 
-/// The most folders a list from another device may carry.
+/// The most folders one event from another device may carry.
 pub const MAX_SHARE_INDEX_ENTRIES: usize = 4096;
+/// The most folders, removed ones included, a list keeps.
+pub const MAX_SHARE_INDEX_TOTAL: usize = 65_536;
 
 impl ShareIndex {
+    /// The file as it is, whichever profile it belongs to.
     pub fn load(config_dir: &Path) -> Result<Self> {
         let path = config_dir.join(SHARE_INDEX_FILE);
         match std::fs::read(&path) {
@@ -172,6 +182,27 @@ impl ShareIndex {
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Self::default()),
             Err(error) => Err(error).with_context(|| format!("reading {}", path.display())),
         }
+    }
+
+    /// The list of the profile `config` is signed in to: the file if it is
+    /// that profile's, an empty list otherwise.
+    pub fn load_for(config_dir: &Path, config: &AppConfig) -> Result<Self> {
+        let profile_id = config.profile.as_ref().map(|state| state.profile_id);
+        let index = Self::load(config_dir)?;
+        if index.profile_id == profile_id || (index.profile_id.is_none() && index.is_empty()) {
+            return Ok(Self {
+                profile_id,
+                ..index
+            });
+        }
+        Ok(Self {
+            profile_id,
+            ..Self::default()
+        })
+    }
+
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty() && self.adopted.is_empty()
     }
 
     pub fn save(&self, config_dir: &Path) -> Result<()> {
@@ -213,8 +244,16 @@ impl ShareIndex {
             .map(|(_, entry)| entry)
     }
 
-    /// Fold what this device did to its shared folders into the list: folders
-    /// it shared or joined, where they sit now, and folders it removed.
+    /// Fold where this device's shared folders sit into the list, and list
+    /// the ones it shared that are not there yet.
+    ///
+    /// This only ever adds and moves. Leaving a folder and coming back to
+    /// one the profile left are said outright ([`Self::note_removed`],
+    /// [`Self::note_joined`]): a folder that is merely missing from the
+    /// config is added again from its admin's access list, and one the
+    /// profile left that is merely present is dropped again. A config
+    /// written over by a stale copy therefore never makes the profile leave
+    /// a folder or rejoin one.
     pub fn capture_local(&mut self, config: &AppConfig, now: i64) -> bool {
         let Some(state) = config.profile.as_ref() else {
             return false;
@@ -224,66 +263,80 @@ impl ShareIndex {
         let mut present = BTreeSet::new();
         let mut revoked = None;
         for folder in &config.shared_folders {
+            // A folder that never listed this device is another profile's
+            // leftover, not this profile's folder.
+            if folder.member_for_app_key(&state.app_key_pubkey).is_none() {
+                continue;
+            }
             let key = folder.share_id.to_string();
-            present.insert(key.clone());
             let (source_path, shortcuts) = local_place(config, state, folder);
-            if let Some(entry) = self.entries.get_mut(&key).filter(|entry| !entry.removed) {
-                let admin = reanchored_admin(state, folder, &entry.admin, &mut revoked);
-                if entry.source_path != source_path
-                    || entry.shortcuts != shortcuts
-                    || entry.admin != admin
-                {
-                    entry.source_path = source_path;
-                    entry.shortcuts = shortcuts;
-                    entry.admin = admin;
-                    entry.updated_at = stamp;
-                    entry.updated_by.clone_from(&state.app_key_pubkey);
+            match self.entries.get_mut(&key) {
+                Some(entry) if entry.removed => continue,
+                Some(entry) => {
+                    let admin = reanchored_admin(state, folder, &entry.admin, &mut revoked);
+                    if entry.source_path != source_path
+                        || entry.shortcuts != shortcuts
+                        || entry.admin != admin
+                    {
+                        entry.source_path = source_path;
+                        entry.shortcuts = shortcuts;
+                        entry.admin = admin;
+                        entry.updated_at = stamp;
+                        entry.updated_by.clone_from(&state.app_key_pubkey);
+                        changed = true;
+                    }
+                }
+                None => {
+                    let entry = new_entry(config, state, folder, 0, stamp);
+                    self.entries.insert(key.clone(), entry);
                     changed = true;
                 }
-            } else {
-                let generation = self.generation_after_removal(&key);
-                self.entries.insert(
-                    key.clone(),
-                    ShareIndexEntry {
-                        share_id: folder.share_id,
-                        owner_profile_id: folder.owner_profile_id,
-                        admin: default_admin(folder, &state.app_key_pubkey),
-                        name: folder.display_name.clone(),
-                        role: folder
-                            .active_member_for_app_key(&state.app_key_pubkey)
-                            .map_or(folder.local_role, |member| member.role),
-                        link_key: None,
-                        source_path,
-                        shortcuts,
-                        removed: false,
-                        generation,
-                        updated_at: stamp,
-                        updated_by: state.app_key_pubkey.clone(),
-                    },
-                );
-                changed = true;
             }
+            present.insert(key.clone());
             changed |= self.adopted.insert(key);
         }
-        let gone = self
-            .adopted
-            .iter()
-            .filter(|key| !present.contains(*key))
-            .cloned()
-            .collect::<Vec<_>>();
-        for key in gone {
-            self.adopted.remove(&key);
-            if let Some(entry) = self.entries.get_mut(&key).filter(|entry| !entry.removed) {
-                entry.removed = true;
-                entry.link_key = None;
-                entry.source_path.clear();
-                entry.shortcuts.clear();
-                entry.updated_at = stamp;
-                entry.updated_by.clone_from(&state.app_key_pubkey);
-            }
-            changed = true;
+        let before = self.adopted.len();
+        self.adopted.retain(|key| present.contains(key));
+        changed | (self.adopted.len() != before)
+    }
+
+    /// The profile stopped sharing the folder or left it, on this device.
+    pub fn note_removed(&mut self, share_id: NostrIdentityId, device: &str, now: i64) -> bool {
+        let stamp = self.next_stamp(now);
+        let key = share_id.to_string();
+        self.adopted.remove(&key);
+        let Some(entry) = self.entries.get_mut(&key).filter(|entry| !entry.removed) else {
+            return false;
+        };
+        entry.removed = true;
+        entry.link_key = None;
+        entry.source_path.clear();
+        entry.shortcuts.clear();
+        entry.updated_at = stamp;
+        device.clone_into(&mut entry.updated_by);
+        true
+    }
+
+    /// This device joined the folder on purpose. If the profile had left it,
+    /// this is a new beginning that wins over the leaving.
+    pub fn note_joined(&mut self, config: &AppConfig, share_id: NostrIdentityId, now: i64) -> bool {
+        let key = share_id.to_string();
+        if self.entry(share_id).is_some() {
+            return false;
         }
-        changed
+        let (Some(state), Some(folder)) = (config.profile.as_ref(), config.shared_folder(share_id))
+        else {
+            return false;
+        };
+        let entry = new_entry(
+            config,
+            state,
+            folder,
+            self.generation_after_removal(&key),
+            self.next_stamp(now),
+        );
+        self.entries.insert(key, entry);
+        true
     }
 
     /// Remember the link a folder was joined with and the admin who answers
@@ -330,11 +383,11 @@ impl ShareIndex {
                 continue;
             }
             let key = entry.share_id.to_string();
-            if self
-                .entries
-                .get(&key)
-                .is_none_or(|current| entry.newer_than(current))
-            {
+            let newer = match self.entries.get(&key) {
+                Some(current) => entry.newer_than(current),
+                None => self.entries.len() < MAX_SHARE_INDEX_TOTAL,
+            };
+            if newer {
                 self.entries.insert(key, entry);
                 changed = true;
             }
@@ -361,6 +414,66 @@ impl ShareIndex {
         }
         changed
     }
+}
+
+/// The entry for a folder this device has, as it stands in its config.
+fn new_entry(
+    config: &AppConfig,
+    state: &ProfileState,
+    folder: &SharedFolder,
+    generation: u32,
+    stamp: i64,
+) -> ShareIndexEntry {
+    let (source_path, shortcuts) = local_place(config, state, folder);
+    ShareIndexEntry {
+        share_id: folder.share_id,
+        owner_profile_id: folder.owner_profile_id,
+        admin: default_admin(folder, &state.app_key_pubkey),
+        name: folder.display_name.clone(),
+        role: folder
+            .active_member_for_app_key(&state.app_key_pubkey)
+            .map_or(folder.local_role, |member| member.role),
+        link_key: None,
+        source_path,
+        shortcuts,
+        removed: false,
+        generation,
+        updated_at: stamp,
+        updated_by: state.app_key_pubkey.clone(),
+    }
+}
+
+/// Say in the list that this device left `share_id` or stopped sharing it.
+/// Call inside the config transaction that removes the folder.
+pub fn record_removed(
+    config_dir: &Path,
+    config: &AppConfig,
+    share_id: NostrIdentityId,
+    now: i64,
+) -> Result<()> {
+    let Some(state) = config.profile.as_ref() else {
+        return Ok(());
+    };
+    let mut index = ShareIndex::load_for(config_dir, config)?;
+    if index.note_removed(share_id, &state.app_key_pubkey, now) {
+        index.save(config_dir)?;
+    }
+    Ok(())
+}
+
+/// Say in the list that this device joined `share_id` on purpose. Call
+/// inside the config transaction that adds the folder.
+pub fn record_joined(
+    config_dir: &Path,
+    config: &AppConfig,
+    share_id: NostrIdentityId,
+    now: i64,
+) -> Result<()> {
+    let mut index = ShareIndex::load_for(config_dir, config)?;
+    if index.note_joined(config, share_id, now) {
+        index.save(config_dir)?;
+    }
+    Ok(())
 }
 
 /// Put a folder this device has where `entry` says it sits in My Drive.

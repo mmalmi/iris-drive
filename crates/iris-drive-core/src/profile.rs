@@ -2623,6 +2623,13 @@ pub fn logout_local_profile(config_dir: &Path) -> Result<ProfileLogoutReport, Pr
     report.removed_key = remove_file_if_present(&key_path_in(config_dir))?;
     report.removed_recovery_phrase = remove_file_if_present(&recovery_phrase_path_in(config_dir))?;
     report.removed_sync_cache = remove_file_if_present(&sync_cache_path_in(config_dir))?;
+    // The profile's list of shared folders holds its join links.
+    for file in [
+        crate::share_index::SHARE_INDEX_FILE,
+        crate::share_index::SHARE_INDEX_EVENT_FILE,
+    ] {
+        remove_file_if_present(&config_dir.join(file))?;
+    }
 
     Ok(report)
 }

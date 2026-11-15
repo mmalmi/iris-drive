@@ -53,6 +53,9 @@ pub async fn dispatch_share_action_with_content(
     let mut changed = crate::shared_content::seed_shared_roots(daemon.tree(), &mut config).await?;
     if let ShareAction::DeleteShare { share_id } = action {
         detach_share(config_dir, daemon.tree(), config, share_id).await?;
+        // Leaving is said outright, so the profile's other devices leave too.
+        let detached = AppConfig::load_or_default(config_path_in(config_dir))?;
+        crate::share_index::record_removed(config_dir, &detached, share_id, now_seconds)?;
         let mut result = share_action_state(config_dir)?;
         result.share_id = Some(share_id);
         return Ok(result);

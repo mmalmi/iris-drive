@@ -8,7 +8,7 @@ async fn refresh_share_join_subscriptions(
     daemon_tasks: &DaemonTaskSet,
 ) -> Result<Vec<nostr_sdk::Filter>> {
     let store = iris_drive_core::share_join::ShareJoinStore::load(config_dir)?;
-    let index = iris_drive_core::share_index::ShareIndex::load(config_dir)?;
+    let index = iris_drive_core::share_index::ShareIndex::load_for(config_dir, config)?;
     let filters = iris_drive_core::share_join::share_relay_filters(config, &store, &index);
     let changed =
         iris_drive_core::share_join::refresh_share_relay_subscriptions(client, &filters, subscriptions)
@@ -44,7 +44,8 @@ async fn apply_share_join_relay_event(
 ) -> Result<Option<EventApplyOutcome>> {
     use iris_drive_core::share_join::{self, ShareJoinEventOutcome};
     let store = share_join::ShareJoinStore::load(config_dir)?;
-    let index = iris_drive_core::share_index::ShareIndex::load(config_dir)?;
+    let config = AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?;
+    let index = iris_drive_core::share_index::ShareIndex::load_for(config_dir, &config)?;
     if !share_join::is_share_join_event(event, &store, &index) {
         return Ok(None);
     }
@@ -62,6 +63,13 @@ async fn apply_share_join_relay_event(
         ShareJoinEventOutcome::Approved(share_id) => ("approved", share_id),
         ShareJoinEventOutcome::Joined(share_id) => ("joined", share_id),
         ShareJoinEventOutcome::Asked(share_id) => ("asked", share_id),
+        // An access list that answers no join is still an access list: the
+        // usual handling takes it.
+        ShareJoinEventOutcome::Ignored
+            if iris_drive_core::is_share_access_snapshot_event_coordinate(event) =>
+        {
+            return Ok(None);
+        }
         ShareJoinEventOutcome::Ignored => return Ok(Some(EventApplyOutcome::Unchanged)),
     };
     emit_daemon_status_event(

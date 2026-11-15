@@ -1,6 +1,10 @@
 //! Keeping a device's list and folders in step with the profile's other
 //! devices. The desktop daemon and the mobile sync both come through here.
+//!
+//! Every change to the list file happens under the config transaction lock,
+//! so the daemon, the apps and the CLI never write over each other.
 
+use std::collections::BTreeSet;
 use std::path::Path;
 use std::time::Duration;
 
@@ -8,8 +12,8 @@ use anyhow::{Context, Result};
 use nostr_sdk::{Client, Event};
 
 use super::event::{
-    ShareIndexEventError, current_share_index_event, is_share_index_event, mark_published,
-    parse_share_index_event, share_index_d_tag, share_index_filter,
+    ShareIndexEventError, current_share_index_events, is_share_index_event, mark_published,
+    parse_share_index_event, share_index_d_tag, share_index_event_scope, share_index_filter,
 };
 use super::{ShareIndex, admit::admit_profile_devices};
 use crate::config::AppConfig;
@@ -56,7 +60,17 @@ pub fn apply_share_index_event_locked(config_dir: &Path, event: &Event) -> Resul
     }
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config.profile.clone().context("Profile required")?;
-    if event.tags.identifier() != Some(share_index_d_tag(&state.root_scope_id()).as_str()) {
+    let scope = state.root_scope_id();
+    // Any part of the list, however its sender split it.
+    let first_part = share_index_d_tag(&scope, 0);
+    if share_index_event_scope(event) != Some(scope.as_str())
+        || !event.tags.identifier().is_some_and(|d_tag| {
+            d_tag == first_part
+                || d_tag
+                    .strip_prefix(first_part.as_str())
+                    .is_some_and(|part| part.starts_with('/'))
+        })
+    {
         return Ok(ShareIndexApply::NotOurs);
     }
     let author = event.pubkey.to_hex();
@@ -72,9 +86,9 @@ pub fn apply_share_index_event_locked(config_dir: &Path, event: &Event) -> Resul
         Err(ShareIndexEventError::KeyUnavailable) => return Ok(ShareIndexApply::KeyUnavailable),
         Err(error) => return Err(error.into()),
     };
-    let mut index = ShareIndex::load(config_dir)?;
-    // What this device did first, so it is neither lost nor mistaken for the
-    // other device's change.
+    let mut index = ShareIndex::load_for(config_dir, &config)?;
+    // Where this device's folders sit first, so its own move is neither lost
+    // nor mistaken for the other device's.
     let mut index_changed = index.capture_local(&config, now_seconds());
     let removed_before = removed_share_ids(&index);
     index_changed |= index.merge(entries);
@@ -104,7 +118,7 @@ pub fn apply_share_index_event_locked(config_dir: &Path, event: &Event) -> Resul
     })
 }
 
-fn removed_share_ids(index: &ShareIndex) -> std::collections::BTreeSet<NostrIdentityId> {
+fn removed_share_ids(index: &ShareIndex) -> BTreeSet<NostrIdentityId> {
     index
         .entries
         .values()
@@ -113,28 +127,33 @@ fn removed_share_ids(index: &ShareIndex) -> std::collections::BTreeSet<NostrIden
         .collect()
 }
 
-/// Send this device's list to relays if they do not have it yet (or again,
-/// with `force`). Returns whether it was sent.
+/// Send the parts of this device's list that relays do not have yet (or all
+/// of them again, with `force`). Returns whether anything was sent.
 pub async fn publish_share_index(client: &Client, config_dir: &Path, force: bool) -> Result<bool> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let Some((event, published)) = current_share_index_event(config_dir, &config)? else {
-        return Ok(false);
-    };
-    if (published && !force) || client.relays().await.is_empty() {
+    let events = current_share_index_events(config_dir, &config)?;
+    if events.is_empty() || client.relays().await.is_empty() {
         return Ok(false);
     }
-    client
-        .send_event(&event)
-        .await
-        .map_err(|error| anyhow::anyhow!("sending shared folder list: {error}"))?;
-    mark_published(config_dir, &event)?;
-    Ok(true)
+    let mut sent = false;
+    for (event, published) in &events {
+        if *published && !force {
+            continue;
+        }
+        client
+            .send_event(event)
+            .await
+            .map_err(|error| anyhow::anyhow!("sending shared folder list: {error}"))?;
+        mark_published(config_dir, event)?;
+        sent = true;
+    }
+    Ok(sent)
 }
 
 /// What one reconciliation did.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct ShareIndexReconcile {
-    /// This device's own changes were folded into its list.
+    /// The list or this device's folders changed to agree with each other.
     pub captured: bool,
     /// Folders the profile's newly linked devices were let into.
     pub admitted: Vec<NostrIdentityId>,
@@ -150,32 +169,35 @@ impl ShareIndexReconcile {
     }
 }
 
-/// Fold this device's own changes into its list and let the profile's new
-/// devices into the folders it answers for.
+/// Bring this device's list and folders into agreement, and let the
+/// profile's new devices into the folders it answers for.
 async fn capture_and_admit(config_dir: &Path) -> Result<ShareIndexReconcile> {
     let lock = ConfigMutationLock::acquire(config_dir).await?;
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     if config.profile.is_none() {
         return Ok(ShareIndexReconcile::default());
     }
-    let mut index = ShareIndex::load(config_dir)?;
+    let mut index = ShareIndex::load_for(config_dir, &config)?;
     let now = now_seconds();
-    let changed = index.capture_local(&config, now);
+    let captured = index.capture_local(&config, now);
+    // A folder the profile left that is back in the config was put there by
+    // a stale copy of it, not by the person: it goes again.
+    let healed = index.apply_to_config(&mut config);
     let admitted = if config.shared_folders.is_empty() {
         Vec::new()
     } else {
         let app_key = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
         admit_profile_devices(&mut config, &index, app_key.keys(), now)?
     };
-    if !admitted.is_empty() {
+    if healed || !admitted.is_empty() {
         config.save(config_path_in(config_dir))?;
     }
-    if changed {
+    if captured || healed {
         index.save(config_dir)?;
     }
     drop(lock);
     Ok(ShareIndexReconcile {
-        captured: changed,
+        captured: captured || healed,
         admitted,
         published: false,
     })

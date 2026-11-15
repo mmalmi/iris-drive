@@ -193,11 +193,11 @@ pub async fn apply_share_join_event(
 ) -> Result<ShareJoinEventOutcome> {
     let lock = crate::config_lock::ConfigMutationLock::acquire(config_dir).await?;
     let mut store = ShareJoinStore::load(config_dir)?;
-    let mut index = ShareIndex::load(config_dir)?;
+    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let mut index = ShareIndex::load_for(config_dir, &config)?;
     if !is_share_join_event(event, &store, &index) {
         return Ok(ShareJoinEventOutcome::Ignored);
     }
-    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let index_before = index.clone();
     let answers_a_join = !is_share_join_request_event(event);
     let outcome = if answers_a_join {
@@ -389,7 +389,7 @@ pub async fn sync_share_joins_once(
     let filters = share_join_filters(
         &config,
         &ShareJoinStore::load(config_dir)?,
-        &ShareIndex::load(config_dir)?,
+        &ShareIndex::load_for(config_dir, &config)?,
     );
     if filters.is_empty() {
         return Ok(report);

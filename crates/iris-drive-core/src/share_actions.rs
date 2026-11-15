@@ -286,7 +286,11 @@ fn apply_share_action(
             display_name.as_deref(),
             now_seconds,
         ),
-        ShareAction::DeleteShare { share_id } => delete_share(config, share_id),
+        ShareAction::DeleteShare { share_id } => {
+            let metadata = delete_share(config, share_id)?;
+            crate::share_index::record_removed(config_dir, config, share_id, now_seconds)?;
+            Ok(metadata)
+        }
         ShareAction::InviteShareMember {
             share_id,
             profile_id,
@@ -338,7 +342,12 @@ fn apply_share_action(
             now_seconds,
         ),
         ShareAction::AcceptShareInvite { invite } => {
-            accept_share_invite(config, &invite, now_seconds)
+            let metadata = accept_share_invite(config, &invite, now_seconds)?;
+            // Accepting says the profile wants the folder, even one it left.
+            if let Some(share_id) = metadata.share_id {
+                crate::share_index::record_joined(config_dir, config, share_id, now_seconds)?;
+            }
+            Ok(metadata)
         }
         ShareAction::RevokeShareMember {
             share_id,

@@ -1043,7 +1043,7 @@ pub fn build_current_direct_root_events(
         }
     }
     // The profile's shared folders, so its devices agree on them without relays.
-    if let Some((event, _)) = crate::share_index::current_share_index_event(config_dir, config)? {
+    for (event, _) in crate::share_index::current_share_index_events(config_dir, config)? {
         events.push(direct_root_event(
             format!("share-index:{}:{}", state.app_key_pubkey, event.id.to_hex()),
             &event,

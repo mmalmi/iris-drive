@@ -344,3 +344,52 @@ fn a_device_linked_later_asks_to_join_with_the_profiles_link() {
         Some("Shared plan")
     );
 }
+
+/// Write the device's config back as it was at `saved`, the way a process
+/// holding an old copy of it does.
+fn restore_config(dir: &Path, saved: &AppConfig) {
+    saved.save(config_path_in(dir)).unwrap();
+}
+
+#[test]
+fn a_stale_config_neither_leaves_nor_rejoins_a_folder_for_the_profile() {
+    let services = super::sharing_test_network::SharingTestServices::new();
+    let laptop = tempdir().unwrap();
+    new_profile(laptop.path(), "Laptop");
+    services.prepare(laptop.path());
+    cmd_shares_create(laptop.path(), "Projects/Alpha", None).unwrap();
+    let share_id = only_share_id(laptop.path());
+    let phone = tempdir().unwrap();
+    link_device(laptop.path(), phone.path(), "Phone");
+    services.prepare(phone.path());
+    sync(laptop.path());
+    let without_folder = AppConfig::load_or_default(config_path_in(phone.path())).unwrap();
+    sync(phone.path());
+    assert_eq!(only_share_id(phone.path()), share_id);
+    let with_folder = AppConfig::load_or_default(config_path_in(phone.path())).unwrap();
+
+    // An old copy of the phone's config, from before it had the folder, is
+    // written over the new one. Nobody left: the phone adds the folder again
+    // and the laptop keeps it.
+    restore_config(phone.path(), &without_folder);
+    assert_eq!(shares_of(phone.path()), Vec::new());
+    sync(phone.path());
+    assert_eq!(only_share_id(phone.path()), share_id);
+    sync(laptop.path());
+    assert_eq!(only_share_id(laptop.path()), share_id);
+
+    // The laptop stops sharing, and the phone follows.
+    act(laptop.path(), ShareAction::DeleteShare { share_id });
+    sync(laptop.path());
+    sync(phone.path());
+    assert_eq!(shares_of(phone.path()), Vec::new());
+
+    // An old copy of the phone's config that still has the folder is written
+    // back. Nobody shared it again: it goes again, on the phone only.
+    restore_config(phone.path(), &with_folder);
+    assert_eq!(only_share_id(phone.path()), share_id);
+    sync(phone.path());
+    assert_eq!(shares_of(phone.path()), Vec::new());
+    sync(laptop.path());
+    assert_eq!(shares_of(laptop.path()), Vec::new());
+}
