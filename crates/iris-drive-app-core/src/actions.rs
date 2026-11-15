@@ -164,12 +164,20 @@ pub enum NativeAppAction {
     RepairShareWraps {
         share_id: String,
     },
+    /// Take a shared folder out of My Drive on this device, keeping access.
+    RemoveShareShortcuts {
+        share_id: String,
+    },
     /// Make (or reuse) the link that lets anyone ask to join with `role`.
     CreateShareJoinLink {
         share_id: String,
         role: String,
     },
     DisableShareJoinLinks {
+        share_id: String,
+    },
+    /// Stop waiting to be let into a folder this device asked to join.
+    CancelShareJoin {
         share_id: String,
     },
     ImportFile {

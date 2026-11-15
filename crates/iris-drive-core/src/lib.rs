@@ -162,8 +162,7 @@ pub use projection::{
 pub use recovery_wraps::{active_recovery_phrase_pubkeys, drive_root_key_recipient_pubkeys};
 pub use root_meta::{DriveRootMeta, RootObservation, RootParent};
 pub use share_actions::{
-    ShareAction, ShareActionResult, dispatch_share_action, repair_missing_share_shortcuts,
-    share_action_state,
+    ShareAction, ShareActionResult, dispatch_share_action, share_action_state,
 };
 pub use sharing::{
     KIND_SHARE_ACCESS_SNAPSHOT, PendingShareInvite, PendingShareInviteView, ResolvedShareRecipient,

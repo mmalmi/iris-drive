@@ -132,6 +132,13 @@ fn disabled_links_let_nobody_else_in() {
     services.prepare(guest_dir.path());
     cmd_shares_accept(guest_dir.path(), &link).unwrap();
     sync(owner_dir.path());
+    // Nobody lets the guest in, so they stop waiting.
+    let cancelled = dispatch_cli_share_action(
+        guest_dir.path(),
+        iris_drive_core::ShareAction::CancelShareJoin { share_id },
+    )
+    .unwrap();
+    assert_eq!(cancelled.pending_joins, Vec::new());
 
     let owner_config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
     assert!(

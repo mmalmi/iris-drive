@@ -36,6 +36,9 @@ pub struct UiState {
     pub last_share_recipient_evidence: String,
     /// Folders this device asked to join from a link, still waiting.
     pub pending_share_joins: Vec<UiPendingShareJoin>,
+    /// My Drive folders that can be shared: not already shared, and not
+    /// inside or around a shared folder.
+    pub shareable_folders: Vec<String>,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -79,6 +82,11 @@ pub struct UiShare {
     pub members: Vec<UiShareMember>,
     pub pending_invites: Vec<UiPendingShareInvite>,
     pub shortcut_paths: Vec<String>,
+    /// This profile shared the folder from its own Drive.
+    pub owned: bool,
+    /// Where the folder is in My Drive on this device: the owner's own path,
+    /// or the shortcut a member added. Empty when it is not in My Drive.
+    pub location: String,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

@@ -1226,9 +1226,22 @@ struct IrisDriveControlPanel: View {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Create Shared Folder")
                     .font(.headline)
-                TextField("Folder in My Drive, e.g. Projects/Trip", text: $shareSourceInput)
-                    .textFieldStyle(.roundedBorder)
-                    .disableAutocorrection(true)
+                HStack(spacing: 8) {
+                    TextField("Folder in My Drive", text: $shareSourceInput)
+                        .textFieldStyle(.roundedBorder)
+                        .disableAutocorrection(true)
+                    Menu {
+                        if status.shareableFolders.isEmpty {
+                            Text("No folders in My Drive yet")
+                        }
+                        ForEach(status.shareableFolders.prefix(300), id: \.self) { folder in
+                            Button(folder) { shareSourceInput = folder }
+                        }
+                    } label: {
+                        Label("Choose", systemImage: "folder.fill")
+                    }
+                    .fixedSize()
+                }
                 Button {
                     let source = shareSourceInput.trimmingCharacters(in: .whitespacesAndNewlines)
                     controller.createShare(sourcePath: source) {
@@ -1275,7 +1288,9 @@ struct IrisDriveControlPanel: View {
                 }
             }
 
-            PendingShareJoinRows(joins: status.pendingShareJoins)
+            PendingShareJoinRows(joins: status.pendingShareJoins) { join in
+                controller.cancelShareJoin(shareId: join.id)
+            }
             if status.shares.isEmpty {
                 if status.pendingShareJoins.isEmpty {
                     emptyState("No shared folders")
@@ -1287,7 +1302,14 @@ struct IrisDriveControlPanel: View {
                         localProfileId: status.profileId,
                         driveLink: shareDriveLink(share, status: status),
                         onOpen: {
-                            controller.openShareFolder(path: shareOpenPath(share))
+                            controller.openShareFolder(path: share.location)
+                        },
+                        onAddToMyDrive: { controller.addShareShortcut(shareId: share.shareId) },
+                        onRemoveFromMyDrive: {
+                            controller.removeShareFromMyDrive(
+                                shareId: share.shareId,
+                                providerPaths: shareProviderSignalPaths(share)
+                            )
                         },
                         onOpenDriveLink: { link in
                             openDriveIrisLink(link)
@@ -1329,7 +1351,7 @@ struct IrisDriveControlPanel: View {
             Text("It's added to My Drive once someone who manages it lets you in.")
         }
         .alert(
-            "Delete share?",
+            deleteShare?.owned == true ? "Stop sharing?" : "Leave shared folder?",
             isPresented: Binding(
                 get: { deleteShare != nil },
                 set: { presented in
@@ -1340,7 +1362,7 @@ struct IrisDriveControlPanel: View {
             ),
             presenting: deleteShare
         ) { share in
-            Button("Delete", role: .destructive) {
+            Button(share.owned ? "Stop Sharing" : "Leave", role: .destructive) {
                 controller.deleteShare(
                     shareId: share.shareId,
                     providerPaths: shareProviderSignalPaths(share)
@@ -1351,10 +1373,12 @@ struct IrisDriveControlPanel: View {
                 deleteShare = nil
             }
         } message: { share in
-            Text("Delete \(shareDisplayName(share)) from this device? Folder contents stay in My Drive.")
+            Text(share.owned
+                ? "“\(shareDisplayName(share))” stays in your My Drive. People you shared it with keep what they have and get no further changes."
+                : "“\(shareDisplayName(share))” is removed from this Mac. You can join again with a link.")
         }
         .alert(
-            "Revoke access?",
+            "Remove access?",
             isPresented: Binding(
                 get: { revokeShareMember != nil },
                 set: { presented in
@@ -1365,7 +1389,7 @@ struct IrisDriveControlPanel: View {
             ),
             presenting: revokeShareMember
         ) { target in
-            Button("Revoke", role: .destructive) {
+            Button("Remove", role: .destructive) {
                 controller.revokeShareMember(
                     shareId: target.share.shareId,
                     profileId: target.member.profileId
@@ -1376,7 +1400,7 @@ struct IrisDriveControlPanel: View {
                 revokeShareMember = nil
             }
         } message: { target in
-            Text("Revoke \(shareMemberDisplayName(target.member)) from \(shareDisplayName(target.share))?")
+            Text("\(shareMemberDisplayName(target.member)) will no longer get changes to “\(shareDisplayName(target.share))”.")
         }
     }
 
@@ -2062,6 +2086,8 @@ private struct ShareStatusRow: View {
     let localProfileId: String?
     let driveLink: String?
     let onOpen: () -> Void
+    let onAddToMyDrive: () -> Void
+    let onRemoveFromMyDrive: () -> Void
     let onOpenDriveLink: (String) -> Void
     let onInvite: () -> Void
     let onDelete: () -> Void
@@ -2079,17 +2105,17 @@ private struct ShareStatusRow: View {
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button {
-                    onOpen()
-                } label: {
-                    Label("Open", systemImage: "folder")
-                }
-                if let driveLink = driveLink?.trimmingCharacters(in: .whitespacesAndNewlines),
-                   !driveLink.isEmpty {
+                if share.location.isEmpty {
                     Button {
-                        onOpenDriveLink(driveLink)
+                        onAddToMyDrive()
                     } label: {
-                        Label("Open on drive.iris.to", systemImage: "safari")
+                        Label("Add to My Drive", systemImage: "plus.rectangle.on.folder")
+                    }
+                } else {
+                    Button {
+                        onOpen()
+                    } label: {
+                        Label("Open", systemImage: "folder")
                     }
                 }
                 if share.canAdmin {
@@ -2099,18 +2125,25 @@ private struct ShareStatusRow: View {
                         Label("Share", systemImage: "link")
                     }
                 }
-                if share.repairNeeded || !share.missingKeyWraps.isEmpty {
-                    Button {
-                        onRepair()
-                    } label: {
-                        Label("Repair", systemImage: "arrow.triangle.2.circlepath")
+                Menu {
+                    if let driveLink = driveLink?.trimmingCharacters(in: .whitespacesAndNewlines),
+                       !driveLink.isEmpty {
+                        Button("Open on drive.iris.to") { onOpenDriveLink(driveLink) }
                     }
-                }
-                Button(role: .destructive) {
-                    onDelete()
+                    if !share.owned, !share.location.isEmpty {
+                        Button("Remove from My Drive") { onRemoveFromMyDrive() }
+                    }
+                    if share.repairNeeded || !share.missingKeyWraps.isEmpty {
+                        Button("Repair Access") { onRepair() }
+                    }
+                    Divider()
+                    Button(share.owned ? "Stop Sharing…" : "Leave…", role: .destructive) { onDelete() }
                 } label: {
-                    Label("Delete", systemImage: "trash")
+                    Image(systemName: "ellipsis.circle.fill")
                 }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .accessibilityLabel("More")
             }
             ForEach(share.members) { member in
                 HStack(alignment: .firstTextBaseline) {
@@ -2127,7 +2160,7 @@ private struct ShareStatusRow: View {
                         Button(role: .destructive) {
                             onRevoke(member)
                         } label: {
-                            Label("Revoke", systemImage: "trash")
+                            Label("Remove", systemImage: "person.fill.xmark")
                         }
                     }
                 }
@@ -2155,19 +2188,11 @@ private func shareDisplayName(_ share: IrisDriveShareStatus) -> String {
 }
 
 private func shareSummary(_ share: IrisDriveShareStatus) -> String {
-    let displayPath = share.sourcePath
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    return [
+    [
         share.roleLabel.isEmpty ? share.role : share.roleLabel,
         sharePeopleCount(share.participantCount),
-        displayPath.isEmpty
-            ? nil
-            : shortValue(displayPath),
-    ].compactMap { $0 }.joined(separator: " | ")
-}
-
-private func shareOpenPath(_ share: IrisDriveShareStatus) -> String {
-    share.sourcePath
+        share.location.isEmpty ? "Not in My Drive" : "My Drive/\(share.location)",
+    ].joined(separator: " · ")
 }
 
 private func sharePeopleCount(_ count: Int) -> String {
@@ -2175,7 +2200,7 @@ private func sharePeopleCount(_ count: Int) -> String {
 }
 
 private func shareProviderSignalPaths(_ share: IrisDriveShareStatus) -> [String] {
-    ([share.sourcePath] + share.shortcutPaths)
+    ([share.location] + share.shortcutPaths)
         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         .filter { !$0.isEmpty }
 }
@@ -2206,7 +2231,7 @@ private func shareDriveLink(_ share: IrisDriveShareStatus, status: IrisDriveStat
 }
 
 private func shareLinkCandidatePaths(_ share: IrisDriveShareStatus) -> [String] {
-    ([share.sourcePath, share.sharedWithMePath] + share.shortcutPaths)
+    ([share.location, share.sourcePath] + share.shortcutPaths)
         .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
         .filter { !$0.isEmpty }
 }

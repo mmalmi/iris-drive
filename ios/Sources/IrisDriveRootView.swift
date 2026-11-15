@@ -1281,11 +1281,21 @@ private struct SharesView: View {
     var body: some View {
         Form {
             Section("Create Shared Folder") {
-                TextField("Folder in My Drive, e.g. Photos/Trip", text: $model.shareSourceInput)
+                TextField("Folder in My Drive", text: $model.shareSourceInput)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
                     .onSubmit { model.createShare() }
                     .accessibilityIdentifier("shareSourceInput")
+                if !model.shareableFolders.isEmpty {
+                    Menu {
+                        ForEach(model.shareableFolders.prefix(200), id: \.self) { folder in
+                            Button(folder) { model.shareSourceInput = folder }
+                        }
+                    } label: {
+                        Label("Choose folder", systemImage: "folder.fill")
+                    }
+                    .accessibilityIdentifier("shareFolderMenu")
+                }
                 Button {
                     model.createShare()
                 } label: {
@@ -1296,7 +1306,9 @@ private struct SharesView: View {
             }
 
             Section("Join Shared Folder") {
-                PendingShareJoinRows(joins: model.pendingShareJoins)
+                PendingShareJoinRows(joins: model.pendingShareJoins) { join in
+                    model.cancelShareJoin(shareId: join.shareId)
+                }
                 TextField("Paste a share link", text: $model.shareInviteInput)
                     .textInputAutocapitalization(.never)
                     .autocorrectionDisabled()
@@ -1334,19 +1346,17 @@ private struct ShareRow: View {
 
     var body: some View {
         DisclosureGroup {
-            LabeledContent("Role", value: share.roleLabel.isEmpty ? share.role : share.roleLabel)
-            LabeledContent("Key", value: share.keyStatusLabel.isEmpty ? share.keyStatus : share.keyStatusLabel)
-            if !share.sourcePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                LabeledContent("Source", value: shortText(share.sourcePath))
-            }
-            if let epoch = share.currentKeyEpoch {
-                LabeledContent("Epoch", value: "\(epoch)")
-            }
-            if let shortcut = share.shortcutPaths.first {
-                LabeledContent("My Drive", value: shortText(shortcut))
-            }
+            LabeledContent("Access", value: share.roleLabel.isEmpty ? share.role : share.roleLabel)
+            LabeledContent("In My Drive", value: share.location.isEmpty ? "No" : shortText(share.location))
             HStack {
-                if !shareOpenPath(share).trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if share.location.isEmpty {
+                    Button {
+                        model.addShareShortcut(shareId: share.shareId, displayName: shareDisplayName(share))
+                    } label: {
+                        Label("Add to My Drive", systemImage: "plus.rectangle.on.folder")
+                    }
+                    .accessibilityIdentifier("addShareToMyDrive")
+                } else {
                     Button {
                         model.openShareFolder(share)
                     } label: {
@@ -1360,25 +1370,23 @@ private struct ShareRow: View {
                         Label("Share", systemImage: "link")
                     }
                 }
-                if share.repairNeeded || !share.missingKeyWraps.isEmpty {
-                    Button {
-                        model.repairShareWraps(shareId: share.shareId)
-                    } label: {
-                        Label("Repair", systemImage: "arrow.triangle.2.circlepath")
+                Menu {
+                    if !share.owned, !share.location.isEmpty {
+                        Button("Remove from My Drive") {
+                            model.removeShareFromMyDrive(shareId: share.shareId)
+                        }
                     }
-                }
-                if share.shortcutPaths.isEmpty {
-                    Button {
-                        model.addShareShortcut(shareId: share.shareId, displayName: shareDisplayName(share))
-                    } label: {
-                        Label("Add to My Drive", systemImage: "link")
+                    if share.repairNeeded || !share.missingKeyWraps.isEmpty {
+                        Button("Repair Access") { model.repairShareWraps(shareId: share.shareId) }
                     }
-                }
-                Button(role: .destructive) {
-                    showingDeleteShare = true
+                    Button(share.owned ? "Stop Sharing…" : "Leave…", role: .destructive) {
+                        showingDeleteShare = true
+                    }
                 } label: {
-                    Label("Delete", systemImage: "trash")
+                    Label("More", systemImage: "ellipsis.circle.fill")
+                        .labelStyle(.iconOnly)
                 }
+                .accessibilityIdentifier("shareMoreMenu")
             }
             .buttonStyle(.bordered)
             ForEach(share.members) { member in
@@ -1396,7 +1404,7 @@ private struct ShareRow: View {
                         Button(role: .destructive) {
                             revokeTarget = member
                         } label: {
-                            Label("Revoke", systemImage: "trash")
+                            Label("Remove", systemImage: "person.fill.xmark")
                         }
                         .labelStyle(.iconOnly)
                     }
@@ -1413,7 +1421,7 @@ private struct ShareRow: View {
         } label: {
             VStack(alignment: .leading) {
                 Text(shareDisplayName(share))
-                Text("\(share.participantCount) people | \(share.keyStatusLabel.isEmpty ? share.keyStatus : share.keyStatusLabel)")
+                Text("\(share.participantCount) \(share.participantCount == 1 ? "person" : "people") · \(share.location.isEmpty ? "Not in My Drive" : "In My Drive")")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -1421,8 +1429,13 @@ private struct ShareRow: View {
         .sheet(isPresented: $showingInvite) {
             ShareLinkSheet(model: model, share: share)
         }
+        .onChange(of: model.shareSheetShareId, initial: true) { _, id in
+            guard id == share.shareId else { return }
+            showingInvite = true
+            model.shareSheetShareId = nil
+        }
         .alert(
-            "Revoke access?",
+            "Remove access?",
             isPresented: Binding(
                 get: { revokeTarget != nil },
                 set: { presented in
@@ -1433,7 +1446,7 @@ private struct ShareRow: View {
             ),
             presenting: revokeTarget
         ) { member in
-            Button("Revoke", role: .destructive) {
+            Button("Remove", role: .destructive) {
                 model.revokeShareMember(shareId: share.shareId, profileId: member.profileId)
                 revokeTarget = nil
             }
@@ -1441,15 +1454,17 @@ private struct ShareRow: View {
                 revokeTarget = nil
             }
         } message: { member in
-            Text("Revoke \(memberDisplayName(member)) from \(shareDisplayName(share))?")
+            Text("\(memberDisplayName(member)) will no longer get changes to “\(shareDisplayName(share))”.")
         }
-        .alert("Delete share?", isPresented: $showingDeleteShare) {
-            Button("Delete", role: .destructive) {
+        .alert(share.owned ? "Stop sharing?" : "Leave shared folder?", isPresented: $showingDeleteShare) {
+            Button(share.owned ? "Stop Sharing" : "Leave", role: .destructive) {
                 model.deleteShare(shareId: share.shareId)
             }
             Button("Cancel", role: .cancel) {}
         } message: {
-            Text("Delete \(shareDisplayName(share)) from this device? Folder contents stay in My Drive.")
+            Text(share.owned
+                ? "“\(shareDisplayName(share))” stays in your My Drive. People you shared it with keep what they have and get no further changes."
+                : "“\(shareDisplayName(share))” is removed from this device. You can join again with a link.")
         }
     }
 }
@@ -2591,17 +2606,6 @@ private func shareDisplayName(_ share: IrisDriveShare) -> String {
     share.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         ? "Shared folder"
         : share.displayName
-}
-
-private func shareOpenPath(_ share: IrisDriveShare) -> String {
-    if let shortcut = share.shortcutPaths.first,
-       !shortcut.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-        return shortcut
-    }
-    if !share.sourcePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-        return share.sourcePath
-    }
-    return share.sharedWithMePath
 }
 
 private func memberDisplayName(_ member: IrisDriveShareMember) -> String {

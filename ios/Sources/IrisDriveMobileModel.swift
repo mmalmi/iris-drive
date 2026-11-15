@@ -67,6 +67,7 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var shareRecipientDisplayName = ""
     @Published var shareRecipientProfileId = ""
     @Published var shareDialogRequestId: UInt64 = 0
+    @Published var shareSheetShareId: String?
     @Published var relays = defaultRelays
     @Published var relayStatuses: [IrisDriveRelayStatus] = []
     @Published var syncOverCellular = false
@@ -1705,6 +1706,8 @@ final class IrisDriveMobileModel: ObservableObject {
             "source_path": resolved.path,
             "display_name": "",
         ])
+        // Like Drive: sharing a folder goes straight to who can open it.
+        shareSheetShareId = shares.first { $0.owned && $0.location == resolved.path }?.shareId
         shareSourceInput = ""
     }
 
@@ -1818,9 +1821,8 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func openShareFolder(_ share: IrisDriveShare) {
-        let path = shareOpenPath(share)
-        guard !path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        openDriveFolder(path: path)
+        guard !share.location.isEmpty else { return }
+        openDriveFolder(path: share.location)
     }
 
     func addShareShortcut(shareId: String, displayName _: String) {
@@ -1880,16 +1882,6 @@ final class IrisDriveMobileModel: ObservableObject {
         return "Shared/\(sourcePath)"
     }
 
-    private func shareOpenPath(_ share: IrisDriveShare) -> String {
-        if let shortcut = share.shortcutPaths.first,
-           !shortcut.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return shortcut
-        }
-        if !share.sourcePath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return share.sourcePath
-        }
-        return share.sharedWithMePath
-    }
 
     private func nativeJsonObject(_ text: String) -> [String: Any] {
         guard let data = text.data(using: .utf8),
@@ -2218,7 +2210,9 @@ final class IrisDriveMobileModel: ObservableObject {
                         statusLabel: invite.statusLabel
                     )
                 },
-                shortcutPaths: share.shortcutPaths
+                shortcutPaths: share.shortcutPaths,
+                owned: share.owned,
+                location: share.location
             )
         }
         roots = state.ui.roots.map { root in

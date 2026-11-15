@@ -30,6 +30,34 @@ pub(super) fn pending_share_joins(data_dir: &str, config: &AppConfig) -> Vec<UiP
         .collect()
 }
 
+/// Folders of My Drive a share could start from, for the shells' pickers.
+pub(super) fn shareable_folders(config: &AppConfig, directories: &[String]) -> Vec<String> {
+    let profile = config.profile.as_ref().map(|profile| profile.profile_id);
+    let shared = config
+        .shared_folders
+        .iter()
+        .filter(|folder| Some(folder.owner_profile_id) == profile)
+        .map(|folder| folder.source_path.as_str())
+        .chain(config.share_shortcuts.iter().map(|s| s.path.as_str()))
+        .collect::<Vec<_>>();
+    let within = |path: &str, parent: &str| {
+        path == parent
+            || path
+                .strip_prefix(parent)
+                .is_some_and(|rest| rest.starts_with('/'))
+    };
+    directories
+        .iter()
+        .filter(|dir| !dir.is_empty() && !dir.split('/').any(|part| part.starts_with('.')))
+        .filter(|dir| {
+            !shared
+                .iter()
+                .any(|mount| within(dir, mount) || within(mount, dir))
+        })
+        .cloned()
+        .collect()
+}
+
 fn pending_share_join_views(
     pending: &[iris_drive_core::share_actions::PendingShareJoinView],
 ) -> Vec<UiPendingShareJoin> {
@@ -187,10 +215,20 @@ impl NativeAppRuntime {
                     share_id: share_id.parse()?,
                 }
             }
+            NativeAppAction::RemoveShareShortcuts { share_id } => {
+                iris_drive_core::ShareAction::RemoveShareShortcuts {
+                    share_id: share_id.parse()?,
+                }
+            }
             NativeAppAction::CreateShareJoinLink { share_id, role } => {
                 iris_drive_core::ShareAction::CreateShareJoinLink {
                     share_id: share_id.parse()?,
                     role: parse_share_role(&role)?,
+                }
+            }
+            NativeAppAction::CancelShareJoin { share_id } => {
+                iris_drive_core::ShareAction::CancelShareJoin {
+                    share_id: share_id.parse()?,
                 }
             }
             NativeAppAction::DisableShareJoinLinks { share_id } => {

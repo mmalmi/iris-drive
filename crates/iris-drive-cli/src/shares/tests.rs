@@ -111,11 +111,8 @@ fn shares_create_command_creates_entity_member_share() {
             .and_then(|device| device.profile_id),
         Some(account.state.profile_id)
     );
-    assert_eq!(saved.share_shortcuts.len(), 1);
-    let shortcut = &saved.share_shortcuts[0];
-    assert_eq!(shortcut.share_id, folder.share_id);
-    assert_eq!(shortcut.path, "Alpha");
-    assert_eq!(shortcut.target_path, "");
+    // The folder stays where the owner keeps it; no shortcut is added.
+    assert_eq!(saved.share_shortcuts, Vec::new());
 }
 
 #[test]

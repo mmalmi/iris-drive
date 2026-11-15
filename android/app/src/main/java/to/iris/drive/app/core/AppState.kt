@@ -20,6 +20,7 @@ internal data class AppState(
     val sitesPortalUrl: String = "",
     val lastShareInvite: String = "",
     val pendingShareJoins: List<PendingShareJoinState> = emptyList(),
+    val shareableFolders: List<String> = emptyList(),
     val lastShareRecipientEvidence: String = "",
     val error: String = "",
     val setupState: String = "not_configured",
@@ -57,6 +58,7 @@ internal data class AppState(
                 sitesPortalUrl = ui.optString("sites_portal_url"),
                 lastShareInvite = ui.optString("last_share_invite"),
                 pendingShareJoins = ui.optJSONArray("pending_share_joins").toPendingShareJoins(),
+                shareableFolders = ui.optJSONArray("shareable_folders").toStringList(),
                 lastShareRecipientEvidence = ui.optString("last_share_recipient_evidence"),
                 error = json.optString("error"),
                 setupState = ui.optString("setup_state", "not_configured"),
@@ -156,6 +158,10 @@ internal data class ShareState(
     val members: List<ShareMemberState>,
     val pendingInvites: List<PendingShareInviteState> = emptyList(),
     val shortcutPaths: List<String>,
+    /** This profile shared the folder from its own Drive. */
+    val owned: Boolean = false,
+    /** Where it is in My Drive on this device; blank when it is not there. */
+    val location: String = "",
 )
 
 /** A folder this device asked to join from a link, still waiting to be let in. */
@@ -477,6 +483,12 @@ internal object NativeActions {
     fun createShareJoinLink(shareId: String, role: String): String =
         JSONObject().put("type", "create_share_join_link").put("share_id", shareId).put("role", role).toString()
 
+    fun cancelShareJoin(shareId: String): String =
+        JSONObject().put("type", "cancel_share_join").put("share_id", shareId).toString()
+
+    fun removeShareShortcuts(shareId: String): String =
+        JSONObject().put("type", "remove_share_shortcuts").put("share_id", shareId).toString()
+
     fun disableShareJoinLinks(shareId: String): String =
         JSONObject().put("type", "disable_share_join_links").put("share_id", shareId).toString()
 
@@ -711,6 +723,8 @@ private fun JSONArray?.toShares(): List<ShareState> {
                     members = item.optJSONArray("members").toShareMembers(),
                     pendingInvites = item.optJSONArray("pending_invites").toPendingShareInvites(),
                     shortcutPaths = item.optJSONArray("shortcut_paths").toStringList(),
+                    owned = item.optBoolean("owned"),
+                    location = item.optString("location"),
                 ),
             )
         }

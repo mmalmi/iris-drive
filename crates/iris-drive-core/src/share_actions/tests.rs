@@ -31,13 +31,12 @@ fn create_share_defaults_display_name_to_source_dirname() {
 
     assert_eq!(created.shares.len(), 1);
     assert_eq!(created.shares[0].display_name, "tst");
-    assert_eq!(created.shares[0].shortcut_paths, vec!["tst"]);
+    assert_eq!(created.shares[0].shortcut_paths, Vec::<String>::new());
 
     let saved = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
     assert_eq!(saved.shared_folders.len(), 1);
     assert_eq!(saved.shared_folders[0].display_name, "tst");
-    assert_eq!(saved.share_shortcuts.len(), 1);
-    assert_eq!(saved.share_shortcuts[0].path, "tst");
+    assert_eq!(saved.share_shortcuts, Vec::new());
 }
 
 #[test]
@@ -128,12 +127,11 @@ fn accept_share_invite_adds_share_to_my_drive() {
 }
 
 #[test]
-fn share_state_repairs_legacy_share_without_my_drive_shortcut() {
+fn a_share_leaves_my_drive_and_comes_back_without_losing_access() {
     let owner_dir = tempdir().unwrap();
     let owner = Profile::create(owner_dir.path(), Some("Owner".into())).unwrap();
     init_config(owner_dir.path(), &owner);
-
-    dispatch_share_action(
+    let share_id = dispatch_share_action(
         owner_dir.path(),
         ShareAction::CreateShare {
             source_path: "Shared/Legacy".to_owned(),
@@ -141,18 +139,32 @@ fn share_state_repairs_legacy_share_without_my_drive_shortcut() {
         },
         10,
     )
+    .unwrap()
+    .share_id
     .unwrap();
-    let mut saved = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
-    saved.share_shortcuts.clear();
-    saved.save(config_path_in(owner_dir.path())).unwrap();
+    let add = || ShareAction::AddShareShortcut {
+        share_id,
+        path: None,
+        parent: None,
+        target_path: None,
+    };
+    let added = dispatch_share_action(owner_dir.path(), add(), 11).unwrap();
+    assert_eq!(added.shares[0].shortcut_paths, vec!["Legacy"]);
 
-    let repaired = share_action_state(owner_dir.path()).unwrap();
+    let removed = dispatch_share_action(
+        owner_dir.path(),
+        ShareAction::RemoveShareShortcuts { share_id },
+        12,
+    )
+    .unwrap();
+    assert_eq!(removed.shares.len(), 1);
+    assert_eq!(removed.shares[0].shortcut_paths, Vec::<String>::new());
+    // Reading state never puts it back: where it sits is the person's choice.
+    let state = share_action_state(owner_dir.path()).unwrap();
+    assert_eq!(state.shares[0].shortcut_paths, Vec::<String>::new());
 
-    assert_eq!(repaired.shares.len(), 1);
-    assert_eq!(repaired.shares[0].shortcut_paths, vec!["Legacy"]);
-    let saved = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
-    assert_eq!(saved.share_shortcuts.len(), 1);
-    assert_eq!(saved.share_shortcuts[0].path, "Legacy");
+    let back = dispatch_share_action(owner_dir.path(), add(), 13).unwrap();
+    assert_eq!(back.shares[0].shortcut_paths, vec!["Legacy"]);
 }
 
 #[test]

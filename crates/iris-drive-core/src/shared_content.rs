@@ -13,30 +13,22 @@ use crate::{
 };
 
 /// Enforce roles before a provider stages or acknowledges a local write.
+/// Only writes inside a read-only folder are refused: where its shortcut
+/// sits in My Drive is the member's own to move or remove.
 pub fn ensure_shared_path_writable(config: &AppConfig, path: &str) -> Result<()> {
     let Some(account) = config.profile.as_ref() else {
         return Ok(());
     };
     for folder in &config.shared_folders {
-        let mut paths = vec![crate::sharing::shared_with_me_mount_path(
-            folder,
-            &config.shared_folders,
-        )];
-        if folder.owner_profile_id == account.profile_id {
-            paths.push(folder.source_path.clone());
-        }
-        paths.extend(
-            config
-                .share_shortcuts
-                .iter()
-                .filter(|s| s.share_id == folder.share_id)
-                .map(|s| s.path.clone()),
-        );
-        if paths.iter().any(|mount| {
-            path == mount
-                || path.starts_with(&format!("{mount}/"))
-                || mount.starts_with(&format!("{path}/"))
-        }) && !crate::shared_folder_app_key_can_write_roots(folder, &account.app_key_pubkey)
+        let owner = folder.owner_profile_id == account.profile_id;
+        let inside = config
+            .share_shortcuts
+            .iter()
+            .filter(|s| s.share_id == folder.share_id)
+            .map(|s| s.path.as_str())
+            .chain(owner.then_some(folder.source_path.as_str()))
+            .any(|mount| path.starts_with(&format!("{mount}/")));
+        if inside && !crate::shared_folder_app_key_can_write_roots(folder, &account.app_key_pubkey)
         {
             bail!("This shared folder is read-only");
         }
@@ -278,21 +270,33 @@ pub(crate) async fn route_shared_edits<S: Store>(
     let current = crate::primary_merged_root_from_view(tree, config, &projection)
         .await?
         .root_cid;
-    let mut base = base.unwrap_or(current);
     let app_key = config
         .profile
         .as_ref()
         .context("Profile required")?
         .app_key_pubkey
         .clone();
+    let explicit_base = base.is_some();
+    let mut base = base.unwrap_or(current);
     let mut changes = BTreeMap::new();
+    let mut moved = Vec::new();
     for mount in &projection.shared_mounts {
         let before = tree.resolve(&base, &mount.path).await?;
         let after = tree.resolve(&edited, &mount.path).await?;
         if !local_only && before != after {
-            // Removing/renaming the mounted folder itself needs an explicit
-            // shortcut action; it must not silently delete everyone's files.
-            let after = after.context("Remove shared folders using the sharing controls")?;
+            let Some(after) = after else {
+                // The mounted folder itself is gone from where it was: its
+                // place in My Drive changed, never everyone's files.
+                let to = match &before {
+                    Some(before) if explicit_base => {
+                        placement::moved_dir(tree, &base, &edited, before).await?
+                    }
+                    _ => None,
+                };
+                placement::apply(config, mount, to.as_deref(), explicit_base)?;
+                moved.extend(to);
+                continue;
+            };
             if !tree.is_dir(&after).await? {
                 bail!("A shared folder must remain a folder");
             }
@@ -340,9 +344,14 @@ pub(crate) async fn route_shared_edits<S: Store>(
             .context("Share missing")?;
         write_shared_folder(tree, folder, &app_key, changed, &before).await?;
     }
-    for mount in &projection.shared_mounts {
-        edited = remove_mount(tree, edited, &mount.path).await?;
-        base = remove_mount(tree, base, &mount.path).await?;
+    for path in projection
+        .shared_mounts
+        .iter()
+        .map(|mount| &mount.path)
+        .chain(&moved)
+    {
+        edited = remove_mount(tree, edited, path).await?;
+        base = remove_mount(tree, base, path).await?;
     }
     Ok((edited, Some(base)))
 }
@@ -356,5 +365,12 @@ async fn remove_mount<S: Store>(tree: &HashTree<S>, root: Cid, path: &str) -> Re
     Ok(tree.remove_entry(&root, parent, name).await?)
 }
 
+#[path = "shared_content/placement.rs"]
+mod placement;
+
 #[cfg(test)]
 mod tests;
+
+#[cfg(test)]
+#[path = "shared_content/placement_tests.rs"]
+mod placement_tests;

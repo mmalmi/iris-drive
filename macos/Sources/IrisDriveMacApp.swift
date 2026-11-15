@@ -2174,6 +2174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             status.shares =
                 (ui["shares"] as? [[String: Any]] ?? []).map(IrisDriveShareStatus.init)
             status.pendingShareJoins = (ui["pending_share_joins"] as? [[String: Any]] ?? []).map(IrisDrivePendingShareJoin.init)
+            status.shareableFolders = ui["shareable_folders"] as? [String] ?? []
             let lastShareInvite = ui["last_share_invite"] as? String ?? ""
             status.lastShareInviteURL = lastShareInvite.isEmpty ? nil : lastShareInvite
             let lastShareRecipientEvidence = ui["last_share_recipient_evidence"] as? String ?? ""
@@ -2675,7 +2676,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func signalFileProviderDomain(directoryPaths: [String]? = nil) {
+    func signalFileProviderDomain(directoryPaths: [String]? = nil) {
         guard fileProviderIntegrationEnabled else { return }
         if !Thread.isMainThread {
             DispatchQueue.main.async { [weak self] in

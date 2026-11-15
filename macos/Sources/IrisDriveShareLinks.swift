@@ -46,6 +46,25 @@ extension AppDelegate {
         )
     }
 
+    func cancelShareJoin(shareId: String) {
+        dispatchNativeAction(
+            ["type": "cancel_share_join", "share_id": shareId],
+            progress: "Cancelling",
+            success: "No longer waiting to join"
+        )
+    }
+
+    /// Take a shared folder out of My Drive on this Mac; access stays.
+    func removeShareFromMyDrive(shareId: String, providerPaths: [String]) {
+        dispatchNativeAction(
+            ["type": "remove_share_shortcuts", "share_id": shareId],
+            progress: "Removing from My Drive",
+            success: "Removed from My Drive. It stays under Shares."
+        ) { [weak self] in
+            self?.signalFileProviderDomain(directoryPaths: providerPaths)
+        }
+    }
+
     /// drive.iris.to join and invite links open the app's Join prompt.
     func handleShareLinkURL(_ url: URL, classification: [String: Any]) -> Bool {
         let kind = classification["kind"] as? String ?? ""
@@ -177,6 +196,7 @@ struct InviteShareMemberSheet: View {
 /// Folders this Mac asked to join and is waiting to be let into.
 struct PendingShareJoinRows: View {
     let joins: [IrisDrivePendingShareJoin]
+    let onCancel: (IrisDrivePendingShareJoin) -> Void
 
     var body: some View {
         ForEach(joins) { join in
@@ -188,6 +208,8 @@ struct PendingShareJoinRows: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
+                Spacer()
+                Button("Cancel") { onCancel(join) }
             }
             .padding(14)
             .frame(maxWidth: .infinity, alignment: .leading)

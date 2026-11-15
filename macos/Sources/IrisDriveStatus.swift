@@ -74,6 +74,7 @@ final class IrisDriveStatus: ObservableObject {
     @Published var lastShareRecipientEvidence: String?
     @Published var pendingShareDialog: IrisDriveShareDialogRequest?
     @Published var pendingShareJoins: [IrisDrivePendingShareJoin] = []
+    @Published var shareableFolders: [String] = []
     @Published var pendingJoinLink: IrisDriveJoinLinkRequest?
     @Published var pendingDeviceApproval: IrisDriveDeviceApprovalRequest?
     @Published var fips = IrisDriveFipsStatus()
@@ -340,6 +341,8 @@ struct IrisDriveShareStatus: Identifiable, Equatable {
     let members: [IrisDriveShareMemberStatus]
     let pendingInvites: [IrisDrivePendingShareInviteStatus]
     let shortcutPaths: [String]
+    let owned: Bool
+    let location: String
 
     init(json: [String: Any]) {
         shareId = json["share_id"] as? String ?? UUID().uuidString
@@ -369,6 +372,8 @@ struct IrisDriveShareStatus: Identifiable, Equatable {
             (json["pending_invites"] as? [[String: Any]] ?? [])
             .map(IrisDrivePendingShareInviteStatus.init(json:))
         shortcutPaths = json["shortcut_paths"] as? [String] ?? []
+        owned = json["owned"] as? Bool ?? false
+        location = json["location"] as? String ?? ""
     }
 }
 

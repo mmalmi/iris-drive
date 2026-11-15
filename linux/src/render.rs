@@ -224,10 +224,19 @@ pub(crate) fn render_shares(model: &AppRef, state: &NativeAppState) {
     let list = &model.ui.shares;
     clear_list(list);
     for join in &state.ui.pending_share_joins {
-        list.append(&simple_row(
+        let row = simple_row(
             &format!("Waiting to join “{}”", join.display_name),
             "You get access when someone who manages it has Iris Drive open.",
-        ));
+        );
+        if let Some(body) = row.child().and_downcast::<gtk::Box>() {
+            let cancel = icon_button("window-close-symbolic", "Stop waiting");
+            cancel.set_halign(gtk::Align::End);
+            let model = Rc::clone(model);
+            let share_id = join.share_id.clone();
+            cancel.connect_clicked(move |_| cancel_share_join(&model, share_id.clone()));
+            body.append(&cancel);
+        }
+        list.append(&row);
     }
     for share in &state.ui.shares {
         list.append(&share_row(model, state, share));
@@ -276,21 +285,20 @@ fn share_row(
     if !share.role_label.is_empty() {
         metadata.push(share.role_label.clone());
     }
-    if !share.key_status_label.is_empty() {
-        metadata.push(share.key_status_label.clone());
-    }
     metadata.push(share_participant_text(share.participant_count));
-    if !share.shortcut_paths.is_empty() {
-        metadata.push(format!("My Drive {}", short_text(&share.shortcut_paths[0])));
-    }
-    labels.append(&share_detail_label(&metadata.join(" | "), 72));
+    metadata.push(if share.location.is_empty() {
+        "Not in My Drive".to_string()
+    } else {
+        format!("My Drive/{}", short_text(&share.location))
+    });
+    labels.append(&share_detail_label(&metadata.join(" · "), 72));
     let repair_text = share_repair_text(share);
     if let Some(repair_text) = repair_text.as_deref() {
         labels.append(&share_detail_label(repair_text, 72));
     }
     header.append(&labels);
 
-    let open_path = share_open_path(share);
+    let open_path = share.location.clone();
     if !open_path.is_empty() {
         let open = icon_button("folder-open-symbolic", "Open share folder");
         let model = Rc::clone(model);
@@ -306,7 +314,7 @@ fn share_row(
         header.append(&repair);
     }
 
-    if share.shortcut_paths.is_empty() {
+    if share.location.is_empty() {
         let shortcut = icon_button("folder-new-symbolic", "Add to My Drive");
         let model = Rc::clone(model);
         let share_id = share.share_id.clone();
@@ -314,6 +322,14 @@ fn share_row(
             add_share_shortcut(&model, share_id.clone());
         });
         header.append(&shortcut);
+    } else if !share.owned {
+        let remove = icon_button("list-remove-symbolic", "Remove from My Drive");
+        let model = Rc::clone(model);
+        let share_id = share.share_id.clone();
+        remove.connect_clicked(move |_| {
+            remove_share_from_my_drive(&model, share_id.clone());
+        });
+        header.append(&remove);
     }
 
     if share.can_admin {
@@ -327,7 +343,11 @@ fn share_row(
         header.append(&invite);
     }
 
-    let delete = icon_button("user-trash-symbolic", "Delete share");
+    let owned = share.owned;
+    let delete = icon_button(
+        "user-trash-symbolic",
+        if owned { "Stop sharing" } else { "Leave" },
+    );
     delete.add_css_class("destructive-action");
     let delete_model = Rc::clone(model);
     let share_id = share.share_id.clone();
@@ -337,7 +357,7 @@ fn share_row(
         share.display_name.clone()
     };
     delete.connect_clicked(move |_| {
-        show_delete_share_dialog(&delete_model, share_id.clone(), display_name.clone());
+        show_delete_share_dialog(&delete_model, share_id.clone(), display_name.clone(), owned);
     });
     header.append(&delete);
 
@@ -364,20 +384,6 @@ fn share_row(
 
     row.set_child(Some(&body));
     row
-}
-
-fn share_open_path(share: &iris_drive_app_core::state::UiShare) -> String {
-    share
-        .shortcut_paths
-        .first()
-        .cloned()
-        .filter(|path| !path.trim().is_empty())
-        .or_else(|| (!share.source_path.trim().is_empty()).then(|| share.source_path.clone()))
-        .or_else(|| {
-            (!share.shared_with_me_path.trim().is_empty())
-                .then(|| share.shared_with_me_path.clone())
-        })
-        .unwrap_or_default()
 }
 
 fn share_detail_label(text: &str, max_width_chars: i32) -> gtk::Label {

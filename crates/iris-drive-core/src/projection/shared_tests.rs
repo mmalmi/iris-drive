@@ -87,19 +87,3 @@ async fn reader_projects_shared_root_instead_of_its_own_same_named_folder() {
         b"Meet at noon"
     );
 }
-
-#[test]
-fn same_named_shares_have_distinct_canonical_mounts() {
-    let owner = nostr_sdk::Keys::generate();
-    let profile = crate::NostrIdentityId::new_v4();
-    let first = create_shared_folder(&owner, profile, "First", "Photos", None, vec![], 1).unwrap();
-    let second =
-        create_shared_folder(&owner, profile, "Second", "Photos", None, vec![], 1).unwrap();
-    let folders = vec![first.clone(), second.clone()];
-    assert_ne!(
-        crate::sharing::shared_with_me_mount_path(&first, &folders),
-        crate::sharing::shared_with_me_mount_path(&second, &folders)
-    );
-    let views = crate::shared_folder_views(&folders, &[], &owner.public_key().to_hex());
-    assert_ne!(views[0].shared_with_me_path, views[1].shared_with_me_path);
-}

@@ -928,12 +928,7 @@ async fn current_drive_root(state: &GatewayState, drive_id: &str) -> Result<Cid,
         ));
     }
     let config_path = config_path_in(config_dir);
-    let mut config = AppConfig::load_or_default(&config_path)?;
-    if crate::repair_missing_share_shortcuts(&mut config)
-        .map_err(|e| GatewayError::InvalidRequest(e.to_string()))?
-    {
-        config.save(&config_path)?;
-    }
+    let config = AppConfig::load_or_default(&config_path)?;
     if drive_id == PRIMARY_DRIVE_ID {
         let merged = crate::primary_merged_root(state.tree.as_ref(), &config)
             .await

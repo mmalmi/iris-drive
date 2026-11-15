@@ -65,13 +65,9 @@ pub(super) async fn add_shared_mounts<S: Store>(
         } else {
             shared_folder_merged_root(tree, folder).await?.root_cid
         };
+        // On disk a shared folder is where its owner keeps it, and wherever a
+        // member added it to My Drive. There is no "Shared with me" folder.
         let mut paths = BTreeMap::new();
-        if !owner {
-            paths.insert(
-                crate::sharing::shared_with_me_mount_path(folder, &config.shared_folders),
-                String::new(),
-            );
-        }
         if owner {
             paths.insert(folder.source_path.clone(), String::new());
         }

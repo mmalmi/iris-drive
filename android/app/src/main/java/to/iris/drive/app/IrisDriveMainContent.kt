@@ -21,6 +21,8 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -101,6 +103,8 @@ internal fun AuthenticatedContent(
     onOpenSharePath: (String) -> Unit,
     onDeleteShare: (String) -> Unit,
     onAddShareShortcut: (String, String) -> Unit,
+    onRemoveShareShortcuts: (String) -> Unit,
+    onCancelShareJoin: (String) -> Unit,
     onRepairShareWraps: (String) -> Unit,
 ) {
     when (selectedTab) {
@@ -150,6 +154,8 @@ internal fun AuthenticatedContent(
             onOpenSharePath = onOpenSharePath,
             onDeleteShare = onDeleteShare,
             onAddShareShortcut = onAddShareShortcut,
+            onRemoveShareShortcuts = onRemoveShareShortcuts,
+            onCancelShareJoin = onCancelShareJoin,
             onRepairShareWraps = onRepairShareWraps,
         )
         MainTab.Settings -> SettingsContent(
@@ -310,6 +316,8 @@ private fun SharesContent(
     onOpenSharePath: (String) -> Unit,
     onDeleteShare: (String) -> Unit,
     onAddShareShortcut: (String, String) -> Unit,
+    onRemoveShareShortcuts: (String) -> Unit,
+    onCancelShareJoin: (String) -> Unit,
     onRepairShareWraps: (String) -> Unit,
 ) {
     LazyColumn(
@@ -336,6 +344,8 @@ private fun SharesContent(
                 onOpenSharePath = onOpenSharePath,
                 onDeleteShare = onDeleteShare,
                 onAddShareShortcut = onAddShareShortcut,
+                onRemoveShareShortcuts = onRemoveShareShortcuts,
+                onCancelShareJoin = onCancelShareJoin,
                 onRepairShareWraps = onRepairShareWraps,
             )
         }
@@ -598,6 +608,8 @@ private fun SharesPanel(
     onOpenSharePath: (String) -> Unit,
     onDeleteShare: (String) -> Unit,
     onAddShareShortcut: (String, String) -> Unit,
+    onRemoveShareShortcuts: (String) -> Unit,
+    onCancelShareJoin: (String) -> Unit,
     onRepairShareWraps: (String) -> Unit,
 ) {
     var sourceInput by remember { mutableStateOf("") }
@@ -628,10 +640,10 @@ private fun SharesPanel(
     revokeTarget?.let { target ->
         AlertDialog(
             onDismissRequest = { revokeTarget = null },
-            title = { Text("Revoke access") },
+            title = { Text("Remove access?") },
             text = {
                 Text(
-                    "Revoke ${displayMemberName(target.second)} from ${displayShareName(target.first)}?",
+                    "${displayMemberName(target.second)} will no longer get changes to “${displayShareName(target.first)}”.",
                     color = Muted,
                 )
             },
@@ -642,7 +654,7 @@ private fun SharesPanel(
                         revokeTarget = null
                     },
                 ) {
-                    Text("Revoke", color = Danger)
+                    Text("Remove", color = Danger)
                 }
             },
             dismissButton = {
@@ -656,10 +668,14 @@ private fun SharesPanel(
     deleteTarget?.let { share ->
         AlertDialog(
             onDismissRequest = { deleteTarget = null },
-            title = { Text("Delete share?") },
+            title = { Text(if (share.owned) "Stop sharing?" else "Leave shared folder?") },
             text = {
                 Text(
-                    "Delete ${displayShareName(share)} from this device? Folder contents stay in My Drive.",
+                    if (share.owned) {
+                        "“${displayShareName(share)}” stays in your My Drive. People you shared it with keep what they have and get no further changes."
+                    } else {
+                        "“${displayShareName(share)}” is removed from this device. You can join again with a link."
+                    },
                     color = Muted,
                 )
             },
@@ -670,7 +686,7 @@ private fun SharesPanel(
                         deleteTarget = null
                     },
                 ) {
-                    Text("Delete", color = Danger)
+                    Text(if (share.owned) "Stop sharing" else "Leave", color = Danger)
                 }
             },
             dismissButton = {
@@ -692,6 +708,25 @@ private fun SharesPanel(
                 .fillMaxWidth()
                 .testTag("shareSourceInput"),
         )
+        if (state.shareableFolders.isNotEmpty()) {
+            var choosing by remember { mutableStateOf(false) }
+            Box {
+                OutlinedButton(onClick = { choosing = true }, modifier = Modifier.testTag("shareFolderMenu")) {
+                    Text("Choose folder")
+                }
+                DropdownMenu(expanded = choosing, onDismissRequest = { choosing = false }) {
+                    state.shareableFolders.take(200).forEach { folder ->
+                        DropdownMenuItem(
+                            text = { Text(folder) },
+                            onClick = {
+                                sourceInput = folder
+                                choosing = false
+                            },
+                        )
+                    }
+                }
+            }
+        }
         Button(
             onClick = {
                 onCreateShare(sourceInput, "")
@@ -704,9 +739,12 @@ private fun SharesPanel(
 
         Text("Join Shared Folder", fontWeight = FontWeight.SemiBold)
         state.pendingShareJoins.forEach { join ->
-            Column(Modifier.testTag("pendingShareJoin")) {
-                Text("Waiting to join “${join.displayName}”", color = Ink)
-                Text("You get access when someone who manages it has Iris Drive open.", color = Muted, style = MaterialTheme.typography.bodySmall)
+            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.weight(1f).testTag("pendingShareJoin")) {
+                    Text("Waiting to join “${join.displayName}”", color = Ink)
+                    Text("You get access when someone who manages it has Iris Drive open.", color = Muted, style = MaterialTheme.typography.bodySmall)
+                }
+                TextButton(onClick = { onCancelShareJoin(join.shareId) }) { Text("Cancel") }
             }
         }
         OutlinedTextField(
@@ -736,10 +774,11 @@ private fun SharesPanel(
             ShareItem(
                 share = share,
                 localProfileId = state.profile?.profileId.orEmpty(),
-                onOpen = { onOpenSharePath(shareOpenPath(share)) },
+                onOpen = { onOpenSharePath(share.location) },
                 onInvite = { inviteTarget = share },
                 onRepair = { onRepairShareWraps(share.shareId) },
                 onShortcut = { onAddShareShortcut(share.shareId, displayShareName(share)) },
+                onRemoveShortcut = { onRemoveShareShortcuts(share.shareId) },
                 onDelete = { deleteTarget = share },
                 onRevoke = { member -> revokeTarget = share to member },
             )
@@ -809,24 +848,27 @@ private fun ShareItem(
     onInvite: () -> Unit,
     onRepair: () -> Unit,
     onShortcut: () -> Unit,
+    onRemoveShortcut: () -> Unit,
     onDelete: () -> Unit,
     onRevoke: (ShareMemberState) -> Unit,
 ) {
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(displayShareName(share), fontWeight = FontWeight.SemiBold)
         Text(
-            listOfNotNull(
+            listOf(
                 share.roleLabel.ifBlank { share.role },
-                share.keyStatusLabel.ifBlank { share.keyStatus },
-                share.sourcePath.takeIf { it.isNotBlank() }?.let(::shortText),
-                "${share.participantCount} people",
-                share.shortcutPaths.firstOrNull()?.let { "My Drive ${shortText(it)}" },
-            ).joinToString(" - "),
+                if (share.participantCount == 1) "1 person" else "${share.participantCount} people",
+                if (share.location.isBlank()) "Not in My Drive" else "My Drive/${shortText(share.location)}",
+            ).joinToString(" · "),
             color = Muted,
             style = MaterialTheme.typography.bodySmall,
         )
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            if (shareOpenPath(share).isNotBlank()) {
+            if (share.location.isBlank()) {
+                TextButton(onClick = onShortcut, modifier = Modifier.testTag("addShareToMyDrive")) {
+                    Text("Add to My Drive")
+                }
+            } else {
                 TextButton(onClick = onOpen) {
                     Text("Open")
                 }
@@ -841,13 +883,15 @@ private fun ShareItem(
                     Text("Repair")
                 }
             }
-            if (share.shortcutPaths.isEmpty()) {
-                TextButton(onClick = onShortcut) {
-                    Text("Add to My Drive")
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (!share.owned && share.location.isNotBlank()) {
+                TextButton(onClick = onRemoveShortcut, modifier = Modifier.testTag("removeShareFromMyDrive")) {
+                    Text("Remove from My Drive")
                 }
             }
             TextButton(onClick = onDelete) {
-                Text("Delete", color = Danger)
+                Text(if (share.owned) "Stop sharing" else "Leave", color = Danger)
             }
         }
         share.members.forEach { member ->
@@ -886,7 +930,7 @@ private fun ShareMemberRow(
         }
         if (canRevoke) {
             TextButton(onClick = onRevoke) {
-                Text("Revoke", color = Danger)
+                Text("Remove", color = Danger)
             }
         }
     }
@@ -1287,12 +1331,6 @@ private fun displayMemberName(member: ShareMemberState): String =
 
 private fun displayPendingInviteName(invite: PendingShareInviteState): String =
     invite.displayName.ifBlank { "Pending contact" }
-
-private fun shareOpenPath(share: ShareState): String =
-    share.shortcutPaths.firstOrNull()?.takeIf { it.isNotBlank() }
-        ?: share.sourcePath.takeIf { it.isNotBlank() }
-        ?: share.sharedWithMePath.takeIf { it.isNotBlank() }
-        ?: ""
 
 private fun shortText(value: String): String {
     if (value.length <= 32) return value

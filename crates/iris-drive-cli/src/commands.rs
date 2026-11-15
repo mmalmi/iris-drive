@@ -418,6 +418,9 @@ pub(crate) enum SharesCmd {
         /// Path inside the share to open. Empty means the share root.
         #[arg(long, default_value = "")]
         target_path: String,
+        /// Take the share out of My Drive on this device, keeping access.
+        #[arg(long)]
+        remove: bool,
     },
     /// Repair missing key wraps for a share's current key epoch.
     #[command(name = "repair-wraps")]

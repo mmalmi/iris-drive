@@ -301,6 +301,55 @@ class IrisDriveAndroidGuiFlowTest {
     }
 
     @Test
+    fun joinedFolderLeavesAndReturnsToMyDriveWithoutLeavingTheShare() {
+        val removed = mutableListOf<String>()
+        val added = mutableListOf<String>()
+        fun share(id: String, name: String, location: String) = ShareState(
+            shareId = id,
+            displayName = name,
+            sourcePath = "",
+            sharedWithMePath = "",
+            role = "reader",
+            roleLabel = "Reader",
+            keyStatus = "available",
+            keyStatusLabel = "Available",
+            writeAuthorization = "read_only",
+            writeAuthorizationLabel = "Read only",
+            canWrite = false,
+            canAdmin = false,
+            currentKeyEpoch = 1,
+            hasCurrentKeyWrap = true,
+            keyUnavailable = false,
+            repairNeeded = false,
+            missingKeyWraps = emptyList(),
+            participantCount = 2,
+            appKeyCount = 2,
+            members = emptyList(),
+            shortcutPaths = listOfNotNull(location.takeIf { it.isNotBlank() }),
+            location = location,
+        )
+
+        render(
+            state = AppState(
+                profile = profileState(),
+                shares = listOf(share("1", "Trip", "Trip"), share("2", "Recipes", "")),
+                setupState = "authorized",
+                isSetupComplete = true,
+            ),
+            onAddShareShortcut = { shareId, _ -> added += shareId },
+            onRemoveShareShortcuts = { removed += it },
+        )
+
+        compose.onNodeWithTag("tabShares").activate()
+        compose.onNodeWithText("Not in My Drive", substring = true).performScrollTo().assertIsDisplayed()
+        compose.onNodeWithTag("removeShareFromMyDrive").performScrollTo().activate()
+        compose.onNodeWithTag("addShareToMyDrive").performScrollTo().activate()
+
+        assertEquals(listOf("1"), removed)
+        assertEquals(listOf("2"), added)
+    }
+
+    @Test
     fun openedJoinLinkIsReadyToJoinAndWaitingJoinsAreShown() {
         val joined = mutableListOf<String>()
         val link = "https://drive.iris.to/#/share-join/demo"
@@ -713,6 +762,8 @@ class IrisDriveAndroidGuiFlowTest {
         onOpenSharePath: (String) -> Unit = {},
         onDeleteShare: (String) -> Unit = {},
         onAddShareShortcut: (String, String) -> Unit = { _, _ -> },
+        onRemoveShareShortcuts: (String) -> Unit = {},
+        onCancelShareJoin: (String) -> Unit = {},
         onRepairShareWraps: (String) -> Unit = {},
         onOpenIrisApps: (String) -> Unit = {},
         isOpeningIrisApps: Boolean = false,
@@ -774,6 +825,8 @@ class IrisDriveAndroidGuiFlowTest {
                 onOpenSharePath = onOpenSharePath,
                 onDeleteShare = onDeleteShare,
                 onAddShareShortcut = onAddShareShortcut,
+                onRemoveShareShortcuts = onRemoveShareShortcuts,
+                onCancelShareJoin = onCancelShareJoin,
                 onRepairShareWraps = onRepairShareWraps,
             )
         }

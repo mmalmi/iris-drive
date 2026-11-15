@@ -126,6 +126,7 @@ just run-cli shares members <share-id>
 just run-cli shares role <share-id> <nostr-identity-id> editor
 just run-cli shares revoke <share-id> <nostr-identity-id>
 just run-cli shares shortcut <share-id> --parent "Projects"
+just run-cli shares shortcut <share-id> --remove
 just run-cli shares repair-wraps <share-id>
 just run-cli shares list --diagnostics
 just run-cli backups add fs:/path/to/encrypted-backup --label "External disk"
@@ -137,7 +138,12 @@ Sharing is link-first. **Share** on a shared folder gives a
 who opens it can ask to join, in a browser with no install or from the app's
 **Join** field. The sharer's Drive lets them in when it sees the request: the
 desktop daemon at once, mobile apps on their next sync, the web app while it
-is open. Joined folders appear under Shares and as a shortcut in My Drive.
+is open. As in Google Drive, a shared folder is on disk only where it sits in
+My Drive: the owner's own path, or the shortcut a member keeps (added when
+they join from the app). There is no "Shared with me" folder on disk; the
+Shares list is that view. **Remove from My Drive**, or deleting the shortcut
+folder on disk, keeps membership; **Add to My Drive** puts it back; moving the
+folder moves the shortcut.
 `idrive shares link <share-id> --disable` stops a folder's links from letting
 anyone else in; people already in keep access. The link format is shared with
 Iris Drive web (`src/drive/shareJoinLink.ts`).

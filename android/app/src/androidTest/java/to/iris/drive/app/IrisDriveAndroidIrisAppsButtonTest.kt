@@ -103,6 +103,8 @@ class IrisDriveAndroidIrisAppsButtonTest {
                 onOpenSharePath = {},
                 onDeleteShare = {},
                 onAddShareShortcut = { _, _ -> },
+                onRemoveShareShortcuts = {},
+                onCancelShareJoin = {},
                 onRepairShareWraps = {},
             )
         }

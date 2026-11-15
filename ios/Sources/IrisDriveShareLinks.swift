@@ -13,6 +13,20 @@ extension IrisDriveMobileModel {
         return lastShareInvite
     }
 
+    /// My Drive folders a share can start from.
+    var shareableFolders: [String] {
+        lastState?.ui.shareableFolders ?? []
+    }
+
+    /// Take a shared folder out of My Drive on this phone; access stays.
+    func removeShareFromMyDrive(shareId: String) {
+        dispatch(["type": "remove_share_shortcuts", "share_id": shareId])
+    }
+
+    func cancelShareJoin(shareId: String) {
+        dispatch(["type": "cancel_share_join", "share_id": shareId])
+    }
+
     func disableShareLinks(shareId: String) {
         dispatch(["type": "disable_share_join_links", "share_id": shareId])
         statusTitle = "Links turned off"
@@ -103,6 +117,7 @@ struct ShareLinkSheet: View {
 
 struct PendingShareJoinRows: View {
     let joins: [NativePendingShareJoin]
+    let onCancel: (NativePendingShareJoin) -> Void
 
     var body: some View {
         ForEach(joins) { join in
@@ -116,6 +131,9 @@ struct PendingShareJoinRows: View {
                 }
             }
             .accessibilityIdentifier("pendingShareJoin")
+            .swipeActions {
+                Button("Cancel", role: .destructive) { onCancel(join) }
+            }
         }
     }
 }

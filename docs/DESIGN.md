@@ -15,8 +15,10 @@ discovery. P2P as far as each OS allows.
   own cryptographic root, entity roster, roles, key epochs, wraps, and
   core-derived key status (`available`, `repair_needed`, `key_unavailable`,
   etc.); AppKeys remain the concrete signing/decryption actors under each
-  member profile. Recipients see shares under **Shared with me** and may add
-  shortcuts into My Drive.
+  member profile. As in Google Drive, a shared folder is on disk only where
+  it sits in My Drive: at the owner's own path, or at the shortcut a member
+  keeps. The app's **Shares** list is the "Shared with me" view; there is no
+  such folder on disk.
 - No DNS, SSL, CDNs, or centralized servers. Identity = IrisProfile UUID plus
   signed AppKey/recovery/social facets, not a primary Nostr pubkey.
 - Native shells per platform, single shared Rust core.
@@ -227,9 +229,13 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
   `--diagnostics` flags.
 - **Receive invite**: app keeps an open Nostr subscription for DMs
   (no timed fetches — see CLAUDE.md rule), surfaces "X shared 'Photos'."
-- **Receive share**: shared folders appear under `Shared with me/<name>`.
-  Recipients can add shortcuts anywhere in My Drive. Team/shared DriveSpaces can
-  come later; the first UX remains one Iris Drive.
+- **Receive share**: joining from the app adds a My Drive shortcut, the
+  folder's only place on disk. Deleting that folder on disk, or **Remove from
+  My Drive**, takes the shortcut away and keeps membership; **Add to My
+  Drive** puts it back; moving or renaming it moves the shortcut. None of
+  these touch the shared files. An owner's shared folder moves with them and
+  cannot be deleted on disk until they stop sharing it. Team/shared
+  DriveSpaces can come later; the first UX remains one Iris Drive.
 - **GUI parity**: native control panels render app-core `UiShare`,
   `UiShareMember`, and `UiPendingShareInvite` state from the **Shares** tab,
   including source path, role/status, pending contacts,
@@ -287,8 +293,8 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
    share authority. Do not add a general CRDT library unless it clearly
    simplifies this model.
 3. **Drive granularity**: one user-facing My Drive, with internal share roots
-   for shared folders. Recipients see Shared with me and optional shortcuts,
-   not a pile of separate sidebar drives.
+   for shared folders. Members see them in the Shares list and as My Drive
+   shortcuts, not as a pile of separate sidebar drives.
 4. **Conflict resolution**: causal merge where available, conflict copies for
    concurrent edits/deletes. No document-level CRDT in v1.
 5. **In-process vs out-of-process daemon**: in-process. Mobile sandboxes ban

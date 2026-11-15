@@ -63,6 +63,10 @@ struct IrisDriveShare: Identifiable, Equatable {
     var members: [IrisDriveShareMember]
     var pendingInvites: [IrisDrivePendingShareInvite]
     var shortcutPaths: [String]
+    /// This profile shared the folder from its own Drive.
+    var owned = false
+    /// Where it is in My Drive on this device; empty when it is not there.
+    var location = ""
 }
 
 struct IrisDrivePendingShareInvite: Identifiable, Equatable {

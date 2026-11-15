@@ -843,18 +843,6 @@ impl ShareRootWriteAuthorization {
     }
 }
 
-pub(crate) fn shared_with_me_mount_path(folder: &SharedFolder, folders: &[SharedFolder]) -> String {
-    let path = folder.shared_with_me_path();
-    if folders
-        .iter()
-        .any(|other| other.share_id != folder.share_id && other.shared_with_me_path() == path)
-    {
-        format!("{path} ({})", folder.share_id)
-    } else {
-        path
-    }
-}
-
 #[must_use]
 pub fn shared_folder_views(
     shared_folders: &[SharedFolder],
@@ -863,15 +851,11 @@ pub fn shared_folder_views(
 ) -> Vec<SharedFolderView> {
     let mut views = shared_folders
         .iter()
-        .map(|folder| {
-            let mut view = shared_folder_view(folder, share_shortcuts, current_app_pubkey);
-            view.shared_with_me_path = shared_with_me_mount_path(folder, shared_folders);
-            view
-        })
+        .map(|folder| shared_folder_view(folder, share_shortcuts, current_app_pubkey))
         .collect::<Vec<_>>();
     views.sort_by(|left, right| {
-        left.shared_with_me_path
-            .cmp(&right.shared_with_me_path)
+        left.display_name
+            .cmp(&right.display_name)
             .then_with(|| left.share_id.cmp(&right.share_id))
     });
     views
@@ -916,7 +900,8 @@ pub fn shared_folder_view(
         share_id: folder.share_id,
         display_name: folder.display_name.clone(),
         source_path: folder.source_path.clone(),
-        shared_with_me_path: folder.shared_with_me_path(),
+        // Shared folders are on disk only at their My Drive shortcuts.
+        shared_with_me_path: String::new(),
         local_role,
         current_app_pubkey: current_app_pubkey.to_string(),
         key_status,

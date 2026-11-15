@@ -251,6 +251,12 @@ class MainActivity : ComponentActivity() {
                 onAddShareShortcut = { shareId, path ->
                     dispatch(NativeActions.addShareShortcut(shareId, path))
                 },
+                onRemoveShareShortcuts = { shareId ->
+                    dispatch(NativeActions.removeShareShortcuts(shareId))
+                },
+                onCancelShareJoin = { shareId ->
+                    dispatch(NativeActions.cancelShareJoin(shareId))
+                },
                 onRepairShareWraps = { shareId ->
                     dispatch(NativeActions.repairShareWraps(shareId))
                 },

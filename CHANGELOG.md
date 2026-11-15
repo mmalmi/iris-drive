@@ -9,6 +9,14 @@
 - Open drive.iris.to share links in the app on iPhone and Mac, with the choice
   to open them in the browser instead. Other drive.iris.to pages the Mac app
   cannot show open in the browser.
+- Shared folders sit on disk the way they do in Google Drive: once, where
+  they are in My Drive. The separate "Shared with me" folder is gone from
+  Finder, Files and Explorer, and sharing a folder no longer adds a second
+  copy at the top of the owner's Drive. Take a joined folder out of My Drive
+  and add it back from Shares without losing access; deleting or moving its
+  folder on disk only changes your own Drive, never the shared files.
+- Pick the folder to share from a list on Mac, iPhone and Android, and get
+  the share link right after creating a shared folder on iPhone.
 - Folders shared or joined while Drive is running now sync without a restart.
 - Photo backup on iPhone shows its progress and when the last full backup
   finished, and says how to back up when it is waiting for Wi-Fi.

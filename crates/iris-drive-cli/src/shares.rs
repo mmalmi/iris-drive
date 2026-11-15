@@ -57,9 +57,15 @@ pub(crate) fn cmd_shares(config_dir: &Path, command: Option<SharesCmd>) -> Resul
         } => cmd_shares_role(config_dir, &share_id, &profile_id, &role),
         SharesCmd::Shortcut {
             share_id,
+            remove: true,
+            ..
+        } => cmd_shares_remove_shortcuts(config_dir, &share_id),
+        SharesCmd::Shortcut {
+            share_id,
             path,
             parent,
             target_path,
+            remove: false,
         } => cmd_shares_shortcut(
             config_dir,
             &share_id,
@@ -291,6 +297,22 @@ fn cmd_shares_accept(config_dir: &Path, invite: &str) -> Result<()> {
             "share": share_view_json(view),
             "share_id": share_id.to_string(),
         })
+    );
+    Ok(())
+}
+
+fn cmd_shares_remove_shortcuts(config_dir: &Path, share_id: &str) -> Result<()> {
+    let share_id = share_id
+        .parse::<iris_drive_core::NostrIdentityId>()
+        .context("parsing share id")?;
+    dispatch_cli_share_action(
+        config_dir,
+        iris_drive_core::ShareAction::RemoveShareShortcuts { share_id },
+    )
+    .context("removing the share from My Drive")?;
+    println!(
+        "{}",
+        json!({ "share_id": share_id.to_string(), "in_my_drive": false })
     );
     Ok(())
 }

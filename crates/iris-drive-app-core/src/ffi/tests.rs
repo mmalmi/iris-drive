@@ -455,7 +455,8 @@ fn app_state_surfaces_shared_with_me_rows_and_shortcuts() {
     assert_eq!(share.share_id, folder.share_id.to_string());
     assert_eq!(share.display_name, "Alpha");
     assert_eq!(share.source_path, "Projects/Alpha");
-    assert_eq!(share.shared_with_me_path, "Shared with me/Alpha");
+    // Shared folders are on disk only where they sit in My Drive.
+    assert_eq!(share.shared_with_me_path, "");
     assert_eq!(share.role, "admin");
     assert_eq!(share.role_label, "Admin");
     assert_eq!(share.key_status, "available");
@@ -560,7 +561,7 @@ fn app_actions_manage_share_invite_accept_shortcut_and_revoke() {
     });
     assert!(created_share.error.is_empty(), "{}", created_share.error);
     assert_eq!(created_share.ui.shares.len(), 1);
-    assert_eq!(created_share.ui.shares[0].shortcut_paths, vec!["Alpha"]);
+    assert_eq!(created_share.ui.shares[0].location, "Projects/Alpha");
     let share_id = created_share.ui.shares[0].share_id.clone();
 
     let recipient_dir = tempfile::tempdir().unwrap();
@@ -680,7 +681,7 @@ fn app_action_delete_share_removes_share_and_shortcuts() {
     assert!(shortcut.error.is_empty(), "{}", shortcut.error);
     assert_eq!(
         shortcut.ui.shares[0].shortcut_paths,
-        vec!["Alpha", "Projects/Alpha shared"]
+        vec!["Projects/Alpha shared"]
     );
 
     let deleted = app.dispatch(NativeAppAction::DeleteShare { share_id });

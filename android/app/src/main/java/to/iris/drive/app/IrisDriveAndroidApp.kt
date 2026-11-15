@@ -220,6 +220,8 @@ internal fun IrisDriveAndroidApp(
     onOpenSharePath: (String) -> Unit,
     onDeleteShare: (String) -> Unit,
     onAddShareShortcut: (String, String) -> Unit,
+    onRemoveShareShortcuts: (String) -> Unit,
+    onCancelShareJoin: (String) -> Unit,
     onRepairShareWraps: (String) -> Unit,
     onAddRoot: (String, String) -> Unit,
 ) {
@@ -351,6 +353,8 @@ internal fun IrisDriveAndroidApp(
                     onOpenSharePath = onOpenSharePath,
                     onDeleteShare = onDeleteShare,
                     onAddShareShortcut = onAddShareShortcut,
+                    onRemoveShareShortcuts = onRemoveShareShortcuts,
+                    onCancelShareJoin = onCancelShareJoin,
                     onRepairShareWraps = onRepairShareWraps,
                 )
             }

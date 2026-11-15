@@ -118,11 +118,10 @@ fn overlaps(a: &str, b: &str) -> bool {
 pub(crate) fn ensure_private(config: &AppConfig, dest: &str) -> Result<()> {
     let profile = config.profile.as_ref().context("Set up Iris Drive first")?;
     for folder in &config.shared_folders {
-        let received = crate::sharing::shared_with_me_mount_path(folder, &config.shared_folders);
         let shared_source =
             folder.owner_profile_id == profile.profile_id && overlaps(dest, &folder.source_path);
         ensure!(
-            !(overlaps(dest, &received) || shared_source),
+            !shared_source,
             "Choose a personal destination outside shared folders"
         );
     }

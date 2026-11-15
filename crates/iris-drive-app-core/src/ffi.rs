@@ -616,8 +616,10 @@ impl NativeAppRuntime {
             | NativeAppAction::RevokeShareMember { .. }
             | NativeAppAction::SetShareMemberRole { .. }
             | NativeAppAction::AddShareShortcut { .. }
+            | NativeAppAction::RemoveShareShortcuts { .. }
             | NativeAppAction::CreateShareJoinLink { .. }
             | NativeAppAction::DisableShareJoinLinks { .. }
+            | NativeAppAction::CancelShareJoin { .. }
             | NativeAppAction::RepairShareWraps { .. }) => self.dispatch_share_action(share_action),
             NativeAppAction::ExportShareRecipientEvidence { display_name } => {
                 self.export_share_recipient_evidence(&display_name);
@@ -1396,17 +1398,6 @@ impl NativeAppRuntime {
             self.refresh_ui_summary(None);
             return;
         };
-        match iris_drive_core::repair_missing_share_shortcuts(&mut config) {
-            Ok(true) => {
-                if let Err(error) = config.save(config_path_in(Path::new(&self.data_dir))) {
-                    self.state.error = format!("saving repaired share shortcuts: {error}");
-                }
-            }
-            Ok(false) => {}
-            Err(error) => {
-                self.state.error = format!("repairing share shortcuts: {error:#}");
-            }
-        }
         if let Err(error) =
             ensure_cached_app_key_link_request_url(&mut config, Path::new(&self.data_dir))
         {
@@ -1514,6 +1505,8 @@ impl NativeAppRuntime {
             self.state.ui.provider_change_key = previous_provider_summary.2;
             self.state.ui.provider_directory_paths = previous_provider_summary.3;
         }
+        self.state.ui.shareable_folders =
+            share_actions::shareable_folders(&config, &self.state.ui.provider_directory_paths);
         self.refresh_ui_summary(Some(ui_fips_status));
     }
 
@@ -3519,7 +3512,22 @@ fn ui_shares_for_config(config: &AppConfig, current_app_pubkey: &str) -> Vec<UiS
         current_app_pubkey,
     )
     .into_iter()
-    .map(|share| UiShare {
+    .map(|share| {
+        let owned = config.profile.as_ref().is_some_and(|profile| {
+            config
+                .shared_folder(share.share_id)
+                .is_some_and(|folder| folder.owner_profile_id == profile.profile_id)
+        });
+        let location = if owned {
+            share.source_path.clone()
+        } else {
+            share.shortcut_paths.first().cloned().unwrap_or_default()
+        };
+        (share, owned, location)
+    })
+    .map(|(share, owned, location)| UiShare {
+        owned,
+        location,
         share_id: share.share_id.to_string(),
         display_name: share.display_name,
         source_path: share.source_path,

@@ -444,6 +444,7 @@ struct NativeUiState: Codable {
     var lastShareInvite: String
     var lastShareRecipientEvidence: String
     var pendingShareJoins: [NativePendingShareJoin]
+    var shareableFolders: [String]
 
     enum CodingKeys: String, CodingKey {
         case roots
@@ -475,6 +476,7 @@ struct NativeUiState: Codable {
         case lastShareInvite = "last_share_invite"
         case lastShareRecipientEvidence = "last_share_recipient_evidence"
         case pendingShareJoins = "pending_share_joins"
+        case shareableFolders = "shareable_folders"
     }
 }
 
@@ -575,8 +577,12 @@ struct NativeShare: Codable {
     var members: [NativeShareMember]
     var pendingInvites: [NativePendingShareInvite]
     var shortcutPaths: [String]
+    var owned: Bool
+    var location: String
 
     enum CodingKeys: String, CodingKey {
+        case owned
+        case location
         case shareId = "share_id"
         case displayName = "display_name"
         case sourcePath = "source_path"

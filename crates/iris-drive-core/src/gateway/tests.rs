@@ -405,7 +405,7 @@ async fn gateway_proxy_tunnels_connect_iris_host() {
 }
 
 #[tokio::test]
-async fn gateway_serves_primary_share_shortcut_projection() {
+async fn gateway_serves_a_shared_folder_where_its_owner_keeps_it() {
     let cfg_dir = tempdir().unwrap();
     init_account_config(cfg_dir.path());
     let work = tempdir().unwrap();
@@ -436,9 +436,12 @@ async fn gateway_serves_primary_share_shortcut_projection() {
     .await
     .unwrap();
     let host = format!("main{DRIVE_HOST_SUFFIX}");
-    let response = http_get(server.local_addr(), &host, "/keke/note.txt").await;
+    // A shared folder is served where its owner keeps it, and only there.
+    let response = http_get(server.local_addr(), &host, "/Shared/keke/note.txt").await;
     assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
     assert!(response.contains("shared through gateway"), "{response}");
+    let duplicate = http_get(server.local_addr(), &host, "/keke/note.txt").await;
+    assert!(duplicate.starts_with("HTTP/1.1 404"), "{duplicate}");
     server.shutdown().await.unwrap();
 }
 

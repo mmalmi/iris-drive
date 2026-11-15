@@ -283,7 +283,11 @@ pub(crate) fn show_invite_share_member_dialog(
     {
         let model = Rc::clone(model);
         copy.connect_clicked(move |_| {
-            let role = if role.selected() == 1 { "editor" } else { "reader" };
+            let role = if role.selected() == 1 {
+                "editor"
+            } else {
+                "reader"
+            };
             match dispatch_desktop_action(NativeAppAction::CreateShareJoinLink {
                 share_id: share_id.clone(),
                 role: role.to_string(),
@@ -326,6 +330,29 @@ pub(crate) fn add_share_shortcut(model: &AppRef, share_id: String) {
     }
 }
 
+pub(crate) fn cancel_share_join(model: &AppRef, share_id: String) {
+    match dispatch_desktop_action(NativeAppAction::CancelShareJoin { share_id }) {
+        Ok(_) => {
+            model.ui.notice.set_text("No longer waiting to join");
+            refresh(model);
+        }
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
+pub(crate) fn remove_share_from_my_drive(model: &AppRef, share_id: String) {
+    match dispatch_desktop_action(NativeAppAction::RemoveShareShortcuts { share_id }) {
+        Ok(_) => {
+            model
+                .ui
+                .notice
+                .set_text("Removed from My Drive. It stays under Shares.");
+            refresh(model);
+        }
+        Err(error) => model.ui.notice.set_text(&error),
+    }
+}
+
 pub(crate) fn open_share_folder(model: &AppRef, provider_path: String) {
     if !ensure_daemon_running(model) {
         model.ui.notice.set_text("Could not start sync");
@@ -343,10 +370,32 @@ pub(crate) fn open_share_folder(model: &AppRef, provider_path: String) {
     open_path(&local_path);
 }
 
-pub(crate) fn show_delete_share_dialog(model: &AppRef, share_id: String, display_name: String) {
+pub(crate) fn show_delete_share_dialog(
+    model: &AppRef,
+    share_id: String,
+    display_name: String,
+    owned: bool,
+) {
+    let (heading, confirm, detail) = if owned {
+        (
+            "Stop sharing?",
+            "Stop Sharing",
+            format!(
+                "“{display_name}” stays in your My Drive. People you shared it with keep what they have and get no further changes."
+            ),
+        )
+    } else {
+        (
+            "Leave shared folder?",
+            "Leave",
+            format!(
+                "“{display_name}” is removed from this computer. You can join again with a link."
+            ),
+        )
+    };
     let dialog = gtk::Window::builder()
         .application(&model.application)
-        .title("Delete share")
+        .title(confirm)
         .modal(true)
         .default_width(380)
         .build();
@@ -360,14 +409,12 @@ pub(crate) fn show_delete_share_dialog(model: &AppRef, share_id: String, display
     body.set_margin_start(18);
     body.set_margin_end(18);
 
-    let title = gtk::Label::new(Some("Delete share?"));
+    let title = gtk::Label::new(Some(heading));
     title.add_css_class("title-2");
     title.set_xalign(0.0);
     body.append(&title);
 
-    let message = gtk::Label::new(Some(&format!(
-        "Delete {display_name} from this device? Folder contents stay in My Drive."
-    )));
+    let message = gtk::Label::new(Some(&detail));
     message.add_css_class("iris-muted");
     message.set_xalign(0.0);
     message.set_wrap(true);
@@ -376,7 +423,7 @@ pub(crate) fn show_delete_share_dialog(model: &AppRef, share_id: String, display
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     buttons.set_halign(gtk::Align::End);
     let cancel = pill_button("Cancel");
-    let delete = pill_button("Delete");
+    let delete = pill_button(confirm);
     delete.add_css_class("destructive-action");
     buttons.append(&cancel);
     buttons.append(&delete);

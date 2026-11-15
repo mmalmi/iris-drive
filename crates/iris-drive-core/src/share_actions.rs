@@ -87,6 +87,11 @@ pub enum ShareAction {
     RepairShareWraps {
         share_id: NostrIdentityId,
     },
+    /// Take the folder out of My Drive on this device. Membership stays; it
+    /// can be added back with `AddShareShortcut`.
+    RemoveShareShortcuts {
+        share_id: NostrIdentityId,
+    },
     /// The link that lets anyone who opens it ask to join with `role`.
     CreateShareJoinLink {
         share_id: NostrIdentityId,
@@ -99,6 +104,10 @@ pub enum ShareAction {
     /// Ask to join a folder from its link.
     JoinShareLink {
         link: String,
+    },
+    /// Stop waiting to be let into a folder this device asked to join.
+    CancelShareJoin {
+        share_id: NostrIdentityId,
     },
 }
 
@@ -199,7 +208,6 @@ pub fn dispatch_share_action(
     let action = action.normalized();
     let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let metadata = apply_share_action(config_dir, &mut config, action, now_seconds)?;
-    repair_missing_share_shortcuts(&mut config)?;
     let current_app_pubkey = config
         .profile
         .as_ref()
@@ -231,8 +239,7 @@ pub fn dispatch_share_action(
 }
 
 pub fn share_action_state(config_dir: &Path) -> Result<ShareActionResult> {
-    let mut config = AppConfig::load_or_default(config_path_in(config_dir))?;
-    let shortcuts_repaired = repair_missing_share_shortcuts(&mut config)?;
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let current_app_pubkey = config
         .profile
         .as_ref()
@@ -244,9 +251,6 @@ pub fn share_action_state(config_dir: &Path) -> Result<ShareActionResult> {
         &config.share_shortcuts,
         &current_app_pubkey,
     );
-    if shortcuts_repaired {
-        config.save(config_path_in(config_dir))?;
-    }
     Ok(ShareActionResult {
         shares,
         share_id: None,
@@ -368,12 +372,30 @@ fn apply_share_action(
         ShareAction::RepairShareWraps { share_id } => {
             repair_share_wraps(config_dir, config, share_id, now_seconds)
         }
+        ShareAction::RemoveShareShortcuts { share_id } => {
+            anyhow::ensure!(config.shared_folder(share_id).is_some(), "Share missing");
+            config.remove_share_shortcuts_for_share(share_id);
+            Ok(ShareActionMetadata {
+                share_id: Some(share_id),
+                ..ShareActionMetadata::default()
+            })
+        }
         ShareAction::CreateShareJoinLink { share_id, role } => {
             create_share_join_link(config_dir, config, share_id, role)
         }
         ShareAction::DisableShareJoinLinks { share_id } => {
             let mut store = crate::share_join::ShareJoinStore::load(config_dir)?;
             if store.disable_links(share_id) {
+                store.save(config_dir)?;
+            }
+            Ok(ShareActionMetadata {
+                share_id: Some(share_id),
+                ..ShareActionMetadata::default()
+            })
+        }
+        ShareAction::CancelShareJoin { share_id } => {
+            let mut store = crate::share_join::ShareJoinStore::load(config_dir)?;
+            if store.finish_pending(share_id) {
                 store.save(config_dir)?;
             }
             Ok(ShareActionMetadata {
@@ -463,12 +485,11 @@ fn create_share(
         Vec::new(),
         now_seconds,
     )?;
+    // The folder stays where its owner keeps it; sharing adds no second copy.
     let share_id = folder.share_id;
-    let shortcut = ensure_default_share_shortcut(config, share_id, &display_name)?;
     config.upsert_shared_folder(folder);
     Ok(ShareActionMetadata {
         share_id: Some(share_id),
-        shortcut,
         ..ShareActionMetadata::default()
     })
 }
@@ -696,19 +717,6 @@ pub(crate) fn ensure_default_share_shortcut(
     let shortcut = ShareShortcut::new(share_id, &shortcut_path, "")?;
     config.upsert_share_shortcut(shortcut.clone());
     Ok(Some(shortcut))
-}
-
-pub fn repair_missing_share_shortcuts(config: &mut AppConfig) -> Result<bool> {
-    let shares = config
-        .shared_folders
-        .iter()
-        .map(|folder| (folder.share_id, folder.display_name.clone()))
-        .collect::<Vec<_>>();
-    let mut changed = false;
-    for (share_id, display_name) in shares {
-        changed |= ensure_default_share_shortcut(config, share_id, &display_name)?.is_some();
-    }
-    Ok(changed)
 }
 
 fn repair_share_wraps(

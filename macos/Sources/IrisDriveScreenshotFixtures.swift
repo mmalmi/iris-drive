@@ -85,14 +85,25 @@ enum IrisDriveScreenshotFixtures {
             IrisDriveShareStatus(json: [
                 "share_id": "11111111-1111-4111-8111-111111111111", "display_name": "Trip photos",
                 "source_path": "Photos/Trip", "role": "admin", "role_label": "Admin", "can_admin": true,
-                "can_write": true, "participant_count": 3,
+                "can_write": true, "participant_count": 3, "owned": true, "location": "Photos/Trip",
                 "members": [
                     ["profile_id": "a", "display_name": "You", "role": "admin", "role_label": "Admin", "status": "active", "status_label": "Active"],
                     ["profile_id": "b", "display_name": "Alice", "role": "editor", "role_label": "Editor", "status": "active", "status_label": "Active"],
                     ["profile_id": "c", "display_name": "Sam", "role": "reader", "role_label": "Reader", "status": "active", "status_label": "Active"],
                 ],
-            ])
+            ]),
+            IrisDriveShareStatus(json: [
+                "share_id": "33333333-3333-4333-8333-333333333333", "display_name": "Recipes",
+                "role": "editor", "role_label": "Editor", "can_write": true, "participant_count": 4,
+                "owned": false, "location": "Recipes", "shortcut_paths": ["Recipes"],
+            ]),
+            IrisDriveShareStatus(json: [
+                "share_id": "44444444-4444-4444-8444-444444444444", "display_name": "Old projects",
+                "role": "reader", "role_label": "Reader", "participant_count": 2,
+                "owned": false, "location": "",
+            ]),
         ]
+        status.shareableFolders = ["Documents", "Documents/Taxes", "Photos/2026", "Projects"]
         status.profileId = "a"
         status.pendingShareJoins = [
             IrisDrivePendingShareJoin(json: ["share_id": "2", "display_name": "Book club", "role_label": "Reader"])
