@@ -6,7 +6,7 @@ use iris_drive_core::{ShareAction, ShareRole, SharedFolderView};
 use std::time::Duration;
 use tempfile::tempdir;
 
-fn new_profile(dir: &Path, label: &str) {
+pub(super) fn new_profile(dir: &Path, label: &str) {
     let profile = Profile::create(dir, Some(label.into())).unwrap();
     AppConfig {
         profile: Some(profile.state),
@@ -17,7 +17,7 @@ fn new_profile(dir: &Path, label: &str) {
 }
 
 /// Link a new device in `dir` to the profile in `first_dir`, approved there.
-fn link_device(first_dir: &Path, dir: &Path, label: &str) {
+pub(super) fn link_device(first_dir: &Path, dir: &Path, label: &str) {
     let mut config = AppConfig::load_or_default(config_path_in(first_dir)).unwrap();
     let mut first = Profile::load(config.profile.clone().unwrap(), first_dir).unwrap();
     let mut linked = Profile::link_to_profile(
@@ -46,11 +46,11 @@ fn link_device(first_dir: &Path, dir: &Path, label: &str) {
     .unwrap();
 }
 
-fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
+pub(super) fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
     tokio::runtime::Runtime::new().unwrap().block_on(future)
 }
 
-fn sync(dir: &Path) {
+pub(super) fn sync(dir: &Path) {
     block_on(iris_drive_core::network_sync::sync_once(
         dir,
         &[],
@@ -122,17 +122,21 @@ fn shares_of(dir: &Path) -> Vec<SharedFolderView> {
     iris_drive_core::share_action_state(dir).unwrap().shares
 }
 
-fn act(dir: &Path, action: ShareAction) -> iris_drive_core::ShareActionResult {
+pub(super) fn act(dir: &Path, action: ShareAction) -> iris_drive_core::ShareActionResult {
     dispatch_cli_share_action(dir, action).unwrap()
 }
 
-fn join_link(dir: &Path, share_id: iris_drive_core::NostrIdentityId, role: ShareRole) -> String {
+pub(super) fn join_link(
+    dir: &Path,
+    share_id: iris_drive_core::NostrIdentityId,
+    role: ShareRole,
+) -> String {
     act(dir, ShareAction::CreateShareJoinLink { share_id, role })
         .share_join_link
         .unwrap()
 }
 
-fn only_share_id(dir: &Path) -> iris_drive_core::NostrIdentityId {
+pub(super) fn only_share_id(dir: &Path) -> iris_drive_core::NostrIdentityId {
     let shares = shares_of(dir);
     assert_eq!(shares.len(), 1);
     shares[0].share_id

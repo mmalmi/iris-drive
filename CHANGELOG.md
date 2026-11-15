@@ -27,6 +27,9 @@
   Drive; moving it, taking it out of My Drive, leaving it or stopping sharing
   applies on all of them. A device you link later is let into the folders you
   own. For a folder someone else owns it asks to join with the link you used.
+- The apps now tell Iris Drive web when they let a browser into a shared
+  folder, so a browser linked to your profile can pick up the folders you
+  share from an app, as one that joined by link already could.
 - Save to Iris Drive from another app's share sheet on iPhone and Android
   asks first, as Google Drive does: check or change the name, pick the folder,
   then Save or Cancel. It used to save straight into My Drive without asking.

@@ -190,6 +190,7 @@ async fn capture_and_admit(config_dir: &Path) -> Result<ShareIndexReconcile> {
         admit_profile_devices(&mut config, &index, app_key.keys(), now)?
     };
     if healed || !admitted.is_empty() {
+        crate::share_added::outbox::owe_share_added_notices(config_dir, &admitted)?;
         config.save(config_path_in(config_dir))?;
     }
     if captured || healed {
@@ -198,14 +199,15 @@ async fn capture_and_admit(config_dir: &Path) -> Result<ShareIndexReconcile> {
     drop(lock);
     Ok(ShareIndexReconcile {
         captured: captured || healed,
-        admitted,
+        admitted: admitted.into_iter().map(|(share_id, _)| share_id).collect(),
         published: false,
     })
 }
 
 /// Bring the list up to date with this device and the profile's devices,
-/// then publish what changed: the folders new devices were let into, and
-/// the list itself.
+/// then publish what changed: the folders new devices were let into, the
+/// list itself, and a note to each device let in. The profile's native
+/// devices learn of a folder from the list; Iris Drive web from the note.
 pub async fn reconcile_share_index(
     config_dir: &Path,
     client: &Client,
@@ -217,6 +219,7 @@ pub async fn reconcile_share_index(
         crate::share_actions::publish_share_content_to(config_dir, *share_id, client).await?;
     }
     report.published = publish_share_index(client, config_dir, force_publish).await?;
+    crate::share_added::publish_share_added_notices(client, config_dir).await?;
     Ok(report)
 }
 

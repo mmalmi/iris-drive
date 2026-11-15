@@ -267,6 +267,17 @@ Finder shows sidebar entry, edits round-trip to the Linux peer.
   someone else owns, a device that is not in the snapshot asks with the
   profile's join link. **Remove from My Drive**, moving, leaving and **Stop
   sharing** on one device apply on the others.
+- **Telling a device it was let in**: Iris Drive web does not read the
+  profile's list. An admin AppKey that lets devices into a folder, its own
+  profile's or those of someone who asked with a join link, sends each one
+  the note Iris Drive web listens for (`share_added`): kind 30078 with `l` =
+  `iris-drive/share-added`, one `p` tag naming the device, and `d` =
+  SHA-256 of the label, share id and device key joined by newlines. The
+  content is NIP-44 for that device alone: `v`, `share_id`,
+  `owner_profile_id`, `name`, and `role` (`editor` or `reader`, a hint). The
+  note grants nothing: the device waits for the access snapshot signed by the
+  note's author and adds the folder once that snapshot includes it. Devices
+  still to be told are kept in `share-added.json` until their notes are sent.
 - **GUI parity**: native control panels render app-core `UiShare`,
   `UiShareMember`, and `UiPendingShareInvite` state from the **Shares** tab,
   including source path, role/status, pending contacts,

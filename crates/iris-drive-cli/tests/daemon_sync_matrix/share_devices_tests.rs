@@ -12,6 +12,34 @@ fn shares(config_dir: &Path) -> Vec<Value> {
         .unwrap_or_default()
 }
 
+/// The note that tells `device_dir`'s device it was let into a folder, once
+/// the relay holds one: what Iris Drive web listens for.
+async fn share_added_notice(
+    relay: &LocalNostrRelay,
+    device_dir: &Path,
+) -> (iris_drive_core::share_added::ShareAddedNotice, String) {
+    use nostr_sdk::JsonUtil;
+    let device = iris_drive_core::AppKey::load(iris_drive_core::paths::key_path_in(device_dir))
+        .unwrap()
+        .keys()
+        .clone();
+    tokio::time::timeout(WAIT_TIMEOUT, async {
+        loop {
+            for stored in relay.events().await {
+                if let Ok(event) = nostr_sdk::Event::from_json(stored.to_string())
+                    && let Some(notice) =
+                        iris_drive_core::share_added::read_share_added_notice(&event, &device)
+                {
+                    return (notice, event.pubkey.to_hex());
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    })
+    .await
+    .expect("the device let into the folder is told of it")
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn live_daemons_share_a_folder_on_every_device_of_the_profile() {
     let _guard = live_daemon_test_guard().await;
@@ -41,6 +69,17 @@ async fn live_daemons_share_a_folder_on_every_device_of_the_profile() {
                 && shares[0]["has_current_key_wrap"] == true
         })
         .await;
+    // The first device's Drive let the second in, and told it so in the note
+    // Iris Drive web listens for.
+    let (told, teller) = share_added_notice(&cluster.relay, second).await;
+    assert_eq!(told.share_id.to_string(), share_id);
+    assert_eq!(told.name, "Alpha");
+    let first_device = AppConfig::load_or_default(config_path_in(first))
+        .unwrap()
+        .profile
+        .unwrap()
+        .app_key_pubkey;
+    assert_eq!(teller, first_device);
     cluster
         .wait_until("the second device has the shared folder's files", || {
             AppConfig::load_or_default(config_path_in(second)).is_ok_and(|config| {

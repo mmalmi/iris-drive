@@ -1,8 +1,8 @@
 mod content;
+pub(crate) use content::publish_share_content_to;
 pub use content::{
     dispatch_share_action_with_content, dispatch_share_action_with_content_blocking,
 };
-pub(crate) use content::{publish_share_content, publish_share_content_to};
 use std::path::Path;
 
 use anyhow::{Context, Result};

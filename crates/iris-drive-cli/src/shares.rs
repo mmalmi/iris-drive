@@ -682,3 +682,7 @@ mod link_tests;
 #[cfg(test)]
 #[path = "shares/devices_tests.rs"]
 mod devices_tests;
+
+#[cfg(test)]
+#[path = "shares/added_tests.rs"]
+mod added_tests;

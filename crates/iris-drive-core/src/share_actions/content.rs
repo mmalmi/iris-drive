@@ -175,10 +175,7 @@ async fn publish_share_join_requests(config_dir: &Path) {
     crate::relay_sync::shutdown_client(&client).await;
 }
 
-pub(crate) async fn publish_share_content(
-    config_dir: &Path,
-    share_id: NostrIdentityId,
-) -> Result<()> {
+async fn publish_share_content(config_dir: &Path, share_id: NostrIdentityId) -> Result<()> {
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let client = crate::relay_sync::connect(&config.relays).await?;
     let outcome = publish_share_content_to(config_dir, share_id, &client).await;

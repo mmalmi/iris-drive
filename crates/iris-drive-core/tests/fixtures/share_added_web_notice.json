@@ -1,0 +1,27 @@
+{
+  "admin_secret_key": "1111111111111111111111111111111111111111111111111111111111111111",
+  "device_secret_key": "2222222222222222222222222222222222222222222222222222222222222222",
+  "plaintext": "{\"v\":1,\"share_id\":\"123e4567-e89b-42d3-a456-426614174011\",\"owner_profile_id\":\"123e4567-e89b-42d3-a456-426614174022\",\"name\":\"Tax papers 2026\",\"role\":\"editor\"}",
+  "event": {
+    "kind": 30078,
+    "created_at": 1000,
+    "content": "Al12ZwPiTJsqLVky72pG2XPQ5t+YkI9j+3/yqmIJSBfOlB0jZ4SrIjzznbRkUYP30pkMZ/GUMPU3FZ2erIojsj09htuUzGEf/RGOi2IWotZTH7+YQKfx/oKUCj8alMQJKj7cET1ah7egs52CGahnJ1Ldr4YVcVo6646FQ5HdwKHNZDnlOrNlggbBq61RwBFLxFSKBIuqTiiQec4uwPgxJw3Nj4qGc+Hc/cp1rcAIImhYpZx5RFk3ZS3dL/fIIiUtR7Vx+d0wjIXCYQG26dKiVQzsVwPO5XR6dOYKil8HRA30+DA=",
+    "tags": [
+      [
+        "d",
+        "76a170667c75d4650f80fb26538cbdf5f5d4791e7ba5b3cffddbf2bcc3602d84"
+      ],
+      [
+        "l",
+        "iris-drive/share-added"
+      ],
+      [
+        "p",
+        "466d7fcae563e5cb09a0d1870bb580344804617879a14949cf22285f1bae3f27"
+      ]
+    ],
+    "pubkey": "4f355bdcb7cc0af728ef3cceb9615d90684bb5b2ca5f859ab0f0b704075871aa",
+    "id": "5c61533af99ea40f161d7409d822c2e548f7ee6cf5fc028582ac37117c95bcea",
+    "sig": "2ff00d8067fbd64e4fbccd40abfbaabf0e1e81901e7d439837795076e443aee6950a41e6cdcf9c84aac5b210c7f42f012e98ecb5c6ba56e0e09af6ff7e9a0de3"
+  }
+}

@@ -44,13 +44,14 @@ fn now_seconds() -> i64 {
 }
 
 /// Let in the person behind a request made with one of this device's links.
+/// Returns the folder and the devices let into it.
 pub fn approve_share_join_request(
     config_dir: &Path,
     config: &mut AppConfig,
     store: &ShareJoinStore,
     event: &Event,
     now: i64,
-) -> Result<Option<NostrIdentityId>> {
+) -> Result<Option<(NostrIdentityId, Vec<String>)>> {
     let Some(link) = store.link_signed_by(&event.pubkey.to_hex()) else {
         return Ok(None);
     };
@@ -70,8 +71,14 @@ pub fn approve_share_join_request(
     if !join_request_needs_approval(folder, resolved.profile_id, &requester) {
         return Ok(None);
     }
+    let already_in = folder.projection().active_facets;
     invite_shared_folder_resolved_recipient(folder, app_key.keys(), &resolved, link.role, now)?;
-    Ok(Some(folder.share_id))
+    let let_in = resolved
+        .app_pubkeys
+        .into_iter()
+        .filter(|pubkey| !already_in.contains_key(pubkey))
+        .collect();
+    Ok(Some((folder.share_id, let_in)))
 }
 
 fn access_event_is_for(event: &Event, admin: &str, share_id: NostrIdentityId) -> bool {
@@ -216,10 +223,16 @@ pub async fn apply_share_join_event(
             now_seconds(),
         )?
     } else {
-        approve_share_join_request(config_dir, &mut config, &store, event, now_seconds())?.map_or(
-            ShareJoinEventOutcome::Ignored,
-            ShareJoinEventOutcome::Approved,
-        )
+        match approve_share_join_request(config_dir, &mut config, &store, event, now_seconds())? {
+            Some((share_id, let_in)) => {
+                crate::share_added::outbox::owe_share_added_notices(
+                    config_dir,
+                    &[(share_id, let_in)],
+                )?;
+                ShareJoinEventOutcome::Approved(share_id)
+            }
+            None => ShareJoinEventOutcome::Ignored,
+        }
     };
     // The folder first, then the list that says this device has it: a list
     // saved without the folder would read as the profile removing it.
@@ -240,9 +253,18 @@ pub async fn apply_share_join_event(
 }
 
 /// Publish a folder's new access list and its files, wrapped for everyone
-/// now in it, so the person just let in can open it.
+/// now in it, so the person just let in can open it, and tell the devices
+/// let in: Iris Drive web learns of the folder from that note.
 pub async fn publish_approved_share(config_dir: &Path, share_id: NostrIdentityId) -> Result<()> {
-    crate::share_actions::publish_share_content(config_dir, share_id).await
+    let config = AppConfig::load_or_default(config_path_in(config_dir))?;
+    let client = crate::relay_sync::connect(&config.relays).await?;
+    let outcome = async {
+        crate::share_actions::publish_share_content_to(config_dir, share_id, &client).await?;
+        crate::share_added::publish_share_added_notices(&client, config_dir).await
+    }
+    .await;
+    crate::relay_sync::shutdown_client(&client).await;
+    outcome.map(|_| ())
 }
 
 /// Relay filters for requests made with this device's links and for the

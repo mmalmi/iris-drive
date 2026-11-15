@@ -14,14 +14,14 @@ use crate::sharing::add_shared_folder_member_devices;
 use crate::{NostrIdentityId, shared_folder_app_key_can_admin};
 
 /// Add the profile's devices that a folder does not have yet, in every
-/// folder this device answers for. Returns the folders whose access changed;
-/// the caller publishes them.
+/// folder this device answers for. Returns the folders whose access changed
+/// with the devices let into each; the caller publishes them.
 pub(crate) fn admit_profile_devices(
     config: &mut AppConfig,
     index: &ShareIndex,
     keys: &Keys,
     now: i64,
-) -> Result<Vec<NostrIdentityId>> {
+) -> Result<Vec<(NostrIdentityId, Vec<String>)>> {
     let state = config.profile.clone().context("Profile required")?;
     let device = &state.app_key_pubkey;
     let devices = state.active_root_writer_app_key_pubkeys();
@@ -53,7 +53,7 @@ pub(crate) fn admit_profile_devices(
             continue;
         }
         add_shared_folder_member_devices(folder, keys, &member, &missing, now)?;
-        admitted.push(folder.share_id);
+        admitted.push((folder.share_id, missing));
     }
     Ok(admitted)
 }
