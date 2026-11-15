@@ -26,7 +26,7 @@ pub(crate) fn render_awaiting_approval(model: &AppRef, state: &NativeAppState, s
     let back = setup_back_button();
     {
         let model = Rc::clone(model);
-        back.connect_clicked(move |_| logout(&model));
+        back.connect_clicked(move |_| confirm_logout(&model, LogoutPrompt::PendingRequest));
     }
     container.append(&back);
 
@@ -200,7 +200,7 @@ pub(crate) fn render_revoked_device(model: &AppRef, state: &NativeAppState) {
     logout_button.add_css_class("destructive-action");
     {
         let model = Rc::clone(model);
-        logout_button.connect_clicked(move |_| logout(&model));
+        logout_button.connect_clicked(move |_| confirm_logout(&model, LogoutPrompt::Profile));
     }
     container.append(&logout_button);
     container.append(&notice);

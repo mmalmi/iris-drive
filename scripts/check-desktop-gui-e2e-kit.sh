@@ -243,6 +243,11 @@ require_file_absent macos/Sources/IrisDriveControlPanel.swift "Copy invite link"
 require_file_absent macos/Sources/IrisDriveControlPanel.swift "Reset invite"
 require_file_contains linux/src/setup.rs "Copy Request Link"
 require_file_contains linux/src/setup.rs "setup_back_button"
+require_file_contains linux/src/setup.rs 'confirm_logout(&model, LogoutPrompt::PendingRequest)'
+require_file_contains linux/src/setup.rs 'confirm_logout(&model, LogoutPrompt::Profile)'
+require_file_contains linux/src/ui.rs 'confirm_logout(&model, LogoutPrompt::Profile)'
+require_file_contains linux/src/actions.rs '.default_response("cancel")'
+require_file_contains linux/src/actions.rs 'if response == "confirm"'
 require_file_absent linux/src/setup.rs "Start over"
 require_file_contains linux/src/setup.rs "open_recovery_phrase_setup"
 require_file_contains linux/src/setup.rs "open_secret_key_setup"
@@ -260,6 +265,9 @@ require_file_absent linux/src/ui.rs "Copy invite link"
 require_file_absent linux/src/ui.rs "Reset invite"
 require_file_contains windows/MainWindow.xaml "Copy Request Link"
 require_file_contains windows/MainWindow.xaml 'Click="AwaitingBack_Click"'
+require_file_contains windows/MainWindow.xaml.cs 'await ConfirmLogoutAsync(cancelPendingRequest: true);'
+require_file_contains windows/MainWindow.xaml.cs 'MessageBoxResult.No) != MessageBoxResult.Yes)'
+require_file_absent windows/MainWindow.xaml.cs 'LogoutAsync(confirm: false)'
 require_file_absent windows/MainWindow.xaml "Start over"
 require_file_contains windows/MainWindow.xaml "AwaitingQrGrid"
 require_file_contains windows/MainWindow.xaml "Restore from recovery phrase"

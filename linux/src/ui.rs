@@ -732,7 +732,7 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     {
         let button = model.ui.logout_button.clone();
         let model = Rc::clone(&model);
-        button.connect_clicked(move |_| logout(&model));
+        button.connect_clicked(move |_| confirm_logout(&model, LogoutPrompt::Profile));
     }
 
     connect_tray(&model, &window);

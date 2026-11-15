@@ -1040,22 +1040,26 @@ public partial class MainWindow : Window
 
     private async void Logout_Click(object sender, RoutedEventArgs e)
     {
-        await LogoutAsync();
+        await ConfirmLogoutAsync();
     }
 
     private async void AwaitingBack_Click(object sender, RoutedEventArgs e)
     {
-        await LogoutAsync(confirm: false);
+        await ConfirmLogoutAsync(cancelPendingRequest: true);
     }
 
-    private async Task LogoutAsync(bool confirm = true)
+    private async Task ConfirmLogoutAsync(bool cancelPendingRequest = false)
     {
-        if (confirm && System.Windows.MessageBox.Show(
+        var message = cancelPendingRequest
+            ? "Cancel this sign-in request? You’ll need a new request to link this device."
+            : "Remove this local Iris Drive profile from Windows?";
+        if (System.Windows.MessageBox.Show(
                 this,
-                "Remove this local Iris Drive profile from Windows?",
-                "Log out",
+                message,
+                cancelPendingRequest ? "Cancel sign-in request" : "Log out",
                 MessageBoxButton.YesNo,
-                MessageBoxImage.Warning) != MessageBoxResult.Yes)
+                MessageBoxImage.Warning,
+                MessageBoxResult.No) != MessageBoxResult.Yes)
         {
             return;
         }

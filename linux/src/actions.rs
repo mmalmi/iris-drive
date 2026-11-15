@@ -566,7 +566,46 @@ pub(crate) fn reset_relays(model: &AppRef) {
     }
 }
 
-pub(crate) fn logout(model: &AppRef) {
+pub(crate) enum LogoutPrompt {
+    Profile,
+    PendingRequest,
+}
+
+pub(crate) fn confirm_logout(model: &AppRef, prompt: LogoutPrompt) {
+    let Some(window) = model.application.active_window() else {
+        return;
+    };
+    let (heading, body, cancel, confirm) = match prompt {
+        LogoutPrompt::Profile => (
+            "Log out of Iris Drive?",
+            "This removes your local Drive profile from this computer.",
+            "Cancel",
+            "Log out",
+        ),
+        LogoutPrompt::PendingRequest => (
+            "Cancel this sign-in request?",
+            "You’ll need a new request to link this device.",
+            "Keep waiting",
+            "Cancel request",
+        ),
+    };
+    let dialog = adw::AlertDialog::builder()
+        .heading(heading)
+        .body(body)
+        .close_response("cancel")
+        .default_response("cancel")
+        .build();
+    dialog.add_responses(&[("cancel", cancel), ("confirm", confirm)]);
+    dialog.set_response_appearance("confirm", adw::ResponseAppearance::Destructive);
+    let model = Rc::clone(model);
+    dialog.choose(&window, None::<&gio::Cancellable>, move |response| {
+        if response == "confirm" {
+            logout(&model);
+        }
+    });
+}
+
+fn logout(model: &AppRef) {
     stop_daemon(model);
     match dispatch_desktop_action(NativeAppAction::Logout) {
         Ok(_) => {
