@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.41 - 2026-11-15
 
 - Share folders by link from every app. Anyone who opens a drive.iris.to share
   link can join from a browser without installing anything, or from the app's
