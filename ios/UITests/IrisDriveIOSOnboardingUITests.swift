@@ -89,10 +89,15 @@ extension IrisDriveIOSUITests {
         let back = app.buttons["awaitingApprovalBack"]
         XCTAssertTrue(back.isHittable, app.debugDescription)
         back.tap()
-        app.buttons["Keep waiting"].tap()
+        let confirmation = app.alerts["Cancel this sign-in request?"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5), app.debugDescription)
+        confirmation.buttons["Keep waiting"].tap()
         XCTAssertTrue(awaitingApproval.exists, app.debugDescription)
         back.tap()
-        app.buttons["Cancel request"].tap()
+        confirmation.buttons["Cancel request"].tap()
+        XCTAssertTrue(app.buttons["welcomeSignIn"].waitForExistence(timeout: 15), app.debugDescription)
+        app.terminate()
+        app.launch()
         XCTAssertTrue(app.buttons["welcomeSignIn"].waitForExistence(timeout: 15), app.debugDescription)
     }
 

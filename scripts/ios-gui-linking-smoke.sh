@@ -608,6 +608,12 @@ reset_sim_app_state
 run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testWelcomeRoutesWithoutSetupTitle"
 
 reset_sim_app_state
+run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testCancelSignInRequestRequiresConfirmation"
+
+reset_sim_app_state
+run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testSettingsLogoutRequiresConfirmation"
+
+reset_sim_app_state
 run_ui_test "IrisDriveIOSUITests/IrisDriveIOSUITests/testLinkThisDeviceFromWelcome"
 
 reset_sim_app_group_state

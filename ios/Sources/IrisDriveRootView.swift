@@ -148,10 +148,9 @@ private struct DeviceLogoutButton: View {
         } label: {
             Label("Log out", systemImage: "rectangle.portrait.and.arrow.right")
         }
-        .confirmationDialog(
+        .alert(
             "Log out of Iris Drive on this device?",
-            isPresented: $showingLogoutConfirmation,
-            titleVisibility: .visible
+            isPresented: $showingLogoutConfirmation
         ) {
             Button("Log out", role: .destructive) {
                 model.logout()
@@ -289,11 +288,11 @@ private struct AwaitingApprovalSetupView: View {
                         Label("Back", systemImage: "chevron.left")
                     }
                     .accessibilityIdentifier("awaitingApprovalBack")
-                    .confirmationDialog("Cancel this sign-in request?", isPresented: $showingCancelRequest, titleVisibility: .visible) {
-                        Button("Cancel request", role: .destructive) { model.logout() }
-                        Button("Keep waiting", role: .cancel) {}
-                    }
                 }
+            }
+            .alert("Cancel this sign-in request?", isPresented: $showingCancelRequest) {
+                Button("Keep waiting", role: .cancel) {}
+                Button("Cancel request", role: .destructive) { model.logout() }
             }
             .accessibilityIdentifier("awaitingApprovalView")
             .task {
