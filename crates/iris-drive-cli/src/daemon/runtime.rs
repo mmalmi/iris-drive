@@ -400,49 +400,20 @@ pub(crate) fn cmd_daemon(
                 } => {
                     match recv {
                         Some(Ok(RelayPoolNotification::Event { event, .. })) => {
-                            let is_device_approval_receipt =
-                                relay_sync::is_device_approval_receipt_event(&event);
-                            if should_defer_relay_roster_event_while_awaiting(
-                                event.kind.as_u16(),
-                                is_device_approval_receipt,
-                                AppConfig::load_or_default_cached_profile(config_path_in(config_dir))?
-                                    .profile
-                                    .as_ref()
-                                    .is_some_and(|profile| {
-                                        profile.authorization_state
-                                            == iris_drive_core::AppKeyAuthorizationState::AwaitingApproval
-                                    }),
-                            )
-                            {
-                                continue;
-                            }
-                            if !is_device_approval_receipt
-                                && !relay_sync::relay_event_matches_policy(&subscription_policy, &event)
-                            {
-                                continue;
-                            }
-                            match apply_one_event(
+                            if apply_received_drive_event(
+                                &event,
+                                &subscription_policy,
                                 &client,
                                 config_dir,
-                                &event,
                                 fips_blocks.clone(),
                                 mount_refresh_tx.clone(),
                                 &daemon_tasks,
                             )
-                            .await
+                            .await?
                             {
-                                Ok(outcome) if outcome.should_announce_current_state() => {
-                                    direct_roots.invalidate_current_sync_events_cache();
-                                    direct_root_change_announce_pending = true;
-                                    direct_root_change_announce_timer.as_mut().reset(direct_root_change_announce_deadline());
-                                }
-                                Ok(_) => {}
-                                Err(e) => {
-                                    println!(
-                                        "{}",
-                                        json!({"event": "apply_error", "id": event.id.to_hex(), "error": e.to_string()})
-                                    );
-                                }
+                                direct_roots.invalidate_current_sync_events_cache();
+                                direct_root_change_announce_pending = true;
+                                direct_root_change_announce_timer.as_mut().reset(direct_root_change_announce_deadline());
                             }
                         }
                         Some(Ok(RelayPoolNotification::Shutdown)) => {
@@ -982,6 +953,26 @@ pub(crate) fn cmd_daemon(
                         std::future::pending::<iris_drive_core::FipsNostrPubsubEvent>().await
                     }
                 } => {
+                    // The account's devices also send Drive events over the
+                    // FIPS feed; they apply as relay events do.
+                    if iris_drive_core::is_drive_feed_event(&message.event) {
+                        if apply_received_drive_event(
+                            &message.event,
+                            &subscription_policy,
+                            &client,
+                            config_dir,
+                            fips_blocks.clone(),
+                            mount_refresh_tx.clone(),
+                            &daemon_tasks,
+                        )
+                        .await?
+                        {
+                            direct_roots.invalidate_current_sync_events_cache();
+                            direct_root_change_announce_pending = true;
+                            direct_root_change_announce_timer.as_mut().reset(direct_root_change_announce_deadline());
+                        }
+                        continue;
+                    }
                     handle_nostr_pubsub_event(
                         &message,
                         &mut update_announcements,

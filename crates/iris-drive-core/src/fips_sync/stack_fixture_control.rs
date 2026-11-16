@@ -2,7 +2,7 @@
 //! The numeric traffic collector retains no payloads, identities or error text.
 //! The separate negotiation observer retains its configured synthetic peer and
 //! serial attempt counters and display prefixes; it never changes network state.
-//! Metadata selectors below are qualified against nvpn-fips-core 0.4.119.
+//! Metadata selectors below are qualified against nvpn-fips-core 0.4.123.
 use std::fmt;
 use std::sync::{Arc, Mutex, OnceLock};
 
@@ -107,7 +107,7 @@ fn classify(metadata: &Metadata<'_>) -> Option<Kind> {
         "src/node/handlers/session/node_handshake.rs",
     ) && *metadata.level() == Level::DEBUG
     {
-        if metadata.line() == Some(521) && shape(metadata, &["message", "src"]) {
+        if metadata.line() == Some(483) && shape(metadata, &["message", "src"]) {
             return Some(Kind::Retry(9));
         }
         // This shape is unique in the pinned handshake source.

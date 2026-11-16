@@ -48,9 +48,9 @@ pub use control_runtime::FipsAppMessage;
 use download::download_tree_with_router;
 use endpoint_config::bind_drive_fips_endpoint;
 use nostr_runtime::DriveNostrPubsubRuntime;
-pub use nostr_runtime::FipsNostrPubsubEvent;
 #[cfg(test)]
 use nostr_runtime::recv_optional_nostr_pubsub_event;
+pub use nostr_runtime::{DRIVE_FEED_KINDS, FipsNostrPubsubEvent, is_drive_feed_event};
 use peer_config::{
     FipsPeerConfigSnapshot, authenticated_local_inbound_capability, fips_peer_config_snapshot,
     normalize_fips_peer_npub, peer_ids, set_drive_fips_peer_configs,

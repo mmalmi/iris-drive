@@ -219,6 +219,7 @@ include!("daemon/share_index_events.rs");
 include!("daemon/device_storage_events.rs");
 include!("daemon/app_key_link_sender.rs");
 include!("daemon/runtime_support.rs");
+include!("daemon/received_drive_events.rs");
 include!("daemon/runtime.rs");
 include!("daemon/gateway_runtime.rs");
 

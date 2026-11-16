@@ -135,10 +135,17 @@ impl DirectRootExchange {
             return Ok(());
         };
         self.refresh_known_root_peers(sync);
-        let events = self.events_for_publish(
-            build_current_direct_root_events(config_dir, &config, state)
-                .map_err(|error| format!("{error:#}"))?,
-        );
+        let current = build_current_direct_root_events(config_dir, &config, state)
+            .map_err(|error| format!("{error:#}"))?;
+        // This device's events enter the FIPS feed before its other devices
+        // are admitted to it, so Negentropy sends each side only what it lacks.
+        let feed_events = current
+            .iter()
+            .filter_map(|event| nostr_sdk::Event::from_json(&event.event_json).ok())
+            .collect();
+        sync.admit_drive_feed_peers(sync.authorized_peer_ids(), feed_events)
+            .await;
+        let events = self.events_for_publish(current);
         let now = Instant::now();
         for publish_event in events {
             self.publish_event(sync, publish_event, None, now).await?;

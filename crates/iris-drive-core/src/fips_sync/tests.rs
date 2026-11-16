@@ -6,6 +6,7 @@ mod acl;
 mod app_key_link_peers;
 mod blob_forwarding;
 mod control;
+mod drive_feed;
 mod mesh_fallback;
 mod peer_announcements;
 mod peer_refresh;

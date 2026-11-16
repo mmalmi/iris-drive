@@ -15,7 +15,7 @@ use nostr_pubsub_fips::{
     FipsPubsubClientOptions, FipsPubsubPolicyOptions,
 };
 use nostr_sdk::Event;
-use tokio::sync::broadcast;
+use tokio::sync::{broadcast, watch};
 use tokio::task::JoinHandle;
 
 use super::{FipsBlockSync, FipsSyncError};
@@ -23,6 +23,19 @@ use super::{FipsBlockSync, FipsSyncError};
 const DELIVERY_CAPACITY: usize = 256;
 const SUBSCRIPTION_RETRY_INTERVAL: Duration = Duration::from_millis(500);
 const RECENT_EVENT_IDS: usize = 256;
+/// The account's device roster (7368) and Drive's roots, notes and device
+/// reports (30078). The account's devices exchange them over the FIPS feed,
+/// as the web devices do, so they keep syncing when relays do not answer.
+pub const DRIVE_FEED_KINDS: [u16; 2] = [7368, 30078];
+
+#[must_use]
+pub fn is_drive_feed_event(event: &Event) -> bool {
+    DRIVE_FEED_KINDS.contains(&event.kind.as_u16())
+}
+
+fn drive_feed_filter() -> Filter {
+    Filter::new().kinds(DRIVE_FEED_KINDS.map(nostr_sdk::Kind::Custom))
+}
 
 #[derive(Debug, Clone)]
 pub struct FipsNostrPubsubEvent {
@@ -36,6 +49,8 @@ pub(super) struct DriveNostrPubsubRuntime {
     update_routes: Arc<crate::updater::pubsub::UpdateRoutes>,
     deliveries: broadcast::Sender<FipsNostrPubsubEvent>,
     receiver_task: Option<JoinHandle<()>>,
+    feed_peers: watch::Sender<Vec<String>>,
+    feed_task: Option<JoinHandle<()>>,
 }
 
 impl<L: hashtree_core::Store + Send + Sync + 'static> FipsBlockSync<L> {
@@ -63,6 +78,15 @@ impl<L: hashtree_core::Store + Send + Sync + 'static> FipsBlockSync<L> {
             }
         }
         events
+    }
+
+    /// Pass this device's Drive events into the FIPS feed, then admit the
+    /// account's other devices to it. Negentropy then sends each side only the
+    /// events it lacks, and later events follow live.
+    pub async fn admit_drive_feed_peers(&self, peers: Vec<String>, events: Vec<Event>) {
+        if let Some(runtime) = self.nostr_runtime.as_ref() {
+            runtime.admit_drive_feed_peers(peers, events).await;
+        }
     }
 
     pub async fn recv_nostr_pubsub_event(&self) -> FipsNostrPubsubEvent {
@@ -178,12 +202,37 @@ impl DriveNostrPubsubRuntime {
                 tokio::time::sleep(SUBSCRIPTION_RETRY_INTERVAL).await;
             }
         });
+        // The feed is open before any Drive event is passed into it, so its
+        // window holds them when a device is admitted.
+        let feed = match client
+            .subscribe_feed(drive_feed_filter(), Some(Vec::new()))
+            .await
+        {
+            Ok(feed) => feed,
+            Err(error) => {
+                receiver_task.abort();
+                client.shutdown_shared().await;
+                if let Some(store) = &announcement_store {
+                    store.close().await;
+                }
+                return Err(endpoint_error(error.to_string()));
+            }
+        };
+        let (feed_peers, feed_peers_rx) = watch::channel(Vec::new());
+        let feed_task = tokio::spawn(run_drive_feed(
+            client.clone(),
+            feed,
+            deliveries.clone(),
+            feed_peers_rx,
+        ));
         Ok(Self {
             client: Some(client),
             announcement_store,
             update_routes,
             deliveries,
             receiver_task: Some(receiver_task),
+            feed_peers,
+            feed_task: Some(feed_task),
         })
     }
 
@@ -243,8 +292,27 @@ impl DriveNostrPubsubRuntime {
         Ok(peers)
     }
 
+    pub(super) async fn admit_drive_feed_peers(&self, peers: Vec<String>, events: Vec<Event>) {
+        for event in events.into_iter().filter(is_drive_feed_event) {
+            if let Err(error) = self.publish(event).await {
+                tracing::debug!(%error, "passing a Drive event into the FIPS feed");
+            }
+        }
+        let mut peers = peers;
+        peers.sort_unstable();
+        peers.dedup();
+        self.feed_peers.send_if_modified(|current| {
+            let changed = *current != peers;
+            *current = peers;
+            changed
+        });
+    }
+
     pub(super) async fn shutdown(&mut self) {
-        if let Some(task) = self.receiver_task.take() {
+        for task in [self.receiver_task.take(), self.feed_task.take()]
+            .into_iter()
+            .flatten()
+        {
             task.abort();
             let _ = task.await;
         }
@@ -259,8 +327,59 @@ impl DriveNostrPubsubRuntime {
 
 impl Drop for DriveNostrPubsubRuntime {
     fn drop(&mut self) {
-        if let Some(task) = self.receiver_task.take() {
+        for task in [self.receiver_task.take(), self.feed_task.take()]
+            .into_iter()
+            .flatten()
+        {
             task.abort();
+        }
+    }
+}
+
+/// The Drive feed: only the account's own devices are its peers. Events they
+/// send are delivered like any pubsub event, for the daemon to apply as it
+/// applies relay events.
+async fn run_drive_feed(
+    client: Arc<FipsPubsubClient>,
+    mut feed: nostr_pubsub_fips::FipsPubsubSubscription,
+    deliveries: broadcast::Sender<FipsNostrPubsubEvent>,
+    mut peers: watch::Receiver<Vec<String>>,
+) {
+    loop {
+        loop {
+            tokio::select! {
+                delivery = feed.recv() => {
+                    let Some(delivery) = delivery else {
+                        break;
+                    };
+                    let _ = deliveries.send(FipsNostrPubsubEvent {
+                        origin_peer_id: delivery.source.id.0,
+                        event: delivery.event.into_event(),
+                    });
+                }
+                changed = peers.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                    let admitted = peers.borrow_and_update().clone();
+                    if let Err(error) = feed.set_feed_peers(Some(admitted)).await {
+                        tracing::warn!(%error, "admitting devices to the Drive FIPS feed");
+                    }
+                }
+            }
+        }
+        // A closed feed reopens with an empty window; the next announcement
+        // passes this device's events into it again.
+        loop {
+            tokio::time::sleep(SUBSCRIPTION_RETRY_INTERVAL).await;
+            let admitted = peers.borrow_and_update().clone();
+            if let Ok(reopened) = client
+                .subscribe_feed(drive_feed_filter(), Some(admitted))
+                .await
+            {
+                feed = reopened;
+                break;
+            }
         }
     }
 }

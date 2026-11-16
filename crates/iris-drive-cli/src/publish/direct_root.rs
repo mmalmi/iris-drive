@@ -122,6 +122,14 @@ impl DirectRootExchange {
                 build_current_sync_events_from_disk(config_dir, &expected_root_scope_id)
             })
             .await?;
+        // This device's events enter the FIPS feed before its other devices
+        // are admitted to it, so Negentropy sends each side only what it lacks.
+        let feed_events = local_events
+            .iter()
+            .filter_map(|event| Event::from_json(&event.json).ok())
+            .collect();
+        sync.admit_drive_feed_peers(sync.authorized_peer_ids(), feed_events)
+            .await;
         let events = self.events_for_publish(local_events);
         let now = std::time::Instant::now();
         for publish_event in events {

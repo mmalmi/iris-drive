@@ -112,8 +112,8 @@ pub use direct_root_transport::{
     parse_direct_root_key_hint,
 };
 pub use fips_sync::{
-    FipsAppMessage, FipsBlockSync, FipsNostrPubsubEvent, FipsPeerStatus, FipsRelayStatus,
-    FipsSyncError, FsFipsBlockSync,
+    DRIVE_FEED_KINDS, FipsAppMessage, FipsBlockSync, FipsNostrPubsubEvent, FipsPeerStatus,
+    FipsRelayStatus, FipsSyncError, FsFipsBlockSync, is_drive_feed_event,
 };
 pub use gateway::{GatewayBind, GatewayError, GatewayProxyServer, GatewayServer};
 pub use identity::{AppKey, Identity, IdentityError, RecoveryKey};
