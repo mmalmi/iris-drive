@@ -53,7 +53,7 @@ fn classify(meta: &Metadata<'_>) -> Option<Kind> {
                 if file.ends_with("src/node/lifecycle/discovery.rs") =>
             {
                 match line {
-                    448 => (
+                    452 => (
                         Kind::Failed,
                         Level::WARN,
                         &[
@@ -64,7 +64,7 @@ fn classify(meta: &Metadata<'_>) -> Option<Kind> {
                             "cooldown_secs",
                         ],
                     ),
-                    458 => (
+                    462 => (
                         Kind::Failed,
                         Level::DEBUG,
                         &["message", "npub", "error", "consecutive_failures"],
@@ -569,7 +569,7 @@ mod tests {
         let failure = meta(
             "fips_core::node::lifecycle::discovery",
             "src/node/lifecycle/discovery.rs",
-            448,
+            452,
             Level::WARN,
             &[
                 "message",
