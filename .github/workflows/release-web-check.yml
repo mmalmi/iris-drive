@@ -17,7 +17,7 @@ permissions:
 jobs:
   web:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 65
     env:
       SOURCE_ROOT: ${{ github.workspace }}/source
       SOURCE_COMMIT: ${{ inputs.commit }}

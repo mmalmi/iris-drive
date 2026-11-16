@@ -44,10 +44,11 @@ writeFileSync(join(sourceConfig, 'config.toml'), [
   '[storage]', `data_dir = ${JSON.stringify(sourceData)}`,
   '[nostr]', 'relays = ["wss://temp.iris.to", "wss://nos.lol", "wss://relay.snort.social"]',
   '[blossom]', 'servers = []',
-  'read_servers = ["https://upload.iris.to", "https://cdn.iris.to", "https://blossom.primal.net"]',
+  'read_servers = ["https://cdn.iris.to", "https://upload.iris.to", "https://blossom.primal.net"]',
   'write_servers = []', 'force_upload = false', '',
 ].join('\n'))
-run('git', ['clone', publicWeb, web], { timeout: 600000, env: releaseToolsEnv({ env: {
+// Hosted cold reads of the 75 MiB source history can take over twenty minutes.
+run('git', ['clone', publicWeb, web], { timeout: 35 * 60_000, env: releaseToolsEnv({ env: {
   ...env, HTREE_CONFIG_DIR: sourceConfig, HTREE_DATA_DIR: sourceData,
   HTREE_PREFER_LOCAL_DAEMON: '0', NOSTR_PREFER_LOCAL: '0',
 } }) })
