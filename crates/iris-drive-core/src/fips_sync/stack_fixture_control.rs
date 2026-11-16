@@ -2,7 +2,7 @@
 //! The numeric traffic collector retains no payloads, identities or error text.
 //! The separate negotiation observer retains its configured synthetic peer and
 //! serial attempt counters and display prefixes; it never changes network state.
-//! Metadata selectors below are qualified against nvpn-fips-core 0.4.119.
+//! Metadata selectors below are qualified against nvpn-fips-core 0.4.123.
 use std::fmt;
 use std::sync::{Arc, Mutex, OnceLock};
 
