@@ -19,6 +19,7 @@ Environment:
   IRIS_DRIVE_MACOS_SCREENSHOT_OUTPUT   output PNG path
   IRIS_DRIVE_MACOS_SCREENSHOT_TAB      initial tab (default devices)
   IRIS_DRIVE_MACOS_SCREENSHOT_APP      existing app bundle for --no-build
+  IRIS_DRIVE_MACOS_SCREENSHOT_UPDATE   install step to show, as stage[:reason]
 EOF
 }
 

@@ -3,11 +3,12 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use hashtree_updater::{
-    HashtreeUpdater, ProductAssetPolicy, ProductUpdateSelection, PubsubRootResolver,
-    SecurePubsubBlossomConfig, UpdateEventCache, UpdateRef, UpdateStore,
-    build_secure_pubsub_store_updater, build_update_store, current_archive_target, dedupe_nonempty,
-    download_product_selection, env_csv, platform_app_asset_suffixes, preferred_product_asset,
-    product_result_from_selection, select_product_update, update_ref_from_override,
+    DownloadCallback, DownloadEvent, DownloadOptions, HashtreeUpdater, ProductAssetPolicy,
+    ProductUpdateSelection, PubsubRootResolver, SecurePubsubBlossomConfig, UpdateEventCache,
+    UpdateRef, UpdateStore, build_secure_pubsub_store_updater, build_update_store,
+    current_archive_target, dedupe_nonempty, env_csv, platform_app_asset_suffixes,
+    preferred_product_asset, product_result_from_selection, select_product_update,
+    selected_download_path, update_ref_from_override, write_downloaded_asset,
 };
 pub use hashtree_updater::{
     ProductUpdateMode, ProductUpdateResult, SECURE_SOURCE_NAME, UpdateAsset, UpdateAutoCheckPolicy,
@@ -19,9 +20,11 @@ use crate::config::{AppConfig, DEFAULT_BLOSSOM_SERVERS};
 type PeerUpdateSelection = ProductUpdateSelection<PubsubRootResolver, UpdateStore>;
 type PeerUpdateUpdater = HashtreeUpdater<PubsubRootResolver, UpdateStore>;
 
+pub mod progress;
 pub(crate) mod pubsub;
 use crate::paths::config_path_in;
 use crate::update_announcement::{load_update_event_cache, persist_update_event_cache};
+use progress::{UpdateProgress, UpdateStage, report_update_progress, update_progress};
 
 pub const HTREE_UPDATE_REF: &str = "htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/releases%2Firis-drive/latest";
 
@@ -142,13 +145,33 @@ pub async fn download_product_update(
     config: ProductUpdateConfig,
     download_dir: Option<&Path>,
 ) -> Result<ProductUpdateResult> {
-    let selection = select_update(current_version, mode, config).await?;
-    let destination = download_selection(&selection, download_dir).await?;
-    Ok(result_from_selection(
-        current_version,
-        &selection,
-        Some(&destination),
-    ))
+    // A profile's install press is reported step by step for its app to show.
+    let reporter = config.config_dir.clone();
+    let report = |progress: UpdateProgress| {
+        if let Some(directory) = reporter.as_deref() {
+            report_update_progress(directory, progress);
+        }
+    };
+    report(UpdateProgress::new(UpdateStage::FindingRelease, ""));
+    let result = async {
+        let selection = select_update(current_version, mode, config).await?;
+        report(UpdateProgress::new(
+            UpdateStage::FindingRelease,
+            &selection.tag,
+        ));
+        let destination = download_selection(&selection, download_dir, reporter.as_deref()).await?;
+        Ok(result_from_selection(
+            current_version,
+            &selection,
+            Some(&destination),
+        ))
+    }
+    .await;
+    if let (Err(error), Some(directory)) = (&result, reporter.as_deref()) {
+        let tag = update_progress(directory).tag;
+        report(UpdateProgress::failed(&tag, &format!("{error:#}")));
+    }
+    result
 }
 
 async fn select_update(
@@ -282,19 +305,58 @@ fn blossom_read_servers(config: &ProductUpdateConfig) -> Vec<String> {
 async fn download_selection(
     selection: &PeerUpdateSelection,
     download_dir: Option<&Path>,
+    reporter: Option<&Path>,
 ) -> Result<PathBuf> {
     let workspace = create_update_workspace(download_dir)?;
-    let destination =
-        download_product_selection(selection, Some(workspace.path()), &asset_policy())
-            .await
-            .with_context(|| {
-                format!(
-                    "failed to download verified hashtree asset {}",
-                    selection.asset.name
-                )
-            })?;
+    let destination = selected_download_path(
+        Some(workspace.path()),
+        &selection.asset.name,
+        asset_policy().download_file_name_fallback(),
+    )?;
+    let downloaded = selection
+        .updater
+        .download(
+            &selection.check,
+            DownloadOptions::default(),
+            reporter.map(|directory| download_reporter(directory, &selection.tag)),
+        )
+        .await
+        .with_context(|| {
+            format!(
+                "failed to download verified hashtree asset {}",
+                selection.asset.name
+            )
+        })?;
+    // Every chunk was checked against its hash; this writes the checked file.
+    if let Some(directory) = reporter {
+        report_update_progress(
+            directory,
+            UpdateProgress::new(UpdateStage::Verifying, &selection.tag),
+        );
+    }
+    write_downloaded_asset(&destination, &downloaded.bytes)?;
     let _ = workspace.keep();
     Ok(destination)
+}
+
+fn download_reporter(directory: &Path, tag: &str) -> DownloadCallback {
+    let directory = directory.to_owned();
+    let tag = tag.to_owned();
+    let total = std::sync::atomic::AtomicU64::new(0);
+    std::sync::Arc::new(move |event: DownloadEvent| {
+        if let DownloadEvent::Started {
+            content_length: Some(length),
+        } = event
+        {
+            total.store(length, std::sync::atomic::Ordering::Relaxed);
+        }
+        let known =
+            Some(total.load(std::sync::atomic::Ordering::Relaxed)).filter(|total| *total > 0);
+        report_update_progress(
+            &directory,
+            UpdateProgress::from_download_event(&tag, &event, known),
+        );
+    })
 }
 
 /// Create a unique, private directory for verified update files.

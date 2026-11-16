@@ -195,7 +195,15 @@ struct IrisDriveControlPanel: View {
 
     @ViewBuilder
     private var updateStripe: some View {
-        if status.updateAvailable {
+        if status.updateProgress.shown {
+            IrisDriveUpdateProgressRow(progress: status.updateProgress) {
+                controller.installUpdate()
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 8)
+            .background(Color(nsColor: .controlBackgroundColor))
+            Divider()
+        } else if status.updateAvailable {
             HStack(spacing: 12) {
                 Label(status.updateStripeText, systemImage: "arrow.down.circle")
                     .font(.callout.weight(.medium))
@@ -1601,7 +1609,11 @@ struct IrisDriveControlPanel: View {
                     }
                     .disabled(!status.updateCanInstall || status.updateChecking || status.updateInstalling)
                 }
-                if !status.updateStatus.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                if status.updateProgress.shown {
+                    IrisDriveUpdateProgressRow(progress: status.updateProgress) {
+                        controller.installUpdate()
+                    }
+                } else if !status.updateStatus.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     LabeledContent("Status", value: status.updateStatus)
                 }
                 if let checked = status.lastSuccessfulUpdateCheck {

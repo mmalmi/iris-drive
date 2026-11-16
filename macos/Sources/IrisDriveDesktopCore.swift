@@ -66,6 +66,16 @@ private func irisDriveUpdateDownloadJson(
     _ downloadDir: UnsafePointer<CChar>
 ) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("iris_drive_update_progress_json")
+private func irisDriveUpdateProgressJson(_ dataDir: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
+
+@_silgen_name("iris_drive_update_report_stage_json")
+private func irisDriveUpdateReportStageJson(
+    _ dataDir: UnsafePointer<CChar>,
+    _ stage: UnsafePointer<CChar>,
+    _ reason: UnsafePointer<CChar>
+) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("iris_drive_provider_list_json")
 private func irisDriveProviderListJson(_ dataDir: UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
 
@@ -242,6 +252,32 @@ final class IrisDriveDesktopCore {
               let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
         else {
             return ["error": "native updater returned invalid JSON"]
+        }
+        return payload
+    }
+
+    /// The current install step for this profile, as the core words it.
+    static func updateProgress(dataDir: String) -> [String: Any] {
+        jsonObject(dataDir.withCString { takeString(irisDriveUpdateProgressJson($0)) })
+    }
+
+    /// Record a step only the app can take (installing, restarting, failed).
+    static func reportUpdateStage(dataDir: String, stage: String, reason: String = "") -> [String: Any] {
+        let json = dataDir.withCString { dataDirPointer in
+            stage.withCString { stagePointer in
+                reason.withCString { reasonPointer in
+                    takeString(irisDriveUpdateReportStageJson(dataDirPointer, stagePointer, reasonPointer))
+                }
+            }
+        }
+        return jsonObject(json)
+    }
+
+    private static func jsonObject(_ json: String) -> [String: Any] {
+        guard let data = json.data(using: .utf8),
+              let payload = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            return [:]
         }
         return payload
     }

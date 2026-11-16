@@ -7,6 +7,7 @@ const localReleaseSource = readFileSync(new URL('./local-release.mjs', import.me
 const projectSource = readFileSync(new URL('../windows/IrisDrive.Windows.csproj', import.meta.url), 'utf8')
 const serviceSource = readFileSync(new URL('../windows/IrisDriveService.cs', import.meta.url), 'utf8')
 const appVersionSource = readFileSync(new URL('../windows/IrisDriveServiceAppVersion.cs', import.meta.url), 'utf8')
+const updateSource = readFileSync(new URL('../windows/IrisDriveServiceUpdates.cs', import.meta.url), 'utf8')
 
 function position(pattern, description) {
   const match = source.match(pattern)
@@ -304,12 +305,14 @@ test('the publish step proves the exe carries the workspace version before packa
 })
 
 test('the Windows app reports and update-checks its stamped version without a fallback', () => {
-  assert.doesNotMatch(serviceSource, /\bAppVersion\s*=>/, 'AppVersion has one definition')
+  for (const source of [serviceSource, updateSource]) {
+    assert.doesNotMatch(source, /\bAppVersion\s*=>/, 'AppVersion has one definition')
+  }
   const appVersion = appVersionSource.match(/public\s+string\s+AppVersion\b[\s\S]*?;/)
   assert.ok(appVersion, 'IrisDriveService must expose AppVersion')
   assert.match(appVersion[0], /AssemblyInformationalVersionAttribute/)
   assert.match(appVersion[0], /throw\b/, 'A missing stamp must fail loudly')
   assert.doesNotMatch(appVersion[0], /GetName\(\)\.Version|"\d+\.\d+/, 'No assembly-version or hard-coded fallback')
-  assert.match(serviceSource, /CheckUpdate\(DefaultConfigDirectory,\s*AppVersion\)/)
-  assert.match(serviceSource, /DownloadUpdate\(DefaultConfigDirectory,\s*AppVersion,/)
+  assert.match(updateSource, /CheckUpdate\(DefaultConfigDirectory,\s*AppVersion\)/)
+  assert.match(updateSource, /DownloadUpdate\(DefaultConfigDirectory,\s*AppVersion,/)
 })

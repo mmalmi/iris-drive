@@ -277,6 +277,8 @@ pub extern "C" fn iris_drive_mirror_json(
 
 mod provider;
 pub use provider::*;
+mod update_progress;
+pub use update_progress::*;
 
 #[unsafe(no_mangle)]
 pub extern "C" fn iris_drive_share_stage_file_json(

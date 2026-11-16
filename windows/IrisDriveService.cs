@@ -36,17 +36,6 @@ public sealed partial class IrisDriveService
                 new Dictionary<string, object> { ["type"] = "refresh_profile" });
     }
 
-    public Task<IrisDriveUpdateResult> CheckUpdateAsync()
-    {
-        return Task.Run(() => IrisDriveNativeCore.CheckUpdate(DefaultConfigDirectory, AppVersion));
-    }
-
-    public Task<IrisDriveUpdateResult> DownloadUpdateAsync(string downloadDirectory)
-    {
-        return Task.Run(() =>
-            IrisDriveNativeCore.DownloadUpdate(DefaultConfigDirectory, AppVersion, downloadDirectory));
-    }
-
     public Task CreateProfileAsync(string username, string profilePhotoPath)
     {
         var args = new[] { "init", "--force" }.ToList();

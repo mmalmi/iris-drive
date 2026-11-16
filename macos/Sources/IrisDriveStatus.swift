@@ -22,6 +22,7 @@ final class IrisDriveStatus: ObservableObject {
     @Published var updateAvailable = false
     @Published var updateVersion = ""
     @Published var updateStatus = ""
+    @Published var updateProgress = IrisDriveUpdateProgress.idle
     @Published var lastSuccessfulUpdateCheck: Date?
     @Published var openingFinder = false
     @Published var finderOpenError: String?

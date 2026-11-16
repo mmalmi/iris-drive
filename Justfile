@@ -217,6 +217,7 @@ structure:
     ./scripts/check-sharing-menu-parity.sh
     ./scripts/check-client-primary-status-ownership.sh
     ./scripts/check-client-sync-status-ownership.sh
+    ./scripts/check-client-update-progress-ownership.sh
     ./scripts/check-backup-target-summary-ownership.sh
     ./scripts/check-backup-control-parity.sh
     ./scripts/check-windows-provider-refresh-key-ownership.sh

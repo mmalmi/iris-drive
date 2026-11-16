@@ -325,6 +325,12 @@
                 Visibility="Collapsed">
           <DockPanel LastChildFill="True">
             <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center">
+              <ProgressBar x:Name="UpdateBannerProgress"
+                           Width="140"
+                           Height="6"
+                           Margin="0,0,12,0"
+                           VerticalAlignment="Center"
+                           Visibility="Collapsed" />
               <CheckBox x:Name="UpdateBannerAutoInstallCheckBox"
                         Content="Install automatically"
                         VerticalAlignment="Center"
@@ -337,7 +343,7 @@
                       Padding="10,3">
                 <StackPanel Orientation="Horizontal">
                   <TextBlock Text="&#xE896;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
-                  <TextBlock Text="Install" />
+                  <TextBlock x:Name="UpdateBannerInstallText" Text="Install" />
                 </StackPanel>
               </Button>
             </StackPanel>
@@ -597,7 +603,7 @@
                 <Button x:Name="InstallUpdateButton" Click="InstallUpdate_Click">
                   <StackPanel Orientation="Horizontal">
                     <TextBlock Text="&#xE896;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />
-                    <TextBlock Text="Install Update" />
+                    <TextBlock x:Name="InstallUpdateText" Text="Install Update" />
                   </StackPanel>
                 </Button>
               </StackPanel>
@@ -605,6 +611,12 @@
                          Foreground="{StaticResource IrisMutedBrush}"
                          TextWrapping="Wrap"
                          Margin="0,8,0,0" />
+              <ProgressBar x:Name="UpdateProgressBar"
+                           Width="240"
+                           Height="6"
+                           Margin="0,6,0,0"
+                           HorizontalAlignment="Left"
+                           Visibility="Collapsed" />
               <Button x:Name="RecoveryPhraseButton" Click="RecoveryPhrase_Click" Margin="0,16,0,0" HorizontalAlignment="Left">
                 <StackPanel Orientation="Horizontal">
                   <TextBlock Text="&#xE8D7;" Style="{StaticResource IconGlyph}" Margin="0,0,7,0" />

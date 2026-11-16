@@ -13,6 +13,9 @@ use iris_drive_app_core::{
     LinkInputClassification, NativeAppAction, NativeAppState, UiState, UpdateAutoCheckPolicy,
     classify_link_input,
 };
+use iris_drive_core::updater::progress::{
+    UpdateProgress, UpdateStage, report_update_stage, update_progress,
+};
 
 mod actions;
 mod daemon_control;
@@ -59,6 +62,7 @@ struct Ui {
     update_auto_check: gtk::CheckButton,
     update_auto_install: gtk::CheckButton,
     update_install_button: gtk::Button,
+    update_progress: gtk::ProgressBar,
     update_check_button: gtk::Button,
     update_status: gtk::Label,
     setup: gtk::Box,
@@ -468,19 +472,46 @@ fn first_non_empty(values: [&str; 3]) -> &str {
 
 fn render_update_state(model: &AppRef) {
     let update = model.update.borrow();
-    model.ui.update_bar.set_visible(update.available);
-    model.ui.update_label.set_text(&update_stripe_text(
-        &update.version,
-        env!("CARGO_PKG_VERSION"),
-    ));
-    model.ui.update_install_button.set_sensitive(
+    let progress = &update.progress;
+    model
+        .ui
+        .update_bar
+        .set_visible(update.available || progress.shown);
+    if progress.shown {
+        model.ui.update_label.set_text(&progress.text);
+    } else {
+        model.ui.update_label.set_text(&update_stripe_text(
+            &update.version,
+            env!("CARGO_PKG_VERSION"),
+        ));
+    }
+    model.ui.update_progress.set_visible(progress.active);
+    match progress.fraction {
+        Some(fraction) => model.ui.update_progress.set_fraction(fraction),
+        None if progress.active => model.ui.update_progress.pulse(),
+        None => {}
+    }
+    let install = &model.ui.update_install_button;
+    install.set_visible(!progress.shown || progress.can_retry);
+    if let Some(content) = install.child().and_downcast::<adw::ButtonContent>() {
+        content.set_label(if progress.can_retry {
+            "Try Again"
+        } else {
+            "Download"
+        });
+    }
+    install.set_sensitive(
         update.available && update.asset.is_some() && !update.checking && !update.downloading,
     );
     model
         .ui
         .update_check_button
         .set_sensitive(!update.checking && !update.downloading);
-    model.ui.update_status.set_text(&update.status);
+    model.ui.update_status.set_text(if progress.shown {
+        &progress.text
+    } else {
+        &update.status
+    });
     model.settings_refreshing.set(true);
     model.ui.update_auto_check.set_active(update.auto_check);
     model.ui.update_auto_install.set_active(update.auto_install);
@@ -564,8 +595,11 @@ fn download_update(model: &AppRef) {
             return;
         };
         update.downloading = true;
-        update.status = format!("Downloading {}", update.version);
-        (asset, model.update_sender.clone(), app_config_dir())
+        // Every step from here stays on screen until the installer opens or it
+        // fails with its reason and Try Again.
+        let config_dir = app_config_dir();
+        update.progress = report_update_stage(&config_dir, UpdateStage::FindingRelease, "");
+        (asset, model.update_sender.clone(), config_dir)
     };
     render_update_state(model);
     updater::download(
@@ -581,7 +615,14 @@ fn drain_update_events(model: &AppRef) {
         let receiver = model.update_receiver.borrow();
         receiver.try_iter().collect::<Vec<_>>()
     };
+    let downloading = model.update.borrow().downloading;
+    if downloading {
+        model.update.borrow_mut().progress = update_progress(&app_config_dir());
+    }
     if events.is_empty() {
+        if downloading {
+            render_update_state(model);
+        }
         return;
     }
 
@@ -607,10 +648,15 @@ fn drain_update_events(model: &AppRef) {
                                     )
                                 };
                                 auto_download = update.auto_install && update.asset.is_some();
-                            } else if manual {
-                                update.status = "Up to date".to_string();
                             } else {
-                                update.status.clear();
+                                if !update.downloading {
+                                    update.progress = UpdateProgress::default();
+                                }
+                                if manual {
+                                    update.status = "Up to date".to_string();
+                                } else {
+                                    update.status.clear();
+                                }
                             }
                         }
                         Err(error) => {
@@ -622,21 +668,10 @@ fn drain_update_events(model: &AppRef) {
                         }
                     }
                 }
-                updater::UpdateEvent::Downloaded(result) => {
+                updater::UpdateEvent::Downloaded => {
+                    // The updater thread reported how it ended.
                     update.downloading = false;
-                    match result {
-                        Ok(path) => {
-                            update.status = format!(
-                                "Downloaded {}",
-                                path.file_name()
-                                    .and_then(|name| name.to_str())
-                                    .unwrap_or("update")
-                            );
-                        }
-                        Err(error) => {
-                            update.status = error;
-                        }
-                    }
+                    update.progress = update_progress(&app_config_dir());
                 }
             }
         }

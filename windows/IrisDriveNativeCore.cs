@@ -143,6 +143,24 @@ public sealed class IrisDriveNativeCore : IDisposable
                 downloadDirectory ?? "")));
     }
 
+    public static IrisDriveUpdateProgress UpdateProgress(string dataDirectory)
+    {
+        return IrisDriveUpdateProgress.FromJson(
+            TakeString(iris_drive_update_progress_json(dataDirectory ?? "")));
+    }
+
+    public static IrisDriveUpdateProgress ReportUpdateStage(
+        string dataDirectory,
+        string stage,
+        string reason = "")
+    {
+        return IrisDriveUpdateProgress.FromJson(
+            TakeString(iris_drive_update_report_stage_json(
+                dataDirectory ?? "",
+                stage ?? "",
+                reason ?? "")));
+    }
+
     public void Dispose()
     {
         if (handle != IntPtr.Zero)
@@ -224,6 +242,16 @@ public sealed class IrisDriveNativeCore : IDisposable
         [MarshalAs(UnmanagedType.LPUTF8Str)] string currentVersion,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string mode,
         [MarshalAs(UnmanagedType.LPUTF8Str)] string downloadDir);
+
+    [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr iris_drive_update_progress_json(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string dataDir);
+
+    [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]
+    private static extern IntPtr iris_drive_update_report_stage_json(
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string dataDir,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string stage,
+        [MarshalAs(UnmanagedType.LPUTF8Str)] string reason);
 
     [DllImport("iris_drive_app_core", CallingConvention = CallingConvention.Cdecl)]
     private static extern void iris_drive_string_free(IntPtr value);

@@ -93,6 +93,9 @@ public partial class MainWindow : Window
         SelectPage("Drive");
         RenderLoading();
         RenderUpdateState();
+#if DEBUG
+        ApplyUpdateFixture();
+#endif
         WindowsShellTrace.Write("MainWindow constructor completed");
     }
 
@@ -1550,137 +1553,6 @@ public partial class MainWindow : Window
     private async void InstallUpdate_Click(object sender, RoutedEventArgs e)
     {
         await InstallUpdateAsync();
-    }
-
-    private async Task CheckUpdatesAsync(bool manual = true)
-    {
-        if (updateChecking || updateInstalling)
-        {
-            return;
-        }
-
-        var shouldInstall = false;
-        updateChecking = true;
-        if (manual)
-        {
-            updateStatus = "Checking for updates";
-        }
-        RenderUpdateState();
-
-        try
-        {
-            var result = await service.CheckUpdateAsync();
-            if (!string.IsNullOrWhiteSpace(result.Error))
-            {
-                throw new InvalidOperationException(result.Error);
-            }
-
-            latestUpdate = result;
-            updateAvailable = result.Available;
-            if (result.Available)
-            {
-                updateStatus = string.IsNullOrWhiteSpace(result.Asset)
-                    ? $"Update {result.Tag} found without a Windows asset"
-                    : $"Update {result.Tag} available";
-                shouldInstall =
-                    AutoInstallUpdatesCheckBox.IsChecked == true &&
-                    !string.IsNullOrWhiteSpace(result.Asset);
-            }
-            else
-            {
-                updateStatus = manual ? "Up to date" : "";
-            }
-        }
-        catch (Exception error)
-        {
-            if (manual)
-            {
-                updateStatus = error.Message;
-            }
-        }
-        finally
-        {
-            updateChecking = false;
-            RenderUpdateState();
-        }
-        if (shouldInstall)
-        {
-            await InstallUpdateAsync();
-        }
-    }
-
-    private async Task InstallUpdateAsync()
-    {
-        if (!CanInstallUpdate || updateInstalling)
-        {
-            return;
-        }
-
-        updateInstalling = true;
-        updateStatus = $"Downloading {UpdateVersionText}";
-        RenderUpdateState();
-        try
-        {
-            var downloadDir = UpdateDownloadDirectory();
-            Directory.CreateDirectory(downloadDir);
-            var result = await service.DownloadUpdateAsync(downloadDir);
-            if (!string.IsNullOrWhiteSpace(result.Error))
-            {
-                throw new InvalidOperationException(result.Error);
-            }
-            if (string.IsNullOrWhiteSpace(result.Path))
-            {
-                throw new InvalidOperationException("Updater did not return a downloaded file.");
-            }
-
-            updateStatus = $"Downloaded {IOPath.GetFileName(result.Path)}";
-            if (!WindowsProfileEnvironment.IsTruthy(Environment.GetEnvironmentVariable("IRIS_DRIVE_UPDATE_SKIP_OPEN")))
-            {
-                _ = Process.Start(new ProcessStartInfo(result.Path) { UseShellExecute = true });
-            }
-        }
-        catch (Exception error)
-        {
-            updateStatus = error.Message;
-        }
-        finally
-        {
-            updateInstalling = false;
-            RenderUpdateState();
-        }
-    }
-
-    private void RenderUpdateState()
-    {
-        UpdateBanner.Visibility = updateAvailable ? Visibility.Visible : Visibility.Collapsed;
-        UpdateBannerText.Text = UpdateStripeText();
-        UpdateStatusText.Text = updateStatus;
-        CheckUpdatesButton.IsEnabled = !updateChecking && !updateInstalling;
-        InstallUpdateButton.IsEnabled = CanInstallUpdate;
-        UpdateBannerInstallButton.IsEnabled = CanInstallUpdate;
-        settingsUpdating = true;
-        UpdateBannerAutoInstallCheckBox.IsChecked = AutoInstallUpdatesCheckBox.IsChecked;
-        settingsUpdating = false;
-    }
-
-    private bool CanInstallUpdate =>
-        updateAvailable &&
-        latestUpdate is not null &&
-        !string.IsNullOrWhiteSpace(latestUpdate.Asset) &&
-        !updateChecking &&
-        !updateInstalling;
-
-    private string UpdateVersionText =>
-        latestUpdate is null || string.IsNullOrWhiteSpace(latestUpdate.Tag)
-            ? "update"
-            : latestUpdate.Tag;
-
-    private string UpdateStripeText()
-    {
-        var current = service.AppVersion;
-        return string.IsNullOrWhiteSpace(current)
-            ? $"Update available: {UpdateVersionText}"
-            : $"Update available: {UpdateVersionText} (you're on {current})";
     }
 
     private async void LocalNhashResolver_Changed(object sender, RoutedEventArgs e)

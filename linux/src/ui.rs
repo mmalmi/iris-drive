@@ -28,7 +28,13 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     let update_auto_install = gtk::CheckButton::with_label("Install automatically");
     let update_install_button =
         action_button("folder-download-symbolic", "Download", "Download update");
+    let update_progress = gtk::ProgressBar::new();
+    update_progress.set_valign(gtk::Align::Center);
+    update_progress.set_width_request(140);
+    update_progress.set_pulse_step(0.1);
+    update_progress.set_visible(false);
     update_bar.append(&update_label);
+    update_bar.append(&update_progress);
     update_bar.append(&update_install_button);
     root.append(&update_bar);
 
@@ -459,6 +465,7 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
             update_auto_check,
             update_auto_install,
             update_install_button,
+            update_progress,
             update_check_button,
             update_status,
             setup,

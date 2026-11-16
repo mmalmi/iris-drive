@@ -5,6 +5,7 @@ use std::process::Command;
 use std::sync::mpsc::Sender;
 use std::thread;
 
+use iris_drive_core::updater::progress::{UpdateProgress, UpdateStage, report_update_stage};
 use iris_drive_core::updater::{
     ProductUpdateMode, check_product_update_blocking, download_product_update_blocking,
     product_update_config_for_dir,
@@ -20,6 +21,8 @@ pub struct UpdateState {
     pub version: String,
     pub status: String,
     pub asset: Option<ReleaseAsset>,
+    /// The install step after a press, worded by the core.
+    pub progress: UpdateProgress,
 }
 
 #[derive(Clone, Debug)]
@@ -33,7 +36,8 @@ pub enum UpdateEvent {
         manual: bool,
         result: Result<UpdateCheck, String>,
     },
-    Downloaded(Result<PathBuf, String>),
+    /// The download ended; how is in the core's update progress.
+    Downloaded,
 }
 
 #[derive(Debug)]
@@ -63,9 +67,11 @@ pub fn download(
     sender: Sender<UpdateEvent>,
 ) {
     thread::spawn(move || {
-        let result = download_blocking(&current_version, &config_dir, &asset)
-            .map_err(|error| error.to_string());
-        let _ = sender.send(UpdateEvent::Downloaded(result));
+        let result = download_blocking(&current_version, &config_dir, &asset);
+        if let Err(reason) = &result {
+            report_update_stage(&config_dir, UpdateStage::Failed, reason);
+        }
+        let _ = sender.send(UpdateEvent::Downloaded);
     });
 }
 
@@ -75,7 +81,7 @@ fn check_blocking(current_version: &str, config_dir: &Path) -> Result<UpdateChec
         ProductUpdateMode::App,
         product_update_config_for_dir(config_dir),
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| format!("{error:#}"))?;
     let asset = (!result.asset.trim().is_empty()).then_some(ReleaseAsset { name: result.asset });
     Ok(UpdateCheck {
         tag: result.tag,
@@ -96,7 +102,7 @@ fn download_blocking(
         product_update_config_for_dir(config_dir),
         download_dir.as_deref(),
     )
-    .map_err(|error| error.to_string())?;
+    .map_err(|error| format!("{error:#}"))?;
     if result.asset != asset.name {
         return Err(format!(
             "Latest release changed from {} to {}; please check again",
@@ -107,7 +113,9 @@ fn download_blocking(
         .path
         .map(PathBuf::from)
         .ok_or_else(|| "Updater did not return a downloaded file".to_string())?;
+    report_update_stage(config_dir, UpdateStage::OpeningInstaller, "");
     maybe_make_executable_and_open(&destination, &asset.name)?;
+    report_update_stage(config_dir, UpdateStage::InstallerOpened, "");
     Ok(destination)
 }
 

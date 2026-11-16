@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- After you press Install, the Mac, Windows and Linux apps show each step:
+  finding the release, downloading with a progress bar, checking the
+  download, then installing and restarting or opening the installer. If it
+  stops, they say why and offer Try Again; Install no longer just turns back
+  on without a word. The wording comes from the shared core.
+
 ## 0.1.46 - 2026-11-16
 
 - Your devices exchange Drive's own events (roots, roster changes and device

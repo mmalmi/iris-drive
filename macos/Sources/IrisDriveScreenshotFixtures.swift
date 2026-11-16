@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 
 enum IrisDriveScreenshotFixtures {
@@ -257,6 +258,7 @@ enum IrisDriveScreenshotFixtures {
         ])
         status.lastEvent = "Fixture state"
         status.copyStatus = nil
+        applyUpdateStep(to: status)
     }
 
     private static func peer(
@@ -298,6 +300,47 @@ enum IrisDriveScreenshotFixtures {
             output.append(alphabet[value % alphabet.count])
         }
         return output
+    }
+
+    /// `IRIS_DRIVE_MACOS_SCREENSHOT_UPDATE=<stage>[:reason]` shows an install
+    /// step, worded by the core, in the update banner and Settings.
+    static func applyUpdateStep(to status: IrisDriveStatus) {
+        let value = ProcessInfo.processInfo.environment["IRIS_DRIVE_MACOS_SCREENSHOT_UPDATE"] ?? ""
+        guard !value.isEmpty else { return }
+        let parts = value.split(separator: ":", maxSplits: 1).map(String.init)
+        status.updateAvailable = true
+        status.updateCanInstall = true
+        status.updateVersion = "v0.1.47"
+        status.updateAsset = "iris-drive-v0.1.47-macos-arm64.app.tar.gz"
+        let dataDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iris-drive-fixture-update", isDirectory: true).path
+        status.updateProgress = IrisDriveUpdateProgress(
+            IrisDriveDesktopCore.reportUpdateStage(
+                dataDir: dataDir,
+                stage: parts[0],
+                reason: parts.count > 1 ? parts[1] : ""
+            )
+        )
+    }
+
+    /// `IRIS_DRIVE_MACOS_SCREENSHOT_RENDER=1` draws the window, prints it as a
+    /// base64 PNG and quits, for hosts where screen capture is not allowed
+    /// (the sandboxed app cannot write outside its container).
+    static func renderWindowIfRequested(_ window: NSWindow) {
+        guard environmentFlag("IRIS_DRIVE_MACOS_SCREENSHOT_RENDER") else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
+            guard let view = window.contentView?.superview ?? window.contentView,
+                  let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)
+            else {
+                exit(1)
+            }
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            guard let png = bitmap.representation(using: .png, properties: [:]) else {
+                exit(1)
+            }
+            print(png.base64EncodedString())
+            exit(0)
+        }
     }
 
     private static func argumentValue(after flag: String) -> String? {

@@ -86,6 +86,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private var externalStatusRefreshWorkItem: DispatchWorkItem?
     private var lastAppManagedDaemonStatusRefreshAt = Date.distantPast
     var updatePollTimer: Timer?
+    var updateProgressTimer: Timer?
     var startupUpdateCheckDone = false
     var installingAppUpdate = false
     let nativeCoreQueue = DispatchQueue(label: "to.iris.drive.macos.native-core", qos: .utility)
@@ -104,6 +105,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             IrisDriveScreenshotFixtures.apply()
             installWindowObserver()
             showControlPanel()
+            IrisDriveScreenshotFixtures.renderWindowIfRequested(mainWindow() ?? fallbackControlPanelWindow())
             return
         }
         if !singleInstanceHandoffDisabled, handOffToExistingInstanceIfNeeded() {

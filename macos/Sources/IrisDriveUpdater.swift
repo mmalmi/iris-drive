@@ -82,12 +82,14 @@ extension AppDelegate {
             return
         }
         status.updateInstalling = true
-        status.updateStatus = "Downloading \(status.updateVersion)"
-        let dataDir = (runtimePathsForMenu ?? runtimePaths()).configDirectory.path
+        let dataDir = updateDataDir
         let version = appVersion
         let downloadDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("IrisDriveDownloads", isDirectory: true)
             .path
+        // Every step from here is shown until it finishes or fails with a way to retry.
+        reportUpdateStage("finding_release")
+        startUpdateProgressPolling(dataDir: dataDir)
         DispatchQueue.global(qos: .utility).async {
             let result = IrisDriveDesktopCore.updateDownload(
                 dataDir: dataDir,
@@ -99,6 +101,47 @@ extension AppDelegate {
                 self.finishUpdateDownload(result)
             }
         }
+    }
+
+    private var updateDataDir: String {
+        (runtimePathsForMenu ?? runtimePaths()).configDirectory.path
+    }
+
+    private func startUpdateProgressPolling(dataDir: String) {
+        updateProgressTimer?.invalidate()
+        updateProgressTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
+            guard let self, IrisDriveStatus.shared.updateInstalling else {
+                self?.updateProgressTimer?.invalidate()
+                self?.updateProgressTimer = nil
+                return
+            }
+            self.applyUpdateProgress(IrisDriveDesktopCore.updateProgress(dataDir: dataDir))
+        }
+    }
+
+    /// Record a step and show it. Safe to call from any queue.
+    private func reportUpdateStage(_ stage: String, reason: String = "") {
+        let progress = IrisDriveDesktopCore.reportUpdateStage(dataDir: updateDataDir, stage: stage, reason: reason)
+        if Thread.isMainThread {
+            applyUpdateProgress(progress)
+        } else {
+            DispatchQueue.main.async { self.applyUpdateProgress(progress) }
+        }
+    }
+
+    private func applyUpdateProgress(_ json: [String: Any]) {
+        guard !json.isEmpty else { return }
+        let status = IrisDriveStatus.shared
+        let progress = IrisDriveUpdateProgress(json)
+        status.updateProgress = progress
+        if !progress.text.isEmpty {
+            status.updateStatus = progress.text
+        }
+    }
+
+    private func failUpdateInstall(_ reason: String) {
+        reportUpdateStage("failed", reason: reason)
+        IrisDriveStatus.shared.updateInstalling = false
     }
 
     private var updatePollInterval: TimeInterval {
@@ -120,6 +163,9 @@ extension AppDelegate {
             status.updateCanInstall = check.available && !check.asset.isEmpty
             status.updateStatus = check.statusText
             status.lastSuccessfulUpdateCheck = Date()
+            if !status.updateCanInstall, !status.updateInstalling {
+                status.updateProgress = .idle
+            }
             if status.updateCanInstall && status.autoInstallUpdates && check.asset.lowercased().hasSuffix(".app.tar.gz") {
                 installUpdate()
             }
@@ -133,89 +179,98 @@ extension AppDelegate {
     }
 
     private func finishUpdateDownload(_ result: [String: Any]) {
-        let status = IrisDriveStatus.shared
         if let error = result["error"] as? String,
            !error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            status.updateInstalling = false
-            status.updateStatus = error
+            failUpdateInstall(error)
             return
         }
         guard let path = result["path"] as? String, !path.isEmpty else {
-            status.updateInstalling = false
-            status.updateStatus = "Updater did not return a downloaded file"
+            failUpdateInstall("Updater did not return a downloaded file")
             return
         }
-        do {
-            try installDownloadedUpdate(URL(fileURLWithPath: path))
-        } catch {
-            status.updateInstalling = false
-            status.updateStatus = error.localizedDescription
+        let archiveURL = URL(fileURLWithPath: path)
+        if !archiveURL.lastPathComponent.lowercased().hasSuffix(".app.tar.gz") {
+            reportUpdateStage("opening_installer")
+            NSWorkspace.shared.activateFileViewerSelecting([archiveURL])
+            reportUpdateStage("installer_opened")
+            IrisDriveStatus.shared.updateInstalling = false
+            return
+        }
+        reportUpdateStage("installing")
+        let configDirectory = updateDataDir
+        DispatchQueue.global(qos: .userInitiated).async {
+            do {
+                let relaunch = try self.installDownloadedUpdate(archiveURL, configDirectory: configDirectory)
+                DispatchQueue.main.async {
+                    self.reportUpdateStage("restarting")
+                    do {
+                        try relaunch.run()
+                        self.installingAppUpdate = true
+                        NSApp.terminate(nil)
+                    } catch {
+                        self.failUpdateInstall(error.localizedDescription)
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async { self.failUpdateInstall(error.localizedDescription) }
+            }
         }
     }
 
-    private func installDownloadedUpdate(_ archiveURL: URL) throws {
-        let status = IrisDriveStatus.shared
-        if archiveURL.lastPathComponent.lowercased().hasSuffix(".app.tar.gz") {
-            status.updateStatus = "Installing \(status.updateVersion)"
-            let unpackDir = FileManager.default.temporaryDirectory
-                .appendingPathComponent("IrisDriveUpdate-\(UUID().uuidString)", isDirectory: true)
-            try FileManager.default.createDirectory(at: unpackDir, withIntermediateDirectories: true)
-            try runUpdateProcess(
-                "/usr/bin/tar",
-                arguments: ["-xzf", archiveURL.path, "-C", unpackDir.path]
+    /// Replace this app with the downloaded one and return the relaunch helper.
+    /// Runs off the main queue so the steps stay visible.
+    private func installDownloadedUpdate(_ archiveURL: URL, configDirectory: String) throws -> Process {
+        let unpackDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("IrisDriveUpdate-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: unpackDir, withIntermediateDirectories: true)
+        try runUpdateProcess(
+            "/usr/bin/tar",
+            arguments: ["-xzf", archiveURL.path, "-C", unpackDir.path]
+        )
+        guard let newApp = findIrisDriveApp(in: unpackDir) else {
+            throw NSError(
+                domain: "IrisDriveUpdate",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "Downloaded update did not contain Iris Drive.app"]
             )
-            guard let newApp = findIrisDriveApp(in: unpackDir) else {
-                throw NSError(
-                    domain: "IrisDriveUpdate",
-                    code: 1,
-                    userInfo: [NSLocalizedDescriptionKey: "Downloaded update did not contain Iris Drive.app"]
-                )
-            }
-            let currentApp = Bundle.main.bundleURL
-            let installScript = try updateInstallScript()
-            let relaunchScript = try updateRelaunchScript()
-            let paths = runtimePathsForMenu ?? runtimePaths()
-            let logURL = FileManager.default.temporaryDirectory
-                .appendingPathComponent("iris-drive-install-update.log")
-
-            do {
-                try runUpdateProcess(
-                    "/bin/sh",
-                    arguments: [installScript.path, currentApp.path, newApp.path, logURL.path]
-                )
-            } catch {
-                try runPrivilegedUpdateInstall(
-                    script: installScript,
-                    currentApp: currentApp,
-                    newApp: newApp,
-                    logURL: logURL
-                )
-            }
-            guard FileManager.default.isExecutableFile(
-                atPath: currentApp
-                    .appendingPathComponent("Contents/MacOS/Iris Drive", isDirectory: false)
-                    .path
-            ) else {
-                throw updateError("Installed update is missing the Iris Drive executable")
-            }
-
-            let relaunch = Process()
-            relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
-            relaunch.arguments = [
-                relaunchScript.path,
-                currentApp.path,
-                "\(ProcessInfo.processInfo.processIdentifier)",
-                paths.configDirectory.path,
-                logURL.path,
-            ]
-            try relaunch.run()
-            installingAppUpdate = true
-            NSApp.terminate(nil)
-        } else {
-            NSWorkspace.shared.activateFileViewerSelecting([archiveURL])
-            status.updateInstalling = false
-            status.updateStatus = "Downloaded \(archiveURL.lastPathComponent)"
         }
+        let currentApp = Bundle.main.bundleURL
+        let installScript = try updateInstallScript()
+        let relaunchScript = try updateRelaunchScript()
+        let logURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("iris-drive-install-update.log")
+
+        do {
+            try runUpdateProcess(
+                "/bin/sh",
+                arguments: [installScript.path, currentApp.path, newApp.path, logURL.path]
+            )
+        } catch {
+            try runPrivilegedUpdateInstall(
+                script: installScript,
+                currentApp: currentApp,
+                newApp: newApp,
+                logURL: logURL
+            )
+        }
+        guard FileManager.default.isExecutableFile(
+            atPath: currentApp
+                .appendingPathComponent("Contents/MacOS/Iris Drive", isDirectory: false)
+                .path
+        ) else {
+            throw updateError("Installed update is missing the Iris Drive executable")
+        }
+
+        let relaunch = Process()
+        relaunch.executableURL = URL(fileURLWithPath: "/bin/sh")
+        relaunch.arguments = [
+            relaunchScript.path,
+            currentApp.path,
+            "\(ProcessInfo.processInfo.processIdentifier)",
+            configDirectory,
+            logURL.path,
+        ]
+        return relaunch
     }
 
     private func findIrisDriveApp(in root: URL) -> URL? {
