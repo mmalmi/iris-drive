@@ -194,13 +194,70 @@ if [[ -z "$APP_PATH" || ! -d "$APP_PATH" ]]; then
 fi
 
 xcrun devicectl device install app --device "$DEVICE_UDID" "$APP_PATH" >/dev/null
-xcrun devicectl device process launch \
-  --device "$DEVICE_UDID" \
-  --terminate-existing \
-  --environment-variables "{\"IRIS_DRIVE_UI_TEST_BASE_DIR\":\"__TMP__/$PROBE_BASE_DIR\",\"IRIS_DRIVE_DEBUG_ACTION\":\"probe-iris-apps\",\"IRIS_DRIVE_DEBUG_REFRESH_DELAY_MS\":\"$DEBUG_REFRESH_DELAY_MS\",\"IRIS_DRIVE_DEBUG_PROBE_TIMEOUT_MS\":\"$PROBE_TIMEOUT_MS\",\"IRIS_DRIVE_DEBUG_PROBE_ID\":\"$PROBE_ID\",\"IRIS_DRIVE_DEBUG_WEBVIEW_SETTLE_MS\":\"$WEBVIEW_SETTLE_MS\",\"IRIS_DRIVE_DEBUG_PROBE_HTTP\":\"$DEBUG_PROBE_HTTP\"}" \
-  "$BUNDLE_ID" >/dev/null
+probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/iris-apps-probe.XXXXXX")"
+probe_launch_json="$probe_dir/launch.json"
+probe_json="$probe_dir/probe.json"
+echo "probe_launch_receipt=$probe_launch_json"
+echo "probe_result=$probe_json"
 
-probe_json="$(mktemp -t iris-drive-ios-device-iris-apps.XXXXXX.json)"
+launch_probe_console() {
+  exec xcrun devicectl device process launch \
+    --device "$DEVICE_UDID" \
+    --console --json-output "$probe_launch_json" --timeout "$((PROBE_TIMEOUT_MS / 1000 + 120))" \
+    --terminate-existing \
+    --environment-variables "{\"IRIS_DRIVE_UI_TEST_BASE_DIR\":\"__TMP__/$PROBE_BASE_DIR\",\"IRIS_DRIVE_DEBUG_ACTION\":\"probe-iris-apps\",\"IRIS_DRIVE_DEBUG_REFRESH_DELAY_MS\":\"$DEBUG_REFRESH_DELAY_MS\",\"IRIS_DRIVE_DEBUG_PROBE_TIMEOUT_MS\":\"$PROBE_TIMEOUT_MS\",\"IRIS_DRIVE_DEBUG_PROBE_ID\":\"$PROBE_ID\",\"IRIS_DRIVE_DEBUG_WEBVIEW_SETTLE_MS\":\"$WEBVIEW_SETTLE_MS\",\"IRIS_DRIVE_DEBUG_PROBE_HTTP\":\"$DEBUG_PROBE_HTTP\"}" \
+    "$BUNDLE_ID"
+}
+
+finish_probe() {
+  local status="$1" console_status=0 sent_term=0
+  trap - EXIT
+  trap '' HUP INT TERM
+  if [[ -z "$probe_console_pid" ]]; then
+    probe_console_pid="$(jobs -p %launch_probe_console 2>/dev/null || true)"
+    [[ -n "$probe_console_pid" ]] || exit "$status"
+  fi
+  # devicectl forwards signals to the attached app. A completed shell job can
+  # never select a replacement app, even if iOS has recycled its PID.
+  if kill -TERM %launch_probe_console 2>/dev/null; then sent_term=1; fi
+  wait "$probe_console_pid" || console_status=$?
+  if (( console_status != 0 && !(sent_term && console_status == 143) )); then
+    echo "FAIL: device probe console exited with status $console_status (see $probe_dir/console.log)" >&2
+    if (( status == 0 )); then status=1; fi
+  fi
+  if ! python3 - "$probe_launch_json" "$PROBE_ID" <<'PYRECEIPT'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as handle:
+    receipt = json.load(handle)
+if (receipt.get("info") or {}).get("outcome") != "success":
+    raise SystemExit("FAIL: devicectl did not complete the probe console session")
+result = receipt.get("result") or {}
+pid = (result.get("process") or {}).get("processIdentifier")
+launch_env = (result.get("launchOptions") or {}).get("environmentVariables") or {}
+if type(pid) is not int or pid <= 0 or launch_env.get("IRIS_DRIVE_DEBUG_PROBE_ID") != sys.argv[2]:
+    raise SystemExit("FAIL: devicectl did not return the launched probe PID and matching probe ID")
+print(f"probe_pid={pid}")
+PYRECEIPT
+  then
+    if (( status == 0 )); then status=1; fi
+  fi
+  if (( status == 0 )); then
+    echo "IOS_DEVICE_IRIS_APPS_SMOKE_OK"
+    echo "build_log=$BUILD_LOG"
+  fi
+  exit "$status"
+}
+
+probe_console_pid=""
+trap 'finish_probe "$?"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
+launch_probe_console >"$probe_dir/console.log" 2>&1 &
+probe_console_pid=$!
+
 if ! poll_probe_result "$DEVICE_UDID" "$probe_json"; then
   echo "FAIL: device Iris Apps probe did not write a fresh result." >&2
   exit 1
@@ -219,7 +276,7 @@ if not re.fullmatch(r"debug-iris-apps-webview-[0-9A-Fa-f-]{36}\.png", name):
 print(f"Documents/{name}")
 PY
 )"
-probe_screenshot="$(mktemp -t iris-drive-ios-device-iris-apps.XXXXXX.png)"
+probe_screenshot="$probe_dir/webview.png"
 if xcrun devicectl device copy from \
   --device "$DEVICE_UDID" \
   --domain-type appDataContainer \
@@ -310,6 +367,3 @@ if missing_markers:
     )
 print(f"opened_ms={elapsed} webview_ms={webview_elapsed}")
 PY
-
-echo "IOS_DEVICE_IRIS_APPS_SMOKE_OK"
-echo "build_log=$BUILD_LOG"

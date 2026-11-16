@@ -24,6 +24,7 @@ from test_macos_finder_smoke import FinderSmokeLogs
 from test_macos_smoke_profile import MacSmokeProfileTests
 from test_local_blossom_server import BlossomStartupTests
 from test_ios_linking_observer import IosLinkingObserverTests
+from test_ios_probe_console import IosProbeConsoleTests
 
 
 ROOT = Path(__file__).resolve().parents[1]
