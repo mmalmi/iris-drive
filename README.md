@@ -401,103 +401,87 @@ boundaries, not every edit. Dedicated simulator/device reset is opt-in through
 
 ### Release
 
-1. Bump `[workspace.package].version` in `Cargo.toml`.
-2. Run the release gate:
+Releases ship binaries built by GitHub Actions from an exact commit. They are
+verified, signed and published from a clean checkout of that commit; every step
+below refuses another commit, a changed tree or a product whose receipt does
+not match.
+
+1. Version: `node scripts/local-release.mjs --tag vX.Y.Z --build --only platform-versions`,
+   then `cargo update --workspace --offline` for the root and for
+   `--manifest-path linux/Cargo.toml`, retitle "Unreleased" in `CHANGELOG.md`,
+   run `just verify-fast`, commit and push.
+2. Hosted builds and the Iris Stack gate:
 
 ```bash
-just verify-fast
-just verify-full
+gh workflow run release-products.yml --ref master -f commit=<sha> -f platform=all
+gh workflow run product-lab.yml -R irislib/iris-stack --ref master -f drive_rev=<sha> -f chat_rev=<pin> -f htree_version=<pin>
 ```
 
-The full gate runs the five-platform lab (`just e2e-5devices`) and requires
-the Linux, Windows, macOS, iOS, and Android hosts/app installs configured in the
-local environment.
-
-3. Build platform artifacts into `dist/`:
+   The products run uploads unsigned `drive-<platform>-<sha>` archives with build
+   receipts. The stack gate's companion pins are in `scripts/mesh-release-gate.mjs`;
+   its `iris-stack-product-gate` artifact holds the `receipt.json` used for
+   `IRIS_STACK_GATE_RECEIPT`.
+3. Stage, sign and upload from the products run:
 
 ```bash
-node scripts/local-release.mjs --build --only macos
-node scripts/local-release.mjs --build --only linux
-node scripts/local-release.mjs --build --only windows
-node scripts/local-release.mjs --build --only android
-node scripts/local-release.mjs --build --only ios
+node scripts/release-hosted-stage.mjs --platform linux --run <run-id>
+node scripts/release-hosted-stage.mjs --platform windows --run <run-id>
+node scripts/release-hosted-stage.mjs --platform android --run <run-id>
+node scripts/release-hosted-stage.mjs --platform macos-release --run <run-id>
+node scripts/release-hosted-stage.mjs --platform ios-release --run <run-id>
+IRIS_DRIVE_MACOS_PREBUILT_DIR=<macos-release dir> node scripts/local-release.mjs --build --only macos
+node scripts/release-ios-hosted.mjs ios-build ios-export --product <ios-release dir>
+node scripts/release-ios-hosted.mjs ios-build ios-upload --product <ios-release dir>
+node scripts/release-ios-hosted.mjs testflight-internal put
 ```
 
-Use `--dry-run` to print the planned artifact names and commands without
-building. The iOS step runs `scripts/ios-build ios-testflight`; set
-`IRIS_DRIVE_IOS_PUBLIC_TESTFLIGHT=1` for the public-TestFlight-capable export.
-The iOS release script runs `scripts/ios-profiles ensure` before archiving so
-the app, File Provider, and Share Extension are exported with installed manual
-App Store provisioning profiles instead of Xcode cloud signing.
-To export an unsigned hosted iOS release from the current revision, set
-`IRIS_DRIVE_IOS_HOSTED_PRODUCT_DIR` to the downloaded directory containing
-`build-receipt.json` and `ios-release-products.tar.gz`. Run
-`scripts/ios-build ios-export`, then `scripts/ios-build ios-upload` with the
-same settings. Both steps verify the signed app and its two extensions have
-the committed release entitlements, including their shared App Group.
-
-Before the first iOS upload for a bundle ID, run
-`scripts/testflight-internal ensure-app` or create the App Store Connect app
-record manually with the documented bundle ID and SKU if the API key cannot
-create app records.
-`just release` runs the same build entrypoint.
-
-For App Store distribution, export the upload with
-`IRIS_DRIVE_IOS_INTERNAL_ONLY=false`; an internal-only TestFlight build cannot
-be submitted to the store. The same eligible upload can serve internal
-TestFlight and App Store review. Then set the exact
-`IRIS_DRIVE_IOS_MARKETING_VERSION` and `IRIS_DRIVE_IOS_BUILD_NUMBER` and use:
+   Linux and Windows files are linked into `dist/` unchanged; the Windows app
+   zip must equal the hosted publish directory. Android is signed with the
+   upload key from `.env.release.local` and checked for package, version, ABI,
+   license, 16 KiB alignment, signer certificate and an unchanged payload.
+   Evidence goes to `artifacts/release-<version>/hosted/<sha>/`. The Mac step
+   signs, notarizes and runs the launch smoke; when an Iris Drive with the same
+   bundle id is running on this Mac, the smoke runs on the lab Mac VM instead
+   (`IRIS_DRIVE_MACOS_RELEASE_SMOKE_HOST=local` or `vm` decides explicitly).
+   iOS export records the IPA hash and upload refuses any other IPA. Notes come
+   from `artifacts/release-<version>/notes/beta-notes.txt` and
+   `store-notes.json`. Public TestFlight (`testflight-public put`) and App Store
+   review (`app-store submit`) are separate decisions; `app-store submit`
+   creates or resumes the exact version's review and stops on missing metadata
+   or a different attached build.
+4. Gate: `node scripts/release-gate-env.mjs -- just release-gate`. The wrapper
+   derives lab hosts from the local dev-lab file and git remotes, selects the
+   reserved release-gate simulator and Android emulator, and prints only the
+   names of the variables it sets. `just verify-full` also needs the
+   five-platform lab with physical phones.
+5. Tag and publish:
 
 ```bash
-scripts/app-store status
-IRIS_DRIVE_APP_STORE_NOTES_PATH=/path/to/release-notes.json scripts/app-store prepare
-IRIS_DRIVE_APP_STORE_NOTES_PATH=/path/to/release-notes.json scripts/app-store submit
+node scripts/release-tools.mjs install
+node scripts/local-release.mjs --tag vX.Y.Z --stage-dir <dir>
+node scripts/release-tools.mjs run -- haps import-release <dir> --config haps-release.json --tag vX.Y.Z --check
+IRIS_STACK_GATE_RECEIPT=<receipt.json> node scripts/local-release.mjs --tag vX.Y.Z --stage-dir <dir> --final
 ```
 
-The notes file maps every existing store locale to its release notes, for
-example `{"en-US":"Improve local peer discovery and idle usage."}`. `prepare`
-creates or reuses the version, preserves its metadata and release policy,
-updates the notes, and attaches the exact eligible build. Apple
-[transfers the current version's metadata](https://developer.apple.com/help/app-store-connect/update-your-app/create-a-new-version)
-when creating a new version; this helper requires an existing store release.
-`submit` also creates or resumes the exact version's
-[App Review submission](https://developer.apple.com/documentation/appstoreconnectapi/review-submissions)
-and confirms Apple's returned state. Rerunning resumes partial preparation
-without creating another review. Missing metadata, an attached different build,
-or unrelated review items stop the operation for correction in App Store
-Connect. The existing release policy controls distribution after approval;
-manual releases still require release in App Store Connect. `status` is
-read-only and is the default action. Authentication uses the existing
-TestFlight App Store Connect settings.
+   Push the annotated tag to both remotes before `--final`. Publishing runs the
+   `haps` and `htree` pinned by version and SHA-256 in
+   `scripts/release-tools.lock.json`; the archives are verified before every
+   use. The Haps key comes from `NOSTR_KEY_PATH` in `.env.zapstore.local`
+   unless `HAPS_KEY_FILE` is set. Final publication requires the
+   [pinned Iris Stack process-gate receipt](https://github.com/irislib/iris-stack/blob/9bb0e9361afa6b2b031c243af21cebbdefa1de4e/docs/integration-lab.md)
+   for the exact annotated tag; it checks the source tuple, recovery, private
+   blob protection and CPU/bandwidth budgets. Receipts check locally supplied
+   provenance; they are not signed attestations.
+6. Read back: `--final` checks the public `release.json`; then run
+   `node scripts/zapstore-readback.mjs --tag vX.Y.Z` (signed app, release and
+   APK hash records) and `node scripts/release-ios-hosted.mjs testflight-internal status`.
 
-4. Stage the release tree:
-
-```bash
-node scripts/local-release.mjs --tag v0.1.0
-```
-
-Publish a draft or final signed hashtree release:
-
-```bash
-node scripts/local-release.mjs --tag v0.1.0 --publish --draft
-node scripts/local-release.mjs --tag v0.1.0 --final
-```
-
-Final publication requires a clean checkout at the exact annotated tag and
-`IRIS_STACK_GATE_RECEIPT` pointing to the successful [pinned Iris Stack process-gate receipt](https://github.com/irislib/iris-stack/blob/9bb0e9361afa6b2b031c243af21cebbdefa1de4e/docs/integration-lab.md).
-Publish the source commit first and run that gate with `IRIS_STACK_RELEASE_GATE=1`,
-the pinned `IRIS_STACK_LAB_REV`, and `IRIS_STACK_DRIVE_REV` set to the full candidate
-commit. Set `IRIS_STACK_CHAT_REV` and `IRIS_STACK_HTREE_VERSION` to the companion
-pins in `scripts/mesh-release-gate.mjs`. The publisher checks the exact source
-tuple, recovery, private blob protection and passing CPU/bandwidth measurements
-for all four processes before building and again before publication. The Hashtree
-0.3 cohort reads the authenticated references used by this version of Drive.
-Draft staging and dry-run planning do not require a receipt.
-Receipts check locally supplied provenance; they are not signed attestations.
-
-The default release tree is `releases/iris-drive`. Copy
-`.env.release.example` and `.env.zapstore.example` to local `.env.*.local`
-files for machine-specific signing, htree release, and Zapstore settings.
+Local builds remain for development: `node scripts/local-release.mjs --build
+--only <macos|linux|windows|android|ios>` on the matching host, with `--dry-run`
+to print the planned artifacts. Copy `.env.release.example` and
+`.env.zapstore.example` to `.env.*.local` for signing and store settings; a
+release worktree reads them from the main checkout. The default release tree
+is `releases/iris-drive`.
 
 ### Workspace Layout
 

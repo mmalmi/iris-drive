@@ -5,6 +5,11 @@
 - Iris Drive on Windows shows its real version in Settings and now offers
   updates when a newer release is out. It used to call itself 1.0.0.0, so it
   never saw any 0.x release as newer.
+- Releases are made from hosted builds with tested scripts in the repository:
+  staging and Android signing of the hosted products, iOS export and upload,
+  the release-gate lab environment, the Mac launch smoke on the lab VM when
+  this Mac runs Iris Drive, Zapstore readback, and `haps` and `htree` pinned
+  by SHA-256 for publishing.
 
 ## 0.1.44 - 2026-11-16
 

@@ -654,6 +654,7 @@ test('local-release dry-run wires restricted entitlement scrubbing and macOS rel
         ...process.env,
         IRIS_DRIVE_MACOS_KEEP_PROVISIONED_ENTITLEMENTS: 'false',
         IRIS_DRIVE_MACOS_NOTARY_KEYCHAIN_PROFILE: 'iris-drive-notary',
+        IRIS_DRIVE_MACOS_RELEASE_SMOKE_HOST: 'local',
       },
     },
   )

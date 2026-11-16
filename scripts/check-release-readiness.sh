@@ -132,7 +132,32 @@ require_absent scripts/local-release.mjs "IRIS_DRIVE_ALLOW_UNSIGNED_WINDOWS"
 require_contains scripts/local-release.mjs "Missing Zapstore signing key"
 require_contains scripts/local-release.mjs "notarytool"
 require_contains scripts/local-release.mjs "stapler"
-require_contains scripts/local-release.mjs "macos-release-smoke.sh"
+require_contains scripts/local-release.mjs "macosReleaseSmokeCommand"
+require_contains scripts/macos-release-smoke-host.mjs "macos-release-smoke.sh"
+require_contains scripts/macos-release-smoke-host.mjs "macos-vm-release-smoke.sh"
+# Hosted-build release route: stage, sign, gate, publish and read back.
+require_executable scripts/release-hosted-stage.mjs
+require_executable scripts/select-hosted-release-products.py
+require_file scripts/release-android-signing.mjs
+require_executable scripts/release-ios-hosted.mjs
+require_executable scripts/release-gate-env.mjs
+require_executable scripts/macos-vm-release-smoke.sh
+require_file scripts/lib/macos-vm-host.sh
+require_executable scripts/release-tools.mjs
+require_file scripts/release-tools.lock.json
+require_executable scripts/zapstore-readback.mjs
+require_file scripts/fixtures/zapstore-readback-events.json
+for route_test in tools hosted-stage android-signing ios-hosted gate-env macos-vm-smoke zapstore-readback route; do
+  require_file "scripts/local-release-$route_test.test.mjs"
+done
+require_contains scripts/release-hosted-stage.mjs "verifyProductReceipt"
+require_contains scripts/release-hosted-stage.mjs "stageHostedProduct"
+require_contains scripts/local-release.mjs "releaseToolsEnv"
+require_absent scripts/local-release.mjs "commandExists('htree')"
+require_contains README.md "node scripts/release-hosted-stage.mjs --platform android --run"
+require_contains README.md "node scripts/release-gate-env.mjs -- just release-gate"
+require_contains README.md "node scripts/release-tools.mjs install"
+require_contains README.md "node scripts/zapstore-readback.mjs --tag"
 require_contains scripts/macos-release-smoke.sh "verify_file_provider_contract"
 require_contains scripts/macos-release-smoke.sh "verify_embedded_license"
 require_contains scripts/macos-release-smoke.sh 'com\.apple\.security\.application-groups.0'

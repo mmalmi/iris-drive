@@ -1,0 +1,104 @@
+{
+  "npub": "npub13rlrfha5fzw8u3nuk28mpuazdlgl5lcqy4523ycugqjhkctacm3q4ejxxz",
+  "pubkey": "88fe34dfb4489c7e467cb28fb0f3a26fd1fa7f002568a8931c40257b617dc6e2",
+  "version": "9.9.9",
+  "apkSha256": "afbe02bf06f56d9276b23a2e1bf23676d7125d09e90facc47ba011d5a0c6168c",
+  "events": [
+    {
+      "kind": 32267,
+      "created_at": 1767225600,
+      "content": "Iris Drive \"quoted\" \\ text\nline",
+      "tags": [
+        [
+          "d",
+          "to.iris.drive"
+        ],
+        [
+          "name",
+          "Iris Drive"
+        ],
+        [
+          "f",
+          "android-arm64-v8a"
+        ]
+      ],
+      "pubkey": "88fe34dfb4489c7e467cb28fb0f3a26fd1fa7f002568a8931c40257b617dc6e2",
+      "id": "b6fe7ece1cfd012fb5b429f3d949e7976b9834921146c65798fa35751d2f2de0",
+      "sig": "e5fed62e388dd7546b0074e3306431b6f2f9281bfcdd941a4a70d11c181086d2a3ee59c98bc259d57c25d54ee627109eaf571d518d10886f2fa0c5d8125b9253"
+    },
+    {
+      "kind": 30063,
+      "created_at": 1767225600,
+      "content": "Release notes",
+      "tags": [
+        [
+          "d",
+          "to.iris.drive@9.9.9"
+        ],
+        [
+          "i",
+          "to.iris.drive"
+        ],
+        [
+          "version",
+          "9.9.9"
+        ],
+        [
+          "e",
+          "8da70801608af8281bfa256c6015740498ba318bb4187576ba5ea5461733df51"
+        ]
+      ],
+      "pubkey": "88fe34dfb4489c7e467cb28fb0f3a26fd1fa7f002568a8931c40257b617dc6e2",
+      "id": "ee88e9feb4e39f655ba147dfdeaa6413a801990b46f7a6df3680e50c81fd190e",
+      "sig": "f5a7656b206bfa95300d6158a212f8b0f85678b02a75ba092c8e5011f0a7a51f9c40699b95f49dc569ee24bc3e28a4017f8fe08d7c393bf865debc145e22ea5b"
+    },
+    {
+      "kind": 3063,
+      "created_at": 1767225600,
+      "content": "",
+      "tags": [
+        [
+          "i",
+          "to.iris.drive"
+        ],
+        [
+          "x",
+          "afbe02bf06f56d9276b23a2e1bf23676d7125d09e90facc47ba011d5a0c6168c"
+        ],
+        [
+          "version",
+          "9.9.9"
+        ],
+        [
+          "m",
+          "application/vnd.android.package-archive"
+        ],
+        [
+          "url",
+          "https://cdn.example.invalid/afbe02bf06f56d9276b23a2e1bf23676d7125d09e90facc47ba011d5a0c6168c"
+        ]
+      ],
+      "pubkey": "88fe34dfb4489c7e467cb28fb0f3a26fd1fa7f002568a8931c40257b617dc6e2",
+      "id": "8da70801608af8281bfa256c6015740498ba318bb4187576ba5ea5461733df51",
+      "sig": "0c234226666e66d25fdb0b2b88077fb2752dffcabb0f274a0633db6e18021cc6c9344af3247e3549cddeef29ff3327368d84ddda874723691c9691fd45346a24"
+    },
+    {
+      "kind": 30063,
+      "created_at": 1767139200,
+      "content": "",
+      "tags": [
+        [
+          "d",
+          "to.iris.drive@9.9.8"
+        ],
+        [
+          "i",
+          "to.iris.drive"
+        ]
+      ],
+      "pubkey": "88fe34dfb4489c7e467cb28fb0f3a26fd1fa7f002568a8931c40257b617dc6e2",
+      "id": "26a16a8b0871806fc90c1ebb7f1efcb4076804dfdd45bb3f3e04209dde8a2d56",
+      "sig": "311a24f68b850d20a7b8c136b5eda3fe50d2687faa8d36653cafbfec15540121e853bf0629d2f05541c769e5d82c69a80f82aa2bc9e3383528ec83a38eda9ac4"
+    }
+  ]
+}

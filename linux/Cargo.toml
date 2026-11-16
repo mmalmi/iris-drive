@@ -39,3 +39,7 @@ assets = [
     ["resources/iris-drive.svg", "usr/share/icons/hicolor/scalable/apps/iris-drive.svg", "644"],
     ["resources/iris-drive.desktop", "usr/share/applications/iris-drive.desktop", "644"],
 ]
+
+# Its own workspace (excluded from the root one), also when checked out in a
+# worktree nested inside another checkout of this repository.
+[workspace]

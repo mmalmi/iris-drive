@@ -1,0 +1,61 @@
+{
+  "schema": 1,
+  "haps": {
+    "version": "0.1.27",
+    "commit": "4658bb84612eb008eef8569232afc9cf19394fdd",
+    "url": "https://github.com/mmalmi/haps/releases/download/v0.1.27/",
+    "assets": {
+      "aarch64-apple-darwin": {
+        "name": "haps-v0.1.27-aarch64-apple-darwin.tar.gz",
+        "bytes": 41465580,
+        "sha256": "da1921a6874e53c16e29ec08eda4130d0b01333a3bb02643d9618310ff098791"
+      },
+      "x86_64-apple-darwin": {
+        "name": "haps-v0.1.27-x86_64-apple-darwin.tar.gz",
+        "bytes": 43681181,
+        "sha256": "d99c54a0ddd910feed8e0aea309549322f6358fd7a1fe79109f1482f95083501"
+      },
+      "aarch64-unknown-linux-gnu": {
+        "name": "haps-v0.1.27-aarch64-unknown-linux-gnu.tar.gz",
+        "bytes": 45641413,
+        "sha256": "c664d299143007800ce64eff1d145239749e78413b9b5a4ca2ab72fd2ae3bf67"
+      },
+      "x86_64-unknown-linux-gnu": {
+        "name": "haps-v0.1.27-x86_64-unknown-linux-gnu.tar.gz",
+        "bytes": 47297481,
+        "sha256": "481021c3bc3b360d25eea3256ef061a16908c8356aff8c3d3d46bb6c43f502d9"
+      }
+    }
+  },
+  "hashtree": {
+    "version": "0.4.5",
+    "commit": "6058c7b3e3807d11b828459fa1d39c2e702e69bd",
+    "url": "https://github.com/mmalmi/hashtree/releases/download/v0.4.5/",
+    "assets": {
+      "aarch64-apple-darwin": {
+        "name": "hashtree-aarch64-apple-darwin.tar.gz",
+        "bytes": 46244887,
+        "sha256": "218e10439fe134a72f3971d37c5415fb8feb0317fa15425803e8f311401c1499",
+        "gitRemoteHtreeSha256": "5994554a50c6a6b05ce536910fc8ed8cbf2eed834d13233a8792d4a28e83ef32"
+      },
+      "x86_64-apple-darwin": {
+        "name": "hashtree-x86_64-apple-darwin.tar.gz",
+        "bytes": 48823949,
+        "sha256": "6748bd1342636164e66e7d10ec916085cacaa9bef32033347d890d831cfb7097",
+        "gitRemoteHtreeSha256": "eee570778d3c345539d11cb2b175df8a20d87276c5cbca23decf4dfd48ecb1c2"
+      },
+      "aarch64-unknown-linux-gnu": {
+        "name": "hashtree-aarch64-unknown-linux-musl.tar.gz",
+        "bytes": 51371791,
+        "sha256": "fad4d265455458dc0e11b3d1cc660bcdb619f2224a670a4a3b75e654e8031f68",
+        "gitRemoteHtreeSha256": "6d4aa8533a87349cb468ea01a972843c86fe33e7686a8d77423a174752b83276"
+      },
+      "x86_64-unknown-linux-gnu": {
+        "name": "hashtree-x86_64-unknown-linux-musl.tar.gz",
+        "bytes": 53117385,
+        "sha256": "405ffbf9ac145b7548f0ae5767d689d362b9923efdd6690613f9c383be535bf8",
+        "gitRemoteHtreeSha256": "23e54834078797e0315e495cd72e7e84616761846559bcee083961d096b6df9a"
+      }
+    }
+  }
+}

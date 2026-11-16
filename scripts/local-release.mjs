@@ -48,6 +48,8 @@ import { prepareMacosReleaseBinaries } from './macos-release-binaries.mjs'
 import { createMacosDmg } from './macos-release-dmg.mjs'
 import { assertZipEntriesEqualFiles } from './release-zip.mjs'
 import { requireMeshRelease } from './mesh-release-gate.mjs'
+import { macosReleaseSmokeCommand } from './macos-release-smoke-host.mjs'
+import { releaseToolsEnv } from './release-tools.mjs'
 import { stageHostedProduct } from './stage-hosted-product.mjs'
 import {
   assertNoPrivateBuildMetadata,
@@ -95,6 +97,8 @@ Options:
 
 Final publication requires IRIS_STACK_GATE_RECEIPT for the exact annotated
 release commit, produced by the pinned Iris Stack release gate.
+Publishing runs the haps and htree pinned in scripts/release-tools.lock.json;
+fetch and verify them once with: node scripts/release-tools.mjs install
 Set IRIS_DRIVE_MACOS_PREBUILT_DIR to a verified hosted product directory to
 sign and package its app without compiling. IRIS_DRIVE_RELEASE_SOURCE_ROOT
 selects the clean source checkout whose commit must match the product receipt.`)
@@ -786,7 +790,7 @@ function buildMacosArtifacts({ env, tag, dryRun }) {
     { dryRun },
   )
   run(
-    env.IRIS_DRIVE_MACOS_RELEASE_SMOKE_COMMAND || join(repoRoot, 'scripts', 'macos-release-smoke.sh'),
+    macosReleaseSmokeCommand({ env, repoRoot }),
     ['--app', appPath, '--archive', updaterArchivePath, '--dmg', dmgPath],
     { dryRun, env },
   )
@@ -1121,15 +1125,7 @@ function buildReleaseArtifacts({ env, tag, options }) {
     ['platform-versions', () => syncPlatformVersions({ tag, dryRun: options.dryRun })],
     ['macos', () => buildMacosArtifacts({ env, tag, dryRun: options.dryRun })],
     ['linux', () => buildLinuxArtifacts({ env, tag, dryRun: options.dryRun })],
-    [
-      'windows',
-      () =>
-        buildWindowsArtifacts({
-          env,
-          tag,
-          dryRun: options.dryRun,
-        }),
-    ],
+    ['windows', () => buildWindowsArtifacts({ env, tag, dryRun: options.dryRun })],
     ['android', () => buildAndroidArtifacts({ env, tag, dryRun: options.dryRun })],
     ['ios', () => buildIosTestFlight({ env, tag, dryRun: options.dryRun })],
   ])
@@ -1417,6 +1413,7 @@ function main() {
     validateFinalPublishInputs({ env, skipZapstore: options.skipZapstore })
     if (!options.dryRun) requireMeshRelease(meshGate)
   }
+  const toolEnv = options.publish ? releaseToolsEnv({ env, dryRun: options.dryRun }) : env
 
   if (options.build) {
     buildReleaseArtifacts({ env, tag, options })
@@ -1437,14 +1434,11 @@ function main() {
   })
 
   if (options.publish) {
-    if (!options.dryRun && !commandExists('htree')) {
-      throw new Error('Missing htree; cannot publish release')
-    }
     if (!options.draft && !options.dryRun) requireMeshRelease(meshGate)
     const hapsArgs = ['import-release', stageDir, '--config', join(repoRoot, 'haps-release.json'), '--tag', tag]
     if (!options.draft) {
-      run('haps', [...hapsArgs, '--check'], { env, dryRun: options.dryRun })
-      run('haps', [...hapsArgs, '--publish-source'], { env, dryRun: options.dryRun })
+      run('haps', [...hapsArgs, '--check'], { env: toolEnv, dryRun: options.dryRun })
+      run('haps', [...hapsArgs, '--publish-source'], { env: toolEnv, dryRun: options.dryRun })
     }
     const published = publishRelease({
       stageDir,
@@ -1452,7 +1446,7 @@ function main() {
       tag,
       draft: options.draft,
       dryRun: options.dryRun,
-      env,
+      env: toolEnv,
     })
     console.log(
       `Published ${options.draft ? 'draft ' : ''}${tag} to ${releaseTree} via ${published.cid}`,
@@ -1467,7 +1461,7 @@ function main() {
         dryRun: options.dryRun,
       })
     }
-    if (!options.draft) run('haps', [...hapsArgs, '--publish'], { env, dryRun: options.dryRun })
+    if (!options.draft) run('haps', [...hapsArgs, '--publish'], { env: toolEnv, dryRun: options.dryRun })
     if (!options.draft && !options.skipZapstore) {
       publishZapstore({ env, tag, assetDir, dryRun: options.dryRun, plannedAssetNames })
     }

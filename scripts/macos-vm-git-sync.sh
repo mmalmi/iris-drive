@@ -3,25 +3,9 @@
 set -Eeuo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-ENV_FILE="${IRIS_DRIVE_DEV_LAB_ENV:-$HOME/.config/iris-drive/dev-lab.env}"
-if [[ -f "$ENV_FILE" ]]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  set +a
-fi
-
-SSH_HOST="${IRIS_DRIVE_MACOS_SSH_HOST:-${1:-${IRIS_DRIVE_DEV_VM_MACOS_SSH_HOST:-}}}"
-REMOTE_NAME="${IRIS_DRIVE_DEV_VM_MACOS_REMOTE:-macos}"
-if [[ -z "$SSH_HOST" ]] && git -C "$ROOT" remote get-url "$REMOTE_NAME" >/dev/null 2>&1; then
-  remote_url="$(git -C "$ROOT" remote get-url "$REMOTE_NAME")"
-  SSH_HOST="${remote_url%%:*}"
-  SSH_HOST="${SSH_HOST#*@}"
-fi
-[[ -n "$SSH_HOST" ]] || {
-  echo "set IRIS_DRIVE_MACOS_SSH_HOST or configure the macOS VM git remote" >&2
-  exit 2
-}
+source "$ROOT/scripts/lib/macos-vm-host.sh"
+macos_vm_load_lab_env
+SSH_HOST="$(macos_vm_ssh_host "${1:-}")" || exit 2
 
 GUEST_SRC_ROOT="${IRIS_DRIVE_MACOS_GUEST_SRC_ROOT:-src}"
 REMOTE_REF="${IRIS_DRIVE_MACOS_GIT_REF:-refs/heads/codex/macos-vm-sync}"
