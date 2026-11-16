@@ -194,13 +194,16 @@ resolve_adb() {
 select_physical_android() {
   local requested="${IRIS_DRIVE_ANDROID_SERIAL:-${ANDROID_SERIAL:-}}"
   local serial candidates="" devices
+  [[ "$requested" != emulator-* ]] || return 3
   devices="$("$ADB" devices)" || return 5
   while read -r serial _; do
     [[ -n "$serial" && "$serial" != "List" ]] || continue
+    [[ -z "$requested" || "$serial" == "$requested" ]] || continue
     if [[ "$("$ADB" -s "$serial" get-state 2>/dev/null || true)" != "device" ]]; then
       continue
     fi
     if [[ "$("$ADB" -s "$serial" shell getprop ro.kernel.qemu 2>/dev/null | tr -d '\r')" == "1" ]]; then
+      [[ -z "$requested" ]] || return 3
       continue
     fi
     candidates+="${candidates:+$'\n'}$serial"

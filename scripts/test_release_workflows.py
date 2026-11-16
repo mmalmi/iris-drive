@@ -862,6 +862,39 @@ echo "$DERIVED_DATA"
             + 'printf "end %s\\n" "$lane" >>"$RELEASE_WORKFLOW_TEST_STATE/events"\n',
         )
 
+    def test_physical_pairing_with_selected_emulator(self) -> None:
+        script = self.copy_script("mobile-ios-android-linking-e2e.sh")
+        for helper in ("ios-xcuitest-accessibility-session.sh", "mobile-physical-ios-xctest.sh"):
+            self.copy_script("lib/" + helper)
+        self.write_executable(self.bin / "uname", "echo Darwin")
+        self.write_executable(self.bin / "xcrun", "exit 71")
+        sdk = self.repo / "sdk"
+        self.write_executable(sdk / "platform-tools/adb", """
+            case "$*" in
+                devices) printf 'List of devices attached\nother-phone device\nemulator-5554 device\nvirtual-transport device\n';;
+                '-s emulator-5554 get-state'|'-s virtual-transport get-state') echo device;;
+                '-s emulator-5554 shell getprop ro.kernel.qemu'|'-s virtual-transport shell getprop ro.kernel.qemu') echo 1;;
+                *) touch "$RELEASE_WORKFLOW_TEST_STATE/unselected-device"; exit 71;;
+            esac
+        """)
+        for serial, mode, status, message in (
+            ("emulator-5554", "auto", 0, "reason=physical_android_unavailable"),
+            ("emulator-5554", "required", 1, "select exactly one online non-emulated Android device"),
+            ("virtual-transport", "auto", 0, "reason=physical_android_unavailable"),
+            ("missing-phone", "auto", 1, "select exactly one online non-emulated Android device"),
+        ):
+            with self.subTest(serial=serial, mode=mode):
+                run = subprocess.run(
+                    [str(script)], capture_output=True, text=True, timeout=WORKFLOW_TIMEOUT_SECONDS,
+                    env=self.environment(
+                        ANDROID_HOME=str(sdk), CARGO_TARGET_DIR=str(self.repo),
+                        IRIS_DRIVE_ANDROID_SERIAL=serial, IRIS_DRIVE_MOBILE_PHYSICAL_LINKING=mode,
+                    ),
+                )
+                self.assertEqual(run.returncode, status, run.stdout + run.stderr)
+                self.assertIn(message, run.stdout + run.stderr)
+                self.assertFalse((self.state / "unselected-device").exists())
+
     def install_five_platform_fixture(self) -> Path:
         script = self.copy_script("cross-vm-five-platform-e2e.sh")
         self.install_parallel_lane("ios-simulator-smoke.sh", "ios", barrier=True)
