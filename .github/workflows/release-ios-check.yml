@@ -60,13 +60,28 @@ jobs:
           run-id: ${{ inputs.debug_run }}
           name: drive-ios-sim-debug-${{ inputs.commit }}
           path: products/debug
-      - name: Diagnose the Files location on the exact hosted simulator product
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.release_run }}
+          name: drive-ios-sim-release-${{ inputs.commit }}
+          path: products/release
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.mac_run }}
+          name: drive-macos-release-${{ inputs.commit }}
+          path: products/mac
+      - name: Run canonical functional and optimized idle assertions
         run: node tooling/scripts/check-hosted-ios.mjs
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: ios-files-location-${{ inputs.commit }}
+          name: ios-check-${{ inputs.commit }}
           path: |
             ios-check/receipt.json
+            ios-check/files-lookup.json
+            ios-check/xcode-tests.log
+            ios-check/gui.png
           if-no-files-found: ignore
           retention-days: 7
