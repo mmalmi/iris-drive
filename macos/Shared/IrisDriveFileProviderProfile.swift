@@ -52,3 +52,32 @@ struct IrisDriveFileProviderProfile {
         SHA256.hash(data: Data(value.utf8)).map { String(format: "%02x", $0) }.joined()
     }
 }
+
+extension IrisDriveFileProviderProfile {
+    struct Runtime: Decodable {
+        let configDirectory: String?
+        let idriveExecutable: String?
+
+        init(configDirectory: String?, idriveExecutable: String?) {
+            self.configDirectory = configDirectory
+            self.idriveExecutable = idriveExecutable
+        }
+
+        init?(userInfo: [AnyHashable: Any]?) {
+            let configDirectory = userInfo?["config_dir"] as? String
+            let idriveExecutable = userInfo?["idrive_executable"] as? String
+            guard configDirectory != nil || idriveExecutable != nil else {
+                return nil
+            }
+            self.init(
+                configDirectory: configDirectory,
+                idriveExecutable: idriveExecutable
+            )
+        }
+
+        enum CodingKeys: String, CodingKey {
+            case configDirectory = "config_dir"
+            case idriveExecutable = "idrive_executable"
+        }
+    }
+}

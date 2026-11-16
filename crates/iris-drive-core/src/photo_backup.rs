@@ -65,19 +65,9 @@ impl PhotoOriginal {
         // The root itself records the write. A crash before the phone saves its receipt
         // can retry and find the original even if a similarly named file came first.
         let id = &identify[..12];
-        let marker = format!(" ({id}");
         for entry in entries.iter().filter(|e| self.matches(e)) {
-            if let Some((_, tail)) = entry.name.rsplit_once(&marker)
-                && let Some((sequence, _)) = tail.split_once(')')
-            {
-                let number = if sequence.is_empty() {
-                    Some(1)
-                } else {
-                    sequence.strip_prefix('-').and_then(|n| n.parse().ok())
-                };
-                if number.is_some_and(|n| entry.name == backup_name(&filename, id, n)) {
-                    return Ok((root.clone(), format!("{FOLDER}/{}", entry.name)));
-                }
+            if is_backup_variant(&entry.name, &filename) {
+                return Ok((root.clone(), format!("{FOLDER}/{}", entry.name)));
             }
         }
         let mut number = 0;
@@ -127,6 +117,24 @@ impl PhotoOriginal {
     fn matches(&self, e: &TreeEntry) -> bool {
         !e.link_type.is_directory_like() && e.hash == self.cid.hash && e.key == self.cid.key
     }
+}
+
+// A matching original may have been backed up by a different phone, whose
+// local photo-library identifier produced a different collision suffix.
+fn is_backup_variant(name: &str, original: &str) -> bool {
+    let Some((_, suffix)) = name.rsplit_once(" (") else {
+        return false;
+    };
+    let Some((marker, _)) = suffix.split_once(')') else {
+        return false;
+    };
+    let (id, number) = marker.split_once('-').map_or((marker, Some(1)), |(id, n)| {
+        (id, n.parse::<usize>().ok().filter(|n| *n >= 2))
+    });
+    id.len() == 12
+        && id.bytes().all(|b| b.is_ascii_hexdigit())
+        && number
+            .is_some_and(|n| name.to_lowercase() == backup_name(original, id, n).to_lowercase())
 }
 
 fn backup_name(original: &str, id: &str, number: usize) -> String {
@@ -212,6 +220,20 @@ mod tests {
                 .add_to(&daemon, &root, "device/2", "IMG_001.MOV")
                 .await?,
             (root.clone(), second.clone())
+        );
+        assert_eq!(
+            other
+                .add_to(&daemon, &root, "another-phone/7", "IMG_001.MOV")
+                .await?,
+            (root.clone(), second.clone()),
+            "the other phone has the same original, including its camera filename"
+        );
+        let second_cid = tree.resolve_path(&root, &second).await?.unwrap();
+        assert_eq!(
+            tree.read_file_range_cid(&second_cid, 0, None)
+                .await?
+                .unwrap(),
+            b"second clip"
         );
         let cid = tree.resolve_path(&root, &path).await?.unwrap();
         assert_eq!(

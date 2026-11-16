@@ -330,14 +330,19 @@ impl FfiApp {
         }
         if matches!(
             action,
-            NativeAppAction::Refresh | NativeAppAction::StartSync | NativeAppAction::RestartSync
+            NativeAppAction::Refresh
+                | NativeAppAction::StartSync
+                | NativeAppAction::RestartSync
+                | NativeAppAction::SyncApprovalAcks
         ) {
             return self.dispatch_concurrent_work(&action);
         }
         let work = self.with_runtime(|runtime| runtime.background_work.clone());
         let _work = (!matches!(
             action,
-            NativeAppAction::RefreshProfile | NativeAppAction::ApproveDevice { .. }
+            NativeAppAction::RefreshProfile
+                | NativeAppAction::ApproveDevice { .. }
+                | NativeAppAction::RevokeDevice { .. }
         ))
         .then(|| {
             work.lock()
@@ -354,6 +359,27 @@ impl FfiApp {
 }
 
 impl FfiApp {
+    #[cfg(all(not(test), target_os = "ios"))]
+    pub(crate) fn set_gateway_foreground(&self, foreground: bool) {
+        // UIKit serializes these transitions. A background sync can still request
+        // the gateway while the scene is suspended, so keep the gate in the core.
+        let stopping = self.with_runtime(|runtime| {
+            runtime.gateway_foreground = foreground;
+            if foreground {
+                runtime.start_browser_gateway_if_needed();
+                None
+            } else {
+                runtime.stop_browser_gateway();
+                runtime.browser_gateway_thread.take()
+            }
+        });
+        // The embedded store releases its file locks before UIKit ends the
+        // background task. Other callers can use the roster during teardown.
+        if let Some(worker) = stopping {
+            let _ = worker.join();
+        }
+    }
+
     fn with_runtime<T>(&self, f: impl FnOnce(&mut NativeAppRuntime) -> T) -> T {
         match self.runtime.lock() {
             Ok(mut runtime) => f(&mut runtime),
@@ -385,6 +411,8 @@ struct NativeAppRuntime {
     app_key_link_exchange_thread: Option<std::thread::JoinHandle<()>>,
     #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
     browser_gateway_running: Arc<AtomicBool>,
+    #[cfg(all(not(test), target_os = "ios"))]
+    gateway_foreground: bool,
     #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
     browser_gateway_stop: Arc<AtomicBool>,
     #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
@@ -400,7 +428,9 @@ enum ProviderSummaryMode {
 fn provider_summary_mode_for_action(action: &NativeAppAction) -> ProviderSummaryMode {
     if matches!(
         action,
-        NativeAppAction::RefreshProfile | NativeAppAction::ApproveDevice { .. }
+        NativeAppAction::RefreshProfile
+            | NativeAppAction::ApproveDevice { .. }
+            | NativeAppAction::RevokeDevice { .. }
     ) {
         ProviderSummaryMode::Skip
     } else {
@@ -447,6 +477,8 @@ impl NativeAppRuntime {
             app_key_link_exchange_thread: None,
             #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
             browser_gateway_running: Arc::new(AtomicBool::new(false)),
+            #[cfg(all(not(test), target_os = "ios"))]
+            gateway_foreground: false,
             #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
             browser_gateway_stop: Arc::new(AtomicBool::new(false)),
             #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
@@ -470,6 +502,7 @@ impl NativeAppRuntime {
         let disk_mutation = if matches!(
             &action,
             NativeAppAction::ApproveDevice { .. }
+                | NativeAppAction::RevokeDevice { .. }
                 | NativeAppAction::AddRelay { .. }
                 | NativeAppAction::RemoveRelay { .. }
                 | NativeAppAction::ReplaceRelays { .. }
@@ -1254,6 +1287,10 @@ impl NativeAppRuntime {
 
     #[allow(clippy::unused_self)]
     fn start_browser_gateway_if_needed(&mut self) {
+        #[cfg(all(not(test), target_os = "ios"))]
+        if !self.gateway_foreground {
+            return;
+        }
         #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
         {
             let Ok(config) = self.load_config() else {
@@ -3139,8 +3176,9 @@ async fn write_native_fips_status(
     sync: &iris_drive_core::FsFipsBlockSync,
     error: Option<&str>,
 ) -> Result<(), String> {
-    let direct_devices = sync.connected_peer_ids().await;
-    let mesh_devices = sync.mesh_peer_ids().await;
+    let presence = sync.peer_presence().await;
+    let direct_devices = presence.direct;
+    let mesh_devices = presence.mesh;
     let online_devices = online_device_ids(&direct_devices, &mesh_devices);
     let updated_at = unix_now_seconds();
     let error_value = error.map_or(Value::Null, |error| Value::String(error.to_owned()));
@@ -3167,7 +3205,7 @@ async fn write_native_fips_status(
         "connected_peers": direct_devices,
         "mesh_devices": mesh_devices.clone(),
         "mesh_peers": mesh_devices,
-        "peer_statuses": sync.fips_peer_statuses().await,
+        "peer_statuses": presence.statuses,
         "error": error,
     });
     let value = normalize_fips_status_value(

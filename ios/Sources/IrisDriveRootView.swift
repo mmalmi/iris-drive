@@ -762,8 +762,8 @@ private struct DriveHomeView: View {
                     Label("Open in Files", systemImage: "folder")
                 }
                 .accessibilityIdentifier("openInFilesButton")
-                if !model.fileProviderError.isEmpty {
-                    Text(model.fileProviderError)
+                if let message = model.fileProviderError.isEmpty ? model.filesAvailabilityNotice : model.fileProviderError {
+                    Text(message)
                         .font(.footnote)
                         .foregroundStyle(.red)
                         .accessibilityIdentifier("openInFilesError")
@@ -830,7 +830,6 @@ private struct DevicesView: View {
                     deviceRow(device, showPresence: true)
                 }
             }
-            DeviceStorageSection(storage: model.deviceStorage)
             if !recoveryKeyActors.isEmpty {
                 Section("Recovery Keys") {
                     ForEach(recoveryKeyActors) { device in
@@ -905,7 +904,9 @@ private struct DevicesView: View {
     @ViewBuilder
     private func deviceRow(_ device: IrisDriveDevice, showPresence: Bool) -> some View {
         let canRename = model.canAdminProfile && device.isDeviceActor
+        let report = showPresence ? model.deviceStorage.devices.first { $0.npub == device.id && $0.hasReport } : nil
         DisclosureGroup {
+            if let report { DeviceStorageDetails(device: report) }
             if device.isCurrentDevice {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 10) {
@@ -974,6 +975,7 @@ private struct DevicesView: View {
                 }
                 VStack(alignment: .leading) {
                     Text(device.label)
+                    if let report { Text(report.heldLabel).font(.caption).foregroundStyle(.secondary) }
                     Text(deviceSubtitle(device, includeConnection: showPresence))
                         .font(.caption)
                         .foregroundStyle(.secondary)

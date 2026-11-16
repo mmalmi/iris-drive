@@ -114,6 +114,17 @@ pub unsafe extern "C" fn iris_drive_app_free(handle: *mut IrisDriveAppHandle) {
     }
 }
 
+#[cfg(all(not(test), target_os = "ios"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn iris_drive_app_set_gateway_foreground(
+    handle: *const IrisDriveAppHandle,
+    foreground: u8,
+) {
+    if let Ok(handle) = app_from_handle(handle) {
+        handle.app.set_gateway_foreground(foreground != 0);
+    }
+}
+
 #[unsafe(no_mangle)]
 pub extern "C" fn iris_drive_app_state_json(handle: *const IrisDriveAppHandle) -> *mut c_char {
     let state = app_from_handle(handle).map_or_else(
@@ -264,69 +275,35 @@ pub extern "C" fn iris_drive_mirror_json(
     json_string(&result)
 }
 
-#[unsafe(no_mangle)]
-pub extern "C" fn iris_drive_provider_list_json(data_dir: *const c_char) -> *mut c_char {
-    json_string(&native_provider_list_json(&c_string_lossy(data_dir)))
-}
+mod provider;
+pub use provider::*;
 
 #[unsafe(no_mangle)]
-pub extern "C" fn iris_drive_provider_read_json(
-    data_dir: *const c_char,
-    path: *const c_char,
-    output_path: *const c_char,
+pub extern "C" fn iris_drive_share_stage_file_json(
+    dir: *const c_char,
+    folder: *const c_char,
+    name: *const c_char,
+    source: *const c_char,
 ) -> *mut c_char {
-    json_string(&native_provider_read_json(
-        &c_string_lossy(data_dir),
-        &c_string_lossy(path),
-        &c_string_lossy(output_path),
+    json_string(&crate::native_provider::stage_shared_file_json(
+        &c_string_lossy(dir),
+        &c_string_lossy(folder),
+        &c_string_lossy(name),
+        &c_string_lossy(source),
     ))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn iris_drive_provider_write_json(
-    data_dir: *const c_char,
-    path: *const c_char,
-    source_path: *const c_char,
+pub extern "C" fn iris_drive_share_publish_json(
+    dir: *const c_char,
+    allow_network: bool,
+    context: *const std::ffi::c_void,
+    is_cancelled: Option<extern "C" fn(*const std::ffi::c_void) -> bool>,
 ) -> *mut c_char {
-    json_string(&native_provider_write_json(
-        &c_string_lossy(data_dir),
-        &c_string_lossy(path),
-        &c_string_lossy(source_path),
-    ))
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn iris_drive_provider_mkdir_json(
-    data_dir: *const c_char,
-    path: *const c_char,
-) -> *mut c_char {
-    json_string(&native_provider_mkdir_json(
-        &c_string_lossy(data_dir),
-        &c_string_lossy(path),
-    ))
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn iris_drive_provider_delete_json(
-    data_dir: *const c_char,
-    path: *const c_char,
-) -> *mut c_char {
-    json_string(&native_provider_delete_json(
-        &c_string_lossy(data_dir),
-        &c_string_lossy(path),
-    ))
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn iris_drive_provider_rename_json(
-    data_dir: *const c_char,
-    old_path: *const c_char,
-    new_path: *const c_char,
-) -> *mut c_char {
-    json_string(&native_provider_rename_json(
-        &c_string_lossy(data_dir),
-        &c_string_lossy(old_path),
-        &c_string_lossy(new_path),
+    json_string(&crate::native_provider::publish_shared_files_json(
+        &c_string_lossy(dir),
+        allow_network,
+        || is_cancelled.is_some_and(|check| check(context)),
     ))
 }
 

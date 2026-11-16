@@ -5,7 +5,7 @@
 //! between authorized app installs. Blossom remains useful as a public remote,
 //! but the local app should first ask peer instances over FIPS.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -36,6 +36,8 @@ pub(crate) mod endpoint_config;
 mod nostr_runtime;
 mod peer_config;
 mod peer_refresh;
+mod presence;
+pub use presence::FipsPeerPresence;
 mod recent_peer_cache;
 pub(crate) mod settings_runtime;
 #[cfg(feature = "stack-fixture")]
@@ -446,71 +448,12 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
             .collect()
     }
 
-    /// Authorized application peers reachable through authenticated end-to-end
-    /// FIPS sessions but not currently attached as direct physical neighbors.
-    pub async fn mesh_peer_ids(&self) -> Vec<String> {
-        let direct = self
-            .endpoint_peers(false)
-            .await
-            .into_iter()
-            .filter(|peer| peer.connected)
-            .map(|peer| peer.npub)
-            .collect::<BTreeSet<_>>();
-        let Some(control) = self.control_runtime.as_ref() else {
-            return Vec::new();
-        };
-        let mut mesh = control.connected_peer_ids().await.unwrap_or_else(|error| {
-            tracing::warn!(%error, "failed to snapshot Drive FIPS control peers");
-            Vec::new()
-        });
-        mesh.retain(|peer| !direct.contains(peer));
-        mesh.sort_unstable();
-        mesh.dedup();
-        mesh
-    }
-
     #[must_use]
     pub fn same_host_blob_provider_ids(&self) -> Vec<String> {
         self.blob_runtime
             .as_ref()
             .map(DriveBlobRuntime::same_host_provider_ids)
             .unwrap_or_default()
-    }
-
-    pub async fn fips_peer_statuses(&self) -> Vec<FipsPeerStatus> {
-        let mut statuses = self
-            .endpoint_peers(false)
-            .await
-            .into_iter()
-            .map(|peer| {
-                let status = FipsPeerStatus {
-                    npub: peer.npub,
-                    connected: peer.connected,
-                    transport_addr: peer.transport_addr,
-                    transport_type: peer.transport_type,
-                    srtt_ms: peer.srtt_ms,
-                    packets_sent: peer.packets_sent,
-                    packets_recv: peer.packets_recv,
-                    bytes_sent: peer.bytes_sent,
-                    bytes_recv: peer.bytes_recv,
-                };
-                (status.npub.clone(), status)
-            })
-            .collect::<BTreeMap<_, _>>();
-        for npub in self.mesh_peer_ids().await {
-            statuses.entry(npub.clone()).or_insert(FipsPeerStatus {
-                npub,
-                connected: true,
-                transport_addr: None,
-                transport_type: None,
-                srtt_ms: None,
-                packets_sent: 0,
-                packets_recv: 0,
-                bytes_sent: 0,
-                bytes_recv: 0,
-            });
-        }
-        statuses.into_values().collect()
     }
 
     pub async fn fips_relay_statuses(&self) -> Vec<FipsRelayStatus> {

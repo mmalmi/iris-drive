@@ -213,7 +213,6 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
     peers.set_selection_mode(gtk::SelectionMode::None);
     peers_page.append(&peers);
     let device_storage = device_storage_section();
-    peers_page.append(&device_storage.root);
 
     let backups_page = page_box();
     backups_page.append(&section_title("Backup"));
@@ -311,6 +310,7 @@ pub(crate) fn build_ui(app: &adw::Application, present: bool) {
 
     let settings_page = page_box();
     settings_page.append(&section_title("Settings"));
+    settings_page.append(&device_storage.root);
     let tray_on_close = gtk::CheckButton::with_label("Tray on close");
     tray_on_close.add_css_class("iris-setting-check");
     tray_on_close.set_active(read_close_to_tray_on_close());

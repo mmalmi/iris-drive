@@ -103,7 +103,7 @@ internal fun PhotoBackupSettings(profileId: String) {
                 modifier = Modifier.testTag("photoBackupToggle"),
             )
         }
-        Text("Copy this device’s photos and videos to My Drive/Photos. Removing an item from your device keeps its backup.",
+        Text("All phones on this Drive back up to My Drive/Photos. Deleting a photo from your phone keeps its backup.",
             style = MaterialTheme.typography.bodySmall)
         if (status != null) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {

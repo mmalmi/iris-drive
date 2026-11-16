@@ -38,26 +38,45 @@ fn thousands(value: u64) -> String {
 /// Whether the device holds every file of the Drive it measured.
 #[must_use]
 pub fn holds_all(report: &DeviceStorageReport) -> bool {
-    report.held_files >= report.files && report.held_bytes >= report.file_bytes
+    report.unread_folders.unwrap_or(0) == 0
+        && report.held_files >= report.files
+        && report.held_bytes >= report.file_bytes
 }
 
-/// How much a device holds, short: "All of it", "1.2 GB · 35%".
+/// Locally stored content in the Drive this device measured.
 #[must_use]
 pub fn holding_label(report: &DeviceStorageReport) -> String {
     if report.files == 0 {
-        return "Nothing to hold yet".to_owned();
+        return if report.unread_folders.unwrap_or(0) > 0 {
+            "Drive size unknown"
+        } else {
+            "Drive is empty"
+        }
+        .to_owned();
+    }
+    if report.unread_folders.unwrap_or(0) > 0 {
+        return format!(
+            "{} stored · some folders unavailable",
+            format_bytes(report.held_bytes)
+        );
     }
     if holds_all(report) {
-        return "All of it".to_owned();
+        return "All Drive files available offline".to_owned();
     }
     if report.held_bytes == 0 {
-        return "None of it".to_owned();
+        return "No Drive data stored".to_owned();
     }
     let share = (u128::from(report.held_bytes) * 100) / u128::from(report.file_bytes.max(1));
     if share < 1 {
-        format!("{} · under 1%", format_bytes(report.held_bytes))
+        format!(
+            "{} stored · under 1% of Drive",
+            format_bytes(report.held_bytes)
+        )
     } else {
-        format!("{} · {share}%", format_bytes(report.held_bytes))
+        format!(
+            "{} stored · {share}% of Drive",
+            format_bytes(report.held_bytes)
+        )
     }
 }
 
@@ -257,11 +276,13 @@ pub fn drive_size(rows: &[DeviceRowInput]) -> Option<&DeviceStorageReport> {
         .iter()
         .find(|row| row.current)
         .and_then(|row| row.report.as_ref())
+        .filter(|report| report.unread_folders.unwrap_or(0) == 0)
     {
         return Some(own);
     }
     rows.iter()
         .filter_map(|row| row.report.as_ref())
+        .filter(|report| report.unread_folders.unwrap_or(0) == 0)
         .max_by_key(|report| report.measured_at)
 }
 
@@ -277,10 +298,13 @@ pub fn holders_sentence(rows: &[DeviceRowInput]) -> String {
         })
         .collect::<Vec<_>>();
     match holders.as_slice() {
-        [] => "No device holds all of it.".to_owned(),
-        [one] if one.current => "All of it is on this device.".to_owned(),
-        [one] => format!("All of it is on {}.", one.name),
-        many => format!("All of it is on {} devices.", many.len()),
+        [] => String::new(),
+        [one] if one.current => "Every Drive file is available offline on this device.".to_owned(),
+        [one] => format!("{} has every Drive file available offline.", one.name),
+        many => format!(
+            "Every Drive file is available offline on {} devices.",
+            many.len()
+        ),
     }
 }
 
@@ -294,8 +318,10 @@ pub fn summary(rows: &[DeviceRowInput]) -> String {
             thousands(drive.files),
             if drive.files == 1 { "file" } else { "files" },
             holders_sentence(rows)
-        ),
-        None => "Measuring how much of your Drive is here…".to_owned(),
+        )
+        .trim_end()
+        .to_owned(),
+        None => String::new(),
     }
 }
 

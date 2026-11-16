@@ -337,6 +337,22 @@ fn causal_tombstone_suppresses_observed_write_even_with_older_clock() {
 }
 
 #[test]
+fn republished_deletion_observes_a_device_that_only_saw_the_previous_sequence() {
+    let phone = causal_root("phone-files", 300, 39, &[("browser", 1, "browser-files")]);
+    let browser = causal_root("browser-files", 400, 2, &[("phone", 39, "phone-files")]);
+    let view = merge_drives(
+        &["phone", "browser"],
+        &[
+            snap("phone", &phone, vec![file("photo.jpg", 1, 1)], vec![]),
+            snap("browser", &browser, vec![], vec![tomb("photo.jpg", 200)]),
+        ],
+    );
+    assert_eq!(view.suppressed_by_tombstone, ["photo.jpg"]);
+    assert_eq!(view.files.len(), 0);
+    assert_eq!(view.conflicts.len(), 0);
+}
+
+#[test]
 fn concurrent_write_delete_is_marked_as_conflict() {
     let r_a = causal_root("cid-a", 100, 1, &[]);
     let r_b = causal_root("cid-b", 200, 1, &[]);

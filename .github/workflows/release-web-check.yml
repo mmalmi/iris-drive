@@ -70,7 +70,7 @@ jobs:
           run-id: ${{ inputs.product_run }}
           name: drive-linux-${{ inputs.commit }}
           path: products
-      - name: Verify and run four canonical browser/native journeys
+      - name: Verify browser and native linking, presence and file sync
         run: node tooling/scripts/check-hosted-web.mjs
       - uses: actions/upload-artifact@v4
         if: always()
@@ -79,6 +79,7 @@ jobs:
           path: |
             web-check/receipt.json
             web-check/journeys.log
+            web-check/journeys.json
             web-check/web/test-results/**/*.png
           if-no-files-found: ignore
           retention-days: 7

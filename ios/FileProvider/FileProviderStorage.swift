@@ -23,6 +23,12 @@ enum FileProviderStorage {
         var saveFolders: [String] = []
     }
 
+    private struct ReimportResult: Decodable {
+        enum Outcome: String, Decodable { case match, collision, absent, created }
+        let outcome: Outcome
+        let entry: ProviderEntry?
+    }
+
     private struct ProviderEntry: Decodable {
         var path: String
         var parentPath: String
@@ -92,8 +98,8 @@ enum FileProviderStorage {
         }
     }
 
-    static func item(for identifier: NSFileProviderItemIdentifier) -> FileProviderItem? {
-        let state = loadStateForEnumeration()
+    static func item(for identifier: NSFileProviderItemIdentifier) throws -> FileProviderItem? {
+        let state = try loadProviderBackedState()
         if identifier == .rootContainer || identifier == .workingSet {
             return .root(anchor: state.anchor, modified: stateModifiedDate(state))
         }
@@ -103,7 +109,7 @@ enum FileProviderStorage {
         guard let path = path(for: identifier),
               let entry = state.entries.first(where: { $0.path == path })
         else { return nil }
-        return item(for: entry, anchor: state.anchor)
+        return item(for: entry)
     }
 
     static func path(for identifier: NSFileProviderItemIdentifier) -> String? {
@@ -129,31 +135,35 @@ enum FileProviderStorage {
         return NSFileProviderItemIdentifier("\(pathPrefix)\(base64EncodeString(Data(path.utf8)))")
     }
 
-    static func children(of containerIdentifier: NSFileProviderItemIdentifier) -> [FileProviderItem] {
+    static func children(of containerIdentifier: NSFileProviderItemIdentifier) throws -> [FileProviderItem] {
         if containerIdentifier == .trashContainer {
             return []
         }
         guard let parent = path(for: containerIdentifier) else { return [] }
-        let state = loadStateForEnumeration()
+        let state = try loadProviderBackedState()
         return state.entries
             .filter { $0.parentPath == parent }
             .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
-            .map { item(for: $0, anchor: state.anchor) }
+            .map { item(for: $0) }
     }
 
-    static func allItemsAndAnchor() -> (items: [FileProviderItem], anchor: NSFileProviderSyncAnchor) {
-        let state = loadStateForEnumeration()
+    static func allItemsAndAnchor() throws -> (items: [FileProviderItem], anchor: NSFileProviderSyncAnchor) {
+        let state = try loadProviderBackedState()
         let modified = stateModifiedDate(state)
         var items = [
             FileProviderItem.root(anchor: state.anchor, modified: modified),
             FileProviderItem.trash(anchor: state.anchor, modified: modified),
         ]
-        items.append(contentsOf: state.entries.map { item(for: $0, anchor: state.anchor) })
+        items.append(contentsOf: state.entries.map { item(for: $0) })
         return (items, syncAnchor(for: state.anchor))
     }
 
-    static func storedSnapshotIdentifiers() -> Set<String> {
-        Set(storedSnapshot()?.identifiers ?? [])
+    static func snapshotIdentifiers(from anchor: NSFileProviderSyncAnchor, current: NSFileProviderSyncAnchor) throws -> Set<String>? {
+        if let snapshot = storedSnapshot(), Data(snapshot.anchor.utf8) == anchor.rawValue {
+            return Set(snapshot.identifiers)
+        }
+        if anchor.rawValue == current.rawValue || anchor.rawValue == Data("bootstrap".utf8) { return nil }
+        throw NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.syncAnchorExpired.rawValue)
     }
 
     static func currentProviderAnchor() -> NSFileProviderSyncAnchor {
@@ -167,7 +177,7 @@ enum FileProviderStorage {
                 anchor: String(data: anchor.rawValue, encoding: .utf8) ?? "unavailable",
                 identifiers: items.map(\.itemIdentifier.rawValue).sorted()
             )
-            try JSONEncoder().encode(snapshot).write(to: snapshotURL())
+            try JSONEncoder().encode(snapshot).write(to: snapshotURL(), options: .atomic)
         } catch {
             debugLog("snapshot write failed: \(error)")
         }
@@ -178,28 +188,30 @@ enum FileProviderStorage {
         contents: URL?,
         mayAlreadyExist: Bool
     ) throws -> FileProviderItem? {
-        let parent = path(for: template.parentItemIdentifier) ?? ""
-        let destination: NativeProviderResolvedPath
-        debugLog(
-            "create request name=\(template.filename) parent=\(parent) " +
-                "mayAlreadyExist=\(mayAlreadyExist) contents=\(contents != nil)"
-        )
+        guard let parent = path(for: template.parentItemIdentifier) else {
+            throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: template.parentItemIdentifier)
+        }
+        let destination = try composedPath(parent: parent, name: template.filename)
         if mayAlreadyExist {
-            destination = try resolvedPath(parent: parent, name: template.filename)
-            let state = loadStateForEnumeration()
-            if let existing = state.entries.first(where: { $0.path == destination.path }) {
-                debugLog("create mayAlreadyExist resolved existing path=\(destination.path)")
-                return item(for: existing, anchor: state.anchor)
-            }
-            debugLog(
-                "create mayAlreadyExist absent path=\(destination.path) " +
-                    "contents=\(contents != nil)"
+            let directory = (template.contentType ?? .data).conforms(to: .folder)
+            let json = IrisDriveNativeProvider.reimport(
+                dataDir: baseDirectory.path, path: destination.path, contents: contents, directory: directory
             )
-            if contents == nil {
+            try runProviderMutation(json)
+            let result = try JSONDecoder().decode(ReimportResult.self, from: Data(json.utf8))
+            switch result.outcome {
+            case .match, .collision:
+                guard let entry = result.entry else { throw providerError("Missing reimport item") }
+                let existing = item(for: entry)
+                if result.outcome == .collision { throw NSError.fileProviderErrorForCollision(with: existing) }
+                return existing
+            case .absent:
+                debugLog("create mayAlreadyExist absent path=\(destination.path)")
                 return nil
+            case .created:
+                signalProviderChanged()
+                return optimisticItem(for: destination, template: template, contents: contents)
             }
-        } else {
-            destination = try composedPath(parent: parent, name: template.filename)
         }
         if (template.contentType ?? .data).conforms(to: .folder) {
             try runProviderMutation(
@@ -222,7 +234,7 @@ enum FileProviderStorage {
                 )
             } catch {
                 if isPlaceholderCopyError(error) {
-                    if let existing = existingPlaceholderFamilyItem(for: destination.path) {
+                    if let existing = try existingPlaceholderFamilyItem(for: destination.path) {
                         debugLog(
                             "create placeholder copy resolved to existing " +
                                 "path=\(existing.itemIdentifier.rawValue)"
@@ -249,8 +261,9 @@ enum FileProviderStorage {
 
     /// Folders of My Drive a shared item can be saved into, or nil when Iris
     /// Drive has no profile on this device yet.
-    static func shareDestinations() -> [String]? {
-        (try? loadProviderBackedState())?.saveFolders
+    static func shareDestinations() throws -> [String]? {
+        guard FileManager.default.fileExists(atPath: baseDirectory.appendingPathComponent("key").path) else { return nil }
+        return try loadProviderBackedState().saveFolders
     }
 
     /// Save the staged file `source` into `parent` (empty for My Drive itself),
@@ -260,24 +273,16 @@ enum FileProviderStorage {
         from source: URL,
         into parent: String = ""
     ) throws {
-        let result: String
-        if parent.isEmpty {
-            result = IrisDriveNativeProvider.importSharedFile(
-                dataDir: baseDirectory.path,
-                displayName: displayName,
-                sourcePath: source.path
-            )
-        } else {
-            let destination = try resolvedPath(parent: parent, name: displayName)
-            result = IrisDriveNativeProvider.write(
-                dataDir: baseDirectory.path,
-                path: destination.path,
-                sourcePath: source.path
-            )
+        let result = IrisDriveNativeProvider.stageSharedFile(
+            dataDir: baseDirectory.path, parent: parent, displayName: displayName, sourcePath: source.path
+        )
+        struct Commit: Decodable {
+            let path: String?
+            let error: String?
         }
-        try runProviderMutation(result)
-        let bytes = (try? source.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
-        debugLog("share import saved name=\(displayName) parent=\(parent) bytes=\(bytes) result=\(result)")
+        let commit = try JSONDecoder().decode(Commit.self, from: Data(result.utf8))
+        if let error = commit.error { throw providerError(error) }
+        guard let path = commit.path, !path.isEmpty else { throw providerError("Drive did not save the file.") }
         signalProviderChanged()
     }
 
@@ -289,7 +294,7 @@ enum FileProviderStorage {
         guard let original = path(for: item.itemIdentifier), !original.isEmpty else {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: item.itemIdentifier)
         }
-        guard let originalEntry = loadStateForEnumeration().entries.first(where: { $0.path == original }) else {
+        guard let originalEntry = try loadProviderBackedState().entries.first(where: { $0.path == original }) else {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: item.itemIdentifier)
         }
         if changedFields.contains(.parentItemIdentifier),
@@ -361,7 +366,7 @@ enum FileProviderStorage {
         for identifier: NSFileProviderItemIdentifier,
         requestedSize size: CGSize
     ) throws -> Data? {
-        guard let item = item(for: identifier) else {
+        guard let item = try item(for: identifier) else {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier)
         }
         guard item.contentType.conforms(to: .image) else {
@@ -411,20 +416,12 @@ enum FileProviderStorage {
         return data as Data
     }
 
-    private static func loadStateForEnumeration() -> ProviderState {
-        do {
-            return try loadProviderBackedState()
-        } catch {
-            debugLog("provider list unavailable: \(error)")
-            return ProviderState(anchor: "bootstrap", entries: [])
-        }
-    }
-
     private static func loadProviderBackedState() throws -> ProviderState {
         let json = IrisDriveNativeProvider.list(dataDir: baseDirectory.path)
         guard let data = json.data(using: .utf8) else {
             throw providerError("provider returned invalid text")
         }
+        try runProviderMutation(json)
         let list = try JSONDecoder().decode(ProviderList.self, from: data)
         if let error = list.error, !error.isEmpty {
             throw providerError(error)
@@ -435,7 +432,7 @@ enum FileProviderStorage {
         return ProviderState(anchor: anchor, entries: list.entries, saveFolders: list.saveFolders ?? [])
     }
 
-    private static func item(for entry: ProviderEntry, anchor _: String) -> FileProviderItem {
+    private static func item(for entry: ProviderEntry) -> FileProviderItem {
         let isDirectory = entry.kind == "directory"
         let type = isDirectory
             ? UTType.folder
@@ -631,15 +628,15 @@ enum FileProviderStorage {
         (error as NSError).localizedDescription.contains("placeholder copy")
     }
 
-    private static func existingPlaceholderFamilyItem(for path: String) -> FileProviderItem? {
-        let state = loadStateForEnumeration()
+    private static func existingPlaceholderFamilyItem(for path: String) throws -> FileProviderItem? {
+        let state = try loadProviderBackedState()
         let family = collisionFamilyPath(path)
         guard let existing = state.entries.first(where: { entry in
             entry.kind == "file" && entry.size > 0 && collisionFamilyPath(entry.path) == family
         }) else {
             return nil
         }
-        return item(for: existing, anchor: state.anchor)
+        return item(for: existing)
     }
 
     private static func collisionFamilyPath(_ path: String) -> String {

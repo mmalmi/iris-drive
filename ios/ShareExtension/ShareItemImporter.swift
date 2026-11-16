@@ -23,6 +23,10 @@ final class ShareItemImporter {
     }
 
     func preferredTypeIdentifier(for provider: NSItemProvider) -> String? {
+        // Photos may offer a movie alongside its poster or a share link.
+        if let movie = provider.registeredTypeIdentifiers.first(where: {
+            UTType($0)?.conforms(to: .movie) == true
+        }) { return movie }
         let exactPreferred = [
             UTType.fileURL.identifier,
             UTType.url.identifier,
@@ -31,7 +35,7 @@ final class ShareItemImporter {
         if let typeIdentifier = exactPreferred.first(where: { provider.hasItemConformingToTypeIdentifier($0) }) {
             return typeIdentifier
         }
-        let concretePreferred = [UTType.image, UTType.movie, UTType.data]
+        let concretePreferred = [UTType.image, UTType.data]
         for contentType in concretePreferred {
             if let typeIdentifier = provider.registeredTypeIdentifiers.first(where: { identifier in
                 UTType(identifier)?.conforms(to: contentType) == true
@@ -53,6 +57,12 @@ final class ShareItemImporter {
             provider.loadFileRepresentation(forTypeIdentifier: typeIdentifier) { url, error in
                 if let url {
                     completion(.success(url as NSURL))
+                    return
+                }
+                // Loading a movie as an object can materialize its entire contents
+                // inside the share extension. Propagate the file-provider error.
+                if UTType(typeIdentifier)?.conforms(to: .movie) == true {
+                    completion(.failure(error ?? CocoaError(.fileReadUnknown)))
                     return
                 }
                 if let error {
@@ -206,14 +216,14 @@ final class ShareItemImporter {
             try importFileURL(referencedURL, declaredContentType: .data, provider: provider)
             return
         }
-        let fileType = UTType(filenameExtension: url.pathExtension)
+        let movie = declaredContentType.conforms(to: .movie)
+        let fileType = movie ? declaredContentType : UTType(filenameExtension: url.pathExtension)
             ?? (declaredContentType.conforms(to: .fileURL) ? .data : declaredContentType)
+        let name = movie
+            ? defaultName(provider: provider, fallbackName: url.lastPathComponent, contentType: fileType)
+            : fileURLDefaultName(provider: provider, fallbackName: url.lastPathComponent, contentType: fileType)
         try saveSharedFile(
-            fileURLDefaultName(
-                provider: provider,
-                fallbackName: url.lastPathComponent,
-                contentType: fileType
-            ),
+            name,
             fileType,
             try stageCopy(of: url)
         )

@@ -980,13 +980,8 @@ async fn current_root_observes_drive_roots(
                 || meta
                     .observed
                     .get(app_key_pubkey)
-                    .is_some_and(|observed| root_observation_covers(observed, root))
+                    .is_some_and(|observed| observed.covers(root))
         }))
-}
-
-fn root_observation_covers(observed: &RootObservation, root: &AppKeyRootRef) -> bool {
-    crate::root_meta::root_cid_identity_matches(&observed.root_cid, &root.root_cid)
-        || (root.app_key_seq > 0 && observed.app_key_seq > root.app_key_seq)
 }
 
 fn unix_now() -> i64 {

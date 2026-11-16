@@ -22,7 +22,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
         request: NSFileProviderRequest
     ) throws -> NSFileProviderEnumerator {
         storage.debugLog("enumerator requested container=\(containerItemIdentifier.rawValue)")
-        guard containerItemIdentifier == .rootContainer
+        guard try containerItemIdentifier == .rootContainer
             || containerItemIdentifier == .workingSet
             || containerItemIdentifier == .trashContainer
             || storage.item(for: containerItemIdentifier)?.contentType == .folder
@@ -39,12 +39,16 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
         completionHandler: @escaping (NSFileProviderItem?, Error?) -> Void
     ) -> Progress {
         let progress = Progress(totalUnitCount: 1)
-        if let item = storage.item(for: identifier) {
-            storage.debugLog("item resolved identifier=\(identifier.rawValue)")
-            completionHandler(item, nil)
-        } else {
-            storage.debugLog("item missing identifier=\(identifier.rawValue)")
-            completionHandler(nil, NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier))
+        do {
+            if let item = try storage.item(for: identifier) {
+                storage.debugLog("item resolved identifier=\(identifier.rawValue)")
+                completionHandler(item, nil)
+            } else {
+                storage.debugLog("item missing identifier=\(identifier.rawValue)")
+                completionHandler(nil, NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier))
+            }
+        } catch {
+            completionHandler(nil, error)
         }
         progress.completedUnitCount = 1
         return progress
@@ -60,7 +64,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
         do {
             storage.debugLog("fetch contents identifier=\(itemIdentifier.rawValue)")
             let url = try storage.contentsURL(for: itemIdentifier)
-            guard let item = storage.item(for: itemIdentifier) else {
+            guard let item = try storage.item(for: itemIdentifier) else {
                 throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: itemIdentifier)
             }
             completionHandler(url, item, nil)

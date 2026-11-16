@@ -77,6 +77,17 @@ final class ShareSaveModelTests: XCTestCase {
             return XCTFail("expected a failure, got \(model.phase)")
         }
     }
+
+    func testOfflineSaveExplainsWhereTheMovieIsAndKeepsTheSheetOpen() async {
+        let model = ShareSaveModel()
+        model.loaded([item("Trip.mov")], folders: [])
+        let pending = "Saved on this iPhone. Waiting to sync."
+        let closed = expectation(description: "dismissal")
+        closed.isInverted = true
+        model.save(using: { _, _ in }, sync: { pending }, done: { closed.fulfill() })
+        await fulfillment(of: [closed], timeout: 1.1)
+        XCTAssertEqual(model.phase, .saved(pending))
+    }
 }
 
 private final class Recorder: @unchecked Sendable {

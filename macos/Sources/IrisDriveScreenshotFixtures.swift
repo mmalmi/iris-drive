@@ -218,11 +218,11 @@ enum IrisDriveScreenshotFixtures {
             ),
         ]
         status.deviceStorage = IrisDriveDeviceStorage(json: [
-            "summary": "Your Drive is 12.4 GB in 3,210 files. All of it is on this device.",
+            "summary": "Your Drive is 12.4 GB in 3,210 files. Every Drive file is available offline on this device.",
             "devices": [
                 [
-                    "pubkey": "mac", "name": "This Mac", "is_current": true, "icon": "computer",
-                    "has_report": true, "held_label": "All of it", "holds_all": true,
+                    "pubkey": "fixture-mac", "npub": fakeNpub("mac"), "name": "This Mac", "is_current": true, "icon": "computer",
+                    "has_report": true, "held_label": "All Drive files available offline", "holds_all": true,
                     "held_permille": 1000, "space_label": "Uses 12.9 GB of 210.4 GB allowed",
                     "age_label": "Updated just now",
                     "folders": [
@@ -232,20 +232,20 @@ enum IrisDriveScreenshotFixtures {
                     ],
                 ],
                 [
-                    "pubkey": "iphone", "name": "iPhone", "icon": "phone", "has_report": true,
-                    "held_label": "1.1 GB · 8%", "held_permille": 88, "connected": true,
+                    "pubkey": "fixture-iphone", "npub": fakeNpub("iphone"), "name": "iPhone", "icon": "phone", "has_report": true,
+                    "held_label": "1.1 GB stored · 8% of Drive", "held_permille": 88, "connected": true,
                     "connection_label": "Connected", "sync_state": "in-sync", "sync_label": "In sync",
                     "space_label": "Uses 1.4 GB of 64.0 GB allowed", "age_label": "Updated 3 min ago",
                 ],
                 [
-                    "pubkey": "linux", "name": "Linux server", "icon": "computer", "has_report": true,
-                    "held_label": "All of it", "holds_all": true, "held_permille": 1000,
+                    "pubkey": "fixture-linux", "npub": fakeNpub("linux"), "name": "Linux server", "icon": "computer", "has_report": true,
+                    "held_label": "All Drive files available offline", "holds_all": true, "held_permille": 1000,
                     "connection_label": "Not connected", "sync_state": "behind",
                     "sync_label": "Missing recent changes", "space_label": "Uses 12.6 GB",
                     "age_label": "Updated 2 h ago",
                 ],
                 [
-                    "pubkey": "windows", "name": "Windows desktop", "has_report": false,
+                    "pubkey": "fixture-windows", "npub": fakeNpub("windows"), "name": "Windows desktop", "has_report": false,
                     "held_label": "No report yet", "connected": true, "connection_label": "Connected",
                 ],
             ],

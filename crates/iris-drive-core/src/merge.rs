@@ -25,7 +25,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::config::AppKeyRootRef;
 use crate::indexer::path_has_ignored_component;
-use crate::root_meta::root_cid_identity_matches;
+use crate::root_meta::{root_cid_identity_matches, root_reference_covers};
 
 /// Reserved top-level subdirectory inside any hashtree directory for
 /// htree-format metadata. Everything iris-drive (and future htree
@@ -688,6 +688,17 @@ pub(crate) fn root_relation(
     right_app_key: &str,
     right: &AppKeyRootRef,
 ) -> RootRelation {
+    if left_app_key == right_app_key
+        && left.app_key_seq > 0
+        && right.app_key_seq > 0
+        && left.app_key_seq != right.app_key_seq
+    {
+        return if left.app_key_seq > right.app_key_seq {
+            RootRelation::LeftDescends
+        } else {
+            RootRelation::RightDescends
+        };
+    }
     if root_cid_identity_matches(&left.root_cid, &right.root_cid) {
         return RootRelation::Same;
     }
@@ -718,9 +729,12 @@ fn root_observes(
     }
     if newer_root.parents.iter().any(|parent| {
         parent.app_key_pubkey == candidate_app_key_pubkey
-            && (root_cid_identity_matches(&parent.root_cid, &candidate_root.root_cid)
-                || (candidate_root.app_key_seq > 0
-                    && parent.app_key_seq > candidate_root.app_key_seq))
+            && root_reference_covers(
+                parent.app_key_seq,
+                &parent.root_cid,
+                candidate_root.app_key_seq,
+                &candidate_root.root_cid,
+            )
     }) {
         return true;
     }
@@ -728,8 +742,12 @@ fn root_observes(
         .observed
         .get(candidate_app_key_pubkey)
         .is_some_and(|o| {
-            root_cid_identity_matches(&o.root_cid, &candidate_root.root_cid)
-                || (candidate_root.app_key_seq > 0 && o.app_key_seq > candidate_root.app_key_seq)
+            root_reference_covers(
+                o.app_key_seq,
+                &o.root_cid,
+                candidate_root.app_key_seq,
+                &candidate_root.root_cid,
+            )
         })
 }
 

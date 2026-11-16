@@ -330,27 +330,38 @@ async fn a_folder_that_cannot_be_read_is_skipped_and_said() {
 fn the_storage_page_says_how_much_each_device_holds() {
     assert_eq!(
         holding_label(&report(&json!({ "held_files": 3, "held_bytes": 3000 }))),
-        "All of it"
+        "All Drive files available offline"
     );
-    assert_eq!(holding_label(&report(&json!({}))), "1000 B · 33%");
+    assert_eq!(
+        holding_label(&report(&json!({}))),
+        "1000 B stored · 33% of Drive"
+    );
     assert_eq!(
         holding_label(&report(&json!({ "held_bytes": 0, "held_files": 0 }))),
-        "None of it"
+        "No Drive data stored"
     );
     assert_eq!(
         holding_label(&report(&json!({ "held_bytes": 1, "file_bytes": 1000 }))),
-        "1 B · under 1%"
+        "1 B stored · under 1% of Drive"
     );
     assert_eq!(
         holding_label(&report(
             &json!({ "held_bytes": 3_221_225_472_u64, "file_bytes": 6_442_450_944_u64 })
         )),
-        "3.0 GB · 50%"
+        "3.0 GB stored · 50% of Drive"
     );
     assert_eq!(
         space_label(&report(&json!({}))),
         "Uses 4.9 KB of 9.8 KB allowed"
     );
+    let incomplete = report(&json!({
+        "held_files": 3, "held_bytes": 3000, "unread_folders": 1
+    }));
+    assert_eq!(
+        holding_label(&incomplete),
+        "2.9 KB stored · some folders unavailable"
+    );
+    assert_eq!(summary(&[row("Mac", true, Some(incomplete))]), "");
     let mut no_room = report(&json!({}));
     no_room.capacity_bytes = None;
     assert_eq!(space_label(&no_room), "Uses 4.9 KB");
@@ -372,24 +383,21 @@ fn the_storage_page_names_the_devices_that_hold_everything() {
     let all = report(&json!({ "held_files": 3, "held_bytes": 3000 }));
     assert_eq!(
         holders_sentence(&[row("Laptop", false, Some(all.clone()))]),
-        "All of it is on Laptop."
+        "Laptop has every Drive file available offline."
     );
     assert_eq!(
         holders_sentence(&[row("Laptop", true, Some(all.clone()))]),
-        "All of it is on this device."
+        "Every Drive file is available offline on this device."
     );
     assert_eq!(
         holders_sentence(&[row("Laptop", false, Some(report(&json!({}))))]),
-        "No device holds all of it."
+        ""
     );
     assert_eq!(
         summary(&[row("Mac", true, Some(all)), row("Phone", false, None)]),
-        "Your Drive is 2.9 KB in 3 files. All of it is on this device."
+        "Your Drive is 2.9 KB in 3 files. Every Drive file is available offline on this device."
     );
-    assert_eq!(
-        summary(&[row("Phone", false, None)]),
-        "Measuring how much of your Drive is here…"
-    );
+    assert_eq!(summary(&[row("Phone", false, None)]), "");
 }
 
 #[test]

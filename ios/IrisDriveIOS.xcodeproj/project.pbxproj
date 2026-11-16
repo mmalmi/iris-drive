@@ -24,6 +24,7 @@
 		413E8F55ECADA251FA095C78 /* IrisDriveNativeCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A215568D3B9E51946DE326 /* IrisDriveNativeCore.swift */; };
 		42DC352648243213A7638096 /* IrisDriveNativeCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A215568D3B9E51946DE326 /* IrisDriveNativeCore.swift */; };
 		43ED8C459203E2A04C503823 /* FileProviderItem.swift in Sources */ = {isa = PBXBuildFile; fileRef = C789203391687925DEAB3576 /* FileProviderItem.swift */; };
+		4411E2E3911454A457C7E0CE /* IrisDriveShareUpload.swift in Sources */ = {isa = PBXBuildFile; fileRef = E06AE6518FA615175347A2CF /* IrisDriveShareUpload.swift */; };
 		45ACE487D08A90186C70D195 /* ShareViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACA849B0E0B0455493C3B441 /* ShareViewController.swift */; };
 		46FB7CC3A4BBDB15C3882988 /* IrisDriveMobileBrowser.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C21C908DBB23960AAC56A6 /* IrisDriveMobileBrowser.swift */; };
 		475352EA0C4DBE384F2485B0 /* IrisWebGatewayRetryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9E4B164F4746113107B49D91 /* IrisWebGatewayRetryTests.swift */; };
@@ -37,7 +38,6 @@
 		58180F6A0DFE7A5CD8B32B6F /* IrisDriveDeviceApprovalUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0616E47A31E4975C0669AE51 /* IrisDriveDeviceApprovalUITests.swift */; };
 		601614B09B57DDD4F321FCAD /* IrisDriveAppStoreScreenshotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8D7AA29853DF8DF3A5364375 /* IrisDriveAppStoreScreenshotTests.swift */; };
 		61CFFFD32B41C23910D234F7 /* PhotoBackupLibrary.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA82862F4179D55F8E649031 /* PhotoBackupLibrary.swift */; };
-		63F3103E2F5D31EB3307DACE /* DeviceStorageDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 10D737E4801F0AE5BA45D2BC /* DeviceStorageDecodingTests.swift */; };
 		67DB67633A630D66C81425C8 /* IrisDriveShareLinks.swift in Sources */ = {isa = PBXBuildFile; fileRef = C316C3909E0EB1A1F95E66F8 /* IrisDriveShareLinks.swift */; };
 		67EC48DA8DFCEC820707F50B /* IrisDriveMobileBrowserDebug.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27F50A528A1A7D8F67198F84 /* IrisDriveMobileBrowserDebug.swift */; };
 		6D070FE16A7563F4606BA7A6 /* IrisDriveNativeCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 51A215568D3B9E51946DE326 /* IrisDriveNativeCore.swift */; };
@@ -64,8 +64,11 @@
 		CAE91FE838AF86B78E47EEB2 /* IrisDriveIOSApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 09D6DB93662CEF48C0C9A246 /* IrisDriveIOSApp.swift */; };
 		CEA258A8460E637231AFB3BC /* ShareSaveModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3CED4C5E84F31219B2961A1C /* ShareSaveModelTests.swift */; };
 		CF2234DAD4994BC3D9CDA1D8 /* ShareItemImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFFCB22B1FE65968BC0862BE /* ShareItemImporter.swift */; };
+		CFA32D35B4F05C78C46F0813 /* IrisDriveShareUpload.swift in Sources */ = {isa = PBXBuildFile; fileRef = E06AE6518FA615175347A2CF /* IrisDriveShareUpload.swift */; };
 		D3FE62286547E94FA6B5DDA5 /* IrisDriveBackgroundSync.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06140F5A8590769EE11B0EC6 /* IrisDriveBackgroundSync.swift */; };
 		D47A6409051387D5D36CEB1F /* IrisWebBrowserURLIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = 438598A8B3E5334B56EC8C2B /* IrisWebBrowserURLIdentity.swift */; };
+		D667425C2BFDF05FC7EEABD0 /* DeviceStorageDecodingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1B2CF9D1A2FAD787D2E272A0 /* DeviceStorageDecodingTests.swift */; };
+		D81A65E0ED5E4FF643CA7739 /* IrisDriveDeviceStorageSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5E8E28295E7E7A9B101E555D /* IrisDriveDeviceStorageSection.swift */; };
 		DAD4FC45FA4BFCF4DE027480 /* PhotoBackupSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0E96F2F1C4DA9ED64AC63644 /* PhotoBackupSection.swift */; };
 		DF01644D115BD8E0B2580704 /* ShareItemImporter.swift in Sources */ = {isa = PBXBuildFile; fileRef = DFFCB22B1FE65968BC0862BE /* ShareItemImporter.swift */; };
 		E53470B009860DC79FE39549 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = 6187EFB2F9F9102CE7BC1809 /* PrivacyInfo.xcprivacy */; };
@@ -73,7 +76,6 @@
 		EDB65234DF8B98FA5A85E5BF /* IrisDriveContentLinks.swift in Sources */ = {isa = PBXBuildFile; fileRef = C5776131C4E7DA77C3A533FB /* IrisDriveContentLinks.swift */; };
 		F41146F818216FEFA22D08D4 /* IrisDriveNativeFipsStatus.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABD444DC604210414F3FDE54 /* IrisDriveNativeFipsStatus.swift */; };
 		FCA07D9E0FCE8AD5D196A8CB /* browser-footer.html in Resources */ = {isa = PBXBuildFile; fileRef = 5F7984AB4A917CEB5A16EB9A /* browser-footer.html */; };
-		FE828F54D87AAAD2C337D4C5 /* IrisDriveDeviceStorageSection.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0D689A1C845B7D1C792218EE /* IrisDriveDeviceStorageSection.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -137,11 +139,10 @@
 		06141ABD59462D13F0F2BF8C /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		0616E47A31E4975C0669AE51 /* IrisDriveDeviceApprovalUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveDeviceApprovalUITests.swift; sourceTree = "<group>"; };
 		09D6DB93662CEF48C0C9A246 /* IrisDriveIOSApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveIOSApp.swift; sourceTree = "<group>"; };
-		0D689A1C845B7D1C792218EE /* IrisDriveDeviceStorageSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveDeviceStorageSection.swift; sourceTree = "<group>"; };
 		0E96F2F1C4DA9ED64AC63644 /* PhotoBackupSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoBackupSection.swift; sourceTree = "<group>"; };
 		0FAD09F152A81F2977621CC8 /* QRCodeScannerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QRCodeScannerView.swift; sourceTree = "<group>"; };
-		10D737E4801F0AE5BA45D2BC /* DeviceStorageDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceStorageDecodingTests.swift; sourceTree = "<group>"; };
 		1AFAFBCCA53880654AA26EBE /* IrisDrivePhotoBackup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDrivePhotoBackup.swift; sourceTree = "<group>"; };
+		1B2CF9D1A2FAD787D2E272A0 /* DeviceStorageDecodingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeviceStorageDecodingTests.swift; sourceTree = "<group>"; };
 		1ED4CE5456B6960701BBD801 /* ShareSaveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareSaveView.swift; sourceTree = "<group>"; };
 		24260482AACE6AF69CE462AF /* IrisDriveIOS.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = IrisDriveIOS.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		27F50A528A1A7D8F67198F84 /* IrisDriveMobileBrowserDebug.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveMobileBrowserDebug.swift; sourceTree = "<group>"; };
@@ -157,6 +158,7 @@
 		51A215568D3B9E51946DE326 /* IrisDriveNativeCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveNativeCore.swift; sourceTree = "<group>"; };
 		57ECD37803B00AFA445E6080 /* StartupLoadingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StartupLoadingView.swift; sourceTree = "<group>"; };
 		59222C8CE8FD8C001461A472 /* FileProvider.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = FileProvider.entitlements; sourceTree = "<group>"; };
+		5E8E28295E7E7A9B101E555D /* IrisDriveDeviceStorageSection.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveDeviceStorageSection.swift; sourceTree = "<group>"; };
 		5F7984AB4A917CEB5A16EB9A /* browser-footer.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "browser-footer.html"; sourceTree = "<group>"; };
 		5FC65A0B497BC4727996F907 /* external-links.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "external-links.html"; sourceTree = "<group>"; };
 		6187EFB2F9F9102CE7BC1809 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
@@ -191,6 +193,7 @@
 		D4FC18243848BE0ED14785D0 /* IrisDriveShareExtension.appex */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = "wrapper.app-extension"; path = IrisDriveShareExtension.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		DBC171DD1C2DE89B561ADE85 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		DFFCB22B1FE65968BC0862BE /* ShareItemImporter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShareItemImporter.swift; sourceTree = "<group>"; };
+		E06AE6518FA615175347A2CF /* IrisDriveShareUpload.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveShareUpload.swift; sourceTree = "<group>"; };
 		E41F97CC4C0E1F6DFCF75979 /* keyboard-viewport.html */ = {isa = PBXFileReference; lastKnownFileType = text.html; path = "keyboard-viewport.html"; sourceTree = "<group>"; };
 		E557F08ED7154F5CEFEE24FB /* IrisDriveMobileModel+Audit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "IrisDriveMobileModel+Audit.swift"; sourceTree = "<group>"; };
 		E6900D84600C036027662156 /* IrisDriveDeviceModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IrisDriveDeviceModel.swift; sourceTree = "<group>"; };
@@ -207,7 +210,7 @@
 			isa = PBXGroup;
 			children = (
 				BB4F84F93BE16A87E321C9B7 /* ApprovalReceiptForegroundSyncTests.swift */,
-				10D737E4801F0AE5BA45D2BC /* DeviceStorageDecodingTests.swift */,
+				1B2CF9D1A2FAD787D2E272A0 /* DeviceStorageDecodingTests.swift */,
 				9E4B164F4746113107B49D91 /* IrisWebGatewayRetryTests.swift */,
 				4134304A6A38E20AC5C0FFFF /* PhotoBackupTests.swift */,
 				CE2C4253593D33F7F23D75FE /* ShareItemImporterTests.swift */,
@@ -276,7 +279,7 @@
 				C5776131C4E7DA77C3A533FB /* IrisDriveContentLinks.swift */,
 				75CEF461BE73AC852CC85DE5 /* IrisDriveDeviceApproval.swift */,
 				E6900D84600C036027662156 /* IrisDriveDeviceModel.swift */,
-				0D689A1C845B7D1C792218EE /* IrisDriveDeviceStorageSection.swift */,
+				5E8E28295E7E7A9B101E555D /* IrisDriveDeviceStorageSection.swift */,
 				09D6DB93662CEF48C0C9A246 /* IrisDriveIOSApp.swift */,
 				31FD6FE77F71CF8F6241C514 /* IrisDriveMobileBackups.swift */,
 				B2C21C908DBB23960AAC56A6 /* IrisDriveMobileBrowser.swift */,
@@ -289,6 +292,7 @@
 				050F38C17BF67B7645C1572B /* IrisDriveRootView.swift */,
 				B2ADCBBB6662B4115530117E /* IrisDriveScreenshotFixture.swift */,
 				C316C3909E0EB1A1F95E66F8 /* IrisDriveShareLinks.swift */,
+				E06AE6518FA615175347A2CF /* IrisDriveShareUpload.swift */,
 				05D4B51FEA3B8CED41DCF37E /* IrisDriveTypes.swift */,
 				438598A8B3E5334B56EC8C2B /* IrisWebBrowserURLIdentity.swift */,
 				F79643DD70FB4DF39C1B40B3 /* PhotoBackupExport.swift */,
@@ -590,7 +594,7 @@
 				EDB65234DF8B98FA5A85E5BF /* IrisDriveContentLinks.swift in Sources */,
 				3F3C6499B85CC69AEC87AE4C /* IrisDriveDeviceApproval.swift in Sources */,
 				2C6EA80FEA9DF3ABA0D77907 /* IrisDriveDeviceModel.swift in Sources */,
-				FE828F54D87AAAD2C337D4C5 /* IrisDriveDeviceStorageSection.swift in Sources */,
+				D81A65E0ED5E4FF643CA7739 /* IrisDriveDeviceStorageSection.swift in Sources */,
 				CAE91FE838AF86B78E47EEB2 /* IrisDriveIOSApp.swift in Sources */,
 				0E0EA5ABF3A312874452F666 /* IrisDriveMobileBackups.swift in Sources */,
 				46FB7CC3A4BBDB15C3882988 /* IrisDriveMobileBrowser.swift in Sources */,
@@ -603,6 +607,7 @@
 				4BEA90FF19E22C4AC1DBD5BF /* IrisDriveRootView.swift in Sources */,
 				559A9A8C3AF356DC45265B54 /* IrisDriveScreenshotFixture.swift in Sources */,
 				67DB67633A630D66C81425C8 /* IrisDriveShareLinks.swift in Sources */,
+				4411E2E3911454A457C7E0CE /* IrisDriveShareUpload.swift in Sources */,
 				894AF158E3CF979243462B09 /* IrisDriveTypes.swift in Sources */,
 				D47A6409051387D5D36CEB1F /* IrisWebBrowserURLIdentity.swift in Sources */,
 				21F6212330C10026792F7264 /* PhotoBackupExport.swift in Sources */,
@@ -639,7 +644,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				1F2E01B263322F0FABB999B0 /* ApprovalReceiptForegroundSyncTests.swift in Sources */,
-				63F3103E2F5D31EB3307DACE /* DeviceStorageDecodingTests.swift in Sources */,
+				D667425C2BFDF05FC7EEABD0 /* DeviceStorageDecodingTests.swift in Sources */,
 				475352EA0C4DBE384F2485B0 /* IrisWebGatewayRetryTests.swift in Sources */,
 				AA158B7D94AE797B73C650B8 /* PhotoBackupTests.swift in Sources */,
 				DF01644D115BD8E0B2580704 /* ShareItemImporter.swift in Sources */,
@@ -656,6 +661,7 @@
 				43ED8C459203E2A04C503823 /* FileProviderItem.swift in Sources */,
 				89D8B799C3537B200EACD87A /* FileProviderStorage.swift in Sources */,
 				42DC352648243213A7638096 /* IrisDriveNativeCore.swift in Sources */,
+				CFA32D35B4F05C78C46F0813 /* IrisDriveShareUpload.swift in Sources */,
 				CF2234DAD4994BC3D9CDA1D8 /* ShareItemImporter.swift in Sources */,
 				95283E3038CB92B5F82EC96E /* ShareSaveView.swift in Sources */,
 				45ACE487D08A90186C70D195 /* ShareViewController.swift in Sources */,
@@ -741,7 +747,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1045;
+				CURRENT_PROJECT_VERSION = 1046;
 				DEBUG_INFORMATION_FORMAT = dwarf;
 				DEVELOPMENT_TEAM = 8G9P8AN75D;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
@@ -769,7 +775,7 @@
 				IRIS_DRIVE_IOS_SHARE_EXTENSION_TESTS_BUNDLE_ID = fi.siriusbusiness.drive.ShareExtensionTests;
 				IRIS_DRIVE_IOS_SHARE_SOURCE_BUNDLE_ID = fi.siriusbusiness.drive.ShareSource;
 				IRIS_DRIVE_IOS_UI_TESTS_BUNDLE_ID = fi.siriusbusiness.drive.UITests;
-				MARKETING_VERSION = 0.1.44;
+				MARKETING_VERSION = 0.1.45;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -897,7 +903,7 @@
 				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
 				CODE_SIGN_STYLE = Automatic;
 				COPY_PHASE_STRIP = NO;
-				CURRENT_PROJECT_VERSION = 1045;
+				CURRENT_PROJECT_VERSION = 1046;
 				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
 				DEVELOPMENT_TEAM = 8G9P8AN75D;
 				ENABLE_NS_ASSERTIONS = NO;
@@ -919,7 +925,7 @@
 				IRIS_DRIVE_IOS_SHARE_EXTENSION_TESTS_BUNDLE_ID = fi.siriusbusiness.drive.ShareExtensionTests;
 				IRIS_DRIVE_IOS_SHARE_SOURCE_BUNDLE_ID = fi.siriusbusiness.drive.ShareSource;
 				IRIS_DRIVE_IOS_UI_TESTS_BUNDLE_ID = fi.siriusbusiness.drive.UITests;
-				MARKETING_VERSION = 0.1.44;
+				MARKETING_VERSION = 0.1.45;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				PRODUCT_NAME = "$(TARGET_NAME)";

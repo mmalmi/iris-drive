@@ -9,6 +9,9 @@ private func irisDriveAppNew(
 @_silgen_name("iris_drive_app_free")
 private func irisDriveAppFree(_ handle: UnsafeMutableRawPointer?)
 
+@_silgen_name("iris_drive_app_set_gateway_foreground")
+private func irisDriveSetGatewayForeground(_ handle: UnsafeMutableRawPointer?, _ foreground: UInt8)
+
 @_silgen_name("iris_drive_app_state_json")
 private func irisDriveAppStateJson(_ handle: UnsafeMutableRawPointer?) -> UnsafeMutablePointer<CChar>?
 
@@ -67,6 +70,12 @@ private func irisDriveProviderWriteJson(
     _ sourcePath: UnsafePointer<CChar>
 ) -> UnsafeMutablePointer<CChar>?
 
+@_silgen_name("iris_drive_provider_reimport_json")
+private func irisDriveProviderReimportJson(
+    _ dataDir: UnsafePointer<CChar>, _ path: UnsafePointer<CChar>,
+    _ source: UnsafePointer<CChar>, _ directory: Bool
+) -> UnsafeMutablePointer<CChar>?
+
 @_silgen_name("iris_drive_provider_mkdir_json")
 private func irisDriveProviderMkdirJson(
     _ dataDir: UnsafePointer<CChar>,
@@ -86,11 +95,10 @@ private func irisDriveProviderRenameJson(
     _ newPath: UnsafePointer<CChar>
 ) -> UnsafeMutablePointer<CChar>?
 
-@_silgen_name("iris_drive_provider_import_shared_file_json")
-private func irisDriveProviderImportSharedFileJson(
-    _ dataDir: UnsafePointer<CChar>,
-    _ displayName: UnsafePointer<CChar>,
-    _ sourcePath: UnsafePointer<CChar>
+@_silgen_name("iris_drive_share_stage_file_json")
+private func irisDriveShareStageFile(
+    _ directory: UnsafePointer<CChar>, _ folder: UnsafePointer<CChar>,
+    _ name: UnsafePointer<CChar>, _ source: UnsafePointer<CChar>
 ) -> UnsafeMutablePointer<CChar>?
 
 @_silgen_name("iris_drive_provider_resolve_path_json")
@@ -128,6 +136,10 @@ final class IrisDriveNativeCore {
 
     deinit {
         irisDriveAppFree(handle)
+    }
+
+    func setGatewayForeground(_ foreground: Bool) {
+        irisDriveSetGatewayForeground(handle, foreground ? 1 : 0)
     }
 
     func stateJson() -> String {
@@ -308,6 +320,16 @@ enum IrisDriveNativeProvider {
         }
     }
 
+    static func reimport(dataDir: String, path: String, contents: URL?, directory: Bool) -> String {
+        dataDir.withCString { dataDir in
+            path.withCString { path in
+                (contents?.path ?? "").withCString { source in
+                    takeString(irisDriveProviderReimportJson(dataDir, path, source, directory))
+                }
+            }
+        }
+    }
+
     static func mkdir(dataDir: String, path: String) -> String {
         dataDir.withCString { dataDirPointer in
             path.withCString { pathPointer in
@@ -334,16 +356,8 @@ enum IrisDriveNativeProvider {
         }
     }
 
-    static func importSharedFile(dataDir: String, displayName: String, sourcePath: String) -> String {
-        dataDir.withCString { dataDirPointer in
-            displayName.withCString { namePointer in
-                sourcePath.withCString { sourcePointer in
-                    takeString(
-                        irisDriveProviderImportSharedFileJson(dataDirPointer, namePointer, sourcePointer)
-                    )
-                }
-            }
-        }
+    static func stageSharedFile(dataDir: String, parent: String, displayName: String, sourcePath: String) -> String {
+        takeString(irisDriveShareStageFile(dataDir, parent, displayName, sourcePath))
     }
 
     static func resolvePath(

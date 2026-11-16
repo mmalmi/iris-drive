@@ -20,7 +20,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
         for containerItemIdentifier: NSFileProviderItemIdentifier,
         request: NSFileProviderRequest
     ) throws -> NSFileProviderEnumerator {
-        guard containerItemIdentifier == .rootContainer
+        guard try containerItemIdentifier == .rootContainer
             || containerItemIdentifier == .workingSet
             || containerItemIdentifier == .trashContainer
             || FileProviderStorage.item(for: containerItemIdentifier)?.contentType == .folder
@@ -36,10 +36,14 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
         completionHandler: @escaping (NSFileProviderItem?, Error?) -> Void
     ) -> Progress {
         let progress = Progress(totalUnitCount: 1)
-        if let item = FileProviderStorage.item(for: identifier) {
-            completionHandler(item, nil)
-        } else {
-            completionHandler(nil, NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier))
+        do {
+            if let item = try FileProviderStorage.item(for: identifier) {
+                completionHandler(item, nil)
+            } else {
+                completionHandler(nil, NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier))
+            }
+        } catch {
+            completionHandler(nil, error)
         }
         progress.completedUnitCount = 1
         return progress
@@ -54,7 +58,7 @@ final class FileProviderExtension: NSObject, NSFileProviderReplicatedExtension, 
         let progress = Progress(totalUnitCount: 1)
         do {
             let url = try FileProviderStorage.contentsURL(for: itemIdentifier)
-            let item = FileProviderStorage.item(for: itemIdentifier)
+            let item = try FileProviderStorage.item(for: itemIdentifier)
             completionHandler(url, item, nil)
         } catch {
             completionHandler(nil, nil, error)

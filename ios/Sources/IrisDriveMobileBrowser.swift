@@ -1,6 +1,24 @@
 import Foundation
 import WebKit
 
+/// Keeps the app runnable until the embedded gateway closes its shared-container databases.
+@MainActor
+final class IrisGatewayShutdownTime {
+    private var task = UIBackgroundTaskIdentifier.invalid
+
+    init() {
+        task = UIApplication.shared.beginBackgroundTask(withName: "Close Drive gateway") { [weak self] in
+            self?.end()
+        }
+    }
+
+    func end() {
+        guard task != .invalid else { return }
+        UIApplication.shared.endBackgroundTask(task)
+        task = .invalid
+    }
+}
+
 private let irisNativeBrowserGatewayStatusFileName = "native-browser-gateway-status.json"
 
 struct IrisNativeBrowserGatewayStatus: Decodable {

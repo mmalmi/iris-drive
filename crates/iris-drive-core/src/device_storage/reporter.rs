@@ -25,10 +25,10 @@ use anyhow::{Context, Result};
 use nostr_sdk::{Client, Event};
 
 use super::event::build_device_storage_event;
-use super::measure::{HoldingCache, measure_holding, root_hex};
-use super::report::{DeviceStorageFiles, DeviceStorageReport, current_app, report_moved};
+use super::measure::HoldingCache;
+use super::report::{DeviceStorageReport, report_moved};
 use super::state::{DeviceStorageState, SentReport, profile_devices, update_device_storage_state};
-use super::{disk, unix_now};
+use super::unix_now;
 use crate::config::AppConfig;
 use crate::paths::{config_path_in, key_path_in};
 use crate::{AppKey, Daemon, PRIMARY_DRIVE_ID, ProfileState};
@@ -41,7 +41,7 @@ const AFTER_CHANGE: Duration = Duration::from_mins(10);
 const BACKGROUND_GAP: Duration = Duration::from_hours(1);
 /// A folder counted longer ago than this is counted again, for content
 /// fetched or removed since.
-const FOLDER_MAX_AGE_MS: u64 = 24 * 60 * 60 * 1000;
+pub(super) const FOLDER_MAX_AGE_MS: u64 = 24 * 60 * 60 * 1000;
 /// The versions taken in are sent this long after taking one in.
 const SEEN_AFTER: Duration = Duration::from_secs(15);
 /// A report is measured and sent again after this long even when nothing moved.
@@ -179,8 +179,10 @@ impl DeviceStorageReporter {
                 *self = Self::new(&self.config_dir);
             }
             self.account = account;
-            // Soon after starting only when it has not reported for a day.
-            if !overdue && self.measure_at.is_some_and(|at| at > now) {
+            // A new device needs a local result on its first tick.
+            if stored.own.is_none() {
+                self.measure_at = Some(now);
+            } else if !overdue && self.measure_at.is_some_and(|at| at > now) {
                 self.measure_at = None;
             }
         }
@@ -204,13 +206,24 @@ impl DeviceStorageReporter {
         }
         let report = if self.measure_at.is_some_and(|at| at <= now) {
             self.measure_at = None;
-            let measured = self.measure(&config, state, &devices).await;
-            if measured.is_none() {
-                self.measure_at = Some(now + NOT_READABLE_RETRY);
-            } else {
-                self.measured_at = Some(now);
-            }
-            measured
+            let daemon = Daemon::open_with_config(&self.config_dir, config.clone());
+            self.measure_at = Some(now + NOT_READABLE_RETRY);
+            let daemon = daemon.context("opening local Drive for storage measurement")?;
+            let (_, root, _) = daemon
+                .provider_projection()
+                .await
+                .context("reading Drive for storage measurement")?;
+            let report = super::local::measure_root(
+                &daemon,
+                &root.root_cid,
+                state,
+                &devices,
+                &mut self.cache,
+            )
+            .await?;
+            self.measured_at = Some(now);
+            self.measure_at = None;
+            Some(report)
         } else if self.seen_at.is_some_and(|at| at <= now) {
             self.seen_at = None;
             stored.own.clone().map(|own| DeviceStorageReport {
@@ -252,54 +265,6 @@ impl DeviceStorageReporter {
             Ok::<_, crate::sealed_content::SealedContentError>(Some(event))
         })??;
         Ok(event)
-    }
-
-    async fn measure(
-        &mut self,
-        config: &AppConfig,
-        state: &ProfileState,
-        devices: &[String],
-    ) -> Option<DeviceStorageReport> {
-        let daemon = Daemon::open_with_config(&self.config_dir, config.clone()).ok()?;
-        let (_, root, _) = daemon.provider_projection().await.ok()?;
-        let now_ms = unix_now().saturating_mul(1000);
-        let holding = measure_holding(
-            daemon.tree(),
-            &root.root_cid,
-            &mut self.cache,
-            Some(FOLDER_MAX_AGE_MS),
-            now_ms,
-        )
-        .await;
-        let blocks_dir = daemon.blocks_dir().to_path_buf();
-        let (stored_bytes, free) = tokio::task::spawn_blocking(move || {
-            (
-                disk::stored_bytes(&blocks_dir),
-                disk::free_bytes(&blocks_dir),
-            )
-        })
-        .await
-        .ok()?;
-        Some(DeviceStorageReport {
-            v: 1,
-            measured_at: unix_now(),
-            app: current_app().to_owned(),
-            root: root_hex(&root.root_cid),
-            files: holding.total.files,
-            file_bytes: holding.total.bytes,
-            held_files: holding.total.held_files,
-            held_bytes: holding.total.held_bytes,
-            stored_bytes,
-            capacity_bytes: free.map(|free| stored_bytes.saturating_add(free)),
-            unread_folders: (holding.unread_folders > 0).then_some(holding.unread_folders),
-            seen: Some(seen_versions(config, state, devices)),
-            loose: Some(DeviceStorageFiles {
-                files: holding.loose.files,
-                bytes: holding.loose.bytes,
-                held: holding.loose.held_bytes,
-            }),
-            folders: Some(holding.folders),
-        })
     }
 }
 

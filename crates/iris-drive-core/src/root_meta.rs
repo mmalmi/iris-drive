@@ -26,6 +26,21 @@ pub fn root_cid_identity_matches(left: &str, right: &str) -> bool {
         .is_some_and(|(left, right)| left.hash == right.hash)
 }
 
+/// An observation of an earlier publication cannot cover a later one that
+/// reused the same tree but supplied new causal observations.
+pub(crate) fn root_reference_covers(
+    sequence: u64,
+    cid: &str,
+    candidate_sequence: u64,
+    candidate_cid: &str,
+) -> bool {
+    if sequence == 0 || candidate_sequence == 0 || sequence == candidate_sequence {
+        root_cid_identity_matches(cid, candidate_cid)
+    } else {
+        sequence > candidate_sequence
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RootParent {
     #[serde(alias = "device_id")]
@@ -40,6 +55,17 @@ pub struct RootObservation {
     #[serde(alias = "device_seq")]
     pub app_key_seq: u64,
     pub root_cid: String,
+}
+
+impl RootObservation {
+    pub(crate) fn covers(&self, root: &crate::config::AppKeyRootRef) -> bool {
+        root_reference_covers(
+            self.app_key_seq,
+            &self.root_cid,
+            root.app_key_seq,
+            &root.root_cid,
+        )
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

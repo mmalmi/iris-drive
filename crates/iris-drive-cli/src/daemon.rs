@@ -908,8 +908,9 @@ pub(crate) async fn relay_status_payload(client: &nostr_sdk::Client) -> Vec<serd
 pub(crate) async fn fips_block_sync_status(sync: Option<&FsFipsBlockSync>) -> Option<Value> {
     let sync = sync?;
     let transport = sync.transport_settings();
-    let direct_devices = sync.connected_peer_ids().await;
-    let mesh_devices = sync.mesh_peer_ids().await;
+    let presence = sync.peer_presence().await;
+    let direct_devices = presence.direct;
+    let mesh_devices = presence.mesh;
     let online_devices = fips_online_device_ids(&direct_devices, &mesh_devices);
     Some(json!({
         "endpoint_npub": sync.endpoint_npub(),
@@ -931,7 +932,7 @@ pub(crate) async fn fips_block_sync_status(sync: Option<&FsFipsBlockSync>) -> Op
         "direct_devices": direct_devices.clone(),
         "direct_peers": direct_devices.clone(),
         "connected_peers": direct_devices,
-        "peer_statuses": sync.fips_peer_statuses().await,
+        "peer_statuses": presence.statuses,
         "relay_statuses": sync.fips_relay_statuses().await,
     }))
 }

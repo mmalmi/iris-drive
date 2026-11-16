@@ -51,7 +51,16 @@ async fn a_device_reports_what_it_holds_and_shows_what_the_others_hold() {
     let profile = account.state.root_scope_id();
 
     let mut reporter = DeviceStorageReporter::new(dir.path());
-    reporter.measure_now();
+    let pending = device_storage_view(
+        dir.path(),
+        &config,
+        &account.state,
+        |_| None,
+        |_| false,
+        now(),
+    );
+    assert_eq!(pending.summary, "");
+    assert_eq!(pending.devices[0].age_label, "");
     let event = reporter
         .due_event()
         .await
@@ -93,7 +102,7 @@ async fn a_device_reports_what_it_holds_and_shows_what_the_others_hold() {
     let config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
     let theirs = read_device_storage_report(&serde_json::json!({
         "v": 1, "measured_at": now(), "app": "web", "root": "ab".repeat(32),
-        "files": 2, "file_bytes": 300_005, "held_files": 1, "held_bytes": 5,
+        "files": 2, "file_bytes": 10, "held_files": 1, "held_bytes": 5,
         "stored_bytes": 9000, "capacity_bytes": 1_000_000_000_u64, "seen": { account.state.app_key_pubkey.clone(): 1 },
     }))
     .unwrap();
@@ -122,7 +131,7 @@ async fn a_device_reports_what_it_holds_and_shows_what_the_others_hold() {
     let view = device_storage_view(dir.path(), &config, state, |_| None, |_| false, now());
     assert_eq!(
         view.summary,
-        "Your Drive is 293.0 KB in 2 files. All of it is on this device."
+        "Your Drive is 293.0 KB in 2 files. Every Drive file is available offline on this device."
     );
     let rows = view
         .devices
@@ -135,11 +144,12 @@ async fn a_device_reports_what_it_holds_and_shows_what_the_others_hold() {
             )
         })
         .collect::<Vec<_>>();
+    assert_eq!(view.devices[1].held_permille, 500);
     assert_eq!(
         rows,
         vec![
-            (true, "All of it", ""),
-            (false, "5 B · under 1%", "In sync")
+            (true, "All Drive files available offline", ""),
+            (false, "5 B stored · 50% of Drive", "In sync")
         ]
     );
 

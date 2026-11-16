@@ -96,7 +96,7 @@ else:
         failures.append("foreground drive sync throttle must only gate native sync, not visible refresh.")
 
 approve_match = re.search(
-    r"func approveDevice\(request: String, label: String\) \{(?P<body>.*?)\n    func rejectDevice",
+    r"func approveDevice\(request: String, label: String\) async \{(?P<body>.*?)\n    func rejectDevice",
     model,
     flags=re.S,
 )
@@ -105,7 +105,7 @@ if not approve_match:
 else:
     approve_body = approve_match.group("body")
     for token in (
-        'dispatch([',
+        'await dispatchRosterAction([',
         'scheduleBackgroundSyncIfNeeded()',
         'lastForegroundDriveSyncStartedAt = Date.distantPast',
         'syncOnceIfRunning()',
@@ -114,6 +114,19 @@ else:
     ):
         if token not in approve_body:
             failures.append(f"iOS approveDevice must wake approval publishing; missing: {token}")
+
+roster_match = re.search(r"func dispatchRosterAction\([^\n]+\{(?P<body>.*?)\n    \}", model, flags=re.S)
+if not roster_match or "on: rosterQueue" not in roster_match.group("body"):
+    failures.append("Roster actions must run on their own queue so network sync cannot delay device approval.")
+
+if "reimportItems(below: .rootContainer)" in model:
+    failures.append("Ordinary Files refresh or open must not rebuild the domain and replay all cached files.")
+if "domain.userEnabled" not in model:
+    failures.append("Files registration must respect whether the location is enabled in Files.")
+
+for method in ("ensureFileProviderDomain", "removeFileProviderDomain", "signalFileProviderIfNeeded"):
+    if not re.search(rf"func {method}\([^\n]*\) \{{\s+guard !IrisDriveSharedContainer.isolatedBrowserProbe", model):
+        failures.append(f"The disposable browser probe must leave the installed Files domain alone in {method}.")
 
 setup_match = re.search(
     r"private struct SetupWelcomeView: View \{(?P<body>.*?)\nprivate struct ",

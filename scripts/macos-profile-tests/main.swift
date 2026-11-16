@@ -64,6 +64,17 @@ check(!secondStorage.hasStoredSnapshot() && !mainStorage.hasStoredSnapshot(), "s
 secondStorage.recordSnapshot(items: [.trash()], anchor: NSFileProviderSyncAnchor(Data("second".utf8)))
 check(firstStorage.storedSnapshotIdentifiers() == Set([NSFileProviderItemIdentifier.rootContainer.rawValue]), "second domain overwrote first snapshot")
 check(secondStorage.storedSnapshotIdentifiers() == Set([NSFileProviderItemIdentifier.trashContainer.rawValue]), "second snapshot missing")
+let firstAnchor = NSFileProviderSyncAnchor(Data("first".utf8))
+let nextAnchor = NSFileProviderSyncAnchor(Data("next".utf8))
+let matchingIDs = try firstStorage.snapshotIdentifiers(from: firstAnchor, current: nextAnchor)
+check(matchingIDs == [.init(NSFileProviderItemIdentifier.rootContainer.rawValue)], "snapshot did not match the requested baseline")
+do {
+    _ = try firstStorage.snapshotIdentifiers(from: nextAnchor, current: firstAnchor)
+    fatalError("unknown baseline reported an empty change history")
+} catch let error as NSError {
+    check(error.domain == NSFileProviderErrorDomain && error.code == NSFileProviderError.syncAnchorExpired.rawValue,
+          "unknown baseline produced the wrong File Provider error")
+}
 let unchangedMain = try Data(contentsOf: shared.appendingPathComponent("fileprovider-runtime.json"))
 check(unchangedMain == mainBytes, "default runtime was modified")
 

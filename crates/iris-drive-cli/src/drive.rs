@@ -377,6 +377,44 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     })
                 );
             }
+            ProviderCmd::Reimport {
+                path,
+                source,
+                directory,
+            } => {
+                use iris_drive_core::provider::reimport::{Reimport, reimport_item};
+
+                let path = normalize_provider_path(&path)?;
+                let outcome = reimport_item(
+                    daemon.tree(),
+                    &provider,
+                    &path,
+                    directory,
+                    source.as_deref(),
+                    || {
+                        iris_drive_core::shared_content::ensure_shared_path_writable(
+                            daemon.config(),
+                            &path,
+                        )
+                    },
+                )
+                .await?;
+                if matches!(outcome, Reimport::Created) {
+                    stage_provider_mutation(
+                        &daemon,
+                        mutation_lock,
+                        &provider,
+                        &path,
+                        tombstone_base_root,
+                        provider_mutation_tombstone_paths(
+                            staged_root.as_ref(),
+                            BTreeSet::from([path.clone()]),
+                        ),
+                    )
+                    .await?;
+                }
+                println!("{}", json!(outcome));
+            }
             ProviderCmd::Write {
                 base_root_cid: _,
                 path,
@@ -400,7 +438,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     elapsed_ms = phase.elapsed().as_millis(),
                     "provider command wrote file"
                 );
-                print_provider_mutation(
+                let report = stage_provider_mutation(
                     &daemon,
                     mutation_lock,
                     &provider,
@@ -412,6 +450,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     ),
                 )
                 .await?;
+                println!("{report}");
             }
             ProviderCmd::Mkdir {
                 base_root_cid: _,
@@ -424,7 +463,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     elapsed_ms = phase.elapsed().as_millis(),
                     "provider command created directory"
                 );
-                print_provider_mutation(
+                let report = stage_provider_mutation(
                     &daemon,
                     mutation_lock,
                     &provider,
@@ -436,6 +475,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     ),
                 )
                 .await?;
+                println!("{report}");
             }
             ProviderCmd::Delete {
                 base_root_cid: _,
@@ -449,7 +489,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     elapsed_ms = phase.elapsed().as_millis(),
                     "provider command deleted path"
                 );
-                print_provider_mutation(
+                let report = stage_provider_mutation(
                     &daemon,
                     mutation_lock,
                     &provider,
@@ -458,6 +498,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     provider_mutation_tombstone_paths(staged_root.as_ref(), deleted_paths),
                 )
                 .await?;
+                println!("{report}");
             }
             ProviderCmd::Rename {
                 base_root_cid: _,
@@ -472,7 +513,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     elapsed_ms = phase.elapsed().as_millis(),
                     "provider command renamed path"
                 );
-                print_provider_mutation(
+                let report = stage_provider_mutation(
                     &daemon,
                     mutation_lock,
                     &provider,
@@ -484,6 +525,7 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     ),
                 )
                 .await?;
+                println!("{report}");
             }
         }
 
@@ -495,6 +537,7 @@ fn provider_command_is_mutation(command: &ProviderCmd) -> bool {
     matches!(
         command,
         ProviderCmd::Write { .. }
+            | ProviderCmd::Reimport { .. }
             | ProviderCmd::Mkdir { .. }
             | ProviderCmd::Delete { .. }
             | ProviderCmd::Rename { .. }
@@ -534,7 +577,7 @@ async fn provider_entries(
     let mut entries = Vec::new();
     let mut stack = vec![(String::new(), root.clone())];
     while let Some((parent, dir_cid)) = stack.pop() {
-        let mut children = tree.list_directory(&dir_cid).await?;
+        let mut children = tree.list_directory_required(&dir_cid).await?;
         children.sort_by(|a, b| a.name.cmp(&b.name));
         for child in children {
             let path = if parent.is_empty() {
@@ -650,14 +693,14 @@ pub(crate) async fn rename_provider_path(
     shared_rename_provider_path(provider, old_path, new_path).await
 }
 
-async fn print_provider_mutation(
+async fn stage_provider_mutation(
     daemon: &Daemon,
     mutation_lock: Option<ConfigMutationLock>,
     provider: &HashTreeProviderFs<FsBlobStore>,
     changed_path: &str,
     tombstone_base_root: Option<Cid>,
     tombstone_paths: BTreeSet<String>,
-) -> Result<()> {
+) -> Result<Value> {
     let phase = std::time::Instant::now();
     let root = provider.current_root().await;
     tracing::debug!(
@@ -729,17 +772,13 @@ async fn print_provider_mutation(
         staged = woke,
         "provider command staged provider root"
     );
-    println!(
-        "{}",
-        json!({
+    Ok(json!({
             "path": changed_path,
             "root_cid": root_cid,
             "file_count": file_count,
             "top_level_entries": top_level_entries,
             "staged": woke,
-        })
-    );
-    Ok(())
+    }))
 }
 
 async fn wake_provider_root_publisher(config_dir: &Path, payload: Option<Value>) -> Result<bool> {

@@ -130,21 +130,6 @@ pub(crate) fn native_provider_resolve_path_json(
     }
 }
 
-pub(crate) fn native_provider_compose_path_json(
-    parent_path: &str,
-    display_name: &str,
-) -> serde_json::Value {
-    match run_native_provider_compose_path(parent_path, display_name) {
-        Ok(value) => value,
-        Err(error) => json!({
-            "path": "",
-            "parent_path": "",
-            "display_name": "",
-            "error": format!("{error:#}"),
-        }),
-    }
-}
-
 pub(crate) fn native_provider_normalize_path_json(path: &str) -> serde_json::Value {
     match run_native_provider_normalize_path(path) {
         Ok(value) => value,
@@ -185,6 +170,7 @@ pub(crate) fn native_provider_import_shared_file(
         data_dir,
         &display_name,
         Path::new(source_path),
+        None,
     ))
 }
 
@@ -241,12 +227,54 @@ async fn import_provider_bytes(
     .await
 }
 
-/// Save a staged local file under a name not yet taken in My Drive, reading
-/// it in chunks so a large shared video never sits in memory whole.
+/// Stage an iOS share in the selected folder. The extension publishes the batch after
+/// committing each item; a later background launch resumes a pending upload.
+pub(crate) fn stage_shared_file_json(
+    dir: &str,
+    parent: &str,
+    name: &str,
+    source: &str,
+) -> serde_json::Value {
+    let result = native_provider_runtime().and_then(|runtime| {
+        let parent = optional_normalized_provider_path(parent)?.unwrap_or_default();
+        runtime.block_on(import_provider_file(
+            dir,
+            &sanitized_provider_file_name(name),
+            Path::new(source),
+            Some(&parent),
+        ))
+    });
+    match result {
+        Ok(value) => value,
+        Err(error) => json!({"error": format!("{error:#}")}),
+    }
+}
+
+pub(crate) fn publish_shared_files_json(
+    dir: &str,
+    allow_network: bool,
+    cancelled: impl Fn() -> bool,
+) -> serde_json::Value {
+    let dir = Path::new(dir);
+    if !iris_drive_core::paths::key_path_in(dir).is_file() {
+        return json!({"ok": true, "pending": false});
+    }
+    let result = native_provider_runtime().and_then(|runtime| runtime.block_on(async {
+        tokio::select! {
+            result = pending_upload::PendingUpload::SharedFiles.publish(dir, None, allow_network) => result,
+            () = async {
+                while !cancelled() { tokio::time::sleep(std::time::Duration::from_millis(100)).await; }
+            } => anyhow::bail!("Upload paused"),
+        }
+    }));
+    pending_upload::result_json(result)
+}
+
 async fn import_provider_file(
     data_dir: &str,
     display_name: &str,
     source: &Path,
+    share_sheet_folder: Option<&str>,
 ) -> anyhow::Result<serde_json::Value> {
     let size = source_len(source)?;
     let config_lock =
@@ -254,11 +282,35 @@ async fn import_provider_file(
     let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
     let modified_at_by_path = BTreeMap::new();
     let entries = provider_entries(&provider, &modified_at_by_path).await?;
-    let path = unique_provider_path(&entries, "", display_name, None);
+    let path = unique_provider_path(
+        &entries,
+        share_sheet_folder.unwrap_or_default(),
+        display_name,
+        None,
+    );
     if size == 0 && provider_write_is_probable_os_placeholder(&entries, &path, &[]) {
         anyhow::bail!("refusing probable FileProvider placeholder copy: {path}");
     }
     write_provider_file_from_path(&provider, &path, source).await?;
+    if share_sheet_folder.is_some() {
+        let profile = daemon
+            .config()
+            .profile
+            .as_ref()
+            .filter(|p| p.is_authorized())
+            .context("Sign in to save to Iris Drive")?
+            .profile_id
+            .to_string();
+        let root = hashtree_core::Cid::parse(provider.anchor().await.as_str())
+            .context("reading shared file root")?;
+        pending_upload::PendingUpload::SharedFiles.queue(
+            Path::new(data_dir),
+            &profile,
+            &root.hash,
+        )?;
+        persist_provider_root(&mut daemon, root, Some(visible_root)).await?;
+        return Ok(json!({"path": path}));
+    }
     import_provider_mutation(
         &mut daemon,
         &provider,
@@ -324,61 +376,14 @@ pub(crate) fn download_content_link_bytes_for_test(
     ContentLinkDownloadBytesGuard
 }
 
-fn run_native_provider_normalize_path(path: &str) -> anyhow::Result<serde_json::Value> {
-    let path = normalize_provider_document_path(path)?;
-    let (parent_path, display_name) = split_provider_path(&path)?;
-    Ok(json!({
-        "parent_path": parent_path,
-        "display_name": display_name,
-        "path": path,
-        "error": "",
-    }))
-}
-
-fn run_native_provider_compose_path(
-    parent_path: &str,
-    display_name: &str,
-) -> anyhow::Result<serde_json::Value> {
-    let (parent_path, display_name, path) = compose_provider_path(parent_path, display_name)?;
-    Ok(json!({
-        "parent_path": parent_path,
-        "display_name": display_name,
-        "path": path,
-        "error": "",
-    }))
-}
-
-fn run_native_provider_resolve_path(
-    data_dir: &str,
-    parent_path: &str,
-    display_name: &str,
-    excluding_path: &str,
-) -> anyhow::Result<serde_json::Value> {
-    let runtime = native_provider_runtime()?;
-    runtime.block_on(async {
-        let parent_path = normalize_provider_parent_path(parent_path)?;
-        let display_name = sanitized_provider_file_name(display_name);
-        let excluding_path = optional_normalized_provider_path(excluding_path)?;
-        let (_daemon, provider, _visible_root) = native_provider(data_dir).await?;
-        let modified_at_by_path = BTreeMap::new();
-        let entries = provider_entries(&provider, &modified_at_by_path).await?;
-        let path = unique_provider_path(
-            &entries,
-            &parent_path,
-            &display_name,
-            excluding_path.as_deref(),
-        );
-        let (resolved_parent_path, resolved_display_name) = split_provider_path(&path)?;
-        Ok(json!({
-            "parent_path": resolved_parent_path,
-            "display_name": resolved_display_name,
-            "path": path,
-            "error": "",
-        }))
-    })
-}
-
 pub(crate) fn run_native_provider_list(data_dir: &str) -> anyhow::Result<serde_json::Value> {
+    provider_list(data_dir, false)
+}
+
+pub(crate) fn provider_list(
+    data_dir: &str,
+    refresh_storage: bool,
+) -> anyhow::Result<serde_json::Value> {
     #[cfg(test)]
     work_pause::wait(data_dir, "provider");
     let runtime = native_provider_runtime()?;
@@ -392,6 +397,15 @@ pub(crate) fn run_native_provider_list(data_dir: &str) -> anyhow::Result<serde_j
             .provider_projection()
             .await
             .context("building provider view")?;
+        if refresh_storage
+            && let Err(error) = iris_drive_core::device_storage::local::refresh_local_report(
+                &daemon,
+                &visible_root.root_cid,
+            )
+            .await
+        {
+            tracing::warn!(%error, "measuring local Drive storage");
+        }
         let modified_at_by_path = provider_modified_at_index(&visible_view);
         let provider =
             HashTreeProviderFs::open(daemon.tree_handle(), visible_root.root_cid.clone())
@@ -642,6 +656,10 @@ where
     commit_provider_root(daemon, root, tombstone_base_root, changed_path, config_lock).await
 }
 
+mod path;
+pub(crate) use path::{native_provider_compose_path_json, native_provider_reimport};
+use path::{run_native_provider_normalize_path, run_native_provider_resolve_path};
+mod pending_upload;
 pub(crate) mod photo_backup;
 
 async fn commit_provider_root(
@@ -725,7 +743,9 @@ enum PreparedProviderRootPublish {
 async fn prepare_current_app_key_root_publish(
     daemon: &iris_drive_core::Daemon,
 ) -> anyhow::Result<PreparedProviderRootPublish> {
-    let config = daemon.config().clone();
+    // The lightweight provider daemon omits the signed roster sidecar. Load
+    // it under the caller's mutation lock so every current reader gets a wrap.
+    let config = AppConfig::load_or_default(config_path_in(daemon.config_dir()))?;
     let Some(account) = config.profile.as_ref() else {
         return Ok(PreparedProviderRootPublish::Unavailable(
             json!({"published_drive_root": false, "error": "account missing"}),

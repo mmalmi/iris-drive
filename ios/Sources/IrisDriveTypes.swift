@@ -127,6 +127,20 @@ enum IrisDriveSharedContainer {
     ) as? String ?? "group.fi.siriusbusiness.drive"
     static let storageDirectoryName = "IrisDrive"
 
+    // The device WebView check runs over an existing installation. Its
+    // temporary profile must not register or signal the installation's Files domain.
+    static let isolatedBrowserProbe = isIsolatedBrowserProbe(ProcessInfo.processInfo.environment)
+
+    static func isIsolatedBrowserProbe(_ environment: [String: String]) -> Bool {
+        #if DEBUG
+        let path = environment["IRIS_DRIVE_UI_TEST_BASE_DIR"] ?? ""
+        return environment["IRIS_DRIVE_DEBUG_ACTION"] == "probe-iris-apps"
+            && (path == "__TMP__" || path.hasPrefix("__TMP__/"))
+        #else
+        return false
+        #endif
+    }
+
     static var baseDirectory: URL {
         let uiTestBaseDir = ProcessInfo.processInfo.environment["IRIS_DRIVE_UI_TEST_BASE_DIR"]?
             .trimmingCharacters(in: .whitespacesAndNewlines)

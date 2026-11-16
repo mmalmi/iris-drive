@@ -54,6 +54,26 @@ final class ShareItemImporterTests: XCTestCase {
         XCTAssertEqual(String(data: try XCTUnwrap(recorder.files.first?.contents), encoding: .utf8), "hello from share")
     }
 
+    func testMovieWinsOverShareLinkAndKeepsSuggestedFilename() throws {
+        let recorder = SaveRecorder()
+        let provider = NSItemProvider()
+        provider.suggestedName = "Trip.mov"
+        for type in [UTType.url, UTType.quickTimeMovie] {
+            provider.registerDataRepresentation(forTypeIdentifier: type.identifier, visibility: .all) { completion in
+                completion(Data(), nil)
+                return nil
+            }
+        }
+        let importer = makeImporter(recorder: recorder)
+        XCTAssertEqual(importer.preferredTypeIdentifier(for: provider), UTType.quickTimeMovie.identifier)
+        let temporary = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try Data([1, 2, 3]).write(to: temporary)
+        defer { try? FileManager.default.removeItem(at: temporary) }
+        XCTAssertTrue(try importer.importItem(temporary as NSURL, typeIdentifier: UTType.quickTimeMovie.identifier, provider: provider))
+        XCTAssertEqual(recorder.files.first?.displayName, "Trip.mov")
+        XCTAssertEqual(recorder.files.first?.contentType, .quickTimeMovie)
+    }
+
     func testTextImportDoesNotDuplicateExistingExtension() throws {
         let recorder = SaveRecorder()
         let provider = NSItemProvider()

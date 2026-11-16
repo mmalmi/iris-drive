@@ -124,17 +124,11 @@ pub fn device_storage_view(
         .filter(|device| !roots.get(*device).is_some_and(|root| root.local_only))
         .cloned()
         .collect::<Vec<_>>();
-    let scale = rows
-        .iter()
-        .filter_map(|row| row.report.as_ref().map(|report| report.file_bytes))
-        .max()
-        .unwrap_or(0)
-        .max(1);
     DeviceStorageView {
         summary: summary(&rows),
         devices: rows
             .iter()
-            .map(|row| row_view(row, &held, &compared, scale, now))
+            .map(|row| row_view(row, &held, &compared, now))
             .collect(),
     }
 }
@@ -143,7 +137,6 @@ fn row_view(
     row: &DeviceRowInput,
     held: &BTreeMap<String, u64>,
     devices: &[String],
-    scale: u64,
     now: u64,
 ) -> DeviceStorageRowView {
     let report = row.report.as_ref();
@@ -174,23 +167,14 @@ fn row_view(
         (false, true) => ("Connected", CONNECTED_DETAIL),
         (false, false) => ("Not connected", NOT_CONNECTED_DETAIL),
     };
-    let age = report.map_or_else(
-        || {
-            if row.current {
-                "Measuring…".to_owned()
-            } else {
-                String::new()
-            }
-        },
-        |report| {
-            let at = if row.current {
-                report.measured_at
-            } else {
-                row.heard_at.unwrap_or(report.measured_at)
-            };
-            age_label(at, now)
-        },
-    );
+    let age = report.map_or_else(String::new, |report| {
+        let at = if row.current {
+            report.measured_at
+        } else {
+            row.heard_at.unwrap_or(report.measured_at)
+        };
+        age_label(at, now)
+    });
     DeviceStorageRowView {
         pubkey: row.pubkey.clone(),
         npub: pubkey_npub(&row.pubkey),
@@ -201,7 +185,7 @@ fn row_view(
         has_report: report.is_some(),
         held_label: report.map_or_else(|| "No report yet".to_owned(), holding_label),
         holds_all: report.is_some_and(|report| report.files > 0 && holds_all(report)),
-        held_permille: report.map_or(0, |report| permille(report.held_bytes, scale)),
+        held_permille: report.map_or(0, |report| permille(report.held_bytes, report.file_bytes)),
         connected: row.connected,
         connection_label: connection_label.to_owned(),
         connection_detail: connection_detail.to_owned(),

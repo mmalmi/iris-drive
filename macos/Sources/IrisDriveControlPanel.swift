@@ -814,6 +814,7 @@ struct IrisDriveControlPanel: View {
                 ForEach(devicePeers) { peer in
                     PeerRow(
                         peer: peer,
+                        storage: status.deviceStorage.devices.first { $0.npub == peer.npub && $0.hasReport },
                         canManageDevices: status.canAdminProfile,
                         adminCount: adminCount,
                         controller: controller
@@ -835,7 +836,6 @@ struct IrisDriveControlPanel: View {
                     }
                 }
             }
-            DeviceStorageSection(storage: status.deviceStorage)
             if !showAddDevice, !status.inboundAppKeyLinkRequests.isEmpty {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Requests")
@@ -2363,6 +2363,7 @@ struct DetailRow: View {
 
 private struct PeerRow: View {
     let peer: IrisDrivePeerStatus
+    var storage: IrisDriveDeviceStorageRow? = nil
     let canManageDevices: Bool
     let adminCount: Int
     let controller: AppDelegate
@@ -2386,11 +2387,7 @@ private struct PeerRow: View {
                             )
                             .frame(width: 8, height: 8)
                     }
-                    Image(
-                        systemName: peer.role == "recovery"
-                            ? "key.fill"
-                            : (peer.isCurrentDevice ? "desktopcomputer" : "laptopcomputer")
-                    )
+                    Image(systemName: deviceSymbol)
                         .frame(width: 24)
                         .foregroundStyle(.secondary)
                     VStack(alignment: .leading, spacing: 2) {
@@ -2402,6 +2399,11 @@ private struct PeerRow: View {
                             .foregroundStyle(.secondary)
                     }
                     Spacer()
+                    if let storage {
+                        Text(storage.heldLabel)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Image(systemName: "chevron.right")
                         .font(.caption.weight(.semibold))
                         .foregroundStyle(.secondary)
@@ -2426,6 +2428,7 @@ private struct PeerRow: View {
                         .buttonStyle(.borderless)
                         .font(.caption)
                     }
+                    if let storage { DeviceStorageDetails(device: storage) }
                     DetailRow(label: "Role", value: peer.roleLabel)
                     if let root = peer.rootCID {
                         DetailRow(label: "Root", value: root, copyable: true)
@@ -2494,6 +2497,17 @@ private struct PeerRow: View {
                 controller.renameDevice(peer.npub, label: renameLabel)
             }
             Button("Cancel", role: .cancel) {}
+        }
+    }
+
+    private var deviceSymbol: String {
+        if !peer.isDeviceActor { return "key.fill" }
+        if peer.isCurrentDevice { return "desktopcomputer" }
+        switch storage?.icon {
+        case "phone": return "iphone"
+        case "web": return "globe"
+        case "computer": return "laptopcomputer"
+        default: return "externaldrive.fill"
         }
     }
 

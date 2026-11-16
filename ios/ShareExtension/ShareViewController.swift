@@ -8,8 +8,11 @@ import UniformTypeIdentifiers
 final class ShareViewController: UIViewController {
     private let model = ShareSaveModel()
     private var didStartLoading = false
+    private let upload = IrisDriveShareUpload()
+    private var finished = false
     private let collectedLock = NSLock()
     private var collected: [PendingSharedItem] = []
+    private var loadError: String?
     /// Shared files wait here, on disk, until Save or Cancel.
     private let staging = FileManager.default.temporaryDirectory
         .appendingPathComponent("Shared items", isDirectory: true)
@@ -63,7 +66,10 @@ final class ShareViewController: UIViewController {
             .flatMap { $0.attachments ?? [] } ?? []
         let group = DispatchGroup()
         for provider in providers {
-            guard let typeIdentifier = importer.preferredTypeIdentifier(for: provider) else { continue }
+            guard let typeIdentifier = importer.preferredTypeIdentifier(for: provider) else {
+                recordLoadError("One of the shared items could not be read.")
+                continue
+            }
             FileProviderStorage.debugLog(
                 "share provider types=\(provider.registeredTypeIdentifiers.joined(separator: ",")) chosen=\(typeIdentifier)"
             )
@@ -73,32 +79,64 @@ final class ShareViewController: UIViewController {
                 do {
                     let item = try result.get()
                     if try !self.importer.importItem(item, typeIdentifier: typeIdentifier, provider: provider) {
-                        FileProviderStorage.debugLog("share import unsupported item for \(typeIdentifier)")
+                        self.recordLoadError("One of the shared items could not be read.")
                     }
                 } catch {
-                    FileProviderStorage.debugLog("share item unreadable: \(error)")
+                    self.recordLoadError(error.localizedDescription)
                 }
             }
         }
-        group.notify(queue: .main) {
+        group.notify(queue: .global(qos: .userInitiated)) {
             self.collectedLock.lock()
             let items = self.collected
+            let error = self.loadError
             self.collectedLock.unlock()
-            let folders = FileProviderStorage.shareDestinations()
-            Task { @MainActor in self.model.loaded(items, folders: folders) }
+            if let error {
+                Task { @MainActor in self.model.phase = .failed(error) }
+                return
+            }
+            do {
+                let folders = try FileProviderStorage.shareDestinations()
+                Task { @MainActor in self.model.loaded(items, folders: folders) }
+            } catch {
+                Task { @MainActor in self.model.phase = .failed(error.localizedDescription) }
+            }
         }
     }
 
+    private func recordLoadError(_ message: String) {
+        collectedLock.withLock { if loadError == nil { loadError = message } }
+    }
+
     private func save() {
+        var backgroundScheduled = false
+        let upload = self.upload
         model.save(using: { item, folder in
             try FileProviderStorage.importSharedFile(
                 named: item.name.trimmingCharacters(in: .whitespacesAndNewlines),
                 from: item.source,
                 into: folder
             )
+            if upload.publish(in: FileProviderStorage.baseDirectory.path, allowNetwork: false) == .pending {
+                do {
+                    try IrisDriveShareUpload.schedule()
+                    backgroundScheduled = true
+                } catch {
+                    FileProviderStorage.debugLog("Background upload scheduling failed: \(error.localizedDescription)")
+                }
+            }
+        }, sync: {
+            switch upload.publish(in: FileProviderStorage.baseDirectory.path) {
+            case .complete: return nil
+            case .paused: return "Saved on this iPhone. Sync is paused."
+            case .waitingForWiFi where backgroundScheduled: return "Saved on this iPhone. Waiting for Wi-Fi."
+            default: break
+            }
+            return backgroundScheduled
+                ? "Saved on this iPhone. Waiting to sync."
+                : "Saved on this iPhone. Open Iris Drive to finish syncing."
         }, done: { [weak self] in
-            self?.removeStaging()
-            self?.extensionContext?.completeRequest(returningItems: nil)
+            self?.complete()
         })
     }
 
@@ -106,11 +144,22 @@ final class ShareViewController: UIViewController {
         try? FileManager.default.removeItem(at: staging)
     }
 
-    private func cancel() {
+    private func complete() {
+        guard !finished else { return }
+        finished = true
         removeStaging()
-        if case .saved = model.phase {
-            extensionContext?.completeRequest(returningItems: nil)
-        } else {
+        extensionContext?.completeRequest(returningItems: nil)
+    }
+
+    private func cancel() {
+        switch model.phase {
+        case .saved, .syncing:
+            upload.cancel()
+            complete()
+        case .saving:
+            break
+        default:
+            removeStaging()
             extensionContext?.cancelRequest(withError: CocoaError(.userCancelled))
         }
     }

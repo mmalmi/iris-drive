@@ -19,6 +19,7 @@ final class ShareSaveModel: ObservableObject {
         case notSetUp
         case ready
         case saving
+        case syncing
         case saved(String)
         case failed(String)
     }
@@ -49,7 +50,8 @@ final class ShareSaveModel: ObservableObject {
         phase = loaded.isEmpty ? .failed("Nothing here can be saved to Iris Drive.") : .ready
     }
 
-    func save(using saveItem: @escaping (PendingSharedItem, String) throws -> Void, done: @escaping () -> Void) {
+    func save(using saveItem: @escaping (PendingSharedItem, String) throws -> Void,
+              sync: (() -> String?)? = nil, done: @escaping () -> Void) {
         guard canSave else { return }
         phase = .saving
         let items = items
@@ -59,6 +61,13 @@ final class ShareSaveModel: ObservableObject {
             do {
                 for item in items {
                     try saveItem(item, folder)
+                }
+                if let sync {
+                    await MainActor.run { self.phase = .syncing }
+                    if let pending = sync() {
+                        await MainActor.run { self.phase = .saved(pending) }
+                        return
+                    }
                 }
                 await MainActor.run {
                     self.phase = .saved(items.count == 1 ? "Saved to \(destination)" : "Saved \(items.count) items to \(destination)")
@@ -111,6 +120,8 @@ struct ShareSaveView: View {
                     if model.phase == .saving {
                         ProgressView("Saving…")
                     }
+                case .syncing:
+                    ProgressView("Syncing…")
                 case .saved(let message):
                     Label(message, systemImage: "checkmark.circle.fill")
                         .accessibilityIdentifier("shareSaveResult")
@@ -125,6 +136,7 @@ struct ShareSaveView: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button(closesOnly ? "Close" : "Cancel", action: onCancel)
                         .accessibilityIdentifier("shareSaveCancel")
+                        .disabled(model.phase == .saving)
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     if !closesOnly {
@@ -140,7 +152,7 @@ struct ShareSaveView: View {
     /// Nothing left to decide: only closing the sheet makes sense.
     private var closesOnly: Bool {
         switch model.phase {
-        case .notSetUp, .failed, .saved: true
+        case .notSetUp, .failed, .saved, .syncing: true
         default: false
         }
     }

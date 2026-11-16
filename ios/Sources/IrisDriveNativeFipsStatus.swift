@@ -12,6 +12,55 @@ private let nativeFipsStatusVolatileKeys: Set<String> = [
 ]
 
 extension IrisDriveMobileModel {
+    func startNativeFipsStatusDirectoryWatcher(directory: URL) {
+        let descriptor = open(directory.path, O_EVTONLY)
+        guard descriptor >= 0 else {
+            NSLog("Iris Drive native FIPS status directory watch unavailable: \(directory.path)")
+            return
+        }
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor,
+            eventMask: [.write, .rename, .delete],
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            guard self.nativeFipsStatusFileSource == nil else { return }
+            if self.startNativeFipsStatusFileWatcher(directory: directory) {
+                self.scheduleNativeFipsStatusRefresh()
+            }
+        }
+        source.setCancelHandler { close(descriptor) }
+        nativeFipsStatusDirectorySource = source
+        source.resume()
+    }
+
+    @discardableResult
+    func startNativeFipsStatusFileWatcher(directory: URL) -> Bool {
+        nativeFipsStatusFileSource?.cancel()
+        nativeFipsStatusFileSource = nil
+        let statusURL = directory.appendingPathComponent(nativeFipsStatusFileName, isDirectory: false)
+        let descriptor = open(statusURL.path, O_EVTONLY)
+        guard descriptor >= 0 else { return false }
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: descriptor,
+            eventMask: [.write, .extend, .attrib, .rename, .delete],
+            queue: .main
+        )
+        source.setEventHandler { [weak self] in
+            guard let self else { return }
+            let data = source.data
+            if data.contains(.delete) || data.contains(.rename) {
+                self.startNativeFipsStatusFileWatcher(directory: directory)
+            }
+            self.scheduleNativeFipsStatusRefresh()
+        }
+        source.setCancelHandler { close(descriptor) }
+        nativeFipsStatusFileSource = source
+        source.resume()
+        return true
+    }
+
     func nativeFipsStatusRefreshIsDue(statusURL: URL, now: Date = Date()) -> Bool {
         let fingerprint = nativeFipsStatusStableFingerprint(statusURL: statusURL)
         let elapsed = now.timeIntervalSince(lastNativeFipsStatusRefreshAt)

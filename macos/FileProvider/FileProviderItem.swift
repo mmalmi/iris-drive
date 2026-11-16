@@ -120,32 +120,7 @@ final class FileProviderStorage {
     private let sharedSupportDirectory: URL
     private let configuredRuntime: Runtime?
 
-    struct Runtime: Decodable {
-        let configDirectory: String?
-        let idriveExecutable: String?
-
-        init(configDirectory: String?, idriveExecutable: String?) {
-            self.configDirectory = configDirectory
-            self.idriveExecutable = idriveExecutable
-        }
-
-        init?(userInfo: [AnyHashable: Any]?) {
-            let configDirectory = userInfo?["config_dir"] as? String
-            let idriveExecutable = userInfo?["idrive_executable"] as? String
-            guard configDirectory != nil || idriveExecutable != nil else {
-                return nil
-            }
-            self.init(
-                configDirectory: configDirectory,
-                idriveExecutable: idriveExecutable
-            )
-        }
-
-        enum CodingKeys: String, CodingKey {
-            case configDirectory = "config_dir"
-            case idriveExecutable = "idrive_executable"
-        }
-    }
+    typealias Runtime = IrisDriveFileProviderProfile.Runtime
 
     init(domain: NSFileProviderDomain, applicationSupportDirectory: URL? = nil) {
         profile = IrisDriveFileProviderProfile(domainIdentifier: domain.identifier.rawValue)
@@ -226,6 +201,12 @@ final class FileProviderStorage {
         enum CodingKeys: String, CodingKey {
             case providerRefreshKey = "provider_refresh_key"
         }
+    }
+
+    private struct ReimportResult: Decodable {
+        enum Outcome: String, Decodable { case match, collision, absent, created }
+        let outcome: Outcome
+        let entry: ProviderEntry?
     }
 
     private struct ProviderEntry: Decodable {
@@ -339,14 +320,14 @@ final class FileProviderStorage {
         return containingAppBundled.path
     }
 
-    func item(for identifier: NSFileProviderItemIdentifier) -> FileProviderItem? {
+    func item(for identifier: NSFileProviderItemIdentifier) throws -> FileProviderItem? {
         if identifier == .rootContainer || identifier == .workingSet {
-            return .root(anchor: providerList().anchor)
+            return .root(anchor: try requiredProviderList().anchor)
         }
         if identifier == .trashContainer {
-            return .trash(anchor: providerList().anchor)
+            return .trash(anchor: try requiredProviderList().anchor)
         }
-        let list = providerList()
+        let list = try requiredProviderList()
         guard let path = path(for: identifier),
               let entry = list.entries.first(where: { $0.path == path })
         else {
@@ -378,13 +359,13 @@ final class FileProviderStorage {
         return NSFileProviderItemIdentifier("\(pathPrefix)\(encoded)")
     }
 
-    func children(of containerIdentifier: NSFileProviderItemIdentifier) -> [FileProviderItem] {
+    func children(of containerIdentifier: NSFileProviderItemIdentifier) throws -> [FileProviderItem] {
         if containerIdentifier == .trashContainer {
             debugLog("children parent=trash count=0")
             return []
         }
         guard let parent = path(for: containerIdentifier) else { return [] }
-        let list = providerList()
+        let list = try requiredProviderList()
         let items = list.entries
             .filter { $0.parentPath == parent }
             .sorted { $0.path.localizedStandardCompare($1.path) == .orderedAscending }
@@ -393,12 +374,12 @@ final class FileProviderStorage {
         return items
     }
 
-    func allItems() -> [FileProviderItem] {
-        allItemsAndAnchor().items
+    func allItems() throws -> [FileProviderItem] {
+        try allItemsAndAnchor().items
     }
 
-    func allItemsAndAnchor() -> (items: [FileProviderItem], anchor: NSFileProviderSyncAnchor) {
-        let list = providerList()
+    func allItemsAndAnchor() throws -> (items: [FileProviderItem], anchor: NSFileProviderSyncAnchor) {
+        let list = try requiredProviderList()
         var items = [FileProviderItem]()
         if list.anchor != nil {
             items.append(.root(anchor: list.anchor))
@@ -406,6 +387,14 @@ final class FileProviderStorage {
         }
         items.append(contentsOf: list.entries.map { item(for: $0, in: list) })
         return (items, syncAnchor(for: list.changeAnchor))
+    }
+
+    func snapshotIdentifiers(from anchor: NSFileProviderSyncAnchor, current: NSFileProviderSyncAnchor) throws -> Set<String>? {
+        if let snapshot = storedSnapshot(), Data(snapshot.anchor.utf8) == anchor.rawValue {
+            return Set(snapshot.identifiers)
+        }
+        if anchor.rawValue == current.rawValue || anchor.rawValue == Data("bootstrap".utf8) { return nil }
+        throw NSError(domain: NSFileProviderErrorDomain, code: NSFileProviderError.syncAnchorExpired.rawValue)
     }
 
     func storedSnapshotIdentifiers() -> Set<String> {
@@ -474,7 +463,7 @@ final class FileProviderStorage {
                     .sorted()
             )
             let data = try JSONEncoder().encode(snapshot)
-            try data.write(to: snapshotURL())
+            try data.write(to: snapshotURL(), options: .atomic)
             debugLog("record snapshot anchor=\(anchorString) identifiers=\(snapshot.identifiers.count)")
         } catch {
             debugLog("snapshot write failed: \(error)")
@@ -485,29 +474,33 @@ final class FileProviderStorage {
         template: NSFileProviderItem,
         contents: URL?,
         mayAlreadyExist: Bool
-    ) throws -> FileProviderItem {
-        let parent = path(for: template.parentItemIdentifier) ?? ""
-        let baseRootCid = mutationBaseRootCid()
-        let destination: ProviderResolvedPath
-        if mayAlreadyExist {
-            destination = try resolvedPath(
-                parent: parent,
-                name: template.filename,
-                baseRootCid: baseRootCid
-            )
-            invalidateProviderListCache()
-            let list = providerList()
-            if let existing = list.entries.first(where: { $0.path == destination.path }) {
-                debugLog("create mayAlreadyExist resolved existing path=\(destination.path)")
-                return item(for: existing, in: list)
-            }
-            debugLog("create mayAlreadyExist rejected absent path=\(destination.path)")
-            throw NSError.fileProviderErrorForNonExistentItem(
-                withIdentifier: identifier(for: destination.path)
-            )
-        } else {
-            destination = try composedPath(parent: parent, name: template.filename)
+    ) throws -> FileProviderItem? {
+        guard let parent = path(for: template.parentItemIdentifier) else {
+            throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: template.parentItemIdentifier)
         }
+        let destination = try composedPath(parent: parent, name: template.filename)
+        if mayAlreadyExist {
+            let directory = (template.contentType ?? .data).conforms(to: .folder)
+            var arguments = ["provider", "reimport", destination.path]
+            if directory { arguments.append("--directory") }
+            if let contents { arguments += ["--source", contents.path] }
+            let data = try runIDrive(arguments: arguments, timeout: 120)
+            let result = try JSONDecoder().decode(ReimportResult.self, from: data)
+            switch result.outcome {
+            case .match, .collision:
+                guard let entry = result.entry else { throw providerError("Missing reimport item") }
+                let existing = item(for: entry, in: providerList())
+                if result.outcome == .collision { throw NSError.fileProviderErrorForCollision(with: existing) }
+                return existing
+            case .absent:
+                debugLog("create mayAlreadyExist absent path=\(destination.path)")
+                return nil
+            case .created:
+                invalidateProviderListCache()
+                return optimisticItem(for: destination, template: template, contents: contents)
+            }
+        }
+        let baseRootCid = mutationBaseRootCid()
         let mutationBaseRootCid = destination.rootCid ?? baseRootCid
         NSLog("Iris Drive FileProvider create path=\(destination.path) mayAlreadyExist=\(mayAlreadyExist)")
         invalidateProviderListCache()
@@ -633,7 +626,7 @@ final class FileProviderStorage {
         for identifier: NSFileProviderItemIdentifier,
         requestedSize size: CGSize
     ) throws -> Data? {
-        guard let item = item(for: identifier) else {
+        guard let item = try item(for: identifier) else {
             throw NSError.fileProviderErrorForNonExistentItem(withIdentifier: identifier)
         }
         guard item.contentType.conforms(to: .image) else {
@@ -731,6 +724,12 @@ final class FileProviderStorage {
             modified: Date(),
             versionIdentifier: "\(providerItemVersionPrefix):optimistic:\(resolved.path):\(size?.stringValue ?? "dir")"
         )
+    }
+
+    private func requiredProviderList() throws -> ProviderList {
+        let list = providerList()
+        guard list.anchor != nil else { throw providerError("Drive contents are unavailable") }
+        return list
     }
 
     private func providerList() -> ProviderList {

@@ -1,4 +1,4 @@
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Result, ensure};
 use iris_drive_core::{
     Daemon,
     config_lock::ConfigMutationLock,
@@ -6,11 +6,7 @@ use iris_drive_core::{
     photo_backup::{PhotoOriginal, check_profile},
 };
 use serde_json::{Value, json};
-use std::{
-    fs,
-    io::ErrorKind,
-    path::{Path, PathBuf},
-};
+use std::path::Path;
 
 pub(crate) fn import_json(
     dir: &str,
@@ -60,69 +56,13 @@ async fn import(
     let (root, path) = original.add_to(&daemon, &base, resource, name).await?;
     // Queue before committing so a shutdown between the local write and the phone's
     // receipt cannot lose the upload. Only the public hash is needed for coalescing.
-    iris_drive_core::atomic_write(&pending_path(dir, profile), &root.hash)?;
+    super::pending_upload::PendingUpload::Photos.queue(dir, profile, &root.hash)?;
     if root != base {
         super::persist_provider_root(&mut daemon, root, Some(base)).await?;
     }
     Ok(path)
 }
 
-fn pending_path(dir: &Path, profile: &str) -> PathBuf {
-    let id = hashtree_core::to_hex(&hashtree_core::sha256(profile.as_bytes()));
-    dir.join(format!("photo-backup-{id}.pending"))
-}
-
 pub(crate) fn publish_json(dir: &str, profile: &str, allow_network: bool) -> Value {
-    let result = super::native_provider_runtime()
-        .and_then(|runtime| runtime.block_on(publish(Path::new(dir), profile, allow_network)));
-    match result {
-        Ok(published) => json!({"ok": published, "pending": !published}),
-        Err(error) => json!({"ok": false, "pending": true, "error": format!("{error:#}")}),
-    }
-}
-
-async fn publish(dir: &Path, profile: &str, allow_network: bool) -> Result<bool> {
-    let lock = ConfigMutationLock::acquire(dir).await?;
-    let daemon = Daemon::open(dir)?;
-    check_profile(daemon.config(), profile)?;
-    let path = pending_path(dir, profile);
-    let generation = match fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(true),
-        Err(error) => return Err(error.into()),
-    };
-    if !allow_network {
-        return Ok(false);
-    }
-    let prepared = match super::prepare_current_app_key_root_publish(&daemon).await? {
-        super::PreparedProviderRootPublish::Ready(prepared) => prepared,
-        super::PreparedProviderRootPublish::Unavailable(reason) => {
-            bail!(
-                "{}",
-                reason["error"]
-                    .as_str()
-                    .unwrap_or("Drive is waiting to sync")
-            )
-        }
-    };
-    drop(lock);
-    // Large videos legitimately take longer than the foreground File Provider deadline.
-    // Each Blossom transfer uses the client's request timeout. Never clear the queue
-    // until the blocks and the signed root have both been accepted.
-    let result = super::publish_prepared_app_key_root(dir, *prepared).await?;
-    ensure!(
-        result["published_drive_root"] == true,
-        "Drive is waiting to sync"
-    );
-    let _lock = ConfigMutationLock::acquire(dir).await?;
-    let current = match fs::read(&path) {
-        Ok(bytes) => bytes,
-        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(true),
-        Err(error) => return Err(error.into()),
-    };
-    if current != generation {
-        return Ok(false);
-    }
-    fs::remove_file(path).context("finishing photo backup")?;
-    Ok(true)
+    super::pending_upload::PendingUpload::Photos.publish_json(dir, Some(profile), allow_network)
 }

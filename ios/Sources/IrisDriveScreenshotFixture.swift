@@ -77,16 +77,17 @@ extension IrisDriveMobileModel {
         ]
 
         deviceStorage = NativeDeviceStorage(
-            summary: "Your Drive is 9.2 GB in 247 files. All of it is on 2 devices.",
+            summary: "Your Drive is 9.2 GB in 247 files. Every Drive file is available offline on 2 devices.",
             devices: [
                 NativeDeviceStorageRow(
                     pubkey: "fixture-iphone",
+                    npub: "device1irisdriveiphone",
                     name: "iPhone",
                     isCurrent: true,
                     app: "ios",
                     icon: "phone",
                     hasReport: true,
-                    heldLabel: "All of it",
+                    heldLabel: "All Drive files available offline",
                     holdsAll: true,
                     heldPermille: 1000,
                     spaceLabel: "Uses 9.2 GB of 64.0 GB allowed",
@@ -98,11 +99,12 @@ extension IrisDriveMobileModel {
                 ),
                 NativeDeviceStorageRow(
                     pubkey: "fixture-macbook",
+                    npub: "device1irisdrivemacbook",
                     name: "MacBook",
                     app: "macos",
                     icon: "computer",
                     hasReport: true,
-                    heldLabel: "All of it",
+                    heldLabel: "All Drive files available offline",
                     holdsAll: true,
                     heldPermille: 1000,
                     connected: true,
@@ -114,11 +116,12 @@ extension IrisDriveMobileModel {
                 ),
                 NativeDeviceStorageRow(
                     pubkey: "fixture-home-server",
+                    npub: "device1irisdrivehomeserver",
                     name: "Home server",
                     app: "linux",
                     icon: "drive",
                     hasReport: true,
-                    heldLabel: "6.1 GB · 66%",
+                    heldLabel: "6.1 GB stored · 66% of Drive",
                     heldPermille: 663,
                     connectionLabel: "Not connected",
                     syncState: "behind",

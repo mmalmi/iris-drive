@@ -5,6 +5,7 @@
 
 pub mod disk;
 pub mod event;
+pub mod local;
 pub mod measure;
 pub mod report;
 pub mod reporter;

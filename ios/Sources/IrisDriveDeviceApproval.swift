@@ -16,7 +16,7 @@ extension IrisDriveMobileModel {
     func approvePendingDevice() {
         guard let request = pendingDeviceApprovalRequest else { return }
         pendingDeviceApprovalRequest = nil
-        approveDevice(request: request, label: "")
+        Task { await approveDevice(request: request, label: "") }
     }
 }
 

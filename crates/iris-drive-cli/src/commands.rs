@@ -686,6 +686,15 @@ pub(crate) enum ProviderCmd {
         /// Source file path.
         source: PathBuf,
     },
+    /// Reconcile an Apple File Provider item already on disk.
+    #[command(hide = true)]
+    Reimport {
+        path: String,
+        #[arg(long)]
+        source: Option<PathBuf>,
+        #[arg(long)]
+        directory: bool,
+    },
     /// Create a virtual directory.
     Mkdir {
         /// Current visible root from the native `FileProvider` anchor.

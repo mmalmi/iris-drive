@@ -21,7 +21,9 @@ private let fileProviderAddRetryLimit = 8
 private let fileProviderVisibleURLRetryLimit = 12
 private let fileProviderRemovalWaitPolls = 450
 private let providerRootSignalFileName = "provider-root.changed"
-private let nativeFipsStatusFileName = "native-fips-status.json"
+let nativeFipsStatusFileName = "native-fips-status.json"
+private let filesLookupFailedMessage = "Files could not check the Iris Drive location."
+private let filesDisabledMessage = "Iris Drive is turned off in Files. To enable it, open Browse, tap More, then Edit."
 private let irisWebPublisherProfileNameCacheKey = "irisWebPublisherProfileNameCacheV1"
 private let irisWebPublisherProfileNameFreshAge: TimeInterval = 24 * 60 * 60
 private let irisWebPublisherProfileNameMaxCacheAge: TimeInterval = 30 * 24 * 60 * 60
@@ -85,6 +87,7 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var roots: [IrisDriveRoot] = []
     @Published var copyFeedback = ""
     @Published var fileProviderError = ""
+    @Published private(set) var filesAvailabilityNotice: String?
     @Published var authorizationState = "Not linked"
     @Published var pendingContentLink: PendingContentLink?
     @Published var pendingDeviceApprovalRequest: String?
@@ -101,10 +104,12 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published private var irisWebPublisherProfileNameCache: [String: IrisWebPublisherProfileNameCacheEntry] = [:]
 
     let photoBackup = IrisDrivePhotoBackup()
-    let defaults = UserDefaults.standard
+    let defaults = IrisDriveSharedContainer.isolatedBrowserProbe
+        ? UserDefaults(suiteName: "IrisDriveTemporaryBrowserProbe")! : .standard
     private let nativeCore: IrisDriveNativeCore
     private let appleCalendarSync = IrisDriveAppleCalendarSync.shared
     private let nativeCoreQueue = DispatchQueue(label: "fi.siriusbusiness.drive.native-core", qos: .utility)
+    private let rosterQueue = DispatchQueue(label: "fi.siriusbusiness.drive.roster", qos: .userInitiated)
     var lastAppliedStateJson = ""
     var lastState: NativeAppState?
     private var fileProviderOpenAttempt = 0
@@ -113,15 +118,16 @@ final class IrisDriveMobileModel: ObservableObject {
     private var providerSignalInFlightKey = ""
     private var providerSignalRetryTask: Task<Void, Never>?
     private var currentProviderDirectoryPaths: [String] = []
+    private let gatewayLifecycleQueue = DispatchQueue(label: "fi.siriusbusiness.drive.gateway-lifecycle", qos: .userInitiated)
+    private var gatewayInForeground = false
     private var foregroundSyncTask: Task<Void, Never>?
     var copyFeedbackTask: Task<Void, Never>?
     private var fileProviderDomainRemovalInFlight = false
     private var stateGeneration: UInt64 = 0
-    private var nativeFipsStatusDirectorySource: DispatchSourceFileSystemObject?
-    private var nativeFipsStatusFileSource: DispatchSourceFileSystemObject?
-    private var nativeFipsStatusDirectoryDescriptor: CInt = -1
-    private var nativeFipsStatusFileDescriptor: CInt = -1
+    var nativeFipsStatusDirectorySource: DispatchSourceFileSystemObject?
+    var nativeFipsStatusFileSource: DispatchSourceFileSystemObject?
     private var nativeFipsStatusRefreshTask: Task<Void, Never>?
+    private var nativeFipsStatusChanged = false
     var lastNativeFipsStatusFingerprint = ""
     var lastNativeFipsStatusRefreshAt = Date.distantPast
     private var providerRootSignalDirectorySource: DispatchSourceFileSystemObject?
@@ -242,7 +248,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private var shouldRunAppleCalendarSync: Bool {
-        appleCalendarSync.isActive && isSetupComplete && !isRevoked
+        !IrisDriveSharedContainer.isolatedBrowserProbe && appleCalendarSync.isActive && isSetupComplete && !isRevoked
     }
 
     private var shouldScheduleBackgroundSync: Bool {
@@ -273,6 +279,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func ensureFileProviderDomain(completion: ((Bool) -> Void)? = nil) {
+        guard !IrisDriveSharedContainer.isolatedBrowserProbe else { completion?(false); return }
         guard isSetupComplete else {
             fileProviderStatus = "Files provider not registered"
             rebuildDerivedState()
@@ -286,15 +293,22 @@ final class IrisDriveMobileModel: ObservableObject {
             return
         }
         let domain = irisDriveFileProviderDomain()
-        NSFileProviderManager.getDomainsWithCompletionHandler { [weak self] domains, _ in
+        NSFileProviderManager.getDomainsWithCompletionHandler { [weak self] domains, error in
             Task { @MainActor [weak self] in
                 guard let self else { return }
+                guard error == nil else {
+                    self.filesAvailabilityNotice = filesLookupFailedMessage
+                    completion?(false)
+                    return
+                }
+                if self.filesAvailabilityNotice == filesLookupFailedMessage { self.filesAvailabilityNotice = nil }
                 let legacyDomains = domains.filter { irisDriveLegacyDomainIdentifiers.contains($0.identifier) }
                 if !legacyDomains.isEmpty {
                     self.removeLegacyFileProviderDomains(legacyDomains, completion: completion)
                     return
                 }
                 if let existingDomain = domains.first(where: { $0.identifier == irisDriveDomainIdentifier }) {
+                    guard self.checkFilesEnabled(existingDomain) else { completion?(false); return }
                     if self.shouldRepairFileProviderRegistration(existingDomain) {
                         self.repairFileProviderRegistration(
                             existingDomain: existingDomain,
@@ -314,33 +328,56 @@ final class IrisDriveMobileModel: ObservableObject {
         }
     }
 
+    private func checkFilesEnabled(_ domain: NSFileProviderDomain) -> Bool {
+        guard domain.userEnabled else {
+            fileProviderStatus = "Turned off in Files"
+            filesAvailabilityNotice = filesDisabledMessage
+            return false
+        }
+        if filesAvailabilityNotice == filesDisabledMessage || filesAvailabilityNotice == filesLookupFailedMessage {
+            filesAvailabilityNotice = nil
+        }
+        if fileProviderError == filesDisabledMessage { fileProviderError = "" }
+        return true
+    }
+
+    private func filesNotice(for error: Error) -> String? {
+        let error = error as NSError
+        guard error.domain == NSFileProviderErrorDomain else { return nil }
+        switch error.code {
+        case NSFileProviderError.domainDisabled.rawValue: return filesDisabledMessage
+        case NSFileProviderError.cannotSynchronize.rawValue: return "Files paused syncing an Iris Drive item."
+        case NSFileProviderError.serverUnreachable.rawValue: return "Files can’t reach Iris Drive."
+        default:
+            if #available(iOS 17.1, *), error.code == NSFileProviderError.providerDomainTemporarilyUnavailable.rawValue {
+                return "Iris Drive is temporarily unavailable in Files."
+            }
+            return nil
+        }
+    }
+
     private func addFileProviderDomain(
         _ domain: NSFileProviderDomain,
         completion: ((Bool) -> Void)?,
         attempt: Int = 0
     ) {
         NSFileProviderManager.add(domain) { [weak self] error in
-            if error == nil {
-                Task { @MainActor in
-                    guard let self else { return }
-                    self.markFileProviderRegistrationCurrent()
-                    self.fileProviderStatus = "Files provider registered"
-                    self.rebuildDerivedState()
-                    self.signalFileProviderIfNeeded()
-                    completion?(true)
-                }
-                return
-            }
             if let error {
                 NSLog("Iris Drive FileProvider domain add failed attempt \(attempt + 1): \(error)")
             }
 
-            NSFileProviderManager.getDomainsWithCompletionHandler { [weak self] domains, _ in
+            NSFileProviderManager.getDomainsWithCompletionHandler { [weak self] domains, lookupError in
                 let existingDomain = domains.first { $0.identifier == irisDriveDomainIdentifier }
                 let exists = existingDomain != nil
                 Task { @MainActor [weak self] in
                     guard let self else { return }
-                    if let existingDomain,
+                    guard lookupError == nil else {
+                        self.filesAvailabilityNotice = filesLookupFailedMessage
+                        completion?(false)
+                        return
+                    }
+                    if let existingDomain, !self.checkFilesEnabled(existingDomain) { completion?(false); return }
+                    if error != nil, let existingDomain,
                        self.shouldRepairFileProviderRegistration(existingDomain) {
                         self.repairFileProviderRegistration(
                             existingDomain: existingDomain,
@@ -395,7 +432,7 @@ final class IrisDriveMobileModel: ObservableObject {
         ensureFileProviderDomain { [weak self] ready in
             guard let self else { return }
             guard ready else {
-                self.showFileProviderError("Files could not register Iris Drive.")
+                self.showFileProviderError(self.filesAvailabilityNotice ?? "Files could not register Iris Drive.")
                 return
             }
             self.openRegisteredDriveFolder(attempt: attempt)
@@ -417,7 +454,7 @@ final class IrisDriveMobileModel: ObservableObject {
         ensureFileProviderDomain { [weak self] ready in
             guard let self else { return }
             guard ready else {
-                self.showFileProviderError("Files could not register Iris Drive.")
+                self.showFileProviderError(self.filesAvailabilityNotice ?? "Files could not register Iris Drive.")
                 return
             }
             self.openRegisteredDriveFolder(attempt: attempt, path: normalized)
@@ -453,6 +490,10 @@ final class IrisDriveMobileModel: ObservableObject {
                 guard let self else { return }
                 guard self.fileProviderOpenAttempt == attempt else { return }
                 guard let url else {
+                    if let error, let notice = self.filesNotice(for: error) {
+                        self.showFileProviderError(notice)
+                        return
+                    }
                     if self.retryOpenRegisteredDriveFolder(attempt: attempt, path: path, identifier: identifier, visibleURLAttempt: visibleURLAttempt, error: error) {
                         return
                     }
@@ -500,11 +541,6 @@ final class IrisDriveMobileModel: ObservableObject {
         fileProviderStatus = "Opening Files provider"
         rebuildDerivedState()
         if let manager = NSFileProviderManager(for: irisDriveFileProviderDomain()) {
-            if #available(iOS 16.0, *) {
-                manager.reimportItems(below: .rootContainer) { error in
-                    if let error { NSLog("Iris Drive Files provider open reimport failed: \(error)") }
-                }
-            }
             let signalIdentifiers = identifier == .rootContainer ? [identifier] : [identifier, .rootContainer]
             for signalIdentifier in signalIdentifiers {
                 manager.signalEnumerator(for: signalIdentifier) { error in
@@ -578,6 +614,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private func removeFileProviderDomain() {
+        guard !IrisDriveSharedContainer.isolatedBrowserProbe else { return }
         let domains = [irisDriveFileProviderDomain()]
             + irisDriveLegacyDomainIdentifiers.map(legacyFileProviderDomain)
         fileProviderDomainRemovalInFlight = true
@@ -720,29 +757,20 @@ final class IrisDriveMobileModel: ObservableObject {
         rebuildDerivedState()
         NSLog("Iris Drive repairing stale FileProvider domain registration")
         NSFileProviderManager.remove(existingDomain) { [weak self] removeError in
-            if let removeError {
-                NSLog("Iris Drive FileProvider domain removal before repair failed: \(removeError)")
-            }
-            NSFileProviderManager.add(freshDomain) { [weak self] addError in
-                Task { @MainActor in
-                    guard let self else { return }
-                    if let addError {
-                        NSLog("Iris Drive FileProvider domain repair failed: \(addError)")
-                        self.fileProviderStatus = "Files provider unavailable"
-                        self.rebuildDerivedState()
-                        completion?(false)
-                        return
-                    }
-                    self.markFileProviderRegistrationCurrent()
-                    self.lastProviderSignalKey = ""
-                    self.providerSignalInFlightKey = ""
-                    self.providerSignalRetryTask?.cancel()
-                    self.providerSignalRetryTask = nil
-                    self.fileProviderStatus = "Files provider registered"
+            Task { @MainActor in
+                guard let self else { return }
+                if let removeError {
+                    NSLog("Iris Drive FileProvider repair failed: \(removeError)")
+                    self.fileProviderStatus = "Files provider unavailable"
                     self.rebuildDerivedState()
-                    self.signalFileProviderIfNeeded()
-                    completion?(true)
+                    completion?(false)
+                    return
                 }
+                self.lastProviderSignalKey = ""
+                self.providerSignalInFlightKey = ""
+                self.providerSignalRetryTask?.cancel()
+                self.providerSignalRetryTask = nil
+                self.addFileProviderDomain(freshDomain, completion: completion)
             }
         }
     }
@@ -775,6 +803,7 @@ final class IrisDriveMobileModel: ObservableObject {
     func refreshAfterStartup() { Task { await refreshInBackground() } }
 
     func scheduleBackgroundSyncIfNeeded() {
+        guard !IrisDriveSharedContainer.isolatedBrowserProbe else { return }
         guard shouldScheduleBackgroundSync else { return cancelBackgroundSync() }
         let request = BGAppRefreshTaskRequest(identifier: IrisDriveBackgroundSyncTask.identifier)
         request.earliestBeginDate = Date(timeIntervalSinceNow: 15 * 60)
@@ -801,6 +830,21 @@ final class IrisDriveMobileModel: ObservableObject {
         }
     }
 
+    func updateGatewayScenePhase(_ phase: ScenePhase) {
+        guard phase == .active || phase == .background else { return }
+        let foreground = phase == .active
+        guard foreground != gatewayInForeground else { return }
+        gatewayInForeground = foreground
+        let core = nativeCore
+        let backgroundTime = foreground ? nil : IrisGatewayShutdownTime()
+        gatewayLifecycleQueue.async {
+            core.setGatewayForeground(foreground)
+            if let backgroundTime {
+                Task { @MainActor in backgroundTime.end() }
+            }
+        }
+    }
+
     func startForegroundSyncLoop() {
         guard UIApplication.shared.applicationState == .active else {
             stopForegroundSyncLoop()
@@ -810,9 +854,9 @@ final class IrisDriveMobileModel: ObservableObject {
             stopForegroundSyncLoop()
             return
         }
+        guard foregroundSyncTask == nil else { return }
         startNativeFipsStatusWatcher()
         startProviderRootSignalWatcher()
-        guard foregroundSyncTask == nil else { return }
         foregroundSyncTask = Task { @MainActor [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
@@ -838,93 +882,39 @@ final class IrisDriveMobileModel: ObservableObject {
         let directory = IrisDriveSharedContainer.baseDirectory
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         startNativeFipsStatusDirectoryWatcher(directory: directory)
-        startNativeFipsStatusFileWatcher(directory: directory)
+        if startNativeFipsStatusFileWatcher(directory: directory) {
+            lastNativeFipsStatusRefreshAt = .distantPast
+            scheduleNativeFipsStatusRefresh()
+        }
     }
 
     private func stopNativeFipsStatusWatcher() {
         nativeFipsStatusRefreshTask?.cancel()
         nativeFipsStatusRefreshTask = nil
+        nativeFipsStatusChanged = false
         nativeFipsStatusFileSource?.cancel()
         nativeFipsStatusFileSource = nil
         nativeFipsStatusDirectorySource?.cancel()
         nativeFipsStatusDirectorySource = nil
     }
 
-    private func startNativeFipsStatusDirectoryWatcher(directory: URL) {
-        let descriptor = open(directory.path, O_EVTONLY)
-        guard descriptor >= 0 else {
-            NSLog("Iris Drive native FIPS status directory watch unavailable: \(directory.path)")
-            return
-        }
-        nativeFipsStatusDirectoryDescriptor = descriptor
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: descriptor,
-            eventMask: [.write, .rename, .delete],
-            queue: .main
-        )
-        source.setEventHandler { [weak self] in
-            guard let self else { return }
-            guard self.nativeFipsStatusFileSource == nil else { return }
-            if self.startNativeFipsStatusFileWatcher(directory: directory) {
-                self.scheduleNativeFipsStatusRefresh()
-            }
-        }
-        source.setCancelHandler { [weak self, descriptor] in
-            close(descriptor)
-            guard let self else { return }
-            if self.nativeFipsStatusDirectoryDescriptor == descriptor {
-                self.nativeFipsStatusDirectoryDescriptor = -1
-            }
-        }
-        nativeFipsStatusDirectorySource = source
-        source.resume()
-    }
-
-    @discardableResult
-    private func startNativeFipsStatusFileWatcher(directory: URL) -> Bool {
-        nativeFipsStatusFileSource?.cancel()
-        nativeFipsStatusFileSource = nil
-        let statusURL = directory.appendingPathComponent(nativeFipsStatusFileName, isDirectory: false)
-        let descriptor = open(statusURL.path, O_EVTONLY)
-        guard descriptor >= 0 else { return false }
-        nativeFipsStatusFileDescriptor = descriptor
-        let source = DispatchSource.makeFileSystemObjectSource(
-            fileDescriptor: descriptor,
-            eventMask: [.write, .extend, .attrib, .rename, .delete],
-            queue: .main
-        )
-        source.setEventHandler { [weak self] in
-            guard let self else { return }
-            let data = source.data
-            if data.contains(.delete) || data.contains(.rename) {
-                self.startNativeFipsStatusFileWatcher(directory: directory)
-            }
-            self.scheduleNativeFipsStatusRefresh()
-        }
-        source.setCancelHandler { [weak self, descriptor] in
-            close(descriptor)
-            guard let self else { return }
-            if self.nativeFipsStatusFileDescriptor == descriptor {
-                self.nativeFipsStatusFileDescriptor = -1
-            }
-        }
-        nativeFipsStatusFileSource = source
-        source.resume()
-        return true
-    }
-
-    private func scheduleNativeFipsStatusRefresh() {
-        nativeFipsStatusRefreshTask?.cancel()
+    func scheduleNativeFipsStatusRefresh() {
+        nativeFipsStatusChanged = true
+        guard nativeFipsStatusRefreshTask == nil else { return }
         nativeFipsStatusRefreshTask = Task { @MainActor [weak self] in
-            try? await Task.sleep(nanoseconds: 50_000_000)
             guard let self else { return }
             let statusURL = IrisDriveSharedContainer.baseDirectory
                 .appendingPathComponent(nativeFipsStatusFileName, isDirectory: false)
-            if !self.nativeFipsStatusRefreshIsDue(statusURL: statusURL) {
-                return
+            // Coalesce file events without cancelling a snapshot that is being applied.
+            while nativeFipsStatusChanged {
+                do { try await Task.sleep(nanoseconds: 50_000_000) } catch { return }
+                nativeFipsStatusChanged = false
+                if nativeFipsStatusRefreshIsDue(statusURL: statusURL) {
+                    await dispatchInBackground(["type": "refresh_profile"], on: rosterQueue)
+                }
+                if Task.isCancelled { return }
             }
-            NSLog("Iris Drive native FIPS status file changed")
-            await self.refreshInBackground()
+            nativeFipsStatusRefreshTask = nil
         }
     }
 
@@ -1203,9 +1193,9 @@ final class IrisDriveMobileModel: ObservableObject {
         }
     }
 
-    func approveDevice(request: String, label: String) {
+    func approveDevice(request: String, label: String) async {
         let before = configIdentitySnapshot()
-        let state = dispatch([
+        let state = await dispatchRosterAction([
             "type": "approve_device",
             "request": request,
             "label": label,
@@ -1264,10 +1254,9 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     func deleteDevice(id: String) {
-        dispatch([
-            "type": "delete_device",
-            "app_key_pubkey": id,
-        ])
+        Task {
+            await dispatchRosterAction(["type": "delete_device", "app_key_pubkey": id])
+        }
     }
 
     func appointAdmin(id: String) {
@@ -1317,6 +1306,7 @@ final class IrisDriveMobileModel: ObservableObject {
         profileUsername = ""
         profilePhotoName = ""
         fileProviderError = ""
+        filesAvailabilityNotice = nil
         fileProviderStatus = "Files provider not registered"
         rebuildDerivedState()
         removeFileProviderDomain()
@@ -1391,6 +1381,7 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private func refreshAppleCalendarSyncState() {
+        guard !IrisDriveSharedContainer.isolatedBrowserProbe else { return }
         appleCalendarSyncEnabled = appleCalendarSync.isActive
         appleCalendarSyncStatus = appleCalendarSync.accessStatusLabel
     }
@@ -2227,6 +2218,12 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     @discardableResult
+    func dispatchRosterAction(_ action: [String: Any]) async -> NativeAppState? {
+        // A foreground roster edit can commit while the sync queue waits on peers.
+        await dispatchInBackground(action, invalidatePendingState: true, on: rosterQueue)
+    }
+
+    @discardableResult
     func dispatch(_ action: [String: Any]) -> NativeAppState? {
         guard let actionJson = encodeNativeAction(action) else {
             statusTitle = "Native action failed"
@@ -2238,24 +2235,31 @@ final class IrisDriveMobileModel: ObservableObject {
         return lastState
     }
 
+    @discardableResult
     func dispatchInBackground(
         _ action: [String: Any],
-        invalidatePendingState: Bool = false
-    ) async {
+        invalidatePendingState: Bool = false,
+        on queue: DispatchQueue? = nil
+    ) async -> NativeAppState? {
         guard let actionJson = encodeNativeAction(action) else {
             statusTitle = "Native action failed"
             statusDetail = "Unable to encode action."
-            return
+            return nil
         }
         if invalidatePendingState {
             stateGeneration &+= 1
         }
         let generation = stateGeneration
-        let json = await runNativeInBackground { nativeCore in
+        let json = await runNativeInBackground(on: queue) { nativeCore in
             nativeCore.dispatchJson(actionJson)
         }
-        guard !Task.isCancelled, generation == stateGeneration else { return }
+        guard !Task.isCancelled, generation == stateGeneration else { return nil }
+        // Also discard snapshots started after the request but before it committed.
+        if invalidatePendingState {
+            stateGeneration &+= 1
+        }
         applyStateJson(json)
+        return lastState
     }
 
     func refreshInBackground() async {
@@ -2279,17 +2283,14 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private func runNativeInBackground(
+        on queue: DispatchQueue? = nil,
         _ operation: @escaping @Sendable (IrisDriveNativeCore) -> String
     ) async -> String {
         let nativeCore = nativeCore
-        let nativeCoreQueue = nativeCoreQueue
+        let queue = queue ?? nativeCoreQueue
         return await withCheckedContinuation { continuation in
-            nativeCoreQueue.async { continuation.resume(returning: operation(nativeCore)) }
+            queue.async { continuation.resume(returning: operation(nativeCore)) }
         }
-    }
-
-    func nativeStateJsonForAudit() -> String {
-        runNative { $0.stateJson() }
     }
 
     private func runNative<T>(_ operation: (IrisDriveNativeCore) -> T) -> T {
@@ -2313,6 +2314,8 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private func configurePhotoBackup() {
+        guard !IrisDriveSharedContainer.isolatedBrowserProbe else { return }
+        IrisDriveShareUpload.allowsCellular = syncOverCellular
         let profile = isSetupComplete && !isRevoked && !screenshotFixtureEnabled ? localProfileId : ""
         photoBackup.configure(profile: profile, dataDir: sharedContainerPath, allowsCellular: syncOverCellular)
     }
@@ -2363,7 +2366,8 @@ final class IrisDriveMobileModel: ObservableObject {
     }
 
     private func signalFileProviderIfNeeded() {
-        guard isSetupComplete, !currentProviderSignalKey.isEmpty else { return }
+        guard !IrisDriveSharedContainer.isolatedBrowserProbe else { return }
+        guard isSetupComplete, !currentProviderSignalKey.isEmpty, filesAvailabilityNotice != filesDisabledMessage else { return }
         guard currentProviderSignalKey != lastProviderSignalKey else { return }
         guard currentProviderSignalKey != providerSignalInFlightKey else { return }
         let signalKey = currentProviderSignalKey
@@ -2379,24 +2383,21 @@ final class IrisDriveMobileModel: ObservableObject {
         identifiers.append(contentsOf: currentProviderDirectoryPaths.map(fileProviderIdentifier))
         let group = DispatchGroup()
         var failed = false
-        if #available(iOS 16.0, *) {
-            group.enter()
-            manager.reimportItems(below: .rootContainer) { error in
-                if let error {
-                    failed = true
-                    NSLog("Iris Drive Files provider reimport failed: \(error)")
-                }
-                group.leave()
-            }
-        }
+        // These paths keep stable identifiers. A root reimport would discard
+        // Files' backing store and ask us to recreate every cached item.
         for identifier in identifiers {
             group.enter()
             manager.signalEnumerator(for: identifier) { error in
-                if let error {
-                    failed = true
-                    NSLog("Iris Drive Files provider signal failed for \(identifier.rawValue): \(error)")
+                Task { @MainActor in
+                    if let error {
+                        failed = true
+                        if self.providerSignalInFlightKey == signalKey, let notice = self.filesNotice(for: error) {
+                            self.filesAvailabilityNotice = notice
+                        }
+                        NSLog("Iris Drive Files provider signal failed for \(identifier.rawValue): \(error)")
+                    }
+                    group.leave()
                 }
-                group.leave()
             }
         }
         group.notify(queue: .main) { [weak self] in
@@ -2407,6 +2408,9 @@ final class IrisDriveMobileModel: ObservableObject {
                 return
             }
             if self.currentProviderSignalKey == signalKey {
+                if self.filesAvailabilityNotice != filesDisabledMessage && self.filesAvailabilityNotice != filesLookupFailedMessage {
+                    self.filesAvailabilityNotice = nil
+                }
                 self.lastProviderSignalKey = signalKey
             }
         }

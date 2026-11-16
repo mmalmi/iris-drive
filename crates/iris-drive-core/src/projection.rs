@@ -429,7 +429,6 @@ async fn drive_merged_root_from_view<S: Store>(
         // The view was built by hand or from other roots: walk these ones.
         None => std::sync::Arc::new(DriveSources::load(tree, drive, merge_app_keys).await?.0),
     };
-    let source_roots = &sources.roots;
 
     let mut target_dirs = sources.user_directories(merge_app_keys);
     target_dirs.retain(|path, _| {
@@ -457,7 +456,7 @@ async fn drive_merged_root_from_view<S: Store>(
         &merged.view.tombstones,
         &merged.view.path_kind_replacements,
         &merged.view.path_kind_role_roots,
-        source_roots,
+        &sources,
     )?;
 
     let mut visible = DirBuilder::default();

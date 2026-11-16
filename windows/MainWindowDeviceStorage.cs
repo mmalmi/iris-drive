@@ -16,7 +16,7 @@ using WpfProgressBar = System.Windows.Controls.ProgressBar;
 
 namespace IrisDrive.WindowsShell;
 
-/// The Devices page's Storage section: each of the profile's devices and how
+/// The Settings page's Storage section: each of the profile's devices and how
 /// much of the Drive it holds, as Iris Drive web's Settings > Storage shows it.
 /// The app core words all of it (`ui.device_storage`); this only lays it out.
 public partial class MainWindow

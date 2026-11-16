@@ -445,19 +445,6 @@
 
               <TextBlock Text="Linked Devices" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
               <ListBox x:Name="PeersList" BorderBrush="{StaticResource IrisBorderBrush}" />
-
-              <StackPanel x:Name="DeviceStoragePanel" Visibility="Collapsed" Margin="0,14,0,0">
-                <TextBlock Text="Storage" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
-                <TextBlock x:Name="DeviceStorageSummary"
-                           Foreground="{StaticResource IrisMutedBrush}"
-                           TextWrapping="Wrap"
-                           Margin="0,0,0,8" />
-                <Border Background="{StaticResource IrisPanelBrush}"
-                        BorderBrush="{StaticResource IrisBorderBrush}"
-                        BorderThickness="1">
-                  <StackPanel x:Name="DeviceStorageList" />
-                </Border>
-              </StackPanel>
             </StackPanel>
 
             <StackPanel x:Name="SharesPage" Visibility="Collapsed">
@@ -548,6 +535,18 @@
 
             <StackPanel x:Name="SettingsPage" Visibility="Collapsed">
               <TextBlock Text="Settings" FontWeight="SemiBold" FontSize="18" Margin="0,0,0,12" />
+              <StackPanel x:Name="DeviceStoragePanel" Visibility="Collapsed" Margin="0,14,0,0">
+                <TextBlock Text="Storage" Style="{StaticResource FieldName}" Margin="0,0,0,6" />
+                <TextBlock x:Name="DeviceStorageSummary"
+                           Foreground="{StaticResource IrisMutedBrush}"
+                           TextWrapping="Wrap"
+                           Margin="0,0,0,8" />
+                <Border Background="{StaticResource IrisPanelBrush}"
+                        BorderBrush="{StaticResource IrisBorderBrush}"
+                        BorderThickness="1">
+                  <StackPanel x:Name="DeviceStorageList" />
+                </Border>
+              </StackPanel>
               <CheckBox x:Name="CloseToTrayCheckBox" Content="Tray on close" Checked="CloseToTray_Changed" Unchecked="CloseToTray_Changed" />
               <CheckBox x:Name="LaunchOnStartupCheckBox" Content="Launch on startup" Margin="0,8,0,0" Checked="LaunchOnStartup_Changed" Unchecked="LaunchOnStartup_Changed" />
               <CheckBox x:Name="LocalNhashResolverCheckBox" Content="*.iris.localhost resolver" Margin="0,8,0,0" Checked="LocalNhashResolver_Changed" Unchecked="LocalNhashResolver_Changed" />

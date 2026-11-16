@@ -1,6 +1,14 @@
 # Changelog
 
-## Unreleased
+## 0.1.45 - 2026-11-16
+
+- Devices lists each device once and shows how much of the Drive it keeps offline.
+- Web deletions reach native devices even when a browser republishes the same file tree. Files on iPhone and Mac can reconcile an existing file without creating a numbered copy.
+- Files on iPhone updates its listing during sync without rebuilding the whole Drive, and shows when the Files location has been turned off.
+- iPhone shares keep the original movie, retry interrupted uploads and include the keys the other devices need to open it.
+- Phone backups use one Photos folder. Matching camera filenames preserve different originals, and another phone backing up the same original can reuse the existing copy.
+- The roster recognizes an active encrypted connection through another peer as well as a direct one.
+- Device approvals, roster changes and foreground connection updates can proceed while background file work is running. The iOS browser gateway releases its file locks when the app goes into the background.
 
 - Iris Drive on Windows shows its real version in Settings and now offers
   updates when a newer release is out. It used to call itself 1.0.0.0, so it

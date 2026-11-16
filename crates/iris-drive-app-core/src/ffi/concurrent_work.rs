@@ -1,7 +1,8 @@
 use super::{FfiApp, NativeAppRuntime, ProviderSummaryMode};
 use crate::NativeAppAction;
 use crate::native_provider::{
-    native_sync_status_label, run_native_provider_list, run_native_sync_once,
+    native_sync_status_label, provider_list, run_native_sync_once,
+    run_native_sync_pending_device_approval_acks,
 };
 use crate::state::NativeAppState;
 
@@ -33,8 +34,10 @@ impl FfiApp {
             return self.state();
         };
 
+        let ack_sync = matches!(action, NativeAppAction::SyncApprovalAcks);
         let sync_result = sync.then(|| run_native_sync_once(&data_dir));
-        let provider = run_native_provider_list(&data_dir);
+        let ack_result = ack_sync.then(|| run_native_sync_pending_device_approval_acks(&data_dir));
+        let provider = provider_list(&data_dir, true);
 
         self.with_runtime(|runtime| {
             // Approval, logout, pause, or a later action wins over this work.
@@ -45,11 +48,14 @@ impl FfiApp {
             if let Some(result) = sync_result {
                 runtime.apply_sync_result(&result);
             }
+            if let Some(result) = ack_result {
+                runtime.apply_approval_ack_result(result);
+            }
             runtime.reload_from_disk_preserving_error(ProviderSummaryMode::Skip);
             if let Ok(value) = provider {
                 runtime.apply_provider_summary(&value);
             }
-            runtime.reconcile_app_key_link_exchange(sync);
+            runtime.reconcile_app_key_link_exchange(sync || ack_sync);
             runtime.start_browser_gateway_if_needed();
             runtime.state()
         })

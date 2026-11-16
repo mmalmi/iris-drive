@@ -48,7 +48,7 @@ pub struct UiState {
 /// has and whether it is in sync, as Iris Drive web's Storage page shows it.
 #[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UiDeviceStorage {
-    /// "Your Drive is 2.3 GB in 1,204 files. All of it is on this device."
+    /// "Your Drive is 2.3 GB in 1,204 files. Every Drive file is available offline on this device."
     pub summary: String,
     /// This device first, then those that reported, holding most first.
     pub devices: Vec<UiDeviceStorageRow>,
@@ -66,10 +66,10 @@ pub struct UiDeviceStorageRow {
     /// `web`, `phone`, `computer` or `drive`, for the shell's own icon.
     pub icon: String,
     pub has_report: bool,
-    /// "All of it", "1.2 GB · 35%", or "No report yet".
+    /// "All Drive files available offline", "1.2 GB stored · 35% of Drive", or "No report yet".
     pub held_label: String,
     pub holds_all: bool,
-    /// The bar: held bytes in thousandths of the largest Drive size reported.
+    /// Locally held bytes in thousandths of this device's measured Drive size.
     pub held_permille: u32,
     pub connected: bool,
     /// "Connected" or "Not connected"; empty for this device.

@@ -407,7 +407,12 @@ impl LocalBlossomServer {
             uploads_offline: Arc::default(),
         };
         let app = Router::new()
-            .route("/upload", put(blossom_upload))
+            // Match the htree Blossom endpoint. A full encrypted Drive chunk
+            // is larger than Axum's default two-megabyte extraction limit.
+            .route(
+                "/upload",
+                put(blossom_upload).layer(axum::extract::DefaultBodyLimit::max(64 * 1024 * 1024)),
+            )
             .route("/:name", get(blossom_get).head(blossom_head))
             .with_state(state.clone());
         let listener = TcpListener::bind(SocketAddr::from((Ipv4Addr::LOCALHOST, 0)))

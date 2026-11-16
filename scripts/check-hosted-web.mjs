@@ -56,19 +56,28 @@ if (execFileSync('git', ['rev-parse', 'HEAD'], { cwd: web, encoding: 'utf8' }).t
 }
 run('pnpm', ['install', '--frozen-lockfile'], { cwd: web, timeout: 300000 })
 run('pnpm', ['exec', 'playwright', 'install', '--with-deps', 'chromium'], { cwd: web, timeout: 300000 })
-env = { ...env, CI: 'true', IRIS_DRIVE_BIN: cli, IRIS_DRIVE_REPO: root,
+const cliSha256 = createHash('sha256').update(readFileSync(cli)).digest('hex')
+env = { ...env, CI: 'true', IRIS_DRIVE_BIN: cli, IRIS_DRIVE_BIN_SHA256: cliSha256,
+  IRIS_DRIVE_REQUIRE_NATIVE: '1', IRIS_DRIVE_REPO: root,
+  PLAYWRIGHT_JSON_OUTPUT_FILE: join(output, 'journeys.json'),
   PW_WORKERS: '1', PW_APP_PORT: '5186', PW_TEST_BLOSSOM_URL: 'http://127.0.0.1:18886',
   HTREE_ADDR: '127.0.0.1:18886', HTREE_CONFIG_DIR: join(output, 'htree-config'),
   HTREE_DATA_DIR: join(output, 'htree-data') }
 const log = openSync(join(output, 'journeys.log'), 'wx')
+const suites = ['shared-folder-journey.spec.ts', 'shared-folder-reconnect.spec.ts',
+  'web-native-device-link.spec.ts', 'drive-interop.spec.ts']
 try {
-  run('pnpm', ['exec', 'playwright', 'test', 'e2e/shared-folder-journey.spec.ts',
-    'e2e/shared-folder-reconnect.spec.ts', 'e2e/web-native-device-link.spec.ts',
-    '--project=chromium', '--retries=0'], { cwd: web, timeout: 600000, stdio: ['ignore', log, log] })
+  run('pnpm', ['exec', 'playwright', 'test', ...suites.map(name => `e2e/${name}`),
+    '--project=chromium', '--forbid-only', '--retries=0', '--reporter=line,json'],
+  { cwd: web, timeout: 600000, stdio: ['ignore', log, log] })
 } finally { closeSync(log) }
-const results = readFileSync(join(output, 'journeys.log'), 'utf8')
-if (!/4 passed/.test(results) || /[1-9]\d* skipped/.test(results)) throw new Error('All four journeys must execute and pass')
+const results = JSON.parse(readFileSync(env.PLAYWRIGHT_JSON_OUTPUT_FILE, 'utf8'))
+const { expected, skipped, flaky, unexpected } = results.stats
+if (expected < 7 || skipped !== 0 || flaky !== 0 || unexpected !== 0 || results.errors.length ||
+    !suites.every(name => results.suites.some(suite => suite.file.split('/').pop() === name))) {
+  throw new Error('All shared-folder, device-link and Drive interop journeys must execute and pass')
+}
 writeFileSync(join(output, 'receipt.json'), JSON.stringify({ schema: 1, status: 'passed', commit,
-  webSource: publicWeb, webCommit, testsPassed: 4, testsSkipped: 0,
+  webSource: publicWeb, webCommit, cliSha256, testsPassed: expected, testsSkipped: skipped,
   htreeVersion: '0.2.142', htreeSha256: createHash('sha256').update(readFileSync(htree)).digest('hex'),
   product: JSON.parse(readFileSync(join(inputs, 'build-receipt.json'), 'utf8')) }, null, 2))

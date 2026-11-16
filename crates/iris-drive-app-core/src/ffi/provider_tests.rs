@@ -655,6 +655,15 @@ fn refresh_profile_skips_provider_summary_until_full_refresh() {
     let full_refresh = app.dispatch(NativeAppAction::Refresh);
     assert_eq!(full_refresh.ui.file_count, 1);
     assert_eq!(full_refresh.ui.visible_file_bytes, 20);
+    let local = full_refresh
+        .ui
+        .device_storage
+        .devices
+        .iter()
+        .find(|row| row.is_current)
+        .unwrap();
+    assert!(local.has_report);
+    assert_eq!(local.held_label, "All Drive files available offline");
     assert!(
         full_refresh
             .ui

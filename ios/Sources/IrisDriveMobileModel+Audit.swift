@@ -90,7 +90,9 @@ extension IrisDriveMobileModel {
         }
         guard let data = try? JSONEncoder().encode(events) else { return }
         defaults.set(data, forKey: configMutationAuditDefaultsKey)
-        writeDebugState(nativeStateJsonForAudit())
+        if !lastAppliedStateJson.isEmpty {
+            writeDebugState(lastAppliedStateJson)
+        }
     }
 
     private func configMutationAuditEvents() -> [ConfigMutationAuditEvent] {

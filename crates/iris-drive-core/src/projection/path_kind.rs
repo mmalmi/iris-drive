@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use hashtree_core::HashTreeError;
 
+use super::sources::DriveSources;
 use super::{DirectoryMeta, ProjectionError, merged_entry_source_path, next_visible_conflict_path};
 use crate::config::AppKeyRootRef;
 use crate::conflict::conflict_filename;
@@ -37,8 +38,9 @@ pub(super) fn resolve_path_kind_conflicts(
     tombstones: &[MergedTombstone],
     path_kind_replacements: &[MergedPathKindReplacement],
     path_kind_role_roots: &[MergedPathKindRoleRoot],
-    source_roots: &BTreeMap<String, AppKeyRootRef>,
+    sources: &DriveSources,
 ) -> Result<(Vec<MergedEntry>, BTreeMap<String, MergedDirectory>), ProjectionError> {
+    let source_roots = &sources.roots;
     let tombstone_index = TombstoneIndex::new(tombstones);
     if !tombstones.is_empty() {
         files.retain(|file| {
@@ -258,6 +260,14 @@ pub(super) fn resolve_path_kind_conflicts(
             || file_role_persists;
 
         if !file_is_canonical {
+            let losing = &files[collision_index];
+            let preferred = conflict_filename(&collision_path, &losing.source_app_key_pubkey);
+            if let Some(copy) = files.iter().find(|entry| entry.path == preferred)
+                && same_projected_file(sources, losing, copy)?
+            {
+                files.remove(collision_index);
+                continue;
+            }
             let mut occupied = collect_occupied_paths(
                 files
                     .iter()
@@ -296,6 +306,19 @@ pub(super) fn resolve_path_kind_conflicts(
             .cloned()
             .map(|entry| (entry.path.clone(), entry))
             .collect::<BTreeMap<_, _>>();
+        // A later writer can already carry the previous visible projection.
+        // Compare the complete visible subtree, including empty directories
+        // and other writers' children, before reusing its conflict copy.
+        let preferred = conflict_filename(&collision_path, &directory.source_app_key_pubkey);
+        if stationary_directories.contains_key(&preferred)
+            && same_projected_subtree(sources, &directories, &files, &collision_path, &preferred)?
+        {
+            directories = stationary_directories;
+            files.retain(|entry| {
+                entry.path == collision_path || !path_is_at_or_below(&entry.path, &collision_path)
+            });
+            continue;
+        }
         let occupied = collect_occupied_paths(
             files
                 .iter()
@@ -335,6 +358,60 @@ pub(super) fn resolve_path_kind_conflicts(
 
     files.sort_by(|left, right| left.path.cmp(&right.path));
     Ok((files, directories))
+}
+
+fn same_projected_file(
+    sources: &DriveSources,
+    left: &MergedEntry,
+    right: &MergedEntry,
+) -> Result<bool, ProjectionError> {
+    let a = sources.entry_for(left)?;
+    let b = sources.entry_for(right)?;
+    Ok(a.hash == b.hash
+        && a.key == b.key
+        && a.size == b.size
+        && a.link_type == b.link_type
+        && super::visible_entry_meta(a, left) == super::visible_entry_meta(b, right))
+}
+
+fn same_projected_subtree(
+    sources: &DriveSources,
+    directories: &BTreeMap<String, MergedDirectory>,
+    files: &[MergedEntry],
+    original: &str,
+    copy: &str,
+) -> Result<bool, ProjectionError> {
+    let dirs_at = |root: &str| {
+        directories
+            .iter()
+            .filter(|(path, _)| path_is_at_or_below(path, root))
+            .map(|(path, dir)| (&path[root.len()..], &dir.meta))
+            .collect::<BTreeMap<_, _>>()
+    };
+    if dirs_at(original) != dirs_at(copy) {
+        return Ok(false);
+    }
+    let files_at = |root: &str| {
+        files
+            .iter()
+            .filter(|f| f.path != root && path_is_at_or_below(&f.path, root))
+            .map(|f| (&f.path[root.len()..], f))
+            .collect::<BTreeMap<_, _>>()
+    };
+    let left = files_at(original);
+    let right = files_at(copy);
+    if left.len() != right.len() {
+        return Ok(false);
+    }
+    for (path, entry) in left {
+        let Some(other) = right.get(path) else {
+            return Ok(false);
+        };
+        if !same_projected_file(sources, entry, other)? {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 fn active_role_persists_against_descendant(

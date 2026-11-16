@@ -78,9 +78,11 @@
   <key>BGTaskSchedulerPermittedIdentifiers</key>
   <array>
     <string>$(IRIS_DRIVE_IOS_BACKGROUND_SYNC_TASK_IDENTIFIER)</string>
+    <string>$(IRIS_DRIVE_IOS_BACKGROUND_SYNC_TASK_IDENTIFIER).share-upload</string>
   </array>
   <key>UIBackgroundModes</key>
   <array>
+    <string>processing</string>
     <string>fetch</string>
   </array>
   <key>UIApplicationSupportsIndirectInputEvents</key>

@@ -253,7 +253,6 @@ private fun DevicesContent(
         item {
             DevicesPanel(
                 devices = state.devices,
-                deviceStorage = state.deviceStorage,
                 inboundRequests = state.profile?.inboundAppKeyLinkRequests.orEmpty(),
                 canApprove = state.profile?.canAdminProfile == true,
                 onAddRecoveryKey = onAddRecoveryKey,
@@ -383,6 +382,7 @@ private fun SettingsContent(
         state.profile?.profileId?.takeIf { state.isSetupComplete && !state.isRevoked }?.let { profileId ->
             item { PhotoBackupSettings(profileId) }
         }
+        item { DeviceStorageSection(storage = state.deviceStorage) }
         item {
             SettingsPanel(
                 state = state,

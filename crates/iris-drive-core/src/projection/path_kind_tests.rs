@@ -160,6 +160,41 @@ async fn causally_newer_file_keeps_path_and_remaps_entire_directory_subtree() {
 }
 
 #[tokio::test]
+async fn republished_conflict_copies_keep_one_file_and_one_directory() {
+    let fixture = PathKindFixture::new();
+    let file = fixture.file_root("draft", b"file", FILE_MODIFIED_AT).await;
+    let folder = fixture.directory_root("draft", "child", b"contents").await;
+    for (older, replacement) in [(&file, &folder), (&folder, &file)] {
+        let original = root_ref(older, &fixture.owner_app_key, 1, 100, None);
+        let published = |root, seq| {
+            root_ref(
+                root,
+                PEER_APP_KEY,
+                seq,
+                200,
+                Some((&fixture.owner_app_key, 1, older)),
+            )
+        };
+        let first = primary_merged_root(
+            &fixture.tree,
+            &fixture.config(original.clone(), published(replacement, 1)),
+        )
+        .await
+        .unwrap();
+        let second = primary_merged_root(
+            &fixture.tree,
+            &fixture.config(original, published(&first.root_cid, 2)),
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            second.root_cid, first.root_cid,
+            "republishing created another conflict copy"
+        );
+    }
+}
+
+#[tokio::test]
 async fn causal_publication_time_drift_preserves_replaced_directory_children() {
     let fixture = PathKindFixture::new();
     let directory_root = fixture

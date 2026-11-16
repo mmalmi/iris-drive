@@ -131,7 +131,7 @@ impl<S: Store> HashTreeProviderFs<S> {
         let parent_cid = self.descend(&parent_segs).await?;
         let entries = self
             .tree
-            .list_directory(&parent_cid)
+            .list_directory_required(&parent_cid)
             .await
             .map_err(map_err)?;
         let entry = entries
@@ -152,7 +152,11 @@ impl<S: Store> HashTreeProviderFs<S> {
     async fn descend(&self, segments: &[&str]) -> Result<Cid, ProviderError> {
         let mut current = self.current_root().await;
         for seg in segments {
-            let listing = self.tree.list_directory(&current).await.map_err(map_err)?;
+            let listing = self
+                .tree
+                .list_directory_required(&current)
+                .await
+                .map_err(map_err)?;
             let entry = listing
                 .into_iter()
                 .find(|e| e.name == *seg)
@@ -286,7 +290,7 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
         }
         let listing = self
             .tree
-            .list_directory(&resolved.cid)
+            .list_directory_required(&resolved.cid)
             .await
             .map_err(map_err)?;
         Ok(listing
@@ -424,7 +428,7 @@ impl<S: Store + 'static> ProviderFs for HashTreeProviderFs<S> {
         if resolved.link_type == LinkType::Dir {
             let listing = self
                 .tree
-                .list_directory(&resolved.cid)
+                .list_directory_required(&resolved.cid)
                 .await
                 .map_err(map_err)?;
             if !listing.is_empty() {
@@ -574,7 +578,7 @@ fn set_entry_with_meta<'a, S: Store>(
     Box::pin(async move {
         if path.is_empty() {
             let mut entries = tree
-                .list_directory(root)
+                .list_directory_required(root)
                 .await?
                 .into_iter()
                 .filter(|item| item.name != entry.name)
@@ -598,7 +602,7 @@ fn set_entry_with_meta<'a, S: Store>(
             return tree.put_directory(entries).await;
         }
 
-        let entries = tree.list_directory(root).await?;
+        let entries = tree.list_directory_required(root).await?;
         let segment = path[0];
         let child = entries
             .iter()

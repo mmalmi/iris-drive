@@ -290,6 +290,14 @@ impl ProfileState {
     pub fn sync_app_keys_from_profile(&mut self) -> bool {
         let profile_projection =
             project_nostr_identity_roster(self.profile_id, self.profile_roster_ops.clone());
+        // A removed device can no longer acknowledge its original invitation.
+        let receipts_before = self.pending_device_approval_receipts.len();
+        self.pending_device_approval_receipts.retain(|receipt| {
+            !profile_projection
+                .tombstones
+                .contains_key(&receipt.device_app_key_pubkey)
+        });
+        let receipts_changed = self.pending_device_approval_receipts.len() != receipts_before;
         let Some(projection) = app_keys_from_profile_projection_with_local_labels(
             &profile_projection,
             self.app_keys.as_ref(),
@@ -303,7 +311,7 @@ impl ProfileState {
             let requests_changed = self.inbound_app_key_link_requests.len() != request_count_before;
             self.profile_roster_projection = Some(profile_projection);
             self.recompute_authorization();
-            return requests_changed;
+            return requests_changed || receipts_changed;
         };
         let app_keys_changed = self.app_keys.as_ref() != Some(&projection);
         let request_count_before = self.inbound_app_key_link_requests.len();
@@ -321,7 +329,7 @@ impl ProfileState {
         self.recompute_authorization_from_app_keys(&projection, current_app_key_is_tombstoned);
         self.profile_roster_projection = Some(profile_projection);
         self.app_keys = Some(projection);
-        app_keys_changed || requests_changed
+        app_keys_changed || requests_changed || receipts_changed
     }
 
     /// Adopt the profile UUID carried by local roster evidence when that

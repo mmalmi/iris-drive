@@ -46,7 +46,7 @@ struct PhotoBackupSection: View {
         } header: {
             Text("Photo backup")
         } footer: {
-            Text("Save originals to Photos in My Drive. Removing an item from your library keeps its Drive copy.")
+            Text("All phones on this Drive back up to My Drive/Photos. Deleting a photo from your phone keeps its backup.")
         }
     }
 
