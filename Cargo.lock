@@ -2139,9 +2139,9 @@ dependencies = [
 
 [[package]]
 name = "git-remote-htree"
-version = "0.4.0"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6c4f5a0feac5a320ea383af86849063d2ca890d0c318aa5dd9d38046c5b2ccf8"
+checksum = "fee9332a3366c8a61709d12973c79451721d0372706abf8e37b2a6da39808f7e"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2402,9 +2402,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-cli"
-version = "0.4.1"
+version = "0.4.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e2dba54451f29489a8858fdacc8f05f7bdc58b7d7386a1c2b998de281d29bbdf"
+checksum = "1e20779e57be1bb55a33556269971646e3425088c58b21f45543c515baaf9fe2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2436,6 +2436,7 @@ dependencies = [
  "ignore",
  "libc",
  "lru 0.12.5",
+ "negentropy",
  "nostr",
  "nostr-pubsub",
  "nostr-pubsub-fips",
@@ -2517,9 +2518,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-core"
-version = "0.3.0"
+version = "0.3.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0984dfd6c005bdd85b0ae249d3ee77680d18df3a778807e45b618b8f0814704f"
+checksum = "ad3de9ec303ed9a02551e91ef30d6ac62f44b1cb46f1fd44ab89f7570c4ff127"
 dependencies = [
  "aes-gcm 0.11.1",
  "async-trait",
@@ -2538,9 +2539,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-embedded"
-version = "0.4.1"
+version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9fd7360cad9c373584bd744685bfc336ca59bd5a0df419eaf840ac0867629bb5"
+checksum = "aebe8a56e536dcf701444e79b1905b870e5748bc4d0150836314d17adab1fbd7"
 dependencies = [
  "anyhow",
  "hashtree-cli",
@@ -2721,9 +2722,9 @@ dependencies = [
 
 [[package]]
 name = "hashtree-nostr-social-graph-heed"
-version = "0.2.0-hashtree.1"
+version = "0.2.1-hashtree.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "99c4f448573e151bf32a0e6a9c18eb2ee69178a441680622a9729229d788f375"
+checksum = "f48e56163b5a87fadafb206194e37edd5c75c1a66f138225c9a36e6a6b2780e0"
 dependencies = [
  "hashtree-heed",
  "nostr-social-graph",
@@ -3877,9 +3878,9 @@ dependencies = [
 
 [[package]]
 name = "negentropy"
-version = "0.5.2"
+version = "0.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a3d66662cb5ca384d4991509755ed5a42dd8e31c4282bf881938e506fc3146ec"
+checksum = "fd6f12461d14b5768028d39fab3cdfbcefb0bc7f09e95f413a00b6fdedcc9c2d"
 
 [[package]]
 name = "netlink-packet-core"
@@ -4191,9 +4192,9 @@ dependencies = [
 
 [[package]]
 name = "nostr-social-graph"
-version = "0.2.0"
+version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "83a7c3e6dedf8c0474c9e09938496abde4a9c77cd38ec4832d9b56ee9602b8f8"
+checksum = "94ad34129aa71f3cb8344e39d3a690c08c7d84b5a230a42e146efc0aaa3f2d22"
 dependencies = [
  "hex",
  "indexmap",
