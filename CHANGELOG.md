@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.46 - 2026-11-16
 
 - Your devices exchange Drive's own events (roots, roster changes and device
   storage reports) with your web devices over FIPS as well as through relays,
