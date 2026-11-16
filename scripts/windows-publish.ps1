@@ -183,6 +183,13 @@ function Test-ReleaseNativePathRemapping {
   }
 }
 
+# The csproj stamps IrisDrive.exe from this same workspace version; a release
+# tag must name it too, so the installer, the exe and its update check agree.
+$AppVersion = Get-WorkspaceVersion
+if ($Tag -and $Tag.TrimStart("v") -ne $AppVersion) {
+  throw "Release tag $Tag does not match workspace version $AppVersion"
+}
+
 # Resolve and verify runtime downloads before starting the native compilation.
 . (Join-Path $PSScriptRoot "windows-build-inputs.ps1")
 Invoke-Checked dotnet @("restore", $Project, "--runtime", $Runtime, "--locked-mode",
@@ -253,6 +260,11 @@ if ($Configuration -eq "Release") {
 }
 Invoke-Checked dotnet $DotnetArgs
 
+$StampedApp = (Get-Item -LiteralPath (Join-Path $PublishDir "IrisDrive.exe")).VersionInfo
+if ($StampedApp.ProductVersion -ne $AppVersion -or $StampedApp.FileVersion -ne "$AppVersion.0") {
+  throw "IrisDrive.exe is stamped $($StampedApp.ProductVersion) (file $($StampedApp.FileVersion)), expected workspace version $AppVersion"
+}
+
 Copy-Item $Idrive (Join-Path $PublishDir "idrive.exe") -Force
 Copy-Item $AppCore (Join-Path $PublishDir "iris_drive_app_core.dll") -Force
 $PublishedLicense = Join-Path $PublishDir "LICENSE"
@@ -304,11 +316,8 @@ Write-Output "Published Iris Drive to $PublishDir"
 Write-Output "Self-contained publish: no .NET Desktop Runtime install required."
 
 if ($Installer) {
-  $VersionTag = if ($Tag) { $Tag } else { "v$(Get-WorkspaceVersion)" }
-  if (!$VersionTag.StartsWith("v")) {
-    $VersionTag = "v$VersionTag"
-  }
-  $Version = $VersionTag.TrimStart("v")
+  $Version = $AppVersion
+  $VersionTag = "v$Version"
   $InstallerOutputDir = if ($OutputDir) { Resolve-OutputPath $OutputDir } else { Join-Path $Root "dist" }
   New-Item -ItemType Directory -Force -Path $InstallerOutputDir | Out-Null
 

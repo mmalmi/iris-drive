@@ -15,6 +15,7 @@ require_contains() {
 
 require_contains crates/iris-drive-core/src/updater.rs "fn preferred_app_asset_uses_current_platform_artifacts_only()"
 require_contains crates/iris-drive-core/src/updater.rs "fn compares_semver_like_update_tags()"
+require_contains crates/iris-drive-core/src/updater.rs "fn windows_app_version_compares_against_release_tags()"
 require_contains crates/iris-drive-core/src/updater.rs "fn native_update_config_uses_the_running_profiles_embedded_hashtree()"
 require_contains crates/iris-drive-cli/src/daemon/tests_part1.rs "fn daemon_status_records_binary_version_for_gui_mismatch_detection()"
 require_contains crates/iris-drive-cli/src/service.rs "fn macos_binary_version_query_reads_version_json()"

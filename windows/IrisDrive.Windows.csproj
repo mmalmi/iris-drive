@@ -17,6 +17,19 @@
     <ApplicationIcon>IrisDrive.ico</ApplicationIcon>
   </PropertyGroup>
 
+  <!-- The app reports and update-checks the workspace release version from the root Cargo.toml. -->
+  <PropertyGroup>
+    <IrisDriveWorkspaceCargoToml>$([MSBuild]::NormalizePath('$(MSBuildThisFileDirectory)', '..', 'Cargo.toml'))</IrisDriveWorkspaceCargoToml>
+    <IrisDriveWorkspaceVersion Condition="Exists('$(IrisDriveWorkspaceCargoToml)')">$([System.Text.RegularExpressions.Regex]::Match($([System.IO.File]::ReadAllText('$(IrisDriveWorkspaceCargoToml)')), '(?m)^\[workspace\.package\][\s\S]*?^version\s*=\s*"[^"\r\n]+"'))</IrisDriveWorkspaceVersion>
+    <IrisDriveWorkspaceVersion>$([System.Text.RegularExpressions.Regex]::Match('$(IrisDriveWorkspaceVersion)', '[^"]+(?="\z)'))</IrisDriveWorkspaceVersion>
+    <Version>$(IrisDriveWorkspaceVersion)</Version>
+    <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
+  </PropertyGroup>
+
+  <Target Name="IrisDriveRequireWorkspaceVersion" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(IrisDriveWorkspaceVersion)' == ''" Text="Could not read [workspace.package] version from $(IrisDriveWorkspaceCargoToml)." />
+  </Target>
+
   <ItemGroup>
     <Content Include="IrisDrive.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
     <Content Include="IrisDrive.png" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

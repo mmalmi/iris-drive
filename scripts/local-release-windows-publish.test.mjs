@@ -4,6 +4,9 @@ import { readFileSync } from 'node:fs'
 
 const source = readFileSync(new URL('./windows-publish.ps1', import.meta.url), 'utf8')
 const localReleaseSource = readFileSync(new URL('./local-release.mjs', import.meta.url), 'utf8')
+const projectSource = readFileSync(new URL('../windows/IrisDrive.Windows.csproj', import.meta.url), 'utf8')
+const serviceSource = readFileSync(new URL('../windows/IrisDriveService.cs', import.meta.url), 'utf8')
+const appVersionSource = readFileSync(new URL('../windows/IrisDriveServiceAppVersion.cs', import.meta.url), 'utf8')
 
 function position(pattern, description) {
   const match = source.match(pattern)
@@ -240,4 +243,73 @@ test('Windows runtime downloads are locked and checked before native compilation
   assertBefore(verify, cargo, 'Input verification precedes native compilation')
   assert.match(source, /"--locked-mode"/)
   assert.match(source, /"publish",[\s\S]{0,80}"--no-restore"/)
+})
+
+test('every Windows app build is stamped with the workspace version or fails', () => {
+  const read = projectSource.match(
+    /<IrisDriveWorkspaceVersion\b[^>]*>[\s\S]*?<\/IrisDriveWorkspaceVersion>/g,
+  )
+  assert.ok(read, 'The Windows project must derive IrisDriveWorkspaceVersion')
+  const derivation = read.join('\n')
+  assert.match(derivation, /ReadAllText/, 'The version must be read from a file')
+  assert.match(derivation, /ReadAllText\('\$\(IrisDriveWorkspaceCargoToml\)'\)/)
+  assert.match(
+    projectSource,
+    /<IrisDriveWorkspaceCargoToml>[^<]*'\$\(MSBuildThisFileDirectory\)',\s*'\.\.',\s*'Cargo\.toml'[^<]*<\/IrisDriveWorkspaceCargoToml>/,
+    'The version must come from the root Cargo.toml',
+  )
+  assert.match(derivation, /\\\[workspace\\\.package\\\]/, 'The version must come from [workspace.package]')
+  assert.match(projectSource, /<Version>\$\(IrisDriveWorkspaceVersion\)<\/Version>/)
+  assert.match(
+    projectSource,
+    /<Error\s+Condition="'\$\(IrisDriveWorkspaceVersion\)'\s*==\s*''"/,
+    'A build without a readable workspace version must fail instead of using the SDK default 1.0.0',
+  )
+  assert.match(
+    projectSource,
+    /<IncludeSourceRevisionInInformationalVersion>false<\/IncludeSourceRevisionInInformationalVersion>/,
+    'The informational version the app reports must be the bare release version',
+  )
+  assert.doesNotMatch(
+    projectSource,
+    /<(?:Version|VersionPrefix|AssemblyVersion|FileVersion|InformationalVersion)>\s*\d/,
+    'The Windows project must not carry a second hand-maintained version',
+  )
+})
+
+test('the publish step proves the exe carries the workspace version before packaging', () => {
+  const version = position(/\$AppVersion\s*=\s*Get-WorkspaceVersion\b/, 'read the workspace version once')
+  const tagGate = position(
+    /if\s*\(\s*\$Tag\s+-and\s+\$Tag\.TrimStart\(["']v["']\)\s+-ne\s+\$AppVersion\s*\)\s*\{\s*throw/i,
+    'reject a release tag that differs from the workspace version',
+  )
+  const cargo = position(/Invoke-Checked\s+cargo\s+\$CargoArgs/i, 'run the Cargo build')
+  const publish = position(/Invoke-Checked\s+dotnet\s+\$DotnetArgs/i, 'run dotnet publish')
+  const stamped = position(
+    /\$StampedApp\s*=\s*\(Get-Item\s+-LiteralPath\s+\(Join-Path\s+\$PublishDir\s+["']IrisDrive\.exe["']\)\)\.VersionInfo/i,
+    'read the published IrisDrive.exe version info',
+  )
+  const gate = position(
+    /if\s*\(\s*\$StampedApp\.ProductVersion\s+-ne\s+\$AppVersion\s+-or\s+\$StampedApp\.FileVersion\s+-ne\s+["']\$AppVersion\.0["']\s*\)\s*\{\s*throw/i,
+    'fail when IrisDrive.exe ProductVersion or FileVersion differs from the workspace version',
+  )
+  const inno = position(/\$InnoSetupCompiler\s*=\s*Resolve-InnoSetupCompiler/i, 'build the installer')
+
+  assertBefore(version, tagGate, 'The workspace version must be read before the tag gate')
+  assertBefore(tagGate, cargo, 'A mismatched tag must fail before the expensive Cargo build')
+  assertBefore(publish, stamped, 'The stamp is checked on the published exe')
+  assertBefore(stamped, gate, 'The stamp is read before it is checked')
+  assertBefore(gate, inno, 'The stamp must be proven before the installer is built')
+  assert.match(source, /\$Version\s*=\s*\$AppVersion\b/, 'The installer must carry the same version as the exe')
+})
+
+test('the Windows app reports and update-checks its stamped version without a fallback', () => {
+  assert.doesNotMatch(serviceSource, /\bAppVersion\s*=>/, 'AppVersion has one definition')
+  const appVersion = appVersionSource.match(/public\s+string\s+AppVersion\b[\s\S]*?;/)
+  assert.ok(appVersion, 'IrisDriveService must expose AppVersion')
+  assert.match(appVersion[0], /AssemblyInformationalVersionAttribute/)
+  assert.match(appVersion[0], /throw\b/, 'A missing stamp must fail loudly')
+  assert.doesNotMatch(appVersion[0], /GetName\(\)\.Version|"\d+\.\d+/, 'No assembly-version or hard-coded fallback')
+  assert.match(serviceSource, /CheckUpdate\(DefaultConfigDirectory,\s*AppVersion\)/)
+  assert.match(serviceSource, /DownloadUpdate\(DefaultConfigDirectory,\s*AppVersion,/)
 })

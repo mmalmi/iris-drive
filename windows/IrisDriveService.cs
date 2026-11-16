@@ -26,9 +26,6 @@ public sealed partial class IrisDriveService
 
     private IrisDriveNativeCore NativeCore => nativeCore.Value;
 
-    public string AppVersion =>
-        typeof(IrisDriveService).Assembly.GetName().Version?.ToString() ?? "0.1.0";
-
     public string DefaultConfigDirectory => WindowsProfileEnvironment.ConfigDirectory;
 
     public Task<IrisDriveStatusData> StatusAsync(bool refreshProvider = true)

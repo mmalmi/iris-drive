@@ -553,4 +553,15 @@ mod tests {
         assert!(!version_is_newer("v0.2.27", "0.2.27"));
         assert!(!version_is_newer("v0.2.26", "0.2.27"));
     }
+
+    #[test]
+    fn windows_app_version_compares_against_release_tags() {
+        // IrisDrive.exe sends the workspace version stamped into its informational version.
+        assert!(version_is_newer("v0.1.42", "0.1.41"));
+        assert!(!version_is_newer("v0.1.41", "0.1.41"));
+        assert!(!version_is_newer("v0.1.40", "0.1.41"));
+        // Builds that lacked the stamp sent the .NET default assembly version, which outranks
+        // every 0.x release tag, so they were never offered an update.
+        assert!(!version_is_newer("v0.1.42", "1.0.0.0"));
+    }
 }
