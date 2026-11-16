@@ -151,14 +151,12 @@ async fn main() -> Result<()> {
                     bail!("fetch accepts exactly one CID");
                 }
                 let result = sync.download_tree(&cid).await;
-                let remote = sync
-                    .fips_peer_statuses()
-                    .await
-                    .into_iter()
+                let presence = sync.peer_presence().await;
+                let remote = presence
+                    .statuses
+                    .iter()
                     .find(|peer| peer.npub == remote_npub);
-                let remote_connected = remote
-                    .as_ref()
-                    .is_some_and(|peer| peer.transport_addr.is_some());
+                let remote_connected = presence.direct.contains(&remote_npub);
                 match result {
                     Ok(report) => {
                         let cached = local
@@ -173,8 +171,8 @@ async fn main() -> Result<()> {
                             "root_cached": cached.is_some(),
                             "sha256": cached.as_ref().map(|bytes| hex::encode(Sha256::digest(bytes))),
                             "remote_connected": remote_connected,
-                            "remote_transport": remote.as_ref().and_then(|peer| peer.transport_type.clone()),
-                            "remote_addr": remote.as_ref().and_then(|peer| peer.transport_addr.clone()),
+                            "remote_transport": remote.and_then(|peer| peer.transport_type.clone()),
+                            "remote_addr": remote.and_then(|peer| peer.transport_addr.clone()),
                         }))?;
                     }
                     Err(error) => emit(&json!({
@@ -182,20 +180,23 @@ async fn main() -> Result<()> {
                         "cid": cid.to_string(),
                         "error": format!("{error:#}"),
                         "remote_connected": remote_connected,
-                        "remote_transport": remote.as_ref().and_then(|peer| peer.transport_type.clone()),
-                        "remote_addr": remote.as_ref().and_then(|peer| peer.transport_addr.clone()),
+                        "remote_transport": remote.and_then(|peer| peer.transport_type.clone()),
+                        "remote_addr": remote.and_then(|peer| peer.transport_addr.clone()),
                     }))?,
                 }
             }
             Some("status") => {
-                let remote = sync
-                    .fips_peer_statuses()
-                    .await
-                    .into_iter()
+                let presence = sync.peer_presence().await;
+                let remote = presence
+                    .statuses
+                    .iter()
                     .find(|peer| peer.npub == remote_npub);
-                let remote_connected = remote
-                    .as_ref()
-                    .is_some_and(|peer| peer.transport_addr.is_some());
+                let remote_connected = presence.direct.contains(&remote_npub);
+                let direct_peers: Vec<_> = presence
+                    .statuses
+                    .iter()
+                    .filter(|peer| presence.direct.contains(&peer.npub))
+                    .collect();
                 #[cfg(feature = "stack-fixture")]
                 let traffic = sync.stack_fixture_traffic_snapshot()?;
                 #[cfg(not(feature = "stack-fixture"))]
@@ -209,10 +210,10 @@ async fn main() -> Result<()> {
                     "traffic": traffic,
                     "negotiation": negotiation,
                     "remote_connected": remote_connected,
-                    "remote_transport": remote.as_ref().and_then(|peer| peer.transport_type.clone()),
-                    "remote_addr": remote.as_ref().and_then(|peer| peer.transport_addr.clone()),
+                    "remote_transport": remote.and_then(|peer| peer.transport_type.clone()),
+                    "remote_addr": remote.and_then(|peer| peer.transport_addr.clone()),
                     "same_host_blob_providers": sync.same_host_blob_provider_ids(),
-                    "direct_peers": sync.fips_peer_statuses().await,
+                    "direct_peers": direct_peers,
                     "pubsub_peer_count": sync.mesh_peer_count(),
                     "pubsub_max_peers": sync.mesh_peer_limit(),
                     "authorized_peers": sync.authorized_peer_ids(),

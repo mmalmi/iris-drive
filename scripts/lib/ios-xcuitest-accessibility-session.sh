@@ -35,3 +35,29 @@ restart_ios_simulator_accessibility_session() {
   xcrun simctl boot "$device_udid" >/dev/null
   xcrun simctl bootstatus "$device_udid" -b >/dev/null
 }
+
+ios_xcuitest_runner_install_busy_after() {
+  local log="$1" byte_offset="$2" runner="$3"
+  python3 - "$log" "$byte_offset" "$runner" <<'PY'
+import re
+import sys
+
+with open(sys.argv[1], "rb") as log:
+    log.seek(int(sys.argv[2]))
+    attempt = log.read().decode("utf-8", errors="replace")
+busy = f'Application "{sys.argv[3]}" is installing or uninstalling, and cannot be launched'
+failed_to_launch = "Failed to install or launch the test runner" in attempt
+started_test = re.search(r"^\s*Test Case\s", attempt, re.MULTILINE | re.IGNORECASE)
+sys.exit(0 if failed_to_launch and busy in attempt and not started_test else 1)
+PY
+}
+
+wait_for_ios_simulator_test_runner() {
+  local device="$1" runner="$2" container deadline=$((SECONDS + 30))
+  while (( SECONDS < deadline )); do
+    container="$(xcrun simctl get_app_container "$device" "$runner" app 2>/dev/null)" \
+      && [[ -f "$container/Info.plist" ]] && return 0
+    sleep 1
+  done
+  return 1
+}

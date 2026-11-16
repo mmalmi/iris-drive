@@ -55,7 +55,7 @@ jobs:
             htree-target
           key: drive-web-htree-0.2.142-linux-x64-v1
       - name: Install the exact public web-test storage server
-        run: cargo install --locked --version '=0.2.142' --features fips-webrtc,git-remote-wrapper --bin htree --bin git-remote-htree --root "$GITHUB_WORKSPACE/htree-bin" hashtree-cli
+        run: cargo install --locked --version '=0.2.142' --features fips-webrtc,git-remote-wrapper --bin htree --root "$GITHUB_WORKSPACE/htree-bin" hashtree-cli
       - uses: actions/cache/save@v4
         if: steps.htree-cache.outputs.cache-hit != 'true'
         with:
@@ -70,6 +70,8 @@ jobs:
           run-id: ${{ inputs.product_run }}
           name: drive-linux-${{ inputs.commit }}
           path: products
+      - name: Install pinned tools for the public web source checkout
+        run: node tooling/scripts/release-tools.mjs install
       - name: Verify browser and native linking, presence and file sync
         run: node tooling/scripts/check-hosted-web.mjs
       - uses: actions/upload-artifact@v4

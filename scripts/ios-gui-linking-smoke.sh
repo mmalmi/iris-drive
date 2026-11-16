@@ -448,13 +448,23 @@ PY
     -destination "$DESTINATION" \
     -only-testing:"$only_testing" \
     test-without-building)
-  "${test_command[@]}" >>"$BUILD_LOG" || status=$?
-  if [[ "$status" != 0 ]] \
+  "${test_command[@]}" >>"$BUILD_LOG" 2>&1 || status=$?
+  if [[ "$status" == 65 ]] \
+    && ios_xcuitest_runner_install_busy_after "$BUILD_LOG" "$build_log_offset" "$BUNDLE_ID.UITests.xctrunner"; then
+    echo "[ios-gui-smoke] waiting for the XCTest runner installation before retrying $only_testing" >&2
+    if wait_for_ios_simulator_test_runner "$DEVICE_UDID" "$BUNDLE_ID.UITests.xctrunner"; then
+      status=0
+      "${test_command[@]}" >>"$BUILD_LOG" 2>&1 || status=$?
+    fi
+  elif [[ "$status" != 0 ]] \
     && ios_xcuitest_accessibility_session_disabled_after "$BUILD_LOG" "$build_log_offset"; then
     echo "[ios-gui-smoke] resetting disabled simulator accessibility session once" >&2
     restart_ios_simulator_accessibility_session "$DEVICE_UDID"
     status=0
-    "${test_command[@]}" >>"$BUILD_LOG" || status=$?
+    "${test_command[@]}" >>"$BUILD_LOG" 2>&1 || status=$?
+  fi
+  if [[ "$status" != 0 ]]; then
+    echo "[ios-gui-smoke] $only_testing failed (Xcode $status). See $BUILD_LOG" >&2
   fi
   rm -f "$run_file"
   return "$status"

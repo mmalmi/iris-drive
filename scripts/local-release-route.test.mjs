@@ -38,6 +38,15 @@ test('every script in the README release route exists', () => {
   }
 })
 
+test('the hosted web check uses the pinned Git helper independently of the journey storage server', () => {
+  const workflow = read('.github/workflows/release-web-check.yml')
+  const check = read('scripts/check-hosted-web.mjs')
+  assert.match(workflow, /node tooling\/scripts\/release-tools\.mjs install/)
+  assert.doesNotMatch(workflow, /--bin git-remote-htree/)
+  assert.match(workflow, /--version '=0\.2\.142'.*--bin htree/)
+  assert.match(check, /run\('git', \['clone', publicWeb, web\].*env: releaseToolsEnv\(/)
+})
+
 test('the release route keeps local machine details out of the repository', () => {
   const files = ['README.md', 'scripts/release-gate-env.mjs', 'scripts/release-hosted-stage.mjs',
     'scripts/release-ios-hosted.mjs', 'scripts/release-tools.mjs', 'scripts/macos-vm-release-smoke.sh',

@@ -5,6 +5,7 @@ import contextlib
 import io
 import json
 import os
+import plistlib
 import shlex
 import shutil
 import subprocess
@@ -593,6 +594,50 @@ class ReleaseWorkflowTests(unittest.TestCase):
         self.assertEqual(completed.returncode, 1, completed.stderr)
         self.assertIn("has not been prepared", completed.stderr)
         self.assertFalse(events.exists(), "measurement must not build or sample without preparation")
+
+    def test_ios_gui_retries_only_unstarted_runner_install_races(self) -> None:
+        source = (ROOT / "scripts/ios-gui-linking-smoke.sh").read_text()
+        run_ui = source[source.index("run_ui_test() {"):source.index("reset_sim_app_group_state() {")]
+        products = self.state / "Build/Products"
+        products.mkdir(parents=True)
+        xctestrun = products / "fixture.xctestrun"
+        xctestrun.write_bytes(plistlib.dumps({}))
+        (self.state / "Info.plist").write_bytes(plistlib.dumps({}))
+        runner = "test.drive.UITests.xctrunner"
+        busy = f'Failed to install or launch the test runner: Application "{runner}" is installing or uninstalling, and cannot be launched'
+        script = self.scripts / "run-ui"
+        helper = ROOT / "scripts/lib/ios-xcuitest-accessibility-session.sh"
+        self.write_executable(script, f"source {shlex.quote(str(helper))}\n" + run_ui + "run_ui_test Suite/testRequired\n")
+        self.write_executable(self.bin / "xcodebuild", """
+[[ "$*" == *"-only-testing:Suite/testRequired"* ]]
+echo test >> "$EVENTS"
+if [[ $(wc -l < "$EVENTS") -eq 1 ]]; then
+  echo "$DIAGNOSTIC" >&2
+  exit 65
+fi
+exit "$SECOND_STATUS"
+""")
+        self.write_executable(self.bin / "xcrun", """
+[[ "$*" == "simctl get_app_container simulator test.drive.UITests.xctrunner app" ]]
+echo "$DERIVED_DATA"
+""")
+        events, log = self.state / "events", self.state / "xcode.log"
+        for diagnostic, retry_status, attempts, expected in [
+            (busy, 0, 2, 0),
+            (busy, 65, 2, 65),
+            ("ordinary assertion failure", 0, 1, 65),
+            ("Test Case '-[Tests testRequired]' started.\n" + busy, 0, 1, 65),
+            (busy.replace(runner, "another.application"), 0, 1, 65),
+        ]:
+            with self.subTest(diagnostic=diagnostic, retry_status=retry_status):
+                events.unlink(missing_ok=True)
+                log.write_text(busy + "\n")  # A prior invocation must not trigger a retry.
+                result = subprocess.run([str(script)], capture_output=True, text=True, timeout=WORKFLOW_TIMEOUT_SECONDS,
+                    env=self.environment(BUILD_LOG=str(log), XCTESTRUN=str(xctestrun), DERIVED_DATA=str(self.state),
+                        SIM_APP_BASE_DIR=str(self.state), DESTINATION="fixture", DEVICE_UDID="simulator",
+                        BUNDLE_ID="test.drive", EVENTS=str(events), DIAGNOSTIC=diagnostic, SECOND_STATUS=str(retry_status)))
+                self.assertEqual(result.returncode, expected, result.stderr)
+                self.assertEqual(events.read_text().splitlines(), ["test"] * attempts)
 
     def test_ios_gui_cleanup_preserves_incomplete_and_failed_journeys(self) -> None:
         source = (ROOT / "scripts/ios-gui-linking-smoke.sh").read_text(encoding="utf-8")

@@ -239,20 +239,19 @@ impl Ledger {
             });
             return;
         }
-        if kind == Kind::Offer {
-            if !f
+        // short_id truncates a timestamp-prefixed nonce, so this display
+        // prefix can repeat. Correlation instead requires a serial complete
+        // sequence plus the full peer's monotonically advancing counter.
+        // The pinned core demultiplexes full nonces and validates the full
+        // session, sender and freshness before emitting the terminal error.
+        if kind == Kind::Offer
+            && !f
                 .session
                 .as_ref()
                 .is_some_and(|s| s.len() == 8 && s.bytes().all(|b| b.is_ascii_digit()))
-            {
-                self.invalid = true;
-                return;
-            }
-            // short_id truncates a timestamp-prefixed nonce, so this display
-            // prefix can repeat. Correlation instead requires a serial complete
-            // sequence plus the full peer's monotonically advancing counter.
-            // The pinned core demultiplexes full nonces and validates the full
-            // session, sender and freshness before emitting the terminal error.
+        {
+            self.invalid = true;
+            return;
         }
         let ordinal = self.attempts.len() as u64;
         let Some(attempt) = self.attempts.last_mut().filter(|a| !a.terminal) else {
@@ -261,7 +260,7 @@ impl Ledger {
         };
         match kind {
             Kind::Offer if attempt.session.is_none() && !attempt.answer => {
-                attempt.session = f.session
+                attempt.session = f.session;
             }
             Kind::Answer
                 if attempt.session.is_some()
@@ -270,7 +269,7 @@ impl Ledger {
                     && f.accepted == Some(false)
                     && f.signal_path == Some(true) =>
             {
-                attempt.answer = true
+                attempt.answer = true;
             }
             Kind::Failed
                 if attempt.answer

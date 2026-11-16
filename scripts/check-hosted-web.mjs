@@ -4,6 +4,7 @@ import { createHash } from 'node:crypto'
 import { closeSync, constants, accessSync, mkdirSync, openSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { hostTarget, releaseToolsEnv, releaseToolsLock } from './release-tools.mjs'
 import { stageHostedProduct } from './stage-hosted-product.mjs'
 
 const root = resolve(process.env.SOURCE_ROOT)
@@ -46,9 +47,10 @@ writeFileSync(join(sourceConfig, 'config.toml'), [
   'read_servers = ["https://upload.iris.to", "https://cdn.iris.to", "https://blossom.primal.net"]',
   'write_servers = []', 'force_upload = false', '',
 ].join('\n'))
-run('git', ['clone', publicWeb, web], { timeout: 600000, env: { ...env,
-  PATH: `${dirname(htree)}:${env.PATH}`, HTREE_CONFIG_DIR: sourceConfig,
-  HTREE_DATA_DIR: sourceData, HTREE_PREFER_LOCAL_DAEMON: '0', NOSTR_PREFER_LOCAL: '0' } })
+run('git', ['clone', publicWeb, web], { timeout: 600000, env: releaseToolsEnv({ env: {
+  ...env, HTREE_CONFIG_DIR: sourceConfig, HTREE_DATA_DIR: sourceData,
+  HTREE_PREFER_LOCAL_DAEMON: '0', NOSTR_PREFER_LOCAL: '0',
+} }) })
 run('git', ['checkout', '--detach', webCommit], { cwd: web })
 if (execFileSync('git', ['rev-parse', 'HEAD'], { cwd: web, encoding: 'utf8' }).trim() !== webCommit
     || execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], { cwd: web, encoding: 'utf8' }).trim()) {
@@ -78,6 +80,8 @@ if (expected < 7 || skipped !== 0 || flaky !== 0 || unexpected !== 0 || results.
   throw new Error('All shared-folder, device-link and Drive interop journeys must execute and pass')
 }
 writeFileSync(join(output, 'receipt.json'), JSON.stringify({ schema: 1, status: 'passed', commit,
+  toolingCommit: execFileSync('git', ['rev-parse', 'HEAD'], { cwd: scripts, encoding: 'utf8' }).trim(),
+  sourceGitHelperSha256: releaseToolsLock.hashtree.assets[hostTarget()].gitRemoteHtreeSha256,
   webSource: publicWeb, webCommit, cliSha256, testsPassed: expected, testsSkipped: skipped,
   htreeVersion: '0.2.142', htreeSha256: createHash('sha256').update(readFileSync(htree)).digest('hex'),
   product: JSON.parse(readFileSync(join(inputs, 'build-receipt.json'), 'utf8')) }, null, 2))
