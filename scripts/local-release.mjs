@@ -13,6 +13,7 @@ import {
   writeFileSync,
 } from 'node:fs'
 import os from 'node:os'
+import { verifyPublishedMeshUpdate } from './published-mesh-update.mjs'
 import { basename, dirname, join, resolve } from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
@@ -1268,7 +1269,7 @@ function stageRelease({
 
 function publishRelease({ stageDir, releaseTree, tag, draft, dryRun, env = process.env }) {
   // Drive 0.1.39 needs 32-byte CHK keys for both the release assets and their parent tree.
-  const addOutput = run('htree', ['add', '--legacy-keys', stageDir], { capture: true, dryRun })
+  const addOutput = run('htree', ['add', '--legacy-keys', stageDir], { capture: true, dryRun, env })
   const match = addOutput.match(/^\s*url:\s*(\S+)/m)
   if (!dryRun && !match) {
     throw new Error('Could not parse htree add output for release CID')
@@ -1278,13 +1279,14 @@ function publishRelease({ stageDir, releaseTree, tag, draft, dryRun, env = proce
   if (draft) {
     args.push('--draft')
   }
-  const publishOutput = run('htree', args, { capture: !dryRun, dryRun })
+  const publishOutput = run('htree', args, { capture: !dryRun, dryRun, env })
   if (publishOutput) {
     console.log(publishOutput)
   }
   const npubMatch = publishOutput.match(/Published release:\s*htree:\/\/([^/\s]+)\//)
   return {
     cid,
+    root: publishOutput.match(/^Release tree root:\s*(\S+)$/m)?.[1],
     npub: dryRun
       ? String(env.IRIS_DRIVE_RELEASE_NPUB ?? 'npub1example').trim()
       : (npubMatch?.[1] ?? ''),
@@ -1456,6 +1458,7 @@ function main() {
       `Published ${options.draft ? 'draft ' : ''}${tag} to ${releaseTree} via ${published.cid}`,
     )
     if (!options.draft) {
+      verifyPublishedMeshUpdate({ env, npub: published.npub, releaseTree, tag, root: published.root, dryRun: options.dryRun })
       refreshPublicReleaseResolvers({
         env,
         npub: published.npub,

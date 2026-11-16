@@ -1,4 +1,5 @@
 import test from 'node:test'
+import { requirePublishedHead } from './published-mesh-update.mjs'
 import assert from 'node:assert/strict'
 import { spawn, spawnSync } from 'node:child_process'
 import { createHash, generateKeyPairSync } from 'node:crypto'
@@ -271,6 +272,14 @@ test('local-release dry-run validates planned build assets over partial existing
   assert.match(result.stdout, /Would stage 10 planned asset\(s\)/)
 })
 
+test('mesh publication requires the signed root and tag the publisher just wrote', () => {
+  const result = { verified: true, tag: 'v0.1.43', root_cid: 'new-root' }
+  requirePublishedHead(result, 'v0.1.43', 'new-root')
+  for (const mismatch of [{ verified: false }, { tag: 'v0.1.40' }, { root_cid: 'old-root' }]) {
+    assert.throws(() => requirePublishedHead({ ...result, ...mismatch }, 'v0.1.43', 'new-root'))
+  }
+})
+
 test('local-release final dry-run refreshes public release resolver after htree publish', () => {
   const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-refresh-test-'))
   const assetDir = join(root, 'dist')
@@ -308,6 +317,7 @@ test('local-release final dry-run refreshes public release resolver after htree 
   assert.match(result.stdout, /Would stage 10 asset\(s\)/)
   assert.match(result.stdout, /^\$ htree add --legacy-keys /m)
   assert.match(result.stdout, /^\$ htree release publish releases\/iris-drive v9\.9\.9 dry-run --legacy-keys$/m)
+  assert.match(result.stdout, /Verify v9\.9\.9 through a fresh Drive mesh update check/)
   assert.match(result.stdout, /api\/resolve\/npub1example\/releases%2Firis-drive\?refresh=1/)
   assert.match(
     result.stdout,

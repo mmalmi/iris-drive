@@ -43,5 +43,8 @@ require_contains macos/Resources/iris-drive-install-update.sh "restoring previou
 require_contains macos/Sources/IrisDriveMacApp.swift "if installingAppUpdate"
 require_contains macos/Sources/IrisDriveMacApp.swift 'updateStatus("Installing update")'
 require_contains macos/Sources/IrisDriveMacApp.swift "stopSync()"
+if [[ $(uname -s) == Darwin ]]; then
+  "$ROOT/scripts/check-apple-status.sh"
+fi
 "$ROOT/scripts/test-macos-update-install.sh"
 echo "UPDATER_WIRING_OK"

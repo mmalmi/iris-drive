@@ -1412,20 +1412,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func showFileProviderItem(path targetPath: String?) {
         let paths = runtimePathsForMenu ?? runtimePaths()
         let status = IrisDriveStatus.shared
+        guard !status.openingFinder else { return }
+        status.finderOpenError = nil
         guard status.stateLoaded else {
-            updateStatus("Loading")
+            handleFileProviderOpenFailure("Drive is still loading")
             return
         }
         guard localProfileExists(paths: paths), status.setupComplete else {
-            updateStatus(status.revoked ? "Device removed" : (status.awaitingApproval ? "Waiting for approval" : "Setup needed"))
+            handleFileProviderOpenFailure(status.revoked ? "Device removed" : (status.awaitingApproval ? "Waiting for approval" : "Setup needed"))
             return
         }
         guard fileProviderIntegrationEnabled else {
             handleFileProviderOpenFailure("disabled for this signing mode")
             return
         }
+        status.openingFinder = true
         if !status.daemonRunning {
             startSync()
+        }
+        if fileProviderDomainState == .registered && fileProviderRegistrationIdentityIsCurrent() {
+            openFileProviderItem(path: targetPath)
+            return
         }
         prepareFileProviderRuntime(paths: paths, idrive: idriveExecutableURL())
         let runtime = FileProviderRuntimeConfig(
@@ -1465,30 +1472,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
 
         let identifier = targetPath.map { Self.fileProviderIdentifier(for: $0) } ?? .rootContainer
-        refreshFileProviderDomainForOpen(manager: manager) { [weak self] in
-            manager.getUserVisibleURL(for: identifier) { [weak self] url, error in
-                DispatchQueue.main.async {
-                    guard let self else { return }
-                    if let url {
-                        self.openFileProviderURL(url, selectingItem: targetPath != nil)
+        manager.getUserVisibleURL(for: identifier) { [weak self] url, error in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                if let url {
+                    self.openFileProviderURL(url, selectingItem: targetPath != nil)
+                    return
+                }
+
+                if let error {
+                    NSLog("Iris Drive mounted folder unavailable for \(targetPath ?? "root"): \(error)")
+                    if self.repairFileProviderDomainForOpenIfNeeded(
+                        error: error,
+                        reason: "user-visible URL unavailable",
+                        targetPath: targetPath,
+                        alreadyRepaired: repairedAfterFailure
+                    ) {
                         return
                     }
-
-                    if let error {
-                        NSLog("Iris Drive mounted folder unavailable for \(targetPath ?? "root"): \(error)")
-                        if self.repairFileProviderDomainForOpenIfNeeded(
-                            error: error,
-                            reason: "user-visible URL unavailable",
-                            targetPath: targetPath,
-                            alreadyRepaired: repairedAfterFailure
-                        ) {
-                            return
-                        }
-                    } else {
-                        NSLog("Iris Drive mounted folder unavailable for \(targetPath ?? "root")")
-                    }
-                    self.handleFileProviderOpenFailure("user-visible URL unavailable")
+                } else {
+                    NSLog("Iris Drive mounted folder unavailable for \(targetPath ?? "root")")
                 }
+                self.handleFileProviderOpenFailure(error?.localizedDescription ?? "The drive folder is unavailable")
             }
         }
     }
@@ -1534,71 +1539,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         return true
     }
 
-    private func refreshFileProviderDomainForOpen(manager: NSFileProviderManager, completion: @escaping () -> Void) {
-        guard fileProviderIntegrationEnabled else {
-            completion()
-            return
-        }
-        guard let paths = runtimePathsForMenu else {
-            completion()
-            return
-        }
-
-        let idrive = idriveExecutableURL()
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            guard let self else {
-                DispatchQueue.main.async { completion() }
-                return
-            }
-            do {
-                let summary = try self.providerSignalSummary(idrive: idrive, paths: paths)
-                DispatchQueue.main.async {
-                    self.signalFileProviderDomain(directoryPaths: summary.directoryPaths)
-                    self.reimportFileProviderDomainForOpen(
-                        manager: manager,
-                        key: summary.changeKey,
-                        completion: completion
-                    )
-                }
-            } catch {
-                NSLog("Iris Drive FileProvider open refresh skipped: \(error)")
-                DispatchQueue.main.async { completion() }
-            }
-        }
-    }
-
-    private func reimportFileProviderDomainForOpen(manager: NSFileProviderManager, key: String, completion: @escaping () -> Void) {
-        guard fileProviderReimportEnabled else {
-            completion()
-            return
-        }
-        guard !fileProviderReimportInFlight else {
-            NSLog("Iris Drive FileProvider reimport skipped (open requested); already in flight")
-            completion()
-            return
-        }
-
-        fileProviderReimportInFlight = true
-        lastFileProviderReimportAt = Date()
-        lastFileProviderReimportKey = key
-        manager.reimportItems(below: .rootContainer) { [weak self] error in
-            DispatchQueue.main.async {
-                guard let self else {
-                    completion()
-                    return
-                }
-                self.fileProviderReimportInFlight = false
-                if let error {
-                    NSLog("Iris Drive FileProvider reimport failed (open requested): \(error)")
-                } else {
-                    NSLog("Iris Drive FileProvider reimport requested (open requested)")
-                }
-                completion()
-            }
-        }
-    }
-
     private func openFileProviderURL(_ url: URL, selectingItem: Bool) {
+        IrisDriveStatus.shared.openingFinder = false
         if selectingItem {
             NSWorkspace.shared.activateFileViewerSelecting([url])
             irisDriveDebugLog("Iris Drive mounted drive item revealed: \(url.path)")
@@ -1611,6 +1553,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     private func handleFileProviderOpenFailure(_ reason: String) {
+        IrisDriveStatus.shared.openingFinder = false
+        IrisDriveStatus.shared.finderOpenError = reason
         updateStatus("FileProvider unavailable")
         irisDriveDebugLog("Iris Drive FileProvider open failed: \(reason)")
     }

@@ -89,6 +89,14 @@ struct IrisDriveControlPanel: View {
                 controlPanel
             }
         }
+        .alert("Couldn’t open the drive in Finder", isPresented: Binding(
+            get: { status.finderOpenError != nil },
+            set: { if !$0 { status.finderOpenError = nil } }
+        )) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(status.finderOpenError ?? "")
+        }
         .onAppear {
             if status.stateLoaded {
                 controller.ensureFileProviderDomainIfProfileExists()
@@ -610,13 +618,14 @@ struct IrisDriveControlPanel: View {
                 HStack(spacing: 7) {
                     Image(systemName: "folder.fill")
                         .frame(width: 16)
-                    Text("Open")
+                    Text(status.openingFinder ? "Opening…" : "Open")
                     Spacer(minLength: 0)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
             .buttonStyle(.bordered)
             .controlSize(.regular)
+            .disabled(status.openingFinder)
             .accessibilityIdentifier("sidebarOpenDrive")
             .accessibilityLabel("Open")
             .padding(.bottom, 4)
@@ -638,7 +647,7 @@ struct IrisDriveControlPanel: View {
                     VStack(alignment: .leading, spacing: 3) {
                         Text(status.driveName)
                             .font(.title2.weight(.semibold)).accessibilityIdentifier("driveTitle")
-                        Text(heroText)
+                        Text("File sync · \(heroText)")
                             .font(.headline)
                             .foregroundStyle(heroColor)
                     }
@@ -655,11 +664,12 @@ struct IrisDriveControlPanel: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
 
             Button(action: controller.showDriveFolder) {
-                Label("Open in Finder", systemImage: "folder.fill")
+                Label(status.openingFinder ? "Opening Finder…" : "Open in Finder", systemImage: "folder.fill")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
+            .disabled(status.openingFinder)
 
             if status.localNhashResolverEnabled {
                 Button(action: controller.openSitesPortal) {
@@ -1593,6 +1603,9 @@ struct IrisDriveControlPanel: View {
                 }
                 if !status.updateStatus.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                     LabeledContent("Status", value: status.updateStatus)
+                }
+                if let checked = status.lastSuccessfulUpdateCheck {
+                    LabeledContent("Last successful check", value: checked.formatted(date: .abbreviated, time: .shortened))
                 }
             }
 

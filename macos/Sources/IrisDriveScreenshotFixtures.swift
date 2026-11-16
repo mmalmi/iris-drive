@@ -31,6 +31,8 @@ enum IrisDriveScreenshotFixtures {
 
     static func apply(to status: IrisDriveStatus = .shared) {
         status.message = "Sync on"
+        status.syncStatus = "up to date"
+        status.syncStatusLabel = "Up to date"
         status.daemonRunning = true
         status.stateLoaded = true
         status.initialized = true

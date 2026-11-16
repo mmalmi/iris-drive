@@ -37,7 +37,7 @@ extension AppDelegate {
                 mode: "app"
             )
             DispatchQueue.main.async {
-                self.applyUpdateCheck(result, manual: manual)
+                self.applyUpdateCheck(result)
             }
         }
     }
@@ -109,35 +109,26 @@ extension AppDelegate {
         return irisDriveDefaultUpdatePollInterval
     }
 
-    private func applyUpdateCheck(_ result: [String: Any], manual: Bool) {
+    private func applyUpdateCheck(_ result: [String: Any]) {
         let status = IrisDriveStatus.shared
         status.updateChecking = false
-        if let error = result["error"] as? String,
-           !error.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        do {
+            let check = try IrisDriveUpdateCheck(result)
+            status.updateAvailable = check.available
+            status.updateVersion = check.tag
+            status.updateAsset = check.asset
+            status.updateCanInstall = check.available && !check.asset.isEmpty
+            status.updateStatus = check.statusText
+            status.lastSuccessfulUpdateCheck = Date()
+            if status.updateCanInstall && status.autoInstallUpdates && check.asset.lowercased().hasSuffix(".app.tar.gz") {
+                installUpdate()
+            }
+        } catch {
             status.updateAvailable = false
             status.updateCanInstall = false
+            status.updateVersion = ""
             status.updateAsset = ""
-            status.updateStatus = manual ? error : ""
-            return
-        }
-        let available = result["available"] as? Bool ?? false
-        let asset = result["asset"] as? String ?? ""
-        let tag = result["tag"] as? String ?? ""
-        status.updateAvailable = available
-        status.updateVersion = tag
-        status.updateAsset = asset
-        status.updateCanInstall = available && !asset.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        if available {
-            if status.updateCanInstall {
-                status.updateStatus = "Update \(tag) available"
-                if status.autoInstallUpdates && asset.lowercased().hasSuffix(".app.tar.gz") {
-                    installUpdate()
-                }
-            } else {
-                status.updateStatus = "Update \(tag) found without a macOS asset"
-            }
-        } else {
-            status.updateStatus = manual ? "Up to date" : ""
+            status.updateStatus = error.localizedDescription
         }
     }
 

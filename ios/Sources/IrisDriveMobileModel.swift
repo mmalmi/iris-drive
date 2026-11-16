@@ -49,7 +49,7 @@ final class IrisDriveMobileModel: ObservableObject {
     @Published var statusTitle = "Ready"
     @Published var statusDetail = "Waiting for this device to be linked."
     @Published var stateLoaded = false
-    @Published var deviceLabel = UIDevice.current.name
+    @Published var deviceLabel = IrisDriveDeviceModel.currentLabel(family: UIDevice.current.model)
     @Published var profileLinkTarget = ""
     @Published var currentAppKeyNpub = ""
     @Published var devicePublicKey = "local-device"
@@ -2027,7 +2027,7 @@ final class IrisDriveMobileModel: ObservableObject {
         removeObsoletePrototypeDefaults()
         irisWebPublisherProfileNameCache = loadIrisWebPublisherProfileNameCache()
         applyStateJson(runNative { $0.stateJson() })
-        deviceLabel = defaults.string(forKey: "deviceLabel") ?? UIDevice.current.name
+        deviceLabel = defaults.string(forKey: "deviceLabel") ?? IrisDriveDeviceModel.currentLabel(family: UIDevice.current.model)
         if hasLocalProfile {
             profileUsername = defaults.string(forKey: "profileUsername") ?? profileUsername
             profilePhotoName = defaults.string(forKey: "profilePhotoName") ?? profilePhotoName

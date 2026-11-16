@@ -61,6 +61,8 @@ PY
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "ensureFileProviderDomainAfterStatusIfNeeded"
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "removeFileProviderDomainRegistration("
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "openFileProviderURL(_ url: URL, selectingItem: Bool)"
+require_not_contains "$APP" "Finder handoff" "refreshFileProviderDomainForOpen"
+require_not_contains "$APP" "Finder handoff" "reimportFileProviderDomainForOpen"
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "activateFileViewerSelecting([url])"
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "repairFileProviderDomainForOpenIfNeeded"
 require_contains "$APP" "macos/Sources/IrisDriveMacApp.swift" "Opening FileProvider roots as plain file URLs"
