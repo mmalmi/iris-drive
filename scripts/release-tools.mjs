@@ -11,6 +11,7 @@ import os from 'node:os'
 import { delimiter, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { gunzipSync } from 'node:zlib'
+import { loadReleaseEnv } from './release-env.mjs'
 
 export const releaseToolsLock = JSON.parse(
   readFileSync(new URL('./release-tools.lock.json', import.meta.url), 'utf8'))
@@ -183,11 +184,15 @@ if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) 
     if (command === 'install') {
       installReleaseTools({ cacheDir: defaultCacheDir() })
     } else if (command === 'run' && separator === '--' && rest.length > 0) {
-      const { parseEnvFile } = await import('./local-release-lib.mjs')
-      const zapstoreEnv = join(dirname(fileURLToPath(import.meta.url)), '..', '.env.zapstore.local')
-      const fileEnv = existsSync(zapstoreEnv) ? parseEnvFile(readFileSync(zapstoreEnv, 'utf8')) : {}
-      const keyEnv = fileEnv.NOSTR_KEY_PATH ? { NOSTR_KEY_PATH: fileEnv.NOSTR_KEY_PATH } : {}
-      const env = releaseToolsEnv({ env: { ...keyEnv, ...process.env } })
+      const toolEnv = { ...process.env }
+      if (!toolEnv.HAPS_KEY_FILE && toolEnv.NOSTR_KEY_PATH === undefined) {
+        const { NOSTR_KEY_PATH } = loadReleaseEnv({
+          repoRoot: resolve(dirname(fileURLToPath(import.meta.url)), '..'),
+          localFileNames: ['.env.zapstore.local'], env: {},
+        })
+        if (NOSTR_KEY_PATH) toolEnv.NOSTR_KEY_PATH = NOSTR_KEY_PATH
+      }
+      const env = releaseToolsEnv({ env: toolEnv })
       const result = spawnSync(rest[0], rest.slice(1), { env, stdio: 'inherit' })
       process.exitCode = result.status ?? 1
     } else {

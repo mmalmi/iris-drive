@@ -1,22 +1,36 @@
 // Local release settings for scripts that run from a linked release worktree.
 // The ignored .env.*.local files live in the main checkout, so read them from
 // there as well as from the release checkout itself.
-import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { existsSync, readFileSync, statSync } from 'node:fs'
 import { basename, dirname, join, resolve } from 'node:path'
 import { parseEnvFile } from './local-release-lib.mjs'
 
 export function mainCheckout(repoRoot) {
-  const common = execFileSync('git', ['rev-parse', '--path-format=absolute', '--git-common-dir'], {
-    cwd: repoRoot, encoding: 'utf8',
-  }).trim()
-  return basename(common) === '.git' ? dirname(common) : resolve(repoRoot)
+  const root = resolve(repoRoot)
+  const marker = join(root, '.git')
+  if (!statSync(marker, { throwIfNoEntry: false })?.isFile()) return root
+  // A linked worktree points to its private Git directory. Its commondir is
+  // relative to that directory, even when the worktree itself is elsewhere.
+  const pointer = /^gitdir: (.+)$/.exec(readFileSync(marker, 'utf8').trim())
+  if (!pointer) throw new Error('Invalid Git worktree pointer')
+  const gitDir = resolve(root, pointer[1])
+  const commonFile = join(gitDir, 'commondir')
+  const common = existsSync(commonFile) ? resolve(gitDir, readFileSync(commonFile, 'utf8').trim()) : gitDir
+  return basename(common) === '.git' ? dirname(common) : root
 }
 
-export function loadReleaseEnv({ repoRoot, envFiles = [], env = process.env }) {
-  const roots = [...new Set([mainCheckout(repoRoot), resolve(repoRoot)])]
+export function loadReleaseEnv({
+  repoRoot, localFileNames = ['.env.release.local', '.env.zapstore.local'],
+  provisioningFile, envFiles = [], env = process.env,
+}) {
+  const checkout = resolve(repoRoot)
+  const primary = mainCheckout(checkout)
+  const localFiles = root => localFileNames.map(name => join(root, name))
   const files = [
-    ...roots.flatMap(root => ['.env.release.local', '.env.zapstore.local'].map(name => join(root, name))),
+    ...(primary !== checkout ? localFiles(primary) : []),
+    ...(provisioningFile ? [provisioningFile] : []),
+    ...localFiles(checkout),
     ...envFiles,
   ]
   const loaded = {}

@@ -3,12 +3,14 @@ import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { delimiter, join } from 'node:path'
 import { tarGz } from './lib/tar-fixture.mjs'
+import { fixtureCheckout } from './lib/release-fixture.mjs'
 import {
   installCommand,
+  hostTarget,
   installReleaseTools,
   prepareReleaseTools,
   releaseToolsEnv,
@@ -20,6 +22,40 @@ const sha256 = data => createHash('sha256').update(data).digest('hex')
 const target = 'aarch64-apple-darwin'
 const script = text => `#!/bin/sh\n${text}\n`
 const helper = script('echo "Error: Usage: git-remote-htree <remote-name> <url>" >&2; exit 1')
+
+test('release-tools run uses only the project signer setting from a primary or linked checkout', t => {
+  const project = fixtureCheckout()
+  const tools = fixture()
+  t.after(() => {
+    rmSync(project.root, { recursive: true, force: true })
+    rmSync(tools.root, { recursive: true, force: true })
+  })
+  const linked = join(project.root, 'linked')
+  project.git('worktree', 'add', '-q', '--detach', linked, 'HEAD')
+  const scripts = join(linked, 'scripts')
+  mkdirSync(scripts)
+  for (const name of ['release-tools.mjs', 'release-env.mjs', 'local-release-lib.mjs']) {
+    copyFileSync(new URL(name, import.meta.url), join(scripts, name))
+  }
+  for (const tool of [tools.lock.haps, tools.lock.hashtree]) tool.assets[hostTarget()] = tool.assets[target]
+  writeFileSync(join(scripts, 'release-tools.lock.json'), JSON.stringify(tools.lock))
+  installReleaseTools({ ...tools, target: hostTarget(), log() {} })
+  writeFileSync(join(project.root, '.env.zapstore.local'), 'NOSTR_KEY_PATH=/primary-signer\nOTHER_SETTING=private-fixture\n')
+  function checkSigner(expected, overrides = {}) {
+    const result = spawnSync(process.execPath, [
+      realpathSync(join(scripts, 'release-tools.mjs')), 'run', '--', process.execPath, '-e',
+      'console.log(JSON.stringify([process.env.HAPS_KEY_FILE, process.env.OTHER_SETTING]))',
+    ], { encoding: 'utf8', env: { PATH: process.env.PATH, HOME: tools.root,
+      IRIS_DRIVE_RELEASE_TOOLS_DIR: tools.cacheDir, ...overrides } })
+    assert.equal(result.status, 0, result.stderr)
+    assert.deepEqual(JSON.parse(result.stdout.trim().split('\n').at(-1)), [expected, null])
+  }
+  checkSigner('/primary-signer')
+  writeFileSync(join(linked, '.env.zapstore.local'), 'NOSTR_KEY_PATH=/linked-signer\n')
+  checkSigner('/linked-signer')
+  checkSigner('/shell-signer', { NOSTR_KEY_PATH: '/shell-signer' })
+  checkSigner('/explicit-haps', { NOSTR_KEY_PATH: '/shell-signer', HAPS_KEY_FILE: '/explicit-haps' })
+})
 
 function fixture({ hapsVersion = '0.1.27', helperBytes = helper, hapsType = '0' } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'iris-drive-release-tools-'))

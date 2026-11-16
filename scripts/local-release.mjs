@@ -31,7 +31,6 @@ import {
   canonicalReleaseAssetNames,
   normalizeTag,
   parseNotarytoolSubmitOutput,
-  parseEnvFile,
   plannedReleaseAssetNames,
   readWorkspaceVersionTag,
   renderReleaseNotes,
@@ -51,6 +50,7 @@ import { requireMeshRelease } from './mesh-release-gate.mjs'
 import { macosReleaseSmokeCommand } from './macos-release-smoke-host.mjs'
 import { releaseToolsEnv } from './release-tools.mjs'
 import { stageHostedProduct } from './stage-hosted-product.mjs'
+import { loadReleaseEnv } from './release-env.mjs'
 import {
   assertNoPrivateBuildMetadata,
   normalizedTarOwnerArgs,
@@ -64,11 +64,6 @@ const repoRoot = process.env.IRIS_DRIVE_RELEASE_SOURCE_ROOT
 const rootCargoToml = join(repoRoot, 'Cargo.toml')
 const releasePolicyPath = join(repoRoot, 'release-policy.json')
 const distDir = join(repoRoot, 'dist')
-const defaultEnvFiles = [
-  join(repoRoot, 'dist', 'macos', 'provisioning.env'),
-  join(repoRoot, '.env.release.local'),
-  join(repoRoot, '.env.zapstore.local'),
-]
 const defaultBuildSteps = ['platform-versions', 'macos', 'linux', 'windows', 'android', 'ios']
 class SkipStepError extends Error {}
 
@@ -178,16 +173,6 @@ function parseArgs(argv) {
     }
   }
   return options
-}
-
-function readOptionalEnvFiles(envFiles) {
-  const loaded = {}
-  for (const envFile of envFiles) {
-    if (existsSync(envFile)) {
-      Object.assign(loaded, parseEnvFile(readFileSync(envFile, 'utf8')))
-    }
-  }
-  return loaded
 }
 
 function envFlag(env, name) {
@@ -1387,7 +1372,9 @@ function publishZapstore({ env, tag, assetDir, dryRun, plannedAssetNames = [] })
 
 function main() {
   const options = parseArgs(process.argv.slice(2))
-  const env = { ...readOptionalEnvFiles([...defaultEnvFiles, ...options.envFiles]), ...process.env }
+  const env = loadReleaseEnv({
+    repoRoot, provisioningFile: join(distDir, 'macos', 'provisioning.env'), envFiles: options.envFiles,
+  })
   const releasePolicy = readProjectReleasePolicy()
   const tag = options.tag || readWorkspaceVersionTag(readFileSync(rootCargoToml, 'utf8'))
   const releaseTree = options.releaseTree || env.IRIS_DRIVE_RELEASE_TREE || 'releases/iris-drive'
