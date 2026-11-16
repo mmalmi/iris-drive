@@ -33,6 +33,7 @@ const cli = join(mac, 'idrive')
 run('codesign', ['--force', '--sign', '-', cli])
 run('codesign', ['--verify', '--strict', cli])
 run('python3', [join(scripts, 'prepare-hosted-ios-check.py'), root, output])
+if (env.IOS_PREFIX_RUN) run('python3', [join(scripts, 'ios-verified-prefix.py')])
 const devices = JSON.parse(execFileSync('xcrun', ['simctl', 'list', 'devices', 'available', '--json'], { encoding: 'utf8' })).devices
 const device = Object.entries(devices).filter(([runtime]) => runtime.includes('iOS-26-2'))
   .flatMap(([, entries]) => entries).find(item => item.name.startsWith('iPhone'))
@@ -51,4 +52,5 @@ run('bash', [join(root, 'scripts/idle-cpu-gate.sh'), '--platform', 'ios'], { tim
 const products = Object.fromEntries(['debug', 'release', 'mac'].map(name => [name,
   JSON.parse(readFileSync(join(inputs, name, 'build-receipt.json'), 'utf8'))]))
 writeFileSync(join(output, 'receipt.json'), JSON.stringify({ schema: 1, status: 'passed', commit,
-  gates: ['ios-gui-linking', 'ios-simulator-provider', 'ios-release-idle-65s'], products }, null, 2))
+  gates: ['ios-gui-linking', 'ios-simulator-provider', 'ios-release-idle-65s'], products,
+  ...(env.IOS_PREFIX_RUN ? { verifiedPrefix: JSON.parse(readFileSync(join(output, 'verified-prefix.json'), 'utf8')) } : {}) }, null, 2))

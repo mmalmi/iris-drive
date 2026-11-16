@@ -33,6 +33,10 @@ on:
         description: Exact published web source for web-check
         required: false
 
+      ios_prefix_run:
+        description: Previous canonical run with successful pre-Files assertions
+        required: false
+
       debug_run:
         description: Simulator Debug artifact run for ios-check
         required: false
@@ -83,6 +87,7 @@ jobs:
     uses: ./.github/workflows/release-ios-check.yml
     with:
       commit: ${{ inputs.commit }}
+      ios_prefix_run: ${{ inputs.ios_prefix_run }}
       debug_run: ${{ inputs.debug_run }}
       release_run: ${{ inputs.release_run }}
       mac_run: ${{ inputs.mac_run }}

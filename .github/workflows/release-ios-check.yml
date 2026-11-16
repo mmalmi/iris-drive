@@ -5,6 +5,9 @@ on:
       commit:
         required: true
         type: string
+      ios_prefix_run:
+        type: string
+        required: false
       debug_run:
         required: true
         type: string
@@ -19,6 +22,9 @@ on:
       commit:
         description: Exact application source commit
         required: true
+      ios_prefix_run:
+        type: string
+        required: false
       debug_run:
         description: Run containing the simulator Debug product
         required: true
@@ -39,6 +45,10 @@ jobs:
       DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
       SOURCE_ROOT: ${{ github.workspace }}/source
       SOURCE_COMMIT: ${{ inputs.commit }}
+      IOS_PREFIX_RUN: ${{ inputs.ios_prefix_run }}
+      IOS_DEBUG_RUN: ${{ inputs.debug_run }}
+      IOS_RELEASE_RUN: ${{ inputs.release_run }}
+      IOS_MAC_RUN: ${{ inputs.mac_run }}
       PRODUCT_INPUTS: ${{ github.workspace }}/products
       CHECK_OUTPUT: ${{ github.workspace }}/ios-check
     steps:
@@ -73,6 +83,8 @@ jobs:
           name: drive-macos-release-${{ inputs.commit }}
           path: products/mac
       - name: Run canonical functional and optimized idle assertions
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: node tooling/scripts/check-hosted-ios.mjs
       - uses: actions/upload-artifact@v4
         if: always()
@@ -80,6 +92,7 @@ jobs:
           name: ios-check-${{ inputs.commit }}
           path: |
             ios-check/receipt.json
+            ios-check/verified-prefix.json
             ios-check/xcode-tests.log
             ios-check/gui.png
           if-no-files-found: ignore

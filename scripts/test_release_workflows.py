@@ -25,6 +25,7 @@ from test_macos_smoke_profile import MacSmokeProfileTests
 from test_local_blossom_server import BlossomStartupTests
 from test_ios_linking_observer import IosLinkingObserverTests
 from test_ios_probe_console import IosProbeConsoleTests
+from test_ios_verified_prefix import VerifiedIOSPrefixTests
 
 
 ROOT = Path(__file__).resolve().parents[1]
