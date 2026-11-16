@@ -456,26 +456,6 @@ final class IrisDriveIOSUITests: XCTestCase {
         XCTAssertFalse(app.buttons["Add Custom Target"].exists || app.buttons["Add File Server"].exists)
     }
 
-    func testSettingsLogoutRequiresConfirmation() throws {
-        let app = launchApp(environment: try isolatedBaseEnvironment())
-        ensureMyDriveReady(in: app)
-        let settings = tabButton("Settings", in: app)
-        let logout = app.buttons["Log out"]
-        let confirmation = app.alerts["Log out of Iris Drive on this device?"]
-        settings.tap()
-        makeHittable(logout, in: app)
-        logout.tap()
-        XCTAssertTrue(confirmation.waitForExistence(timeout: 5), app.debugDescription)
-        confirmation.buttons["Cancel"].tap()
-        XCTAssertTrue(settings.exists, app.debugDescription)
-        logout.tap()
-        confirmation.buttons["Log out"].tap()
-        XCTAssertTrue(app.buttons["welcomeSignIn"].waitForExistence(timeout: 15), app.debugDescription)
-        app.terminate()
-        app.launch()
-        XCTAssertTrue(app.buttons["welcomeSignIn"].waitForExistence(timeout: 15), app.debugDescription)
-    }
-
     func testSettingsExposeAppleCalendarContinuousSyncToggle() throws {
         let app = launchApp()
         ensureMyDriveReady(in: app)
@@ -622,7 +602,7 @@ final class IrisDriveIOSUITests: XCTestCase {
         return ["IRIS_DRIVE_UI_TEST_BASE_DIR": baseDir.path]
     }
 
-    private func ensureMyDriveReady(
+    func ensureMyDriveReady(
         in app: XCUIApplication,
         file: StaticString = #filePath,
         line: UInt = #line
@@ -896,7 +876,7 @@ final class IrisDriveIOSUITests: XCTestCase {
         return value
     }
 
-    private func makeHittable(_ element: XCUIElement, in app: XCUIApplication) {
+    func makeHittable(_ element: XCUIElement, in app: XCUIApplication) {
         for _ in 0..<6 where !element.isHittable {
             app.swipeUp()
         }

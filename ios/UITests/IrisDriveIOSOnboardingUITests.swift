@@ -81,6 +81,26 @@ extension IrisDriveIOSUITests {
         XCTAssertFalse(app.buttons["Start over"].exists, app.debugDescription)
     }
 
+    func testSettingsLogoutRequiresConfirmation() throws {
+        let app = launchApp(environment: try isolatedBaseEnvironment())
+        ensureMyDriveReady(in: app)
+        let settings = tabButton("Settings", in: app)
+        let logout = app.buttons["Log out"]
+        let confirmation = app.alerts["Log out of Iris Drive on this device?"]
+        settings.tap()
+        makeHittable(logout, in: app)
+        logout.tap()
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5), app.debugDescription)
+        confirmation.buttons["Cancel"].tap()
+        XCTAssertTrue(settings.exists, app.debugDescription)
+        logout.tap()
+        confirmation.buttons["Log out"].tap()
+        XCTAssertTrue(app.buttons["welcomeSignIn"].waitForExistence(timeout: 15), app.debugDescription)
+        app.terminate()
+        app.launch()
+        XCTAssertTrue(app.buttons["welcomeSignIn"].waitForExistence(timeout: 15), app.debugDescription)
+    }
+
     func testCancelSignInRequestRequiresConfirmation() throws {
         let app = launchApp(environment: try isolatedBaseEnvironment())
         app.buttons["welcomeSignIn"].tap()
