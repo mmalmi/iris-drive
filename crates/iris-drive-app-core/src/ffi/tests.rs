@@ -479,12 +479,20 @@ fn app_state_surfaces_shared_with_me_rows_and_shortcuts() {
         created.ui.profile.unwrap().profile_id
     );
     assert_eq!(share.members[0].display_name, "Mac");
+    assert_eq!(share.members[0].name, "You");
+    assert_eq!(share.members[0].detail, "Admin");
     assert_eq!(share.members[0].role, "admin");
     assert_eq!(share.members[0].role_label, "Admin");
     assert_eq!(share.members[0].status, "active");
     assert_eq!(share.members[0].status_label, "Active");
     assert_eq!(share.members[0].app_key_count, 1);
     assert_eq!(share.shortcut_paths, vec!["Projects/Alpha shared"]);
+
+    let mut config = AppConfig::load_or_default(config_path_in(dir.path())).unwrap();
+    config.user_profile = iris_drive_core::UserProfile::from_optional(Some("Ada"), None);
+    config.save(config_path_in(dir.path())).unwrap();
+    let named = app.refresh();
+    assert_eq!(named.ui.shares[0].members[0].name, "Ada (you)");
 }
 
 #[test]
@@ -533,6 +541,8 @@ fn app_state_surfaces_share_missing_wrap_detail() {
 
     assert!(refreshed.error.is_empty(), "{}", refreshed.error);
     let share = refreshed.ui.shares.first().unwrap();
+    let phone = share.members.iter().find(|m| m.name == "Phone").unwrap();
+    assert_eq!(phone.detail, "Reader");
     assert_eq!(share.key_status, "repair_needed");
     assert!(share.repair_needed);
     assert_eq!(share.missing_key_wrap_count, 1);

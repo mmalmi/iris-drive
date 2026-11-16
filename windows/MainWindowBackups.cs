@@ -81,11 +81,7 @@ public partial class MainWindow
         grid.Children.Add(text);
         grid.Children.Add(actions);
 
-        return new Border
-        {
-            Padding = new Thickness(12, 9, 12, 9),
-            Child = grid,
-        };
+        return ListRow(grid, target.Title);
     }
 
     private async void AddBackup_Click(object sender, RoutedEventArgs e)

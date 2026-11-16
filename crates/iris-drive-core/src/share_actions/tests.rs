@@ -40,6 +40,39 @@ fn create_share_defaults_display_name_to_source_dirname() {
 }
 
 #[test]
+fn the_owner_is_named_by_their_username_before_their_device() {
+    let owner_dir = tempdir().unwrap();
+    let owner = Profile::create(owner_dir.path(), Some("Owner's Mac".into())).unwrap();
+    let config = AppConfig {
+        profile: Some(owner.state.clone()),
+        user_profile: crate::UserProfile::from_optional(Some("Ada"), None),
+        ..AppConfig::default()
+    };
+    config.save(config_path_in(owner_dir.path())).unwrap();
+    let create = |path: &str| ShareAction::CreateShare {
+        source_path: path.to_owned(),
+        display_name: None,
+    };
+
+    let named = dispatch_share_action(owner_dir.path(), create("Shared/a"), 10).unwrap();
+    let mut config = AppConfig::load_or_default(config_path_in(owner_dir.path())).unwrap();
+    config.user_profile = None;
+    config.save(config_path_in(owner_dir.path())).unwrap();
+    let unnamed = dispatch_share_action(owner_dir.path(), create("Shared/b"), 11).unwrap();
+
+    let owner_name = |result: &ShareActionResult, folder: &str| {
+        let share = result
+            .shares
+            .iter()
+            .find(|share| share.display_name == folder)
+            .unwrap();
+        share.members[0].name.clone()
+    };
+    assert_eq!(owner_name(&named, "a").as_deref(), Some("Ada"));
+    assert_eq!(owner_name(&unnamed, "b").as_deref(), Some("Owner's Mac"));
+}
+
+#[test]
 fn sharing_a_shared_folder_again_reuses_its_share() {
     let owner_dir = tempdir().unwrap();
     let owner = Profile::create(owner_dir.path(), Some("Owner".into())).unwrap();

@@ -82,6 +82,8 @@ struct IrisDrivePendingShareInvite: Identifiable, Equatable {
 struct IrisDriveShareMember: Identifiable, Equatable {
     var id: String { profileId }
     var profileId: String
+    var name: String
+    var detail: String
     var displayName: String
     var representativeNpubHint: String
     var role: String
@@ -116,7 +118,6 @@ struct IrisDriveRelayStatus: Identifiable, Equatable {
 struct IrisDriveRoot: Identifiable, Equatable {
     var id: String { name }
     var name: String
-    var status: String
     var path: String
 }
 

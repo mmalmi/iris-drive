@@ -48,11 +48,7 @@ public partial class MainWindow
         Grid.SetColumn(cancel, 1);
         grid.Children.Add(cancel);
 
-        return new Border
-        {
-            Padding = new Thickness(12, 9, 12, 9),
-            Child = grid,
-        };
+        return ListRow(grid, $"Waiting to join \u201c{name}\u201d");
     }
 
     /// The row's less common actions: take it out of My Drive, stop sharing, leave.

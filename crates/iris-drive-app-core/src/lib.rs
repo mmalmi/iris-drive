@@ -5,6 +5,7 @@ mod ffi;
 mod native_link_input;
 mod native_provider;
 mod provider_metadata;
+mod share_members;
 pub mod state;
 
 pub use actions::NativeAppAction;

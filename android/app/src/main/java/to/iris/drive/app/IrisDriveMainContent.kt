@@ -662,7 +662,7 @@ private fun SharesPanel(
             title = { Text("Remove access?") },
             text = {
                 Text(
-                    "${displayMemberName(target.second)} will no longer get changes to “${displayShareName(target.first)}”.",
+                    "${target.second.name} will no longer get changes to “${displayShareName(target.first)}”.",
                     color = Muted,
                 )
             },
@@ -934,13 +934,9 @@ private fun ShareMemberRow(
 ) {
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth()) {
         Column(modifier = Modifier.weight(1f)) {
-            Text(displayMemberName(member), color = Ink)
+            Text(member.name, color = Ink)
             Text(
-                listOf(
-                    member.roleLabel.ifBlank { member.role },
-                    member.statusLabel.ifBlank { member.status },
-                    shortText(member.representativeNpubHint.ifBlank { member.profileId }),
-                ).joinToString(" - "),
+                member.detail,
                 color = Muted,
                 style = MaterialTheme.typography.bodySmall,
                 maxLines = 1,
@@ -1320,9 +1316,6 @@ private fun byteString(bytes: Long): String {
 
 private fun displayShareName(share: ShareState): String =
     share.displayName.ifBlank { "Shared folder" }
-
-private fun displayMemberName(member: ShareMemberState): String =
-    member.displayName.ifBlank { "NostrIdentity" }
 
 private fun displayPendingInviteName(invite: PendingShareInviteState): String =
     invite.displayName.ifBlank { "Pending contact" }

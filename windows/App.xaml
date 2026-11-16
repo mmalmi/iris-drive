@@ -164,5 +164,14 @@
       <Setter Property="CornerRadius" Value="8" />
       <Setter Property="Padding" Value="12" />
     </Style>
+
+    <!-- List rows are Borders built in code. A list item takes its row's
+         name, or UI Automation reads the Border's type name instead. -->
+    <Style TargetType="{x:Type ListBoxItem}">
+      <Setter Property="AutomationProperties.Name"
+              Value="{Binding Content.(AutomationProperties.Name), RelativeSource={RelativeSource Self}}" />
+      <Setter Property="AutomationProperties.HelpText"
+              Value="{Binding Content.(AutomationProperties.HelpText), RelativeSource={RelativeSource Self}}" />
+    </Style>
   </Application.Resources>
 </Application>

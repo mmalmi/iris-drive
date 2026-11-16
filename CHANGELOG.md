@@ -10,6 +10,13 @@
   the release-gate lab environment, the Mac launch smoke on the lab VM when
   this Mac runs Iris Drive, Zapstore readback, and `haps` and `htree` pinned
   by SHA-256 for publishing.
+- People in a shared folder are listed as in Google Drive: you first, then
+  each person by name with their role under it, on every platform. Someone
+  who gave no name is "Someone" rather than an id. On Linux the Share and
+  Remove access dialogs open over the Iris Drive window instead of in a
+  corner of the screen; on Windows My Drive says whether it is in File
+  Explorer instead of "SAF provider root", and screen readers read each list
+  row's name.
 
 ## 0.1.44 - 2026-11-16
 

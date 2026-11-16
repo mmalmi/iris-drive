@@ -213,15 +213,7 @@ pub(crate) fn show_invite_share_member_dialog(
     share_id: String,
     share_name: String,
 ) {
-    let dialog = gtk::Window::builder()
-        .application(&model.application)
-        .title("Share")
-        .modal(true)
-        .default_width(420)
-        .build();
-    if let Some(parent) = model.application.active_window() {
-        dialog.set_transient_for(Some(&parent));
-    }
+    let dialog = dialog_window(&model.application, "Share", 420);
 
     let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
     body.set_margin_top(18);
@@ -393,15 +385,7 @@ pub(crate) fn show_delete_share_dialog(
             ),
         )
     };
-    let dialog = gtk::Window::builder()
-        .application(&model.application)
-        .title(confirm)
-        .modal(true)
-        .default_width(380)
-        .build();
-    if let Some(parent) = model.application.active_window() {
-        dialog.set_transient_for(Some(&parent));
-    }
+    let dialog = dialog_window(&model.application, confirm, 380);
 
     let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
     body.set_margin_top(18);
@@ -458,17 +442,10 @@ pub(crate) fn show_revoke_share_member_dialog(
     model: &AppRef,
     share_id: String,
     profile_id: String,
-    display_name: String,
+    member_name: &str,
+    share_name: &str,
 ) {
-    let dialog = gtk::Window::builder()
-        .application(&model.application)
-        .title("Revoke share member")
-        .modal(true)
-        .default_width(380)
-        .build();
-    if let Some(parent) = model.application.active_window() {
-        dialog.set_transient_for(Some(&parent));
-    }
+    let dialog = dialog_window(&model.application, "Remove access", 380);
 
     let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
     body.set_margin_top(18);
@@ -476,13 +453,13 @@ pub(crate) fn show_revoke_share_member_dialog(
     body.set_margin_start(18);
     body.set_margin_end(18);
 
-    let title = gtk::Label::new(Some("Revoke access?"));
+    let title = gtk::Label::new(Some("Remove access?"));
     title.add_css_class("title-2");
     title.set_xalign(0.0);
     body.append(&title);
 
     let message = gtk::Label::new(Some(&format!(
-        "Revoke {display_name} from this share? Future key epochs will not be wrapped for this identity."
+        "{member_name} will no longer get changes to \u{201c}{share_name}\u{201d}."
     )));
     message.add_css_class("iris-muted");
     message.set_xalign(0.0);
@@ -492,7 +469,7 @@ pub(crate) fn show_revoke_share_member_dialog(
     let buttons = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     buttons.set_halign(gtk::Align::End);
     let cancel = pill_button("Cancel");
-    let revoke = pill_button("Revoke");
+    let revoke = pill_button("Remove");
     revoke.add_css_class("destructive-action");
     buttons.append(&cancel);
     buttons.append(&revoke);
@@ -512,7 +489,7 @@ pub(crate) fn show_revoke_share_member_dialog(
                 reason: String::new(),
             }) {
                 Ok(_) => {
-                    model.ui.notice.set_text("Share member revoked");
+                    model.ui.notice.set_text("Access removed");
                     refresh(&model);
                     dialog.close();
                 }
@@ -618,15 +595,7 @@ fn logout(model: &AppRef) {
 }
 
 pub(crate) fn show_add_recovery_key_dialog(model: &AppRef) {
-    let dialog = gtk::Window::builder()
-        .application(&model.application)
-        .title("Add Recovery Key")
-        .modal(true)
-        .default_width(420)
-        .build();
-    if let Some(parent) = model.application.active_window() {
-        dialog.set_transient_for(Some(&parent));
-    }
+    let dialog = dialog_window(&model.application, "Add Recovery Key", 420);
 
     let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
     body.set_margin_top(18);
@@ -1076,15 +1045,7 @@ pub(crate) fn confirm_approve_device(model: &AppRef, request: String) {
 }
 
 pub(crate) fn show_delete_device_dialog(model: &AppRef, device_npub: String, label: String) {
-    let dialog = gtk::Window::builder()
-        .application(&model.application)
-        .title("Remove Device")
-        .modal(true)
-        .default_width(360)
-        .build();
-    if let Some(parent) = model.application.active_window() {
-        dialog.set_transient_for(Some(&parent));
-    }
+    let dialog = dialog_window(&model.application, "Remove Device", 360);
 
     let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
     body.set_margin_top(18);
@@ -1137,15 +1098,7 @@ pub(crate) fn show_delete_device_dialog(model: &AppRef, device_npub: String, lab
 }
 
 pub(crate) fn show_rename_device_dialog(model: &AppRef, device_npub: String, label: String) {
-    let dialog = gtk::Window::builder()
-        .application(&model.application)
-        .title("Rename Device")
-        .modal(true)
-        .default_width(360)
-        .build();
-    if let Some(parent) = model.application.active_window() {
-        dialog.set_transient_for(Some(&parent));
-    }
+    let dialog = dialog_window(&model.application, "Rename Device", 360);
 
     let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
     body.set_margin_top(18);
@@ -1281,15 +1234,7 @@ pub(crate) fn copy_text(model: &AppRef, value: &str, message: &str) {
 pub(crate) fn show_recovery_phrase_dialog(model: &AppRef) {
     let export =
         iris_drive_app_core::export_recovery_secret(app_config_dir().display().to_string());
-    let dialog = gtk::Window::builder()
-        .application(&model.application)
-        .title("Recovery phrase")
-        .modal(true)
-        .default_width(420)
-        .build();
-    if let Some(parent) = model.application.active_window() {
-        dialog.set_transient_for(Some(&parent));
-    }
+    let dialog = dialog_window(&model.application, "Recovery phrase", 420);
 
     let body = gtk::Box::new(gtk::Orientation::Vertical, 14);
     body.set_margin_top(18);

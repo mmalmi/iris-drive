@@ -112,7 +112,6 @@ pub struct UiPendingShareJoin {
 pub struct UiSyncRoot {
     pub name: String,
     pub local_path: String,
-    pub status: String,
 }
 
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -162,6 +161,11 @@ pub struct UiPendingShareInvite {
 #[derive(uniffi::Record, Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct UiShareMember {
     pub profile_id: String,
+    /// What the row shows first: the person's name, "You" for this profile,
+    /// or "Someone" when no name is known. Never an id.
+    pub name: String,
+    /// Shown under the name: the role, and the status unless it is active.
+    pub detail: String,
     pub display_name: String,
     pub representative_npub_hint: String,
     pub role: String,

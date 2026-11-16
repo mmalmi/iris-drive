@@ -505,7 +505,7 @@ fn create_share(
         account.state.profile_id,
         source_path,
         &display_name,
-        account.state.app_key_label,
+        name_to_share(config),
         Vec::new(),
         now_seconds,
     )?;
@@ -516,6 +516,17 @@ fn create_share(
         share_id: Some(share_id),
         ..ShareActionMetadata::default()
     })
+}
+
+/// The name other members see for this profile: the username when one is
+/// set, otherwise this device's label.
+pub(crate) fn name_to_share(config: &AppConfig) -> Option<String> {
+    config
+        .user_profile
+        .as_ref()
+        .map(|profile| profile.username.trim().to_owned())
+        .filter(|name| !name.is_empty())
+        .or_else(|| config.profile.as_ref()?.app_key_label.clone())
 }
 
 fn delete_share(config: &mut AppConfig, share_id: NostrIdentityId) -> Result<ShareActionMetadata> {

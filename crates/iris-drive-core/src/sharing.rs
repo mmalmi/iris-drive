@@ -702,6 +702,10 @@ pub struct SharedFolderMemberView {
     pub profile_id: NostrIdentityId,
     pub role: ShareRole,
     pub status: ShareMemberStatus,
+    /// The name the member gave, when they gave one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    /// The name, or else an id that tells members apart in CLI output.
     pub display_name: String,
     pub representative_npub_hint: Option<String>,
     pub app_key_count: usize,
@@ -1612,6 +1616,7 @@ fn shared_folder_member_views(
             profile_id: member.profile_id,
             role: member.role,
             status: member.status,
+            name: share_member_name(member),
             display_name: share_member_display_name(member),
             representative_npub_hint: member.representative_npub_hint.clone(),
             app_key_count: app_key_counts
@@ -1632,6 +1637,15 @@ fn shared_folder_member_views(
             .then_with(|| left.profile_id.cmp(&right.profile_id))
     });
     members
+}
+
+fn share_member_name(member: &ShareMember) -> Option<String> {
+    member
+        .display_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|name| !name.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 fn share_member_display_name(member: &ShareMember) -> String {

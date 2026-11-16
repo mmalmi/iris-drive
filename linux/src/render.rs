@@ -4,7 +4,7 @@ use super::*;
 pub(crate) fn render_drives(list: &gtk::ListBox, state: &NativeAppState) {
     clear_list(list);
     if state.ui.roots.is_empty() {
-        list.append(&drive_row("main", &drive_mount_text(state), "-"));
+        list.append(&drive_row("main", &drive_mount_text(state)));
         return;
     }
     for drive in &state.ui.roots {
@@ -16,12 +16,7 @@ pub(crate) fn render_drives(list: &gtk::ListBox, state: &NativeAppState) {
         let path = mounted_dir(state)
             .map(|path| path.display().to_string())
             .unwrap_or_else(|| "Not mounted".to_string());
-        let status = if drive.status.is_empty() {
-            "configured".to_string()
-        } else {
-            short_text(&drive.status)
-        };
-        list.append(&drive_row(name, &path, &status));
+        list.append(&drive_row(name, &path));
     }
 }
 
@@ -239,18 +234,14 @@ pub(crate) fn render_shares(model: &AppRef, state: &NativeAppState) {
         list.append(&row);
     }
     for share in &state.ui.shares {
-        list.append(&share_row(model, state, share));
+        list.append(&share_row(model, share));
     }
     if list.first_child().is_none() {
         list.append(&simple_row("No shared folders", ""));
     }
 }
 
-fn share_row(
-    model: &AppRef,
-    state: &NativeAppState,
-    share: &iris_drive_app_core::state::UiShare,
-) -> gtk::ListBoxRow {
+fn share_row(model: &AppRef, share: &iris_drive_app_core::state::UiShare) -> gtk::ListBoxRow {
     let row = gtk::ListBoxRow::new();
     row.set_selectable(false);
 
@@ -359,20 +350,8 @@ fn share_row(
 
     body.append(&header);
 
-    let local_profile_id = state
-        .ui
-        .profile
-        .as_ref()
-        .map(|profile| profile.profile_id.as_str())
-        .unwrap_or("");
     for member in &share.members {
-        body.append(&share_member_row(
-            model,
-            share,
-            member,
-            local_profile_id,
-            share.can_admin,
-        ));
+        body.append(&share_member_row(model, share, member));
     }
     for invite in &share.pending_invites {
         body.append(&pending_share_invite_row(invite));
@@ -418,8 +397,6 @@ fn share_member_row(
     model: &AppRef,
     share: &iris_drive_app_core::state::UiShare,
     member: &iris_drive_app_core::state::UiShareMember,
-    local_profile_id: &str,
-    can_admin: bool,
 ) -> gtk::Box {
     let row = gtk::Box::new(gtk::Orientation::Horizontal, 8);
     row.set_margin_start(28);
@@ -427,52 +404,34 @@ fn share_member_row(
 
     let labels = gtk::Box::new(gtk::Orientation::Vertical, 2);
     labels.set_hexpand(true);
-    let title = gtk::Label::new(Some(if member.display_name.is_empty() {
-        "NostrIdentity"
-    } else {
-        &member.display_name
-    }));
+    let title = gtk::Label::new(Some(&member.name));
     title.add_css_class("iris-row-title");
     title.set_xalign(0.0);
     labels.append(&title);
 
-    let mut metadata = Vec::new();
-    if !member.role_label.is_empty() {
-        metadata.push(member.role_label.clone());
-    }
-    if !member.status_label.is_empty() {
-        metadata.push(member.status_label.clone());
-    }
-    if !member.representative_npub_hint.is_empty() {
-        metadata.push(short_text(&member.representative_npub_hint));
-    } else {
-        metadata.push(short_text(&member.profile_id));
-    }
-    let subtitle = gtk::Label::new(Some(&metadata.join(" | ")));
+    let subtitle = gtk::Label::new(Some(&member.detail));
     subtitle.add_css_class("iris-row-subtitle");
     subtitle.set_xalign(0.0);
-    subtitle.set_ellipsize(gtk::pango::EllipsizeMode::Middle);
+    subtitle.set_ellipsize(gtk::pango::EllipsizeMode::End);
     subtitle.set_max_width_chars(68);
     labels.append(&subtitle);
     row.append(&labels);
 
-    if can_admin && member.status != "revoked" && member.profile_id != local_profile_id {
-        let revoke = icon_button("user-trash-symbolic", "Revoke member");
+    if member.can_revoke {
+        let revoke = icon_button("user-trash-symbolic", "Remove access");
         revoke.add_css_class("destructive-action");
         let model = Rc::clone(model);
         let share_id = share.share_id.clone();
         let profile_id = member.profile_id.clone();
-        let display_name = if member.display_name.is_empty() {
-            short_text(&member.profile_id)
-        } else {
-            member.display_name.clone()
-        };
+        let member_name = member.name.clone();
+        let share_name = share.display_name.clone();
         revoke.connect_clicked(move |_| {
             show_revoke_share_member_dialog(
                 &model,
                 share_id.clone(),
                 profile_id.clone(),
-                display_name.clone(),
+                &member_name,
+                &share_name,
             );
         });
         row.append(&revoke);
@@ -805,7 +764,7 @@ pub(crate) fn peer_row(
     row
 }
 
-pub(crate) fn drive_row(name: &str, path: &str, status: &str) -> gtk::ListBoxRow {
+pub(crate) fn drive_row(name: &str, path: &str) -> gtk::ListBoxRow {
     let row = gtk::ListBoxRow::new();
     let body = gtk::Box::new(gtk::Orientation::Horizontal, 12);
     body.set_margin_top(10);
@@ -830,11 +789,6 @@ pub(crate) fn drive_row(name: &str, path: &str, status: &str) -> gtk::ListBoxRow
     labels.append(&title);
     labels.append(&subtitle);
     body.append(&labels);
-
-    let state = gtk::Label::new(Some(status));
-    state.add_css_class("iris-row-state");
-    state.set_xalign(1.0);
-    body.append(&state);
 
     row.set_child(Some(&body));
     row

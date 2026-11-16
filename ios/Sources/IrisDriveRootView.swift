@@ -1416,8 +1416,8 @@ private struct ShareRow: View {
             ForEach(share.members) { member in
                 HStack {
                     VStack(alignment: .leading) {
-                        Text(memberDisplayName(member))
-                        Text(memberMetadata(member))
+                        Text(member.name)
+                        Text(member.detail)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -1478,7 +1478,7 @@ private struct ShareRow: View {
                 revokeTarget = nil
             }
         } message: { member in
-            Text("\(memberDisplayName(member)) will no longer get changes to “\(shareDisplayName(share))”.")
+            Text("\(member.name) will no longer get changes to “\(shareDisplayName(share))”.")
         }
         .alert(share.owned ? "Stop sharing?" : "Leave shared folder?", isPresented: $showingDeleteShare) {
             Button(share.owned ? "Stop Sharing" : "Leave", role: .destructive) {
@@ -2616,20 +2616,6 @@ private func shareDisplayName(_ share: IrisDriveShare) -> String {
     share.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         ? "Shared folder"
         : share.displayName
-}
-
-private func memberDisplayName(_ member: IrisDriveShareMember) -> String {
-    member.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        ? "NostrIdentity"
-        : member.displayName
-}
-
-private func memberMetadata(_ member: IrisDriveShareMember) -> String {
-    [
-        member.roleLabel.isEmpty ? member.role : member.roleLabel,
-        member.statusLabel.isEmpty ? member.status : member.statusLabel,
-        shortText(member.representativeNpubHint.isEmpty ? member.profileId : member.representativeNpubHint),
-    ].joined(separator: " | ")
 }
 
 private func pendingInviteDisplayName(_ invite: IrisDrivePendingShareInvite) -> String {

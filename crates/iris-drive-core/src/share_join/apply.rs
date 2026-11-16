@@ -343,12 +343,7 @@ pub fn pending_share_join_requests(config_dir: &Path) -> Result<Vec<Event>> {
     }
     let config = AppConfig::load_or_default(config_path_in(config_dir))?;
     let state = config.profile.clone().context("Profile required")?;
-    let display_name = config
-        .user_profile
-        .as_ref()
-        .map(|profile| profile.username.trim().to_owned())
-        .filter(|name| !name.is_empty())
-        .or_else(|| state.app_key_label.clone());
+    let display_name = crate::share_actions::name_to_share(&config);
     let profile = Profile::load(state, config_dir)?;
     let mut events = Vec::new();
     for pending in &store.pending {

@@ -227,6 +227,8 @@ internal data class PendingShareInviteState(
 
 internal data class ShareMemberState(
     val profileId: String,
+    val name: String,
+    val detail: String,
     val displayName: String,
     val representativeNpubHint: String,
     val role: String,
@@ -285,7 +287,6 @@ internal data class FipsPeerStatus(
 internal data class SyncRoot(
     val name: String,
     val localPath: String,
-    val status: String,
 )
 
 internal object NativeActions {
@@ -668,7 +669,6 @@ private fun JSONArray?.toRoots(): List<SyncRoot> {
                 SyncRoot(
                     name = item.optString("name"),
                     localPath = item.optString("local_path"),
-                    status = item.optString("status"),
                 ),
             )
         }
@@ -838,6 +838,8 @@ private fun JSONArray?.toShareMembers(): List<ShareMemberState> {
             add(
                 ShareMemberState(
                     profileId = item.optString("profile_id"),
+                    name = item.optString("name"),
+                    detail = item.optString("detail"),
                     displayName = item.optString("display_name"),
                     representativeNpubHint = item.optString("representative_npub_hint"),
                     role = item.optString("role"),

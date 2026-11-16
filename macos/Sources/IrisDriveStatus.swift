@@ -406,6 +406,8 @@ struct IrisDrivePendingShareInviteStatus: Identifiable, Equatable {
 struct IrisDriveShareMemberStatus: Identifiable, Equatable {
     let id: String
     let profileId: String
+    let name: String
+    let detail: String
     let displayName: String
     let representativeNpubHint: String
     let role: String
@@ -417,6 +419,8 @@ struct IrisDriveShareMemberStatus: Identifiable, Equatable {
     init(json: [String: Any]) {
         profileId = json["profile_id"] as? String ?? UUID().uuidString
         id = profileId
+        name = json["name"] as? String ?? ""
+        detail = json["detail"] as? String ?? ""
         displayName = json["display_name"] as? String ?? ""
         representativeNpubHint = json["representative_npub_hint"] as? String ?? ""
         role = json["role"] as? String ?? ""

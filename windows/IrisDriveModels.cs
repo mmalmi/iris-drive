@@ -166,28 +166,28 @@ public sealed class IrisDriveStatusData
         return "My Drive";
     }
 
+    /// Each drive with where it is on this PC: its File Explorer folder.
     private static IReadOnlyList<DriveRow> NativeDriveRows(JsonElement ui, bool setupComplete)
     {
         var rows = new List<DriveRow>();
-        var fallbackPath = setupComplete && WindowsCloudFiles.IsEnabled
-            ? WindowsCloudFiles.SyncRootPath
-            : null;
+        var place = !setupComplete
+            ? "Not ready"
+            : WindowsCloudFiles.IsEnabled
+                ? WindowsCloudFiles.SyncRootPath
+                : "Not in File Explorer";
         if (ui.ValueKind == JsonValueKind.Object &&
             ui.TryGetProperty("roots", out var roots) &&
             roots.ValueKind == JsonValueKind.Array)
         {
             foreach (var root in roots.EnumerateArray())
             {
-                rows.Add(new DriveRow(
-                    String(root, "name") ?? "main",
-                    String(root, "local_path") ?? fallbackPath ?? "Not ready",
-                    ShortText(String(root, "status") ?? "configured")));
+                rows.Add(new DriveRow(String(root, "name") ?? "My Drive", place));
             }
         }
 
         if (rows.Count == 0)
         {
-            rows.Add(new DriveRow("main", fallbackPath ?? "Not ready", "-"));
+            rows.Add(new DriveRow("My Drive", place));
         }
 
         return rows;
@@ -364,7 +364,8 @@ public sealed class IrisDriveStatusData
         {
             rows.Add(new ShareMemberRow(
                 String(member, "profile_id") ?? "",
-                String(member, "display_name") ?? "",
+                String(member, "name") ?? "",
+                String(member, "detail") ?? "",
                 String(member, "representative_npub_hint") ?? "",
                 String(member, "role") ?? "",
                 String(member, "role_label") ?? "",
@@ -520,7 +521,7 @@ public sealed class IrisDriveStatusData
 
 }
 
-public sealed record DriveRow(string Name, string Path, string State);
+public sealed record DriveRow(string Name, string Path);
 
 public sealed record BackupTargetRow(
     string Id,
@@ -569,7 +570,8 @@ public sealed record PendingShareInviteRow(
 
 public sealed record ShareMemberRow(
     string ProfileId,
-    string DisplayName,
+    string Name,
+    string Detail,
     string RepresentativeNpubHint,
     string Role,
     string RoleLabel,

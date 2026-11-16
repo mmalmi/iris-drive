@@ -1,5 +1,6 @@
 using System;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Media;
 using WpfBrush = System.Windows.Media.Brush;
@@ -128,11 +129,9 @@ public partial class MainWindow
             grid.Children.Add(actions);
         }
 
-        return new Border
-        {
-            Padding = new Thickness(12, 9, 12, 9),
-            Child = grid,
-        };
+        var row = ListRow(grid, ShareName(share));
+        AutomationProperties.SetHelpText(row, ShareSummary(share));
+        return row;
     }
 
     private Grid ShareMemberRow(ShareRow share, ShareMemberRow member)
@@ -141,16 +140,8 @@ public partial class MainWindow
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
 
-        var display = string.IsNullOrWhiteSpace(member.DisplayName)
-            ? "Someone"
-            : member.DisplayName;
-        var role = string.IsNullOrWhiteSpace(member.RoleLabel) ? member.Role : member.RoleLabel;
-        var status = string.IsNullOrWhiteSpace(member.StatusLabel) ? member.Status : member.StatusLabel;
-        var identity = string.IsNullOrWhiteSpace(member.RepresentativeNpubHint)
-            ? member.ProfileId
-            : member.RepresentativeNpubHint;
-        var text = ShareDetail($"{display} \u00b7 {role} \u00b7 {status} \u00b7 {IrisDriveStatusData.ShortText(identity)}");
-        var tag = new ShareMemberActionTag(share.ShareId, member.ProfileId, display, ShareName(share));
+        var text = ShareDetail($"{member.Name} \u00b7 {member.Detail}");
+        var tag = new ShareMemberActionTag(share.ShareId, member.ProfileId, member.Name, ShareName(share));
         Grid.SetColumn(text, 0);
         row.Children.Add(text);
 

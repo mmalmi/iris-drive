@@ -1421,7 +1421,7 @@ struct IrisDriveControlPanel: View {
                 revokeShareMember = nil
             }
         } message: { target in
-            Text("\(shareMemberDisplayName(target.member)) will no longer get changes to “\(shareDisplayName(target.share))”.")
+            Text("\(target.member.name) will no longer get changes to “\(shareDisplayName(target.share))”.")
         }
     }
 
@@ -2160,8 +2160,8 @@ private struct ShareStatusRow: View {
             ForEach(share.members) { member in
                 HStack(alignment: .firstTextBaseline) {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text(member.profileId == localProfileId ? "You" : shareMemberDisplayName(member))
-                        Text(shareMemberSummary(member))
+                        Text(member.name)
+                        Text(member.detail)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -2254,18 +2254,6 @@ private func openDriveIrisLink(_ link: String) {
         return
     }
     NSWorkspace.shared.open(url)
-}
-
-private func shareMemberDisplayName(_ member: IrisDriveShareMemberStatus) -> String {
-    member.displayName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        ? "User"
-        : member.displayName
-}
-
-private func shareMemberSummary(_ member: IrisDriveShareMemberStatus) -> String {
-    let role = member.roleLabel.isEmpty ? member.role : member.roleLabel
-    let status = member.statusLabel.isEmpty ? member.status : member.statusLabel
-    return member.status == "active" ? role : "\(role) · \(status)"
 }
 
 private func pendingShareInviteDisplayName(_ invite: IrisDrivePendingShareInviteStatus) -> String {

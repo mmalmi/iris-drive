@@ -192,6 +192,8 @@ extension IrisDriveMobileModel {
                 members: [
                     IrisDriveShareMember(
                         profileId: ownerProfileId,
+                        name: "You",
+                        detail: "Admin",
                         displayName: "You",
                         representativeNpubHint: "npub1you",
                         role: "admin",
@@ -202,6 +204,8 @@ extension IrisDriveMobileModel {
                     ),
                     IrisDriveShareMember(
                         profileId: "fixture-alex",
+                        name: "Alex",
+                        detail: "Editor",
                         displayName: "Alex",
                         representativeNpubHint: "npub1alex",
                         role: "editor",
@@ -212,6 +216,8 @@ extension IrisDriveMobileModel {
                     ),
                     IrisDriveShareMember(
                         profileId: "fixture-maya",
+                        name: "Maya",
+                        detail: "Reader",
                         displayName: "Maya",
                         representativeNpubHint: "npub1maya",
                         role: "reader",

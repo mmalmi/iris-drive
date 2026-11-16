@@ -2194,6 +2194,8 @@ final class IrisDriveMobileModel: ObservableObject {
                 members: share.members.map { member in
                     IrisDriveShareMember(
                         profileId: member.profileId,
+                        name: member.name,
+                        detail: member.detail,
                         displayName: member.displayName,
                         representativeNpubHint: member.representativeNpubHint,
                         role: member.role,
@@ -2219,7 +2221,7 @@ final class IrisDriveMobileModel: ObservableObject {
             )
         }
         roots = state.ui.roots.map { root in
-            IrisDriveRoot(name: root.name, status: root.status, path: root.localPath)
+            IrisDriveRoot(name: root.name, path: root.localPath)
         }
         applyScreenshotFixtureIfRequested()
     }

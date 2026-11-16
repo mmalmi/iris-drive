@@ -391,7 +391,6 @@ class AppStateTest {
                 SyncRoot(
                     name = "My Drive",
                     localPath = "content://to.iris.drive.documents/document/root",
-                    status = "ready",
                 ),
             ),
             devices = listOf(

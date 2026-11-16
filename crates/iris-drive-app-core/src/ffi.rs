@@ -67,8 +67,8 @@ pub(crate) use crate::native_provider::{
 };
 use crate::state::{
     NativeAppState, UiAppActor, UiAppKeyLinkRequest, UiBackup, UiFipsPeerStatus, UiFipsStatus,
-    UiPaths, UiPendingShareInvite, UiProfile, UiRelayStatus, UiShare, UiShareMember, UiState,
-    UiSyncRoot, UiSyncStatus,
+    UiPaths, UiPendingShareInvite, UiProfile, UiRelayStatus, UiShare, UiState, UiSyncRoot,
+    UiSyncStatus,
 };
 #[derive(uniffi::Record, Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct RecoverySecretExport {
@@ -137,7 +137,6 @@ mod android_test_support;
 #[cfg(target_os = "android")]
 pub(crate) use android_test_support::native_apply_owner_snapshot_for_test_json;
 
-const DEFAULT_ROOT_STATUS: &str = "SAF provider root";
 const DAEMON_STATUS_FILE_NAME: &str = "daemon-status.json";
 const DAEMON_STATUS_FRESH_SECS: u64 = 15;
 const NATIVE_FIPS_STATUS_FILE_NAME: &str = "native-fips-status.json";
@@ -1425,7 +1424,6 @@ impl NativeAppRuntime {
                 .map(|drive| UiSyncRoot {
                     name: drive.display_name.clone(),
                     local_path: self.data_dir.clone(),
-                    status: DEFAULT_ROOT_STATUS.to_owned(),
                 })
                 .collect()
         };
@@ -1679,7 +1677,6 @@ impl NativeAppRuntime {
         let root = UiSyncRoot {
             name: name.to_owned(),
             local_path: local_path.to_owned(),
-            status: DEFAULT_ROOT_STATUS.to_owned(),
         };
         match self
             .state
@@ -3530,6 +3527,16 @@ fn recovery_devices_from_account(state: &iris_drive_core::ProfileState) -> Vec<U
 }
 
 fn ui_shares_for_config(config: &AppConfig, current_app_pubkey: &str) -> Vec<UiShare> {
+    let you = config
+        .profile
+        .as_ref()
+        .map(|profile| crate::share_members::You {
+            profile_id: profile.profile_id,
+            name: config
+                .user_profile
+                .as_ref()
+                .map(|user| user.username.as_str()),
+        });
     iris_drive_core::shared_folder_views(
         &config.shared_folders,
         &config.share_shortcuts,
@@ -3576,22 +3583,7 @@ fn ui_shares_for_config(config: &AppConfig, current_app_pubkey: &str) -> Vec<UiS
             .collect(),
         participant_count: share.participant_count as u64,
         app_key_count: share.app_key_count as u64,
-        members: share
-            .members
-            .into_iter()
-            .map(|member| UiShareMember {
-                profile_id: member.profile_id.to_string(),
-                display_name: member.display_name,
-                representative_npub_hint: member.representative_npub_hint.unwrap_or_default(),
-                role: member.role.as_str().to_owned(),
-                role_label: member.role.label().to_owned(),
-                status: member.status.as_str().to_owned(),
-                status_label: member.status.label().to_owned(),
-                app_key_count: member.app_key_count as u64,
-                can_revoke: member.can_revoke,
-                can_change_role: member.can_change_role,
-            })
-            .collect(),
+        members: crate::share_members::ui_share_members(share.members, you.as_ref()),
         pending_invites: share
             .pending_invites
             .into_iter()

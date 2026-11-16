@@ -548,12 +548,10 @@ struct NativeProviderResolvedPath: Codable {
 struct NativeSyncRoot: Codable {
     var name: String
     var localPath: String
-    var status: String
 
     enum CodingKeys: String, CodingKey {
         case name
         case localPath = "local_path"
-        case status
     }
 }
 
@@ -646,6 +644,8 @@ struct NativePendingShareInvite: Codable {
 
 struct NativeShareMember: Codable {
     var profileId: String
+    var name: String
+    var detail: String
     var displayName: String
     var representativeNpubHint: String
     var role: String
@@ -656,6 +656,8 @@ struct NativeShareMember: Codable {
 
     enum CodingKeys: String, CodingKey {
         case profileId = "profile_id"
+        case name
+        case detail
         case displayName = "display_name"
         case representativeNpubHint = "representative_npub_hint"
         case role

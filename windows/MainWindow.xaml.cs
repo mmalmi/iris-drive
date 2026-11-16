@@ -5,6 +5,7 @@ using System.IO;
 using System.Linq;
 using System.Threading.Tasks;
 using System.Windows;
+using System.Windows.Automation;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
@@ -408,7 +409,7 @@ public partial class MainWindow : Window
         DrivesList.Items.Clear();
         foreach (var drive in status.Drives)
         {
-            DrivesList.Items.Add(Row(drive.Name, drive.Path, drive.State));
+            DrivesList.Items.Add(Row(drive.Name, drive.Path, ""));
         }
     }
 
@@ -529,11 +530,7 @@ public partial class MainWindow : Window
             grid.Children.Add(actions);
         }
 
-        return new Border
-        {
-            Padding = new Thickness(12, 9, 12, 9),
-            Child = grid,
-        };
+        return ListRow(grid, peer.Title);
     }
 
     private WpfButton PeerActionButton(string glyph, string toolTip, string deviceNpub)
@@ -658,11 +655,20 @@ public partial class MainWindow : Window
             grid.Children.Add(stateBlock);
         }
 
-        return new Border
+        return ListRow(grid, string.Join(", ", new[] { title, subtitle, state }.Where(text => !string.IsNullOrWhiteSpace(text))));
+    }
+
+    /// A row of a list. UI Automation reads `name` for it: the ListBoxItem
+    /// style in App.xaml passes it on, since a Border has no name of its own.
+    private static Border ListRow(UIElement child, string name)
+    {
+        var row = new Border
         {
             Padding = new Thickness(12, 9, 12, 9),
-            Child = grid,
+            Child = child,
         };
+        AutomationProperties.SetName(row, name);
+        return row;
     }
 
     private bool EnsureDaemonRunning(IrisDriveStatusData status)
