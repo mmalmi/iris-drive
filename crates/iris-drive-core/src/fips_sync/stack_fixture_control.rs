@@ -107,7 +107,7 @@ fn classify(metadata: &Metadata<'_>) -> Option<Kind> {
         "src/node/handlers/session/node_handshake.rs",
     ) && *metadata.level() == Level::DEBUG
     {
-        if metadata.line() == Some(521) && shape(metadata, &["message", "src"]) {
+        if metadata.line() == Some(483) && shape(metadata, &["message", "src"]) {
             return Some(Kind::Retry(9));
         }
         // This shape is unique in the pinned handshake source.

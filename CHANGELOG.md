@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Your devices exchange Drive's own events (roots, roster changes and device
+  storage reports) with your web devices over FIPS as well as through relays,
+  so changes keep reaching every device when relays do not answer. Each device
+  opens the same peer feed as the web app, only with the account's own
+  devices, and Negentropy sends each side just the events it lacks.
+- Uses Hashtree CLI 0.4.6, `nostr-pubsub-fips` 0.6.6 and FIPS 0.4.123.
+
 ## 0.1.45 - 2026-11-16
 
 - Devices lists each device once and shows how much of the Drive it keeps offline.

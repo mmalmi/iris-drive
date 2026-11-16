@@ -2198,6 +2198,19 @@ async fn run_app_key_link_exchange_async(
                 let mut messages = vec![message];
                 messages.extend(sync.drain_nostr_pubsub_events().await);
                 for message in &messages {
+                    // The account's devices also send Drive events over the
+                    // FIPS feed; they apply as relay events do.
+                    if iris_drive_core::is_drive_feed_event(&message.event) {
+                        handle_native_drive_event(
+                            config_dir,
+                            &config_mutation,
+                            &relay_client,
+                            &sync,
+                            &message.event,
+                        )
+                        .await?;
+                        continue;
+                    }
                     match update_announcements.handle_nostr_event(config_dir, message) {
                         Ok(true) => tracing::info!(
                             origin = message.origin_peer_id,
@@ -2279,44 +2292,14 @@ async fn run_app_key_link_exchange_async(
             notification = relay_notifications.recv() => {
                 match notification {
                     Ok(nostr_sdk::RelayPoolNotification::Event { event, .. }) => {
-                        if iris_drive_core::device_storage::looks_like_device_storage_event(&event) {
-                            if let Err(error) =
-                                iris_drive_core::device_storage::take_in_relay_event(config_dir, &event)
-                            {
-                                tracing::warn!(error = %format!("{error:#}"), "taking in a device storage report failed");
-                            }
-                            continue;
-                        }
-                        let is_device_approval_receipt =
-                            iris_drive_core::relay_sync::is_device_approval_receipt_event(&event);
-                        if event.kind.as_u16() == iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP
-                            && !is_device_approval_receipt
-                            && AppConfig::load_or_default(config_path_in(config_dir))
-                                .map_err(|error| {
-                                    format!("loading approval state before ordinary roster: {error}")
-                                })?
-                                .profile
-                                .as_ref()
-                                .is_some_and(|profile| {
-                                    profile.authorization_state
-                                        == AppKeyAuthorizationState::AwaitingApproval
-                                })
-                        {
-                            continue;
-                        }
-                        if is_device_approval_receipt {
-                            // Approval receipts are subscribed on the same relay client as normal
-                            // app-key-link traffic.
-                        }
-                        if let Err(error) = handle_native_app_key_link_relay_event(
+                        handle_native_drive_event(
                             config_dir,
                             &config_mutation,
                             &relay_client,
                             &sync,
                             &event,
-                        ).await {
-                            tracing::warn!(error = %error, event_id = %event.id.to_hex(), "handling native app-key-link relay event failed");
-                        }
+                        )
+                        .await?;
                     }
                     Ok(nostr_sdk::RelayPoolNotification::Shutdown) => {
                         tracing::warn!("native app-key-link relay notifications shut down");
@@ -2661,6 +2644,53 @@ async fn handle_native_app_key_link_request(
         );
     }
     Ok(true)
+}
+
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+/// One Drive event from relays or, over the FIPS feed, from one of the
+/// account's own devices.
+async fn handle_native_drive_event(
+    config_dir: &Path,
+    config_mutation: &Arc<Mutex<()>>,
+    relay_client: &nostr_sdk::Client,
+    sync: &iris_drive_core::FsFipsBlockSync,
+    event: &nostr_sdk::Event,
+) -> Result<(), String> {
+    if iris_drive_core::device_storage::looks_like_device_storage_event(event) {
+        if let Err(error) = iris_drive_core::device_storage::take_in_relay_event(config_dir, event)
+        {
+            tracing::warn!(error = %format!("{error:#}"), "taking in a device storage report failed");
+        }
+        return Ok(());
+    }
+    let is_device_approval_receipt =
+        iris_drive_core::relay_sync::is_device_approval_receipt_event(event);
+    // Approval receipts share the relay client with ordinary app-key-link
+    // traffic; an ordinary roster op waits until this device is approved.
+    if event.kind.as_u16() == iris_drive_core::KIND_NOSTR_IDENTITY_ROSTER_OP
+        && !is_device_approval_receipt
+        && AppConfig::load_or_default(config_path_in(config_dir))
+            .map_err(|error| format!("loading approval state before ordinary roster: {error}"))?
+            .profile
+            .as_ref()
+            .is_some_and(|profile| {
+                profile.authorization_state == AppKeyAuthorizationState::AwaitingApproval
+            })
+    {
+        return Ok(());
+    }
+    if let Err(error) = handle_native_app_key_link_relay_event(
+        config_dir,
+        config_mutation,
+        relay_client,
+        sync,
+        event,
+    )
+    .await
+    {
+        tracing::warn!(error = %error, event_id = %event.id.to_hex(), "handling native app-key-link relay event failed");
+    }
+    Ok(())
 }
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
