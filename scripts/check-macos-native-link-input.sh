@@ -25,8 +25,15 @@ require_contains macos/Sources/IrisDriveDesktopCore.swift "static func validateD
 require_contains macos/Sources/IrisDriveMacApp.swift 'IrisDriveDesktopCore.validateDeviceInviteInput(text)'
 require_contains macos/Sources/IrisDriveMacApp.swift 'IrisDriveDesktopCore.validateDeviceApprovalInput(text)'
 require_contains macos/Sources/AppKeyLinkInput.swift "inputIsComplete"
-require_contains macos/Sources/IrisDriveControlPanel.swift "controller.startJoinRequest()"
-require_contains macos/Sources/IrisDriveControlPanel.swift "startSetupJoinRequestIfNeeded"
+if ! awk '
+  /case \.welcome:/ { welcome = 1 }
+  /case \.create:/ { welcome = 0 }
+  /controller\.startJoinRequest\(\)/ { if (welcome) sign_in++; else automatic++ }
+  END { exit !(sign_in == 1 && !automatic) }
+' "$ROOT/macos/Sources/IrisDriveControlPanel.swift"; then
+  echo "macOS must start the approval request from the Welcome screen’s Sign in action" >&2
+  exit 1
+fi
 require_contains macos/Sources/IrisDriveControlPanel.swift "approveDeviceKeyIsComplete"
 require_contains macos/Sources/IrisDriveControlPanel.swift "IrisDriveDesktopCore.validateDeviceApprovalInput(request)"
 require_contains windows/IrisDriveNativeCore.cs "iris_drive_validate_device_invite_input_json"

@@ -52,7 +52,6 @@ struct IrisDriveControlPanel: View {
     @State private var setupPhotoPath = ""
     @State private var setupRecoveryWords = Array(repeating: "", count: recoveryPhraseWordCount)
     @State private var setupRecoveryWordIndex = 0
-    @State private var setupJoinRequestStarted = false
     @State private var approveDeviceKey = ""
     @State private var approveDeviceKeyIsComplete = false
     @State private var approveDeviceError = ""
@@ -108,7 +107,6 @@ struct IrisDriveControlPanel: View {
         .onChange(of: status.initialized) { _, initialized in
             if !initialized {
                 setupMode = .welcome
-                setupJoinRequestStarted = false
             }
         }
         .onChange(of: status.setupComplete) { _, _ in applyPendingShareDialog() }
@@ -265,12 +263,6 @@ struct IrisDriveControlPanel: View {
         }
     }
 
-    private func startSetupJoinRequestIfNeeded() {
-        guard !setupJoinRequestStarted else { return }
-        setupJoinRequestStarted = true
-        controller.startJoinRequest()
-    }
-
     private func confirmApproveDevice(_ value: String, force: Bool = false) {
         let request = value.trimmingCharacters(in: .whitespacesAndNewlines)
         guard IrisDriveDesktopCore.validateDeviceApprovalInput(request) else { return }
@@ -369,6 +361,7 @@ struct IrisDriveControlPanel: View {
                 .buttonStyle(.borderedProminent)
                 Button {
                     setupMode = .restoreOptions
+                    controller.startJoinRequest()
                 } label: {
                     setupButtonLabel("Sign in", systemImage: "rectangle.portrait.and.arrow.right")
                 }
@@ -445,9 +438,6 @@ struct IrisDriveControlPanel: View {
                 }
                 .accessibilityLabel("Restore from secret key")
                 .buttonStyle(.bordered)
-            }
-            .onAppear {
-                startSetupJoinRequestIfNeeded()
             }
         case .restorePhrase:
             setupForm(title: "Recovery phrase", backTarget: .restoreOptions) {
