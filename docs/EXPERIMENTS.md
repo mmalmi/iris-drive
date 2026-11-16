@@ -4,6 +4,22 @@ Performance and integration experiments log. Omit identifying information
 (pubkeys, secrets, IPs, private hostnames, exact repo names, raw hashes)
 unless the user explicitly asks otherwise.
 
+## 2026-11-16 iOS launcher idle CPU
+
+Opening Iris Apps left WebKit busy after the launcher finished rendering. We compared the original and updated signed launcher on the same iOS 26.5 simulator, using an Iris Drive 0.1.45 debug build and a disposable profile. A loopback forwarding service selected each pinned site from Drive’s native gateway and kept the page in launcher mode. The live test opened the published launcher through the app’s normal gateway and checked that one WebView remained visible after the launch probe finished. Standalone Safari opened the same two signed sites, the live launcher, the Drive web client and a blank page.
+
+Each figure is the CPU time a process accumulated over 75 seconds of idle foreground time, expressed as a percentage of one core. The embedded test checked the visible page before the timed interval and verified its entry script against the signed site afterwards.
+
+| Page | Drive app | Embedded WebContent | Embedded networking | Safari WebContent | Safari networking |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Blank | 3.25% | 0.00% | 0.00% | 0.01% | 0.00% |
+| Original signed launcher | 1.91% | 51.59% | 39.96% | 68.70% | 51.53% |
+| Updated signed launcher | 3.07% | 0.01% | 0.01% | 0.01% | 0.09% |
+| Live updated launcher | 3.08% | 0.00% | 0.00% | 0.01% | 0.00% |
+| Drive web client | — | — | — | 4.53% | 1.29% |
+
+The original launcher loaded the peer worker client and relay worker while the app directory sat idle. The update defers peer connections until opening a hosted site or starting an upload. Both browsers loaded the updated directory without either worker. Phone temperature and battery consumption were unmeasured.
+
 ## 2026-11-10 Merged projection and mount-import scaling
 
 Building the merged provider root and the local delta for a mount import both
