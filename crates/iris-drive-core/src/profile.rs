@@ -250,14 +250,13 @@ impl ProfileState {
         } else {
             self.app_keys
                 .as_ref()
-                .map(|projection| {
+                .map_or_else(Default::default, |projection| {
                     projection
                         .app_actors
                         .iter()
                         .map(|actor| actor.pubkey.clone())
                         .collect()
                 })
-                .unwrap_or_default()
         };
 
         if self.can_write_roots() && !app_keys.contains(&self.app_key_pubkey) {
@@ -1335,9 +1334,9 @@ impl Profile {
             &dck,
             secret_epoch,
             now,
-            app_key_label
-                .map(|label| BTreeMap::from([(app_key_pubkey_hex.to_string(), label)]))
-                .unwrap_or_default(),
+            app_key_label.map_or_else(Default::default, |label| {
+                BTreeMap::from([(app_key_pubkey_hex.to_string(), label)])
+            }),
             &[],
         )?;
         let parents = nostr_identity_roster_parent_ids(&self.state.profile_roster_ops);
@@ -1834,8 +1833,9 @@ impl Profile {
                     label
                         .as_deref()
                         .and_then(normalize_app_key_label)
-                        .map(|label| BTreeMap::from([(self.state.app_key_pubkey.clone(), label)]))
-                        .unwrap_or_default(),
+                        .map_or_else(Default::default, |label| {
+                            BTreeMap::from([(self.state.app_key_pubkey.clone(), label)])
+                        }),
                     &[],
                 )
             })

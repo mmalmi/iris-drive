@@ -323,7 +323,7 @@ if ! ADB="$(resolve_adb 2>/dev/null)"; then
   fail "physical linking requires adb"
 fi
 
-TMP="$(mktemp -d -t iris-drive-mobile-linking)"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/iris-drive-mobile-linking.XXXXXX")"
 mkdir -p "$RESULT_DIR"
 IOS_MARKERS="$TMP/ios-markers.log"
 

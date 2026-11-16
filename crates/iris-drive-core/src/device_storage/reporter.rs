@@ -296,7 +296,7 @@ pub fn seen_versions(
 fn roots_key(config: &AppConfig) -> String {
     config
         .drive(PRIMARY_DRIVE_ID)
-        .map(|drive| {
+        .map_or_else(Default::default, |drive| {
             drive
                 .app_key_roots
                 .iter()
@@ -304,5 +304,4 @@ fn roots_key(config: &AppConfig) -> String {
                 .collect::<Vec<_>>()
                 .join(",")
         })
-        .unwrap_or_default()
 }

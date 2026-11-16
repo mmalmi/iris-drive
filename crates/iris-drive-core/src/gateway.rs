@@ -1277,8 +1277,7 @@ pub fn local_immutable_url(port: u16, cid: &Cid) -> String {
     let label = encode_immutable_host_label(&cid.hash);
     let key = cid
         .key
-        .map(|key| format!("?k={}", to_hex(&key)))
-        .unwrap_or_default();
+        .map_or_else(Default::default, |key| format!("?k={}", to_hex(&key)));
     match nhash {
         Some(_) => format!("http://{label}.sites.iris.localhost:{port}/{key}"),
         None => format!("http://{label}.sites.iris.localhost:{port}/"),

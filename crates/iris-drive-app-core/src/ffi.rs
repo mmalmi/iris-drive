@@ -1491,17 +1491,14 @@ impl NativeAppRuntime {
         } else {
             None
         };
-        self.state.ui.sites_portal_url = gateway_port
-            .map(iris_drive_core::gateway::local_portal_url)
-            .unwrap_or_default();
-        self.state.ui.caldav_url = gateway_port
-            .map(|port| {
-                iris_drive_core::gateway::local_caldav_url_for_identity(
-                    port,
-                    &pubkey_npub(&account.app_key_pubkey),
-                )
-            })
-            .unwrap_or_default();
+        self.state.ui.sites_portal_url =
+            gateway_port.map_or_else(Default::default, iris_drive_core::gateway::local_portal_url);
+        self.state.ui.caldav_url = gateway_port.map_or_else(Default::default, |port| {
+            iris_drive_core::gateway::local_caldav_url_for_identity(
+                port,
+                &pubkey_npub(&account.app_key_pubkey),
+            )
+        });
         let profile = nostr_identity_summary(&account);
         self.state.ui.profile = Some(UiProfile {
             profile_id: profile.profile_id,
@@ -1605,14 +1602,13 @@ impl NativeAppRuntime {
         self.state.ui.provider_directory_paths = value
             .get("directory_paths")
             .and_then(serde_json::Value::as_array)
-            .map(|paths| {
+            .map_or_else(Default::default, |paths| {
                 paths
                     .iter()
                     .filter_map(serde_json::Value::as_str)
                     .map(ToOwned::to_owned)
                     .collect()
-            })
-            .unwrap_or_default();
+            });
     }
 
     fn refresh_ui_summary(&mut self, fips_status: Option<UiFipsStatus>) {
@@ -3148,7 +3144,7 @@ fn normalized_u64(status: &Value, key: &str) -> u64 {
 fn ui_fips_peer_statuses(value: Option<&Value>) -> Vec<UiFipsPeerStatus> {
     value
         .and_then(Value::as_array)
-        .map(|statuses| {
+        .map_or_else(Default::default, |statuses| {
             statuses
                 .iter()
                 .filter_map(|status| {
@@ -3169,7 +3165,6 @@ fn ui_fips_peer_statuses(value: Option<&Value>) -> Vec<UiFipsPeerStatus> {
                 })
                 .collect()
         })
-        .unwrap_or_default()
 }
 
 #[cfg(any(test, target_os = "ios", target_os = "android"))]

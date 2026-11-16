@@ -377,8 +377,7 @@ async fn fetch_public_blossom_blob(
 
 fn gateway_blossom_read_servers(state: &GatewayState) -> Vec<String> {
     AppConfig::load_or_default(config_path_in(state.config_dir.as_ref()))
-        .map(|config| config.blossom_servers)
-        .unwrap_or_default()
+        .map_or_else(|_| Vec::new(), |config| config.blossom_servers)
         .into_iter()
         .map(|server| server.trim().trim_end_matches('/').to_string())
         .filter(|server| !server.is_empty())

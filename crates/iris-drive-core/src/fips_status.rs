@@ -257,7 +257,7 @@ pub fn normalized_fips_peer_statuses(value: Option<&Value>) -> Value {
     Value::Array(
         value
             .and_then(Value::as_array)
-            .map(|statuses| {
+            .map_or_else(Default::default, |statuses| {
                 statuses
                     .iter()
                     .filter_map(|status| {
@@ -270,8 +270,7 @@ pub fn normalized_fips_peer_statuses(value: Option<&Value>) -> Value {
                         Some(Value::Object(normalized))
                     })
                     .collect()
-            })
-            .unwrap_or_default(),
+            }),
     )
 }
 
@@ -408,14 +407,13 @@ pub fn string_vec_from_json_array(value: Option<&Value>) -> Vec<String> {
 pub fn string_set_from_json_array(value: Option<&Value>) -> BTreeSet<String> {
     value
         .and_then(Value::as_array)
-        .map(|values| {
+        .map_or_else(Default::default, |values| {
             values
                 .iter()
                 .filter_map(Value::as_str)
                 .map(ToOwned::to_owned)
                 .collect()
         })
-        .unwrap_or_default()
 }
 
 #[must_use]

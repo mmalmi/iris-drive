@@ -50,9 +50,8 @@ pub fn recovery_phrase_to_keys(phrase: &str) -> Result<Keys, RecoveryPhraseError
 
 pub fn recovery_phrase_to_nsec(phrase: &str) -> Result<String, RecoveryPhraseError> {
     let keys = recovery_phrase_to_keys(phrase)?;
-    keys.secret_key()
-        .to_bech32()
-        .map_err(|error| RecoveryPhraseError::InvalidSecret(error.to_string()))
+    let Ok(nsec) = keys.secret_key().to_bech32();
+    Ok(nsec)
 }
 
 pub fn normalize_recovery_phrase(phrase: &str) -> String {
@@ -74,9 +73,8 @@ pub fn secret_input_to_nsec(input: &str) -> Result<String, RecoveryPhraseError> 
     } else {
         return recovery_phrase_to_nsec(trimmed);
     };
-    secret
-        .to_bech32()
-        .map_err(|error| RecoveryPhraseError::InvalidSecret(error.to_string()))
+    let Ok(nsec) = secret.to_bech32();
+    Ok(nsec)
 }
 
 pub fn save_recovery_phrase(

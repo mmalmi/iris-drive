@@ -249,7 +249,7 @@ fn cmd_shares_invite(
         "{}",
         json!({
             "share_id": share_id.to_string(),
-            "profile_id": result.profile_id.map(|profile_id| profile_id.to_string()).unwrap_or_default(),
+            "profile_id": result.profile_id.map_or_else(Default::default, |profile_id| profile_id.to_string()),
             "epoch": result.epoch,
             "invite": result.last_share_invite.unwrap_or_default(),
             "members": view.members.iter().map(share_member_json).collect::<Vec<_>>(),

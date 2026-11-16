@@ -286,8 +286,7 @@ impl BackupService {
                             .static_peer_hints
                             .iter()
                             .find(|(key, _)| key == npub)
-                            .map(|(_, addresses)| addresses.clone())
-                            .unwrap_or_default(),
+                            .map_or_else(Default::default, |(_, addresses)| addresses.clone()),
                     })
                     .collect(),
             )

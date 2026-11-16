@@ -125,8 +125,7 @@ pub fn read_device_storage_report(value: &Value) -> Option<DeviceStorageReport> 
         app: raw
             .get("app")
             .and_then(Value::as_str)
-            .map(|app| truncate(app, MAX_APP))
-            .unwrap_or_default(),
+            .map_or_else(Default::default, |app| truncate(app, MAX_APP)),
         root: root.to_owned(),
         files,
         file_bytes,

@@ -57,8 +57,7 @@ pub(super) fn save_profile_roster_events(
     let mut events = if path.exists() {
         let raw = fs::read_to_string(&path)?;
         serde_json::from_str::<ProfileRosterEventStore>(&raw)
-            .map(|store| store.events)
-            .unwrap_or_default()
+            .map_or_else(|_| Vec::new(), |store| store.events)
     } else {
         Vec::new()
     };

@@ -101,11 +101,7 @@ macro_rules! keypair_struct {
                 if let Some(parent) = self.path.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                let bech = self
-                    .keys
-                    .secret_key()
-                    .to_bech32()
-                    .map_err(|e| IdentityError::InvalidKey(e.to_string()))?;
+                let Ok(bech) = self.keys.secret_key().to_bech32();
                 write_secret_file(&self.path, bech.as_bytes())?;
                 Ok(())
             }

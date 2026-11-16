@@ -225,7 +225,7 @@ impl FriendBackupStore {
             if key.to_hex() != name {
                 return Err(invalid("invalid friend backup directory"));
             }
-            let npub = key.to_bech32().map_err(|e| invalid(e.to_string()))?;
+            let Ok(npub) = key.to_bech32();
             usage.insert(npub, directory_bytes(&entry.path())?);
         }
         Ok(usage)
@@ -437,7 +437,8 @@ impl FriendBackupStore {
 
     fn peer_dir(&self, npub: &str) -> Result<PathBuf> {
         let public = PublicKey::parse(npub).map_err(|_| invalid("invalid friend npub"))?;
-        if public.to_bech32().map_err(|e| invalid(e.to_string()))? != npub {
+        let Ok(canonical) = public.to_bech32();
+        if canonical != npub {
             return Err(invalid("friend must use its canonical npub"));
         }
         Ok(self.base_dir.join(public.to_hex()))

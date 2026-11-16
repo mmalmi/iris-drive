@@ -424,8 +424,7 @@ async fn sync_once_inner(
     let authorized_app_keys = config
         .profile
         .as_ref()
-        .map(authorized_app_key_pubkeys)
-        .unwrap_or_default();
+        .map_or_else(Default::default, authorized_app_key_pubkeys);
     let root_scope_id = state.root_scope_id();
     let drive_root_events = relay_sync::fetch_drive_roots(
         &client,

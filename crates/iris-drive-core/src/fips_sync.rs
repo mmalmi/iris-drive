@@ -137,11 +137,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         filters: Vec<nostr_pubsub::Filter>,
     ) -> Result<Self, FipsSyncError> {
         let _ = rustls::crypto::ring::default_provider().install_default();
-        let identity_nsec = device
-            .keys()
-            .secret_key()
-            .to_bech32()
-            .map_err(|error| FipsSyncError::Identity(error.to_string()))?;
+        let Ok(identity_nsec) = device.keys().secret_key().to_bech32();
         let discovery_scope = discovery_scope(config);
         let transport_settings = FipsTransportSettings::from_env();
         let shared_store = configured_shared_lmdb_route().unwrap_or_else(|error| {
@@ -435,8 +431,9 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
         self.peer_config_refresh
             .applied()
             .as_ref()
-            .map(|snapshot| snapshot.blob.iter().map(|peer| peer.npub.clone()).collect())
-            .unwrap_or_default()
+            .map_or_else(Default::default, |snapshot| {
+                snapshot.blob.iter().map(|peer| peer.npub.clone()).collect()
+            })
     }
 
     pub async fn connected_peer_ids(&self) -> Vec<String> {
@@ -452,8 +449,7 @@ impl<L: Store + Send + Sync + 'static> FipsBlockSync<L> {
     pub fn same_host_blob_provider_ids(&self) -> Vec<String> {
         self.blob_runtime
             .as_ref()
-            .map(DriveBlobRuntime::same_host_provider_ids)
-            .unwrap_or_default()
+            .map_or_else(Default::default, DriveBlobRuntime::same_host_provider_ids)
     }
 
     pub async fn fips_relay_statuses(&self) -> Vec<FipsRelayStatus> {

@@ -44,12 +44,11 @@ pub(super) fn ensure_cached_app_key_link_request_url(
     {
         return Ok(());
     }
-    let admin_app_key_pubkey = pending
-        .map(|pending| pending.admin_app_key_pubkey.clone())
-        .unwrap_or_default();
-    let invite_pubkey = pending
-        .map(|pending| pending.invite_pubkey.clone())
-        .unwrap_or_default();
+    let admin_app_key_pubkey = pending.map_or_else(Default::default, |pending| {
+        pending.admin_app_key_pubkey.clone()
+    });
+    let invite_pubkey =
+        pending.map_or_else(Default::default, |pending| pending.invite_pubkey.clone());
     let app_key_label = state.app_key_label.clone();
     let requested_at = pending.map_or_else(unix_now_seconds, |pending| pending.requested_at);
     let app_key = iris_drive_core::AppKey::load(key_path_in(config_dir))

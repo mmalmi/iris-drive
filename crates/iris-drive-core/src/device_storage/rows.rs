@@ -111,8 +111,7 @@ pub fn device_storage_view(
     sort_rows(&mut rows);
     let roots = config
         .drive(PRIMARY_DRIVE_ID)
-        .map(|drive| drive.app_key_roots.clone())
-        .unwrap_or_default();
+        .map_or_else(Default::default, |drive| drive.app_key_roots.clone());
     let held = roots
         .iter()
         .map(|(device, root)| (device.clone(), root.app_key_seq))
@@ -180,7 +179,7 @@ fn row_view(
         npub: pubkey_npub(&row.pubkey),
         name: row.name.clone(),
         is_current: row.current,
-        app: report.map(|report| report.app.clone()).unwrap_or_default(),
+        app: report.map_or_else(Default::default, |report| report.app.clone()),
         icon: icon(report.map_or("", |report| report.app.as_str())).to_owned(),
         has_report: report.is_some(),
         held_label: report.map_or_else(|| "No report yet".to_owned(), holding_label),
@@ -189,12 +188,10 @@ fn row_view(
         connected: row.connected,
         connection_label: connection_label.to_owned(),
         connection_detail: connection_detail.to_owned(),
-        sync_state: sync.map(|sync| sync.id().to_owned()).unwrap_or_default(),
-        sync_label: sync.map(|sync| sync.label().to_owned()).unwrap_or_default(),
-        sync_detail: sync
-            .map(|sync| sync.detail().to_owned())
-            .unwrap_or_default(),
-        space_label: report.map(space_label).unwrap_or_default(),
+        sync_state: sync.map_or_else(Default::default, |sync| sync.id().to_owned()),
+        sync_label: sync.map_or_else(Default::default, |sync| sync.label().to_owned()),
+        sync_detail: sync.map_or_else(Default::default, |sync| sync.detail().to_owned()),
+        space_label: report.map_or_else(Default::default, space_label),
         space_detail: if report.is_some() {
             SPACE_DETAIL.to_owned()
         } else {

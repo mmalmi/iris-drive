@@ -177,7 +177,7 @@ pub(crate) fn app_key_actors_for_status(config: &AppConfig) -> Vec<AppActorEntry
 fn fips_peer_statuses_by_npub(value: Option<&Value>) -> BTreeMap<String, Value> {
     value
         .and_then(Value::as_array)
-        .map(|statuses| {
+        .map_or_else(Default::default, |statuses| {
             statuses
                 .iter()
                 .filter_map(|status| {
@@ -188,7 +188,6 @@ fn fips_peer_statuses_by_npub(value: Option<&Value>) -> BTreeMap<String, Value> 
                 })
                 .collect()
         })
-        .unwrap_or_default()
 }
 
 fn peer_detail(

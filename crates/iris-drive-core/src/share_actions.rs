@@ -152,8 +152,9 @@ pub struct PendingShareJoinView {
 }
 
 fn pending_join_views(config_dir: &Path, config: &AppConfig) -> Vec<PendingShareJoinView> {
-    crate::share_join::ShareJoinStore::load(config_dir)
-        .map(|store| {
+    crate::share_join::ShareJoinStore::load(config_dir).map_or_else(
+        |_| Vec::new(),
+        |store| {
             store
                 .pending
                 .iter()
@@ -165,8 +166,8 @@ fn pending_join_views(config_dir: &Path, config: &AppConfig) -> Vec<PendingShare
                     requested_at: pending.requested_at,
                 })
                 .collect()
-        })
-        .unwrap_or_default()
+        },
+    )
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]

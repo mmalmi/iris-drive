@@ -303,9 +303,8 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                     .as_deref()
                     .map(normalize_provider_path)
                     .transpose()?;
-                let modified_at_by_path = visible_view
-                    .map(provider_modified_at_index)
-                    .unwrap_or_default();
+                let modified_at_by_path =
+                    visible_view.map_or_else(Default::default, provider_modified_at_index);
                 let entries =
                     provider_entries(daemon.tree(), &visible.root_cid, &modified_at_by_path)
                         .await?;
@@ -652,9 +651,8 @@ fn provider_mutation_tombstone_paths(
     staged: Option<&ProviderStagedRoot>,
     changed_paths: BTreeSet<String>,
 ) -> BTreeSet<String> {
-    let mut tombstone_paths = staged
-        .map(|staged| staged.tombstone_paths.clone())
-        .unwrap_or_default();
+    let mut tombstone_paths =
+        staged.map_or_else(Default::default, |staged| staged.tombstone_paths.clone());
     tombstone_paths.extend(changed_paths);
     tombstone_paths
 }

@@ -249,8 +249,7 @@ pub fn unique_provider_path(
         .extension()
         .and_then(|value| value.to_str())
         .filter(|value| !value.is_empty())
-        .map(|value| format!(".{value}"))
-        .unwrap_or_default();
+        .map_or_else(Default::default, |value| format!(".{value}"));
     let mut index = 2;
     while existing.contains(candidate.as_str()) {
         candidate = format!("{prefix}{stem} ({index}){extension}");

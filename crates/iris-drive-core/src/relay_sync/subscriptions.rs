@@ -102,8 +102,7 @@ pub async fn refresh_app_key_link_relay_subscriptions(
     let approval_ack = pending_device_approval_applied_ack_subscription(state)?;
     let approval_ack_coordinates = approval_ack
         .as_ref()
-        .map(|(coordinates, _)| coordinates.clone())
-        .unwrap_or_default();
+        .map_or_else(Default::default, |(coordinates, _)| coordinates.clone());
     if approval_ack_coordinates != subscriptions.approval_ack_coordinates {
         let subscription_id = SubscriptionId::new(DEVICE_APPROVAL_ACK_SUBSCRIPTION_ID);
         if let Some((_, filter)) = approval_ack {
