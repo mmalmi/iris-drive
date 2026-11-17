@@ -196,6 +196,7 @@ async fn handle_caldav_put(
     uri: &Uri,
     body: &[u8],
 ) -> Result<Response, (StatusCode, String)> {
+    let _calendar_write = state.calendar_writes.lock().await;
     let path = normalized_caldav_path(uri.path());
     let config = load_caldav_config(state)?;
     let paths = current_caldav_paths(&config);
@@ -257,6 +258,7 @@ async fn handle_caldav_delete(
     state: &GatewayState,
     uri: &Uri,
 ) -> Result<Response, (StatusCode, String)> {
+    let _calendar_write = state.calendar_writes.lock().await;
     let path = normalized_caldav_path(uri.path());
     let config = load_caldav_config(state)?;
     let paths = current_caldav_paths(&config);

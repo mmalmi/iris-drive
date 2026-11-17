@@ -772,7 +772,9 @@ pub fn apply_remote_files_root_event(
         if existing.root_cid == incoming_root.root_cid {
             return Ok(FilesRootApply::StaleTimestamp);
         }
-        if existing.app_key_seq > 0 {
+        // Calendar has one same-author root shared by the web app and CalDAV.
+        // Both publish the standard replaceable event, ordered by its timestamp.
+        if existing.app_key_seq > 0 && parsed.tree_name != CALENDAR_TREE_NAME {
             return Ok(FilesRootApply::StaleTimestamp);
         }
         if existing.published_at >= incoming_root.published_at {

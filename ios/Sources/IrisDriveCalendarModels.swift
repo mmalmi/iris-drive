@@ -19,15 +19,17 @@ struct IrisCalendarEvent: Decodable {
     var start: String
     var end: String
     var allDay: Bool
-    var location: String
-    var notes: String
+    var day: String?
+    var days: Int?
+    var location: String?
+    var notes: String?
     var recurrence: IrisCalendarRecurrence?
 }
 
 struct IrisCalendarRecurrence: Decodable {
     var frequency: String
     var interval: Int
-    var until: String
+    var until: String?
 }
 
 enum IrisCalendarExportError: LocalizedError {
@@ -81,13 +83,15 @@ private func normalizedIrisCalendarEvent(_ event: IrisCalendarEvent) -> IrisCale
         start: event.start.trimmingCharacters(in: .whitespacesAndNewlines),
         end: event.end.trimmingCharacters(in: .whitespacesAndNewlines),
         allDay: event.allDay,
-        location: event.location.trimmingCharacters(in: .whitespacesAndNewlines),
-        notes: event.notes.trimmingCharacters(in: .whitespacesAndNewlines),
+        day: event.day,
+        days: event.days,
+        location: event.location?.trimmingCharacters(in: .whitespacesAndNewlines),
+        notes: event.notes?.trimmingCharacters(in: .whitespacesAndNewlines),
         recurrence: event.recurrence.map { recurrence in
             IrisCalendarRecurrence(
                 frequency: recurrence.frequency.trimmingCharacters(in: .whitespacesAndNewlines),
                 interval: max(1, recurrence.interval),
-                until: recurrence.until.trimmingCharacters(in: .whitespacesAndNewlines)
+                until: recurrence.until?.trimmingCharacters(in: .whitespacesAndNewlines)
             )
         }
     )

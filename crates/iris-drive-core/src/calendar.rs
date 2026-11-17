@@ -13,6 +13,8 @@ use crate::{Daemon, DaemonError};
 pub const CALENDAR_TREE_NAME: &str = "calendar";
 pub const CALENDAR_DATA_FILE: &str = "calendar.json";
 const CALENDAR_UID_SUFFIX: &str = "@calendar.iris.to";
+const MAX_CALENDAR_BYTES: u64 = 16 * 1024 * 1024;
+const DAY_MS: i64 = 86_400_000;
 
 #[derive(Debug, Error)]
 pub enum CalendarError {
@@ -66,6 +68,8 @@ pub struct CalendarEvent {
     pub recurrence_source_id: Option<String>,
     pub created_at: i64,
     pub updated_at: i64,
+    #[serde(flatten)]
+    pub extra: serde_json::Map<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -138,20 +142,16 @@ pub async fn load_calendar_data<S: Store>(
     let Some(root) = current_calendar_root(config)? else {
         return Ok(CalendarData::new(owner_npub, now_millis()));
     };
-    let Some(file) = tree
+    let file = tree
         .resolve(&root, CALENDAR_DATA_FILE)
         .await
         .map_err(|e| CalendarError::Hashtree(e.to_string()))?
-    else {
-        return Ok(CalendarData::new(owner_npub, now_millis()));
-    };
-    let Some(bytes) = tree
-        .read_file_range_cid(&file, 0, Some(1024 * 1024))
+        .ok_or_else(|| CalendarError::Data("calendar file is missing".into()))?;
+    let bytes = tree
+        .read_file_range_cid(&file, 0, Some(MAX_CALENDAR_BYTES))
         .await
         .map_err(|e| CalendarError::Hashtree(e.to_string()))?
-    else {
-        return Ok(CalendarData::new(owner_npub, now_millis()));
-    };
+        .ok_or_else(|| CalendarError::Data("calendar file is unreadable".into()))?;
     let mut data: CalendarData = serde_json::from_slice(&bytes)?;
     if data.owner_npub.trim().is_empty() {
         data.owner_npub = owner_npub.to_string();
@@ -168,9 +168,24 @@ pub async fn put_calendar_event_ics(
     let now = now_millis();
     let mut data = load_calendar_data(daemon.tree(), daemon.config(), &actor).await?;
     let ics = std::str::from_utf8(body).map_err(|e| CalendarError::Data(e.to_string()))?;
-    let event = event_from_ics(ics, resource_id, now)?;
-    data.events.retain(|existing| existing.id != event.id);
-    data.events.push(event.clone());
+    let mut event = event_from_ics(ics, resource_id, now)?;
+    if let Some(existing) = data
+        .events
+        .iter_mut()
+        .find(|existing| existing.id == event.id)
+    {
+        event.color.clone_from(&existing.color);
+        event
+            .recurrence_source_id
+            .clone_from(&existing.recurrence_source_id);
+        event.created_at = existing.created_at;
+        existing.extra.remove("day");
+        existing.extra.remove("days");
+        event.extra.append(&mut existing.extra);
+        *existing = event.clone();
+    } else {
+        data.events.push(event.clone());
+    }
     data.touch(&actor, now);
     save_calendar_data(daemon, &data).await?;
     Ok(event)
@@ -260,7 +275,7 @@ fn current_calendar_root(config: &AppConfig) -> Result<Option<Cid>, CalendarErro
 fn calendar_actor(config: &AppConfig) -> String {
     config.profile.as_ref().map_or_else(
         || "iris-caldav".into(),
-        |profile| profile.app_key_pubkey.clone(),
+        |profile| crate::app_key_summary::pubkey_npub(&profile.app_key_pubkey),
     )
 }
 
@@ -302,11 +317,9 @@ fn event_component_lines(event: &CalendarEvent, now_ms: i64) -> Vec<String> {
         property_line("SUMMARY", &event.title),
     ];
     if event.all_day {
-        lines.push(format!(
-            "DTSTART;VALUE=DATE:{}",
-            iso_to_ics_date(&event.start)
-        ));
-        lines.push(format!("DTEND;VALUE=DATE:{}", iso_to_ics_date(&event.end)));
+        let (start, end) = all_day_ics_dates(event);
+        lines.push(format!("DTSTART;VALUE=DATE:{start}"));
+        lines.push(format!("DTEND;VALUE=DATE:{end}"));
     } else {
         lines.push(format!("DTSTART:{}", iso_to_ics_utc(&event.start)));
         lines.push(format!("DTEND:{}", iso_to_ics_utc(&event.end)));
@@ -322,6 +335,17 @@ fn event_component_lines(event: &CalendarEvent, now_ms: i64) -> Vec<String> {
     }
     lines.push("END:VEVENT".into());
     lines
+}
+
+fn all_day_ics_dates(event: &CalendarEvent) -> (String, String) {
+    if let Some(day) = event.extra.get("day").and_then(Value::as_str)
+        && let Some(start) = iso_to_millis_floor(&format!("{day}T00:00:00"))
+    {
+        let days = event.extra.get("days").and_then(Value::as_i64).unwrap_or(1);
+        let end = millis_to_iso(start + days.clamp(1, 3660) * DAY_MS);
+        return (iso_to_ics_date(day), iso_to_ics_date(&end));
+    }
+    (iso_to_ics_date(&event.start), iso_to_ics_date(&event.end))
 }
 
 fn ics_document(lines: Vec<String>) -> String {
@@ -592,6 +616,15 @@ pub fn event_from_ics(
     let updated_at = value_for(&lines, "LAST-MODIFIED")
         .and_then(|value| parse_ics_millis(&value))
         .unwrap_or(now_ms);
+    let mut extra = serde_json::Map::new();
+    if all_day
+        && let Some(day) = start_iso.get(..10)
+        && let Some((start, end)) =
+            iso_to_millis_floor(&start_iso).zip(iso_to_millis_floor(&end_iso))
+    {
+        extra.insert("day".into(), json!(day));
+        extra.insert("days".into(), json!(((end - start) / DAY_MS).max(1)));
+    }
     Ok(CalendarEvent {
         id,
         title,
@@ -605,6 +638,7 @@ pub fn event_from_ics(
         recurrence_source_id: None,
         created_at,
         updated_at,
+        extra,
     })
 }
 
@@ -731,7 +765,7 @@ fn iso_to_millis_floor(iso: &str) -> Option<i64> {
 
 fn default_end_iso(start_iso: &str, all_day: bool) -> String {
     let start = iso_to_millis_floor(start_iso).unwrap_or_else(now_millis);
-    let duration = if all_day { 86_400_000 } else { 1_800_000 };
+    let duration = if all_day { DAY_MS } else { 1_800_000 };
     millis_to_iso(start.saturating_add(duration))
 }
 

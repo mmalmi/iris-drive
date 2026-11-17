@@ -39,6 +39,11 @@ async fn calendar_put_ics_upserts_event_in_calendar_tree() {
     assert_eq!(data.events[0].title, "Bridge test");
     assert_eq!(data.events[0].location.as_deref(), Some("Helsinki"));
     assert_eq!(data.events[0].notes.as_deref(), Some("from CalDAV"));
+    let profile = daemon.config().profile.as_ref().unwrap();
+    assert_eq!(
+        data.owner_npub,
+        crate::app_key_summary::pubkey_npub(&profile.app_key_pubkey),
+    );
 }
 
 #[tokio::test]
@@ -61,6 +66,40 @@ async fn calendar_delete_event_removes_it_from_calendar_tree() {
     assert_eq!(data.events.len(), 0);
 }
 
+#[tokio::test]
+async fn calendar_caldav_writes_preserve_invites_and_all_day_dates() {
+    let dir = tempdir().unwrap();
+    init_calendar_config(dir.path());
+    let mut daemon = Daemon::open(dir.path()).unwrap();
+    let browser_event = json!({
+        "id": "picnic", "title": "Picnic", "start": "2026-06-21T21:00:00.000Z",
+        "end": "2026-06-23T21:00:00.000Z", "allDay": true, "color": "green",
+        "day": "2026-06-22", "days": 2, "createdAt": 1, "updatedAt": 1,
+        "guests": [{"npub": "guest", "status": "accepted"}], "inviteKey": "link-secret",
+    });
+    let mut data = CalendarData::new("npub-test", 1);
+    data.events
+        .push(serde_json::from_value(browser_event.clone()).unwrap());
+    let ics = event_to_ics(&data.events[0], &data.title, 1);
+    assert!(ics.contains("DTSTART;VALUE=DATE:20260622"));
+    assert!(ics.contains("DTEND;VALUE=DATE:20260624"));
+    save_calendar_data(&mut daemon, &data).await.unwrap();
+
+    let edited = ics.replace("SUMMARY:Picnic", "SUMMARY:Dinner");
+    put_calendar_event_ics(&mut daemon, "picnic", edited.as_bytes())
+        .await
+        .unwrap();
+    let data = load_calendar_data(daemon.tree(), daemon.config(), "npub-test")
+        .await
+        .unwrap();
+    assert_eq!(data.events.len(), 1);
+    let event = serde_json::to_value(&data.events[0]).unwrap();
+    assert_eq!(event["title"], "Dinner");
+    for field in ["color", "createdAt", "day", "days", "guests", "inviteKey"] {
+        assert_eq!(event[field], browser_event[field], "preserved {field}");
+    }
+}
+
 #[test]
 fn caldav_report_lists_event_href_and_calendar_data() {
     let mut data = CalendarData::new("npub-test", 1_782_070_400_000);
@@ -77,6 +116,7 @@ fn caldav_report_lists_event_href_and_calendar_data() {
         recurrence_source_id: None,
         created_at: 1_782_070_400_000,
         updated_at: 1_782_070_400_000,
+        extra: serde_json::Map::new(),
     });
 
     let xml = calendar_query_multistatus(&data, "/caldav/calendars/iris/calendar/");
@@ -123,6 +163,7 @@ fn caldav_collection_tag_changes_when_events_change() {
         recurrence_source_id: None,
         created_at: 1_782_070_400_000,
         updated_at: 1_782_070_400_000,
+        extra: serde_json::Map::new(),
     });
     let with_event =
         collection_propfind_multistatus(&data, "/caldav/calendars/iris/calendar/", "0");

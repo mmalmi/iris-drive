@@ -163,6 +163,7 @@ impl GatewayServer {
             config_dir: Arc::new(config_dir.into()),
             tree,
             htree_daemon_addr: htree_daemon_addr.map(Arc::new),
+            calendar_writes: Arc::default(),
         };
         let app = Router::new()
             .fallback(any(gateway_handler))
@@ -377,6 +378,7 @@ struct GatewayState {
     config_dir: Arc<PathBuf>,
     tree: Arc<HashTree<FsBlobStore>>,
     htree_daemon_addr: Option<Arc<String>>,
+    calendar_writes: Arc<tokio::sync::Mutex<()>>,
 }
 
 fn normalize_daemon_addr(value: &str) -> String {
