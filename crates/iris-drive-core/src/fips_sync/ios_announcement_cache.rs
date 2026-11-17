@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
-/// FileEventBus holds an exclusive writer lock next to its snapshot until
-/// shutdown. RunningBoard permits that lock in the process's temporary folder.
+/// `FileEventBus` holds an exclusive writer lock next to its snapshot until
+/// shutdown. `RunningBoard` permits that lock in the process's temporary folder.
 pub(super) fn snapshot_path(shared: &Path, private_temp: &Path) -> std::io::Result<PathBuf> {
     let name = hex::encode(hashtree_core::sha256(shared.as_os_str().as_encoded_bytes()));
     let directory = private_temp.join("iris-drive-peer-announcements");
