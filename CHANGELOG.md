@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed a crash that could occur when iOS suspended Drive during device discovery.
+- On iPhone, “All files offline” appears beside the device’s connection status so the row keeps its height when syncing finishes.
 - After you press Install, the Mac, Windows and Linux apps show each step:
   finding the release, downloading with a progress bar, checking the
   download, then installing and restarting or opening the installer. If it
