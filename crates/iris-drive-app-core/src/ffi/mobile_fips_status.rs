@@ -53,6 +53,34 @@ pub(super) async fn wait_for_app_key_link_exchange_tick(
     }
 }
 
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+pub(super) async fn observe_presence(
+    config_dir: &Path,
+    sync: &iris_drive_core::FsFipsBlockSync,
+    stop: &AtomicBool,
+) -> Result<(), String> {
+    let mut presence_changes = sync.subscribe_presence_changes();
+    while !stop.load(Ordering::Acquire) {
+        if let Err(error) = super::write_native_fips_status(config_dir, sync, None).await {
+            tracing::warn!(%error, "writing native FIPS presence status failed");
+        }
+        // Browser peers use authenticated route feedback and never open the native
+        // control channel. Read local measurements without sending network probes.
+        let interval = if sync.authorized_peer_ids().is_empty() {
+            std::time::Duration::from_millis(super::APP_KEY_LINK_EXCHANGE_IDLE_TICK_MILLIS)
+        } else {
+            std::time::Duration::from_secs(3)
+        };
+        tokio::select! {
+            event = presence_changes.changed() => {
+                event.map_err(|_| "native FIPS presence channel closed".to_owned())?;
+            }
+            () = tokio::time::sleep(interval) => {}
+        }
+    }
+    Ok(())
+}
+
 impl NativeAppRuntime {
     #[allow(clippy::unused_self)]
     pub(super) fn reconcile_app_key_link_exchange(&mut self, wake: bool) {

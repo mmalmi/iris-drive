@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- On iPhone and Android, Devices shows when a linked browser comes online or
+  goes offline even if a relay stops responding to device-list updates.
+
 ## 0.1.47 - 2026-11-17
 
 - Fixed a crash that could occur when iOS suspended Drive during device discovery.

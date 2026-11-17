@@ -2015,11 +2015,10 @@ fn write_native_browser_gateway_status(config_dir: &Path, value: &Value) {
 }
 
 #[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
-#[allow(clippy::similar_names, clippy::too_many_lines)]
 async fn run_app_key_link_exchange_async(
     data_dir: &str,
     stop: Arc<AtomicBool>,
-    mut wake: tokio::sync::watch::Receiver<()>,
+    wake: tokio::sync::watch::Receiver<()>,
     config_mutation: Arc<Mutex<()>>,
 ) -> Result<(), String> {
     let config_dir = Path::new(data_dir);
@@ -2037,13 +2036,49 @@ async fn run_app_key_link_exchange_async(
         normalized_config_relays(&startup_config.relays)
             .map_err(|error| format!("normalizing relays: {error}"))?
     };
+    let daemon = iris_drive_core::Daemon::open(config_dir)
+        .map_err(|error| format!("opening block store: {error}"))?;
+    let local = daemon.tree().get_store().clone();
+    let sync = iris_drive_core::FipsBlockSync::start_for_drive(&device, local, &startup_config)
+        .await
+        .map_err(|error| format!("starting FIPS app-key-link exchange: {error}"))?;
+    // Keep the same endpoint alive for both futures, including a clean relay shutdown.
+    let exchange = run_connected_app_key_exchange(
+        config_dir,
+        account_state,
+        &relays,
+        &sync,
+        stop.clone(),
+        wake,
+        config_mutation,
+    );
+    tokio::pin!(exchange);
+    tokio::select! {
+        result = &mut exchange => return result,
+        result = mobile_fips_status::observe_presence(config_dir, &sync, &stop) => result?,
+    }
+    exchange.await
+}
+
+#[cfg(all(not(test), any(target_os = "ios", target_os = "android")))]
+#[allow(clippy::similar_names, clippy::too_many_lines)]
+async fn run_connected_app_key_exchange(
+    config_dir: &Path,
+    account_state: &iris_drive_core::ProfileState,
+    relays: &[String],
+    sync: &iris_drive_core::FsFipsBlockSync,
+    stop: Arc<AtomicBool>,
+    mut wake: tokio::sync::watch::Receiver<()>,
+    config_mutation: Arc<Mutex<()>>,
+) -> Result<(), String> {
+    let mut app_messages = sync.subscribe_app_messages();
     let root_scope_id = account_state.root_scope_id();
     let relay_filters = iris_drive_core::relay_sync::subscription_filters(
         &account_state.app_key_pubkey,
         &root_scope_id,
         iris_drive_core::PRIMARY_DRIVE_ID,
     );
-    let relay_client = iris_drive_core::relay_sync::connect(&relays)
+    let relay_client = iris_drive_core::relay_sync::connect(relays)
         .await
         .map_err(|error| format!("connecting app-key-link relays: {error}"))?;
     for relay_filter in relay_filters {
@@ -2071,17 +2106,6 @@ async fn run_app_key_link_exchange_async(
     )
     .await
     .map_err(|error| format!("subscribing to device approval acknowledgements: {error}"))?;
-    let daemon = iris_drive_core::Daemon::open(config_dir)
-        .map_err(|error| format!("opening block store: {error}"))?;
-    let local = daemon.tree().get_store().clone();
-    let sync = iris_drive_core::FipsBlockSync::start_for_drive(&device, local, &startup_config)
-        .await
-        .map_err(|error| format!("starting FIPS app-key-link exchange: {error}"))?;
-    let mut presence_changes = sync.subscribe_presence_changes();
-    if let Err(error) = write_native_fips_status(config_dir, &sync, None).await {
-        tracing::warn!(error = %error, "writing native FIPS status failed");
-    }
-    let mut app_messages = sync.subscribe_app_messages();
     let mut sent_requests = BTreeMap::new();
     let mut sent_rosters = BTreeMap::new();
     let mut published_roster_op_ids = BTreeSet::new();
@@ -2098,7 +2122,7 @@ async fn run_app_key_link_exchange_async(
     let app_key_link_tick_millis = match drive_app_key_link_exchange_tick(
         config_dir,
         &relay_client,
-        &sync,
+        sync,
         &mut sent_requests,
         &mut sent_rosters,
         &mut published_roster_op_ids,
@@ -2117,18 +2141,16 @@ async fn run_app_key_link_exchange_async(
     let app_key_link_tick =
         tokio::time::sleep(std::time::Duration::from_millis(app_key_link_tick_millis));
     tokio::pin!(app_key_link_tick);
-    if let Err(error) = direct_roots.announce_current_state(config_dir, &sync).await {
+    if let Err(error) = direct_roots.announce_current_state(config_dir, sync).await {
         tracing::warn!(error = %error, "native direct-root FIPS exchange failed");
     }
     if let Err(error) = direct_roots
-        .request_current_state_from_peers(config_dir, &sync)
+        .request_current_state_from_peers(config_dir, sync)
         .await
     {
         tracing::warn!(error = %error, "native direct-root state request failed");
     }
-    update_announcements
-        .sync_with_peers(config_dir, &sync)
-        .await;
+    update_announcements.sync_with_peers(config_dir, sync).await;
 
     while !stop.load(Ordering::Acquire) {
         tokio::select! {
@@ -2143,7 +2165,7 @@ async fn run_app_key_link_exchange_async(
                 let tick_millis = match drive_app_key_link_exchange_tick(
                     config_dir,
                     &relay_client,
-                    &sync,
+                    sync,
                     &mut sent_requests,
                     &mut sent_rosters,
                     &mut published_roster_op_ids,
@@ -2171,24 +2193,16 @@ async fn run_app_key_link_exchange_async(
                 if stop.load(Ordering::Acquire) {
                     break;
                 }
-                if let Err(error) = direct_roots.announce_current_state(config_dir, &sync).await {
+                if let Err(error) = direct_roots.announce_current_state(config_dir, sync).await {
                     tracing::warn!(error = %error, "native direct-root FIPS exchange failed");
                 }
                 if let Err(error) = direct_roots
-                    .request_current_state_from_peers(config_dir, &sync)
+                    .request_current_state_from_peers(config_dir, sync)
                     .await
                 {
                     tracing::warn!(error = %error, "native direct-root state request failed");
                 }
-                update_announcements.sync_with_peers(config_dir, &sync).await;
-            }
-            presence_changed = presence_changes.changed() => {
-                if presence_changed.is_err() {
-                    break;
-                }
-                if let Err(error) = write_native_fips_status(config_dir, &sync, None).await {
-                    tracing::warn!(error = %error, "writing native FIPS presence status failed");
-                }
+                update_announcements.sync_with_peers(config_dir, sync).await;
             }
             message = sync.recv_nostr_pubsub_event() => {
                 let mut messages = vec![message];
@@ -2201,7 +2215,7 @@ async fn run_app_key_link_exchange_async(
                             config_dir,
                             &config_mutation,
                             &relay_client,
-                            &sync,
+                            sync,
                             &message.event,
                         )
                         .await?;
@@ -2252,7 +2266,7 @@ async fn run_app_key_link_exchange_async(
                                 config_dir,
                                 &config_mutation,
                                 &relay_client,
-                                &sync,
+                                sync,
                                 &message,
                                 &mut acked_rosters,
                             ).await {
@@ -2264,7 +2278,7 @@ async fn run_app_key_link_exchange_async(
                             };
                             if handled && message.topic == APP_KEY_LINK_ROSTER_APP_TOPIC
                                 && let Err(error) = direct_roots
-                                    .request_current_state_from_peers(config_dir, &sync)
+                                    .request_current_state_from_peers(config_dir, sync)
                                     .await
                             {
                                 tracing::warn!(error = %error, "requesting roots after native app-key linking failed");
@@ -2272,7 +2286,7 @@ async fn run_app_key_link_exchange_async(
                             if let Err(error) = direct_roots.handle_app_message(
                                 config_dir,
                                 &config_mutation,
-                                &sync,
+                                sync,
                                 &message,
                             ).await {
                                 tracing::warn!(error = %error, topic = message.topic, "handling native direct-root FIPS message failed");
@@ -2292,7 +2306,7 @@ async fn run_app_key_link_exchange_async(
                             config_dir,
                             &config_mutation,
                             &relay_client,
-                            &sync,
+                            sync,
                             &event,
                         )
                         .await?;
@@ -2360,9 +2374,6 @@ async fn drive_app_key_link_exchange_tick(
         .await;
         let approval_ack_result =
             send_native_device_approval_applied_ack(config_dir, relay_client, sync).await;
-        if let Err(error) = write_native_fips_status(config_dir, sync, None).await {
-            tracing::warn!(error = %error, "writing native FIPS status failed");
-        }
         roster_result?;
         let approval_ack_delivered = approval_ack_result?;
         Ok(approval_ack_delivered)
