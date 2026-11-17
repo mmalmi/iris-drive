@@ -7,6 +7,7 @@ struct DeviceStorageDetails: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
+            Text(device.heldLabel)
             ProgressView(value: fraction(device.heldPermille))
             HStack {
                 Text(device.spaceLabel).accessibilityHint(device.spaceDetail)

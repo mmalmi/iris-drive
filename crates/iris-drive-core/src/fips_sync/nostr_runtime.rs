@@ -427,6 +427,13 @@ async fn open_announcement_store(
     let path = directory
         .join("fips-peer-announcements")
         .join(format!("{key}.json"));
+    #[cfg(target_os = "ios")]
+    let path = tokio::task::spawn_blocking(move || {
+        super::ios_announcement_cache::snapshot_path(&path, &std::env::temp_dir())
+    })
+    .await
+    .map_err(|e| endpoint_error(e.to_string()))?
+    .map_err(|e| endpoint_error(e.to_string()))?;
     let filter = peer_announcement_filter(scope);
     FileEventBus::open(path, EventRetentionPolicy::new(256, vec![filter]))
         .await

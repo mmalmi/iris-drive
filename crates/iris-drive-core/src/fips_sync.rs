@@ -33,6 +33,8 @@ mod blob_runtime;
 pub(crate) mod control_runtime;
 mod download;
 pub(crate) mod endpoint_config;
+#[cfg(any(test, target_os = "ios"))]
+mod ios_announcement_cache;
 mod nostr_runtime;
 mod peer_config;
 mod peer_refresh;

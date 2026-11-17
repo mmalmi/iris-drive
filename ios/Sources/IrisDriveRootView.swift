@@ -975,8 +975,8 @@ private struct DevicesView: View {
                 }
                 VStack(alignment: .leading) {
                     Text(device.label)
-                    if let report { Text(report.heldLabel).font(.caption).foregroundStyle(.secondary) }
-                    Text(deviceSubtitle(device, includeConnection: showPresence))
+                    Text(deviceSubtitle(device, includeConnection: showPresence, report: report))
+                        .lineLimit(1)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -1019,10 +1019,13 @@ private struct DevicesView: View {
         devicePendingRename = device
     }
 
-    private func deviceSubtitle(_ device: IrisDriveDevice, includeConnection: Bool) -> String {
+    private func deviceSubtitle(_ device: IrisDriveDevice, includeConnection: Bool, report: NativeDeviceStorageRow?) -> String {
         var parts = [device.role, device.state].filter { !$0.isEmpty }
         if includeConnection && !device.connectionLabel.isEmpty {
             parts.append(device.connectionLabel)
+        }
+        if let report, !report.heldLabel.isEmpty {
+            parts.append(report.holdsAll ? "All files offline" : report.heldLabel)
         }
         return parts.joined(separator: " | ")
     }

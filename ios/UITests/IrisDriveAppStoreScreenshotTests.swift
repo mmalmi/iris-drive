@@ -35,6 +35,10 @@ final class IrisDriveAppStoreScreenshotTests: XCTestCase {
         let devices = tabButton("Devices", in: app)
         devices.tap()
         XCTAssertTrue(app.staticTexts["Home server"].waitForExistence(timeout: 10))
+        let offline = app.descendants(matching: .any).matching(
+            NSPredicate(format: "label CONTAINS %@", "Admin | Linked | Online | All files offline")
+        ).firstMatch
+        XCTAssertTrue(offline.waitForExistence(timeout: 5), app.debugDescription)
         settleAndCapture("02-devices")
 
         let shares = tabButton("Shares", in: app)
