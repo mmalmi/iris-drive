@@ -82,6 +82,7 @@ fn apply_calendar_files_root_creates_calendar_drive_entry() {
 fn calendar_accepts_new_web_root_after_native_write() {
     let dir = tempdir().unwrap();
     let (mut cfg, acct) = config_with_owner_account(dir.path());
+    let path = crate::paths::config_path_in(dir.path());
     let tree = crate::calendar::CALENDAR_TREE_NAME;
     let native_root = encrypted_root(0x73, 20, 1);
     let native_event =
@@ -98,6 +99,8 @@ fn calendar_accepts_new_web_root_after_native_write() {
         .get_mut(&acct.state.app_key_pubkey)
         .unwrap()
         .app_key_seq = 1;
+    cfg.save(&path).unwrap();
+    let stale_config = cfg.clone();
 
     let web_root = encrypted_root(0x74, 21, 0);
     let web_event =
@@ -110,8 +113,11 @@ fn calendar_accepts_new_web_root_after_native_write() {
         apply_remote_files_root_event(&mut cfg, &native_event, Some(acct.app_key.keys())).unwrap(),
         FilesRootApply::StaleTimestamp,
     );
+    cfg.save(&path).unwrap();
+    stale_config.save(&path).unwrap();
+    let reopened = AppConfig::load_or_default(&path).unwrap();
     assert_eq!(
-        cfg.drive(tree).unwrap().last_root_cid.as_deref(),
+        reopened.drive(tree).unwrap().last_root_cid.as_deref(),
         Some(web_root.root_cid.as_str()),
     );
 }
