@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.47 - 2026-11-17
 
 - Fixed a crash that could occur when iOS suspended Drive during device discovery.
 - On iPhone, “All files offline” appears beside the device’s connection status so the row keeps its height when syncing finishes.
