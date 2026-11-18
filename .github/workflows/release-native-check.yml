@@ -1,4 +1,4 @@
-name: Native shared-state regression
+name: Build matching unpatched native cache-pressure baseline
 
 on:
   workflow_call:
@@ -10,7 +10,6 @@ on:
         type: boolean
         required: false
         default: false
-
       fixture_readiness_only:
         type: boolean
         required: false
@@ -22,68 +21,76 @@ permissions:
 jobs:
   state:
     runs-on: ubuntu-24.04
-    timeout-minutes: 40
+    timeout-minutes: 35
     env:
       CARGO_BUILD_JOBS: '2'
-      RUST_TEST_THREADS: '2'
+      CARGO_INCREMENTAL: '0'
+      CARGO_PROFILE_DEV_DEBUG: '0'
+      PROOF_DRIVE_SOURCE: 3277bbe35566e762df0407fb550471cb803f6c2a
+      PROOF_CLI_CRATE_SHA256: 4c692044a77a611977552d0ac0205a81602ef2098232b89b1a993f6bcbdeb34e
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           path: source
           ref: ${{ inputs.commit }}
           persist-credentials: false
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: clippy, rustfmt
+      - name: Install the verified native toolchain
+        run: |
+          rustup toolchain install 1.100.0 --profile minimal --no-self-update
+          rustup default 1.100.0
+          rustc --version | grep -F '1.100.0 (0ef1bc386 2026-11-09)'
       - name: Install native dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --yes libdbus-1-dev libfuse3-dev libxdo-dev pkg-config protobuf-compiler
       - uses: actions/cache/restore@v4
-        id: cache
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
             source/target
-          key: drive-state-check-${{ runner.arch }}-${{ hashFiles('source/Cargo.lock') }}-${{ inputs.commit }}
+          key: drive-state-check-${{ runner.arch }}-${{ hashFiles('source/Cargo.lock') }}-5b4941f92bdb5c39e1d2366407625b42f57022a2
           restore-keys: |
             drive-state-check-${{ runner.arch }}-${{ hashFiles('source/Cargo.lock') }}-
             drive-products-linux-${{ runner.arch }}-
-      - name: Run approval control batch ordering regression
-        if: inputs.daemon_ack_only != true && inputs.fixture_readiness_only != true
-        working-directory: source
-        run: cargo test --locked -p iris-drive-core --lib direct_root_batch_keeps_approval_exchange_ahead_of_root_work -- --nocapture
-      - name: Run direct-root coalescing regressions
-        if: inputs.daemon_ack_only != true && inputs.fixture_readiness_only != true
-        working-directory: source
-        run: cargo test --locked -p iris-drive-core --lib direct_root_app_message_coalescing -- --nocapture
-      - name: Run shared-state regressions
-        if: inputs.daemon_ack_only != true && inputs.fixture_readiness_only != true
-        working-directory: source
-        run: cargo test --locked -p iris-drive-app-core --lib ffi::concurrency_tests -- --nocapture
-      - name: Run unchanged stalled-relay approval journey
-        if: inputs.daemon_ack_only && inputs.fixture_readiness_only != true
-        working-directory: source
-        run: cargo test --locked -p idrive --test daemon_sync_matrix app_key_link_tests::stalled_roster_relay_keeps_daemon_fips_status_and_direct_ack_responsive -- --exact --nocapture
-      - name: Run deterministic approval observer and real delayed-peer fixture regressions
-        if: inputs.fixture_readiness_only
+      - name: Verify the unmodified baseline source and original locked Hashtree CLI
         working-directory: source
         run: |
-          python3 - <<'PYTHON'
-          import subprocess
-          checks = [
-              ['python3', 'scripts/test_release_workflows.py', 'ReleaseWorkflowTests.test_primary_gui_approval_observes_final_marker_after_process_exit'],
-              ['cargo', 'test', '--locked', '-p', 'idrive', '--bin', 'idrive', 'daemon::tests::delayed_blob::blossom_miss_does_not_cancel_a_delayed_valid_peer_blob', '--', '--exact', '--nocapture'],
-          ]
-          results = [subprocess.run(check).returncode for check in checks]
-          raise SystemExit(0 if all(result == 0 for result in results) else 1)
-          PYTHON
-      - uses: actions/cache/save@v4
-        if: always() && steps.cache.outputs.cache-hit != 'true'
+          test "$(git rev-parse HEAD)" = "$PROOF_DRIVE_SOURCE"
+          git diff --exit-code
+          printf '%s  %s\n' \
+            '0e744e67b4a9f9cf9f45b1694168e1974cd1d6ac418a9c7440e860717d601c89' Cargo.toml \
+            '87d43c215a6533c286374a1f79dc356f1078d3395da3e8b6c54340baf22e863f' Cargo.lock \
+            | sha256sum --check --strict
+          curl --fail --location --silent --show-error https://static.crates.io/crates/hashtree-cli/hashtree-cli-0.4.6.crate -o "$RUNNER_TEMP/hashtree-cli-0.4.6.crate"
+          printf '%s  %s\n' "$PROOF_CLI_CRATE_SHA256" "$RUNNER_TEMP/hashtree-cli-0.4.6.crate" | sha256sum --check --strict
+      - name: Build test-only native Iris Drive CLI
+        working-directory: source
+        run: |
+          df -h "$PWD"
+          cargo build --locked -p idrive --bin idrive
+          ./target/debug/idrive --version
+          mkdir "$RUNNER_TEMP/native-proof"
+          tar -cf "$RUNNER_TEMP/native-proof/idrive-linux-amd64-baseline.tar" -C target/debug idrive
+          sha256sum target/debug/idrive Cargo.toml Cargo.lock > "$RUNNER_TEMP/native-proof/inputs-and-executable.sha256"
+          (
+            cd "$RUNNER_TEMP/native-proof"
+            sha256sum idrive-linux-amd64-baseline.tar > archive.sha256
+          )
+          {
+            printf 'Drive source %s\nHashtree CLI published registry 0.4.6\nCrate SHA256 %s\n' "$PROOF_DRIVE_SOURCE" "$PROOF_CLI_CRATE_SHA256"
+            printf 'Cargo profile dev, debug=0, incremental=false\n'
+            rustc -Vv
+            cargo -V
+            cat /etc/os-release
+            dpkg-query -W libdbus-1-dev libfuse3-dev libxdo-dev pkg-config protobuf-compiler
+            ldd target/debug/idrive
+          } > "$RUNNER_TEMP/native-proof/build-provenance.txt"
+          cat "$RUNNER_TEMP/native-proof/inputs-and-executable.sha256"
+          cat "$RUNNER_TEMP/native-proof/archive.sha256"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            source/target
-          key: ${{ steps.cache.outputs.cache-primary-key }}
+          name: idrive-cache-pressure-baseline-only-linux-amd64
+          path: ${{ runner.temp }}/native-proof/
+          if-no-files-found: error
+          retention-days: 3
