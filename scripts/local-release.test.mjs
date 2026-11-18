@@ -855,7 +855,7 @@ test('iOS manual build keeps App Store Connect auth out of Xcode signing', () =>
     'utf8',
   )
   const manualArchive = script.match(
-    /run_ios_archive\(\)[\s\S]*?\n  else\n([\s\S]*?)\n  fi\n  verify_ios_archive_license/,
+    /run_ios_archive\(\)[\s\S]*?\n  else\n([\s\S]*?)\n  fi\n/,
   )?.[1] ?? ''
 
   assert.match(manualArchive, /CODE_SIGN_STYLE=Manual/)
