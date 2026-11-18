@@ -267,6 +267,7 @@ run_ios_project() { :; }
 ensure_profiles() { :; }
 load_profiles_env() { :; }
 xcode_auth_args() { echo -allowProvisioningUpdates; }
+verify_ios_release_sdk() { :; }
 verify_ios_archive_license() { :; }
 verify_ios_archive_privacy() { :; }
 marketing_version() { echo 0.1.0; }

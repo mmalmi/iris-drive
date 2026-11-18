@@ -431,10 +431,15 @@ verify_ios_export_license() {
   }
 }
 
+verify_ios_release_sdk() {
+  python3 "$ROOT/scripts/check-ios-release-sdk.py" "$@"
+}
+
 run_ios_archive() {
   local auth_args=() build_args=()
   local derived_data
   require_darwin
+  verify_ios_release_sdk selected
   ensure_dir "$DIST_DIR"
   IOS_ARCHIVE_PRIVACY_VERIFIED=false
   rm -rf "$ARCHIVE_PATH"
@@ -483,6 +488,7 @@ run_ios_archive() {
       "${build_args[@]}" \
       archive
   fi
+  verify_ios_release_sdk archive "$ARCHIVE_PATH"
   verify_ios_archive_license
   verify_ios_archive_privacy
   rm -rf -- "$derived_data"
@@ -570,6 +576,7 @@ verify_ios_export_entitlements() {
 run_ios_export() {
   require_darwin
   [[ -d "$ARCHIVE_PATH" ]] || { echo "iOS release archive not found." >&2; exit 1; }
+  verify_ios_release_sdk archive "$ARCHIVE_PATH"
   verify_ios_archive_license
   verify_ios_archive_privacy
   rm -rf "$EXPORT_DIR"
@@ -598,6 +605,7 @@ run_ios_export() {
       -exportOptionsPlist "$EXPORT_OPTIONS"
   fi
   verify_ios_export_license
+  verify_ios_release_sdk ipa "$(ipa_path)"
   verify_ios_export_entitlements
 }
 
@@ -611,9 +619,10 @@ run_ios_upload() {
   verify_ios_archive_license
   verify_ios_archive_privacy
   verify_ios_export_license
-  verify_ios_export_entitlements
   ipa="$(ipa_path)"
   [[ -n "$ipa" ]] || { echo "No IPA found in $EXPORT_DIR; run ios-export first." >&2; exit 1; }
+  verify_ios_release_sdk ipa "$ipa"
+  verify_ios_export_entitlements
   key_id="$(asc_key_id)"
   issuer_id="$(asc_issuer_id)"
   [[ -n "$key_id" ]] || { echo "IRIS_DRIVE_ASC_KEY_ID is required for upload." >&2; exit 2; }

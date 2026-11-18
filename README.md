@@ -420,8 +420,10 @@ gh workflow run product-lab.yml -R irislib/iris-stack --ref master -f drive_rev=
    The products run uploads unsigned `drive-<platform>-<sha>` archives with build
    receipts. It uses checksum-verified tool archives, a pinned Rust toolchain
    and a verified Ubuntu package snapshot. Android verifies Gradle artifacts
-   against committed SHA-256 checksums. macOS and Windows use the Xcode
-   and Visual Studio tools installed on their hosted runners. The stack gate's
+   against committed SHA-256 checksums. The App Store archive uses Xcode 27.2
+   on the `xcode-27` hosted runner. Archive, export and upload checks require the
+   iOS 27 SDK or later. macOS and Windows use the Xcode and Visual Studio tools
+   installed on their hosted runners. The stack gate's
    companion pins are in `scripts/mesh-release-gate.mjs`.
    Its `iris-stack-product-gate` artifact holds the `receipt.json` used for
    `IRIS_STACK_GATE_RECEIPT`.

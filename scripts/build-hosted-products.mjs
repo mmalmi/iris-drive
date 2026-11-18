@@ -22,6 +22,7 @@ const release = await import(pathToFileURL(join(root, 'scripts/local-release-lib
 const version = release.readWorkspaceVersionTag(readFileSync(join(root, 'Cargo.toml'), 'utf8')).slice(1)
 const output = resolve(process.env.PRODUCT_OUTPUT)
 const payload = join(output, 'payload')
+const iosSdkCheck = fileURLToPath(new URL('./check-ios-release-sdk.py', import.meta.url))
 mkdirSync(payload, { recursive: true })
 let env = helper.releaseRustBuildEnvironment({ ...process.env,
   CARGO_BUILD_JOBS: '2', CARGO_INCREMENTAL: '0', CARGO_PROFILE_DEV_DEBUG: '0',
@@ -43,9 +44,11 @@ if (platform.startsWith('macos') || platform.startsWith('ios')) {
   const mac = platform.startsWith('macos')
   const simulator = platform.startsWith('ios-sim')
   const debug = platform.endsWith('debug')
+  const store = platform === 'ios-release'
   const configuration = debug ? 'Debug' : 'Release'
   const target = mac ? 'aarch64-apple-darwin' : simulator ? 'aarch64-apple-ios-sim' : 'aarch64-apple-ios'
   env = { ...env, CARGO_TARGET_DIR: join(root, 'target') }
+  if (store) run('python3', [iosSdkCheck, 'selected'])
   const args = ['build', '--locked', '--target', target, '-p', 'iris-drive-app-core']
   if (mac) args.push('-p', 'idrive')
   if (!debug) args.push('--release')
@@ -77,6 +80,7 @@ if (platform.startsWith('macos') || platform.startsWith('ios')) {
   if (!mac && !simulator) {
     const archive = join(payload, 'IrisDriveIOS.xcarchive')
     run('xcodebuild', [...xcode, '-archivePath', archive, 'archive'])
+    if (store) run('python3', [iosSdkCheck, 'archive', archive])
     if (debug) {
       // As with macOS packaging, remove linker debug-map entries containing
       // static-library input paths. This preserves DEBUG hooks and executable code.

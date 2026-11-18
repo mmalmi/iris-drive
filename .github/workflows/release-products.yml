@@ -6,6 +6,7 @@ on:
     paths:
       - '.github/workflows/release-products.yml'
       - 'scripts/build-hosted-products.mjs'
+      - 'scripts/check-ios-release-sdk.py'
       - 'scripts/hosted-product-receipt*'
   workflow_dispatch:
     inputs:
@@ -107,7 +108,7 @@ jobs:
   products:
     if: inputs.platform != 'ios-check' && inputs.platform != 'native-check' && inputs.platform != 'linux-check' && inputs.platform != 'catalog-check' && inputs.platform != 'web-check' && inputs.platform != 'android-tests'
     name: ${{ matrix.platform }}
-    runs-on: ${{ matrix.platform == 'windows' && 'windows-2025' || (startsWith(matrix.platform, 'macos') || startsWith(matrix.platform, 'ios')) && 'macos-15' || 'ubuntu-24.04' }}
+    runs-on: ${{ matrix.platform == 'ios-release' && 'xcode-27' || matrix.platform == 'windows' && 'windows-2025' || (startsWith(matrix.platform, 'macos') || startsWith(matrix.platform, 'ios')) && 'macos-15' || 'ubuntu-24.04' }}
     timeout-minutes: 60
     strategy:
       fail-fast: false
@@ -118,6 +119,7 @@ jobs:
       SOURCE_ROOT: ${{ github.workspace }}/source
       PRODUCT_OUTPUT: ${{ github.workspace }}/products
       PRODUCT_PLATFORM: ${{ matrix.platform }}
+      PRODUCT_CACHE_SCOPE: ${{ matrix.platform == 'ios-release' && 'ios-release-xcode27.2' || matrix.platform }}
       CARGO_BUILD_JOBS: '2'
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
@@ -157,12 +159,14 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: bash tooling/scripts/hosted-tool-archives.sh dotnet
-      - name: Select submission-compatible iOS SDK
+      - name: Select iOS SDK
         if: startsWith(matrix.platform, 'ios')
+        env:
+          DEVELOPER_DIR: /Applications/${{ matrix.platform == 'ios-release' && 'Xcode_27.2' || 'Xcode_26.2' }}.app/Contents/Developer
         run: |
-          test -d /Applications/Xcode_26.2.app/Contents/Developer
-          echo 'DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer' >> "$GITHUB_ENV"
-          /Applications/Xcode_26.2.app/Contents/Developer/usr/bin/xcodebuild -version
+          test -d "$DEVELOPER_DIR"
+          echo "DEVELOPER_DIR=$DEVELOPER_DIR" >> "$GITHUB_ENV"
+          xcodebuild -version
       - name: Install verified Rust and Apple build tools
         shell: bash
         run: |
@@ -204,8 +208,8 @@ jobs:
             ~/.cargo/git
             source/target
             source/linux/target
-          key: drive-products-pinned-${{ matrix.platform }}-${{ runner.arch }}-${{ hashFiles('source/Cargo.lock', 'source/linux/Cargo.lock') }}
-          restore-keys: drive-products-pinned-${{ matrix.platform }}-${{ runner.arch }}-
+          key: drive-products-pinned-${{ env.PRODUCT_CACHE_SCOPE }}-${{ runner.arch }}-${{ hashFiles('source/Cargo.lock', 'source/linux/Cargo.lock') }}
+          restore-keys: drive-products-pinned-${{ env.PRODUCT_CACHE_SCOPE }}-${{ runner.arch }}-
       - name: Build source-bound unsigned products
         run: node tooling/scripts/build-hosted-products.mjs
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
