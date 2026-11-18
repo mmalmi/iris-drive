@@ -54,7 +54,9 @@ if (git(catalog, 'rev-parse', 'HEAD') !== irisSitesCommit
   throw new Error('Iris Sites checkout must match the pinned clean source')
 }
 run('pnpm', ['install', '--frozen-lockfile'], { cwd: catalog, timeout: 300000 })
-run('pnpm', ['exec', 'playwright', 'install', '--with-deps', 'chromium'], { cwd: catalog, timeout: 300000 })
+// Dedicated lab images already provide Chromium's OS libraries.
+const systemDependencies = env.IRIS_DRIVE_CATALOG_SYSTEM_DEPS_PREINSTALLED === '1' ? [] : ['--with-deps']
+run('pnpm', ['exec', 'playwright', 'install', ...systemDependencies, 'chromium'], { cwd: catalog, timeout: 300000 })
 
 const execCatalog = file => import(pathToFileURL(join(catalog, 'scripts', file)))
 const { withFreshGateway } = await execCatalog('native-release-gate.mjs')
