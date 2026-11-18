@@ -92,6 +92,7 @@ pub(super) async fn proxy_htree_daemon_request(
 #[derive(Deserialize)]
 struct ResolveResponse {
     hash: Option<String>,
+    cid: Option<String>,
     error: Option<String>,
 }
 
@@ -161,6 +162,14 @@ async fn proxy_public_mutable_tree_request(
                 )
             })
         })?;
+
+    // The resolver's `key` field identifies the mutable ref. Its CID carries
+    // any encryption material, which is handled by the embedded daemon.
+    if let Some(cid) = resolved.cid
+        && !Cid::parse(&cid).is_ok_and(|cid| cid.hash == hash && !cid.is_encrypted())
+    {
+        return Ok(None);
+    }
 
     let servers = gateway_blossom_read_servers(state);
     if servers.is_empty() {
