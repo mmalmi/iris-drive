@@ -1,0 +1,63 @@
+name: Verify published catalog through a Drive candidate
+on:
+  workflow_call:
+    inputs:
+      commit:
+        required: true
+        type: string
+      product_run:
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  catalog:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      SOURCE_ROOT: ${{ github.workspace }}/source
+      SOURCE_COMMIT: ${{ inputs.commit }}
+      PRODUCT_INPUTS: ${{ github.workspace }}/products
+      CHECK_OUTPUT: ${{ github.workspace }}/catalog-check
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: tooling
+          persist-credentials: false
+      - uses: actions/checkout@v4
+        with:
+          path: source
+          ref: ${{ inputs.commit }}
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10.23.0'
+      - name: Install the native runtime and pinned Hashtree source checkout tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes libfuse3-3
+          node tooling/scripts/release-tools.mjs install
+      - uses: actions/download-artifact@v4
+        with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.product_run }}
+          name: drive-linux-${{ inputs.commit }}
+          path: products
+      - name: Verify the catalog with the packaged Linux bridge
+        run: |
+          mkdir -p "$CHECK_OUTPUT"
+          node tooling/scripts/check-hosted-catalog.mjs 2>&1 | tee "$CHECK_OUTPUT/catalog.log"
+        shell: bash
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: catalog-check-${{ inputs.commit }}
+          path: |
+            catalog-check/receipt.json
+            catalog-check/catalog.log
+          if-no-files-found: ignore
+          retention-days: 7

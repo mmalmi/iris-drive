@@ -421,6 +421,12 @@ gh workflow run product-lab.yml -R irislib/iris-stack --ref master -f drive_rev=
    receipts. The stack gate's companion pins are in `scripts/mesh-release-gate.mjs`;
    its `iris-stack-product-gate` artifact holds the `receipt.json` used for
    `IRIS_STACK_GATE_RECEIPT`.
+   The products run also opens the published Iris Sites catalog in Chromium
+   through the exact packaged Linux CLI's native browser bridge with a fresh
+   Drive profile. Its `catalog-check-<sha>` artifact contains the receipt for
+   `IRIS_DRIVE_CATALOG_GATE_RECEIPT`. To check an existing hosted Linux product,
+   dispatch `platform=catalog-check` with its candidate `commit` and `release_run`
+   ID.
 3. Stage, sign and upload from the products run:
 
 ```bash
@@ -460,7 +466,7 @@ node scripts/release-ios-hosted.mjs testflight-internal put
 node scripts/release-tools.mjs install
 node scripts/local-release.mjs --tag vX.Y.Z --stage-dir <dir>
 node scripts/release-tools.mjs run -- haps import-release <dir> --config haps-release.json --tag vX.Y.Z --check
-IRIS_STACK_GATE_RECEIPT=<receipt.json> node scripts/local-release.mjs --tag vX.Y.Z --stage-dir <dir> --final
+IRIS_STACK_GATE_RECEIPT=<stack/receipt.json> IRIS_DRIVE_CATALOG_GATE_RECEIPT=<catalog/receipt.json> node scripts/local-release.mjs --tag vX.Y.Z --stage-dir <dir> --final
 ```
 
    Push the annotated tag to both remotes before `--final`. Publishing runs the
@@ -470,8 +476,9 @@ IRIS_STACK_GATE_RECEIPT=<receipt.json> node scripts/local-release.mjs --tag vX.Y
    unless `HAPS_KEY_FILE` is set. Final publication requires the
    [pinned Iris Stack process-gate receipt](https://github.com/irislib/iris-stack/blob/9bb0e9361afa6b2b031c243af21cebbdefa1de4e/docs/integration-lab.md)
    for the exact annotated tag; it checks the source tuple, recovery, private
-   blob protection and CPU/bandwidth budgets. Receipts check locally supplied
-   provenance; they are not signed attestations.
+   blob protection and CPU/bandwidth budgets. The catalog receipt must match
+   the same commit and the SHA-256 of the staged Linux CLI archive. Receipts
+   record locally supplied provenance.
 6. Read back: `--final` checks the public `release.json`; then run
    `node scripts/zapstore-readback.mjs --tag vX.Y.Z` (signed app, release and
    APK hash records) and `node scripts/release-ios-hosted.mjs testflight-internal status`.

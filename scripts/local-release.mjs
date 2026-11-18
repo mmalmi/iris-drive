@@ -47,6 +47,7 @@ import { prepareMacosReleaseBinaries } from './macos-release-binaries.mjs'
 import { createMacosDmg } from './macos-release-dmg.mjs'
 import { assertZipEntriesEqualFiles } from './release-zip.mjs'
 import { requireMeshRelease } from './mesh-release-gate.mjs'
+import { readNativeCatalogReceipt, verifyNativeCatalogArchive } from './native-catalog-release.mjs'
 import { macosReleaseSmokeCommand } from './macos-release-smoke-host.mjs'
 import { releaseToolsEnv } from './release-tools.mjs'
 import { stageHostedProduct } from './stage-hosted-product.mjs'
@@ -90,8 +91,8 @@ Options:
   --dry-run              Print actions without copying or publishing
   --help                 Show this help
 
-Final publication requires IRIS_STACK_GATE_RECEIPT for the exact annotated
-release commit, produced by the pinned Iris Stack release gate.
+Final publication requires IRIS_STACK_GATE_RECEIPT and
+IRIS_DRIVE_CATALOG_GATE_RECEIPT for the exact annotated release commit.
 Publishing runs the haps and htree pinned in scripts/release-tools.lock.json;
 fetch and verify them once with: node scripts/release-tools.mjs install
 Set IRIS_DRIVE_MACOS_PREBUILT_DIR to a verified hosted product directory to
@@ -1370,7 +1371,7 @@ function publishZapstore({ env, tag, assetDir, dryRun, plannedAssetNames = [] })
   )
 }
 
-function main() {
+async function main() {
   const options = parseArgs(process.argv.slice(2))
   const env = loadReleaseEnv({
     repoRoot, provisioningFile: join(distDir, 'macos', 'provisioning.env'), envFiles: options.envFiles,
@@ -1383,6 +1384,7 @@ function main() {
     options.stageDir || join(os.tmpdir(), `iris-drive-release-${tag.replace(/[^\w.-]/g, '_')}`)
   const commit = resolveReleaseCommit(tag, options.dryRun)
   const meshGate = { repoRoot, tag, commit, receiptPath: env.IRIS_STACK_GATE_RECEIPT }
+  let catalogReceipt
   const buildSteps = selectedBuildSteps(options)
   const signedAndroid = androidSigningIsComplete(env)
   const plannedAssetNames = options.build
@@ -1398,7 +1400,10 @@ function main() {
   if (options.publish && !options.draft) {
     if (options.build) validateFinalReleaseBuildInputs({ env, steps: buildSteps })
     validateFinalPublishInputs({ env, skipZapstore: options.skipZapstore })
-    if (!options.dryRun) requireMeshRelease(meshGate)
+    if (!options.dryRun) {
+      requireMeshRelease(meshGate)
+      catalogReceipt = readNativeCatalogReceipt(env.IRIS_DRIVE_CATALOG_GATE_RECEIPT, commit)
+    }
   }
   const toolEnv = options.publish ? releaseToolsEnv({ env, dryRun: options.dryRun }) : env
 
@@ -1422,6 +1427,10 @@ function main() {
 
   if (options.publish) {
     if (!options.draft && !options.dryRun) requireMeshRelease(meshGate)
+    if (catalogReceipt) {
+      const linuxCli = `idrive-${tag}-x86_64-unknown-linux-gnu.tar.gz`
+      await verifyNativeCatalogArchive(catalogReceipt, join(stageDir, 'assets', linuxCli))
+    }
     const hapsArgs = ['import-release', stageDir, '--config', join(repoRoot, 'haps-release.json'), '--tag', tag]
     if (!options.draft) {
       run('haps', [...hapsArgs, '--check'], { env: toolEnv, dryRun: options.dryRun })
@@ -1458,7 +1467,7 @@ function main() {
 }
 
 try {
-  main()
+  await main()
 } catch (error) {
   console.error(`error: ${error.message}`)
   process.exit(1)
