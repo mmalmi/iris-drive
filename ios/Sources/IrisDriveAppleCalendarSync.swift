@@ -267,12 +267,20 @@ private struct AppleCalendarEventDraft {
         irisId = event.id
         title = event.title
         allDay = event.allDay
-        location = event.location
-        notes = event.notes
+        location = event.location ?? ""
+        notes = event.notes ?? ""
         timeZone = event.allDay ? nil : TimeZone(identifier: snapshot.timezone) ?? .current
 
-        let parsedStart = appleCalendarEventDate(event.start, allDay: event.allDay)
+        let localDay = event.allDay ? event.day : nil
+        let parsedStart = appleCalendarEventDate(localDay ?? event.start, allDay: event.allDay)
         var parsedEnd = appleCalendarEventDate(event.end, allDay: event.allDay)
+        if localDay != nil {
+            parsedEnd = Calendar.current.date(
+                byAdding: .day,
+                value: min(max(event.days ?? 1, 1), 3660),
+                to: parsedStart
+            ) ?? parsedEnd
+        }
         if parsedEnd <= parsedStart {
             parsedEnd = Calendar.current.date(
                 byAdding: event.allDay ? .day : .hour,
@@ -348,9 +356,9 @@ private func appleCalendarRecurrenceRule(
     default:
         return nil
     }
-    let end = recurrence.until.isEmpty
-        ? nil
-        : EKRecurrenceEnd(end: appleCalendarEventDate(recurrence.until, allDay: allDay))
+    let end = recurrence.until.flatMap { until in
+        until.isEmpty ? nil : EKRecurrenceEnd(end: appleCalendarEventDate(until, allDay: allDay))
+    }
     return EKRecurrenceRule(
         recurrenceWith: frequency,
         interval: max(1, recurrence.interval),

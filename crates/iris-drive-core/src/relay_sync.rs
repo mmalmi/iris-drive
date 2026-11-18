@@ -768,16 +768,11 @@ pub fn apply_remote_files_root_event(
     else {
         return Ok(FilesRootApply::UnknownDrive);
     };
-    if let Some(existing) = drive.app_key_roots.get(&app_key_pubkey) {
-        if existing.root_cid == incoming_root.root_cid {
-            return Ok(FilesRootApply::StaleTimestamp);
-        }
-        if existing.app_key_seq > 0 {
-            return Ok(FilesRootApply::StaleTimestamp);
-        }
-        if existing.published_at >= incoming_root.published_at {
-            return Ok(FilesRootApply::StaleTimestamp);
-        }
+    if let Some(existing) = drive.app_key_roots.get(&app_key_pubkey)
+        && (existing.root_cid == incoming_root.root_cid
+            || !incoming_root.is_newer_for_drive(existing, &parsed.tree_name))
+    {
+        return Ok(FilesRootApply::StaleTimestamp);
     }
     drive.last_root_cid = Some(incoming_root.root_cid.clone());
     drive.app_key_roots.insert(app_key_pubkey, incoming_root);

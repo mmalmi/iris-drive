@@ -232,6 +232,44 @@ async fn gateway_caldav_put_report_get_and_delete_round_trip_calendar_event() {
     server.shutdown().await.unwrap();
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn gateway_caldav_preserves_concurrent_calendar_writes() {
+    let cfg_dir = tempdir().unwrap();
+    init_account_config(cfg_dir.path());
+    let identity = account_caldav_identity(cfg_dir.path());
+    let daemon = Daemon::open(cfg_dir.path()).unwrap();
+    let server = GatewayServer::bind_with_tree(
+        cfg_dir.path(),
+        daemon.tree_handle(),
+        GatewayBind::loopback_v4(0),
+    )
+    .await
+    .unwrap();
+    let addr = server.local_addr();
+    let titles = [
+        "Coffee", "Cycling", "Dinner", "Reading", "Shopping", "Swimming",
+    ];
+    let replies = futures::future::join_all(titles.map(|title| {
+        let href = format!("/caldav/calendars/{identity}/calendar/{title}.ics");
+        async move {
+            let ics = format!("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:{title}\r\nSUMMARY:{title}\r\nDTSTART:20260622T100000Z\r\nDTEND:20260622T103000Z\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n");
+            http_request(addr, "PUT", "localhost", &href, &[], ics.as_bytes()).await
+        }
+    }))
+    .await;
+    for reply in replies {
+        assert!(reply.starts_with("HTTP/1.1 201 Created"), "{reply}");
+    }
+    let feed = http_request(addr, "GET", "localhost", "/caldav/calendar.ics", &[], b"").await;
+    for title in titles {
+        assert!(
+            feed.contains(&format!("SUMMARY:{title}")),
+            "missing {title}"
+        );
+    }
+    server.shutdown().await.unwrap();
+}
+
 #[tokio::test]
 async fn gateway_caldav_root_propfind_exposes_calendar_home_for_apple_calendar() {
     let cfg_dir = tempdir().unwrap();

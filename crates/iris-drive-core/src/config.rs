@@ -389,10 +389,13 @@ impl AppConfig {
                 {
                     continue;
                 }
-                let keep_existing = drive
-                    .app_key_roots
-                    .get(app_key_pubkey)
-                    .is_none_or(|incoming| existing_root.is_newer_than(incoming));
+                let keep_existing =
+                    drive
+                        .app_key_roots
+                        .get(app_key_pubkey)
+                        .is_none_or(|incoming| {
+                            existing_root.is_newer_for_drive(incoming, &drive.drive_id)
+                        });
                 if keep_existing {
                     drive
                         .app_key_roots
@@ -546,6 +549,14 @@ impl AppKeyRootRef {
             return self.app_key_seq > other.app_key_seq;
         }
         self.published_at > other.published_at
+    }
+
+    pub(crate) fn is_newer_for_drive(&self, other: &Self, drive_id: &str) -> bool {
+        // Calendar's private Nostr root is shared by the browser and CalDAV.
+        if drive_id == crate::calendar::CALENDAR_TREE_NAME {
+            return self.published_at > other.published_at;
+        }
+        self.is_newer_than(other)
     }
 }
 
