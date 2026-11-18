@@ -696,3 +696,56 @@ Published source inspection confirms that FIPS 0.4.95 still performs a zero-dura
 The exact 0.1.38 candidate passed the existing macOS device-link journey with the new state-lock and approval-durability fixes. Cancel and reopen, explicit approval, authenticated transport, durable acknowledgements and post-link provider exchange passed. The external joiner drained its acknowledgement in 842 ms, GUI approval reached the external joiner in 2,131 ms, and the subsequent provider write became visible in 2,530 ms. The approval limit remained 15 seconds. The guarded run completed in 60.273 seconds and all owned processes were reaped.
 
 The optimized Release build passed the canonical idle check after its original 60-second warmup: thirteen samples over 65 seconds measured 0.27% average app CPU (0.59% peak) and 1.14% average daemon CPU (1.58% peak), below the existing 5% and 10% average ceilings. The guarded run completed in 135.291 seconds. Both test bundles came from the same clean source and verified hosted archives; identical bundled CLI copies were signed once and relinked, then their shared inode, bytes and enclosing bundle signatures were verified. These ad-hoc test checks do not replace final signed-package validation. Separate visible-interface capture remained incomplete: the VM displayed pending Local Network prompts, and capture over SSH returned no display image. Both capture attempts stopped their isolated app and daemon successfully; neither is counted as visual acceptance.
+
+## 2026-11-18 Native bridge reads under cache pressure
+
+Two Linux test builds used the same Drive source, Rust toolchain and unoptimized
+Cargo profile. The patched build overlaid the reviewed Hashtree 0.4.6 cache fix.
+Each cold run used a fresh native profile in the same two-CPU Linux guest. A
+loopback supplier served 32 deterministic 512 KiB blobs. The test fetched and
+verified a 16-byte range from each through the native bridge, measured latency
+and daemon CPU, and counted full upstream bodies. The warm run repeated the
+ordinary four-request batches in the same profile. The cold pressure run used
+32 requests with one write permit and a 1 ms write admission deadline.
+
+| Run | Exact ranges | Batch | Daemon CPU | Peak RSS | Upstream |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Baseline, ordinary cold | 32/32 | 1482 ms | 2160 ms | 191 MiB | 16 MiB |
+| Patched, ordinary cold | 32/32 | 1875 ms | 2920 ms | 184 MiB | 16 MiB |
+| Baseline, ordinary warm | 32/32 | 49 ms | 80 ms | 191 MiB | 0 |
+| Patched, ordinary warm | 32/32 | 114 ms | 160 ms | 187 MiB | 0 |
+| Baseline, pressure cold | 13/32 | 1243 ms | 1660 ms | 203 MiB | 16 MiB |
+| Patched, pressure cold | 32/32 | 2216 ms | 3130 ms | 198 MiB | 16 MiB |
+
+The baseline returned 19 HTTP 503 responses under pressure. The revised bridge
+returned every correct range while skipping 14 cache writes. An earlier draft
+skipped writes immediately when busy and re-fetched 15 blobs during its ordinary
+warm run. The configured admission deadline now allows ordinary reads to warm
+the disk cache. The revised pressure run used more CPU and completed 19 more
+reads. Two further ordinary comparisons alternated order and returned every
+range with zero warm transfers in all four runs. Across the three matched
+pairs, median cold batch time was 1721 ms before and 1875 ms after. Median warm
+batch time was 69 ms before and 86 ms after. Median cold daemon CPU was 2390 ms
+before and 2730 ms after. Median warm daemon CPU was 110 ms before and 130 ms
+after. These measurements establish fixture behavior on unoptimized builds
+under Linux emulation. Optimized package measurements use a separate set of
+receipts.
+
+The equivalent optimized 0.1.47 package runs used the same guest and workload.
+The retained package had an older transport dependency. Both packages returned
+all 32 ranges in ordinary cold and warm workloads, fetched 16 MiB when cold and
+made no upstream requests when warm. With the 0.4.7 crate, cold batch time was
+367 ms versus 326 ms, p95 was 136 ms versus 135 ms and daemon CPU was 290 ms
+versus 260 ms. Warm batch time was 29 ms versus 32 ms, p95 was 4 ms versus 6 ms
+and daemon CPU was 20 ms for both. During forced pressure, the retained
+package returned 13 exact ranges and the 0.4.7 package returned 32. These
+optimized measurements are one comparison pair per workload.
+
+The optimized 0.4.7 and 0.4.8 candidates changed just the Hashtree CLI pin.
+Both returned all 32 ranges in each workload. Both fetched 16 MiB cold and
+zero bytes warm. Ordinary cold batch time was 309 ms before and 329 ms after,
+with p95 latency of 120 ms and 129 ms and daemon CPU time of 260 ms and 290 ms.
+Warm batch time was 28 ms before and 25 ms after, with p95 latency of 7 ms and
+5 ms and daemon CPU time of 30 ms and 20 ms. Under pressure, batch time was
+357 ms before and 363 ms after. Daemon CPU time was 250 ms and 240 ms, and peak
+RSS was 128 MiB and 124 MiB. These are single serialized workload pairs.
