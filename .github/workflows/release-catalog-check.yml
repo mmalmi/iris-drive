@@ -30,22 +30,23 @@ jobs:
           path: source
           ref: ${{ inputs.commit }}
           persist-credentials: false
-      - name: Checkout reviewed input installers
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
-        with:
-          repository: irislib/iris-chat-rs
-          ref: 061c1747575e216db4506d12f2d358dd8c8e0241
-          persist-credentials: false
-          path: build-inputs
-          sparse-checkout-cone-mode: false
-          sparse-checkout: |
-            /linux/scripts/pinned-apt.sh
-            /linux/build-inputs/apt-snapshots.tsv
       - name: Install verified catalog check tools
         run: |
           bash tooling/scripts/hosted-tool-archives.sh node
           bash tooling/scripts/hosted-tool-archives.sh pnpm
-          sudo bash build-inputs/linux/scripts/pinned-apt.sh ubuntu-noble libfuse3-3
+      - name: Install verified FUSE runtime
+        run: |
+          package=libfuse3-3_3.14.0-5build1_amd64.deb
+          curl --proto '=https' --proto-redir '=https' --fail --location --retry 2 \
+            --max-time 60 --max-filesize 100000 --output "$RUNNER_TEMP/$package" \
+            "https://archive.ubuntu.com/ubuntu/pool/main/f/fuse3/$package"
+          # SHA-256 from Ubuntu's Noble amd64 package download index.
+          (
+            cd "$RUNNER_TEMP"
+            printf '%s  %s\n' 3042159c6d7d4dcb3df9d49cd21e49ecb57f4ba8c4153a72102f512a4fc534a2 "$package" \
+              | sha256sum --check --strict
+          )
+          sudo dpkg --install "$RUNNER_TEMP/$package"
       - name: Install pinned Hashtree source checkout tools
         run: node tooling/scripts/release-tools.mjs install
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
