@@ -4,7 +4,7 @@ import { basename } from 'node:path'
 import { archiveDigest } from './hosted-product-receipt.mjs'
 
 export const irisSitesSource = 'htree://npub1xdhnr9mrv47kkrn95k6cwecearydeh8e895990n3acntwvmgk2dsdeeycm/iris-sites'
-export const irisSitesCommit = '638928262981d1101666667c71d89f67dc162d90'
+export const irisSitesCommit = '08fef39fc6cd77cbe4c7d76c9892b9be0fac993d'
 
 export function requirePassingCatalog(results) {
   assert.ok(Number.isSafeInteger(results?.passed) && results.passed > 0
