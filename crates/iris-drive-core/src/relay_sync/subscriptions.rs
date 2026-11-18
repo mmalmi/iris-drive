@@ -12,6 +12,7 @@ const DEVICE_APPROVAL_SUBSCRIPTION_ID: &str = "iris-drive-device-approval";
 const DEVICE_APPROVAL_ACK_SUBSCRIPTION_ID: &str = "iris-drive-device-approval-ack";
 const PROFILE_ROSTER_SUBSCRIPTION_ID: &str = "iris-drive-profile-roster";
 const PRIMARY_DRIVE_ROOT_SUBSCRIPTION_ID: &str = "iris-drive-primary-root";
+const PRIVATE_TRASH_ROOT_SUBSCRIPTION_ID: &str = "iris-drive-trash-root";
 
 /// Tracks the identity-scoped relay subscriptions that must follow config
 /// changes while a daemon or mobile sync worker stays alive.
@@ -137,6 +138,14 @@ pub async fn refresh_app_key_link_relay_subscriptions(
             .subscribe_with_id(
                 SubscriptionId::new(PRIMARY_DRIVE_ROOT_SUBSCRIPTION_ID),
                 drive_root_filter(&drive_root_scope_id, PRIMARY_DRIVE_ID),
+                None,
+            )
+            .await
+            .map_err(|error| RelayError::Client(error.to_string()))?;
+        client
+            .subscribe_with_id(
+                SubscriptionId::new(PRIVATE_TRASH_ROOT_SUBSCRIPTION_ID),
+                drive_root_filter(&drive_root_scope_id, crate::private_trash::DRIVE_ID),
                 None,
             )
             .await

@@ -182,6 +182,10 @@ fn persist_restore(dir: &Path, config: &AppConfig, restored: RecoveryPhraseResto
     }
     // A pending, unbound join has a placeholder drive. Replace it.
     current.upsert_drive(restored.drive);
+    current.remove_drive(iris_drive_core::private_trash::DRIVE_ID);
+    if let Some(trash) = restored.trash {
+        current.upsert_drive(trash);
+    }
     current.profile = Some(restored.profile.state);
     current.save(config_path_in(dir))?;
     Ok(())

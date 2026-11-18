@@ -395,6 +395,20 @@ fn parse_drive_root_event_parts(
         .map_err(|e| WireError::SignatureFailed(e.to_string()))?;
     let content: DriveRootWireContent =
         serde_json::from_str(&event.content).map_err(|e| WireError::BadContent(e.to_string()))?;
+    if drive_id == crate::private_trash::DRIVE_ID
+        && (content.root_cid.is_some()
+            || content.root_key_wraps.is_empty()
+            || content
+                .parents
+                .iter()
+                .map(|parent| &parent.root_cid)
+                .chain(content.observed.values().map(|root| &root.root_cid))
+                .any(|cid| Cid::parse(cid).is_ok_and(|cid| cid.key.is_some())))
+    {
+        return Err(WireError::BadContent(
+            "private Trash roots require an encrypted key envelope".into(),
+        ));
+    }
     let app_key_pubkey_hex = event.pubkey.to_hex();
     let published_at = i64::try_from(event.created_at.as_secs()).unwrap_or(i64::MAX);
     Ok((

@@ -405,7 +405,12 @@ impl Daemon {
         tombstone_paths: Option<&std::collections::BTreeSet<String>>,
         local_only: bool,
     ) -> Result<ImportReport, DaemonError> {
-        self.load_full_profile_for_mutation()?;
+        if drive_id == crate::private_trash::DRIVE_ID {
+            self.config.profile =
+                AppConfig::load_or_default(config_path_in(&self.config_dir))?.profile;
+        } else {
+            self.load_full_profile_for_mutation()?;
+        }
         self.ensure_drive_for_import(drive_id)?;
         let (root, tombstone_base_root) = if drive_id == PRIMARY_DRIVE_ID {
             crate::shared_content::route_shared_edits(
@@ -933,6 +938,24 @@ impl Daemon {
     }
 
     fn ensure_drive_for_import(&mut self, drive_id: &str) -> Result<(), DaemonError> {
+        if drive_id == crate::private_trash::DRIVE_ID {
+            let account = self
+                .config
+                .profile
+                .as_ref()
+                .filter(|state| crate::private_trash::can_write(state, &state.app_key_pubkey))
+                .ok_or_else(|| DaemonError::DriveMissing(drive_id.to_string()))?;
+            let scope = account.root_scope_id();
+            if !self
+                .config
+                .drive(drive_id)
+                .is_some_and(|drive| drive.root_scope_id == scope)
+            {
+                self.config
+                    .upsert_drive(crate::private_trash::owner_drive(scope));
+            }
+            return Ok(());
+        }
         if self.config.drive(drive_id).is_some() {
             return Ok(());
         }

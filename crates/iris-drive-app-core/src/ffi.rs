@@ -1458,6 +1458,7 @@ impl NativeAppRuntime {
             config
                 .drives
                 .iter()
+                .filter(|drive| drive.drive_id != iris_drive_core::private_trash::DRIVE_ID)
                 .map(|drive| UiSyncRoot {
                     name: drive.display_name.clone(),
                     local_path: self.data_dir.clone(),

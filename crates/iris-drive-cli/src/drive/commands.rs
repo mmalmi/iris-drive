@@ -65,6 +65,35 @@ pub(crate) fn cmd_relays(config_dir: &std::path::Path, sub: Option<RelaysCmd>) -
     Ok(())
 }
 
+pub(crate) fn cmd_trash(config_dir: &Path, command: TrashCmd) -> Result<()> {
+    use iris_drive_core::private_trash;
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?;
+    let now = i64::try_from(
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)?
+            .as_secs(),
+    )?;
+    runtime.block_on(async {
+        match command {
+            TrashCmd::List => println!(
+                "{}",
+                serde_json::to_string_pretty(&private_trash::list(config_dir, now).await?,)?
+            ),
+            TrashCmd::Put { path } => {
+                let components = path.split('/').map(str::to_owned).collect();
+                let item = private_trash::trash(config_dir, components, now).await?;
+                println!("{}", serde_json::to_string_pretty(&item)?);
+            }
+            TrashCmd::Restore { id } => {
+                private_trash::restore(config_dir, &id, now).await?;
+            }
+        }
+        Ok(())
+    })
+}
+
 pub(crate) fn cmd_history(config_dir: &std::path::Path, limit: usize) -> Result<()> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()

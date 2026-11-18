@@ -1049,7 +1049,7 @@ fn should_publish_direct_root_hint(key: &str, source: DirectRootPublishSource) -
     matches!(
         source,
         DirectRootPublishSource::LocalCurrent | DirectRootPublishSource::StateRequestReply
-    ) && direct_root_cache_slot(key).is_some()
+    ) && iris_drive_core::parse_direct_root_key_hint(key).is_some()
 }
 
 fn should_publish_direct_root_full_frame(
@@ -1113,7 +1113,7 @@ pub(crate) async fn build_current_sync_events(
 ) -> Result<Vec<DirectRootEvent>> {
     let mut events = Vec::new();
 
-    append_primary_drive_root_events(&mut events, config_dir, config, state).await?;
+    append_account_drive_root_events(&mut events, config_dir, config, state).await?;
     append_share_root_events(&mut events, config_dir, config, state).await?;
     append_profile_roster_events(&mut events, state)?;
     append_share_access_snapshot_events(&mut events, config_dir, config, state)?;
@@ -1245,7 +1245,7 @@ fn append_share_access_snapshot_events(
     Ok(())
 }
 
-async fn append_primary_drive_root_events(
+async fn append_account_drive_root_events(
     events: &mut Vec<DirectRootEvent>,
     config_dir: &Path,
     config: &AppConfig,
@@ -1254,15 +1254,15 @@ async fn append_primary_drive_root_events(
     if !state.can_write_roots() {
         return Ok(());
     }
-    if let Some(drive) = config.drive(iris_drive_core::PRIMARY_DRIVE_ID) {
-        let Some(root) = publishable_app_key_root(config_dir, drive, state).await? else {
-            return Ok(());
-        };
-        let authorized_app_keys =
-            iris_drive_core::drive_root_key_recipient_pubkeys(state, drive);
+    for id in [iris_drive_core::private_trash::DRIVE_ID, iris_drive_core::PRIMARY_DRIVE_ID] {
+        let Some(drive) = config.drive(id) else { continue };
+        let authorized_app_keys = iris_drive_core::drive_root_key_recipient_pubkeys(state, drive);
         if authorized_app_keys.is_empty() {
-            return Ok(());
+            continue;
         }
+        let Some(root) = publishable_app_key_root(config_dir, drive, state).await? else {
+            continue;
+        };
         ensure_publishable_root_locally_available(config_dir, config, &root.root_cid).await?;
         let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
             .context("loading app key")?;
@@ -1276,18 +1276,13 @@ async fn append_primary_drive_root_events(
         )
         .context("building drive-root event")?;
         events.push(direct_root_event(
-            format!(
-                "drive-root:{}:{}:{}:{}:{}",
-                state.app_key_pubkey,
-                drive.drive_id,
-                root.app_key_seq,
-                root.root_cid,
-                authorized_app_keys.join(",")
-            ),
+            iris_drive_core::direct_root_transport::drive_root_transport_key(
+                &state.app_key_pubkey, &drive.drive_id, &root, &authorized_app_keys,
+            )?,
             &event,
         )?);
 
-        if state.can_write_roots() {
+        if id == iris_drive_core::PRIMARY_DRIVE_ID {
             let event = iris_drive_core::nostr_events::build_private_hashtree_root_event(
                 device.keys(),
                 &drive.drive_id,

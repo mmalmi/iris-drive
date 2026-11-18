@@ -1,0 +1,17 @@
+{
+  "item": {
+    "v": 1,
+    "id": "1bf214c6-5b72-46d8-81f7-13836accabc0",
+    "account": "1b1f288e-711e-4f94-9235-2245a7b5d731",
+    "source_scope": "1b1f288e-711e-4f94-9235-2245a7b5d731",
+    "tree_name": "main",
+    "path": ["Notes", "café.txt"],
+    "deleted_at": 1800000000
+  },
+  "content_utf8": "Private recovery\n",
+  "marker": {
+    "v": 1,
+    "id": "1bf214c6-5b72-46d8-81f7-13836accabc0",
+    "removed_at": 1800000123
+  }
+}

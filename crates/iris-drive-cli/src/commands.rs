@@ -192,6 +192,9 @@ pub(crate) enum Command {
     /// Hidden native-provider bridge used by FileProvider/FUSE adapters.
     #[command(hide = true, subcommand)]
     Provider(ProviderCmd),
+    /// Manage the account's private Trash.
+    #[command(subcommand)]
+    Trash(TrashCmd),
     /// Walk this `AppKey`'s `.hashtree/prev` revision chain and print each root
     /// CID + top-level entry count, newest-first. Blocks GC'd from
     /// the local store terminate the walk silently.
@@ -773,4 +776,14 @@ pub(crate) enum MirrorCmd {
     Run { destination: String },
     /// Stop mirroring. Keeps all files in My Drive.
     Remove { destination: String },
+}
+
+#[derive(Debug, Subcommand)]
+pub(crate) enum TrashCmd {
+    /// List items available to restore.
+    List,
+    /// Move an item from My Drive to Trash.
+    Put { path: String },
+    /// Restore an item to its original path in My Drive.
+    Restore { id: String },
 }

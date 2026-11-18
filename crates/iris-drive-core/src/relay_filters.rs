@@ -39,6 +39,9 @@ pub fn subscription_filters_for_shared_roots(
         filters.push(nostr_identity_roster_op_filter(profile_id));
     }
     push_drive_root_filters(&mut filters, root_scope_id, drive_id);
+    if drive_id != crate::private_trash::DRIVE_ID {
+        push_drive_root_filters(&mut filters, root_scope_id, crate::private_trash::DRIVE_ID);
+    }
     // The profile's shared folders, as each of its devices lists them.
     filters.push(crate::share_index::share_index_filter(root_scope_id));
     // How much of the Drive each of the profile's devices holds.

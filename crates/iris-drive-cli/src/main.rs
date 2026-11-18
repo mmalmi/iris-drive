@@ -185,6 +185,7 @@ fn run_cli() -> ExitCode {
         Command::Import { dir } => cmd_import(&config_dir, &dir),
         Command::List { at } => cmd_list(&config_dir, at),
         Command::Provider(command) => cmd_provider(&config_dir, command),
+        Command::Trash(command) => cmd_trash(&config_dir, command),
         Command::History { limit } => cmd_history(&config_dir, limit),
         Command::Event(ev) => match ev {
             EventCmd::DriveRoot => cmd_event_drive_root(&config_dir),

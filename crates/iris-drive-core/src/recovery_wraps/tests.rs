@@ -62,6 +62,64 @@ fn my_drive_root_is_wrapped_for_the_recovery_phrase() {
 }
 
 #[test]
+fn private_trash_admits_active_recovery_phrase_without_wrapping_for_foreign_roots() {
+    let owner = owner_with_recovery_phrase();
+    let state = &owner.profile.state;
+    let mut trash = crate::private_trash::owner_drive(state.root_scope_id());
+    let stranger = Keys::generate();
+    trash
+        .app_key_roots
+        .insert(stranger.public_key().to_hex(), root(0x20));
+    let recipients = drive_root_key_recipient_pubkeys(state, &trash);
+    assert!(!recipients.contains(&stranger.public_key().to_hex()));
+    let original = root(0x30);
+    let event = build_drive_root_event(
+        owner.profile.app_key.keys(),
+        &trash.root_scope_id,
+        &trash.drive_id,
+        &original,
+        &recipients,
+    )
+    .unwrap();
+
+    let fresh = tempdir().unwrap();
+    let restored = Profile::restore_with_recovery_phrase_keys(
+        fresh.path(),
+        &owner.recovery_keys,
+        state.profile_id,
+        state.profile_roster_ops.clone(),
+        None,
+    )
+    .unwrap();
+    let mut config = AppConfig {
+        profile: Some(restored.state),
+        ..Default::default()
+    };
+    let report = apply_drive_root_events_opening_with_recovery_key(
+        &mut config,
+        std::slice::from_ref(&event),
+        restored.app_key.keys(),
+        &owner.recovery_keys,
+    )
+    .unwrap();
+    assert_eq!(report.applied, 1);
+    assert_eq!(report.root_cids_to_download, vec![original.root_cid]);
+    assert!(config.drive(crate::private_trash::DRIVE_ID).is_some());
+    assert!(parse_drive_root_event_for_device(&event, &stranger).is_err());
+
+    let legacy = nostr_sdk::EventBuilder::new(
+        nostr_sdk::Kind::from(crate::nostr_events::KIND_DRIVE_ROOT),
+        serde_json::json!({"root_cid": root(0x50).root_cid, "dck_generation": 1}).to_string(),
+    )
+    .tag(nostr_sdk::Tag::identifier(
+        crate::nostr_events::drive_root_d_tag(&trash.root_scope_id, &trash.drive_id),
+    ))
+    .sign_with_keys(owner.profile.app_key.keys())
+    .unwrap();
+    assert!(crate::nostr_events::parse_drive_root_event_preview(&legacy).is_err());
+}
+
+#[test]
 fn adding_a_recovery_phrase_is_seen_in_the_ops_to_publish() {
     let owner = owner_with_recovery_phrase();
     let state = &owner.profile.state;

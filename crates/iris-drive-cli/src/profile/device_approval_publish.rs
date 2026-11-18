@@ -87,21 +87,13 @@ fn publish_device_approval(
                 report.published_events += event_ids.len();
             }
 
-            tokio::time::timeout(
+            let published_roots = tokio::time::timeout(
                 std::time::Duration::from_secs(APP_KEY_LINK_RELAY_PUBLISH_TIMEOUT_SECS),
-                iris_drive_core::relay_sync::publish_drive_root(
-                    config_dir,
-                    &client,
-                    device.keys(),
-                    &drive_root.root_scope_id,
-                    &drive_root.drive_id,
-                    &drive_root.root,
-                    &drive_root.authorized_app_keys,
-                ),
+                drive_root.publish(config_dir, &client, device.keys()),
             )
             .await
             .map_err(|_| anyhow::anyhow!("publishing approval Drive root timed out"))??;
-            report.published_events += 1;
+            report.published_events += published_roots;
             report.published_drive_root = true;
 
             tokio::time::timeout(

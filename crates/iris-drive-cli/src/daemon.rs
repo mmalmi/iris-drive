@@ -453,6 +453,7 @@ fn current_app_key_root_key(config: &AppConfig) -> Option<String> {
         .filter(|drive| {
             drive.drive_id == iris_drive_core::PRIMARY_DRIVE_ID
                 || drive.drive_id == iris_drive_core::calendar::CALENDAR_TREE_NAME
+                || drive.drive_id == iris_drive_core::private_trash::DRIVE_ID
         })
         .filter_map(|drive| {
             let root = drive.app_key_roots.get(&state.app_key_pubkey)?;

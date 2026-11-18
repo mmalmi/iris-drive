@@ -485,17 +485,7 @@ pub(crate) async fn publish_current_state(
     if let Some(handoff) = approval_handoff.as_ref() {
         let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
             .context("loading AppKey for device approval Drive root")?;
-        match relay_publish_with_timeout(relay_sync::publish_drive_root(
-            config_dir,
-            client,
-            device.keys(),
-            &handoff.root_scope_id,
-            &handoff.drive_id,
-            &handoff.root,
-            &handoff.authorized_app_keys,
-        ))
-        .await
-        {
+        match relay_publish_with_timeout(handoff.publish(config_dir, client, device.keys())).await {
             Ok(_) => report.published_drive_root = true,
             Err(error) => {
                 report.drive_root_publish_error = Some(error);
@@ -577,6 +567,45 @@ pub(crate) async fn publish_current_state(
         {
             Ok(_) => report.published_share_roots += 1,
             Err(error) => report.drive_root_publish_error = Some(error),
+        }
+    }
+
+    if approval_handoff.is_none()
+        && let Some(drive) = config.drive(iris_drive_core::private_trash::DRIVE_ID)
+    {
+        let recipients = iris_drive_core::drive_root_key_recipient_pubkeys(state, drive);
+        if !recipients.is_empty()
+            && let Some(root) = publishable_app_key_root(config_dir, drive, state).await?
+        {
+            ensure_publishable_root_locally_available(config_dir, config, &root.root_cid).await?;
+            let device = iris_drive_core::AppKey::load(key_path_in(config_dir))
+                .context("loading app key")?;
+            if upload_blossom {
+                let (uploaded, error) =
+                    maybe_upload_root_to_blossom(config_dir, config, &device, &root.root_cid, None)
+                        .await?;
+                if uploaded.is_none() || error.is_some() {
+                    report.drive_root_publish_error = Some(format!(
+                        "withheld Trash root: {}",
+                        error.as_deref().unwrap_or("blocks unavailable on Blossom")
+                    ));
+                    return Ok(report);
+                }
+            }
+            if let Err(error) = relay_publish_with_timeout(relay_sync::publish_drive_root(
+                config_dir,
+                client,
+                device.keys(),
+                &state.root_scope_id(),
+                &drive.drive_id,
+                &root,
+                &recipients,
+            ))
+            .await
+            {
+                report.drive_root_publish_error = Some(error);
+                return Ok(report);
+            }
         }
     }
 

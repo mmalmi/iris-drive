@@ -24,6 +24,7 @@ pub struct RecoveryPhraseRestore {
     /// The primary drive, holding each device's latest root that this device
     /// or the recovery phrase could open.
     pub drive: Drive,
+    pub trash: Option<Drive>,
     pub drive_roots: DriveRootEventApplyReport,
 }
 
@@ -65,10 +66,9 @@ pub async fn restore_from_recovery_phrase(
         .into_iter()
         .filter(|pubkey| pubkey != &profile.state.app_key_pubkey)
         .collect::<Vec<_>>();
-    let events = relay_sync::fetch_drive_roots(
+    let events = relay_sync::fetch_account_drive_roots(
         client,
         &profile.state.root_scope_id(),
-        PRIMARY_DRIVE_ID,
         &devices,
         timeout,
     )
@@ -87,6 +87,7 @@ pub async fn restore_from_recovery_phrase(
     Ok(Some(RecoveryPhraseRestore {
         profile,
         drive,
+        trash: config.drive(crate::private_trash::DRIVE_ID).cloned(),
         drive_roots,
     }))
 }
@@ -128,20 +129,9 @@ pub async fn publish_recovered_drive_root(
     .context("publishing this device's admission timed out")??
     .len();
     let app_key = AppKey::load(crate::paths::key_path_in(config_dir))?;
-    tokio::time::timeout(
-        timeout,
-        relay_sync::publish_drive_root(
-            config_dir,
-            client,
-            app_key.keys(),
-            &handoff.root_scope_id,
-            &handoff.drive_id,
-            &handoff.root,
-            &handoff.authorized_app_keys,
-        ),
-    )
-    .await
-    .context("publishing the restored Drive root timed out")??;
+    tokio::time::timeout(timeout, handoff.publish(config_dir, client, app_key.keys()))
+        .await
+        .context("publishing the restored Drive root timed out")??;
     crate::paths::touch_provider_root_signal_in(config_dir)?;
     Ok(RecoveredDriveRoot {
         root_cid: handoff.root.root_cid,

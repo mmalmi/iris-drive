@@ -40,10 +40,9 @@ async fn sync_drive_roots(
             iris_drive_core::authorized_app_key_pubkeys(state),
         )
     };
-    let events = iris_drive_core::relay_sync::fetch_drive_roots(
+    let events = iris_drive_core::relay_sync::fetch_account_drive_roots(
         relay_client,
         &root_scope_id,
-        iris_drive_core::PRIMARY_DRIVE_ID,
         &authorized_app_keys,
         std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS),
     )

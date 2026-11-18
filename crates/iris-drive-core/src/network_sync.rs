@@ -426,10 +426,9 @@ async fn sync_once_inner(
         .as_ref()
         .map_or_else(Default::default, authorized_app_key_pubkeys);
     let root_scope_id = state.root_scope_id();
-    let drive_root_events = relay_sync::fetch_drive_roots(
+    let drive_root_events = relay_sync::fetch_account_drive_roots(
         &client,
         &root_scope_id,
-        PRIMARY_DRIVE_ID,
         &authorized_app_keys,
         timeout,
     )
@@ -590,12 +589,15 @@ pub fn apply_drive_root_events(
     for event in events {
         let parsed =
             crate::nostr_events::parse_drive_root_event_for_device(event, device.keys()).ok();
-        if let Some((_, _, _, root_ref)) = parsed.as_ref() {
+        let outcome = relay_sync::apply_remote_drive_root_event(config, event, Some(device.keys()))
+            .context("applying drive-root event")?;
+        if let Some((author, scope, drive_id, root_ref)) = parsed.as_ref()
+            && (drive_id != crate::private_trash::DRIVE_ID
+                || crate::private_trash::root_was_accepted(config, author, scope, root_ref))
+        {
             push_unique(&mut report.root_cids_to_download, root_ref.root_cid.clone());
         }
-        match relay_sync::apply_remote_drive_root_event(config, event, Some(device.keys()))
-            .context("applying drive-root event")?
-        {
+        match outcome {
             relay_sync::DriveRootApply::Applied => report.applied += 1,
             _ => report.skipped += 1,
         }

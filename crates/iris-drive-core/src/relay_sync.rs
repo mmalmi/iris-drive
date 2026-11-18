@@ -598,6 +598,40 @@ pub fn apply_remote_drive_root_event(
         return Err(RelayError::NoAccount);
     };
     if preview.root_scope_id == account.root_scope_id() {
+        if preview.drive_id == crate::private_trash::DRIVE_ID {
+            // First contact may precede any local Trash action. Only register the
+            // drive after a roster-authorized, decryptable event is applied.
+            if !crate::private_trash::can_write(account, &app_key_hex) {
+                return Ok(DriveRootApply::UnauthorizedAppKey);
+            }
+            if device_keys.is_some_and(|keys| {
+                !crate::private_trash::can_open(account, &keys.public_key().to_hex())
+            }) {
+                return Ok(DriveRootApply::KeyUnavailable);
+            }
+            if let Some(drive) = config.drives.iter_mut().find(|drive| {
+                drive.drive_id == crate::private_trash::DRIVE_ID
+                    && drive.root_scope_id == preview.root_scope_id
+            }) {
+                return apply_root_to_app_key_roots(
+                    &mut drive.app_key_roots,
+                    event,
+                    device_keys,
+                    &preview,
+                );
+            }
+            let mut drive = crate::private_trash::owner_drive(preview.root_scope_id.clone());
+            let outcome = apply_root_to_app_key_roots(
+                &mut drive.app_key_roots,
+                event,
+                device_keys,
+                &preview,
+            )?;
+            if outcome == DriveRootApply::Applied {
+                config.upsert_drive(drive);
+            }
+            return Ok(outcome);
+        }
         let Some(drive_index) = config
             .drives
             .iter()
@@ -720,6 +754,9 @@ pub fn apply_remote_files_root_event(
     let parsed = hashtree_nostr::parse_verified_hashtree_root_event(event)
         .map_err(|e| RelayError::HashtreeRoot(e.to_string()))?
         .ok_or_else(|| RelayError::HashtreeRoot("not a hashtree root event".to_string()))?;
+    if parsed.tree_name == crate::private_trash::DRIVE_ID {
+        return Ok(FilesRootApply::UnknownDrive);
+    }
     let Some(account) = config.profile.as_ref() else {
         return Err(RelayError::NoAccount);
     };
@@ -1215,6 +1252,41 @@ pub async fn fetch_drive_roots(
     authorized_app_keys: &[String],
     timeout: Duration,
 ) -> Result<Vec<Event>, RelayError> {
+    fetch_drive_roots_for_ids(
+        client,
+        root_scope_id,
+        &[drive_id],
+        authorized_app_keys,
+        timeout,
+    )
+    .await
+}
+
+/// Fetch the account's personal Drive and Trash heads, keeping both heads
+/// when a device has published to both coordinates.
+pub async fn fetch_account_drive_roots(
+    client: &Client,
+    root_scope_id: &str,
+    authorized_app_keys: &[String],
+    timeout: Duration,
+) -> Result<Vec<Event>, RelayError> {
+    fetch_drive_roots_for_ids(
+        client,
+        root_scope_id,
+        &[crate::PRIMARY_DRIVE_ID, crate::private_trash::DRIVE_ID],
+        authorized_app_keys,
+        timeout,
+    )
+    .await
+}
+
+async fn fetch_drive_roots_for_ids(
+    client: &Client,
+    root_scope_id: &str,
+    drive_ids: &[&str],
+    authorized_app_keys: &[String],
+    timeout: Duration,
+) -> Result<Vec<Event>, RelayError> {
     if authorized_app_keys.is_empty() {
         return Ok(Vec::new());
     }
@@ -1223,20 +1295,26 @@ pub async fn fetch_drive_roots(
         authors
             .push(PublicKey::from_hex(hex).map_err(|e| RelayError::InvalidPubkey(e.to_string()))?);
     }
-    let d_tag = drive_root_d_tag(root_scope_id, drive_id);
     let filter = Filter::new()
         .authors(authors)
         .kind(nostr_sdk::Kind::from(KIND_DRIVE_ROOT))
-        .custom_tag(SingleLetterTag::lowercase(nostr_sdk::Alphabet::D), d_tag);
+        .custom_tags(
+            SingleLetterTag::lowercase(nostr_sdk::Alphabet::D),
+            drive_ids
+                .iter()
+                .map(|drive_id| drive_root_d_tag(root_scope_id, drive_id)),
+        );
     let events = fetch_events(client, vec![filter], timeout).await?;
     // Pick the latest root per author. Device roots carry a monotonic
     // per-device sequence; use it before wall-clock timestamps so two publishes
     // in the same second cannot make us fetch an older snapshot.
-    let mut latest_per_author: std::collections::HashMap<PublicKey, Event> =
-        std::collections::HashMap::new();
+    let mut latest_per_coordinate = std::collections::HashMap::<_, Event>::new();
     for ev in events {
-        latest_per_author
-            .entry(ev.pubkey)
+        let Some(identifier) = ev.tags.identifier() else {
+            continue;
+        };
+        latest_per_coordinate
+            .entry((ev.pubkey, identifier.to_owned()))
             .and_modify(|cur| {
                 if drive_root_event_is_newer(&ev, cur) {
                     *cur = ev.clone();
@@ -1244,7 +1322,7 @@ pub async fn fetch_drive_roots(
             })
             .or_insert(ev);
     }
-    Ok(latest_per_author.into_values().collect())
+    Ok(latest_per_coordinate.into_values().collect())
 }
 
 fn drive_root_event_is_newer(candidate: &Event, current: &Event) -> bool {

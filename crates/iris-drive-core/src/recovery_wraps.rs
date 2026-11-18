@@ -32,6 +32,9 @@ pub fn active_recovery_phrase_pubkeys(state: &ProfileState) -> Vec<String> {
 /// its active recovery phrases.
 #[must_use]
 pub fn drive_root_key_recipient_pubkeys(state: &ProfileState, drive: &Drive) -> Vec<String> {
+    if drive.drive_id == crate::private_trash::DRIVE_ID {
+        return crate::private_trash::recipients(state, drive);
+    }
     let mut recipients = drive_root_recipient_app_key_pubkeys(state, drive);
     recipients.extend(active_recovery_phrase_pubkeys(state));
     recipients.sort();
@@ -79,8 +82,10 @@ pub fn apply_drive_root_events_opening_with_recovery_key(
                 relay_sync::apply_remote_drive_root_event(config, event, Some(recovery_keys))?;
             opened_with = recovery_keys;
         }
-        if let Ok((_, _, _, root)) =
+        if let Ok((author, scope, drive_id, root)) =
             crate::nostr_events::parse_drive_root_event_for_device(event, opened_with)
+            && (drive_id != crate::private_trash::DRIVE_ID
+                || crate::private_trash::root_was_accepted(config, &author, &scope, &root))
             && !report.root_cids_to_download.contains(&root.root_cid)
         {
             report.root_cids_to_download.push(root.root_cid);
@@ -109,26 +114,34 @@ pub async fn republish_root_for_added_recovery_phrase(
         return Ok(false);
     }
     let config = AppConfig::load_or_default(crate::paths::config_path_in(config_dir))?;
-    let Some(drive) = config.drive(crate::PRIMARY_DRIVE_ID) else {
-        return Ok(false);
-    };
-    let Some(root) =
-        crate::publishable_root::publishable_app_key_root(config_dir, drive, state).await?
-    else {
-        return Ok(false);
-    };
     let app_key = crate::AppKey::load(crate::paths::key_path_in(config_dir))?;
-    relay_sync::publish_drive_root(
-        config_dir,
-        client,
-        app_key.keys(),
-        &state.root_scope_id(),
-        &drive.drive_id,
-        &root,
-        &drive_root_key_recipient_pubkeys(state, drive),
-    )
-    .await?;
-    Ok(true)
+    let mut published = false;
+    for id in [crate::PRIMARY_DRIVE_ID, crate::private_trash::DRIVE_ID] {
+        let Some(drive) = config.drive(id) else {
+            continue;
+        };
+        let recipients = drive_root_key_recipient_pubkeys(state, drive);
+        if recipients.is_empty() {
+            continue;
+        }
+        let Some(root) =
+            crate::publishable_root::publishable_app_key_root(config_dir, drive, state).await?
+        else {
+            continue;
+        };
+        relay_sync::publish_drive_root(
+            config_dir,
+            client,
+            app_key.keys(),
+            &state.root_scope_id(),
+            &drive.drive_id,
+            &root,
+            &recipients,
+        )
+        .await?;
+        published = true;
+    }
+    Ok(published)
 }
 
 #[cfg(test)]

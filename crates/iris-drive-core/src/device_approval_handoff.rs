@@ -19,6 +19,50 @@ pub struct DeviceApprovalRootHandoff {
     pub root: AppKeyRootRef,
     pub authorized_app_keys: Vec<String>,
     pub blossom_upload: crate::blossom_sync::UploadReport,
+    trash: Option<TrashHandoff>,
+}
+
+#[derive(Debug, Clone)]
+struct TrashHandoff {
+    root: AppKeyRootRef,
+    recipients: Vec<String>,
+}
+
+impl DeviceApprovalRootHandoff {
+    /// Publish the prepared account roots before publishing an approval receipt.
+    pub async fn publish(
+        &self,
+        config_dir: &Path,
+        client: &nostr_sdk::Client,
+        keys: &nostr_sdk::Keys,
+    ) -> Result<usize, crate::relay_sync::RelayError> {
+        use crate::relay_sync::publish_drive_root;
+        let mut published = 0;
+        if let Some(trash) = &self.trash {
+            publish_drive_root(
+                config_dir,
+                client,
+                keys,
+                &self.root_scope_id,
+                crate::private_trash::DRIVE_ID,
+                &trash.root,
+                &trash.recipients,
+            )
+            .await?;
+            published += 1;
+        }
+        publish_drive_root(
+            config_dir,
+            client,
+            keys,
+            &self.root_scope_id,
+            &self.drive_id,
+            &self.root,
+            &self.authorized_app_keys,
+        )
+        .await?;
+        Ok(published + 1)
+    }
 }
 
 struct DeviceApprovalRootSnapshot {
@@ -27,6 +71,7 @@ struct DeviceApprovalRootSnapshot {
     root: AppKeyRootRef,
     authorized_app_keys: Vec<String>,
     blossom_servers: Vec<String>,
+    trash: Option<TrashHandoff>,
 }
 
 /// Build and upload the root that must be published before an approval
@@ -47,12 +92,19 @@ pub async fn prepare_device_approval_root_handoff(
         .await
         .context("uploading device approval Drive root to Blossom")?;
 
+    if let Some(trash) = &snapshot.trash {
+        let cid = Cid::parse(&trash.root.root_cid).context("parsing approval Trash root")?;
+        crate::blossom_sync::upload_tree(daemon.tree(), &cid, &blossom)
+            .await
+            .context("uploading device approval Trash root to Blossom")?;
+    }
     Ok(DeviceApprovalRootHandoff {
         root_scope_id: snapshot.root_scope_id,
         drive_id: snapshot.drive_id,
         root: snapshot.root,
         authorized_app_keys: snapshot.authorized_app_keys,
         blossom_upload,
+        trash: snapshot.trash,
     })
 }
 
@@ -70,6 +122,12 @@ async fn prepare_device_approval_root_snapshot(
         .materialize_primary_merged_root_for_device_approval()
         .await
         .context("materializing current Drive for device approval")?;
+    drop(daemon);
+    let full_config = AppConfig::load_or_default(crate::paths::config_path_in(config_dir))?;
+    let mut daemon = Daemon::open_with_config(config_dir, full_config)?;
+    crate::private_trash::materialize_for_admission(&mut daemon)
+        .await
+        .context("materializing current Trash for device approval")?;
     drop(daemon);
 
     let config = AppConfig::load_or_default(crate::paths::config_path_in(config_dir))
@@ -102,12 +160,29 @@ async fn prepare_device_approval_root_snapshot(
         anyhow::bail!("device approval Drive root has no authorized recipients");
     }
 
+    let trash = config
+        .drive(crate::private_trash::DRIVE_ID)
+        .map(|drive| {
+            let root = drive
+                .app_key_roots
+                .get(&state.app_key_pubkey)
+                .cloned()
+                .context("approving AppKey has no materialized Trash root")?;
+            let recipients = crate::drive_root_key_recipient_pubkeys(state, drive);
+            anyhow::ensure!(
+                !root.local_only && !recipients.is_empty(),
+                "Trash root cannot be handed off"
+            );
+            Ok::<_, anyhow::Error>(TrashHandoff { root, recipients })
+        })
+        .transpose()?;
     Ok(DeviceApprovalRootSnapshot {
         root_scope_id: state.root_scope_id(),
         drive_id: drive.drive_id.clone(),
         root,
         authorized_app_keys,
         blossom_servers: config.blossom_servers.clone(),
+        trash,
     })
 }
 

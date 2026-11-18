@@ -928,7 +928,7 @@ fn should_publish_direct_root_hint(key: &str, source: DirectRootPublishSource) -
     matches!(
         source,
         DirectRootPublishSource::LocalCurrent | DirectRootPublishSource::StateRequestReply
-    ) && direct_root_cache_slot(key).is_some()
+    ) && parse_direct_root_key_hint(key).is_some()
 }
 
 fn should_publish_direct_root_full_frame(
@@ -974,17 +974,43 @@ pub fn decode_direct_root_wire_frame(
     }
 }
 
+pub fn drive_root_transport_key(
+    app_key: &str,
+    drive_id: &str,
+    root: &crate::AppKeyRootRef,
+    recipients: &[String],
+) -> Result<String> {
+    let public_root;
+    let reference = if drive_id == crate::private_trash::DRIVE_ID {
+        public_root = hashtree_core::to_hex(&Cid::parse(&root.root_cid)?.hash);
+        public_root.as_str()
+    } else {
+        &root.root_cid
+    };
+    Ok(format!(
+        "drive-root:{app_key}:{drive_id}:{}:{reference}:{}",
+        root.app_key_seq,
+        recipients.join(",")
+    ))
+}
+
 pub fn build_current_direct_root_events(
     config_dir: &Path,
     config: &AppConfig,
     state: &ProfileState,
 ) -> Result<Vec<DirectRootEvent>> {
     let mut events = Vec::new();
-    if state.can_write_roots()
-        && let Some(drive) = config.drive(PRIMARY_DRIVE_ID)
-        && let Some(root) = drive.app_key_roots.get(&state.app_key_pubkey)
-    {
-        let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
+    let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
+    for id in [crate::private_trash::DRIVE_ID, PRIMARY_DRIVE_ID] {
+        let Some(drive) = config.drive(id).filter(|_| state.can_write_roots()) else {
+            continue;
+        };
+        let Some(root) = drive.app_key_roots.get(&state.app_key_pubkey) else {
+            continue;
+        };
+        if id == crate::private_trash::DRIVE_ID && root.local_only {
+            continue;
+        }
         let authorized_app_keys = drive_root_key_recipient_pubkeys(state, drive);
         if !authorized_app_keys.is_empty() {
             let event = crate::nostr_events::build_drive_root_publish_event(
@@ -997,19 +1023,16 @@ pub fn build_current_direct_root_events(
             )
             .context("building drive-root event")?;
             events.push(direct_root_event(
-                format!(
-                    "drive-root:{}:{}:{}:{}:{}",
-                    state.app_key_pubkey,
-                    drive.drive_id,
-                    root.app_key_seq,
-                    root.root_cid,
-                    authorized_app_keys.join(",")
-                ),
+                drive_root_transport_key(
+                    &state.app_key_pubkey,
+                    &drive.drive_id,
+                    root,
+                    &authorized_app_keys,
+                )?,
                 &event,
             ));
         }
     }
-    let device = AppKey::load(key_path_in(config_dir)).context("loading app key")?;
     for folder in &config.shared_folders {
         if crate::shared_folder_app_key_can_write_roots(folder, &state.app_key_pubkey)
             && let Some(root) = folder.app_key_roots.get(&state.app_key_pubkey)
@@ -1340,6 +1363,9 @@ pub fn parse_direct_root_key_hint(key: &str) -> Option<DirectRootKeyHint> {
             let mut parts = rest.splitn(4, ':');
             let app_key_pubkey = parts.next()?.to_ascii_lowercase();
             let drive_id = parts.next()?.to_string();
+            if drive_id == crate::private_trash::DRIVE_ID {
+                return None;
+            }
             let app_key_seq = parts.next()?.parse().ok()?;
             let root_and_recipients = parts.next()?;
             let (root_cid, recipients) = root_and_recipients.rsplit_once(':')?;
@@ -1481,6 +1507,48 @@ mod tests {
             &authorized,
             &["authorized".to_string()]
         ));
+    }
+
+    #[test]
+    fn private_trash_transport_requires_a_signed_envelope_for_the_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile = Profile::create(dir.path(), None).unwrap();
+        let state = &profile.state;
+        let cid = Cid::encrypted([12; 32], [13; 32]);
+        let mut drive = crate::private_trash::owner_drive(state.root_scope_id());
+        drive.app_key_roots.insert(
+            state.app_key_pubkey.clone(),
+            AppKeyRootRef::legacy(cid.to_string(), 1700000000, 1),
+        );
+        let mut config = AppConfig {
+            profile: Some(state.clone()),
+            drives: vec![drive],
+            ..AppConfig::default()
+        };
+        let events = build_current_direct_root_events(dir.path(), &config, state).unwrap();
+        let mut trash_events = events
+            .iter()
+            .filter(|event| event.key.starts_with("drive-root:"));
+        let event = trash_events.next().unwrap();
+        assert!(trash_events.next().is_none());
+        assert!(event.key.contains(&hashtree_core::to_hex(&cid.hash)));
+        assert!(!event.key.contains(&hex::encode(cid.key.unwrap())));
+        assert!(!should_publish_direct_root_hint(
+            &event.key,
+            DirectRootPublishSource::LocalCurrent
+        ));
+        let illegitimate_hint = format!(
+            "drive-root:{}:trash:3:{}:{}",
+            state.app_key_pubkey, cid, state.app_key_pubkey
+        );
+        let report = apply_direct_root_key_hint_to_config(
+            &mut config,
+            &illegitimate_hint,
+            &state.app_key_pubkey,
+            1700000001,
+        )
+        .unwrap();
+        assert_eq!(report.outcome, DirectRootHintApply::NotRootKey);
     }
 
     #[test]

@@ -139,6 +139,36 @@ fn encrypted_root(seed: u8, published_at: i64, dck_generation: u64) -> AppKeyRoo
     )
 }
 
+#[test]
+fn private_trash_root_is_discovered_for_its_owner_only() {
+    let dir = tempdir().unwrap();
+    let (mut config, owner) = config_with_owner_account(dir.path());
+    let scope = owner.state.root_scope_id();
+    let root = encrypted_root(41, 1700000000, 1);
+    let event = build_drive_root_event(owner.app_key.keys(), &scope, "trash", &root, &[]).unwrap();
+    let filters =
+        subscription_filters(&owner.state.app_key_pubkey, &scope, crate::PRIMARY_DRIVE_ID);
+    assert!(filters.iter().any(|filter| filter_matches(filter, &event)));
+
+    let stranger = Keys::generate();
+    let forged = build_drive_root_event(&stranger, &scope, "trash", &root, &[]).unwrap();
+    assert_eq!(
+        apply_remote_drive_root_event(&mut config, &forged, Some(owner.app_key.keys())).unwrap(),
+        DriveRootApply::UnauthorizedAppKey
+    );
+    assert!(config.drive("trash").is_none());
+    assert_eq!(
+        apply_remote_drive_root_event(&mut config, &event, Some(owner.app_key.keys())).unwrap(),
+        DriveRootApply::Applied
+    );
+    let trash = config.drive("trash").unwrap();
+    assert_eq!(trash.root_scope_id, scope);
+    assert_eq!(
+        trash.app_key_roots[&owner.state.app_key_pubkey].root_cid,
+        root.root_cid
+    );
+}
+
 fn causal_encrypted_root(
     seed: u8,
     published_at: i64,

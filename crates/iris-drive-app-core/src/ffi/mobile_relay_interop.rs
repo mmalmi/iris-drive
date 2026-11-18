@@ -204,15 +204,7 @@ pub(super) async fn publish_native_profile_roster_ops(
             .map_err(|error| format!("loading AppKey for native approval root: {error}"))?;
         tokio::time::timeout(
             std::time::Duration::from_secs(NATIVE_SYNC_RELAY_TIMEOUT_SECS),
-            iris_drive_core::relay_sync::publish_drive_root(
-                config_dir,
-                relay_client,
-                app_key.keys(),
-                &handoff.root_scope_id,
-                &handoff.drive_id,
-                &handoff.root,
-                &handoff.authorized_app_keys,
-            ),
+            handoff.publish(config_dir, relay_client, app_key.keys()),
         )
         .await
         .map_err(|_| "publishing native approval Drive root timed out".to_string())?
