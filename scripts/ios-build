@@ -66,6 +66,7 @@ IOS_UPLOAD_TRANSPORT="${IRIS_DRIVE_IOS_UPLOAD_TRANSPORT:-HTTP}"
 IOS_INTERNAL_ONLY="${IRIS_DRIVE_IOS_INTERNAL_ONLY:-true}"
 IOS_SIGNING_STYLE="${IRIS_DRIVE_IOS_SIGNING_STYLE:-manual}"
 IOS_ARCHIVE_PRIVACY_VERIFIED=false
+IOS_HOSTED_STAGE=""
 TRANSPORTER="${IRIS_DRIVE_ITMS_TRANSPORTER:-/Applications/Transporter.app/Contents/itms/bin/iTMSTransporter}"
 
 usage() {
@@ -564,9 +565,6 @@ use_hosted_ios_archive() {
   trap 'rm -rf -- "$IOS_HOSTED_STAGE"' EXIT
   python3 "$ROOT/scripts/unpack-hosted-product.py" "$product/ios-release-products.tar.gz" "$IOS_HOSTED_STAGE"
   ARCHIVE_PATH="$IOS_HOSTED_STAGE/IrisDriveIOS.xcarchive"
-  if [[ "$1" == ios-export ]]; then
-    python3 "$ROOT/scripts/ios-distribution-entitlements.py" prepare-archive "$ARCHIVE_PATH" "$IOS_DIR" "$APP_GROUP_IDENTIFIER"
-  fi
 }
 
 verify_ios_export_entitlements() {
@@ -578,6 +576,9 @@ run_ios_export() {
   [[ -d "$ARCHIVE_PATH" ]] || { echo "iOS release archive not found." >&2; exit 1; }
   verify_ios_release_sdk archive "$ARCHIVE_PATH"
   verify_ios_archive_license
+  if [[ -n "$IOS_HOSTED_STAGE" ]]; then
+    python3 "$ROOT/scripts/ios-distribution-entitlements.py" prepare-archive "$ARCHIVE_PATH" "$IOS_DIR" "$APP_GROUP_IDENTIFIER"
+  fi
   verify_ios_archive_privacy
   rm -rf "$EXPORT_DIR"
   ensure_dir "$EXPORT_DIR"
@@ -686,7 +687,7 @@ run_ios_testflight_public() {
 }
 
 if [[ -n "${IRIS_DRIVE_IOS_HOSTED_PRODUCT_DIR:-}" && ( "${1:-}" == ios-export || "${1:-}" == ios-upload ) ]]; then
-  use_hosted_ios_archive "$1"
+  use_hosted_ios_archive
 fi
 
 case "${1:-}" in
