@@ -120,60 +120,83 @@ jobs:
       PRODUCT_PLATFORM: ${{ matrix.platform }}
       CARGO_BUILD_JOBS: '2'
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: tooling
           persist-credentials: false
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: source
           ref: ${{ env.SOURCE_COMMIT }}
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - name: Checkout reviewed input installers
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          node-version: '24'
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: ilammy/msvc-dev-cmd@v1
+          repository: irislib/iris-chat-rs
+          ref: 061c1747575e216db4506d12f2d358dd8c8e0241
+          persist-credentials: false
+          path: build-inputs
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /linux/scripts/pinned-apt.sh
+            /linux/build-inputs/apt-snapshots.tsv
+            /scripts/release-build-inputs.py
+            /scripts/release-build-inputs.json
+            /scripts/android-release-inputs.py
+            /scripts/android-release-inputs.json
+            /android/gradle/wrapper/gradle-wrapper.jar
+            /android/gradle/wrapper/gradle-wrapper.properties
+      - name: Install verified Node.js
+        shell: bash
+        run: bash tooling/scripts/hosted-tool-archives.sh node
+      - uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756 # v1
         if: runner.os == 'Windows'
         with:
           arch: x64
-      - uses: actions/setup-dotnet@v4
+      - name: Install verified .NET SDK
         if: runner.os == 'Windows'
-        with:
-          dotnet-version: '8.0.x'
-      - name: Install Apple build tools
-        if: runner.os == 'macOS'
-        run: brew list xcodegen >/dev/null 2>&1 || brew install xcodegen
+        shell: bash
+        run: bash tooling/scripts/hosted-tool-archives.sh dotnet
       - name: Select submission-compatible iOS SDK
         if: startsWith(matrix.platform, 'ios')
         run: |
           test -d /Applications/Xcode_26.2.app/Contents/Developer
           echo 'DEVELOPER_DIR=/Applications/Xcode_26.2.app/Contents/Developer' >> "$GITHUB_ENV"
           /Applications/Xcode_26.2.app/Contents/Developer/usr/bin/xcodebuild -version
-      - name: Install Linux build tools
+      - name: Install verified Rust and Apple build tools
+        shell: bash
+        run: |
+          args=()
+          case "$PRODUCT_PLATFORM" in
+            macos-*) args+=(--tools macos) ;;
+            ios-sim-*) args+=(--tools ios --target aarch64-apple-ios-sim) ;;
+            ios-*) args+=(--tools ios --target aarch64-apple-ios) ;;
+            android) args+=(--target aarch64-linux-android) ;;
+            windows) args+=(--bash "$(cygpath -w "$BASH")") ;;
+          esac
+          python3 -B build-inputs/scripts/release-build-inputs.py --install --work "$RUNNER_TEMP/iris-rust" "${args[@]}"
+      - name: Install verified Linux build dependencies
         if: runner.os == 'Linux'
+        shell: bash
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes libdbus-1-dev libfuse3-dev libgtk-4-dev libadwaita-1-dev libxdo-dev pkg-config protobuf-compiler
-      - uses: actions/setup-java@v4
+          packages=(cmake libdbus-1-dev pkg-config pkgconf pkgconf-bin protobuf-compiler)
+          if [[ "$PRODUCT_PLATFORM" == linux ]]; then
+            packages+=(libfuse3-dev libgtk-4-dev libadwaita-1-dev libxdo-dev)
+          fi
+          sudo bash build-inputs/linux/scripts/pinned-apt.sh ubuntu-noble "${packages[@]}"
+      - name: Install verified Android tools
         if: matrix.platform == 'android'
-        with:
-          distribution: temurin
-          java-version: '17'
-      - uses: gradle/actions/setup-gradle@v4
-        if: matrix.platform == 'android'
-        with:
-          gradle-version: '8.13'
-      - name: Install Android NDK
-        if: matrix.platform == 'android'
+        shell: bash
         run: |
-          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" 'ndk;28.2.13676358' 'platforms;android-36' 'build-tools;36.0.0'
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/28.2.13676358" >> "$GITHUB_ENV"
-          cargo install --locked cargo-ndk
-      - name: Install Debian packager
+          bash tooling/scripts/hosted-tool-archives.sh gradle
+          python3 -B build-inputs/scripts/android-release-inputs.py --install \
+            --work "$RUNNER_TEMP/iris-android" --rust-work "$RUNNER_TEMP/iris-rust"
+          test -x "$RUNNER_TEMP/iris-android/sdk/build-tools/36.0.0/apksigner"
+      - name: Install verified Debian packager
         if: matrix.platform == 'linux'
-        run: cargo install --locked cargo-deb
-      - uses: actions/cache/restore@v4
+        shell: bash
+        run: bash tooling/scripts/hosted-tool-archives.sh cargo-deb
+      - uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         id: cache
         with:
           path: |
@@ -181,11 +204,11 @@ jobs:
             ~/.cargo/git
             source/target
             source/linux/target
-          key: drive-products-${{ matrix.platform }}-${{ runner.arch }}-${{ hashFiles('source/Cargo.lock', 'source/linux/Cargo.lock') }}
-          restore-keys: drive-products-${{ matrix.platform }}-${{ runner.arch }}-
+          key: drive-products-pinned-${{ matrix.platform }}-${{ runner.arch }}-${{ hashFiles('source/Cargo.lock', 'source/linux/Cargo.lock') }}
+          restore-keys: drive-products-pinned-${{ matrix.platform }}-${{ runner.arch }}-
       - name: Build source-bound unsigned products
         run: node tooling/scripts/build-hosted-products.mjs
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: drive-${{ matrix.platform }}-${{ env.SOURCE_COMMIT }}
           path: |
@@ -193,7 +216,17 @@ jobs:
             products/build-receipt.json
           if-no-files-found: error
           retention-days: 7
-      - uses: actions/cache/save@v4
+      - name: Retain build input receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: drive-inputs-${{ matrix.platform }}-${{ env.SOURCE_COMMIT }}
+          path: |
+            ${{ runner.temp }}/iris-rust/receipt.json
+            ${{ runner.temp }}/iris-android/receipt.json
+          if-no-files-found: warn
+          retention-days: 7
+      - uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         if: ${{ !cancelled() && steps.cache.outputs.cache-hit != 'true' }}
         with:
           path: |

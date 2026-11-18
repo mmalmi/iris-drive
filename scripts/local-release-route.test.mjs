@@ -1,6 +1,8 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { accessSync, constants, existsSync, readFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { accessSync, constants, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { androidBuildToolsVersion } from './release-android-signing.mjs'
@@ -21,11 +23,31 @@ test('the hosted products workflow still produces what staging downloads and ver
   for (const platform of [...stagedPlatforms, ...verifiedOnlyPlatforms]) {
     assert.ok(workflow.includes(`"${platform}"`), `${platform} is built by the workflow matrix`)
   }
-  assert.ok(workflow.includes(`build-tools;${androidBuildToolsVersion}`), 'signing uses the hosted build-tools version')
+  assert.ok(workflow.includes(`/build-tools/${androidBuildToolsVersion}/apksigner`), 'signing uses the hosted build-tools version')
   const builder = read('scripts/build-hosted-products.mjs')
   assert.ok(builder.includes('`${platform}-products.tar.gz`') && builder.includes('build-receipt.json'))
   assert.match(read('scripts/ios-build'), /IRIS_DRIVE_IOS_HOSTED_PRODUCT_DIR/)
   for (const command of Object.keys(iosPhases)) accessSync(join(root, 'scripts', command), constants.X_OK)
+})
+
+test('the hosted tool installer rejects an archive before extraction on a checksum mismatch', t => {
+  const work = mkdtempSync(join(tmpdir(), 'drive-hosted-tool-test-'))
+  t.after(() => rmSync(work, { recursive: true, force: true }))
+  writeFileSync(join(work, 'uname'), '#!/usr/bin/env bash\ncase "$1" in -s) echo Linux;; -m) echo x86_64;; esac\n', { mode: 0o755 })
+  writeFileSync(join(work, 'curl'), '#!/usr/bin/env bash\nwhile [[ "$1" != --output ]]; do shift; done\nprintf bad > "$2"\n', { mode: 0o755 })
+  writeFileSync(join(work, 'tar'), '#!/usr/bin/env bash\ntouch "$DRIVE_TOOL_TEST_EXTRACTED"\n', { mode: 0o755 })
+  const extracted = join(work, 'extracted')
+  const pathFile = join(work, 'path')
+  const result = spawnSync('bash', [join(root, 'scripts/hosted-tool-archives.sh'), 'node'], {
+    encoding: 'utf8',
+    env: { ...process.env, PATH: `${work}:${process.env.PATH}`, RUNNER_OS: process.platform === 'darwin' ? 'macOS' : 'Linux',
+      RUNNER_TEMP: work,
+      GITHUB_PATH: pathFile, DRIVE_TOOL_TEST_EXTRACTED: extracted },
+  })
+  assert.equal(result.status, 1, result.stderr)
+  assert.match(result.stdout + result.stderr, /node-v24\.22\.2-linux-x64\.tar\.xz: FAILED/)
+  assert.equal(existsSync(extracted), false)
+  assert.equal(existsSync(pathFile), false)
 })
 
 test('every script in the README release route exists', () => {

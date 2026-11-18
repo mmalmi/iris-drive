@@ -228,7 +228,7 @@ for lock in Cargo.lock linux/Cargo.lock; do
   require_registry_package "$lock" nvpn-fips-tcp 0.2.6 299df22559c4af63e7d276fcb90cf000f2f1cd5546c213f17d8860154c1383d7
   require_registry_package "$lock" nvpn-fips-tcp-endpoint 0.2.57 8f3fa2f912e0d105a7ee4166c15df11ac5179d453a152b339e351868ecb871eb
   require_registry_package "$lock" git-remote-htree 0.4.2 fee9332a3366c8a61709d12973c79451721d0372706abf8e37b2a6da39808f7e
-  require_registry_package "$lock" hashtree-cli 0.4.6 4c692044a77a611977552d0ac0205a81602ef2098232b89b1a993f6bcbdeb34e
+  require_registry_package "$lock" hashtree-cli 0.4.8 f000625322ca3ba2f2997d54754ba8fdb9f2069147f761c141b846a5c8bda8ae
   require_registry_package "$lock" hashtree-updater 0.3.0 d74b436997bd5c98adeeef4d03177a9403f24eeb55c76ea0f3cb42a3a7c62e52
   require_registry_package "$lock" hashtree-config 0.2.83 661c0bec57ba49999860fc418a7e656714cd79d82a3c3ee272794b90bb49db76
   require_registry_package "$lock" hashtree-core 0.3.1 ad3de9ec303ed9a02551e91ef30d6ac62f44b1cb46f1fd44ab89f7570c4ff127
@@ -238,7 +238,7 @@ for lock in Cargo.lock linux/Cargo.lock; do
   require_registry_package "$lock" hashtree-network 0.3.0 e5e282964a08e2ee6851006a91823740672fa5f103d5de652532ee03186381c5
   require_registry_package "$lock" hashtree-nostr 0.4.0 381059616e65a3154eeac615a811ef18d854400958f78dfb8e11024f65800501
   require_registry_package "$lock" hashtree-nostr-pubsub 0.4.0 114ab31557c3e5466969fcfa9d7f0a294fbd7069bc501274f47860ff763b6b5b
-  require_registry_package "$lock" nostr-pubsub 0.1.21 8e06419d62a5196b9d9d5f7ed50a54664a08cec1497de18cae5a2643547d3907
+  require_registry_package "$lock" nostr-pubsub 0.1.22 30d7f47d8b4a1785dcb667abaf69a02b39b9978a6c72a2af444ad60560e48fe2
   require_registry_package "$lock" nostr-pubsub-fips 0.6.6 65a202b9198f979184b476ecb1b5614be02ac059e91901212ff3df7e4d9f19af
   require_registry_package "$lock" nostr-pubsub-reconcile 0.1.4 63865303e25e95741c1ccaf51873124bfb2ebe74660a8d4c9c7df15b02d2f18a
   require_registry_package "$lock" nostr-pubsub-social-graph 0.3.1 6f7f5d8b5ae252baf6bba6f1fafcd4d0df80a2a9b31eaccc3786016e35f25abd

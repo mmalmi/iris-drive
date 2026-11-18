@@ -1,9 +1,11 @@
 # Changelog
 
-## Unreleased
+## 0.1.48 - 2026-11-18
 
 - On iPhone and Android, Devices shows when a linked browser comes online or
   goes offline even if a relay stops responding to device-list updates.
+- Keep keyed catalog reads on the native Hashtree connection.
+- Update Hashtree CLI to 0.4.8 and nostr-pubsub to 0.1.22.
 
 ## 0.1.47 - 2026-11-17
 

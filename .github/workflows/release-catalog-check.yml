@@ -21,27 +21,34 @@ jobs:
       PRODUCT_INPUTS: ${{ github.workspace }}/products
       CHECK_OUTPUT: ${{ github.workspace }}/catalog-check
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: tooling
           persist-credentials: false
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           path: source
           ref: ${{ inputs.commit }}
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - name: Checkout reviewed input installers
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
-          node-version: '24'
-      - uses: pnpm/action-setup@v4
-        with:
-          version: '10.23.0'
-      - name: Install the native runtime and pinned Hashtree source checkout tools
+          repository: irislib/iris-chat-rs
+          ref: 061c1747575e216db4506d12f2d358dd8c8e0241
+          persist-credentials: false
+          path: build-inputs
+          sparse-checkout-cone-mode: false
+          sparse-checkout: |
+            /linux/scripts/pinned-apt.sh
+            /linux/build-inputs/apt-snapshots.tsv
+      - name: Install verified catalog check tools
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes libfuse3-3
-          node tooling/scripts/release-tools.mjs install
-      - uses: actions/download-artifact@v4
+          bash tooling/scripts/hosted-tool-archives.sh node
+          bash tooling/scripts/hosted-tool-archives.sh pnpm
+          sudo bash build-inputs/linux/scripts/pinned-apt.sh ubuntu-noble libfuse3-3
+      - name: Install pinned Hashtree source checkout tools
+        run: node tooling/scripts/release-tools.mjs install
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           github-token: ${{ github.token }}
           run-id: ${{ inputs.product_run }}
@@ -52,7 +59,7 @@ jobs:
           mkdir -p "$CHECK_OUTPUT"
           node tooling/scripts/check-hosted-catalog.mjs 2>&1 | tee "$CHECK_OUTPUT/catalog.log"
         shell: bash
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: always()
         with:
           name: catalog-check-${{ inputs.commit }}

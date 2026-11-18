@@ -1,4 +1,5 @@
 # path line_limit reason
+android/gradle/verification-metadata.xml 4000 Generated Gradle checksums for Android production and instrumentation dependencies.
 windows/WindowsCloudFiles.cs 2600 Windows Cloud Files interop is still monolithic.
 android/app/src/androidTest/java/to/iris/drive/app/IrisDriveAndroidGuiFlowTest.kt 1116 Android GUI linking/share/browser smoke coverage plus login parity assertions and strict approval persistence waits need a later scenario split.
 android/app/src/main/java/to/iris/drive/app/IrisDriveMainContent.kt 1450 Legacy Android Compose shell pending panel-module split.

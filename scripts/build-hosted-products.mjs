@@ -46,7 +46,6 @@ if (platform.startsWith('macos') || platform.startsWith('ios')) {
   const configuration = debug ? 'Debug' : 'Release'
   const target = mac ? 'aarch64-apple-darwin' : simulator ? 'aarch64-apple-ios-sim' : 'aarch64-apple-ios'
   env = { ...env, CARGO_TARGET_DIR: join(root, 'target') }
-  run('rustup', ['target', 'add', target])
   const args = ['build', '--locked', '--target', target, '-p', 'iris-drive-app-core']
   if (mac) args.push('-p', 'idrive')
   if (!debug) args.push('--release')
@@ -151,7 +150,6 @@ if (platform.startsWith('macos') || platform.startsWith('ios')) {
   }
 } else {
   env = { ...env, CARGO_TARGET_DIR: join(root, 'target') }
-  run('rustup', ['target', 'add', 'aarch64-linux-android'])
   run('gradle', ['-p', join(root, 'android'), '--no-daemon', '--max-workers=2',
     `-PirisDriveVersionName=${version}`, `-PirisDriveVersionCode=${release.buildNumberFromVersion(version)}`,
     ':app:assembleRelease', ':app:bundleRelease', ':app:assembleUiTest', ':app:assembleUiTestAndroidTest'])

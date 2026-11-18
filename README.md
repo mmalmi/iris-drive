@@ -418,8 +418,12 @@ gh workflow run product-lab.yml -R irislib/iris-stack --ref master -f drive_rev=
 ```
 
    The products run uploads unsigned `drive-<platform>-<sha>` archives with build
-   receipts. The stack gate's companion pins are in `scripts/mesh-release-gate.mjs`;
-   its `iris-stack-product-gate` artifact holds the `receipt.json` used for
+   receipts. It uses checksum-verified tool archives, a pinned Rust toolchain
+   and a verified Ubuntu package snapshot. Android verifies Gradle artifacts
+   against committed SHA-256 checksums. macOS and Windows use the Xcode
+   and Visual Studio tools installed on their hosted runners. The stack gate's
+   companion pins are in `scripts/mesh-release-gate.mjs`.
+   Its `iris-stack-product-gate` artifact holds the `receipt.json` used for
    `IRIS_STACK_GATE_RECEIPT`.
    The products run also opens the published Iris Sites catalog in Chromium
    through the exact packaged Linux CLI's native browser bridge with a fresh

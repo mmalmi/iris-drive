@@ -32,6 +32,7 @@ val hasReleaseSigning =
 android {
     namespace = "to.iris.drive.app"
     compileSdk = 36
+    buildToolsVersion = "36.0.0"
     testBuildType = "uiTest"
 
     sourceSets.named("main") {
