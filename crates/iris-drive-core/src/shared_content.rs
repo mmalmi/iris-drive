@@ -2,9 +2,10 @@
 //! its ancestor history, or a recipient's same-named local folder as a share.
 use std::{collections::BTreeMap, path::Path};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, bail, ensure};
 use hashtree_core::{Cid, HashTree, LinkType, Store};
 
+use crate::shared_owner_return::markers::{self, RemovalMarker};
 use crate::{
     AppConfig, AppKeyRootRef, Daemon, PRIMARY_DRIVE_ID, SharedFolder,
     config_lock::ConfigMutationLock,
@@ -168,29 +169,113 @@ pub(crate) fn share_root_meta(folder: &SharedFolder, app_key: &str) -> DriveRoot
 pub async fn write_shared_folder<S: Store>(
     tree: &HashTree<S>,
     folder: &mut SharedFolder,
-    app_key: &str,
+    keys: &nostr_sdk::Keys,
     edited: Cid,
     base: &Cid,
 ) -> Result<()> {
-    if !crate::shared_folder_app_key_can_write_roots(folder, app_key) {
+    let app_key = keys.public_key().to_hex();
+    if !crate::shared_folder_app_key_can_write_roots(folder, &app_key) {
         bail!("This shared folder is read-only");
     }
+    let current = crate::projection::shared_folder_merged_root(tree, folder).await?;
+    let prepared = crate::shared_owner_return::prepare_edit(
+        tree,
+        folder,
+        keys,
+        edited,
+        base,
+        &current.root_cid,
+        false,
+    )
+    .await?;
+    write_shared_folder_delta(
+        tree,
+        folder,
+        &app_key,
+        prepared.root,
+        base,
+        &current.root_cid,
+        &prepared.allowed_removals,
+    )
+    .await
+}
+
+pub(crate) async fn write_shared_folder_delta<S: Store>(
+    tree: &HashTree<S>,
+    folder: &mut SharedFolder,
+    app_key: &str,
+    edited: Cid,
+    base: &Cid,
+    current: &Cid,
+    allowed_removals: &std::collections::BTreeSet<String>,
+) -> Result<()> {
+    write_shared_folder_change(
+        tree,
+        folder,
+        app_key,
+        SharedFolderChange {
+            edited,
+            base,
+            current,
+            allowed_removals,
+            marker: None,
+        },
+    )
+    .await
+}
+
+pub(crate) struct SharedFolderChange<'a> {
+    pub edited: Cid,
+    pub base: &'a Cid,
+    pub current: &'a Cid,
+    pub allowed_removals: &'a std::collections::BTreeSet<String>,
+    pub marker: Option<&'a RemovalMarker>,
+}
+
+pub(crate) async fn write_shared_folder_change<S: Store>(
+    tree: &HashTree<S>,
+    folder: &mut SharedFolder,
+    app_key: &str,
+    change: SharedFolderChange<'_>,
+) -> Result<()> {
+    let SharedFolderChange {
+        edited,
+        base,
+        current,
+        allowed_removals,
+        marker,
+    } = change;
+    ensure!(
+        crate::shared_folder_app_key_can_write_roots(folder, app_key),
+        "This shared folder is read-only"
+    );
     let previous = folder
         .app_key_roots
         .get(app_key)
         .map(|r| Cid::parse(&r.root_cid))
         .transpose()?;
-    let current = crate::projection::shared_folder_merged_root(tree, folder).await?;
     let delta = crate::indexer::local_visible_root_for_mount_import(
         tree,
         &edited,
         previous.as_ref(),
         base,
-        Some(&current.root_cid),
+        Some(current),
         None,
     )
     .await?;
+    ensure!(
+        delta.tombstone_paths.is_subset(allowed_removals),
+        "The shared file stays in the folder until its owner confirms it is saved"
+    );
     let meta = share_root_meta(folder, app_key);
+    let mut tombstones = delta.tombstone_paths;
+    if let Some(marker) = marker {
+        tombstones.remove(
+            &crate::shared_owner_return::read_request(&marker.request)?
+                .path
+                .join("/"),
+        );
+    }
     let root =
         crate::indexer::layer_history_and_meta_on_root_with_tombstone_base_paths_and_replacements(
             tree,
@@ -199,10 +284,11 @@ pub async fn write_shared_folder<S: Store>(
             Some(base),
             meta.created_at,
             Some(&meta),
-            Some(&delta.tombstone_paths),
+            Some(&tombstones),
             Some(&delta.kind_replacement_paths),
         )
         .await?;
+    let root = markers::attach(tree, &root, folder, marker).await?;
     folder.app_key_roots.insert(
         app_key.into(),
         AppKeyRootRef::from_meta(root.to_string(), meta.created_at, &meta),
@@ -214,6 +300,7 @@ pub async fn write_shared_folder<S: Store>(
 /// mounts are independent of the imported personal directory.
 pub(crate) async fn import_owned_shared_folders<S: Store>(
     tree: &HashTree<S>,
+    config_dir: &Path,
     config: &mut AppConfig,
     imported: &Cid,
     previous_import: Option<&Cid>,
@@ -222,7 +309,14 @@ pub(crate) async fn import_owned_shared_folders<S: Store>(
         return Ok(());
     };
     let owner = profile.profile_id;
-    let app_key = profile.app_key_pubkey.clone();
+    if !config
+        .shared_folders
+        .iter()
+        .any(|folder| folder.owner_profile_id == owner)
+    {
+        return Ok(());
+    }
+    let device = crate::AppKey::load(crate::paths::key_path_in(config_dir))?;
     seed_shared_roots(tree, config).await?;
     for folder in config
         .shared_folders
@@ -250,7 +344,7 @@ pub(crate) async fn import_owned_shared_folders<S: Store>(
             }
         };
         if root != base {
-            write_shared_folder(tree, folder, &app_key, root, &base).await?;
+            write_shared_folder(tree, folder, device.keys(), root, &base).await?;
         }
     }
     Ok(())
@@ -258,14 +352,17 @@ pub(crate) async fn import_owned_shared_folders<S: Store>(
 
 pub(crate) async fn route_shared_edits<S: Store>(
     tree: &HashTree<S>,
-    config: &mut AppConfig,
+    config_dir: &Path,
+    persisted: &mut AppConfig,
     mut edited: Cid,
     base: Option<Cid>,
     local_only: bool,
 ) -> Result<(Cid, Option<Cid>)> {
-    if config.shared_folders.is_empty() {
+    if persisted.shared_folders.is_empty() {
         return Ok((edited, base));
     }
+    let mut transaction = persisted.clone();
+    let config = &mut transaction;
     seed_shared_roots(tree, config).await?;
     let projection = crate::primary_merged_view(tree, config).await?;
     let current = crate::primary_merged_root_from_view(tree, config, &projection)
@@ -337,13 +434,42 @@ pub(crate) async fn route_shared_edits<S: Store>(
             bail!("This shared folder is read-only");
         }
     }
-    for (id, (changed, before)) in changes {
-        let folder = config
-            .shared_folders
-            .iter_mut()
-            .find(|folder| folder.share_id == id)
-            .context("Share missing")?;
-        write_shared_folder(tree, folder, &app_key, changed, &before).await?;
+    if !changes.is_empty() {
+        let device = crate::AppKey::load(crate::paths::key_path_in(config_dir))?;
+        let mut updated = Vec::new();
+        let mut requests = Vec::new();
+        for (id, (changed, before)) in changes {
+            let mut folder = config.shared_folder(id).context("Share missing")?.clone();
+            let live = crate::projection::shared_folder_merged_root(tree, &folder)
+                .await?
+                .root_cid;
+            let prepared = crate::shared_owner_return::prepare_edit(
+                tree,
+                &folder,
+                device.keys(),
+                changed,
+                &before,
+                &live,
+                true,
+            )
+            .await?;
+            write_shared_folder_delta(
+                tree,
+                &mut folder,
+                &app_key,
+                prepared.root,
+                &before,
+                &live,
+                &prepared.allowed_removals,
+            )
+            .await?;
+            requests.extend(prepared.requests);
+            updated.push(folder);
+        }
+        crate::shared_owner_return::remember_requests(config_dir, requests)?;
+        for folder in updated {
+            config.upsert_shared_folder(folder);
+        }
     }
     for path in projection
         .shared_mounts
@@ -354,6 +480,7 @@ pub(crate) async fn route_shared_edits<S: Store>(
         edited = remove_mount(tree, edited, path).await?;
         base = remove_mount(tree, base, path).await?;
     }
+    *persisted = transaction;
     Ok((edited, Some(base)))
 }
 

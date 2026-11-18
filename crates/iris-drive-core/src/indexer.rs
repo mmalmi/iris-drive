@@ -704,9 +704,9 @@ fn path_is_below_visible_selected_barrier(
 
 /// User-visible files and directories of one root, keyed by path.
 #[derive(Default)]
-struct VisibleEntries {
-    files: BTreeMap<String, TreeEntry>,
-    dirs: BTreeMap<String, TreeEntry>,
+pub(crate) struct VisibleEntries {
+    pub(crate) files: BTreeMap<String, TreeEntry>,
+    pub(crate) dirs: BTreeMap<String, TreeEntry>,
 }
 
 async fn visible_entries<S: Store>(
@@ -714,7 +714,16 @@ async fn visible_entries<S: Store>(
     root: &Cid,
 ) -> Result<VisibleEntries, IndexError> {
     let mut entries = VisibleEntries::default();
-    collect_visible_entries(tree, root, "", &mut entries).await?;
+    collect_visible_entries(tree, root, "", &mut entries, false).await?;
+    Ok(entries)
+}
+
+pub(crate) async fn required_visible_entries<S: Store>(
+    tree: &HashTree<S>,
+    root: &Cid,
+) -> Result<VisibleEntries, IndexError> {
+    let mut entries = VisibleEntries::default();
+    collect_visible_entries(tree, root, "", &mut entries, true).await?;
     Ok(entries)
 }
 
@@ -723,9 +732,15 @@ fn collect_visible_entries<'a, S: Store>(
     root: &'a Cid,
     prefix: &'a str,
     out: &'a mut VisibleEntries,
+    required: bool,
 ) -> futures::future::BoxFuture<'a, Result<(), IndexError>> {
     Box::pin(async move {
-        for entry in tree.list_directory(root).await? {
+        let entries = if required {
+            tree.list_directory_required(root).await?
+        } else {
+            tree.list_directory(root).await?
+        };
+        for entry in entries {
             if should_ignore_name(&entry.name) {
                 continue;
             }
@@ -740,7 +755,7 @@ fn collect_visible_entries<'a, S: Store>(
                     key: entry.key,
                 };
                 out.dirs.insert(path.clone(), entry);
-                collect_visible_entries(tree, &cid, &path, out).await?;
+                collect_visible_entries(tree, &cid, &path, out, required).await?;
             } else {
                 out.files.insert(path, entry);
             }

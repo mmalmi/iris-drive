@@ -481,6 +481,16 @@ pub(crate) fn cmd_provider(config_dir: &std::path::Path, command: ProviderCmd) -
                 path,
             } => {
                 let path = normalize_provider_path(&path)?;
+                if let Some(lock) = mutation_lock.as_ref()
+                    && let Some(id) =
+                        iris_drive_core::shared_owner_return::queue_shared_file_return(
+                            &daemon, &path, lock,
+                        )
+                        .await?
+                {
+                    println!("{}", json!({"return_request": id, "pending": true}));
+                    return Ok(());
+                }
                 let deleted_paths = provider_delete_tombstone_paths(&provider, &path).await?;
                 let phase = std::time::Instant::now();
                 delete_provider_path(&provider, &path).await?;

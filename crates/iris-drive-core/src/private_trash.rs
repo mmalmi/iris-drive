@@ -3,8 +3,8 @@ use anyhow::{Result, ensure};
 
 mod operations;
 mod tree;
-pub(crate) use operations::materialize_for_admission;
 pub use operations::{list, restore, trash};
+pub(crate) use operations::{materialize_for_admission, stage_share_return, verify_share_return};
 
 #[cfg(test)]
 mod tests;
@@ -81,7 +81,7 @@ pub(crate) fn owner_drive(root_scope_id: String) -> Drive {
         drive_id: DRIVE_ID.into(),
         display_name: "Trash".into(),
         role: DriveRole::Owner,
-        app_key_roots: Default::default(),
+        app_key_roots: std::collections::BTreeMap::new(),
         last_root_cid: None,
         key_hex: None,
     }

@@ -28,7 +28,7 @@ pub async fn shared_folder_merged_root<S: Store>(
     let mut drive = Drive::primary(folder.share_id.to_string());
     drive.app_key_roots = folder.app_key_roots.clone();
     let writers = crate::shared_folder_authorized_writer_pubkeys(folder);
-    let merged = drive_merged_view(tree, &drive, &writers).await?;
+    let merged = drive_merged_view(tree, &drive, &writers, Some(folder)).await?;
     drive_merged_root_from_view(tree, &drive, &writers, &merged).await
 }
 

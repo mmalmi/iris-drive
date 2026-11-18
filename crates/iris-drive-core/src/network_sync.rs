@@ -533,6 +533,14 @@ async fn sync_once_inner(
         }
     }
 
+    if !approval_still_pending
+        && let Err(error) = Box::pin(crate::shared_owner_return::sync_shared_file_returns(
+            &client, config_dir, timeout,
+        ))
+        .await
+    {
+        tracing::debug!(%error, "shared file returns will retry on the next sync");
+    }
     relay_sync::shutdown_client(&client).await;
     Ok(report)
 }

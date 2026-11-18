@@ -83,6 +83,7 @@ pub mod share_index;
 pub mod share_join;
 pub mod share_links;
 pub mod shared_content;
+pub mod shared_owner_return;
 pub mod sharing;
 pub mod sync;
 pub mod sync_cache;

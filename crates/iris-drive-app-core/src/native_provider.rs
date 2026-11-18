@@ -8,7 +8,7 @@ use hashtree_provider::{HashTreeProviderFs, ItemKind, ProviderFs};
 use iris_drive_core::config::DEFAULT_RELAYS;
 use iris_drive_core::paths::{config_path_in, key_path_in};
 use iris_drive_core::provider::{
-    ProviderListEntry, compose_provider_path, create_provider_dir, delete_provider_path,
+    ProviderListEntry, compose_provider_path, create_provider_dir,
     normalize_provider_document_path, normalize_provider_parent_path, normalize_provider_path,
     optional_normalized_provider_path, provider_entry_is_probable_os_placeholder,
     provider_file_probable_os_placeholder_family, provider_list_summary,
@@ -84,13 +84,6 @@ pub(crate) fn native_provider_write_json(
 
 pub(crate) fn native_provider_mkdir_json(data_dir: &str, path: &str) -> serde_json::Value {
     match run_native_provider_mkdir(data_dir, path) {
-        Ok(value) => value,
-        Err(error) => json!({"error": format!("{error:#}")}),
-    }
-}
-
-pub(crate) fn native_provider_delete_json(data_dir: &str, path: &str) -> serde_json::Value {
-    match run_native_provider_delete(data_dir, path) {
         Ok(value) => value,
         Err(error) => json!({"error": format!("{error:#}")}),
     }
@@ -514,26 +507,6 @@ fn run_native_provider_mkdir(data_dir: &str, path: &str) -> anyhow::Result<serde
     })
 }
 
-fn run_native_provider_delete(data_dir: &str, path: &str) -> anyhow::Result<serde_json::Value> {
-    ensure_daemon_available_for_provider_mutation(data_dir)?;
-    let runtime = native_provider_runtime()?;
-    runtime.block_on(async {
-        let path = normalize_provider_path(path)?;
-        let config_lock =
-            iris_drive_core::config_lock::ConfigMutationLock::acquire(Path::new(data_dir)).await?;
-        let (mut daemon, provider, visible_root) = native_provider(data_dir).await?;
-        delete_provider_path(&provider, &path).await?;
-        import_provider_mutation(
-            &mut daemon,
-            &provider,
-            &path,
-            Some(visible_root),
-            config_lock,
-        )
-        .await
-    })
-}
-
 fn run_native_provider_rename(
     data_dir: &str,
     old_path: &str,
@@ -656,6 +629,8 @@ where
     commit_provider_root(daemon, root, tombstone_base_root, changed_path, config_lock).await
 }
 
+mod delete;
+pub(crate) use delete::native_provider_delete_json;
 mod path;
 pub(crate) use path::{native_provider_compose_path_json, native_provider_reimport};
 use path::{run_native_provider_normalize_path, run_native_provider_resolve_path};

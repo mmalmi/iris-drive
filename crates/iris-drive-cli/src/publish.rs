@@ -23,7 +23,7 @@ pub(crate) fn cmd_publish(
             .await
             .context("connecting to relays")?;
 
-        let report = publish_current_state(&client, config_dir, &config, &state, true).await?;
+        let report = Box::pin(publish_current_state(&client, config_dir, &config, &state, true)).await?;
 
         relay_sync::shutdown_client(&client).await;
         let drive_iris_to_url = report
@@ -383,13 +383,13 @@ pub(crate) fn spawn_publish_current_state(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let started = std::time::Instant::now();
-        let payload = match publish_current_state(
+        let payload = match Box::pin(publish_current_state(
             &client,
             &config_dir,
             &config,
             &state,
             upload_blossom,
-        )
+        ))
         .await
         {
             Ok(report) => json!({
@@ -736,7 +736,13 @@ pub(crate) fn spawn_initial_publish(
     tokio::spawn(async move {
         let retry_storage = match tokio::time::timeout(
             std::time::Duration::from_secs(STARTUP_NETWORK_TIMEOUT_SECS),
-            publish_current_state(&client, &config_dir, &startup_config, &startup_state, true),
+            Box::pin(publish_current_state(
+                &client,
+                &config_dir,
+                &startup_config,
+                &startup_state,
+                true,
+            )),
         )
         .await
         {

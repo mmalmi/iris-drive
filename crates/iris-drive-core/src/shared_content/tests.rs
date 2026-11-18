@@ -5,7 +5,7 @@ use crate::{
 };
 
 #[tokio::test]
-async fn editor_changes_and_deletions_merge_while_reader_writes_are_rejected() {
+async fn editor_updates_merge_and_unverified_removals_leave_the_share_intact() {
     let alice_dir = tempfile::tempdir().unwrap();
     let bob_dir = tempfile::tempdir().unwrap();
     let cara_dir = tempfile::tempdir().unwrap();
@@ -51,12 +51,14 @@ async fn editor_changes_and_deletions_merge_while_reader_writes_are_rejected() {
         .set_entry(&initial, &[], "Remove.txt", &old, size, LinkType::Blob)
         .await
         .unwrap();
-    write_shared_folder(
+    write_shared_folder_delta(
         &tree,
         &mut folder,
         &alice.state.app_key_pubkey,
         initial,
         &empty,
+        &empty,
+        &Default::default(),
     )
     .await
     .unwrap();
@@ -69,14 +71,14 @@ async fn editor_changes_and_deletions_merge_while_reader_writes_are_rejected() {
         .set_entry(&base, &[], "Plan.txt", &new, size, LinkType::Blob)
         .await
         .unwrap();
-    let edited = tree.remove_entry(&edited, &[], "Remove.txt").await.unwrap();
+    let attempted_remove = tree.remove_entry(&edited, &[], "Remove.txt").await.unwrap();
     let before = folder.clone();
     assert!(
         write_shared_folder(
             &tree,
             &mut folder,
-            &cara.state.app_key_pubkey,
-            edited.clone(),
+            cara.app_key.keys(),
+            attempted_remove.clone(),
             &base
         )
         .await
@@ -85,7 +87,21 @@ async fn editor_changes_and_deletions_merge_while_reader_writes_are_rejected() {
         .contains("read-only")
     );
     assert_eq!(folder, before);
-    write_shared_folder(&tree, &mut folder, &bob.state.app_key_pubkey, edited, &base)
+    assert!(
+        write_shared_folder(
+            &tree,
+            &mut folder,
+            bob.app_key.keys(),
+            attempted_remove,
+            &base,
+        )
+        .await
+        .unwrap_err()
+        .to_string()
+        .contains("owner")
+    );
+    assert_eq!(folder, before);
+    write_shared_folder(&tree, &mut folder, bob.app_key.keys(), edited, &base)
         .await
         .unwrap();
     let result = crate::projection::shared_folder_merged_root(&tree, &folder)
@@ -97,7 +113,10 @@ async fn editor_changes_and_deletions_merge_while_reader_writes_are_rejected() {
         tree.get(&file, None).await.unwrap().unwrap(),
         b"Updated by editor"
     );
-    assert!(tree.resolve(&result, "Remove.txt").await.unwrap().is_none());
+    assert_eq!(
+        tree.resolve(&result, "Remove.txt").await.unwrap(),
+        Some(old.clone())
+    );
     let event = crate::nostr_events::build_drive_root_event(
         bob.app_key.keys(),
         &folder.share_id.to_string(),
@@ -134,6 +153,10 @@ async fn editor_changes_and_deletions_merge_while_reader_writes_are_rejected() {
         tree.get(&file, None).await.unwrap().unwrap(),
         b"Updated by editor"
     );
+    assert_eq!(
+        tree.resolve(&reader_root, "Remove.txt").await.unwrap(),
+        Some(old)
+    );
     config.shared_folders = vec![folder.clone()];
     config.save(config_path_in(alice_dir.path())).unwrap();
     crate::share_actions::dispatch_share_action_with_content(
@@ -162,7 +185,7 @@ async fn editor_changes_and_deletions_merge_while_reader_writes_are_rejected() {
         tree.get(&file, None).await.unwrap().unwrap(),
         b"Updated by editor"
     );
-    assert!(tree.resolve(&result, "Remove.txt").await.unwrap().is_none());
+    assert!(tree.resolve(&result, "Remove.txt").await.unwrap().is_some());
     crate::share_actions::dispatch_share_action_with_content(
         alice_dir.path(),
         crate::ShareAction::DeleteShare {
@@ -188,7 +211,7 @@ async fn editor_changes_and_deletions_merge_while_reader_writes_are_rejected() {
         tree.resolve(&personal.root_cid, "Picnic/Remove.txt")
             .await
             .unwrap()
-            .is_none()
+            .is_some()
     );
 }
 

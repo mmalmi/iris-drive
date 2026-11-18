@@ -72,6 +72,38 @@ impl DriveSources {
         Ok((sources, contents))
     }
 
+    pub(super) fn apply_shared_removals(
+        &self,
+        contents: &mut [SourceContents],
+        removals: &crate::shared_owner_return::markers::Removals,
+    ) {
+        if removals.is_empty() {
+            return;
+        }
+        for source in contents {
+            if let (Some(index), Some(root)) = (
+                self.trees.get(&source.app_key_pubkey),
+                self.roots.get(&source.app_key_pubkey),
+            ) {
+                source.files.retain(|file| {
+                    let (parent, name) = file.path.rsplit_once('/').unwrap_or(("", &file.path));
+                    !index
+                        .listings
+                        .get(parent)
+                        .and_then(|listing| listing.get(name))
+                        .is_some_and(|entry| {
+                            removals.matches(
+                                &file.path,
+                                entry,
+                                &source.app_key_pubkey,
+                                root.app_key_seq,
+                            )
+                        })
+                });
+            }
+        }
+    }
+
     fn resolved_from(&self, drive: &Drive, merge_app_keys: &[String]) -> bool {
         self.inputs.len() == merge_app_keys.len()
             && self

@@ -106,7 +106,7 @@ pub async fn primary_merged_view<S: Store>(
     let authorized = authorized_app_key_pubkeys(account);
     let merge_app_keys = merge_app_key_pubkeys(account, drive);
 
-    let mut merged = drive_merged_view(tree, drive, &merge_app_keys).await?;
+    let mut merged = drive_merged_view(tree, drive, &merge_app_keys, None).await?;
     merged.authorized_app_keys = authorized.len();
     shared::add_shared_mounts(tree, config, &mut merged).await?;
     Ok(merged)
@@ -116,8 +116,21 @@ async fn drive_merged_view<S: Store>(
     tree: &HashTree<S>,
     drive: &Drive,
     merge_app_keys: &[String],
+    share: Option<&crate::SharedFolder>,
 ) -> Result<PrimaryMergedView, ProjectionError> {
-    let (sources, source_contents) = DriveSources::load(tree, drive, merge_app_keys).await?;
+    let (sources, mut source_contents) = DriveSources::load(tree, drive, merge_app_keys).await?;
+    if let Some(folder) = share {
+        let removals = Box::pin(crate::shared_owner_return::markers::Removals::read(
+            tree,
+            folder,
+            source_contents
+                .iter()
+                .map(|source| source.cid.clone())
+                .collect(),
+        ))
+        .await?;
+        sources.apply_shared_removals(&mut source_contents, &removals);
+    }
     let mut roots = Vec::new();
     let mut contents = Vec::new();
     for source in source_contents {

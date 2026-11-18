@@ -151,3 +151,46 @@ mod tests {
         assert!(!hashes.contains(&missing_prev.hash));
     }
 }
+
+/// Verify every referenced encrypted block without retaining file bytes or
+/// fetching the same blocks a second time for integrity checks.
+pub(crate) async fn verify_reachable_blocks<S: Store>(
+    tree: &HashTree<S>,
+    root: &Cid,
+) -> Result<(), HashTreeError> {
+    let store = RequiredBlocks(tree.get_store().clone());
+    let verified = HashTree::new(hashtree_core::HashTreeConfig::new(std::sync::Arc::new(
+        store,
+    )));
+    collect_hashes(&verified, root, 4).await?;
+    Ok(())
+}
+
+struct RequiredBlocks<S: Store>(std::sync::Arc<S>);
+
+#[async_trait::async_trait]
+impl<S: Store> Store for RequiredBlocks<S> {
+    async fn put(&self, hash: Hash, data: Vec<u8>) -> Result<bool, hashtree_core::StoreError> {
+        self.0.put(hash, data).await
+    }
+
+    async fn get(&self, hash: &Hash) -> Result<Option<Vec<u8>>, hashtree_core::StoreError> {
+        let bytes = self.0.get(hash).await?.ok_or_else(|| {
+            hashtree_core::StoreError::Other("Required file block is unavailable".into())
+        })?;
+        if hashtree_core::sha256(&bytes) != *hash {
+            return Err(hashtree_core::StoreError::Other(
+                "File block failed its integrity check".into(),
+            ));
+        }
+        Ok(Some(bytes))
+    }
+
+    async fn has(&self, hash: &Hash) -> Result<bool, hashtree_core::StoreError> {
+        self.0.has(hash).await
+    }
+
+    async fn delete(&self, hash: &Hash) -> Result<bool, hashtree_core::StoreError> {
+        self.0.delete(hash).await
+    }
+}

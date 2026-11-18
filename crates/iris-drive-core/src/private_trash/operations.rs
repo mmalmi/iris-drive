@@ -203,6 +203,64 @@ fn state(daemon: &Daemon) -> Result<&ProfileState> {
     Ok(state)
 }
 
+/// Save an owner's shared file under the request nonce while the caller
+/// holds the config lock. Existing removal markers prevent resurrection.
+pub(crate) async fn stage_share_return(
+    daemon: &mut Daemon,
+    item: &TrashItem,
+    content: &TreeEntry,
+) -> Result<()> {
+    let state = state(daemon)?;
+    item.validate(state.profile_id, &item.id)?;
+    let mut snapshot = read_heads(daemon, state).await?;
+    if let Some(stored) = snapshot.items.get(&item.id) {
+        ensure!(
+            &stored.item == item && same_entry(&stored.content, content),
+            "Trash already contains a different payload for this return"
+        );
+        if let Some(current) = daemon
+            .config()
+            .drive(DRIVE_ID)
+            .and_then(|drive| drive.app_key_roots.get(&state.app_key_pubkey))
+            && verify_share_return(
+                daemon.tree(),
+                &Cid::parse(&current.root_cid)?,
+                item,
+                content,
+            )
+            .await
+            .is_ok()
+        {
+            return Ok(());
+        }
+    } else {
+        snapshot
+            .insert(daemon.tree(), item.clone(), content.clone())
+            .await?;
+    }
+    let root = snapshot.write(daemon.tree()).await?;
+    daemon.import_visible_root_for_drive(DRIVE_ID, root).await?;
+    Ok(())
+}
+
+pub(crate) async fn verify_share_return<S: Store>(
+    tree: &HashTree<S>,
+    root: &Cid,
+    item: &TrashItem,
+    content: &TreeEntry,
+) -> Result<()> {
+    let snapshot = TrashTree::read(tree, item.account, std::slice::from_ref(root)).await?;
+    let stored = snapshot
+        .items
+        .get(&item.id)
+        .context("Returned file is missing from private Trash")?;
+    ensure!(
+        &stored.item == item && same_entry(&stored.content, content),
+        "Private Trash contains a different return"
+    );
+    verify_content(tree, &stored.content).await
+}
+
 /// Hold the config mutation lock while preparing the causal handoff root.
 pub(crate) async fn materialize_for_admission(daemon: &mut Daemon) -> Result<()> {
     if daemon.config().drive(DRIVE_ID).is_none() {
@@ -332,17 +390,8 @@ async fn lookup<S: Store>(tree: &HashTree<S>, dir: &Cid, name: &str) -> Result<O
 }
 
 async fn verify_content<S: Store>(tree: &HashTree<S>, entry: &TreeEntry) -> Result<()> {
-    let hashes = hashtree_core::diff::collect_hashes(tree, &entry_cid(entry), 4).await?;
-    let store = tree.get_store();
-    for hash in hashes {
-        let bytes = store
-            .get(&hash)
-            .await?
-            .context("Trash payload blocks are unavailable")?;
-        ensure!(
-            hashtree_core::sha256(&bytes) == hash,
-            "Trash payload block failed its integrity check"
-        );
-    }
+    crate::block_sync::verify_reachable_blocks(tree, &entry_cid(entry))
+        .await
+        .context("Verifying Trash payload blocks")?;
     Ok(())
 }

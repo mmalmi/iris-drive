@@ -505,7 +505,13 @@ async fn handle_gateway_request(
     }
 
     if uri.path() == SHARE_ACTION_API_PATH {
-        return handle_share_action_api(&state, &method, &headers, body.as_ref()).await;
+        return Box::pin(handle_share_action_api(
+            &state,
+            &method,
+            &headers,
+            body.as_ref(),
+        ))
+        .await;
     }
 
     if is_htree_runtime_ws_path(uri.path()) && htree_runtime_host_allowed(&headers) {

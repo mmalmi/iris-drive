@@ -304,6 +304,7 @@ pub(crate) fn cmd_daemon(
         ));
         let mut share_index_changed_rx =
             start_share_index_reconciler(&client, config_dir, &daemon_tasks);
+        start_shared_file_returns(&client, config_dir, &daemon_tasks);
         // How much of the Drive this device holds, for the profile's other devices.
         let (_, device_storage_task) = iris_drive_core::device_storage::DeviceStorageReporter::spawn(
             config_dir,

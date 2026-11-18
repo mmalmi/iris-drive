@@ -114,3 +114,24 @@ fn start_share_index_reconciler(
     }));
     changed_rx
 }
+
+fn start_shared_file_returns(
+    client: &nostr_sdk::Client,
+    config_dir: &Path,
+    daemon_tasks: &DaemonTaskSet,
+) {
+    let client = client.clone();
+    let config_dir = config_dir.to_path_buf();
+    daemon_tasks.push(tokio::spawn(async move {
+        let mut timer = tokio::time::interval(std::time::Duration::from_secs(30));
+        timer.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            timer.tick().await;
+            if let Err(error) = iris_drive_core::shared_owner_return::sync_shared_file_returns(
+                &client, &config_dir, std::time::Duration::from_secs(6),
+            ).await {
+                tracing::debug!(%error, "shared file return sync will retry");
+            }
+        }
+    }));
+}
