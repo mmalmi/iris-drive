@@ -1518,7 +1518,7 @@ mod tests {
         let mut drive = crate::private_trash::owner_drive(state.root_scope_id());
         drive.app_key_roots.insert(
             state.app_key_pubkey.clone(),
-            AppKeyRootRef::legacy(cid.to_string(), 1700000000, 1),
+            AppKeyRootRef::legacy(cid.to_string(), 1_700_000_000, 1),
         );
         let mut config = AppConfig {
             profile: Some(state.clone()),
@@ -1545,7 +1545,7 @@ mod tests {
             &mut config,
             &illegitimate_hint,
             &state.app_key_pubkey,
-            1700000001,
+            1_700_000_001,
         )
         .unwrap();
         assert_eq!(report.outcome, DirectRootHintApply::NotRootKey);

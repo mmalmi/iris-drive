@@ -58,7 +58,7 @@ async fn editor_updates_merge_and_unverified_removals_leave_the_share_intact() {
         initial,
         &empty,
         &empty,
-        &Default::default(),
+        &std::collections::BTreeSet::new(),
     )
     .await
     .unwrap();

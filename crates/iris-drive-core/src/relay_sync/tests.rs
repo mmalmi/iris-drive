@@ -144,7 +144,7 @@ fn private_trash_root_is_discovered_for_its_owner_only() {
     let dir = tempdir().unwrap();
     let (mut config, owner) = config_with_owner_account(dir.path());
     let scope = owner.state.root_scope_id();
-    let root = encrypted_root(41, 1700000000, 1);
+    let root = encrypted_root(41, 1_700_000_000, 1);
     let event = build_drive_root_event(owner.app_key.keys(), &scope, "trash", &root, &[]).unwrap();
     let filters =
         subscription_filters(&owner.state.app_key_pubkey, &scope, crate::PRIMARY_DRIVE_ID);

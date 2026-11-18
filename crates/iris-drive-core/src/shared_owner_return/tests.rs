@@ -207,7 +207,7 @@ impl ShareFixture {
             edited,
             &self.root,
             &self.root,
-            &Default::default(),
+            &std::collections::BTreeSet::new(),
         )
         .await
         .unwrap();

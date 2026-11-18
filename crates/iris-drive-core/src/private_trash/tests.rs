@@ -185,9 +185,11 @@ async fn private_trash_restore_preserves_payload_and_refuses_to_overwrite() {
     daemon.import_visible_root(root).await.unwrap();
 
     let path = vec!["notes.txt".to_string()];
-    let item = trash(dir.path(), path.clone(), 1800000000).await.unwrap();
+    let item = trash(dir.path(), path.clone(), 1_800_000_000)
+        .await
+        .unwrap();
     assert_eq!(
-        list(dir.path(), 1800000001).await.unwrap(),
+        list(dir.path(), 1_800_000_001).await.unwrap(),
         vec![item.clone()]
     );
     let mut daemon = Daemon::open(dir.path()).unwrap();
@@ -211,20 +213,20 @@ async fn private_trash_restore_preserves_payload_and_refuses_to_overwrite() {
         .unwrap();
     daemon.import_visible_root(updated).await.unwrap();
     assert!(
-        restore(dir.path(), &item.id, 1800000001)
+        restore(dir.path(), &item.id, 1_800_000_001)
             .await
             .unwrap_err()
             .to_string()
             .contains("already exists")
     );
     assert_eq!(
-        list(dir.path(), 1800000002).await.unwrap(),
+        list(dir.path(), 1_800_000_002).await.unwrap(),
         vec![item.clone()]
     );
 
-    trash(dir.path(), path, 1800000002).await.unwrap();
-    restore(dir.path(), &item.id, 1800000003).await.unwrap();
-    restore(dir.path(), &item.id, 1800000004).await.unwrap();
+    trash(dir.path(), path, 1_800_000_002).await.unwrap();
+    restore(dir.path(), &item.id, 1_800_000_003).await.unwrap();
+    restore(dir.path(), &item.id, 1_800_000_004).await.unwrap();
     let daemon = Daemon::open(dir.path()).unwrap();
     let root = crate::primary_merged_root(daemon.tree(), daemon.config())
         .await
@@ -235,7 +237,7 @@ async fn private_trash_restore_preserves_payload_and_refuses_to_overwrite() {
         Some(original)
     );
     assert!(
-        list(dir.path(), 1800000004)
+        list(dir.path(), 1_800_000_004)
             .await
             .unwrap()
             .iter()

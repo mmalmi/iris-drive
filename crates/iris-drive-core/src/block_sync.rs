@@ -113,45 +113,6 @@ async fn collect_entry_hashes<S: Store>(
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use hashtree_core::{DirEntry, HashTreeConfig, LinkType, MemoryStore};
-
-    #[tokio::test]
-    async fn live_sync_hashes_skip_prev_history_target() {
-        let store = std::sync::Arc::new(MemoryStore::new());
-        let tree = HashTree::new(HashTreeConfig::new(store));
-        let (file_cid, _) = tree.put(b"visible bytes").await.unwrap();
-        let visible_root = tree
-            .put_directory(vec![DirEntry {
-                name: "visible.txt".to_string(),
-                hash: file_cid.hash,
-                key: file_cid.key,
-                link_type: LinkType::File,
-                size: 13,
-                meta: None,
-            }])
-            .await
-            .unwrap();
-        let missing_prev = Cid {
-            hash: [9; 32],
-            key: None,
-        };
-        let root_with_history = crate::indexer::layer_prev_link(&tree, visible_root, &missing_prev)
-            .await
-            .unwrap();
-
-        let hashes = collect_live_sync_hashes(&tree, &root_with_history, 4)
-            .await
-            .unwrap();
-
-        assert!(hashes.contains(&root_with_history.hash));
-        assert!(hashes.contains(&file_cid.hash));
-        assert!(!hashes.contains(&missing_prev.hash));
-    }
-}
-
 /// Verify every referenced encrypted block without retaining file bytes or
 /// fetching the same blocks a second time for integrity checks.
 pub(crate) async fn verify_reachable_blocks<S: Store>(
@@ -192,5 +153,44 @@ impl<S: Store> Store for RequiredBlocks<S> {
 
     async fn delete(&self, hash: &Hash) -> Result<bool, hashtree_core::StoreError> {
         self.0.delete(hash).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use hashtree_core::{DirEntry, HashTreeConfig, LinkType, MemoryStore};
+
+    #[tokio::test]
+    async fn live_sync_hashes_skip_prev_history_target() {
+        let store = std::sync::Arc::new(MemoryStore::new());
+        let tree = HashTree::new(HashTreeConfig::new(store));
+        let (file_cid, _) = tree.put(b"visible bytes").await.unwrap();
+        let visible_root = tree
+            .put_directory(vec![DirEntry {
+                name: "visible.txt".to_string(),
+                hash: file_cid.hash,
+                key: file_cid.key,
+                link_type: LinkType::File,
+                size: 13,
+                meta: None,
+            }])
+            .await
+            .unwrap();
+        let missing_prev = Cid {
+            hash: [9; 32],
+            key: None,
+        };
+        let root_with_history = crate::indexer::layer_prev_link(&tree, visible_root, &missing_prev)
+            .await
+            .unwrap();
+
+        let hashes = collect_live_sync_hashes(&tree, &root_with_history, 4)
+            .await
+            .unwrap();
+
+        assert!(hashes.contains(&root_with_history.hash));
+        assert!(hashes.contains(&file_cid.hash));
+        assert!(!hashes.contains(&missing_prev.hash));
     }
 }
