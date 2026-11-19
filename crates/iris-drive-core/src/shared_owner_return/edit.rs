@@ -34,7 +34,7 @@ pub(crate) async fn prepare_edit<S: Store>(
     };
     let live = &current_entries.as_ref().unwrap_or(&old).files;
     let edited_entries = crate::indexer::required_visible_entries(tree, &edited).await?;
-    let moves = confirmed_moves(&old.files, live, &edited_entries.files);
+    let moves = confirmed_moves(folder, &old.files, live, &edited_entries.files);
     let moves_by_destination: BTreeMap<_, _> = moves
         .iter()
         .map(|(from, to)| (to.as_str(), from.as_str()))
@@ -160,6 +160,7 @@ pub(crate) async fn prepare_edit<S: Store>(
 }
 
 fn confirmed_moves(
+    folder: &SharedFolder,
     old: &BTreeMap<String, TreeEntry>,
     live: &BTreeMap<String, TreeEntry>,
     edited: &BTreeMap<String, TreeEntry>,
@@ -168,7 +169,7 @@ fn confirmed_moves(
     for (path, entry) in edited {
         if !old.contains_key(path) && !live.contains_key(path) {
             destinations
-                .entry(entry_cid(entry).to_string())
+                .entry(move_identity(entry))
                 .or_default()
                 .push(path);
         }
@@ -180,15 +181,32 @@ fn confirmed_moves(
         {
             continue;
         }
-        if let Some(group) = destinations.get_mut(&entry_cid(source).to_string())
-            && let Some(index) = group
+        let Some(group) = destinations.get_mut(&move_identity(source)) else {
+            continue;
+        };
+        // Native providers can combine a rename with a write. In that
+        // case the bytes and modified time change, but a verified claim
+        // still identifies an unambiguous move within this share.
+        let found = if group.len() == 1
+            && super::validated_owner(folder, source).is_ok_and(|claim| claim.is_some())
+        {
+            Some(0)
+        } else {
+            group
                 .iter()
                 .position(|candidate| same_link(&edited[*candidate], source))
-        {
+        };
+        if let Some(index) = found {
             matched.insert(path.clone(), group.swap_remove(index).to_owned());
         }
     }
     matched
+}
+
+fn move_identity(entry: &TreeEntry) -> String {
+    owner_meta(entry)
+        .and_then(serde_json::Value::as_str)
+        .map_or_else(|| entry_cid(entry).to_string(), str::to_owned)
 }
 
 fn same_link(left: &TreeEntry, right: &TreeEntry) -> bool {

@@ -285,12 +285,7 @@ pub(crate) async fn apply_one_event(
         let stale_current_root = matches!(outcome, relay_sync::DriveRootApply::StaleTimestamp)
             && parsed
                 .as_ref()
-                .is_some_and(|(app_key_pubkey, _, drive_id, root_ref)| {
-                    config
-                        .drive(drive_id)
-                        .and_then(|drive| drive.app_key_roots.get(app_key_pubkey))
-                        .is_some_and(|stored| stored.root_cid == root_ref.root_cid)
-                });
+                .is_some_and(|parsed| accepted_current_drive_root(&config, parsed));
         let parsed_root_cid = parsed
             .as_ref()
             .map(|(_, _, _, root_ref)| root_ref.root_cid.clone());
@@ -456,6 +451,7 @@ fn startup_root_cids_needing_sync(config_dir: &Path, config: &AppConfig) -> Vec<
         .drives
         .iter()
         .flat_map(|drive| drive.app_key_roots.values())
+        .chain(accepted_shared_roots(config).map(|(_, _, root)| root))
         .filter(|root| !root.local_only)
         .filter(|root| !root_has_successful_block_sync(config_dir, &root.root_cid))
         .map(|root| root.root_cid.clone())

@@ -662,3 +662,77 @@ async fn a_stored_receipt_disposes_of_observed_revisions_and_keeps_its_proof_on_
     let marker: super::markers::RemovalMarker = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(marker.receipt, receipt);
 }
+
+#[tokio::test]
+async fn editing_and_renaming_in_one_provider_batch_preserves_the_file_owner() {
+    let mut fixture = ShareFixture::new().await;
+    let daemon = fixture.open();
+    let path = vec!["Plan.txt".to_owned()];
+    let original = entry_at(daemon.tree(), &fixture.root, &path)
+        .await
+        .unwrap()
+        .unwrap();
+    let (claim, _) = validated_owner(&fixture.folder, &original)
+        .unwrap()
+        .unwrap();
+    let (revised, size) = daemon.tree().put(b"Edited while renaming").await.unwrap();
+    let without_old = daemon
+        .tree()
+        .remove_entry(&fixture.root, &[], &path[0])
+        .await
+        .unwrap();
+    let renamed = daemon
+        .tree()
+        .set_entry_with_meta(
+            &without_old,
+            &[],
+            "Updated plan.txt",
+            &revised,
+            size,
+            LinkType::Blob,
+            original.meta,
+        )
+        .await
+        .unwrap();
+    crate::shared_content::write_shared_folder(
+        daemon.tree(),
+        &mut fixture.folder,
+        fixture.editor.app_key.keys(),
+        renamed,
+        &fixture.root,
+    )
+    .await
+    .unwrap();
+    let root = crate::projection::shared_folder_merged_root(daemon.tree(), &fixture.folder)
+        .await
+        .unwrap()
+        .root_cid;
+    assert!(
+        entry_at(daemon.tree(), &root, &path)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    let new_path = vec!["Updated plan.txt".to_owned()];
+    let entry = entry_at(daemon.tree(), &root, &new_path)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(entry_cid(&entry), revised);
+    assert_eq!(
+        validated_owner(&fixture.folder, &entry).unwrap().unwrap().0,
+        claim
+    );
+    let request = build_request(
+        &fixture.folder,
+        &entry,
+        new_path,
+        fixture.editor.app_key.keys(),
+        unix_now().unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        read_request(&request).unwrap().owner,
+        fixture.owner.state.profile_id
+    );
+}

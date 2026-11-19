@@ -887,3 +887,79 @@ async fn windows_cloud_upsert_skips_stale_cached_placeholder() {
             .is_err()
     );
 }
+
+#[test]
+fn shared_writer_roots_get_distinct_followups_and_retries_after_restart() {
+    use iris_drive_core::sharing::{ShareRecipient, ShareRole, create_shared_folder};
+    let dir = tempfile::tempdir().unwrap();
+    let owner = Profile::create(dir.path(), None).unwrap();
+    let editor_dir = tempfile::tempdir().unwrap();
+    let editor = Profile::create(editor_dir.path(), None).unwrap();
+    let mut folder = create_shared_folder(
+        owner.app_key.keys(),
+        owner.state.profile_id,
+        "Picnic",
+        "Picnic",
+        None,
+        vec![ShareRecipient {
+            profile_id: editor.state.profile_id,
+            app_pubkey: editor.state.app_key_pubkey.clone(),
+            role: ShareRole::Editor,
+            label: None,
+            representative_npub_hint: None,
+            display_name: None,
+        }],
+        1,
+    )
+    .unwrap();
+    folder.app_key_roots.insert(
+        owner.state.app_key_pubkey.clone(),
+        AppKeyRootRef::legacy("owner-share-root", 1, 1),
+    );
+    folder.app_key_roots.insert(
+        editor.state.app_key_pubkey.clone(),
+        AppKeyRootRef::legacy("editor-share-root", 1, 1),
+    );
+    let share_scope = folder.share_id.to_string();
+    let mut config = AppConfig {
+        profile: Some(owner.state.clone()),
+        drives: vec![Drive::primary(owner.state.root_scope_id())],
+        shared_folders: vec![folder],
+        ..AppConfig::default()
+    };
+    let initial = root_apply_followup_key(&config, Some("editor-share-root"), true).unwrap();
+    let queue = root_apply_followup_queue_key(&config, Some("editor-share-root"), true).unwrap();
+    assert_ne!(
+        Some(queue.clone()),
+        root_apply_followup_queue_key(&config, Some("owner-share-root"), true)
+    );
+    assert_eq!(
+        startup_root_cids_needing_sync(dir.path(), &config),
+        ["editor-share-root", "owner-share-root"]
+    );
+    config.save(config_path_in(dir.path())).unwrap();
+    assert!(!root_apply_followup_is_stale(dir.path(), Some(&initial)));
+
+    let next = AppKeyRootRef {
+        app_key_seq: 2,
+        ..AppKeyRootRef::legacy("editor-latest-root", 2, 1)
+    };
+    config.shared_folders[0]
+        .app_key_roots
+        .insert(editor.state.app_key_pubkey.clone(), next.clone());
+    assert!(accepted_current_drive_root(
+        &config,
+        &(
+            editor.state.app_key_pubkey,
+            share_scope,
+            PRIMARY_DRIVE_ID.into(),
+            next
+        )
+    ));
+    config.save(config_path_in(dir.path())).unwrap();
+    assert!(root_apply_followup_is_stale(dir.path(), Some(&initial)));
+    assert_eq!(
+        Some(queue),
+        root_apply_followup_queue_key(&config, Some("editor-latest-root"), true)
+    );
+}
