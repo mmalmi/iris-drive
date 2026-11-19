@@ -67,7 +67,7 @@ fn publish(dir: &Path) {
         let client = iris_drive_core::relay_sync::connect(&config.relays)
             .await
             .unwrap();
-        publish_current_state(&client, dir, &config, &state, true)
+        Box::pin(publish_current_state(&client, dir, &config, &state, true))
             .await
             .unwrap();
         iris_drive_core::relay_sync::shutdown_client(&client).await;
