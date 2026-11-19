@@ -1,8 +1,8 @@
 pluginManagement {
     repositories {
         google()
+        // Kotlin plugin metadata is pinned to the Maven Central artifacts.
         mavenCentral()
-        gradlePluginPortal()
     }
 }
 
