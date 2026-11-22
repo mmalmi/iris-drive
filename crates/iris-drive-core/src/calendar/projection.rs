@@ -172,7 +172,7 @@ fn into_array(table: BTreeMap<String, Map<String, Value>>) -> Value {
     Value::Array(table.into_values().map(Value::Object).collect())
 }
 
-fn install_schedule(event: &mut Map<String, Value>, schedule: Value) -> Result<(), CalendarError> {
+fn install_schedule(event: &mut Map<String, Value>, schedule: &Value) -> Result<(), CalendarError> {
     match schedule.get("allDay").and_then(Value::as_bool) {
         Some(true) => {
             let day = schedule
@@ -262,7 +262,7 @@ pub(super) fn materialize(fields: Fields) -> Result<CalendarData, CalendarError>
             ["events", id, field] => {
                 if let Some(event) = events.get_mut(*id) {
                     if *field == "schedule" {
-                        install_schedule(event, value)?;
+                        install_schedule(event, &value)?;
                     } else {
                         assign(event, field, value);
                     }
@@ -275,7 +275,7 @@ pub(super) fn materialize(fields: Fields) -> Result<CalendarData, CalendarError>
                 }
             }
             ["subscriptions", id] => {
-                initial_record(&mut subscriptions, (*id).into(), "npub", &value)
+                initial_record(&mut subscriptions, (*id).into(), "npub", &value);
             }
             ["subscriptions", id, field] => {
                 if let Some(item) = subscriptions.get_mut(*id) {

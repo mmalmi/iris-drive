@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
@@ -150,7 +150,7 @@ async fn load_baseline<S: Store>(
         .await?
         .ok_or_else(|| invalid("calendar file is missing"))?;
     let mut data: CalendarData = serde_json::from_slice(&bytes)?;
-    data.owner_npub = owner.to_owned();
+    owner.clone_into(&mut data.owner_npub);
     Ok(data)
 }
 
@@ -227,7 +227,7 @@ pub(crate) fn account_replica_drive(name: &str, scope: String) -> Drive {
         drive_id: name.into(),
         display_name: "Calendar replica".into(),
         role: DriveRole::Owner,
-        app_key_roots: Default::default(),
+        app_key_roots: BTreeMap::new(),
         last_root_cid: None,
         key_hex: None,
     }

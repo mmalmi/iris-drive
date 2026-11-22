@@ -119,6 +119,7 @@ pub(super) fn valid_writer(writer: &str) -> bool {
             .all(|byte| matches!(byte, b'0'..=b'9' | b'a'..=b'f'))
 }
 
+#[must_use]
 pub fn replica_writer(tree: &str) -> Option<&str> {
     tree.strip_prefix(TREE_PREFIX)
         .filter(|writer| valid_writer(writer))
@@ -132,20 +133,19 @@ fn valid_register(path: &[String], value: &Value) -> bool {
     let presence = value.is_null() || value.as_bool() == Some(true);
     match path.as_slice() {
         ["availability", "rules", _] | ["events" | "bookingLinks" | "subscriptions", _] => presence,
-        ["availability", "rules", _, field] => *field != "id",
+        ["availability", "rules", _, field] | ["bookingLinks", _, field] => *field != "id",
         ["availability", field] => *field != "rules",
-        ["events", _, "guests", _] => value.is_object() || value.is_null(),
-        ["events", _, "schedule"] => value.is_object() || value.is_null(),
+        ["events", _, "guests", _] | ["events", _, "schedule"] | ["sharing"] => {
+            value.is_object() || value.is_null()
+        }
         ["events", _, field] => !matches!(
             *field,
             "id" | "calendar" | "guests" | "allDay" | "start" | "end" | "day" | "days"
         ),
         ["subscriptions", _, field] => *field != "npub",
-        ["bookingLinks", _, field] => *field != "id",
         ["shareWithdrawals", _] => {
             value.is_null() || value.as_u64().is_some_and(|n| n <= MAX_CLOCK)
         }
-        ["sharing"] => value.is_object() || value.is_null(),
         ["initialTimezone"] => value
             .as_str()
             .is_some_and(|zone| !zone.is_empty() && zone.len() <= 255),

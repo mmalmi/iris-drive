@@ -221,7 +221,7 @@ async fn handle_caldav_put(
             check_caldav_etag(headers, event)
         })
         .await
-        .map_err(caldav_write_error)?;
+        .map_err(|error| caldav_write_error(&error))?;
     caldav_empty_response_with_etag(
         if existed {
             StatusCode::NO_CONTENT
@@ -275,7 +275,7 @@ async fn handle_caldav_delete(
         check_caldav_etag(headers, event)
     })
     .await
-    .map_err(caldav_write_error)?;
+    .map_err(|error| caldav_write_error(&error))?;
     if changed {
         caldav_empty_response(StatusCode::NO_CONTENT)
     } else {
@@ -283,7 +283,7 @@ async fn handle_caldav_delete(
     }
 }
 
-fn caldav_write_error(error: crate::calendar::CalendarError) -> (StatusCode, String) {
+fn caldav_write_error(error: &crate::calendar::CalendarError) -> (StatusCode, String) {
     let status = match error {
         crate::calendar::CalendarError::Precondition => StatusCode::PRECONDITION_FAILED,
         crate::calendar::CalendarError::Hashtree(_) | crate::calendar::CalendarError::Daemon(_) => {

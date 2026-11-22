@@ -104,7 +104,14 @@ pub async fn sync_once_with_options(
     timeout: Duration,
     options: NetworkSyncOptions,
 ) -> Result<NetworkSyncReport> {
-    sync_once_inner(config_dir, relay_override, timeout, None, options).await
+    Box::pin(sync_once_inner(
+        config_dir,
+        relay_override,
+        timeout,
+        None,
+        options,
+    ))
+    .await
 }
 
 pub async fn sync_once_with_fips(
@@ -113,13 +120,13 @@ pub async fn sync_once_with_fips(
     timeout: Duration,
     fips: Option<&FsFipsBlockSync>,
 ) -> Result<NetworkSyncReport> {
-    sync_once_inner(
+    Box::pin(sync_once_inner(
         config_dir,
         relay_override,
         timeout,
         fips,
         NetworkSyncOptions::default(),
-    )
+    ))
     .await
 }
 
