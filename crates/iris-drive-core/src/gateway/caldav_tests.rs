@@ -368,3 +368,5 @@ async fn http_request(
     stream.read_to_end(&mut response).await.unwrap();
     String::from_utf8_lossy(&response).into_owned()
 }
+
+mod offline;

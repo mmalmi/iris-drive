@@ -17,14 +17,20 @@ pub(crate) async fn retry_writer_storage_publication(
             }) else {
                 return Ok(());
             };
-            let Some(drive) = config.drive(PRIMARY_DRIVE_ID) else {
+            let primary = config.drive(PRIMARY_DRIVE_ID);
+            let replica = iris_drive_core::calendar::local_replica_tree(config_dir, state)?
+                .and_then(|name| config.drive(&name));
+            if config.blossom_servers.is_empty() || primary.is_none() && replica.is_none() {
                 return Ok(());
-            };
-            if config.blossom_servers.is_empty()
-                || publishable_app_key_root(config_dir, drive, state)
+            }
+            let has_primary_root = if let Some(drive) = primary {
+                publishable_app_key_root(config_dir, drive, state)
                     .await?
-                    .is_none()
-            {
+                    .is_some()
+            } else {
+                false
+            };
+            if !has_primary_root && replica.is_none() {
                 return Ok(());
             }
             let report = Box::pin(publish_current_state(
@@ -35,7 +41,8 @@ pub(crate) async fn retry_writer_storage_publication(
                 anyhow::bail!(error);
             }
             anyhow::ensure!(
-                report.blossom_upload.is_some(),
+                !report.calendar_replica_pending
+                    && (!has_primary_root || report.blossom_upload.is_some()),
                 "authorized writer upload is pending"
             );
             Ok::<_, anyhow::Error>(())

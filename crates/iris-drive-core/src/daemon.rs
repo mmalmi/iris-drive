@@ -905,6 +905,24 @@ impl Daemon {
             }
             return Ok(());
         }
+        if crate::calendar::replica_writer(drive_id).is_some() {
+            let state = self
+                .config
+                .profile
+                .as_ref()
+                .filter(|state| state.can_write_roots())
+                .ok_or_else(|| DaemonError::DriveMissing(drive_id.to_owned()))?;
+            let scope = state.root_scope_id();
+            if self
+                .config
+                .drive(drive_id)
+                .is_none_or(|drive| drive.root_scope_id != scope)
+            {
+                self.config
+                    .upsert_drive(crate::calendar::account_replica_drive(drive_id, scope));
+            }
+            return Ok(());
+        }
         if self.config.drive(drive_id).is_some() {
             return Ok(());
         }

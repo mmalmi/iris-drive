@@ -28,7 +28,7 @@ enum RootApplyFollowupQueueKey {
 
 fn update_last_provider_root_key(config_dir: &Path, last_root_key: &mut Option<String>) {
     if let Ok(config) = AppConfig::load_or_default_cached_profile(config_path_in(config_dir)) {
-        *last_root_key = current_app_key_root_key(&config);
+        *last_root_key = current_app_key_root_key(config_dir, &config);
     }
 }
 

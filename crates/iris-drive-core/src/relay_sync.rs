@@ -609,6 +609,31 @@ pub fn apply_remote_files_root_event(
     if parsed.event.pubkey != account.app_key_pubkey {
         return Ok(FilesRootApply::NotOurAppKey);
     }
+    let is_calendar_replica = crate::calendar::replica_writer(&parsed.tree_name).is_some();
+    if is_calendar_replica
+        && (parsed.visibility != hashtree_core::TreeVisibility::Private
+            || local_keys.is_none()
+            || !parsed
+                .labels
+                .iter()
+                .any(|label| label == crate::calendar::REPLICA_LABEL)
+            || !parsed
+                .labels
+                .iter()
+                .any(|label| label == CALENDAR_TREE_NAME)
+            || parsed.event.tags.iter().any(|tag| {
+                tag.first().is_some_and(|tag| {
+                    matches!(
+                        tag.as_str(),
+                        "key" | "selfEncryptedLinkKey" | "encryptedKey"
+                    )
+                })
+            }))
+    {
+        return Err(RelayError::HashtreeRoot(
+            "calendar replica requires a private root envelope and Calendar labels".into(),
+        ));
+    }
     let root_cid = if let Some(local_keys) = local_keys {
         hashtree_nostr::resolve_self_encrypted_root_cid(&parsed, local_keys)
             .map_err(|e| RelayError::HashtreeRoot(e.to_string()))?
@@ -630,12 +655,41 @@ pub fn apply_remote_files_root_event(
         local_only: false,
     };
     let app_key_pubkey = account.app_key_pubkey.clone();
-    if config.drive(&parsed.tree_name).is_none() {
+    let scope = account.root_scope_id();
+    if is_calendar_replica {
+        if config
+            .drive(&parsed.tree_name)
+            .is_none_or(|drive| drive.root_scope_id != scope)
+        {
+            let count = config
+                .drives
+                .iter()
+                .filter(|drive| {
+                    drive.root_scope_id == scope
+                        && crate::calendar::replica_writer(&drive.drive_id).is_some()
+                })
+                .count();
+            if count >= crate::calendar::MAX_REPLICAS {
+                return Err(RelayError::HashtreeRoot(
+                    "too many calendar replicas".into(),
+                ));
+            }
+            config.upsert_drive(crate::calendar::account_replica_drive(
+                &parsed.tree_name,
+                scope,
+            ));
+        }
+    } else if config.drive(&parsed.tree_name).is_none()
+        || parsed.tree_name == CALENDAR_TREE_NAME
+            && config
+                .drive(CALENDAR_TREE_NAME)
+                .is_some_and(|drive| drive.root_scope_id != scope)
+    {
         if parsed.tree_name != CALENDAR_TREE_NAME {
             return Ok(FilesRootApply::UnknownDrive);
         }
         config.upsert_drive(Drive {
-            root_scope_id: account.root_scope_id(),
+            root_scope_id: scope,
             drive_id: CALENDAR_TREE_NAME.into(),
             display_name: "Calendar".into(),
             role: DriveRole::Owner,
@@ -902,6 +956,11 @@ pub async fn publish_files_root(
         .send_event(&event)
         .await
         .map_err(|e| RelayError::Client(e.to_string()))?;
+    if crate::calendar::replica_writer(tree_name).is_some() && output.success.is_empty() {
+        return Err(RelayError::Client(
+            "no relay accepted the Calendar replica root".into(),
+        ));
+    }
     Ok(*output.id())
 }
 
@@ -950,6 +1009,32 @@ pub async fn fetch_latest_files_root(
     let events = fetch_events(client, vec![filter], timeout).await?;
     let latest = events.into_iter().max_by_key(|e| e.created_at.as_secs());
     Ok(latest)
+}
+
+pub(crate) async fn fetch_calendar_roots(
+    client: &Client,
+    app_key: &str,
+    timeout: Duration,
+) -> Result<Vec<Event>, RelayError> {
+    let author =
+        PublicKey::from_hex(app_key).map_err(|error| RelayError::Client(error.to_string()))?;
+    let (legacy, replicas) = tokio::join!(
+        fetch_latest_files_root(client, app_key, CALENDAR_TREE_NAME, timeout),
+        fetch_events(
+            client,
+            vec![crate::relay_filters::calendar_replica_filter(author)],
+            timeout
+        ),
+    );
+    let mut roots = replicas?;
+    roots.extend(legacy?);
+    roots.sort_by(|left, right| {
+        right
+            .created_at
+            .cmp(&left.created_at)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    Ok(roots)
 }
 
 /// Fetch all visible `NostrIdentity` roster ops for a profile.

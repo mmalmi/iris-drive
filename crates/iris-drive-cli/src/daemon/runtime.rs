@@ -379,7 +379,7 @@ pub(crate) fn cmd_daemon(
         let acked_app_key_link_tx = spawn_app_key_link_roster_sender(
             config_dir, &client, fips_blocks.clone(), &daemon_tasks,
         );
-        let mut last_provider_root_key = current_app_key_root_key(&config);
+        let mut last_provider_root_key = current_app_key_root_key(config_dir, &config);
         let mut provider_root_publish_cache = ProviderRootPublishCache::default();
 
         loop {

@@ -55,6 +55,7 @@ pub fn subscription_filters_for_shared_roots(
         push_drive_root_filters(&mut filters, &share_scope, crate::PRIMARY_DRIVE_ID);
     }
     if let Ok(current_app_key) = PublicKey::from_hex(current_app_key_pubkey_hex) {
+        filters.push(calendar_replica_filter(current_app_key));
         let mut tree_names = vec![drive_id, CALENDAR_TREE_NAME];
         tree_names.sort_unstable();
         tree_names.dedup();
@@ -72,6 +73,20 @@ pub fn subscription_filters_for_shared_roots(
         }
     }
     filters
+}
+
+pub(crate) fn calendar_replica_filter(author: PublicKey) -> Filter {
+    Filter::new()
+        .author(author)
+        .kinds([
+            nostr_sdk::Kind::from(KIND_HASHTREE_ROOT),
+            nostr_sdk::Kind::from(KIND_DRIVE_ROOT),
+        ])
+        .custom_tag(
+            SingleLetterTag::lowercase(nostr_sdk::Alphabet::L),
+            crate::calendar::REPLICA_LABEL,
+        )
+        .limit(crate::calendar::MAX_REPLICAS)
 }
 
 #[must_use]

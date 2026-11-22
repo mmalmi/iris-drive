@@ -1,0 +1,27 @@
+{
+  "owner": "npub1fixture",
+  "replicas": [
+    {"version":1,"writer":"11111111111111111111111111111111","changes":[
+      [["events","uid/a"],1,true],
+      [["events","uid/a","title"],2,"Renamed on web"],
+      [["events","uid/a","schedule"],1,{"start":"2026-11-23T09:00:00.000Z","end":"2026-11-23T10:00:00.000Z","allDay":false}],
+      [["events","uid/a","color"],1,"violet"],
+      [["events","uid/a","createdAt"],1,10],
+      [["events","uid/a","updatedAt"],2,20],
+      [["events","removed"],3,null],
+      [["title"],4,"First concurrent title"]
+    ]},
+    {"version":1,"writer":"22222222222222222222222222222222","changes":[
+      [["events","uid/a","location"],2,"Room B"],
+      [["events","all-day"],2,true],
+      [["events","all-day","schedule"],2,{"allDay":true,"day":"2026-11-24","days":2}],
+      [["events","all-day","title"],2,"Native holiday"],
+      [["events","all-day","color"],2,"blue"],
+      [["events","all-day","createdAt"],2,20],
+      [["events","all-day","updatedAt"],2,20],
+      [["events","removed","notes"],3,"Late edit"],
+      [["title"],4,"Second concurrent title"]
+    ]}
+  ],
+  "expected":{"title":"Second concurrent title","eventIds":["uid/a","all-day"],"firstTitle":"Renamed on web","firstLocation":"Room B","allDay":"2026-11-24","days":2}
+}

@@ -78,6 +78,7 @@ pub(crate) struct PublishStateReport {
     drive_root_publish_error: Option<String>,
     published_files_root: bool,
     files_root_publish_error: Option<String>,
+    calendar_replica_pending: bool,
     root_cid: Option<String>,
     blossom_upload: Option<UploadReport>,
     blossom_upload_error: Option<String>,
@@ -383,6 +384,7 @@ pub(crate) fn spawn_publish_current_state(
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let started = std::time::Instant::now();
+        let mut retry_calendar = false;
         let payload = match Box::pin(publish_current_state(
             &client,
             &config_dir,
@@ -392,12 +394,15 @@ pub(crate) fn spawn_publish_current_state(
         ))
         .await
         {
-            Ok(report) => json!({
-                "event": event_name,
-                "elapsed_ms": started.elapsed().as_millis(),
-                "context": context,
-                "publish": publish_state_report_json(&report),
-            }),
+            Ok(report) => {
+                retry_calendar = report.calendar_replica_pending;
+                json!({
+                    "event": event_name,
+                    "elapsed_ms": started.elapsed().as_millis(),
+                    "context": context,
+                    "publish": publish_state_report_json(&report),
+                })
+            }
             Err(error) => json!({
                 "event": format!("{event_name}_error"),
                 "elapsed_ms": started.elapsed().as_millis(),
@@ -407,6 +412,9 @@ pub(crate) fn spawn_publish_current_state(
         };
         write_daemon_status(&config_dir, payload.clone());
         println!("{payload}");
+        if retry_calendar && upload_blossom && !config.blossom_servers.is_empty() {
+            retry_writer_storage_publication(&client, &config_dir, &state).await;
+        }
     })
 }
 
@@ -666,10 +674,16 @@ pub(crate) async fn publish_current_state(
         let account = Profile::load(state.clone(), config_dir).context("loading profile")?;
         let device = iris_drive_core::identity::AppKey::load(key_path_in(config_dir))
             .context("loading app key")?;
-        for drive in standard_files_root_drives(config) {
+        let local_replica = iris_drive_core::calendar::local_replica_tree(config_dir, state)?;
+        for drive in config.drives.iter().filter(|drive| {
+            drive.drive_id == iris_drive_core::PRIMARY_DRIVE_ID
+                || local_replica.as_deref() == Some(drive.drive_id.as_str())
+        }) {
             let Some(root) = publishable_app_key_root(config_dir, drive, state).await? else {
                 continue;
             };
+            let is_calendar_replica = local_replica.as_deref() == Some(drive.drive_id.as_str());
+            report.calendar_replica_pending |= is_calendar_replica;
             ensure_publishable_root_locally_available(config_dir, config, &root.root_cid).await?;
             let mut root_blocks_available = !upload_blossom
                 || (drive.drive_id == iris_drive_core::PRIMARY_DRIVE_ID
@@ -703,7 +717,12 @@ pub(crate) async fn publish_current_state(
             ))
             .await
             {
-                Ok(_) => report.published_files_root = true,
+                Ok(_) => {
+                    report.published_files_root = true;
+                    if is_calendar_replica {
+                        report.calendar_replica_pending = false;
+                    }
+                }
                 Err(error) => {
                     let detail = format!("{}: {error}", drive.drive_id);
                     report.files_root_publish_error = Some(
@@ -718,13 +737,6 @@ pub(crate) async fn publish_current_state(
     }
 
     Ok(report)
-}
-
-fn standard_files_root_drives(config: &AppConfig) -> impl Iterator<Item = &iris_drive_core::Drive> {
-    config.drives.iter().filter(|drive| {
-        drive.drive_id == iris_drive_core::PRIMARY_DRIVE_ID
-            || drive.drive_id == iris_drive_core::calendar::CALENDAR_TREE_NAME
-    })
 }
 
 pub(crate) fn spawn_initial_publish(
@@ -747,8 +759,9 @@ pub(crate) fn spawn_initial_publish(
         .await
         {
             Ok(Ok(report)) => {
-                let incomplete =
-                    report.blossom_upload.is_none() || report.blossom_upload_error.is_some();
+                let incomplete = report.blossom_upload.is_none()
+                    || report.blossom_upload_error.is_some()
+                    || report.calendar_replica_pending;
                 let drive_iris_to_url = report
                     .root_cid
                     .as_ref()

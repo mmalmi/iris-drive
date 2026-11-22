@@ -314,7 +314,7 @@ async fn publish_provider_root_if_changed(
         sync.refresh_authorized_peers_from_config_dir(config_dir)
             .await;
     }
-    let current_key = current_app_key_root_key(&updated_config);
+    let current_key = current_app_key_root_key(config_dir, &updated_config);
     let publish_key = ProviderRootPublishKey::from_config(&updated_config, current_key.clone());
     if cache.is_current(&config_fingerprint, &publish_key) {
         return Ok(None);
@@ -445,14 +445,18 @@ fn provider_root_event_recheck_delay(debounce: std::time::Duration) -> std::time
         .max(std::time::Duration::from_secs(1))
 }
 
-fn current_app_key_root_key(config: &AppConfig) -> Option<String> {
+fn current_app_key_root_key(config_dir: &Path, config: &AppConfig) -> Option<String> {
     let state = config.profile.as_ref()?;
+    let local_replica = iris_drive_core::calendar::local_replica_tree(config_dir, state)
+        .inspect_err(|error| tracing::warn!(%error, "reading local Calendar writer identity"))
+        .ok()
+        .flatten();
     let mut roots = config
         .drives
         .iter()
         .filter(|drive| {
             drive.drive_id == iris_drive_core::PRIMARY_DRIVE_ID
-                || drive.drive_id == iris_drive_core::calendar::CALENDAR_TREE_NAME
+                || local_replica.as_deref() == Some(drive.drive_id.as_str())
                 || drive.drive_id == iris_drive_core::private_trash::DRIVE_ID
         })
         .filter_map(|drive| {

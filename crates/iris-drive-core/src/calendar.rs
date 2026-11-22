@@ -1,14 +1,30 @@
 use std::collections::HashMap;
 use std::fmt::Write as _;
 
-use hashtree_core::{Cid, HashTree, LinkType, Store};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::config::AppConfig;
-use crate::{Daemon, DaemonError};
+use crate::DaemonError;
+
+mod mutations;
+mod projection;
+mod replica;
+mod replica_store;
+mod replication;
+
+use mutations::current_calendar_root;
+pub use mutations::{
+    delete_calendar_event, load_calendar_data, put_calendar_event_ics, save_calendar_data,
+};
+pub(crate) use mutations::{delete_calendar_event_checked, put_calendar_event_ics_checked};
+pub use replica::{REPLICA_LABEL, replica_writer};
+pub use replica_store::local_replica_tree;
+pub(crate) use replica_store::{MAX_REPLICAS, account_replica_drive};
+pub(crate) use replication::{
+    append_missing_roots, apply_discovered_roots, publish_pending_replica,
+};
 
 pub const CALENDAR_TREE_NAME: &str = "calendar";
 pub const CALENDAR_DATA_FILE: &str = "calendar.json";
@@ -20,6 +36,8 @@ const DAY_MS: i64 = 86_400_000;
 pub enum CalendarError {
     #[error("calendar data: {0}")]
     Data(String),
+    #[error("calendar resource precondition failed")]
+    Precondition,
     #[error("hashtree: {0}")]
     Hashtree(String),
     #[error("daemon: {0}")]
@@ -45,6 +63,8 @@ pub struct CalendarData {
     pub booking_links: Vec<Value>,
     pub updated_at: i64,
     pub updated_by: String,
+    #[serde(skip)]
+    deleted_events: Vec<String>,
     #[serde(flatten)]
     pub extra: serde_json::Map<String, Value>,
 }
@@ -105,15 +125,9 @@ impl CalendarData {
             })],
             updated_at: now_ms,
             updated_by: owner_npub.to_string(),
+            deleted_events: Vec::new(),
             extra: serde_json::Map::new(),
         }
-    }
-
-    fn touch(&mut self, actor: &str, now_ms: i64) {
-        self.updated_at = now_ms;
-        self.updated_by = actor.to_string();
-        self.events
-            .sort_by(|left, right| left.start.cmp(&right.start));
     }
 }
 
@@ -132,151 +146,6 @@ fn default_availability() -> Value {
             "endTime": "17:00",
         })).collect::<Vec<_>>(),
     })
-}
-
-pub async fn load_calendar_data<S: Store>(
-    tree: &HashTree<S>,
-    config: &AppConfig,
-    owner_npub: &str,
-) -> Result<CalendarData, CalendarError> {
-    let Some(root) = current_calendar_root(config)? else {
-        return Ok(CalendarData::new(owner_npub, now_millis()));
-    };
-    let file = tree
-        .resolve(&root, CALENDAR_DATA_FILE)
-        .await
-        .map_err(|e| CalendarError::Hashtree(e.to_string()))?
-        .ok_or_else(|| CalendarError::Data("calendar file is missing".into()))?;
-    let bytes = tree
-        .read_file_range_cid(&file, 0, Some(MAX_CALENDAR_BYTES))
-        .await
-        .map_err(|e| CalendarError::Hashtree(e.to_string()))?
-        .ok_or_else(|| CalendarError::Data("calendar file is unreadable".into()))?;
-    let mut data: CalendarData = serde_json::from_slice(&bytes)?;
-    if data.owner_npub.trim().is_empty() {
-        data.owner_npub = owner_npub.to_string();
-    }
-    Ok(data)
-}
-
-pub async fn put_calendar_event_ics(
-    daemon: &mut Daemon,
-    resource_id: &str,
-    body: &[u8],
-) -> Result<CalendarEvent, CalendarError> {
-    let actor = calendar_actor(daemon.config());
-    let now = now_millis();
-    let mut data = load_calendar_data(daemon.tree(), daemon.config(), &actor).await?;
-    let ics = std::str::from_utf8(body).map_err(|e| CalendarError::Data(e.to_string()))?;
-    let mut event = event_from_ics(ics, resource_id, now)?;
-    if let Some(existing) = data
-        .events
-        .iter_mut()
-        .find(|existing| existing.id == event.id)
-    {
-        event.color.clone_from(&existing.color);
-        event
-            .recurrence_source_id
-            .clone_from(&existing.recurrence_source_id);
-        event.created_at = existing.created_at;
-        existing.extra.remove("day");
-        existing.extra.remove("days");
-        event.extra.append(&mut existing.extra);
-        *existing = event.clone();
-    } else {
-        data.events.push(event.clone());
-    }
-    data.touch(&actor, now);
-    save_calendar_data(daemon, &data).await?;
-    Ok(event)
-}
-
-pub async fn delete_calendar_event(
-    daemon: &mut Daemon,
-    resource_id: &str,
-) -> Result<bool, CalendarError> {
-    let actor = calendar_actor(daemon.config());
-    let now = now_millis();
-    let mut data = load_calendar_data(daemon.tree(), daemon.config(), &actor).await?;
-    let len_before = data.events.len();
-    data.events
-        .retain(|event| event.id != resource_id && event_href_id(&event.id) != resource_id);
-    let changed = data.events.len() != len_before;
-    if changed {
-        data.touch(&actor, now);
-        save_calendar_data(daemon, &data).await?;
-    }
-    Ok(changed)
-}
-
-pub async fn save_calendar_data(
-    daemon: &mut Daemon,
-    data: &CalendarData,
-) -> Result<(), CalendarError> {
-    let bytes = serde_json::to_vec_pretty(data)?;
-    let mut bytes = bytes;
-    bytes.push(b'\n');
-    let tree = daemon.tree();
-    let base_root = if let Some(root) = current_calendar_root(daemon.config())? {
-        root
-    } else {
-        tree.put_directory(Vec::new())
-            .await
-            .map_err(|e| CalendarError::Hashtree(e.to_string()))?
-    };
-    let (file_cid, size) = tree
-        .put_file(&bytes)
-        .await
-        .map_err(|e| CalendarError::Hashtree(e.to_string()))?;
-    let mut meta = HashMap::new();
-    meta.insert(
-        "contentType".into(),
-        Value::String("application/json".into()),
-    );
-    meta.insert("mimeType".into(), Value::String("application/json".into()));
-    let visible_root = tree
-        .set_entry_with_meta(
-            &base_root,
-            &[],
-            CALENDAR_DATA_FILE,
-            &file_cid,
-            size,
-            LinkType::Blob,
-            Some(meta),
-        )
-        .await
-        .map_err(|e| CalendarError::Hashtree(e.to_string()))?;
-    daemon
-        .import_visible_root_for_drive(CALENDAR_TREE_NAME, visible_root)
-        .await?;
-    Ok(())
-}
-
-fn current_calendar_root(config: &AppConfig) -> Result<Option<Cid>, CalendarError> {
-    let root = config
-        .profile
-        .as_ref()
-        .and_then(|account| {
-            config
-                .drive(CALENDAR_TREE_NAME)
-                .and_then(|drive| drive.app_key_roots.get(&account.app_key_pubkey))
-        })
-        .map(|root| root.root_cid.as_str())
-        .or_else(|| {
-            config
-                .drive(CALENDAR_TREE_NAME)
-                .and_then(|drive| drive.last_root_cid.as_deref())
-        });
-    root.map(Cid::parse)
-        .transpose()
-        .map_err(|e| CalendarError::Data(e.to_string()))
-}
-
-fn calendar_actor(config: &AppConfig) -> String {
-    config.profile.as_ref().map_or_else(
-        || "iris-caldav".into(),
-        |profile| crate::app_key_summary::pubkey_npub(&profile.app_key_pubkey),
-    )
 }
 
 #[must_use]
@@ -411,6 +280,14 @@ pub fn calendar_multiget_multistatus(data: &CalendarData, hrefs: &[String]) -> S
 
 #[must_use]
 pub fn calendar_sync_collection_multistatus(data: &CalendarData, collection_href: &str) -> String {
+    calendar_sync_report(data, collection_href, false)
+}
+
+pub(crate) fn calendar_sync_report(
+    data: &CalendarData,
+    collection_href: &str,
+    incremental: bool,
+) -> String {
     let mut responses = String::new();
     for event in &data.events {
         let event_href = format!(
@@ -419,6 +296,20 @@ pub fn calendar_sync_collection_multistatus(data: &CalendarData, collection_href
             percent_encode(&event_href_id(&event.id))
         );
         responses.push_str(&event_prop_response(&event_href, event));
+    }
+    if incremental {
+        for id in &data.deleted_events {
+            let href = format!(
+                "{}/{}.ics",
+                collection_href.trim_end_matches('/'),
+                percent_encode(&event_href_id(id))
+            );
+            let _ = write!(
+                responses,
+                "<D:response><D:href>{}</D:href><D:status>HTTP/1.1 404 Not Found</D:status></D:response>",
+                xml_escape(&href),
+            );
+        }
     }
     format!(
         "<?xml version=\"1.0\" encoding=\"utf-8\"?><D:multistatus xmlns:D=\"DAV:\" xmlns:C=\"urn:ietf:params:xml:ns:caldav\"><D:sync-token>{}</D:sync-token>{responses}</D:multistatus>",
@@ -513,7 +404,7 @@ fn multistatus(responses: &str) -> String {
 pub fn extract_hrefs(xml: &str) -> Vec<String> {
     let mut hrefs = Vec::new();
     let mut rest = xml;
-    while let Some(start) = find_href_start_tag(rest) {
+    while let Some(start) = find_xml_start_tag(rest, "href") {
         let after = &rest[start..];
         let Some(close_start) = after.find('>') else {
             break;
@@ -528,7 +419,16 @@ pub fn extract_hrefs(xml: &str) -> Vec<String> {
     hrefs
 }
 
-fn find_href_start_tag(xml: &str) -> Option<usize> {
+pub(crate) fn has_calendar_sync_token(xml: &str) -> bool {
+    find_xml_start_tag(xml, "sync-token").is_some_and(|start| {
+        xml[start..]
+            .split_once('>')
+            .and_then(|(_, tail)| tail.split_once('<'))
+            .is_some_and(|(value, _)| !value.trim().is_empty())
+    })
+}
+
+fn find_xml_start_tag(xml: &str, name: &str) -> Option<usize> {
     let mut offset = 0;
     while let Some(relative_start) = xml[offset..].find('<') {
         let start = offset + relative_start;
@@ -540,7 +440,7 @@ fn find_href_start_tag(xml: &str) -> Option<usize> {
         }
         let close = after_open.find('>')?;
         let tag = after_open[..close].trim();
-        if !tag.ends_with('/') && xml_tag_local_name(tag).eq_ignore_ascii_case("href") {
+        if !tag.ends_with('/') && xml_tag_local_name(tag).eq_ignore_ascii_case(name) {
             return Some(start);
         }
         offset = start + close + 2;

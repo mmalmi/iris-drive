@@ -121,3 +121,60 @@ fn calendar_accepts_new_web_root_after_native_write() {
         Some(web_root.root_cid.as_str()),
     );
 }
+
+#[test]
+fn calendar_replica_discovery_requires_the_exact_signer_coordinate_and_private_envelope() {
+    let dir = tempdir().unwrap();
+    let (mut cfg, profile) = config_with_owner_account(dir.path());
+    let keys = profile.app_key.keys();
+    let other = Keys::generate();
+    let root = encrypted_root(13, 20, 0);
+    let tree = "calendar-replica-11111111111111111111111111111111";
+    let event = build_private_hashtree_root_event(keys, tree, &root).unwrap();
+    let filters = subscription_filters(
+        &profile.state.app_key_pubkey,
+        &profile.state.root_scope_id(),
+        "main",
+    );
+    assert!(filters.iter().any(|filter| filter_matches(filter, &event)));
+    let other_event = build_private_hashtree_root_event(&other, tree, &root).unwrap();
+    assert!(
+        !filters
+            .iter()
+            .any(|filter| filter_matches(filter, &other_event))
+    );
+    assert_eq!(
+        apply_remote_files_root_event(&mut cfg, &other_event, Some(keys)).unwrap(),
+        FilesRootApply::NotOurAppKey
+    );
+    let label_missing = hashtree_nostr::build_private_hashtree_root_event(
+        keys,
+        tree,
+        &Cid::parse(&root.root_cid).unwrap(),
+        Some(20),
+    )
+    .unwrap();
+    assert!(apply_remote_files_root_event(&mut cfg, &label_missing, Some(keys)).is_err());
+    assert!(apply_remote_files_root_event(&mut cfg, &event, None).is_err());
+    let unsafe_tags =
+        event
+            .tags
+            .iter()
+            .cloned()
+            .chain([nostr_sdk::Tag::parse(["key", &"01".repeat(32)]).unwrap()]);
+    let clear_key = nostr_sdk::EventBuilder::new(event.kind, "")
+        .tags(unsafe_tags)
+        .custom_created_at(event.created_at)
+        .sign_with_keys(keys)
+        .unwrap();
+    assert!(apply_remote_files_root_event(&mut cfg, &clear_key, Some(keys)).is_err());
+    assert!(cfg.drive(tree).is_none());
+    assert_eq!(
+        apply_remote_files_root_event(&mut cfg, &event, Some(keys)).unwrap(),
+        FilesRootApply::Applied
+    );
+    assert_eq!(
+        apply_remote_files_root_event(&mut cfg, &event, Some(keys)).unwrap(),
+        FilesRootApply::StaleTimestamp
+    );
+}

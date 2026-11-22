@@ -462,38 +462,38 @@ async fn sync_once_inner(
     drop(mutation);
 
     if let Some(account_state) = config.profile.clone().filter(ProfileState::can_write_roots) {
-        match relay_sync::fetch_latest_files_root(
-            &client,
-            &account_state.app_key_pubkey,
-            PRIMARY_DRIVE_ID,
-            timeout,
-        )
-        .await
-        {
-            Ok(Some(ev)) => {
+        let (primary, calendar) = tokio::join!(
+            relay_sync::fetch_latest_files_root(
+                &client,
+                &account_state.app_key_pubkey,
+                PRIMARY_DRIVE_ID,
+                timeout
+            ),
+            relay_sync::fetch_calendar_roots(&client, &account_state.app_key_pubkey, timeout),
+        );
+        let mutation = crate::config_lock::ConfigMutationLock::acquire(config_dir).await?;
+        config = reload_sync_config(config_dir, &initial_state)?;
+        let current_state = config.profile.clone().context("profile disappeared")?;
+        let account = crate::Profile::load(current_state, config_dir).context("loading profile")?;
+        let mut files_roots_applied = false;
+        match primary {
+            Ok(Some(event)) => {
                 report.files_root_event_seen = true;
-                let mutation = crate::config_lock::ConfigMutationLock::acquire(config_dir).await?;
-                config = reload_sync_config(config_dir, &initial_state)?;
-                let current_state = config.profile.clone().context("profile disappeared")?;
-                let account =
-                    crate::Profile::load(current_state, config_dir).context("loading profile")?;
                 let outcome = relay_sync::apply_remote_files_root_event(
                     &mut config,
-                    &ev,
+                    &event,
                     Some(account.app_key.keys()),
                 )
                 .context("applying files-root event")?;
                 report.files_root_event_outcome = files_root_apply_label(&outcome).to_string();
                 if matches!(outcome, relay_sync::FilesRootApply::Applied) {
-                    config.save(config_path_in(config_dir))?;
-                }
-                drop(mutation);
-                if matches!(outcome, relay_sync::FilesRootApply::Applied)
-                    && let Some(root_ref) = config
+                    files_roots_applied = true;
+                    if let Some(root_ref) = config
                         .drive(PRIMARY_DRIVE_ID)
                         .and_then(|drive| drive.app_key_roots.get(&account.state.app_key_pubkey))
-                {
-                    push_unique(&mut root_cids_to_download, root_ref.root_cid.clone());
+                    {
+                        push_unique(&mut root_cids_to_download, root_ref.root_cid.clone());
+                    }
                 }
             }
             Ok(None) => {}
@@ -502,6 +502,19 @@ async fn sync_once_inner(
                 report.files_root_fetch_error = Some(format!("{error:#}"));
             }
         }
+        files_roots_applied |=
+            crate::calendar::apply_discovered_roots(&mut config, &account, calendar);
+        if files_roots_applied {
+            config.save(config_path_in(config_dir))?;
+        }
+        drop(mutation);
+        crate::calendar::append_missing_roots(
+            config_dir,
+            &config,
+            &account,
+            &mut root_cids_to_download,
+        )
+        .await?;
     }
 
     // A UI action may have changed settings or authorization during the fetch.
@@ -531,6 +544,13 @@ async fn sync_once_inner(
         {
             report.materialized_root_cid = Some(import.root_cid);
         }
+    }
+
+    if !approval_still_pending
+        && let Err(error) =
+            crate::calendar::publish_pending_replica(&client, config_dir, timeout).await
+    {
+        tracing::warn!(%error, "Calendar changes will retry on the next sync");
     }
 
     if !approval_still_pending
@@ -910,83 +930,4 @@ fn push_unique(values: &mut Vec<String>, value: String) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::{
-        DirectFipsDownloadDecision, NetworkSyncOptions, direct_fips_download_decision,
-        drive_root_recipient_app_key_pubkeys, should_materialize_after_sync,
-    };
-    use crate::config::{AppConfig, Drive};
-    use crate::profile::Profile;
-    use nostr_sdk::Keys;
-    use tempfile::tempdir;
-
-    #[test]
-    fn default_sync_options_preserve_existing_temporary_fips_download() {
-        assert!(NetworkSyncOptions::default().start_direct_fips_download);
-        assert_eq!(
-            direct_fips_download_decision(false, NetworkSyncOptions::default()),
-            DirectFipsDownloadDecision::StartTemporary
-        );
-    }
-
-    #[test]
-    fn sync_options_can_skip_only_temporary_direct_fips_download() {
-        let options = NetworkSyncOptions::without_direct_fips_download();
-
-        assert_eq!(
-            direct_fips_download_decision(false, options),
-            DirectFipsDownloadDecision::SkipTemporary
-        );
-        assert_eq!(
-            direct_fips_download_decision(true, options),
-            DirectFipsDownloadDecision::UseSupplied
-        );
-    }
-
-    #[test]
-    fn applied_remote_roots_request_materialization_even_without_peer_root() {
-        let config = AppConfig::default();
-
-        assert!(should_materialize_after_sync(&config, &[], true));
-        assert!(!should_materialize_after_sync(&config, &[], false));
-    }
-
-    #[test]
-    fn drive_root_recipients_use_full_cached_app_key_projection() {
-        let dir = tempdir().unwrap();
-        let mut profile = Profile::create(dir.path(), Some("Owner".into())).unwrap();
-        let phone = Keys::generate().public_key().to_hex();
-        let tablet = Keys::generate().public_key().to_hex();
-        profile
-            .approve_app_key(&phone, Some("Phone".into()))
-            .unwrap();
-        profile
-            .approve_app_key(&tablet, Some("Tablet".into()))
-            .unwrap();
-        let expected = profile
-            .state
-            .current_app_keys_projection()
-            .unwrap()
-            .app_actors
-            .iter()
-            .map(|actor| actor.pubkey.clone())
-            .collect::<Vec<_>>();
-
-        let mut partial_state = profile.state.clone();
-        partial_state.profile_roster_ops.truncate(1);
-        partial_state.profile_roster_projection = None;
-        assert_eq!(
-            partial_state
-                .current_app_keys_projection()
-                .unwrap()
-                .app_actors
-                .len(),
-            expected.len()
-        );
-
-        let drive = Drive::primary(partial_state.root_scope_id());
-        let recipients = drive_root_recipient_app_key_pubkeys(&partial_state, &drive);
-
-        assert_eq!(recipients, expected);
-    }
-}
+mod tests;

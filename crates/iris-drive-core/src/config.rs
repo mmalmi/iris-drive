@@ -553,7 +553,9 @@ impl AppKeyRootRef {
 
     pub(crate) fn is_newer_for_drive(&self, other: &Self, drive_id: &str) -> bool {
         // Calendar's private Nostr root is shared by the browser and CalDAV.
-        if drive_id == crate::calendar::CALENDAR_TREE_NAME {
+        if drive_id == crate::calendar::CALENDAR_TREE_NAME
+            || crate::calendar::replica_writer(drive_id).is_some()
+        {
             return self.published_at > other.published_at;
         }
         self.is_newer_than(other)

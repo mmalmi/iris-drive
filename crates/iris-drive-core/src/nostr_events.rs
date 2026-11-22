@@ -319,8 +319,39 @@ pub fn build_private_hashtree_root_event(
     } else {
         None
     };
-    hashtree_nostr::build_private_hashtree_root_event(signer_keys, tree_name, &root_cid, ts)
+    let event =
+        hashtree_nostr::build_private_hashtree_root_event(signer_keys, tree_name, &root_cid, ts)
+            .map_err(|e| WireError::Event(e.to_string()))?;
+    if crate::calendar::replica_writer(tree_name).is_none() {
+        return Ok(event);
+    }
+    let labels = [
+        crate::calendar::CALENDAR_TREE_NAME,
+        crate::calendar::REPLICA_LABEL,
+    ]
+    .map(|label| {
+        Tag::custom(
+            TagKind::SingleLetter(nostr_sdk::SingleLetterTag::lowercase(
+                nostr_sdk::Alphabet::L,
+            )),
+            [label],
+        )
+    });
+    EventBuilder::new(event.kind, event.content)
+        .tags(event.tags.iter().cloned().chain(labels))
+        .custom_created_at(event.created_at)
+        .sign_with_keys(signer_keys)
         .map_err(|e| WireError::Event(e.to_string()))
+}
+
+#[must_use]
+pub fn is_calendar_replica_event_coordinate(event: &Event) -> bool {
+    hashtree_nostr::is_hashtree_root_kind(u32::from(event.kind.as_u16()))
+        && event
+            .tags
+            .identifier()
+            .and_then(crate::calendar::replica_writer)
+            .is_some()
 }
 
 /// Parse + verify a drive-root event. Returns

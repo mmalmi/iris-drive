@@ -330,7 +330,9 @@ pub(crate) async fn apply_one_event(
         } else {
             EventApplyOutcome::Unchanged
         });
-    } else if kind == iris_drive_core::nostr_events::KIND_HASHTREE_ROOT {
+    } else if kind == iris_drive_core::nostr_events::KIND_HASHTREE_ROOT
+        || iris_drive_core::nostr_events::is_calendar_replica_event_coordinate(event)
+    {
         let Some(account_state) = config.profile.clone() else {
             return Ok(EventApplyOutcome::Unchanged);
         };
@@ -654,9 +656,14 @@ pub(crate) fn spawn_root_apply_followup(
                     })
                 );
                 if !recover_pending_peer_blocks(
-                    &config_dir, &config, &root_cid, expected_projection_root_key.as_ref(),
+                    &config_dir,
+                    &config,
+                    &root_cid,
+                    expected_projection_root_key.as_ref(),
                     fips_blocks.as_deref(),
-                ).await {
+                )
+                .await
+                {
                     return;
                 }
             }

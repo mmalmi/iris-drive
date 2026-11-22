@@ -61,8 +61,8 @@ pub(crate) async fn handle_caldav_request(
         "PROPFIND" => handle_caldav_propfind(&state, uri, headers).await,
         "REPORT" => handle_caldav_report(&state, uri, body).await,
         "GET" | "HEAD" => handle_caldav_get(&state, method, uri).await,
-        "PUT" => handle_caldav_put(&state, uri, body).await,
-        "DELETE" => handle_caldav_delete(&state, uri).await,
+        "PUT" => handle_caldav_put(&state, uri, headers, body).await,
+        "DELETE" => handle_caldav_delete(&state, uri, headers).await,
         "PROPPATCH" => handle_caldav_proppatch(&state, uri),
         _ => Err((StatusCode::METHOD_NOT_ALLOWED, "method not allowed".into())),
     }
@@ -147,7 +147,11 @@ async fn handle_caldav_report(
         let hrefs = crate::calendar::extract_hrefs(&body_text);
         crate::calendar::calendar_multiget_multistatus(&data, &hrefs)
     } else if body_text.contains("sync-collection") {
-        crate::calendar::calendar_sync_collection_multistatus(&data, calendar_href)
+        crate::calendar::calendar_sync_report(
+            &data,
+            calendar_href,
+            crate::calendar::has_calendar_sync_token(&body_text),
+        )
     } else {
         crate::calendar::calendar_query_multistatus(&data, calendar_href)
     };
@@ -194,9 +198,9 @@ async fn handle_caldav_get(
 async fn handle_caldav_put(
     state: &GatewayState,
     uri: &Uri,
+    headers: &HeaderMap,
     body: &[u8],
 ) -> Result<Response, (StatusCode, String)> {
-    let _calendar_write = state.calendar_writes.lock().await;
     let path = normalized_caldav_path(uri.path());
     let config = load_caldav_config(state)?;
     let paths = current_caldav_paths(&config);
@@ -212,17 +216,12 @@ async fn handle_caldav_put(
     let id = crate::calendar::href_event_id(&path);
     let mut daemon = Daemon::open(state.config_dir.as_ref())
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-    let existed =
-        crate::calendar::load_calendar_data(daemon.tree(), daemon.config(), "iris-caldav")
-            .await
-            .is_ok_and(|data| {
-                data.events
-                    .iter()
-                    .any(|event| event.id == id || crate::calendar::event_href_id(&event.id) == id)
-            });
-    let event = crate::calendar::put_calendar_event_ics(&mut daemon, &id, body)
+    let (event, existed) =
+        crate::calendar::put_calendar_event_ics_checked(&mut daemon, &id, body, |event| {
+            check_caldav_etag(headers, event)
+        })
         .await
-        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+        .map_err(caldav_write_error)?;
     caldav_empty_response_with_etag(
         if existed {
             StatusCode::NO_CONTENT
@@ -257,8 +256,8 @@ fn handle_caldav_proppatch(
 async fn handle_caldav_delete(
     state: &GatewayState,
     uri: &Uri,
+    headers: &HeaderMap,
 ) -> Result<Response, (StatusCode, String)> {
-    let _calendar_write = state.calendar_writes.lock().await;
     let path = normalized_caldav_path(uri.path());
     let config = load_caldav_config(state)?;
     let paths = current_caldav_paths(&config);
@@ -272,14 +271,52 @@ async fn handle_caldav_delete(
     let id = crate::calendar::href_event_id(&path);
     let mut daemon = Daemon::open(state.config_dir.as_ref())
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-    let changed = crate::calendar::delete_calendar_event(&mut daemon, &id)
-        .await
-        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let changed = crate::calendar::delete_calendar_event_checked(&mut daemon, &id, |event| {
+        check_caldav_etag(headers, event)
+    })
+    .await
+    .map_err(caldav_write_error)?;
     if changed {
         caldav_empty_response(StatusCode::NO_CONTENT)
     } else {
         Err((StatusCode::NOT_FOUND, "event not found".into()))
     }
+}
+
+fn caldav_write_error(error: crate::calendar::CalendarError) -> (StatusCode, String) {
+    let status = match error {
+        crate::calendar::CalendarError::Precondition => StatusCode::PRECONDITION_FAILED,
+        crate::calendar::CalendarError::Hashtree(_) | crate::calendar::CalendarError::Daemon(_) => {
+            StatusCode::SERVICE_UNAVAILABLE
+        }
+        _ => StatusCode::BAD_REQUEST,
+    };
+    (status, error.to_string())
+}
+
+fn check_caldav_etag(
+    headers: &HeaderMap,
+    event: Option<&crate::calendar::CalendarEvent>,
+) -> Result<(), crate::calendar::CalendarError> {
+    let etag = event.map(crate::calendar::event_etag);
+    let matches = |name, weak: bool| {
+        etag.as_deref().is_some_and(|etag| {
+            headers
+                .get_all(name)
+                .iter()
+                .filter_map(|value| value.to_str().ok())
+                .flat_map(|value| value.split(',').map(str::trim))
+                .any(|value| {
+                    value == "*" || value == etag || weak && value.strip_prefix("W/") == Some(etag)
+                })
+        })
+    };
+    if (headers.contains_key(http::header::IF_MATCH) && !matches(http::header::IF_MATCH, false))
+        || matches(http::header::IF_NONE_MATCH, true)
+    {
+        return Err(crate::calendar::CalendarError::Precondition);
+    }
+    Ok(())
 }
 
 async fn load_caldav_calendar(
