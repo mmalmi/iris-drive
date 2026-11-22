@@ -940,6 +940,51 @@ fn embedded_browser_relays_include_hashtree_resolver_bootstrap_relays() {
 }
 
 #[test]
+fn catalog_announcements_use_read_only_sources_for_exact_public_trees_and_default_network() {
+    let config = AppConfig::default();
+    let settings = embedded_browser_settings(&config);
+    let root_sources = settings["publicRootReadRelays"].as_object().unwrap();
+    let owner = crate::gateway::IRIS_SITES_PORTAL_NPUB;
+    assert_eq!(root_sources.len(), 3);
+    for tree in ["cashu-me", "iris-stack-site", "webvm-site"] {
+        assert_eq!(
+            root_sources[&format!("{owner}/{tree}")],
+            "wss://upload.iris.to/ws"
+        );
+    }
+    assert!(
+        !settings["nostrRelays"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|relay| relay == "wss://upload.iris.to/ws")
+    );
+
+    for relays in [vec![], vec!["wss://relay.example".into()]] {
+        let custom = AppConfig {
+            relays,
+            ..AppConfig::default()
+        };
+        assert!(
+            embedded_browser_settings(&custom)["publicRootReadRelays"]
+                .as_object()
+                .unwrap()
+                .is_empty()
+        );
+    }
+    let custom = AppConfig {
+        blossom_servers: vec!["https://files.example".into()],
+        ..AppConfig::default()
+    };
+    assert!(
+        embedded_browser_settings(&custom)["publicRootReadRelays"]
+            .as_object()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
 fn embedded_browser_settings_allow_iris_sites_portal_plaintext_reads() {
     let settings = embedded_browser_settings(&AppConfig::default());
 

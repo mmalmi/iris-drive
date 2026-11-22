@@ -1,9 +1,10 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde_json::json;
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, DEFAULT_BLOSSOM_SERVERS, DEFAULT_RELAYS};
 use crate::paths::key_path_in;
 
 pub struct EmbeddedHashtreeHost {
@@ -68,6 +69,7 @@ pub(crate) fn embedded_browser_settings(config: &AppConfig) -> serde_json::Value
         "socialGraphDbMaxSizeGb": 1,
         "spamboxDbMaxSizeGb": 0,
         "nostrRelays": embedded_browser_nostr_relays(config),
+        "publicRootReadRelays": public_catalog_read_relays(config),
         "blossomReadServers": config.blossom_servers.clone(),
         "blossomWriteServers": config.blossom_servers.clone(),
         "enableWebrtc": false,
@@ -84,6 +86,19 @@ pub(crate) fn embedded_browser_settings(config: &AppConfig) -> serde_json::Value
         "publicPlaintextReads": false,
         "allowedNpubs": [crate::gateway::IRIS_SITES_PORTAL_NPUB],
     })
+}
+
+/// These public catalog trees have an authoritative signed root index on the
+/// default Iris file server. A custom networking policy defines its own sources.
+fn public_catalog_read_relays(config: &AppConfig) -> BTreeMap<String, &'static str> {
+    if config.relays != DEFAULT_RELAYS || config.blossom_servers != DEFAULT_BLOSSOM_SERVERS {
+        return BTreeMap::new();
+    }
+    let owner = crate::gateway::IRIS_SITES_PORTAL_NPUB;
+    ["cashu-me", "iris-stack-site", "webvm-site"]
+        .into_iter()
+        .map(|tree| (format!("{owner}/{tree}"), "wss://upload.iris.to/ws"))
+        .collect()
 }
 
 pub(crate) fn embedded_browser_nostr_relays(config: &AppConfig) -> Vec<String> {

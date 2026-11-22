@@ -198,7 +198,7 @@ require_contains Cargo.toml 'nvpn-fips-tcp = { version = "=0.2.6" }'
 require_contains Cargo.toml 'nvpn-fips-tcp-endpoint = { version = "=0.2.57" }'
 require_contains Cargo.toml 'hashtree-core = "=0.3.1"'
 require_contains Cargo.toml 'hashtree-config = "=0.2.83"'
-require_contains Cargo.toml 'hashtree-embedded = "=0.4.2"'
+require_contains Cargo.toml 'hashtree-embedded = "=0.4.3"'
 require_contains Cargo.toml 'hashtree-fips-transport = { version = "=0.5.0", features = ["webrtc-endpoint"] }'
 require_contains Cargo.toml 'hashtree-lmdb = "=0.3.0"'
 require_contains Cargo.toml 'hashtree-network = "=0.3.0"'
@@ -228,11 +228,11 @@ for lock in Cargo.lock linux/Cargo.lock; do
   require_registry_package "$lock" nvpn-fips-tcp 0.2.6 299df22559c4af63e7d276fcb90cf000f2f1cd5546c213f17d8860154c1383d7
   require_registry_package "$lock" nvpn-fips-tcp-endpoint 0.2.57 8f3fa2f912e0d105a7ee4166c15df11ac5179d453a152b339e351868ecb871eb
   require_registry_package "$lock" git-remote-htree 0.4.2 fee9332a3366c8a61709d12973c79451721d0372706abf8e37b2a6da39808f7e
-  require_registry_package "$lock" hashtree-cli 0.4.8 f000625322ca3ba2f2997d54754ba8fdb9f2069147f761c141b846a5c8bda8ae
+  require_registry_package "$lock" hashtree-cli 0.4.9 39315bb0f60d1b3fd9ec7866ec97ef8c9b0f36dbcc6ea30112604157c676ca63
   require_registry_package "$lock" hashtree-updater 0.3.0 d74b436997bd5c98adeeef4d03177a9403f24eeb55c76ea0f3cb42a3a7c62e52
   require_registry_package "$lock" hashtree-config 0.2.83 661c0bec57ba49999860fc418a7e656714cd79d82a3c3ee272794b90bb49db76
   require_registry_package "$lock" hashtree-core 0.3.1 ad3de9ec303ed9a02551e91ef30d6ac62f44b1cb46f1fd44ab89f7570c4ff127
-  require_registry_package "$lock" hashtree-embedded 0.4.2 aebe8a56e536dcf701444e79b1905b870e5748bc4d0150836314d17adab1fbd7
+  require_registry_package "$lock" hashtree-embedded 0.4.3 04a90527837fff2b010c3800a8429c348cd435b829598f46799ec49193f4481a
   require_registry_package "$lock" hashtree-fips-transport 0.5.0 fe8ec8fd82d673c7f0e6c692cabdbf89839cdcba9c5600ec9077e8f1e799d824
   require_registry_package "$lock" hashtree-lmdb 0.3.0 e175d64320b99ec4df162d2db593d18b25528a5362456dee0aac0e704c49c5e5
   require_registry_package "$lock" hashtree-network 0.3.0 e5e282964a08e2ee6851006a91823740672fa5f103d5de652532ee03186381c5
