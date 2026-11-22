@@ -21,6 +21,7 @@ pub(crate) const MAX_REPLICAS: usize = 256;
 
 pub(super) struct Snapshot {
     base: Fields,
+    is_new: bool,
     registers: Registers,
     local_replica: Option<Replica>,
 }
@@ -32,9 +33,11 @@ impl Snapshot {
         owner: &str,
         local_writer: Option<&str>,
     ) -> Result<Self, CalendarError> {
-        let base = load_baseline(tree, config, owner).await?;
+        let legacy = current_calendar_root(config)?;
+        let base = flatten(&load_baseline(tree, legacy.as_ref(), owner).await?)?;
         let mut snapshot = Self {
             base,
+            is_new: legacy.is_none(),
             registers: Registers::default(),
             local_replica: None,
         };
@@ -80,15 +83,18 @@ impl Snapshot {
     }
 
     pub(super) fn view(&self) -> Result<CalendarData, CalendarError> {
-        materialize(self.registers.overlay(self.base.clone()))
+        materialize(self.registers.overlay(self.base.clone(), self.is_new))
     }
 
     pub(super) async fn write(
         &mut self,
         daemon: &mut Daemon,
         writer: String,
-        edits: Fields,
+        mut edits: Fields,
     ) -> Result<(), CalendarError> {
+        if self.is_new && self.registers.initial_timezone().is_none() {
+            edits.insert(vec!["initialTimezone".into()], json!("UTC"));
+        }
         let clock = self
             .registers
             .clock
@@ -134,18 +140,18 @@ impl Snapshot {
 
 async fn load_baseline<S: Store>(
     tree: &HashTree<S>,
-    config: &AppConfig,
+    root: Option<&Cid>,
     owner: &str,
-) -> Result<Fields, CalendarError> {
-    let Some(root) = current_calendar_root(config)? else {
-        return flatten(&genesis(owner));
+) -> Result<CalendarData, CalendarError> {
+    let Some(root) = root else {
+        return Ok(genesis(owner));
     };
-    let bytes = read_tree_file(tree, &root, CALENDAR_DATA_FILE)
+    let bytes = read_tree_file(tree, root, CALENDAR_DATA_FILE)
         .await?
         .ok_or_else(|| invalid("calendar file is missing"))?;
     let mut data: CalendarData = serde_json::from_slice(&bytes)?;
     data.owner_npub = owner.to_owned();
-    flatten(&data)
+    Ok(data)
 }
 
 pub(super) async fn read_tree_file<S: Store>(

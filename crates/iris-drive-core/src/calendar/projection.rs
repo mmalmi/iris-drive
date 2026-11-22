@@ -304,6 +304,13 @@ pub(super) fn materialize(fields: Fields) -> Result<CalendarData, CalendarError>
     data.insert("bookingLinks".into(), into_array(bookings));
     data.insert("subscriptions".into(), into_array(subscriptions));
     let mut data: CalendarData = serde_json::from_value(Value::Object(data))?;
+    data.booking_links.sort_by(|left, right| {
+        left["createdAt"]
+            .as_i64()
+            .unwrap_or_default()
+            .cmp(&right["createdAt"].as_i64().unwrap_or_default())
+            .then_with(|| left["id"].as_str().cmp(&right["id"].as_str()))
+    });
     data.deleted_events = deleted_events;
     data.events
         .sort_unstable_by(|a, b| (&a.start, &a.id).cmp(&(&b.start, &b.id)));
@@ -317,6 +324,29 @@ mod tests {
         event_href_id, event_to_ics, href_event_id,
         replica::{Registers, Replica},
     };
+
+    #[test]
+    fn initial_timezone_only_supplies_missing_settings_on_a_new_calendar() {
+        let owner = "npub1fixture";
+        let mut writer = Replica::new("11111111111111111111111111111111".into());
+        let mut merged = Registers::default();
+        writer.write(
+            1,
+            Fields::from([
+                (vec!["initialTimezone".into()], json!("America/New_York")),
+                (vec!["timezone".into()], json!("Asia/Tokyo")),
+            ]),
+        );
+        merged.merge(&writer);
+        let base = flatten(&genesis(owner)).unwrap();
+        let revised = materialize(merged.overlay(base.clone(), true)).unwrap();
+        assert_eq!(revised.timezone, "Asia/Tokyo");
+        assert_eq!(revised.availability["timezone"], "America/New_York");
+        assert!(!revised.extra.contains_key("initialTimezone"));
+        let legacy = materialize(merged.overlay(base, false)).unwrap();
+        assert_eq!(legacy.timezone, "Asia/Tokyo");
+        assert_eq!(legacy.availability["timezone"], "UTC");
+    }
 
     #[test]
     fn native_projection_matches_the_shared_web_replica_fixture() {
@@ -343,7 +373,7 @@ mod tests {
             for index in order {
                 merged.merge(&replicas[index]);
             }
-            let view = materialize(merged.overlay(base.clone())).unwrap();
+            let view = materialize(merged.overlay(base.clone(), true)).unwrap();
             assert_eq!(json!(view.title), expected["title"]);
             assert_eq!(
                 json!(

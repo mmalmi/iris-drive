@@ -82,10 +82,26 @@ impl Registers {
         }
     }
 
-    pub(super) fn overlay(&self, mut base: Fields) -> Fields {
+    pub(super) fn initial_timezone(&self) -> Option<&str> {
+        self.winners.iter().find_map(|(path, (_, _, value))| {
+            (path == &["initialTimezone"])
+                .then(|| value.as_str())
+                .flatten()
+        })
+    }
+
+    pub(super) fn overlay(&self, mut base: Fields, is_new: bool) -> Fields {
+        if let Some(zone) = self.initial_timezone().filter(|_| is_new) {
+            base.insert(vec!["timezone".into()], Value::String(zone.into()));
+            base.insert(
+                vec!["availability".into(), "timezone".into()],
+                Value::String(zone.into()),
+            );
+        }
         base.extend(
             self.winners
                 .iter()
+                .filter(|(path, _)| *path != &["initialTimezone"])
                 .map(|(path, (_, _, value))| (path.clone(), value.clone())),
         );
         base
@@ -130,6 +146,9 @@ fn valid_register(path: &[String], value: &Value) -> bool {
             value.is_null() || value.as_u64().is_some_and(|n| n <= MAX_CLOCK)
         }
         ["sharing"] => value.is_object() || value.is_null(),
+        ["initialTimezone"] => value
+            .as_str()
+            .is_some_and(|zone| !zone.is_empty() && zone.len() <= 255),
         [field] => !matches!(
             *field,
             "events"
@@ -195,7 +214,7 @@ mod tests {
                 merged.merge(replica);
             }
             assert_eq!(merged.clock, 6);
-            assert_eq!(merged.overlay(Fields::new()), expected);
+            assert_eq!(merged.overlay(Fields::new(), true), expected);
         }
     }
 
