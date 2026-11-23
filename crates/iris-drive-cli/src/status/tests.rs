@@ -2,6 +2,33 @@ use super::*;
 use std::io::{Error, ErrorKind};
 
 #[test]
+fn overlapping_status_writes_preserve_each_completed_root() {
+    let dir = tempfile::tempdir().unwrap();
+    let ready = std::sync::Barrier::new(8);
+    std::thread::scope(|scope| {
+        for worker in 0..8 {
+            let ready = &ready;
+            let path = dir.path();
+            scope.spawn(move || {
+                ready.wait();
+                for revision in 0..4 {
+                    let root = format!("root-{worker}-{revision}");
+                    merge_daemon_status(path, |status| {
+                        status
+                            .entry("block_sync_by_root")
+                            .or_insert_with(|| json!({}))[root] = json!({"total_hashes": 7});
+                    });
+                    write_daemon_status(path, json!({"event": "heartbeat"}));
+                }
+            });
+        }
+    });
+    let status: Value =
+        serde_json::from_slice(&std::fs::read(daemon_status_path(dir.path())).unwrap()).unwrap();
+    assert_eq!(status["block_sync_by_root"].as_object().unwrap().len(), 32);
+}
+
+#[test]
 fn retry_interrupted_io_retries_until_success() {
     let mut attempts = 0;
 

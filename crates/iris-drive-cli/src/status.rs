@@ -6,6 +6,9 @@ mod config_load;
 mod network;
 mod peers;
 mod storage;
+mod writer;
+
+pub(crate) use writer::{merge_daemon_status, write_daemon_status};
 
 #[cfg(test)]
 pub(crate) use backups::backup_target_status;
@@ -455,65 +458,6 @@ pub(crate) fn load_daemon_status(config_dir: &Path) -> Option<Value> {
     Some(value)
 }
 
-pub(crate) fn write_daemon_status(config_dir: &Path, mut payload: Value) -> Value {
-    let now = unix_now();
-    let heartbeat = payload
-        .get("event")
-        .and_then(Value::as_str)
-        .is_some_and(|event| event == "heartbeat");
-    if let Some(payload_object) = payload.as_object_mut()
-        && let Ok(raw) = std::fs::read_to_string(daemon_status_path(config_dir))
-        && let Ok(existing) = serde_json::from_str::<Value>(&raw)
-        && let Some(existing_object) = existing.as_object()
-    {
-        for key in [
-            "last_block_sync",
-            "block_sync_by_root",
-            "block_sync_error_by_root",
-            "relays",
-            "current_app_key_npub",
-            "summary",
-            "hashtree",
-            "provider_update_mode",
-            "watch_debounce_ms",
-            "mount",
-            "relay_statuses",
-            "embedded_hashtree",
-            "browser_gateway",
-            "fips_block_sync",
-            "fips_block_sync_error",
-            "fips",
-        ] {
-            if !payload_object.contains_key(key)
-                && let Some(value) = existing_object.get(key)
-            {
-                payload_object.insert(key.to_string(), value.clone());
-            }
-        }
-    }
-    if let Some(object) = payload.as_object_mut() {
-        object.insert("schema".to_string(), json!(DAEMON_STATUS_SCHEMA));
-        object.insert("pid".to_string(), json!(std::process::id()));
-        object.insert("running".to_string(), json!(true));
-        object.insert("fresh".to_string(), json!(true));
-        object.insert("updated_at".to_string(), json!(now));
-        object.insert(
-            "binary_version".to_string(),
-            json!(env!("CARGO_PKG_VERSION")),
-        );
-    }
-    if !heartbeat {
-        normalize_daemon_status_for_clients(config_dir, &mut payload);
-    }
-    if let Some(parent) = daemon_status_path(config_dir).parent() {
-        let _ = std::fs::create_dir_all(parent);
-    }
-    if let Ok(bytes) = serde_json::to_vec_pretty(&payload) {
-        let _ = std::fs::write(daemon_status_path(config_dir), bytes);
-    }
-    payload
-}
-
 pub(crate) fn normalize_daemon_status_for_clients(config_dir: &Path, payload: &mut Value) {
     let Ok(config) = daemon_status_config(config_dir) else {
         return;
@@ -636,23 +580,6 @@ pub(crate) fn normalized_relay_statuses(
 
 fn relay_statuses_json(relays: &[String], daemon_status: Option<&Value>) -> Value {
     json!(normalized_relay_statuses_for_relays(relays, daemon_status))
-}
-
-pub(crate) fn merge_daemon_status(
-    config_dir: &Path,
-    update: impl FnOnce(&mut serde_json::Map<String, Value>),
-) {
-    let mut value = std::fs::read_to_string(daemon_status_path(config_dir))
-        .ok()
-        .and_then(|raw| serde_json::from_str::<Value>(&raw).ok())
-        .unwrap_or_else(|| json!({}));
-    if !value.is_object() {
-        value = json!({});
-    }
-    if let Some(object) = value.as_object_mut() {
-        update(object);
-    }
-    write_daemon_status(config_dir, value);
 }
 
 pub(crate) fn unix_now() -> i64 {
