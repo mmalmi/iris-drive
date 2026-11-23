@@ -174,7 +174,7 @@ async fn calendar_offline_caldav_writers_merge_after_reopen_and_report_deletes()
         assert!(report.contains(text), "{text} missing from feed");
     }
     assert!(!report.contains("Late offline edit"));
-    let stale = http_request(
+    let deletion_with_old_etag = http_request(
         fresh.local_addr(),
         "DELETE",
         "localhost",
@@ -183,7 +183,10 @@ async fn calendar_offline_caldav_writers_merge_after_reopen_and_report_deletes()
         b"",
     )
     .await;
-    assert!(stale.starts_with("HTTP/1.1 412"), "{stale}");
+    assert!(
+        deletion_with_old_etag.starts_with("HTTP/1.1 412"),
+        "{deletion_with_old_etag}"
+    );
     let incremental = http_request(fresh.local_addr(), "REPORT", "localhost", &href, &[],
         br#"<D:sync-collection xmlns:D="DAV:"><D:sync-token>prior</D:sync-token></D:sync-collection>"#).await;
     assert!(incremental.contains(&format!("<D:href>{gone}</D:href><D:status>HTTP/1.1 404")));
