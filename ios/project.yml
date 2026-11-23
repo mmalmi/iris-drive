@@ -120,6 +120,7 @@ targets:
         PRODUCT_MODULE_NAME: IrisDriveShareSource
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: Iris Drive Share Source
+        INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
       configs:
         Debug:
           CODE_SIGN_STYLE: Automatic
