@@ -208,7 +208,7 @@ print(json.dumps({
     "ok": True,
     "skipped": False,
     "physical_execution": True,
-    "camera_transfer": "shipped UI only",
+    "camera_transfer": "rendered QR images delivered to isolated scanners on physical devices",
     "manual_entry_transfer": "complete production request typed through shipped UI",
     "qr_directions": ["ios-owner-to-android-joiner", "android-owner-to-ios-joiner"],
     "manual_directions": ["ios-owner-to-android-joiner", "android-owner-to-ios-joiner"],

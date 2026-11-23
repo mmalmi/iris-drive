@@ -6,6 +6,8 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 source "$ROOT/scripts/lib/ios-xcuitest-accessibility-session.sh"
 # shellcheck source=scripts/lib/mobile-physical-ios-xctest.sh
 source "$ROOT/scripts/lib/mobile-physical-ios-xctest.sh"
+# shellcheck source=scripts/lib/mobile-qr-frames.sh
+source "$ROOT/scripts/lib/mobile-qr-frames.sh"
 MODE="${IRIS_DRIVE_MOBILE_PHYSICAL_LINKING:-auto}"
 WAIT_SECS="${IRIS_DRIVE_MOBILE_LINK_WAIT_SECS:-15}"
 CAMERA_WAIT_SECS="${IRIS_DRIVE_MOBILE_CAMERA_WAIT_SECS:-30}"
@@ -92,15 +94,6 @@ bool_true() {
 monotonic_milliseconds() {
   perl -MTime::HiRes=clock_gettime,CLOCK_MONOTONIC \
     -e 'printf "%.0f\n", clock_gettime(CLOCK_MONOTONIC) * 1000'
-}
-
-sha256_file() {
-  python3 - "$1" <<'PY'
-import hashlib
-import sys
-with open(sys.argv[1], "rb") as handle:
-    print(hashlib.sha256(handle.read()).hexdigest())
-PY
 }
 
 sha256_text() {
@@ -429,7 +422,7 @@ build_apps() {
     -configuration "$IOS_CONFIGURATION" \
     -derivedDataPath "$IOS_DERIVED_DATA" \
     -destination "platform=iOS,id=$IOS_DEVICE_SELECTED" \
-    SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG \
+    "SWIFT_ACTIVE_COMPILATION_CONDITIONS=DEBUG IRIS_DRIVE_QR_FRAME_TEST" \
     LIBRARY_SEARCH_PATHS="$RUST_LIB_DIR" \
     OTHER_LDFLAGS="$RUST_STATIC_LIB" \
     -allowProvisioningUpdates \
@@ -513,6 +506,7 @@ start_ios_test() {
     "IRIS_XCUITEST_PHYSICAL_LINK_GATE=1" \
     "IRIS_XCUITEST_ISOLATED_DEVICE=1" \
     "IRIS_XCUITEST_RUN_ID=$RUN_ID" \
+    "IRIS_XCUITEST_FRAME_SHA256=${QR_FRAME_SHA256:-}" \
     "IRIS_XCUITEST_SIGNAL_PREFIX=$IOS_SIGNAL_PREFIX" \
     "IRIS_XCUITEST_DELIVERY_WAIT_SECS=$WAIT_SECS" \
     "IRIS_XCUITEST_CAMERA_WAIT_SECS=$CAMERA_WAIT_SECS" \
@@ -878,20 +872,24 @@ assert_delivery_bound() {
 run_ios_owner_android_joiner() {
   echo "[mobile-link] direction iOS owner -> Android joiner" >&2
   display_android_join_request_qr
+  capture_android_request_frame || fail "Could not capture Android's displayed request QR"
+  local QR_FRAME_SHA256
+  QR_FRAME_SHA256="$(sha256_file "$TMP/android-request.png")"
   start_ios_test \
-    testIosOwnerApprovesAndroidThroughPhysicalCamera \
+    testIosOwnerApprovesAndroidRenderedQr \
     "$IOS_OWNER_FILE" \
     "$IOS_OWNER_CONTENT" \
     "$ANDROID_JOINER_FILE"
+  wait_for_ios_marker "IRIS_IOS_LIFECYCLE_RESUMED=1" "$IOS_BRIDGE_READY_WAIT_SECS" \
+    || fail "iOS owner did not finish its profile and foreground setup"
   wait_for_ios_marker "IRIS_IOS_CAMERA_READY=1" 30 \
     || fail "iOS shipped camera did not become ready"
   wait_for_ios_marker "IRIS_IOS_MANUAL_ENTRY_READY=1" 2 \
     || fail "iOS shipped manual approval entry was not covered before camera approval"
-  wait_for_ios_marker "IRIS_IOS_LIFECYCLE_RESUMED=1" 2 \
-    || fail "iOS owner state did not survive background/restart coverage"
-  echo "Aim the unlocked iOS camera at the Android request QR (up to ${CAMERA_WAIT_SECS}s)." >&2
+  send_frame_to_ios || fail "Could not deliver the Android QR image to the iOS test scanner"
   wait_for_ios_marker "IRIS_IOS_APPROVAL_CONFIRMATION_READY=1" "$((CAMERA_WAIT_SECS + 5))" \
-    || fail "iOS camera did not scan Android's compact request"
+    || fail "iOS scanner did not recognize Android's displayed QR"
+  echo "IRIS_IOS_QR_IMAGE_CONFIRMED"
   local android_config="$TMP/android-joiner-config.toml"
   IOS_TO_ANDROID_STARTED_MS="$(monotonic_milliseconds)"
   signal_ios_test submit-camera-approval \
@@ -907,7 +905,7 @@ run_ios_owner_android_joiner() {
     "$ANDROID_JOINER_FILE" "$ANDROID_JOINER_CONTENT"
   wait_for_empty_receipts ios "$WAIT_SECS" \
     || fail "iOS owner retained its durable approval receipt after Android applied it"
-  finish_ios_test testIosOwnerApprovesAndroidThroughPhysicalCamera
+  finish_ios_test testIosOwnerApprovesAndroidRenderedQr
   copy_android_config "$android_config" || fail "could not read Android joiner config"
   assert_authorized_config "$android_config" || fail "Android did not persist authorized state"
   assert_ios_provider_content "$ANDROID_JOINER_FILE" "$ANDROID_JOINER_CONTENT" \
@@ -922,14 +920,19 @@ run_android_owner_ios_joiner() {
     "$IOS_JOINER_FILE" \
     "$IOS_JOINER_CONTENT" \
     "$ANDROID_OWNER_FILE"
-  wait_for_ios_marker "IRIS_IOS_REQUEST_QR_READY=1" 30 \
+  wait_for_ios_marker "IRIS_IOS_REQUEST_QR_READY=1" "$IOS_BRIDGE_READY_WAIT_SECS" \
     || fail "iOS shipped UI did not display its compact request QR"
   wait_for_ios_marker "IRIS_IOS_LIFECYCLE_RESUMED=1" 2 \
     || fail "iOS request QR did not survive background and resume"
+  copy_ios_request_frame || fail "Could not capture the iOS request QR"
+  local frame_digest
+  frame_digest="$(sha256_file "$TMP/ios-request.png")"
+  arm_android_frame_reader "$frame_digest" || fail "Could not prepare the Android test scanner"
   open_android_approval_camera
-  echo "Aim the unlocked Android camera at the iOS request QR (up to ${CAMERA_WAIT_SECS}s)." >&2
+  send_frame_to_android "$frame_digest" || fail "Could not deliver the iOS QR image to Android"
   wait_for_android_ui text "Approve this device?" "$CAMERA_WAIT_SECS" \
-    || fail "Android camera did not scan iOS's compact request"
+    || fail "Android scanner did not recognize iOS's displayed QR"
+  echo "IRIS_ANDROID_QR_IMAGE_CONFIRMED"
   local ios_config="$TMP/ios-joiner-config.toml"
   ANDROID_TO_IOS_STARTED_MS="$(monotonic_milliseconds)"
   tap_android_ui text "Approve" || fail "Android approval confirmation could not be tapped"

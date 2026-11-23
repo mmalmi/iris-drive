@@ -1,6 +1,11 @@
 import AVFoundation
 import SwiftUI
 import UIKit
+#if DEBUG && IRIS_DRIVE_QR_FRAME_TEST
+import CryptoKit
+import ImageIO
+import Vision
+#endif
 
 struct QRCodeScannerSheet: View {
     let onCode: (String) -> Void
@@ -139,24 +144,68 @@ private struct QRCodeScannerView: UIViewRepresentable {
             attachPreview(to: view)
             sessionQueue.async {
                 session.startRunning()
+                #if DEBUG && IRIS_DRIVE_QR_FRAME_TEST
+                if let digest = ProcessInfo.processInfo.environment["IRIS_DRIVE_QR_FRAME_SHA256"] {
+                    self.readTestFrame(digest, until: .now() + 45)
+                }
+                #endif
             }
         }
+
+        #if DEBUG && IRIS_DRIVE_QR_FRAME_TEST
+        private func readTestFrame(_ digest: String, until deadline: DispatchTime) {
+            guard session?.isRunning == true, !didFinish else { return }
+            guard digest.range(of: "^[0-9a-f]{64}$", options: .regularExpression) != nil else { return }
+            let file = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("qr-frame-\(digest).png")
+            guard DispatchTime.now() < deadline else {
+                try? FileManager.default.removeItem(at: file)
+                DispatchQueue.main.async { self.onError("Test QR frame timed out.") }
+                return
+            }
+            if let size = try? file.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+               (1...4_194_304).contains(size), let data = try? Data(contentsOf: file),
+               SHA256.hash(data: data).map({ String(format: "%02x", $0) }).joined() == digest {
+                defer { try? FileManager.default.removeItem(at: file) }
+                guard let image = CGImageSourceCreateWithData(data as CFData, nil),
+                      let properties = CGImageSourceCopyPropertiesAtIndex(image, 0, nil) as? [CFString: Any],
+                      let width = properties[kCGImagePropertyPixelWidth] as? Int,
+                      let height = properties[kCGImagePropertyPixelHeight] as? Int,
+                      (1...4096).contains(width), (1...4096).contains(height) else { return }
+                let request = VNDetectBarcodesRequest()
+                request.symbologies = [.qr]
+                do {
+                    try VNImageRequestHandler(data: data).perform([request])
+                    if let codes = request.results, codes.count == 1 {
+                        finish(codes[0].payloadStringValue)
+                    }
+                } catch {
+                    DispatchQueue.main.async { self.onError("Test QR frame could not be read.") }
+                }
+                return
+            }
+            sessionQueue.asyncAfter(deadline: .now() + .milliseconds(100)) { [weak self] in
+                self?.readTestFrame(digest, until: deadline)
+            }
+        }
+        #endif
 
         func metadataOutput(
             _ output: AVCaptureMetadataOutput,
             didOutput metadataObjects: [AVMetadataObject],
             from connection: AVCaptureConnection
         ) {
-            guard !didFinish else { return }
-            guard let code = metadataObjects
+            #if DEBUG && IRIS_DRIVE_QR_FRAME_TEST
+            if ProcessInfo.processInfo.environment["IRIS_DRIVE_QR_FRAME_SHA256"] != nil { return }
+            #endif
+            finish(metadataObjects
                 .compactMap({ $0 as? AVMetadataMachineReadableCodeObject })
-                .first(where: { $0.type == .qr })?
-                .stringValue?
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-                !code.isEmpty
-            else {
-                return
-            }
+                .first(where: { $0.type == .qr })?.stringValue)
+        }
+
+        private func finish(_ value: String?) {
+            guard !didFinish, let code = value?.trimmingCharacters(in: .whitespacesAndNewlines),
+                  !code.isEmpty else { return }
             didFinish = true
             session?.stopRunning()
             DispatchQueue.main.async {

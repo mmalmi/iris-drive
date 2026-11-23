@@ -104,10 +104,10 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
         XCTAssertTrue(app.buttons["scanApprovalRequestQr"].waitForExistence(timeout: 5))
     }
 
-    func testIosOwnerApprovesAndroidThroughPhysicalCamera() {
+    func testIosOwnerApprovesAndroidRenderedQr() {
         defer {
             PhysicalLinkMarker.emit(
-                "IRIS_XCUITEST_FINISHED=testIosOwnerApprovesAndroidThroughPhysicalCamera"
+                "IRIS_XCUITEST_FINISHED=testIosOwnerApprovesAndroidRenderedQr"
             )
         }
         launchCleanAppGroup()
@@ -122,7 +122,7 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
         let confirmation = app.alerts["Approve this device?"]
         XCTAssertTrue(
             confirmation.waitForExistence(timeout: PhysicalLinkTimeouts.camera),
-            "The physical iOS camera did not decode Android's request QR."
+            "The iOS scanner did not decode Android's displayed request QR."
         )
         PhysicalLinkMarker.emit("IRIS_IOS_APPROVAL_CONFIRMATION_READY=1")
         waitForHostSignal("submit-camera-approval")
@@ -142,7 +142,7 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
         startJoiner(requestReadyMarker: "IRIS_IOS_REQUEST_QR_READY=1")
         waitForJoinerAuthorization(
             marker: "IRIS_IOS_AUTHORIZED=1",
-            failure: "iOS stayed on Waiting for approval after Android confirmed the camera scan."
+            failure: "iOS stayed on Waiting for approval after Android approved the displayed QR."
         )
 
         completePostLinkExchange()
@@ -234,6 +234,18 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
         XCUIDevice.shared.press(.home)
         app.activate()
         XCTAssertTrue(requestQr.waitForExistence(timeout: 10), app.debugDescription)
+        if requestReadyMarker == "IRIS_IOS_REQUEST_QR_READY=1" {
+            let runId = requiredEnvironment("IRIS_XCUITEST_RUN_ID")
+            let file = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("qr-request-\(runId).png")
+            do {
+                try requestQr.screenshot().pngRepresentation.write(to: file, options: .atomic)
+                addTeardownBlock { try? FileManager.default.removeItem(at: file) }
+            } catch {
+                XCTFail("Could not capture the displayed request QR.")
+                return
+            }
+        }
         PhysicalLinkMarker.emit("IRIS_IOS_LIFECYCLE_RESUMED=1")
         PhysicalLinkMarker.emit(requestReadyMarker)
     }
@@ -401,7 +413,12 @@ final class IrisDrivePhysicalLinkingUITests: XCTestCase {
     }
 
     private func appEnvironment() -> [String: String] {
-        ["IRIS_DRIVE_ALLOW_DESTRUCTIVE_DEBUG_ACTIONS_ON_DEVICE": "1"]
+        var environment = ["IRIS_DRIVE_ALLOW_DESTRUCTIVE_DEBUG_ACTIONS_ON_DEVICE": "1"]
+        if let digest = ProcessInfo.processInfo.environment["IRIS_XCUITEST_FRAME_SHA256"],
+           !digest.isEmpty {
+            environment["IRIS_DRIVE_QR_FRAME_SHA256"] = digest
+        }
+        return environment
     }
 
     private func tabButton(_ title: String) -> XCUIElement {

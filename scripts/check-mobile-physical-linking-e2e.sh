@@ -61,6 +61,12 @@ def read(path: str) -> str:
     xcode_project,
 ) = (read(path) for path in sys.argv[1:])
 
+if "Aim the unlocked" in gate or not all(step in gate for step in (
+    "capture_android_request_frame", "send_frame_to_ios", "copy_ios_request_frame",
+    "send_frame_to_android",
+)):
+    raise SystemExit("The mobile QR journey must transfer rendered pixels unattended in both directions")
+
 macos_android_contract = macos_android_gate + macos_android_evidence
 
 physical_gate = gate + manual_gate + ios_xctest_helpers
@@ -159,7 +165,7 @@ for required in (
     "select_physical_android",
     "select_physical_ios",
     "ro.kernel.qemu",
-    "testIosOwnerApprovesAndroidThroughPhysicalCamera",
+    "testIosOwnerApprovesAndroidRenderedQr",
     "testIosJoinerDisplaysPhysicalQrAndBecomesAuthorized",
     "testIosOwnerApprovesAndroidThroughManualEntry",
     "testIosJoinerWaitsForAndroidManualApproval",
@@ -292,7 +298,7 @@ for required in (
 
 for test_name in (
     "testPhysicalEnvironmentBridgeIsReady",
-    "testIosOwnerApprovesAndroidThroughPhysicalCamera",
+    "testIosOwnerApprovesAndroidRenderedQr",
     "testIosJoinerDisplaysPhysicalQrAndBecomesAuthorized",
     "testIosOwnerApprovesAndroidThroughManualEntry",
     "testIosJoinerWaitsForAndroidManualApproval",
@@ -301,7 +307,7 @@ for test_name in (
         raise SystemExit(f"physical iOS XCTest is missing {test_name}")
 
 owner_test = ios_test.split(
-    "func testIosOwnerApprovesAndroidThroughPhysicalCamera()", 1
+    "func testIosOwnerApprovesAndroidRenderedQr()", 1
 )[1].split("func testIosJoinerDisplaysPhysicalQrAndBecomesAuthorized()", 1)[0]
 approve = 'confirmation.buttons["Approve"].tap()'
 release = 'waitForHostSignal("submit-camera-approval")'

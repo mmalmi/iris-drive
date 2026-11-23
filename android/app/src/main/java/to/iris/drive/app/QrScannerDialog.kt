@@ -50,7 +50,6 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.google.mlkit.vision.barcode.BarcodeScannerOptions
 import com.google.mlkit.vision.barcode.BarcodeScanning
 import com.google.mlkit.vision.barcode.common.Barcode
-import com.google.mlkit.vision.common.InputImage
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -136,6 +135,7 @@ private fun QrScannerHost(
                 importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
             }
         }
+    val nextImage = remember(context) { qrScannerImageSource(context) }
     val scanner =
         remember {
             val options =
@@ -194,7 +194,12 @@ private fun QrScannerHost(
                 return@setAnalyzer
             }
 
-            val image = InputImage.fromMediaImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+            val image = nextImage(mediaImage, imageProxy.imageInfo.rotationDegrees)
+            if (image == null) {
+                inFlight.set(false)
+                imageProxy.close()
+                return@setAnalyzer
+            }
             scanner.process(image)
                 .addOnSuccessListener { barcodes ->
                     val raw = barcodes.firstOrNull()?.rawValue?.trim().orEmpty()

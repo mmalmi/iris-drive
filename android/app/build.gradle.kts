@@ -65,6 +65,10 @@ android {
         }
     }
 
+    // Only the instrumentation build accepts frames captured on the other test device.
+    sourceSets.getByName("debug").java.srcDir("src/deviceCamera/java")
+    sourceSets.getByName("release").java.srcDir("src/deviceCamera/java")
+
     buildTypes {
         debug {
             applicationIdSuffix = ".debug"
