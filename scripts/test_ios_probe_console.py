@@ -36,10 +36,13 @@ elif args[:4] == ["devicectl", "device", "process", "launch"]:
     def ended(*_):
         if scenario == "wrong-receipt":
             env["IRIS_DRIVE_DEBUG_PROBE_ID"] = "different launch"
+        termination = {"terminatingSignal": 15, "wasCoreDumpCreated": False}
+        if scenario == "other-signal":
+            termination["terminatingSignal"] = 6
         receipt({"info": {"outcome": "success"}, "result": {
-            "launchOptions": {"environmentVariables": env}, "process": {"processIdentifier": 123}}})
+            "terminationResult": termination, "launchOptions": {"environmentVariables": env}, "process": {"processIdentifier": 123}}})
         (state / "ended").touch()
-        sys.exit(0)
+        sys.exit(1 if scenario in ("forwarded-term", "other-signal") else 0)
     signal.signal(signal.SIGTERM, ended)
     (state / "probe-id").write_text(env["IRIS_DRIVE_DEBUG_PROBE_ID"])
     if "--console" in args:
@@ -105,12 +108,12 @@ class IosProbeConsoleTests(unittest.TestCase):
                "PROBE_TEST_STATE": str(root), "PROBE_TEST_SCENARIO": scenario, "TMPDIR": str(root),
                "IRIS_DRIVE_IOS_DEVICE": "fixture", "IRIS_DRIVE_IOS_DEVICE_IRIS_APPS_BUILD_LOG": str(root / "build.log")}
         result = subprocess.run(["bash", str(script)], env=env, capture_output=True, text=True, timeout=15)
-        expected = {"screenshot-error": 1, "wrong-receipt": 1, "interrupt": 143}.get(scenario, 0)
+        expected = {"screenshot-error": 1, "wrong-receipt": 1, "other-signal": 1, "interrupt": 143}.get(scenario, 0)
         self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
         self.assertFalse((root / "unexpected-device-command").exists())
         self.assertTrue((root / "ended").exists(), "owned probe was left running")
-        if scenario == "wrong-receipt":
-            self.assertIn("matching probe ID", result.stderr)
+        if scenario in ("wrong-receipt", "other-signal"):
+            self.assertIn("matching probe ID" if scenario == "wrong-receipt" else "console exited", result.stderr)
             self.assertNotIn("probe_pid=", result.stdout)
         else:
             self.assertIn("probe_pid=123", result.stdout)
@@ -131,6 +134,12 @@ class IosProbeConsoleTests(unittest.TestCase):
 
     def test_closes_the_owned_console_when_collecting_the_screenshot_fails(self):
         self.exercise("screenshot-error")
+
+    def test_recognizes_devicectl_reporting_forwarded_termination(self):
+        self.exercise("forwarded-term")
+
+    def test_rejects_unexpected_signal(self):
+        self.exercise("other-signal")
 
     def test_naturally_exited_console_cannot_target_a_replacement(self):
         self.exercise("replacement")

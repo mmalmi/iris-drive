@@ -221,11 +221,7 @@ finish_probe() {
   # never select a replacement app, even if iOS has recycled its PID.
   if kill -TERM %launch_probe_console 2>/dev/null; then sent_term=1; fi
   wait "$probe_console_pid" || console_status=$?
-  if (( console_status != 0 && !(sent_term && console_status == 143) )); then
-    echo "FAIL: device probe console exited with status $console_status (see $probe_dir/console.log)" >&2
-    if (( status == 0 )); then status=1; fi
-  fi
-  if ! python3 - "$probe_launch_json" "$PROBE_ID" <<'PYRECEIPT'
+  if ! python3 - "$probe_launch_json" "$PROBE_ID" "$sent_term" "$console_status" <<'PYRECEIPT'
 import json
 import sys
 
@@ -238,6 +234,17 @@ pid = (result.get("process") or {}).get("processIdentifier")
 launch_env = (result.get("launchOptions") or {}).get("environmentVariables") or {}
 if type(pid) is not int or pid <= 0 or launch_env.get("IRIS_DRIVE_DEBUG_PROBE_ID") != sys.argv[2]:
     raise SystemExit("FAIL: devicectl did not return the launched probe PID and matching probe ID")
+sent_term, console_status = map(int, sys.argv[3:5])
+termination = result.get("terminationResult") or {}
+# Current devicectl returns 1 for a forwarded signal and records the actual
+# signal in the structured launch receipt. Keep other process failures visible.
+forwarded_term = sent_term and (
+    console_status == 143
+    or (console_status == 1 and termination.get("terminatingSignal") == 15
+        and termination.get("wasCoreDumpCreated") is False)
+)
+if console_status and not forwarded_term:
+    raise SystemExit(f"FAIL: device probe console exited with status {console_status}")
 print(f"probe_pid={pid}")
 PYRECEIPT
   then

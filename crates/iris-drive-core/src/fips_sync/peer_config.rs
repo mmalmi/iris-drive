@@ -65,6 +65,25 @@ fn normalize_fips_peer_configs(
     out
 }
 
+pub(super) fn explicit_dial_peer_ids(
+    application_peers: &[FipsPeerConfig],
+    pending_peers: &[FipsPeerConfig],
+) -> BTreeSet<String> {
+    let mut peers = peer_ids(pending_peers);
+    // An operator-provided route may only work in one direction across NAT.
+    // Cached or discovered addresses are merged later and keep normal election.
+    for peer in application_peers {
+        if peer
+            .udp_addresses
+            .iter()
+            .any(|addr| drive_peer_address(addr).is_some())
+        {
+            peers.insert(peer.npub.trim().to_owned());
+        }
+    }
+    peers
+}
+
 pub(super) async fn set_drive_fips_peer_configs(
     endpoint: &FipsEndpoint,
     local_npub: &str,
@@ -73,7 +92,8 @@ pub(super) async fn set_drive_fips_peer_configs(
     peer_configs: Vec<FipsPeerConfig>,
 ) -> Result<(), fips_core::FipsEndpointError> {
     let application_peer_ids = peer_ids(application_peers);
-    let outbound_connect_peer_ids = peer_ids(outbound_connect_peers);
+    let outbound_connect_peer_ids =
+        explicit_dial_peer_ids(application_peers, outbound_connect_peers);
     let local_inbound_capability =
         authenticated_local_inbound_capability(endpoint, local_npub).await;
     let peers = drive_core_peer_configs(

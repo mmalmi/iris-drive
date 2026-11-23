@@ -568,12 +568,12 @@ test('local-release dry-run passes release versions to macOS and Android builder
 
   assert.equal(result.status, 0, result.stderr)
   assert.match(result.stdout, /MARKETING_VERSION=9\.9\.9/)
-  assert.match(result.stdout, /CURRENT_PROJECT_VERSION=9009010/)
+  assert.match(result.stdout, /CURRENT_PROJECT_VERSION=9009011/)
   assert.match(result.stdout, /--timestamp/)
   assert.match(result.stdout, /codesign --force --timestamp --options runtime --sign/)
   assert.match(result.stdout, /iris-drive-v9\.9\.9-macos-arm64\.app\.tar\.gz/)
   assert.match(result.stdout, /-PirisDriveVersionName=9\.9\.9/)
-  assert.match(result.stdout, /-PirisDriveVersionCode=9009010/)
+  assert.match(result.stdout, /-PirisDriveVersionCode=9009011/)
   assert.match(result.stdout, /tools\/run-android .* clean :app:assembleRelease :app:bundleRelease/)
 })
 
@@ -809,7 +809,7 @@ test('local-release dry-run passes release versions to the iOS TestFlight builde
   )
 
   assert.equal(result.status, 0, result.stderr)
-  assert.match(result.stdout, /iOS TestFlight version: 9\.9\.9 \(9009010\)/)
+  assert.match(result.stdout, /iOS TestFlight version: 9\.9\.9 \(9009011\)/)
 })
 
 test('local-release dry-run uses a public-capable iOS upload for internal plus public TestFlight', () => {

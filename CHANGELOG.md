@@ -5,6 +5,7 @@
 - Keep recent Calendar edits when the same calendar is changed in the browser
   and a native app.
 - Open the current Iris Sites catalog through the native Drive connection.
+- Connect approved devices directly when a configured address works in only one direction.
 
 ## 0.1.49 - 2026-11-19
 

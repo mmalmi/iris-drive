@@ -27,8 +27,8 @@ version = "0.2.27"
 
 test('release build numbers are strictly increasing and collision-free', () => {
   assert.deepEqual(
-    ['v0.1.32', 'v0.1.33', 'v0.1.34', 'v0.1.999', 'v0.2.0'].map(buildNumberFromVersion),
-    ['1033', '1034', '1035', '2000', '2001'],
+    ['v0.1.32', 'v0.1.33', 'v0.1.34', 'v0.1.49', 'v0.1.50', 'v0.1.51', 'v0.1.999', 'v0.2.0'].map(buildNumberFromVersion),
+    ['1033', '1034', '1035', '1050', '1052', '1053', '2001', '2002'],
   )
   assert.throws(() => buildNumberFromVersion('v0.1.33-rc.1'), /stable release/)
   assert.throws(() => buildNumberFromVersion('v0.1.1000'), /at most 999/)

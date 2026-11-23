@@ -55,6 +55,35 @@ fn outbound_only_authorized_peer_keeps_dialing_after_pending_transition() {
 }
 
 #[test]
+fn authorized_static_route_dials_even_when_identity_elects_the_unreachable_direction() {
+    let local = "npub1zzz";
+    let remote = "npub1aaa";
+    let configured = FipsPeerConfig {
+        npub: remote.to_owned(),
+        udp_addresses: vec!["192.0.2.1:2121".to_owned()],
+    };
+    let mut discovered = configured.clone();
+    discovered.udp_addresses.clear();
+    for (application_peer, expected) in [
+        (configured.clone(), ConnectPolicy::AutoConnect),
+        (discovered, ConnectPolicy::Manual),
+    ] {
+        let application = [application_peer];
+        let outbound = crate::fips_sync::peer_config::explicit_dial_peer_ids(&application, &[]);
+        let peer = drive_core_peer_configs(
+            local,
+            LocalInboundCapability::InboundRoutable,
+            &peer_ids(&application),
+            &outbound,
+            vec![configured.clone()],
+        )
+        .remove(0);
+        assert_eq!(peer.connect_policy, expected);
+        assert!(!peer.auto_reconnect);
+    }
+}
+
+#[test]
 fn revoked_peer_is_not_kept_as_an_outbound_only_application_dial_target() {
     let peer = FipsPeerConfig {
         npub: "npub1revoked".to_string(),
